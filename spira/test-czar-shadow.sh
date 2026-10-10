@@ -70,23 +70,32 @@ echo "czar + shadow → queue.sh eject refused; act and non-czar unaffected"
 TQ="$(mktemp -d)"; mkdir -p "$TQ/run"
 
 # SEEN RED: czar in shadow — queue.sh eject refused with czar-fence message.
+tl_config SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb"
 out="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock \
-       SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
+       SPIRA_CONF=/nonexistent \
        SPIRA_HOME="$HERE" queue eject sp-fake 2>&1 || true)"
 [[ "$out" == *"czar-fence"* && "$out" == *"shadow"* ]] \
     && ok "czar eject in shadow: fence fires inside queue.sh" \
     || bad "czar eject in shadow: expected czar-fence shadow message, got: $out"
 
 # SEEN GREEN: czar in act — no shadow refusal (may fail for other reasons; that is expected).
+# queue's czar_fence port just execs czar-fence.sh (queue/src/real.rs) with no env of its
+# own to pass along — in production conf.sh has already exported every registered key as a
+# plain var before queue is ever invoked, which is what czar-fence.sh's raw `${!var}` read
+# relies on. tl_config alone only lands the key in the suite's SPIRA_TOML layer, which
+# queue's own config resolution never forwards to this child; the plain env must carry it
+# too (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" SPIRA_CZAR_STAGE_DEADLOCK=act
 out2="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock SPIRA_CZAR_STAGE_DEADLOCK=act \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
+        SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" queue eject sp-fake 2>&1 || true)"
 [[ "$out2" != *"czar-fence"*shadow* ]] \
     && ok "czar eject in act: no shadow refusal" \
     || bad "czar eject in act: unexpected shadow refusal: $out2"
 
 # NON-CZAR: unaffected — no czar-fence message regardless of queue outcome.
-out3="$(SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
+tl_config SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb"
+out3="$(SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" queue eject sp-fake 2>&1 || true)"
 [[ "$out3" != *"czar-fence"* ]] \
     && ok "non-czar eject: fence not triggered" \

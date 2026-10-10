@@ -12,14 +12,17 @@
 //! sp-xethq, and the restricted unit environment this bead only provides — see
 //! aeon/src/restrict.rs, formerly spira/work-env.sh, retired sp-zpaq0).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::process::Command;
 use std::time::Duration;
 
 const CANNOT_TELL: i32 = work::CANNOT_TELL;
 const REFUSED: i32 = work::REFUSED;
-const TIMEOUT: Duration = Duration::from_secs(10);
+const TIMEOUT: Duration = Duration::from_secs(5);
+// batch-job: a reply under batch load can lag seconds; the read retries in slices up to this total.
+const REPLY_WAIT: Duration = Duration::from_secs(30);
+const READ_SLICE: Duration = Duration::from_secs(2);
 // batch-job: a lane verb's broker-run tool is bounded at 300 s by the broker; wait just past it.
 const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
 
@@ -65,14 +68,13 @@ fn main() {
         }
     };
 
-    // A harness tool (a groomer sweep, a queue step) reads the whole graph; the broker bounds
-    // it at 300 s, so this client waits that long for those and no longer.
-    let wait = if work::LANE_VERBS.contains(&verb.as_str()) { TOOL_TIMEOUT } else { TIMEOUT };
+    // A harness tool (a groomer sweep, a queue step) reads the whole graph, and a filing verb
+    // runs bead.sh; the broker bounds both at 300 s, so this client waits that long and no longer.
+    let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split");
+    let wait = if runs_tool { TOOL_TIMEOUT } else { REPLY_WAIT };
     match send(&req, wait) {
         Ok((code, out)) => {
-            if !out.is_empty() {
-                println!("{out}");
-            }
+            spira_config::lc_call::print_answer(code, &out);
             std::process::exit(code);
         }
         Err(e) => {
@@ -93,7 +95,7 @@ fn read_tip(bead: &str) -> Option<String> {
             return Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
         }
     }
-    let out = Command::new("git").args(["rev-parse", "HEAD"]).output().ok()?;
+    let out = spira_config::bounded::bounded("git").args(["rev-parse", "HEAD"]).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -101,12 +103,12 @@ fn read_tip(bead: &str) -> Option<String> {
 }
 
 /// The exact wire protocol spira-lc's own CLI speaks to its socket (client.rs): one JSON
-/// line in (the argv array), one JSON line out (`{exit_code, stdout}`). No same-user
+/// line in (the argv array), one header line out (`{exit_code, len}`) then `len` raw stdout bytes. No same-user
 /// fallback exists here — see this file's module doc for why that absence is the point.
 fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
-    let socket_path = spira_config::resolve::key_for_process("SPIRA_LC_SOCKET")?;
+    let socket_path = spira_config::process::cfg("SPIRA_LC_SOCKET")?;
     let stream = UnixStream::connect(&socket_path).map_err(|e| format!("connecting to {socket_path}: {e}"))?;
-    stream.set_read_timeout(Some(wait)).map_err(|e| e.to_string())?;
+    stream.set_read_timeout(Some(READ_SLICE.min(wait))).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
 
     let request = serde_json::to_string(argv).map_err(|e| e.to_string())?;
@@ -115,11 +117,38 @@ fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
 
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    if reader.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-        return Err("spira-lc closed the connection with no reply".to_string());
+    // The request is already sent and may mutate, so only the read is retried: a slow socket
+    // under load answers late (EAGAIN on the slice), it must not be resent.
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        match reader.read_line(&mut line) {
+            Ok(0) => return Err("spira-lc closed the connection with no reply".to_string()),
+            Ok(_) => break,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!("no reply from spira-lc within {}s: {e}", wait.as_secs()));
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
     }
     let resp: serde_json::Value = serde_json::from_str(line.trim()).map_err(|e| format!("malformed reply: {e}"))?;
     let code = resp.get("exit_code").and_then(|v| v.as_i64()).ok_or("reply had no exit_code")? as i32;
-    let out = resp.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let len = resp.get("len").and_then(|v| v.as_u64()).ok_or("reply had no len")? as usize;
+    let mut body = vec![0u8; len];
+    let mut at = 0;
+    while at < len {
+        match reader.read(&mut body[at..]) {
+            Ok(0) => return Err("spira-lc closed the connection mid-reply".to_string()),
+            Ok(n) => at += n,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!("no reply from spira-lc within {}s: {e}", wait.as_secs()));
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    let out = String::from_utf8(body).map_err(|e| format!("reply was not UTF-8: {e}"))?;
     Ok((code, out))
 }

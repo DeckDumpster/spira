@@ -43,18 +43,18 @@ REPO_PATH="$(repo_root "$REPO_NAME" 2>/dev/null)" \
 BASE_REF="$(spira_landref "$REPO_PATH" 2>/dev/null)" \
     || { printf 'holds.sh: could not resolve landref for %s\n' "$REPO_NAME" >&2; exit 1; }
 
-# _bead_state <id> -> its status, "(none)" when the store was read but the bead is not
-# there, or "(unknown)" when the store itself could not be read. The two must never be
-# confused: "(none)" is a bead that is confirmed gone, "(unknown)" is a read that failed and
-# proves nothing (law-absence-needs-a-positive-control).
+# _bead_state <id> -> its lifecycle state, "(none)" when the machine was read but has no row
+# for the bead, or "(unknown)" when the machine itself could not be read. The two must never
+# be confused: "(none)" is a bead that is confirmed gone, "(unknown)" is a read that failed
+# and proves nothing (law-absence-needs-a-positive-control).
 _bead_state() {
-    bdjson show "$1" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: print("(unknown)"); sys.exit()
-d = d if isinstance(d, list) else [d]
-s = d[0].get("status", "") if d else ""
-print(s if s else "(none)")' 2>/dev/null
+    local s rc
+    s="$(spira-lc state "$1" 2>/dev/null)"; rc=$?
+    case "$rc" in
+        0) printf '%s\n' "$s" ;;
+        1) printf '(none)\n' ;;
+        *) printf '(unknown)\n' ;;
+    esac
 }
 
 rc=0
@@ -64,11 +64,11 @@ while IFS= read -r branch; do
     state="$(_bead_state "$bead_id")"
     case "$state" in
         "(unknown)")
-            printf 'holds.sh: %s: bead status unreadable\n' "$bead_id" >&2
+            printf 'holds.sh: %s: bead state unreadable\n' "$bead_id" >&2
             rc=1
             continue
             ;;
-        "(none)"|closed) continue ;;
+        "(none)"|LANDED|SUPERSEDED|DROPPED|DONE) continue ;;
     esac
     touched="$(git -C "$REPO_PATH" diff --name-only "$BASE_REF...$branch" -- 2>/dev/null)" \
         || continue

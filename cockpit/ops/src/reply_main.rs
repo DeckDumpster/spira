@@ -3,20 +3,18 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{ExitCode, Stdio};
 
 use cockpit_ops::db;
-use cockpit_ops::reply::{run, usage_error, BdResult, Commenter, Outcome, USAGE};
+use cockpit_ops::reply::{run, usage_error, BdResult, Commenter, Follow, Outcome, USAGE};
 
 struct RealBd;
 
 impl Commenter for RealBd {
-    fn comment(&self, db: &Path, id: &str, text: &str) -> BdResult {
-        let bd = db::bd_bin();
-        let out = Command::new(&bd)
-            .arg("-C")
-            .arg(db)
-            .args(["comments", "add", id, text])
+    fn comment(&self, _db: &Path, id: &str, text: &str) -> BdResult {
+        let bd = db::lc_bin();
+        let out = spira_config::bounded::bounded(&bd)
+            .args(["content", "comments", "add", id, text])
             .env("BEADS_ACTOR", "claude")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -41,6 +39,28 @@ impl Commenter for RealBd {
                 combined: format!("failed to run {bd}: {e}"),
             },
         }
+    }
+}
+
+struct RealFollow;
+
+impl Follow for RealFollow {
+    fn lift_hold(&self, id: &str, message_id: &str) -> Result<(), String> {
+        let out = spira_config::bounded::bounded("spira-lc")
+            .args(["reply", id, message_id, "claude"])
+            .output()
+            .map_err(|e| format!("failed to run spira-lc: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+
+    fn deliver(&self, id: &str, text: &str) {
+        let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
+        let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
+        bead::claimdesc::notify_live_aeon(id, text, &run, &mail);
     }
 }
 
@@ -70,7 +90,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match run(&id, &text, &cockpit_db, &RealBd) {
+    match run(&id, &text, &cockpit_db, &RealBd, &RealFollow) {
         Outcome::Replied(s) => {
             println!("{s}");
             ExitCode::SUCCESS

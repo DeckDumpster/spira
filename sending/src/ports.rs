@@ -13,8 +13,8 @@ pub struct Repo {
     pub name: String,
     /// None: no path is configured for it.
     pub root: Option<PathBuf>,
-    /// Land mode queue or queue.local (repo_land_queued).
-    pub queued: bool,
+    /// Land mode queue.forge: the forge retires its branches. queue.local is not.
+    pub forge_queued: bool,
 }
 
 /// A repository's land ref, its land refs (the base plus any local landing ref), and the
@@ -57,9 +57,15 @@ pub trait World {
     fn destroy_worktree(&self, id: &str, w: &Path, repo: &Path, why: &str) -> bool;
     /// spira_prune_worktrees.
     fn prune(&self, repo: &Path);
+    /// The lifecycle row says the builder has handed the bead on (SUBMITTED or later — what bd
+    /// `closed` used to mean). An unreadable record or a missing row is not past the builder.
+    fn lc_past_builder(&self, id: &str) -> bool;
     /// `spira-lc state <id>` reads LANDED: the lifecycle record says the bead landed. An
     /// unreadable record or a missing row is not LANDED (cannot prove it landed).
     fn lc_landed(&self, id: &str) -> bool;
+    /// The lifecycle row is terminal (LANDED, SUPERSEDED, DROPPED, DONE): it takes no further
+    /// event. An unreadable record or a missing row is not terminal.
+    fn lc_terminal(&self, id: &str) -> bool;
     /// `spira-lc content-on-base <id> <proof> sending`.
     fn content_on_base(&self, id: &str, proof: &str);
     /// The merged PR's head for `br`, if a PR for it is MERGED (`gh pr view`).

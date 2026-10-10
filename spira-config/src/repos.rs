@@ -285,6 +285,18 @@ impl Registry {
         Registry::new(map_text.as_deref(), &env, home)
     }
 
+    /// [`Registry::from_env`] for a caller that needs the home repo as a git checkout. A
+    /// release directory is not one: when neither `home` nor `env`'s `SPIRA_REPO` has a
+    /// `.git`, the `SPIRA_REPO` is dropped so the home repo resolves to the map's own row (the
+    /// harness checkout) instead of being overridden by the release.
+    pub fn from_env_checkout(mut env: BTreeMap<String, String>, home: &Path) -> Registry {
+        let repo_is_checkout = env.get("SPIRA_REPO").filter(|r| !r.is_empty()).is_some_and(|r| Path::new(r).join(".git").exists());
+        if !home.join(".git").exists() && !repo_is_checkout {
+            env.remove("SPIRA_REPO");
+        }
+        Registry::from_env(env, home)
+    }
+
     /// Whether `SPIRA_REPO_MAP` existed — `repo_field`-based lookups ([`Registry::field`],
     /// [`Registry::root`], [`Registry::gate`], [`Registry::format`], [`Registry::base`])
     /// refuse (bash: `return 1`) when it did not, even though a missing map and an empty map
@@ -356,6 +368,12 @@ impl Registry {
         matches!(self.land(name).as_str(), "queue" | "queue.local")
     }
 
+    /// True only for `queue.forge`: the forge's merge queue retires those branches itself,
+    /// which `queue.local` does not.
+    pub fn land_forge_queued(&self, name: &str) -> bool {
+        self.land(name) == "queue"
+    }
+
     /// `repo_gate <name>`.
     pub fn gate(&self, name: &str) -> Option<String> {
         self.field(name, Column::Gate)
@@ -416,11 +434,11 @@ impl Registry {
 // ========================================================================================
 
 fn git_status_ok(repo: &str, args: &[&str]) -> bool {
-    Command::new("git").arg("-C").arg(repo).args(args).output().map(|o| o.status.success()).unwrap_or(false)
+    crate::bounded::bounded("git").arg("-C").arg(repo).args(args).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 fn git_stdout(repo: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(repo).args(args).output().ok()?;
+    let out = crate::bounded::bounded("git").arg("-C").arg(repo).args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -432,6 +450,7 @@ fn git_stdout(repo: &str, args: &[&str]) -> Option<String> {
 /// as "no remotes," exactly as bash's own `$(git remote 2>/dev/null)` does (a failed
 /// substitution is just an empty string, and nothing downstream distinguishes the two).
 fn git_remotes(repo: &str) -> Vec<String> {
+    // batch-job: git history or network operation, as long as the repository is large
     match Command::new("git").arg("-C").arg(repo).arg("remote").output() {
         Ok(o) if o.status.success() => {
             String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).filter(|l| !l.is_empty()).collect()
@@ -610,7 +629,7 @@ pub fn publish_forge(reg: &Registry, name: &str, env: &BTreeMap<String, String>)
 /// a private git dir and a shared common one, and only the shared one identifies the
 /// repository (see [`same_repo`]'s own doc).
 fn gitstore(path: &str) -> Option<PathBuf> {
-    let out = Command::new("git").args(["-C", path, "rev-parse", "--git-common-dir"]).output().ok()?;
+    let out = crate::bounded::bounded("git").args(["-C", path, "rev-parse", "--git-common-dir"]).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -665,6 +684,19 @@ pub fn same_repo(a: &str, b: &str) -> bool {
 /// unit's own worker, not a dispatcher's borrowed context), the freshly-derived value
 /// equals the forwarded one and nothing changes.
 pub fn registry_env(mut env: std::collections::BTreeMap<String, String>, home: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    // The registered keys come from the one source of config, never the environment: drop
+    // any inherited copy so the resolve below is what answers (per Ryan 2026-10-05).
+    for k in ["SPIRA_REPO_MAP", "SPIRA_HOME_REPO"] {
+        env.remove(k);
+    }
+    // The config is the one $SPIRA_TOML names. A caller that hands over a map of its own
+    // resolved values (gate's) rather than its environment does not carry it; it is this
+    // same process's SPIRA_TOML either way — one file, not a second source.
+    if env.get("SPIRA_TOML").is_none_or(|v| v.is_empty()) {
+        if let Ok(t) = std::env::var("SPIRA_TOML") {
+            env.insert("SPIRA_TOML".to_string(), t);
+        }
+    }
     env.insert(
         "SPIRA_REPO_DERIVED".to_string(),
         crate::resolve::derive_repo_filesystem(home, &env).to_string_lossy().into_owned(),
@@ -684,7 +716,13 @@ pub fn registry_env(mut env: std::collections::BTreeMap<String, String>, home: &
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| crate::resolve::derive_home_repo(home, &env));
-    if let Ok(r) = crate::resolve::resolve_for_process(home, &repo, &env) {
+    let resolved = crate::resolve::resolve_for_process(home, &repo, &env);
+    if let Err(e) = &resolved {
+        // Never silent: a registry that cannot resolve its declared keys says why, and every
+        // lookup below then refuses for want of a map.
+        eprintln!("spira-config repos: cannot resolve the repo registry's config: {e}");
+    }
+    if let Ok(r) = resolved {
         for k in KEYS {
             if env.get(k).is_none_or(|v| v.is_empty()) && !r.get(k).is_empty() {
                 env.insert(k.to_string(), r.get(k).to_string());
@@ -711,42 +749,41 @@ mod tests {
         assert_eq!(field(&rows, "nope", Column::Path), "");
     }
 
-    /// sp-z3eyk: conf.sh resolves the repo map but never exports it, so queue's own
-    /// environment lacks it (queue: sp-z3eyk). The registry must still find it, resolved in-process.
+    /// The repo map is the one spira.toml declares (spira.repo_map) — never discovered from
+    /// XDG, a legacy spira.conf or a shipped example (per Ryan 2026-10-05).
     #[test]
-    fn registry_env_resolves_the_map_conf_sh_never_exports() {
+    fn registry_env_takes_the_declared_map() {
         let t = testkit::TempDir::new("repos-registry-env");
-        let xdg = t.path().join("xdg");
-        std::fs::create_dir_all(xdg.join("spira")).unwrap();
-        std::fs::write(xdg.join("spira/repo-map"), "spira|/nowhere|local|local/main\n").unwrap();
-        std::fs::write(xdg.join("spira/spira.conf"), "").unwrap();
+        let map = t.path().join("my-repo-map");
+        std::fs::write(&map, "spira|/nowhere|local|local/main\n").unwrap();
+        let toml = crate::fixture_toml_file(t.path(), &[("SPIRA_REPO_MAP".to_string(), map.display().to_string())].into_iter().collect());
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let mut env = std::collections::BTreeMap::new();
         env.insert("HOME".to_string(), t.path().display().to_string());
-        env.insert("XDG_CONFIG_HOME".to_string(), xdg.display().to_string());
         env.insert("SPIRA_REPO".to_string(), t.path().display().to_string());
-        env.insert("SPIRA_CONF".to_string(), xdg.join("spira/spira.conf").display().to_string());
+        env.insert("SPIRA_TOML".to_string(), toml.display().to_string());
+        let repo = std::path::PathBuf::from(env.get("SPIRA_REPO").unwrap());
+        if let Err(e) = crate::resolve::resolve_for_process(&home, &repo, &env) { panic!("resolve: {e}"); }
         let out = registry_env(env, &home);
-        assert_eq!(out.get("SPIRA_REPO_MAP").map(String::as_str), Some(xdg.join("spira/repo-map").to_str().unwrap()), "{out:?}");
+        assert_eq!(out.get("SPIRA_REPO_MAP").map(String::as_str), Some(map.to_str().unwrap()), "{out:?}");
     }
 
-    /// `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO` still win when the environment
-    /// already sets them — but `SPIRA_REPO_DERIVED` (sp-8bhnr) is never one of those three:
-    /// it is always recomputed fresh from `home`, overwriting whatever the ambient value
-    /// was ("0" here is not a real filesystem fact and must not survive).
+    /// The REGISTERED keys (`SPIRA_REPO_MAP`, `SPIRA_HOME_REPO`) never come from the
+    /// environment (per Ryan 2026-10-05: one source of config) — an inherited copy is
+    /// dropped and only what config resolves survives (here nothing: no SPIRA_TOML).
+    /// `SPIRA_REPO` is a per-copy fact, not config, and is kept; `SPIRA_REPO_DERIVED`
+    /// (sp-8bhnr) is always recomputed from `home`, never the stale "0".
     #[test]
-    fn registry_env_keeps_what_the_environment_already_sets_except_the_derived_fact() {
+    fn registry_env_ignores_the_environments_copy_of_a_registered_key() {
         let mut env = std::collections::BTreeMap::new();
-        for (k, v) in [("SPIRA_REPO_MAP", "/a"), ("SPIRA_HOME_REPO", "h"), ("SPIRA_REPO", "/r"), ("SPIRA_REPO_DERIVED", "0")] {
+        for (k, v) in [("SPIRA_REPO_MAP", "/a"), ("SPIRA_HOME_REPO", "h"), ("SPIRA_REPO", "/r"), ("SPIRA_REPO_DERIVED", "0"), ("SPIRA_TOML", "/nonexistent/spira.toml")] {
             env.insert(k.to_string(), v.to_string());
         }
         let home = std::path::Path::new("/nonexistent/spira");
         let out = registry_env(env.clone(), home);
-        assert_eq!(out.get("SPIRA_REPO_MAP").map(String::as_str), Some("/a"));
-        assert_eq!(out.get("SPIRA_HOME_REPO").map(String::as_str), Some("h"));
+        assert_eq!(out.get("SPIRA_REPO_MAP"), None, "{out:?}");
+        assert_eq!(out.get("SPIRA_HOME_REPO"), None, "{out:?}");
         assert_eq!(out.get("SPIRA_REPO").map(String::as_str), Some("/r"));
-        // A nonexistent `home` canonicalizes to nothing, so `derive_repo_filesystem` falls
-        // back to `home` itself (its own doc) — never the stale "0".
         assert_eq!(out.get("SPIRA_REPO_DERIVED").map(String::as_str), Some("/nonexistent/spira"));
     }
 
@@ -791,8 +828,9 @@ mod tests {
         let mut env = std::collections::BTreeMap::new();
         env.insert("HOME".to_string(), home_dir.display().to_string());
         env.insert("SPIRA_REPO".to_string(), release.canonicalize().unwrap_or_else(|_| release.clone()).display().to_string());
-        env.insert("SPIRA_REPO_MAP".to_string(), map.display().to_string());
-        env.insert("SPIRA_HOME_REPO".to_string(), "spira".to_string());
+        // The map and the home repo are DECLARED config (the one source), not forwarded env.
+        let toml = crate::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
+        env.insert("SPIRA_TOML".to_string(), toml.display().to_string());
 
         let reg = Registry::from_env(env, &release_spira);
         assert_eq!(
@@ -802,6 +840,29 @@ mod tests {
         );
     }
 
+
+    /// A release directory has no `.git`: forwarded as `SPIRA_REPO` for a home that is itself the
+    /// release, it must not override the map row naming the real harness checkout.
+    #[test]
+    fn registry_for_a_release_dir_home_resolves_the_mapped_checkout() {
+        let t = testkit::TempDir::new("repos-from-env-checkout");
+        let checkout = t.path().join("checkouts/spira");
+        std::fs::create_dir_all(checkout.join(".git")).unwrap();
+        let map = t.path().join("repo-map");
+        std::fs::write(&map, format!("spira | {} | queue.local | local/main |  |\n", checkout.display())).unwrap();
+        let release = t.path().join("spira-releases/deadbeef");
+        std::fs::create_dir_all(&release).unwrap();
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), release.join("conf.d")).unwrap();
+        let toml = crate::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("HOME".to_string(), t.path().join("userhome").display().to_string());
+        env.insert("SPIRA_REPO".to_string(), release.display().to_string());
+        env.insert("SPIRA_TOML".to_string(), toml.display().to_string());
+        let plain = Registry::from_env(env.clone(), &release);
+        assert_eq!(plain.root("spira"), Some(release.display().to_string()), "positive control: the plain door lets the release override");
+        let reg = Registry::from_env_checkout(env, &release);
+        assert_eq!(reg.root("spira"), Some(checkout.display().to_string()));
+    }
 
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
@@ -930,6 +991,11 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
         assert_eq!(reg2.land("q"), "queue");
         assert!(reg2.land_queued("q"));
         assert!(!reg2.land_queued("ghost"));
+        assert!(reg2.land_forge_queued("q"));
+        let ql = "l | /l | queue.local | main | |\n";
+        let reg3 = Registry::new(Some(ql), &env, Path::new("/h/home"));
+        assert!(reg3.land_queued("l") && !reg3.land_forge_queued("l"));
+        assert!(!reg3.land_forge_queued("ghost"));
     }
 
     #[test]

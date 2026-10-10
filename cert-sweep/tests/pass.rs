@@ -54,13 +54,48 @@ impl Fx {
 
     fn cert(&self, args: &[&str]) -> (i32, String, String) {
         let p = self.d.path();
+        // SPIRA_RUN/SPIRA_DB/SPIRA_BD are registered keys (spira/conf.d) — cert-sweep now
+        // reads them through `spira_config::process::cfg`, resolved from `$SPIRA_TOML`,
+        // never a bare env var (per Ryan 2026-10-05: one source of config). Each test here
+        // spawns a fresh process, so a per-test fixture is safe (`cfg`'s `OnceLock` is
+        // per-process, not shared across these `Command::new` children). SPIRA_HOME still
+        // has to be the checkout's own spira/ (where conf.d — the key registry — lives).
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = spira_config::process::fixture_toml(
+            p,
+            &[
+                ("SPIRA_RUN", &p.join("run").display().to_string()),
+                ("SPIRA_DB", &p.join("db").display().to_string()),
+                ("SPIRA_BD", "bd"),
+                // An empty repository map, DECLARED (the environment's copy is never read): no row
+                // names this fixture repo, so landref falls to its own current branch.
+                ("SPIRA_REPO_MAP", &p.join("map.txt").display().to_string()),
+            ],
+        );
+        // `landing_ref`'s own `spira_config::repos::Registry::from_env` call ALSO reads
+        // this process's `SPIRA_HOME` (raw, unrelated to `cfg()`) — and, with it now real,
+        // `registry_env` UNCONDITIONALLY recomputes `SPIRA_REPO_DERIVED` from the real
+        // checkout's own git root (never this fixture repo), so `repo_override` always
+        // treats `SPIRA_REPO` as a deliberate root override here; `name_at` then matches
+        // it and `landref`'s rung 1 consults whatever row `reg.base(name)` finds. Left to
+        // `Registry::from_env`'s own "no map file -> read $SPIRA_TOML's [repo.*] tables"
+        // fallback, that row would be the COMPLETE fixture's `[repo.spira]` (`base =
+        // "local/main"`) — a row that means nothing for THIS fixture repo and names a ref
+        // it does not have. A real (if empty) repository map FILE here short-circuits that
+        // fallback entirely: `Registry::from_env` reads a real `SPIRA_REPO_MAP` before
+        // ever considering `$SPIRA_TOML`'s tables, and an empty map has no row for this
+        // repo under any name, so `landref` correctly falls through to the repo's own
+        // current branch (rung 4) — exactly what these "repo without local/main" tests
+        // mean to exercise.
+        let map_file = p.join("map.txt");
+        std::fs::write(&map_file, "").unwrap();
         let o = Command::new(env!("CARGO_BIN_EXE_cert-sweep"))
             .args(args)
             .env_clear()
             .env("PATH", format!("{}:/usr/bin:/bin", p.join("bin").display()))
             .env("FX", p)
-            .env("SPIRA_RUN", p.join("run"))
-            .env("SPIRA_DB", p.join("db"))
+            .env("SPIRA_HOME", &real_home)
+            .env("SPIRA_TOML", &toml)
             .env("SPIRA_REPO", p.join("repo"))
             .output()
             .unwrap();
@@ -290,4 +325,27 @@ fn a_repo_with_no_suites_is_a_clean_no_op() {
     let (rc, out, err) = fx.sample();
     assert_eq!(rc, 0, "{out}{err}");
     assert!(out.contains("nothing to certify"), "{out}");
+}
+
+#[test]
+fn a_full_pass_whose_runner_stays_silent_is_a_sweep_fault_naming_admission() {
+    let fx = Fx::new();
+    let p = fx.d.path();
+    write_exe(p.join("bin/round-vm"), "#!/bin/sh\nexec sleep 60\n");
+    write_exe(p.join("bin/spira-admit"), "#!/bin/sh\necho 'compile 0/4 held 9 waiting'\n");
+    let t = std::time::Instant::now();
+    let (rc, out, _) = fx.cert(&["pass", "--mode", "full", "--tree", &p.join("tree").display().to_string(), "--start-deadline", "2"]);
+    assert!(t.elapsed().as_secs() < 30, "the silent runner must be cut at the deadline");
+    assert_eq!(rc, 1);
+    assert!(out.contains("SWEEP FAULT") && out.contains("no-verdict") && out.contains("9 waiting"), "{out}");
+}
+
+#[test]
+fn the_runner_is_bound_to_the_start_deadline_for_its_own_acquire_wait() {
+    let fx = Fx::new();
+    let p = fx.d.path();
+    let seen = p.join("seen");
+    write_exe(p.join("bin/round-vm"), &format!("#!/bin/sh\necho \"$SPIRA_ROUND_VM_ACQUIRE_DEADLINE\" > {}\nexit 1\n", seen.display()));
+    fx.cert(&["pass", "--mode", "full", "--tree", &p.join("tree").display().to_string(), "--start-deadline", "7"]);
+    assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), "7");
 }

@@ -69,7 +69,7 @@ install_fixture_build() {
     mkdir -p "$fixture/systemd" "$fixture/spira"
     # *.yaml: units-install renders dolt-server{,-test}.yaml whenever SPIRA_{DOLT,TESTDB}_DATA
     # resolve non-empty. suite-covers.sh: lib.sh sources it unconditionally.
-    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer \
+    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer "$_LIB_INSTALL_SELF/../systemd/"*.socket \
              "$_LIB_INSTALL_SELF/../systemd/"*.yaml; do
         [ -e "$f" ] || continue
         ln -sf "$f" "$fixture/systemd/$(basename "$f")"
@@ -77,10 +77,19 @@ install_fixture_build() {
     for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$fixture/spira/$f"
     done
+    # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+    # <home>/conf.d directly, so a fixture spira/ with no conf.d refuses config resolution.
+    [ -e "$fixture/spira/conf.d" ] || ln -sf "$_LIB_INSTALL_SELF/conf.d" "$fixture/spira/conf.d"
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
     printf '# empty\n' > "$fixture/spira/repo-map.example"
     install_fixture_release_stub "$fixture/spira"
+    install_fixture_compose_stub "$fixture/spira"
     install_fixture_release_bins "$fixture"
+}
+
+install_fixture_compose_stub() {
+    printf '#!/usr/bin/env bash\ncase "${1:-}" in compose) printf "spira compose: stub\\n" ;; esac\nexit 0\n' > "$1/spira"
+    chmod +x "$1/spira"
 }
 
 install_fixture_release_stub() {
@@ -178,7 +187,7 @@ install_fixture_render() {
     shift
     cache_root="${SPIRA_TEST_INSTALL_CACHE:-${TMP:-${TMPDIR:-/tmp}}/spira-install-render-cache}"
     tmpl_hash="$( { cat "$_LIB_INSTALL_SELF/../systemd/"*.service \
-                        "$_LIB_INSTALL_SELF/../systemd/"*.timer 2>/dev/null
+                        "$_LIB_INSTALL_SELF/../systemd/"*.timer "$_LIB_INSTALL_SELF/../systemd/"*.socket 2>/dev/null
                     command -v units-install | xargs -r cat 2>/dev/null
                   } | _lib_install_hash )"
     mkdir -p "$cache_root/$tmpl_hash"
@@ -197,7 +206,7 @@ install_fixture_render() {
 mk_install_fixture() {
     local fixture="$1" tmp="$2" spira="$1/spira" systemd="$1/systemd" cockpit="$1/cockpit" f
     mkdir -p "$spira" "$systemd" "$cockpit" "$spira/statutes"
-    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer \
+    for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer "$_LIB_INSTALL_SELF/../systemd/"*.socket \
              "$_LIB_INSTALL_SELF/../systemd/"*.yaml; do
         [ -e "$f" ] || continue
         ln -sf "$f" "$systemd/$(basename "$f")"
@@ -205,8 +214,12 @@ mk_install_fixture() {
     for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$spira/$f"
     done
+    # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+    # <home>/conf.d directly, so a fixture spira/ with no conf.d refuses config resolution.
+    [ -e "$spira/conf.d" ] || ln -sf "$_LIB_INSTALL_SELF/conf.d" "$spira/conf.d"
     printf '# empty\n' > "$spira/watchers"
     printf '# empty\n' > "$spira/repo-map.example"
+    install_fixture_compose_stub "$spira"
     # Root/spira/cockpit exec targets outside bin/ (concierge.sh, mail.sh, moot-sweep.sh, ...)
     # are stubbed by install_fixture_release_bins (sp-m6ow8), which every caller of this
     # fixture also calls — not duplicated here.
@@ -221,8 +234,8 @@ mk_install_fixture() {
     git -C "$FAKE_REPO" add f
     git -C "$FAKE_REPO" commit -qm "seed" 2>/dev/null
     git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"
-    git -C "$FAKE_REPO" push -q origin main 2>/dev/null
-    git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
+    timeout 5 git -C "$FAKE_REPO" push -q origin main 2>/dev/null
+    timeout 5 git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
     git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 }
 
@@ -267,13 +280,16 @@ tinstall_fixture() {   # tinstall_fixture <dir>
     src="$(cd "$(dirname "$src")" && pwd -P)"
     mkdir -p "$dir/systemd" "$dir/spira"
     local f
-    for f in "$src/../systemd/"*.service "$src/../systemd/"*.timer "$src/../systemd/"*.yaml; do
+    for f in "$src/../systemd/"*.service "$src/../systemd/"*.timer "$src/../systemd/"*.socket "$src/../systemd/"*.yaml; do
         [ -e "$f" ] || continue
         ln -sf "$f" "$dir/systemd/$(basename "$f")"
     done
     for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$src/$f" ] && ln -sf "$src/$f" "$dir/spira/$f"
     done
+    # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+    # <home>/conf.d directly, so a fixture spira/ with no conf.d refuses config resolution.
+    [ -e "$dir/spira/conf.d" ] || ln -sf "$src/conf.d" "$dir/spira/conf.d"
     printf '# empty — test fixture\n' > "$dir/spira/watchers"
     printf '# empty\n' > "$dir/spira/repo-map.example"
 }
@@ -284,13 +300,11 @@ tinstall_render() {    # tinstall_render <fixture> <home> -> rendered text (memo
     key="$(printf '%s\x1e%s' "$fixture" "$home" | cksum | cut -d' ' -f1)"
     if [ -z "${_TINSTALL_RENDER_CACHE[$key]+x}" ]; then
         local out rc
-        out="$(env -i PATH="$PATH" HOME="$home" \
-            SPIRA_RUN="$home/run" \
+        tl_config SPIRA_RUN="$home/run" SPIRA_WATCHERS="$fixture/spira/watchers" \
+            SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+        out="$(env -i PATH="$PATH" HOME="$home" SPIRA_TOML="$SPIRA_TOML" \
             SPIRA_HOME="$fixture/spira" SPIRA_REPO="$fixture" \
             SPIRA_CONF=/nonexistent \
-            SPIRA_WATCHERS="$fixture/spira/watchers" \
-            SPIRA_DOLT_DATA="" \
-            SPIRA_TESTDB_DATA="" \
             units-install --render 2>&1)"; rc=$?
         _TINSTALL_RENDER_CACHE[$key]="$out"
         _TINSTALL_RENDER_RC[$key]="$rc"

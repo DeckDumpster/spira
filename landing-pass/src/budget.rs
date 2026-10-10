@@ -1,5 +1,5 @@
-//! Never start a gate this pass cannot finish (landing.sh's gate_fits), and wait only
-//! briefly for a branch's own gate tree lock (gate_lock_wait).
+//! Never start a gate this pass cannot finish (landing.sh's gate_fits), and wait for a branch's own gate tree lock
+//! twice the gate timeout (one holder can run two trials) (gate_lock_wait).
 
 /// 0 or negative maxsec means no limit (a hand-run pass is not held to a budget nobody
 /// enforces on it).
@@ -13,11 +13,11 @@ pub fn gate_fits(maxsec: i64, pass_start: u64, reserve: i64, now: u64) -> bool {
 
 /// The wait handed to gate.sh as SPIRA_GATE_LOCK_WAIT, and a log line when the pass budget
 /// capped it. An explicit setting is honoured unchanged.
-pub fn gate_lock_wait(maxsec: i64, pass_start: u64, explicit: Option<&str>, now: u64) -> (String, Option<String>) {
+pub fn gate_lock_wait(gate_timeout: i64, maxsec: i64, pass_start: u64, explicit: Option<&str>, now: u64) -> (String, Option<String>) {
     if let Some(e) = explicit.filter(|e| !e.is_empty()) {
         return (e.to_string(), None);
     }
-    let ideal: i64 = 120;
+    let ideal: i64 = gate_timeout * 2;
     if maxsec > 0 {
         let remaining = maxsec - (now as i64 - pass_start as i64);
         if remaining < ideal {
@@ -44,10 +44,10 @@ mod tests {
     }
 
     #[test]
-    fn lock_wait_is_short_and_capped() {
-        assert_eq!(gate_lock_wait(0, 0, None, 5).0, "120");
-        assert_eq!(gate_lock_wait(3600, 0, Some("7"), 3590), ("7".into(), None));
-        let (w, note) = gate_lock_wait(3600, 0, None, 3550);
+    fn lock_wait_is_twice_the_gate_timeout_and_capped() {
+        assert_eq!(gate_lock_wait(700, 0, 0, None, 5).0, "1400");
+        assert_eq!(gate_lock_wait(700, 3600, 0, Some("7"), 3590), ("7".into(), None));
+        let (w, note) = gate_lock_wait(700, 3600, 0, None, 3550);
         assert_eq!(w, "50");
         assert!(note.unwrap().contains("capped at 50s"));
     }

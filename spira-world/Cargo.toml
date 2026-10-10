@@ -23,6 +23,7 @@ path = "src/bin/slay.rs"
 [dependencies]
 spira-ctrl = { path = "../spira-ctrl" }
 spira-config = { path = "../spira-config" }
+sending = { path = "../sending" }
 serde_json = "1"
 
 [dev-dependencies]

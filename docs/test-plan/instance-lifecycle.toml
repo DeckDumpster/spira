@@ -4,7 +4,7 @@ area = "instance-lifecycle"
 [[use_case]]
 id = "UC-instance-lifecycle-01"
 tier = "T1"
-statement = "`build.sh` builds loom, panel, broker, czar-pass and spira-supervise in order to `SPIRA_*_BIN`; with no cargo it exits 0 naming the lost features, and `--skip-build` never invokes cargo"
+statement = "`build.sh` runs `make build` and exits 1 when it fails; `--skip-build` never invokes make and lists the prebuilt binaries expected on PATH; an unknown argument exits 2"
 
 [[use_case]]
 id = "UC-instance-lifecycle-02"
@@ -121,6 +121,11 @@ id = "UC-instance-lifecycle-18"
 tier = "T2"
 statement = "root install exits 3 when installed but `ready.sh` fails; `--dry-run` prints each phase and mutates nothing"
 
+[use_case.uncovered]
+reason = "test-install-refusal.sh deleted: it was green and red on one commit, so it asserted nothing (law-a-test-that-flips-is-deleted). No deterministic replacement exists yet"
+date = "2026-10-06"
+bead = "sp-7j1cc"
+
 [[use_case]]
 id = "UC-instance-lifecycle-19"
 tier = "T1"
@@ -205,6 +210,11 @@ statement = "`cadence.sh` changes a timer's cadence via a revertible drop-in and
 id = "UC-instance-lifecycle-33"
 tier = "T2"
 statement = "`owned.sh list` emits every artefact kind in 5-field rows, with unit rows equal to `install.sh --render` for that instance; `check` reports absent, present or drifted per artefact"
+
+[use_case.uncovered]
+reason = "owned.sh check derives unit status from systemd/install.sh --diff, which no longer exists, so every unit reads absent; list is exercised only incidentally by test-drift.sh and test-uninstall.sh, and no suite asserts the 5-field rows or the check statuses"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-instance-lifecycle-34"

@@ -13,7 +13,6 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
 
 /// What the caller must supply beyond the manifest and host values: the control-plane
 /// suspension predicate (`ctrl.sh`, read once by the caller) and whether the world is halted.
@@ -146,7 +145,7 @@ fn unified_diff(rendered: &str, installed_path: &Path) -> Vec<String> {
     if fs::write(&tmp, rendered).is_err() {
         return Vec::new();
     }
-    let out = Command::new("diff").arg("-u").arg(&tmp).arg(installed_path).output();
+    let out = spira_config::bounded::bounded("diff").arg("-u").arg(&tmp).arg(installed_path).output();
     let _ = fs::remove_file(&tmp);
     match out {
         Ok(o) => String::from_utf8_lossy(&o.stdout).lines().map(|l| format!("    {l}")).collect(),
@@ -266,6 +265,10 @@ fn apply(ctx: &Ctx, unit: &str, action: Action) {
 /// which that denies outright. `kill` sends the signal directly, bypassing job control, and
 /// `Restart=always` brings the process back under the just-reloaded unit file.
 fn restart_active(ctx: &Ctx, unit: &str) {
+    if unit.ends_with(".socket") {
+        println!("install: {unit} changed — left listening; its service restarts onto it");
+        return;
+    }
     let base = unit.strip_suffix(".timer").unwrap_or(unit);
     if base == "dolt-beads.service" || unit == "dolt-beads.service" {
         if ctx.systemctl.kill(unit).is_ok() {
@@ -324,7 +327,7 @@ fn db_server_wait(ctx: &Ctx) {
     let mut waited = 0u64;
     let mut printed_waiting = false;
     loop {
-        match Command::new(&bd).args(["-C", db, "sql", "select 1"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status() {
+        match spira_config::bounded::bounded(&bd).args(["-C", db, "sql", "select 1"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status() {
             Ok(s) if s.success() => {
                 if waited > 0 {
                     println!("install: beads database answering after {waited}s");
@@ -469,7 +472,7 @@ pub fn split_not_active(not_active: &[String], in_testenv: bool) -> NotActiveSpl
     // (that is spira-install's phase 4.5, against a real Dolt server): in a fixture it cannot
     // reach active either, and is named, never silently dropped (sp-xfqnr).
     let (watchers, other): (Vec<String>, Vec<String>) =
-        not_active.iter().cloned().partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service");
+        not_active.iter().cloned().partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service" || u == "lc-serve.socket");
     NotActiveSplit { warn_only: watchers, fatal: other }
 }
 
@@ -499,7 +502,7 @@ mod tests {
     use std::fs;
 
     fn host() -> HostValues {
-        HostValues { home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
+        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
     }
 
     fn tiny_manifest() -> Manifest {

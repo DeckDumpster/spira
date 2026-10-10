@@ -29,6 +29,16 @@ pub trait Provider {
     /// Converts the (stopped) VM into a template.
     fn make_template(&self, vmid: &str) -> Result<(), String>;
     fn is_template(&self, vmid: &str) -> Result<bool, String>;
+    /// Blocks (bounded) while an ephemeral CI VM provisions, so a sweep VM does not boot against it.
+    fn hold_for_ci(&self) {}
+    /// Handles of VMs this provider created that outlived the run deadline: leaked, to be destroyed.
+    fn stale(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Why a VM that never reached the network is stuck, for the failure's reason.
+    fn diagnose(&self, _vmid: &str) -> String {
+        String::new()
+    }
 }
 
 /// The only name round-vm gives a VM, and the only name it will ever destroy (G4).
@@ -76,10 +86,13 @@ pub fn destroy_fenced(p: &dyn Provider, vmid: &str, expected: &str, t: Timing) -
             "round-vm: refusing to destroy VM {vmid}: it is named {name:?}, not {expected:?}"
         )));
     }
+    let caller = crate::schema::ProcId::current();
     if p.alive(vmid).unwrap_or(true) {
+        eprintln!("round-vm: stop VM {vmid} (caller run {caller})");
         // A stop that fails is not final: destroy below reports the real refusal.
         let _ = p.stop(vmid);
     }
+    eprintln!("round-vm: destroy VM {vmid} (caller run {caller})");
     let destroy_err = p.destroy(vmid).err();
     for i in 0..t.gone_tries.max(1) {
         if let Ok(None) = p.name_of(vmid) {
@@ -166,6 +179,7 @@ pub fn provision(p: &dyn Provider, spec: &ProvisionSpec, on_vmid: &mut dyn FnMut
     let vmid = p.next_id().map_err(|e| fail(format!("API unreachable (nextid): {e}")))?;
     on_vmid(&vmid);
     let t = spec.timing;
+    p.hold_for_ci();
     if let Err(e) = p.clone_to(&vmid, &vm_name(&vmid)) {
         return Err(cleanup(p, &vmid, t, format!("clone refused: {e}")));
     }
@@ -189,7 +203,11 @@ pub fn boot(p: &dyn Provider, vmid: &str, spec: &ProvisionSpec) -> Result<String
             std::thread::sleep(t.poll);
         }
     }
-    let addr = addr.ok_or_else(|| format!("VM {vmid} did not come up on the network ({})", spec.iface))?;
+    let addr = addr.ok_or_else(|| {
+        let why = p.diagnose(vmid);
+        let why = if why.is_empty() { String::new() } else { format!("; {why}") };
+        format!("VM {vmid} did not come up on the network ({}){why}", spec.iface)
+    })?;
     deliver_key(p, vmid, spec.ssh_user, spec.pubkey)
         .map_err(|e| format!("guest-agent key delivery failed on VM {vmid}: {e}"))?;
     Ok(addr)

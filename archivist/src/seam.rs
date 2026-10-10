@@ -35,12 +35,12 @@ pub trait Seam {
     /// A resolved `SPIRA_*` config key (e.g. `SPIRA_ARCHIVIST_EVERY`), after sourcing
     /// lib.sh/conf.sh. Empty if unset.
     fn conf(&self, key: &str) -> String;
-    /// Every `SPIRA_*` shell variable after sourcing lib.sh — exported or not. conf.sh
-    /// and lib.sh set many keys (`SPIRA_RUN`, `SPIRA_CHAMBER`, `SPIRA_TOKEN_PROJECTS`,
-    /// every `SPIRA_ARCHIVIST_*` default) without exporting them, so this process's own
-    /// environment cannot be trusted for them the way `sentinel`'s S0 probe already
-    /// established — one seam call at startup, reused for the whole run rather than one
-    /// `conf()` round trip per key.
+    /// Every `SPIRA_*` shell variable after sourcing lib.sh — exported or not. No longer
+    /// `main`'s route to this crate's own config: `crate::config::resolve` now reads every
+    /// registered key straight through `spira_config::process::cfg`/`cfg_parse` (one source
+    /// of config, per Ryan 2026-10-05), which does not depend on lib.sh having exported
+    /// anything. Kept on the `Seam` trait as a still-correct general capability; unused by
+    /// this crate's own binary today.
     fn probe(&self) -> HashMap<String, String>;
     /// `ctx-meter.sh env <transcript>`, parsed into its `KEY=value` lines.
     fn ctx_meter_env(&self, transcript: &Path) -> HashMap<String, String>;
@@ -89,6 +89,7 @@ impl RealSeam {
         // still reaches whoever is reading this process's output, the same seam idiom
         // `sentinel::seams::PROBE` uses (`. "$LIB" >&2 || exit 97`).
         let script = format!(r#". "$0" >&2 || exit 97; {body}"#);
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -112,7 +113,17 @@ impl Seam for RealSeam {
     // recorded (`capacity_pause_set`, below — recording evidence is not probing), but the
     // early-lift probe itself runs only from aeon's own call sites.
     fn capacity_paused(&self) -> Option<i64> {
-        let run = self.conf("SPIRA_RUN");
+        // SPIRA_RUN is a registered config key (spira/conf.d) — the one source of config,
+        // through `spira_config::process::cfg`, not this seam's own `conf()`. An
+        // unresolvable config fails exactly like `PauseState::Unknown`, below: closed,
+        // never open.
+        let run = match spira_config::process::cfg("SPIRA_RUN") {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("archivist: {e}");
+                return Some(self.capacity_backoff());
+            }
+        };
         let now = aeon::util::now_epoch();
         match aeon::capacity::pause_state(&self.capacity_pause_file(&run)) {
             aeon::capacity::PauseState::Paused { until, .. } if until > now => Some(until - now),
@@ -124,7 +135,10 @@ impl Seam for RealSeam {
     }
 
     fn capacity_pause_set(&self, at: i64, why: &str) {
-        let run = self.conf("SPIRA_RUN");
+        // SPIRA_RUN is a registered config key — through `spira_config::process::cfg`.
+        // Recording evidence is best-effort already (the write below is `let _ =`'d), so an
+        // unresolvable config is just one more reason this particular write does not happen.
+        let Ok(run) = spira_config::process::cfg("SPIRA_RUN") else { return };
         let pause = self.capacity_pause_file(&run);
         let ledger = PathBuf::from(&run).join("aeon-ledger.log");
         let now = aeon::util::now_epoch();
@@ -144,6 +158,7 @@ impl Seam for RealSeam {
         // own warnings (SPIRA_CLAUDE's deprecation notice among them) are never silently
         // dropped just because this process happens to be reading lib.sh's variables.
         let script = r#". "$0" >&2 || exit 97; for _v in $(compgen -v SPIRA_); do printf '%s\0' "$_v=${!_v:-}"; done"#;
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -170,7 +185,7 @@ impl Seam for RealSeam {
     }
 
     fn ctx_meter_env(&self, transcript: &Path) -> HashMap<String, String> {
-        let o = Command::new("ctx-meter.sh").arg("env").arg(transcript).stdin(Stdio::null()).output();
+        let o = spira_config::bounded::bounded("ctx-meter.sh").arg("env").arg(transcript).stdin(Stdio::null()).output();
         let mut m = HashMap::new();
         if let Ok(o) = o {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
@@ -183,7 +198,7 @@ impl Seam for RealSeam {
     }
 
     fn archive_lineage(&self, session: &str) -> String {
-        Command::new("archive.sh")
+        spira_config::bounded::bounded("archive.sh")
             .args(["lineage", session, "--json"])
             .stdin(Stdio::null())
             .output()
@@ -192,7 +207,7 @@ impl Seam for RealSeam {
     }
 
     fn mail_send_digest(&self, subject: &str, body: &str) -> Result<bool, String> {
-        let mut child = Command::new("mail")
+        let mut child = spira_config::bounded::bounded("mail")
             .args(["send", "operator", "--from", "Archivist <archivist@spira>", "--subject", subject, "--kind", "note", "--digest"])
             .stdin(Stdio::piped())
             .spawn()
@@ -249,10 +264,19 @@ impl Seam for RealSeam {
     }
 
     fn today(&self, tz: &str) -> String {
-        Command::new("date")
-            .arg("+%F")
-            .env("TZ", tz)
-            .stdin(Stdio::null())
+        // SPIRA_TZ's own declared meaning for empty is "the host's own" (spira/conf.d/
+        // SPIRA_TZ) — NOT UTC: `TZ=""` in the child's environment is glibc's own spelling
+        // for UTC, so an empty `tz` must leave `TZ` unset entirely (never exported, never
+        // removed from a real ambient one — `date` then reads /etc/localtime) rather than
+        // setting it to the empty string.
+        let mut c = spira_config::bounded::bounded("date");
+        c.arg("+%F");
+        if tz.is_empty() {
+            c.env_remove("TZ");
+        } else {
+            c.env("TZ", tz);
+        }
+        c.stdin(Stdio::null())
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default()

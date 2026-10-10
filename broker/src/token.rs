@@ -1,8 +1,12 @@
 // token.rs — mint and cache GitHub App installation tokens.
 //
-// Credentials are read from SPIRA_GH_APP_ID, SPIRA_GH_APP_INSTALLATION_ID,
-// SPIRA_GH_APP_KEY (path to RSA private key PEM), falling back to the config
-// file at SPIRA_GH_APP_CONFIG or ~/.config/spira/github-app.env.
+// Credentials are read from the registered keys SPIRA_GH_APP_ID,
+// SPIRA_GH_APP_INSTALLATION_ID, SPIRA_GH_APP_KEY (path to RSA private key PEM) —
+// the config file ONLY, no second source (per Ryan 2026-10-05, one source of config; the
+// Concierge decision retiring the ~/.config/spira/github-app.env fallback this file
+// used to carry). A value in the config file may itself be a path to a credential file
+// (SPIRA_GH_APP_KEY, the PEM path) — that is a value pointing at a file, not a second
+// place this code looks for the value itself.
 //
 // Tokens are cached in $SPIRA_RUN/broker/gh-token.json at mode 600 and reused
 // until five minutes before expiry. The file is never world-readable; the key
@@ -10,8 +14,8 @@
 
 use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
@@ -30,52 +34,29 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn load_creds() -> Option<AppCreds> {
-    let app_id      = std::env::var("SPIRA_GH_APP_ID").unwrap_or_default();
-    let install_id  = std::env::var("SPIRA_GH_APP_INSTALLATION_ID").unwrap_or_default();
-    let key_path    = std::env::var("SPIRA_GH_APP_KEY").unwrap_or_default();
+// Concierge decision: App credentials come ONLY from the config file now — no second,
+// file-based source. (This used to fall through to a hand-parsed
+// ~/.config/spira/github-app.env, named by the now-unused SPIRA_GH_APP_CONFIG, when
+// the triplet was unset; that fallback is retired, not merely unreached.)
+fn load_creds() -> Result<Option<AppCreds>, String> {
+    let app_id     = spira_config::process::cfg("SPIRA_GH_APP_ID")?;
+    let install_id = spira_config::process::cfg("SPIRA_GH_APP_INSTALLATION_ID")?;
+    let key_path   = spira_config::process::cfg("SPIRA_GH_APP_KEY")?;
     if !app_id.is_empty() && !install_id.is_empty() && !key_path.is_empty() {
-        return Some(AppCreds { app_id, installation_id: install_id, key_path });
-    }
-    let config = {
-        let v = std::env::var("SPIRA_GH_APP_CONFIG").unwrap_or_default();
-        if !v.is_empty() {
-            PathBuf::from(v)
-        } else {
-            let home = std::env::var("HOME").unwrap_or_default();
-            let xdg  = std::env::var("XDG_CONFIG_HOME")
-                .unwrap_or_else(|_| format!("{}/.config", home));
-            PathBuf::from(xdg).join("spira").join("github-app.env")
-        }
-    };
-    parse_env_file(&config)
-}
-
-fn parse_env_file(path: &Path) -> Option<AppCreds> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let mut app_id     = String::new();
-    let mut install_id = String::new();
-    let mut key_path   = String::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('#') || line.is_empty() { continue; }
-        if let Some(v) = line.strip_prefix("SPIRA_GH_APP_ID=") {
-            app_id = v.trim().to_string();
-        } else if let Some(v) = line.strip_prefix("SPIRA_GH_APP_INSTALLATION_ID=") {
-            install_id = v.trim().to_string();
-        } else if let Some(v) = line.strip_prefix("SPIRA_GH_APP_KEY=") {
-            key_path = v.trim().to_string();
-        }
-    }
-    if !app_id.is_empty() && !install_id.is_empty() && !key_path.is_empty() {
-        Some(AppCreds { app_id, installation_id: install_id, key_path })
+        Ok(Some(AppCreds { app_id, installation_id: install_id, key_path }))
     } else {
-        None
+        Ok(None)
     }
 }
 
+// DESIGN QUESTION (flagged, not resolved here): SPIRA_RUN is registered, so this reads
+// it via cfg(), but keeps the original best-effort shape — `.ok()` turns a resolution
+// failure into "no cache", not a refusal, so `broker token` still mints without caching
+// when SPIRA_RUN can't be resolved. That is in tension with "a missing value is a
+// refusal"; left as-is because caching is optional to this subcommand and the rest of
+// the crate (execute.rs, submit.rs) already refuses hard on SPIRA_RUN where it is not.
 fn cache_path() -> Option<PathBuf> {
-    let run = std::env::var("SPIRA_RUN").ok().filter(|s| !s.is_empty())?;
+    let run = spira_config::process::cfg("SPIRA_RUN").ok().filter(|s| !s.is_empty())?;
     Some(PathBuf::from(run).join("broker").join("gh-token.json"))
 }
 
@@ -126,7 +107,7 @@ fn b64url(data: &[u8]) -> String {
 }
 
 fn sign_rs256(key_path: &str, message: &str) -> Result<Vec<u8>, String> {
-    let mut child = Command::new("openssl")
+    let mut child = spira_config::bounded::bounded("openssl")
         .args(["dgst", "-sha256", "-sign", key_path, "-binary"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -189,7 +170,7 @@ fn mint_fresh(creds: &AppCreds) -> Result<(String, u64), String> {
         "https://api.github.com/app/installations/{}/access_tokens",
         creds.installation_id
     );
-    let out = Command::new("curl")
+    let out = spira_config::bounded::bounded("curl")
         .args([
             "-sf", "--max-time", "30",
             "-X", "POST",
@@ -224,8 +205,8 @@ fn mint_fresh(creds: &AppCreds) -> Result<(String, u64), String> {
 /// Mint (or return cached) GitHub App installation token.
 /// Returns Err when App credentials are not configured.
 pub fn mint() -> Result<String, String> {
-    let creds = load_creds()
-        .ok_or_else(|| "no App credentials (set SPIRA_GH_APP_ID/INSTALLATION_ID/KEY or SPIRA_GH_APP_CONFIG)".to_string())?;
+    let creds = load_creds()?
+        .ok_or_else(|| "no App credentials (declare SPIRA_GH_APP_ID/INSTALLATION_ID/KEY in the config file)".to_string())?;
 
     if let Some(cached) = read_cache() {
         return Ok(cached);
@@ -238,14 +219,15 @@ pub fn mint() -> Result<String, String> {
 
 /// Environment pairs to inject into gh subprocess calls.
 /// Prefers an App installation token when credentials are configured,
-/// falls back to SPIRA_BROKER_GH_TOKEN (static) or SPIRA_BROKER_GH_CONFIG_DIR.
-pub fn gh_env() -> Vec<(String, String)> {
+/// falls back to SPIRA_BROKER_GH_TOKEN (static) or SPIRA_BROKER_GH_CONFIG_DIR —
+/// both registered keys, each legitimately empty when that strategy is not in use.
+pub fn gh_env() -> Result<Vec<(String, String)>, String> {
     let mut pairs: Vec<(String, String)> = Vec::new();
 
     match mint() {
         Ok(tok) => {
             pairs.push(("GH_TOKEN".to_string(), tok));
-            return pairs;
+            return Ok(pairs);
         }
         Err(e) if e.starts_with("no App credentials") => {
             // App not configured — fall through to static token check.
@@ -256,18 +238,16 @@ pub fn gh_env() -> Vec<(String, String)> {
         }
     }
 
-    if let Ok(tok) = std::env::var("SPIRA_BROKER_GH_TOKEN") {
-        if !tok.is_empty() {
-            pairs.push(("GH_TOKEN".to_string(), tok));
-            return pairs;
-        }
+    let tok = spira_config::process::cfg("SPIRA_BROKER_GH_TOKEN")?;
+    if !tok.is_empty() {
+        pairs.push(("GH_TOKEN".to_string(), tok));
+        return Ok(pairs);
     }
 
-    if let Ok(dir) = std::env::var("SPIRA_BROKER_GH_CONFIG_DIR") {
-        if !dir.is_empty() {
-            pairs.push(("GH_CONFIG_DIR".to_string(), dir));
-        }
+    let dir = spira_config::process::cfg("SPIRA_BROKER_GH_CONFIG_DIR")?;
+    if !dir.is_empty() {
+        pairs.push(("GH_CONFIG_DIR".to_string(), dir));
     }
 
-    pairs
+    Ok(pairs)
 }

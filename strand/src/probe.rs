@@ -2,11 +2,12 @@
 //! systemctl, and the harness's own run files. Every payload a subprocess needs travels on
 //! its stdin (law-payloads-go-on-stdin); argv carries only verbs, flags, ids and labels.
 
+use std::process::Command;
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use crate::classify::Throttle;
 use crate::config::Config;
@@ -20,6 +21,7 @@ pub struct Out {
 }
 
 pub fn run(program: &str, args: &[&str], stdin: Option<&[u8]>, env: &[(&str, &str)]) -> Out {
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(program);
     cmd.args(args)
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
@@ -172,7 +174,7 @@ pub fn parse_roster(text: &str) -> Vec<PartitionSpec> {
 /// Every partition this run covers, with the personas that work it. `want` narrows to one
 /// partition (SPIRA_LABELS). Err when the probe itself failed — never an empty roster.
 pub fn roster(cfg: &Config, want: Option<&str>) -> Result<Vec<PartitionSpec>, String> {
-    let home = cfg.home.as_ref().ok_or("SPIRA_HOME is unknown (not in the environment, no [spira].prod)")?;
+    let home = cfg.home.as_ref().ok_or("neither SPIRA_HOME nor SPIRA_RELEASE is set")?;
     let lib = home.join("lib.sh");
     if !lib.is_file() {
         return Err(format!("{} is missing — cannot read the persona roster", lib.display()));
@@ -197,22 +199,21 @@ pub fn roster(cfg: &Config, want: Option<&str>) -> Result<Vec<PartitionSpec>, St
 // Liveness and the fleet
 // ------------------------------------------------------------------------------------------
 
-fn pid_in(path: &Path) -> Option<u32> {
-    fs::read_to_string(path).ok()?.trim().parse().ok()
+pub use sending::reap::{lease_file, lease_live};
+
+/// Write an identity lease: the deadline, in epoch seconds, before which the aeon is alive.
+pub fn write_lease(pidfile: &Path, deadline: i64) {
+    let f = lease_file(pidfile);
+    let tmp = f.with_extension("lease.tmp");
+    if fs::write(&tmp, deadline.to_string()).is_ok() {
+        let _ = fs::rename(&tmp, &f);
+    }
 }
 
-/// A recorded pid that is still an aeon: alive AND its argv is the aeon runner — aeon.sh, or
-/// the Rust binary whose argv[0] is `…/aeon` (a recycled pid must not resurrect a dead
-/// aeon's claim).
+/// An aeon is alive while its identity lease is ahead of the clock — the one liveness signal.
+/// The pidfile names the identity; the pid and `/proc` are never consulted.
 pub fn aeon_alive(pf: &Path) -> bool {
-    let Some(pid) = pid_in(pf) else { return false };
-    let Ok(cmd) = fs::read(format!("/proc/{pid}/cmdline")) else { return false };
-    is_aeon_cmdline(&cmd)
-}
-
-pub fn is_aeon_cmdline(c: &[u8]) -> bool {
-    let argv0 = String::from_utf8_lossy(c.split(|b| *b == 0).next().unwrap_or(&[])).into_owned();
-    String::from_utf8_lossy(c).contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
+    sending::reap::aeon_alive(pf)
 }
 
 fn pidfiles(run: &Path, prefix: &str, suffix: &str) -> Vec<PathBuf> {
@@ -277,8 +278,7 @@ pub fn aeons_live_total(cfg: &Config) -> u32 {
 /// fayth is free to declare a different unit/pidfile name than its chamber filename.
 pub fn aeons_live_lanes(cfg: &Config) -> u32 {
     let Some(home) = cfg.home.as_ref() else { return 0 };
-    let env_override = std::env::var("SPIRA_FAYTHS").ok();
-    let lanes = spira_config::chamber::spira_lane_fayths(home, env_override.as_deref());
+    let lanes = spira_config::chamber::spira_lane_fayths(home, cfg.fayths_override.as_deref());
     lanes
         .split_whitespace()
         .map(|f| {
@@ -431,17 +431,11 @@ pub fn harness_state(cfg: &Config, now: i64) -> (String, i64) {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn aeon_cmdline_matches_the_script_and_the_binary_only() {
-        assert!(super::is_aeon_cmdline(b"bash\0/h/spira/aeon.sh\0builder\0"));
-        assert!(super::is_aeon_cmdline(b"/r/current/bin/aeon\0--home\0/r/current/spira\0builder\0"));
-        assert!(!super::is_aeon_cmdline(b"/usr/bin/sleep\0aeon\0"));
-        assert!(!super::is_aeon_cmdline(b"/r/bin/aeonic\0"));
-    }
-
     use super::*;
-    use crate::config::Source;
-    use std::collections::HashMap;
+
+    fn now_secs() -> i64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
+    }
 
     // ---- holder_alive: delegates to sending::reap (wave 4.23, sp-0ffox) -------------------
 
@@ -451,24 +445,19 @@ mod tests {
         std::fs::write(run.join("hold-sp-h1.pid"), std::process::id().to_string()).unwrap();
         assert!(holder_alive(&run, "sp-h1"));
         assert!(!holder_alive(&run, "sp-h2"), "nothing holds sp-h2");
-        // A live pid whose argv is not an aeon must not resurrect a recycled pid's claim —
-        // the same guarantee sending::reap's own suite proves; this just confirms the
-        // delegation reaches it rather than a local reimplementation.
+        // Liveness is the lease: a live pid with no lease is not an aeon, and a lease in the
+        // past is not one either.
         std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
-        assert!(!holder_alive(&run, "sp-a1"));
+        assert!(!holder_alive(&run, "sp-a1"), "a pid alone does not hold a claim");
+        std::fs::write(run.join("aeon-builder-sp-a1.lease"), "1").unwrap();
+        assert!(!holder_alive(&run, "sp-a1"), "an expired lease does not hold a claim");
+        std::fs::write(run.join("aeon-builder-sp-a1.lease"), (now_secs() + 60).to_string()).unwrap();
+        assert!(holder_alive(&run, "sp-a1"), "a running lease does");
+        std::fs::write(run.join("aeon-builder-sp-a1.pid"), "999999999").unwrap();
+        assert!(holder_alive(&run, "sp-a1"), "the pid is never probed");
     }
 
     // ---- aeon_count / aeons_live_lanes / fayth_free (wave 4.23, sp-0ffox) ------------------
-
-    struct Env(HashMap<&'static str, String>);
-    impl Source for Env {
-        fn env(&self, k: &str) -> Option<String> {
-            self.0.get(k).cloned()
-        }
-        fn toml(&self, _: &str) -> Option<String> {
-            None
-        }
-    }
 
     /// `systemctl --user list-units <pattern> --no-legend`, stubbed: echoes `lines`
     /// regardless of its argv, so the test controls the fleet without a real systemd
@@ -488,7 +477,7 @@ mod tests {
             &t,
             &["spira-aeon-builder-1.service loaded active running x", "spira-aeon-builder-2.service loaded active running x"],
         );
-        let cfg = Config::resolve(&Env(HashMap::from([("SPIRA_SYSTEMCTL", sc)])));
+        let cfg = Config { systemctl: sc, ..Config::test_fixture() };
         assert_eq!(cfg.summon, "systemd-run", "the default — exercises the unit-list branch");
         assert_eq!(aeon_count(&cfg, "builder", None), 2);
         assert_eq!(aeon_count(&cfg, "builder", Some("spira-aeon-builder-1.service")), 1, "the caller's own unit is excluded");
@@ -500,10 +489,7 @@ mod tests {
         let t = testkit::TempDir::new("strand-aeon-count-fallback");
         let run = t.join("run");
         std::fs::create_dir_all(&run).unwrap();
-        let cfg = Config::resolve(&Env(HashMap::from([
-            ("SPIRA_SUMMON", "mock".to_string()),
-            ("SPIRA_RUN", run.to_string_lossy().into_owned()),
-        ])));
+        let cfg = Config { summon: "mock".into(), run: Some(run.clone()), ..Config::test_fixture() };
         assert_eq!(aeon_count(&cfg, "builder", None), 0, "no pidfiles at all");
         assert_eq!(aeon_count(&cfg, "builder", Some("anything")), 0, "exclude is a no-op off the systemd-run branch");
     }
@@ -511,33 +497,29 @@ mod tests {
     #[test]
     fn aeons_live_lanes_resolves_fayth_name_and_sums_lane_units() {
         let t = testkit::TempDir::new("strand-live-lanes");
+        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", Some(t.join("chamber").to_str().unwrap()))]);
         std::fs::create_dir_all(t.join("chamber")).unwrap();
         // A lane fayth declaring a different unit name than its chamber filename —
         // aeons_live_lanes must resolve FAYTH_NAME, not use the fayth id verbatim.
         std::fs::write(t.join("chamber/laner.fayth"), "FAYTH_LANE=incident\nFAYTH_NAME=siren\n").unwrap();
         std::fs::write(t.join("chamber/builder.fayth"), "").unwrap(); // not a lane — must not be counted
         let sc = mock_systemctl(&t, &["spira-aeon-siren-1.service loaded active running x"]);
-        let cfg = Config::resolve(&Env(HashMap::from([
-            ("SPIRA_HOME", t.to_string_lossy().into_owned()),
-            ("SPIRA_SYSTEMCTL", sc),
-        ])));
+        let cfg = Config { home: Some(t.to_path_buf()), systemctl: sc, ..Config::test_fixture() };
         assert_eq!(aeons_live_lanes(&cfg), 1);
     }
 
     #[test]
     fn fayth_free_matches_the_bash_originals_arithmetic() {
         let t = testkit::TempDir::new("strand-fayth-free");
+        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", Some(t.join("chamber").to_str().unwrap()))]);
         std::fs::create_dir_all(t.join("chamber")).unwrap();
         std::fs::write(t.join("chamber/stretchy.fayth"), "FAYTH_MAX_CONCURRENT=4\nFAYTH_ELASTIC=1\n").unwrap();
         std::fs::write(t.join("chamber/anchor.fayth"), "FAYTH_MAX_CONCURRENT=10\n").unwrap();
         std::fs::write(t.join("chamber/laner.fayth"), "FAYTH_MAX_CONCURRENT=1\n").unwrap();
         let run = t.join("run");
         std::fs::create_dir_all(&run).unwrap();
-        let cfg = Config::resolve(&Env(HashMap::from([
-            ("SPIRA_HOME", t.to_string_lossy().into_owned()),
-            ("SPIRA_SUMMON", "mock".to_string()), // pid fallback, no real aeons: have=0 throughout
-            ("SPIRA_RUN", run.to_string_lossy().into_owned()),
-        ])));
+        // pid fallback, no real aeons: have=0 throughout
+        let cfg = Config { home: Some(t.to_path_buf()), summon: "mock".into(), run: Some(run.clone()), ..Config::test_fixture() };
         // elastic: pool remainder whole, never subtracting running twice (have is ignored
         // here since the stub always reports 0 — the G18 regression this guards against is
         // "have" double-counted against a pool that already nets it out).
@@ -577,19 +559,9 @@ mod tests {
 
     #[test]
     fn throttle_states_from_the_stamp() {
-        use crate::config::{Config, Source};
-        struct S(PathBuf);
-        impl Source for S {
-            fn env(&self, k: &str) -> Option<String> {
-                (k == "SPIRA_THROTTLE_STAMP").then(|| self.0.to_string_lossy().into_owned())
-            }
-            fn toml(&self, _: &str) -> Option<String> {
-                None
-            }
-        }
         let dir = testkit::TempDir::new("strand-throttle");
         let stamp = dir.join("queue-throttled");
-        let cfg = Config::resolve(&S(stamp.clone()));
+        let cfg = Config { throttle_stamp: Some(stamp.clone()), ..Config::test_fixture() };
         assert_eq!(throttle_line(&throttle(&cfg)), "open\t");
         fs::write(&stamp, "2026-09-29T00:00:00Z depth=14 x\n").unwrap();
         assert_eq!(throttle_line(&throttle(&cfg)), "shut\tdepth 14 >= release-at 8");

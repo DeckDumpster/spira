@@ -46,11 +46,27 @@ pub fn foreign(w: &dyn World, repo: &str, base: &str, ref_: &str) -> i32 {
     }
     let repo_path = PathBuf::from(repo);
 
-    if w.env("SPIRA_ALLOW_FOREIGN_HARNESS").map(|v| !v.is_empty()).unwrap_or(false) {
-        return 0;
+    // Fails closed on its own confusion too: a resolution failure is refused, never read
+    // as the override being unset.
+    match w.env("SPIRA_ALLOW_FOREIGN_HARNESS") {
+        Ok(v) => {
+            if v.map(|v| !v.is_empty()).unwrap_or(false) {
+                return 0;
+            }
+        }
+        Err(e) => {
+            w.err(&format!("skew: {e}"));
+            return 1;
+        }
     }
 
-    let spira_repo = w.env("SPIRA_REPO").unwrap_or_default();
+    let spira_repo = match w.env("SPIRA_REPO") {
+        Ok(v) => v.unwrap_or_default(),
+        Err(e) => {
+            w.err(&format!("skew: {e}"));
+            return 1;
+        }
+    };
     if w.same_repo(&repo_path, Path::new(&spira_repo)) {
         return 0;
     }
@@ -139,7 +155,13 @@ pub fn copies(w: &dyn World) -> i32 {
                 continue;
             }
             found = true;
-            let spira_repo = w.env("SPIRA_REPO").unwrap_or_default();
+            let spira_repo = match w.env("SPIRA_REPO") {
+                Ok(v) => v.unwrap_or_default(),
+                Err(e) => {
+                    w.err(&format!("skew: {e}"));
+                    return 1;
+                }
+            };
             let kind = if w.same_repo(&p, Path::new(&spira_repo)) { "self" } else { "second" };
             w.out(&format!("{n} {} {d} {kind}", p.display()));
         }
@@ -157,7 +179,14 @@ pub fn copies(w: &dyn World) -> i32 {
 // =============================================================================================
 
 pub fn check(w: &dyn World, escalate_flag: bool) -> i32 {
-    let Some(releases) = w.env("SPIRA_RELEASES").filter(|v| !v.is_empty()) else {
+    let releases = match w.env("SPIRA_RELEASES") {
+        Ok(v) => v.filter(|v| !v.is_empty()),
+        Err(e) => {
+            w.err(&format!("skew: {e}"));
+            return EXIT_CANNOT_CHECK;
+        }
+    };
+    let Some(releases) = releases else {
         w.err("skew: SPIRA_RELEASES is not set — cannot check release currency");
         return EXIT_CANNOT_CHECK;
     };
@@ -166,7 +195,13 @@ pub fn check(w: &dyn World, escalate_flag: bool) -> i32 {
 
     if !w.is_symlink(&current_link) {
         // CHECKOUT MODE.
-        let spira_repo = w.env("SPIRA_REPO").unwrap_or_default();
+        let spira_repo = match w.env("SPIRA_REPO") {
+            Ok(v) => v.unwrap_or_default(),
+            Err(e) => {
+                w.err(&format!("skew: {e}"));
+                return EXIT_CANNOT_CHECK;
+            }
+        };
         let repo_path = PathBuf::from(&spira_repo);
         if w.is_git_repo(&repo_path) {
             let (rc, out) = gap_line(w, &repo_path);
@@ -205,7 +240,13 @@ pub fn check(w: &dyn World, escalate_flag: bool) -> i32 {
         return check_local(w, &activated_name, manifest_commit, escalate_flag);
     }
 
-    let spira_repo = w.env("SPIRA_REPO").unwrap_or_default();
+    let spira_repo = match w.env("SPIRA_REPO") {
+        Ok(v) => v.unwrap_or_default(),
+        Err(e) => {
+            w.err(&format!("skew: {e}"));
+            return EXIT_CANNOT_CHECK;
+        }
+    };
     let repo_path = PathBuf::from(&spira_repo);
 
     let tag_sidecar = releases_dir.join(".tags").join(&activated_name);
@@ -301,10 +342,23 @@ fn resolve_all_tags(w: &dyn World, repo: &Path) -> Result<Vec<String>, i32> {
     let mut all_tags = w.tags_matching(repo, "spira-release-*");
     all_tags.sort();
 
-    let rel_repo = w
-        .env("SPIRA_RELEASE_REPO")
-        .filter(|v| !v.is_empty())
-        .or_else(|| w.env("SPIRA_GH_INTAKE_REPO").filter(|v| !v.is_empty()));
+    let release_repo = match w.env("SPIRA_RELEASE_REPO") {
+        Ok(v) => v.filter(|v| !v.is_empty()),
+        Err(e) => {
+            w.err(&format!("skew: {e}"));
+            return Err(EXIT_CANNOT_CHECK);
+        }
+    };
+    let rel_repo = match release_repo {
+        Some(v) => Some(v),
+        None => match w.env("SPIRA_GH_INTAKE_REPO") {
+            Ok(v) => v.filter(|v| !v.is_empty()),
+            Err(e) => {
+                w.err(&format!("skew: {e}"));
+                return Err(EXIT_CANNOT_CHECK);
+            }
+        },
+    };
 
     let rel_dir: Option<String> = rel_repo.as_deref().and_then(|r| {
         if let Some(rest) = r.strip_prefix("file://") {
@@ -333,7 +387,15 @@ fn resolve_all_tags(w: &dyn World, repo: &Path) -> Result<Vec<String>, i32> {
                     all_tags.sort();
                 }
                 Err(e) => {
-                    let who = w.env("USER").unwrap_or_else(|| "the operator".into());
+                    // USER is not a registered config key — this read of the raw
+                    // environment cannot fail, but `env()` is fallible in general.
+                    let who = match w.env("USER") {
+                        Ok(v) => v.unwrap_or_else(|| "the operator".into()),
+                        Err(env_err) => {
+                            w.err(&format!("skew: {env_err}"));
+                            return Err(EXIT_CANNOT_CHECK);
+                        }
+                    };
                     w.err(&format!(
                         "skew: could not list the releases of {slug} with gh ({e}) — make a gh credential visible to user units (the systemd user manager's environment, or gh auth as {who}), or set SPIRA_RELEASE_REPO to a local directory of release tarballs"
                     ));
@@ -442,7 +504,13 @@ pub fn check_local(w: &dyn World, activated_name: &str, manifest_commit: &str, e
     let mut cond_tampered = 0;
     let mut hotfix_line = String::new();
 
-    let releases = w.env("SPIRA_RELEASES").map(PathBuf::from);
+    let releases = match w.env("SPIRA_RELEASES") {
+        Ok(v) => v.map(PathBuf::from),
+        Err(e) => {
+            w.err(&format!("skew: {e}"));
+            return EXIT_CANNOT_CHECK;
+        }
+    };
     let (ok, verify_out) = w.release_verify_no_pre_activate(activated_name, releases.as_deref());
     if !ok {
         hard = true;
@@ -563,12 +631,24 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
             let home = w.home_repo();
             match w.repo_root(&home) {
                 Some(p) if w.is_git_repo(&p) => p,
-                _ => PathBuf::from(w.env("SPIRA_REPO").unwrap_or_default()),
+                _ => match w.env("SPIRA_REPO") {
+                    Ok(v) => PathBuf::from(v.unwrap_or_default()),
+                    Err(e) => {
+                        w.out(&format!("skew: refresh: {e}"));
+                        return 1;
+                    }
+                },
             }
         }
     };
     if repo.as_os_str().is_empty() {
-        repo = PathBuf::from(w.env("SPIRA_REPO").unwrap_or_default());
+        repo = match w.env("SPIRA_REPO") {
+            Ok(v) => PathBuf::from(v.unwrap_or_default()),
+            Err(e) => {
+                w.out(&format!("skew: refresh: {e}"));
+                return 1;
+            }
+        };
     }
 
     if let Some(name) = repo_name_for_path(w, &repo) {
@@ -577,7 +657,13 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
         }
     }
 
-    let releases = w.env("SPIRA_RELEASES").filter(|v| !v.is_empty());
+    let releases = match w.env("SPIRA_RELEASES") {
+        Ok(v) => v.filter(|v| !v.is_empty()),
+        Err(e) => {
+            w.out(&format!("skew: refresh: {e}"));
+            return 1;
+        }
+    };
     let current_is_symlink = releases
         .as_ref()
         .map(|r| w.is_symlink(&PathBuf::from(r).join("current")))
@@ -732,7 +818,13 @@ fn refresh_check_only(w: &dyn World, repo: &Path, name: &str) -> i32 {
         return 1;
     };
 
-    let releases = w.env("SPIRA_RELEASES").filter(|v| !v.is_empty());
+    let releases = match w.env("SPIRA_RELEASES") {
+        Ok(v) => v.filter(|v| !v.is_empty()),
+        Err(e) => {
+            w.out(&format!("skew: refresh: {e}"));
+            return 1;
+        }
+    };
     let running: String = if let Some(r) = &releases {
         let current_link = PathBuf::from(r).join("current");
         if !w.is_symlink(&current_link) {
@@ -776,6 +868,13 @@ fn refresh_check_only(w: &dyn World, repo: &Path, name: &str) -> i32 {
     if hotfix_line.starts_with(&format!("RUNNING UNLANDED {running}:")) {
         w.out(&format!(
             "skew: refresh: queue.local — running ({running}) is a recorded standing hotfix ({hotfix_line}); refresh never resets it"
+        ));
+        return 0;
+    }
+
+    if w.queue_lock_held(name) {
+        w.out(&format!(
+            "skew: refresh: queue.local — running ({running}) differs from {base} but the queue lock is held; a land-local in flight, not skew"
         ));
         return 0;
     }
@@ -824,7 +923,13 @@ fn gap_line(w: &dyn World, repo: &Path) -> (i32, String) {
 }
 
 pub fn gap(w: &dyn World, repo_arg: Option<&str>) -> i32 {
-    let spira_repo = w.env("SPIRA_REPO").unwrap_or_default();
+    let spira_repo = match w.env("SPIRA_REPO") {
+        Ok(v) => v.unwrap_or_default(),
+        Err(e) => {
+            w.err(&format!("skew: {e}"));
+            return EXIT_CANNOT_CHECK;
+        }
+    };
     let repo = repo_arg.map(PathBuf::from).unwrap_or_else(|| PathBuf::from(&spira_repo));
     let (rc, line) = gap_line(w, &repo);
     if rc == EXIT_CANNOT_CHECK {
@@ -847,7 +952,13 @@ pub fn units(w: &dyn World) -> i32 {
     // living beside the old systemd/install.sh. EMPTY OR NOT EXECUTABLE both refuse — an
     // explicit SPIRA_INSTALL_SH pin pointing at nothing is exactly as unanswerable as no
     // pin and no PATH hit (skew.sh's own `[ -z "$installer" ] || [ ! -x "$installer" ]`).
-    let installer = w.env("SPIRA_INSTALL_SH").filter(|v| !v.is_empty()).or_else(|| w.which("units-install"));
+    let installer = match w.env("SPIRA_INSTALL_SH") {
+        Ok(v) => v.filter(|v| !v.is_empty()).or_else(|| w.which("units-install")),
+        Err(e) => {
+            w.err(&format!("skew: {e}"));
+            return EXIT_CANNOT_CHECK;
+        }
+    };
     let Some(installer) = installer.filter(|p| w.is_executable(Path::new(p))) else {
         w.err("skew: units-install is missing (not on PATH) — unit staleness has no answer");
         return EXIT_CANNOT_CHECK;

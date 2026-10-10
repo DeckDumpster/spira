@@ -49,11 +49,14 @@ pub struct SendArgs<'a> {
     pub bead: &'a str,
     pub urgent: bool,
     pub digest: bool,
+    pub dry_run: bool,
 }
 
+#[derive(Debug)]
 pub struct SendOutcome {
     pub delivered_path: PathBuf,
     pub x_bead: Option<String>,
+    pub steps: Vec<String>,
 }
 
 pub const ESCALATION_CLASSES: [&str; 3] = ["permissions", "policy", "destructive"];
@@ -61,7 +64,10 @@ pub const ESCALATION_CLASSES: [&str; 3] = ["permissions", "policy", "destructive
 /// Why an aeon's decision ask for the operator does not qualify, or None if it does.
 /// A class is supported only when declared, one of `ESCALATION_CLASSES`, and argued in a
 /// non-empty `## Class basis` section (law-escalate-decisions-not-problems).
-pub fn class_refusal(class: &str, body: &str) -> Option<String> {
+pub fn class_refusal(class: &str, default: &str, body: &str) -> Option<String> {
+    if default.trim().is_empty() {
+        return Some("no --default stated".to_string());
+    }
     if class.is_empty() {
         return Some("no --class declared".to_string());
     }
@@ -74,22 +80,67 @@ pub fn class_refusal(class: &str, body: &str) -> Option<String> {
     None
 }
 
+/// Why a mail for the operator does not belong in the operator mailbox, or None if it does.
+pub fn operator_refusal(kind: &str, default: &str, class: &str, body: &str) -> Option<String> {
+    if kind != "question" && kind != "decision" {
+        return Some(format!("kind '{kind}' is not a decision ask"));
+    }
+    if default.trim().is_empty() {
+        return Some("no --default carried".to_string());
+    }
+    class_refusal(class, default, body)
+}
+
+const PROBE_MARKERS: [&str; 4] = ["probe", "deleteme", "plumbing test", "test ping"];
+
+/// The probe marker an operator-bound message carries in its subject or first body line.
+pub fn probe_marker(subject: &str, body: &str) -> Option<&'static str> {
+    let first = body.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let hay = format!("{}\n{}", subject.to_lowercase(), first.to_lowercase());
+    PROBE_MARKERS.iter().copied().find(|m| hay.contains(m))
+}
+
+pub type DeliverFn<'a> = &'a dyn Fn(&Path, &str, &str, bool) -> Result<PathBuf, String>;
+
+fn deliver_to_maildir(dir: &Path, msgid: &str, msg: &str, mute: bool) -> Result<PathBuf, String> {
+    maildir::mail_ensure(dir).map_err(|e| format!("cannot create mailbox {}: {e}", dir.display()))?;
+    fs::write(dir.join("tmp").join(msgid), msg).map_err(|e| format!("cannot write message: {e}"))?;
+    maildir::mail_deliver(dir, msgid, mute).map_err(|e| format!("cannot deliver message: {e}"))
+}
+
 pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<SendOutcome, String> {
+    send_with(bd, env, args, body, &deliver_to_maildir)
+}
+
+pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver: DeliverFn) -> Result<SendOutcome, String> {
     let mut mailbox = args.mailbox.to_string();
     maildir::mailbox_valid(&mailbox)?;
+    let mut steps = vec![format!("mailbox {mailbox}: valid")];
+
+    if mailbox == "operator" && !args.dry_run {
+        if let Some(m) = probe_marker(args.subject, &body) {
+            return Err(format!(
+                "refusing a probe to the operator ('{m}' in the subject or opening line) — a real ask in the queue pages a human. To exercise the plumbing, add --dry-run (work ask --dry-run): every step runs and nothing is filed or delivered."
+            ));
+        }
+    }
 
     let mut body = body;
     let mut rerouted = false;
-    if mailbox == "operator" && env.bead_id.is_some() && (args.kind == "question" || args.kind == "decision") {
-        if let Some(why) = class_refusal(args.class, &body) {
+    if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
+        if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body) {
             eprintln!(
-                "mail: routed to the concierge, not the operator — {why}. Only permissions, policy and destructive-on-production-data asks go to the operator (--class); everything else is the concierge's judgement."
+                "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only question asks with a class (permissions, policy, destructive-on-production-data), a default and a '## Class basis' section; everything else is the concierge's judgement, and carries no ask label."
             );
-            body = format!("(Routed here from an operator ask: {why}.)\n\n{body}");
+            body = format!("(Routed here from an operator mail: {why}.)\n\n{body}");
             mailbox = "concierge".to_string();
             rerouted = true;
         }
     }
+    steps.push(match mailbox.as_str() {
+        "concierge" if rerouted => "route: concierge (rerouted: ask does not qualify for the operator)".to_string(),
+        m => format!("route: {m}"),
+    });
 
     if let Some(bid) = mailbox.strip_prefix("aeon:") {
         let bid = bid.to_string();
@@ -100,8 +151,18 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     }
 
     let from = args.from.map(str::to_string).or_else(|| env.mail_from.clone()).unwrap_or_default();
+    for (name, value) in [("From", from.as_str()), ("Subject", args.subject), ("X-Spira-Kind", args.kind), ("X-Spira-Default", args.default)] {
+        message::header(name, value)?;
+    }
 
     let is_operator = mailbox == "operator";
+    if is_operator && !args.dry_run && !env.db.is_empty() && !env.ask_label.is_empty() {
+        match bead::open_duplicate_ask(bd, &env.ask_label, args.subject, args.bead) {
+            Ok(Some(open)) => return Err(format!("duplicate ask refused — {open} is already open for it; answer or amend that one")),
+            Ok(None) => {}
+            Err(e) => eprintln!("mail: duplicate check skipped: {e}"),
+        }
+    }
     let mut repeat_guard = if is_operator {
         Some(repeat::repeat_check(&env.run_dir, &mailbox, args.subject, env.repeat_window_s, env.lock_timeout_ms, env.repeat_considered.as_deref())?)
     } else {
@@ -118,6 +179,8 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
         }
     }
 
+    steps.push(if env.lint_considered.is_none() { "lint: passed".to_string() } else { "lint: overridden".to_string() });
+
     let db_configured = !env.db.is_empty();
     let asks = args.kind == "question" || args.kind == "decision";
     // The bead a question is ABOUT (the asking session's own, under `work ask`), carried as
@@ -128,14 +191,38 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     // X-Spira-Work-Bead alone.
     let mut x_bead = if rerouted && asks { String::new() } else { args.bead.to_string() };
 
-    if (args.kind == "question" || args.kind == "decision") && db_configured && !rerouted {
+    if args.dry_run {
+        if asks && db_configured && !rerouted && mailbox != "concierge" {
+            if env.ask_label.is_empty() {
+                return Err("ask label does not resolve — refusing to file an ask under a guessed one".to_string());
+            }
+            steps.push(format!("tracking bead: would be filed under label {}", env.ask_label));
+        }
+        steps.push(format!("delivery: would write into {}", maildir::mail_dir(env, &mailbox).display()));
+        steps.push("dry run: no bead filed, no mail delivered".to_string());
+        if is_operator {
+            repeat::repeat_release(repeat_guard.take().unwrap());
+        }
+        return Ok(SendOutcome { delivered_path: PathBuf::new(), x_bead: None, steps });
+    }
+
+    if (args.kind == "question" || args.kind == "decision") && db_configured && !rerouted && mailbox != "concierge" {
         if env.ask_label.is_empty() {
             if is_operator {
                 repeat::repeat_release(repeat_guard.take().unwrap());
             }
             return Err("ask label does not resolve — refusing to file an ask under a guessed one".to_string());
         }
-        if let Some(dec_bead) = bead::create_tracking_bead(bd, true, args.subject, &body, &env.ask_label, work_bead) {
+        let created = match bead::create_tracking_bead(bd, true, args.subject, &body, &env.ask_label, work_bead) {
+            Ok(c) => c,
+            Err(e) => {
+                if is_operator {
+                    repeat::repeat_release(repeat_guard.take().unwrap());
+                }
+                return Err(format!("ask not sent — {e}"));
+            }
+        };
+        if let Some(dec_bead) = created {
             if !args.bead.is_empty() {
                 if env.allow_blocking {
                     if bead::dep_add(bd, args.bead, &dec_bead, "blocks") {
@@ -163,17 +250,16 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     };
 
     let dir = maildir::mail_dir(env, &mailbox);
-    maildir::mail_ensure(&dir).map_err(|e| format!("cannot create mailbox {mailbox}: {e}"))?;
     let msgid = maildir::mint_msgid();
 
     let mut msg = String::new();
-    msg.push_str(&format!("From: {from}\n"));
-    msg.push_str(&format!("Subject: {}\n", args.subject));
+    msg.push_str(&message::header("From", &from)?);
+    msg.push_str(&message::header("Subject", args.subject)?);
     if !args.kind.is_empty() {
-        msg.push_str(&format!("X-Spira-Kind: {}\n", args.kind));
+        msg.push_str(&message::header("X-Spira-Kind", args.kind)?);
     }
     if !args.default.is_empty() {
-        msg.push_str(&format!("X-Spira-Default: {}\n", args.default));
+        msg.push_str(&message::header("X-Spira-Default", args.default)?);
     }
     if args.urgent {
         msg.push_str("X-Spira-Urgent: yes\n");
@@ -182,7 +268,7 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
         msg.push_str("X-Spira-Digest: yes\n");
     }
     if !x_bead.is_empty() {
-        msg.push_str(&format!("X-Spira-Bead: {x_bead}\n"));
+        msg.push_str(&message::header("X-Spira-Bead", &x_bead)?);
     }
     if !work_bead.is_empty() {
         msg.push_str(&format!("X-Spira-Work-Bead: {work_bead}\n"));
@@ -199,8 +285,17 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     msg.push_str(&final_body);
     msg.push('\n');
 
-    fs::write(dir.join("tmp").join(&msgid), &msg).map_err(|e| format!("cannot write message: {e}"))?;
-    let delivered_path = maildir::mail_deliver(&dir, &msgid, env.mute).map_err(|e| format!("cannot deliver message: {e}"))?;
+    let delivered = bead::retry_until_deadline(|| deliver(&dir, &msgid, &msg, env.mute && work_bead.is_empty()));
+    let delivered_path = match delivered {
+        Ok(p) => p,
+        Err(e) => {
+            let tracked = if x_bead.is_empty() || x_bead == args.bead { String::new() } else { format!("; {}", bead::abandon_bead(bd, &x_bead, &format!("mail not delivered: {e}"))) };
+            if is_operator {
+                repeat::repeat_release(repeat_guard.take().unwrap());
+            }
+            return Err(format!("ask not sent — {e}{tracked}"));
+        }
+    };
 
     if is_operator {
         repeat::repeat_stamp(repeat_guard.take().unwrap());
@@ -210,7 +305,7 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
         }
     }
 
-    Ok(SendOutcome { delivered_path, x_bead: if x_bead.is_empty() { None } else { Some(x_bead) } })
+    Ok(SendOutcome { delivered_path, x_bead: if x_bead.is_empty() { None } else { Some(x_bead) }, steps })
 }
 
 /// One TSV line: mailbox, message id, tracking bead, kind, default, and — sixth, possibly
@@ -415,6 +510,9 @@ pub fn sweep_dismissed(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, mail_root:
         let reason = format!("dismissed by operator (mail deleted) — default taken: {}", if default.is_empty() { "<none given>" } else { default });
         if bead::close(bd, bead_id, &reason).is_ok() {
             report.dismissed += 1;
+            if let Some(w) = lc::take_default(lc, bead_id, &reason, operator_actor) {
+                eprintln!("{w}");
+            }
             if let Some(w) = lc::lift_ask(lc, fields.get(5).copied().unwrap_or(""), Lift::Reply { message_id: msgid }, operator_actor) {
                 eprintln!("{w}");
             }
@@ -434,16 +532,21 @@ mod class_tests {
     #[test]
     fn a_declared_supported_class_qualifies() {
         for c in ["permissions", "policy", "destructive"] {
-            assert_eq!(class_refusal(c, BASIS), None);
+            assert_eq!(class_refusal(c, "take the safe path", BASIS), None);
         }
     }
 
     #[test]
     fn no_class_an_architecture_class_or_no_basis_is_refused() {
-        assert!(class_refusal("", BASIS).is_some());
-        assert!(class_refusal("architecture", BASIS).is_some());
-        assert!(class_refusal("policy", "## Question\nq\n").is_some());
-        assert!(class_refusal("policy", "## Class basis\n\n").is_some());
+        assert!(class_refusal("", "d", BASIS).is_some());
+        assert!(class_refusal("architecture", "d", BASIS).is_some());
+        assert!(class_refusal("policy", "d", "## Question\nq\n").is_some());
+        assert!(class_refusal("policy", "d", "## Class basis\n\n").is_some());
+    }
+
+    #[test]
+    fn a_missing_default_is_refused_whatever_the_class() {
+        assert!(class_refusal("policy", "  ", BASIS).is_some());
     }
 }
 
@@ -480,6 +583,279 @@ mod sweep_tests {
         let lc = FakeLc::new(0);
         let Ok(SweepOutcome::Report(r)) = sweep_dismissed(&bd, &lc, true, t.path(), &idx, "ops", "ryan") else { panic!("no report") };
         assert_eq!(r.dismissed, 2, "{:?}", bd.calls());
-        assert_eq!(lc.calls(), vec![vec!["reply", "sp-work1", "m1@spira", "ryan"]]);
+        let calls = lc.calls();
+        assert_eq!(calls.iter().filter(|c| c[0] == "close-ask" && c.contains(&"default".to_string())).count(), 2, "{calls:?}");
+        assert!(calls.contains(&vec!["reply".to_string(), "sp-work1".into(), "m1@spira".into(), "ryan".into()]), "{calls:?}");
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+    use crate::bead::fake::FakeBd;
+    use crate::bead::BdOut;
+
+    fn env(root: &Path) -> Env {
+        Env {
+            mail_root: root.join("mail"),
+            kinds_dir: root.join("kinds"),
+            index_file: root.join("index"),
+            mute: false,
+            loom_budget_ms: 1000,
+            repeat_window_s: 0,
+            tidy_fresh_s: 0,
+            id_prefix: "sp".into(),
+            ask_label: "needs-x".into(),
+            db: String::new(),
+            bd_bin: String::new(),
+            bd_conn_retries: 0,
+            operator_actor: "op".into(),
+            run_dir: root.join("run"),
+            home: root.to_path_buf(),
+            mail_from: None,
+            lint_considered: Some("test".into()),
+            repeat_considered: Some("test".into()),
+            operator_considered: None,
+            allow_blocking: false,
+            bead_id: None,
+            lock_timeout_ms: 1000,
+        }
+    }
+
+    fn args<'a>(subject: &'a str, dry_run: bool) -> SendArgs<'a> {
+        SendArgs { mailbox: "operator", from: Some("A <a@spira>"), subject, kind: "question", default: "do it", class: "policy", bead: "", urgent: false, digest: false, dry_run }
+    }
+
+    fn mailbox_entries(root: &Path) -> usize {
+        let new = root.join("mail/operator/new");
+        std::fs::read_dir(new).map(|d| d.count()).unwrap_or(0)
+    }
+
+    #[test]
+    fn a_probe_to_the_operator_is_refused_naming_the_dry_run_exit() {
+        let t = testkit::TempDir::new("mail-probe-refused");
+        let e = env(t.path());
+        for subject in ["plumbing probe 2", "TEST-PROBE4-DELETEME", "probe-direct-mail-2"] {
+            let Err(msg) = send(&FakeBd::new(vec![]), &e, &args(subject, false), "body".into()) else { panic!("{subject} delivered") };
+            assert!(msg.contains("--dry-run"), "{msg}");
+        }
+        assert_eq!(mailbox_entries(t.path()), 0);
+    }
+
+    #[test]
+    fn a_probe_marker_in_the_opening_line_is_refused_too() {
+        let t = testkit::TempDir::new("mail-probe-body");
+        let r = send(&FakeBd::new(vec![]), &env(t.path()), &args("hello", false), "\nthis is a probe\n".into());
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn a_dry_run_reports_each_step_and_delivers_nothing() {
+        let t = testkit::TempDir::new("mail-probe-dry");
+        let bd = FakeBd::new(vec![]);
+        let out = send(&bd, &env(t.path()), &args("probe: is the ask channel alive", true), "## Class basis\nit is policy\n".into()).unwrap();
+        let all = out.steps.join("\n");
+        for want in ["mailbox operator: valid", "route: operator", "lint:", "delivery: would write", "no bead filed"] {
+            assert!(all.contains(want), "{want} missing from {all}");
+        }
+        assert!(bd.calls().is_empty(), "{:?}", bd.calls());
+        assert_eq!(mailbox_entries(t.path()), 0);
+        assert!(!t.path().join("mail/operator").exists(), "a dry run must not even create the mailbox");
+        assert!(out.x_bead.is_none());
+    }
+
+    fn root_mailbox_entries(root: &Path, mb: &str) -> usize {
+        std::fs::read_dir(root.join("mail").join(mb).join("new")).map(|d| d.count()).unwrap_or(0)
+    }
+
+    #[test]
+    fn unclassed_or_non_question_operator_mail_is_rerouted_to_the_concierge() {
+        let basis = "## Class basis\nit is policy\n";
+        let cases = [("fyi", "d", "policy", basis), ("alert", "d", "policy", basis), ("question", "d", "", basis), ("question", "", "policy", basis), ("question", "d", "policy", "no basis")];
+        for (n, (kind, default, class, body)) in cases.iter().enumerate() {
+            let t = testkit::TempDir::new(&format!("mail-reroute-{n}"));
+            let a = SendArgs { kind, default, class, ..args("Something happened", false) };
+            send(&FakeBd::new(vec![]), &env(t.path()), &a, (*body).into()).unwrap();
+            assert_eq!(root_mailbox_entries(t.path(), "operator"), 0, "{kind}/{default}/{class}");
+            assert_eq!(root_mailbox_entries(t.path(), "concierge"), 1, "{kind}/{default}/{class}");
+        }
+    }
+
+    const THREE_PARAS: &str = "first paragraph\n\nsecond paragraph\n\nthird paragraph";
+
+    fn written_message(root: &Path) -> String {
+        let new = root.join("mail/operator/new");
+        let f = std::fs::read_dir(new).unwrap().next().unwrap().unwrap().path();
+        std::fs::read_to_string(f).unwrap()
+    }
+
+    #[test]
+    fn multi_line_headers_are_written_folded_and_read_back_whole() {
+        let t = testkit::TempDir::new("mail-fold");
+        let a = SendArgs { default: THREE_PARAS, ..args("line one\nline two", false) };
+        send(&FakeBd::new(vec![]), &env(t.path()), &a, "## Class basis\nit is policy\n".into()).unwrap();
+        let text = written_message(t.path());
+        let (head, _) = message::split_headers_body(&text);
+        for line in head.lines() {
+            assert!(line.starts_with(' ') || line.starts_with('\t') || line.split_once(':').is_some_and(|(n, _)| !n.is_empty() && !n.contains(' ')), "illegal header line {line:?}");
+        }
+        assert_eq!(message::header_ci_before_blank(&text, "x-spira-default"), THREE_PARAS.replace('\n', " "));
+        assert_eq!(message::header_ci_before_blank(&text, "subject"), "line one line two");
+    }
+
+    #[test]
+    fn a_header_value_that_cannot_be_made_legal_is_refused_before_anything_is_filed() {
+        let t = testkit::TempDir::new("mail-fold-refused");
+        let bd = FakeBd::new(vec![]);
+        let a = SendArgs { default: "a\rb", ..args("Rotate the key?", false) };
+        let e = send(&bd, &env(t.path()), &a, "## Class basis\nit is policy\n".into()).unwrap_err();
+        assert!(e.contains("X-Spira-Default"), "{e}");
+        assert!(bd.calls().is_empty() && mailbox_entries(t.path()) == 0);
+    }
+
+    #[test]
+    fn a_classed_question_with_a_default_still_reaches_the_operator() {
+        let t = testkit::TempDir::new("mail-classed");
+        send(&FakeBd::new(vec![]), &env(t.path()), &args("Rotate the key?", false), "## Class basis\nit is policy\n".into()).unwrap();
+        assert_eq!(root_mailbox_entries(t.path(), "operator"), 1);
+        assert_eq!(root_mailbox_entries(t.path(), "concierge"), 0);
+    }
+
+    #[test]
+    fn a_duplicate_ask_is_refused_naming_the_open_one() {
+        let t = testkit::TempDir::new("mail-dup");
+        let mut e = env(t.path());
+        e.db = "/db".into();
+        let open = r#"[{"id":"sp-open1","title":"Rotate the key 12?","labels":["needs-x","work-bead:sp-w1"]}]"#;
+        let body = "## Class basis\nit is policy\n";
+        let same_subject = send(&FakeBd::new(vec![BdOut::ok(open)]), &e, &args("Rotate the key 99?", false), body.into());
+        assert!(same_subject.unwrap_err().contains("sp-open1"));
+        let same_bead = SendArgs { bead: "sp-w1", ..args("Entirely different words", false) };
+        assert!(send(&FakeBd::new(vec![BdOut::ok(open)]), &e, &same_bead, body.into()).unwrap_err().contains("sp-open1"));
+        assert_eq!(root_mailbox_entries(t.path(), "operator"), 0);
+        let other = FakeBd::new(vec![BdOut::ok(open), BdOut::ok("sp-new1"), BdOut::ok("")]);
+        assert!(send(&other, &e, &args("Wholly unrelated?", false), body.into()).is_ok());
+    }
+
+    #[test]
+    fn a_real_ask_still_goes_through() {
+        let t = testkit::TempDir::new("mail-probe-real");
+        let out = send(&FakeBd::new(vec![]), &env(t.path()), &args("Close sp-abcd1?", false), "## Class basis\nit is policy\n".into()).unwrap();
+        assert!(out.delivered_path.exists());
+        assert_eq!(mailbox_entries(t.path()), 1);
+    }
+
+    fn send_ask(root: &Path, bd: &FakeBd, default: &str, class: &str, body: &str) -> SendOutcome {
+        for d in ["mail/operator/new", "mail/concierge/new", "run"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind: "question", default, class, bead: "", urgent: false, digest: false, dry_run: false };
+        let mut e = env(root);
+        e.db = "db".into();
+        e.bd_bin = "bd".into();
+        send(bd, &e, &args, body.to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_machine_alarm_with_no_class_carries_no_ask_label_and_reaches_the_concierge() {
+        let t = testkit::TempDir::new("mail-ask-alarm");
+        let bd = FakeBd::new(vec![]);
+        let out = send_ask(t.path(), &bd, "mute it", "", "## Question\nrecurred 5 times\n");
+        assert!(bd.calls().is_empty(), "no tracking bead, so no ask label: {:?}", bd.calls());
+        assert!(out.delivered_path.to_string_lossy().contains("/concierge/"), "{:?}", out.delivered_path);
+    }
+
+    #[test]
+    fn a_proper_decision_ask_still_carries_the_ask_label() {
+        let t = testkit::TempDir::new("mail-ask-proper");
+        let bd = FakeBd::new(vec![BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        let out = send_ask(t.path(), &bd, "grant it", "permissions", "## Question\nq\n\n## Class basis\nneeds a credential\n");
+        let calls = bd.calls();
+        assert!(calls[0].0.iter().any(|a| a.starts_with("needs-x")), "{calls:?}");
+        assert!(out.delivered_path.to_string_lossy().contains("/operator/"), "{:?}", out.delivered_path);
+    }
+
+    fn ask_env(root: &Path) -> Env {
+        for d in ["mail/operator/new", "run"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        let mut e = env(root);
+        e.db = "db".into();
+        e.bd_bin = "bd".into();
+        e
+    }
+
+    fn ask_args() -> SendArgs<'static> {
+        SendArgs { mailbox: "operator", from: None, subject: "Grant it?", kind: "question", default: "grant", class: "permissions", bead: "", urgent: false, digest: false, dry_run: false }
+    }
+
+    const ASK_BODY: &str = "## Question\nq\n\n## Class basis\nneeds a credential\n";
+
+    fn closed(bd: &FakeBd) -> bool {
+        bd.calls().iter().any(|c| c.0[0] == "close" && c.0[1] == "sp-new1")
+    }
+
+    #[test]
+    fn a_lifecycle_row_failing_once_is_retried_and_the_ask_is_whole() {
+        let t = testkit::TempDir::new("mail-ask-row-once");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        bd.row_failures.set(1);
+        let out = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap();
+        assert_eq!(bd.row_attempts.get(), 2);
+        assert_eq!(out.x_bead.as_deref(), Some("sp-new1"));
+        assert_eq!(mailbox_entries(t.path()), 1);
+        assert!(!closed(&bd));
+    }
+
+    #[test]
+    fn a_lifecycle_row_that_never_lands_closes_the_bead_and_delivers_nothing() {
+        let t = testkit::TempDir::new("mail-ask-row-never");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        bd.row_failures.set(u32::MAX);
+        let err = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap_err();
+        assert!(err.contains("ask row") && err.contains("sp-new1 closed"), "{err}");
+        assert!(closed(&bd));
+        assert_eq!(mailbox_entries(t.path()), 0);
+    }
+
+    #[test]
+    fn a_maildir_write_failing_once_is_retried_and_the_ask_is_whole() {
+        let t = testkit::TempDir::new("mail-ask-mail-once");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        let fails = std::cell::Cell::new(1);
+        let deliver = |d: &Path, id: &str, m: &str, mute: bool| {
+            if fails.replace(0) == 1 {
+                return Err("disk full".to_string());
+            }
+            deliver_to_maildir(d, id, m, mute)
+        };
+        let out = send_with(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into(), &deliver).unwrap();
+        assert_eq!(out.x_bead.as_deref(), Some("sp-new1"));
+        assert_eq!(mailbox_entries(t.path()), 1);
+        assert!(!closed(&bd));
+    }
+
+    #[test]
+    fn a_maildir_that_never_accepts_the_mail_closes_the_bead_and_exits_with_an_error() {
+        let t = testkit::TempDir::new("mail-ask-mail-never");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok(""), BdOut::ok("")]);
+        let deliver = |_: &Path, _: &str, _: &str, _: bool| Err::<PathBuf, String>("disk full".to_string());
+        let err = send_with(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into(), &deliver).unwrap_err();
+        assert!(err.contains("disk full") && err.contains("sp-new1 closed"), "{err}");
+        assert!(closed(&bd));
+        assert_eq!(mailbox_entries(t.path()), 0);
+    }
+
+    #[test]
+    fn a_muted_work_ask_still_lands_unseen_in_new() {
+        let t = testkit::TempDir::new("mail-ask-muted-work");
+        let mut e = env(t.path());
+        e.mute = true;
+        let ask = SendArgs { bead: "sp-work9", ..args("Which way?", false) };
+        let body = "## Class basis\nit is policy\n";
+        let out = send(&FakeBd::new(vec![]), &e, &ask, body.into()).unwrap();
+        assert!(out.delivered_path.to_string_lossy().contains("/new/"), "{:?}", out.delivered_path);
+        let plain = send(&FakeBd::new(vec![]), &e, &args("Plain?", false), body.into()).unwrap();
+        assert!(plain.delivered_path.to_string_lossy().contains("/cur/"), "{:?}", plain.delivered_path);
     }
 }

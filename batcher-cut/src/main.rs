@@ -25,20 +25,22 @@
 mod drive;
 mod flip;
 mod io;
+mod order;
+mod screen;
 mod vm;
 
 use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use batcher::core::{
-    adaptive_n, combine, cut_event, ejected_event, opened_event, pr_record, should_cut, skipped_event, stack_sequencing,
+    combine, cut_event, ejected_event, opened_event, pr_record, should_cut, skipped_event, stack_sequencing,
     stacked_into, stale_retry_due, topo_order, CombineInput, Ejection, Member, MergeResult, TriggerInputs, TriggerReason,
 };
 use batcher::attrib::JobResult;
 use io::{Env, Land, Repo};
+use spira_config::process::{cfg, cfg_parse};
 
 struct Opts {
     cmd: String,
@@ -54,6 +56,9 @@ struct Opts {
 
 fn usage() -> ExitCode {
     eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
+    eprintln!("       batcher rounds|rounds-local|rounds-forge [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
+    eprintln!("       batcher sift <repo> [--run DIR] [--db DIR] [--home DIR]");
+    eprintln!("       batcher sifts [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     ExitCode::from(2)
 }
@@ -62,11 +67,15 @@ fn parse() -> Result<Opts, String> {
     let mut a = env::args().skip(1);
     let cmd = a.next().ok_or("missing command")?;
     let repo = a.next().unwrap_or_default();
+    // SPIRA_HOME is a per-copy fact (which checkout this process runs from), not something
+    // spira.toml declares — it stays a bare env read. SPIRA_RUN/SPIRA_DB ARE registered keys
+    // (spira/conf.d), so once no `--run`/`--db` flag names them explicitly below, they are
+    // read through the one door (`cfg`), not this process's own environment.
     let mut o = Opts {
         cmd,
         repo,
-        run: env::var_os("SPIRA_RUN").map(PathBuf::from),
-        db: env::var_os("SPIRA_DB").map(PathBuf::from),
+        run: None,
+        db: None,
         home: env::var_os("SPIRA_HOME").map(PathBuf::from),
         round_vm: None,
         suites: None,
@@ -84,6 +93,18 @@ fn parse() -> Result<Opts, String> {
             "--members" => o.members = Some(val()?),
             "--evidence" => o.evidence = Some(val()?),
             other => return Err(format!("unknown flag {other}")),
+        }
+    }
+    if o.run.is_none() {
+        let v = cfg("SPIRA_RUN")?;
+        if !v.trim().is_empty() {
+            o.run = Some(PathBuf::from(v));
+        }
+    }
+    if o.db.is_none() {
+        let v = cfg("SPIRA_DB")?;
+        if !v.trim().is_empty() {
+            o.db = Some(PathBuf::from(v));
         }
     }
     Ok(o)
@@ -117,20 +138,17 @@ fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
     if base.is_empty() {
         return Err(format!("{name}: spira_landref could not resolve a base ref"));
     }
-    let forge = default_forge();
+    // SPIRA_FORGE, resolved once at the top level into `env_.forge` (env_for) — not re-read
+    // here. forge.sh is retired (sp-t4y60); sp-yv4b3 found a Rust-level default still naming
+    // the deleted script, which blinded production queue-watch ("forge check-status 459: No
+    // such file or directory (os error 2)") — the bare-`forge` default now lives in
+    // spira/conf.d/SPIRA_FORGE, the one source, not here.
+    let forge = env_.forge.clone();
     Ok(Repo { name: name.to_string(), path: PathBuf::from(path), base, forge, land })
 }
 
-/// Bare name on the launcher's PATH (sp-gypjk); forge.sh is retired (sp-t4y60) — sp-yv4b3
-/// found this default still naming the deleted script, which blinded production queue-watch
-/// ("forge check-status 459: No such file or directory (os error 2)"). Factored out so the
-/// regression has a seam to call without faking lib.sh's repo-map (see `tests` below).
-pub(crate) fn default_forge() -> PathBuf {
-    env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("forge"))
-}
-
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    spira_config::vtime::now_epoch()
 }
 
 /// `round-vm`, by name on the launcher's PATH (sp-gypjk), unless --round-vm names another.
@@ -138,46 +156,23 @@ fn default_round_vm() -> PathBuf {
     PathBuf::from("round-vm")
 }
 
-/// `SPIRA_*` values a bash process this binary spawns (`io::lib_call`'s own `. lib.sh`)
-/// must never see pre-set — the same per-copy-fact / host-policy keys `cockpit-collect`'s
-/// `bootstrap_config` names (wave4-decomposition.md row (b)).
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
-
-/// Wave 4.8 ("retire conf re-import seams in Rust"): every `env::var(...)` read in this
-/// function (and `default_forge`/`q_minutes` right after it runs) used to see only this
-/// process's own already-set environment — no spira.toml load at all
-/// (wave4-decomposition.md row (b) names batcher-cut by file: SPIRA_FORGE, SPIRA_QUEUE_DIR,
-/// SPIRA_QUEUE_BATCH_WAIT, SPIRA_RELEASE_RUST_TOOLCHAIN, SPIRA_GIT_*). Merges
-/// `spira_config::resolve()`'s in-process answer into THIS process's own environment once,
-/// using the ALREADY-resolved `home` (which already reflects `--home` over `SPIRA_HOME` —
-/// never recomputed independently here) — inserting a key only when it is not already set
-/// and never one of [`NEVER_EXPORTED`]. Best-effort: a missing registry or a containment
-/// refusal leaves the environment exactly as it was.
-fn merge_resolved_env(home: &Path) {
-    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-    let repo = spira_config::resolve::derive_home_repo(home, &env_map);
-    {
-        let resolved = spira_config::resolve::resolve_or_say("batcher-cut", home, &repo, &env_map);
-        for (k, v) in resolved.values {
-            if NEVER_EXPORTED.contains(&k.as_str()) {
-                continue;
-            }
-            if env::var_os(&k).is_none() {
-                env::set_var(k, v);
-            }
-        }
-    }
-}
-
-fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
-    merge_resolved_env(&home);
-    Env {
+/// Every field sourced from a registered `spira/conf.d` key is read exactly once here, through
+/// `spira_config::process::cfg`/`cfg_parse` — THE ONE DOOR (per Ryan 2026-10-05: one source of
+/// config) — and handed down as a plain field from here on; nothing downstream re-reads the
+/// environment. A key that cannot be resolved is a refusal naming it, never a Rust-level
+/// default standing in for it. `SPIRA_BATCHER_ROUND_SLOTS`/`SPIRA_BATCHER_POLL_SECS`/
+/// `SPIRA_LC_TIMEOUT`/`SPIRA_VERDICTS`/`SPIRA_BATCHER_LAND_LOCK_ATTEMPTS`/
+/// `SPIRA_BATCHER_LAND_LOCK_WAIT` are NOT registered keys (`ls spira/conf.d/` does not name
+/// them) — they stay bare `env::var` reads with their existing defaults, unchanged by this
+/// migration.
+fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
+    Ok(Env {
         home: home.clone(),
         run: run.clone(),
-        queue_dir: env::var_os("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue")),
+        queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
         db: o.db.clone(),
-        bd: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
-        express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
+        bd: cfg("SPIRA_BD")?,
+        forge: PathBuf::from(cfg("SPIRA_FORGE")?),
         // Every harness tool by name, on the launcher's PATH (sp-gypjk).
         tsd_bin: Some(PathBuf::from("tsd-write")),
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
@@ -187,20 +182,17 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         poll_secs: env::var("SPIRA_BATCHER_POLL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
         // own hardware-derived or unpinned defaults — see io::run_suites.
-        maxpar: env::var("SPIRA_BATCH_MAXPAR").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(16),
-        wall_secs: env::var("SPIRA_BATCHER_WALL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(3600),
-        rust_toolchain: {
-            let v = env::var("SPIRA_RELEASE_RUST_TOOLCHAIN").unwrap_or_default();
-            if v.trim().is_empty() { "1.82.0".to_string() } else { v }
-        },
-        git_name: env::var("SPIRA_GIT_NAME").unwrap_or_else(|_| "spira".into()),
-        git_email: env::var("SPIRA_GIT_EMAIL").unwrap_or_else(|_| "spira@spira.invalid".into()),
+        maxpar: cfg_parse::<u32>("SPIRA_BATCH_MAXPAR")?,
+        wall_secs: cfg_parse::<u64>("SPIRA_BATCHER_WALL_SECS")?,
+        rust_toolchain: cfg("SPIRA_RELEASE_RUST_TOOLCHAIN")?,
+        git_name: cfg("SPIRA_GIT_NAME")?,
+        git_email: cfg("SPIRA_GIT_EMAIL")?,
         lc_bin: Some(PathBuf::from("spira-lc")),
-        lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
+        lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
         land_lock_wait: std::time::Duration::from_secs(env::var("SPIRA_BATCHER_LAND_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(30)),
-    }
+    })
 }
 
 fn cut(o: &Opts) -> Result<(), String> {
@@ -209,7 +201,7 @@ fn cut(o: &Opts) -> Result<(), String> {
     if o.repo.is_empty() {
         return Err("repo name required".into());
     }
-    let env_ = env_for(o, home, run);
+    let env_ = env_for(o, home, run)?;
     let repo = find_repo(&env_, &o.repo)?;
 
     // The machine must answer before anything changes.
@@ -220,23 +212,27 @@ fn cut(o: &Opts) -> Result<(), String> {
         ));
     }
 
-    let wait_secs = env::var("SPIRA_QUEUE_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
+    let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
     let Some(_lock) = io::wait_lock(&env_, &repo.name, wait_secs)? else {
         return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name));
     };
 
-    let pool = batcher::core::base_fix_lane(io::certified_pool(&env_, &repo)?);
+    let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(io::certified_pool(&env_, &repo)?));
+    let (pool, refused) = batcher::core::refuse_blocked(pool);
+    for r in &refused {
+        println!("batcher {}: {r}", repo.name);
+    }
+    if let batcher::core::RoundKind::Feature(root) = &kind {
+        println!("batcher {}: feature round {root} ({} members)", repo.name, pool.len());
+    }
     let open = io::read_open_batch(&env_, &repo.name)?;
-    let hist = io::pool_history(&env_.run, &repo.name, pool.len());
-    let n = adaptive_n(hist);
-    let last_arrival = pool.iter().map(|m| m.certified_at).max();
-    let q_minutes: u64 = env::var("SPIRA_QUEUE_BATCH_WAIT").ok().and_then(|v| v.parse::<u64>().ok()).map(|s| s / 60).unwrap_or(30);
+    let pool = screen::cut_pool(pool, &io::sifted_tips(&env_)?);
 
     if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
         return Ok(());
     }
 
-    let inputs = TriggerInputs { pool: &pool, now: now(), last_arrival, n, q_minutes, main_red: false, batch_open: open.is_some() };
+    let inputs = TriggerInputs { pool: &pool, main_red: false, batch_open: open.is_some() };
     let Some(reason) = should_cut(&inputs) else {
         println!("{}", skipped_event("no trigger").text);
         return Ok(());
@@ -302,6 +298,8 @@ struct StableRound {
     attribution_seconds: Option<u64>,
     /// Wall time from the first red to the round's decision — None for the same reason.
     regreen_seconds: Option<u64>,
+    /// The round staged behind this one while its suites ran, if the verb wrote one.
+    staged: Option<String>,
 }
 
 /// The effects of a round besides running suites (drive::RoundOps), on this box.
@@ -316,6 +314,7 @@ struct LiveOps<'a> {
     changed: BTreeMap<String, Vec<String>>,
     first_red: Option<u64>,
     key: String,
+    batch: Option<&'a str>,
 }
 
 impl drive::RoundOps for LiveOps<'_> {
@@ -323,12 +322,19 @@ impl drive::RoundOps for LiveOps<'_> {
         suspects_in(self.wt, &self.changed, suite, members)
     }
 
-    fn eject(&mut self, member: &Member, suites: &[String]) {
+    fn eject(&mut self, member: &Member, suites: &[String], owner: bool) {
         let fails: Vec<(String, String)> = suites
             .iter()
             .filter_map(|s| io::suite_first_fail(Path::new(&self.evidence), s).map(|l| (s.clone(), l)))
             .collect();
-        io::eject_member(self.env, &self.repo.name, &member.id, suites, &fails);
+        match self.batch {
+            Some(batch) => {
+                if let Err(e) = io::round_eject(self.env, self.repo, batch, &member.id, suites, &fails, owner) {
+                    println!("batcher {}: could not eject {} from round {batch}: {e}", self.repo.name, member.id);
+                }
+            }
+            None => io::eject_member(self.env, &self.repo.name, &member.id, suites, &fails, owner),
+        }
         println!("{}", ejected_event(&Ejection { id: member.id.clone(), suites: suites.to_vec() }).text);
     }
 
@@ -425,7 +431,7 @@ impl drive::RoundOps for LiveOps<'_> {
 
 /// The commit `rev` names in `repo`, if any.
 fn git_rev(repo: &Repo, rev: &str) -> Option<String> {
-    let o = std::process::Command::new("git").arg("-C").arg(&repo.path).args(["rev-parse", "--verify", "-q", rev]).output().ok()?;
+    let o = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["rev-parse", "--verify", "-q", rev]).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
@@ -453,6 +459,10 @@ fn merge_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, mut members:
     Ok(members)
 }
 
+fn staged_worktree(env_: &Env, repo: &Repo) -> PathBuf {
+    env_.run.join("worktree").join(format!(".batcher-{}-staged", repo.name))
+}
+
 /// Enforces law-a-round-takes-certified-tips (amended 2026-09-27): a round that is red on its
 /// own corpus is never sent on. The corpus runs on the round VM with concurrent attribution
 /// (DESIGN.md §4): each red is attributed while the corpus still runs; every owner is ejected
@@ -460,8 +470,30 @@ fn merge_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, mut members:
 /// reds do not block (a base red is filed for Ops); an unattributed red or a workspace that
 /// does not build does. Returns `Ok(None)` for a blocked or emptied round — the caller opens
 /// no PR and changes no open-batch record, as if the round had never been cut.
-fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting: Vec<Member>) -> Result<Option<StableRound>, String> {
-    let members = merge_round(env_, repo, wt, start_sha, starting)?;
+fn stabilize_round(
+    env_: &Env,
+    repo: &Repo,
+    wt: &Path,
+    start_sha: &str,
+    starting: Vec<Member>,
+    batch: Option<&str>,
+    stage: &[Member],
+) -> Result<Option<StableRound>, String> {
+    let mut members = merge_round(env_, repo, wt, start_sha, starting)?;
+    if let Some(batch) = batch {
+        let held: Vec<(String, String)> = members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+        let marked = io::gate_red_marks(env_, &held);
+        if !marked.is_empty() {
+            for (id, mark) in &marked {
+                match io::round_eject_gate_red(env_, repo, batch, id, mark) {
+                    Ok(()) => println!("batcher {}: ejected {id} from round {batch} — its own gate was red at this tip ({mark})", repo.name),
+                    Err(e) => println!("batcher {}: could not eject gate-red {id} from round {batch}: {e}", repo.name),
+                }
+            }
+            members.retain(|m| !marked.iter().any(|(id, _)| *id == m.id));
+            members = merge_round(env_, repo, wt, start_sha, members)?;
+        }
+    }
     if members.is_empty() {
         println!("{}", skipped_event("round emptied rebuilding the tree").text);
         return Ok(None);
@@ -481,10 +513,29 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         return Ok(None);
     }
 
-    let suites = io::all_suites(repo, &round_branch);
+    let history = std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
+    let ordered = order::longest_first(&io::all_suites(repo, &round_branch), &history);
+    if !ordered.unmeasured.is_empty() {
+        println!("batcher {}: ALARM no recorded wall time for {} — scheduled first", repo.name, ordered.unmeasured.join(","));
+    }
+    let suites = ordered.list;
+    if suites.is_empty() {
+        println!("batcher {}: round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing", repo.name);
+        return Ok(None);
+    }
     let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip))).collect();
 
     let mut runner = vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?;
+    let stage_bg = match batch {
+        Some(_) if !stage.is_empty() => match io::round_stage_spawn(env_, repo, &staged_worktree(env_, repo), stage) {
+            Ok(bg) => Some(bg),
+            Err(e) => {
+                println!("batcher {}: {e} — no round staged", repo.name);
+                None
+            }
+        },
+        _ => None,
+    };
     let mut ops = LiveOps {
         env: env_,
         repo,
@@ -496,6 +547,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         changed,
         first_red: None,
         key: batcher::core::round_key(&members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>()),
+        batch,
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let round_members = members.clone();
@@ -505,6 +557,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         install_fault_outcome(repo, &mut ops, &round_members, &fault);
     }
     runner.close();
+    let staged = stage_bg.and_then(|bg| io::round_stage_done(repo, bg));
     match end? {
         drive::RoundEnd::Land { members, attribution_secs } => {
             let head = io::head_of(wt)?;
@@ -521,6 +574,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
                 green_branch,
                 attribution_seconds: attribution_secs,
                 regreen_seconds: ops.first_red.map(|f| now().saturating_sub(f)),
+                staged,
             }))
         }
         drive::RoundEnd::Blocked(why) => {
@@ -551,7 +605,7 @@ fn install_fault_outcome(repo: &Repo, ops: &mut LiveOps, members: &[Member], fau
         InstallFault::Owner(id) => {
             println!("batcher {}: install fault → owner {id}", repo.name);
             if let Some(m) = members.iter().find(|m| &m.id == id) {
-                ops.eject(m, &install);
+                ops.eject(m, &install, true);
             }
         }
         InstallFault::Base => {
@@ -565,21 +619,26 @@ fn install_fault_outcome(repo: &Repo, ops: &mut LiveOps, members: &[Member], fau
     }
 }
 
-/// queue.local's terminal step (sp-828tp): `terminal_ready` (core) gates both land modes on
-/// the same every-member-named/bins-present contract before this box changes anything —
-/// green-at-head is stabilize_round's own control flow, already confirmed before this is ever
-/// called (sp-j21fv). Only the action taken once it passes differs — here, `queue
-/// land-local` (fast-forward, LANDED, bead close, then publish and activate the release) in place of a push and a
-/// PR. Never rebuilds binaries (law-deploy-the-tested-artifacts): the corpus's own --with-bins
-/// run already built the tree `bins_present` looks for.
-fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_start: u64, stable: &StableRound) -> Result<(), String> {
+/// queue.local's terminal step: `terminal_ready` gates the round on the every-member-named,
+/// bins-present contract before anything changes, then the round's own `queue round certify`
+/// and `queue round land` do the rest. Never rebuilds binaries (law-deploy-the-tested-artifacts).
+fn finish_local_round(
+    env_: &Env,
+    repo: &Repo,
+    wt: &Path,
+    base_sha: &str,
+    round_start: u64,
+    stable: &StableRound,
+    batch: &str,
+    attested: bool,
+) -> Result<Option<io::Promotion>, String> {
     let head = io::head_of(wt)?;
     let named = io::named_ids(repo, base_sha, &head, &stable.members);
     let bins_ok = io::bins_present(repo, wt, &head);
 
-    if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &named, bins_ok) {
-        let msg = format!("batcher {}: refused to land locally at {head} — {refusal}", repo.name);
+    let refuse = |msg: String| {
         println!("{msg}");
+        io::round_abandon(env_, repo, batch, &msg);
         io::write_local_verdict(env_, &repo.name, "red", &msg);
         io::tsd_append_round(
             env_,
@@ -590,39 +649,61 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
                 ("base", base_sha.to_string()),
             ],
         );
-        return Ok(());
+        Ok(None)
+    };
+
+    if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &named, bins_ok) {
+        return refuse(format!("batcher {}: refused to land locally at {head} — {refusal}", repo.name));
     }
 
-    // The round's own certification (queue/DESIGN.md §8 D12): its full corpus ran green on
-    // stable.head, so that tree — and only that one — carries a round GREEN. land-local
-    // refuses any other head, so a worktree that moved since the corpus run cannot land.
-    match io::certify_round(env_, repo, &stable.head, &stable.green_branch) {
-        Ok(p) => println!("batcher {}: certified the round's tree (round GREEN at {}) — {}", repo.name, stable.head, p.display()),
-        Err(e) => {
-            let msg = format!("batcher {}: refused to land locally at {head} — cannot record the round's certificate: {e}", repo.name);
-            println!("{msg}");
-            io::write_local_verdict(env_, &repo.name, "red", &msg);
-            io::tsd_append_round(
-                env_,
-                &[
-                    ("repo", repo.name.clone()),
-                    ("verdict", "refused".to_string()),
-                    ("duration_ms", ((now() - round_start) * 1000).to_string()),
-                    ("base", base_sha.to_string()),
-                ],
-            );
-            return Ok(());
+    let on_record = io::round_members(env_, repo)?;
+    let kept: Vec<&str> = stable.members.iter().map(|m| m.id.as_str()).collect();
+    if on_record.iter().map(String::as_str).collect::<Vec<_>>() != kept {
+        return refuse(format!(
+            "batcher {}: refused to land locally at {head} — the round {batch} holds [{}] but the tree was built from [{}]",
+            repo.name,
+            on_record.join(" "),
+            kept.join(" ")
+        ));
+    }
+
+    // The batcher's own full-corpus run on `stable.head` is the round's certification
+    // (queue/DESIGN.md §8 D12); the verb refuses any head but the round worktree's own.
+    if attested {
+        println!("batcher {}: the staged pass certified the round's tree (attested at {})", repo.name, stable.head);
+    } else {
+        match io::round_certify(env_, repo, batch, &stable.head) {
+            Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
+            Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
         }
     }
+    let stage_test = stable.staged.as_ref().and_then(|_| match io::round_stage_test_spawn(env_, repo) {
+        Ok(bg) => Some(bg),
+        Err(e) => {
+            println!("batcher {}: {e}", repo.name);
+            None
+        }
+    });
 
-    let member_pairs: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    let run = io::land_local(env_, repo, wt, &head, &member_pairs)?;
+    let certified: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    io::lc_certify_round(env_, &certified, batch);
+
+    let run = io::round_land(env_, repo, batch);
+    let run = match run {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(bg) = stage_test {
+                io::round_stage_test_done(repo, bg);
+            }
+            return Err(e);
+        }
+    };
     let mut landed = run.outcome;
     let alarm = match landed {
         io::LandOutcome::Refused => Some(format!("refused: {}", run.refusal)),
         _ if !io::head_on_base(repo, &head) => {
             landed = io::LandOutcome::Refused;
-            Some(format!("land-local exited as landed but {head} is not an ancestor of {}", repo.base))
+            Some(format!("queue round land exited as landed but {head} is not an ancestor of {}", repo.base))
         }
         _ => None,
     };
@@ -639,7 +720,11 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
         }
     }
     if landed == io::LandOutcome::Refused {
-        io::write_local_verdict(env_, &repo.name, "red", "queue land-local refused — see its own stderr above");
+        if let Some(bg) = stage_test {
+            io::round_stage_test_done(repo, bg);
+        }
+        io::round_abandon(env_, repo, batch, "queue round land refused — the round did not land");
+        io::write_local_verdict(env_, &repo.name, "red", "queue round land refused — see its own stderr above");
         io::tsd_append_round(
             env_,
             &[
@@ -649,7 +734,7 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
                 ("base", base_sha.to_string()),
             ],
         );
-        return Ok(());
+        return Ok(None);
     }
 
     io::write_local_verdict(env_, &repo.name, "green", "");
@@ -669,7 +754,10 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
         fields.push(("regreen_seconds", r.to_string()));
     }
     io::tsd_append_round(env_, &fields);
-    Ok(())
+
+    let Some(bg) = stage_test else { return Ok(None) };
+    io::round_stage_test_done(repo, bg);
+    Ok(io::round_promote(env_, repo))
 }
 
 fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
@@ -729,9 +817,23 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
     }
     println!("{}", cut_event(reason, &combined).text);
 
-    let stable = match stabilize_round(env_, repo, &wt, &base_sha, combined.merged.clone())? {
-        Some(s) => s,
-        None => {
+    let batch = if repo.land == Land::Local { Some(io::round_open(env_, repo, &wt, &combined.merged)?) } else { None };
+    let abandon = |why: &str| {
+        if let Some(b) = batch.as_deref() {
+            io::round_abandon(env_, repo, b, why);
+        }
+    };
+
+    let merged_ids: Vec<&str> = combined.merged.iter().map(|m| m.id.as_str()).collect();
+    let stage_pool: Vec<Member> = sorted.iter().filter(|m| !merged_ids.contains(&m.id.as_str())).cloned().collect();
+    let stable = match stabilize_round(env_, repo, &wt, &base_sha, combined.merged.clone(), batch.as_deref(), &stage_pool) {
+        Err(e) => {
+            abandon(&e);
+            return Err(e);
+        }
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            abandon("the round was blocked before it could land");
             io::write_local_verdict(env_, &repo.name, "red", "local corpus red — held before reaching CI");
             io::tsd_append_round(
                 env_,
@@ -754,6 +856,7 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
             moved.join(", ")
         );
         println!("{msg}");
+        abandon(&msg);
         io::write_local_verdict(env_, &repo.name, "red", &msg);
         io::tsd_append_round(
             env_,
@@ -767,15 +870,63 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
         return Ok(());
     }
 
-    // queue.local's terminal step is not a batch PR (sp-828tp, epic sp-hq9x8): no push, no
-    // open-batch record, and stack_round is never reached for a Local repo — read_open_batch
-    // always finds nothing since this branch never writes that file, so `cut()`'s own
-    // Some(ob)/None match always takes the None arm here.
-    if repo.land == Land::Local {
-        return finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable);
+    if let Some(b) = batch.as_deref() {
+        let mut next = finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable, b, false)?;
+        while let Some(p) = next {
+            next = follow_promoted(env_, repo, pool, p)?;
+        }
+        return Ok(());
     }
     let batch_head = io::head_of(&wt)?;
     open_round_pr(env_, repo, &stable.members, &batch_head, round_start, stable.attribution_seconds, stable.regreen_seconds)
+}
+
+/// The staged round `promote` cut after the round before it landed. Attested, its tree is the
+/// one the staged pass judged and it lands on that; otherwise it gets its own pass here, as any
+/// opened round does. Either way it ends as the rounds before it did, and may promote nothing
+/// further: one stage is staged per cut.
+fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -> Result<Option<io::Promotion>, String> {
+    let round_start = now();
+    let wt = staged_worktree(env_, repo);
+    let base_sha = io::resolve_base_sha(repo)?;
+    let abandon = |why: &str| io::round_abandon(env_, repo, &p.batch, why);
+    let mut members = Vec::new();
+    for (id, tip) in &p.members {
+        match pool.iter().find(|m| &m.id == id && &m.tip == tip) {
+            Some(m) => members.push(m.clone()),
+            None => {
+                let why = format!("promoted round {} holds {id}@{tip}, which is not in the certified pool at that tip", p.batch);
+                println!("batcher {}: {why}", repo.name);
+                abandon(&why);
+                return Ok(None);
+            }
+        }
+    }
+    let stable = if p.attested {
+        StableRound { members, head: p.head.clone(), green_branch: String::new(), attribution_seconds: None, regreen_seconds: None, staged: None }
+    } else {
+        match stabilize_round(env_, repo, &wt, &base_sha, members, Some(&p.batch), &[]) {
+            Err(e) => {
+                abandon(&e);
+                return Err(e);
+            }
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                abandon("the round was blocked before it could land");
+                io::write_local_verdict(env_, &repo.name, "red", "local corpus red — held before reaching CI");
+                return Ok(None);
+            }
+        }
+    };
+    let moved = io::moved_members(repo, &base_sha, &stable.members);
+    if !moved.is_empty() {
+        let msg = format!("batcher {}: refused to open — {} changed since the round was built (new patches); rebuild and retest", repo.name, moved.join(", "));
+        println!("{msg}");
+        abandon(&msg);
+        io::write_local_verdict(env_, &repo.name, "red", &msg);
+        return Ok(None);
+    }
+    finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable, &p.batch, p.attested)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -883,7 +1034,7 @@ fn prepare_round(env_: &Env, repo: &Repo, pool: &[Member], ob: &io::OpenBatch) -
         return Ok(());
     }
 
-    let stable = stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone())?;
+    let stable = stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone(), None, &[])?;
     let green = stable.is_some();
     let (members, head) = match &stable {
         Some(s) => (s.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), io::head_of(&wt)?),
@@ -927,6 +1078,131 @@ fn open_prepared(env_: &Env, repo: &Repo, pool: &[Member]) -> Result<bool, Strin
 /// `id=<bead-id>` on success so the caller can record it without scraping human-facing text
 /// (law-never-derive-an-id-from-output); prints nothing to stdout on failure, the error goes
 /// to stderr, and the exit code alone tells queue verdict whether to log it as unfiled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pass {
+    Local,
+    Forge,
+    All,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Step {
+    Verdict,
+    Cut,
+}
+
+/// What one pass does for `land`: a queue.forge repo settles its open batch and then cuts (which
+/// opens the next one); a queue.local repo only cuts. A repo is never given the other mode's
+/// steps, and a repo outside the pass's mode gets none.
+fn plan(land: &str, pass: Pass) -> Vec<Step> {
+    match (land, pass) {
+        ("queue.local", Pass::Local | Pass::All) => vec![Step::Cut],
+        ("queue", Pass::Forge | Pass::All) => vec![Step::Verdict, Step::Cut],
+        _ => vec![],
+    }
+}
+
+fn drive_pass(
+    repos: &[(String, String)],
+    pass: Pass,
+    local_enabled: bool,
+    mut run: impl FnMut(&str, &Step) -> Result<(), String>,
+) -> Vec<String> {
+    let mut failed = Vec::new();
+    for (name, land) in repos {
+        if land == "queue.local" && !local_enabled {
+            continue;
+        }
+        for step in plan(land, pass) {
+            if let Err(e) = run(name, &step) {
+                eprintln!("batcher rounds: {name}: {e}");
+                if !failed.contains(name) {
+                    failed.push(name.clone());
+                }
+            }
+        }
+    }
+    failed
+}
+
+fn settle_batch(env_: &Env, name: &str) -> Result<(), String> {
+    // batch-job: the verdict waits on CI and a red batch's replay; it ends when the batch settles
+    let st = std::process::Command::new(&env_.queue_bin).args(["verdict", name]).status().map_err(|e| format!("queue verdict: {e}"))?;
+    if st.success() {
+        Ok(())
+    } else {
+        Err(format!("queue verdict exited {}", st.code().map_or("by signal".to_string(), |c| c.to_string())))
+    }
+}
+
+/// One scheduler pass over the repo map. `Pass::Local` is the harness's VM rounds, run one repo
+/// at a time; `Pass::Forge` settles and opens queue.forge batches. They run as separate units so
+/// a long VM round never delays a forge batch. `SPIRA_BATCHER_ENABLE=0` holds only the local
+/// rounds: the operator cuts those by hand, and a forge batch is not theirs.
+fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
+    let local_enabled = cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0";
+    if !local_enabled {
+        println!("batcher rounds: SPIRA_BATCHER_ENABLE=0 — the operator cuts local rounds");
+        if pass == Pass::Local {
+            return Ok(());
+        }
+    }
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    let env_ = env_for(o, home, run)?;
+    let reg = io::registry(&env_);
+    let repos: Vec<(String, String)> = reg.all().into_iter().map(|n| { let l = reg.land(&n); (n, l) }).collect();
+    let failed = drive_pass(&repos, pass, local_enabled, |name, step| match step {
+        Step::Verdict => settle_batch(&env_, name),
+        Step::Cut => {
+            let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
+            cut(&one)
+        }
+    });
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("failed for: {}", failed.join(", ")))
+    }
+}
+
+fn sift_one(o: &Opts) -> Result<(), String> {
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    if o.repo.is_empty() {
+        return Err("repo name required".into());
+    }
+    let env_ = env_for(o, home, run)?;
+    let repo = find_repo(&env_, &o.repo)?;
+    let open = io::read_open_batch(&env_, &repo.name)?;
+    let out = screen::sift_repo(&env_, &repo, open.as_ref())?;
+    println!("batcher {}: sift: {} sifted, {} sent back, {} superseded, {} held", repo.name, out.sifted.len(), out.sent_back.len(), out.superseded.len(), out.capped.len() + out.held.len());
+    Ok(())
+}
+
+fn sifts(o: &Opts) -> Result<(), String> {
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    let env_ = env_for(o, home, run)?;
+    let reg = io::registry(&env_);
+    let mut failed = Vec::new();
+    for name in reg.all() {
+        if !matches!(reg.land(&name).as_str(), "queue" | "queue.local") {
+            continue;
+        }
+        let one = Opts { cmd: "sift".into(), repo: name.clone(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
+        if let Err(e) = sift_one(&one) {
+            eprintln!("batcher sifts: {name}: {e}");
+            failed.push(name);
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("sift failed for: {}", failed.join(", ")))
+    }
+}
+
 fn judgement_ci(o: &Opts) -> Result<(), String> {
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
@@ -941,7 +1217,7 @@ fn judgement_ci(o: &Opts) -> Result<(), String> {
         return Err("no red suites given — nothing to judge".into());
     };
 
-    let env_ = env_for(o, home, run);
+    let env_ = env_for(o, home, run)?;
     let repo = find_repo(&env_, &o.repo)?;
     let id = io::file_judgement(&env_, &repo, &j, &members, &evidence)?;
     println!("id={id}");
@@ -958,7 +1234,12 @@ fn main() -> ExitCode {
     };
     let r = match o.cmd.as_str() {
         "cut" => cut(&o),
+        "rounds" => rounds(&o, Pass::All),
+        "rounds-local" => rounds(&o, Pass::Local),
+        "rounds-forge" => rounds(&o, Pass::Forge),
         "judgement-ci" => judgement_ci(&o),
+        "sift" => sift_one(&o),
+        "sifts" => sifts(&o),
         _ => return usage(),
     };
     match r {
@@ -973,83 +1254,79 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // Serialises the one test in this crate that touches the real process environment
-    // (SPIRA_FORGE) — same pattern as release's `ENV_LOCK`/`PathGuard` (release/src/tests.rs).
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard(Option<std::ffi::OsString>);
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.0 {
-                Some(f) => env::set_var("SPIRA_FORGE", f),
-                None => env::remove_var("SPIRA_FORGE"),
-            }
-        }
-    }
-
-    // REGRESSION (sp-yv4b3): production queue-watch went blind because this default named
-    // the retired `forge.sh` instead of the release's `forge` binary. Fails on the pre-fix
-    // default (`forge.sh`).
     #[test]
-    fn default_forge_is_the_bare_release_binary_when_spira_forge_is_unset() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = EnvGuard(env::var_os("SPIRA_FORGE"));
-        env::remove_var("SPIRA_FORGE");
-        assert_eq!(default_forge(), PathBuf::from("forge"), "default must name the bare release binary, not forge.sh");
+    fn a_pass_drives_each_repo_by_its_own_land_mode_and_never_mixes() {
+        let repos: Vec<(String, String)> = [("spira", "queue.local"), ("deck", "queue"), ("poke", "queue"), ("other", "push")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        let run = |pass, enabled| {
+            let mut seen = Vec::new();
+            let failed = drive_pass(&repos, pass, enabled, |n, s| {
+                seen.push(format!("{n}:{}", if *s == Step::Verdict { "verdict" } else { "cut" }));
+                Ok(())
+            });
+            assert!(failed.is_empty());
+            seen
+        };
+        assert_eq!(run(Pass::Forge, true), ["deck:verdict", "deck:cut", "poke:verdict", "poke:cut"]);
+        assert_eq!(run(Pass::Local, true), ["spira:cut"]);
+        assert_eq!(run(Pass::All, true), ["spira:cut", "deck:verdict", "deck:cut", "poke:verdict", "poke:cut"]);
     }
 
     #[test]
-    fn default_forge_still_honours_an_explicit_spira_forge_override() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = EnvGuard(env::var_os("SPIRA_FORGE"));
-        env::set_var("SPIRA_FORGE", "/some/other/forge.sh");
-        assert_eq!(default_forge(), PathBuf::from("/some/other/forge.sh"));
+    fn the_local_switch_holds_local_rounds_and_not_forge_batches() {
+        let repos = vec![("spira".to_string(), "queue.local".to_string()), ("deck".to_string(), "queue".to_string())];
+        let mut seen = Vec::new();
+        drive_pass(&repos, Pass::All, false, |n, _| {
+            seen.push(n.to_string());
+            Ok(())
+        });
+        assert_eq!(seen, ["deck", "deck"]);
     }
 
-    // Wave 4.8: merge_resolved_env() must reach a registry key this crate never hardcoded
-    // a default for, and must never leak a NEVER_EXPORTED key into this process's own
-    // environment.
     #[test]
-    fn merge_resolved_env_reaches_a_registry_default_and_never_exports_the_forbidden_set() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved_toml = env::var_os("SPIRA_TOML");
-        let saved_wait = env::var_os("SPIRA_QUEUE_BATCH_WAIT");
-        let saved_max_aeons = env::var_os("SPIRA_MAX_AEONS");
-        env::remove_var("SPIRA_QUEUE_BATCH_WAIT");
-        env::remove_var("SPIRA_MAX_AEONS");
-        let dir = testkit::TempDir::new("batcher-cut-merge-env");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_QUEUE_BATCH_WAIT"),
-            "TYPE=u32\nGROUP=queue\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_QUEUE_BATCH_WAIT:=1800}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+    fn one_repos_failure_does_not_stop_the_others_and_a_failed_verdict_still_cuts() {
+        let repos = vec![("deck".to_string(), "queue".to_string()), ("poke".to_string(), "queue".to_string())];
+        let mut seen = Vec::new();
+        let failed = drive_pass(&repos, Pass::Forge, true, |n, s| {
+            seen.push(format!("{n}:{}", if *s == Step::Verdict { "verdict" } else { "cut" }));
+            if n == "deck" { Err("boom".into()) } else { Ok(()) }
+        });
+        assert_eq!(seen, ["deck:verdict", "deck:cut", "poke:verdict", "poke:cut"]);
+        assert_eq!(failed, ["deck"]);
+    }
 
-        merge_resolved_env(&home);
 
-        let got_wait = env::var("SPIRA_QUEUE_BATCH_WAIT").ok();
-        let got_max_aeons = env::var_os("SPIRA_MAX_AEONS");
+    // THE ONE DOOR (per Ryan 2026-10-05: one source of config): env_for() reads every
+    // registered key through `spira_config::process::cfg`/`cfg_parse`, never its own
+    // environment and never a Rust-level default. `fixture_toml` declares every key
+    // (spira-config's own complete fixture); the three overrides below prove a value
+    // written to `spira.toml` reaches `Env` end to end, through the real resolver.
+    #[test]
+    fn env_for_reads_every_registered_key_through_the_one_door() {
+        let dir = testkit::TempDir::new("batcher-cut-env-for");
+        let toml = spira_config::process::fixture_toml(
+            &dir,
+            &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600")],
+        );
+        // The real, checked-in spira/conf.d (this crate's own repo layout: `batcher-cut/`
+        // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate every
+        // key `env_for` asks for.
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+        let g = testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", home.to_str())]);
 
-        match saved_toml {
-            Some(v) => env::set_var("SPIRA_TOML", v),
-            None => env::remove_var("SPIRA_TOML"),
-        }
-        match saved_wait {
-            Some(v) => env::set_var("SPIRA_QUEUE_BATCH_WAIT", v),
-            None => env::remove_var("SPIRA_QUEUE_BATCH_WAIT"),
-        }
-        match saved_max_aeons {
-            Some(v) => env::set_var("SPIRA_MAX_AEONS", v),
-            None => env::remove_var("SPIRA_MAX_AEONS"),
-        }
+        let o = Opts { cmd: "cut".into(), repo: "r".into(), run: None, db: None, home: None, round_vm: None, suites: None, members: None, evidence: None };
+        let env_ = env_for(&o, dir.join("home"), dir.join("run"));
 
-        assert_eq!(got_wait, Some("1800".to_string()), "a registry default must reach the real environment");
-        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
+        drop(g);
+        let env_ = env_.expect("env_for resolves through the one door given a complete spira.toml");
         let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(env_.bd, "bd-fixture", "a registered key's declared value must reach Env, not a Rust-level default");
+        assert_eq!(env_.forge, PathBuf::from("forge-fixture"));
+        assert_eq!(env_.wall_secs, 3600);
     }
 }
 
@@ -1063,7 +1340,7 @@ mod base_conflict_handling {
     use std::fs;
 
     fn member(id: &str, tip: &str) -> Member {
-        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: BTreeMap::new() }
+        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: BTreeMap::new(), blocked_by: Vec::new() }
     }
 
     #[test]
@@ -1116,3 +1393,14 @@ mod base_conflict_handling {
     }
 }
 
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+
+
+    #[test]
+    fn now_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || now());
+        assert_eq!(got, 1_900_000_000);
+    }
+}

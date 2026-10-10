@@ -58,6 +58,9 @@ echo "case 2 — strand detection: sentinel log 'not evaluated' → pass-truncat
 # PASS_TRUNCATED=1 to the classifier.
 mkdir -p "$TMP/stubs/chamber"
 _libs "$TMP/stubs"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$TMP/stubs/chamber"
 cat > "$TMP/stubs/chamber/test-watcher.fayth" <<'FAYTH'
 FAYTH_NAME=test-watcher
 FAYTH_LABELS=spira,test-plan
@@ -91,12 +94,11 @@ cat > "$TMP/run/sentinel.log" <<'LOG'
 2026-01-01T00:00:01Z spira: CHECK7 test-watcher: not evaluated (pass budget exhausted)
 LOG
 
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
-    SPIRA_RUN="$TMP/run" \
-    SPIRA_BD="$TMP/mock-bd" \
+    SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
-    SPIRA_DB="$TMP/no-db" \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null
 )"
@@ -113,12 +115,11 @@ cat > "$TMP/run/sentinel.log" <<'LOG'
 2026-01-01T00:00:01Z spira: CHECK7 test-watcher: nothing ready in its partition
 LOG
 
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
-    SPIRA_RUN="$TMP/run" \
-    SPIRA_BD="$TMP/mock-bd" \
+    SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
-    SPIRA_DB="$TMP/no-db" \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null
 )"
@@ -168,20 +169,21 @@ done
 touch "$TMP/stubs2/repo-map"
 
 _run2="$TMP/run2"; mkdir -p "$_run2"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_RUN="$_run2" SPIRA_DB="$TMP/no-db" SPIRA_FAYTHS="alpha beta" \
+    SPIRA_NOTIFY="$TMP/stubs2/mock-notify" SPIRA_CHAMBER="$TMP/stubs2/chamber" \
+    SPIRA_BD="$TMP/mock-bd"
 out="$(env -i \
     PATH="$PATH" HOME="$HOME" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_HOME="$TMP/stubs2" PATH="$TMP/stubs2:$PATH" \
-    SPIRA_RUN="$_run2" \
-    SPIRA_DB="$TMP/no-db" \
-    SPIRA_BD="$TMP/mock-bd" \
-    SPIRA_FAYTHS="alpha beta" \
     SPIRA_SKIP_RECLAIM=1 \
     SPIRA_SENTINEL_PASS_BUDGET_SECS=0 \
     SPIRA_LAND_STALE=999999 \
     SPIRA_SYSTEMCTL="$TMP/stubs2/mock-systemctl" \
     SPIRA_LAUNCH="$TMP/stubs2/mock-launch" \
     SPIRA_SUMMON="$TMP/stubs2/mock-summon" \
-    SPIRA_NOTIFY="$TMP/stubs2/mock-notify" \
     PATH="$TMP/stubs2:$PATH" \
         sentinel 2>&1)"
 

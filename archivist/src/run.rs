@@ -140,6 +140,7 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
     };
 
     let _ = state::write_state(arc, sid, State::Sweeping, at, 0);
+    let _live = transcripts::is_live(tp, cfg.idle, now_epoch()).then(|| state::LiveMarker::set(arc, sid));
 
     let lineage = lineage_brief(seam, sid, &tp.to_string_lossy());
     let wiki_text = match cfg.wiki.as_deref().filter(|w| !w.is_empty()) {
@@ -471,8 +472,27 @@ mod tests {
     use super::*;
     use crate::seam::fake::FakeSeam;
 
+    /// A plain `Env` literal — these tests exercise `sweep`/`mark`/etc, which take config as
+    /// an argument, so they must not go through `config::resolve`'s real
+    /// `spira_config::process::cfg` door (a process-global `OnceLock`; `config.rs`'s own test
+    /// is the only one in this crate allowed to touch it). Values mirror what `spira/conf.sh`
+    /// used to default these keys to, for continuity with this test suite's existing fixtures.
     fn cfg() -> Env {
-        crate::config::resolve(&std::collections::HashMap::new())
+        Env {
+            db: ".".to_string(),
+            run: "/tmp".to_string(),
+            chamber: String::new(),
+            token_projects: String::new(),
+            wiki: None,
+            agent: "claude".to_string(),
+            tz: "UTC".to_string(),
+            every: 40,
+            idle: 1800,
+            model: "claude-opus-5".to_string(),
+            timeout: 900,
+            per_pass: 1,
+            timeout_retries: 3,
+        }
     }
 
     #[test]
@@ -612,6 +632,19 @@ mod tests {
         assert!(seam.agent_calls.borrow()[0].contains("task for sess-1"));
     }
 
+    // A fork elsewhere in the test binary can briefly hold a copy of a just-dropped flock fd,
+    // so a lock refusal (75) is retried; the timeout accounting under test is unaffected.
+    fn archive_past_lock_contention(seam: &FakeSeam, c: &Env, dir: &Path) -> i32 {
+        for _ in 0..200 {
+            let rc = archive(seam, c, dir, "sess-1", Path::new("/tmp/s.jsonl"), 10, "5", "t", false);
+            if rc != 75 {
+                return rc;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        75
+    }
+
     #[test]
     fn archive_on_timeout_retries_until_the_budget_then_fails() {
         let dir = testkit::TempDir::new("archivist-run");
@@ -624,11 +657,11 @@ mod tests {
         let seam = FakeSeam::new();
         *seam.agent_rc.borrow_mut() = 124;
 
-        let rc1 = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/s.jsonl"), 10, "5", "t", false);
+        let rc1 = archive_past_lock_contention(&seam, &c, &dir);
         assert_eq!(rc1, 124);
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("timeout".into()));
 
-        let rc2 = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/s.jsonl"), 10, "5", "t", false);
+        let rc2 = archive_past_lock_contention(&seam, &c, &dir);
         assert_eq!(rc2, 124);
         assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()), "budget of 2 exhausted on the second timeout");
     }

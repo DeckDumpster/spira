@@ -10,11 +10,18 @@ use crate::ports::ref_branch;
 use crate::records::{self, one_line, write_atomic, Kv};
 
 /// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED (Returned is
-/// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK. Reported, never fatal.
-fn lc_return(w: &World, id: &str) {
-    let fail = |why: String| w.err(format!("queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"));
+/// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK; a row already in REWORK is the target state, not a refusal. The refusal is
+/// reported here and handed back: an eject that leaves the row where it was must exit non-zero.
+pub fn lc_return(w: &World, id: &str) -> Result<(), ()> {
+    let fail = |why: String| {
+        w.err(format!("queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"));
+        Err(())
+    };
     let Some((mut state, version)) = w.lc.bead_state(id) else { return fail("no lifecycle row".into()) };
     let Ok(mut v) = version.trim().parse::<u64>() else { return fail(format!("unreadable version {version:?}")) };
+    if state == "REWORK" {
+        return Ok(());
+    }
     let who = "queue.sh";
     if state == "CERTIFIED" {
         if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "\"Deliver\"") {
@@ -27,12 +34,13 @@ fn lc_return(w: &World, id: &str) {
         return fail(format!("in state {state}, not CERTIFIED or IN_DELIVERY"));
     }
     if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "{\"Returned\":{\"reason\":\"batch-ejected\"}}") {
-        fail(format!("Returned refused (rc={rc}): {e}"));
+        return fail(format!("Returned refused (rc={rc}): {e}"));
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &str, red: bool, dry_run: bool) -> i32 {
+pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &str, red: bool, harness_fault: bool, dry_run: bool) -> i32 {
     if !czar_ok(w) {
         return FAIL;
     }
@@ -54,7 +62,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         return FAIL;
     }
     let actor = actor(w);
-    let cause = EjectCause::decide(red, suites);
+    let cause = EjectCause::decide(red, harness_fault, suites);
     if !dry_run && require_lc(w, "eject").is_err() {
         return FAIL;
     }
@@ -92,8 +100,11 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             w.out(format!("dry-run: would post comment to {id}"));
             return bead_resolves(w, id);
         }
-        w.lib.bead_reopen(id, cause.as_str(), suites);
-        lc_return(w, id);
+        let reopened = w.lib.bead_reopen(id, cause.as_str(), suites);
+        if !reopened {
+            w.err(format!("queue.sh eject: cannot reopen {id} (cause {})", cause.as_str()));
+        }
+        let returned = lc_return(w, id).is_ok();
         let mut comment = format!("Ejected while certified but not yet batched in {}.", c.r.name);
         if !reason.is_empty() {
             comment.push_str(&format!("\n\n{reason}"));
@@ -103,6 +114,9 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
         }
         w.lib.comment(id, &comment);
+        if !reopened || !returned {
+            return FAIL;
+        }
         w.out(format!("queue.sh eject: ejected {id} (certified, not yet batched) for {} (withdrawn)", c.r.name));
         return OK;
     };
@@ -125,13 +139,16 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     // `bead_reopen` carries the suites a recertification must force.
     w.lib.cause_event(id, cause.as_str());
     // The delivery-exit event legal from IN_DELIVERY (sp-rlyl0).
-    lc_return(w, id);
+    let mut failed = lc_return(w, id).is_err();
     w.lib.release_claim(id);
     if !batch_id.is_empty() {
         let r = bounded_text(&why);
         match lc_cas(w, &batch_id, |s, v| w.lc.eject_member(&batch_id, id, s, v, "queue.sh", &r)) {
             Ok(()) => w.out(format!("queue.sh eject: {id} ejected on spira-lc (returned to CERTIFIED there)")),
-            Err((rc, out)) => w.err(format!("queue.sh eject: spira-lc eject-member refused for {id} (rc={rc}): {out}")),
+            Err((rc, out)) => {
+                failed = true;
+                w.err(format!("queue.sh eject: spira-lc eject-member refused for {id} (rc={rc}): {out}"));
+            }
         }
     }
     let mut comment = format!("Ejected from open batch in {}.", c.r.name);
@@ -144,6 +161,18 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     for m in &survivors {
         w.out(format!("queue.sh eject: {} returned to CERTIFIED", m.id));
     }
+    // The PR is closed and no rebuilt one is opened: the batch row must not outlive it, or its
+    // members stay IN_DELIVERY behind a PR that is gone.
+    if !batch_id.is_empty() && !survivors.is_empty() {
+        let r = bounded_text(&format!("{id} ejected; the batch PR is closed and not rebuilt"));
+        match lc_cas(w, &batch_id, |s, v| w.lc.abandon_batch(&batch_id, s, v, "queue.sh", &r)) {
+            Ok(()) => w.out(format!("queue.sh eject: {batch_id} abandoned on spira-lc (survivors back to CERTIFIED)")),
+            Err((rc, out)) => {
+                failed = true;
+                w.err(format!("queue.sh eject: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}"));
+            }
+        }
+    }
     if !pr.is_empty() && idents(w, "eject", &[("pr", &pr)]).is_ok() {
         w.forge.pr_close(&c.s.forge, &path, &pr);
     }
@@ -155,8 +184,12 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         body.push_str(&format!(" Reason: {reason}"));
     }
     body.push_str(&format!("\nSurvivors returned to CERTIFIED: {surv}"));
-    w.lib.notify(&c.r.name, &format!("{id} ejected (queue.sh eject)"), &body);
-    w.out(format!("queue.sh eject: ejected {id} from {} batch", c.r.name));
+    w.lib.notify(&c.s.mailbox, &c.r.name, &format!("{id} ejected (queue.sh eject)"), &body);
+    if failed {
+        w.err(format!("queue.sh eject: {id} left the {} batch record but spira-lc did not take every write — see above", c.r.name));
+        return FAIL;
+    }
+    w.out(format!("queue.sh eject: ejected {id} from {} batch {batch_id}; {} member(s) remain", c.r.name, survivors.len()));
     OK
 }
 
@@ -280,7 +313,7 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
         &format!("abandoned PR {pr} for {} (actor={actor})", c.r.name),
         &format!("members={audit} reason={reason_clean}"),
     );
-    w.lib.notify(&c.r.name, "batch abandoned (queue.sh abandon)", &format!("PR {pr} abandoned by {actor}. Reason: {reason_clean}\nMembers: {audit}"));
+    w.lib.notify(&c.s.mailbox, &c.r.name, "batch abandoned (queue.sh abandon)", &format!("PR {pr} abandoned by {actor}. Reason: {reason_clean}\nMembers: {audit}"));
     w.out(format!("queue.sh abandon: PR {pr} closed, batch abandoned for {}", c.r.name));
     OK
 }
@@ -349,7 +382,14 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             acc.push_str(&format!("{i} {t} {e}\n"));
             acc
         });
-        cands = w.lib.sort_rows(&path, &base_sha, &prio, &rows);
+        let express: std::collections::HashSet<String> = match w.lc.express_ids() {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(e) => {
+                eprintln!("queue: express set unreadable ({e}) -- ranking without it");
+                Default::default()
+            }
+        };
+        cands = w.lib.sort_rows(&express, &path, &base_sha, &prio, &rows);
     }
 
     // Admission: the member's lifecycle row, read fresh, is still CERTIFIED — waiting for a
@@ -360,6 +400,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     for (id, tip) in cands {
         match w.lc.bead_row(&id) {
             None => skips.push(format!("{id}: no lifecycle row (spira-lc could not say) — not admitted")),
+            Some(r) if r.state == "CERTIFIED" && !r.holds.is_empty() => skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(","))),
             Some(r) if r.state == "CERTIFIED" => admitted.push((id, tip)),
             Some(r) => skips.push(format!("{id}: lifecycle state={} (no longer CERTIFIED) — not admitted", r.state)),
         }
@@ -380,8 +421,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             skips.push(format!("{id}: not a valid id:tip"));
             continue;
         }
-        let subject = w.lib.land_subject(&id);
-        if w.git.merge_no_ff(&wt, &subject, &tip) {
+        if super::round::merge_member(w, &c, &wt, &id, &tip) {
             members.push(Member { id, tip });
         } else {
             w.git.merge_abort(&wt);

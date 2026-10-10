@@ -17,10 +17,19 @@ echo "test-mail-pane.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
+# SPIRA_MAIL/SPIRA_ID_PREFIX/SPIRA_DB are all registered and mail/src/env.rs's Env::load()
+# resolves every one of them via cfg() (SPIRA_TOML), never the environment — corrected
+# round 6: mail/src/env.rs's OWN header comment says so explicitly ("every REGISTERED key
+# comes from the config file... never the environment"), contradicting earlier rounds' belief
+# that mail read these raw. Without this, mail_root resolved to the complete fixture's
+# bogus "/fixture/userhome/spira/run/mail" default, and every done/read/sendmail call below
+# operated on a directory this suite never touched (silent "no such mailbox"/permission
+# errors, since that path may partially exist with the wrong ownership in the container).
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=""
 export SPIRA_ID_PREFIX="sp"
 export SPIRA_DB=""
+tl_config SPIRA_MAIL="$TMP/mail" SPIRA_ID_PREFIX="sp" SPIRA_DB=""
 
 run_mail() { mail "$@"; }
 
@@ -124,7 +133,11 @@ printf 'From: Operator <op@h>\nSubject: Read message\nDate: %s\n\nbody\n' \
 printf 'From: Operator <op@h>\nSubject: Done message\nDate: %s\n\nbody\n' \
     "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')" > "$MAIL_DIR/concierge/cur/done-msg:2,R"
 
-keys="$(SPIRA_MAIL="$MAIL_DIR" cockpit-collect probe mail 2>/dev/null)"
+# SPIRA_MAIL is registered (cockpit-collect/src/probes/mod.rs's Cfg.mail resolves it via
+# cfg(), not raw env, unlike mail/src/env.rs which does read it raw) — the plain env prefix
+# below is ignored; tl_layer scopes the override to this one call only, since $MAIL_DIR is
+# section-local (round 5).
+keys="$(SPIRA_TOML="$(tl_layer SPIRA_MAIL="$MAIL_DIR")" cockpit-collect probe mail 2>/dev/null)"
 isz "cockpit-collect probe mail exits 0" "$?"
 
 want "SP_MAIL_UNREAD=1" "SP_MAIL_UNREAD=1" "$keys"
@@ -145,7 +158,7 @@ touch "$BUDGET"
 # Build a minimal snapshot from cockpit-collect probe mail probe output
 {
     printf 'SP_AT=%s\n' "$(date +%s)"
-    SPIRA_MAIL="$MAIL_DIR" cockpit-collect probe mail 2>/dev/null
+    SPIRA_TOML="$(tl_layer SPIRA_MAIL="$MAIL_DIR")" cockpit-collect probe mail 2>/dev/null
     # Minimal keys for health.sh to not crash
     printf 'SP_AEONS=0\nSP_SENTINEL_AGE=5\nSP_OPS_AGE=5\nSP_AURON_AGE=5\n'
     printf 'SP_SENTINEL_TIMER=1\nSP_OPS_TIMER=1\nSP_AURON_TIMER=1\nSP_AURON_FIRING=0\n'
@@ -154,7 +167,11 @@ touch "$BUDGET"
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
 } > "$SNAP"
 
-pane_out="$(SPIRA_RUN="$TMP" health once 2>/dev/null)"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): health refuses outright
+# without one (sfail round 3, pattern 1). SPIRA_DB declared too (round-3 caveat audit):
+# cockpit/ops's db.rs resolves it via cfg().
+tl_config SPIRA_RUN="$TMP" SPIRA_DB=""
+pane_out="$(SPIRA_HOME="$HERE" health once 2>/dev/null)"
 want "MAIL label in pane"  "MAIL"  "$pane_out"
 want "NEW state in pane"   "NEW"   "$pane_out"
 want "READ state in pane"  "READ"  "$pane_out"

@@ -38,7 +38,7 @@
 #
 # defect: sp-q9i sp-9194o
 # tier: T3
-# covers: landing-pass/* spira/lib.sh
+# covers: landing-pass/* spira/lib.sh UC-landing-merge-queue-13 UC-landing-merge-queue-15 UC-landing-merge-queue-17 UC-landing-merge-queue-22 UC-landing-merge-queue-23
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -62,10 +62,14 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 lc_path_stub "$SH" "$TMP/lcfix"
+# A repo's base is no longer derived (no remote-HEAD auto-detection to fall back on) — the
+# map row must name it explicitly, or landing-pass can never say a commit "is/is not on
+# origin/main" (the "names the branch it lost"/"says the commit is on the base" assertions).
+printf '%s | %s | push | origin/main | |\n' "$REPONAME" "$REPO" > "$SH/repo-map"
 
 # conf.sh travels with lib.sh — lib.sh refuses to run without it, and a harness that copies
 # one and not the other fails at source time, which reads as landing being broken.
@@ -132,6 +136,7 @@ if [ -s "$c" ]; then
     while read -r id pid; do
         [ -n "$id" ] || continue
         printf "%s\\n" "$pid" > "$SPIRA_RUN/aeon-builder-$id.pid"
+        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-builder-$id.lease"
     done < "$c"
     : > "$c"
 fi
@@ -147,7 +152,7 @@ stub gh 'exit 1'
 # can restore it.
 cp "$SH/gate.sh" "$TMP/gate-full.sh"
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -176,9 +181,17 @@ landing() {
     # other_beads_on_conflicts a pattern that does not match the sp- ids used in this
     # fixture's commits, so the function returns empty and the parallel-duplicate note
     # omits the bead name it is written to carry (law-gates-run-in-a-clean-environment).
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
+    # SPIRA_RUN AS A PLAIN ENV VAR TOO, not only in config: landing-pass's own process reads
+    # it through the one source (SPIRA_TOML), but gate.sh is a plain child process that
+    # inherits whatever landing-pass's OWN environment held — real.rs's with_env() never
+    # clears or re-derives it. Without this, gate.sh's own "$SPIRA_RUN/reap-during-gate" read
+    # resolves against an empty SPIRA_RUN, so the reap-during-gate fixture never fires and
+    # the branch it names is never actually removed (sp-zzz staying present makes the pass
+    # read it as "already landed", not "gone since this pass began").
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
 notes_of() { B show "$1" 2>/dev/null; }
@@ -263,7 +276,7 @@ drop_branch sp-reused
 # pass in this suite would go on claiming a reused verdict.
 unset GATE_REASON
 
-export SPIRA_VERDICT_TTL=600
+tl_config SPIRA_VERDICT_TTL=600
 mkdir -p "$RUN/verdicts"
 : > "$RUN/verdicts/stale"; touch -d '3 hours ago' "$RUN/verdicts/stale"
 : > "$RUN/verdicts/fresh"
@@ -272,7 +285,7 @@ seed; landing >/dev/null 2>&1
     || ok "a verdict past the TTL is deleted by a pass"
 [ -e "$RUN/verdicts/fresh" ] && ok "and one inside it is kept" \
     || bad "and one inside it is kept" "the pass deleted a live verdict"
-unset SPIRA_VERDICT_TTL
+tl_config SPIRA_VERDICT_TTL=86400   # restore the fixture's own default for the rest of the suite
 
 # A REAL DISAGREEMENT STILL REOPENS. The branch and the base both write the same file with
 # different content after they diverged, so the rebase genuinely conflicts and the bead
@@ -281,7 +294,7 @@ unset SPIRA_VERDICT_TTL
 seed; branch sp-clash shared.txt "from the branch"
 printf '%s\n' "from the base" > "$REPO/shared.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 out="$(landing)"
 want "a branch that truly conflicts is reopened"   "reopened sp-clash" "$out"
 is   "and its bead goes back to open"              open "$(status_of sp-clash)"
@@ -297,7 +310,7 @@ drop_branch sp-clash
 # --------------------------------------------------------------------------------------
 seed; branch sp-zzz; out="$(landing)"
 want "the branch lands on the first pass" "landed spira/sp-zzz" "$out"
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 zzz_tip="$(git -C "$REPO" rev-parse spira/sp-zzz)"
 git -C "$REPO" merge-base --is-ancestor "$zzz_tip" origin/main \
     && ok  "and its commit is on the base before the second pass begins" \
@@ -386,9 +399,10 @@ case "$*" in *" show "*|*" show") printf '%s\n' "$*" >> "${BD_CALL_LOG:?}" ;; es
 exec "$BD_REAL" "$@"
 SHIM
 chmod +x "$TMP/bd-counter.sh"
-export BD_CALL_LOG="$TMP/bd-calls.log" BD_REAL="${SPIRA_BD:-bd}" SPIRA_BD="$TMP/bd-counter.sh"
+export BD_CALL_LOG="$TMP/bd-calls.log" BD_REAL="${SPIRA_BD:-bd}"
+SPIRA_BD="$TMP/bd-counter.sh"   # shell var only: landing()'s own tl_config read picks this up
 landing >/dev/null 2>&1
-SPIRA_BD="$BD_REAL"; export SPIRA_BD; unset BD_CALL_LOG BD_REAL
+SPIRA_BD="$BD_REAL"; unset BD_CALL_LOG BD_REAL
 show_calls="$(grep -c '^show' "$TMP/bd-calls.log" 2>/dev/null || echo 0)"
 # One bulk show for the scan, plus one re-read per branch that reaches the gate (three
 # here). The scan must not grow with the branch count — three branches and eleven must
@@ -502,7 +516,7 @@ drop_branch sp-dupa; drop_branch sp-dupb
 seed; branch sp-mine shared.txt "my version"
 printf '%s\n' "an unrelated edit by nobody" > "$REPO/shared.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base edits shared.txt (no bead id)"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 out="$(landing)"
 want "a conflict with no bead on the base reopens normally" "reopened sp-mine" "$out"
 notes="$(notes_of sp-mine)"

@@ -269,3 +269,39 @@ fn release_currency_follows_the_sibling_current_link() {
     std::os::unix::fs::symlink("new", d.join("current")).unwrap();
     assert!(!release_is_current(&old));
 }
+
+#[test]
+fn a_path_inside_a_release_follows_the_release_not_its_subdirectory() {
+    let d = tmp("sub");
+    for r in ["old", "new"] {
+        std::fs::create_dir_all(d.join(r).join("spira")).unwrap();
+    }
+    std::os::unix::fs::symlink("old", d.join("current")).unwrap();
+    assert!(release_is_current(&d.join("old/spira")));
+    assert!(!release_is_current(&d.join("new/spira")));
+    assert!(release_is_current(&d.join("current/spira")));
+    std::fs::remove_file(d.join("current")).unwrap();
+    std::os::unix::fs::symlink("new", d.join("current")).unwrap();
+    assert!(!release_is_current(&d.join("old/spira")));
+}
+
+#[test]
+fn a_fault_keeps_the_gates_whole_output_and_a_pass_does_not() {
+    let big = format!("{}\ngate: VERDICT=NO_VERDICT reason=harness-fault", "x\n".repeat(20000));
+    for (rc, out, kept) in [(75, big.as_str(), true), (0, "gate: VERDICT=PASS", false)] {
+        let d = tmp("keep");
+        let q = GateQueue::new(&d);
+        let job = Job::new("r", "spira/sp-a", "sp-a", "t1", false);
+        q.enqueue(&job).unwrap();
+        let g = Scripted(RefCell::new(vec![(rc, out.to_string())]));
+        let w = Worker { queue: &q, gate: &g, branches: &Tip(Some("t1".into())), clock: &Tick(AtomicU64::new(0)), lock_wait: 5400, log: &|_| {}, slot: 0 };
+        assert_eq!(w.drain(), 1);
+        q.take_done("r", "spira/sp-a", "t1").unwrap();
+        let dir = d.join("gate-worker/output");
+        let files: Vec<_> = std::fs::read_dir(&dir).map(|r| r.flatten().collect()).unwrap_or_default();
+        assert_eq!(!files.is_empty(), kept, "rc {rc}");
+        if kept {
+            assert_eq!(std::fs::read_to_string(files[0].path()).unwrap(), out);
+        }
+    }
+}

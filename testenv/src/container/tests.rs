@@ -236,10 +236,11 @@ impl Host for Fake {
 fn conf(root: &str) -> Conf {
     Conf {
         harness: Some(PathBuf::from(root)),
-        bd_pin: Some(PathBuf::from("/run/bd-pin")),
+        bd_pin: PathBuf::from("/run/bd-pin"),
         registry: String::new(),
         max_concurrent: 8,
         cpus: None,
+        pids_limit: 32768,
         queue_timeout: 900,
         queue_poll: 5,
         heartbeat: 60,
@@ -260,6 +261,7 @@ fn harness(f: &Fake, root: &str) {
     // sp-xjnzl: every ordinary build_image call needs a spira-config to stage for
     // doctor-check; tests of that staging itself (a_cold_build_*) set it up by hand instead.
     f.with_spira_config_buildable(root);
+    f.file(&format!("{root}/spira-config/tests/fixtures/complete.toml"), "[spira]\n");
 }
 
 fn args(v: &[&str]) -> Vec<String> {
@@ -657,7 +659,10 @@ fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     assert_eq!(
         *f.copies.borrow(),
-        vec![(PathBuf::from("/build/target/release/testenv").parent().unwrap().join("spira-config"), dest.clone())]
+        vec![
+            (PathBuf::from("/build/target/release/testenv").parent().unwrap().join("spira-config"), dest.clone()),
+            (PathBuf::from("/h/spira-config/tests/fixtures/complete.toml"), PathBuf::from("/t/ctx/testenv/.doctor-check.toml")),
+        ]
     );
     assert!(!f.is_file(&dest), "left behind in the checkout after a green build");
     assert!(!f.errs().contains("no spira-config next to this binary"));
@@ -669,7 +674,7 @@ fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
     f.with_spira_config_sibling("/build/target/release/testenv");
     f.build_rc.set(1);
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1);
-    assert_eq!(f.copies.borrow().len(), 1);
+    assert_eq!(f.copies.borrow().len(), 2);
     assert!(!f.is_file(&dest), "left behind in the checkout after a red build");
 }
 
@@ -687,7 +692,7 @@ fn a_cold_build_with_no_sibling_builds_spira_config_on_demand() {
     let c = conf("/h");
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     assert_eq!(*f.build_spira_config_calls.borrow(), vec![PathBuf::from("/h")]);
-    assert_eq!(f.copies.borrow().len(), 1, "the on-demand build still gets staged into the build context");
+    assert_eq!(f.copies.borrow().len(), 2, "the on-demand build still gets staged into the build context");
     assert!(!f.is_file(&PathBuf::from("/t/ctx/testenv/.doctor-check-spira-config")), "cleaned up after the build");
 }
 
@@ -727,16 +732,65 @@ fn up_passes_the_configured_cpu_cap_to_podman_run() {
 }
 
 #[test]
+fn up_passes_the_configured_pids_limit_to_podman_run() {
+    let f = Fake::new();
+    booting(&f);
+    let c = Conf { pids_limit: 12345, ..conf("/h") };
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
+    let run = &f.calls_with("run")[0];
+    let i = run.iter().position(|a| a == "--pids-limit").expect("--pids-limit passed");
+    assert_eq!(run[i + 1], "12345");
+}
+
+#[test]
+fn up_refuses_when_a_kernel_task_ceiling_is_below_the_pids_limit() {
+    for (path, key) in [
+        ("/proc/sys/kernel/pid_max", "kernel.pid_max"),
+        ("/proc/sys/kernel/threads-max", "kernel.threads-max"),
+    ] {
+        let f = Fake::new();
+        booting(&f);
+        f.sysctls.borrow_mut().insert(path.into(), "30000\n".into());
+        let c = conf("/h");
+        assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 1, "{key}");
+        assert!(f.calls_with("run").is_empty(), "{key}: nothing started");
+        assert!(f.errs().contains(key) && f.errs().contains("30000"), "{key}: {}", f.errs());
+    }
+    let f = Fake::new();
+    booting(&f);
+    f.sysctls.borrow_mut().insert("/proc/sys/kernel/pid_max".into(), "4194304\n".into());
+    f.sysctls.borrow_mut().insert("/proc/sys/kernel/threads-max".into(), "32768".into());
+    let c = conf("/h");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
+}
+
+#[test]
+fn up_gives_a_container_its_own_pids_limit_and_memory() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    let a = args(&["--name", "n1", "--pids-limit", "3333", "--memory", "7g"]);
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&a), 0);
+    let run = &f.calls_with("run")[0];
+    let at = |k: &str| run[run.iter().position(|a| a == k).expect(k) + 1].clone();
+    assert_eq!(at("--pids-limit"), "3333");
+    assert_eq!(at("--memory"), "7g");
+}
+
+#[test]
+fn up_refuses_a_non_numeric_pids_limit() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    assert_ne!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--pids-limit", "lots"])), 0);
+}
+
+#[test]
 fn cpu_cap_is_unset_unless_a_positive_number_is_configured() {
-    let load = |v: Option<&'static str>| {
-        let env = move |k: &str| (k == "SPIRA_TESTENV_CPUS").then(|| v.map(String::from)).flatten();
-        Conf::load(&Source { env: &env, config: None }, None).cpus
-    };
-    assert_eq!(load(None), None);
-    assert_eq!(load(Some("")), None);
-    assert_eq!(load(Some("0")), None);
-    assert_eq!(load(Some("many")), None);
-    assert_eq!(load(Some("16")), Some("16".into()));
+    assert_eq!(valid_cpus(""), None);
+    assert_eq!(valid_cpus("0"), None);
+    assert_eq!(valid_cpus("many"), None);
+    assert_eq!(valid_cpus("16"), Some("16".into()));
 }
 
 #[test]
@@ -759,7 +813,7 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
             "n1",
             "--systemd=true",
             "--pids-limit",
-            "8192",
+            "32768",
             "--network",
             "pasta:-T,none,--no-map-gw",
             "--label",
@@ -1223,35 +1277,11 @@ fn an_unknown_subcommand_prints_usage_and_fails() {
         .starts_with("usage: testenv container up|down|exec|probe|tag|image|publish"));
 }
 
-#[test]
-fn settings_come_from_the_environment_then_the_config_then_conf_sh_defaults() {
-    let env = |k: &str| match k {
-        "SPIRA_RUN" => Some("/r".to_string()),
-        "SPIRA_TESTENV_MAX_CONCURRENT" => Some("3".to_string()),
-        _ => None,
-    };
-    let src = Source {
-        env: &env,
-        config: None,
-    };
-    let c = Conf::load(&src, Some(PathBuf::from("/h")));
-    assert_eq!(c.bd_pin, Some(PathBuf::from("/r/bd-pin")));
-    assert_eq!(
-        (c.max_concurrent, c.queue_timeout, c.queue_poll, c.heartbeat),
-        (3, 900, 5, 60)
-    );
-    assert_eq!((c.basic_wait_ticks, c.basic_retry_sleep), (20, 2));
-    assert_eq!(c.registry, "");
-    let env = |k: &str| (k == "SPIRA_BD_PIN").then(|| "/pin".to_string());
-    let c = Conf::load(
-        &Source {
-            env: &env,
-            config: None,
-        },
-        None,
-    );
-    assert_eq!(c.bd_pin, Some(PathBuf::from("/pin")));
-}
+// `Conf::load`'s registered-key defaulting (SPIRA_RUN, SPIRA_TESTENV_MAX_CONCURRENT,
+// SPIRA_BD_PIN, ...) now goes through `spira_config::process::cfg`/`cfg_parse`, which
+// resolve once per process from spira-config's own cache — not something a unit test here
+// can drive per-case. That behavior is spira-config's to test; `cpu_cap_is_unset_unless_a_
+// positive_number_is_configured` above still covers this crate's own pure validation.
 
 #[test]
 fn sizes_read_like_df_h() {

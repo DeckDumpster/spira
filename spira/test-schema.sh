@@ -16,7 +16,7 @@
 # the negative is not passing by accident (law-a-regression-test-must-be-seen-to-fail).
 #
 # tier: T1
-# covers: spira/*.sh
+# covers: spira/*.sh UC-config-store-preflight-19
 # hermetic-ok: no database, no systemd, no network; conf.sh is pointed at a nonexistent file
 # timeout: 60
 set -uo pipefail

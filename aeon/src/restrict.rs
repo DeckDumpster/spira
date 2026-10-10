@@ -87,8 +87,11 @@ const CONDITIONAL: &[&str] = &[
     "GIT_COMMITTER_EMAIL",
     "SPIRA_AEON",
     "SPIRA_AEON_OVERRIDE",
-    "SPIRA_RUN",
-    "SPIRA_PROD",
+    // `work` (the one tool on the model's PATH) resolves its lifecycle socket from the one
+    // source of config: it needs the spec and the release that locates its key registry.
+    // Both only name files the model's HOME can already reach — no new exposure.
+    "SPIRA_TOML",
+    "SPIRA_RELEASE",
     "BEAD_ID",
     "BEADS_ACTOR",
     "SPIRA_MAIL",
@@ -190,6 +193,8 @@ mod tests {
         }
     }
 
+    const MODEL_BIN_OVERRIDE: &str = "SPIRA_MODEL_BIN_CONSIDERED";
+
     fn exe_at(paths: &'static [&'static str]) -> impl Fn(&Path) -> bool {
         move |p: &Path| paths.iter().any(|q| p == Path::new(q))
     }
@@ -246,6 +251,37 @@ mod tests {
     }
 
     #[test]
+    fn no_directory_on_the_models_path_holds_bd() {
+        let tmp = testkit::TempDir::new("restrict-nobd");
+        let root = tmp.path().to_path_buf();
+        let put = |rel: &str| {
+            let f = root.join(rel);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            testkit::write_exe(&f, "#!/bin/sh\n");
+        };
+        put("rel/bin/work");
+        put("rel/bin/bd");
+        put("rel/model-bin/work");
+        put("home/.local/bin/bd");
+        put("home/.cargo/bin/cargo");
+        let r = |p: &str| root.join(p).display().to_string();
+        let mut b = base(&[("HOME", &r("home")), ("PATH", &format!("{}:{}", r("home/.local/bin"), r("rel/bin"))), ("SPIRA_RELEASE", &r("rel"))]);
+        for k in DB_LOCATORS.iter().filter(|k| **k != MODEL_BIN_OVERRIDE) {
+            b.insert(k.to_string(), r("db"));
+        }
+        let dir = model_bin_dir(&b, b.get("PATH").unwrap(), |p| p.is_file()).unwrap();
+        let e = restricted_env("sp-x", &b, &dir);
+        let path = e.get("PATH").unwrap();
+        assert!(path.split(':').any(|d| Path::new(d).join("work").is_file()), "work must stay reachable: {path}");
+        for d in path.split(':') {
+            assert!(!Path::new(d).join("bd").exists(), "bd is executable from {d} on the model's PATH {path}");
+        }
+        for k in DB_LOCATORS {
+            assert!(!e.contains_key(*k), "{k} reaches the model");
+        }
+    }
+
+    #[test]
     fn bead_id_is_always_the_bound_one() {
         let e = restricted_env("sp-bound1", &BTreeMap::new(), "/rel/bin");
         assert_eq!(e.get("SPIRA_WORK_BEAD_ID").unwrap(), "sp-bound1");
@@ -292,8 +328,6 @@ mod tests {
             ("GIT_COMMITTER_EMAIL", "aeon-ifrit@spira.local"),
             ("SPIRA_AEON", "ifrit"),
             ("SPIRA_AEON_OVERRIDE", "shiva"),
-            ("SPIRA_RUN", "/run/spira"),
-            ("SPIRA_PROD", "/prod/spira"),
             ("BEAD_ID", "sp-x"),
             ("BEADS_ACTOR", "aeon-ifrit"),
             ("SPIRA_MAIL", "/run/spira/mail"),
@@ -308,6 +342,16 @@ mod tests {
         for k in CONDITIONAL {
             assert_eq!(e.get(*k), b.get(*k), "{k} did not carry through unchanged");
         }
+    }
+
+    #[test]
+    fn prod_and_run_roots_never_reach_the_model() {
+        let b = base(&[("HOME", "/h"), ("SPIRA_PROD", "/prod/spira"), ("SPIRA_RUN", "/run/spira")]);
+        let e = restricted_env("sp-x", &b, "/rel/model-bin");
+        for k in ["SPIRA_PROD", "SPIRA_RUN"] {
+            assert!(!e.contains_key(k), "{k} locates the release bin/ and must not reach the model");
+        }
+        assert!(!CONDITIONAL.contains(&"SPIRA_PROD") && !CONDITIONAL.contains(&"SPIRA_RUN"));
     }
 
     #[test]

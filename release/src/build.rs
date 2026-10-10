@@ -31,6 +31,7 @@ impl Cargo for RealCargo {
         // `~/.cargo/config.toml` dependency, which only ever reached a build that happened to
         // run under a shell that had sourced it.
         let store = spira_config::build::Store::from_env();
+        // batch-job: cargo runs for as long as its work does
         let st = Command::new("cargo")
             .args(["build", "--release", "--workspace", "--locked", "--target-dir"])
             .arg(target)
@@ -187,6 +188,7 @@ pub fn regenerate_config(stage: &Path) -> Result<(), String> {
     if !gen.is_file() {
         return Ok(());
     }
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     let out = Command::new("bash").envs(spira_config::release_env::child_path_env_for_process()).arg(&gen).current_dir(stage).output().map_err(|e| format!("cannot run {}: {e}", gen.display()))?;
     if !out.status.success() {
         return Err(format!(

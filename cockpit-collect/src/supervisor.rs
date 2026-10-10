@@ -27,6 +27,7 @@ pub const PROBES: &[Probe] = &[
     Probe { name: "now", interval_s: 5, timeout_s: 30, subcommand: "now" },
     Probe { name: "slots", interval_s: 60, timeout_s: 20, subcommand: "slots" },
     Probe { name: "admission", interval_s: 60, timeout_s: 20, subcommand: "admission" },
+    Probe { name: "tsd", interval_s: 60, timeout_s: 30, subcommand: "tsd" },
     Probe { name: "reachable", interval_s: 60, timeout_s: 120, subcommand: "reachable" },
     Probe { name: "sphere", interval_s: 60, timeout_s: 90, subcommand: "sphere" },
     Probe { name: "repo_labels", interval_s: 60, timeout_s: 90, subcommand: "repo_labels" },
@@ -34,6 +35,7 @@ pub const PROBES: &[Probe] = &[
     Probe { name: "ratelim", interval_s: 60, timeout_s: 90, subcommand: "ratelim" },
     Probe { name: "core", interval_s: 60, timeout_s: 150, subcommand: "core" },
     Probe { name: "queue", interval_s: 60, timeout_s: 90, subcommand: "queue" },
+    Probe { name: "round", interval_s: 5, timeout_s: 60, subcommand: "round" },
     Probe { name: "core_detail", interval_s: 600, timeout_s: 900, subcommand: "core_detail" },
     Probe { name: "mail", interval_s: 60, timeout_s: 90, subcommand: "mail" },
     Probe { name: "sops", interval_s: 600, timeout_s: 300, subcommand: "sops" },
@@ -596,7 +598,7 @@ mod tests {
     // properties are asserted directly against it, no extraction needed.
     #[test]
     fn probes_registry_is_well_formed() {
-        assert_eq!(PROBES.len(), 20, "20 probes registered");
+        assert_eq!(PROBES.len(), 22, "22 probes registered");
         let mut seen = std::collections::HashSet::new();
         let mut shorter_timeout = 0;
         for p in PROBES {
@@ -703,7 +705,6 @@ mod tests {
     /// pure argv test above cannot (that one does not spawn anything).
     #[test]
     fn two_consecutive_scheduled_runs_produce_an_advancing_sp_at() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let run = TempDir::new("cc-advancing-sp-at");
         let mut cfg = cfg(&run);
         let self_exe = run.path().join("fake-self");
@@ -718,7 +719,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 "#,
         );
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
-        std::env::set_var("FRAG_DIR", &cfg.frag_dir);
+        let _env = testkit::env(&[("FRAG_DIR", cfg.frag_dir.to_str())]);
         cfg.self_exe = self_exe;
 
         let probes = [Probe { name: "now", interval_s: 5, timeout_s: 30, subcommand: "now" }];
@@ -751,7 +752,6 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         let snap2 = std::fs::read_to_string(&cfg.snap).unwrap();
         let at2 = snap2.lines().find_map(|l| l.strip_prefix("SP_AT=")).expect("SP_AT present after second run");
 
-        std::env::remove_var("FRAG_DIR");
         assert_ne!(at1, at2, "SP_AT must advance between two scheduled runs, not freeze");
     }
 
@@ -950,6 +950,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 
     #[test]
     fn run_probe_body_success_writes_ok_fragment() {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let run = TempDir::new("cc-run-ok");
         let mut cfg = cfg(&run);
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
@@ -964,6 +965,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 
     #[test]
     fn run_probe_body_first_failure_is_fault_not_stale() {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let run = TempDir::new("cc-run-fault");
         let mut cfg = cfg(&run);
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
@@ -979,6 +981,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 
     #[test]
     fn run_probe_body_failure_after_success_is_stale_and_keeps_values() {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let run = TempDir::new("cc-run-stale");
         let mut cfg = cfg(&run);
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
@@ -998,16 +1001,11 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
 
     #[test]
     fn may_write_refuses_bare_and_allows_forced() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        // Both assertions live in one test function: `SPIRA_COCKPIT_FORCE`/`INVOCATION_ID`
-        // are process-global, and cargo runs tests in parallel threads, so a separate test
-        // per case raced the other's env mutation (observed flake: this file's own CI run).
-        std::env::remove_var("SPIRA_COCKPIT_FORCE");
-        std::env::remove_var("INVOCATION_ID");
+        let env = testkit::env(&[("SPIRA_COCKPIT_FORCE", None), ("INVOCATION_ID", None)]);
         assert!(!may_write(None));
+        drop(env);
 
-        std::env::set_var("SPIRA_COCKPIT_FORCE", "1");
+        let _env = testkit::env(&[("SPIRA_COCKPIT_FORCE", Some("1")), ("INVOCATION_ID", None)]);
         assert!(may_write(None));
-        std::env::remove_var("SPIRA_COCKPIT_FORCE");
     }
 }

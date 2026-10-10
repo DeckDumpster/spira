@@ -22,7 +22,7 @@
 //!     silently drop.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Run `<script>` as `bash -c '<script>' <name>`, with `SPIRA_HOME_LIB` pointing at
 /// `lib.sh` (the seam's own prelude sources it) and every `(k, v)` in `envs` set besides
@@ -31,7 +31,7 @@ use std::process::{Command, Stdio};
 /// sentinel's seams do.
 pub fn run(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin: &str) -> (String, bool) {
     let full = format!("set -uo pipefail\n. \"$SPIRA_HOME_LIB\" >&2 || exit 97\n{script}\n");
-    let mut cmd = Command::new("bash");
+    let mut cmd = spira_config::bounded::bounded("bash");
     cmd.args(["-c", &full, name]);
     cmd.env("SPIRA_HOME_LIB", lib_sh);
     // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
@@ -99,9 +99,12 @@ except Exception:
 /// delete the work), 4b (the note) and the final `bdjson show` — everything downstream of
 /// "the aeon/hold is stopped" that still has to go through lib.sh's own chokepoints.
 /// Reads `$SLAY_ID $SLAY_WHY $SLAY_MODE $SLAY_REASON $SLAY_KEEP $SLAY_NAME $SLAY_PID
-/// $SLAY_UNIT` from the environment (never interpolated into this script's text) and
-/// prints slay.sh's own narration lines verbatim, ending with one machine-readable line
-/// this crate strips before relaying the rest: `___SLAY_RESULT___\t<0|1>`.
+/// $SLAY_UNIT $SPIRA_RUN $SPIRA_SUBMITTED_LABEL` from the environment (never interpolated
+/// into this script's text) and prints slay.sh's own narration lines verbatim, ending with
+/// one machine-readable line this crate strips before relaying the rest:
+/// `___SLAY_RESULT___\t<0|1>`. `SPIRA_RUN`/`SPIRA_SUBMITTED_LABEL` are the caller's own
+/// `spira_config` reads, passed in explicitly — never inherited ambient values (per Ryan
+/// 2026-10-05: one source of config).
 pub const SLAY_FINISH: &str = r#"
 ID="$SLAY_ID"; WHY="$SLAY_WHY"; MODE="$SLAY_MODE"; REASON="$SLAY_REASON"
 KEEP="$SLAY_KEEP"; name="$SLAY_NAME"; pid="$SLAY_PID"; unit="$SLAY_UNIT"
@@ -125,7 +128,7 @@ if [ "$st" = in_progress ]; then
 fi
 bdq update "$ID" --assignee "" --force >/dev/null 2>&1 || bdq update "$ID" --assignee "" >/dev/null 2>&1
 if [ "$carries_own" = 1 ]; then
-    bdq label add "$ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
+    bdq label add "$ID" "$SPIRA_SUBMITTED_LABEL" >/dev/null 2>&1 || true
     say "bead: spira/$ID already carries a commit of $ID — reopened as submitted, not for redo"
 fi
 

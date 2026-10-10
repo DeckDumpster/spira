@@ -61,6 +61,11 @@ id = "UC-aeon-execution-10"
 tier = "T1"
 statement = "session outcome classification (refused/unknown/killed/unlanded/yield-headless) and its charge default-deny"
 
+[use_case.uncovered]
+reason = "outcome classification and the charging rule are aeon::decide (session_outcome, disposition) and are verified by decide::tests::session_outcome_table, session_yield_headless_table and disposition_table; the Rust seam is not drivable from bash"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+
 [[use_case]]
 id = "UC-aeon-execution-11"
 tier = "T1"
@@ -72,7 +77,7 @@ tier = "T3"
 statement = "a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt"
 
 [use_case.uncovered]
-reason = "test-aeon-teardown-e2e.sh's rebase-conflict-at-close row (sp-rq-1) is deleted: sp-v62vn made every aeon session restricted, and a restricted session hands its bead on only through the work verbs, so teardown's closed branch (aeon decide::builder_closed) — where this behaviour lives — is reached by no session. The subject is unreachable, not regressed; the dead branch itself is still in aeon/src/teardown.rs."
+reason = "test-aeon-teardown-e2e.sh's rebase-conflict-at-close row (sp-rq-1) is deleted: sp-v62vn made every aeon session restricted, and a restricted session hands its bead on only through the work verbs, so the close fences (aeon decide::builder_closed, now deleted) — where this behaviour lived — is deleted (sp-nyo1m). The subject is unreachable, not regressed."
 date = "2026-10-05"
 bead = "sp-v62vn"
 
@@ -97,7 +102,7 @@ tier = "T1"
 statement = "closing with the gate still running, FAIL, or no gate run leaves a distinct note but does not reopen"
 
 [use_case.uncovered]
-reason = "test-aeon-gate-close-silent.sh's aeon rows are deleted (the suite keeps only gate-run.sh's own --status codes): sp-v62vn made every aeon session restricted, and a restricted session hands its bead on only through the work verbs, so teardown's closed branch (aeon decide::builder_closed) — where this behaviour lives — is reached by no session. The subject is unreachable, not regressed; the dead branch itself is still in aeon/src/teardown.rs."
+reason = "test-aeon-gate-close-silent.sh's aeon rows are deleted (the suite keeps only gate-run.sh's own --status codes): sp-v62vn made every aeon session restricted, and a restricted session hands its bead on only through the work verbs, so the close fences (aeon decide::builder_closed, now deleted) — where this behaviour lived — is deleted (sp-nyo1m). The subject is unreachable, not regressed."
 date = "2026-10-05"
 bead = "sp-v62vn"
 
@@ -105,11 +110,6 @@ bead = "sp-v62vn"
 id = "UC-aeon-execution-16"
 tier = "T1"
 statement = "the four close guards (prod-dirty, close-reason override, SOP, groom-escalation) bind to their knob, not the persona name"
-
-[use_case.uncovered]
-reason = "partly: the guards judge the restricted hand-on (decide::builder_submitted) and refuse it back to REWORK; test-aeon-prod-dirty.sh drives that refusal end to end (own-dirty refused, override stands). test-groom-escalation-check.sh's and test-ops-closing.sh's end-to-end rows for the knob binding are not restored yet."
-date = "2026-10-05"
-bead = "sp-v62vn"
 
 [[use_case]]
 id = "UC-aeon-execution-17"

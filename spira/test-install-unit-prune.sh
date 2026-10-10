@@ -67,28 +67,35 @@ PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 WATCHERS="$TMP/watchers"
 printf '# empty\n' > "$WATCHERS"
 
+# Constant across every install.sh invocation below (the --render pre-seed and every
+# inst() call). SPIRA_MAIL_READERS="": this suite is about unit pruning, not mail — the
+# fixture's declared reader ("concierge=inbox-append.sh") points units-install's own
+# ensure_reader_mailboxes() at a shared "/fixture/userhome/.../mail" tree this suite's sandboxed
+# SPIRA_RUN never touches, which has intermittently refused mkdir with EACCES under
+# concurrent runs; declaring no readers here means install never calls `mail ensure` at all.
+tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent SPIRA_WATCHERS="$WATCHERS" \
+    SPIRA_MAIL_READERS=
+
 # inst [extra-env...] — run install.sh for the 'test' instance.
 # The logger dir goes first on PATH (conf.sh keeps the caller's PATH first).
 inst() {
     > "$SCTL_LOG"
+    # Any extra SPIRA_* overrides a caller passes are registered keys — declared via
+    # tl_config rather than forwarded through the command prefix, which no process reads.
+    [ $# -gt 0 ] && tl_config "$@"
     SCTL_LOG="$SCTL_LOG" \
-    PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" \
+    PATH="$TMP/bin:$PATH" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_RUN="$SPIRA_RUN_DIR" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    SPIRA_WATCHERS="$WATCHERS" \
-    "$@" \
+    SPIRA_RUN="$SPIRA_RUN_DIR" \
     units-install test 2>&1
 }
 
 # Pre-seed DEST so install.sh sees existing unit files and skips the daemon-reload
 # and restart for unchanged units. Uses --render to get the content install.sh would write.
-rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
-    SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
-    SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
+rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
+    SPIRA_INSTALL_FORCE=1 \
     units-install test --render 2>&1)"
 render_rc=$?
 if [ "$render_rc" != 0 ]; then

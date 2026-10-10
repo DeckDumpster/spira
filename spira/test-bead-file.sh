@@ -26,6 +26,12 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 mkdir -p "$T/chamber" "$T/run"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$T/conf.d"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$T/chamber"
 
 # ---------------------------------------------------------------------------
 # FAKE FAYTHS. builder (plan lane), maechen (maechen-sweep lane), empty (no labels).
@@ -74,30 +80,37 @@ esac
 STUB
 chmod +x "$STUB_BD"
 
+STUB_LC="$T/stub-lc"
+LC_LOG="$T/lc.log"
+cat > "$STUB_LC" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$LC_LOG_PATH"
+exit 0
+STUB
+chmod +x "$STUB_LC"
+
 # sp-g9mhe: bead.sh is now a shim onto the Rust `bead` binary, and sources conf.sh (which may
 # shell out to `spira-config`) before it even gets there — so the narrowed PATH below needs
 # spira-config's (and bead's own) directory the same way test-bead-contract.sh's fixture
 # already does, not just $HERE/usr/bin/bin.
 TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
 
+tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/db" SPIRA_REPO_MAP="$T/repo-map" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_GROOMER_LABEL="groom" \
+    SPIRA_SPIKE_LABEL="spike" SPIRA_CZAR_LABEL="czar-trigger" \
+    SPIRA_INCIDENT_LABEL="incident" SPIRA_PLAN_LABEL="plan" \
+    SPIRA_SUBMITTED_LABEL="testsubmitted" SPIRA_SCOPE_LABEL="testscope"
+
 run_bead() {
-    : > "$BD_LOG"
+    : > "$BD_LOG"; : > "$LC_LOG"
     env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
-        SPIRA_DB="$T/db" \
+        LC_LOG_PATH="$LC_LOG" \
+        SPIRA_LC_BIN="$STUB_LC" \
         SPIRA_HOME="$T" \
         SPIRA_REPO="$T" \
-        SPIRA_REPO_MAP="$T/repo-map" \
-        SPIRA_MAECHEN_LABEL="maechen-sweep" \
-        SPIRA_GROOMER_LABEL="groom" \
-        SPIRA_SPIKE_LABEL="spike" \
-        SPIRA_CZAR_LABEL="czar-trigger" \
-        SPIRA_INCIDENT_LABEL="incident" \
-        SPIRA_PLAN_LABEL="plan" \
-        SPIRA_SUBMITTED_LABEL="testsubmitted" \
-        SPIRA_SCOPE_LABEL="testscope" \
         SPIRA_BEAD_LANE_OVERRIDE="${SPIRA_BEAD_LANE_OVERRIDE:-}" \
         bead.sh file "$@" 2>&1
 }
@@ -113,9 +126,22 @@ want "work: bd create called" "create"  "$(cat "$BD_LOG")"
 out="$(run_bead "work bead" --for builder --repo testrepo)"
 nowant "work: no submitted label by default" "testsubmitted" "$(cat "$BD_LOG")"
 : > "$BD_LOG"
-out="$(run_bead "own fix" --for builder --repo testrepo --submitted)"; rc=$?
+out="$(run_bead "own fix" --for builder --repo testrepo --submitted --tip abc123)"; rc=$?
 is   "submitted: exits 0"               "0"             "$rc"
 want "submitted: configured label applied" "testsubmitted" "$(cat "$BD_LOG")"
+want "submitted: row created at the tip, not READY" "create-bead sp-test --priority 2 --title own fix --submitted-tip abc123" "$(cat "$LC_LOG")"
+
+out="$(run_bead "own fix" --for builder --repo testrepo --submitted)"; rc=$?
+is     "submitted without tip: refused"            "2"     "$rc"
+want   "submitted without tip: refusal names --tip" "--tip" "$out"
+nowant "submitted without tip: bd create NOT called" "create" "$(cat "$BD_LOG")"
+
+out="$(run_bead "own fix" --for builder --repo testrepo --tip abc123)"; rc=$?
+is     "tip without submitted: refused"            "2"     "$rc"
+nowant "tip without submitted: bd create NOT called" "create" "$(cat "$BD_LOG")"
+
+out="$(run_bead "work bead" --for builder --repo testrepo)"
+nowant "unsubmitted: no synchronous row creation"  "--submitted-tip" "$(cat "$LC_LOG")"
 out="$(run_bead "an event" --kind event --submitted)"; rc=$?
 is   "submitted on event: refused"      "2"             "$rc"
 

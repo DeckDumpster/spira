@@ -114,7 +114,7 @@ impl RoundOps for ProofOps {
     fn suspects(&self, suite: &str, members: &[String]) -> Vec<String> {
         crate::suspects_in(&self.wt, &self.changed, suite, members)
     }
-    fn eject(&mut self, member: &Member, suites: &[String]) {
+    fn eject(&mut self, member: &Member, suites: &[String], _owner: bool) {
         self.ejected.push((member.id.clone(), suites.to_vec()));
     }
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
@@ -169,7 +169,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         write(&repo_dir.join(path), body);
         commit(&repo_dir, id);
         let tip = git(&repo_dir, &["rev-parse", "HEAD"]);
-        members.push(Member { id: id.into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new() });
+        members.push(Member { id: id.into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() });
     }
     git(&repo_dir, &["checkout", "-q", "main"]);
 
@@ -182,7 +182,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         queue_dir: run.join("queue"),
         db: None,
         bd: "bd".into(),
-        express_label: "express".into(),
+        forge: PathBuf::new(),
         tsd_bin: None,
         round_vm: stub,
         queue_bin: root.join("queue"),

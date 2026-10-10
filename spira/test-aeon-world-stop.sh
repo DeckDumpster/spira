@@ -35,16 +35,21 @@ testdb_up aeonsworld || { echo "test-aeon-world-stop: could not build a fixture 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
@@ -60,7 +65,8 @@ BIN="$TMP/bin"; mkdir -p "$BIN"
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
 # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
-export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$BIN/claude"
+export TMP
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-aeon-world-stop: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
@@ -90,7 +96,7 @@ seed() {
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":["%s"],"updated_at":"2026-09-08T00:00:00Z"}\n' \
         "$1" "$(printf '%s' "$labels" | sed 's/,/","/g')" | testdb_seed
 }
-field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+field() { timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 run_aeon() { : > "$WORLD_CALLS"; rm -rf "$SPIRA_RUN/worktree"; PATH="$SPIRA_HOME:$PATH" aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }

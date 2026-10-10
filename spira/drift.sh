@@ -51,16 +51,17 @@ checkout() {
     return 1
 }
 
-# local_units <manifest> -> "<path>\t<bead>" per complete [[unit]] table. An entry without a
-# retiring bead is not a declaration: an interim must name what ends it.
+# local_units <manifest> -> "<path>\t<bead>" per complete [[unit]] table. An entry names
+# the bead that retires it, or says `permanent = true` (bead "-"); neither is no declaration.
 local_units() {
     local file="$1"
     [ -n "$file" ] && [ -r "$file" ] || return 0
     awk '
-        function flush() { if (path != "" && bead != "") printf "%s\t%s\n", path, bead; path = ""; bead = "" }
+        function flush() { if (perm) bead = "-"; if (path != "" && bead != "") printf "%s\t%s\n", path, bead; path = ""; bead = ""; perm = 0 }
         /^[[:space:]]*\[\[unit\]\]/ { flush(); next }
         /^[[:space:]]*path[[:space:]]*=/ { v = $0; sub(/^[^=]*=[[:space:]]*"/, "", v); sub(/"[[:space:]]*(#.*)?$/, "", v); path = v }
         /^[[:space:]]*bead[[:space:]]*=/ { v = $0; sub(/^[^=]*=[[:space:]]*"/, "", v); sub(/"[[:space:]]*(#.*)?$/, "", v); bead = v }
+        /^[[:space:]]*permanent[[:space:]]*=[[:space:]]*true/ { perm = 1 }
         END { flush() }
     ' "$file"
 }
@@ -71,6 +72,7 @@ declared_verdict() {
     local unitdir="$1" f="$2" why="$3" rel bead
     rel="${f#"$unitdir"/}"
     bead="${declared[$rel]:-}"
+    [ "$bead" = "-" ] && return 0
     if [ -z "$bead" ]; then
         printf 'UNSHIPPED %s (%s)\n' "$f" "$why"
         return 1
@@ -142,7 +144,11 @@ units() {
         fi
     done < <(find "$unitdir" -mindepth 2 -maxdepth 2 -path '*.d/*.conf' -type f 2>/dev/null | sort)
 
-    [ "$rc" = 0 ] && echo "drift: units clean — $unitdir matches what this install ships"
+    if [ "$rc" = 0 ]; then
+        echo "drift: units clean — $unitdir matches what this install ships"
+    else
+        echo "drift: to accept a file, declare it as a [[unit]] (path, reason, and bead or permanent = true) in ${SPIRA_LOCAL_UNITS:-the local-units manifest}"
+    fi
     return "$rc"
 }
 

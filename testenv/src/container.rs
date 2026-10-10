@@ -2,8 +2,9 @@
 //! driver (DESIGN.md §12, sp-s0e1k; replaces spira/testenv.sh). Everything that touches the
 //! host goes through [`Host`], so the orchestration is unit-tested against a fake.
 
-use crate::settings::{self, Source};
+use crate::settings::Source;
 use regex::Regex;
+use spira_config::process::{cfg, cfg_parse};
 use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -105,10 +106,11 @@ pub trait Host {
 pub struct Conf {
     /// The harness root: `<root>/spira/testenv/Containerfile`. None = not found.
     pub harness: Option<PathBuf>,
-    pub bd_pin: Option<PathBuf>,
+    pub bd_pin: PathBuf,
     pub registry: String,
     pub max_concurrent: i64,
     pub cpus: Option<String>,
+    pub pids_limit: u64,
     pub queue_timeout: u64,
     pub queue_poll: u64,
     pub heartbeat: u64,
@@ -116,51 +118,33 @@ pub struct Conf {
     pub basic_retry_sleep: u64,
 }
 
+/// SPIRA_TESTENV_CPUS: trimmed and kept only when it parses as a positive number — a given
+/// non-numeric or non-positive value is simply not an override (the cgroup's own CPU share
+/// governs), never a parse refusal; this key has no "bad value" the way SPIRA_BATCH_MAXPAR
+/// does. Pure over the already-fetched string so a unit test can drive it directly.
+fn valid_cpus(raw: &str) -> Option<String> {
+    let v = raw.trim().to_string();
+    v.parse::<f64>().is_ok_and(|n| n > 0.0).then_some(v)
+}
+
 impl Conf {
-    pub fn load(src: &Source, harness: Option<PathBuf>) -> Conf {
-        let num = |env: &str, cfg: Option<&str>, d: i64| -> i64 {
-            src.get(env, cfg)
-                .and_then(|v| v.trim().parse().ok())
-                .unwrap_or(d)
+    pub fn load(src: &Source, harness: Option<PathBuf>) -> Result<Conf, String> {
+        let num = |env: &str| -> Option<i64> {
+            src.get(env).and_then(|v| v.trim().parse().ok())
         };
-        let bd_pin = src
-            .get("SPIRA_BD_PIN", Some("spira.bd_pin"))
-            .map(PathBuf::from)
-            .or_else(|| {
-                let root = harness.clone().unwrap_or_default();
-                Some(settings::resolve_run(src, &root).join("bd-pin"))
-            });
-        Conf {
-            bd_pin,
-            registry: src
-                .get("SPIRA_TESTENV_REGISTRY", Some("spira.testenv_registry"))
-                .unwrap_or_default(),
-            max_concurrent: num(
-                "SPIRA_TESTENV_MAX_CONCURRENT",
-                Some("spira.testenv_max_concurrent"),
-                8,
-            ),
-            cpus: src
-                .get("SPIRA_TESTENV_CPUS", Some("spira.testenv_cpus"))
-                .map(|v| v.trim().to_string())
-                .filter(|v| v.parse::<f64>().is_ok_and(|n| n > 0.0)),
-            queue_timeout: num(
-                "SPIRA_TESTENV_QUEUE_TIMEOUT",
-                Some("spira.testenv_queue_timeout"),
-                900,
-            )
-            .max(0) as u64,
-            queue_poll: num(
-                "SPIRA_TESTENV_QUEUE_POLL",
-                Some("spira.testenv_queue_poll"),
-                5,
-            )
-            .max(1) as u64,
-            heartbeat: num("SPIRA_TESTENV_BUILD_HEARTBEAT", None, 60).max(1) as u64,
-            basic_wait_ticks: num("SPIRA_TESTENV_BASIC_WAIT_TICKS", None, 20).max(0) as u32,
-            basic_retry_sleep: num("SPIRA_TESTENV_BASIC_RETRY_SLEEP", None, 2).max(0) as u64,
+        Ok(Conf {
+            bd_pin: PathBuf::from(cfg("SPIRA_BD_PIN")?),
+            registry: cfg("SPIRA_TESTENV_REGISTRY")?,
+            max_concurrent: cfg_parse("SPIRA_TESTENV_MAX_CONCURRENT")?,
+            cpus: valid_cpus(&cfg("SPIRA_TESTENV_CPUS")?),
+            pids_limit: cfg_parse("SPIRA_TESTENV_PIDS_LIMIT")?,
+            queue_timeout: cfg_parse::<i64>("SPIRA_TESTENV_QUEUE_TIMEOUT")?.max(0) as u64,
+            queue_poll: cfg_parse::<i64>("SPIRA_TESTENV_QUEUE_POLL")?.max(1) as u64,
+            heartbeat: num("SPIRA_TESTENV_BUILD_HEARTBEAT").unwrap_or(60).max(1) as u64,
+            basic_wait_ticks: num("SPIRA_TESTENV_BASIC_WAIT_TICKS").unwrap_or(20).max(0) as u32,
+            basic_retry_sleep: num("SPIRA_TESTENV_BASIC_RETRY_SLEEP").unwrap_or(2).max(0) as u64,
             harness,
-        }
+        })
     }
 
     fn spira_dir(&self) -> Option<PathBuf> {
@@ -176,7 +160,7 @@ pub const HARNESS_MARKER: &str = "spira/testenv/Containerfile";
 
 pub const USAGE: &[&str] = &[
     "usage: testenv container up|down|exec|probe|tag|image|publish [OPTIONS]",
-    "  up      [--name NAME] [--checkout PATH] [--queue-timeout SECS]",
+    "  up      [--name NAME] [--checkout PATH] [--queue-timeout SECS] [--pids-limit N] [--memory SIZE]",
     "  down    [--name NAME] [--volumes] [--force-foreign]",
     "  exec    [--name NAME] [--user USER] CMD ARGS...",
     "  probe   [--name NAME]",
@@ -215,6 +199,12 @@ const DEPS_TIERS_DOCTOR_CHECK_READS: &[&str] = &["runtime", "optional", "operato
 /// (the podman build context) — `testenv/Containerfile` `COPY`s it from exactly here.
 /// Named so a missing one is a loud `COPY` failure, not a silent absence.
 pub const DOCTOR_CHECK_SPIRA_CONFIG: &str = "testenv/.doctor-check-spira-config";
+
+/// The complete config the image build's two conf.sh-sourcing steps name as `SPIRA_TOML`
+/// (conf.sh refuses without one), staged from the repository's own fixture at
+/// [`DOCTOR_CHECK_FIXTURE`]. The build context is `spira/`, which holds neither.
+pub const DOCTOR_CHECK_TOML: &str = "testenv/.doctor-check.toml";
+const DOCTOR_CHECK_FIXTURE: &str = "spira-config/tests/fixtures/complete.toml";
 
 /// The build closure's share of deps.toml: `<name> <tier>\n` for every entry whose tier
 /// doctor-check.sh checks, sorted by name so the text is independent of the manifest's own
@@ -288,10 +278,9 @@ impl Driver<'_> {
             return None;
         };
         let mut closure = sha256sum_line(&cf_bytes);
-        if let Some(pin) = &self.conf.bd_pin {
-            if self.host.is_file(pin) {
-                closure.extend(self.host.read(pin).unwrap_or_default());
-            }
+        let pin = &self.conf.bd_pin;
+        if self.host.is_file(pin) {
+            closure.extend(self.host.read(pin).unwrap_or_default());
         }
         closure.extend(sha256sum_line(deps_text.as_bytes()));
         Some(crate::verdict::sha256_hex(&closure)[..12].to_string())
@@ -439,6 +428,20 @@ impl Driver<'_> {
         }
     }
 
+    fn stage_doctor_check_toml(&self, dir: &Path, context: &Path) -> bool {
+        let Some(root) = dir.parent() else {
+            self.err("testenv: cannot find the repository root above the harness — no config to stage for doctor-check");
+            return false;
+        };
+        match self.host.copy_file(&root.join(DOCTOR_CHECK_FIXTURE), &context.join(DOCTOR_CHECK_TOML)) {
+            Ok(()) => true,
+            Err(why) => {
+                self.err(&format!("testenv: could not stage {DOCTOR_CHECK_FIXTURE} into the build context: {why}"));
+                false
+            }
+        }
+    }
+
     fn build_image(&self, img: &str) -> bool {
         let Some(dir) = self.need_harness("image") else {
             return false;
@@ -469,6 +472,11 @@ impl Driver<'_> {
             self.err("testenv: refusing the image build — no spira-config to stage for doctor-check (see above)");
             return false;
         };
+        if !self.stage_doctor_check_toml(&dir, &context) {
+            self.host.remove_tree(&context);
+            self.err("testenv: refusing the image build — no config to stage for doctor-check (see above)");
+            return false;
+        }
         let log = self.host.temp_log();
         let start = self.host.now();
         let args = vec![
@@ -636,6 +644,18 @@ impl Driver<'_> {
         (rc == 0).then_some(out)
     }
 
+    fn kernel_task_ceiling_below(&self, limit: u64) -> Option<(&'static str, u64)> {
+        [
+            ("kernel.pid_max", "/proc/sys/kernel/pid_max"),
+            ("kernel.threads-max", "/proc/sys/kernel/threads-max"),
+        ]
+        .into_iter()
+        .find_map(|(key, path)| {
+            let v = self.host.sysctl(path)?.trim().parse::<u64>().ok()?;
+            (v < limit).then_some((key, v))
+        })
+    }
+
     fn inotify_pressure(&self) -> (String, String) {
         let used = self.host.inotify_used();
         let a = self
@@ -761,6 +781,8 @@ impl Driver<'_> {
         let mut checkout: Option<String> = None;
         let mut queue_bound = self.conf.queue_timeout;
         let mut build = true;
+        let mut pids_limit = self.conf.pids_limit;
+        let mut memory: Option<String> = None;
         let mut i = 0;
         while i < args.len() {
             if args[i] == "--no-build" {
@@ -776,6 +798,10 @@ impl Driver<'_> {
                         return 1;
                     }
                 },
+                ("--pids-limit", Some(v)) if v.parse::<u64>().is_ok_and(|n| n > 0) => {
+                    pids_limit = v.parse().unwrap_or(pids_limit)
+                }
+                ("--memory", Some(v)) if !v.is_empty() => memory = Some(v.clone()),
                 ("--name", Some(v)) => name = v.clone(),
                 ("--checkout", Some(v)) => checkout = Some(v.clone()),
                 (a, _) => {
@@ -821,7 +847,13 @@ impl Driver<'_> {
             self.err("testenv: cannot tell whether podman is rootless; refusing to start without network isolation");
             return 1;
         };
-        // pids-limit 8192: 52 parallel suites exhausted podman's rootless default of 2048.
+        if let Some((key, ceiling)) = self.kernel_task_ceiling_below(pids_limit) {
+            self.err(&format!(
+                "testenv: {key} is {ceiling}, below the container pids limit {}; raising the container limit alone does nothing — raise {key} or lower the limit",
+                pids_limit
+            ));
+            return 1;
+        }
         let run: Vec<String> = [
             s("run"),
             s("-d"),
@@ -829,7 +861,7 @@ impl Driver<'_> {
             name.clone(),
             s("--systemd=true"),
             s("--pids-limit"),
-            s("8192"),
+            pids_limit.to_string(),
             s("--network"),
             s(network),
             s("--label"),
@@ -839,6 +871,7 @@ impl Driver<'_> {
         ]
         .into_iter()
         .chain(self.conf.cpus.iter().flat_map(|c| [s("--cpus"), c.clone()]))
+        .chain(memory.iter().flat_map(|m| [s("--memory"), m.clone()]))
         .chain(extra_mounts)
         .chain([
             s("--volume"),
@@ -1123,6 +1156,7 @@ pub fn human(bytes: u64) -> String {
 impl Host for RealHost {
     fn podman(&self, args: &[String], io: Io) -> (i32, String) {
         use std::process::{Command, Stdio};
+        // batch-job: podman runs for as long as its work does
         let mut c = Command::new("podman");
         c.args(args).stdin(Stdio::null());
         // `podman run`/`up` starts conmon, which daemonizes and outlives this call; it must
@@ -1168,6 +1202,7 @@ impl Host for RealHost {
         let Ok(g) = f.try_clone() else {
             return Box::new(FailedBuild);
         };
+        // batch-job: podman runs for as long as its work does
         let mut c = Command::new("podman");
         c.args(args).stdin(Stdio::null()).stdout(f).stderr(g);
         crate::util::close_inherited_fds(&mut c);
@@ -1178,6 +1213,7 @@ impl Host for RealHost {
     }
 
     fn exec_replace(&self, args: &[String]) -> i32 {
+        // batch-job: podman runs for as long as its work does
         let mut c = std::process::Command::new("podman");
         c.args(args);
         // A true exec, not a fork: pre_exec still runs, in this process, right before it —
@@ -1220,6 +1256,7 @@ impl Host for RealHost {
         std::env::current_exe().ok()
     }
     fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf> {
+        // batch-job: cargo runs for as long as its work does
         let ok = std::process::Command::new("cargo")
             .args(["build", "--release", "-p", "spira-config"])
             .current_dir(repo_root)
@@ -1240,6 +1277,7 @@ impl Host for RealHost {
             self.now()
         ));
         std::fs::create_dir_all(&dest).map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
+        // batch-job: cp runs for as long as its work does
         let copied = std::process::Command::new("cp")
             .arg("-R")
             .arg("--no-preserve=mode,ownership")
@@ -1376,14 +1414,16 @@ impl Host for RealHost {
 }
 
 /// `testenv container <args>`.
-pub fn main(
-    args: &[String],
-    harness: Option<PathBuf>,
-    config: Option<&spira_config::SpiraToml>,
-) -> i32 {
+pub fn main(args: &[String], harness: Option<PathBuf>) -> i32 {
     let env = |k: &str| std::env::var(k).ok();
-    let src = Source { env: &env, config };
-    let conf = Conf::load(&src, harness);
+    let src = Source { env: &env };
+    let conf = match Conf::load(&src, harness) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("testenv container: {e}");
+            return 1;
+        }
+    };
     Driver {
         host: &RealHost,
         conf: &conf,

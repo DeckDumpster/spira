@@ -200,10 +200,9 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "runs spira-lint's scratch-fence rule", "spira-lint --only scratch-fence", g);
     j.want(GATE, "runs the testenv runner on the staged release's build", "testenv --artifacts \"$SPIRA_RELEASE/bin\" --suites -", g);
     j.want(GATE, "its retry tests the same prebuilt set", "GATE_RETRY_ARTIFACTS=\"$SPIRA_RELEASE/bin\" bash spira/gate-retry.sh", g);
-    // 2. queue PRs use diff-selected suites
+    // 2. queue and publish PRs run the whole corpus
     j.want(GATE, "the selected list is piped via --suites", "--suites", g);
-    j.want(GATE, "queue PRs use the selector", "suite-select select", g);
-    j.want(GATE, "queue PRs match spira/queue/", "spira/queue/", g);
+    j.want(GATE, "queue and publish PRs match their branches", "spira/(queue|publish)/", g);
     // 3. an infrastructure fault is not a branch failure
     j.want(GATE, "the harness-fault exit code is handled", "75", g);
     // 4. release only by explicit dispatch, only on the base branch
@@ -246,10 +245,10 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "fetch-depth is set", "fetch-depth", g);
     j.want(GATE, "tags are fetched", "fetch-tags", g);
     // 7. the runner is provisioned per run
-    j.want(GATE, "the VM is provisioned", "ephemeral-ci/provision@v1", g);
+    j.want(GATE, "the VM is provisioned", "ephemeral-ci/provision@v2", g);
     j.want(GATE, "the gate targets that VM", "needs.provision.outputs.label", g);
     // 8. the VM is destroyed whatever the outcome
-    j.want(GATE, "teardown runs", "ephemeral-ci/teardown@v1", g);
+    j.want(GATE, "teardown runs", "ephemeral-ci/teardown@v2", g);
     j.want(GATE, "teardown is unconditional", "always()", g);
     // 9. the gate confirms which machine it landed on
     j.want(GATE, "the runner identity is checked", "RUNNER_NAME", g);
@@ -297,8 +296,8 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     // 14. push to main selects nothing
     let sel = step(g, "Select suites", false);
     j.located(GATE, "the Select suites step", &sel);
-    j.want(GATE, "select matches queue PRs", "spira/queue/", &sel);
-    j.want(GATE, "queue selection uses the selector", "suite-select select", &sel);
+    j.want(GATE, "select matches queue and publish PRs", "spira/(queue|publish)/", &sel);
+    j.want(GATE, "queue and publish selection enumerates the corpus", "ls spira/test-*.sh", &sel);
     j.want(GATE, "PR selection uses the selector's gate pipeline", "suite-select gate", &sel);
     j.want(GATE, "select has a dedicated push branch", "\"push\"", &sel);
     let push_branch = between(&sel, |l| l.contains("= \"push\""), |l| l == "          else");
@@ -377,6 +376,7 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "the staging step sets SPIRA_RELEASE for every later step", "SPIRA_RELEASE=%s", &stage);
     j.want(GATE, "the staging step sets PATH for every later step", "PATH=%s", &stage);
     j.want(GATE, "the staging step names the checkout as the repository under test", "SPIRA_REPO=%s", &stage);
+    j.want(GATE, "the staging step declares SPIRA_HOME for the release tool", "SPIRA_HOME: ${{ github.workspace }}/spira", &stage);
     j.want(GATE, "the staging step writes both to GITHUB_ENV", "GITHUB_ENV", &stage);
     j.want(GATE, "PATH starts with the staged release", "_path=\"$_rel/bin:$_rel/spira:", &stage);
     j.want(GATE, "the suites step runs after the staging step", "Stage the build as a release", &suites_job);
@@ -688,4 +688,10 @@ mod tests {
             vec!["pve-ca-cert"]
         );
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(GateWorkflow),
+    ]
 }

@@ -1,0 +1,40 @@
+epoch = 1800000000
+horizon = 3600000
+goal = "sp-cs01:LANDED"
+real_actors = ["sentinel-summon", "sentinel-landing", "sift", "rounds"]
+
+[[actor]]
+name = "gate-worker"
+command = "gate-worker run"
+first = 20000
+every = 30000
+duration_min = 2000
+duration_max = 10000
+
+[[step]]
+at = 0
+file = "sp-cs01"
+priority = 3
+
+[[step]]
+at = 0
+file = "sp-cs02"
+priority = 0
+
+[[step]]
+at = 0
+claim = "sp-cs01"
+script = ["commit out/shared.txt", "submit", "summon", "drop out/shared.txt", "commit out/cs01.txt", "submit"]
+
+[[step]]
+at = 0
+claim = "sp-cs02"
+script = ["commit out/shared.txt", "submit"]
+
+[[expect]]
+name = "loser_was_returned"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-cs01' AND lc_state = 'REWORK'"
+
+[[expect]]
+name = "priority_won_the_conflict"
+sql = "SELECT 1 FROM (SELECT min(seq) AS s FROM bead_state WHERE bead = 'sp-cs02' AND lc_state = 'LANDED') w, (SELECT min(seq) AS s FROM bead_state WHERE bead = 'sp-cs01' AND lc_state = 'LANDED') l WHERE w.s < l.s"

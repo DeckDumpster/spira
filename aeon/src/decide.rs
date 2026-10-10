@@ -65,6 +65,7 @@ pub enum NoteKey {
     Submitted,
     YieldHeadless,
     PreSession,
+    HarnessRed,
     Unlanded,
     NoProgress,
     NotJudged,
@@ -87,6 +88,7 @@ pub struct DispositionIn {
     pub operator_wait: bool,
     pub yield_headless: bool,
     pub session_started: bool,
+    pub harness_red: bool,
     pub outcome: Option<String>,
     pub submitted: bool,
     /// Did THIS session's own turn move the branch tip (sp-1zxru-2)? Distinct from
@@ -146,6 +148,9 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     if i.slain {
         return d("slain", false, Some("unjudged-slain"), Slain);
     }
+    if i.harness_red {
+        return d("harness-red", false, Some("unjudged-harness-red"), HarnessRed);
+    }
     if i.thrash {
         return if i.thrash_charged {
             d("requeue-thrash-charged", true, Some("thrash-stale"), ThrashCharged)
@@ -198,20 +203,6 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     } else {
         Disposition { ledger_status: status.to_string(), charge: false, requeue_cause: Some(format!("unjudged-{outcome}")), note: NotJudged }
     }
-}
-
-/// Did the session's builder hand its bead on by closing it — the legacy close path the
-/// verdict fences (sp-mve9i; teardown's own closed branch is deleted, sp-v62vn)? Read from the bead's
-/// lifecycle row, never bd's `status` (design §3.4: bd status is inert for work beads).
-///
-/// A restricted session (every session the aeon launches) hands its bead on only through the work verbs
-/// (`work submit`/`done`), which teardown's disposition reads as `submitted`
-/// (`lc_bead_verified`); bd's status never moved for it, so it never took this path and
-/// still does not. An unrestricted session's close is the row past the builder
-/// (`lc_state::past_builder`). No row is not a close: the conservative answer, which sends
-/// the bead through the disposition (release, never a reopen).
-pub fn builder_closed(restricted: bool, row: Option<&spira_config::lc_state::Row>) -> bool {
-    !restricted && row.is_some_and(|r| r.past_builder())
 }
 
 /// A restricted session handed its bead on by `work submit`: the row stands SUBMITTED. The
@@ -450,7 +441,6 @@ mod tests {
         let row = |st: &str| spira_config::lc_state::Row { bead_id: "sp-x".into(), state: st.into(), ..Default::default() };
         // Every session is restricted: its hand-on is SUBMITTED, never a bd close.
         assert!(builder_submitted(true, Some(&row("SUBMITTED"))));
-        assert!(!builder_closed(true, Some(&row("SUBMITTED"))));
         assert!(!builder_submitted(true, Some(&row("WORKING"))));
         assert!(!builder_submitted(true, Some(&row("REWORK"))));
         assert!(!builder_submitted(true, None));
@@ -507,6 +497,9 @@ mod tests {
         assert_eq!(disposition(&i), d("open", false, Some("unjudged-killed"), NoteKey::NotJudged));
         i.session_started = false;
         assert_eq!(disposition(&i), d("pre-session", true, None, NoteKey::PreSession));
+        i.harness_red = true;
+        assert_eq!(disposition(&i), d("harness-red", false, Some("unjudged-harness-red"), NoteKey::HarnessRed), "a session the harness could not start is not an attempt");
+        i.harness_red = false;
         i.yield_headless = true;
         assert_eq!(disposition(&i).note, NoteKey::YieldHeadless);
         i.submitted = true;

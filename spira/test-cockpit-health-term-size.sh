@@ -37,7 +37,11 @@ echo "test-cockpit-health-term-size.sh"
 # The exact live-pane reproduction: an 81-row, 168-column pane running `health loop`, given
 # a moment to paint, then captured. Never the operator's own server — TMUX_TMPDIR scopes
 # this to a private one, and $T is a throwaway directory no other test or process shares.
-TMUX_TMPDIR="$T" tmux new-session -d -x 168 -y 81 -e "SPIRA_RUN=$RUN" "health loop"
+# SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare it via
+# tl_config — `health` no longer reads the -e SPIRA_RUN below from its environment, but the
+# new session's SPIRA_TOML is seeded from this process's, which tl_config writes into.
+tl_config SPIRA_RUN="$RUN"
+TMUX_TMPDIR="$T" tmux new-session -d -x 168 -y 81 -e "SPIRA_RUN=$RUN" -e "SPIRA_HOME=$HERE" "health loop"
 sleep 3
 OUT="$(TMUX_TMPDIR="$T" tmux capture-pane -p)"
 

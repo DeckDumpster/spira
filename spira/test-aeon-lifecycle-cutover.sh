@@ -74,18 +74,18 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
 SERVER_PID=$!
 
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         up=1; break
     fi
     sleep 0.2
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+root_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
 # spira-lc and work are the tree's own build, invoked by name on the suite's PATH (sp-gypjk).
 for _t in spira-lc work; do command -v "$_t" >/dev/null 2>&1 || bail "$_t is not on PATH"; done
@@ -96,6 +96,12 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# SPIRA_LC_PASSWORD_FILE EXPLICITLY, EMPTY: it is a registered key, resolved from SPIRA_TOML
+# alone now — left undeclared it falls to the complete fixture's own (nonexistent) path, and
+# every spira-lc call below refuses before ever reaching the dolt server. Empty matches
+# root's actual password (the throwaway server takes none).
+LC_CRED="$TMP/lc.credential"; : > "$LC_CRED"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_CRED"
 
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
@@ -134,14 +140,14 @@ want "spira-lc list carries a stacked row's real stack_depth, not the column-mis
 want "spira-lc list carries the stacked row's own stack map" 'sp-lc-below' "$stacked_row"
 
 SOCK="$TMP/spira-lc.sock"
-SPIRA_LC_SOCKET="$SOCK" spira-lc serve "$SOCK" >"$TMP/serve.log" 2>&1 &
+tl_config SPIRA_LC_SOCKET="$SOCK"
+spira-lc serve "$SOCK" >"$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
 for _ in $(seq 1 50); do
     [ -S "$SOCK" ] && break
     sleep 0.1
 done
 [ -S "$SOCK" ] || bail "spira-lc serve never created its socket: $(cat "$TMP/serve.log")"
-export SPIRA_LC_SOCKET="$SOCK"
 
 seed_bead() {   # seed_bead <bead-id> <state> [holder] [lease_until]
     local holder_sql="NULL" lease_sql="NULL"
@@ -151,7 +157,7 @@ seed_bead() {   # seed_bead <bead-id> <state> [holder] [lease_until]
         "REPLACE INTO bead (bead_id, state, holds, version, updated_at, holder, lease_until) VALUES ('$1','$2','[]',0,0,$holder_sql,$lease_sql)" >/dev/null 2>&1
 }
 row_json() {   # row_json <bead-id> -> the row's JSON, for want/nowant substring checks
-    root_sql --use-db spira_lifecycle sql -q "SELECT state, holder, version FROM bead WHERE bead_id='$1'" -r json 2>/dev/null
+    root_sql --use-db spira_lifecycle sql -q "SELECT state, holder, persona, version FROM bead WHERE bead_id='$1'" -r json 2>/dev/null
 }
 
 # shellcheck disable=SC1090
@@ -165,6 +171,18 @@ seed_bead "sp-lcrdy1" READY
 lc_claim_bead "sp-lcrdy1" "aeon-t1" 999999999
 is "claim from READY: applied (exit 0)" "0" "$?"
 want "claim from READY: row is now WORKING" '"state":"WORKING"' "$(row_json sp-lcrdy1)"
+
+# The claiming persona rides beside the holder: one aeon name, two personas, each row its own;
+# a claim that names none (a row from before the column) reports NULL, not a guess.
+seed_bead "sp-lcper1" READY
+seed_bead "sp-lcper2" READY
+seed_bead "sp-lcper3" READY
+lc_claim_bead "sp-lcper1" "aeon-mindy" 999999999 '{}' 0 4 builder
+lc_claim_bead "sp-lcper2" "aeon-mindy" 999999999 '{}' 0 4 ops
+lc_claim_bead "sp-lcper3" "aeon-mindy" 999999999
+want "persona: the builder claim records builder" '"persona":"builder"' "$(row_json sp-lcper1)"
+want "persona: the ops claim under the same name records ops" '"persona":"ops"' "$(row_json sp-lcper2)"
+nowant "persona: a claim naming none is not guessed" '"persona":"' "$(row_json sp-lcper3)"
 
 # sp-zw9ot: batched at 16:59; an aeon claims at 17:00 -> refused.
 seed_bead "sp-zw9ot" IN_DELIVERY
@@ -198,6 +216,17 @@ _held="$(row_json sp-lcheld)"
 want "claim over a live holder: the holder keeps it" '"holder":"aeon-live"' "$_held"
 want "claim over a live holder: no transition applied" '"version":"0"' "$_held"
 
+seed_bead "sp-lcrpt" READY
+lc_claim_bead "sp-lcrpt" "aeon-t2" 999999999
+is "repeat claim: first applies (exit 0)" "0" "$?"
+lc_claim_bead "sp-lcrpt" "aeon-t2" 999999999
+is "repeat claim by the holder: already yours (exit 0)" "0" "$?"
+_rpt="$(row_json sp-lcrpt)"
+want "repeat claim: still held by the claimant" '"holder":"aeon-t2"' "$_rpt"
+want "repeat claim: applied once" '"version":"1"' "$_rpt"
+lc_claim_bead "sp-lcrpt" "aeon-other" 999999999
+is "claim by another holder after a repeat: refused (exit 3)" "3" "$?"
+
 # ===========================================================================
 echo
 echo "lc_release_bead: WORKING returns to READY; past WORKING is a harmless no-op:"
@@ -211,6 +240,19 @@ lc_release_bead "sp-lcrel2" "aeon-t3"
 rc=$?
 is "release past WORKING: never fails the caller" "0" "$rc"
 want "release past WORKING: row is untouched (Release illegal from SUBMITTED)" '"state":"SUBMITTED"' "$(row_json sp-lcrel2)"
+
+_sent=0
+_real_lc_event_bead="$(declare -f lc_event_bead)"
+lc_event_bead() { _sent=$((_sent + 1)); return 3; }
+for _st in REWORK SUBMITTED DONE READY; do
+    seed_bead "sp-lcrel-$_st" "$_st"
+    lc_release_bead "sp-lcrel-$_st" "overseer"
+done
+is "release from a non-WORKING row sends no event (no refusal for the alarm to count)" "0" "$_sent"
+seed_bead "sp-lcrel-w" WORKING "aeon-t3" 999999999
+lc_release_bead "sp-lcrel-w" "aeon-t3"
+is "release from WORKING still sends its event" "1" "$_sent"
+eval "$_real_lc_event_bead"
 
 # ===========================================================================
 echo
@@ -233,19 +275,23 @@ echo
 echo "End to end through the real aeon.sh: no bd on the model's PATH, WORKING until work submit:"
 # ===========================================================================
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-FREPO="$TMP/repo"; git clone -q "$ORIGIN" "$FREPO" 2>/dev/null
+FREPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$FREPO" 2>/dev/null
 git -C "$FREPO" config user.email t@t; git -C "$FREPO" config user.name t
 printf 'seed\n' > "$FREPO/f"
-git -C "$FREPO" add f; git -C "$FREPO" commit -qm seed; git -C "$FREPO" push -q origin main 2>/dev/null
+git -C "$FREPO" add f; git -C "$FREPO" commit -qm seed; timeout 5 git -C "$FREPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
 # work-env.sh is retired (sp-zpaq0): the aeon binary builds its own restricted environment.
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$FREPO" > "$SPIRA_REPO_MAP"
+# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# now (no longer derived from SPIRA_HOME when unset), so the fixture persona built below
+# under $SPIRA_HOME/chamber would otherwise never be found.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
@@ -255,7 +301,8 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+BIN="$TMP/bin"; mkdir -p "$BIN"; export TMP
+tl_config SPIRA_AGENT="$BIN/claude"
 command -v aeon >/dev/null 2>&1 \
     || bail "aeon is not on PATH — refusing to run the real model"
 
@@ -297,7 +344,7 @@ is "work submit exited 0 (applied)" "0" "$(cat "$TMP/work-submit-rc" 2>/dev/null
 want "the machine's row: WORKING (claimed) then SUBMITTED (work submit) — never closed" \
     '"state":"SUBMITTED"' "$(row_json "$BID")"
 
-bstatus="$(bd -C "$SPIRA_DB" show "$BID" --json 2>/dev/null | python3 -c '
+bstatus="$(timeout 5 bd -C "$SPIRA_DB" show "$BID" --json 2>/dev/null | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("status","") if d else "")' 2>/dev/null)"

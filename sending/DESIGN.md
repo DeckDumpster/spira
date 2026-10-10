@@ -65,6 +65,24 @@ computed. Otherwise, in order (the forge is asked only after every local check s
 holder witnesses say nobody is home, is removed through `spira_destroy_worktree`; then
 `spira_prune_worktrees`. `--dry-run` says `WOULD …` for every action and changes nothing.
 
+**`sending reap-terminal [--dry-run]`** (hourly, `spira-reap-terminal.timer`) is the reaper for
+the directory itself, independent of branch dispositions. State comes from one `spira-lc
+list`; an empty or failed listing refuses and deletes nothing. For every entry under
+`$SPIRA_RUN/worktree/` (dot-named trees are never touched):
+
+| entry | action |
+|---|---|
+| a row in a terminal state (DONE, LANDED, DROPPED, SUPERSEDED) | remove the worktree through `spira_destroy_worktree` (held and dirty trees refuse or salvage there) |
+| a row in any other state | keep |
+| no row, older than `SPIRA_SCRATCH_MAX_AGE_HOURS` | scratch: remove |
+| no row, younger | keep |
+
+A checkout whose HEAD holds commits that neither a land ref nor any branch or archive ref
+reaches is kept either way, as is one whose land ref or HEAD cannot be read. Attached to its
+own branch, a worktree holds nothing unsaved: the branch keeps the commits. Branches are
+`sending --all`'s business, not this verb's. `sending` with no arguments prints usage and
+exits 2; the full sweep is `sending --all`.
+
 **Output** is the shell's, line for line (`SENT`, `REAPED`, `ARCHIVED`, `KEEP`, `HELD`,
 `SKIP`, `WOULD`, `FAILED`, lib.sh `log` lines), ending `… spira: sending: <n> sent,
 <m> failed` unless dry. The wire token is `SENT` (test-wire-token.sh).

@@ -6,10 +6,12 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::settings::{derive_run, Source};
+use crate::settings::Source;
+use spira_config::process::{cfg, cfg_parse};
 
-/// Resolved settings (DESIGN-suites.md §2.5): environment, then spira.toml through the
-/// spira-config library, then the default.
+/// Resolved settings (DESIGN-suites.md §2.5): registered keys (`spira/conf.d`) through
+/// `spira_config::process::cfg`/`cfg_parse` — the one source of config; a handful of
+/// non-registered names (SPIRA_AEON) still read the environment directly via `Source`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     /// The harness root (suites.sh's `$HERE/..`).
@@ -31,62 +33,37 @@ pub struct Settings {
     pub git_email: String,
 }
 
+/// SPIRA_SUITES_PRIORITY's declared range (0..=4) — pure, so a unit test can drive it
+/// without touching spira-config's per-process resolution cache.
+fn validate_priority(priority: u8) -> Result<u8, String> {
+    if priority > 4 {
+        return Err(format!(
+            "SPIRA_SUITES_PRIORITY={priority} is refused — priority must be 0..=4"
+        ));
+    }
+    Ok(priority)
+}
+
 impl Settings {
-    pub fn load(src: &Source, root: &Path) -> Settings {
-        let num = |env: &str, key: Option<&str>, d: u64| -> u64 {
-            src.get(env, key)
-                .and_then(|v| v.trim().parse().ok())
-                .unwrap_or(d)
-        };
-        let instance = src
-            .get("SPIRA_INSTANCE", Some("spira.instance"))
-            .unwrap_or_else(|| "prod".into());
-        let run = src
-            .get("SPIRA_RUN", Some("spira.run"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                let repo = src
-                    .get("SPIRA_REPO", None)
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| root.to_path_buf());
-                derive_run(&repo, &instance, src.env)
-            });
+    pub fn load(src: &Source, root: &Path) -> Result<Settings, String> {
         let suite_dir = root.join("spira");
-        let gate_list = src
-            .get("SPIRA_GATE_SUITES", Some("spira.gate_suites"))
-            .map(PathBuf::from)
-            .or_else(|| {
-                src.get("SPIRA_HOME", None)
-                    .map(|h| PathBuf::from(h).join("gate-suites"))
-            })
-            .unwrap_or_else(|| suite_dir.join("gate-suites"));
-        let priority = src
-            .get("SPIRA_SUITES_PRIORITY", Some("spira.suites_priority"))
-            .and_then(|v| v.trim().parse::<u8>().ok())
-            .filter(|p| *p <= 4)
-            .unwrap_or(3);
-        Settings {
-            state: src
-                .get("SPIRA_SUITES_STATE", Some("spira.suites_state"))
-                .map(PathBuf::from)
-                .unwrap_or_else(|| run.join("suites")),
-            stale: num("SPIRA_SUITES_STALE", Some("spira.suites_stale"), 21_600),
+        let gate_list = PathBuf::from(cfg("SPIRA_GATE_SUITES")?);
+        let priority = validate_priority(cfg_parse("SPIRA_SUITES_PRIORITY")?)?;
+        Ok(Settings {
+            state: PathBuf::from(cfg("SPIRA_SUITES_STATE")?),
+            stale: cfg_parse("SPIRA_SUITES_STALE")?,
             priority,
             gate_list,
-            suite_state_file: src
-                .get("SPIRA_SUITE_STATE_FILE", Some("spira.suite_state_file"))
-                .unwrap_or_else(|| "spira/suite-state".into()),
-            flake_at: num("SPIRA_FLAKE_QUARANTINE_AT", Some("spira.flake_quarantine_at"), 2),
-            flake_window: num("SPIRA_FLAKE_WINDOW", Some("spira.flake_window"), 604_800),
-            max_age: num("SPIRA_QUARANTINE_MAX_AGE", Some("spira.quarantine_max_age"), 604_800),
-            aeon: src.get("SPIRA_AEON", None).is_some(),
-            git_name: src.get("SPIRA_GIT_NAME", None).unwrap_or_else(|| "spira".into()),
-            git_email: src
-                .get("SPIRA_GIT_EMAIL", None)
-                .unwrap_or_else(|| "spira@spira.invalid".into()),
+            suite_state_file: cfg("SPIRA_SUITE_STATE_FILE")?,
+            flake_at: cfg_parse("SPIRA_FLAKE_QUARANTINE_AT")?,
+            flake_window: cfg_parse("SPIRA_FLAKE_WINDOW")?,
+            max_age: cfg_parse("SPIRA_QUARANTINE_MAX_AGE")?,
+            aeon: src.get("SPIRA_AEON").is_some(),
+            git_name: cfg("SPIRA_GIT_NAME")?,
+            git_email: cfg("SPIRA_GIT_EMAIL")?,
             root: root.to_path_buf(),
             suite_dir,
-        }
+        })
     }
 
     pub fn suite_path(&self, suite: &str) -> PathBuf {
@@ -233,32 +210,27 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    /// Every registered key here (SPIRA_RUN, SPIRA_SUITES_STALE, SPIRA_FLAKE_QUARANTINE_AT,
+    /// SPIRA_GATE_SUITES, SPIRA_SUITES_PRIORITY, SPIRA_SUITES_STATE, SPIRA_FLAKE_WINDOW,
+    /// SPIRA_GIT_NAME, SPIRA_GIT_EMAIL, SPIRA_SUITE_STATE_FILE, SPIRA_QUARANTINE_MAX_AGE) now
+    /// goes through `cfg`/`cfg_parse`, which resolve once per process from spira-config's own
+    /// cache — not something a unit test can drive per-case. That default/parse behavior is
+    /// spira-config's to test; what stays testable here is the pure validation below and the
+    /// one remaining non-registered field, `aeon`.
     #[test]
-    fn settings_env_then_config_then_default() {
-        let env: BTreeMap<&str, &str> = [
-            ("SPIRA_RUN", "/run/x"),
-            ("SPIRA_SUITES_STALE", "60"),
-            ("SPIRA_FLAKE_QUARANTINE_AT", "junk"),
-            ("SPIRA_AEON", "sp-1"),
-        ]
-        .into();
+    fn priority_above_four_is_refused_by_name() {
+        assert_eq!(validate_priority(0), Ok(0));
+        assert_eq!(validate_priority(4), Ok(4));
+        assert!(validate_priority(5).is_err());
+    }
+
+    #[test]
+    fn aeon_is_whether_spira_aeon_is_set_at_all() {
+        let env: BTreeMap<&str, &str> = [("SPIRA_AEON", "sp-1")].into();
         let f = |k: &str| env.get(k).map(|v| v.to_string());
-        let doc = spira_config::validate("[spira]\nsuites_state = \"/cfg/suites\"\nsuites_priority = \"1\"\n").unwrap();
-        let s = Settings::load(&Source { env: &f, config: Some(&doc) }, Path::new("/h"));
-        assert_eq!(s.state, PathBuf::from("/cfg/suites"));
-        assert_eq!(s.stale, 60);
-        assert_eq!(s.priority, 1);
-        assert_eq!(s.flake_at, 2, "a malformed value falls back to the default");
-        assert_eq!(s.gate_list, PathBuf::from("/h/spira/gate-suites"));
-        assert_eq!(s.lifecycle_file(), PathBuf::from("/h/spira/suite-state"));
-        assert!(s.aeon);
+        assert!(Source { env: &f }.get("SPIRA_AEON").is_some());
+
         let none = |_: &str| None;
-        let d = Settings::load(&Source { env: &none, config: None }, Path::new("/h"));
-        assert_eq!(d.priority, 3, "conf.sh's default, not suites.sh's shadowed 2");
-        assert_eq!((d.flake_window, d.max_age), (604_800, 604_800));
-        assert!(!d.aeon);
-        let home = |k: &str| (k == "SPIRA_HOME").then(|| "/prod/spira".to_string());
-        let h = Settings::load(&Source { env: &home, config: None }, Path::new("/h"));
-        assert_eq!(h.gate_list, PathBuf::from("/prod/spira/gate-suites"));
+        assert!(Source { env: &none }.get("SPIRA_AEON").is_none());
     }
 }

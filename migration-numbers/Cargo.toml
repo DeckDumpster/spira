@@ -1,0 +1,8 @@
+[package]
+name = "migration-numbers"
+version = "0.1.0"
+edition = "2021"
+description = "migration-numbers — renumbers a lifecycle migration whose number another member's merge already took; shared by every path that merges round members."
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

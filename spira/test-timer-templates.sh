@@ -5,7 +5,7 @@
 # unit files instead of six suites each re-reading them.
 #
 # tier: T0
-# covers: systemd/*.timer systemd/*.service install/src/manifest.rs install/src/values.rs systemd/concierge.service systemd/beads-push.service cockpit-collect/src/* supervise/** UC-instance-lifecycle-31
+# covers: systemd/*.timer systemd/*.service install/src/manifest.rs install/src/values.rs systemd/concierge.service systemd/beads-push.service cockpit-collect/src/* supervise/** UC-instance-lifecycle-31 UC-landing-merge-queue-50
 #
 # WHAT THIS GUARDS. Defect sp-7gklu: a timer template existed in systemd/ but was absent from
 # units.sh's UNITS array, so install.sh never wrote it to disk. Defect sp-mplcb: WatchdogSec
@@ -34,7 +34,8 @@ echo "units-install --list-union — UNITS, ENABLE and OPTIONAL:"
 # `--list-union` is the UNION across every combination of this box's conditional inputs —
 # "is this template listed ANYWHERE", the same completeness view the old static text parse
 # of every UNITS+=/ENABLE+=/OPTIONAL+= line (conditional or not) gave.
-_list_union_out="$(SPIRA_INSTANCE=t units-install --list-union 2>/dev/null)" \
+tl_config SPIRA_INSTANCE=t
+_list_union_out="$(units-install --list-union 2>/dev/null)" \
     || bail "units-install --list-union failed"
 units_all="$(printf '%s\n' "$_list_union_out" | awk '$1=="UNITS"{print $2}')"
 enable_all="$(printf '%s\n' "$_list_union_out" | awk '$1=="ENABLE"{print $2}')"

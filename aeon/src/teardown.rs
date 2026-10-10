@@ -48,35 +48,41 @@ impl Run<'_> {
         Some((o.code, o.text()))
     }
 
-    /// The checks the gate runs that need no host-wide admission: a rebase conflict against
-    /// the base, then (where the tree carries it) spira-lint and the build fence. Returns the
-    /// first red with its text; a tool that is absent (127) is skipped, never a red.
-    fn fast_tier_red(&self) -> Option<String> {
+    /// The in-session fast tier (`fast_tier::red`); a tool that is absent (127) is skipped,
+    /// never a red.
+    fn fast_tier_red(&self) -> Option<crate::fast_tier::Red> {
         let work = self.s.work.as_deref()?;
-        let br = &self.s.branch;
-        let mt = self.d.git.git(&self.s.repo, &["merge-tree", "--write-tree", &self.s.base_fq, br]);
-        if mt.code == 1 {
-            return Some(format!("{br} does not rebase onto {} cleanly:\n{}", self.s.base_fq, mt.text()));
-        }
-        if !work.join("spira/build-fence.sh").is_file() {
-            return None;
-        }
-        for (prog, args) in fast_tier_steps(&self.s.base_fq) {
-            let o = self.d.exec.exec(prog, &args, None, Some(work));
-            if o.code != 0 && o.code != 127 {
-                let name = if args.iter().any(|a| a == "spira/build-fence.sh") { "spira/build-fence.sh" } else { "spira-lint" };
-                return Some(format!("{name} failed (rc={}):\n{}{}", o.code, o.stdout, o.stderr));
-            }
-        }
-        None
+        crate::fast_tier::red(self.d.git, self.d.exec, &self.s.repo, work, &self.s.branch, &self.s.base_fq, false)
     }
 
     /// Refuses the handoff when the fast tier is red: the bead goes back to the graph with the
     /// failure text instead of waiting a certification cycle to learn it.
-    fn refuse_handoff(&self, red: &str) {
+    fn refuse_handoff(&self, red: &crate::fast_tier::Red) {
         let br = &self.s.branch;
-        self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{red}"));
+        let digest = crate::fast_tier::digest(&red.text);
+        if red.harness {
+            self.bead_reopen("fast-tier-harness", &format!("Reopened by aeon.sh: the in-session fast tier could not run on {br} (a tool failed, not the work) and the handoff was refused. No attempt charged.\n\n{digest}"));
+            self.log(&format!("{}: {} REOPENED — fast tier harness failure, no attempt charged", self.f(), self.s.bead));
+            return;
+        }
+        self.record_fact(crate::fast_tier::KIND, &digest);
+        self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{digest}"));
         self.log(&format!("{}: {} REOPENED — fast tier red, handoff refused", self.f(), self.s.bead));
+    }
+
+    /// A session that ends without submitting, when the bead's last fast-tier red named a
+    /// compile error and the session never ran `cargo check`, is recorded as a blind rework.
+    fn note_blind_rework(&self) {
+        let red = self.last_fast_tier_red();
+        if !crate::fast_tier::names_compile_error(&red) {
+            return;
+        }
+        let log = self.s.logf.as_deref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+        if log.contains("cargo check") || log.contains("build-fence") {
+            return;
+        }
+        self.record_fact("blind-rework", "ended without submitting; never ran cargo check against the last fast-tier red");
+        self.note("Blind rework: the previous closeout's fast tier named a compile error, and this session ended without submitting or ever running cargo check against it. Reproduce the error first.");
     }
 
     /// Commits naming this bead between the base and the branch.
@@ -90,6 +96,10 @@ impl Run<'_> {
         let id = self.s.bead.clone();
         let f = self.fayth.name.clone();
         self.stop_heartbeat();
+        let lc = self.lc_bead(&id);
+        if lc.as_ref().is_some_and(|r| r.working()) {
+            self.phase("teardown");
+        }
         self.fixture_drop();
         let _ = std::fs::remove_file(self.run_dir().join("aeon").join(format!("{id}.lease")));
         self.restore_world();
@@ -99,20 +109,20 @@ impl Run<'_> {
         // `st` is the ledger's word. A session hands its bead on only through the work verbs
         // (every session runs restricted since sp-v62vn), which the disposition reads as
         // `submitted` — there is no "the model closed the bead" branch here any more.
-        let lc = self.lc_bead(&id);
         let st = decide::ledger_word(lc.as_ref()).to_string();
         // Operator-wait is the lifecycle record's (sp-v62vn follow-up): the model asks
         // through `work ask`/`work blocked`, whose broker places an `ask` hold on this bead's
         // row. The claim released any bead already carrying a non-wait hold
         // (run.rs blocking_holds), so an ask hold here was placed during this session.
         let asked = lc.as_ref().is_some_and(|r| r.held("ask"));
+        let disposition = lc.as_ref().and_then(|r| r.disposition.as_deref());
+        let disposition_note = lc.as_ref().and_then(|r| r.disposition_note.clone()).unwrap_or_default();
         let logf = self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
 
-        let mut i = DispositionIn { status: st.clone(), session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, ..Default::default() };
+        let mut i = DispositionIn { status: st.clone(), session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, harness_red: self.s.harness_red.is_some(), ..Default::default() };
         let (mut reset, mut thrash_note, mut thrash_tip, mut streak) = (String::new(), String::new(), String::new(), 0i64);
         let (mut lapsed_quiet, mut lapsed_last, mut gw) = (String::new(), String::new(), String::new());
         let mut unlanded_reason = String::new();
-        let run = self.run_dir().to_path_buf();
         let work = self.s.work.clone();
         let short_tip = |this: &Self| {
             let o = this.d.git.git(work.as_deref().unwrap_or(Path::new("/dev/null")), &["rev-parse", "--short", "HEAD"]);
@@ -131,30 +141,27 @@ impl Run<'_> {
         if let Some(r) = cr {
             i.capacity = true;
             reset = r.to_string();
-        } else if run.join(format!("{id}.slain")).exists() {
+        } else if disposition == Some("slain") {
             i.slain = true;
-        } else if run.join(format!("{id}.thrash")).exists() {
+        } else if disposition == Some("thrash") {
             i.thrash = true;
-            thrash_note = std::fs::read_to_string(run.join(format!("{id}.thrash"))).unwrap_or_default().trim_end_matches('\n').to_string();
-            let _ = std::fs::remove_file(run.join(format!("{id}.thrash")));
+            thrash_note = disposition_note.clone();
             thrash_tip = short_tip(self);
             let n = if thrash_note.is_empty() { "?" } else { &thrash_note };
             streak = self.sv("thrash_streak_bump", &s(&[&id, &thrash_tip, n])).text().trim().parse().unwrap_or(0);
-            i.thrash_charged = streak >= self.conf.n("SPIRA_THRASH_STREAK_CAP", 2);
-        } else if run.join(format!("{id}.lapsed")).exists() {
+            i.thrash_charged = streak >= self.conf.i("SPIRA_THRASH_STREAK_CAP");
+        } else if disposition == Some("lapsed") {
             i.lapsed = true;
-            let body = std::fs::read_to_string(run.join(format!("{id}.lapsed"))).unwrap_or_default().trim_end_matches('\n').to_string();
-            match body.split_once('\t') {
+            match disposition_note.split_once('\t') {
                 Some((q, l)) => {
                     lapsed_quiet = q.into();
                     lapsed_last = l.into();
                 }
                 None => {
-                    lapsed_quiet = body.clone();
-                    lapsed_last = body;
+                    lapsed_quiet = disposition_note.clone();
+                    lapsed_last = disposition_note.clone();
                 }
             }
-            let _ = std::fs::remove_file(run.join(format!("{id}.lapsed")));
         } else if let Some((2, why)) = self.gate_status() {
             i.gate_unfinished = true;
             gw = why;
@@ -167,8 +174,6 @@ impl Run<'_> {
         } else if asked {
             i.operator_wait = true;
         } else if self.sv("lc_bead_verified", &s(&[&id])).success() {
-            i.submitted = true;
-        } else if bd::show(self.d.bd, &id).is_some_and(|r| r.has_label(&self.conf.submitted_label())) {
             i.submitted = true;
         } else if ledger::trace_segment(self.s.logf.as_deref(), 50_000, &self.conf.trace_mark()).is_some_and(|seg| decide::session_yield_headless(&seg)) {
             i.yield_headless = true;
@@ -192,7 +197,7 @@ impl Run<'_> {
         let d = decide::disposition(&i);
         let cause = d.requeue_cause.clone().unwrap_or_default();
         let status = d.ledger_status.clone();
-        let thrash_minutes = self.conf.n("SPIRA_THRASH_MINUTES", 20);
+        let thrash_minutes = self.conf.i("SPIRA_THRASH_MINUTES");
         match d.note {
             NoteKey::Capacity => {
                 let at: i64 = reset.trim().parse().unwrap_or(0);
@@ -208,6 +213,10 @@ impl Run<'_> {
             NoteKey::Slain => {
                 self.release();
                 self.bump_requeue(&cause);
+                if self.checkpoint_across_stop() {
+                    self.log(&format!("{f}: {id} slain by a world stop — checkpointed, no attempt charged"));
+                    return self.finish(rc, &status);
+                }
                 self.log(&format!("{f}: {id} slain — released, no attempt charged"));
                 return self.finish(rc, &status);
             }
@@ -300,6 +309,17 @@ impl Run<'_> {
                 self.release();
                 return self.finish(rc, &status);
             }
+            NoteKey::HarnessRed => {
+                let why = self.s.harness_red.clone().unwrap_or_default();
+                if rc == 0 {
+                    rc = 1;
+                }
+                self.bump_requeue(&cause);
+                self.note(&format!("Harness red (rc={rc}): the aeon could not start its session — {why}. NO attempt was charged and nothing about the work is implied; this repeats until the harness config is fixed."));
+                self.log(&format!("{f}: {id} harness red (rc={rc}): {why} — no attempt charged"));
+                self.release();
+                return self.finish(rc, &status);
+            }
             NoteKey::PreSession => {
                 if rc == 0 {
                     rc = 1;
@@ -311,6 +331,7 @@ impl Run<'_> {
             }
             NoteKey::Unlanded => {
                 let o = i.outcome.clone().unwrap_or_default();
+                self.note_blind_rework();
                 self.note(&format!("Unlanded ({o}): the session ran to its own end and left this bead open. That is a verdict about the work; the next claim counts toward the poison threshold via the events trail."));
                 self.log(&format!("{f}: {id} not closed ({o}), released"));
                 self.release();
@@ -332,7 +353,7 @@ impl Run<'_> {
                     if r.is_empty() { "no reason given".to_string() } else { r }
                 };
                 let streak: i64 = self.sv("thrash_streak_bump", &s(&[&id, &tip, &reason])).text().trim().parse().unwrap_or(0);
-                let cap = self.conf.n("SPIRA_THRASH_STREAK_CAP", 2);
+                let cap = self.conf.i("SPIRA_THRASH_STREAK_CAP");
                 self.bump_requeue(&cause);
                 self.release();
                 if streak >= cap {
@@ -353,11 +374,14 @@ impl Run<'_> {
                     self.log(&format!("{f}: {id} no-progress streak {streak}/{cap} at {tip} — routed to the Concierge, no attempt charged"));
                 } else {
                     let backoff_min = decide::no_progress_backoff_minutes(streak);
-                    let until = util::iso_utc(self.now() + backoff_min * 60);
-                    // A dated defer is bd's snooze: hidden from `bd ready` until `until`,
-                    // then it wakes to open on its own (`bd defer --help`). No bd status
-                    // write follows it — the release above is the lifecycle's (sp-mve9i).
-                    let _ = self.d.bd.bd(&s(&["update", &id, "--defer", &until]));
+                    let until_epoch = self.now() + backoff_min * 60;
+                    let until = util::iso_utc(until_epoch);
+                    // A timed `wait` hold on the lifecycle row: claim reads the expiry from its
+                    // reason, so nothing has to lift it and no bd status or defer is written.
+                    let held = self.d.exec.exec("spira-lc", &s(&["hold", &id, "wait", &spira_config::lc_state::snooze_reason(until_epoch), "aeon"]), None, None);
+                    if held.code != 0 {
+                        self.log(&format!("{f}: {id} snooze hold refused (rc={}): {}", held.code, held.stdout.trim()));
+                    }
                     self.note(&format!("No progress ({o}): {reason}\n\nHeld for {backoff_min}m (no-progress streak {streak}, branch stuck at {tip}) — not re-claimed until {until}. No attempt charged."));
                     self.log(&format!("{f}: {id} no-progress streak {streak} at {tip} — held {backoff_min}m until {until}, no attempt charged"));
                 }
@@ -365,7 +389,8 @@ impl Run<'_> {
             NoteKey::NotJudged => {
                 let o = i.outcome.clone().unwrap_or_default();
                 self.bump_requeue(&cause);
-                self.note(&format!("Not judged ({o}): the worker did not survive to judge this bead, so NO attempt was charged and nothing about the work is implied. See {logf}."));
+                let red = if o == "refused" { format!("Harness red (session exit rc={}, no transcript). ", self.s.session_rc) } else { String::new() };
+                self.note(&format!("{red}Not judged ({o}): the worker did not survive to judge this bead, so NO attempt was charged and nothing about the work is implied. See {logf}."));
                 self.log(&format!("{f}: {id} never judged ({o}) — no attempt charged"));
                 self.release();
             }
@@ -380,6 +405,7 @@ impl Run<'_> {
     fn remove_identity(&self) {
         if let Some(p) = &self.s.pidfile {
             let _ = std::fs::remove_file(p);
+            let _ = std::fs::remove_file(strand::probe::lease_file(p));
             let _ = std::fs::remove_file(p.with_extension("name"));
         }
         let mail = self.conf.s("SPIRA_MAIL");
@@ -396,33 +422,5 @@ impl Run<'_> {
         self.remove_identity();
         self.ledger_done(rc, status);
         rc
-    }
-}
-
-/// The fast tier's commands, in order. BOTH get the branch's base: spira-lint's diff-relative
-/// rules (plan-matrix, lockfile-lint, the tier-budget allowlists) exit with "no base to compare
-/// against" without SPIRA_GATE_BASE, so a bare `spira-lint` refused every aeon's handoff
-/// (sp-zh81k, 2026-10-04: four builders reopened in a row).
-fn fast_tier_steps(base_fq: &str) -> Vec<(&'static str, Vec<String>)> {
-    let base = format!("SPIRA_GATE_BASE={base_fq}");
-    vec![
-        ("env", vec![base.clone(), "spira-lint".to_string()]),
-        ("env", vec![base, "bash".to_string(), "spira/build-fence.sh".to_string()]),
-    ]
-}
-
-#[cfg(test)]
-mod fast_tier_steps_tests {
-    use super::fast_tier_steps;
-    #[test]
-    fn spira_lint_and_the_build_fence_both_run_against_the_branch_base() {
-        let steps = fast_tier_steps("refs/heads/local/main");
-        assert_eq!(steps.len(), 2);
-        for (prog, args) in &steps {
-            assert_eq!(*prog, "env");
-            assert_eq!(args[0], "SPIRA_GATE_BASE=refs/heads/local/main", "{args:?}");
-        }
-        assert_eq!(steps[0].1[1], "spira-lint");
-        assert_eq!(steps[1].1[1..], ["bash".to_string(), "spira/build-fence.sh".to_string()]);
     }
 }

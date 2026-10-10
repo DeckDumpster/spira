@@ -653,3 +653,25 @@ fn stall_bound_zero_and_unknown_ticks_never_reclaim() {
     let (live, _, _) = reap(&t, Pool::Test, 1, &p, 99_999, 600);
     assert_eq!(live.len(), 1);
 }
+
+#[test]
+fn a_fresh_lease_waits_out_the_stagger_while_others_are_held() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1), (30, 3, 1)]);
+    let take = |pid, st, who, now| try_take_staggered(&d, Pool::Test, 3, &h(pid, st, who), 0, now, &p, 30).unwrap().0;
+    assert_eq!(take(10, 1, "a", 100), Take::Admitted { slot: 1, fresh: true });
+    assert!(matches!(take(20, 2, "b", 110), Take::Busy { .. }));
+    assert_eq!(take(20, 2, "b", 130), Take::Admitted { slot: 2, fresh: true });
+    assert!(matches!(take(30, 3, "c", 131), Take::Busy { .. }));
+    assert_eq!(take(10, 1, "a", 140), Take::Admitted { slot: 1, fresh: false });
+}
+
+#[test]
+fn the_stagger_never_holds_an_empty_pool_or_a_disabled_one() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
+    let (t, _) = try_take_staggered(&d, Pool::Compile, 2, &h(10, 1, "a"), 0, 100, &p, 30).unwrap();
+    assert_eq!(t, Take::Admitted { slot: 1, fresh: true });
+    let (t, _) = try_take_staggered(&d, Pool::Compile, 2, &h(20, 2, "b"), 0, 101, &p, 0).unwrap();
+    assert_eq!(t, Take::Admitted { slot: 2, fresh: true });
+}

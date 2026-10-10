@@ -18,19 +18,25 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub mod lc_call;
 pub mod admission;
+pub mod bounded;
 pub mod build;
 pub mod chamber;
 pub mod containment;
 pub mod convert;
 pub mod deps;
 pub mod env_bootstrap;
+pub mod hostaddr;
 pub mod eval;
+pub mod init;
 pub mod legacy_map;
 pub mod lc_state;
 pub mod lifecycle_row;
+pub mod local_pass;
 pub mod locate;
 pub mod nonwork;
+pub mod process;
 pub mod registry;
 pub mod release_env;
 pub mod release_skew;
@@ -38,27 +44,14 @@ pub mod repos;
 pub mod resolve;
 pub mod room;
 pub mod scratch;
+pub mod session;
+pub mod stack_conflict;
 pub mod unit;
+pub mod vtime;
 pub mod writeback;
 
 pub use locate::LocateOutcome;
 
-/// THE ONE CRATE-WIDE ENV LOCK (sp-dh4fv). `cargo test`'s threads share this binary's
-/// process environment — `HOME`, `XDG_CONFIG_HOME`, `SPIRA_TOML`, `SPIRA_CONF`,
-/// `SPIRA_REPO`, and anything else a test sets or clears. Every test in this crate
-/// (including its `tests/` integration binaries, which each get their OWN copy of this
-/// static — see their own lock below) that reads `env::set_var`/`env::remove_var` must
-/// take this lock for its whole body, no exceptions. Before sp-dh4fv, `lib.rs` and
-/// `locate.rs` each had their own private `ENV_LOCK`, which serialized tests against others
-/// in the same module but not against the other module's tests — two locks that never
-/// contend is not a lock at all. `cargo test -p spira-config` (default, 32-wide thread
-/// pool) flaked on exactly that race; `--test-threads=1` hid it by accident. A function
-/// that only *reads* env outside of a test doesn't need this — only a test that mutates
-/// the process env does. Prefer not needing it at all: give the function a pure variant
-/// that takes the values as an argument (`chamber::persona_model_from_doc` is the pattern)
-/// and test that instead of the env-reading wrapper.
-#[cfg(test)]
-pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The one filename this schema's document is ever named on disk — every path-resolution
 /// function below builds on this instead of a caller spelling `"spira.toml"` itself.
@@ -77,18 +70,6 @@ pub fn find_under(dir: &Path) -> Option<PathBuf> {
 /// `spira.toml` or `repo-map`).
 pub fn toml_path_at(dir: &Path) -> PathBuf {
     dir.join(FILE_NAME)
-}
-
-/// The conventional `repo-map` filename, checked at `conf_dir` (if given) then as
-/// `<home>/repo-map.example` — the same lookup conf.sh's `_spira_repo_map_candidate` makes
-/// for a root other than this process's own `SPIRA_HOME`. `None` when neither exists.
-pub fn repo_map_candidate(conf_dir: Option<&Path>, home: &Path) -> Option<PathBuf> {
-    const REPO_MAP: &str = "repo-map";
-    conf_dir
-        .map(|d| d.join(REPO_MAP))
-        .into_iter()
-        .chain(std::iter::once(home.join(format!("{REPO_MAP}.example"))))
-        .find(|c| c.is_file())
 }
 
 /// `spira-config convert --conf <conf> --home <home> --out <out> [--repo-map <repo_map>]
@@ -127,8 +108,62 @@ pub fn discover(explicit: Option<PathBuf>) -> Option<PathBuf> {
 /// Reads and [`validate`]s the document at `path` — the one place a caller turns a resolved
 /// path into a [`SpiraToml`], instead of pairing its own `fs::read_to_string` with `validate`.
 pub fn load(path: &Path) -> Result<SpiraToml, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    validate(&text).map_err(|e| format!("{}: {e}", path.display()))
+    load_layered(&path.to_string_lossy()).map(|(doc, _)| doc)
+}
+
+/// `(added, removed)` key paths a `config-delta.toml` declares: `[added]` table keys and the
+/// `removed` array.
+pub fn parse_config_delta(text: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    let v: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let added = v.get("added").and_then(|a| a.as_table()).map(|t| t.keys().cloned().collect()).unwrap_or_default();
+    let removed = v
+        .get("removed")
+        .and_then(|a| a.as_array())
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    Ok((added, removed))
+}
+
+/// [`load`] plus the warnings and [`require_id_prefix`] — the check `spira-config validate`
+/// runs (doctor, pre-activate) over the config in force, layers and all.
+pub fn load_strict(path: &Path) -> Result<(SpiraToml, Vec<String>), String> {
+    let (doc, warnings) = load_layered(&path.to_string_lossy())?;
+    require_id_prefix(&doc)?;
+    Ok((doc, warnings))
+}
+
+/// THE ONE SOURCE, LAYERED (per Ryan 2026-10-05): `spec` is one file, or a `:`-separated list.
+/// The first is the complete base; each later file overrides only the keys it declares. Each
+/// layer is parsed once; the layers' tables are unioned key by key (a later layer's leaf
+/// replaces the earlier one, nested tables merge); the result is validated once. Every listed
+/// file must exist. Callers never see layers — they get one [`SpiraToml`].
+fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
+    let mut merged = toml::map::Map::new();
+    let mut any = false;
+    for p in spec.split(':').filter(|p| !p.is_empty()) {
+        any = true;
+        let text = std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?;
+        let toml::Value::Table(layer) = text.parse::<toml::Value>().map_err(|e| format!("{p}: {e}"))? else {
+            return Err(format!("{p}: not a TOML table"));
+        };
+        union_into(&mut merged, layer);
+    }
+    if !any {
+        return Err("no config file named".to_string());
+    }
+    validate_value(toml::Value::Table(merged)).map_err(|e| format!("{spec}: {e}"))
+}
+
+/// `over`'s keys into `base`: a nested table merges, anything else replaces.
+fn union_into(base: &mut toml::map::Map<String, toml::Value>, over: toml::map::Map<String, toml::Value>) {
+    for (k, v) in over {
+        match (base.get_mut(&k), v) {
+            (Some(toml::Value::Table(b)), toml::Value::Table(o)) => union_into(b, o),
+            (_, v) => {
+                base.insert(k, v);
+            }
+        }
+    }
 }
 
 /// The one variable a launcher builds PATH from (brain `runtime-is-a-release-2026-09-29`):
@@ -510,6 +545,10 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     // The lifecycle machine is the only mode (sp-v62vn): `true` is accepted with this warning;
     // any other value is refused by [`validate_with_warnings`] before the strip.
     RetiredKey { key: "lifecycle_enforce", bead: "sp-v62vn" },
+    // Express is lifecycle state (`spira-lc list --express`); no consumer reads a bd label.
+    RetiredKey { key: "express_label", bead: "sp-38yq9j" },
+    // Rework is never deferred behind another bead's branch: rounds merge and rebase, Sift screens.
+    RetiredKey { key: "overlap_defer_label", bead: "sp-dzwj7w" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
@@ -558,7 +597,65 @@ pub fn validate(text: &str) -> Result<SpiraToml, String> {
 pub fn validate_strict(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
     let (doc, warnings) = validate_with_warnings(text)?;
     require_id_prefix(&doc)?;
+    let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    require_roster_covers_lanes(&root)?;
+    require_roster_declares_models(&root)?;
     Ok((doc, warnings))
+}
+
+/// A rostered persona with no `persona.<name>.model` is summoned and dies before its session
+/// starts: refused here, naming the key, rather than at every summon.
+fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
+    let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
+    let roster: Vec<&str> = match spira.get("fayths") {
+        Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
+        Some(toml::Value::String(s)) => s.split_whitespace().collect(),
+        _ => return Ok(()),
+    };
+    for p in roster {
+        let model = root.get("persona").and_then(|v| v.get(p)).and_then(|v| v.get("model")).and_then(|v| v.as_str());
+        if model.is_none_or(str::is_empty) {
+            return Err(format!(
+                "spira.fayths rosters {p:?} but persona.{p}.model is not declared — every summon of it would die before its session starts; run `spira-config set persona.{p}.model <model>`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "maechen", "czar", "warden"];
+
+/// A declared lane, or a timer-filed partition label, whose persona is not in an explicit
+/// `spira.fayths` roster is work nothing can claim: refused, naming both keys.
+fn require_roster_covers_lanes(root: &toml::Value) -> Result<(), String> {
+    let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
+    let roster: Vec<&str> = match spira.get("fayths") {
+        Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
+        Some(toml::Value::String(s)) => s.split_whitespace().collect(),
+        _ => return Ok(()),
+    };
+    if roster.is_empty() {
+        return Ok(());
+    }
+    let lanes: Vec<&str> = match spira.get("lanes") {
+        Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
+        Some(toml::Value::String(s)) => s.split_whitespace().collect(),
+        _ => Vec::new(),
+    };
+    if let Some(l) = lanes.iter().find(|l| !roster.contains(l)) {
+        return Err(format!(
+            "spira.lanes declares {l:?} but spira.fayths does not roster it — nothing can claim that lane's beads; add {l:?} to spira.fayths or drop it from spira.lanes"
+        ));
+    }
+    for p in TIMER_PARTITION_PERSONAS {
+        let key = format!("{p}_label");
+        if spira.contains_key(&key) && !roster.contains(p) {
+            return Err(format!(
+                "spira.{key} is set but spira.fayths does not roster {p:?} — beads filed under that label can never be claimed; add {p:?} to spira.fayths"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Whether `p` can be a bead id prefix: non-empty ASCII letters, digits and `_` — never a
@@ -671,11 +768,19 @@ pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
 /// `[spira]` — naming the key and the bead that retired it — instead of silently dropping
 /// them. A key `SPIRA_CONF_KEYS`/`SpiraSection` never accepted still hard-errors: only
 /// listed retirements are stripped before the deserialize that would otherwise refuse them.
+/// A key this release does not know at all (a newer release wrote it) is warned and ignored,
+/// so a predecessor can read its successor's config; a malformed value of a known key still errors.
 ///
 /// A `[spira]` key's registry `MAX=` is enforced here too: this function deserializes the
 /// TOML directly and never runs the shipped schema against the document.
 pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
-    let mut root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    validate_value(root)
+}
+
+/// The checks and the typed deserialize, on an already-parsed document — one parse per layer,
+/// never a text round trip after a merge.
+fn validate_value(mut root: toml::Value) -> Result<(SpiraToml, Vec<String>), String> {
     let mut warnings = Vec::new();
     if let Some(spira) = root.get_mut("spira").and_then(|v| v.as_table_mut()) {
         // BEFORE the generic strip: a batcher_bin that is not the batcher switched the cuts
@@ -725,15 +830,49 @@ pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), St
             }
         }
     }
-    let doc: SpiraToml = serde_path_to_error::deserialize(root).map_err(|e| {
+    let doc = loop {
+        let attempt: Result<SpiraToml, _> = serde_path_to_error::deserialize(root.clone());
+        let e = match attempt {
+            Ok(doc) => break doc,
+            Err(e) => e,
+        };
         let path = e.path().to_string();
-        if path.is_empty() {
-            e.inner().to_string()
-        } else {
-            format!("{path}: {}", e.inner())
+        let msg = e.inner().to_string();
+        match unknown_key_path(&path, &msg).and_then(|p| remove_key(&mut root, &p).then_some(p)) {
+            Some(p) => warnings.push(format!(
+                "{p} is not known to this release (written by a newer release?) and ignored"
+            )),
+            None if path.is_empty() => return Err(msg),
+            None => return Err(format!("{path}: {msg}")),
         }
-    })?;
+    };
     Ok((doc, warnings))
+}
+
+/// The dotted path of the key serde refused as an unknown field, from the error's path and
+/// message (`unknown field \`k\`, expected ...`). The path may or may not already end in the key.
+fn unknown_key_path(path: &str, msg: &str) -> Option<String> {
+    let key = msg.strip_prefix("unknown field `")?.split('`').next()?;
+    if path.is_empty() {
+        Some(key.to_string())
+    } else if path == key || path.ends_with(&format!(".{key}")) {
+        Some(path.to_string())
+    } else {
+        Some(format!("{path}.{key}"))
+    }
+}
+
+fn remove_key(root: &mut toml::Value, path: &str) -> bool {
+    let mut parts: Vec<&str> = path.split('.').collect();
+    let Some(last) = parts.pop() else { return false };
+    let mut cur = root;
+    for p in parts {
+        match cur.get_mut(p) {
+            Some(v) => cur = v,
+            None => return false,
+        }
+    }
+    cur.as_table_mut().is_some_and(|t| t.remove(last).is_some())
 }
 
 /// Whether `new` is a SHRINK of `existing` — fewer `[repo.*]` tables, or fewer
@@ -746,8 +885,8 @@ pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), St
 pub fn shrink_reason(existing: &SpiraToml, new: &SpiraToml) -> Option<String> {
     let existing_repos = existing.repo.len();
     let new_repos = new.repo.len();
-    let existing_fayths = existing.spira.as_ref().map(|s| s.fayths.len()).unwrap_or(0);
-    let new_fayths = new.spira.as_ref().map(|s| s.fayths.len()).unwrap_or(0);
+    let existing_fayths = existing.spira.as_ref().and_then(|s| s.fayths.as_ref()).map_or(0, Vec::len);
+    let new_fayths = new.spira.as_ref().and_then(|s| s.fayths.as_ref()).map_or(0, Vec::len);
     if new_repos < existing_repos || new_fayths < existing_fayths {
         Some(format!(
             "existing has {existing_repos} [repo.*] table(s) and {existing_fayths} fayth(s); \
@@ -897,6 +1036,14 @@ pub fn get_path(doc: &SpiraToml, path: &str) -> Option<String> {
 /// exactly the "is this key spoken for" test `resolve` needs to tell apart from "unset,
 /// consult the derived default".
 pub fn spira_string_map(doc: &SpiraToml) -> BTreeMap<String, String> {
+    spira_value_map(doc, false)
+}
+
+/// Every DECLARED `[spira]` value as a string — an explicitly empty string or list is
+/// declared (""), only an absent field is not. `include_secrets`: `resolve` reads the whole
+/// document (a value it cannot see is a value it would refuse as undeclared); the shell
+/// export ([`spira_string_map`]) still leaves secret-shaped keys out.
+pub fn spira_value_map(doc: &SpiraToml, include_secrets: bool) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let Some(spira) = &doc.spira else {
         return out;
@@ -906,7 +1053,7 @@ pub fn spira_string_map(doc: &SpiraToml) -> BTreeMap<String, String> {
         return out;
     };
     for (key, val) in map {
-        if is_secret_shaped(&key) {
+        if !include_secrets && is_secret_shaped(&key) {
             continue;
         }
         let shell_val = match val {
@@ -915,7 +1062,7 @@ pub fn spira_string_map(doc: &SpiraToml) -> BTreeMap<String, String> {
             serde_json::Value::Bool(b) => b.to_string(),
             serde_json::Value::Number(n) => n.to_string(),
             serde_json::Value::Array(items) => {
-                if items.is_empty() {
+                if items.is_empty() && !include_secrets {
                     continue;
                 }
                 items
@@ -993,6 +1140,65 @@ fn set_path_leaf(
     })
 }
 
+/// `text` with only the keys that differ between `old` and `new` changed: every other line —
+/// comments, order, quoting, empty strings — stays byte-identical. A whole-file re-serialise
+/// rewrites keys the caller never named.
+pub fn edit_text(text: &str, old: &SpiraToml, new: &SpiraToml) -> Result<String, String> {
+    let mut edited: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let old_v = toml::Value::try_from(old).map_err(|e| e.to_string())?;
+    let new_v = toml::Value::try_from(new).map_err(|e| e.to_string())?;
+    let mut path = Vec::new();
+    diff_apply(edited.as_table_mut(), &mut path, Some(&old_v), Some(&new_v))?;
+    Ok(edited.to_string())
+}
+
+fn diff_apply(
+    root: &mut toml_edit::Table,
+    path: &mut Vec<String>,
+    old: Option<&toml::Value>,
+    new: Option<&toml::Value>,
+) -> Result<(), String> {
+    if old == new {
+        return Ok(());
+    }
+    if let (Some(toml::Value::Table(o)), Some(toml::Value::Table(n))) = (old, new) {
+        let keys: std::collections::BTreeSet<&String> = o.keys().chain(n.keys()).collect();
+        for k in keys {
+            path.push(k.clone());
+            diff_apply(root, path, o.get(k), n.get(k))?;
+            path.pop();
+        }
+        return Ok(());
+    }
+    let Some((leaf, parents)) = path.split_last() else { return Ok(()) };
+    let mut cur: &mut dyn toml_edit::TableLike = root;
+    for seg in parents {
+        if new.is_none() && cur.get(seg).is_none() {
+            return Ok(());
+        }
+        let entry = cur.entry(seg).or_insert_with(|| {
+            let mut t = toml_edit::Table::new();
+            t.set_implicit(true);
+            toml_edit::Item::Table(t)
+        });
+        cur = entry.as_table_like_mut().ok_or_else(|| format!("{}: not a table", parents.join(".")))?;
+    }
+    let Some(new) = new else {
+        cur.remove(leaf);
+        return Ok(());
+    };
+    let mut wrap = toml::map::Map::new();
+    wrap.insert(leaf.clone(), new.clone());
+    let doc: toml_edit::DocumentMut =
+        toml::to_string(&wrap).map_err(|e| e.to_string())?.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let mut item = doc.as_table().get(leaf).cloned().ok_or("lost the value")?;
+    if let (Some(prev), toml_edit::Item::Value(v)) = (cur.get(leaf).and_then(|i| i.as_value()), &mut item) {
+        *v.decor_mut() = prev.decor().clone();
+    }
+    cur.insert(leaf, item);
+    Ok(())
+}
+
 /// Sets one dotted path (`spira.prod`, `spira.instance`, `spira.max_live_aeons`) to a value
 /// given as a plain command-line string, for `spira-config set` — the writer `deploy.sh`,
 /// `install.sh` and `conf.sh`'s own `spira_config_set` shell helper use once nothing writes
@@ -1041,6 +1247,22 @@ pub fn unset_path(doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
     set_path_leaf(doc, path, serde_json::Value::Null)
 }
 
+/// `text` without the retired key at `path`, every other line untouched.
+pub fn remove_retired_text(text: &str, path: &str) -> Result<String, String> {
+    let mut edited: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let mut cur: &mut dyn toml_edit::TableLike = edited.as_table_mut();
+    let segs: Vec<&str> = path.split('.').collect();
+    let Some((leaf, parents)) = segs.split_last() else { return Ok(text.to_string()) };
+    for seg in parents {
+        match cur.get_mut(seg).and_then(|i| i.as_table_like_mut()) {
+            Some(t) => cur = t,
+            None => return Ok(text.to_string()),
+        }
+    }
+    cur.remove(leaf);
+    Ok(edited.to_string())
+}
+
 /// Whether `path` names a retired key (see [`unset_path`]).
 pub fn is_retired_path(path: &str) -> bool {
     let parts: Vec<&str> = path.split('.').collect();
@@ -1058,17 +1280,56 @@ pub fn is_retired_path(path: &str) -> bool {
 /// document is never observed with one written and not the other.
 pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Result<(), String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let mut doc = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    let before = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    let mut doc = before.clone();
     for (path, value) in pairs {
         doc = set_path(&doc, path, value)?;
     }
-    let out = toml::to_string_pretty(&doc).map_err(|e| format!("{}: {e}", file.display()))?;
+    let out = edit_text(&text, &before, &doc).map_err(|e| format!("{}: {e}", file.display()))?;
     validate(&out)?;
     write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
 }
 
 #[cfg(test)]
 mod tests {
+
+    // ---- layered config (one source, base:override) ----
+    fn layer(dir: &std::path::Path, name: &str, text: &str) -> String {
+        let p = dir.join(name);
+        std::fs::write(&p, text).unwrap();
+        p.display().to_string()
+    }
+
+    #[test]
+    fn an_override_changes_only_its_own_keys() {
+        let d = testkit::TempDir::new("spira-config-layer-keys");
+        let base = layer(d.path(), "base.toml", "[spira]\nid_prefix = \"sp\"\nlanes_max_live = 2\n");
+        let over = layer(d.path(), "t.override.toml", "[spira]\nlanes_max_live = 5\n");
+        let doc = load(std::path::Path::new(&format!("{base}:{over}"))).unwrap();
+        let m = spira_string_map(&doc);
+        assert_eq!(m.get("LANES_MAX_LIVE").map(String::as_str), Some("5"), "the override wins");
+        assert_eq!(m.get("ID_PREFIX").map(String::as_str), Some("sp"), "the base fills the rest");
+    }
+
+    #[test]
+    fn nested_tables_merge_key_by_key() {
+        let d = testkit::TempDir::new("spira-config-layer-nested");
+        let base = layer(d.path(), "base.toml", "[repo.alpha]\npath = \"/a\"\nmode = \"queue.local\"\nbase = \"local/main\"\n");
+        let over = layer(d.path(), "o.toml", "[repo.alpha]\npath = \"/b\"\n");
+        let doc = load(std::path::Path::new(&format!("{base}:{over}"))).unwrap();
+        let rows = repos::rows_from_toml(&doc);
+        assert_eq!(rows.iter().find(|r| r.name == "alpha").map(|r| r.path.as_str()), Some("/b"));
+        assert_eq!(rows.iter().find(|r| r.name == "alpha").map(|r| r.base.as_str()), Some("local/main"), "unset keys keep the base's value");
+    }
+
+    #[test]
+    fn a_missing_layer_is_refused_naming_it() {
+        let d = testkit::TempDir::new("spira-config-layer-missing");
+        let base = layer(d.path(), "base.toml", "[spira]\n");
+        let gone = d.path().join("gone.toml").display().to_string();
+        let err = load(std::path::Path::new(&format!("{base}:{gone}"))).unwrap_err();
+        assert!(err.contains("gone.toml"), "{err}");
+    }
     use super::*;
 
     #[test]
@@ -1148,8 +1409,10 @@ mod tests {
 
     #[test]
     fn unknown_key_names_its_path() {
-        let err = validate("[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap_err();
-        assert!(err.starts_with("spira.bogus"), "{err}");
+        let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.bogus") && m.contains("newer release")), "{w:?}");
+        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_aeons = \"four\"\nbogus = 1\n").unwrap_err();
+        assert!(err.starts_with("spira.max_aeons"), "{err}");
     }
 
     #[test]
@@ -1261,9 +1524,8 @@ mod tests {
             warnings.iter().any(|w| w.contains("repo.spira.gate") && w.contains("sp-quu2w")),
             "{warnings:?}"
         );
-        // Positive control: a misspelt repo key is still refused.
-        let err = validate("[repo.spira]\npath = \"/p\"\nmode = \"push\"\ngatee = 1\n").unwrap_err();
-        assert!(err.contains("repo.spira"), "{err}");
+        let (_, w) = validate_with_warnings("[repo.spira]\npath = \"/p\"\nmode = \"push\"\ngatee = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("repo.spira.gatee") && !m.contains("retired")), "{w:?}");
     }
 
     #[test]
@@ -1297,11 +1559,11 @@ mod tests {
     }
 
     #[test]
-    fn a_misspelt_key_still_errors() {
-        // Positive control for a_retired_key_warns_instead_of_erroring: a key that looks
-        // like a retired one but isn't must still be refused, not silently accepted.
-        let err = validate("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\n").unwrap_err();
-        assert!(err.starts_with("spira.queue_local_gatee"), "{err}");
+    fn a_misspelt_key_warns_as_unknown_but_a_bad_known_value_errors() {
+        let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.queue_local_gatee") && !m.contains("retired")), "{w:?}");
+        let err = validate("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\nmax_aeons = true\n").unwrap_err();
+        assert!(err.starts_with("spira.max_aeons"), "{err}");
     }
 
     #[test]
@@ -1353,10 +1615,7 @@ mod tests {
         assert_eq!(spira.max_aeons, Some(4));
     }
 
-    // ENV VARS ARE PROCESS-GLOBAL: every `discover` test holding one of these keys takes
-    // the crate-wide `ENV_LOCK` (declared near `FILE_NAME` above, sp-dh4fv) for its whole
-    // body, so it also serializes against `locate`'s own env-mutating tests, not just its
-    // siblings here.
+    // Env edits go through `testkit::env`, which serializes every test in this binary.
     static SCRATCH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     fn scratch_dir(tag: &str) -> testkit::TempDir {
@@ -1381,15 +1640,9 @@ mod tests {
 
     #[test]
     fn discover_prefers_the_explicit_path_over_the_environment() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = std::env::var("SPIRA_TOML").ok();
-        std::env::set_var("SPIRA_TOML", "/should-not-be-used/spira.toml");
+        let _env = testkit::env(&[("SPIRA_TOML", Some("/should-not-be-used/spira.toml"))]);
         let explicit = PathBuf::from("/explicit/spira.toml");
         assert_eq!(discover(Some(explicit.clone())), Some(explicit));
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
     }
 
     #[test]
@@ -1405,38 +1658,19 @@ mod tests {
             eprintln!("skipping: this machine has a real /etc/spira/spira.toml");
             return;
         }
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved_toml = std::env::var("SPIRA_TOML").ok();
-        let saved_repo = std::env::var("SPIRA_REPO").ok();
-        let saved_home = std::env::var("HOME").ok();
-        let saved_xdg = std::env::var("XDG_CONFIG_HOME").ok();
-        std::env::remove_var("SPIRA_TOML");
-        std::env::remove_var("XDG_CONFIG_HOME");
         let dir = scratch_dir("discover-repo");
         let repo_dir = dir.join("repo");
         std::fs::create_dir_all(&repo_dir).unwrap();
         std::fs::write(repo_dir.join(FILE_NAME), "[spira]\n").unwrap();
         let empty_home = dir.join("home-empty");
         std::fs::create_dir_all(&empty_home).unwrap();
-        std::env::set_var("SPIRA_REPO", &repo_dir);
-        std::env::set_var("HOME", &empty_home);
+        let _env = testkit::env(&[
+            ("SPIRA_TOML", None),
+            ("XDG_CONFIG_HOME", None),
+            ("SPIRA_REPO", repo_dir.to_str()),
+            ("HOME", empty_home.to_str()),
+        ]);
         assert_eq!(discover(None), None);
-        match saved_toml {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
-        match saved_repo {
-            Some(v) => std::env::set_var("SPIRA_REPO", v),
-            None => std::env::remove_var("SPIRA_REPO"),
-        }
-        match saved_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        match saved_xdg {
-            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
     }
 
     #[test]
@@ -1452,7 +1686,7 @@ mod tests {
     fn load_names_the_path_on_a_parse_error() {
         let dir = scratch_dir("load-bad");
         let path = dir.join(FILE_NAME);
-        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap();
+        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nmax_aeons = true\n").unwrap();
         let err = load(&path).unwrap_err();
         assert!(err.contains(&path.display().to_string()), "{err}");
     }
@@ -1675,4 +1909,29 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), "before");
         std::fs::remove_dir_all(&dir).ok();
     }
+}
+
+/// The complete fixture `spira.toml` (`tests/fixtures/complete.toml`: every key declared, with
+/// fixture paths) — what a test resolves against now that nothing is defaulted. `SPIRA_<KEY>`
+/// pairs in `declare` are written as `spira.<key>`, the only place a value can come from.
+#[cfg(test)]
+pub(crate) fn fixture_doc(declare: &std::collections::BTreeMap<String, String>) -> SpiraToml {
+    let mut d = validate(include_str!("../tests/fixtures/complete.toml")).expect("the complete fixture validates");
+    for (k, v) in declare {
+        if let Some(rest) = k.strip_prefix("SPIRA_") {
+            if let Ok(n) = set_path(&d, &format!("spira.{}", rest.to_ascii_lowercase()), v) {
+                d = n;
+            }
+        }
+    }
+    d
+}
+
+/// [`fixture_doc`] written to `<dir>/spira.toml`, its path returned: for a test that resolves
+/// through a process-level entry point, which reads only the file `SPIRA_TOML` names.
+#[cfg(test)]
+pub(crate) fn fixture_toml_file(dir: &std::path::Path, declare: &std::collections::BTreeMap<String, String>) -> PathBuf {
+    let p = dir.join(FILE_NAME);
+    serialize_and_write(&p, &fixture_doc(declare)).expect("the fixture writes");
+    p
 }

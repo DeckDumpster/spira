@@ -1,9 +1,10 @@
 TYPE=u32
 GROUP=certify
-DOC=HOW MANY CERTIFICATION GATES THE LANDING PASS MAY RUN AT ONCE. When unset,
+DOC=HOW MANY CERTIFICATION GATES THE LANDING PASS MAY RUN AT ONCE. Declared empty,
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # HOW MANY CERTIFICATION GATES THE LANDING PASS MAY RUN AT ONCE. When unset,
-    # derived per-pass from the box: min(nproc/4, free-memory/400MiB), at least 1.
+    # HOW MANY CERTIFICATION GATES THE LANDING PASS MAY RUN AT ONCE. Declared empty,
+    # it is derived per-pass from the box: min(nproc/4, free-memory/400MiB), at least 1.
     # Set to 1 to restore serial behaviour.
-    : "${SPIRA_CERTIFY_PAR:=}"
+    # Registered default (sp-kuwp6s, per Ryan 2026-10-07): A small single-box install: two certification gates at once (1 restores serial).
+    : "${SPIRA_CERTIFY_PAR:=2}"
 SPIRA_CONF_DEFAULT_EOF

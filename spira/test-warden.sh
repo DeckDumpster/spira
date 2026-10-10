@@ -24,7 +24,7 @@ printf '%s\n' "$*" >> "$BD_LOG_PATH"
 [ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
     list) printf '%s\n' "${BD_LIST_OUTPUT:-[]}" ;;
-    create) [ -n "${BD_CREATE_FAIL:-}" ] && exit 1 ;;
+    create) [ -n "${BD_CREATE_FAIL:-}" ] && exit 1; echo sp-new1 ;;
 esac
 exit 0
 STUB
@@ -36,12 +36,20 @@ chmod +x "$STUB"
 lc_fix_init "$T/lc"
 
 run_trigger() {
+    tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$MAP" SPIRA_BD="$STUB"
+    # EXTRA_ENV: a registered key (e.g. SPIRA_WARDEN_LABEL) goes to tl_config too; anything
+    # else stays a plain env assignment for the env -i call below.
+    local extra_env=() kv k
+    for kv in ${EXTRA_ENV:-}; do
+        k="${kv%%=*}"
+        if [ -f "$HERE/conf.d/$k" ]; then tl_config "$kv"; else extra_env+=("$kv"); fi
+    done
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
-        SPIRA_CONF="$T/none.conf" SPIRA_BD="$STUB" BD_LOG_PATH="$LOG" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
+        SPIRA_CONF="$T/none.conf" BD_LOG_PATH="$LOG" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" BD_CREATE_FAIL="${BD_CREATE_FAIL:-}" \
-        SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$MAP" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
-        ${EXTRA_ENV:-} warden-trigger.sh 2>&1
+        "${extra_env[@]}" warden-trigger.sh 2>&1
 }
 
 echo "test-warden.sh"
@@ -60,6 +68,16 @@ out="$(run_trigger)"; rc=$?
 is "files, exits 0" 0 "$rc"
 want "bd create called" "create" "$(cat "$LOG")"
 want "carries warden label" "warden-sweep" "$(cat "$LOG")"
+want "sweep has a READY lifecycle row at birth" "create-bead sp-new1" "$(cat "$LC_FIX/creates.log")"
+is "row is READY" 1 "$([ -f "$LC_FIX/bead/READY/sp-new1" ] && echo 1 || echo 0)"
+rm -f "$LC_FIX/bead/READY/sp-new1"
+
+echo; echo "FILING: a failed row creation is an error naming the bead"
+: > "$LOG"; touch "$LC_FIX/refuse-create"
+out="$(run_trigger)"; rc=$?
+is "row failure exits 1" 1 "$rc"
+want "names the unclaimable bead" "sp-new1" "$out"
+rm -f "$LC_FIX/refuse-create"
 
 echo; echo "DEDUP: an open sweep suppresses filing (positive control: filing happened above)"
 : > "$LOG"
@@ -76,6 +94,15 @@ is "landed sweep: files, exits 0" 0 "$rc"
 want "landed sweep: a new sweep is filed" "create" "$(cat "$LOG")"
 rm -f "$LC_FIX"/bead/*/sp-x "$LC_FIX/show/sp-x"
 
+echo; echo "DEDUP: a poisoned sweep is dead and no longer suppresses filing"
+: > "$LOG"
+lc_bead READY sp-x deadbeef 0
+printf '{"bead_id":"sp-x","state":"READY","holds":["poison"]}' > "$LC_FIX/bead/READY/sp-x"
+out="$(BD_LIST_OUTPUT='[{"id":"sp-x"}]' run_trigger)"; rc=$?
+is "poisoned sweep: files, exits 0" 0 "$rc"
+want "poisoned sweep: a fresh sweep is filed" "create" "$(cat "$LOG")"
+rm -f "$LC_FIX"/bead/*/sp-x "$LC_FIX/show/sp-x"
+
 echo; echo "FAILURE: a create that fails exits 1"
 out="$(BD_CREATE_FAIL=1 run_trigger)"; rc=$?
 is "create failure exits 1" 1 "$rc"
@@ -85,9 +112,13 @@ echo; echo "LABEL: configured non-default label is used"
 out="$(EXTRA_ENV="SPIRA_WARDEN_LABEL=custom-watch" run_trigger)"
 want "custom label in create args" "custom-watch" "$(cat "$LOG")"
 lack "default label absent when overridden" "warden-sweep" "$(cat "$LOG")"
+tl_config SPIRA_WARDEN_LABEL=warden-sweep
 
 echo; echo "PARTITION: warden claims only its sweep, never plan work"
-export SPIRA_HOME="$HERE" SPIRA_RUN="$T/run" SPIRA_CONF="$T/none.conf"
+export SPIRA_HOME="$HERE" SPIRA_CONF="$T/none.conf"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at the real chamber fayth_get below reads from.
+SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_CHAMBER="$HERE/chamber"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 wl="$(fayth_get warden FAYTH_LABELS)"

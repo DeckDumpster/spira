@@ -55,7 +55,7 @@ _pve() {
     local method="$1" path="$2"; shift 2
     local _tmp _status _rc=0
     _tmp=$(mktemp)
-    _status=$(curl -sS \
+    _status=$(curl -sS --max-time 5 \
         --cacert "$PVE_CACERT" \
         -o "$_tmp" -w '%{http_code}' \
         -X "$method" \

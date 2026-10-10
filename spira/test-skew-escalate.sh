@@ -42,6 +42,15 @@ REPO="$TMP/repo"
 git init -q "$REPO"
 git -C "$REPO" config user.email "test@test"
 git -C "$REPO" config user.name "test"
+# SPIRA_HOME_REPO/SPIRA_REPO_MAP EXPLICITLY: home_repo() defaults to the fixture's own
+# "spira" and repo_root("spira") then has no map to resolve it against, so skew/src's
+# landref fails with "cannot resolve the ref repo:spira lands on" before check() ever
+# reaches escalate(). A repo's base is no longer derived (no remote-HEAD/current-branch
+# fallback to rely on) — the map row must name it explicitly, so this reads the checkout's
+# actual initial branch name rather than assuming "main"/"master".
+BR="$(git -C "$REPO" symbolic-ref --short HEAD)"
+SKEWMAP="$TMP/repomap"
+printf 'fixture | %s | push | %s | | true | self\n' "$REPO" "$BR" > "$SKEWMAP"
 mkdir -p "$REPO/spira"
 printf '# boundary\n'        > "$REPO/spira/boundary"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/gate.sh"
@@ -84,14 +93,13 @@ ln -s "spira-${TS1}" "$RELEASES/current"
 run_skew() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" \
+        SPIRA_HOME_REPO="fixture" SPIRA_REPO_MAP="$SKEWMAP"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         skew check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -100,14 +108,13 @@ run_skew() {
 run_skew_ro() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" \
+        SPIRA_HOME_REPO="fixture" SPIRA_REPO_MAP="$SKEWMAP"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -115,14 +122,13 @@ run_skew_ro() {
 
 run_skew_shared() {
     local run_dir="$1"; shift
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" \
+        SPIRA_HOME_REPO="fixture" SPIRA_REPO_MAP="$SKEWMAP"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         skew check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"

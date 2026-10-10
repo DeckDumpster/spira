@@ -21,35 +21,6 @@ fn read_cmdline(pid_dir: &Path) -> Option<Vec<u8>> {
     std::fs::read(pid_dir.join("cmdline")).ok()
 }
 
-/// One aeon match: its pid and the systemd unit `systemctl status <pid>` resolves it to
-/// (empty if none — a fixture aeon or one hand-run outside a unit).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveAeon {
-    pub pid: String,
-    pub unit: String,
-}
-
-/// Scan `/proc/[0-9]*` for a process whose argv contains one of `aeon_paths` — both homes
-/// (`$SPIRA_HOME/aeon.sh` / `$SPIRA_PROD/aeon.sh`), the release bin-relative path, and
-/// whatever `command -v aeon` resolves to today, so this is blind to neither home in a
-/// split checkout nor to the Rust binary replacing the old script. `unit_of` resolves a pid
-/// to its systemd unit the same way world.sh does (`systemctl --user status <pid>`, first
-/// line, second field) — injected so tests need no real systemd.
-pub fn live_aeons(proc_root: &Path, aeon_paths: &[&str], unit_of: impl Fn(&str) -> String) -> Vec<LiveAeon> {
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(proc_root) else { return out };
-    for e in entries.flatten() {
-        let name = e.file_name();
-        let Some(pid) = name.to_str().filter(|s| s.chars().all(|c| c.is_ascii_digit())) else { continue };
-        let Some(cmdline) = read_cmdline(&e.path()) else { continue };
-        if argv_has(&cmdline, aeon_paths) {
-            out.push(LiveAeon { pid: pid.to_string(), unit: unit_of(pid) });
-        }
-    }
-    out.sort_by(|a, b| a.pid.cmp(&b.pid));
-    out
-}
-
 /// Scan `/proc/[0-9]*` for a process whose argv contains one of `worker_paths` (gate.sh /
 /// landing-pass, both homes) — the processes that survive a `spira-landing.service` stop
 /// if it was killed before they finished.
@@ -111,28 +82,6 @@ mod tests {
         // path must not be nominated.
         let c = cmdline(&["bash", "-c", "cat $SPIRA_PROD/aeon.sh"]);
         assert!(!argv_has(&c, &["/prod/aeon.sh"]));
-    }
-
-    #[test]
-    fn live_aeons_finds_a_matching_proc_and_resolves_its_unit() {
-        let d = testkit::TempDir::new("proc-live-aeons");
-        let pid_dir = d.join("4242");
-        std::fs::create_dir_all(&pid_dir).unwrap();
-        std::fs::write(pid_dir.join("cmdline"), cmdline(&["/opt/x/spira/aeon.sh", "--bead", "sp-1"])).unwrap();
-        // A non-numeric entry (e.g. "self") must be skipped without panicking.
-        std::fs::create_dir_all(d.join("self")).unwrap();
-        let found = live_aeons(&d, &["/opt/x/spira/aeon.sh"], |pid| format!("unit-for-{pid}"));
-        assert_eq!(found, vec![LiveAeon { pid: "4242".into(), unit: "unit-for-4242".into() }]);
-    }
-
-    #[test]
-    fn live_aeons_ignores_non_matching_processes() {
-        let d = testkit::TempDir::new("proc-live-aeons");
-        let pid_dir = d.join("77");
-        std::fs::create_dir_all(&pid_dir).unwrap();
-        std::fs::write(pid_dir.join("cmdline"), cmdline(&["sleep", "10"])).unwrap();
-        let found = live_aeons(&d, &["/opt/x/spira/aeon.sh"], |_| String::new());
-        assert!(found.is_empty());
     }
 
     #[test]

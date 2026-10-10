@@ -45,9 +45,15 @@ mkdir -p "$T/run"
 # process, and an ambient SPIRA_TOML — set for an operator's own shell convenience —
 # would otherwise be read ahead of the fixture and inject a real persona roster.
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
-export SPIRA_TOML="$T/no-such.toml"
+# Registered config (SPIRA_RUN) is declared via tl_config into testlib.sh's own override
+# layer rather than pinning a private SPIRA_TOML: that layered SPIRA_TOML is already the
+# clean, fully-specified environment law-gates-run-in-a-clean-environment asks for — no
+# ambient operator config can reach it either way.
+# SPIRA_CHAMBER too: the complete fixture declares a non-empty value, and nothing derives
+# it from SPIRA_HOME any more (sfail round 2, pattern 6) — without this the real chamber
+# (builder.fayth, ops.fayth, ...) is never found.
+tl_config SPIRA_RUN="$T/run" SPIRA_CHAMBER="$HERE/chamber"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -65,8 +71,12 @@ cat > "$FAKE_BD" <<EOF
 case " \$* " in *" list "*) cat "$STORE_FILE" 2>/dev/null || echo '[]' ;; *) echo '[]' ;; esac
 EOF
 chmod +x "$FAKE_BD"
-export SPIRA_BD="$FAKE_BD"
 export SPIRA_DB="/fake/db"
+# Declared both ways: spira-claim resolves SPIRA_BD via cfg() (tl_config), but the
+# spira-lc stand-in lc_mirror_bd installs is a plain bash stub reading ${SPIRA_BD:-bd}
+# straight from its own inherited env, never through config (sfail round 3, pattern 3/7).
+export SPIRA_BD="$FAKE_BD"
+tl_config SPIRA_BD="$FAKE_BD"
 lc_mirror_bd "$T/lc"
 export PATH="$T/lc:$PATH"
 # bead_json <id> <comma-labels> — one open task bead carrying exactly those labels.
@@ -162,24 +172,25 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\nexit 0\n' "$ARGS_FILE" > "$MOCK_
 chmod +x "$MOCK_QUOTA"
 
 # ==========================================================================================
-# summon_fayth — an express grant passes the label to the claim predicate (sp-zcvh1)
+# summon_fayth — an express grant restricts the claim to express beads
 # ==========================================================================================
-# summon_fayth's third argument is carried to the aeon as SPIRA_REQUIRE_LABEL, so the aeon
+# summon_fayth's third argument is carried to the aeon as SPIRA_REQUIRE_EXPRESS, so the aeon
 # started under an express grant cannot claim a non-express bead.
 export SPIRA_SUMMON="$MOCK_QUOTA"
 
 set_store "$PLAN_BEAD"; rm -f "$ARGS_FILE"
 summon_fayth builder 1 >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
-nowant "no require-label: SPIRA_REQUIRE_LABEL is absent from args" "SPIRA_REQUIRE_LABEL" "$args"
+nowant "no express grant: SPIRA_REQUIRE_EXPRESS is absent from args" "SPIRA_REQUIRE_EXPRESS" "$args"
 
-# The express grant counts only beads carrying the express label (summon.rs: ready-count
-# "<FAYTH_LABELS>,express"), so this store's plan bead carries it.
-set_store "$(bead_json sp-fy-express "$builder_labels,express")"; rm -f "$ARGS_FILE"
+# The express grant counts only beads whose lifecycle row is express (summon.rs: ready-count
+# --express), so this store's plan bead is on the mirror's express list.
+set_store "$(bead_json sp-fy-express "$builder_labels")"; rm -f "$ARGS_FILE"
+echo sp-fy-express > "$T/lc/express"
 summon_fayth builder 1 express >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
-want "express grant: SPIRA_REQUIRE_LABEL=express appears in args" \
-     "SPIRA_REQUIRE_LABEL=express" "$args"
+want "express grant: SPIRA_REQUIRE_EXPRESS=1 appears in args" \
+     "SPIRA_REQUIRE_EXPRESS=1" "$args"
 
 export SPIRA_SUMMON="$MOCK_SUMMON"
 
@@ -190,6 +201,10 @@ export SPIRA_SUMMON="$MOCK_SUMMON"
 # the FAYTH_LANE declaration, not to a hardcoded name.
 LANES_HOME="$T/lanes-home"
 mkdir -p "$LANES_HOME/chamber"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so a synthetic chamber with none refuses config resolution
+# outright (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$LANES_HOME/conf.d"
 cat > "$LANES_HOME/chamber/worker.fayth" <<'F'
 FAYTH_NAME=worker
 FAYTH_LABELS="spira,plan"
@@ -204,7 +219,11 @@ FAYTH_LANE=priority
 F
 
 export SPIRA_HOME="$LANES_HOME"
-export SPIRA_FAYTHS="worker guardian"
+# SPIRA_FAYTHS via tl_config too: cmd_fayth's roster is "the declared one (spira.fayths),
+# never an environment override" (spira-config/src/main.rs, cmd_fayth) — the lib.sh bash
+# wrapper's raw-env forwarding to the spira-config subprocess is a leftover from before
+# the one-source migration and is now ignored for this exact-match roster (round 5).
+tl_config SPIRA_FAYTHS="worker guardian" SPIRA_CHAMBER="$LANES_HOME/chamber"
 
 lane="$(spira_lane_fayths)"
 task="$(spira_task_fayths)"
@@ -213,6 +232,12 @@ is "spira_lane_fayths returns the FAYTH_LANE fayth"      "guardian" "$lane"
 is "spira_task_fayths excludes the FAYTH_LANE fayth"     "worker"   "$task"
 nowant "the lane fayth does not appear in task fayths"   "guardian" "$task"
 nowant "the task fayth does not appear in lane fayths"   "worker"   "$lane"
+
+# tl_config's SPIRA_FAYTHS persists in the override file (no per-call scoping) until
+# something changes it again — every later section in this file that relies on the
+# fixture's own default roster (builder/ops/groomer etc.) via a plain `export SPIRA_FAYTHS`
+# would otherwise keep seeing "worker guardian" here (round 6).
+spira-config unset spira.fayths "$_TL_CONF_OVERRIDE" >/dev/null
 
 # POSITIVE CONTROL: both functions return something, so absence above is the exclusion
 # working and not both functions returning empty.
@@ -224,6 +249,7 @@ is "there is at least one task fayth"  "1" "$([ -n "$task" ] && echo 1 || echo 0
 # ==========================================================================================
 export SPIRA_HOME="$HERE"
 export SPIRA_FAYTHS="builder ops"
+tl_config SPIRA_CHAMBER="$HERE/chamber"
 
 real_task="$(spira_task_fayths)"
 real_lane="$(spira_lane_fayths)"
@@ -282,8 +308,8 @@ done
 # exactly conf.sh's own default, so they are left set rather than unset.
 unset SPIRA_FAYTHS SPIRA_REPO_MAP SPIRA_DB
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
+tl_config SPIRA_RUN="$T/run" SPIRA_CHAMBER="$HERE/chamber"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh" 2>/dev/null
 
@@ -357,8 +383,9 @@ for key in plan incident; do
 done
 
 # DISCRIMINATING: a custom SPIRA_PLAN_LABEL must propagate through schema_name.
+tl_config SPIRA_PLAN_LABEL=work
 custom_label="$(SPIRA_HOME="$HERE" SPIRA_CONF="$SCHEMA_T" \
-    SPIRA_PLAN_LABEL=work schema.sh name plan 2>/dev/null)"
+    schema.sh name plan 2>/dev/null)"
 is "schema_name plan: SPIRA_PLAN_LABEL=work propagates to 'work', not 'plan'" \
    "work" "$custom_label"
 
@@ -382,7 +409,7 @@ want "spike: and edit"                   "Edit"      "$fayth_src"
 # call fayth_ready/summon_fayth. A direct row proves the exclusion set itself: every OTHER
 # persona's fayth:<name>, plus $SPIRA_QUEUE_WAIT_LABEL, never the caller's own name.
 export SPIRA_FAYTHS="builder ops groomer"
-export SPIRA_QUEUE_WAIT_LABEL="g16-queue-wait"
+tl_config SPIRA_QUEUE_WAIT_LABEL="g16-queue-wait"
 
 excl="$(fayth_exclude ops "ops-own-label")"
 want   "G16: the persona's own exclude labels are kept"          "ops-own-label"  "$excl"
@@ -391,6 +418,7 @@ want   "G16: excludes another persona's fayth: label (builder)"  "fayth:builder"
 want   "G16: excludes another persona's fayth: label (groomer)"  "fayth:groomer"  "$excl"
 nowant "G16: does not exclude its own fayth: label (ops)"        "fayth:ops"      "$excl"
 
+spira-config unset spira.queue_wait_label "$_TL_CONF_OVERRIDE" >/dev/null
 unset SPIRA_QUEUE_WAIT_LABEL SPIRA_FAYTHS
 
 # ==========================================================================================

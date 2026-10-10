@@ -104,4 +104,13 @@ fi
 
 # ============================================================================
 echo ""
+echo "G9 — the build pin and the harness-side SPIRA_BD_TAG default are one value:"
+# ============================================================================
+CONF_TAG="$(sed -n 's/^ *: "\${SPIRA_BD_TAG:=\(.*\)}"$/\1/p' "$HERE/conf.d/SPIRA_BD_TAG" | head -1)"
+[ -n "$CONF_TAG" ] && ok "positive control: the conf.d default is readable" \
+    || bad "positive control: the conf.d default is readable" "no := line in conf.d/SPIRA_BD_TAG"
+is "BD_TAG_PIN in build-bd.sh equals the SPIRA_BD_TAG default" "$TAG" "$CONF_TAG"
+
+# ============================================================================
+echo ""
 tl_summary

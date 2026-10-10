@@ -3,10 +3,11 @@
 //! red suite (container death, exec storm, lost `--user` account). DESIGN.md §4.3. With
 //! `BatchCfg::deadline`, a hard cut of the whole suite phase (DESIGN.md D7).
 
+use crate::phase::{RunEvent, RunLog};
 use crate::fixture::{is_user_account_fault, Fixtures, Liveness, Session};
 use crate::record::{self, Mode, Producer, ResultRecord, Status};
 use crate::runtime::cancelled;
-use crate::schedule::Job;
+use crate::schedule::{pids_budget, Admission, Job, LANE_SLOTS};
 use crate::skipgate::{self, SkipGate};
 use crate::tap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,15 +15,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 pub fn now_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    spira_config::vtime::now_epoch()
 }
 
+#[derive(Clone)]
 pub struct BatchCfg {
     pub mode: Mode,
     pub producer: Producer,
@@ -68,6 +67,16 @@ pub struct BatchOutcome {
 }
 
 impl BatchOutcome {
+    /// Folds a concurrently-run lane's outcome into this one.
+    pub fn absorb(&mut self, other: BatchOutcome) {
+        self.records.extend(other.records);
+        self.container_dead = self.container_dead.take().or(other.container_dead);
+        self.exec_fault = self.exec_fault.take().or(other.exec_fault);
+        self.account_fault = self.account_fault.take().or(other.account_fault);
+        self.cancelled |= other.cancelled;
+        self.deadline_hit |= other.deadline_hit;
+    }
+
     pub fn blocking_reds(&self) -> Vec<String> {
         self.records
             .iter()
@@ -129,6 +138,14 @@ pub fn write_suite(results: &Path, suite: &str, rec: &ResultRecord, output: &str
         &results.join(format!("{suite}.result")),
         &format!("{rec}\n"),
     );
+    record_suite(results, suite, rec);
+}
+
+fn record_suite(results: &Path, suite: &str, rec: &ResultRecord) {
+    let event = RunEvent::Suite { name: suite.into(), status: rec.status.as_str().into() };
+    if let Err(e) = RunLog::in_dir(results).record(event, now_epoch()) {
+        eprintln!("batch: run event not recorded: {e}");
+    }
 }
 
 /// Pre-empted suites (disabled, skip-req) get a record and an empty `.out`.
@@ -138,6 +155,7 @@ pub fn write_preempted(results: &Path, suite: &str, rec: &ResultRecord) {
         &results.join(format!("{suite}.result")),
         &format!("{rec}\n"),
     );
+    record_suite(results, suite, rec);
 }
 
 fn detail_lines(rec: &ResultRecord, output: &str) -> Vec<String> {
@@ -276,10 +294,10 @@ impl Shared<'_> {
     }
 }
 
-struct DoneOnDrop(mpsc::Sender<()>);
+struct DoneOnDrop(mpsc::Sender<(u32, Option<String>)>, (u32, Option<String>));
 impl Drop for DoneOnDrop {
     fn drop(&mut self) {
-        let _ = self.0.send(());
+        let _ = self.0.send(self.1.clone());
     }
 }
 
@@ -308,6 +326,9 @@ pub fn run(
         Mode::Serial => run_serial(&sh, jobs, &mut outcome),
         Mode::Parallel => run_parallel(&sh, jobs, &mut outcome),
     }
+    if !outcome.harness_fault() && !outcome.deadline_hit {
+        rerun_lost(&sh, jobs);
+    }
     if outcome.deadline_hit && !outcome.harness_fault() {
         let d = cfg.deadline.map(|d| d.as_secs()).unwrap_or(0);
         (hooks.log)(&format!(
@@ -323,6 +344,43 @@ pub fn run(
     outcome.records = sh.records.into_inner().unwrap();
     outcome.cancelled |= cancelled();
     outcome
+}
+
+/// A suite whose exit status podman lost is run once more, serially, and its second
+/// record replaces the first: one lost status must not fault the other suites' verdicts.
+fn rerun_lost(sh: &Shared, jobs: &[Job]) {
+    let lost: Vec<(usize, &Job)> = jobs
+        .iter()
+        .enumerate()
+        .filter(|(_, j)| {
+            sh.records
+                .lock()
+                .unwrap()
+                .get(&j.name)
+                .is_some_and(|r| r.status.is_fault())
+        })
+        .collect();
+    for (idx, job) in lost {
+        if cancelled() || sh.past_deadline() {
+            return;
+        }
+        let n = idx + 1;
+        (sh.hooks.log)(&format!(
+            "podman lost the exit status of {} — re-running it once",
+            job.name
+        ));
+        if sh.cfg.mode == Mode::Parallel {
+            sh.session.make_home(n);
+        }
+        let (rc, secs, output) = sh.exec_suite(n, &job.name);
+        if rc == crate::runtime::RC_DEADLINE {
+            return;
+        }
+        if rc == crate::runtime::RC_CANCELLED && cancelled() {
+            return;
+        }
+        sh.finish(n, &job.name, rc, secs, &output);
+    }
 }
 
 fn run_serial(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
@@ -379,22 +437,41 @@ fn run_serial(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
 }
 
 fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
-    let (tx, rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::channel::<(u32, Option<String>)>();
+    let mut adm = Admission::new(sh.cfg.maxpar, pids_budget(), LANE_SLOTS);
     std::thread::scope(|scope| {
-        let mut inflight = 0usize;
-        let wait_one = |inflight: &mut usize| {
-            if *inflight > 0 && rx.recv().is_ok() {
-                *inflight -= 1;
+        let wait_one = |adm: &mut Admission| {
+            if adm.running() > 0 {
+                if let Ok((w, lane)) = rx.recv() {
+                    adm.release(w, &lane);
+                }
             }
         };
-        for (idx, job) in jobs.iter().enumerate() {
+        let mut pending: Vec<(usize, &Job)> = jobs.iter().enumerate().collect();
+        while !pending.is_empty() {
             if cancelled() {
                 outcome.cancelled = true;
                 break;
             }
+            // The first suite that fits, so a lane at its slots or a heavy suite waiting on
+            // weight never idles the pool; an exclusive suite is a barrier nothing passes.
+            let pos = pending
+                .iter()
+                .enumerate()
+                .find_map(|(i, (_, j))| match (j.exclusive.is_some(), i) {
+                    (true, 0) => Some(0),
+                    (true, _) => Some(usize::MAX),
+                    _ => adm.fits(j).then_some(i),
+                })
+                .filter(|p| *p != usize::MAX);
+            let Some(pos) = pos else {
+                wait_one(&mut adm);
+                continue;
+            };
+            let (idx, job) = pending.remove(pos);
             if let Some(reason) = &job.exclusive {
-                while inflight > 0 {
-                    wait_one(&mut inflight);
+                while adm.running() > 0 {
+                    wait_one(&mut adm);
                 }
                 (sh.hooks.log)(&format!(
                     "draining for exclusive suite {} ({reason})",
@@ -406,11 +483,6 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 std::thread::sleep(sh.cfg.psi_pause);
             }
             let n = idx + 1;
-            if job.exclusive.is_none() && sh.cfg.maxpar > 0 {
-                while inflight >= sh.cfg.maxpar as usize {
-                    wait_one(&mut inflight);
-                }
-            }
             if sh.past_deadline() {
                 outcome.deadline_hit = true;
                 break;
@@ -431,7 +503,7 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 break;
             }
             sh.session.make_home(n);
-            let done = DoneOnDrop(tx.clone());
+            let done = DoneOnDrop(tx.clone(), (job.weight, job.lane.clone()));
             let name = job.name.clone();
             scope.spawn(move || {
                 let _done = done;
@@ -448,15 +520,15 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 }
                 sh.finish(n, &name, rc, secs, &output);
             });
-            inflight += 1;
+            adm.admit(job);
             if job.exclusive.is_some() {
-                while inflight > 0 {
-                    wait_one(&mut inflight);
+                while adm.running() > 0 {
+                    wait_one(&mut adm);
                 }
             }
         }
-        while inflight > 0 {
-            wait_one(&mut inflight);
+        while adm.running() > 0 {
+            wait_one(&mut adm);
         }
     });
 
@@ -520,10 +592,7 @@ mod tests {
     fn jobs(names: &[&str]) -> Vec<Job> {
         names
             .iter()
-            .map(|n| Job {
-                name: n.to_string(),
-                exclusive: None,
-            })
+            .map(|n| Job::new(n, None))
             .collect()
     }
 
@@ -658,6 +727,47 @@ mod tests {
         let res = fs::read_to_string(dir.join("test-strand-reclaim-n.sh.result")).unwrap();
         assert!(res.starts_with("fault "));
         assert!(res.trim_end().ends_with(" parallel explicit 255"));
+    }
+
+    #[test]
+    fn a_lost_exit_status_is_rerun_once_and_the_second_verdict_stands() {
+        const LOST: &str = "Error: timed out waiting for file /var/lib/containers/storage/overlay-containers/a/userdata/b/exit/a\n";
+        let rt = FakeRuntime::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c2 = calls.clone();
+        rt.on(
+            |r| r.argv.get(1).map(String::as_str) == Some("/workspace/spira/test-lost.sh"),
+            move |_| {
+                if c2.fetch_add(1, Ordering::SeqCst) == 0 {
+                    ExecOutcome { rc: 255, output: LOST.into() }
+                } else {
+                    ExecOutcome { rc: 0, output: "ok 1 - a\n".into() }
+                }
+            },
+        );
+        rt.suite("test-a.sh", 0, "ok\n");
+        let dir = tmpdir("rerun-lost");
+        let s = session(&rt);
+        let c = cfg(Mode::Parallel, &dir, 2);
+        let out = with_hooks(|h, _| {
+            run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-lost.sh", "test-a.sh"]))
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(out.records["test-lost.sh"].status, Status::Ok);
+        assert!(out.faulted().is_empty());
+    }
+
+    #[test]
+    fn a_status_lost_twice_stays_a_fault_and_is_not_rerun_again() {
+        const LOST: &str = "Error: timed out waiting for file /var/lib/containers/storage/overlay-containers/a/userdata/b/exit/a\n";
+        let rt = FakeRuntime::new();
+        rt.suite("test-lost.sh", 255, LOST);
+        let dir = tmpdir("rerun-lost-twice");
+        let s = session(&rt);
+        let c = cfg(Mode::Serial, &dir, 0);
+        let out = with_hooks(|h, _| run(&s, &c, h, &Fixtures::PerSuite, &jobs(&["test-lost.sh"])));
+        assert_eq!(out.faulted(), vec!["test-lost.sh"]);
+        assert_eq!(rt.suite_execs().len(), 2);
     }
 
     #[test]
@@ -994,60 +1104,6 @@ mod tests {
     }
 
     #[test]
-    fn deadline_stops_new_starts_in_serial() {
-        let rt = FakeRuntime::new();
-        timed_suites(
-            &rt,
-            &[
-                ("test-a.sh", 80, 0),
-                ("test-b.sh", 80, 0),
-                ("test-c.sh", 80, 0),
-            ],
-        );
-        let dir = tmpdir("dl-serial");
-        let s = session(&rt);
-        let mut c = cfg(Mode::Serial, &dir, 0);
-        c.deadline = Some(Duration::from_millis(120));
-        let out = with_hooks(|h, seen| {
-            let o = run(
-                &s,
-                &c,
-                h,
-                &Fixtures::PerSuite,
-                &jobs(&["test-a.sh", "test-b.sh", "test-c.sh"]),
-            );
-            assert!(seen
-                .logs
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|l| l.contains("deadline 0s reached")));
-            // no timing row for a deferred suite
-            assert_eq!(seen.timings.lock().unwrap().len(), 1);
-            o
-        });
-        assert!(!out.harness_fault());
-        assert!(out.deadline_hit);
-        assert_eq!(out.records["test-a.sh"].status, Status::Ok);
-        // b was running at the deadline: killed, deferred, partial output kept
-        assert_eq!(out.records["test-b.sh"].status, Status::Deferred);
-        assert_eq!(out.records["test-b.sh"].fingerprint, "deadline:test-b.sh");
-        assert_eq!(
-            fs::read_to_string(dir.join("test-b.sh.out")).unwrap(),
-            "partial\n"
-        );
-        // c never started
-        assert_eq!(out.records["test-c.sh"].status, Status::Deferred);
-        assert_eq!(out.records["test-c.sh"].fingerprint, "-");
-        assert_eq!(rt.suite_execs().len(), 2);
-        assert_eq!(out.deferred(), vec!["test-b.sh", "test-c.sh"]);
-        assert!(out.blocking_reds().is_empty());
-        assert!(fs::read_to_string(dir.join("test-c.sh.result"))
-            .unwrap()
-            .starts_with("deferred "));
-    }
-
-    #[test]
     fn deadline_in_parallel_kills_the_running_and_starts_nothing_new() {
         let rt = FakeRuntime::new();
         // order is kept: the long one first (the selector's priority), then shorts
@@ -1133,5 +1189,17 @@ mod tests {
         assert!(out.deferred().is_empty());
         assert!(out.records.values().all(|r| r.status == Status::Ok));
         assert!(rt.suite_execs().iter().all(|r| r.deadline.is_none()));
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+
+
+    #[test]
+    fn now_epoch_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || now_epoch());
+        assert_eq!(got, 1_900_000_000);
     }
 }

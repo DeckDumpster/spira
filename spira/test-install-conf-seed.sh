@@ -62,6 +62,8 @@ FIXHOME="$TMP/home"; mkdir -p "$FIXHOME"
 seed() {
     local conf="$1" toml="$2" inst="$3"
     env -i PATH="$PATH" HOME="$FIXHOME" \
+        SPIRA_HOME="$HARNESS/spira" SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         units-install --seed-prod-instance "$conf" "$toml" "$inst" "$HARNESS/spira" 2>&1
 }
 

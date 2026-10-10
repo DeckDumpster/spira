@@ -92,7 +92,7 @@ echo "it accepts a machine that works:"
 # Only meaningful where the machine genuinely has a working rootless runtime. On
 # a box without one this asserts nothing and says so, rather than reporting a
 # pass it did not earn.
-if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then # batch-job: container fixture call; image pulls and starts exceed 5 s
     if runner-deps.sh --check >/dev/null 2>&1; then
         ok "a working machine passes"
     else

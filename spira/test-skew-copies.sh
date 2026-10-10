@@ -65,11 +65,14 @@ write_map() {   # write_map <name>... — a repo-map row per name, from a fixed 
     done
 }
 
+tl_config SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db SPIRA_HOME_REPO=home \
+    SPIRA_REPO_MAP="$SH/repo-map"
 run_copies() {
-    env -i PATH="$PATH" HOME="$TMP/home" \
+    env -i PATH="$SH:$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db \
-        SPIRA_REPO="$WS/home" SPIRA_HOME_REPO=home \
+        SPIRA_HOME="$SH" \
+        SPIRA_REPO="$WS/home" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$SH/skew" copies 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }

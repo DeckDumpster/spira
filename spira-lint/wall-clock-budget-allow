@@ -1,0 +1,26 @@
+# wall-clock-budget: suites and tests that still assert a duration against a constant. Shrink-only:
+# a line leaves when its file asserts counts instead; nothing is ever added.
+aeon/src/session.rs
+cert-sweep/tests/pass.rs
+landing-pass/src/tests.rs
+mail/src/repeat.rs
+queue/src/real.rs
+round-vm/src/pool.rs
+round-vm/src/run.rs
+sentinel/src/open_children.rs
+spira-config/src/lc_call.rs
+spira-config/src/scratch.rs
+spira-lint/src/lib.rs
+spira/test-batcher-cut.sh
+spira/test-czar-pass.sh
+spira/test-gate-cap.sh
+spira/test-gate-wait.sh
+spira/test-mail-deliver.sh
+spira/test-mail.sh
+spira/test-testenv-curl-bounds.sh
+spira/test-testenv-wait.sh
+testenv/src/build.rs
+testenv/src/reap.rs
+watchd/src/health.rs
+watchd/src/lock.rs
+watchtower/src/deadline.rs

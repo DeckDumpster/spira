@@ -42,7 +42,7 @@ pub fn mem_available_mb(meminfo_path: &Path) -> Option<i64> {
 
 /// `df --output=pcent /`, digits only — matches the bash's `tail -1 | tr -dc '0-9'`.
 pub fn disk_root_pct(df_bin: &str) -> Option<i64> {
-    let out = std::process::Command::new(df_bin)
+    let out = spira_config::bounded::bounded(df_bin)
         .args(["--output=pcent", "/"])
         .output()
         .ok()?;

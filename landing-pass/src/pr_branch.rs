@@ -9,10 +9,10 @@
 //! 0 opened/refreshed · 1 push or PR creation failed · 2 confine violation (reopened) ·
 //! 3 rebase conflict (reopened) · 4 bead no longer closed (race) · 5 confine inconclusive
 //! (deferred) · 6 already submitted, nothing to do · 7 merged, delivered ·
-//! 8 closed unmerged, returned.
+//! 8 closed unmerged, returned · 9 required check red at the current tip, reopened.
 
 use crate::model::RepoRow;
-use crate::ports::{Beads, Git, Lib, Tools};
+use crate::ports::{Beads, Git, Lib, PrRed, Tools};
 use crate::records::Files;
 use std::path::Path;
 
@@ -50,6 +50,19 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
         Some("open") if !c.git.is_ancestor(repo, base_fq, br) => {
             refresh = 1;
             (c.log)(&format!("{id}: {br} is behind {baseref} — rebasing its pull request onto it"));
+        }
+        Some("open") if c.tools.forge_pr_mergeability(repo, br).as_deref() == Some("DIRTY") => {
+            refresh = 1;
+            (c.log)(&format!("{id}: {br}'s pull request conflicts with {baseref} and runs no checks — rebasing it onto the base"));
+        }
+        Some("open") => {
+            if let Some(red) = c.tools.forge_pr_red(repo, br) {
+                if c.git.rev_parse(repo, br).as_deref() == Some(red.head.as_str()) {
+                    c.lib.reopen(id, "pr-checks-red", &red_note(br, &red));
+                    (c.log)(&format!("{id}: {br}'s pull request has a red check ({}) — returned to rework", red.jobs.join(", ")));
+                    return 9;
+                }
+            }
         }
         _ => {}
     }
@@ -121,6 +134,18 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
     } else {
         1
     }
+}
+
+fn red_note(br: &str, red: &PrRed) -> String {
+    let mut note = format!("Reopened by landing-pass: the pull request for {br} has a red required check at {}.\nFailing job: {}\n", red.head, red.jobs.join(", "));
+    if red.fail_lines.is_empty() {
+        note.push_str("(no FAIL or not-ok lines could be read from its log)\n");
+    }
+    for l in &red.fail_lines {
+        note.push_str(l);
+        note.push('\n');
+    }
+    note
 }
 
 /// `land_pr` (lib.sh 9254–9305): force-push-with-lease, open a PR if none exists (after a
@@ -201,6 +226,7 @@ mod tests {
         pr_merged: Cell<bool>,
         requeues: Cell<u32>,
         force_push_err: RefCell<Option<String>>,
+        notes: RefCell<Vec<String>>,
     }
     impl FLib {
         fn rec(&self, s: String) {
@@ -211,8 +237,9 @@ mod tests {
         }
     }
     impl Lib for FLib {
-        fn reopen(&self, id: &str, cause: &str, _note: &str) {
+        fn reopen(&self, id: &str, cause: &str, note: &str) {
             self.rec(format!("reopen {id} {cause}"));
+            self.notes.borrow_mut().push(note.to_string());
         }
         fn event(&self, kind: &str, id: &str, _title: &str, _detail: &str) {
             self.rec(format!("event {kind} {id}"));
@@ -229,6 +256,7 @@ mod tests {
             self.rec(format!("ask_rebase_refused {id} {reason}"));
         }
         fn ask_budget_deferred(&self, _: &str, _: &str, _: u32) {}
+        fn ask_repo_unreadable(&self, _: &str, _: &Path) {}
         fn rebase(&self, br: &str, _: &str, _: &Path, _: &str) -> Rebase {
             self.rec(format!("rebase {br}"));
             self.rebase.borrow().clone().unwrap_or(Rebase { ok: true, ..Default::default() })
@@ -242,8 +270,8 @@ mod tests {
         fn requeues_of(&self, _: &str) -> u32 {
             self.requeues.get()
         }
-        fn conflict_note(&self, _a: &[&str]) -> String {
-            "note".into()
+        fn conflict_note(&self, a: &[&str]) -> String {
+            format!("note conflicts: {}", a[4])
         }
         fn other_beads(&self, _: &Path, _: &str, _: &str, _: &str) -> String {
             String::new()
@@ -365,6 +393,7 @@ mod tests {
                     external_ref: None,
                     title: "a bead".into(),
                     notes: Vec::new(),
+                    express: false,
                 })
                 .collect())
         }
@@ -383,6 +412,8 @@ mod tests {
     struct FTools {
         confine: Cell<i32>,
         pr_state: RefCell<Option<String>>,
+        pr_red: RefCell<Option<PrRed>>,
+        pr_mergeability: RefCell<Option<String>>,
         pr_create_n: Cell<Option<u64>>,
         pr_list_open: RefCell<Vec<(u64, String)>>,
         automerge_ok: Cell<bool>,
@@ -430,6 +461,14 @@ mod tests {
         fn forge_pr_list_open(&self, _: &Path) -> Vec<(u64, String)> {
             self.forge_calls.borrow_mut().push("pr-list-open".into());
             self.pr_list_open.borrow().clone()
+        }
+        fn forge_pr_mergeability(&self, _: &Path, selector: &str) -> Option<String> {
+            self.forge_calls.borrow_mut().push(format!("pr-mergeability {selector}"));
+            self.pr_mergeability.borrow().clone()
+        }
+        fn forge_pr_red(&self, _: &Path, selector: &str) -> Option<PrRed> {
+            self.forge_calls.borrow_mut().push(format!("pr-red {selector}"));
+            self.pr_red.borrow().clone()
         }
         fn forge_pr_automerge(&self, _: &Path, selector: &str) -> bool {
             self.forge_calls.borrow_mut().push(format!("pr-automerge {selector}"));
@@ -538,6 +577,65 @@ mod tests {
         let rc = run(&ctx, Path::new("/repo"), "spira/sp-a", "sp-a", "origin/master", "spira", "t1", "refs/remotes/origin/master", &row);
         assert_eq!(rc, 0);
         assert!(f.tools.forge_calls.borrow().iter().any(|c| c == "pr-create spira/sp-a master sp-a: a bead"), "{:?}", f.tools.forge_calls.borrow());
+    }
+
+    fn red_at(head: &str) -> PrRed {
+        PrRed { head: head.into(), jobs: vec!["suites".into()], fail_lines: vec!["not ok 2 - thing".into()] }
+    }
+
+    #[test]
+    fn a_dirty_pr_is_rebased_and_a_conflict_returns_the_bead_to_rework_with_the_files() {
+        let f = Fixture::new();
+        *f.tools.pr_state.borrow_mut() = Some("open".into());
+        *f.tools.pr_mergeability.borrow_mut() = Some("DIRTY".into());
+        f.git.ancestors.borrow_mut().push(("refs/remotes/origin/main".into(), "spira/sp-a".into()));
+        f.git.tips.borrow_mut().insert("spira/sp-a".into(), "t1".into());
+        *f.lib.rebase.borrow_mut() = Some(Rebase { ok: false, failure: "conflict".into(), conflicts: "a.rs b.rs".into(), refused_reason: String::new() });
+        let rc = f.run("spira/sp-a", "sp-a", "t1");
+        assert_eq!(rc, 3);
+        assert!(f.lib.has("reopen sp-a rebase-conflict"));
+        assert!(f.lib.notes.borrow()[0].contains("a.rs b.rs"), "{:?}", f.lib.notes.borrow());
+        assert!(!f.tools.forge_calls.borrow().iter().any(|c| c.starts_with("pr-red")), "a PR with no checks has no red to read");
+    }
+
+    #[test]
+    fn a_red_check_at_the_current_tip_reopens_the_bead_with_the_failing_text() {
+        let f = Fixture::new();
+        *f.tools.pr_state.borrow_mut() = Some("open".into());
+        f.git.ancestors.borrow_mut().push(("refs/remotes/origin/main".into(), "spira/sp-a".into()));
+        f.git.tips.borrow_mut().insert("spira/sp-a".into(), "t1".into());
+        *f.tools.pr_red.borrow_mut() = Some(red_at("t1"));
+        let rc = f.run("spira/sp-a", "sp-a", "t1");
+        assert_eq!(rc, 9);
+        assert!(f.lib.has("reopen sp-a pr-checks-red"));
+        let notes = f.lib.notes.borrow();
+        assert!(notes[0].contains("suites") && notes[0].contains("not ok 2 - thing"), "{notes:?}");
+        assert!(!f.lib.has("force_push"), "a red PR is handed back, not refreshed");
+    }
+
+    #[test]
+    fn a_red_check_on_a_stale_base_updates_the_branch_instead_of_reopening() {
+        let f = Fixture::new();
+        *f.tools.pr_state.borrow_mut() = Some("open".into());
+        f.git.tips.borrow_mut().insert("spira/sp-a".into(), "t1".into());
+        *f.tools.pr_red.borrow_mut() = Some(red_at("t1"));
+        f.tools.pr_create_n.set(Some(9));
+        let rc = f.run("spira/sp-a", "sp-a", "t1");
+        assert_eq!(rc, 0);
+        assert!(f.lib.has("force_push origin spira/sp-a"));
+        assert!(!f.lib.has("reopen"));
+    }
+
+    #[test]
+    fn a_red_check_at_an_older_head_than_the_branch_tip_waits_for_the_new_run() {
+        let f = Fixture::new();
+        *f.tools.pr_state.borrow_mut() = Some("open".into());
+        f.git.ancestors.borrow_mut().push(("refs/remotes/origin/main".into(), "spira/sp-a".into()));
+        f.git.tips.borrow_mut().insert("spira/sp-a".into(), "t2".into());
+        *f.tools.pr_red.borrow_mut() = Some(red_at("t1"));
+        f.tools.pr_create_n.set(Some(9));
+        f.run("spira/sp-a", "sp-a", "t2");
+        assert!(!f.lib.has("reopen"));
     }
 
     #[test]

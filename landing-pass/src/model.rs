@@ -71,6 +71,7 @@ pub struct Settings {
     pub id_prefix: String,
     pub land_maxsec: i64,
     pub gate_reserve: i64,
+    pub gate_timeout: i64,
     pub gate_lock_wait: Option<String>,
     /// `SPIRA_CERTIFY_PAR`: how many certification gates the queued walk runs at once
     /// (DESIGN.md §8 D14). 1 is the serial walk.
@@ -81,7 +82,6 @@ pub struct Settings {
     pub verdict_ttl: u64,
     pub verdicts: PathBuf,
     pub deferral_escalate_at: u32,
-    pub express_label: String,
     pub cutover_label: String,
     pub submitted_label: String,
     pub rebase_escalate_at: u32,
@@ -138,13 +138,13 @@ impl Settings {
             id_prefix: "sp".into(),
             land_maxsec: 0,
             gate_reserve: 2700,
+            gate_timeout: 2700,
             gate_lock_wait: None,
             certify_par: 1,
             gate_worker: false,
             verdict_ttl: 86_400,
             verdicts: run.join("verdicts"),
             deferral_escalate_at: 5,
-            express_label: "express".into(),
             cutover_label: "cutover-round".into(),
             submitted_label: "spira-submitted".into(),
             rebase_escalate_at: 3,
@@ -193,6 +193,9 @@ pub struct BeadRow {
     /// snapshot with no `notes` key deserializes to an empty list, not a parse error.
     #[serde(default)]
     pub notes: Vec<String>,
+    /// Express, from the lifecycle row — never a bd label.
+    #[serde(default)]
+    pub express: bool,
 }
 
 fn no_state() -> String {
@@ -266,7 +269,7 @@ impl BeadRow {
             .map(String::from);
         let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let notes = normalize_notes(v.get("notes"));
-        Some(BeadRow { id, state: no_state(), repo, labels, superseded, closed_at, priority, external_ref, title, notes })
+        Some(BeadRow { id, state: no_state(), repo, labels, superseded, closed_at, priority, external_ref, title, notes, express: false })
     }
 
     /// The builder has handed this bead on (its lifecycle row is SUBMITTED onward).
@@ -290,6 +293,8 @@ pub enum GateOutcome {
 
 pub const GATE_NOVERDICT: i32 = 75;
 pub const GATE_BASEFAIL: i32 = 76;
+/// Must equal `spira_claim::events::BASE_RED_CAUSE`, which classifies it as uncharged.
+pub const BASE_RED_CAUSE: &str = "gate-base-red";
 
 impl GateOutcome {
     /// `spira_gate_outcome`.
@@ -348,10 +353,32 @@ impl GateRun {
             }
         }
         let suite = suite.filter(|s| !s.is_empty()).unwrap_or_else(|| "-".to_string());
-        GateRun { rc, outcome: GateOutcome::of(rc), out, reason, suite }
+        let mut outcome = GateOutcome::of(rc);
+        if outcome == GateOutcome::Fail && reason.as_deref() == Some("over-cap") {
+            outcome = GateOutcome::NoVerdict;
+        }
+        GateRun { rc, outcome, out, reason, suite }
     }
     pub fn reason_or(&self, dflt: &str) -> String {
         self.reason.clone().filter(|r| !r.is_empty()).unwrap_or_else(|| dflt.to_string())
+    }
+}
+
+/// The cause a red gate records. A branch that no longer merges onto a moved base was not
+/// judged, so it must not read as a red that charges an attempt.
+pub fn red_cause(judged: &str, reason: &str) -> String {
+    if reason.starts_with("no-rebase") { "no-rebase".into() } else { judged.into() }
+}
+
+#[cfg(test)]
+mod red_cause_tests {
+    use super::red_cause;
+
+    #[test]
+    fn a_no_rebase_red_is_not_a_judged_cause() {
+        assert_eq!(red_cause("cert-gate-red", "no-rebase"), "no-rebase");
+        assert_eq!(red_cause("gate-red", "no-rebase"), "no-rebase");
+        assert_eq!(red_cause("gate-red", "suites-failed"), "gate-red");
     }
 }
 
@@ -431,4 +458,23 @@ pub struct Recut {
     pub ok: bool,
     pub applied: u32,
     pub conflicts: String,
+}
+
+#[cfg(test)]
+mod gate_run_tests {
+    use super::*;
+
+    #[test]
+    fn the_hard_cap_kill_is_no_verdict_not_red() {
+        let g = GateRun::parse(1, "gate: VERDICT=FAIL reason=over-cap branch=b repo=r suite=- (killed)\n".into());
+        assert_eq!(g.outcome, GateOutcome::NoVerdict);
+        assert!(!g.outcome.blames_branch());
+        assert_eq!(g.reason_or("x"), "over-cap");
+    }
+
+    #[test]
+    fn a_branch_red_stays_red() {
+        let g = GateRun::parse(1, "gate: VERDICT=FAIL reason=branch-red branch=b repo=r suite=s\n".into());
+        assert_eq!(g.outcome, GateOutcome::Fail);
+    }
 }

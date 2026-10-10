@@ -12,10 +12,13 @@
 //!
 //! There is no off mode (sp-v62vn): every verb reaches the machine.
 
-use lifecycle::bead::{BeadEventKind, HoldKind};
+use std::collections::BTreeMap;
+
+use lifecycle::bead::{AeonPhase, BeadEventKind, BeadState, DispositionStatus, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use serde_json::Value;
+use spira_config::lc_state;
 
 /// Exit codes, the shell library's own: 0 applied · 1 no row · 2 cannot tell · 3 refused.
 pub const APPLIED: i32 = 0;
@@ -63,6 +66,7 @@ pub const VERBS: &[&str] = &[
     "drop",
     "returned",
     "content-on-base",
+    "supersede",
     "state",
     "holds",
     "held",
@@ -73,6 +77,10 @@ pub const VERBS: &[&str] = &[
     "certify",
     "resubmit",
     "renew",
+    "phase",
+    "disposition",
+    "express",
+    "unexpress",
 ];
 
 pub fn is_verb(v: &str) -> bool {
@@ -86,7 +94,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
     match verb {
         "hold" => {
             if !need(2) {
-                return usage("hold <bead-id> <poison|ask|wait|operator> [cause] [actor]");
+                return usage("hold <bead-id> <poison|ask|wait|manual> [cause] [actor]\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"");
             }
             let actor = actor_or(args.get(3), "sentinel");
             hold(m, &a(0), &a(1), &a(2), &actor)
@@ -104,9 +112,14 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
         }
         "reply" => {
             if !need(2) {
-                return usage("reply <bead-id> <message-id> [actor]");
+                return usage("reply <bead-id> <message-id|seq:<hold event seq>> [actor]");
             }
             let message_id = a(1);
+            if let Some(seq) = message_id.strip_prefix("seq:") {
+                if !hold_event_exists(m, &a(0), seq) {
+                    return Answer { code: REFUSED, stderr: format!("lc: {} has no Hold event with seq {seq} — nothing sent\n", a(0)), ..Default::default() };
+                }
+            }
             with_row(m, &a(0), &actor_or(args.get(2), "sentinel"), |_| Ok(BeadEventKind::Reply { message_id: message_id.clone() }))
         }
         "withdraw-ask" => {
@@ -120,6 +133,13 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 return usage("release <bead-id> [actor]");
             }
             with_row(m, &a(0), &actor_or(args.get(1), "sentinel"), |_| Ok(BeadEventKind::Release))
+        }
+        "express" | "unexpress" => {
+            if !need(1) {
+                return usage(&format!("{verb} <bead-id> [actor]"));
+            }
+            let kind = if verb == "express" { BeadEventKind::Express } else { BeadEventKind::Unexpress };
+            with_row(m, &a(0), &actor_or(args.get(1), "bead"), |_| Ok(kind.clone()))
         }
         "holder-dead" => {
             if !need(1) {
@@ -150,6 +170,13 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             }
             let proof = a(1);
             with_row(m, &a(0), &actor_or(args.get(2), "sending"), |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }))
+        }
+        "supersede" => {
+            if !need(2) {
+                return usage("supersede <bead-id> <successor-id> [actor]");
+            }
+            let by = a(1);
+            with_row(m, &a(0), &actor_or(args.get(2), "groomer"), |_| Ok(BeadEventKind::Supersede { by: by.clone() }))
         }
         "state" => {
             if !need(1) {
@@ -186,7 +213,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             if !need(1) {
                 return usage("list-held <kind>");
             }
-            list(m, &["list".into(), "--hold".into(), a(0)], |r| s(r, "bead_id"))
+            list(m, &["list".into(), "--live".into(), "--hold".into(), a(0)], |r| s(r, "bead_id"))
         }
         "list-state" => {
             if !need(1) {
@@ -211,8 +238,19 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             resubmit(m, &a(0), &a(1), &actor_or(args.get(2), "lifecycle-cert"))
         }
         "renew" => renew(m, args),
+        "phase" => phase(m, args),
+        "disposition" => disposition(m, args),
         other => usage(&format!("unknown caller verb {other:?}")),
     }
+}
+
+fn hold_event_exists(m: &mut dyn Machine, id: &str, seq: &str) -> bool {
+    let (rc, out) = m.call(&["history".into(), id.into(), "--machine".into(), "bead".into()]);
+    if rc != 0 {
+        return false;
+    }
+    let v: Value = serde_json::from_str(out.trim()).unwrap_or(Value::Null);
+    v.as_array().is_some_and(|rows| rows.iter().any(|r| s(r, "seq") == seq && s(r, "event") == "Hold"))
 }
 
 fn usage(what: &str) -> Answer {
@@ -294,7 +332,21 @@ fn with_row(
         Ok(k) => k,
         Err(a) => return a,
     };
-    Answer::code(event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default()).0)
+    if let Some(why) = not_admitted(&kind, &state, &holds_of(v.get("bead").and_then(|b| b.get("holds")))) {
+        return Answer { code: REFUSED, stderr: format!("lc: {id} is {state}; {why} — nothing sent\n"), ..Default::default() };
+    }
+    let (code, text) = event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default());
+    Answer { code, stderr: if code == 0 { String::new() } else { text }, ..Default::default() }
+}
+
+/// Why the state just read cannot take `kind`, for the events whose writers act on a read
+/// that may predate a move; None when the machine admits it (or the writer is not one of those).
+fn not_admitted(kind: &BeadEventKind, state: &str, holds: &[String]) -> Option<&'static str> {
+    match kind {
+        BeadEventKind::Reply { .. } | BeadEventKind::AskWithdrawn if !holds.iter().any(|h| h == "ask") => Some("it holds no ask"),
+        BeadEventKind::HolderDead if state != "WORKING" => Some("it has no holder to reap"),
+        _ => None,
+    }
 }
 
 fn event(m: &mut dyn Machine, machine: &str, id: &str, expect: &str, version: &str, actor: &str, kind: &str) -> (i32, String) {
@@ -320,12 +372,17 @@ fn hold_cause(k: HoldKind) -> HoldCause {
         HoldKind::Poison => HoldCause::AttemptsExhausted,
         HoldKind::Ask => HoldCause::OperatorQuestion,
         HoldKind::Wait => HoldCause::UnlandedBlocker,
-        HoldKind::Operator => HoldCause::ManualHold,
+        HoldKind::Manual => HoldCause::ManualHold,
     }
 }
 
 fn hold(m: &mut dyn Machine, id: &str, kind: &str, cause: &str, actor: &str) -> Answer {
     with_row(m, id, actor, |_| match HoldKind::from_str(kind) {
+        Some(HoldKind::Wait) if lc_state::names_directive(cause) && lc_state::snooze_until(cause).is_none() => Err(Answer {
+            code: REFUSED,
+            stderr: format!("lc: wait hold reason {cause:?} is not understood; a timed snooze is \"snooze-until:<epoch seconds>[ explanation]\"; no hold was applied\n"),
+            ..Default::default()
+        }),
         Some(k) => Ok(BeadEventKind::Hold { kind: k, cause: hold_cause(k), detail: Some(cause.to_string()) }),
         None => Err(unknown_kind(kind)),
     })
@@ -467,13 +524,14 @@ fn submit_kind(tip: &str) -> String {
     serde_json::to_string(&BeadEventKind::Submit { tip: tip.to_string() }).unwrap_or_default()
 }
 
-/// Move the row as close to SUBMITTED-at-<tip> as an event can: WORKING/REWORK advance by
-/// Submit, and a CERTIFIED row at another tip is voided by Submit (the tip invariant, as
-/// bead.rs's own Certified+Submit arm has it). None: the row is unreadable.
+/// Move the row as close to SUBMITTED-at-<tip> as an event can: WORKING advances by Submit (a
+/// REWORK row has no Submit, so a verdict for a bead that moved on is skipped, not refused),
+/// and a CERTIFIED row at another tip is voided by Submit (the tip invariant, as bead.rs's
+/// own Certified+Submit arm has it). None: the row is unreadable.
 fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Option<(String, String)> {
     let (mut st, mut ver, row) = state_version(m, id)?;
     let resubmit = match st.as_str() {
-        "WORKING" | "REWORK" => true,
+        "WORKING" => true,
         "CERTIFIED" => bead_field(&row, "tip") != tip,
         _ => false,
     };
@@ -494,8 +552,17 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
     if state == "CERTIFIED" && outcome == "pass" {
         return Answer::cert(APPLIED, "already", format!("pass tip={tip} — already CERTIFIED"));
     }
-    if state != "SUBMITTED" {
+    let in_round = state == "IN_DELIVERY" && outcome == "red";
+    if state != "SUBMITTED" && !in_round {
         return Answer::cert(REFUSED, "skip", format!("state={state} tip={tip} outcome={outcome} — not SUBMITTED"));
+    }
+    if outcome == "infra" && state == "SUBMITTED" {
+        if let Some((_, _, row)) = state_version(m, id) {
+            let row_tip = bead_field(&row, "tip");
+            if row_tip != tip {
+                return Answer::cert(REFUSED, "skip", format!("infra tip={tip} — stale, row is at {row_tip}"));
+            }
+        }
     }
     let kind = match outcome {
         "pass" => BeadEventKind::GatePass { tip: tip.into(), gate_key: detail.into() },
@@ -503,8 +570,9 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
         "infra" => BeadEventKind::GateInfra { tip: tip.into() },
         other => return Answer::cert(CANNOT_TELL, "cannot-tell", format!("unknown outcome {other}")),
     };
-    if event(m, "bead", id, "SUBMITTED", &version, actor, &serde_json::to_string(&kind).unwrap_or_default()).0 == 0 {
-        return Answer::cert(APPLIED, "applied", format!("{outcome} tip={tip}"));
+    if event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&kind).unwrap_or_default()).0 == 0 {
+        let marked = if in_round { " (in delivery — marked for eject)" } else { "" };
+        return Answer::cert(APPLIED, "applied", format!("{outcome} tip={tip}{marked}"));
     }
     Answer::cert(REFUSED, "refused", format!("{outcome} tip={tip}"))
 }
@@ -520,12 +588,21 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
         return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
     }
     if !matches!(state.as_str(), "WORKING" | "REWORK" | "CERTIFIED") {
-        return Answer::cert(REFUSED, "skip", format!("resubmit: state={state} not eligible for tip={tip}"));
+        let mut a = Answer::cert(REFUSED, "skip", format!("resubmit: state={state} not eligible for tip={tip}"));
+        a.stderr = format!("spira-lc resubmit: {id} is {state}; resubmit moves the tip of a WORKING or CERTIFIED bead — nothing changed\n");
+        return a;
     }
-    if event(m, "bead", id, &state, &version, actor, &submit_kind(tip)).0 == 0 {
+    let (rc, out) = event(m, "bead", id, &state, &version, actor, &submit_kind(tip));
+    if rc == 0 {
         return Answer::cert(APPLIED, "applied", format!("resubmit tip={tip}"));
     }
-    Answer::cert(REFUSED, "refused", format!("resubmit tip={tip}"))
+    let mut a = Answer::cert(REFUSED, "refused", format!("resubmit tip={tip}"));
+    a.stderr = format!(
+        "spira-lc resubmit: {id} is {state} and the machine has no Submit from it ({}); claim the bead, then send Submit with `spira-lc event` — nothing changed\n",
+        out.trim()
+    );
+    a
+
 }
 
 /// `renew <id> <holder> <lease-until>` — a working aeon extends its own lease (sp-2jf0a). The
@@ -565,6 +642,90 @@ fn renew(m: &mut dyn Machine, args: &[String]) -> Answer {
     }
 }
 
+/// `phase <bead-id> <holder> <claimed|building|session|teardown>` — the
+/// holder's move to its next phase. Exit: 0 applied · 1 no row · 2 cannot tell · 3 refused
+/// (not WORKING, not the holder, or not strictly forward — the refusal names the state).
+fn phase(m: &mut dyn Machine, args: &[String]) -> Answer {
+    let (Some(id), Some(holder), Some(name)) = (args.first(), args.get(1), args.get(2)) else {
+        return usage("phase <bead-id> <holder> <claimed|building|session|teardown>");
+    };
+    let Some(phase) = AeonPhase::from_str(name) else {
+        return usage(&format!("phase: unknown phase {name:?}; one of {}", AeonPhase::ALL.map(AeonPhase::as_str).join(" ")));
+    };
+    with_row(m, id, holder, |_| Ok(BeadEventKind::Phase { phase }))
+}
+
+/// `disposition <bead-id> <lapsed|thrash|slain> [note] [actor]` — record how the session was
+/// cut short on the WORKING row; the teardown reads it instead of a marker file.
+fn disposition(m: &mut dyn Machine, args: &[String]) -> Answer {
+    let (Some(id), Some(name)) = (args.first(), args.get(1)) else {
+        return usage("disposition <bead-id> <lapsed|thrash|slain> [note] [actor]");
+    };
+    let Some(status) = DispositionStatus::from_str(name) else {
+        return usage(&format!("disposition: unknown status {name:?}; one of {}", DispositionStatus::ALL.map(DispositionStatus::as_str).join(" ")));
+    };
+    let note = args.get(2).cloned().unwrap_or_default();
+    with_row(m, id, &actor_or(args.get(3), "aeon"), |_| Ok(BeadEventKind::Disposition { status, note: note.clone() }))
+}
+
+/// The ReturnedReason a reopen's free-text cause earns: an eject is the batch's own, anything
+/// else a CERTIFIED or in-delivery bead is handed back for is the base having moved.
+fn reopen_returned_reason(cause: &str) -> ReturnedReason {
+    match cause {
+        "eject" | "batch-eject" => ReturnedReason::BatchEjected,
+        "eject-red" => ReturnedReason::BatchEjectedRed,
+        "base-withdrawn" => ReturnedReason::BaseWithdrawn,
+        "pr-checks-red" => ReturnedReason::PrChangesRequested,
+        _ => ReturnedReason::PushRejected,
+    }
+}
+
+/// `reopen <id> [cause] [actor]` — hand a bead back to its builder: the machine's
+/// return-to-rework, recording the event the row's own state implies. SUBMITTED GateRed ·
+/// CERTIFIED Deliver then Returned · IN_DELIVERY Returned · WORKING Release · READY or REWORK
+/// nothing (already there) · terminal refused. A hold stays on the row: reopening is not an
+/// unhold.
+///
+/// Exit: 0 reopened, or already open · 1 no row · 2 cannot tell · 3 refused (terminal, or the
+/// event lost its CAS).
+fn reopen(m: &mut dyn Machine, id: &str, cause: &str, actor: &str) -> Answer {
+    let refuse = |why: String| Answer { code: REFUSED, stderr: format!("spira-lc reopen: {id}: {why}\n"), ..Default::default() };
+    let v = match show(m, id) {
+        Ok(v) => v,
+        Err(rc) => return Answer::code(rc),
+    };
+    let (state, version) = (bead_field(&v, "state"), bead_field(&v, "version"));
+    if state.is_empty() || version.is_empty() {
+        return Answer::code(NO_ROW);
+    }
+    let send = |m: &mut dyn Machine, expect: &str, version: &str, kind: BeadEventKind| {
+        event(m, "bead", id, expect, version, actor, &serde_json::to_string(&kind).unwrap_or_default())
+    };
+    let returned = BeadEventKind::Returned { reason: reopen_returned_reason(cause) };
+    let rc = match state.as_str() {
+        "READY" | "REWORK" => return Answer::code(APPLIED),
+        "WORKING" => send(m, &state, &version, BeadEventKind::Release).0,
+        "SUBMITTED" => {
+            let kind = BeadEventKind::GateRed { tip: bead_field(&v, "tip"), reason: gate_red_reason(cause) };
+            send(m, &state, &version, kind).0
+        }
+        "IN_DELIVERY" => send(m, &state, &version, returned).0,
+        "CERTIFIED" => match send(m, &state, &version, BeadEventKind::Deliver).0 {
+            APPLIED => match state_version(m, id) {
+                Some((st, ver, _)) if st == "IN_DELIVERY" => send(m, &st, &ver, returned).0,
+                _ => CANNOT_TELL,
+            },
+            rc => rc,
+        },
+        other => return refuse(format!("{other} is terminal — a finished bead is not reopened")),
+    };
+    match rc {
+        APPLIED => Answer::code(APPLIED),
+        REFUSED => refuse("the row moved under the reopen (lost the compare-and-swap)".into()),
+        rc => Answer::code(rc),
+    }
+}
+
 /// The bd half a verb needs: an epic's own close. Behind a trait so the compositions below
 /// are unit-testable without bd.
 pub trait Bd {
@@ -572,6 +733,261 @@ pub trait Bd {
     fn issue_type(&mut self, id: &str) -> Result<String, String>;
     /// `bd close <id> --reason <reason>`.
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String>;
+    /// `(id, close_reason)` for each of `ids` whose bd status is closed.
+    fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String>;
+    /// The subset of `ids` that bd has a bead for, in any status.
+    fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String>;
+    /// The store half of a reopen: bd status open, no assignee, no submitted label — so a bead
+    /// the machine handed back reads open wherever bd is still read (sp-swh8b8). Idempotent.
+    fn reopen(&mut self, id: &str) -> Result<(), String>;
+    /// The work beads an ask names on its `work-bead:<id>` labels; empty for any other bead.
+    fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String>;
+    /// Whether the bead came from outside: its bd `external_ref` is set.
+    fn external(&mut self, id: &str) -> Result<bool, String>;
+}
+
+/// Why `kind` may not end the external bead `id`, as an answer; `None` when it may go ahead or
+/// the bead is not external. A bd that cannot say refuses too — an unreadable origin is not
+/// permission to drop.
+fn external_refusal(bd: &mut dyn Bd, id: &str, kind: &BeadEventKind, reason: &str, verb: &str) -> Option<Answer> {
+    match bd.external(id) {
+        Ok(false) => None,
+        Ok(true) => lifecycle::provenance::refuse_external(kind, reason)
+            .map(|why| Answer { code: REFUSED, stderr: format!("spira-lc {verb}: {id}: {why} — nothing closed\n"), ..Default::default() }),
+        Err(e) => Some(Answer { code: CANNOT_TELL, stderr: format!("spira-lc {verb}: {id}: its origin is unreadable — nothing closed: {}\n", e.trim()), ..Default::default() }),
+    }
+}
+
+/// `drop <bead-id> <reason> [actor]` — the operator's drop, which for an externally-originated
+/// bead must carry a named outcome in `<reason>` (see `provenance::parse_close_reason`).
+pub fn drop_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let kind = BeadEventKind::Drop { reason: DropReason::Unwanted };
+    if let (Some(id), Some(reason)) = (args.first().filter(|s| !s.is_empty()), args.get(1).filter(|s| !s.is_empty())) {
+        if let Some(a) = external_refusal(bd, id, &kind, reason, "drop") {
+            return a;
+        }
+    }
+    run("drop", args, m)
+}
+
+/// `reopen <id> [cause] [actor]` — the one door for handing a bead back (sp-swh8b8), the mirror of
+/// [`close`]: the row records the transition its state implies FIRST (see the caller verb's
+/// table), and only then is the store reopened, so bd never says open while the row says done.
+/// A bead with no row (an alert, an ask — rowless, bd is its only state) is reopened in the
+/// store alone. Terminal, refused or unreadable: nothing is written to the store.
+pub fn reopen_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let Some(id) = args.first().filter(|s| !s.is_empty()) else {
+        return usage("reopen <bead-id> [cause] [actor]");
+    };
+    let cause = args.get(1).cloned().unwrap_or_default();
+    let actor = actor_or(args.get(2), "reopen");
+    match show(m, id) {
+        Err(NO_ROW) => {}
+        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc reopen: {id}: the lifecycle row is unreadable — nothing reopened\n"), ..Default::default() },
+        Ok(_) => {
+            let a = reopen(m, id, &cause, &actor);
+            if a.code != APPLIED {
+                return a;
+            }
+        }
+    }
+    match bd.reopen(id) {
+        Ok(()) => Answer::code(APPLIED),
+        Err(e) => Answer {
+            code: CANNOT_TELL,
+            stderr: format!("spira-lc reopen: {id}: the row is handed back but the store reopen failed: {}\n", e.trim()),
+            ..Default::default()
+        },
+    }
+}
+
+/// The terminal event a bead closed in bd with `reason` earns on its lifecycle row:
+/// SUPERSEDED when the reason names a successor, DROPPED otherwise. Never LANDED — only
+/// the landing path may claim content reached the base.
+pub fn terminal_event_for(reason: &str) -> BeadEventKind {
+    let lower = reason.to_lowercase();
+    if let Some(at) = lower.find("superseded by ") {
+        let rest = &reason[at + "superseded by ".len()..];
+        let by = rest.split_whitespace().next().unwrap_or("").trim_matches(|c: char| !c.is_alphanumeric());
+        if by.contains('-') {
+            return BeadEventKind::Supersede { by: by.to_string() };
+        }
+    }
+    BeadEventKind::Drop { reason: DropReason::ClosedNoBranch }
+}
+
+const RECONCILE_CHUNK: usize = 100;
+
+/// `reconcile-closed [--apply] [<id>...]` — move the READY lifecycle row of every bead bd
+/// has closed to the terminal state its close reason earns. Dry run unless `--apply`. With
+/// ids, only those; the closers' own hook passes the id it just closed. Only READY rows are
+/// touched: a bead that was claimed or submitted ends through the delivery path, which
+/// records its own outcome, and is reported, not rewritten.
+///
+/// Exit: 0 done (or listed) · 2 cannot tell · 3 an event was refused (an ask hold, a lost race).
+pub fn reconcile_closed(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let apply = args.iter().any(|a| a == "--apply");
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
+        return usage(&format!("reconcile-closed [--apply] [<bead-id>...] (unknown flag {bad})"));
+    }
+    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+    let (rc, out) = m.call(&["list".into()]);
+    if rc != 0 {
+        return Answer { code: rc.max(CANNOT_TELL), stderr: format!("spira-lc reconcile-closed: lifecycle list failed: {}\n", out.trim()), ..Default::default() };
+    }
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
+        return Answer { code: CANNOT_TELL, stderr: "spira-lc reconcile-closed: lifecycle list is not a JSON array\n".into(), ..Default::default() };
+    };
+    let ready: Vec<&Value> = rows.iter().filter(|r| s(r, "state") == "READY" && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")))).collect();
+    let ids: Vec<String> = ready.iter().map(|r| s(r, "bead_id")).collect();
+    let mut closed = BTreeMap::new();
+    for chunk in ids.chunks(RECONCILE_CHUNK) {
+        match bd.closed(chunk) {
+            Ok(v) => closed.extend(v),
+            Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-closed: bd unreadable: {}\n", e.trim()), ..Default::default() },
+        }
+    }
+    let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
+    for r in ready {
+        let id = s(r, "bead_id");
+        let Some(reason) = closed.get(&id) else { continue };
+        let kind = terminal_event_for(reason);
+        if apply {
+            if let Some(a) = external_refusal(bd, &id, &kind, reason, "reconcile-closed") {
+                lines.push(format!("refused {id}: {}", a.stderr.trim()));
+                code = REFUSED;
+                continue;
+            }
+        }
+        let to = if matches!(kind, BeadEventKind::Supersede { .. }) { "SUPERSEDED" } else { "DROPPED" };
+        let why = reason.lines().next().unwrap_or("").trim();
+        if !apply {
+            lines.push(format!("would move {id} READY -> {to} ({why})"));
+            done += 1;
+            continue;
+        }
+        let (version, kind_json) = (s(r, "version"), serde_json::to_string(&kind).unwrap_or_default());
+        match event(m, "bead", &id, "READY", &version, "reconcile-closed", &kind_json).0 {
+            APPLIED => {
+                lines.push(format!("moved {id} READY -> {to} ({why})"));
+                done += 1;
+            }
+            rc => {
+                lines.push(format!("refused {id}: event exit {rc}"));
+                code = REFUSED;
+            }
+        }
+    }
+    lines.push(format!("reconcile-closed: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
+    Answer::out(code, lines.join("\n"))
+}
+
+/// `reconcile-epics [--apply] [<id>...]` — move every non-terminal epic's row off READY (and any
+/// other non-OPEN state the classifier would not give a container) to OPEN. Dry run unless
+/// `--apply`. Only rows the epic rule may correct are touched, and only the READY/OPEN rows
+/// are asked of bd, so the cost is one `issue_type` read per READY row, never a full roster.
+///
+/// Exit: 0 done (or listed) · 2 cannot tell · 3 an event was refused.
+pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let apply = args.iter().any(|a| a == "--apply");
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
+        return usage(&format!("reconcile-epics [--apply] [<bead-id>...] (unknown flag {bad})"));
+    }
+    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+    let (rc, out) = m.call(&["list".into(), "--state".into(), "READY".into()]);
+    if rc != 0 {
+        return Answer { code: rc.max(CANNOT_TELL), stderr: format!("spira-lc reconcile-epics: lifecycle list failed: {}\n", out.trim()), ..Default::default() };
+    }
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
+        return Answer { code: CANNOT_TELL, stderr: "spira-lc reconcile-epics: lifecycle list is not a JSON array\n".into(), ..Default::default() };
+    };
+    let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
+    for r in rows.iter().filter(|r| s(r, "state") == "READY" && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")))) {
+        let id = s(r, "bead_id");
+        match bd.issue_type(&id) {
+            Ok(t) if t == "epic" => {}
+            Ok(_) => continue,
+            Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-epics: bd unreadable for {id}: {}\n", e.trim()), ..Default::default() },
+        }
+        if !apply {
+            lines.push(format!("would move {id} READY -> OPEN (epic-container)"));
+            done += 1;
+            continue;
+        }
+        let kind = BeadEventKind::Reclassify { state: BeadState::Open, rule: "epic-container".into() };
+        let (version, kind_json) = (s(r, "version"), serde_json::to_string(&kind).unwrap_or_default());
+        match event(m, "bead", &id, "READY", &version, "classifier", &kind_json).0 {
+            APPLIED => {
+                lines.push(format!("moved {id} READY -> OPEN (epic-container)"));
+                done += 1;
+            }
+            rc => {
+                lines.push(format!("refused {id}: event exit {rc}"));
+                code = REFUSED;
+            }
+        }
+    }
+    lines.push(format!("reconcile-epics: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
+    Answer::out(code, lines.join("\n"))
+}
+
+/// `drop-orphans [--apply] [<id>...]` — move the READY lifecycle row of every key bd has no
+/// bead for to DROPPED. Dry run unless `--apply`. A row is never deleted (spira_lc holds no
+/// DELETE); DROPPED takes it off READY and keeps its history. Without ids, a bd that knows
+/// none of the READY rows is read as bd misreading, not as every row being an orphan.
+///
+/// Exit: 0 done (or listed) · 2 cannot tell · 3 an event was refused.
+pub fn drop_orphans(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let apply = args.iter().any(|a| a == "--apply");
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
+        return usage(&format!("drop-orphans [--apply] [<bead-id>...] (unknown flag {bad})"));
+    }
+    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+    let cannot = |why: String| Answer { code: CANNOT_TELL, stderr: format!("spira-lc drop-orphans: {why}\n"), ..Default::default() };
+    let (rc, out) = m.call(&["list".into()]);
+    if rc != 0 {
+        return cannot(format!("lifecycle list failed: {}", out.trim()));
+    }
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
+        return cannot("lifecycle list is not a JSON array".into());
+    };
+    let ready: Vec<&Value> = rows.iter().filter(|r| s(r, "state") == "READY" && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")))).collect();
+    let ids: Vec<String> = ready.iter().map(|r| s(r, "bead_id")).collect();
+    let mut known = std::collections::BTreeSet::new();
+    for chunk in ids.chunks(RECONCILE_CHUNK) {
+        match bd.known(chunk) {
+            Ok(v) => known.extend(v),
+            Err(e) => return cannot(format!("bd unreadable: {}", e.trim())),
+        }
+    }
+    if only.is_empty() && !ids.is_empty() && known.is_empty() {
+        return cannot("bd knows none of the READY rows; refusing to drop them all".into());
+    }
+    let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
+    for r in ready {
+        let id = s(r, "bead_id");
+        if known.contains(&id) {
+            continue;
+        }
+        if !apply {
+            lines.push(format!("would move {id} READY -> DROPPED (no bead in the store)"));
+            done += 1;
+            continue;
+        }
+        let (version, kind_json) = (s(r, "version"), serde_json::to_string(&BeadEventKind::Drop { reason: DropReason::ClosedNoBranch }).unwrap_or_default());
+        match event(m, "bead", &id, "READY", &version, "drop-orphans", &kind_json).0 {
+            APPLIED => {
+                lines.push(format!("moved {id} READY -> DROPPED (no bead in the store)"));
+                done += 1;
+            }
+            rc => {
+                lines.push(format!("refused {id}: event exit {rc}"));
+                code = REFUSED;
+            }
+        }
+    }
+    lines.push(format!("drop-orphans: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
+    Answer::out(code, lines.join("\n"))
 }
 
 /// `unclaim <id> <actor>` — an aeon hands back a bead it still holds (lib.sh
@@ -631,6 +1047,158 @@ pub fn close_epic(args: &[String], bd: &mut dyn Bd) -> Answer {
             Err(e) => Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: bd close {id} failed: {}\n", e.trim()), ..Default::default() },
         },
     }
+}
+
+/// `close <id> (--reason R | --reason-file F|-) [--superseded-by X | --landing] [--actor A]` — the one
+/// door for closing a bead (sp-3fue0j). The lifecycle machine records the end FIRST — an open
+/// ask is withdrawn, then SUPERSEDED (a successor named by `--superseded-by` or in the reason)
+/// or DROPPED — and only then is the store closed, so a closed bead can never sit READY on
+/// its row again (237 did on 2026-10-06, closed by raw `bd close` from ten callers). A row
+/// already terminal (a landing recorded LANDED before its close) gets no event; a bead with
+/// no row has no state to diverge, and is closed in the store alone. `--landing` is the landing
+/// path's close: the delivery records LANDED itself (it may close first), so the row gets no
+/// event — and a row that is not in delivery or LANDED is refused, so no other caller can use it
+/// to close around the machine. `reason_file` reads
+/// `--reason-file`'s argument (`-` is stdin) — injected so the composition is testable.
+///
+/// Exit: 0 closed · 2 cannot tell (usage, the machine unreadable, or the store close failed
+/// after the event — the row is terminal either way) · 3 refused (the event lost its CAS:
+/// nothing is closed, the store is left as it was).
+pub fn close(
+    args: &[String],
+    m: &mut dyn Machine,
+    bd: &mut dyn Bd,
+    reason_file: &mut dyn FnMut(&str) -> Result<String, String>,
+) -> Answer {
+    const USE: &str = "close <bead-id> (--reason <text> | --reason-file <file|->) [--superseded-by <id> | --landing] [--actor <name>]";
+    let mut id = None;
+    let (mut reason, mut by, mut actor, mut landing) = (None, None, "close".to_string(), false);
+    let mut i = 0;
+    while i < args.len() {
+        let val = args.get(i + 1).cloned();
+        match args[i].as_str() {
+            "--landing" => {
+                landing = true;
+                i += 1;
+                continue;
+            }
+            "--reason" => reason = val,
+            "--reason-file" => match val.map(|f| reason_file(&f)) {
+                Some(Ok(t)) => reason = Some(t),
+                Some(Err(e)) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: --reason-file: {e}\n"), ..Default::default() },
+                None => return usage(USE),
+            },
+            "--superseded-by" => by = val,
+            "--actor" => actor = val.unwrap_or_default(),
+            a if !a.starts_with('-') && id.is_none() => {
+                id = Some(a.to_string());
+                i += 1;
+                continue;
+            }
+            _ => return usage(USE),
+        }
+        i += 2;
+    }
+    let (Some(id), Some(reason)) = (id.filter(|s| !s.is_empty()), reason.map(|r| r.trim_end().to_string()).filter(|r| !r.is_empty())) else {
+        return usage(USE);
+    };
+    if actor.is_empty() || (landing && by.is_some()) {
+        return usage(USE);
+    }
+    let asked_about = match bd.work_beads(&id) {
+        Ok(w) => w,
+        Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: {id}: its labels are unreadable — nothing closed: {}\n", e.trim()), ..Default::default() },
+    };
+    let mut rowless = false;
+    match show(m, &id) {
+        Err(NO_ROW) => rowless = true,
+        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc close: {id}: the lifecycle row is unreadable — nothing closed\n"), ..Default::default() },
+        Ok(v) => {
+            let (mut state, mut version) = (bead_field(&v, "state"), bead_field(&v, "version"));
+            if state.is_empty() || version.is_empty() {
+                return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: {id}: unreadable row\n"), ..Default::default() };
+            }
+            let terminal = matches!(state.as_str(), "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE");
+            if landing {
+                if !matches!(state.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY" | "LANDED") {
+                    return Answer {
+                        code: REFUSED,
+                        stderr: format!("spira-lc close --landing: {id} is {state}, not in delivery — nothing closed\n"),
+                        ..Default::default()
+                    };
+                }
+            } else if !terminal {
+                let kind = match by.as_deref().filter(|b| !b.is_empty()) {
+                    Some(b) => BeadEventKind::Supersede { by: b.to_string() },
+                    None => terminal_event_for(&reason),
+                };
+                if let Some(a) = external_refusal(bd, &id, &kind, &reason, "close") {
+                    return a;
+                }
+                if holds_of(v.get("bead").and_then(|b| b.get("holds"))).iter().any(|h| h == "ask") {
+                    let ev = serde_json::to_string(&BeadEventKind::AskWithdrawn).unwrap_or_default();
+                    match event(m, "bead", &id, &state, &version, &actor, &ev).0 {
+                        APPLIED => match show(m, &id) {
+                            Ok(v) => (state, version) = (bead_field(&v, "state"), bead_field(&v, "version")),
+                            Err(rc) => return Answer::code(rc),
+                        },
+                        rc => return Answer { code: rc, stderr: format!("spira-lc close: {id}: withdrawing its ask was refused — nothing closed\n"), ..Default::default() },
+                    }
+                }
+                let ev = serde_json::to_string(&kind).unwrap_or_default();
+                match event(m, "bead", &id, &state, &version, &actor, &ev) {
+                    (APPLIED, _) => {}
+                    (rc, out) => {
+                        return Answer { code: rc, stderr: format!("spira-lc close: {id}: {state} -> terminal refused ({}) — nothing closed\n", out.trim()), ..Default::default() }
+                    }
+                }
+            }
+        }
+    }
+    match bd.close(&id, &reason) {
+        Ok(()) => {
+            if rowless {
+                let a = close_ask_row(&id, &reason, &actor, m);
+                if a.code != APPLIED {
+                    return a;
+                }
+            }
+            withdraw_named_asks(&id, &asked_about, &actor, m)
+        }
+        Err(e) => Answer {
+            code: CANNOT_TELL,
+            stderr: format!("spira-lc close: {id}: the lifecycle row is terminal but the store close failed: {}\n", e.trim()),
+            ..Default::default()
+        },
+    }
+}
+
+/// A bead with no bead row may be an ask: its own machine records the close. Exit 1 (no ask
+/// row either: an alert, an insight) and 3 (already closed) are nothing to record.
+fn close_ask_row(id: &str, reason: &str, actor: &str, m: &mut dyn Machine) -> Answer {
+    let args: Vec<String> = ["close-ask", id, "--exit", "withdrawn", "--quote", reason, "--actor", actor].iter().map(|x| x.to_string()).collect();
+    match m.call(&args) {
+        (0 | 1 | REFUSED, _) => Answer::code(APPLIED),
+        (rc, out) => Answer { code: rc, stderr: format!("spira-lc close: {id} is closed but its ask row was not: {}\n", out.trim()), ..Default::default() },
+    }
+}
+
+/// Closing an ask lifts the ask hold on each work bead it names and moves nothing else on
+/// them: a work bead ends only through its own close.
+fn withdraw_named_asks(ask: &str, work_beads: &[String], actor: &str, m: &mut dyn Machine) -> Answer {
+    for w in work_beads {
+        match with_row(m, w, actor, |_| Ok(BeadEventKind::AskWithdrawn)) {
+            Answer { code: APPLIED | NO_ROW | REFUSED, .. } => {}
+            a => {
+                return Answer {
+                    code: CANNOT_TELL,
+                    stderr: format!("spira-lc close: {ask} is closed but the ask hold on {w} was not lifted: {}", a.stderr),
+                    ..Default::default()
+                }
+            }
+        }
+    }
+    Answer::code(APPLIED)
 }
 
 #[cfg(test)]

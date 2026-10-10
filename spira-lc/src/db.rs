@@ -19,7 +19,6 @@
 //! Either way exactly one transition is ever recorded as applied for a given (key, version).
 
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -37,22 +36,42 @@ pub struct Conn {
     /// A second connection for plain reads, so a slow `list` never holds the write session
     /// and every lifecycle write queues behind it.
     read_session: Mutex<Option<Wire>>,
-    /// The socket read/write limit for this connection: the 5 s query cap, or
+    /// The socket read/write limit for this connection: the query deadline, or
     /// [`ADMIN_IO_TIMEOUT`] for the admin batch verbs.
     pub io_timeout: std::time::Duration,
+    /// The live bead rows, present only in the serving process (see `live.rs`).
+    pub live: Option<crate::live::Live>,
 }
 
+/// A query's server-side deadline: a statement that has not answered in this long is
+/// abandoned and reported as [`DEADLINE_MESSAGE`], never as a partial answer.
+pub const QUERY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10); // batch-job: queries queue behind a loaded Dolt in the round VM
+pub const DEADLINE_MESSAGE: &str = "deadline";
+
 /// The admin batch verbs' socket limit (admin-apply-ddl, admin-migrate): one-off install
-/// DDL on a fresh Dolt server under load ran past the 5 s query cap ("Resource temporarily
+/// DDL on a fresh Dolt server under load ran past the query deadline ("Resource temporarily
 /// unavailable", sp-4o5um). Bounded, and never used for a query.
 // batch-job: install-time schema DDL, bounded at 120 s; not a query on any serving path.
 pub const ADMIN_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// census's aggregate over the whole fact history, windowed per class: not a point query.
+// batch-job: census report, bounded at 30 s.
+pub const FACTS_QUERY_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A connect that fails is retried this many times in all: nothing has been sent, so a
+/// retry cannot double a write.
+const CONNECT_ATTEMPTS: u32 = 3;
+
+fn connect_backoff(attempt: u32) -> std::time::Duration {
+    std::time::Duration::from_millis(200u64 << (attempt - 1).min(6))
+}
 
 /// The socket limit a verb's connection uses.
 pub fn io_timeout_for(verb: &str) -> std::time::Duration {
     match verb {
         "admin-apply-ddl" | "admin-migrate" => ADMIN_IO_TIMEOUT,
-        _ => std::time::Duration::from_secs(5),
+        "facts-query" => FACTS_QUERY_IO_TIMEOUT,
+        _ => QUERY_DEADLINE,
     }
 }
 
@@ -67,7 +86,7 @@ pub enum DbError {
 }
 
 pub fn now_epoch() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64
+    spira_config::vtime::now_epoch() as i64
 }
 
 impl Conn {
@@ -78,11 +97,14 @@ impl Conn {
             .parse()
             .map_err(|e| DbError::CannotTell(format!("SPIRA_LC_PORT: {e}")))?;
         let user = std::env::var("SPIRA_LC_USER").unwrap_or_else(|_| "spira_lc".to_string());
-        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let password = password_from(Some(spira_config::resolve::lc_password_file(&env)), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
+        // SPIRA_LC_PASSWORD_FILE is declared config (spira/conf.d): the one source is
+        // $SPIRA_TOML (per Ryan 2026-10-05), never this process's own environment. The
+        // credential itself still comes from reading that file's contents, same as always.
+        let password_file = spira_config::process::cfg("SPIRA_LC_PASSWORD_FILE").ok();
+        let password = password_from(password_file, std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: std::time::Duration::from_secs(5) })
+        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: QUERY_DEADLINE, live: None })
     }
 
     /// A second connection to the same server and database under other credentials — the
@@ -98,11 +120,77 @@ impl Conn {
             session: Mutex::new(None),
             read_session: Mutex::new(None),
             io_timeout: self.io_timeout,
+            live: None,
         }
     }
 
+    /// A connection to a port nothing listens on: whatever answers through it was not read from Dolt.
+    #[cfg(test)]
+    pub fn unreachable() -> Conn {
+        Conn {
+            host: "127.0.0.1".into(),
+            port: 1,
+            user: String::new(),
+            password: String::new(),
+            database: String::new(),
+            session: Mutex::new(None),
+            read_session: Mutex::new(None),
+            io_timeout: std::time::Duration::from_millis(200),
+            live: None,
+        }
+    }
+
+    /// Turns on the in-memory live rows; call once, before the connection is shared.
+    pub fn enable_live(&mut self) {
+        self.live = Some(crate::live::Live::default());
+    }
+
+    /// The live rows, once loaded; `None` makes every caller read Dolt as before.
+    pub fn live(&self) -> Option<&crate::live::Live> {
+        self.live.as_ref().filter(|l| l.is_loaded())
+    }
+
+    /// (Re)loads the live rows from Dolt through the write session, so no write commits between
+    /// the read and the swap.
+    pub fn live_load(&self) -> Result<usize, String> {
+        let live = self.live.as_ref().ok_or("the live rows are not enabled")?;
+        self.with_write_wire(|wire| live.load(now_epoch(), |sql| wire.exec(sql).map_err(|_| ())))
+    }
+
+    /// Compares memory with Dolt through the write session (quiescent against writes) and
+    /// reloads on a mismatch; the caller raises the incident.
+    pub fn live_check(&self) -> Result<crate::live::Check, String> {
+        let live = self.live.as_ref().ok_or("the live rows are not enabled")?;
+        self.with_write_wire(|wire| live.check(now_epoch(), |sql| wire.exec(sql).map_err(|_| ())))
+    }
+
+    fn with_write_wire<T>(&self, f: impl FnOnce(&mut Wire) -> Result<T, String>) -> Result<T, String> {
+        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
+        let mut wire = match reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database))) {
+            Ok(w) => w,
+            Err(ScriptFailure::CannotTell(e)) => return Err(e),
+            Err(ScriptFailure::LostRace) => return Err("serialization conflict on connect".into()),
+        };
+        let out = f(&mut wire);
+        if out.is_ok() {
+            *guard = Some(wire);
+        }
+        out
+    }
+
     fn connect(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
-        Wire::connect_with(&self.host, self.port, &self.user, &self.password, database, self.io_timeout)
+        let mut failure = None;
+        for attempt in 0..CONNECT_ATTEMPTS {
+            if attempt > 0 {
+                std::thread::sleep(connect_backoff(attempt));
+            }
+            match Wire::connect_with(&self.host, self.port, &self.user, &self.password, database, self.io_timeout) {
+                Ok(w) => return Ok(w),
+                Err(e) => failure = Some(e),
+            }
+        }
+        Err(failure.expect("CONNECT_ATTEMPTS is at least one"))
     }
 
     /// A single read-only query: the rows of its last result set.
@@ -121,23 +209,66 @@ impl Conn {
         self.run_script_on(&self.session, script)
     }
 
-    /// Times only the statements: the wait for the session lock is queueing, not a slow query.
+    /// A write: once it commits, the live rows it touched are re-read from Dolt on the same
+    /// session, still holding it, so refreshes land in commit order.
+    fn run_write(&self, script: &str, touch: crate::live::Touch) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+        self.run_session(&self.session, script, Some(&touch))
+    }
+
     fn run_script_on(&self, session: &Mutex<Option<Wire>>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+        self.run_session(session, script, None)
+    }
+
+    /// Times only the statements: the wait for the session lock is queueing, not a slow query.
+    fn run_session(&self, session: &Mutex<Option<Wire>>, script: &str, touch: Option<&crate::live::Touch>) -> Result<Vec<Vec<Value>>, ScriptFailure> {
         let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
-        let started = std::time::Instant::now();
+        let session_started = std::time::Instant::now();
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
-        let result = match reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database))) {
+        let wire = reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database)));
+        crate::slow::record(session_started.elapsed(), "CONNECT");
+        match wire {
             Ok(mut wire) => {
-                let out = wire.exec(script);
-                if out.is_ok() {
+                let started = std::time::Instant::now();
+                let (out, keep) = match (touch, &self.live) {
+                    (Some(touch), Some(live)) => match live.write_through(touch, script, |sql| wire.exec(sql)) {
+                        Ok((sets, refreshed)) => (Ok(sets), refreshed),
+                        Err(e) => (Err(e), false),
+                    },
+                    _ => {
+                        let out = wire.exec(script);
+                        let keep = out.is_ok();
+                        (out, keep)
+                    }
+                };
+                crate::slow::record(started.elapsed(), script);
+                if keep {
                     *guard = Some(wire);
                 }
                 out
             }
             Err(e) => Err(e),
-        };
-        crate::slow::record(started.elapsed(), script);
-        result
+        }
+    }
+
+    /// Append one already-built event INSERT in its own transaction (a fact: no row is mutated).
+    pub fn append_event(&self, insert_sql: &str) -> Result<(), DbError> {
+        match self.run_script(&format!("START TRANSACTION;\n{insert_sql};\nCOMMIT;\n")) {
+            Ok(_) => Ok(()),
+            Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a plain INSERT lost a race — unexpected".into())),
+            Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
+        }
+    }
+
+    /// Append many already-built event INSERTs in one transaction over this one connection:
+    /// a machine's fine-grained transitions in a pass cost one commit, not one per transition.
+    /// Empty input writes nothing.
+    pub fn append_events(&self, insert_sqls: &[String]) -> Result<usize, DbError> {
+        let Some(script) = batch_script(insert_sqls) else { return Ok(0) };
+        match self.run_script(&script) {
+            Ok(_) => Ok(insert_sqls.len()),
+            Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a plain INSERT batch lost a race — unexpected".into())),
+            Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
+        }
     }
 
     /// Insert one event row in its own transaction. Used both for logical refusals (no row
@@ -207,7 +338,7 @@ impl Conn {
             at = ev.at,
         );
 
-        match self.run_script(&script) {
+        match self.run_write(&script, touch_of(table, &[key])) {
             Ok(sets) => {
                 let rows = sets.last().cloned().unwrap_or_default();
                 let applied = rows.first().and_then(|r| r.get("applied")).and_then(|v| v.as_str()).map(|s| s != "0").unwrap_or(false);
@@ -264,7 +395,7 @@ impl Conn {
             at = ev.at,
         );
 
-        match self.run_script(&script) {
+        match self.run_write(&script, touch_of(table, &[ev.key.as_str()])) {
             Ok(sets) => {
                 let rows = sets.last().cloned().unwrap_or_default();
                 let applied = rows.first().and_then(|r| r.get("applied")).and_then(|v| v.as_str()).map(|s| s != "0").unwrap_or(false);
@@ -285,7 +416,18 @@ impl Conn {
     /// itself opens with `CREATE DATABASE IF NOT EXISTS spira_lifecycle; USE spira_lifecycle;`.
     pub fn apply_ddl(&self, sql_text: &str) -> Result<(), DbError> {
         let wire = self.connect(Some(&self.database)).or_else(|_| self.connect(None));
-        let result = wire.and_then(|mut wire| wire.exec(sql_text));
+        // One statement per round trip: the server's own multi-statement splitter refuses a
+        // view body with an optimizer hint ("unable to get sub statement").
+        let result = wire.and_then(|mut wire| {
+            let mut last = Ok(Vec::new());
+            for stmt in crate::migrate::split_statements(sql_text) {
+                last = wire.exec(&stmt);
+                if last.is_err() {
+                    break;
+                }
+            }
+            last
+        });
         match result {
             Ok(_) => Ok(()),
             Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("DDL reported a serialization conflict".into())),
@@ -299,7 +441,12 @@ impl Conn {
     /// competes with another writer on the same key by construction (row creation, keyed by
     /// an id nothing else mints).
     pub fn run_plain(&self, script: &str) -> Result<(), DbError> {
-        match self.run_script(script) {
+        self.run_plain_touching(script, crate::live::Touch::All)
+    }
+
+    /// [`Self::run_plain`] for a script whose only effect on the live rows is on `keys`.
+    pub fn run_plain_touching(&self, script: &str, touch: crate::live::Touch) -> Result<(), DbError> {
+        match self.run_write(script, touch) {
             Ok(_) => Ok(()),
             Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a plain insert unexpectedly lost a race".into())),
             Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
@@ -351,7 +498,13 @@ impl Conn {
         }
         script.push_str("COMMIT;\n");
 
-        match self.run_script(&script) {
+        let touch = if preamble.is_empty() {
+            let keys: Vec<&str> = steps.iter().filter(|st| is_live_table(st.table)).map(|st| st.key.as_str()).collect();
+            touch_of("bead", &keys)
+        } else {
+            crate::live::Touch::All
+        };
+        match self.run_write(&script, touch) {
             Ok(blocks) => {
                 Ok(steps
                     .iter()
@@ -399,15 +552,122 @@ pub(crate) enum ScriptFailure {
 }
 
 pub struct EventRecord {
-    pub machine: String,
-    pub key: String,
-    pub event: String,
-    pub expect: String,
-    pub from_state: String,
-    pub refusal: Option<String>,
-    pub evidence: serde_json::Value,
-    pub actor: String,
-    pub at: i64,
+    machine: String,
+    key: String,
+    event: String,
+    expect: String,
+    from_state: String,
+    refusal: Option<String>,
+    evidence: serde_json::Value,
+    actor: String,
+    at: i64,
+}
+
+impl EventRecord {
+    /// An applied event as one INSERT, for a preamble statement that created the row itself.
+    pub fn applied_insert_sql(&self, to_state: &str) -> String {
+        format!(
+            "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) VALUES ({}, {}, {}, {}, {}, {}, 1, NULL, {}, {}, {});\n",
+            sql_str(&self.machine),
+            sql_str(&self.key),
+            sql_str(&self.event),
+            sql_str(&self.expect),
+            sql_str(&self.from_state),
+            sql_str(to_state),
+            sql_json(&self.evidence),
+            sql_str(&self.actor),
+            self.at,
+        )
+    }
+
+    pub fn event_name(&self) -> &str {
+        &self.event
+    }
+
+    #[cfg(test)]
+    pub fn evidence(&self) -> &serde_json::Value {
+        &self.evidence
+    }
+
+    pub fn evidence_mut(&mut self) -> &mut serde_json::Value {
+        &mut self.evidence
+    }
+
+    /// The only way an event about an existing row is recorded: `before` is the state of the
+    /// row the machine applied to. An applied event (no refusal) expected exactly that state,
+    /// so `asked_expect` is only kept for a refusal, where it is what the caller wrongly named.
+    #[allow(clippy::too_many_arguments)]
+    pub fn of_apply(
+        machine: impl AsRef<str>,
+        key: impl AsRef<str>,
+        event: impl AsRef<str>,
+        asked_expect: impl AsRef<str>,
+        before: impl AsRef<str>,
+        refusal: Option<String>,
+        evidence: serde_json::Value,
+        actor: impl AsRef<str>,
+        at: i64,
+    ) -> Self {
+        let before = before.as_ref().to_string();
+        let expect = if refusal.is_none() { before.clone() } else { asked_expect.as_ref().to_string() };
+        EventRecord {
+            machine: machine.as_ref().into(),
+            key: key.as_ref().into(),
+            event: event.as_ref().into(),
+            expect,
+            from_state: before,
+            refusal,
+            evidence,
+            actor: actor.as_ref().into(),
+            at,
+        }
+    }
+
+    /// The sanctioned exception: the import of a row that did not exist, state `NONE`. Only
+    /// `insert_if_absent_and_log` takes one, and it proves absence in the same transaction.
+    pub fn import_absent(
+        machine: impl AsRef<str>,
+        key: impl AsRef<str>,
+        event: impl AsRef<str>,
+        evidence: serde_json::Value,
+        actor: impl AsRef<str>,
+        at: i64,
+    ) -> Self {
+        EventRecord {
+            machine: machine.as_ref().into(),
+            key: key.as_ref().into(),
+            event: event.as_ref().into(),
+            expect: "NONE".into(),
+            from_state: "NONE".into(),
+            refusal: None,
+            evidence,
+            actor: actor.as_ref().into(),
+            at,
+        }
+    }
+}
+
+fn is_live_table(table: &str) -> bool {
+    matches!(table, "bead" | "delivery")
+}
+
+/// The live rows a write to `table` keyed `keys` changes: bead and delivery rows share the
+/// bead id as their key; any other table holds none of them.
+fn touch_of(table: &str, keys: &[&str]) -> crate::live::Touch {
+    crate::live::Touch::Keys(if is_live_table(table) { keys.iter().map(|k| k.to_string()).collect() } else { Vec::new() })
+}
+
+fn batch_script(insert_sqls: &[String]) -> Option<String> {
+    if insert_sqls.is_empty() {
+        return None;
+    }
+    let mut script = String::from("START TRANSACTION;\n");
+    for sql in insert_sqls {
+        script.push_str(sql.trim_end_matches(|c: char| c == ';' || c.is_whitespace()));
+        script.push_str(";\n");
+    }
+    script.push_str("COMMIT;\n");
+    Some(script)
 }
 
 fn sql_str(s: &str) -> String {
@@ -458,14 +718,40 @@ mod password_tests {
 
 #[cfg(test)]
 mod io_timeout_tests {
+    #[test]
+    fn connect_backoff_doubles_from_200ms() {
+        assert_eq!(super::connect_backoff(1), std::time::Duration::from_millis(200));
+        assert_eq!(super::connect_backoff(2), std::time::Duration::from_millis(400));
+    }
+
     use super::*;
     #[test]
     fn only_the_admin_batch_verbs_get_the_long_socket_limit() {
         assert_eq!(io_timeout_for("admin-apply-ddl"), ADMIN_IO_TIMEOUT);
         assert_eq!(io_timeout_for("admin-migrate"), ADMIN_IO_TIMEOUT);
         for v in ["show", "event", "history", "create-bead", "list", "serve", ""] {
-            assert_eq!(io_timeout_for(v), std::time::Duration::from_secs(5), "{v} keeps the 5 s query cap");
+            assert_eq!(io_timeout_for(v), QUERY_DEADLINE, "{v} keeps the query deadline");
         }
         assert!(ADMIN_IO_TIMEOUT <= std::time::Duration::from_secs(120), "bounded");
+        assert_eq!(io_timeout_for("facts-query"), FACTS_QUERY_IO_TIMEOUT);
+        assert_eq!(io_timeout_for("facts"), QUERY_DEADLINE);
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::batch_script;
+
+    #[test]
+    fn n_inserts_share_one_transaction() {
+        let s = batch_script(&["INSERT INTO event VALUES (1);".to_string(), "INSERT INTO event VALUES (2)".to_string()]).unwrap();
+        assert_eq!(s, "START TRANSACTION;\nINSERT INTO event VALUES (1);\nINSERT INTO event VALUES (2);\nCOMMIT;\n");
+        assert_eq!(s.matches("START TRANSACTION").count(), 1);
+        assert_eq!(s.matches("COMMIT").count(), 1);
+    }
+
+    #[test]
+    fn an_empty_batch_writes_nothing() {
+        assert_eq!(batch_script(&[]), None);
     }
 }

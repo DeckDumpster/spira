@@ -6,10 +6,20 @@ id = "UC-gate-verdict-01"
 tier = "T1"
 statement = "Every exit goes through `verdict()`, which prints exactly one anchored `gate: VERDICT=<PASS|FAIL|BASE_FAIL|NO_VERDICT> reason=<slug> branch= repo= suite=` line and exits 0/1/76/75 to match."
 
+[use_case.uncovered]
+reason = "verdict() and its exit mapping live in the gate crate and are verified by gate::tests::a_fail_with_no_message_is_downgraded and the verdict-line assertions beside it; the Rust seam is not drivable from bash"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+
 [[use_case]]
 id = "UC-gate-verdict-02"
 tier = "T1"
 statement = "A FAIL that carries no message is downgraded to NO_VERDICT with `reason=no-evidence:<orig>` (sp-io5j backstop)."
+
+[use_case.uncovered]
+reason = "the no-evidence downgrade is gate::engine::settle, verified by gate::tests::a_fail_with_no_message_is_downgraded; no bash-reachable path yields an empty-message FAIL"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-gate-verdict-03"
@@ -115,6 +125,11 @@ statement = "`gate-sweep.sh` removes stale `.gate.<repo>[.<key>]` worktrees and 
 id = "UC-gate-verdict-21"
 tier = "T3"
 statement = "Under contention (N aeon gates plus a landing pass with a small lock wait), every gate reaches a verdict. None is starved to 75, no tree is crossed, landing verdicts come from the cache, and the whole soak finishes inside its deadline."
+
+[use_case.uncovered]
+reason = "the contention soak needs N concurrent gate processes against a shared gate worktree and lock; no suite drives it since the bash gate was replaced"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-gate-verdict-22"

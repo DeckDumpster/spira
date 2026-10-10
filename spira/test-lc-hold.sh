@@ -3,10 +3,10 @@
 # test-lc-hold.sh — container-tier acceptance for spira-lc's caller verbs (hold/unhold/holds, and,
 # sp-rlyl0: release/holder-dead/drop/returned — lc.sh's lc_hold/lc_unhold/
 # lc_holds, and, sp-rlyl0: lc_release/lc_holderdead/lc_drop/lc_returned) against a real
-# spira-lc binary and a throwaway Dolt server (sp-ki12s, extended for ask/wait/operator by
+# spira-lc binary and a throwaway Dolt server (sp-ki12s, extended for ask/wait/manual by
 # sp-mys5p).
 #
-# WHAT THIS PROVES, for EVERY hold kind (poison, ask, wait, operator — sp-mys5p's
+# WHAT THIS PROVES, for EVERY hold kind (poison, ask, wait, manual — sp-mys5p's
 # acceptance is "for each hold kind", not just the one sp-ki12s wired first):
 #   - lc_hold suspends a non-terminal bead without changing its state (design: "holds are
 #     a dimension, not states") — a §2.2 hazard class ("no terminal states forbids leaving")
@@ -49,6 +49,12 @@ unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
+# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
+# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
+# exist for this suite's throwaway server. testlib/lc-fixture.sh's own pattern: an empty
+# (root, no password) credential file, declared, and no socket.
+: > "$TMP/credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/credential" SPIRA_LC_SOCKET=""
 PORT=$((SPIRA_LC_TESTDB_PORT + 700 + (RANDOM % 300)))
 SERVER_PID=""
 cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"; }
@@ -68,19 +74,19 @@ behavior:
   event_scheduler: "OFF"
 YAML
 
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
 SERVER_PID=$!
 
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         up=1; break
     fi
     sleep 0.2
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+root_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
 # spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk).
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
@@ -109,7 +115,7 @@ row_json() {    # row_json <bead-id>
 # for EVERY hold kind, not just poison. sp-mys5p wires lc_hold/lc_unhold at the ask, wait
 # and operator writers the same way sp-ki12s wired CHECK 4 for poison; this proves the
 # mechanism they all share, generically, per kind. ──────────────────────────────────────
-for kind in poison ask wait operator; do
+for kind in poison ask wait manual; do
     bead="sp-hold-$kind"
     seed_bead "$bead" WORKING
     spira-lc hold "$bead" "$kind" "held for $kind" test-suite
@@ -152,7 +158,7 @@ spira-lc withdraw-ask sp-ask-wd test-suite
 wantrc "a withdrawal with no ask held is refused" 3 $?
 
 # ── POSITIVE CONTROL + refusal: a terminal bead cannot be held, for every kind ─────────
-for kind in poison ask wait operator; do
+for kind in poison ask wait manual; do
     bead="sp-hold-term-$kind"
     seed_bead "$bead" LANDED
     spira-lc hold "$bead" "$kind" "should never apply" test-suite
@@ -167,15 +173,28 @@ done
 spira-lc hold sp-not-classified-yet poison "irrelevant" test-suite
 wantrc "lc_hold against an unclassified bead reports 'no such row', not applied and not a crash" 1 $?
 
-# ── the operator hold kind (sp-rlyl0: hold.sh/unhold.sh), same mechanism, different tag ────
+# ── the manual hold kind (sp-rlyl0: hold.sh/unhold.sh), same mechanism, different tag ────
 seed_bead sp-op-1 WORKING
-spira-lc hold sp-op-1 operator "manual hold via hold.sh (pid 1)" hold-sp-op-1
-wantrc "lc_hold applies the operator kind" 0 $?
+spira-lc hold sp-op-1 manual "manual hold via hold.sh (pid 1)" hold-sp-op-1
+wantrc "lc_hold applies the manual kind" 0 $?
 row="$(row_json sp-op-1)"
-want "the HoldKind::Operator tag is what the row records" 'operator' "$row"
-spira-lc unhold sp-op-1 operator hold-sp-op-1
-wantrc "lc_unhold releases the operator hold" 0 $?
+want "the HoldKind::Manual tag is what the row records" 'manual' "$row"
+spira-lc unhold sp-op-1 manual hold-sp-op-1
+wantrc "lc_unhold releases the manual hold" 0 $?
 is "lc_holds reports nothing held after release" "" "$(spira-lc holds sp-op-1)"
+
+# ── a manual hold's reason: required, never a bare bead id, never a snooze ─────────────────
+for bad in "" "sp-blocker1" "snooze-until:99"; do
+    spira-lc hold sp-op-1 manual "$bad" test-suite >/dev/null 2>&1
+    wantrc "a manual hold with reason '$bad' is refused" 3 $?
+    is "...and the refused hold left nothing held" "" "$(spira-lc holds sp-op-1)"
+done
+out="$(spira-lc hold sp-op-1 manual sp-blocker1 test-suite 2>&1)"
+want "the refusal names bead.sh dep add as the exit" 'bead.sh dep add' "$out"
+spira-lc hold sp-op-1 wait "snooze-until:99" test-suite
+wantrc "a snooze is a wait hold" 0 $?
+is "...recorded as wait" "wait" "$(spira-lc holds sp-op-1)"
+spira-lc unhold sp-op-1 wait test-suite
 
 # ── lc_release / lc_holderdead (sp-rlyl0: slay.sh) — both return WORKING to READY ─────────
 seed_bead sp-rel-1 WORKING
@@ -195,6 +214,21 @@ spira-lc release sp-rel-refused test-suite
 wantrc "lc_release from READY is refused" 3 $?
 
 # ── lc_drop (sp-rlyl0: slay.sh --close) — orthogonal, legal even with no Claim ever applied ─
+# The drop door asks bd whether the bead came from outside (external_ref); a stub answers
+# the one call, so an unreadable origin stays a refusal rather than a pass.
+cat > "$TMP/bd" <<'STUBEOF'
+#!/usr/bin/env bash
+case "$*" in
+    *sp-drop-ext*) echo '[{"id":"sp-drop-ext","status":"open","external_ref":"github:o/r#4"}]' ;;
+    *) echo '[{"id":"sp-drop-1","status":"open"}]' ;;
+esac
+STUBEOF
+chmod +x "$TMP/bd"
+tl_config SPIRA_BD="$TMP/bd"
+seed_bead sp-drop-ext READY
+spira-lc drop sp-drop-ext "operator decided to drop this" test-suite
+wantrc "SEEN RED: a bare drop of an external bead is refused" 3 $?
+is "...and the row stays READY" "READY" "$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='sp-drop-ext'" -r json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["state"] if d else "")')"
 seed_bead sp-drop-1 READY
 spira-lc drop sp-drop-1 "operator decided to drop this" test-suite
 wantrc "lc_drop applies from READY (orthogonal, no Claim needed)" 0 $?

@@ -1,6 +1,7 @@
 TYPE=string
 GROUP=preflight
 DOC=SPIRA_PREFLIGHT_SUITE_MAX_SECS — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+SCHEMA=Reserved: no shipped consumer reads this key today. It has no default and needs none; leaving it empty is valid.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
     # spira_conf_defaults() today; it resolves to an empty string unless the

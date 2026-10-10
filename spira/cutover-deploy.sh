@@ -18,9 +18,9 @@
 # and re-granted underneath it.
 #
 # Steps, in order (each is the one place its own resource is written outside a test):
-#   1. apply lifecycle/schema.sql, as the database ADMIN (SPIRA_LC_ADMIN_USER/PASSWORD;
-#      default root/empty, this harness's own throwaway-server convention) — spira_lc's own
-#      grant does not yet exist to do this with
+#   1. apply lifecycle/schema.sql, as the database ADMIN (SPIRA_LC_ADMIN_USER/PASSWORD, else
+#      root with the password spira-install provisioned) — spira_lc's own grant does not
+#      yet exist to do this with
 #   2. apply lifecycle/grants.sql, same admin connection, with @SPIRA_LC_PASSWORD@/
 #      @SPIRA_LC_RO_PASSWORD@ substituted from the credentials spira-install
 #      generated (the spira_lc_password_file config key, and its -ro sibling)
@@ -68,8 +68,12 @@ command -v spira-config >/dev/null 2>&1 || { printf 'cutover-deploy: spira-confi
 say() { printf 'cutover-deploy: %s\n' "$1"; }
 
 : "${SPIRA_LC_ADMIN_USER:=root}"
+if [ -z "${SPIRA_LC_ADMIN_PASSWORD:-}" ]; then
+    _admin_file="${SPIRA_LC_ADMIN_PASSWORD_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira-lc-admin.credential}"
+    [ -r "$_admin_file" ] && SPIRA_LC_ADMIN_PASSWORD="$(cat "$_admin_file")"
+fi
 : "${SPIRA_LC_ADMIN_PASSWORD:=}"
-admin_lc() { env -u SPIRA_LC_PASSWORD_FILE SPIRA_LC_USER="$SPIRA_LC_ADMIN_USER" SPIRA_LC_PASSWORD="$SPIRA_LC_ADMIN_PASSWORD" spira-lc "$@"; }
+admin_lc() { SPIRA_LC_ADMIN_USER="$SPIRA_LC_ADMIN_USER" SPIRA_LC_ADMIN_PASSWORD="$SPIRA_LC_ADMIN_PASSWORD" spira-lc "$@"; }
 
 say "applying schema.sql (as $SPIRA_LC_ADMIN_USER)"
 if [ "$DRY_RUN" != 1 ]; then
@@ -79,8 +83,14 @@ fi
 say "applying grants.sql (as $SPIRA_LC_ADMIN_USER)"
 TMP_GRANTS="$(mktemp)"
 trap 'rm -f "$TMP_GRANTS"' EXIT INT TERM
-sed -e "s/@SPIRA_LC_PASSWORD@/$SPIRA_LC_PASSWORD/" -e "s/@SPIRA_LC_RO_PASSWORD@/$SPIRA_LC_RO_PASSWORD/" \
-    "$HERE/../lifecycle/grants.sql" > "$TMP_GRANTS"
+PW="$SPIRA_LC_PASSWORD" RO_PW="$SPIRA_LC_RO_PASSWORD" awk '
+    function sub_all(s, tok, val,   out, i) {
+        out = ""
+        while ((i = index(s, tok)) > 0) { out = out substr(s, 1, i - 1) val; s = substr(s, i + length(tok)) }
+        return out s
+    }
+    { $0 = sub_all($0, "@SPIRA_LC_PASSWORD@", ENVIRON["PW"]); print sub_all($0, "@SPIRA_LC_RO_PASSWORD@", ENVIRON["RO_PW"]) }
+' "$HERE/../lifecycle/grants.sql" > "$TMP_GRANTS"
 if [ "$DRY_RUN" != 1 ]; then
     admin_lc admin-apply-ddl "$TMP_GRANTS" || exit 1
 fi
@@ -93,7 +103,7 @@ for name in "${REPOS[@]}"; do
     fi
     SPIRA_LC_USER=spira_lc SPIRA_LC_PASSWORD_FILE="$SPIRA_LC_CRED_FILE" spira-lc classify \
         --home "$SPIRA_CONFIG_HOME" --bd-bin "${SPIRA_BD:-bd}" --bd-db "$SPIRA_DB" \
-        --landstate-dir "$SPIRA_RUN/landstate" --queue-dir "$SPIRA_QUEUE_DIR" --repo "$name" || exit 1
+        --queue-dir "$SPIRA_QUEUE_DIR" --repo "$name" || exit 1
 done
 
 say "retiring lifecycle_enforce"

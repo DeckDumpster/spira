@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 
 use crate::db::ScriptFailure;
 
-const IO_TIMEOUT: Duration = Duration::from_secs(5);
+const IO_TIMEOUT: Duration = Duration::from_secs(12); // batch-job: spira-lc requests queue behind a loaded Dolt in the round VM
 const IDLE_PING_AFTER: Duration = Duration::from_secs(30);
 
 const CLIENT_LONG_PASSWORD: u32 = 1;
@@ -39,6 +39,13 @@ pub struct Wire {
 
 fn cannot(msg: impl std::fmt::Display) -> ScriptFailure {
     ScriptFailure::CannotTell(msg.to_string())
+}
+
+fn io_failure(what: &str, e: std::io::Error) -> ScriptFailure {
+    match e.kind() {
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => cannot(crate::db::DEADLINE_MESSAGE),
+        _ => cannot(format!("{what}: {e}")),
+    }
 }
 
 impl Wire {
@@ -229,11 +236,11 @@ impl Wire {
         let mut out = Vec::new();
         loop {
             let mut head = [0u8; 4];
-            self.stream.read_exact(&mut head).map_err(|e| cannot(format!("reading from server: {e}")))?;
+            self.stream.read_exact(&mut head).map_err(|e| io_failure("reading from server", e))?;
             let len = head[0] as usize | (head[1] as usize) << 8 | (head[2] as usize) << 16;
             let start = out.len();
             out.resize(start + len, 0);
-            self.stream.read_exact(&mut out[start..]).map_err(|e| cannot(format!("reading from server: {e}")))?;
+            self.stream.read_exact(&mut out[start..]).map_err(|e| io_failure("reading from server", e))?;
             if len < 0xff_ffff {
                 return Ok((head[3], out));
             }

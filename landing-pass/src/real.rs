@@ -97,7 +97,7 @@ pub fn load_context(home: &Path, out: &Reporter) -> Result<(Settings, Vec<RepoRo
 /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`); `from_env` resolves them
 /// in-process instead.
 fn repo_registry(home: &Path) -> spira_config::repos::Registry {
-    spira_config::repos::Registry::from_env(std::env::vars().collect(), home)
+    spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), home)
 }
 
 /// The base-ref columns (family W) for one already-resolved `(name, path, mode)` — ported
@@ -165,13 +165,13 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         id_prefix: g("id_prefix"),
         land_maxsec: num("land_maxsec", 3600),
         gate_reserve: num("gate_reserve", 1200),
+        gate_timeout: num("gate_timeout", 2700),
         gate_lock_wait: kv.get("gate_lock_wait").filter(|v| !v.is_empty()).cloned(),
         certify_par: certify_par(kv.get("certify_par").map(String::as_str)),
         gate_worker: num("gate_worker", 1) != 0,
         verdict_ttl: num("verdict_ttl", 0).max(0) as u64,
         verdicts: path_opt("verdicts").unwrap_or_else(|| PathBuf::from(&run).join("verdicts")),
         deferral_escalate_at: num("deferral_at", 5).max(0) as u32,
-        express_label: g("express_label"),
         cutover_label: g("cutover_label"),
         submitted_label: g("submitted_label"),
         rebase_escalate_at: num("rebase_escalate_at", 3).max(0) as u32,
@@ -298,6 +298,7 @@ impl<'a> Lib for RealLib<'a> {
     /// class window resets after `noverdict_class_window` so a fault that went away and
     /// came back later escalates again rather than being silenced forever.
     fn noverdict(&self, id: &str, branch: &str, repo: &str, reason: &str, outcome: &str, out: &str) {
+        self.bump_requeue(id, &format!("gate-no-verdict:{reason}"));
         let dir = self.s.run.join("noverdict");
         let _ = std::fs::create_dir_all(&dir);
         let max = self.s.noverdict_max as u64;
@@ -423,6 +424,14 @@ impl<'a> Lib for RealLib<'a> {
         }
         let (subj, body) = crate::ask::budget_deferred_mail(branch, repo, n);
         self.send_mail("operator", "Landing gate <gate@spira>", &subj, "alert", None, branch.rsplit('/').next().unwrap_or(""), &body);
+    }
+    fn ask_repo_unreadable(&self, repo: &str, path: &Path) {
+        let subj = crate::ask::repo_unreadable_subject(repo);
+        if self.ask_already_open(&subj) {
+            return;
+        }
+        let (subj, body) = crate::ask::repo_unreadable_mail(repo, path);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "alert", None, repo, &body);
     }
     fn rebase(&self, branch: &str, onto: &str, repo: &Path, name: &str) -> Rebase {
         let (rc, ans) = self.seam.call(Op::Rebase, &[branch, onto, &p(repo), name]);
@@ -588,6 +597,7 @@ impl RealBeads {
         let lc = spira_config::lc_state::index(lc);
         for r in rows.iter_mut() {
             r.state = lc.get(&r.id).map(|x| x.state.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into());
+            r.express = lc.get(&r.id).is_some_and(|x| x.express);
         }
         Ok(())
     }
@@ -1180,6 +1190,21 @@ impl Tools for RealTools {
             })
             .collect()
     }
+    fn forge_pr_mergeability(&self, repo: &Path, selector: &str) -> Option<String> {
+        let mut c = command("forge");
+        c.arg("pr-mergeability").arg(repo).arg(selector).stdin(Stdio::null());
+        let (rc, so, _) = run_capture(c);
+        if rc == 0 { Some(String::from_utf8_lossy(&so).trim().to_string()) } else { None }
+    }
+    fn forge_pr_red(&self, repo: &Path, selector: &str) -> Option<crate::ports::PrRed> {
+        let mut c = command("forge");
+        c.arg("pr-red").arg(repo).arg(selector).stdin(Stdio::null());
+        let (rc, so, _) = run_capture(c);
+        if rc != 0 {
+            return None;
+        }
+        crate::ports::PrRed::parse(&String::from_utf8_lossy(&so))
+    }
     fn forge_pr_automerge(&self, repo: &Path, selector: &str) -> bool {
         let mut c = command("forge");
         c.arg("pr-automerge").arg(repo).arg(selector).stdin(Stdio::null());
@@ -1225,9 +1250,7 @@ impl Clock for RealClock {
 mod holder_alive_tests {
     use super::*;
 
-    // Wave 4.23 (sp-0ffox) retired this crate's own hold/aeon-argv checking — the
-    // aeon-cmdline positive/negative controls now live with the one implementation,
-    // sending::reap (see its own suite). This just confirms RealProcs reaches it.
+    // The liveness predicates live in sending::reap; this confirms RealProcs reaches them.
     #[test]
     fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
         let run = testkit::TempDir::new("landing-pass-holder-alive");
@@ -1238,11 +1261,14 @@ mod holder_alive_tests {
     }
 
     #[test]
-    fn holder_alive_requires_aeon_argv_for_an_aeon_pidfile() {
+    fn holder_alive_requires_a_running_lease_for_an_aeon_pidfile() {
         let run = testkit::TempDir::new("landing-pass-holder-alive-aeon");
         std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
         let procs = RealProcs { run: run.to_path_buf() };
-        assert!(!procs.holder_alive("sp-a1"), "a live pid that is not an aeon must not count");
+        assert!(!procs.holder_alive("sp-a1"), "a live pid with no lease must not count");
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        std::fs::write(run.join("aeon-builder-sp-a1.lease"), (now + 60).to_string()).unwrap();
+        assert!(procs.holder_alive("sp-a1"));
     }
 }
 
@@ -1278,7 +1304,7 @@ mod lifecycle_join_tests {
         let p = dir.join("spira-lc");
         testkit::write_exe(
             &p,
-            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\"}]' ;; esac\n",
+            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\",\"express\":\"1\"}]' ;; esac\n",
         );
         p
     }
@@ -1298,6 +1324,8 @@ mod lifecycle_join_tests {
         let rows = b.show(&["sp-w".to_string(), "sp-x".to_string(), "sp-y".to_string()]).unwrap();
         let st: Vec<(&str, bool)> = rows.iter().map(|r| (r.state.as_str(), r.handed_on())).collect();
         assert_eq!(st, vec![("WORKING", false), ("SUBMITTED", true), ("-", false)]);
+        let ex: Vec<bool> = rows.iter().map(|r| r.express).collect();
+        assert_eq!(ex, vec![false, true, false], "express is the lifecycle row's column, not a bd label");
     }
 
     /// A machine that cannot answer is an Err, never a row read as handed on.
@@ -1308,5 +1336,17 @@ mod lifecycle_join_tests {
         b.lc_bin = Some(d.join("no-such-spira-lc"));
         assert!(b.show(&["sp-w".to_string(), "sp-x".to_string()]).is_err());
         assert_eq!(b.bead_lc_state("sp-w"), "-");
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::Clock;
+
+    #[test]
+    fn real_clock_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock.now());
+        assert_eq!(got, 1_900_000_000);
     }
 }

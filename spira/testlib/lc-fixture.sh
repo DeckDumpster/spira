@@ -36,6 +36,11 @@ YAML
     "$LCFIX_DOLT" sql-server --config "$LCFIX_DIR/server.yaml" > "$LCFIX_DIR/server.log" 2>&1 &
     LCFIX_PID=$!
     unset SPIRA_LC_SOCKET
+    # The registered half of the connection is declared in this suite's own config layer
+    # (the one source): the fixture's own (empty-password) credential file, and no socket.
+    : > "$LCFIX_DIR/credential"
+    tl_config SPIRA_LC_PASSWORD_FILE="$LCFIX_DIR/credential" SPIRA_LC_SOCKET="" \
+        || { echo "lc-fixture: cannot declare the lifecycle connection" >&2; return 1; }
     export SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$port" SPIRA_LC_DB=spira_lifecycle \
         SPIRA_LC_DATA_DIR="$LCFIX_DIR" SPIRA_LC_USER=root SPIRA_LC_PASSWORD=""
     local up=0
@@ -59,9 +64,25 @@ lcfix_down() {
     LCFIX_DIR=""
 }
 
+# lcfix_reset_facts — forget every attempt-history fact; a suite that resets its bd fixture
+# between sections resets these with it (lcfix_follow_testdb).
+lcfix_reset_facts() { lcfix_sql -q "DELETE FROM event WHERE machine='fact'" >/dev/null 2>&1; }
+
+# lcfix_fact_causes <id> <kind> — the cause of each fact of that kind, one per line, oldest first.
+lcfix_fact_causes() {
+    spira-lc facts --ids "$1" --kinds "$2" 2>/dev/null \
+        | python3 -c 'import json, sys; [print(r["new_value"]) for r in json.load(sys.stdin)]'
+}
+
+# lcfix_follow_testdb — from here on, testdb_reset also clears the facts.
+lcfix_follow_testdb() {
+    eval "$(declare -f testdb_reset | sed '1s/testdb_reset/_lcfix_testdb_reset_bd/')"
+    testdb_reset() { _lcfix_testdb_reset_bd "$@" && lcfix_reset_facts; }
+}
+
 lcfix_env() {
-    printf 'SPIRA_LC_HOST=%s SPIRA_LC_PORT=%s SPIRA_LC_DB=%s SPIRA_LC_DATA_DIR=%s SPIRA_LC_USER=%s SPIRA_LC_PASSWORD=' \
-        "$SPIRA_LC_HOST" "$SPIRA_LC_PORT" "$SPIRA_LC_DB" "$SPIRA_LC_DATA_DIR" "$SPIRA_LC_USER"
+    printf 'SPIRA_TOML=%s SPIRA_LC_HOST=%s SPIRA_LC_PORT=%s SPIRA_LC_DB=%s SPIRA_LC_DATA_DIR=%s SPIRA_LC_USER=%s SPIRA_LC_PASSWORD=' \
+        "$SPIRA_TOML" "$SPIRA_LC_HOST" "$SPIRA_LC_PORT" "$SPIRA_LC_DB" "$SPIRA_LC_DATA_DIR" "$SPIRA_LC_USER"
 }
 
 # lcfix_seed <id> <STATE> [tip] [since-epoch]
@@ -71,10 +92,11 @@ lcfix_env() {
 # not take says so on stderr and returns non-zero.
 lcfix_seed() {
     local id="$1" state="$2" tip="${3:-}" since="${4:-}"
-    local tipv="NULL" sincev="NULL" out
+    local tipv="NULL" sincev="NULL" gkv="NULL" out
     [ -n "$tip" ] && tipv="'$tip'"
+    [ "$state" = CERTIFIED ] && gkv="'fixture-gate-key'"
     [ -n "$since" ] && sincev="$since"
-    out="$(lcfix_sql -q "INSERT INTO bead (bead_id, state, tip, holds, version, since, updated_at) VALUES ('$id','$state',$tipv,'[]',1,$sincev,0) ON DUPLICATE KEY UPDATE state=VALUES(state), tip=VALUES(tip), holds=VALUES(holds), version=version+1, since=VALUES(since), updated_at=VALUES(updated_at)" 2>&1)" \
+    out="$(lcfix_sql -q "INSERT INTO bead (bead_id, state, tip, gate_key, holds, version, since, updated_at) VALUES ('$id','$state',$tipv,$gkv,'[]',1,$sincev,0) ON DUPLICATE KEY UPDATE state=VALUES(state), tip=VALUES(tip), gate_key=VALUES(gate_key), holds=VALUES(holds), version=version+1, since=VALUES(since), updated_at=VALUES(updated_at)" 2>&1)" \
         || { echo "lc-fixture: seeding $id $state failed: $out" >&2; return 1; }
 }
 

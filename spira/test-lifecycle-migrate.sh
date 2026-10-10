@@ -88,13 +88,23 @@ mkdir -p "$XDG_CONFIG_HOME"
 # admin-migrate's own connection is the lifecycle service user, as lc-serve's is.
 printf '%s\n' "$SVCPW" > "$TMP/svc.cred"; chmod 600 "$TMP/svc.cred"
 export SPIRA_LC_USER=spira_lc
-export SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred"
 unset SPIRA_LC_PASSWORD
 # The admin a pending migration is applied as; cases that test its absence unset these.
 export SPIRA_LC_ADMIN_USER=root
 export SPIRA_LC_ADMIN_PASSWORD="$ROOTPW"
 unset SPIRA_LC_ADMIN_PASSWORD_FILE
-as_root() { env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="$ROOTPW" SPIRA_LC_PASSWORD_FILE= "$@"; }
+# as_root: no credential FILE can stand in for root (hermetic). SPIRA_LC_PASSWORD_FILE is a
+# registered key (read only via SPIRA_TOML now, never env), so it is flipped to empty for
+# this one call and restored to the service credential right after — every OTHER spira-lc
+# call in this file runs outside as_root and needs the real svc.cred back in force.
+as_root() {
+    tl_config SPIRA_LC_PASSWORD_FILE=""
+    env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="$ROOTPW" "$@"
+    local _rc=$?
+    tl_config SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred"
+    return "$_rc"
+}
 no_admin() { env -u SPIRA_LC_ADMIN_USER -u SPIRA_LC_ADMIN_PASSWORD "$@"; }
 sed -e "s/@SPIRA_LC_PASSWORD@/$SVCPW/" -e "s/@SPIRA_LC_RO_PASSWORD@/ro-$SVCPW/" "$REPO/lifecycle/grants.sql" > "$TMP/grants.sql"
 
@@ -110,7 +120,7 @@ store_from() {
 SHIPPED="$REPO/lifecycle/migrations"
 # The live database before round 268: schema.sql as it stood without bead.since.
 pre_since_db() {
-    grep -v '^    since ' "$REPO/lifecycle/schema.sql" > "$TMP/pre-since.sql"
+    sed '/^-- The ops read model;/,$d' "$REPO/lifecycle/schema.sql" | grep -v -e '^    since ' -e bead_state_since_idx > "$TMP/pre-since.sql"
     store_from "$TMP/pre-since.sql"
 }
 
@@ -128,7 +138,7 @@ want "and skips 0002's column, which schema.sql already made" "0002-since.sql: b
 echo
 echo "every migration applied: the service user alone decides it, no admin credential (sp-p1z81)"
 printf 'SELECT 1;\n' > "$TMP/select.sql"
-out="$(as_root env SPIRA_LC_PASSWORD="" spira-lc admin-apply-ddl "$TMP/select.sql" 2>&1)"
+out="$(as_root env SPIRA_LC_PASSWORD="" SPIRA_LC_ADMIN_PASSWORD="" spira-lc admin-apply-ddl "$TMP/select.sql" 2>&1)"
 want "positive control: root with an empty password is refused here, as in production" "Access denied" "$out"
 out="$(no_admin spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
 wantrc "admin-migrate with only the service user succeeds" 0 $rc
@@ -204,5 +214,18 @@ nowant "positive control: pre-since store lacks since" "since" "$(columns)"
 as_root spira-lc admin-apply-ddl "$SHIPPED/0002-since.sql" >"$TMP/m2.log" 2>&1
 wantrc "0002-since.sql applies via admin-apply-ddl" 0 $?
 want "since now exists" "since" "$(columns)"
+
+echo
+echo "0008 adds the per-key history index as the admin, and the history read's plan uses it"
+as_root spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema2.log" 2>&1
+root_sql --use-db spira_lifecycle sql -q "DROP INDEX event_history_idx ON event" >/dev/null 2>&1
+hq="EXPLAIN FORMAT=TREE SELECT seq, machine, lc_key, event FROM event WHERE lc_key = 'sp-1' ORDER BY seq"
+plan="$(root_sql --use-db spira_lifecycle sql -r csv -q "$hq" 2>&1)"
+nowant "positive control: without the index the plan does not use it" "index: [event.lc_key,event.machine]" "$plan"
+out="$(spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
+wantrc "the pending index migration applies as the admin" 0 $rc
+want "reports 0008 applied" "0008-event-history-idx.sql" "$out"
+plan="$(root_sql --use-db spira_lifecycle sql -r csv -q "$hq" 2>&1)"
+want "the history read's plan uses the (lc_key, machine) index" "index: [event.lc_key,event.machine]" "$plan"
 
 tl_summary

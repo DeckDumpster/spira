@@ -9,3 +9,8 @@ id = "UC-gate-diag-01"
 tier = "T1"
 statement = "A certification-gate reopen note for a literal-lint failure carries the offending file:line: the note's tail window of the gate output keeps the offender line and does not drop it behind the explanation block and trailer."
 
+[use_case.uncovered]
+reason = "the reopen note is built by landing-pass and verified by landing-pass tests::a_red_gate_reopens_with_the_gates_own_words_and_marks_red (asserts the 20-line tail window); the Rust seam is not drivable from bash"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+

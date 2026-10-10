@@ -1,0 +1,25 @@
+[package]
+name = "reclaim"
+version = "0.1.0"
+edition = "2021"
+description = "reclaim — loses nothing: removes rebuildable build-target directories no live process or lease holds once the disk is short, and caps the shared compilation cache by size."
+
+[lib]
+name = "reclaim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "reclaim"
+path = "src/main.rs"
+
+[dependencies]
+spira-config = { path = "../spira-config" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

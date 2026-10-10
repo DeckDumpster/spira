@@ -159,6 +159,193 @@ pub fn steps(lifecycle_dir: &Path) -> Result<Vec<Step>, String> {
     Ok(vec![Step::Schema(schema), Step::Migrations(migrations), Step::Grants])
 }
 
+/// A fresh random credential: 32 bytes of the OS generator, base64 without padding — the
+/// alphabet cannot break out of a single-quoted SQL literal.
+pub fn random_secret() -> Result<String, String> {
+    let mut buf = [0u8; 32];
+    std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf)).map_err(|e| format!("cannot read /dev/urandom: {e}"))?;
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    Ok(buf.chunks(3).flat_map(|c| {
+        let n = c.iter().enumerate().fold(0u32, |a, (i, b)| a | (*b as u32) << (16 - 8 * i));
+        (0..=c.len()).map(move |i| CHARS[(n >> (18 - 6 * i) & 63) as usize] as char)
+    }).collect())
+}
+
+/// Close passwordless root: leave `root` with the password in `cred_path` and return the
+/// admin to use. A password already in force (the file's) is kept. Otherwise the file is
+/// written 0600 FIRST — a crash between the file and the `ALTER USER` leaves a password
+/// the next run still finds — then root is moved off its empty password. A server where
+/// root has neither the file's password nor an empty one is refused, never guessed at.
+pub fn ensure_admin(
+    cred_path: &Path,
+    tmp_parent: &Path,
+    host: Option<String>,
+    port: u16,
+    mut run: impl FnMut(&[String], &[(String, String)]) -> (i32, String),
+) -> Result<(Admin, String), String> {
+    let dir = PrivateDir::new(tmp_parent, "adm")?;
+    let probe = dir.write("probe.sql", "SELECT 1;\n")?;
+    let probe_args = vec!["admin-apply-ddl".to_string(), probe.to_string_lossy().to_string()];
+    let try_as = |pw: &str, run: &mut dyn FnMut(&[String], &[(String, String)]) -> (i32, String), file: &str, sql: &[String]| -> Result<bool, String> {
+        let admin = Admin { user: "root".into(), password: pw.to_string(), host: host.clone(), port };
+        let pw_file = dir.write(file, pw)?;
+        Ok(run(sql, &admin_env(&admin, &pw_file)).0 == 0)
+    };
+    let existing = match std::fs::read_to_string(cred_path) {
+        Ok(t) if !t.trim().is_empty() => Some(t.trim().to_string()),
+        Ok(_) => None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("cannot read the admin credential {}: {e}", cred_path.display())),
+    };
+    let make = |pw: String| Admin { user: "root".into(), password: pw, host: host.clone(), port };
+    if let Some(pw) = &existing {
+        if try_as(pw, &mut run, "pw-existing", &probe_args)? {
+            return Ok((make(pw.clone()), format!("admin credential {} already in force", cred_path.display())));
+        }
+    }
+    let pw = match existing {
+        Some(p) => p,
+        None => {
+            let p = random_secret()?;
+            if let Some(parent) = cred_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+            }
+            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(cred_path).map_err(|e| format!("cannot create {}: {e}", cred_path.display()))?;
+            f.write_all(p.as_bytes()).map_err(|e| format!("cannot write {}: {e}", cred_path.display()))?;
+            p
+        }
+    };
+    let alter = dir.write("alter.sql", &format!("ALTER USER 'root'@'localhost' IDENTIFIED BY '{pw}';\n"))?;
+    let alter_args = vec!["admin-apply-ddl".to_string(), alter.to_string_lossy().to_string()];
+    if !try_as("", &mut run, "pw-empty", &alter_args)? {
+        return Err(format!("root accepts neither the password in {} nor an empty one — set it by hand (ALTER USER 'root'@'localhost' IDENTIFIED BY <that file's content>)", cred_path.display()));
+    }
+    if !try_as(&pw, &mut run, "pw-new", &probe_args)? {
+        return Err(format!("root was given the password in {} but does not accept it", cred_path.display()));
+    }
+    Ok((make(pw), format!("root's password set; credential written to {} (0600)", cred_path.display())))
+}
+
+pub const BEADS_USER: &str = "beads";
+
+/// SQL giving `BEADS_USER` the password and every privilege on the beads database `db` and
+/// nothing else. `db` is quoted into a backtick identifier, so only a plain name is accepted.
+pub fn beads_user_sql(db: &str, password: &str) -> Result<String, String> {
+    if db.is_empty() || !db.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(format!("the beads database name {db:?} is not a plain identifier — refusing to place it in a GRANT"));
+    }
+    if password.is_empty() || password.chars().any(|c| c == '\'' || c == '\\' || c == '"' || c.is_control()) {
+        return Err("the beads user's password is empty or carries a quote, backslash or control character".into());
+    }
+    let u = BEADS_USER;
+    Ok(format!("CREATE USER IF NOT EXISTS '{u}'@'%' IDENTIFIED BY '{password}';\nALTER USER '{u}'@'%' IDENTIFIED BY '{password}';\nGRANT ALL ON `{db}`.* TO '{u}'@'%';\n"))
+}
+
+/// The password already in `file`'s `[host:port]` section, if any.
+pub fn read_beads_credential(file: &Path, host: &str, port: u16) -> Option<String> {
+    let header = format!("[{host}:{port}]");
+    let mut in_section = false;
+    for line in std::fs::read_to_string(file).ok()?.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_section = t == header;
+        } else if in_section {
+            if let Some((k, v)) = t.split_once('=') {
+                if k.trim() == "password" && !v.trim().is_empty() {
+                    return Some(v.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Point a beads database's `metadata.json` at `BEADS_USER` (`dolt_server_user`), keeping every other key.
+pub fn set_beads_user(metadata: &Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(metadata).map_err(|e| format!("cannot read {}: {e}", metadata.display()))?;
+    let mut v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{} is not JSON: {e}", metadata.display()))?;
+    let obj = v.as_object_mut().ok_or_else(|| format!("{} is not a JSON object", metadata.display()))?;
+    if obj.get("dolt_server_user").and_then(|u| u.as_str()) == Some(BEADS_USER) {
+        return Ok(format!("{} already names {BEADS_USER}", metadata.display()));
+    }
+    obj.insert("dolt_server_user".into(), serde_json::Value::String(BEADS_USER.into()));
+    let tmp = metadata.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())? + "\n").map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, metadata).map_err(|e| format!("cannot replace {}: {e}", metadata.display()))?;
+    Ok(format!("{} now names {BEADS_USER}", metadata.display()))
+}
+
+/// Give `bd` its own Dolt user instead of root: created as `admin` with grants on `db` alone,
+/// its password kept in the beads credentials file (`ensure_beads_credential`), and the
+/// database's `metadata.json` pointed at it. A password already in the file's section is
+/// reused unless it is the admin's own; re-running converges.
+pub fn ensure_beads_user(
+    file: &Path,
+    metadata: &Path,
+    db: &str,
+    admin: &Admin,
+    tmp_parent: &Path,
+    mut run: impl FnMut(&[String], &[(String, String)]) -> (i32, String),
+) -> Result<Vec<String>, String> {
+    let host = admin.host.clone().unwrap_or_else(|| "127.0.0.1".into());
+    let password = match read_beads_credential(file, &host, admin.port) {
+        Some(p) if p != admin.password => p,
+        _ => random_secret()?,
+    };
+    let sql = beads_user_sql(db, &password)?;
+    let dir = PrivateDir::new(tmp_parent, "bdu")?;
+    let pw_file = dir.write("admin", &admin.password)?;
+    let sql_file = dir.write("beads-user.sql", &sql)?;
+    let args = vec!["admin-apply-ddl".to_string(), sql_file.to_string_lossy().to_string()];
+    let (rc, out) = run(&args, &admin_env(admin, &pw_file));
+    if rc != 0 {
+        let out = redact(out.trim_end(), &[&password, &admin.password]);
+        return Err(format!("creating the {BEADS_USER} user as {} failed (spira-lc exit {rc}){}", admin.user, if out.is_empty() { String::new() } else { format!(": {out}") }));
+    }
+    let mut lines = vec![format!("{BEADS_USER} user granted on {db} only")];
+    lines.push(ensure_beads_credential(file, &host, admin.port, &password)?);
+    lines.push(set_beads_user(metadata)?);
+    Ok(lines)
+}
+
+/// The beads credentials file (`$BEADS_CREDENTIALS_FILE`, else `~/.config/beads/credentials` —
+/// bd's own password lookup after `BEADS_DOLT_PASSWORD`) carries a password, 0600, in the
+/// `[host:port]` section bd resolves. Without it, closing passwordless root locked every bd
+/// client out ("Access denied for user"). Any other section is kept; this one is replaced.
+pub fn ensure_beads_credential(file: &Path, host: &str, port: u16, password: &str) -> Result<String, String> {
+    let header = format!("[{host}:{port}]");
+    let old = match std::fs::read_to_string(file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("cannot read {}: {e}", file.display())),
+    };
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in old.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            skipping = t == header;
+        }
+        if !skipping {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.push_str(&format!("{header}\npassword = {password}\n"));
+    if out == old {
+        return Ok(format!("bd credential for {host}:{port} already in {}", file.display()));
+    }
+    if let Some(parent) = file.parent() {
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let tmp = file.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp).map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
+    f.write_all(out.as_bytes()).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, file).map_err(|e| format!("cannot replace {}: {e}", file.display()))?;
+    Ok(format!("bd credential for {host}:{port} written to {} (0600)", file.display()))
+}
+
 /// Run the whole phase. `run(args, env)` invokes `spira-lc <args>` under `env` and returns
 /// (exit code, combined output); it is injected so tests can watch every call. Fails closed
 /// on the first step that does not exit 0, naming the step; returns the per-step lines to
@@ -206,6 +393,57 @@ pub fn apply(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_beads_credential_section_is_written_0600_and_replaced_not_duplicated() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = testkit::TempDir::new("lc-beads-cred");
+        let f = d.path().join("beads/credentials");
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, "[10.0.0.1:3307]\npassword = other\n[127.0.0.1:3307]\npassword = old\n").unwrap();
+        ensure_beads_credential(&f, "127.0.0.1", 3307, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "[10.0.0.1:3307]\npassword = other\n[127.0.0.1:3307]\npassword = new\n");
+        assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+        let msg = ensure_beads_credential(&f, "127.0.0.1", 3307, "new").unwrap();
+        assert!(msg.contains("already"), "{msg}");
+    }
+
+
+    #[test]
+    fn beads_user_sql_grants_the_one_database_and_refuses_a_hostile_name() {
+        let sql = beads_user_sql("beads_db", "pw").unwrap();
+        assert!(sql.contains("GRANT ALL ON `beads_db`.* TO 'beads'@'%'"), "{sql}");
+        assert!(!sql.contains("*.*"), "{sql}");
+        assert!(beads_user_sql("a`; DROP", "pw").is_err());
+        assert!(beads_user_sql("db", "p'w").is_err());
+    }
+
+    #[test]
+    fn ensure_beads_user_connects_bd_as_beads_not_root() {
+        let d = testkit::TempDir::new("lc-beads-user");
+        let cred = d.path().join("beads/credentials");
+        let meta = d.path().join("metadata.json");
+        std::fs::write(&meta, "{\"dolt_database\":\"spira\",\"dolt_mode\":\"server\"}").unwrap();
+        let admin = Admin { user: "root".into(), password: "rootpw".into(), host: None, port: 3307 };
+        let mut sql_seen = String::new();
+        let lines = ensure_beads_user(&cred, &meta, "spira", &admin, d.path(), |args, _| {
+            sql_seen = std::fs::read_to_string(&args[1]).unwrap();
+            (0, String::new())
+        }).unwrap();
+        assert!(sql_seen.contains("GRANT ALL ON `spira`.*"), "{sql_seen}");
+        let pw = read_beads_credential(&cred, "127.0.0.1", 3307).unwrap();
+        assert_ne!(pw, "rootpw");
+        assert!(sql_seen.contains(&pw));
+        assert!(!lines.join("\n").contains(&pw));
+        let m: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(m["dolt_server_user"], "beads");
+        assert_eq!(m["dolt_database"], "spira");
+        ensure_beads_user(&cred, &meta, "spira", &admin, d.path(), |_, _| (0, String::new())).unwrap();
+        assert_eq!(read_beads_credential(&cred, "127.0.0.1", 3307).unwrap(), pw);
+        let failed = ensure_beads_user(&cred, &meta, "spira", &admin, d.path(), |_, _| (1, format!("bad {pw}")));
+        assert!(!failed.unwrap_err().contains(&pw));
+    }
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
@@ -305,6 +543,71 @@ mod tests {
         assert!(!lines.iter().any(|l| l.contains(RW)), "{lines:?}");
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "the private dir is removed");
         assert!(!std::fs::read_to_string(dir.join("grants.sql")).unwrap().contains(RW), "the shipped template is never rewritten");
+    }
+
+    /// A fake server whose root holds `root_pw` and which obeys an ALTER USER sql file.
+    fn fake_root(root_pw: &std::cell::RefCell<String>) -> impl FnMut(&[String], &[(String, String)]) -> (i32, String) + '_ {
+        move |args, env| {
+            let pw = std::fs::read_to_string(&env.iter().find(|(k, _)| k == "SPIRA_LC_PASSWORD_FILE").unwrap().1).unwrap();
+            if pw != *root_pw.borrow() {
+                return (2, "Access denied".into());
+            }
+            let sql = std::fs::read_to_string(&args[1]).unwrap();
+            if let Some(rest) = sql.split("IDENTIFIED BY '").nth(1) {
+                *root_pw.borrow_mut() = rest.split('\'').next().unwrap().to_string();
+            }
+            (0, String::new())
+        }
+    }
+
+    #[test]
+    fn passwordless_root_gets_a_0600_credential_and_the_password_is_in_force() {
+        let t = testkit::TempDir::new("lc-ensure-admin");
+        let tmp = t.path().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let cred = t.path().join("cfg/spira-lc-admin.credential");
+        let root = std::cell::RefCell::new(String::new());
+        let (admin, _) = ensure_admin(&cred, &tmp, None, 3307, fake_root(&root)).unwrap();
+        let written = std::fs::read_to_string(&cred).unwrap();
+        assert_eq!(std::fs::metadata(&cred).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(written.len() >= 40 && !written.contains('\''), "{written}");
+        assert_eq!(*root.borrow(), written, "root is no longer passwordless");
+        assert_eq!(admin.password, written);
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "no temp files left");
+        let (_, msg) = ensure_admin(&cred, &tmp, None, 3307, fake_root(&root)).unwrap();
+        assert!(msg.contains("already in force"), "{msg}");
+        assert_eq!(std::fs::read_to_string(&cred).unwrap(), written, "a rerun never rotates it");
+    }
+
+    #[test]
+    fn a_crash_between_the_file_and_the_alter_is_finished_by_the_next_run() {
+        let t = testkit::TempDir::new("lc-ensure-crash");
+        let tmp = t.path().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let cred = t.path().join("admin.credential");
+        std::fs::write(&cred, "leftoverPw\n").unwrap();
+        let root = std::cell::RefCell::new(String::new());
+        ensure_admin(&cred, &tmp, None, 3307, fake_root(&root)).unwrap();
+        assert_eq!(*root.borrow(), "leftoverPw");
+    }
+
+    #[test]
+    fn a_root_that_accepts_neither_the_file_nor_empty_is_refused() {
+        let t = testkit::TempDir::new("lc-ensure-refuse");
+        let tmp = t.path().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let cred = t.path().join("admin.credential");
+        let root = std::cell::RefCell::new("someone-elses".to_string());
+        let e = ensure_admin(&cred, &tmp, None, 3307, fake_root(&root)).unwrap_err();
+        assert!(e.contains("neither"), "{e}");
+        assert_eq!(*root.borrow(), "someone-elses");
+    }
+
+    #[test]
+    fn random_secrets_are_distinct_and_safe_inside_a_sql_literal() {
+        let (a, b) = (random_secret().unwrap(), random_secret().unwrap());
+        assert_ne!(a, b);
+        assert!(a.len() >= 40 && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'), "{a}");
     }
 
     #[test]

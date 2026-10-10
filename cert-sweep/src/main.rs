@@ -28,7 +28,7 @@ extern "C" {
 }
 const LOCK_EX: i32 = 2;
 
-const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
+const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME] [--start-deadline SECS]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -81,7 +81,9 @@ fn num(f: &Flags, k: &str, default: u64) -> Result<u64, String> {
 }
 
 fn run_dir(f: &Flags) -> Result<PathBuf, String> {
-    flag(f, "run").map(str::to_string).or_else(|| std::env::var("SPIRA_RUN").ok()).filter(|s| !s.is_empty()).map(PathBuf::from).ok_or("--run or SPIRA_RUN is required".into())
+    // SPIRA_RUN is a registered key (spira/conf.d) — the one source of config, through
+    // `spira_config::process::cfg` (per Ryan 2026-10-05), never the raw environment.
+    flag(f, "run").map(str::to_string).or_else(|| spira_config::process::cfg("SPIRA_RUN").ok()).filter(|s| !s.is_empty()).map(PathBuf::from).ok_or("--run or SPIRA_RUN is required".into())
 }
 
 /// The ref a pass certifies when `--base` is absent: `local/main` when `repo` has it (the
@@ -106,7 +108,7 @@ fn host() -> String {
 }
 
 fn git(repo: &str, args: &[&str]) -> Result<String, String> {
-    let o = Command::new("git").arg("-C").arg(repo).args(args).output().map_err(|e| format!("git: {e}"))?;
+    let o = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).output().map_err(|e| format!("git: {e}"))?;
     if !o.status.success() {
         return Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim()));
     }
@@ -151,7 +153,7 @@ fn file_bead(title: &str, body: &str, priority: u64, run: &Path) -> Result<Strin
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let tmp = dir.join(format!("cert-sweep-{}-{}.txt", std::process::id(), now()));
     fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    let out = Command::new("bead.sh")
+    let out = spira_config::bounded::bounded("bead.sh")
         .envs(spira_config::release_env::child_path_env_for_process())
         .args(["file", title, "--for", "builder", "--repo", "spira", "--priority", &priority.to_string(), "--json", "--body-file"])
         .arg(&tmp)
@@ -231,7 +233,7 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
     }
     let picks = if mode == "full" { all } else { pick_subset(&all, num(f, "subset-div", 4)? as usize, now() ^ u64::from(std::process::id()) << 32) };
     let start = now();
-    let rt = Rt { f, run: &run, repo: &repo, mode, seq: std::cell::Cell::new(0) };
+    let rt = Rt { f, run: &run, repo: &repo, mode, seq: std::cell::Cell::new(0), vm_cut: std::cell::Cell::new(false) };
 
     let (outcomes, text) = rt.run(&tip, &picks, start)?;
     if outcomes.is_empty() {
@@ -321,13 +323,19 @@ struct Rt<'a> {
     repo: &'a str,
     mode: &'a str,
     seq: std::cell::Cell<u64>,
+    vm_cut: std::cell::Cell<bool>,
 }
 
 impl Rt<'_> {
     /// The pass's own runner, so a rerun sees the environment the red was seen in.
     fn run(&self, commit: &str, picks: &[String], start: u64) -> Result<(Vec<Outcome>, String), String> {
         if self.mode == "full" {
-            run_on_vm(self.f, self.run, self.repo, commit, picks, start, self.seq.replace(self.seq.get() + 1))
+            if self.vm_cut.get() {
+                return Err("the round VM gave no verdict earlier in this pass; not waiting on it again".into());
+            }
+            let r = run_on_vm(self.f, self.run, self.repo, commit, picks, start, self.seq.replace(self.seq.get() + 1))?;
+            self.vm_cut.set(r.0.is_empty());
+            Ok(r)
         } else {
             run_on_host(self.f, self.repo, commit, picks)
         }
@@ -340,9 +348,12 @@ impl Rt<'_> {
     }
 
     fn open_beads(&self) -> Result<Vec<(String, String)>, String> {
-        let db = std::env::var("SPIRA_DB").ok().filter(|s| !s.is_empty()).ok_or("SPIRA_DB is required to look for an open duplicate")?;
-        let bd = std::env::var("SPIRA_BD").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "bd".into());
-        let out = Command::new(&bd)
+        // SPIRA_DB/SPIRA_BD are registered keys (spira/conf.d) — the one source of config
+        // (per Ryan 2026-10-05), through `spira_config::process::cfg`, never a literal
+        // default standing in for an unresolved value.
+        let db = spira_config::process::cfg("SPIRA_DB")?;
+        let bd = spira_config::process::cfg("SPIRA_BD")?;
+        let out = spira_config::bounded::bounded(&bd)
             .args(["-C", &db, "list", "--all", "--limit", "0", "--brief", "--json"])
             .stdin(Stdio::null())
             .output()
@@ -423,20 +434,40 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
     let rd = run.join("cert-sweep").join(format!("{start}-full-{seq}"));
     fs::create_dir_all(&rd).map_err(|e| format!("{}: {e}", rd.display()))?;
     let log = rd.with_extension("log");
-    let st = Command::new("round-vm")
+    // batch-job: round-vm runs for as long as its work does
+    let mut child = Command::new("round-vm")
         .args(["run", tree, "--maxpar", &num(f, "maxpar", 16)?.to_string(), "--suites", &picks.join(","), "--results-dir"])
         .arg(&rd)
+        .env("SPIRA_ROUND_VM_ACQUIRE_DEADLINE", num(f, "start-deadline", 900)?.to_string())
         .stdout(fs::File::create(&log).map_err(|e| e.to_string())?)
         .stderr(Stdio::inherit())
-        .status()
+        .spawn()
         .map_err(|e| format!("round-vm: {e}"))?;
-    eprintln!("cert-sweep: round-vm run exited {:?}", st.code());
+    let start_wait = num(f, "start-deadline", 900)?;
+    let began = now();
+    let silent = |rd: &Path, log: &Path| fs::metadata(log).map_or(true, |m| m.len() == 0) && fs::read_dir(rd).map_or(true, |d| d.count() == 0);
+    loop {
+        if let Some(st) = child.try_wait().map_err(|e| format!("round-vm: {e}"))? {
+            eprintln!("cert-sweep: round-vm run exited {:?}", st.code());
+            break;
+        }
+        if now() - began >= start_wait && silent(&rd, &log) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let admit = Command::new("timeout").args(["5", "spira-admit", "status"]).stdin(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("spira-admit status: {e}"));
+            let why = format!("VERDICT no-verdict: round-vm produced no output in {start_wait}s (likely queued in host-wide admission); spira-admit status: {}", admit.replace('\n', " | "));
+            eprintln!("cert-sweep: {why}");
+            return Ok((Vec::new(), why));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
     Ok((results_in(&rd), fs::read_to_string(&log).unwrap_or_default()))
 }
 
 fn run_on_host(f: &Flags, repo: &str, tip: &str, picks: &[String]) -> Result<(Vec<Outcome>, String), String> {
     let branch = flag(f, "branch").unwrap_or("cert-sweep/tip");
     git(repo, &["branch", "-f", branch, tip])?;
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new("testenv");
     if let Some(d) = flag(f, "deadline") {
         cmd.args(["--deadline", d]);

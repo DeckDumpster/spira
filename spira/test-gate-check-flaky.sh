@@ -33,7 +33,7 @@ testdb_require test-gate-check-flaky
 trap 'testdb_drop' EXIT INT TERM
 testdb_up gate_check_flaky || { echo "test-gate-check-flaky: could not build fixture"; exit 1; }
 
-B() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 TMP="$(mktemp -d)"
 # The open-duplicate check reads the lifecycle state (sp-mve9i); this world's machine
@@ -60,13 +60,19 @@ except Exception:
 ' 2>/dev/null
 }
 
+# SPIRA_HOME points at this real checkout ($HERE below), but the complete fixture's own
+# SPIRA_CHAMBER names a path conf.sh no longer derives from SPIRA_HOME (it is declared, not
+# computed) — bead.sh's "--for builder" needs an actual chamber with builder.fayth in it, so
+# a suite that supplies its own SPIRA_HOME must declare its own SPIRA_CHAMBER too (one source
+# of config, per Ryan 2026-10-05): this checkout's own chamber/ is the one SPIRA_HOME names.
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
+    SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
+    SPIRA_HOME_REPO="$(basename "$TMP")" SPIRA_CHAMBER="$HERE/chamber"
 run_gate_check() {
     # The gh stub goes first on PATH (conf.sh keeps the caller's PATH first, sp-gypjk).
-    SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
+    SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         PATH="$TMP/sbin:$PATH" \
-        SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
+        SPIRA_CONF="$TMP/no.conf" \
         gate-check.sh 2>/dev/null
 }
 

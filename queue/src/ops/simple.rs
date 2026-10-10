@@ -43,7 +43,7 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
     let mut tip = w.git.rev_parse(&path, branch).unwrap_or_default();
     let id = branch.strip_prefix("spira/").unwrap_or(branch).to_string();
 
-    let suites = w.var("SPIRA_CERTIFY_SUITES").unwrap_or_else(|| "on".into());
+    let suites = c.s.certify_suites.clone();
     let start = w.clock.now();
     let (rc, out) = w.scripts.gate(branch, &name, &id, &suites);
     if rc != 0 {
@@ -342,7 +342,7 @@ pub fn claim(w: &World, repo: Option<&str>, reason: &Text, force: bool) -> i32 {
         return FAIL;
     }
     let was = if cur.is_empty() { "<none>".to_string() } else { cur };
-    w.lib.notify(&c.r.name, "batch claimed for hand-edit", &format!("Claimed the open batch for {} (was: {was}). Reason: {reason}", c.r.name));
+    w.lib.notify(&c.s.mailbox, &c.r.name, "batch claimed for hand-edit", &format!("Claimed the open batch for {} (was: {was}). Reason: {reason}", c.r.name));
     w.out(format!("queue.sh claim: {} claimed for concierge (was: {was})", c.r.name));
     OK
 }

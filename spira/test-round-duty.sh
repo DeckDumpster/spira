@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-round-duty.sh — a leftover rounds/<n>.running marker must not silence ROUND DUE:
-# a stale marker is reported and removed, a live one still suppresses.
+# test-round-duty.sh — ROUND DUE is judged from `queue round status`, never from a marker file:
+# an open round suppresses it, a failed status is "unknown" and pages nothing.
 #
 # tier: T1
 # covers: spira/round-duty.sh spira/watchers spira/conf.d/SPIRA_ROUND_*
@@ -16,58 +16,57 @@ tip="$(git -C "$TMP/repo" rev-parse HEAD)"
 git -C "$TMP/repo" branch spira/sp-aaa
 mkdir -p "$TMP/run/rounds" "$TMP/bin"
 printf '#!/usr/bin/env bash\n[ "$1 $2" = "list-state CERTIFIED" ] && printf "sp-aaa\\t\\t\\n"\nexit 0\n' > "$TMP/bin/spira-lc"
-chmod +x "$TMP/bin/spira-lc"
+printf '#!/usr/bin/env bash\n[ "$1 $2" = "round status" ] || exit 2\ncase "$(cat QMODE)" in\n open) printf "round=open\\nbatch_id=r-1\\n" ;;\n none) echo round=none ;;\n garbage) echo hello ;;\n fail) echo boom >&2; exit 1 ;;\nesac\n' > "$TMP/bin/queue"
+sed -i "s|QMODE|$TMP/qmode|" "$TMP/bin/queue"
+chmod +x "$TMP/bin/spira-lc" "$TMP/bin/queue"
 PATH="$TMP/bin:$PATH"
 
 run() {
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" SPIRA_REPO="$TMP/repo" \
-        SPIRA_ROUND_MIN=1 SPIRA_ROUND_MARKER_MAX_AGE=3600 bash "$HERE/round-duty.sh" "$@" 2>&1
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/repo" \
+        bash "$HERE/round-duty.sh" "$@" 2>&1
 }
 
-M="$TMP/run/rounds/100.running"
-: > "$M"
-nowant "a fresh marker suppresses ROUND DUE" "ROUND DUE" "$(run watch --interval 1 --ticks 1)"
-[ -e "$M" ]; is "a fresh marker is left in place" "0" "$?"
+echo open > "$TMP/qmode"
+nowant "an open round suppresses ROUND DUE (no marker written)" "ROUND DUE" "$(run watch --interval 1 --ticks 1)"
 
-touch -d '9 hours ago' "$M"
-out="$(run watch --interval 1 --ticks 1)"
-want "a stale marker is reported" "ROUND MARKER STALE: rounds/100.running" "$out"
-want "ROUND DUE still fires past a stale marker" "ROUND DUE: 1 certified" "$out"
-[ ! -e "$M" ]; is "the stale marker is removed" "0" "$?"
+echo none > "$TMP/qmode"
+M="$TMP/run/rounds/100.running"; : > "$M"
+want "no round pages ROUND DUE even past a leftover marker" "ROUND DUE: 1 certified" "$(run watch --interval 1 --ticks 1)"
+rm -f "$M"
 
-: > "$M"; echo "red" > "$TMP/run/rounds/100.result"; touch -d '1 minute ago' "$M"; touch "$TMP/run/rounds/100.result"
-out="$(run watch --interval 1 --ticks 1)"
-want "a marker its round has finished is stale" "outlived its round" "$out"
-want "ROUND DUE fires after a finished round's marker" "ROUND DUE" "$out"
+for m in fail garbage; do
+    echo "$m" > "$TMP/qmode"
+    out="$(run watch --interval 1 --ticks 1)"
+    want "status '$m' is reported as unknown" "ROUND STATE UNKNOWN" "$out"
+    nowant "status '$m' does not page ROUND DUE" "ROUND DUE" "$out"
+done
+
+echo none > "$TMP/qmode"
+run watch --interval 1 --ticks 1 >/dev/null
+rm -f "$TMP/run/rounds/"*; : > "$TMP/run/rounds/300.result"
+(sleep 1.5; echo "red sp-aaa" >> "$TMP/run/rounds/300.result"; sleep 1; echo "round 300: no verdict from any VM" >> "$TMP/run/rounds/300.result") &
+out="$(run watch --interval 1 --ticks 5)"; wait
+want "a result line is announced" "ROUND RESULT 300: red sp-aaa" "$out"
+want "a verdict-less result is reported as its own condition" "ROUND NO VERDICTS 300" "$out"
+[ "$(printf '%s\n' "$out" | grep -c 'ROUND NO VERDICTS')" = 1 ]; is "only the verdict-less line raises it" "0" "$?"
 
 run watch --interval 7 --ticks 1 >/dev/null
 run health >/dev/null; is "health passes after a fresh poll" "0" "$?"
 echo "ok 1 100 7" > "$TMP/run/watchd/round-duty.health"
 run health >/dev/null; is "health fails once the last poll is stale" "1" "$?"
 
-INBOX="$TMP/inbox.log"; ASKS="$TMP/asks.json"
-printf '#!/usr/bin/env bash\ncat "$FAKE_ASKS"\n' > "$TMP/fakebd"; chmod +x "$TMP/fakebd"
-echo '[{"id":"sp-old","title":"already open"}]' > "$ASKS"
-rm -f "$TMP/run/rounds/"*; : > "$TMP/run/rounds/100.running"
+INBOX="$TMP/inbox.log"
+echo open > "$TMP/qmode"
 wrun() {
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" SPIRA_REPO="$TMP/repo" \
-        SPIRA_ROUND_MIN=1 SPIRA_ROUND_MARKER_MAX_AGE=3600 SPIRA_BD="$TMPBD" FAKE_ASKS="$ASKS" \
-        SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x SPIRA_CONCIERGE_INBOX="${WINBOX:-$INBOX}" \
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 \
+        SPIRA_CONCIERGE_INBOX="${WINBOX:-$INBOX}"
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/repo" \
         bash "$HERE/round-duty.sh" "$@" 2>&1
 }
-TMPBD="$TMP/fakebd"
 wrun watch --interval 1 --ticks 1 >/dev/null
 [ ! -s "$INBOX" ]; is "a pass with nothing due writes nothing to the inbox" "0" "$?"
-rm -f "$TMP/run/watchd/round-duty.health"
-wrun watch --interval 1 --ticks 8 > "$TMP/watch.out" &
-wpid=$!
-for _ in $(seq 100); do [ -e "$TMP/run/watchd/round-duty.health" ] && break; sleep 0.1; done
-echo '[{"id":"sp-old","title":"already open"},{"id":"sp-new","title":"decide X"}]' > "$ASKS"
-wait "$wpid"; out="$(cat "$TMP/watch.out")"
-want "a new ask is forwarded to the log" "NEW ASK sp-new: decide X" "$out"
-nowant "a baseline ask is not announced" "NEW ASK sp-old" "$out"
-want "the ask is woken into the inbox" "[watch:round-duty] NEW ASK sp-new: decide X" "$(cat "$INBOX")"
-rm -f "$TMP/run/rounds/100.running"
+echo none > "$TMP/qmode"
 out="$(WINBOX="$TMP" wrun watch --interval 1 --ticks 1)"
 want "a failed wake does not lose ROUND DUE from the log" "ROUND DUE" "$out"
 

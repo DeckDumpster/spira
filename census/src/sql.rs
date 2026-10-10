@@ -43,6 +43,18 @@ pub fn deliberate_causes_sql_list(causes: &[String]) -> String {
 
 /// `_census_events_sql [since_epoch_s]`.
 pub fn events_sql(since_formatted: Option<&str>, causes: &[String]) -> String {
+    events_sql_with(since_formatted, causes, &[])
+}
+
+/// [`events_sql`] for bd's table, whose `reopened` rows are paired with cause rows that now live
+/// in the lifecycle log: `recorded` names the beads whose cause is there, so a reopen whose
+/// cause row bd cannot see is not reported as unrecorded.
+pub fn events_sql_with(since_formatted: Option<&str>, causes: &[String], recorded: &[String]) -> String {
+    let recorded_clause = if recorded.is_empty() {
+        String::new()
+    } else {
+        format!(" AND issue_id NOT IN ({})", deliberate_causes_sql_list(recorded))
+    };
     let conflict_fold = "(event_type = 'requeued' AND new_value = 'merge-conflict')";
     let rebase_aeon_fold = "(event_type = 'requeued' AND new_value = 'rebase-conflict')";
     let eviction_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race')";
@@ -62,7 +74,7 @@ pub fn events_sql(since_formatted: Option<&str>, causes: &[String]) -> String {
         "event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT {conflict_fold} AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT {rebase_aeon_fold} AND NOT {eviction_fold} AND NOT {prod_dirty_fold} AND NOT {unfinished_fold} AND NOT {desc_hash_fold} AND NOT {unjudged_fold} AND NOT {reopen_timing_exclude} AND NOT {deliberate_fold} AND {actor_filter}{sc}"
     );
     let unrecorded_cond = format!(
-        "event_type = 'reopened' AND {actor_filter}{sc} AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR {conflict_fold}){sc})"
+        "event_type = 'reopened' AND {actor_filter}{sc} AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR {conflict_fold}){sc}){recorded_clause}"
     );
     let main = ranked_part("event_type, COALESCE(new_value, '')", "event_type, new_value", &main_cond, "event_type, new_value", "");
     let folded = [
@@ -91,6 +103,35 @@ fn ranked_part(select_head: &str, partition: &str, cond: &str, group_by: &str, h
     let group = if group_by.is_empty() { String::new() } else { format!(" GROUP BY {group_by}") };
     format!(
         "SELECT {select_head}, COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events, SUM(burst_start) AS bursts FROM (SELECT event_type, new_value, issue_id, CASE WHEN LAG(created_at) OVER ({w}) IS NULL OR TIMESTAMPDIFF(SECOND, LAG(created_at) OVER ({w}), created_at) > {BURST_WINDOW_S} THEN 1 ELSE 0 END AS burst_start FROM events WHERE {cond}) b{group}{having}"
+    )
+}
+
+/// Same folds, exclusions, actor filter and since-bound as [`events_sql`], unaggregated: one
+/// `(event_type, new_value, issue_id, unix-timestamp)` row per event. Clustering needs the
+/// timestamps an aggregated `COUNT(*)` throws away.
+pub fn event_rows_sql(since_formatted: Option<&str>, causes: &[String], recorded: &[String]) -> String {
+    let recorded_clause = if recorded.is_empty() {
+        String::new()
+    } else {
+        format!(" AND issue_id NOT IN ({})", deliberate_causes_sql_list(recorded))
+    };
+    let conflict_fold = "(event_type = 'requeued' AND new_value = 'merge-conflict')";
+    let rebase_aeon_fold = "(event_type = 'requeued' AND new_value = 'rebase-conflict')";
+    let eviction_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race')";
+    let prod_dirty_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty')";
+    let unfinished_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason')";
+    let desc_hash_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'desc-changed-since-claim')";
+    let reopen_timing_exclude = "(event_type = 'reopen' AND new_value IN ('closed-while-live', 'recurrence'))";
+    let deliberate_fold = format!("(event_type = 'reopen' AND new_value IN ({}))", deliberate_causes_sql_list(causes));
+    let unjudged_fold = format!(
+        "(event_type = 'requeued' AND new_value LIKE 'unjudged-%' AND new_value <> 'unjudged-{}')",
+        aeon::decide::CHARGING_OUTCOME
+    );
+    let actor_filter = "(actor = 'harness' OR actor LIKE 'aeon-%')";
+    let sc = since_clause(since_formatted);
+
+    format!(
+        "SELECT event_type AS c1, COALESCE(new_value, '') AS c2, issue_id AS c3, CAST(UNIX_TIMESTAMP(created_at) AS SIGNED) AS c4 FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT {conflict_fold} AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT {rebase_aeon_fold} AND NOT {eviction_fold} AND NOT {prod_dirty_fold} AND NOT {unfinished_fold} AND NOT {reopen_timing_exclude} AND NOT {deliberate_fold} AND NOT {unjudged_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'rebase-conflict', issue_id, CAST(UNIX_TIMESTAMP(created_at) AS SIGNED) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR {conflict_fold} OR {rebase_aeon_fold}) AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'eviction-race', issue_id, CAST(UNIX_TIMESTAMP(created_at) AS SIGNED) FROM events WHERE {eviction_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'prod-dirty', issue_id, CAST(UNIX_TIMESTAMP(created_at) AS SIGNED) FROM events WHERE {prod_dirty_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'unfinished-reason', issue_id, CAST(UNIX_TIMESTAMP(created_at) AS SIGNED) FROM events WHERE {unfinished_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopen', 'desc-changed-since-claim', issue_id, CAST(UNIX_TIMESTAMP(created_at) AS SIGNED) FROM events WHERE {desc_hash_fold} AND {actor_filter}{sc} UNION ALL SELECT 'reopened', 'unrecorded', issue_id, CAST(UNIX_TIMESTAMP(created_at) AS SIGNED) FROM events WHERE event_type = 'reopened' AND {actor_filter}{sc} AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR {conflict_fold}){sc}){recorded_clause} ORDER BY 1, 2, 4"
     )
 }
 
@@ -191,11 +232,38 @@ mod tests {
     }
 
     #[test]
+    fn a_reopen_recorded_in_the_lifecycle_log_is_not_unrecorded() {
+        let plain = events_sql(None, &causes());
+        assert!(!plain.contains("issue_id NOT IN ('"), "no recorded list unless one is given");
+        let with = events_sql_with(None, &causes(), &["sp-a".to_string(), "o'x".to_string()]);
+        assert_eq!(with.matches("AND issue_id NOT IN ('sp-a', 'o''x')").count(), 1, "only the unrecorded branch carries it");
+        assert!(with.contains("event_type = 'reopened'"));
+    }
+
+    #[test]
     fn events_sql_excludes_every_unjudged_cause_but_the_charging_one() {
         let q = events_sql(None, &causes());
         assert!(q.contains("new_value <> 'unjudged-unlanded'"));
         assert!(aeon::decide::outcome_charges("unlanded"));
         assert!(!aeon::decide::outcome_charges("operator-wait"));
+    }
+
+    #[test]
+    fn event_rows_sql_is_unaggregated_and_keeps_the_exclusions_of_events_sql() {
+        let rows = event_rows_sql(Some("2023-11-14 22:13:20"), &causes(), &[]);
+        assert!(!rows.contains("COUNT("));
+        assert!(rows.contains("UNIX_TIMESTAMP(created_at)"));
+        let agg = events_sql(Some("2023-11-14 22:13:20"), &causes());
+        for must in [
+            "NOT (event_type = 'reopen' AND new_value IN ('closed-while-live', 'recurrence'))",
+            "NOT (event_type = 'reopen' AND new_value IN ('work-close-converted', 'eject'))",
+            "new_value <> 'unjudged-unlanded'",
+            "(actor = 'harness' OR actor LIKE 'aeon-%')",
+            "created_at > '2023-11-14 22:13:20'",
+        ] {
+            assert!(rows.contains(must), "{must}");
+            assert!(agg.contains(must), "{must}");
+        }
     }
 
     #[test]

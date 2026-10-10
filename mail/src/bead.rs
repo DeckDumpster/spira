@@ -5,7 +5,7 @@
 //! a fake, never a real store (matching aeon's/queue's own ports/real split).
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
 
@@ -35,6 +35,10 @@ impl BdOut {
 
 pub trait Bd {
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut;
+    /// Close `id` through the lifecycle machine (`spira-lc close`, sp-3fue0j) — never bd.
+    fn close(&self, id: &str, reason: &str) -> BdOut;
+    /// Open `id` on the ask machine (never the bead machine), linked to `work_bead` when non-empty.
+    fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String>;
 }
 
 /// The real `bd` binary, `-C <db>` prefixed. Refuses (matching mail.sh's own
@@ -54,6 +58,15 @@ pub struct BdCli {
 }
 
 impl Bd for BdCli {
+    fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String> {
+        spira_config::lifecycle_row::create_ask(id, work_bead)
+    }
+    fn close(&self, id: &str, reason: &str) -> BdOut {
+        match spira_config::lifecycle_row::close(id, reason, "mail", None) {
+            Ok(()) => BdOut::ok(""),
+            Err(e) => BdOut::fail(1, e),
+        }
+    }
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
         if self.db.is_empty() {
             return BdOut::fail(1, "SPIRA_DB is empty/unset");
@@ -72,7 +85,7 @@ impl Bd for BdCli {
 
 impl BdCli {
     fn run_once(&self, args: &[String], stdin: Option<&str>) -> BdOut {
-        let mut cmd = Command::new(&self.bin);
+        let mut cmd = spira_config::bounded::bounded(&self.bin);
         cmd.arg("-C").arg(&self.db);
         cmd.args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
@@ -228,7 +241,8 @@ pub fn suit_reason(kind: &str, first_para: &str) -> String {
     first_para.to_string()
 }
 
-/// Creates the tracking decision bead a question/decision send wires itself to. `None` if
+/// Creates the tracking decision bead a question/decision send wires itself to, and opens its
+/// row on the ask machine (never the bead machine: an ask is not claimable work). `None` if
 /// the store is unconfigured or the create failed (mail.sh: `dec_bead=""` either way — the
 /// send still succeeds, just without a tracking bead).
 ///
@@ -236,9 +250,9 @@ pub fn suit_reason(kind: &str, first_para: &str) -> String {
 /// as a `work-bead:<id>` label, so a path that answers or closes the ASK BEAD rather than
 /// replying to the mail — the cockpit pane's verdict, `resolve`, `verify-asks` — can still
 /// find the work bead whose `ask` hold the answer lifts (sp-v62vn follow-up).
-pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, body: &str, ask_label: &str, work_bead: &str) -> Option<String> {
+pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, body: &str, ask_label: &str, work_bead: &str) -> Result<Option<String>, String> {
     if !db_configured {
-        return None;
+        return Ok(None);
     }
     let mut labels = format!("{ask_label},overseer");
     if !work_bead.is_empty() {
@@ -246,13 +260,55 @@ pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, bod
     }
     let out = bd.run(&a(&["create", subject, "-l", &labels, "--type", "decision", "--body-file", "-", "--silent"]), Some(body));
     let id = out.stdout.trim();
-    if out.code == 0 && !id.is_empty() {
-        if let Err(e) = spira_config::lifecycle_row::after_create("mail", &out.stdout) {
-            eprintln!("mail: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
+    if out.code != 0 || id.is_empty() {
+        return Ok(None);
+    }
+    if let Err(e) = retry_until_deadline(|| bd.ensure_ask(id, work_bead)) {
+        let closed = abandon_bead(bd, id, &format!("ask row not written: {e}"));
+        return Err(format!("{id}: ask row not written: {e}; {closed}"));
+    }
+    Ok(Some(id.to_string()))
+}
+
+#[cfg(not(test))]
+pub const RETRY_DEADLINE_MS: u64 = 5000;
+#[cfg(test)]
+pub const RETRY_DEADLINE_MS: u64 = 250;
+pub const RETRY_PAUSE_MS: u64 = 100;
+
+/// Runs `f` until it succeeds, at least twice and then until `RETRY_DEADLINE_MS` has passed.
+pub fn retry_until_deadline<T>(mut f: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    let start = std::time::Instant::now();
+    let mut attempt = 1;
+    loop {
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) if attempt >= 2 && start.elapsed().as_millis() as u64 >= RETRY_DEADLINE_MS => return Err(e),
+            Err(_) => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(RETRY_PAUSE_MS));
+            }
         }
-        Some(id.to_string())
-    } else {
-        None
+    }
+}
+
+/// Closes a tracking bead that could not be completed, so no ask is left that cannot be
+/// answered; retries the lifecycle close within the deadline. Returns what happened, for the caller's error.
+pub fn abandon_bead(bd: &dyn Bd, id: &str, why: &str) -> String {
+    let reason = format!("ask abandoned by mail send: {why}");
+    let mut last = String::new();
+    let closed = retry_until_deadline(|| {
+        let out = bd.close(id, &reason);
+        if out.code == 0 {
+            Ok(())
+        } else {
+            last = bd_failure_detail(&out);
+            Err(last.clone())
+        }
+    });
+    match closed {
+        Ok(()) => format!("{id} closed"),
+        Err(_) => format!("{id} could NOT be closed: {last}"),
     }
 }
 
@@ -285,7 +341,7 @@ pub fn dep_list_up_ids(bd: &dyn Bd, db_configured: bool, bead: &str) -> Vec<Stri
 }
 
 pub fn close(bd: &dyn Bd, id: &str, reason: &str) -> Result<(), String> {
-    let out = bd.run(&a(&["close", id, "--reason-file", "-"]), Some(reason));
+    let out = bd.close(id, reason);
     if out.code == 0 {
         Ok(())
     } else {
@@ -400,6 +456,31 @@ pub fn open_ask_ids(bd: &dyn Bd, ask_label: &str) -> Result<Vec<String>, String>
     }
 }
 
+/// The open ask a new operator ask duplicates: one about the same work bead, or carrying
+/// the same normalized subject. `Err` when the store cannot answer.
+pub fn open_duplicate_ask(bd: &dyn Bd, ask_label: &str, subject: &str, work_bead: &str) -> Result<Option<String>, String> {
+    let [flag, live] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Live);
+    let out = bd.run(&a(&["list", &flag, &live, "--label", ask_label, "--limit", "0", "--json"]), None);
+    let v: Value = serde_json::from_str(&out.stdout).map_err(|_| format!("bead store query failed {}", bd_failure_detail(&out)))?;
+    let arr = match v {
+        Value::Array(a) => a,
+        obj @ Value::Object(_) => vec![obj],
+        _ => Vec::new(),
+    };
+    let norm = crate::repeat::normalize_subject(subject);
+    let work_label = format!("{WORK_BEAD_LABEL}{work_bead}");
+    for x in &arr {
+        let Some(id) = x.get("id").and_then(Value::as_str) else { continue };
+        let title = x.get("title").and_then(Value::as_str).unwrap_or("");
+        let same_bead = !work_bead.is_empty()
+            && x.get("labels").and_then(Value::as_array).is_some_and(|ls| ls.iter().any(|l| l.as_str() == Some(work_label.as_str())));
+        if same_bead || (!norm.trim().is_empty() && crate::repeat::normalize_subject(title) == norm) {
+            return Ok(Some(id.to_string()));
+        }
+    }
+    Ok(None)
+}
+
 /// The probe an empty [`open_ask_ids`] result needs before it is trusted (an empty result
 /// from a broken query would archive every live ask). `Err` carries the failing call's exit
 /// code and stderr so the caller's refusal can name what actually went wrong.
@@ -423,11 +504,13 @@ pub mod fake {
     pub struct FakeBd {
         pub calls: RefCell<Vec<(Vec<String>, Option<String>)>>,
         pub responses: RefCell<Vec<BdOut>>,
+        pub row_failures: std::cell::Cell<u32>,
+        pub row_attempts: std::cell::Cell<u32>,
     }
 
     impl FakeBd {
         pub fn new(responses: Vec<BdOut>) -> FakeBd {
-            FakeBd { calls: RefCell::new(Vec::new()), responses: RefCell::new(responses) }
+            FakeBd { calls: RefCell::new(Vec::new()), responses: RefCell::new(responses), row_failures: std::cell::Cell::new(0), row_attempts: std::cell::Cell::new(0) }
         }
         pub fn calls(&self) -> Vec<(Vec<String>, Option<String>)> {
             self.calls.borrow().clone()
@@ -435,6 +518,19 @@ pub mod fake {
     }
 
     impl Bd for FakeBd {
+        fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {
+            self.row_attempts.set(self.row_attempts.get() + 1);
+            let left = self.row_failures.get();
+            if left > 0 {
+                self.row_failures.set(left - 1);
+                return Err("lc: injected failure".into());
+            }
+            Ok(())
+        }
+        // Recorded as the argv the real close used to be, so the callers' tests read the same.
+        fn close(&self, id: &str, reason: &str) -> BdOut {
+            self.run(&[String::from("close"), id.to_string(), "--reason-file".into(), "-".into()], Some(reason))
+        }
         fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut {
             self.calls.borrow_mut().push((args.to_vec(), stdin.map(str::to_string)));
             let mut r = self.responses.borrow_mut();
@@ -509,13 +605,13 @@ mod tests {
     #[test]
     fn create_tracking_bead_returns_none_when_store_unconfigured() {
         let bd = FakeBd::new(vec![]);
-        assert_eq!(create_tracking_bead(&bd, false, "subj", "body", "needs-operator", ""), None); // literal-ok: test fixture
+        assert_eq!(create_tracking_bead(&bd, false, "subj", "body", "needs-operator", ""), Ok(None)); // literal-ok: test fixture
     }
 
     #[test]
     fn create_tracking_bead_returns_the_new_id() {
         let bd = FakeBd::new(vec![BdOut::ok("sp-newid1\n")]);
-        let id = create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "").unwrap(); // literal-ok: test fixture
+        let id = create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "").unwrap().unwrap(); // literal-ok: test fixture
         assert_eq!(id, "sp-newid1");
         let calls = bd.calls();
         assert_eq!(calls[0].1.as_deref(), Some("body"));
@@ -527,7 +623,7 @@ mod tests {
     #[test]
     fn a_tracking_bead_for_a_work_bead_carries_its_work_bead_label() {
         let bd = FakeBd::new(vec![BdOut::ok("sp-newid1\n")]);
-        create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "sp-work1").unwrap(); // literal-ok: test fixture
+        create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "sp-work1").unwrap().unwrap(); // literal-ok: test fixture
         assert!(bd.calls()[0].0.contains(&"needs-operator,overseer,work-bead:sp-work1".to_string()), "{:?}", bd.calls()); // literal-ok: test fixture
     }
 
@@ -622,10 +718,9 @@ mod tests {
             log = log.display(),
             state = state.display(),
         );
-        std::fs::write(&script, body).unwrap();
-        let mut perm = std::fs::metadata(&script).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
-        std::fs::set_permissions(&script, perm).unwrap();
+        // testkit::write_exe, never fs::write + chmod: a write descriptor another test thread's
+        // fork inherits makes the exec below fail ETXTBSY under load (a round VM's unit step).
+        testkit::write_exe(&script, &body);
         script
     }
 
@@ -647,10 +742,9 @@ mod tests {
         let script = d.path().join("fake-bd.sh");
         let log = d.path().join("calls.log");
         let body = format!("#!/bin/sh\necho called >> {log}\necho 'Error: no beads project found' >&2\nexit 1\n", log = log.display());
-        std::fs::write(&script, body).unwrap();
-        let mut perm = std::fs::metadata(&script).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
-        std::fs::set_permissions(&script, perm).unwrap();
+        // testkit::write_exe, never fs::write + chmod: a write descriptor another test thread's
+        // fork inherits makes the exec below fail ETXTBSY under load (a round VM's unit step).
+        testkit::write_exe(&script, &body);
         let bd = BdCli { bin: script.display().to_string(), db: d.path().display().to_string(), conn_retries: 2 };
         let out = bd.run(&a(&["list", "--json"]), None);
         assert_eq!(out.code, 1);

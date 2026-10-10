@@ -49,6 +49,10 @@ struct World {
     /// session: a builder's close is the row past the builder (SUBMITTED), a claim WORKING,
     /// anything else READY (sp-mve9i: the aeon reads the row, never bd's status).
     lc: BTreeMap<String, String>,
+    /// `spira-lc facts`' JSON answer.
+    facts: String,
+    /// The disposition (status, note) the row carries per bead, as `spira-lc show` answers it.
+    disposition: BTreeMap<String, (String, String)>,
 }
 
 fn lc_state_of(w: &World, id: &str) -> String {
@@ -217,6 +221,9 @@ impl Exec for FakeExec {
                 _ => Out::ok("{}"),
             };
         }
+        if prog == "spira-lc" && args.first().map(String::as_str) == Some("facts") {
+            return Out::ok(self.0.lock().unwrap().facts.clone());
+        }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("holds") {
             return Out::ok(self.0.lock().unwrap().holds.get(&args[1]).cloned().unwrap_or_default());
         }
@@ -224,7 +231,8 @@ impl Exec for FakeExec {
             let w = self.0.lock().unwrap();
             // The row's holds are the same ones `spira-lc holds` answers (one kind a line).
             let holds: Vec<String> = w.holds.get(&args[1]).map(|h| h.lines().map(str::trim).filter(|h| !h.is_empty()).map(String::from).collect()).unwrap_or_default();
-            return Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": lc_state_of(&w, &args[1]), "holds": holds}, "delivery": null}).to_string());
+            let (disp, note) = w.disposition.get(&args[1]).cloned().unzip();
+            return Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": lc_state_of(&w, &args[1]), "holds": holds, "disposition": disp, "disposition_note": note}, "delivery": null}).to_string());
         }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && self.0.lock().unwrap().fail_content_on_base {
             return Out::fail(1, "spira-lc content-on-base: stub refusal");
@@ -316,6 +324,32 @@ struct Outcome {
     slept: usize,
 }
 
+/// Every key spira-config's own "every key declared" test fixture
+/// (`spira-config/tests/fixtures/complete.toml`, the same document
+/// `spira_config::process::fixture_toml` writes from) declares, renamed `SPIRA_*`/
+/// `COCKPIT_*` — the same rename `spira_config::resolve`'s own (private) `toml_key_map`
+/// applies when it builds a toml-backed `Resolved`, replicated here (not called) because
+/// it is not `pub`. No file I/O, no `$SPIRA_TOML`/`$SPIRA_HOME` env, and nowhere near
+/// `spira_config::process::cfg`'s own cached resolution — this builds `Conf`'s backing map
+/// directly, the same shape `merge_resolved_config` would produce in production.
+///
+/// `pub(crate)`: `escape::tests::conf_at` builds its own `Conf` the same way and needs the
+/// same base — a hand-built `Conf` whose registered keys are simply absent now under-
+/// resolves them to 0/"" (`Conf::i`/`Conf::s` carry no Rust-side default any more, per Ryan
+/// 2026-10-05: one source of config), which is a silent behaviour change for whichever one
+/// of this file's many fixtures does not also move onto this same base.
+pub(crate) fn complete_vars() -> BTreeMap<String, String> {
+    let doc = spira_config::validate(include_str!("../../spira-config/tests/fixtures/complete.toml")).expect("the complete fixture validates");
+    spira_config::spira_string_map(&doc)
+        .into_iter()
+        .map(|(k, v)| if k.starts_with("COCKPIT_") { (k, v) } else { (format!("SPIRA_{k}"), v) })
+        .chain(std::iter::once((
+            "SPIRA_TOML".to_string(),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../spira-config/tests/fixtures/complete.toml").to_string(),
+        )))
+        .collect()
+}
+
 fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
     go_as("builder", f, labels, extra, mode, seam_answers, act)
 }
@@ -327,7 +361,14 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BT
 /// `fx()` does for "builder").
 #[allow(clippy::too_many_arguments)]
 fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
-    let mut vars: BTreeMap<String, String> = [
+    // Every registered key's declared value, from spira-config's own "every key declared"
+    // fixture (per Ryan 2026-10-05: one source of config) — not a hand-picked partial map.
+    // `Conf`'s accessors for registered keys no longer carry a Rust-side default, so a key
+    // this suite never mentions must still resolve to something real, the same as
+    // production's own config file always does. This suite's own long-standing fixture
+    // values are then laid on top, then `extra`, exactly as before.
+    let mut vars: BTreeMap<String, String> = complete_vars();
+    for (k, v) in [
         ("SPIRA_RUN", f.run.display().to_string()),
         ("SPIRA_DB", "/db".to_string()),
         ("SPIRA_ASK_LABEL", "needs-ryan".to_string()), // literal-ok: fixture/fallback
@@ -344,16 +385,58 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
         // override via `extra` instead (SPIRA_REPO_DERIVED == SPIRA_REPO).
         ("SPIRA_HOME_REPO", "fixture".to_string()),
         ("SPIRA_REPO", f.repo.display().to_string()),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v))
-    .collect();
+        // Every other registered key this file's own business logic reads (run.rs/
+        // teardown.rs/verdict.rs/capacity.rs), pinned back to what it always resolved to
+        // when the old hand-picked map simply never mentioned it: "" through `Conf::s`
+        // (SPIRA_SCOPE_LABEL in particular — `complete.toml`'s own "spira" would otherwise
+        // FENCE every test whose `labels` does not happen to contain "spira", e.g. the
+        // plain "plan" case), or the literal this file's own `.n(...)`/`.or(...)` defaults
+        // always produced before they were deleted in favour of `Conf::i`/`Conf::s` (per
+        // Ryan 2026-10-05: one source of config — the complete fixture happens to match
+        // most of these already; listed in full anyway so this does not silently drift
+        // again the next time either side's value changes). An individual test overrides
+        // any one of these further through `extra`, same as always.
+        ("SPIRA_SCOPE_LABEL", String::new()),
+        ("SPIRA_WIKI", String::new()),
+        ("SPIRA_MAIL", String::new()),
+        ("SPIRA_REPO_MAP", String::new()),
+        ("SPIRA_TESTDB_PORT", String::new()),
+        ("SPIRA_SPIKE_DIR", String::new()),
+        ("SPIRA_SPIKE_PATHS", String::new()),
+        ("SPIRA_MAECHEN_MAX_BEADS", String::new()),
+        ("SPIRA_MAECHEN_REMEDY_LABEL", String::new()),
+        ("SPIRA_MEMORIES_CACHE", String::new()),
+        ("SPIRA_STATUTE_CORE", String::new()),
+        ("SPIRA_STATUTE_CORE_LOCAL", String::new()),
+        ("SPIRA_SCCACHE_DAV_ADDR", String::new()),
+        ("SPIRA_CAPACITY_PROBE_MODEL", String::new()),
+        ("SPIRA_THRASH_MINUTES", "20".to_string()),
+        ("SPIRA_THRASH_STREAK_CAP", "2".to_string()),
+        ("SPIRA_VERDICT_WINDOW", "400".to_string()),
+        ("SPIRA_DELIVERS_CHECK_TIMEOUT", "60".to_string()),
+        ("SPIRA_RAPID_RECUR_THRESHOLD", "3".to_string()),
+        ("SPIRA_BRIEF_KEEP_RECURRENCES", "5".to_string()),
+        ("SPIRA_BRIEF_NOTES_MAX_CHARS", "8000".to_string()),
+        ("SPIRA_MEMORIES_CACHE_AGE", "300".to_string()),
+        ("SPIRA_CAPACITY_PROBE_WINDOW", "18000".to_string()),
+        ("SPIRA_CAPACITY_PROBE_INTERVAL", "3600".to_string()),
+        ("SPIRA_CAPACITY_PROBE_TIMEOUT", "30".to_string()),
+        (spira_config::admission::JITTER_ENV, spira_config::admission::JITTER_DEFAULT.to_string()),
+        ("SPIRA_WORKFLOW_ONLY_PATHS", "spira/acceptance-ci.sh spira/acceptance-agent.sh spira/build-tarball.sh".to_string()),
+        ("SPIRA_BD", "bd".to_string()),
+        ("SPIRA_GH_API", "https://api.github.com".to_string()),
+        ("SPIRA_AGENT", "claude".to_string()),
+        ("SPIRA_SUBMITTED_LABEL", "spira-submitted".to_string()),
+    ] {
+        vars.insert(k.to_string(), v);
+    }
     for (k, v) in extra {
         vars.insert(k.to_string(), v.to_string());
     }
     let mut base = BTreeMap::new();
     base.insert("PATH".to_string(), format!("{}:{}", f.bin.display(), std::env::var("PATH").unwrap_or_default()));
     base.insert("GH_TOKEN".to_string(), "secret".to_string());
+    base.insert("CLAUDE_CONFIG_DIR".to_string(), f.run.join("claude-config").display().to_string());
     for (k, v) in [("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"), ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t")] {
         base.insert(k.into(), v.into());
     }
@@ -378,7 +461,11 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
         slept.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     };
     let dry = mode == Mode::DryRun;
-    let cwd = std::env::current_dir().unwrap();
+    // Run chdirs the whole test process into its worktree (run.rs, teardown.rs), and parallel
+    // tests delete their fixtures, so the inherited cwd can already be gone: restore to a
+    // directory that always exists ("/") rather than panic in an unrelated test (a flip in every round since
+    // r-48: tests.rs:455 NotFound).
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
     let code = {
         let mut run = Run {
             d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &launcher, sink: &sink, env: &env, clock: &clock, sleep: &sleep },
@@ -523,7 +610,8 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
     assert_eq!(o.code, 0);
     let w = o.w.lock().unwrap();
     let cas = w.seam_calls.iter().find(|c| c.0 == "lc_claim_bead").expect("lifecycle CAS claim");
-    assert_eq!(cas.1[1], "aeon-ifrit");
+    let me = spira_config::session::parse(&cas.1[1]).expect("the holder is a session identity, not a bare name");
+    assert_eq!((me.name.as_str(), me.pid), ("aeon-ifrit", std::process::id()));
     assert_eq!(o.seen[0].env.get("SPIRA_WORK_BEAD_ID").map(|s| s.as_str()), Some("sp-r"), "the model runs bound to this bead");
     assert!(!o.seen[0].env.contains_key("SPIRA_DB"), "the restricted env never carries SPIRA_DB");
     assert!(!o.seen[0].env.contains_key("GH_TOKEN"), "the restricted env never carries GH_TOKEN");
@@ -744,7 +832,9 @@ fn a_stack_conflict_refuses_the_claim_and_notes_both_prerequisites() {
     assert!(ledger_lines(&o).last().unwrap().contains("status=stack-conflict"), "{:?}", ledger_lines(&o));
     let w = o.w.lock().unwrap();
     assert!(w.seam_calls.iter().any(|c| c.0 == "release_own_claim" && c.1[0] == "sp-c"), "the claim is handed back");
-    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen" || c.0 == "bump_requeue"), "the dependent stays held, not requeued as a fault");
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "the dependent stays held, not reopened as a fault");
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == ["sp-c", "stack-conflict"]), "the refused claim is recorded as an exempt return: {:?}", w.seam_calls);
+    assert!(spira_config::stack_conflict::holds(&f.run, "sp-a", &tip_a) && spira_config::stack_conflict::holds(&f.run, "sp-b-prereq", &tip_b), "both prerequisites are marked");
     let notes: Vec<&str> = w.notes.iter().filter(|(id, _)| id == "sp-a" || id == "sp-b-prereq").map(|(_, t)| t.as_str()).collect();
     assert_eq!(notes.len(), 2, "both prerequisites get a note: {:?}", w.notes);
     assert!(notes.iter().all(|n| n.contains("stack conflict: sp-a x sp-b-prereq")), "{notes:?}");
@@ -758,7 +848,9 @@ fn world_stop_bead_with_live_peers_is_released() {
     seed(&f, "sp-w");
     f.w.lock().unwrap().labels.get_mut("sp-w").unwrap().insert("world-stop".into()); // literal-ok: test fixture
     std::fs::write(f.run.join("aeon-builder-sp-other.pid"), format!("{}\n", std::process::id())).unwrap();
+    strand::probe::write_lease(&f.run.join("aeon-builder-sp-other.pid"), i64::MAX);
     std::fs::write(f.run.join("aeon-builder-sp-dead.pid"), "999999999\n").unwrap();
+    strand::probe::write_lease(&f.run.join("aeon-builder-sp-dead.pid"), 1);
     let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 0);
     assert!(ledger_lines(&o)[2].contains("status=world-stop-fence")); // literal-ok: asserts the ledger status name
@@ -807,6 +899,26 @@ fn a_submitted_session_that_exits_nonzero_ledgers_the_models_rc() {
     assert!(done.starts_with("done builder sp-q rc=1 status=submitted"), "{done}");
 }
 
+/// A bead reopened by a fast-tier red leads its next claim's brief with the digest's error
+/// lines, above the bead body, and none of the warnings the red was buried in.
+#[test]
+fn a_reworked_bead_leads_with_its_last_fast_tier_red() {
+    let f = fx("rework-brief");
+    seed(&f, "sp-r");
+    f.w.lock().unwrap().facts = serde_json::json!([
+        {"issue_id": "sp-r", "event_type": "fast-tier-red", "new_value": "spira/build-fence.sh failed (rc=101):\nerror[E0432]: unresolved import `crate::nope`\n  --> src/a.rs:3:5"},
+    ])
+    .to_string();
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, commits_and_closes());
+    assert_eq!(o.code, 0, "{}", o.log);
+    let task = std::fs::read_to_string(f.run.join("sp-r.task.md")).unwrap();
+    assert!(task.starts_with("## The bead\n## Your last closeout failed — fix this first\n\nspira/build-fence.sh failed (rc=101):\nerror[E0432]"), "{task}");
+    assert!(task.find("--> src/a.rs:3:5").unwrap() < task.find("sp-r ·").unwrap(), "{task}");
+    assert!(!task.contains("warning"), "{task}");
+}
+
 // ---- the whole run --------------------------------------------------------------------
 
 #[test]
@@ -832,13 +944,13 @@ fn happy_path_submits_through_the_machine() {
     assert_eq!(spec.stdin_file, f.run.join("sp-h.task.md"));
     assert_eq!(spec.log, f.run.join("sp-h.log"));
     assert_eq!(spec.cwd, f.run.join("worktree/sp-h"));
-    assert_eq!(spec.env.get("BEADS_ACTOR").map(|s| s.as_str()), Some("aeon-ifrit"));
+    assert!(spec.env.get("BEADS_ACTOR").is_some_and(|a| spira_config::session::parse(a).is_some_and(|s| s.name == "aeon-ifrit")), "{:?}", spec.env.get("BEADS_ACTOR"));
     assert_eq!(spec.env.get("BEAD_ID").map(|s| s.as_str()), Some("sp-h"));
     assert_eq!(spec.env.get("SPIRA_WORK_BEAD_ID").map(|s| s.as_str()), Some("sp-h"), "the model runs bound to this bead");
     assert!(spec.env.get("GH_TOKEN").is_none(), "no credential-shaped var leaked to the model");
     let a = spec.args.join(" ");
     assert!(a.starts_with("-p --output-format stream-json --verbose --include-partial-messages --system-prompt-snapshot on --append-system-prompt-file "));
-    assert!(a.contains("--model claude-opus-5 --allowedTools Bash,Read,Edit,Write,Glob,Grep --dangerously-skip-permissions --settings {"));
+    assert!(a.contains("--model claude-sonnet-5-5 --allowedTools Bash,Read,Edit,Write,Glob,Grep --dangerously-skip-permissions --settings {"));
     // The brief.
     let sys = std::fs::read_to_string(f.run.join("sp-h.system.md")).unwrap();
     let task = std::fs::read_to_string(f.run.join("sp-h.task.md")).unwrap();
@@ -975,17 +1087,17 @@ fn a_session_that_leaves_the_bead_open_with_no_commit_is_a_no_progress_exit_held
     // Exempt, not charged: the events fold's `unjudged-` prefix, same as every other
     // never-judged disposition, so CHECK 4 never counts this toward the attempts ask.
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-o", "unjudged-no-progress"]), "{:?}", w.seam_calls);
-    // sp-mve9i: no bd status write around the machine — bd's dated defer is a snooze that
-    // wakes on its own (`bd defer --help`), and the release above is the lifecycle's.
+    // sp-mve9i: no bd status write around the machine; the snooze is a timed `wait` hold.
     assert!(
         !w.bd_calls.iter().any(|c| c.iter().any(|a| a == "--status" || a.starts_with("--status="))),
         "a timed hold writes no bd status: {:?}",
         w.bd_calls
     );
-    // Held, not resumed: a real defer, not just release() (which alone put it right back
+    assert!(!w.bd_calls.iter().any(|c| c.contains(&"--defer".to_string())), "the snooze is the lifecycle's, not bd's defer: {:?}", w.bd_calls);
+    // Held, not resumed: a real snooze, not just release() (which alone put it right back
     // in front of the next summon — the whole bug).
     assert!(
-        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--defer".to_string())),
+        snoozed(&w),
         "{:?}",
         w.bd_calls
     );
@@ -1018,7 +1130,7 @@ fn a_committed_but_still_open_session_still_charges_a_real_attempt() {
     );
     assert!(!w.seam_calls.iter().any(|c| c.0 == "bump_requeue"), "a charged attempt writes no exempt requeue cause: {:?}", w.seam_calls);
     assert!(!w.seam_calls.iter().any(|c| c.0 == "thrash_streak_bump"), "committed work is not a no-progress exit: {:?}", w.seam_calls);
-    assert!(!w.bd_calls.iter().any(|c| c.contains(&"--defer".to_string())), "a real attempt is not held for a backoff: {:?}", w.bd_calls);
+    assert!(!snoozed(&w), "a real attempt is not held for a backoff: {:?}", w.bd_calls);
     assert_eq!(w.status["sp-p"], "open");
 }
 
@@ -1071,7 +1183,7 @@ fn a_no_progress_streak_at_the_cap_is_routed_to_the_concierge_not_ryan() {
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(
-        !w.bd_calls.iter().any(|c| c.contains(&"--defer".to_string())),
+        !snoozed(&w),
         "at the cap this routes to the Concierge instead of deferring again: {:?}",
         w.bd_calls
     );
@@ -1124,7 +1236,7 @@ fn a_branch_already_ahead_with_no_new_commit_this_session_is_still_held_not_char
     assert!(!w.notes.iter().any(|(_, n)| n.starts_with("Unlanded (unlanded):")), "{:?}", w.notes);
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-aa", "unjudged-no-progress"]), "{:?}", w.seam_calls);
     assert!(
-        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--defer".to_string())),
+        snoozed(&w),
         "held, not resumed: {:?}",
         w.bd_calls
     );
@@ -1159,32 +1271,41 @@ fn an_ops_lane_aeons_no_progress_exit_is_held_too() {
     assert!(w.notes.iter().any(|(_, n)| n.starts_with("No progress (unlanded):")), "{:?}", w.notes);
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-ao", "unjudged-no-progress"]), "{:?}", w.seam_calls);
     assert!(
-        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--defer".to_string())),
+        snoozed(&w),
         "{:?}",
         w.bd_calls
     );
 }
 
 #[test]
-fn slain_mid_session_is_free_and_exits_143() {
-    let f = fx("slain");
-    seed(&f, "sp-s");
-    let run = f.run.clone();
-    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, _, stop| {
-        std::fs::write(run.join("sp-s.slain"), "t\twhy\n").unwrap();
-        stop.trip(15);
-        143
-    });
+fn a_silent_session_exit_is_a_harness_red_and_charges_no_attempt() {
+    let f = fx("silent-exit");
+    seed(&f, "sp-q");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 1);
     let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
-    assert_eq!(o.code, 143);
+    assert_eq!(o.code, 1, "{}", o.log);
     let l = ledger_lines(&o);
-    assert!(l[2].starts_with("done builder sp-s rc=143 status=slain"), "{l:?}");
+    assert!(l[2].starts_with("done builder sp-q rc=1"), "a done line is written: {l:?}");
     let w = o.w.lock().unwrap();
-    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-s", "unjudged-slain"]));
-    // verdict() is native now (no seam call to prove it ran); its first act is always this
-    // exact log line, so its absence proves the whole block was skipped.
-    assert!(!o.log.contains("sp-s status="), "the verdict block is skipped, as bash's trap skipped it");
-    assert!(!f.run.join("aeon-builder-sp-s.pid").exists());
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Harness red (session exit rc=1, no transcript)")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-q", "unjudged-refused"]), "exempt cause, not an attempt: {:?}", w.seam_calls);
+}
+
+#[test]
+fn a_persona_with_no_declared_model_is_a_harness_red_with_a_done_line_not_a_silent_exit() {
+    let f = fx("no-model");
+    std::fs::write(f.home.join("chamber/ghost.md"), std::fs::read_to_string(f.home.join("chamber/builder.md")).unwrap()).unwrap();
+    std::fs::write(f.home.join("chamber/ghost.fayth"), "").unwrap();
+    seed(&f, "sp-g");
+    let o = go_as("ghost", &f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
+    assert_eq!(o.code, 1, "{}", o.log);
+    assert!(o.log.contains("persona.ghost.model is not declared"), "{}", o.log);
+    let l = ledger_lines(&o);
+    assert!(l[2].starts_with("done ghost sp-g rc=1 status=harness-red"), "{l:?}");
+    let w = o.w.lock().unwrap();
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Harness red (rc=1)") && n.contains("NO attempt was charged")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-g", "unjudged-harness-red"]), "{:?}", w.seam_calls);
+    assert!(o.seen.is_empty(), "no session was launched");
 }
 
 #[test]
@@ -1362,7 +1483,7 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
     assert_eq!(get("RUSTC_WRAPPER"), Some(admit.to_str().unwrap()));
     assert_eq!(get("SPIRA_ADMIT_INNER"), Some(sccache.to_str().unwrap()));
     assert_eq!(get("SPIRA_ADMIT_WHO"), Some("sp-adm"));
-    assert_eq!(get("SPIRA_RUN"), Some(f.run.to_str().unwrap()));
+    assert_eq!(get("SPIRA_RUN"), None);
     assert!(!o.log.contains("not admitted"), "{}", o.log);
     assert_eq!(o.slept, 0, "SPIRA_SUMMON_JITTER=0 disables the jitter");
     assert!(!o.log.contains("summon jitter"));
@@ -1462,7 +1583,8 @@ fn rapid_recur_parks_a_bead_after_three_consecutive_sub_10s_summons() {
     let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
-    assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr")); // literal-ok: fixture/fallback
+    // Parked by the row's ask hold (asserted below), never an ask label (sp-psztcc).
+    assert!(!w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr")); // literal-ok: fixture/fallback
     assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("overseer")), "{:?}", w.labels.get("sp-rr"));
     assert!(w.notes.iter().any(|(id, n)| id == "sp-rr" && n.contains("RAPID-RECUR")), "{:?}", w.notes);
     assert!(o.log.contains("RAPID-RECUR: 3 consecutive sub-10s runs"), "{}", o.log);
@@ -1513,4 +1635,213 @@ fn no_aeon_source_reads_the_landstate_ledger() {
         }
     }
     assert!(checked > 10);
+}
+
+/// A `spira-lc hold <id> wait snooze-until:<epoch>` — the no-progress backoff.
+fn snoozed(w: &World) -> bool {
+    w.exec_calls.iter().any(|(p, a, _)| {
+        p == "spira-lc"
+            && a.first().map(String::as_str) == Some("hold")
+            && a.get(2).map(String::as_str) == Some("wait")
+            && a.get(3).is_some_and(|r| spira_config::lc_state::snooze_until(r).is_some())
+    })
+}
+
+// ---- checkpoint across a world stop ----------------------------------------------------
+
+const CK_SESSION: &str = "0b9d6f3a-1c2e-4f5a-8b7c-9d0e1f2a3b4c";
+
+fn persona_of(f: &Fx) -> String {
+    crate::checkpoint::persona_hash(&std::fs::read(f.home.join("chamber/builder.md")).unwrap())
+}
+
+fn checkpoint_facts(fayth: &str, persona: &str) -> String {
+    serde_json::json!([
+        {"issue_id": "sp-ck", "event_type": "session", "new_value": format!("{CK_SESSION} {fayth} {persona} /w/sp-ck")},
+        {"issue_id": "sp-ck", "event_type": "checkpointed", "new_value": "1000"},
+    ])
+    .to_string()
+}
+
+fn keep_transcript(f: &Fx) {
+    let d = f.run.join("claude-config/projects/-some-cwd");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join(format!("{CK_SESSION}.jsonl")), "{}\n").unwrap();
+}
+
+fn arg_after(spec: &SessionSpec, flag: &str) -> Option<String> {
+    spec.args.iter().position(|a| a == flag).and_then(|i| spec.args.get(i + 1)).cloned()
+}
+
+fn ends_clean() -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {
+    Box::new(|_, _, _| 0)
+}
+
+fn session_facts(w: &World) -> Vec<String> {
+    w.exec_calls.iter().filter(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("fact")).map(|c| c.1.join(" ")).collect()
+}
+
+#[test]
+fn a_fresh_claim_launches_under_a_recorded_session_id() {
+    let f = fx("ck-fresh");
+    seed(&f, "sp-ck");
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), ends_clean());
+    let id = arg_after(&o.seen[0], "--session-id").expect(&o.log);
+    assert!(crate::checkpoint::is_uuid(&id) && !o.seen[0].args.contains(&"--resume".to_string()));
+    let w = o.w.lock().unwrap();
+    let facts = session_facts(&w);
+    assert!(facts.len() == 1 && facts[0].contains("--kind session") && facts[0].contains(&id) && facts[0].contains("builder"), "{facts:?}");
+}
+
+#[test]
+fn a_checkpointed_aeon_resumes_its_session_and_is_told_the_world_was_stopped() {
+    let f = fx("ck-resume");
+    seed(&f, "sp-ck");
+    keep_transcript(&f);
+    f.w.lock().unwrap().facts = checkpoint_facts("builder", &persona_of(&f));
+    let task = Arc::new(Mutex::new(String::new()));
+    let t = Arc::clone(&task);
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, _, _| {
+        *t.lock().unwrap() = std::fs::read_to_string(&spec.stdin_file).unwrap();
+        0
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    assert_eq!(arg_after(&o.seen[0], "--resume").as_deref(), Some(CK_SESSION), "{}", o.log);
+    assert!(!o.seen[0].args.contains(&"--session-id".to_string()));
+    let task = task.lock().unwrap();
+    assert!(task.contains("The world was stopped") && task.contains("spira/sp-ck"), "{task}");
+    let w = o.w.lock().unwrap();
+    assert!(!w.notes.iter().any(|(_, n)| n.contains("not resumed")), "{:?}", w.notes);
+    assert!(session_facts(&w)[0].contains(CK_SESSION), "the resumed session is recorded again, which consumes the checkpoint");
+}
+
+#[test]
+fn an_unresumable_session_falls_back_to_a_cold_claim_and_the_note_says_why() {
+    for (case, fayth, persona, transcript, why) in [
+        ("expired", "builder", None, false, "transcript"),
+        ("persona", "builder", Some("000000000000"), true, "persona changed"),
+        ("other-fayth", "ops", None, true, "ran as ops"),
+    ] {
+        let f = fx(&format!("ck-cold-{case}"));
+        seed(&f, "sp-ck");
+        if transcript {
+            keep_transcript(&f);
+        }
+        let persona = persona.map(String::from).unwrap_or_else(|| persona_of(&f));
+        f.w.lock().unwrap().facts = checkpoint_facts(fayth, &persona);
+        let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), ends_clean());
+        let spec = &o.seen[0];
+        assert!(!spec.args.contains(&"--resume".to_string()), "{case}: {:?}", spec.args);
+        let id = arg_after(spec, "--session-id").unwrap_or_else(|| panic!("{case}: {}", o.log));
+        assert_ne!(id, CK_SESSION, "{case}: a cold claim is a new session");
+        let w = o.w.lock().unwrap();
+        assert!(w.notes.iter().any(|(_, n)| n.starts_with("Checkpoint not resumed") && n.contains(why)), "{case}: {:?}", w.notes);
+    }
+}
+
+#[test]
+fn a_session_slain_by_a_world_stop_is_checkpointed_without_charging_an_attempt() {
+    let f = fx("ck-stop");
+    seed(&f, "sp-ck");
+    let run = f.run.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, w, _| {
+        std::fs::write(run.join("world.halted"), "stopped\n").unwrap();
+        w.lock().unwrap().disposition.insert("sp-ck".into(), ("slain".into(), "the world was stopped".into()));
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    let hold = w.exec_calls.iter().find(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold")).unwrap_or_else(|| panic!("{}", o.log));
+    assert_eq!(&hold.1[..3], ["hold", "sp-ck", "wait"]);
+    assert!(spira_config::lc_state::is_checkpoint(&hold.1[3]) && spira_config::lc_state::snooze_until(&hold.1[3]).is_some(), "{:?}", hold.1);
+    let facts = session_facts(&w);
+    assert!(facts.iter().any(|x| x.contains("--kind checkpointed")), "{facts:?}");
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-ck", "unjudged-slain"]), "exempt from the attempt count: {:?}", w.seam_calls);
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}", w.seam_calls);
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Checkpointed across a world stop")), "{:?}", w.notes);
+}
+
+#[test]
+fn a_slay_with_the_world_running_is_a_plain_release_not_a_checkpoint() {
+    let f = fx("ck-slay-only");
+    seed(&f, "sp-ck");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, w, _| {
+        w.lock().unwrap().disposition.insert("sp-ck".into(), ("slain".into(), "by hand".into()));
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    assert!(!w.exec_calls.iter().any(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold")), "{:?}", w.exec_calls);
+    assert!(!session_facts(&w).iter().any(|x| x.contains("checkpointed")));
+}
+
+fn exec_verbs(w: &World, verb: &str) -> Vec<Vec<String>> {
+    w.exec_calls.iter().filter(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some(verb)).map(|c| c.1.clone()).collect()
+}
+
+#[test]
+fn a_run_records_its_phases_on_the_row_in_order_and_reads_no_marker_file() {
+    let f = fx("phases");
+    seed(&f, "sp-ph");
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), ends_clean());
+    let w = o.w.lock().unwrap();
+    let phases: Vec<String> = exec_verbs(&w, "phase").into_iter().map(|a| a[3].clone()).collect();
+    assert_eq!(phases, ["building", "session", "teardown"], "{}", o.log);
+    assert!(exec_verbs(&w, "phase").iter().all(|a| a[1] == "sp-ph" && a[2].starts_with("aeon-")), "{:?}", exec_verbs(&w, "phase"));
+}
+
+#[test]
+fn a_run_whose_row_left_working_records_no_teardown_phase() {
+    let f = fx("phase-after-submit");
+    seed(&f, "sp-ps");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, w, _| {
+        w.lock().unwrap().lc.insert("sp-ps".into(), "SUBMITTED".into());
+        0
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    let phases: Vec<String> = exec_verbs(&w, "phase").into_iter().map(|a| a[3].clone()).collect();
+    assert_eq!(phases, ["building", "session"], "{}", o.log);
+}
+
+#[test]
+fn a_thrash_disposition_on_the_row_requeues_for_thrash_and_the_note_carries_its_words() {
+    let f = fx("thrash-row");
+    seed(&f, "sp-th");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, w, _| {
+        w.lock().unwrap().disposition.insert("sp-th".into(), ("thrash".into(), "stalled on the build".into()));
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-th", "thrash"]), "{:?}", w.seam_calls);
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Requeued (thrash)") && n.contains("stalled on the build")), "{:?}", w.notes);
+}
+
+#[test]
+fn a_lapsed_disposition_on_the_row_charges_and_the_note_carries_quiet_and_last() {
+    let f = fx("lapse-row");
+    seed(&f, "sp-lp");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, w, _| {
+        w.lock().unwrap().disposition.insert("sp-lp".into(), ("lapsed".into(), "321\tlast tool call".into()));
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Lease lapsed: the trace was silent for 321s") && n.contains("Last: last tool call")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_lapsed" && c.1 == vec!["sp-lp", "last tool call"]), "{:?}", w.seam_calls);
+}
+
+#[test]
+fn a_marker_file_is_no_longer_a_disposition() {
+    let f = fx("no-marker");
+    seed(&f, "sp-nm");
+    let run = f.run.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, _, _| {
+        std::fs::write(run.join("sp-nm.slain"), "now\tby hand\n").unwrap();
+        0
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-nm", "unjudged-slain"]), "{:?}", w.seam_calls);
 }

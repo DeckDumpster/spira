@@ -22,7 +22,6 @@
 //! operator noticed and re-exported the webdav vars by hand.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The operator's switch: unset, empty or `sccache` — the cache is required; `off` — an
 /// explicit, loud opt-out (a host or container without sccache).
@@ -77,6 +76,13 @@ impl Store {
     /// treat that exactly like any other absence: the local-disk cache, never a refusal.
     pub fn from_values(get: impl Fn(&str) -> Option<String>) -> Option<Store> {
         let addr = get(STORE_ADDR_ENV).filter(|v| !v.trim().is_empty())?;
+        let addr = match crate::hostaddr::resolve_hostport(&addr) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("spira_config::build: {STORE_ADDR_ENV}={addr}: {e} — building without the shared store");
+                return None;
+            }
+        };
         let endpoint = if addr.contains("://") { addr } else { format!("http://{addr}") };
         Some(Store { endpoint, key_prefix: "/".to_string() })
     }
@@ -122,7 +128,7 @@ pub enum BackendCheck {
 /// environment (this process's, via `extra_env`) names, which is exactly why callers pass the
 /// configured store's own vars here rather than the bare ambient environment.
 fn show_stats_cache_location(sccache_bin: &Path, extra_env: &[(String, String)]) -> Option<String> {
-    let out = Command::new(sccache_bin).arg("--show-stats").envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).output().ok()?;
+    let out = crate::bounded::bounded(sccache_bin).arg("--show-stats").envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).output().ok()?;
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .find(|l| l.trim_start().starts_with("Cache location"))
@@ -157,7 +163,7 @@ fn ensure_store_backend(sccache_bin: &Path, store: &Store) -> BackendCheck {
         None => BackendCheck::Unknown,
         Some(line) if is_webdav_location(&line) => BackendCheck::Matches,
         Some(line) => {
-            let _ = Command::new(sccache_bin).arg("--stop-server").output();
+            let _ = crate::bounded::bounded(sccache_bin).arg("--stop-server").output();
             BackendCheck::Restarted(line)
         }
     }
@@ -501,7 +507,6 @@ mod from_env_tests {
     use super::*;
 
     fn with_env<R>(pairs: &[(&str, Option<&str>)], f: impl FnOnce() -> R) -> R {
-        let _l = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _g = testkit::env(pairs);
         f()
     }
@@ -511,8 +516,7 @@ mod from_env_tests {
         let d = testkit::TempDir::new("spira-config-store-from-toml");
         let home = d.path().join("repo/spira");
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        let toml = d.path().join("spira.toml");
-        std::fs::write(&toml, "[spira]\nsccache_dav_addr = \"10.9.8.7:9431\"\n").unwrap();
+        let toml = crate::fixture_toml_file(d.path(), &[("SPIRA_SCCACHE_DAV_ADDR".to_string(), "10.9.8.7:9431".to_string())].into_iter().collect());
         let got = with_env(
             &[
                 ("SPIRA_HOME", Some(home.to_str().unwrap())),
@@ -530,8 +534,7 @@ mod from_env_tests {
         let d = testkit::TempDir::new("spira-config-addr-for-home");
         let home = d.path().join("repo/spira");
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        let toml = d.path().join("spira.toml");
-        std::fs::write(&toml, "[spira]\nsccache_dav_addr = \"10.9.8.7:9431\"\n").unwrap();
+        let toml = crate::fixture_toml_file(d.path(), &[("SPIRA_SCCACHE_DAV_ADDR".to_string(), "10.9.8.7:9431".to_string())].into_iter().collect());
         let got = with_env(
             &[("SPIRA_HOME", None), ("SPIRA_REPO", Some(d.path().join("repo").to_str().unwrap())), ("SPIRA_TOML", Some(toml.to_str().unwrap())), (STORE_ADDR_ENV, None)],
             || addr_for_home(&home),

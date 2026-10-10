@@ -32,6 +32,7 @@ pub struct SweepData {
     pub gate_wait: gate_wait::GateWait,
     pub gate_win_label: String,
     pub gate_silence: Option<gate_wait::Silence>,
+    pub gate_slow: Option<gate_wait::Slow>,
     pub nv_worst: i64,
     pub nv_worst_key: Option<String>,
 
@@ -94,6 +95,7 @@ impl SweepData {
             },
             gate_win_label: "last 6h".to_string(),
             gate_silence: None,
+            gate_slow: None,
             nv_worst: 0,
             nv_worst_key: None,
             unsent_inflight_disp: "0".to_string(),
@@ -138,37 +140,37 @@ fn read_first_line(path: &std::path::Path) -> Option<String> {
         .and_then(|t| t.lines().next().map(|s| s.to_string()))
 }
 
+fn read_halt(run: &std::path::Path) -> Option<Halt> {
+    let stamp = run.join("world.halted");
+    if !stamp.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&stamp).unwrap_or_default();
+    let since = text.lines().next().unwrap_or("").to_string();
+    let why = text.lines().nth(1).and_then(|l| l.strip_prefix("why: ")).map(|s| s.to_string());
+    Some(Halt { since, why })
+}
+
+fn read_drain(run: &std::path::Path, now: i64) -> Drain {
+    let stamp = run.join("world.draining");
+    if !stamp.is_file() {
+        return Drain::NotDraining;
+    }
+    let since = read_first_line(&stamp).unwrap_or_default();
+    let mins = std::fs::metadata(&stamp)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|mt| mt.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| (now - d.as_secs() as i64) / 60);
+    Drain::Draining { since, mins }
+}
+
 pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let run = &cfg.spira_run;
 
     // HALT / DRAIN -------------------------------------------------------------------
-    let halt_stamp = run.join("world.halted");
-    let halt = if halt_stamp.is_file() {
-        let text = std::fs::read_to_string(&halt_stamp).unwrap_or_default();
-        let mut lines = text.lines();
-        let since = lines.next().unwrap_or("").to_string();
-        let why = text
-            .lines()
-            .nth(1)
-            .and_then(|l| l.strip_prefix("why: "))
-            .map(|s| s.to_string());
-        Some(Halt { since, why })
-    } else {
-        None
-    };
-
-    let drain_stamp = run.join("world.draining");
-    let drain = if drain_stamp.is_file() {
-        let since = read_first_line(&drain_stamp).unwrap_or_default();
-        let mins = std::fs::metadata(&drain_stamp)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|mt| mt.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| (now - d.as_secs() as i64) / 60);
-        Drain::Draining { since, mins }
-    } else {
-        Drain::NotDraining
-    };
+    let halt = read_halt(run);
+    let drain = read_drain(run, now);
 
     // FAILED UNITS ---------------------------------------------------------------------
     let failed_units = failed_units::gather(&cfg.systemctl);
@@ -226,6 +228,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let gate_log_text = std::fs::read_to_string(cfg.gate_log()).unwrap_or_default();
     let gw = gate_wait::compute(&gate_log_text, now, cfg.gate_window_s);
     let gate_win_label = gate_wait::window_label(cfg.gate_window_s);
+    let gate_slow = gate_wait::slow(&gate_log_text, now, 86400, cfg.gate_p90_limit_s, 20);
     let gate_silence = gate_wait::silence(&gate_log_text, &lc::beads_in("SUBMITTED").unwrap_or_default(), now, cfg.gate_silence_window_s);
 
     // YIELD ------------------------------------------------------------------------------
@@ -293,7 +296,12 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         Some(p) => p.fayth_counts.iter().map(|(_, n)| *n as i64).sum::<i64>().to_string(),
         None => "?".to_string(),
     };
-    let idle_while_ready = idle_while_ready_hits(&ledger_path, &probe, cfg.idle_while_ready_n);
+    let active_since: Vec<i64> = ["WORKING", "SUBMITTED"]
+        .iter()
+        .flat_map(|s| lc::beads_in(s).unwrap_or_default())
+        .filter_map(|b| b.since)
+        .collect();
+    let idle_while_ready = idle_while_ready_hits(&ledger_path, &probe, cfg.idle_while_ready_n, &active_since);
 
     // DISK / MEM / TMP ---------------------------------------------------------------------
     let tmp_pct = tmp_pct();
@@ -359,6 +367,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         gate_wait: gw,
         gate_win_label,
         gate_silence,
+        gate_slow,
         nv_worst,
         nv_worst_key,
         unsent_inflight_disp,
@@ -470,11 +479,14 @@ fn guard_block(cfg: &Cfg) -> String {
     }
 }
 
-/// A fayth with ready work whose last N summons ALL came back "idle" (sp-o4trx).
+/// A fayth with ready work whose last N summons ALL came back "idle", no aeon of it is
+/// alive, and no bead entered WORKING/SUBMITTED since the first of those summons. Lifecycle
+/// rows carry no persona, so any such transition in the window counts as the fayth working.
 fn idle_while_ready_hits(
     ledger_path: &std::path::Path,
     probe: &Option<seams::PipelineProbe>,
     n: usize,
+    active_since: &[i64],
 ) -> Vec<(String, u32, String)> {
     let mut out = Vec::new();
     let Some(p) = probe else { return out };
@@ -505,6 +517,15 @@ fn idle_while_ready_hits(
             .iter()
             .map(|l| l.split_whitespace().skip(3).collect::<Vec<_>>().join(" "))
             .collect();
+        if p.fayth_counts.iter().any(|(f, c)| f == fayth && *c > 0) {
+            continue;
+        }
+        let window_start = last_n[0].split_whitespace().next().and_then(crate::log::parse_iso_utc);
+        if let Some(start) = window_start {
+            if active_since.iter().any(|at| *at >= start) {
+                continue;
+            }
+        }
         if reasons.iter().all(|r| r == "idle") {
             out.push((fayth.clone(), *ready, reasons.last().cloned().unwrap_or_default()));
         }
@@ -542,5 +563,137 @@ mod tests {
 
         let stalled: Vec<&str> = block.lines().find(|l| l.contains("loop-stalled")).unwrap().split_whitespace().collect();
         assert_eq!(stalled, vec!["loop-stalled", "?", "?", "?"]);
+    }
+
+    fn probe(ready: &[(&str, u32)]) -> Option<seams::PipelineProbe> {
+        Some(seams::PipelineProbe {
+            fayth_counts: Vec::new(),
+            ready_by_fayth: ready.iter().map(|(f, n)| (f.to_string(), *n)).collect(),
+        })
+    }
+
+    fn ledger(dir: &std::path::Path, lines: &[&str]) -> std::path::PathBuf {
+        let p = dir.join("aeon-ledger.log");
+        std::fs::write(&p, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+        p
+    }
+
+    const IDLE: &str = "2026-01-01T00:00:01Z awake builder idle";
+
+    #[test]
+    fn a_halt_stamp_reads_its_timestamp_and_its_why_line() {
+        let d = testkit::TempDir::new("wt-halt");
+        std::fs::write(d.join("world.halted"), "2026-09-08T01:23:45Z\nwhy: deliberate halt\n").unwrap();
+        let h = read_halt(&d).unwrap();
+        assert_eq!(h.since, "2026-09-08T01:23:45Z");
+        assert_eq!(h.why.as_deref(), Some("deliberate halt"));
+    }
+
+    #[test]
+    fn a_halt_stamp_without_a_why_line_has_none_and_no_stamp_is_no_halt() {
+        let d = testkit::TempDir::new("wt-halt-nowhy");
+        assert!(read_halt(&d).is_none());
+        std::fs::write(d.join("world.halted"), "2026-09-08T01:23:45Z\nsomething else\n").unwrap();
+        let h = read_halt(&d).unwrap();
+        assert_eq!(h.since, "2026-09-08T01:23:45Z");
+        assert!(h.why.is_none());
+    }
+
+    fn drain_at(d: &std::path::Path, text: &str, age_s: i64, now: i64) -> Drain {
+        let stamp = d.join("world.draining");
+        std::fs::write(&stamp, text).unwrap();
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs((now - age_s) as u64);
+        std::fs::File::options().write(true).open(&stamp).unwrap().set_modified(at).unwrap();
+        read_drain(d, now)
+    }
+
+    #[test]
+    fn a_drain_stamp_reads_its_first_line_and_its_age_in_whole_minutes() {
+        let d = testkit::TempDir::new("wt-drain");
+        match drain_at(&d, "2026-09-08 20:02:00 UTC\nsummons gated.\n", 1230, 1_800_000_000) {
+            Drain::Draining { since, mins } => {
+                assert_eq!(since, "2026-09-08 20:02:00 UTC");
+                assert_eq!(mins, Some(20));
+            }
+            Drain::NotDraining => panic!("a stamp is a drain"),
+        }
+    }
+
+    #[test]
+    fn no_drain_stamp_is_not_draining() {
+        let d = testkit::TempDir::new("wt-nodrain");
+        assert!(matches!(read_drain(&d, 1_800_000_000), Drain::NotDraining));
+    }
+
+    #[test]
+    fn a_malformed_drain_stamp_still_reads_as_draining_never_as_running() {
+        let d = testkit::TempDir::new("wt-drain-bad");
+        match drain_at(&d, "not-a-timestamp\nsummons gated.\n", 300, 1_800_000_000) {
+            Drain::Draining { since, mins } => {
+                assert_eq!(since, "not-a-timestamp");
+                assert_eq!(mins, Some(5));
+            }
+            Drain::NotDraining => panic!("a malformed stamp must not read as running"),
+        }
+    }
+
+    #[test]
+    fn five_idle_summons_with_ready_work_is_a_hit_naming_fayth_count_and_reason() {
+        let d = testkit::TempDir::new("wt-iwr-hit");
+        let l = ledger(&d, &[IDLE; 5]);
+        let hits = idle_while_ready_hits(&l, &probe(&[("builder", 3)]), 5, &[]);
+        assert_eq!(hits, vec![("builder".to_string(), 3, "idle".to_string())]);
+    }
+
+    #[test]
+    fn an_empty_ready_set_is_not_a_hit_however_idle_the_ledger() {
+        let d = testkit::TempDir::new("wt-iwr-empty");
+        let l = ledger(&d, &[IDLE; 5]);
+        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 0)]), 5, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_real_claim_among_the_last_n_summons_is_not_a_hit() {
+        let d = testkit::TempDir::new("wt-iwr-mixed");
+        let mut lines = vec!["2026-01-01T00:00:01Z awake builder sp-real1"];
+        lines.extend([IDLE; 4]);
+        let l = ledger(&d, &lines);
+        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[]).is_empty());
+    }
+
+    #[test]
+    fn too_few_summons_other_fayths_and_a_missing_probe_or_ledger_are_no_hit() {
+        let d = testkit::TempDir::new("wt-iwr-short");
+        let mut lines = vec!["2026-01-01T00:00:01Z awake other idle"; 5];
+        lines.extend([IDLE; 4]);
+        let l = ledger(&d, &lines);
+        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[]).is_empty());
+        assert!(idle_while_ready_hits(&l, &None, 4, &[]).is_empty());
+        assert!(idle_while_ready_hits(&d.join("absent.log"), &probe(&[("builder", 1)]), 4, &[]).is_empty());
+        assert_eq!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 4, &[]).len(), 1);
+    }
+
+    fn live_probe(fayth: &str, ready: u32, live: u32) -> Option<seams::PipelineProbe> {
+        Some(seams::PipelineProbe {
+            fayth_counts: vec![(fayth.to_string(), live)],
+            ready_by_fayth: vec![(fayth.to_string(), ready)],
+        })
+    }
+
+    #[test]
+    fn a_working_or_submitted_row_inside_the_idle_window_is_not_a_hit() {
+        let d = testkit::TempDir::new("wt-iwr-submitted");
+        let l = ledger(&d, &[IDLE; 5]);
+        let start = crate::log::parse_iso_utc("2026-01-01T00:00:01Z").unwrap();
+        assert!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[start + 60]).is_empty());
+        assert_eq!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 5, &[start - 60]).len(), 1);
+    }
+
+    #[test]
+    fn a_live_aeon_of_the_fayth_is_not_a_hit() {
+        let d = testkit::TempDir::new("wt-iwr-live");
+        let l = ledger(&d, &[IDLE; 5]);
+        assert!(idle_while_ready_hits(&l, &live_probe("builder", 1, 1), 5, &[]).is_empty());
+        assert_eq!(idle_while_ready_hits(&l, &live_probe("builder", 1, 0), 5, &[]).len(), 1);
     }
 }

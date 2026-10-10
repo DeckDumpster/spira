@@ -2,13 +2,16 @@
 //! (DESIGN.md "activate", "Hotfix", "rollback").
 
 use crate::config::Config;
+use crate::config_delta::{self, Txn};
 use crate::fsutil;
 use crate::git::Git;
 use crate::systemctl::Systemctl;
 use crate::units;
 use crate::verify;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 pub const CURRENT: &str = "current";
@@ -27,6 +30,9 @@ pub struct Ctx<'a> {
     pub landed_ref: String,
     /// How long restarted units get to come up before they are checked.
     pub settle: Duration,
+    /// How long a running oneshot whose unit changed gets to finish its in-flight work and
+    /// exit before activation stops waiting for it.
+    pub drain: Duration,
 }
 
 /// A standing hotfix: the running system is on a commit that has not landed.
@@ -179,6 +185,9 @@ struct Change {
 pub struct Switched {
     pub rewritten: Vec<String>,
     pub restarted: Vec<String>,
+    /// Installed services found failed that this activation did not restart: reset and
+    /// started. One that fails again is reported, never a reason to roll back.
+    pub revived: Vec<String>,
     /// Services whose Exec lines changed but were not restarted (inactive, or a oneshot
     /// mid-run): they pick up the new file on their next start.
     pub deferred: Vec<String>,
@@ -193,6 +202,10 @@ pub struct Switched {
     pub retired: Vec<String>,
 }
 
+fn unit_files(dir: &Path) -> BTreeSet<String> {
+    fs::read_dir(dir).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default()
+}
+
 fn is_up(active: &str) -> bool {
     matches!(active, "active" | "activating" | "reloading")
 }
@@ -200,7 +213,7 @@ fn is_up(active: &str) -> bool {
 /// Switch the running system onto release `sha`: render and install units, swap
 /// `current`, daemon-reload, restart what changed, check it came up, and undo all of it
 /// when something did not.
-pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
+pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, String> {
     let cfg = ctx.cfg;
     let rel = verify::release_dir(cfg, sha)?;
     let problems = verify::check_files(&rel, sha);
@@ -274,14 +287,30 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
         return Err(format!("daemon-reload failed: {e}; rolled back{undo}"));
     }
 
+    if install_new {
+        let before = unit_files(&cfg.unit_dir);
+        if let Err(e) = ensure_new_units(cfg, sha) {
+            let added: Vec<String> = unit_files(&cfg.unit_dir).difference(&before).cloned().collect();
+            let undo = undo(ctx, &changes, prev.as_deref(), &[]);
+            let shipped = if added.is_empty() { String::new() } else { format!(" (units new in {sha}: {})", added.join(", ")) };
+            return Err(format!("{e}{shipped}; nothing was restarted; rolled back{undo}"));
+        }
+    }
+
     let mut out = Switched { rewritten: changes.iter().map(|c| c.unit.clone()).collect(), retired, ..Default::default() };
+    let mut draining = Vec::new();
     for c in &changes {
         if !c.unit.ends_with(".service") || !units::exec_changed(&c.old, &c.new) {
             continue;
         }
         match ctx.sc.state(&c.unit) {
             Ok(st) if is_up(&st.active) && st.kind != "oneshot" => out.restarted.push(c.unit.clone()),
-            Ok(_) => out.deferred.push(c.unit.clone()),
+            Ok(st) => {
+                if st.kind == "oneshot" && is_up(&st.active) {
+                    draining.push(c.unit.clone());
+                }
+                out.deferred.push(c.unit.clone());
+            }
             Err(e) => {
                 let undo = undo(ctx, &changes, prev.as_deref(), &[]);
                 return Err(format!("cannot read the state of {}: {e}; rolled back{undo}", c.unit));
@@ -293,7 +322,7 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
     for u in &out.restarted {
         eprintln!("release: restarting {u}");
         attempted.push(u.clone());
-        if let Err(e) = ctx.sc.restart(u) {
+        if let Err(e) = ctx.sc.reset_failed(u).and_then(|()| ctx.sc.restart(u)) {
             failed.push(format!("{u}: restart failed: {e}"));
             break;
         }
@@ -318,7 +347,56 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
             failed.join("\n  ")
         ));
     }
+    revive_failed(ctx, &mut out);
+    for s in units::path_shadows(&cfg.unit_dir, &rel, &cfg.releases) {
+        eprintln!("release: WARN: {s}");
+    }
+    drain(ctx, &draining);
     Ok(out)
+}
+
+fn revive_failed(ctx: &Ctx, out: &mut Switched) {
+    let failed = match ctx.sc.list_failed("spira-*.service") {
+        Ok(f) => f,
+        Err(e) => return eprintln!("release: WARN: cannot list failed units: {e}"),
+    };
+    for u in failed {
+        if out.restarted.contains(&u) || !ctx.cfg.unit_dir.join(&u).exists() {
+            continue;
+        }
+        eprintln!("release: {u} is failed; resetting and starting it under the new release");
+        match ctx.sc.reset_failed(&u).and_then(|()| ctx.sc.restart(&u)) {
+            Ok(()) => out.revived.push(u),
+            Err(e) => eprintln!("release: WARN: {u} is still failed: {e}"),
+        }
+    }
+}
+
+/// Wait for each running oneshot of a changed unit to exit, so its next start runs the new
+/// release. The worker's own release check ends its pass between jobs; this only bounds how
+/// long the deploy waits for that, and a unit still running at the bound is named, not fatal.
+fn drain(ctx: &Ctx, units: &[String]) {
+    let deadline = std::time::Instant::now() + ctx.drain;
+    let mut next_note = std::time::Instant::now() + Duration::from_secs(30);
+    for u in units {
+        eprintln!("release: waiting for {u} to finish its pass on the previous release");
+        loop {
+            match ctx.sc.state(u) {
+                Ok(st) if is_up(&st.active) => {}
+                _ => break,
+            }
+            let now = std::time::Instant::now();
+            if now >= next_note {
+                eprintln!("release: still waiting for {u}; {}s of the {}s drain wait left", deadline.saturating_duration_since(now).as_secs(), ctx.drain.as_secs());
+                next_note = now + Duration::from_secs(30);
+            }
+            if now >= deadline {
+                eprintln!("release: {u} still running its previous release after {}s; continuing", ctx.drain.as_secs());
+                break;
+            }
+            std::thread::sleep((ctx.drain / 20).clamp(Duration::from_millis(10), Duration::from_secs(1)));
+        }
+    }
 }
 
 fn restore_files(changes: &[Change]) -> Vec<String> {
@@ -363,15 +441,88 @@ fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String])
     }
 }
 
+/// Switch onto `sha` with the config changes `delta` carries: validated by `sha`'s own
+/// `spira-config` before anything changes, added keys written before the flip, dropped keys
+/// removed after it, and the config put back when the switch fails. `Ok` carries the undo
+/// record and any problem dropping keys hit after the flip (the switch itself stood).
+fn switch_with_config(ctx: &Ctx, sha: &str, txn: Option<&Txn>, install_new: bool) -> Result<(Switched, Option<String>), String> {
+    if let Some(t) = txn {
+        t.apply_pre()?;
+    }
+    let out = match switch(ctx, sha, install_new) {
+        Ok(o) => o,
+        Err(e) => {
+            let undo = txn.map(Txn::restore).unwrap_or_default();
+            return Err(if undo.is_empty() { e } else { format!("{e}\n  CONFIG RESTORE INCOMPLETE:\n    {}", undo.join("\n    ")) });
+        }
+    };
+    let late = txn.and_then(|t| t.apply_post().err()).map(|e| format!("{sha} is active but the config keys it drops could not be removed: {e}"));
+    Ok((out, late))
+}
+
+/// Install and enable the units the release at `sha` ships that the box does not have yet,
+/// through the release's own `unit-ensure` (which owns the manifest: gates, enable flags,
+/// watchers). `switch` only rewrites units already on disk. A release with no `unit-ensure`
+/// has nothing to install them with and is skipped.
+fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
+    let rel = verify::release_dir(cfg, sha)?;
+    let bin = rel.join("bin/unit-ensure");
+    if !fsutil::is_executable(&bin) {
+        return Ok(());
+    }
+    // batch-job: installs and starts whatever units are new, bounded at 120 s by timeout(1)
+    let mut cmd = Command::new("timeout");
+    cmd.arg("120").arg(&bin).env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
+    for (k, v) in verify::pre_activate_env(cfg, &rel)? {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+    for l in String::from_utf8_lossy(&out.stdout).lines().chain(String::from_utf8_lossy(&out.stderr).lines()) {
+        eprintln!("release: {l}");
+    }
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(format!("{sha}: unit-ensure could not install its new units ({})", out.status))
+}
+
+/// Moves epic rows the lifecycle still holds READY to OPEN, through the release's own `spira-lc`.
+/// Best effort: the verb is idempotent and bounded, and a failure here is not a reason to undo an
+/// activation that came up.
+fn reconcile_epics(cfg: &Config, sha: &str) {
+    let Ok(rel) = verify::release_dir(cfg, sha) else { return };
+    let bin = rel.join("bin/spira-lc");
+    if !fsutil::is_executable(&bin) {
+        return;
+    }
+    let Ok(env) = verify::pre_activate_env(cfg, &rel) else { return };
+    // batch-job: a one-off migration over the READY roster, bounded by timeout 120
+    let mut cmd = Command::new("timeout");
+    cmd.arg("120").arg(&bin).args(["reconcile-epics", "--apply"]).env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    match cmd.output() {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => eprintln!("release: reconcile-epics did not finish ({}): {}", o.status, String::from_utf8_lossy(&o.stderr).trim()),
+        Err(e) => eprintln!("release: cannot run {}: {e}", bin.display()),
+    }
+}
+
 /// `release activate <sha> [--hotfix <reason>]`.
 pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Switched, String> {
     let state = ctx.cfg.state_dir()?;
     fs::create_dir_all(&state).map_err(|e| format!("cannot create {}: {e}", state.display()))?;
-    verify::release_dir(ctx.cfg, sha)?;
+    let rel = verify::release_dir(ctx.cfg, sha)?;
     let standing = read_hotfix(&state)?;
     let after = hotfix_rule(ctx, standing, sha, hotfix_reason)?;
     let mut history = read_history(&state)?;
-    let out = switch(ctx, sha)?;
+    let delta = config_delta::complete_for(ctx.cfg, &rel, config_delta::load(&rel)?)?;
+    let txn = delta.as_ref().map(|d| config_delta::prepare(ctx.cfg, &rel, d)).transpose()?;
+    let (out, late) = switch_with_config(ctx, sha, txn.as_ref(), true)?;
+    if let Some(t) = &txn {
+        config_delta::save_undo(&state, sha, &t.undo)?;
+    }
     let entry = HistEntry { sha: sha.to_string(), hotfix: hotfix_reason.map(one_line) };
     if history.last() != Some(&entry) {
         history.push(entry);
@@ -388,6 +539,10 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
             write_hotfix(&state, None)?;
         }
     }
+    if let Some(e) = late {
+        return Err(e);
+    }
+    reconcile_epics(ctx.cfg, sha);
     Ok(out)
 }
 
@@ -410,12 +565,24 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
         return Err(format!("{} is the only release ever activated; nothing to roll back to", top.sha));
     }
     let prev = history[history.len() - 2].clone();
-    switch(ctx, &prev.sha)?;
+    let undo = config_delta::load_undo(&state, &top.sha)?;
+    let txn = match &undo {
+        Some(d) => {
+            let rel = verify::release_dir(ctx.cfg, &prev.sha)?;
+            Some(config_delta::prepare(ctx.cfg, &rel, d)?)
+        }
+        None => None,
+    };
+    let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref(), false)?;
+    config_delta::clear_undo(&state, &top.sha);
     history.pop();
     write_history(&state, &history)?;
     let rec = prev.hotfix.as_ref().map(|r| Hotfix { sha: prev.sha.clone(), reason: r.clone(), at: fsutil::now_rfc3339() });
     write_hotfix(&state, rec.as_ref())?;
-    Ok(prev.sha)
+    match late {
+        Some(e) => Err(e),
+        None => Ok(prev.sha),
+    }
 }
 
 /// `release status`. Reads the hotfix record itself, never re-derived elsewhere: doctor,

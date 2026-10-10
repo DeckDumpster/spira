@@ -1,6 +1,6 @@
 //! `layout up|down|status|ensure [--window <target>]` — see `src/layout.rs`.
 
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use cockpit_ops::layout::{Conf, Layout};
 use cockpit_ops::tmux::Tmux;
@@ -30,7 +30,7 @@ fn default_window(tmux: &Tmux) -> String {
 fn scrub_tmux_env(cock: &std::path::Path) {
     let script = cock.join("tmux-env.sh");
     if script.is_file() {
-        let _ = Command::new("bash").arg(&script).arg("scrub").output();
+        let _ = spira_config::bounded::bounded("bash").arg(&script).arg("scrub").output();
     }
 }
 

@@ -35,32 +35,15 @@ pub const READ_VERBS: &[&str] = &["show", "list", "status"];
 /// because it means something else learned how to reach the row.
 pub const CREDENTIAL_TOKENS: &[&str] = &["spira_lc", "spira-lc"];
 
-/// The lifecycle machine itself, which is the route rather than a caller of it: the
-/// `lifecycle` crate that models the record, and in spira-lc only the migration classifier's
-/// reader of the legacy ledger (`spira-lc/src/legacy_files.rs`, design §3.8(3): the one
-/// place the old shape is read, once, to seed the new store at the cutover deploy; it goes
-/// when the legacy files are removed, the release after). This is not an allow-list — there
-/// is none (sp-ts2qr, design §3.8(2): "the static analyser with an **empty** allowlist"): no
-/// caller outside the machine may reach the ledger, whatever it is, and nothing here names a
-/// legacy writer kept on. The rest of spira-lc is held to the same rule as everything else,
-/// so the machine cannot grow a second, ledger-backed answer either.
-pub fn landstate_path_allowed(rel_path: &str) -> bool {
-    rel_path.starts_with("lifecycle/")
-        || (rel_path.starts_with("spira-lc/") && rel_path.ends_with("/legacy_files.rs"))
-        || rel_path == "spira-lc/legacy_files.rs"
-}
-
-/// landing-pass's ledger and landed-oracle subcommands (sp-2c1n0 deletes them): `mark` and
+/// landing-pass's retired ledger and landed-oracle subcommands: `mark` and
 /// `state` wrote and read the landstate ledger, `landed`/`cited-commit` answered "is it
 /// landed" from commit subjects, `close-on-land` closed a bead on that answer. Invoking any
-/// of them is a landstate-call, so a caller cannot reach the oracle through the binary
-/// either once the shell `landed`/`land_mark` functions are gone.
+/// of them is a landstate-call, so a caller cannot reach the oracle through the binary.
 pub const ORACLE_SUBCOMMANDS: &[&str] = &["mark", "state", "landed", "cited-commit", "close-on-land"];
 
 /// The finding classes the landing gate refuses (`lifecycle-guard --gate`, gate.steps): the
-/// landstate ledger and the landed oracles, whose removal completes the cutover (sp-2c1n0) —
-/// after it, the lifecycle machine is the only route to "is this bead landed", and any
-/// reintroduction is a red — and every way around the machine to a bead's state (sp-hyo5e):
+/// landstate ledger and the landed oracles — the lifecycle machine is the only route to
+/// "is this bead landed", and any reintroduction is a red — and every way around the machine to a bead's state (sp-hyo5e):
 /// a bd/bdq lifecycle write, directly or through a wrapper, a verb the analyser cannot
 /// resolve, and a bd status read feeding a decision. Each was cleared by routing it through
 /// spira-lc (`unclaim`, `close-epic`, `show`) before it joined this list.
@@ -83,6 +66,15 @@ pub const GATE_CLASSES: &[Class] = &[
     Class::DynamicVerb,
     Class::LifecycleRead,
     Class::BdStatusRead,
+    // sp-3fue0j: a bd close from Rust, joined in the commit that routed every caller through
+    // `spira-lc close`.
+    Class::BdCloseRust,
+    // sp-psztcc: a hold kept as a bd label, joined in the commit that moved every claim
+    // predicate and writer onto the row's hold.
+    Class::HoldLabel,
+    // sp-swh8b8: a bd reopen (or claim-clearing assign) from Rust, joined in the commit that
+    // routed every caller through `spira-lc reopen`.
+    Class::BdReopenRust,
 ];
 
 /// Cutover-specific and therefore empty until the cutover round actually retires a label or

@@ -116,9 +116,7 @@ impl<'a> Sentinel<'a> {
 
     /// lib.sh `mark_queue_waiters`. `broad_ready` is the pass's own unscoped ready
     /// snapshot (`ready_raw_args`) when running inside a full pass; `None` for a standalone
-    /// `sentinel --mark-queue-waiters` invocation, which falls back to
-    /// `$SPIRA_READY_SNAPSHOT` (re-narrowed to `SPIRA_SCOPE_LABEL`, exactly as the snapshot
-    /// path always did) and then a live `bd ready` call.
+    /// `sentinel --mark-queue-waiters` invocation, which makes a live `bd ready` call.
     pub fn mark_queue_waiters(&self, broad_ready: Option<&[Bead]>) {
         let label = self.cfg.queue_wait.clone();
         if label.is_empty() {
@@ -173,13 +171,7 @@ impl<'a> Sentinel<'a> {
         if let Some(r) = broad_ready {
             return scope_narrow(r.to_vec());
         }
-        match std::env::var("SPIRA_READY_SNAPSHOT") {
-            Ok(p) if !p.is_empty() => match std::fs::read_to_string(&p) {
-                Ok(text) => scope_narrow(parse_beads(&text).unwrap_or_default()),
-                Err(_) => self.live_ready(),
-            },
-            _ => self.live_ready(),
-        }
+        self.live_ready()
     }
 
     fn live_ready(&self) -> Vec<Bead> {

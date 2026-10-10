@@ -13,7 +13,7 @@
 # SPIRA_GH, never at the real `gh` binary.
 #
 # tier: T1
-# covers: gh-intake/src/* spira/lib.sh
+# covers: gh-intake/src/* spira/lib.sh UC-landing-merge-queue-57
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -51,6 +51,7 @@ exit 0
 GHSTUB
 chmod +x "$TMP/bin/gh"
 export GHLOG SPIRA_GH="$TMP/bin/gh"
+tl_config SPIRA_GH="$SPIRA_GH"
 
 # --- mail stub: records a call and, with --bead, wires an ask the way the real `mail`
 # binary does (dep relate), so the dedupe tests below see the same tracking bead a real
@@ -99,16 +100,22 @@ RUN="$TMP/run"
 mkdir -p "$RUN/gh-closed" "$RUN/landstate"
 export SPIRA_RUN="$RUN"
 export SPIRA_HOME="$TMP"
+# round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches) and every
+# binary reads <home>/conf.d to resolve its config schema at all, even when every value
+# is otherwise declared via tl_config — give this stub home the real registry.
+ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 export SPIRA_HOME_REPO=fixture
 export SPIRA_REPO="$REPO"
 export SPIRA_REPO_DERIVED="$REPO"
 export SPIRA_ASK_LABEL=needs-operator
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_HOME_REPO="$SPIRA_HOME_REPO" SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
 
 # The repo→path map, deliberately not named like the production config file (this is a
 # fixture gh-intake resolves in-process through spira-config; no fence applies).
 MAPFILE="$TMP/reposmap"
 printf 'fixture | %s\n' "$REPO" > "$MAPFILE"
 export SPIRA_REPO_MAP="$MAPFILE"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
 # --- bd fixture ---
 testdb_seed <<JSONL
@@ -117,8 +124,8 @@ testdb_seed <<JSONL
 JSONL
 BEAD1=sp-tgh1
 BEAD3=sp-tgh3
-"${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD1" --reason-file - <<< "done" 2>/dev/null || true
-"${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD3" --reason-file - <<< "done" 2>/dev/null || true
+timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD1" --reason-file - <<< "done" 2>/dev/null || true
+timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD3" --reason-file - <<< "done" 2>/dev/null || true
 
 printf '1. gh-intake closeout comments and closes a landed issue:\n'
 : > "$GHLOG"
@@ -224,7 +231,7 @@ fi
 
 printf '\n7. answering the tracking ask lets the scan write the durable marker instead of re-asking:\n'
 ASK_SUBJ="Close GitHub issue github:fixture/testrepo#3 for bead sp-scan1"
-ASK_ID="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --status open --label needs-operator --limit 0 --json 2>/dev/null | python3 -c '
+ASK_ID="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --status open --label needs-operator --limit 0 --json 2>/dev/null | python3 -c '
 import sys, json
 d = json.load(sys.stdin); rows = d if isinstance(d, list) else [d]
 want = sys.argv[1]
@@ -236,7 +243,7 @@ if [ -z "$ASK_ID" ]; then
     bad "found the open tracking ask" "none found — cannot run the regression check"
 else
     ok "found the open tracking ask ($ASK_ID)"
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$ASK_ID" --reason-file - <<< "answered: closed by hand" >/dev/null 2>&1
+    timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$ASK_ID" --reason-file - <<< "answered: closed by hand" >/dev/null 2>&1
     : > "$MAILLOG"
     scan_out3="$(gh-intake unlanded-scan 2>&1)"
     if [ -e "$RUN/gh-closed/sp-scan1" ]; then

@@ -10,13 +10,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration};
 
 use batcher::attrib::{Job, JobResult};
 use batcher::core::{Id, Member, MergeResult};
 
 use crate::drive::{MainEnd, MainKind, MainPoll, RoundRunner};
 use crate::io::{self, Env, Repo};
+use crate::order;
 
 /// Only these extensions may differ for a rerun to reuse the round's release binaries.
 fn binary_neutral(path: &str) -> bool {
@@ -62,9 +63,16 @@ pub fn stderr_tail(text: &str) -> String {
 /// The corpus run's end, typed from round-vm's exit code (round-vm DESIGN.md §2.2). `Ok` is
 /// a verdict the round can be judged on; every `Err` is a harness fault — the round is not
 /// judged (no verdict) — and carries round-vm's stderr.
-pub fn corpus_end(rc: i32, stderr: &str, wall_secs: u64) -> Result<MainEnd, String> {
+pub fn corpus_end(rc: i32, stderr: &str, wall_secs: u64, reported: usize, total: usize) -> Result<MainEnd, String> {
+    let lost_vm = reported == 0 && total > 0 && (matches!(rc, 124 | 137) || (rc == 2 && vm_unreachable(stderr).is_some()));
     let why = match rc {
         0 | 1 => return Ok(MainEnd::Ran),
+        _ if lost_vm => {
+            let (host, status) = vm_unreachable(stderr).unwrap_or_default();
+            let host = if host.is_empty() { "unknown host".to_string() } else { host };
+            let status = if status.is_empty() { "no ssh status in stderr".to_string() } else { format!("ssh exit {status}") };
+            format!("round-vm: infrastructure fault — the round VM ({host}) was unreachable ({status}) and 0 of {total} suites reported within the {wall_secs}s wall bound; no member is implicated, and this is not a cap breach (rc {rc})")
+        }
         4 => return Ok(MainEnd::WorkspaceBuild),
         2 => {
             if let Some(line) = stderr.lines().find(|l| l.contains("batch: unknown suite:")) {
@@ -73,10 +81,27 @@ pub fn corpus_end(rc: i32, stderr: &str, wall_secs: u64) -> Result<MainEnd, Stri
             "round-vm: harness fault — the round VM did not come up, its container died, or round-vm itself failed".to_string()
         }
         INSTALL_FAILED_RC => "round-vm: harness fault — install failed".to_string(),
-        124 | 137 => format!("round-vm: harness fault — exceeded the {wall_secs}s wall bound"),
+        124 | 137 => format!("round-vm: harness fault — over-cap: exceeded the {wall_secs}s wall bound, no verdict (not a functional red)"),
         c => format!("round-vm: harness fault — exit {c}, outside round-vm's contract (0-4)"),
     };
     Err(format!("{why}{}", stderr_tail(stderr)))
+}
+
+/// The host and ssh exit status round-vm's stderr names when it lost the VM: the last line
+/// that mentions ssh failing. `None` when the stderr says nothing of the kind.
+fn vm_unreachable(stderr: &str) -> Option<(String, String)> {
+    let line = stderr.lines().rev().find(|l| {
+        let l = l.to_lowercase();
+        l.contains("ssh") && (l.contains("exit") || l.contains("fail") || l.contains("unreachable"))
+    })?;
+    let words: Vec<&str> = line.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | ':' | '=')).filter(|w| !w.is_empty()).collect();
+    let is_ip = |w: &str| w.split('.').count() == 4 && w.split('.').all(|o| !o.is_empty() && o.chars().all(|c| c.is_ascii_digit()));
+    let host = words.iter().copied().find(|w| is_ip(w)).map(str::to_string).or_else(|| {
+        stderr.lines().find_map(|l| l.strip_prefix("round-vm run:").and_then(|r| r.split_whitespace().find(|w| is_ip(w))).map(str::to_string))
+    })?;
+    let status = words.iter().position(|w| w.eq_ignore_ascii_case("exit") || w.eq_ignore_ascii_case("status"))
+        .and_then(|i| words.get(i + 1)).filter(|w| w.chars().all(|c| c.is_ascii_digit())).map(|w| w.to_string()).unwrap_or_default();
+    Some((host, status))
 }
 
 enum Main {
@@ -198,6 +223,7 @@ impl<'a> VmRunner<'a> {
             }
         }
         let head = io::head_of(&wt);
+        // batch-job: git history or network operation, as long as the repository is large
         let _ = Command::new("git").arg("-C").arg(&self.repo.path).args(["worktree", "remove", "-f"]).arg(&wt).status();
         result?;
         io::set_branch(self.repo, &branch, &head?);
@@ -210,7 +236,7 @@ impl<'a> VmRunner<'a> {
         let bins = res.join("bins");
         let Ok(rd) = fs::read_dir(&bins) else { return Ok(()) };
         let want = String::from_utf8_lossy(
-            &Command::new("git").arg("-C").arg(&self.wt).args(["rev-parse", "HEAD^{tree}"]).output().map_err(|e| e.to_string())?.stdout,
+            &spira_config::bounded::bounded("git").arg("-C").arg(&self.wt).args(["rev-parse", "HEAD^{tree}"]).output().map_err(|e| e.to_string())?.stdout,
         )
         .trim()
         .to_string();
@@ -253,6 +279,7 @@ impl<'a> VmRunner<'a> {
             }
             Ok(()) => {
                 let results = wt.join(".install-probe-results");
+                // batch-job: the install probe is a VM wall-clock job
                 let status = Command::new("timeout")
                     .arg("-k")
                     .arg("10")
@@ -276,6 +303,7 @@ impl<'a> VmRunner<'a> {
                 status.ok().and_then(|st| st.code()).map_or(JobResult::Fault, install_probe_result)
             }
         };
+        // batch-job: git history or network operation, as long as the repository is large
         let _ = Command::new("git").arg("-C").arg(&self.repo.path).args(["worktree", "remove", "-f"]).arg(&wt).status();
         result
     }
@@ -296,7 +324,7 @@ impl Drop for VmRunner<'_> {
 }
 
 fn epoch() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    spira_config::vtime::now_epoch()
 }
 
 impl RoundRunner for VmRunner<'_> {
@@ -321,7 +349,9 @@ impl RoundRunner for VmRunner<'_> {
                 if self.child.is_some() {
                     return Err("the corpus already ran for this round".into());
                 }
+                order::covers(&io::suites_in(&self.wt, "HEAD"), suites)?;
                 let err = fs::File::create(&self.stderr_path).map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
+                // batch-job: this runs whatever its caller names, as long as that takes
                 let mut cmd = Command::new("systemd-run");
                 cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref()));
                 cmd.arg("timeout");
@@ -332,6 +362,7 @@ impl RoundRunner for VmRunner<'_> {
                 cmd.arg("--toolchain").arg(&self.env.rust_toolchain);
                 cmd.arg("--results-dir").arg(&self.results);
                 cmd.arg("--attr-spool").arg(&self.spool);
+                cmd.arg("--base").arg(&self.repo.base);
                 cmd.env("SPIRA_HOME", &self.env.home).env("SPIRA_RUN", &self.env.run);
                 cmd.stdin(Stdio::null()).stderr(Stdio::from(err));
                 self.child = Some(cmd.spawn().map_err(|e| format!("round-vm: {e}"))?);
@@ -382,7 +413,11 @@ impl RoundRunner for VmRunner<'_> {
                 (None, None) => return Ok(p),
             };
             self.install_failed = rc == INSTALL_FAILED_RC;
-            p.done = Some(corpus_end(rc, &self.stderr_text(), self.env.wall_secs)?);
+            let (reported, total) = match &self.main {
+                Main::Corpus { suites, seen } => (seen.len(), suites.len()),
+                _ => (0, 0),
+            };
+            p.done = Some(corpus_end(rc, &self.stderr_text(), self.env.wall_secs, reported, total)?);
             self.main = Main::Finished(p.done.unwrap());
             return Ok(p);
         };
@@ -469,18 +504,30 @@ mod tests {
     #[test]
     fn every_corpus_exit_is_typed_and_a_fault_carries_round_vm_s_stderr() {
         let err = "round-vm run: 103 192.168.1.194 warm\nerror: `cargo run` could not determine which binary to run.\n";
-        assert_eq!(corpus_end(0, err, 600), Ok(MainEnd::Ran));
-        assert_eq!(corpus_end(1, err, 600), Ok(MainEnd::Ran));
-        assert_eq!(corpus_end(4, err, 600), Ok(MainEnd::WorkspaceBuild));
+        assert_eq!(corpus_end(0, err, 600, 1, 1), Ok(MainEnd::Ran));
+        assert_eq!(corpus_end(1, err, 600, 1, 1), Ok(MainEnd::Ran));
+        assert_eq!(corpus_end(4, err, 600, 1, 1), Ok(MainEnd::WorkspaceBuild));
         for rc in [2, 3, 101, 124, 137, -1] {
-            let e = corpus_end(rc, err, 600).unwrap_err();
+            let e = corpus_end(rc, err, 600, 3, 5).unwrap_err();
             assert!(e.contains("harness fault"), "rc {rc}: {e}");
             assert!(e.contains("could not determine which binary"), "rc {rc} lost round-vm's stderr: {e}");
         }
-        assert!(corpus_end(101, err, 600).unwrap_err().contains("exit 101"));
-        assert!(corpus_end(124, "", 600).unwrap_err().contains("600s wall bound"));
-        let mismatch = corpus_end(2, "batch: unknown suite: test-x.sh\n", 600).unwrap_err();
+        assert!(corpus_end(101, err, 600, 3, 5).unwrap_err().contains("exit 101"));
+        assert!(corpus_end(124, "", 600, 3, 5).unwrap_err().contains("over-cap: exceeded the 600s wall bound"));
+        let mismatch = corpus_end(2, "batch: unknown suite: test-x.sh\n", 600, 0, 5).unwrap_err();
         assert!(mismatch.contains("suite list mismatch, not a harness fault"), "{mismatch}");
+    }
+
+    #[test]
+    fn a_pass_that_lost_its_vm_before_any_suite_reported_is_an_infrastructure_fault_not_a_cap_breach() {
+        let err = "round-vm run: 103 192.168.13.252 warm\nssh: connect failed, exit 255\n";
+        let e = corpus_end(124, err, 900, 0, 444).unwrap_err();
+        assert!(e.contains("infrastructure fault") && e.contains("192.168.13.252") && e.contains("ssh exit 255"), "{e}");
+        assert!(e.contains("0 of 444") && e.contains("no member is implicated") && !e.contains("over-cap"), "{e}");
+        let bare = corpus_end(137, "", 900, 0, 444).unwrap_err();
+        assert!(bare.contains("infrastructure fault") && !bare.contains("over-cap"), "{bare}");
+        let slow = corpus_end(124, err, 900, 7, 444).unwrap_err();
+        assert!(slow.contains("over-cap"), "a pass that reported results is a genuine cap breach: {slow}");
     }
 
     #[test]
@@ -529,5 +576,17 @@ mod scope_tests {
         assert!(scope_args(None).contains(&"CPUQuota=1600%".to_string()));
         assert!(scope_args(Some("800%")).contains(&"CPUQuota=800%".to_string()));
         assert!(scope_args(None).contains(&"--scope".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+
+
+    #[test]
+    fn epoch_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || epoch());
+        assert_eq!(got, 1_900_000_000);
     }
 }

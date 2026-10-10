@@ -29,6 +29,18 @@ Carrying it out means merges, the round's suites, the PR, the open-batch record 
 - **Exit:** 0 when the cut ran or had nothing to do; non-zero with a one-line reason on
   stderr.
 
+## 2a. Rounds are the batcher's (sp-1oiokx)
+
+The pool is every unheld SUBMITTED or CERTIFIED lifecycle row whose tip is its branch's live
+tip: no gate verdict is required, because the round's full suite is the stronger trial. A
+non-empty pool cuts at once (`should_cut`: no count, no idle wait; an open batch prepares the
+next round). `select_round` is feature-first: the epic root (the id before its first `.`)
+shared by the most members, at least two, with the members they stack on or that stack on
+them and every express member; else a catch-all of the whole pool. A member that conflicts
+on merge waits for the next round. Reds are attributed by §4 and ejected with quoted lines;
+a SUBMITTED survivor is certified (`GatePass`, gate key `round:<key>`) just before
+`land-local`, and a SUBMITTED owner is returned to REWORK by `GateRed`.
+
 ## 3. Lifecycle machine
 
 There is no lifecycle switch: sp-v62vn retired `lifecycle_enforce`, and the machine is the only
@@ -154,3 +166,21 @@ owners all ejected; survivors re-run only the red suites; nothing ejected when e
 flake or base red. The end-to-end proof (`e2e`, `#[ignore]`: `cargo test -p batcher-cut --bin batcher e2e --
 --ignored --nocapture`) runs a real fixture repo with three members, real git trees, the real
 `VmRunner` and spool, and a stub round-vm that runs tiny fixture suites locally.
+
+## Staged rounds
+
+A queue.local cut stages the next round while the open one's suites run. Once the VM
+runner is up, `queue round stage` assembles the rest of the pool behind the open round
+(`.batcher-<repo>-staged`) beside the suites; its end is awaited before the round is judged.
+When the open round certifies, `queue round stage-test` runs beside `round land`; after the
+land, `round promote` cuts the stage. An attested promotion lands on the staged pass; an
+unattested one gets its own pass (`follow_promoted`). Every staged-round verb that fails is
+logged and the cut goes on as if nothing had been staged. One stage per cut.
+
+## Rounds by land mode (sp-4wdogg)
+
+`batcher rounds-local` (spira-rounds) cuts queue.local repos one at a time, so one VM round runs
+at a time. `batcher rounds-forge` (spira-rounds-forge) runs `queue verdict <repo>` then `cut` for
+each queue.forge repo, which settles the open batch and opens the next. They are separate units
+so a VM round never delays a forge batch; a repo only ever gets its own mode's steps.
+`SPIRA_BATCHER_ENABLE=0` holds local rounds only. `batcher rounds` runs both, in order.

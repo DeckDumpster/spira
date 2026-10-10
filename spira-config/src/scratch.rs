@@ -113,7 +113,8 @@ fn post_want(dir: &Path) -> Option<Guard> {
 }
 
 /// `reserve` by class. `Landing` waits up to `wait` for room, holding a want marker so
-/// certification stops starting new builds; `Certify` refuses while a marker is live.
+/// certification stops starting new builds; `Certify` waits up to `wait` too, without a
+/// marker, and yields while a marker is live.
 pub fn reserve_class(
     dir: &Path,
     owner: &str,
@@ -126,10 +127,20 @@ pub fn reserve_class(
     match class {
         Class::Slot => reserve(dir, owner, mib, floor_mib, free_mib),
         Class::Certify => {
-            if landing_waiting(dir) {
-                return Err(format!("scratch: {owner} yields to a landing round waiting for room; certification resumes once it is admitted"));
+            let attempt = || {
+                if landing_waiting(dir) {
+                    return Err(format!("scratch: {owner} yields to a landing round waiting for room; certification resumes once it is admitted"));
+                }
+                reserve(dir, owner, mib, floor_mib, free_mib)
+            };
+            let deadline = std::time::Instant::now() + wait;
+            loop {
+                match attempt() {
+                    Ok(g) => return Ok(g),
+                    Err(e) if std::time::Instant::now() >= deadline => return Err(e),
+                    Err(_) => std::thread::sleep(Duration::from_millis(500).min(wait)),
+                }
             }
-            reserve(dir, owner, mib, floor_mib, free_mib)
         }
         Class::Landing => {
             let first = reserve(dir, owner, mib, floor_mib, free_mib);
@@ -194,6 +205,50 @@ pub fn reserve(
     }
     let _ = writeln!(f, "{mib}");
     Ok(Guard { _file: f, path })
+}
+
+const PEAK_SAMPLES: usize = 20;
+const PEAK_FLOOR_MIB: u64 = 256;
+
+fn peaks_path(dir: &Path, key: &str) -> PathBuf {
+    let tag: String = key.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    dir.join(format!("peaks-{tag}"))
+}
+
+fn read_peaks(dir: &Path, key: &str) -> Vec<u64> {
+    fs::read_to_string(peaks_path(dir, key))
+        .map(|s| s.lines().filter_map(|l| l.trim().parse().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Record the measured peak of one finished build of composition `key`; the newest
+/// [`PEAK_SAMPLES`] are kept.
+pub fn record_peak(dir: &Path, key: &str, mib: u64) {
+    if fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let Ok(gate) = fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(".lock")) else { return };
+    // SAFETY: a blocking flock on a descriptor we own; it serialises ledger writers only.
+    if unsafe { libc::flock(gate.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return;
+    }
+    let mut v = read_peaks(dir, key);
+    v.push(mib);
+    let skip = v.len().saturating_sub(PEAK_SAMPLES);
+    let body: String = v[skip..].iter().map(|n| format!("{n}\n")).collect();
+    let _ = fs::write(peaks_path(dir, key), body);
+}
+
+/// What to reserve for composition `key`: the p90 of its recorded peaks, or `default_mib`
+/// when none are recorded.
+pub fn estimate_mib(dir: &Path, key: &str, default_mib: u64) -> u64 {
+    let mut v = read_peaks(dir, key);
+    if v.is_empty() {
+        return default_mib;
+    }
+    v.sort_unstable();
+    let idx = (v.len() * 9).div_ceil(10).saturating_sub(1);
+    v[idx].max(PEAK_FLOOR_MIB)
 }
 
 /// True when a live process has `p` (or anything under it) as its cwd or an open file.
@@ -300,6 +355,44 @@ mod tests {
         let r = reserve_class(&d, "round", Class::Landing, 600, 0, Duration::from_millis(300), &free);
         assert!(r.is_err());
         assert!(!landing_waiting(&d));
+    }
+
+    #[test]
+    fn a_certifying_gate_waits_for_room_that_frees() {
+        let d = tmp("certwait");
+        let free = || Some(1000u64);
+        let a = reserve(&d, "a", 900, 0, &free).unwrap();
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(700));
+            drop(a);
+        });
+        let r = reserve_class(&d, "gate", Class::Certify, 600, 0, Duration::from_secs(20), &free);
+        h.join().unwrap();
+        assert!(r.is_ok(), "{:?}", r.as_ref().map(|_| ()));
+    }
+
+    #[test]
+    fn a_certifying_gate_with_no_wait_still_refuses_at_once() {
+        let d = tmp("certnow");
+        let free = || Some(1000u64);
+        let _a = reserve(&d, "a", 900, 0, &free).unwrap();
+        assert!(reserve_class(&d, "gate", Class::Certify, 600, 0, Duration::ZERO, &free).is_err());
+    }
+
+    #[test]
+    fn the_estimate_is_the_p90_of_measured_peaks_and_the_default_before_any() {
+        let d = tmp("peaks");
+        assert_eq!(estimate_mib(&d, "gate.harness", 2560), 2560);
+        for n in 1..=10u64 {
+            record_peak(&d, "gate.harness", n * 1000);
+        }
+        assert_eq!(estimate_mib(&d, "gate.harness", 2560), 9000);
+        assert_eq!(estimate_mib(&d, "gate.other", 2560), 2560, "compositions do not share samples");
+        for _ in 0..PEAK_SAMPLES {
+            record_peak(&d, "gate.harness", 4600);
+        }
+        assert_eq!(estimate_mib(&d, "gate.harness", 2560), 4600, "old samples age out");
+        assert_eq!(reserved_mib(&d), 0, "peaks are not reservations");
     }
 
     #[test]

@@ -69,8 +69,6 @@ test-batch-nocut-reason.sh	T1	8.0
 test-batch-owner.sh	T1	4.5
 test-batch-repeat-refused-delivers.sh	T1	18.5
 test-batch-timing.sh	T1	5.0
-test-bd-lock-retry.sh	T1	2.5
-test-bd-resolve.sh	T1	3.0
 test-bd-schema-stamp.sh	T1	2.5
 test-bead-file.sh	T1	27.0
 test-bead-lint.sh	T1	29.5
@@ -212,7 +210,6 @@ test-governor-deleted.sh	T1	3.0
 test-groom-escalation-check.sh	T1	45.5
 test-groom-trigger.sh	T1	4.0
 test-groomer-split-piece.sh	T1	9.0
-test-groomer-sweep.sh	T1	18.5
 test-groomer.sh	T1	3.0
 test-guards.sh	T1	10.0
 test-held.sh	T2	12.5
@@ -224,12 +221,10 @@ test-incident-delivers-satisfiable.sh	T1	3.0
 test-incident-recur-bounded.sh	T1	98.0
 test-incident.sh	T1	77.0
 test-install-aeons.sh	T1	109.0
-test-install-bd-init-cwd.sh	T1	31.0
 test-install-bootstrap-release.sh	T1	7.5
 test-install-conf-seed.sh	T1	61.0
 test-install-conflicts.sh	T1	9.0
 test-install-dolt-breaker.sh	T1	13.0
-test-install-dolt-mode.sh	T1	7.0
 test-install-dolt-port-wait.sh	T1	1.5
 test-install-hooks-artifact.sh	T1	9.0
 test-install-instance.sh	T1	62.5
@@ -257,7 +252,6 @@ test-layout-guard.sh	T1	3.0
 test-limits.sh	T1	21.5
 test-literal-lint.sh	T1	51.5
 test-livelock.sh	T1	48.0
-test-loom-page.sh	T1	13.0
 test-loop-readonly.sh	T1	10.0
 test-maechen-blind-window.sh	T1	21.5
 test-maechen-sibling-blind.sh	T1	2.0
@@ -296,8 +290,6 @@ test-release.sh	T1	2.0
 test-released-defects.sh	T1	7.5
 test-render-memories.sh	T1	9.0
 test-reopen-queue-eject.sh	T1	3.0
-test-repo-label.sh	T1	2.5
-test-repo-lanes.sh	T1	2.0
 test-requeue.sh	T1	30.5
 test-review.sh	T1	10.5
 test-rollback.sh	T1	2.0

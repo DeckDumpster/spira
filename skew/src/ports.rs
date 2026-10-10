@@ -87,7 +87,14 @@ pub trait World {
     // ---- filesystem / env ----
     /// `date +%Y%m%dT%H%M%SZ` (UTC) — used only to build a unique stash tag.
     fn now_stamp(&self) -> String;
-    fn env(&self, k: &str) -> Option<String>;
+    /// For a registered key (`spira/conf.d/<KEY>`), resolves through the one source of
+    /// config (`$SPIRA_TOML`) and returns `Ok(Some(v))` on success — even an empty `v`,
+    /// which is a legitimate declared value some callers interpret themselves (e.g. empty
+    /// `SPIRA_GH` means "the system gh"). `Err(e)` means resolution itself failed (missing
+    /// `$SPIRA_TOML`, a bad/missing config file, a parse failure) and must be surfaced, never
+    /// read as "this key is simply unset" (per Ryan 2026-10-05). For an unregistered key,
+    /// reads the raw environment instead; that path cannot fail, so it is always `Ok`.
+    fn env(&self, k: &str) -> Result<Option<String>, String>;
     fn is_symlink(&self, p: &Path) -> bool;
     fn readlink(&self, p: &Path) -> Option<String>;
     fn exists(&self, p: &Path) -> bool;
@@ -99,6 +106,8 @@ pub trait World {
     fn mkdir_p(&self, p: &Path);
 
     // ---- escalate's once-per-condition-per-run stamp ----
+    /// True while another process holds the repo's queue lock (a land-local mid-activation).
+    fn queue_lock_held(&self, repo_name: &str) -> bool;
     fn stamp_read(&self, key: &str) -> Option<String>;
     fn stamp_write(&self, key: &str, val: &str);
 

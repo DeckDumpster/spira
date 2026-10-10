@@ -121,6 +121,9 @@ pub struct Ranked {
     /// 0 = the epic has started (sorts first).
     pub epic_started: u8,
     pub bead_priority: i64,
+    /// 0 = an unheld REWORK bead with a tip: ranks ahead of all fresh READY work, and
+    /// ignores epic priority and started-ness among its own kind.
+    pub rework: u8,
     /// 0 = resumable (sorts first).
     pub resumable: u8,
     pub age: String,
@@ -129,8 +132,15 @@ pub struct Ranked {
 }
 
 impl Ranked {
-    fn key(&self) -> (i64, u8, i64, u8, &str, &str, &str) {
-        (self.epic_priority, self.epic_started, self.bead_priority, self.resumable, &self.age, &self.id, &self.epic_id)
+    fn tier(&self) -> (u8, i64, u8, i64) {
+        if self.rework == 0 {
+            (0, 0, 0, self.bead_priority)
+        } else {
+            (1, self.epic_priority, self.epic_started, self.bead_priority)
+        }
+    }
+    fn key(&self) -> ((u8, i64, u8, i64), u8, &str, &str, &str) {
+        (self.tier(), self.resumable, &self.age, &self.id, &self.epic_id)
     }
     pub fn tsv(&self) -> String {
         format!(
@@ -140,14 +150,15 @@ impl Ranked {
     }
 }
 
-pub fn rank_one(r: &ReadyRow, lookup: &EpicLookup, resumable: &BTreeSet<String>) -> Ranked {
+pub fn rank_one(r: &ReadyRow, lookup: &EpicLookup, resumable: &BTreeSet<String>, rework: &BTreeSet<String>) -> Ranked {
     let pid = r.parent.clone().unwrap_or_default();
     let started: BTreeSet<&str> = lookup.started.iter().map(String::as_str).collect();
-    let epic_priority = if pid.is_empty() { r.prio() } else { *lookup.prio.get(&pid).unwrap_or(&r.prio()) };
+    let epic_priority = if pid.is_empty() { r.prio() } else { (*lookup.prio.get(&pid).unwrap_or(&r.prio())).min(r.prio()) };
     Ranked {
         epic_priority,
         epic_started: if started.contains(pid.as_str()) { 0 } else { 1 },
         bead_priority: r.prio(),
+        rework: if rework.contains(&r.id) { 0 } else { 1 },
         resumable: if resumable.contains(&r.id) { 0 } else { 1 },
         age: r.created_at.clone().or_else(|| r.updated_at.clone()).unwrap_or_default(),
         id: r.id.clone(),
@@ -156,8 +167,8 @@ pub fn rank_one(r: &ReadyRow, lookup: &EpicLookup, resumable: &BTreeSet<String>)
 }
 
 /// Best first. Epic/event rows are dropped defensively (READY_ARGS excludes them already).
-pub fn rank(rows: &[ReadyRow], lookup: &EpicLookup, resumable: &BTreeSet<String>) -> Vec<Ranked> {
-    let mut v: Vec<Ranked> = rows.iter().filter(|r| !is_container(r)).map(|r| rank_one(r, lookup, resumable)).collect();
+pub fn rank(rows: &[ReadyRow], lookup: &EpicLookup, resumable: &BTreeSet<String>, rework: &BTreeSet<String>) -> Vec<Ranked> {
+    let mut v: Vec<Ranked> = rows.iter().filter(|r| !is_container(r)).map(|r| rank_one(r, lookup, resumable, rework)).collect();
     v.sort_by(|a, b| a.key().cmp(&b.key()));
     v
 }
@@ -166,18 +177,20 @@ fn is_container(r: &ReadyRow) -> bool {
     matches!(r.issue_type.as_deref(), Some("epic") | Some("event"))
 }
 
-/// aeon.sh's band lines for the best (epic priority, epic started, bead priority) tier:
-/// `id|branch|repo|eprio|estarted|bprio`, in input order.
-pub fn top_tier(rows: &[ReadyRow], lookup: &EpicLookup) -> Vec<String> {
+/// aeon.sh's band lines for the best tier — REWORK beads by bead priority, else the best
+/// (epic priority, epic started, bead priority): `id|branch|repo|eprio|estarted|bprio`,
+/// in input order.
+pub fn top_tier(rows: &[ReadyRow], lookup: &EpicLookup, rework: &BTreeSet<String>) -> Vec<String> {
     let none = BTreeSet::new();
     let ranked: Vec<(&ReadyRow, Ranked)> =
-        rows.iter().filter(|r| !is_container(r)).map(|r| (r, rank_one(r, lookup, &none))).collect();
-    let Some(top) = ranked.iter().map(|(_, k)| (k.epic_priority, k.epic_started, k.bead_priority)).min() else {
+        rows.iter().filter(|r| !is_container(r)).map(|r| (r, rank_one(r, lookup, &none, rework))).collect();
+    let Some(best) = ranked.iter().map(|(_, k)| k.tier()).min() else {
         return Vec::new();
     };
+    let top = (best.1, best.2, best.3);
     ranked
         .iter()
-        .filter(|(_, k)| (k.epic_priority, k.epic_started, k.bead_priority) == top)
+        .filter(|(_, k)| k.tier() == best)
         .map(|(r, _)| {
             format!(
                 "{}|{}|{}|{}|{}|{}",
@@ -212,6 +225,28 @@ pub struct LifecycleRow {
     /// bd branch head, so a prerequisite that never certifies is never stackable regardless
     /// of state.
     pub tip: Option<String>,
+    /// An unexpired `wait` snooze's end, resolved against the clock at parse time.
+    pub snoozed_until: Option<i64>,
+    /// A dependent's stacked base failed to merge this row's tip; set by [`mark_stack_conflicts`].
+    pub stack_conflict: bool,
+}
+
+/// The beads whose lifecycle row carries Express (`spira-lc list`'s `express` column,
+/// string-valued like the rest).
+pub fn express_ids(text: &str) -> Result<BTreeSet<String>, String> {
+    let v: Value = serde_json::from_str(text.trim()).map_err(|e| format!("lifecycle snapshot is not JSON: {e}"))?;
+    let on = |r: &Value| match r.get("express") {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_u64().unwrap_or(0) != 0,
+        Some(Value::String(s)) => matches!(s.trim(), "1" | "true"),
+        _ => false,
+    };
+    Ok(v.as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| on(r))
+        .filter_map(|r| r.get("bead_id").and_then(Value::as_str).map(str::to_string))
+        .collect())
 }
 
 pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, String> {
@@ -240,7 +275,7 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
         for h in holds_v.as_array().into_iter().flatten() {
             let s = h.as_str().unwrap_or("");
             // An unknown hold kind refuses the bead rather than being ignored.
-            holds.insert(HoldKind::from_str(s).unwrap_or(HoldKind::Operator));
+            holds.insert(HoldKind::from_str(s).unwrap_or(HoldKind::Manual));
         }
         let stack_depth = match r.get("stack_depth") {
             Some(Value::Number(n)) => n.as_u64().unwrap_or(0) as u32,
@@ -251,9 +286,21 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
             Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
             _ => None,
         };
-        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip });
+        let snoozed_until = match r.get("reason") {
+            Some(Value::String(reason)) if holds.contains(&HoldKind::Wait) => {
+                spira_config::lc_state::snooze_until(reason).filter(|t| *t > crate::ready::now_epoch())
+            }
+            _ => None,
+        };
+        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until, stack_conflict: false });
     }
     Ok(out)
+}
+
+pub fn mark_stack_conflicts(lc: &mut HashMap<String, LifecycleRow>, run: &std::path::Path) {
+    for r in lc.values_mut() {
+        r.stack_conflict = r.tip.as_deref().is_some_and(|t| spira_config::stack_conflict::holds(run, &r.bead_id, t));
+    }
 }
 
 /// A blocker's bd record (bd list --id … --status all).
@@ -261,13 +308,15 @@ pub fn index_rows(rows: Vec<ReadyRow>) -> HashMap<String, ReadyRow> {
     rows.into_iter().map(|r| (r.id.clone(), r)).collect()
 }
 
-/// The `blocks` targets of a candidate.
+/// The `blocks` targets of a candidate. A `blocks` edge onto the candidate's own parent is read as
+/// parent-child: a container closes only when its children do, so it could never clear.
 pub fn blockers(r: &ReadyRow) -> Vec<String> {
     r.dependencies
         .iter()
         .filter(|d| d.dep_type.as_deref() == Some("blocks"))
         .filter(|d| d.issue_id.as_deref().map_or(true, |i| i == r.id))
         .filter_map(|d| d.depends_on_id.clone())
+        .filter(|b| r.parent.as_deref() != Some(b.as_str()))
         .collect()
 }
 
@@ -286,8 +335,19 @@ pub enum Verdict {
     NoOwnRow,
     OwnState(BeadState),
     Held(HoldKind),
+    Snoozed(i64),
     Blocked(String),
     TooDeep { depth: u32, max: u32 },
+}
+
+/// An incident waits for its fix to land: a certified-only fix is not a reason to summon Ops,
+/// so an incident-labelled candidate never stacks.
+pub fn stack_cap(cand: &ReadyRow, incident_label: &str, stack_max_depth: u32) -> u32 {
+    if !incident_label.is_empty() && cand.labels.iter().any(|l| l == incident_label) {
+        0
+    } else {
+        stack_max_depth
+    }
 }
 
 pub fn claimable(
@@ -318,6 +378,9 @@ pub fn stack_plan(
     if let Some(h) = own.holds.iter().find(|h| **h != HoldKind::Wait) {
         return Err(Verdict::Held(*h));
     }
+    if let Some(t) = own.snoozed_until {
+        return Err(Verdict::Snoozed(t));
+    }
     if !matches!(own.state, BeadState::Ready | BeadState::Rework) {
         return Err(Verdict::OwnState(own.state));
     }
@@ -333,6 +396,7 @@ pub fn stack_plan(
                     && rec.is_some_and(|r| is_work(r) && r.label_value("repo:") == own_repo && own_repo.is_some());
                 match row.state {
                     BeadState::Landed | BeadState::Done => true,
+                    BeadState::Certified | BeadState::InDelivery if stackable && row.stack_conflict => false,
                     BeadState::Certified | BeadState::InDelivery if stackable => {
                         stacked_max = Some(stacked_max.unwrap_or(0).max(row.stack_depth));
                         if let Some(tip) = &row.tip {
@@ -400,17 +464,35 @@ mod tests {
 
     #[test]
     fn epic_priority_ranks_first() {
-        // a P0 bead in a P2 epic loses to a P3 bead in a P1 epic.
-        let rows = vec![row("a", 0, Some("E2"), "2026-01-01"), row("b", 3, Some("E1"), "2026-01-02")];
+        let rows = vec![row("a", 2, Some("E2"), "2026-01-01"), row("b", 3, Some("E1"), "2026-01-02")];
         let lk = EpicLookup { prio: [("E2".into(), 2), ("E1".into(), 1)].into(), started: vec![] };
-        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new())), ["b", "a"]);
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
+    }
+
+    #[test]
+    fn a_p0_child_of_a_p1_epic_outranks_a_standalone_p1() {
+        let rows = vec![row("solo", 1, None, "2026-01-01"), row("kid", 0, Some("E"), "2026-02-01")];
+        let lk = EpicLookup { prio: [("E".into(), 1)].into(), started: vec![] };
+        let r = rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!(ids(&r), ["kid", "solo"]);
+        assert_eq!(r[0].epic_priority, 0);
+    }
+
+    #[test]
+    fn equal_effective_priority_keeps_epic_first_order() {
+        let rows = vec![row("a", 1, Some("E1"), "2026-01-01"), row("b", 0, Some("E2"), "2026-01-02")];
+        let lk = EpicLookup { prio: [("E1".into(), 1), ("E2".into(), 1)].into(), started: vec!["E1".into()] };
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
+        let lk = EpicLookup { prio: [("E1".into(), 0), ("E2".into(), 1)].into(), started: vec!["E1".into()] };
+        let rows = vec![row("b", 0, Some("E2"), "2026-01-02"), row("a", 1, Some("E1"), "2026-01-01")];
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["a", "b"]);
     }
 
     #[test]
     fn started_epic_first_at_equal_priority() {
         let rows = vec![row("a", 1, Some("E1"), "2026-01-01"), row("b", 1, Some("E2"), "2026-01-02")];
         let lk = EpicLookup { prio: [("E1".into(), 1), ("E2".into(), 1)].into(), started: vec!["E2".into()] };
-        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new())), ["b", "a"]);
+        assert_eq!(ids(&rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
     }
 
     #[test]
@@ -423,14 +505,14 @@ mod tests {
         ];
         let lk = EpicLookup { prio: [("E".into(), 0)].into(), started: vec![] };
         let res: BTreeSet<String> = ["res".to_string()].into();
-        assert_eq!(ids(&rank(&rows, &lk, &res)), ["hi", "res", "old", "new"]);
+        assert_eq!(ids(&rank(&rows, &lk, &res, &BTreeSet::new())), ["hi", "res", "old", "new"]);
     }
 
     #[test]
     fn unaffiliated_bead_is_its_own_epic_at_its_own_priority() {
         let rows = vec![row("solo", 1, None, "2026-01-01"), row("kid", 2, Some("E"), "2026-01-01")];
         let lk = EpicLookup { prio: [("E".into(), 0)].into(), started: vec![] };
-        let r = rank(&rows, &lk, &BTreeSet::new());
+        let r = rank(&rows, &lk, &BTreeSet::new(), &BTreeSet::new());
         assert_eq!(ids(&r), ["kid", "solo"]);
         assert_eq!(r[1].epic_id, "solo");
         assert_eq!(r[1].epic_started, 1);
@@ -439,7 +521,7 @@ mod tests {
     #[test]
     fn epic_missing_from_lookup_uses_bead_priority() {
         let rows = vec![row("a", 2, Some("Egone"), "2026-01-01"), row("b", 1, None, "2026-01-01")];
-        assert_eq!(ids(&rank(&rows, &EpicLookup::default(), &BTreeSet::new())), ["b", "a"]);
+        assert_eq!(ids(&rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new())), ["b", "a"]);
     }
 
     #[test]
@@ -448,35 +530,51 @@ mod tests {
         a.priority = None;
         a.created_at = None;
         a.updated_at = Some("2026-05-05".into());
-        let r = rank_one(&a, &EpicLookup::default(), &BTreeSet::new());
+        let r = rank_one(&a, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
         assert_eq!((r.epic_priority, r.bead_priority, r.age.as_str()), (99, 99, "2026-05-05"));
     }
 
     #[test]
     fn ties_break_on_id_deterministically() {
         let rows = vec![row("b", 1, None, "t"), row("a", 1, None, "t")];
-        assert_eq!(ids(&rank(&rows, &EpicLookup::default(), &BTreeSet::new())), ["a", "b"]);
+        assert_eq!(ids(&rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new())), ["a", "b"]);
     }
 
     #[test]
     fn epics_are_never_ranked() {
         let mut e = row("E", 0, None, "t");
         e.issue_type = Some("epic".into());
-        assert!(rank(&[e.clone()], &EpicLookup::default(), &BTreeSet::new()).is_empty());
-        assert!(top_tier(&[e], &EpicLookup::default()).is_empty());
+        assert!(rank(&[e.clone()], &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new()).is_empty());
+        assert!(top_tier(&[e], &EpicLookup::default(), &BTreeSet::new()).is_empty());
     }
 
     #[test]
     fn tsv_matches_epic_rank_rows_columns() {
-        let r = rank_one(&row("sp-a", 1, Some("sp-E"), "2026-01-01T00:00:00Z"), &EpicLookup { prio: [("sp-E".into(), 0)].into(), started: vec!["sp-E".into()] }, &BTreeSet::new());
+        let r = rank_one(&row("sp-a", 1, Some("sp-E"), "2026-01-01T00:00:00Z"), &EpicLookup { prio: [("sp-E".into(), 0)].into(), started: vec!["sp-E".into()] }, &BTreeSet::new(), &BTreeSet::new());
         assert_eq!(r.tsv(), "0\t0\t1\t1\t2026-01-01T00:00:00Z\tsp-a\tsp-E");
+    }
+
+    #[test]
+    fn rework_outranks_fresh_ready_whatever_its_priority_and_orders_by_priority_then_age() {
+        let rows = vec![
+            row("p1ready", 1, None, "2026-01-01"),
+            row("p0ready", 0, None, "2026-01-01"),
+            row("p2rw", 2, None, "2026-03-01"),
+            row("p2rw-old", 2, None, "2026-02-01"),
+            row("p1rw", 1, Some("E"), "2026-04-01"),
+        ];
+        let lk = EpicLookup { prio: [("E".into(), 3)].into(), started: vec![] };
+        let rw: BTreeSet<String> = ["p2rw", "p2rw-old", "p1rw"].map(String::from).into();
+        let r = rank(&rows, &lk, &BTreeSet::new(), &rw);
+        assert_eq!(ids(&r), ["p1rw", "p2rw-old", "p2rw", "p0ready", "p1ready"]);
+        assert_eq!(top_tier(&rows, &lk, &rw), ["p1rw|spira/p1rw|spira|0|0|1"]);
     }
 
     #[test]
     fn top_tier_lines() {
         let rows = vec![row("a", 1, Some("E"), "t"), row("b", 1, Some("E"), "t"), row("c", 2, Some("E"), "t")];
         let lk = EpicLookup { prio: [("E".into(), 0)].into(), started: vec!["E".into()] };
-        assert_eq!(top_tier(&rows, &lk), ["a|spira/a|spira|0|0|1", "b|spira/b|spira|0|0|1"]);
+        assert_eq!(top_tier(&rows, &lk, &BTreeSet::new()), ["a|spira/a|spira|0|0|1", "b|spira/b|spira|0|0|1"]);
     }
 
     /// sp-mve9i: a child's progress is its lifecycle row, whatever bd's status says.
@@ -484,7 +582,7 @@ mod tests {
     fn epic_started_rule() {
         let mut c = row("c", 1, None, "t");
         c.status = Some("in_progress".into());
-        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None })]);
+        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false })]);
         assert!(!epic_started(&[c.clone()], &HashMap::new()), "no row: nothing started, though bd says in_progress");
         assert!(!epic_started(&[c.clone()], &at(BeadState::Ready)));
         assert!(!epic_started(&[c.clone()], &at(BeadState::Rework)));
@@ -523,7 +621,7 @@ mod tests {
         s.push(']');
         assert!(s.len() > 128 * 1024);
         let rows = parse_ready(&s).unwrap();
-        let r = rank(&rows, &EpicLookup::default(), &BTreeSet::new());
+        let r = rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
         assert_eq!(r.len(), 3000);
         assert_eq!(r[0].bead_priority, 0);
         assert_eq!(parents(&rows).len(), 7);
@@ -532,7 +630,7 @@ mod tests {
     // ---- machine mode ----
 
     fn lcrow(id: &str, st: BeadState, holds: &[HoldKind], depth: u32) -> (String, LifecycleRow) {
-        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")) })
+        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None, stack_conflict: false })
     }
 
     fn blocked_on(id: &str, blocker: &str) -> ReadyRow {
@@ -547,6 +645,19 @@ mod tests {
         r.issue_type = Some(ty.into());
         r.labels = vec![format!("repo:{repo}")];
         (id.into(), r)
+    }
+
+    #[test]
+    fn an_incident_never_stacks_on_a_certified_fix_but_claims_once_it_lands() {
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let mut inc = blocked_on("B", "A");
+        inc.labels.push("incident".into());
+        let certified: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
+        let cap = stack_cap(&inc, "incident", 4);
+        assert_eq!(claimable(&inc, &certified, &bd, cap), Verdict::Blocked("A".into()));
+        assert_eq!(claimable(&blocked_on("B", "A"), &certified, &bd, stack_cap(&blocked_on("B", "A"), "incident", 4)), Verdict::Claimable { depth: 1 }, "a non-incident still stacks");
+        let landed: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
+        assert_eq!(claimable(&inc, &landed, &bd, cap), Verdict::Claimable { depth: 0 });
     }
 
     #[test]
@@ -583,10 +694,41 @@ mod tests {
     }
 
     #[test]
+    fn a_dependent_of_a_conflicting_parent_is_blocked_until_the_parent_rebases() {
+        let tmp = testkit::TempDir::new("rank-sc");
+        let run = tmp.path().to_path_buf();
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let child = blocked_on("B", "A");
+        let mut lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
+        mark_stack_conflicts(&mut lc, &run);
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 1 }, "no marker: stacked as before");
+        spira_config::stack_conflict::record(&run, "A", "tip-A");
+        mark_stack_conflicts(&mut lc, &run);
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Blocked("A".into()));
+        lc.get_mut("A").unwrap().tip = Some("tip-A-rebased".into());
+        mark_stack_conflicts(&mut lc, &run);
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 1 }, "the parent's tip moved");
+    }
+
+    #[test]
     fn stacked_blocker_only_submitted_waits() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Submitted, &[], 0)].into();
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Blocked("A".into()));
+    }
+
+    #[test]
+    fn a_blocker_landing_releases_its_dependent_with_no_hand_step_but_a_manual_hold_never_lifts() {
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let dep = blocked_on("B", "A");
+        for blocker in [BeadState::Working, BeadState::Submitted] {
+            let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", blocker, &[], 0)].into();
+            assert_eq!(claimable(&dep, &lc, &bd, 0), Verdict::Blocked("A".into()), "{blocker:?}");
+        }
+        let landed: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
+        assert_eq!(claimable(&dep, &landed, &bd, 0), Verdict::Claimable { depth: 0 });
+        let parked: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Manual], 0), lcrow("A", BeadState::Landed, &[], 0)].into();
+        assert_eq!(claimable(&dep, &parked, &bd, 0), Verdict::Held(HoldKind::Manual));
     }
 
     #[test]
@@ -599,6 +741,15 @@ mod tests {
         // Even an epic with a lifecycle row certified does not stack.
         let lc2: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("E", BeadState::Certified, &[], 0)].into();
         assert_eq!(claimable(&blocked_on("B", "E"), &lc2, &open, 4), Verdict::Blocked("E".into()));
+    }
+
+    #[test]
+    fn a_blocks_edge_onto_the_candidates_own_open_epic_does_not_block() {
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
+        let open: HashMap<_, _> = [bdrec("E", "open", "epic", "spira")].into();
+        let mut child = blocked_on("B", "E");
+        child.parent = Some("E".into());
+        assert_eq!(claimable(&child, &lc, &open, 4), Verdict::Claimable { depth: 0 });
     }
 
     #[test]
@@ -624,6 +775,22 @@ mod tests {
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 0), Verdict::Blocked("A".into()));
+    }
+
+    fn snooze_snapshot(until: i64, hold: &str) -> HashMap<String, LifecycleRow> {
+        let reason = spira_config::lc_state::snooze_reason(until);
+        parse_lifecycle(&format!(r#"[{{"bead_id":"B","state":"READY","holds":["{hold}"],"reason":"{reason}"}}]"#)).unwrap()
+    }
+
+    #[test]
+    fn an_unexpired_wait_snooze_is_not_claimable_and_an_expired_one_is() {
+        let bd = HashMap::new();
+        let b = row("B", 1, None, "t");
+        let future = crate::ready::now_epoch() + 3600;
+        assert_eq!(claimable(&b, &snooze_snapshot(future, "wait"), &bd, 4), Verdict::Snoozed(future));
+        assert_eq!(claimable(&b, &snooze_snapshot(crate::ready::now_epoch() - 1, "wait"), &bd, 4), Verdict::Claimable { depth: 0 });
+        assert_eq!(claimable(&b, &snooze_snapshot(future, "manual"), &bd, 4), Verdict::Held(HoldKind::Manual), "only a wait hold snoozes");
+        assert!(crate::ready::lifecycle_ready_ids(&snooze_snapshot(future, "wait")).is_empty());
     }
 
     #[test]
@@ -683,5 +850,12 @@ mod tests {
         assert!(m["b"].holds.is_empty());
         assert!(parse_lifecycle("").is_err());
         assert!(parse_lifecycle(r#"[{"bead_id":"a","state":"NOPE"}]"#).is_err());
+    }
+
+    #[test]
+    fn express_ids_reads_the_column_in_every_encoding_and_refuses_non_json() {
+        let ids = express_ids(r#"[{"bead_id":"a","express":"1"},{"bead_id":"b","express":0},{"bead_id":"c","express":true},{"bead_id":"d"},{"bead_id":"e","express":"0"}]"#).unwrap();
+        assert_eq!(ids.into_iter().collect::<Vec<_>>(), ["a", "c"]);
+        assert!(express_ids("nope").is_err());
     }
 }

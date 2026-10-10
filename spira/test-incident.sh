@@ -40,7 +40,7 @@
 #
 # defect: sp-5ll6
 # tier: T2
-# covers: spira/incident.sh watchtower/src/* incident/* UC-ops-detection-remediation-02
+# covers: spira/incident.sh watchtower/src/* incident/* UC-ops-detection-remediation-01 UC-ops-detection-remediation-02 UC-ops-detection-remediation-03
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -75,24 +75,31 @@ ILOG="$RUN/incident.log"
 # rebuilds PATH from it; SPIRA_CONF names a non-existent file so a real spira.conf on this
 # box cannot override any key the suite sets explicitly.
 inc() {
-    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$RUN" \
+        SPIRA_MAIL="$TMP/mail"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_BD=*) tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
+    env -i HOME="$HOME" PATH="$PATH" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
-        SPIRA_DB="$SPIRA_DB" \
         SPIRA_SPOOL="$SPOOL" \
         SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
-        SPIRA_RUN="$RUN" \
         SPIRA_HOME="$HERE" \
-        SPIRA_MAIL="$TMP/mail" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        "$@" incident.sh file "the test sweep" -
+        "${extra[@]+"${extra[@]}"}" incident.sh file "the test sweep" -
 }
 
 # Count open beads carrying the given external ref on the fixture database.
 # NOTE: bd-embedded does not support --external-ref server-side filtering, so filter
 # client-side via JSON, exactly as incident.sh open_incident does.
 count_open() {
-    bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,incident --json 2>/dev/null \
+    timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,incident --json 2>/dev/null \
       | python3 -c '
 import sys, json
 target = sys.argv[1]
@@ -110,7 +117,7 @@ print(count)
 # Used by the close-then-refile regression: after the fix the closed bead is reopened so
 # the total count stays 1; under the unfixed code a new bead is created and the count is 2.
 count_all() {
-    bd -C "$SPIRA_DB" list --all --status open,in_progress,closed --limit 0 --label spira,incident --json 2>/dev/null \
+    timeout 5 bd -C "$SPIRA_DB" list --all --status open,in_progress,closed --limit 0 --label spira,incident --json 2>/dev/null \
       | python3 -c '
 import sys, json
 target = sys.argv[1]
@@ -173,7 +180,7 @@ echo "close-then-refile dedup — a handed-on (SUBMITTED) bead within the lookba
 # days and file_one reopens it with a recurrence note — count_all stays 1, count_open stays 1.
 printf 'first payload\n' | inc >/dev/null
 # Extract and close the bead that was just filed.
-_ctr_id="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
+_ctr_id="$(timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
   | python3 -c '
 import sys, json
 target = sys.argv[1]
@@ -296,7 +303,7 @@ _bsd_since="$(PATH="$DATEDIR:$PATH" bash -c 'date -u -v -7d "+%Y-%m-%d" 2>/dev/n
 is "the BSD date -v shim itself resolves a boundary" "yes" "$([ -n "$_bsd_since" ] && echo yes || echo no)"
 
 printf 'bsd-date first payload\n' | PATH="$DATEDIR:$PATH" inc >/dev/null
-_bd_id="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
+_bd_id="$(timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
   | python3 -c '
 import sys, json
 target = sys.argv[1]
@@ -343,9 +350,13 @@ for _a in "\$@"; do [ "\$_a" = create ] && sleep 0.3 && break; done
 exec "$BD_REAL" "\$@"
 WRAP
 chmod +x "$SLOW_BD"
-printf 'concurrent A\n' | inc SPIRA_BD="$SLOW_BD" >/dev/null &
+# Declared once, before either concurrent call, rather than inside inc()'s own per-call
+# tl_config: both filers want the SAME value, and two processes racing a write to the same
+# override.toml is exactly the kind of race this section exists to avoid, not reproduce.
+tl_config SPIRA_BD="$SLOW_BD"
+printf 'concurrent A\n' | inc >/dev/null &
 pid_a=$!
-printf 'concurrent B\n' | inc SPIRA_BD="$SLOW_BD" >/dev/null &
+printf 'concurrent B\n' | inc >/dev/null &
 pid_b=$!
 wait "$pid_a" || true
 wait "$pid_b" || true
@@ -374,23 +385,22 @@ echo "cross-repo dedup — same ref, different repo: labels resolve to ONE incid
 _cross_title="cross repo dedup test"
 _cross_ref="incident:cross-repo-dedup-test"
 _cross_env() {
-    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$REPO_MAP" \
+        SPIRA_RUN="$RUN" SPIRA_MAIL="$TMP/mail"
+    env -i HOME="$HOME" PATH="$PATH" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_SPOOL="$SPOOL" \
         SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
-        SPIRA_RUN="$RUN" \
         SPIRA_HOME="$HERE" \
-        SPIRA_MAIL="$TMP/mail" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         "$@" \
         incident.sh file "$_cross_title" - >/dev/null 2>&1
 }
 printf 'first filer\n'  | _cross_env SPIRA_INCIDENT_REPO=brain
 printf 'second filer\n' | _cross_env SPIRA_INCIDENT_REPO=fixture-repo
-n="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
+n="$(timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
   | python3 -c '
 import sys, json
 target = sys.argv[1]; count = 0
@@ -425,7 +435,7 @@ _fb_id="$("$BD_REAL" -C "$SPIRA_DB" create "fallback test incident" \
 
 # File the same ref via incident.sh — must find the existing bead (recurrence, not new).
 printf 'fallback recur\n' | inc SPIRA_INCIDENT_REF="$_fb_ref" >/dev/null 2>&1 || true
-n_fb="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
+n_fb="$(timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
   | python3 -c "
 import sys, json
 target = sys.argv[1]
@@ -450,10 +460,10 @@ echo "external_ref in bd list --json — the field the dedup query reads must be
 # bead.get('external_ref') was None and _dedup_incident always returned nothing — every
 # filing looked like "no open incident" and filed a fresh bead (17-18+ surplus per ref,
 # merged from test-incident-dedup.sh).
-bd -C "$SPIRA_DB" create "external-ref field probe" \
+timeout 5 bd -C "$SPIRA_DB" create "external-ref field probe" \
     --type bug --priority 2 --labels spira,incident \
     --external-ref "probe:external-ref-field-check" --silent >/dev/null 2>&1
-_has_field="$(bd -C "$SPIRA_DB" list --status open --limit 0 --json 2>/dev/null | python3 -c '
+_has_field="$(timeout 5 bd -C "$SPIRA_DB" list --status open --limit 0 --json 2>/dev/null | python3 -c '
 import sys, json
 try:
     for r in json.load(sys.stdin):
@@ -498,7 +508,7 @@ PAYLOAD500="$(python3 -c 'print("x" * 500, end="")')"
 for _i in 1 2 3; do
     printf '%s' "$PAYLOAD500" | inc SPIRA_INCIDENT_REF="$REF_BOUND" >/dev/null
 done
-_bound_id="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
+_bound_id="$(timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
   | python3 -c '
 import sys, json
 target = sys.argv[1]
@@ -512,7 +522,7 @@ want "recur-bounded bead was created" "sp-" "${_bound_id:-none found}"
 # second recurrence's payload is byte-identical, so it must NOT write it again — that is the
 # whole property _recur_note_body exists to enforce. A copy count of exactly 1 (not 0, not 2)
 # proves both halves at once: the payload was recorded at all, and it was not re-recorded.
-_payload_copies="$(bd -C "$SPIRA_DB" show "${_bound_id:-?}" --json 2>/dev/null | python3 -c '
+_payload_copies="$(timeout 5 bd -C "$SPIRA_DB" show "${_bound_id:-?}" --json 2>/dev/null | python3 -c '
 import sys, json
 try:
     d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]

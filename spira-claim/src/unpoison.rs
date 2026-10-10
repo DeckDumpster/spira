@@ -582,7 +582,7 @@ pub fn parse_lc_show(text: &str) -> Result<LcRow, String> {
         .as_array()
         .into_iter()
         .flatten()
-        .map(|h| HoldKind::from_str(h.as_str().unwrap_or("")).unwrap_or(HoldKind::Operator))
+        .map(|h| HoldKind::from_str(h.as_str().unwrap_or("")).unwrap_or(HoldKind::Manual))
         .collect();
     Ok(LcRow { state, version, holds, holder: s_field(b, "holder").filter(|h| !h.is_empty()) })
 }
@@ -709,17 +709,7 @@ impl World for Live {
     }
 
     fn write_event(&mut self, id: &str, event_type: &str, value: &str) -> Result<(), String> {
-        // bd sql takes its query only as argv; every value in it is validated or bounded.
-        let u = uuid4()?;
-        let q = format!(
-            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ({}, {}, {}, {}, {}, UTC_TIMESTAMP())",
-            store::sql_quote(&u),
-            store::sql_quote(id),
-            store::sql_quote(event_type),
-            store::sql_quote(&bounded_cause(&self.beads_actor)),
-            store::sql_quote(&bounded_cause(value)),
-        );
-        self.bd_ok(&["sql", &q], None).map(|_| ())
+        crate::counters::write_event(&self.store, &self.beads_actor, id, event_type, value)
     }
 
     fn clear_ask_history(&mut self, id: &str) -> Result<(), String> {
@@ -751,7 +741,8 @@ impl World for Live {
     }
 
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
-        self.bd_ok(&["close", id, "--reason-file", "-"], Some(reason.as_bytes())).map(|_| ())
+        // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
+        spira_config::lifecycle_row::close_with(&self.store.lc, id, reason, "spira-claim", None)
     }
 
     fn audit_len(&mut self) -> u64 {
@@ -799,17 +790,8 @@ impl crate::reopen::World for Live {
         }
     }
 
-    fn bd_reopen(&mut self, id: &str) -> Result<(), String> {
-        // The bead's state is the machine's: bd status is inert (sp-mve9i).
-        self.bd_ok(&["reopen", id], None).map(|_| ())
-    }
-
-    fn remove_submitted_label(&mut self, id: &str, label: &str) {
-        let _ = self.bd_ok(&["label", "remove", id, label], None);
-    }
-
-    fn release_claim(&mut self, id: &str) -> Result<(), String> {
-        self.store.release_claim(id)
+    fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String> {
+        self.store.lc_reopen(id, cause, &self.beads_actor)
     }
 
     fn write_reopen_event(&mut self, id: &str, cause: &str) {

@@ -21,8 +21,9 @@ STUB
 chmod +x "$TMP/forge"
 
 run() {
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" SPIRA_REPO="$TMP" \
-        SPIRA_FORGE="$TMP/forge" STUB_OUT="$TMP/out" bash "$HERE/stranded-runner.sh" "$@" 2>&1
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_FORGE="$TMP/forge"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP" SPIRA_REPO="$TMP" \
+        STUB_OUT="$TMP/out" bash "$HERE/stranded-runner.sh" "$@" 2>&1
 }
 
 printf 'STRANDED run=9001 job="suites" label=spira-run-9001 queued=360s runner=eph-133742 vmid=133742\n' > "$TMP/out"

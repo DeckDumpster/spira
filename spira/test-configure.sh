@@ -13,8 +13,6 @@
 # 4. DERIVABLE KEYS COMMENTED: at least one non-trap key appears as a comment.
 # 5. NO OVERWRITE: an existing config file is not touched; the script reports it.
 # 6. ROUND-TRIP: the generated file is accepted by conf.sh (spira-config validates, conf.sh resolves).
-# 7. REPO-MAP SEEDED: a repo-map file is written in the config directory.
-# 8. REPO-MAP PRESERVED: an existing repo-map is not overwritten.
 #
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control)
 #   a. conf.sh refuses an unknown key (proves the round-trip checker would catch a bad key).
@@ -22,7 +20,7 @@
 #
 # defect: sp-id7cx
 # tier: T1
-# covers: spira/configure.sh spira/conf.sh
+# covers: spira/configure.sh spira/conf.sh UC-config-store-preflight-07
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -37,18 +35,21 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 echo
 echo "positive control (a) — conf.sh refuses an unknown key:"
 # ==========================================================================
-# Plant an unknown key and verify conf.sh warns about it. If this fails, the
-# round-trip validation below is untestable — it would pass even if configure.sh
-# wrote garbage (law-absence-needs-a-positive-control).
-_pc_conf="$TMP/pc-bad.conf"
-printf 'SPIRA_NONEXISTENT_KEY_ZZZZZ = value\n' > "$_pc_conf"
-_pc_warn="$(SPIRA_CONF="$_pc_conf" SPIRA_DB=/tmp/pc-nodb-$$ \
-    bash -c ". '$HERE/conf.sh'" 2>&1 1>/dev/null || true)"
-if printf '%s\n' "$_pc_warn" | grep -q 'unknown key'; then
-    ok "conf.sh warns about an unknown key in the config file"
+# Plant an unknown key in a spira.toml and verify spira-config refuses it. If this fails,
+# the round-trip validation below is untestable — it would pass even if configure.sh wrote
+# garbage (law-absence-needs-a-positive-control).
+# conf.sh no longer reads a legacy spira.conf at all — SPIRA_TOML is the one source of
+# config (per Ryan 2026-10-05) — so the positive control now plants the bad key directly in
+# a toml file and asks the same `spira-config validate` the round-trip check below uses,
+# rather than sourcing conf.sh against a SPIRA_CONF-style file nothing reads any more.
+_pc_conf="$TMP/pc-bad.toml"
+printf '[spira]\nmax_aeons = "value"\n' > "$_pc_conf"
+_pc_warn="$(spira-config validate "$_pc_conf" 2>&1)"; _pc_rc=$?
+if [ "$_pc_rc" -ne 0 ] && printf '%s\n' "$_pc_warn" | grep -q 'max_aeons'; then
+    ok "spira-config validate refuses a malformed value in the config file"
 else
     bad "positive control (a)" \
-        "conf.sh did not warn about SPIRA_NONEXISTENT_KEY_ZZZZZ — round-trip test would be vacuous"
+        "spira-config validate did not refuse a malformed max_aeons — round-trip test would be vacuous: $_pc_warn"
 fi
 
 # ==========================================================================
@@ -83,13 +84,14 @@ run_configure() {
         PATH="$PATH" \
         HOME="$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
         CONFIGURE_OUT="$OUT" \
         CONFIGURE_PROD="$FAKE_PROD" \
         CONFIGURE_MAX_AEONS="2" \
         CONFIGURE_MAX_LIVE_AEONS="" \
         CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
         CONFIGURE_DOLT_DATA="" \
-        "$HERE/configure.sh" --no-repo-map "$@" 2>&1
+        "$HERE/configure.sh" "$@" 2>&1
 }
 
 _out="$(run_configure)"; _rc=$?
@@ -156,7 +158,7 @@ else
 fi
 
 # Resolution through conf.sh reads the values back.
-_rt_prod="$(env -i PATH="$PATH" HOME="$FAKE_HOME" SPIRA_TOML="$OUT" SPIRA_CONF=/nonexistent \
+_rt_prod="$(env -i PATH="$PATH" HOME="$FAKE_HOME" SPIRA_TOML="$_TL_CONF_BASE:$OUT" SPIRA_CONF=/nonexistent \
     bash -c ". '$HERE/conf.sh' 2>/dev/null; printf %s \"\$SPIRA_PROD\"")"
 is "conf.sh resolves SPIRA_PROD from the generated toml" "$FAKE_PROD" "$_rt_prod"
 
@@ -183,64 +185,8 @@ fi
 # The output must mention the existing file
 want "output reports the existing file" "already exists" "$_overwrite_out"
 
-# ==========================================================================
-echo
-echo "repo-map seeded — configure.sh seeds a repo-map from the example:"
-# ==========================================================================
-FAKE_HOME2="$TMP/home2"
-OUT2="$FAKE_HOME2/.config/spira/spira.toml"
-mkdir -p "$FAKE_HOME2"
-
-run_configure2() {
-    env -i \
-        PATH="$PATH" \
-        HOME="$FAKE_HOME2" \
-        SPIRA_CONF=/nonexistent \
-        CONFIGURE_OUT="$OUT2" \
-        CONFIGURE_PROD="$FAKE_PROD" \
-        CONFIGURE_MAX_AEONS="2" \
-        CONFIGURE_MAX_LIVE_AEONS="" \
-        CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
-        CONFIGURE_DOLT_DATA="" \
-        "$HERE/configure.sh" "$@" 2>&1
-}
-
-_seed_out="$(run_configure2)"; _seed_rc=$?
-iszero "configure.sh (with repo-map) exits 0" "$_seed_rc"
-_repo_map_path="$(dirname "$OUT2")/repo-map"
-[ -f "$_repo_map_path" ] && ok "repo-map was created" \
-                          || bad "repo-map not created" "expected $OUT2/../repo-map"
-
-# ==========================================================================
-echo
-echo "repo-map preserved — existing repo-map is not overwritten:"
-# ==========================================================================
-EXISTING_MAP_MARKER="# existing-repo-map-sentinel-$$"
-printf '%s\n' "$EXISTING_MAP_MARKER" >> "$_repo_map_path"
-
-FAKE_HOME3="$TMP/home3"
-OUT3="$FAKE_HOME3/.config/spira/spira.toml"
-mkdir -p "$FAKE_HOME3"/.config/spira
-cp "$_repo_map_path" "$FAKE_HOME3/.config/spira/repo-map"
-
-_preserve_out="$(env -i \
-    PATH="$PATH" \
-    HOME="$FAKE_HOME3" \
-    SPIRA_CONF=/nonexistent \
-    CONFIGURE_OUT="$OUT3" \
-    CONFIGURE_PROD="$FAKE_PROD" \
-    CONFIGURE_MAX_AEONS="2" \
-    CONFIGURE_MAX_LIVE_AEONS="" \
-    CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
-    CONFIGURE_DOLT_DATA="" \
-    "$HERE/configure.sh" 2>&1)"
-
-if grep -qF "$EXISTING_MAP_MARKER" "$FAKE_HOME3/.config/spira/repo-map" 2>/dev/null; then
-    ok "existing repo-map was not overwritten"
-else
-    bad "repo-map preserved" "sentinel line was lost — existing repo-map was overwritten"
-fi
-want "output reports the existing repo-map" "already exists" "$_preserve_out"
+# (Cases 7-8, repo-map seeded/preserved, are gone: configure.sh no longer seeds a repo-map —
+# the example it copied was deleted per Ryan 2026-10-05; the operator declares the repos.)
 
 # ==========================================================================
 echo

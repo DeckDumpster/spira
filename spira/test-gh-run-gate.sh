@@ -44,7 +44,7 @@
 # this bead touched.
 #
 # tier: T2
-# covers: spira/gate-check.sh sentinel/src/* aeon/src/*
+# covers: spira/gate-check.sh sentinel/src/* aeon/src/* UC-landing-merge-queue-53
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -55,7 +55,7 @@ testdb_require test-gh-run-gate
 trap 'testdb_drop' EXIT INT TERM
 testdb_up gh_run_gate || { echo "test-gh-run-gate: could not build a fixture database"; exit 1; }
 
-B() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 ready_ids() { B ready --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin)

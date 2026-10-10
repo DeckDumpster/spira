@@ -12,8 +12,8 @@
 # suite-state transition is a change bead on spira/<id> like any other — the bead-less
 # `spira-suite-state/*` route is refused.
 #
-# tier: T3
-# covers: queue/src/* testenv/src/suites/* spira/conf.sh
+# tier: T2
+# covers: queue/src/* testenv/src/suites/* spira/conf.sh UC-landing-merge-queue-27
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -46,14 +46,13 @@ RMAP="$TMP/repo-map"
 printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP"
 
 run() {
+    tl_config SPIRA_HOME_REPO=fixq SPIRA_RUN="$TMP/run" SPIRA_QUEUE_DIR="$TMP/run/queue" \
+        SPIRA_REPO_MAP="$RMAP"
     env -i $(lcfix_env) PATH="$TMP/spira:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME_REPO=fixq \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_QUEUE_DIR="$TMP/run/queue" \
-        SPIRA_REPO_MAP="$RMAP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$TMP/spira" queue "$@" 2>&1
 }
 
@@ -65,9 +64,11 @@ echo "certification honours SPIRA_CERTIFY_SUITES=off (fences only), as landing.s
 mkdir -p "$TMP/run/queue"
 : > "$GATE_LOG"
 git -C "$REPO" branch "spira/sp-cso01" main
+tl_config SPIRA_HOME_REPO=fixq SPIRA_RUN="$TMP/run" SPIRA_QUEUE_DIR="$TMP/run/queue" \
+    SPIRA_REPO_MAP="$RMAP" SPIRA_CERTIFY_SUITES=off
 env -i $(lcfix_env) PATH="$TMP/spira:$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent \
-    SPIRA_HOME_REPO=fixq SPIRA_REPO="$REPO" SPIRA_RUN="$TMP/run" \
-    SPIRA_QUEUE_DIR="$TMP/run/queue" SPIRA_REPO_MAP="$RMAP" SPIRA_CERTIFY_SUITES=off \
+    SPIRA_REPO="$REPO" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_HOME="$TMP/spira" queue submit spira/sp-cso01 >/dev/null 2>&1
 want "the gate is handed suites=off" "suites=off" "$(cat "$GATE_LOG")"
 
@@ -157,14 +158,13 @@ printf 'queuerepo | %s | queue | main | | |\n' "$REPO2" >> "$RMAP2"
 mkdir -p "$TMP/run2/queue"
 : > "$GATE_LOG2"
 run2() {
+    tl_config SPIRA_HOME_REPO=holdhome SPIRA_RUN="$TMP/run2" SPIRA_QUEUE_DIR="$TMP/run2/queue" \
+        SPIRA_REPO_MAP="$RMAP2"
     env -i $(lcfix_env) PATH="$TMP/spira2:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME_REPO=holdhome \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$TMP/run2" \
-        SPIRA_QUEUE_DIR="$TMP/run2/queue" \
-        SPIRA_REPO_MAP="$RMAP2" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$TMP/spira2" queue "$@" 2>&1
 }
 
@@ -185,14 +185,13 @@ RMAP3="$TMP/repo-map3"
 printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP3"
 
 run3() {
+    tl_config SPIRA_HOME_REPO=fixq SPIRA_RUN="$TMP/run3" SPIRA_QUEUE_DIR="$TMP/run3/queue" \
+        SPIRA_REPO_MAP="$RMAP3"
     env -i $(lcfix_env) PATH="$TMP/spira2:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME_REPO=fixq \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$TMP/run3" \
-        SPIRA_QUEUE_DIR="$TMP/run3/queue" \
-        SPIRA_REPO_MAP="$RMAP3" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$TMP/spira2" queue "$@" 2>&1
 }
 out="$(run3 submit spira/sp-ghi03)"; rc=$?
@@ -235,20 +234,19 @@ TRMAP
 git -C "$TREPO" add -A
 git -C "$TREPO" commit -q --allow-empty -m base
 git -C "$TREPO" remote add origin "$TREMOTE"
-git -C "$TREPO" push -q origin main
-git -C "$TREPO" fetch -q origin
+timeout 5 git -C "$TREPO" push -q origin main
+timeout 5 git -C "$TREPO" fetch -q origin
 
 transition() {
+    tl_config SPIRA_HOME_REPO=tfixq SPIRA_RUN="$TRUN" SPIRA_QUEUE_DIR="$TRUN/queue" \
+        SPIRA_REPO_MAP="$TSH/repo-map"
     env -i $(lcfix_env) PATH="$TSH:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TSH" \
-        SPIRA_HOME_REPO=tfixq \
         SPIRA_REPO="$TREPO" \
-        SPIRA_RUN="$TRUN" \
-        SPIRA_QUEUE_DIR="$TRUN/queue" \
-        SPIRA_REPO_MAP="$TSH/repo-map" \
         SPIRA_TESTENV_HARNESS="$TREPO" \
+        SPIRA_TOML="$SPIRA_TOML" \
         testenv suites "$@" 2>&1
 }
 

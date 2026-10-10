@@ -1,6 +1,7 @@
 //! testenv — select suites for a tree, build that tree in place, run the suites in the
 //! fixture container, report the verdict. Contract: DESIGN.md.
 
+use std::process::Command;
 use std::io::Read;
 use std::process::ExitCode;
 use testenv::build::Cargo;
@@ -33,7 +34,7 @@ fn spawn_sweep(run: &std::path::Path) {
 
 fn spawn_warm(sub: &[String], run: &std::path::Path, harness: Option<std::path::PathBuf>) {
     use std::os::unix::process::CommandExt;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
@@ -45,6 +46,7 @@ fn spawn_warm(sub: &[String], run: &std::path::Path, harness: Option<std::path::
         Ok((f, g)) => (Stdio::from(f), Stdio::from(g)),
         Err(_) => (Stdio::null(), Stdio::null()),
     };
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(exe);
     if let Some(h) = harness {
         cmd.env("SPIRA_TESTENV_HARNESS", h);
@@ -80,6 +82,11 @@ fn main() -> ExitCode {
         let rc = testenv::suites::main(&args[1..]);
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
+    // `testenv status [--json] <results-dir>` — a run's recorded phases, suites and verdict.
+    if args.first().map(String::as_str) == Some("status") {
+        let rc = testenv::phase::main(&args[1..]);
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
     // `testenv testdb …` — server-mode test databases (DESIGN-testdb.md).
     if args.first().map(String::as_str) == Some("testdb") {
         let rc = testenv::testdb::main(&args[1..]);
@@ -96,8 +103,7 @@ fn main() -> ExitCode {
     if args.first().map(String::as_str) == Some("container") {
         let env = |k: &str| std::env::var(k).ok();
         let harness = Harness::locate(&env).map(|h| h.root);
-        let config = load_config("testenv");
-        let rc = testenv::container::main(&args[1..], harness, config.as_ref());
+        let rc = testenv::container::main(&args[1..], harness);
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
     // `testenv plan <json>` — the container setup in one exec, run inside the container
@@ -176,12 +182,27 @@ fn main() -> ExitCode {
         .ok()
         .and_then(|p| std::fs::read(p).ok())
         .unwrap_or_default();
+    // The one source of config (per Ryan 2026-10-05): read once, here, at the true top
+    // level — `run`/`report`/`warm_refill`/`warm_sweep` take the result off `Deps`, never
+    // the environment or `spira_config::process::cfg` directly.
+    let settings = match testenv::settings::Settings::load(
+        &testenv::settings::Source { env: &env },
+        testenv::batch::now_epoch(),
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("batch: {e}");
+            println!("VERDICT FAULT rc=2 ran=0 reason=settings-refused");
+            return ExitCode::from(2);
+        }
+    };
     let deps = Deps {
         rt: &rt,
         builder: &Cargo,
         harness,
         env: &env,
         config: config.as_ref(),
+        settings,
         stdin: &stdin,
         out: &out,
         owner_dir: std::path::PathBuf::from("/tmp"),

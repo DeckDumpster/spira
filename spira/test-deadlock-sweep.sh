@@ -28,6 +28,7 @@
 # tier: T2
 # covers: groomer/src/deadlocked.rs spira/lib.sh spira-claim/* UC-aeon-execution-24
 set -uo pipefail
+CLAIM_SEQ=0   # one minute per seeded event, past the double-claim window
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
@@ -67,11 +68,11 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$LC_TMP/server.yaml" > "$LC_TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$LC_TMP/server.yaml" > "$LC_TMP/server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
 LC_SERVER_PID=$!
 lc_up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         lc_up=1; break
     fi
     sleep 0.2
@@ -85,6 +86,11 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$LC_TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
+# resolves to the complete fixture's placeholder /fixture/userhome/.../spira-lc.credential,
+# which does not exist. Declare this suite's own (empty-password) credential file.
+: > "$LC_TMP/credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_TMP/credential"
 spira-lc admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 # mkpoison <id> — a fresh READY row, then a real Hold{Poison} event through `spira-lc hold`, the
@@ -96,15 +102,24 @@ mkpoison() {
 lcheld() { spira-lc held "$1" poison; }
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
+# round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
+# fixture declares its own /fixture/userhome/.../chamber. Declare this suite's real one.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
+# round 2 fix: the complete fixture declares scope_label="spira" as its base value, so
+# builder.fayth's FAYTH_LABELS (resolved against the real config, not this shell's unset
+# $SPIRA_SCOPE_LABEL) would require a "spira" label the seeded beads never carry — nothing
+# would ever be ready. Declare the empty scope this suite has always meant.
+tl_config SPIRA_SCOPE_LABEL=""
 # attempts.sh's candidates() reads fayth_partitions from the chamber (lib.sh) — the same
 # partition builder.fayth declares, so this tool and the summoner cannot disagree about
 # which beads are "ours" (attempts.sh's own header comment).
@@ -127,11 +142,11 @@ cycle() {
     local id="$1" n="$2" i=0 uuid
     while [ "$i" -lt "$n" ]; do
         uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
-        bd -C "$SPIRA_DB" sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'status_changed', 'harness', '{\"status\":\"in_progress\"}', NOW())" >/dev/null 2>&1
+        timeout 5 bd -C "$SPIRA_DB" sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'status_changed', 'harness', '{\"status\":\"in_progress\"}', DATE_ADD(NOW(), INTERVAL $((++CLAIM_SEQ)) MINUTE))" >/dev/null 2>&1
         i=$((i+1))
     done
 }
-notes()   { bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
+notes()   { timeout 5 bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
 lib() { bash -c ". \"$SPIRA_HOME/lib.sh\"; $1" 2>/dev/null; }
 count_of() { local c; c="$(lib "attempts_of $1")"; printf '%s' "${c:-0}"; }
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
@@ -152,8 +167,12 @@ for b in sp-rq-s sp-rq-k; do
     cycle "$b" 3
     mkpoison "$b"
 done
-sweep() { SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" \
-          SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_REPO="$REPO" SPIRA_FAYTHS=builder \
+sweep() {
+    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
+    # which no process reads them from any more.
+    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_FAYTHS=builder
+    SPIRA_HOME="$SPIRA_HOME" SPIRA_REPO="$REPO" \
           groomer deadlocked "$@" 2>&1; }
 out="$(sweep)"
 want "the deadlocked bead is named"            "WOULD    sp-rq-s" "$out"

@@ -74,6 +74,24 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
 
+    let lc_rows = match spira_config::lc_state::list() {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn(&format!("WARN the lifecycle rows could not be read ({e}) — no bead is counted as moving by WORKING, parked or poisoned"));
+            Vec::new()
+        }
+    };
+    let ids = |f: &dyn Fn(&spira_config::lc_state::Row) -> bool| -> std::collections::HashSet<String> {
+        lc_rows.iter().filter(|r| f(r)).map(|r| r.bead_id.clone()).collect()
+    };
+    let working = ids(&|r| r.working());
+    let held_ask = ids(&|r| r.held("ask"));
+    let held_poison = ids(&|r| r.held("poison"));
+    let stacked_on: std::collections::HashMap<String, Vec<String>> = lc_rows
+        .iter()
+        .filter(|r| !r.terminal() && !r.stack.is_empty())
+        .map(|r| (r.bead_id.clone(), r.stack.clone()))
+        .collect();
     let mut rows = Vec::new();
     let mut watching = Vec::new();
     for (labels, excl, fayths) in parts {
@@ -95,10 +113,29 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             store: &store,
             labels: need.iter().map(|s| s.to_string()).collect(),
             ready,
+            working: working.clone(),
+            held_ask: held_ask.clone(),
+            held_poison: held_poison.clone(),
+            stacked_on: stacked_on.clone(),
             vocab: &cfg.vocab,
             facts: &facts,
         };
         rows.extend(p.classify().into_iter().map(|row| PartRow { part: labels.clone(), row }));
+    }
+    if cfg.labels.is_none() {
+        let claimable: std::collections::HashSet<String> = lc_rows
+            .iter()
+            .filter(|r| r.claimable() && !r.held("ask") && !r.held("poison"))
+            .map(|r| r.bead_id.clone())
+            .collect();
+        match crate::unrostered::personas(cfg) {
+            Ok(ps) => rows.extend(
+                crate::unrostered::rows(&claimable, &store, &ps, &cfg.lanes, &cfg.shared_exclude())
+                    .into_iter()
+                    .map(|row| PartRow { part: crate::unrostered::PART.to_string(), row }),
+            ),
+            Err(e) => warn(&format!("WARN the persona chamber could not be read ({e}) — unrostered READY beads are not checked")),
+        }
     }
     Ok(Classified { rows, watching })
 }
@@ -626,33 +663,15 @@ mod tests {
 
     #[test]
     fn from_tsv_attributes_the_partition() {
-        use crate::config::{Config, Source};
-        struct S;
-        impl Source for S {
-            fn env(&self, k: &str) -> Option<String> {
-                (k == "SPIRA_LABELS").then(|| "-".into())
-            }
-            fn toml(&self, _: &str) -> Option<String> {
-                None
-            }
-        }
-        let c = from_tsv(&Config::resolve(&S), "ghost\tsp-a\tact\td\ta\n\nbad line\n");
+        use crate::config::Config;
+        let cfg = Config { labels: Some("-".into()), ..Config::test_fixture() };
+        let c = from_tsv(&cfg, "ghost\tsp-a\tact\td\ta\n\nbad line\n");
         assert_eq!(c.rows.len(), 1);
         assert_eq!(c.rows[0].part, "-");
         assert_eq!(c.rows[0].row.kind, "ghost");
     }
 
     // ---- the lifecycle switch (DESIGN.md §9) -------------------------------------------
-
-    struct Env(Vec<(&'static str, String)>);
-    impl crate::config::Source for Env {
-        fn env(&self, k: &str) -> Option<String> {
-            self.0.iter().find(|(key, _)| *key == k).map(|(_, v)| v.clone())
-        }
-        fn toml(&self, _: &str) -> Option<String> {
-            None
-        }
-    }
 
     fn scratch(tag: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("strand-lc-{tag}"))
@@ -666,11 +685,7 @@ mod tests {
     }
 
     fn cfg(bd: &str, claim: &str) -> Config {
-        Config::resolve(&Env(vec![
-            ("SPIRA_BD", bd.into()),
-            ("SPIRA_DB", "/fake/db".into()),
-        ]))
-        .with_claim(claim)
+        Config { bd: bd.into(), db: Some("/fake/db".into()), ..Config::test_fixture() }.with_claim(claim)
     }
 
     #[test]
@@ -682,7 +697,7 @@ mod tests {
         let mk = |lines: &str| {
             let p = d.join("systemctl");
             testkit::write_exe(&p, &format!("#!/bin/sh\n{lines}\n"));
-            Config::resolve(&Env(vec![("SPIRA_SYSTEMCTL", p.to_string_lossy().into_owned())]))
+            Config { systemctl: p.to_string_lossy().into_owned(), ..Config::test_fixture() }
         };
         let live = mk("echo 'spira-aeon-maechen-1.service loaded active running x'");
         assert_eq!(lane_live_now(&live, spec()), Some(1));

@@ -2,6 +2,7 @@
 //! spira-lc, the config (spira-config library only), the clock, the environment, stdio.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
@@ -82,6 +83,9 @@ impl Git for RealGit {
     fn is_ancestor(&self, repo: &Path, a: &str, b: &str) -> bool {
         ok(git(repo).args(["merge-base", "--is-ancestor", a, b]).stderr(Stdio::null()))
     }
+    fn merge_base(&self, repo: &Path, a: &str, b: &str) -> Option<String> {
+        stdout_of(git(repo).args(["merge-base", a, b]).stderr(Stdio::null())).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    }
     fn update_ref(&self, repo: &Path, refname: &str, new: &str, old: Option<&str>) -> bool {
         let mut c = git(repo);
         c.args(["update-ref", refname, new]);
@@ -148,14 +152,13 @@ impl Git for RealGit {
     fn worktree_remove(&self, repo: &Path, path: &Path) {
         let _ = ok(git(repo).args(["worktree", "remove", "-f"]).arg(path).stderr(Stdio::null()));
     }
-    fn merge_no_ff(&self, wt: &Path, message: &str, tip: &str) -> bool {
+    fn merge_no_ff(&self, wt: &Path, message: &str, tip: &str, git_name: &str, git_email: &str) -> bool {
         // The subject carries a bead title (free text): a file, never argv.
         let msg = std::env::temp_dir().join(format!("queue-merge-msg-{}-{}", std::process::id(), unique()));
         if fs::write(&msg, message).is_err() {
             return false;
         }
-        let name = std::env::var("SPIRA_GIT_NAME").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira".into());
-        let email = std::env::var("SPIRA_GIT_EMAIL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira@spira.invalid".into());
+        let (name, email) = (git_name, git_email);
         let r = ok(git(wt)
             .arg("-c")
             .arg(format!("user.name={name}"))
@@ -171,6 +174,30 @@ impl Git for RealGit {
     }
     fn merge_abort(&self, wt: &Path) {
         let _ = ok(git(wt).args(["merge", "--abort"]).stderr(Stdio::null()));
+    }
+    fn rebase_onto(&self, repo: &Path, scratch: &Path, tip: &str, upstream: &str, onto: &str, git_name: &str, git_email: &str) -> Result<String, Vec<String>> {
+        self.worktree_prune(repo);
+        self.worktree_remove(repo, scratch);
+        if !self.worktree_add_detached(repo, scratch, tip) {
+            return Err(Vec::new());
+        }
+        let done = ok(git(scratch)
+            .arg("-c")
+            .arg(format!("user.name={git_name}"))
+            .arg("-c")
+            .arg(format!("user.email={git_email}"))
+            .args(["rebase", "--onto", onto, upstream])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()));
+        let result = if done {
+            self.rev_parse(scratch, "HEAD").ok_or_else(Vec::new)
+        } else {
+            let paths = stdout_of(git(scratch).args(["diff", "--name-only", "--diff-filter=U"])).unwrap_or_default();
+            let _ = ok(git(scratch).args(["rebase", "--abort"]).stderr(Stdio::null()));
+            Err(paths.lines().map(str::to_string).collect())
+        };
+        self.worktree_remove(repo, scratch);
+        result
     }
     fn is_clean(&self, wt: &Path) -> bool {
         stdout_of(git(wt).args(["status", "--porcelain"])).map(|s| s.trim().is_empty()).unwrap_or(false)
@@ -253,6 +280,7 @@ impl RealLib {
         let home = self.home_str();
         let mut all = vec![home.as_str()];
         all.extend_from_slice(vals);
+        // batch-job: this runs whatever its caller names, as long as that takes
         let mut cmd = Command::new("bash");
         cmd.stdin(Stdio::piped()).stderr(Stdio::inherit());
         cmd.stdout(if capture { Stdio::piped() } else { Stdio::inherit() });
@@ -291,6 +319,7 @@ fn pb(s: &str) -> Option<PathBuf> {
 /// 2>/dev/null | tr '\n' ' '`, which `real.rs`'s callers already split back apart with
 /// `split_whitespace`.
 fn git_remotes(repo: &str) -> Vec<String> {
+    // batch-job: git history or network operation, as long as the repository is large
     Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -322,6 +351,14 @@ impl Lib for RealLib {
         if g("run").is_empty() {
             return Err("SPIRA_RUN is unset after sourcing lib.sh".into());
         }
+        // law-one-source-of-config: these five are not part of the lib.sh seam's kv
+        // answer above (seam R1 predates spira-config) — read straight from $SPIRA_TOML
+        // through the one door, never from the process environment.
+        let certify_suites = spira_config::process::cfg("SPIRA_CERTIFY_SUITES")?;
+        let git_name = spira_config::process::cfg("SPIRA_GIT_NAME")?;
+        let git_email = spira_config::process::cfg("SPIRA_GIT_EMAIL")?;
+        let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
+        let round_wall_secs = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
         let s = Settings {
             home: PathBuf::from(g("home")),
             run: PathBuf::from(g("run")),
@@ -347,7 +384,13 @@ impl Lib for RealLib {
                 lock_wait: n("lock_wait", 90),
                 lock_starve_max: n("starve_max", 5),
                 incident_priority: Some(g("incident_priority")).filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "1".into()),
+                red_tracker_label: g("red_tracker_label"),
             },
+            certify_suites,
+            git_name,
+            git_email,
+            mailbox,
+            round_wall_secs,
         };
         let path = reg.root(&name);
         let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());
@@ -394,22 +437,9 @@ impl Lib for RealLib {
     fn release_claim(&self, id: &str) {
         self.call(Op::ReleaseClaim, &[id], false);
     }
+    // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn bead_close(&self, id: &str, reason: &str) -> bool {
-        let timeout = std::env::var("BD_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "180".into());
-        let Ok(mut child) = Command::new("timeout")
-            .arg(timeout)
-            .args(["bdq", "close", id, "--reason-file", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        else {
-            return false;
-        };
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(reason.as_bytes());
-        }
-        child.wait().map(|s| s.success()).unwrap_or(false)
+        spira_config::lifecycle_row::close_landed(id, reason, "queue").is_ok()
     }
     fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String> {
         let Some(root) = self.repo_registry().root(repo) else { return Ok(false) };
@@ -440,23 +470,23 @@ impl Lib for RealLib {
     /// backs this any more. stdout/stderr inherit straight through, exactly as the
     /// dropped seam call's own `capture: false` did.
     fn gh_issue_closeout(&self, id: &str, sha: &str, repo: &Path) {
-        let _ = Command::new("gh-intake").args(["closeout", id, sha, &repo.display().to_string()]).status();
+        let _ = spira_config::bounded::bounded("gh-intake").args(["closeout", id, sha, &repo.display().to_string()]).status();
     }
     fn comment(&self, id: &str, text: &str) {
         self.call(Op::Comment, &[id, text], false);
     }
-    fn notify(&self, repo: &str, subject: &str, body: &str) {
+    fn notify(&self, mailbox: &str, repo: &str, subject: &str, body: &str) {
         // In-process (sp-hwjsq, "wave 4.32"): queue owns this family now, so its own seam
         // call onto queue_notify_concierge is gone — lib.sh's copy is retired outright.
-        crate::ops::helpers::notify(repo, subject, body);
+        crate::ops::helpers::notify(mailbox, repo, subject, body);
     }
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.call(Op::Event, &[kind, title, detail], false);
     }
-    fn divergence(&self, queue_dir: &Path, repo: &str, path: &Path, forge: &str, local: &str) -> Divergence {
+    fn divergence(&self, mailbox: &str, queue_dir: &Path, repo: &str, path: &Path, forge: &str, local: &str) -> Divergence {
         // In-process (sp-hwjsq, "wave 4.32"); lib.sh's queue_local_check_divergence is
         // retired outright — nothing else ever called it.
-        crate::ops::helpers::check_divergence(queue_dir, repo, path, forge, local)
+        crate::ops::helpers::check_divergence(mailbox, queue_dir, repo, path, forge, local)
     }
     fn push(&self, path: &Path, remote: &str, refspec: &str) -> bool {
         // In-process (sp-hwjsq, "wave 4.32"). Stderr discarded here, as the old seam body
@@ -484,7 +514,7 @@ impl Lib for RealLib {
             ans
         }
     }
-    fn sort_rows(&self, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)> {
+    fn sort_rows(&self, express: &HashSet<String>, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)> {
         // In-process (sp-hwjsq, "wave 4.32"): queue_sort_rows and its internal
         // queue_is_suite_transition, both ported here. queue_is_suite_transition has no
         // caller left at all once this goes in-process, so lib.sh's copy is retired
@@ -497,8 +527,7 @@ impl Lib for RealLib {
                 (id, tip, epoch, is_trans)
             })
             .collect();
-        let express_label = std::env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into());
-        let (ranked, warning) = crate::ops::helpers::sort_rows(&with_trans, prio_json, &express_label);
+        let (ranked, warning) = crate::ops::helpers::sort_rows(&with_trans, prio_json, express);
         if let Some(w) = warning {
             eprintln!("{w}");
         }
@@ -564,7 +593,7 @@ impl Scripts for RealScripts {
         let _ = ok(Command::new("testenv").args(["suites", "observe-flake", suite, sha]).stdout(Stdio::null()).stderr(Stdio::null()));
     }
     fn mail_operator(&self, subject: &str, body: &str) {
-        let Ok(mut child) = Command::new("mail")
+        let Ok(mut child) = spira_config::bounded::bounded("mail")
             .args(["send", "operator", "--from", "Spira Queue <queue@spira>", "--subject", subject])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -579,6 +608,7 @@ impl Scripts for RealScripts {
         let _ = child.wait();
     }
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32 {
+        // batch-job: this runs whatever its caller names, as long as that takes
         let mut c = Command::new(bin);
         c.arg("cut").arg(repo).arg("--home").arg(&self.home);
         if wait_zero {
@@ -590,6 +620,7 @@ impl Scripts for RealScripts {
         ok(Command::new("czar-fence.sh").arg(class))
     }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
+        // batch-job: this runs whatever its caller names, as long as that takes
         match Command::new(bin).args(args).env("SPIRA_DB", db).stdin(Stdio::null()).output() {
             Ok(o) => RunOut {
                 rc: o.status.code().unwrap_or(127),
@@ -599,15 +630,115 @@ impl Scripts for RealScripts {
             Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run release: {e}") },
         }
     }
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
+        // batch-job: the round's lint and suites, bounded by the caller's wall budget
+        let spawned = Command::new("timeout")
+            .args(["-k", "5", &wall_secs.to_string(), "round-vm", "run"])
+            .arg(tree)
+            .arg("--results-dir")
+            .arg(results)
+            .arg("--base")
+            .arg(base)
+            .args(["--round-batch", round.0, "--round-repo", round.1])
+            .args(on_red_hook(round.0, round.1))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        let child = match spawned {
+            Ok(c) => c,
+            Err(e) => return RunOut { rc: 127, out: String::new(), err: format!("cannot run round-vm: {e}") },
+        };
+        let _ = fs::write(handle, child.id().to_string());
+        match child.wait_with_output() {
+            Ok(o) => RunOut {
+                rc: o.status.code().unwrap_or(127),
+                out: String::from_utf8_lossy(&o.stdout).to_string(),
+                err: String::from_utf8_lossy(&o.stderr).to_string(),
+            },
+            Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run round-vm: {e}") },
+        }
+    }
+    fn pass_terminate(&self, pid: u32) {
+        // SAFETY: a plain SIGTERM to the pid the run wrote to its handle.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    }
+    fn pass_alive(&self, pid: u32) -> bool {
+        // SAFETY: signal 0 only checks existence.
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    }
+    fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
+        let width = ids.len().clamp(1, REBASE_WIDTH);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<std::sync::Mutex<Option<RunOut>>> = ids.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        std::thread::scope(|sc| {
+            for _ in 0..width {
+                sc.spawn(|| loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let Some(id) = ids.get(i) else { break };
+                    // batch-job: rebase-stale bounds itself by its own lock wait and gate
+                    let out = match Command::new("rebase-stale").arg(id).arg(repo).stdin(Stdio::null()).output() {
+                        Ok(o) => RunOut {
+                            rc: o.status.code().unwrap_or(127),
+                            out: String::from_utf8_lossy(&o.stdout).to_string(),
+                            err: String::from_utf8_lossy(&o.stderr).to_string(),
+                        },
+                        Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run rebase-stale: {e}") },
+                    };
+                    *slots[i].lock().unwrap_or_else(|p| p.into_inner()) = Some(out);
+                });
+            }
+        });
+        ids.iter().cloned().zip(slots.into_iter().map(|s| s.into_inner().unwrap_or_else(|p| p.into_inner()).unwrap_or_default())).collect()
+    }
+    fn rebase_waiting_start(&self, repo: &str) -> bool {
+        let Ok(exe) = std::env::current_exe() else { return false };
+        // batch-job: the rebase pass runs as long as its gates take, detached from the landing
+        Command::new(exe)
+            .args(["rebase-waiting", repo])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .is_ok()
+    }
+    fn pass_restart(&self, batch: &str, repo: &str) -> bool {
+        let Ok(exe) = std::env::current_exe() else { return false };
+        // batch-job: the next pass runs as long as its round-vm wall allows, detached from this verb
+        Command::new(exe)
+            .args(["round", "certify", batch, repo])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .is_ok()
+    }
+}
+
+/// round-vm's `--on-red` argument: this binary's `round failed`, the suite name appended by round-vm.
+/// round-vm splits it on whitespace, so a path that holds any gets no hook rather than a wrong one.
+fn on_red_hook(batch: &str, repo: &str) -> Vec<String> {
+    let Ok(exe) = std::env::current_exe() else { return vec![] };
+    let cmd = format!("{} round failed {batch} {repo} --suite", exe.display());
+    if cmd.split_whitespace().count() != 6 {
+        return vec![];
+    }
+    vec!["--on-red".into(), cmd]
 }
 
 // ---------------------------------------------------------------------------------- forge
+
+/// How many `rebase-stale` runs go at once; the engine's own per-repo lock serialises the
+/// rebase itself, so this bounds only the waiting.
+const REBASE_WIDTH: usize = 4;
 
 pub struct RealForge;
 
 impl Forge for RealForge {
     fn pr_create(&self, forge: &Path, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<String> {
-        let mut child = Command::new(forge)
+        let mut child = spira_config::bounded::bounded(forge)
             .arg("pr-create")
             .arg(repo)
             .arg(head)
@@ -648,6 +779,9 @@ impl Forge for RealForge {
     fn run_metadata(&self, forge: &Path, repo: &Path, run: &str) -> String {
         stdout_of(Command::new(forge).arg("run-metadata").arg(repo).arg(run)).unwrap_or_default()
     }
+    fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String {
+        stdout_of(Command::new(forge).arg("fail-lines").arg(repo).arg(run).arg(suites)).unwrap_or_default()
+    }
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str) {
         let _ = ok(Command::new(forge).arg("run-cancel").arg(repo).arg(run).stderr(Stdio::null()));
     }
@@ -665,12 +799,15 @@ pub struct RealLc {
 impl RealLc {
     fn run(&self, args: &[&str]) -> (i32, String) {
         let Some(bin) = &self.bin else { return (2, "no spira-lc program".into()) };
-        let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "30".into());
+        let timeout = match crate::conf::nonempty("SPIRA_LC_TIMEOUT") {
+            Ok(t) => t,
+            Err(e) => return (2, e),
+        };
         run_combined(Command::new("timeout").arg(timeout).arg(bin).args(args))
     }
     fn stdout(&self, args: &[&str]) -> Result<String, String> {
         let bin = self.bin.as_ref().ok_or("no spira-lc program")?;
-        let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "30".into());
+        let timeout = crate::conf::nonempty("SPIRA_LC_TIMEOUT")?;
         let mut last = String::new();
         for attempt in 0..2 {
             if attempt > 0 {
@@ -705,6 +842,11 @@ impl Lc for RealLc {
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;
         Some((json_str(&v, "state")?, json_str(&v, "version")?))
     }
+    fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)> {
+        let out = self.stdout(&["show-batch", batch_id]).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&out).ok()?;
+        Some((v.get("pass")?.as_u64()? as u32, json_str(&v, "phase").unwrap_or_default()))
+    }
     fn create_bead(&self, id: &str) {
         let _ = self.run(&["create-bead", id]);
     }
@@ -714,6 +856,21 @@ impl Lc for RealLc {
             return Err((rc, out.trim().to_string()));
         }
         Ok(self.batch_state(batch_id).map(|(_, version)| version).unwrap_or_default())
+    }
+    fn stage(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, parent: &str, actor: &str) -> Result<String, (i32, String)> {
+        let (rc, out) = self.run(&["stage", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", members, "--parent", parent, "--actor", actor]);
+        if rc != 0 {
+            return Err((rc, out.trim().to_string()));
+        }
+        Ok(self.batch_state(batch_id).map(|(_, version)| version).unwrap_or_default())
+    }
+    fn promote(&self, batch_id: &str, head: &str, base: &str, actor: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["promote", batch_id, "--head", head, "--base", base, "--actor", actor]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
     }
     fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["abandon-batch", batch_id, "--expect", state, "--version", version, "--actor", actor, "--reason", reason]);
@@ -772,6 +929,11 @@ impl Lc for RealLc {
         };
         serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))
     }
+    fn express_ids(&self) -> Result<Vec<String>, String> {
+        let out = self.stdout(&["list", "--express"])?;
+        let rows: Vec<LcBeadRow> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))?;
+        Ok(rows.into_iter().map(|r| r.bead_id).collect())
+    }
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow> {
         let out = self.stdout(&["show", bead]).ok()?;
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;
@@ -814,7 +976,7 @@ pub struct SysClock;
 
 impl Clock for SysClock {
     fn now(&self) -> u64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+        spira_config::vtime::now_epoch()
     }
     fn stamp(&self) -> String {
         utc_stamp(self.now())
@@ -894,6 +1056,14 @@ impl Emit for StdEmit {
 mod tests {
     use super::*;
 
+    /// This tree's real `spira/` dir (where `conf.d` actually lives) — `$SPIRA_HOME` for any
+    /// test that reaches `spira_config::resolve::locate_home`/`resolve_for_process` (directly,
+    /// via `process::cfg`, or via `resolve::run_dir_for_process`/`resolve::suite_state_file`
+    /// and friends): none of those tolerate a throwaway fixture dir with no `conf.d` in it
+    /// (per Ryan 2026-10-05: `locate_home` is `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`, else
+    /// refuse — no exe-relative search).
+    const REAL_SPIRA_HOME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira");
+
     #[test]
     fn utc_stamp_matches_date() {
         assert_eq!(utc_stamp(0), "19700101T000000Z");
@@ -919,6 +1089,8 @@ mod tests {
     /// not a stand-in for it.
     fn stub_home() -> testkit::TempDir {
         let d = crate::testutil::tmpdir("reallib");
+        // A home carries the key registry (conf.d): the repo registry resolves through it.
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), d.join("conf.d")).unwrap();
         fs::write(
             d.join("lib.sh"),
             r#"SPIRA_RUN=/run/x; SPIRA_RELEASES=; SPIRA_DB=/db
@@ -931,33 +1103,67 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         d
     }
 
-    /// Sets `SPIRA_REPO_MAP` (and `SPIRA_HOME_REPO` when given) for the duration of `f`,
-    /// restoring whatever was there before — the real-registry counterpart of `stub_home`'s
-    /// bash fakes, for the family-U/W fields only `spira_config::repos` resolves now.
+    /// Every fixture config file that feeds a `lib.context(...)` call declares these
+    /// five, with the SAME values, even when the test at hand only cares about a
+    /// different key. Reason: `spira_config::process::cfg` (what `RealLib::context()`
+    /// reads these five through) caches its resolution once per process in a `OnceLock`
+    /// — whichever fixture happens to be on disk (named by `$SPIRA_TOML`) the FIRST time
+    /// any test's `lib.context(...)` call touches `cfg()` wins, permanently, for every
+    /// other test in this binary. A fixture that declared different values, or omitted
+    /// them (falling back to `complete.toml`'s own defaults, which do NOT all match
+    /// these), would make the result depend on test execution order. Keeping every such
+    /// fixture's declaration identical makes the race immaterial. A fixture that never
+    /// backs a `lib.context(...)` call (`repos()`-only, or the `resolve::*` family
+    /// `cancel_runs`/`is_suite_transition` use, which is a different, uncached path) has
+    /// no reason to carry these.
+    const PROCESS_CFG_DECLARE: &[(&str, &str)] = &[
+        ("SPIRA_CERTIFY_SUITES", "on"),
+        ("SPIRA_GIT_NAME", "spira"),
+        ("SPIRA_GIT_EMAIL", "spira@spira.invalid"),
+        ("SPIRA_MAIL_SESSION_MAILBOX", "concierge"),
+    ];
+
+    /// Declares `SPIRA_REPO_MAP` (and `SPIRA_HOME_REPO` when given), plus
+    /// [`PROCESS_CFG_DECLARE`], through a fixture config file for the duration of `f` —
+    /// the real-registry counterpart of `stub_home`'s bash fakes, for the family-U/W
+    /// fields only `spira_config::repos` resolves now. `registry_env` strips any
+    /// inherited copy of these two REGISTERED keys and re-resolves them from `$SPIRA_TOML`
+    /// exclusively (per Ryan 2026-10-05: one source of config) — a bare `set_var` on them
+    /// no longer reaches `Registry::from_env` at all. That resolve path (unlike
+    /// `process::cfg`'s) re-reads `$SPIRA_TOML` fresh on every call, so the map/home-repo
+    /// pair is safe to vary per test; [`PROCESS_CFG_DECLARE`] still has to ride along in
+    /// case this fixture is the one that ends up seeding `process::cfg`'s cache.
     fn with_repo_map<R>(map: &Path, home_repo: Option<&str>, f: impl FnOnce() -> R) -> R {
-        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
-        let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
-        std::env::set_var("SPIRA_REPO_MAP", map);
-        match home_repo {
-            Some(h) => std::env::set_var("SPIRA_HOME_REPO", h),
-            None => std::env::remove_var("SPIRA_HOME_REPO"),
+        let dir = map.parent().expect("map path has a parent directory");
+        let mut declare: Vec<(&str, &str)> = PROCESS_CFG_DECLARE.to_vec();
+        declare.push(("SPIRA_REPO_MAP", map.to_str().expect("map path is UTF-8")));
+        if let Some(h) = home_repo {
+            declare.push(("SPIRA_HOME_REPO", h));
         }
-        let out = f();
-        match prev_map {
-            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-            None => std::env::remove_var("SPIRA_REPO_MAP"),
-        }
-        match prev_home_repo {
-            Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
-            None => std::env::remove_var("SPIRA_HOME_REPO"),
-        }
-        out
+        let toml = spira_config::process::fixture_toml(dir, &declare);
+        let _env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        f()
+    }
+
+    /// `context()` reads SPIRA_CERTIFY_SUITES/SPIRA_GIT_NAME/SPIRA_GIT_EMAIL/
+    /// SPIRA_MAIL_SESSION_MAILBOX through spira-config's one door
+    /// (law-one-source-of-config), not the stubbed lib.sh above — a `context()`-exercising
+    /// test needs a resolvable `$SPIRA_TOML` for these five, which in turn needs
+    /// `$SPIRA_HOME` to point at a REAL `conf.d` (`registry::load` refuses a directory with
+    /// no `conf.d` at all, sp-1cdgq) — the throwaway fixture dir `fixture_toml` writes into
+    /// has none, so `SPIRA_HOME` must be this tree's own `spira/` (where `conf.d` actually
+    /// lives), not `fixture_dir`. See [`PROCESS_CFG_DECLARE`] for why every caller here
+    /// declares the SAME values.
+    fn declare_test_spira_toml(fixture_dir: &Path) -> testkit::EnvGuard {
+        let toml = spira_config::process::fixture_toml(fixture_dir, PROCESS_CFG_DECLARE);
+        testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))])
     }
 
     #[test]
     fn context_seam_carries_the_verdict_thresholds_with_the_per_repo_override() {
         let _serial = crate::testutil::serial();
         let home = stub_home();
+        let _env = declare_test_spira_toml(&home);
         let lib_sh = fs::read_to_string(home.join("lib.sh")).unwrap();
         fs::write(
             home.join("lib.sh"),
@@ -968,7 +1174,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let (s, _) = lib.context(Some("spira")).unwrap();
         assert_eq!(
             s.verdict,
-            VerdictSettings { ci_maxsec: 77, ci_idle_sec: 12, infra_retries: 4, lock_wait: 9, lock_starve_max: 3, incident_priority: "3".into() }
+            VerdictSettings { ci_maxsec: 77, ci_idle_sec: 12, infra_retries: 4, lock_wait: 9, lock_starve_max: 3, incident_priority: "3".into(), red_tracker_label: String::new() }
         );
         // another repository gets the global value; a name that is not an identifier none
         let (s, _) = lib.context(Some("svc")).unwrap();
@@ -1049,6 +1255,11 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         assert_eq!(s.submitted_label, "spira-submitted"); // literal-ok: conf.sh's own default
         assert_eq!(s.transition_maxsec, 1800);
         assert_eq!(s.home_repo, "spira");
+        // law-one-source-of-config: these come straight from $SPIRA_TOML (declare_test_spira_toml), never the process environment.
+        assert_eq!(s.certify_suites, "on");
+        assert_eq!(s.git_name, "spira");
+        assert_eq!(s.git_email, "spira@spira.invalid");
+        assert_eq!(s.mailbox, "concierge");
         assert_eq!(r.path, Some(repo.clone()));
         assert_eq!(r.mode, LandMode::QueueLocal);
         assert_eq!(r.map_land, "queue.local");
@@ -1078,23 +1289,21 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     fn repos_seam_is_never_empty_even_with_no_map() {
         // spira_repos (sp-k6lku, "wave 4.13") in-process via Registry::all(), which always
         // puts the home repo first: there is no bash seam left to fail or answer nothing,
-        // so (unlike the retired seam call) this can no longer error.
+        // so (unlike the retired seam call) this can no longer error. SPIRA_REPO_MAP/
+        // SPIRA_HOME_REPO are REGISTERED keys now resolved only from $SPIRA_TOML
+        // (registry_env strips any inherited copy before resolving, per Ryan 2026-10-05) —
+        // "no map" means the declared SPIRA_REPO_MAP names a file that does not exist, not
+        // an unset env var, which no longer reaches the registry at all.
         let _serial = crate::testutil::serial();
         let home = stub_home();
         let lib = RealLib { home: home.to_path_buf() };
-        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
-        let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
-        std::env::remove_var("SPIRA_REPO_MAP");
-        std::env::set_var("SPIRA_HOME_REPO", "spira");
+        let toml = spira_config::process::fixture_toml(
+            &home,
+            &[("SPIRA_REPO_MAP", home.join("no-such-map").to_str().unwrap()), ("SPIRA_HOME_REPO", "spira")],
+        );
+        let env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
         let names = lib.repos();
-        match prev_map {
-            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-            None => std::env::remove_var("SPIRA_REPO_MAP"),
-        }
-        match prev_home_repo {
-            Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
-            None => std::env::remove_var("SPIRA_HOME_REPO"),
-        }
+        drop(env);
         assert_eq!(names.unwrap(), vec!["spira".to_string()]);
     }
 
@@ -1122,7 +1331,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         // the real `git diff` behind queue_is_suite_transition fails closed (not a
         // transition) for both rows, same as the bash stub it replaced always answered.
         assert_eq!(
-            lib.sort_rows(Path::new("/repo"), "b0", "[]", "sp-a ta 6\nsp-b tb 5\n"),
+            lib.sort_rows(&HashSet::new(), Path::new("/repo"), "b0", "[]", "sp-a ta 6\nsp-b tb 5\n"),
             vec![("sp-b".to_string(), "tb".to_string()), ("sp-a".to_string(), "ta".to_string())]
         );
     }
@@ -1155,7 +1364,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         // sp-t carries the LATER epoch (2 vs. 1): the transition tiebreak must still put it
         // first, ahead of certification age — sp-ihxa0's "tiebreak only within a priority"
         // rule, not a rank of its own that could outrank arrival order the other way.
-        let out = lib.sort_rows(&repo, &base, "[]", &format!("sp-t {trans_tip} 2\nsp-p {base} 1\n"));
+        let out = lib.sort_rows(&HashSet::new(), &repo, &base, "[]", &format!("sp-t {trans_tip} 2\nsp-p {base} 1\n"));
         // sp-t (the transition) ranks first within the same (default) priority, despite
         // its later epoch.
         assert_eq!(out, vec![("sp-t".to_string(), trans_tip), ("sp-p".to_string(), base)]);
@@ -1186,17 +1395,17 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
         p.push(&old_path);
-        std::env::set_var("PATH", &p);
+        let _env = testkit::env(&[("PATH", Some(p.to_str().unwrap()))]);
 
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
 
         // Local ahead of forge (healthy): true, no alarm, no statefile.
-        assert_eq!(lib.divergence(&queue_dir, "fixq", &repo, &local, &foreign), Divergence::Ancestor);
+        assert_eq!(lib.divergence("concierge", &queue_dir, "fixq", &repo, &local, &foreign), Divergence::Ancestor);
         assert!(!queue_dir.join("fixq/divergence-alarmed").exists());
 
         // Foreign commit on top of local: false, alarmed once.
-        assert!(matches!(lib.divergence(&queue_dir, "fixq", &repo, &foreign, &local), Divergence::Diverged(_)));
+        assert!(matches!(lib.divergence("concierge", &queue_dir, "fixq", &repo, &foreign, &local), Divergence::Diverged(_)));
         let alarmed_after_first = fs::read_to_string(queue_dir.join("fixq/divergence-alarmed")).unwrap();
         assert_eq!(alarmed_after_first.trim(), foreign);
         let mail_after_first = fs::read_to_string(&mail_log).unwrap();
@@ -1205,14 +1414,13 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
 
         // Same foreign tip again: still false, but silent (no second mail).
         fs::write(&mail_log, "").unwrap();
-        assert!(matches!(lib.divergence(&queue_dir, "fixq", &repo, &foreign, &local), Divergence::Diverged(_)));
+        assert!(matches!(lib.divergence("concierge", &queue_dir, "fixq", &repo, &foreign, &local), Divergence::Diverged(_)));
         assert_eq!(fs::read_to_string(&mail_log).unwrap(), "", "a repeated call against the SAME foreign tip must not re-alarm");
 
         // Healthy again: the marker clears.
-        assert_eq!(lib.divergence(&queue_dir, "fixq", &repo, &local, &foreign), Divergence::Ancestor);
+        assert_eq!(lib.divergence("concierge", &queue_dir, "fixq", &repo, &local, &foreign), Divergence::Ancestor);
         assert!(!queue_dir.join("fixq/divergence-alarmed").exists());
 
-        std::env::set_var("PATH", &old_path);
     }
 
     #[test]
@@ -1220,53 +1428,42 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let _serial = crate::testutil::serial();
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
-        let r = lib.divergence(Path::new(""), "fixq", Path::new("/repo"), "a", "b");
+        let r = lib.divergence("concierge", Path::new(""), "fixq", Path::new("/repo"), "a", "b");
         assert!(matches!(r, Divergence::CannotCheck(_)), "{r:?}");
         let qd = crate::testutil::tmpdir("div-cc");
-        let r = lib.divergence(&qd, "fixq", Path::new("/nonexistent-repo"), "a", "b");
+        let r = lib.divergence("concierge", &qd, "fixq", Path::new("/nonexistent-repo"), "a", "b");
         assert!(matches!(r, Divergence::CannotCheck(_)), "{r:?}");
     }
 
     #[test]
     fn push_adds_app_credentials_only_when_configured() {
-        let _serial = crate::testutil::serial();
-        let bindir = crate::testutil::tmpdir("push-bin");
-        let args_file = bindir.join("git-args");
-        testkit::write_exe(bindir.join("git"), &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n", args_file.display()));
-        let old_path = std::env::var_os("PATH").unwrap_or_default();
-        let mut p = std::ffi::OsString::from(bindir.path());
-        p.push(":");
-        p.push(&old_path);
-        std::env::set_var("PATH", &p);
-
-        let home = minimal_home(":");
-        let lib = RealLib { home: home.to_path_buf() };
-
-        std::env::remove_var("SPIRA_GH_APP_ID");
-        std::env::remove_var("SPIRA_GH_APP_INSTALLATION_ID");
-        assert!(lib.push(Path::new("/repo"), "origin", "main"));
-        let plain = fs::read_to_string(&args_file).unwrap();
+        let args = ["-q".to_string(), "origin".to_string(), "main".to_string()];
+        let argv = |app| {
+            crate::ops::helpers::push_command(Path::new("/repo"), &args, app)
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let plain = argv(false);
         assert!(!plain.contains("credential.helper"), "{plain}");
         assert!(plain.contains("push"), "{plain}");
-
-        fs::remove_file(&args_file).ok();
-        std::env::set_var("SPIRA_GH_APP_ID", "1");
-        std::env::set_var("SPIRA_GH_APP_INSTALLATION_ID", "2");
-        assert!(lib.push(Path::new("/repo"), "origin", "main"));
-        let with_creds = fs::read_to_string(&args_file).unwrap();
+        let with_creds = argv(true);
         assert!(with_creds.contains("credential.helper"), "{with_creds}");
         assert!(with_creds.contains("insteadOf=git@github.com:"), "{with_creds}");
-
-        std::env::remove_var("SPIRA_GH_APP_ID");
-        std::env::remove_var("SPIRA_GH_APP_INSTALLATION_ID");
-        std::env::set_var("PATH", &old_path);
+        assert!(with_creds.contains("push"), "{with_creds}");
     }
 
     #[test]
     fn cancel_runs_logs_each_attempt_and_warns_loudly_on_a_failed_cancel() {
         let _serial = crate::testutil::serial();
         let run = crate::testutil::tmpdir("cancel-run");
-        std::env::set_var("SPIRA_RUN", run.path());
+        // cancel_branch_runs resolves its run directory through
+        // spira_config::resolve::run_dir_for_process(), which (per Ryan 2026-10-05: one
+        // source of config) reads `spira.run` from the resolved $SPIRA_TOML — setting
+        // SPIRA_RUN itself is no longer an override, so the fixture toml must declare it.
+        let toml = spira_config::process::fixture_toml(run.path(), &[("SPIRA_RUN", run.path().to_str().unwrap())]);
+        let _env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
         let bindir = crate::testutil::tmpdir("cancel-bin");
         let forge = bindir.join("forge-fake.sh");
         testkit::write_exe(
@@ -1284,11 +1481,10 @@ esac
         let log = fs::read_to_string(run.join("landing.log")).unwrap();
         assert!(log.contains("RUN_CANCEL ") && log.contains("run=101"), "{log}");
         assert!(log.contains("RUN_CANCEL_FAILED") && log.contains("run=202"), "{log}");
-        std::env::remove_var("SPIRA_RUN");
     }
 
     #[test]
-    fn notify_mails_the_concierge_mailbox_by_default() {
+    fn notify_mails_the_given_mailbox() {
         let _serial = crate::testutil::serial();
         let run = crate::testutil::tmpdir("notify-run");
         let mail_log = run.join("mail-args");
@@ -1298,17 +1494,15 @@ esac
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
         p.push(&old_path);
-        std::env::set_var("PATH", &p);
-        std::env::remove_var("SPIRA_MAIL_SESSION_MAILBOX");
+        let _env = testkit::env(&[("PATH", Some(p.to_str().unwrap()))]);
 
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
-        lib.notify("fixq", "test subject", "test body");
+        lib.notify("concierge", "fixq", "test subject", "test body");
         let seen = fs::read_to_string(&mail_log).unwrap();
         assert!(seen.contains("send concierge"), "{seen}");
         assert!(seen.contains("Merge queue: fixq test subject"), "{seen}");
 
-        std::env::set_var("PATH", &old_path);
     }
 
     // ---------------------------------------------------------------------------- sp-uwhx0
@@ -1337,7 +1531,7 @@ esac
         let _serial = crate::testutil::serial();
         let run = crate::testutil::tmpdir("bc-run");
         fs::create_dir_all(run.join("worktree")).unwrap();
-        std::env::set_var("SPIRA_RUN", run.path());
+        let _env = testkit::env(&[("SPIRA_RUN", Some(run.path().to_str().unwrap()))]);
         let repo = crate::testutil::tmpdir("bc-repo");
         git(&repo, &["init", "-q"]);
         git(&repo, &["config", "user.email", "a@b.c"]);
@@ -1374,7 +1568,6 @@ esac
 
         // The scratch worktree it used is cleaned up either way.
         assert!(!run.join("worktree").read_dir().unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with(".batch-ck-")));
-        std::env::remove_var("SPIRA_RUN");
     }
 
     #[test]
@@ -1427,7 +1620,7 @@ esac
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
         p.push(&old_path);
-        std::env::set_var("PATH", &p);
+        let _env = testkit::env(&[("PATH", Some(p.to_str().unwrap()))]);
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
         let (rc, out) = lib.pf_gate("spira/queue/1", "spira", "1700000000", 10);
@@ -1455,6 +1648,17 @@ esac
             Command::new("kill").arg("-0").arg(gc).status().map(|s| !s.success()).unwrap_or(true),
             "the whole process group must be killed, grandchild included — pid {gc} still alive"
         );
-        std::env::set_var("PATH", &old_path);
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::Clock;
+
+    #[test]
+    fn sys_clock_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || SysClock.now());
+        assert_eq!(got, 1_900_000_000);
     }
 }

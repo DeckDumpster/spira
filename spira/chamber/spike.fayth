@@ -25,7 +25,7 @@ FAYTH_DESC="Spike — researches one question to a costed feasibility document"
 # because it is read in four places, and a literal in four files is how four programs come to
 # disagree about which beads exist.
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_SPIKE_LABEL"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
 # Statutes only, as the builder reads. A spike executes no runbook.
 FAYTH_MEMORY_PREFIXES="law-"

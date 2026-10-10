@@ -3,7 +3,7 @@
 //! `python3 -c` (DESIGN.md "Design"). The BFS itself ([`reachable_bfs`]) is pure and unit
 //! tested directly; only the data gathering (bd, the ctrl file, the chamber) is impure.
 
-use super::{push, Kv};
+use super::{push, Cfg, Kv};
 use crate::io;
 use serde_json::Value;
 use spira_config::lc_state;
@@ -26,9 +26,10 @@ pub struct Bead {
     pub blocked_by: HashSet<String>,
 }
 
-fn is_stopper(b: &Bead, ask: &str, suspended: &[LabelSet], live: &[LabelSet]) -> bool {
+fn is_stopper(b: &Bead, suspended: &[LabelSet], live: &[LabelSet]) -> bool {
     let labels = &b.labels;
-    if labels.contains(ask) || labels.contains("spira-poison") || b.holds.iter().any(|h| h == "poison" || h == "ask") {
+    // A stopper is the row's hold, never a label standing in for one (sp-psztcc).
+    if b.holds.iter().any(|h| h == "poison" || h == "ask") {
         return true;
     }
     if suspended.iter().any(|s| s.iter().all(|l| labels.contains(l))) {
@@ -73,7 +74,7 @@ pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelS
         if !all_ids.contains(&b.id) {
             continue;
         }
-        if is_stopper(b, ask, suspended, live) {
+        if is_stopper(b, suspended, live) {
             continue;
         }
         let blockers_empty = blocker_of.get(&b.id).map(|s| s.is_empty()).unwrap_or(true);
@@ -90,7 +91,7 @@ pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelS
                 continue;
             }
             let dn_bead = by_id[&dn];
-            if is_stopper(dn_bead, ask, suspended, live) {
+            if is_stopper(dn_bead, suspended, live) {
                 continue;
             }
             let all_blockers_reachable = blocker_of.get(&dn).map(|s| s.iter().all(|b| reachable.contains(b))).unwrap_or(true);
@@ -103,18 +104,18 @@ pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelS
     (reachable.len(), all_ids.len())
 }
 
-pub fn reachable_keys() -> Kv {
+pub fn reachable_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    let scope = cfg.scope_label.as_str();
     // The universe is every work bead the machine has as claimable or WORKING (what bd's
     // `open,in_progress` meant); bd supplies only its labels and edges.
     let mut args = vec!["list", "--all", "--limit", "0"];
     if !scope.is_empty() {
         args.push("--label");
-        args.push(&scope);
+        args.push(scope);
     }
-    let raw = io::bdjson(&args);
-    let Some((rows, lc)) = io::bd_rows(raw).zip(super::lc::state_index()) else {
+    let raw = io::contentjson(&args);
+    let Some((rows, lc)) = io::json_rows(raw).zip(super::lc::state_index()) else {
         push(&mut out, "SP_REACHABLE", "?");
         push(&mut out, "SP_STRANDED", "?");
         return out;
@@ -136,9 +137,9 @@ pub fn reachable_keys() -> Kv {
     }
 
     let mut suspended: Vec<LabelSet> = Vec::new();
-    let ctrl_path = std::env::var("SPIRA_CTRL").unwrap_or_default();
+    let ctrl_path = cfg.ctrl.as_str();
     if !ctrl_path.is_empty() {
-        if let Ok(content) = std::fs::read_to_string(&ctrl_path) {
+        if let Ok(content) = std::fs::read_to_string(ctrl_path) {
             if let Ok(Value::Object(ctrl)) = serde_json::from_str::<Value>(&content) {
                 for (subj, ops) in &ctrl {
                     let has_suspend = ops.as_array().map(|a| a.iter().any(|v| v.as_str() == Some("suspend"))).unwrap_or(false)
@@ -244,9 +245,13 @@ mod tests {
 
     #[test]
     fn poisoned_bead_counts_as_stuck_work_not_reachable() {
-        let beads = vec![bead("sp-1", "open", &["plan", "spira-poison"], &[])];
-        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
+        let mut b = bead("sp-1", "open", &["plan"], &[]);
+        b.holds = vec!["poison".into()];
+        let (reach, total) = reachable_bfs(&[b], "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (0, 1));
+        // A stale poison LABEL with no hold is not a stopper (sp-psztcc).
+        let beads = vec![bead("sp-2", "open", &["plan", "spira-poison"], &[])];
+        assert_eq!(reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]), (1, 1)); // literal-ok: fixture/fallback
     }
 
     #[test]

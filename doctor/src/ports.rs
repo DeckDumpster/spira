@@ -70,6 +70,9 @@ pub trait World {
     fn dolt_metrics_disabled(&self) -> bool;
     /// Files in `~/.dolt/eventsData` — every dolt CLI start scans them.
     fn dolt_events_count(&self) -> usize;
+    /// Whether `root` logs in to the server at `host:port` with an empty password; `None` when
+    /// the probe could not run (no dolt client, server unreachable).
+    fn dolt_root_passwordless(&self, host: &str, port: u16) -> Option<bool>;
 
     // ---- events probe ----
     /// The first bead id `bd -C <db> list --limit 1 --json` returns, or None.
@@ -140,6 +143,9 @@ pub trait World {
     /// The `--base-path` of every `git daemon` process serving `port`, read from the process
     /// table. Empty when none is.
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String>;
+
+    /// `git -C <repo> config --get core.hooksPath`, verbatim; `None` when unset or git cannot run.
+    fn git_hooks_path(&self, repo: &Path) -> Option<String>;
 
     fn out(&self, s: &str);
 }

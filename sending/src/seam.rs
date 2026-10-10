@@ -53,12 +53,14 @@ act() { log "$*"; }
 /// Settings only — the repository list (family U: `spira_repos`/`repo_root`/
 /// `repo_land_queued`) moved in-process (sp-k6lku, "wave 4.13"): `Real::new` builds it from
 /// `repo_registry()` after this seam call instead of this script's own loop, which paid one
-/// extra lib.sh-shim subprocess fork per mapped repository.
+/// extra lib.sh-shim subprocess fork per mapped repository. `SPIRA_RUN` (unused — nothing
+/// reads the `run` setting; `real::run_dir` resolves it directly) and `SPIRA_SUBMITTED_LABEL`/
+/// `SPIRA_GH` (registered config keys, now read in `Real::new` via
+/// `spira_config::process::cfg` — one source of config, per Ryan 2026-10-05, not this
+/// script's own `${VAR:-default}`) are deliberately no longer emitted here. `SPIRA_REAPLOG`
+/// and `GH_TIMEOUT` are not registered keys, so they stay on this seam.
 const CONTEXT: &str = r#"printf '\036'
-printf 'run=%s\0' "${SPIRA_RUN:-}"
 printf 'reaplog=%s\0' "${SPIRA_REAPLOG:-}"
-printf 'submitted=%s\0' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"
-printf 'gh=%s\0' "${SPIRA_GH:-gh}"
 printf 'gh_timeout=%s\0' "${GH_TIMEOUT:-120}"
 exit 0
 "#;

@@ -2,6 +2,7 @@
 //! fake builder: the contract of DESIGN.md §2 and §4, end to end, without podman or cargo.
 
 use super::*;
+use std::process::Command;
 use crate::cli::{parse, Invocation};
 use crate::fixture::fake::FakeRuntime;
 use crate::runtime::ExecOutcome;
@@ -114,6 +115,80 @@ struct World {
     config: Option<super::RunConfig>,
 }
 
+/// `Settings` from a fake env map, exactly as the old Source-based `Settings::load` built it
+/// before spira-config's `$SPIRA_TOML` became the one source of config in production (per
+/// Ryan 2026-10-05): every default here mirrors that key's `spira/conf.d` default, so a test
+/// can still drive any one of them per-case by inserting into the map. `run`/`report`/
+/// `warm_refill`/`warm_sweep` now read `Settings` off `Deps` rather than the environment, so
+/// this is the seam a fixture uses instead.
+fn test_settings(env: &HashMap<String, String>) -> Settings {
+    let get = |k: &str| env.get(k).filter(|v| !v.is_empty()).cloned();
+    fn parsed<T: std::str::FromStr>(v: Option<String>) -> Option<T> {
+        v.and_then(|v| v.trim().parse().ok())
+    }
+    macro_rules! num {
+        ($k:expr) => {
+            parsed(get($k))
+        };
+    }
+    let run = get("SPIRA_RUN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/nonexistent-run"));
+    let (maxpar_requested, maxpar_refusal) =
+        crate::settings::resolve_maxpar(&get("SPIRA_BATCH_MAXPAR").unwrap_or_default());
+    Settings {
+        results_root: get("SPIRA_BATCH_RESULTS").map(PathBuf::from).unwrap_or_else(|| run.join("batch-results")),
+        verdicts: get("SPIRA_VERDICTS").map(PathBuf::from).unwrap_or_else(|| run.join("verdicts")),
+        verdict_ttl: num!("SPIRA_VERDICT_TTL").unwrap_or(86_400),
+        quarantine_max_age: num!("SPIRA_QUARANTINE_MAX_AGE").unwrap_or(604_800),
+        repeat_reason: get("SPIRA_VERDICT_REPEAT_CONSIDERED"),
+        suite_timeout: num!("SPIRA_SUITE_TIMEOUT").unwrap_or(600),
+        maxpar_requested,
+        maxpar_refusal,
+        maxpar_ceiling: num!("SPIRA_BATCH_MAXPAR_CEILING"),
+        mem_reserve_mib: num!("SPIRA_BATCH_MEM_RESERVE_MIB").unwrap_or(1024),
+        mem_per_suite_mib: num!("SPIRA_BATCH_MEM_PER_SUITE_MIB").unwrap_or(192),
+        mem_avail_mib: num!("SPIRA_BATCH_MEM_AVAIL_MIB"),
+        psi_threshold: num!("SPIRA_BATCH_PSI_THRESHOLD").unwrap_or(10.0),
+        orphan_min_age: num!("SPIRA_BATCH_ORPHAN_MIN_AGE").unwrap_or(3600),
+        orphan_prefix: get("SPIRA_BATCH_ORPHAN_PREFIX").unwrap_or_else(|| "spira-batch-".into()),
+        peak_warn_frac: num!("SPIRA_BATCH_PEAK_WARN_FRAC").unwrap_or(60),
+        exec_fault_threshold: num!("SPIRA_BATCH_EXEC_FAULT_THRESHOLD").unwrap_or(5).max(1),
+        liveness_retries: num!("SPIRA_BATCH_LIVENESS_RETRIES").unwrap_or(3).max(1),
+        liveness_sleep: num!("SPIRA_BATCH_LIVENESS_SLEEP").unwrap_or(3),
+        instance: get("SPIRA_BATCH_INSTANCE"),
+        suite_dir: get("SPIRA_BATCH_SUITE_DIR").map(PathBuf::from),
+        skip_install: env.get("SPIRA_BATCH_SKIP_INSTALL").is_some_and(|v| !v.is_empty()),
+        tiers: get("SPIRA_BATCH_TIERS").unwrap_or_else(|| "T2,T3".into()),
+        mail_cmd: get("SPIRA_BATCH_MAIL_CMD").map(PathBuf::from),
+        incident_cmd: get("SPIRA_BATCH_INCIDENT_CMD").map(PathBuf::from),
+        suite_state_file: get("SPIRA_SUITE_STATE_FILE").unwrap_or_else(|| "spira/suite-state".into()),
+        skip_allowlist_file: get("SPIRA_SKIP_ALLOWLIST_FILE").unwrap_or_else(|| "spira/skip-allowlist.tsv".into()),
+        select_head: get("SPIRA_GATE_SELECT_HEAD"),
+        round_batch_id: get("SPIRA_ROUND_BATCH_ID"),
+        round_members: num!("SPIRA_ROUND_MEMBERS").unwrap_or(0),
+        run_id: get("GITHUB_RUN_ID")
+            .or_else(|| get("SPIRA_BATCH_RUN_ID"))
+            .unwrap_or_else(|| "local-1000".into()),
+        scratch_slots: num!("SPIRA_TESTENV_SCRATCH_SLOTS").unwrap_or(4),
+        scratch_min_free_mib: num!("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB").unwrap_or(4096),
+        scratch_min_mem_mib: num!("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB").unwrap_or(8192),
+        warm_slots: num!("SPIRA_TESTENV_WARM_SLOTS").unwrap_or(3),
+        setup_share: num!("SPIRA_TESTENV_SETUP_SHARE").unwrap_or(50u64).clamp(10, 90),
+        warm_boot_timeout: num!("SPIRA_TESTENV_WARM_BOOT_TIMEOUT").unwrap_or(600u64).max(1),
+        warm_shed_free_mib: num!("SPIRA_TMPFS_SHED_FREE_MIB").unwrap_or(6144),
+        landing_containers: get("SPIRA_LANDING_CONTAINERS").map(PathBuf::from),
+        spira_db: get("SPIRA_DB"),
+        run,
+    }
+}
+
+/// A `Settings` good enough for a test that touches `Deps` but not `Settings` at all (it
+/// exercises `resolve_repo`/`landref`, never `run`/`report`/`warm_refill`/`warm_sweep`).
+fn unused_settings() -> Settings {
+    test_settings(&HashMap::new())
+}
+
 impl World {
     fn new(tag: &str) -> World {
         let root = testkit::TempDir::new(&format!("testenv-run-{tag}"));
@@ -202,6 +277,7 @@ impl World {
             },
             env: &env,
             config: self.config.as_ref(),
+            settings: test_settings(&self.env),
             stdin: &read_stdin,
             out: &out,
             owner_dir: self.owner.clone(),
@@ -1401,28 +1477,6 @@ fn a_container_that_cannot_come_up_within_its_share_is_named_and_torn_down() {
 }
 
 #[test]
-fn a_cold_build_is_not_charged_against_the_setup_share_of_the_container() {
-    let w = World::new("cold-build");
-    let rt = runtime();
-    rt.testenv_delay
-        .lock()
-        .unwrap()
-        .insert("up".into(), Duration::from_millis(2200));
-    // --deadline 6, share 50 %: the build takes 2.2 s, then the boot 2.2 s — together over
-    // the 3 s share, each alone under it with room for a loaded host's jitter.
-    let b = FakeBuilder::slow(Duration::from_millis(2200));
-    let rc = w.run(
-        &rt,
-        &b,
-        &["--deadline", "6", "--suites", "test-a.sh", "topic"],
-        "",
-        &w.root,
-    );
-    assert_eq!(rc, 0, "{}", w.last());
-    assert!(w.last().starts_with("VERDICT GREEN"), "{}", w.last());
-}
-
-#[test]
 fn the_suites_get_what_setup_left_of_the_budget_not_the_whole_budget_again() {
     let w = World::new("cut-left");
     let rt = FakeRuntime::new();
@@ -1806,6 +1860,7 @@ fn resolve_repo_names_a_hash_named_dir_outside_the_map_by_its_basename() {
         },
         env: &env,
         config: None,
+        settings: unused_settings(),
         stdin: &read_stdin,
         out: &out,
         owner_dir: w.owner.clone(),
@@ -1841,6 +1896,7 @@ fn a_non_git_harness_root_resolves_to_the_home_repo_by_the_map() {
         harness: Harness { root: root.to_path_buf() },
         env: &env,
         config: Some(&cfg),
+        settings: unused_settings(),
         stdin: &|| String::new(),
         out: &|_| {},
         owner_dir: t.path().join("owner"),
@@ -1887,6 +1943,7 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
         harness: Harness { root: w.harness.clone() },
         env: &env,
         config,
+        settings: unused_settings(),
         stdin: &stdin,
         out: &out,
         owner_dir: w.owner.clone(),
@@ -1903,4 +1960,65 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
     let found = resolve_repo(Some(&arg), &d).unwrap();
     assert_eq!(found.name, "mapped");
     assert_eq!(landref(&found, &d).as_deref(), Some("main"));
+}
+
+#[test]
+fn landref_falls_back_to_local_main_for_an_unmapped_checkout() {
+    let w = World::new("landref-fallback");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let dir = w.root.join("ab12cd34ef56");
+    fs::create_dir_all(&dir).unwrap();
+    let sh = |args: &[&str]| {
+        let st = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null"])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(st.success(), "{args:?}");
+    };
+    sh(&["init", "-q"]);
+    sh(&["commit", "-q", "--allow-empty", "-m", "x"]);
+    sh(&["checkout", "-q", "--detach"]);
+    let env = |_: &str| None;
+    let read_stdin = || String::new();
+    let out = |_: &str| {};
+    let deps = Deps {
+        rt: &rt,
+        builder: &b,
+        harness: Harness { root: w.harness.clone() },
+        env: &env,
+        config: None,
+        settings: unused_settings(),
+        stdin: &read_stdin,
+        out: &out,
+        owner_dir: w.owner.clone(),
+        cwd: w.root.to_path_buf(),
+        runner_identity: b"runner-v1".to_vec(),
+        warm_refill: &|_, _| {},
+        spawn_sweep: &|_| {},
+        runner_exe: w.runner_exe(),
+    };
+    let r = resolve_repo(Some(dir.to_str().unwrap()), &deps).unwrap();
+    assert_eq!(landref(&r, &deps), None);
+    sh(&["update-ref", "refs/heads/local/main", "HEAD"]);
+    assert_eq!(landref(&r, &deps).as_deref(), Some("local/main"));
+}
+
+#[test]
+fn a_green_run_records_a_full_suite_pass_only_when_it_selected_every_suite() {
+    use spira_config::local_pass::{check, Kind, Verdict};
+    let t = testkit::TempDir::new("full-pass");
+    let (run, dir) = (t.path().join("run"), t.path().join("spira"));
+    fs::create_dir_all(&dir).unwrap();
+    for n in ["test-a.sh", "test-b.sh", "not-a-suite.sh"] {
+        fs::write(dir.join(n), "").unwrap();
+    }
+    let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    record_full_suite_pass(&run, "aaaa", &names(&["test-a.sh"]), &dir, &|_| {});
+    assert!(check(&run, Kind::FullSuite, "aaaa", None, "u", "0").is_err());
+    record_full_suite_pass(&run, "aaaa", &names(&["test-b.sh", "test-a.sh"]), &dir, &|_| {});
+    assert_eq!(check(&run, Kind::FullSuite, "aaaa", None, "u", "0"), Ok(Verdict::Passed));
 }

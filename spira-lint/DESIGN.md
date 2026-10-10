@@ -8,7 +8,7 @@ so and says what the rule does instead.
 ## The program
 
 ```
-spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--emit-allow]
+spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-allow]
 ```
 
 - `--root` defaults to the git work tree containing the current directory. At the gate that
@@ -18,6 +18,11 @@ spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--emit-allow]
   (`plan-matrix`, `lockfile-lint`, the tier-budget ledgers). It defaults to
   `SPIRA_GATE_BASE`, which the gate always sets. With neither, those rules **refuse** (exit
   3): comparing against nothing reads exactly like a clean comparison.
+- `--diff <rev>` is `--base <rev>` plus a filter: a finding is reported only on a line the
+  working tree adds or changes against `git merge-base <rev> HEAD`, and a whole-file finding
+  only for a file the diff touches (untracked files count whole). The base-comparing rules
+  above are left unfiltered. The fast tier uses it, so a finding already on the base never
+  reds a bead; the round's full-tree lint is where such a finding is judged.
 - **One walk.** `git ls-files -z` (tracked) and `git ls-files -z --others --exclude-standard`
   (untracked, not ignored), once. Each rule filters that walk; no rule lists files itself.
   A file's bytes are read at most once and shared between rules.
@@ -136,6 +141,23 @@ pub struct ConfigAllow(BTreeSet<String>);   // entry == Finding.path
   no shell. A persona that tells an agent to write the config names it, and `name` catches
   that.
 
+## Rule `config-env-read`
+
+**Intent.** A binary that reads a registered key from the environment while its peers
+resolve it through config diverges silently (law-a-binary-resolves-the-config-it-reads).
+
+**Scope.** Every `*.rs` outside `target/`; test code exempt (same classifier as
+`config-literal-fallback`). The registered keys are the file names under `spira/conf.d/`.
+
+**Violation.** `env::var`/`env::var_os`/`nonempty_env` called with a string literal naming a
+registered key.
+
+**Exception table.** `spira-lint/config-env-read-exceptions`: `<path> <reason>` per line,
+shrink-only; a line without a reason or whose file no longer offends is refused.
+
+**Known limits.** Lexical: a key reached through a constant, a `get` closure or a computed name is
+not seen.
+
 ## Rule `config-literal-fallback`
 
 New (sp-ivfu3); no bash fence precedes it.
@@ -178,6 +200,11 @@ anywhere a test module's own `mod name;` loads transitively.
   shells out to on `$PATH` at exec time — not a config value `spira_config` owns, and not
   this defect; a `/` in that default would still mean it is secretly a path, so it still
   counts.
+
+  A key with an entry under `spira/conf.d/` (a registered config key, other than a program
+  name: `SPIRA_BD`, `SPIRA_GH`, `SPIRA_FORGE`, `SPIRA_CTRL`, `SPIRA_SYSTEMCTL`) is refused ANY
+  literal default and `.unwrap_or_default()` too: the registry owns the default, so an
+  env read that supplies its own bypasses the config store.
 
 **Allow list.** `spira-lint/config-literal-fallback-allow`, exact paths, shrink-only. Not
 empty at birth: the rule's own first run over the whole tree found 24 pre-existing sites
@@ -402,6 +429,15 @@ constructor per kind of call, so a deploy without `--allow-draft` or a tool with
 release's launcher environment cannot be written) or a unit test of the `acceptance`
 module (the override key against `SPIRA_CONF_KEYS`, the whole run against a fake host).
 `acceptance-agent.sh` stays bash; `test-acceptance-agent.sh` drives it for real.
+
+## Rule `workflow-config`
+
+A step in `.github/workflows/*.yml` that runs a release binary (`target/release/<bin>`,
+`$RUNNER_TEMP/build/<bin>`, or a workspace binary by name once a step has put the staged
+release on PATH) must have `SPIRA_TOML` in its own `env:`, its job's, the workflow's, or
+written to `GITHUB_ENV` by an earlier step of the same job. `spira/ci-config.sh` writes the file a step names in its own env; it exports nothing job-wide. A
+hosted runner has no box config. Comment lines are not invocations; a `PATH` addition is not
+one either. No allow list.
 
 ## Rule `gate-workflow`
 
@@ -639,6 +675,133 @@ followed by `<`, end of line, or a non-`-` character. One finding per line.
 **Refuses** (exit 3): no `spira/` or `chamber/` files in scope. **Positive control:**
 `fence: bd-stdin-lint checked <n> files`.
 
+## Rule `cockpit-no-bd`
+
+**Intent.** The ops pane, its collector and the cockpit panel read bead state from the
+lifecycle machine, never bd, whose status lags it. Bead content and label/comment writes go
+through `spira-lc content`.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/` and `cockpit-collect/`.
+
+**Violation.** A live (non-comment) line that spells a `bd` invocation: `"bd"`, `bd_bin`,
+`bdq(`, `bdjson(` in Rust; `bd <subcommand>` or `$BD` in shell.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: cockpit-no-bd checked
+<n> files`.
+
+## Rule `cockpit-no-round-files`
+
+**Intent.** The pane and its collector read a round's pass (number, phase, reds) from the batch
+row, never from a progress or result file a second writer keeps.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/` and `cockpit-collect/`.
+
+**Violation.** A live line naming `round-progress`, `batch-results` or a `rounds/*.running` /
+`*.result` file.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: cockpit-no-round-files
+checked <n> files`.
+
+## Rule `pool-state-readers`
+
+**Intent.** Operator-facing tooling reads the round VM pool through `round-vm status --json`, which
+reports the pool's recorded events, never from `pool.json`, `template.json` or the round-vm state
+directory.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/` and `spira-world/`.
+
+**Violation.** A live (non-comment) line naming `pool.json`, `template.json`, `round-vm/state` or
+`round-vm.lock`.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: pool-state-readers checked
+<n> files`.
+
+
+## Rule `gate-state-readers`
+
+**Intent.** Operator-facing tooling reads a gate through `gate status <bead>` and stops one with
+`gate cancel <bead>`, never from `gate.log`, the admission and holder files or the gate machine's
+record, and never by matching `gate.sh` in a process listing.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/` and `spira-world/`.
+
+**Violation.** A live (non-comment) line naming `gate.log`, `gate-admission`, `gate-machine`,
+`.lock.holder`, `SPIRA_GATE_LOG` or `gate.sh`. Files that still match a process listing are listed in
+`spira-lint/gate-state-readers-allow`, which only shrinks: a listed file with no match is a finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: gate-state-readers checked
+<n> files`.
+
+## Rule `aeon-state-readers`
+
+**Intent.** An aeon's phase and how its session was cut short are fields of its WORKING row,
+read through spira-lc. Nothing writes or reads the retired `.lapsed`, `.thrash` and `.slain`
+marker files, and the operator-facing health and panel readers read no pidfile, lease file,
+ledger or `/proc` entry.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `watchtower/`, `aeon/`,
+`spira-world/` and `spira/*.sh` for the marker names; `cockpit/ops/src/health*` and
+`cockpit/panel/` for the pid, lease, ledger and `/proc` reads. Suites, `tests.rs`, `tests/` and
+everything after a `#[cfg(test)]` line are out of scope.
+
+**Violation.** A live line naming a marker file in a string (`<id>.slain`, `"…thrash"`), or in a
+reader, `/proc`, `procfs::`, a `.pid` or `.lease` name, or `aeon-ledger`.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: aeon-state-readers
+checked <n> files`; its unit tests plant a read of each kind and require a finding for it.
+
+## Rule `release-state-readers`
+
+**Intent.** Operator-facing tooling reads what is in force through `release status --json`, never
+from the release history, hotfix or machine files under the run directory, nor from the releases
+directory's `current` link.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `spira-world/` and
+`watchtower/`.
+
+**Violation.** A live (non-comment) line naming `release/history`, `release/hotfix`,
+`release/machine`, `releases/current`, a `.join("history")`, `.join("hotfix")` or
+`.join("current")`, or `SPIRA_RELEASES`. Files that still read that way are listed in
+`spira-lint/release-state-readers-allow`, which only shrinks: a listed file with no match is a
+finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: release-state-readers checked
+<n> files`.
+
+## Rule `sift-state-readers`
+
+**Intent.** Operator-facing tooling reads what the pre-round screen decided through `sift status
+--json`, never from the events, send-back counts, capped markers or verdict cache under the run
+directory's `sift` directory.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `spira-world/` and
+`watchtower/`.
+
+**Violation.** A live (non-comment) line naming `sift/events`, `sift/send-backs`, `sift/capped`,
+`sift/verdicts`, `$SPIRA_RUN/sift`, `.join("sift")`, `.join("send-backs")` or `.join("verdicts")`.
+Files that still read that way are listed in `spira-lint/sift-state-readers-allow`, which only
+shrinks: a listed file with no match is a finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: sift-state-readers checked
+<n> files`.
+
+## Rule `testenv-result-readers`
+
+**Intent.** Operator-facing tooling reads what a testenv run did through `testenv status --json
+<results-dir>`, never from the per-suite `.result` files or `batch.meta` under a results
+directory.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `spira-world/` and
+`watchtower/`.
+
+**Violation.** A live (non-comment) line naming `*.result`, a string ending `.result`, or
+`batch.meta`. Files that still read that way are listed in
+`spira-lint/testenv-result-readers-allow`, which only shrinks: a listed file with no match is a
+finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: testenv-result-readers
+checked <n> files`.
+
 ## Rule `incident-cause-lint`
 
 Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.
@@ -679,6 +842,18 @@ name it as a word. One finding per bump, path `Cargo.lock`.
 **Refuses** where the bash skipped with exit 0: no base, no Cargo.lock here, none at the base,
 a lock that does not parse or locks nothing. **Positive control:** `fence: lockfile-lint
 checked <n> packages`.
+
+## Rule `config-delta`
+
+**Intent.** The release applies a registry change to the config in force only from
+`spira/config-delta.toml`; a key added or dropped without an entry passes every fixture (they
+carry the key) and fails at activation. The keys are the file names in `spira/conf.d` and
+`spira/conf.toml.d`, as `spira.<lowercased name without SPIRA_>`. Against the base's listing,
+an added key must be an `[added]` entry and a dropped one listed under `removed`. One finding
+per key, path `spira/config-delta.toml`.
+
+**Refuses:** no base, no registry keys here or at the base, an unparseable delta.
+**Positive control:** `fence: config-delta checked <n> registry keys`.
 
 ## Rules `tier-budget-allowlist`, `tier-budget-area-allowlist`
 
@@ -736,7 +911,9 @@ this way).
 
 **Scope.** The whole walk (tracked and untracked-not-ignored) minus this rule's own source
 (`spira-lint/src/rules/inventory.rs`, which spells out every pattern) and `spira/
-inventory-deny`. The exemption is applied inside the check, not in `applies_to`, so an empty
+inventory-deny`, and the release's vendored third-party binaries under `vendor/bin/` (the
+aerc a release tree carries; its bytes are an upstream's, and the fast tier scans a release
+tree). The exemption is applied inside the check, not in `applies_to`, so an empty
 *repository* refuses while an all-exempt one does not read as one — matching the bash
 original's plain `${#tracked[@]} -gt 0` check.
 
@@ -1060,3 +1237,36 @@ Each rule has, in its own module:
 
 `lib.rs` runs all rules over one small fixture tree built with `git init`, which covers the
 walk itself.
+
+## Rule `wall-clock-budget`
+
+Mechanism for law-no-wall-clock-budgets-in-the-corpus.
+
+**Intent.** A test that asserts a measured duration against a constant measures the box, not
+the code: it fails under load and passes on an idle machine. Corpus tests assert what the
+code did (rows examined, calls made), never how long it took.
+
+**Scope.** `spira/test-*.sh` and every `*.rs` except `target/`, minus any path with a
+`perf-checks` component — the named, isolated path for a real latency check outside the round
+corpus.
+
+**Violation.** Shell: a non-comment line that either reads `took … ms … (<`, or names a time
+quantity (`elapsed`, `took`, `duration`, `latency`, `SECONDS`, `date +%s`, `*_ms`, `*_secs`)
+and bounds it from above with `-lt`/`-le`/`((… < N))` against a number. Lower bounds
+(`-ge`) are not budgets. Rust, in test code as `tmp-leak` defines it: an `assert*` statement
+comparing `elapsed*`/`took*`/`latency*`/`*_ms`/`as_millis()`-style values with `<`/`<=`
+against a literal, an UPPER_CASE constant or `Duration::…`. One finding per line.
+
+**Allow list.** `spira-lint/wall-clock-budget-allow`, exact paths, shrink-only; seeded with the
+files that held a budget when the rule landed. An entry with no finding left is itself a
+finding.
+
+**Known limits.** Line-based: an assert split so the comparison sits in a different statement
+from the `assert` is missed.
+
+## Rule `py-fstring-compat`
+
+Python in a suite must parse on the round VM's older python3. **Flags**, per line, inside an
+f-string's braces: a backslash, and a quote of the string's own kind (both 3.12-only, PEP 701).
+**Scope.** `spira/test-*.sh` and `spira/*.py`. No allow list: the tree is clean, so a new hit is
+always new. A line-local scan; a triple-quoted f-string spanning lines is judged per line.

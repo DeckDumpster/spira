@@ -4,7 +4,8 @@
 
 use crate::activate::{self, Ctx};
 use crate::build::{self, BuildOpts, Cargo};
-use crate::config::{Config, Env, Flags};
+use crate::config::{Config, Env, Flags, Registered};
+use crate::config_delta;
 use crate::fsutil;
 use crate::git::Git;
 use crate::install::{self, InstallOpts, Unpack};
@@ -17,7 +18,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::Duration;
 use testkit::TempDir;
 
@@ -63,6 +63,14 @@ const WATCH: &str = "[Service]\nType=simple\nExecStart=@SPIRA_PROD@/watchd.sh ex
 #[derive(Default)]
 struct FakeGit {
     extra: Vec<(String, String, bool)>,
+    /// Add a `spira-config` binary crate to the workspace, for a release that validates config.
+    validator: bool,
+    /// Add a `unit-ensure` binary crate to the workspace, for a release that installs its own units.
+    unit_ensure: bool,
+    /// A config delta that only the release built from this sha carries.
+    delta_for: Option<(String, String)>,
+    /// Files only the release built from the given sha carries: `(sha, path, body)`.
+    extra_only: Vec<(String, String, String)>,
     ancestors: RefCell<BTreeSet<(String, String)>>,
 }
 
@@ -81,7 +89,20 @@ impl Git for FakeGit {
         }
     }
     fn archive(&self, _repo: &Path, sha: &str, into: &Path) -> Result<(), String> {
-        file(&into.join("Cargo.toml"), "[workspace]\nmembers = [\"tool\"]\n");
+        let members = match (self.validator, self.unit_ensure) {
+            (true, _) => "[\"tool\", \"spira-config\"]",
+            (false, true) => "[\"tool\", \"unit-ensure\"]",
+            (false, false) => "[\"tool\"]",
+        };
+        if self.unit_ensure {
+            file(&into.join("unit-ensure/Cargo.toml"), "[package]\nname = \"unit-ensure\"\nversion = \"0.0.0\"\n");
+            file(&into.join("unit-ensure/src/main.rs"), "fn main() {}\n");
+        }
+        file(&into.join("Cargo.toml"), &format!("[workspace]\nmembers = {members}\n"));
+        if self.validator {
+            file(&into.join("spira-config/Cargo.toml"), "[package]\nname = \"spira-config\"\nversion = \"0.0.0\"\n");
+            file(&into.join("spira-config/src/main.rs"), "fn main() {}\n");
+        }
         file(&into.join("tool/Cargo.toml"), "[package]\nname = \"tool\"\nversion = \"0.0.0\"\n");
         file(&into.join("tool/src/main.rs"), "fn main() {}\n");
         file(&into.join("systemd/spira-tool.service"), SVC);
@@ -94,6 +115,16 @@ impl Git for FakeGit {
         exe(&into.join("shared.sh"), "#!/bin/sh\n");
         std::os::unix::fs::symlink("CLAUDE.md", into.join("AGENTS.md")).unwrap();
         file(&into.join("CLAUDE.md"), "hi\n");
+        if let Some((only, body)) = &self.delta_for {
+            if only == sha {
+                file(&into.join("spira/config-delta.toml"), body);
+            }
+        }
+        for (only, p, body) in &self.extra_only {
+            if only == sha {
+                file(&into.join(p), body);
+            }
+        }
         for (p, body, x) in &self.extra {
             if *x {
                 exe(&into.join(p), body)
@@ -111,11 +142,14 @@ impl Git for FakeGit {
 /// A cargo that "builds" every name in `bins` into `<target>/release`.
 struct FakeCargo {
     bins: Vec<&'static str>,
+    /// A binary's own body, in place of the default.
+    bodies: Vec<(&'static str, String)>,
 }
 impl Cargo for FakeCargo {
     fn build(&self, tree: &Path, target: &Path) -> Result<(), String> {
         for b in &self.bins {
-            exe(&target.join("release").join(b), &format!("#!/bin/sh\n# built from {}\n", tree.display()));
+            let body = self.bodies.iter().find(|(n, _)| n == b).map(|(_, body)| body.clone()).unwrap_or_else(|| format!("#!/bin/sh\n# built from {}\n", tree.display()));
+            exe(&target.join("release").join(b), &body);
         }
         Ok(())
     }
@@ -132,26 +166,25 @@ impl World {
         World::with_git(FakeGit::default())
     }
     fn with_git(git: FakeGit) -> World {
-        World::with_git_and_env(git, &[])
+        World::with_git_and_reg(git, Registered::default())
     }
-    /// [`World::with_git`] plus extra environment entries (sp-xtdqi-2) — for a case that
-    /// needs a host key `with_git` never sets (e.g. `SPIRA_SCCACHE_DAV_ADDR`'s env-bootstrap
-    /// path) without touching every other test's fixed env.
-    fn with_git_and_env(git: FakeGit, extra: &[(&str, &str)]) -> World {
+    /// [`World::with_git`] with extra registered config (sp-xtdqi-2) — for a case that needs
+    /// a host key `with_git` never sets (e.g. `SPIRA_SCCACHE_DAV_ADDR`) without touching
+    /// every other test's fixed config. `reg.instance` is always overridden to `"prod"`
+    /// regardless of what the caller passes — every other test's unit names depend on it.
+    fn with_git_and_reg(git: FakeGit, reg: Registered) -> World {
         let sb = Sandbox::new();
         let mut env = Env::new();
         env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
-        env.insert("SPIRA_INSTANCE".into(), "prod".into());
-        for (k, v) in extra {
-            env.insert(k.to_string(), v.to_string());
-        }
+        env.insert("SPIRA_TOML".into(), sb.p().join("cfg.toml").display().to_string());
+        let reg = Registered { instance: "prod".into(), ..reg };
         let flags = Flags { releases: Some(sb.p().join("rel")), run: Some(sb.p().join("run")), keep: Some(2) };
-        let cfg = Config::resolve_with(&flags, &env, None).unwrap();
+        let cfg = Config::resolve_with(&flags, &env, None, &reg).unwrap();
         fs::create_dir_all(sb.p().join("units")).unwrap();
         World { sb, cfg, git }
     }
     fn build(&self, sha: &str) -> Result<build::Built, String> {
-        self.build_with(sha, &FakeCargo { bins: vec!["tool"] }, vec![])
+        self.build_with(sha, &FakeCargo { bins: vec!["tool"], bodies: vec![] }, vec![])
     }
     fn build_with(&self, sha: &str, cargo: &FakeCargo, system_dirs: Vec<PathBuf>) -> Result<build::Built, String> {
         let o = BuildOpts { repo: self.sb.p(), commit: sha, target_dir: Some(self.sb.p().join("target")), system_dirs, bin_dir: None };
@@ -193,6 +226,7 @@ struct FakeSystemctl {
     unit_dir: PathBuf,
     states: RefCell<BTreeMap<String, UnitState>>,
     restarts: RefCell<Vec<String>>,
+    resets: RefCell<Vec<String>>,
     reloads: RefCell<usize>,
     poison: Option<String>,
     /// Unit names `list_active` must never return, mirroring a `systemd-run` transient
@@ -204,6 +238,11 @@ struct FakeSystemctl {
     disabled: RefCell<Vec<String>>,
     /// When set, `disable_now` fails for this unit name.
     disable_fails: BTreeSet<String>,
+    /// Run at every daemon-reload — after `current` flips, before dropped keys are removed.
+    probe: Option<Box<dyn Fn() -> String>>,
+    probes: RefCell<Vec<String>>,
+    /// Units that go inactive once `state` has been asked about them this many more times.
+    exits_after: RefCell<BTreeMap<String, usize>>,
 }
 
 impl FakeSystemctl {
@@ -218,12 +257,16 @@ impl FakeSystemctl {
             unit_dir,
             states: RefCell::new(s),
             restarts: RefCell::new(vec![]),
+            resets: RefCell::new(vec![]),
             reloads: RefCell::new(0),
             poison: None,
             transient: BTreeSet::new(),
             restart_fails: BTreeSet::new(),
             disabled: RefCell::new(vec![]),
             disable_fails: BTreeSet::new(),
+            probe: None,
+            probes: RefCell::new(vec![]),
+            exits_after: RefCell::new(BTreeMap::new()),
         }
     }
 }
@@ -231,9 +274,19 @@ impl FakeSystemctl {
 impl Systemctl for FakeSystemctl {
     fn daemon_reload(&self) -> Result<(), String> {
         *self.reloads.borrow_mut() += 1;
+        if let Some(p) = &self.probe {
+            self.probes.borrow_mut().push(p());
+        }
         Ok(())
     }
     fn state(&self, unit: &str) -> Result<UnitState, String> {
+        if let Some(n) = self.exits_after.borrow_mut().get_mut(unit) {
+            if *n == 0 {
+                self.states.borrow_mut().entry(unit.into()).or_default().active = "inactive".into();
+            } else {
+                *n -= 1;
+            }
+        }
         Ok(self.states.borrow().get(unit).cloned().unwrap_or_else(|| UnitState { active: "inactive".into(), result: "success".into(), kind: "simple".into() }))
     }
     fn cat(&self, _unit: &str) -> Result<String, String> {
@@ -250,12 +303,23 @@ impl Systemctl for FakeSystemctl {
         e.result = "success".into();
         Ok(())
     }
+    fn reset_failed(&self, unit: &str) -> Result<(), String> {
+        self.resets.borrow_mut().push(unit.into());
+        Ok(())
+    }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.restarts.borrow_mut().push(unit.into());
         if self.restart_fails.contains(unit) {
             return Err(format!("{unit}: simulated restart failure"));
         }
         let text = fs::read_to_string(self.unit_dir.join(unit)).unwrap_or_default();
+        for l in text.lines() {
+            if let Some(dep) = l.strip_prefix("Requires=") {
+                if !self.unit_dir.join(dep).exists() {
+                    return Err(format!("Unit {dep} not found"));
+                }
+            }
+        }
         let bad = self.poison.as_ref().map(|p| units::exec_lines(&text).iter().any(|l| l.contains(p.as_str()))).unwrap_or(false);
         let mut s = self.states.borrow_mut();
         let e = s.entry(unit.into()).or_default();
@@ -267,6 +331,10 @@ impl Systemctl for FakeSystemctl {
             e.result = "success".into();
         }
         Ok(())
+    }
+    fn list_failed(&self, glob: &str) -> Result<Vec<String>, String> {
+        let (pre, suf) = glob.split_once('*').unwrap_or((glob, ""));
+        Ok(self.states.borrow().iter().filter(|(n, st)| st.active == "failed" && n.starts_with(pre) && n.ends_with(suf)).map(|(n, _)| n.clone()).collect())
     }
     fn list_active(&self, glob: &str) -> Result<Vec<String>, String> {
         // The only glob shapes install-tarball ever passes: "<prefix>*<suffix>".
@@ -282,7 +350,7 @@ impl Systemctl for FakeSystemctl {
 }
 
 fn ctx<'a>(w: &'a World, sc: &'a FakeSystemctl) -> Ctx<'a> {
-    Ctx { cfg: &w.cfg, sc, git: &w.git, repo: Some(w.sb.p().to_path_buf()), landed_ref: "local/main".into(), settle: Duration::ZERO }
+    Ctx { cfg: &w.cfg, sc, git: &w.git, repo: Some(w.sb.p().to_path_buf()), landed_ref: "local/main".into(), settle: Duration::ZERO, drain: Duration::ZERO }
 }
 
 fn no_pre() -> VerifyOpts {
@@ -373,7 +441,7 @@ fn build_refuses_when_conf_gen_fails_and_leaves_no_release() {
 fn build_of_an_existing_release_does_not_rebuild_it() {
     let w = World::new();
     w.build(A).unwrap();
-    let again = w.build_with(A, &FakeCargo { bins: vec![] }, vec![]).unwrap();
+    let again = w.build_with(A, &FakeCargo { bins: vec![], bodies: vec![] }, vec![]).unwrap();
     assert!(!again.fresh);
 }
 
@@ -455,7 +523,7 @@ fn build_with_a_bin_dir_also_carries_every_declared_compat_name() {
 #[test]
 fn build_refuses_a_partial_binary_set_and_leaves_nothing_behind() {
     let w = World::new();
-    let e = w.build_with(A, &FakeCargo { bins: vec![] }, vec![]).unwrap_err();
+    let e = w.build_with(A, &FakeCargo { bins: vec![], bodies: vec![] }, vec![]).unwrap_err();
     assert!(e.contains("declares tool but the build"), "{e}");
     assert_eq!(fs::read_dir(&w.cfg.releases).unwrap().count(), 0);
 }
@@ -466,13 +534,13 @@ fn build_refuses_a_release_that_shadows_a_system_command() {
     let sys = w.sb.p().join("usr-bin");
     exe(&sys.join("git"), "");
     exe(&sys.join("tool"), "");
-    let e = w.build_with(A, &FakeCargo { bins: vec!["tool"] }, vec![sys.clone()]).unwrap_err();
+    let e = w.build_with(A, &FakeCargo { bins: vec!["tool"], bodies: vec![] }, vec![sys.clone()]).unwrap_err();
     assert!(e.contains("bin/tool shadows"), "{e}");
     assert!(e.contains("spira/git shadows"), "{e}");
     assert!(!w.rel(A).exists());
     // A non-executable file of the same name is not invokable, so not a clash.
     let w2 = World::with_git(FakeGit { extra: vec![("spira/git".into(), "data\n".into(), false)], ..Default::default() });
-    w2.build_with(A, &FakeCargo { bins: vec!["tool"] }, vec![w2.sb.p().join("none")]).unwrap();
+    w2.build_with(A, &FakeCargo { bins: vec!["tool"], bodies: vec![] }, vec![w2.sb.p().join("none")]).unwrap();
 }
 
 #[test]
@@ -501,7 +569,7 @@ fn git_with_work() -> FakeGit {
 fn build_links_model_bin_holding_only_work() {
     let mb = spira_config::release_env::MODEL_BIN_DIR;
     let w = World::with_git(git_with_work());
-    w.build_with(A, &FakeCargo { bins: vec!["tool", "work"] }, vec![]).unwrap();
+    w.build_with(A, &FakeCargo { bins: vec!["tool", "work"], bodies: vec![] }, vec![]).unwrap();
     let link = w.rel(A).join(mb).join("work");
     assert_eq!(fs::read_link(&link).unwrap(), Path::new("../bin/work"));
     assert!(fsutil::is_executable(&link));
@@ -584,17 +652,17 @@ fn verify_runs_the_releases_own_pre_activate_and_refuses_without_one() {
 #[test]
 fn pre_activate_env_builds_the_release_own_path_and_release_var() {
     let mut env = Env::new();
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
     env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
-    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/h/.local/bin:/h/.cargo/bin\"\n").unwrap();
-    let cfg = Config::resolve_with(&Flags::default(), &env, Some(toml)).unwrap();
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/h/.local/bin:/h/.cargo/bin".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let rel = PathBuf::from("/e").join(A);
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
     assert_eq!(envs[0], (spira_config::RELEASE_ENV.to_string(), rel.display().to_string()));
     assert_eq!(envs[1], ("PATH".to_string(), format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin:/h/.local/bin:/h/.cargo/bin", rel.display(), rel.display())));
 
     // No tail configured: PATH ends at the system directories, same as `release_path`.
-    let cfg = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let envs = verify::pre_activate_env(&cfg, &rel).unwrap();
     assert_eq!(envs[1].1, format!("{}/bin:{}/spira:/usr/local/bin:/usr/bin:/bin", rel.display(), rel.display()));
 }
@@ -605,10 +673,9 @@ fn pre_activate_env_builds_the_release_own_path_and_release_var() {
 #[test]
 fn pre_activate_env_refuses_a_tail_inside_a_release_or_checkout() {
     let mut env = Env::new();
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
     env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
-    let bad: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/x/spira-releases/def/bin\"\n").unwrap();
-    let cfg = Config::resolve_with(&Flags::default(), &env, Some(bad)).unwrap();
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/x/spira-releases/def/bin".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let rel = PathBuf::from("/e").join(A);
     let e = verify::pre_activate_env(&cfg, &rel).unwrap_err();
     assert!(e.contains("spira-releases"), "{e}");
@@ -633,29 +700,16 @@ fn verify_pre_activate_runs_with_the_release_under_verifications_own_env() {
 /// its own `bin/tool`; the *caller's* real `PATH` is pointed at A's `bin/` before verifying
 /// B, and the probe script (same as above) still finds B's own `tool` and names B as
 /// `SPIRA_RELEASE` — proving the child's env is built from the release passed to `verify`,
-/// not inherited. Serialised (`ENV_LOCK`) and restored via `PathGuard` because this is the
-/// one test in this crate that touches the real process environment.
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct PathGuard(Option<std::ffi::OsString>);
-impl Drop for PathGuard {
-    fn drop(&mut self) {
-        match &self.0 {
-            Some(p) => std::env::set_var("PATH", p),
-            None => std::env::remove_var("PATH"),
-        }
-    }
-}
+/// not inherited. Its `PATH` edit goes through `testkit::env`.
 
 #[test]
 fn verify_uses_the_release_under_verification_even_when_the_callers_shell_path_points_at_another_release() {
-    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let w = World::with_git(FakeGit { extra: vec![("spira/pre-activate.sh".into(), PATH_PROBE.into(), true)], ..Default::default() });
     w.build(A).unwrap();
     w.build(B).unwrap();
 
-    let _restore = PathGuard(std::env::var_os("PATH"));
-    std::env::set_var("PATH", w.rel(A).join("bin"));
+    let a_bin = w.rel(A).join("bin");
+    let _env = testkit::env(&[("PATH", a_bin.to_str())]);
 
     let with = VerifyOpts { pre_activate: true, system_dirs: vec![] };
     assert_eq!(verify::verify(&w.cfg, B, &with).unwrap(), Vec::<String>::new());
@@ -724,7 +778,7 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
     let r = rel.display().to_string();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
     let mut host = BTreeMap::new();
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE"] {
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE", "SPIRA_TOML"] {
         host.insert(k.to_string(), format!("/host/{k}"));
     }
     host.insert("SPIRA_PATH_TAIL".to_string(), tail.to_string());
@@ -775,11 +829,24 @@ fn every_shipped_service_renders_the_configured_path_tail_after_the_system_dirs(
 fn every_shipped_service_renders_against_real_host_values() {
     let mut env = Env::new();
     env.insert("HOME".into(), "/h".into());
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_INSTANCE", "SPIRA_REPO_MAP", "SPIRA_SCCACHE_DAV_ADDR"] {
-        env.insert(k.into(), format!("/host/{k}"));
-    }
-    let c = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    env.insert("SPIRA_TOML".into(), "/host/cfg.toml".into());
+    env.insert("DOLT".into(), "/host/DOLT".into());
+    let reg = Registered {
+        releases: "/e".into(),
+        releases_keep: "10".into(),
+        run: "/host/SPIRA_RUN".into(),
+        db: "/host/SPIRA_DB".into(),
+        dolt_data: "/host/SPIRA_DOLT_DATA".into(),
+        testdb_data: "/host/SPIRA_TESTDB_DATA".into(),
+        testdb_port: "3308".into(),
+        snap_stale_s: "60".into(),
+        watchtower_start_timeout_s: "360".into(),
+        instance: "/host/SPIRA_INSTANCE".into(),
+        repo_map: "/host/SPIRA_REPO_MAP".into(),
+        sccache_dav_addr: "/host/SPIRA_SCCACHE_DAV_ADDR".into(),
+        ..Default::default()
+    };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let host = c.host_values().unwrap();
     let rel = Path::new("/r/spira-releases").join(A);
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
@@ -798,6 +865,62 @@ fn every_shipped_service_renders_against_real_host_values() {
 }
 
 // ---------------------------------------------------------------- activate
+
+#[test]
+fn activate_clears_a_start_limit_on_every_unit_it_restarts() {
+    let w = World::new();
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    w.install_units(A);
+    sc.restarts.borrow_mut().clear();
+    sc.resets.borrow_mut().clear();
+    let s = activate::activate(&c, B, None).unwrap();
+    assert!(!s.restarted.is_empty(), "control: something was restarted");
+    assert_eq!(*sc.resets.borrow(), s.restarted);
+}
+
+#[test]
+fn activate_revives_an_installed_unit_found_failed_and_not_otherwise_restarted() {
+    let w = World::new();
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    w.install_units(A);
+    let failed = "spira-watch-pool-prod.service";
+    sc.states.borrow_mut().get_mut(failed).unwrap().active = "failed".into();
+    sc.resets.borrow_mut().clear();
+    let s = activate::activate(&c, B, None).unwrap();
+    assert!(s.revived.contains(&failed.to_string()) || s.restarted.contains(&failed.to_string()), "{s:?}");
+    assert!(sc.resets.borrow().contains(&failed.to_string()));
+    assert_eq!(sc.states.borrow()[failed].active, "active");
+}
+
+#[test]
+fn path_shadows_names_a_dropin_dir_that_carries_a_binary_the_release_ships() {
+    let w = World::new();
+    w.build(A).unwrap();
+    let rel = w.cfg.releases.join(A);
+    let shipped = std::fs::read_dir(rel.join("bin")).unwrap().flatten().next().expect("release ships a bin").file_name();
+    let shim = w.sb.p().join("shim-bin");
+    std::fs::create_dir_all(&shim).unwrap();
+    let ud = w.units();
+    let d = ud.join("spira-x-prod.service.d");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("50.conf"), format!("[Service]\nEnvironment=PATH={}:{}/current/bin\n", shim.display(), w.cfg.releases.display())).unwrap();
+    assert!(units::path_shadows(&ud, &rel, &w.cfg.releases).is_empty(), "control: empty shim dir shadows nothing");
+    let f = shim.join(&shipped);
+    std::fs::write(&f, "#!/bin/sh\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let got = units::path_shadows(&ud, &rel, &w.cfg.releases);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].starts_with("PATH-SHADOW"));
+}
 
 #[test]
 fn activate_swaps_current_rewrites_units_and_restarts_only_changed_long_running_services() {
@@ -941,13 +1064,16 @@ fn activate_is_unaffected_by_a_gated_template_that_was_never_installed() {
     assert!(!w.units().join("sccache-dav.service").exists());
 }
 
-/// THE SECOND HALF of sp-xtdqi-2: an operator without this release's schema yet (so
-/// the config document cannot carry `sccache_dav_addr`) can still bootstrap an activation by
-/// exporting the variable — `host_values` reads env-then-config like every other key here,
-/// never config alone.
+/// THE SECOND HALF of sp-xtdqi-2, updated for the one-source-of-config rule (per Ryan
+/// 2026-10-05): `SPIRA_SCCACHE_DAV_ADDR` no longer has an environment-bootstrap path of its
+/// own — once the config file declares it, `host_values` carries it through exactly like every
+/// other registered key.
 #[test]
-fn activate_renders_the_address_once_the_gate_key_is_set_via_env() {
-    let w = World::with_git_and_env(FakeGit { extra: vec![("systemd/sccache-dav.service".into(), sccache_dav_template(), false)], ..Default::default() }, &[("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")]);
+fn activate_renders_the_address_once_the_gate_key_is_configured() {
+    let w = World::with_git_and_reg(
+        FakeGit { extra: vec![("systemd/sccache-dav.service".into(), sccache_dav_template(), false)], ..Default::default() },
+        Registered { sccache_dav_addr: "192.168.1.56:9431".into(), ..Default::default() },
+    );
     w.build(A).unwrap();
     fs::write(w.units().join("sccache-dav.service"), "stale\n").unwrap();
     let sc = FakeSystemctl::new(w.units());
@@ -1150,6 +1276,40 @@ fn prune_keeps_a_release_a_worktree_git_hook_still_names() {
 }
 
 #[test]
+fn prune_ignores_a_stale_worktrees_git_hook() {
+    let w = World::new(); // keep = 2
+    let shas: Vec<String> = (0..4).map(|i| format!("{i}").repeat(40)).collect();
+    for s in &shas {
+        w.build(s).unwrap();
+    }
+    for (i, s) in shas.iter().enumerate() {
+        let rel = w.rel(s);
+        fsutil::make_writable(&rel);
+        let mut m = Manifest::load(&rel).unwrap();
+        m.built = Some(format!("2026-09-2{i}T00:00:00Z"));
+        fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+        fsutil::set_readonly(&rel).unwrap();
+    }
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, &shas[3], None).unwrap();
+    let run = w.cfg.run.clone().unwrap();
+    let wt = run.join("worktree/a");
+    let gitdir = run.join("gitdirs/a");
+    fs::create_dir_all(gitdir.join("hooks")).unwrap();
+    fs::create_dir_all(&wt).unwrap();
+    fs::write(wt.join(".git"), format!("gitdir: {}\n", gitdir.display())).unwrap();
+    fs::write(gitdir.join("hooks/pre-commit"), format!("bash \"{}/{}/spira/hooks/pre-commit\"\n", w.cfg.releases.display(), shas[0])).unwrap();
+
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 24 * 3600);
+    fs::File::open(&wt).unwrap().set_modified(old).unwrap();
+
+    let p = crate::prune::prune(&w.cfg).unwrap();
+    assert!(p.removed.contains(&shas[0]), "{p:?}");
+    assert!(p.removed.contains(&shas[1]), "{p:?}");
+}
+
+#[test]
 fn prune_after_activate_keeps_current_and_previous_and_removes_the_rest() {
     let w = World::new(); // keep = 2
     let shas: Vec<String> = (0..6).map(|i| format!("{i}").repeat(40)).collect();
@@ -1179,40 +1339,37 @@ fn prune_after_activate_keeps_current_and_previous_and_removes_the_rest() {
 // ---------------------------------------------------------------- config
 
 #[test]
-fn config_resolves_roots_from_flags_env_then_toml_and_refuses_when_nothing_does() {
+fn config_resolves_roots_from_flags_then_config_and_refuses_when_nothing_does() {
     let mut env = Env::new();
     env.insert("HOME".into(), "/h".into());
-    assert!(Config::resolve_with(&Flags::default(), &env, None).unwrap_err().contains("no releases directory"));
-    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\nworkspaces = \"/w\"\nrun = \"/r\"\nreleases_keep = \"7\"\n").unwrap();
-    let c = Config::resolve_with(&Flags::default(), &env, Some(toml.clone())).unwrap();
+    assert!(Config::resolve_with(&Flags::default(), &env, None, &Registered::default()).unwrap_err().contains("no releases directory"));
+    // `reg.releases` is already fully resolved here (as `cfg("SPIRA_RELEASES")` would hand
+    // it — the `workspaces`-derived default is `spira_config`'s own job, not this crate's).
+    let reg = Registered { releases: "/w/spira-releases".into(), run: "/r".into(), releases_keep: "7".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!((c.releases.clone(), c.run.clone(), c.keep), (PathBuf::from("/w/spira-releases"), Some(PathBuf::from("/r")), 7));
     assert_eq!(c.unit_dir, PathBuf::from("/h/.config/systemd/user"));
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
-    assert_eq!(Config::resolve_with(&Flags::default(), &env, Some(toml.clone())).unwrap().releases, PathBuf::from("/e"));
+    let reg2 = Registered { releases: "/e".into(), ..reg.clone() };
+    assert_eq!(Config::resolve_with(&Flags::default(), &env, None, &reg2).unwrap().releases, PathBuf::from("/e"));
     let f = Flags { releases: Some("/f".into()), ..Default::default() };
-    assert_eq!(Config::resolve_with(&f, &env, Some(toml)).unwrap().releases, PathBuf::from("/f"));
+    assert_eq!(Config::resolve_with(&f, &env, None, &reg2).unwrap().releases, PathBuf::from("/f"));
 }
 
 #[test]
-fn host_values_carries_the_configured_path_tail_env_over_config_and_refuses_a_bad_one() {
+fn host_values_carries_the_configured_path_tail_and_refuses_a_bad_one() {
     let mut env = Env::new();
     env.insert("HOME".into(), "/h".into());
-    env.insert("SPIRA_RELEASES".into(), "/e".into());
     // Nothing configured: the tail is empty, not an error.
-    let c = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(""));
-    // The typed key.
-    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/h/.local/bin:/h/.cargo/bin\"\n").unwrap();
-    let c = Config::resolve_with(&Flags::default(), &env, Some(toml.clone())).unwrap();
+    // The configured key.
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/h/.local/bin:/h/.cargo/bin".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":/h/.local/bin:/h/.cargo/bin"));
-    // The environment wins over the typed key.
-    let mut env2 = env.clone();
-    env2.insert("SPIRA_PATH".into(), "/x/bin".into());
-    let c = Config::resolve_with(&Flags::default(), &env2, Some(toml)).unwrap();
-    assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":/x/bin"));
     // A tail entry inside a release is refused, naming it.
-    let bad: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/x/spira-releases/def/bin\"\n").unwrap();
-    let c = Config::resolve_with(&Flags::default(), &env, Some(bad)).unwrap();
+    let bad = Registered { releases: "/e".into(), releases_keep: "10".into(), path: "/x/spira-releases/def/bin".into(), ..Default::default() };
+    let c = Config::resolve_with(&Flags::default(), &env, None, &bad).unwrap();
     let e = c.host_values().unwrap_err();
     assert!(e.contains("spira-releases"), "{e}");
 }
@@ -1242,25 +1399,28 @@ fn parse_rfc3339_refuses_anything_it_did_not_write() {
 
 #[test]
 fn hotfix_alert_hours_defaults_to_four_and_is_configurable() {
+    // SPIRA_HOTFIX_ALERT_HOURS is not a registered key (no spira/conf.d/ entry) — it still
+    // reads the raw environment/document, so this test is unchanged by the one-source-of-
+    // config migration apart from supplying `reg.releases` directly.
     let mut base = Env::new();
     base.insert("HOME".into(), "/h".into());
-    base.insert("SPIRA_RELEASES".into(), "/e".into());
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
 
-    let cfg = Config::resolve_with(&Flags::default(), &base, None).unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &base, None, &reg).unwrap();
     assert_eq!(cfg.hotfix_alert_hours().unwrap(), 4);
 
     let mut env = base.clone();
     env.insert("SPIRA_HOTFIX_ALERT_HOURS".into(), "1".into());
-    let cfg = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert_eq!(cfg.hotfix_alert_hours().unwrap(), 1);
 
     let toml: spira_config::SpiraToml = spira_config::validate("[spira]\nhotfix_alert_hours = 9\n").unwrap();
-    let cfg = Config::resolve_with(&Flags::default(), &base, Some(toml)).unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &base, Some(toml), &reg).unwrap();
     assert_eq!(cfg.hotfix_alert_hours().unwrap(), 9);
 
     let mut env = base;
     env.insert("SPIRA_HOTFIX_ALERT_HOURS".into(), "nope".into());
-    let cfg = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     assert!(cfg.hotfix_alert_hours().unwrap_err().contains("SPIRA_HOTFIX_ALERT_HOURS"));
 }
 
@@ -1318,7 +1478,8 @@ fn a_configured_threshold_changes_when_status_alerts() {
     env.insert("SPIRA_UNIT_DIR".into(), w.cfg.unit_dir.display().to_string());
     env.insert("SPIRA_HOTFIX_ALERT_HOURS".into(), "1".into());
     let flags = Flags { releases: Some(w.cfg.releases.clone()), run: w.cfg.run.clone(), keep: Some(2) };
-    let low_cfg = Config::resolve_with(&flags, &env, None).unwrap();
+    let reg = Registered { instance: "prod".into(), ..Default::default() };
+    let low_cfg = Config::resolve_with(&flags, &env, None, &reg).unwrap();
     assert!(activate::status(&low_cfg).unwrap().contains("ALERT hotfix"));
 }
 
@@ -1361,7 +1522,8 @@ fn install_world() -> (Sandbox, Config) {
     let mut env = Env::new();
     env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
     let flags = Flags { releases: Some(sb.p().join("rel")), run: None, keep: Some(2) };
-    let cfg = Config::resolve_with(&flags, &env, None).unwrap();
+    let reg = Registered { instance: "prod".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&flags, &env, None, &reg).unwrap();
     fs::create_dir_all(sb.p().join("units")).unwrap();
     (sb, cfg)
 }
@@ -1584,4 +1746,369 @@ fn stage_up_refuses_an_existing_root_and_down_refuses_a_non_stage_directory() {
     fs::create_dir_all(&not_a_stage).unwrap();
     let err2 = crate::stage::down(&not_a_stage).unwrap_err();
     assert!(err2.contains("does not look like a stage"), "{err2}");
+}
+
+// ---------------------------------------------------------------- config delta
+
+/// A `spira-config` standing in for one release's schema: `validate` loads iff every key in
+/// `needs` is in the layers `$SPIRA_TOML` names and none of `refuses` is.
+fn schema(needs: &[&str], refuses: &[&str]) -> String {
+    let mut s = String::from("#!/bin/sh\nPATH=/usr/bin:/bin\n[ \"$1\" = validate ] || exit 2\ncfg=$(cat $(echo \"$SPIRA_TOML\" | tr : ' '))\n");
+    for k in needs {
+        s.push_str(&format!("echo \"$cfg\" | grep -q '{k}' || {{ echo \"config has no {k}\" >&2; exit 1; }}\n"));
+    }
+    for k in refuses {
+        s.push_str(&format!("echo \"$cfg\" | grep -q '{k}' && {{ echo \"spira.{k}: unknown field\" >&2; exit 1; }}\n"));
+    }
+    s.push_str("exit 0\n");
+    s
+}
+
+fn delta_git(delta: &str) -> FakeGit {
+    FakeGit { validator: true, delta_for: Some((B.to_string(), delta.to_string())), ..Default::default() }
+}
+
+fn build_with_schema(w: &World, sha: &str, needs: &[&str], refuses: &[&str]) {
+    let cargo = FakeCargo { bins: vec!["tool", "spira-config"], bodies: vec![("spira-config", schema(needs, refuses))] };
+    w.build_with(sha, &cargo, vec![]).unwrap();
+}
+
+fn loads(w: &World, sha: &str) -> bool {
+    std::process::Command::new(w.rel(sha).join("bin/spira-config")).arg("validate").env("SPIRA_TOML", w.cfg.toml_spec().unwrap()).status().unwrap().success()
+}
+
+fn cfg_text(w: &World) -> String {
+    fs::read_to_string(w.cfg.toml_spec().unwrap()).unwrap()
+}
+
+const DELTA_BOTH: &str = "removed = [\"spira.old_key\"]\n[added]\n\"spira.new_key\" = 300\n";
+
+#[test]
+fn a_release_that_adds_and_drops_a_key_activates_over_the_other_with_no_hand_edit() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nold_key = 1\n");
+    build_with_schema(&w, A, &["old_key"], &["new_key"]);
+    build_with_schema(&w, B, &["new_key"], &["old_key"]);
+    let mut sc = FakeSystemctl::new(w.units());
+    let (a, b) = (w.rel(A).join("bin/spira-config"), w.rel(B).join("bin/spira-config"));
+    let spec = w.cfg.toml_spec().unwrap();
+    sc.probe = Some(Box::new(move || {
+        let ok = |p: &Path| std::process::Command::new(p).arg("validate").env("SPIRA_TOML", &spec).status().map(|s| s.success()).unwrap_or(false);
+        format!("a={} b={}", ok(&a), ok(&b))
+    }));
+    let c = ctx(&w, &sc);
+
+    activate::activate(&c, A, None).unwrap();
+    assert!(loads(&w, A) && !loads(&w, B), "A on its own config");
+    sc.probes.borrow_mut().clear();
+
+    activate::activate(&c, B, None).unwrap();
+    assert_eq!(w.current().as_deref(), Some(B));
+    assert!(cfg_text(&w).contains("new_key = 300") && !cfg_text(&w).contains("old_key"), "{}", cfg_text(&w));
+    assert!(loads(&w, B), "the new release loads the config after the flip");
+    assert_eq!(*sc.probes.borrow(), vec!["a=false b=false".to_string()], "at the flip the added key is present and the dropped one not yet removed");
+
+    assert_eq!(activate::rollback(&c).unwrap(), A);
+    assert!(cfg_text(&w).contains("old_key = 1") && !cfg_text(&w).contains("new_key"), "{}", cfg_text(&w));
+    assert!(loads(&w, A), "the old release loads the config again after rollback");
+}
+
+#[test]
+fn verify_pre_activate_sees_the_config_with_the_delta_applied_and_leaves_the_files_alone() {
+    let probe = "#!/bin/sh\nPATH=/usr/bin:/bin\ncat $(echo \"$SPIRA_TOML\" | tr : ' ') | grep -q new_key || { echo 'FAIL units: new_key is not declared' >&2; exit 1; }\nexit 0\n";
+    let mut g = delta_git("[added]\n\"spira.new_key\" = 300\n");
+    g.extra.push(("spira/pre-activate.sh".into(), probe.into(), true));
+    let w = World::with_git(g);
+    let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, A, &["old_key"], &[]);
+    build_with_schema(&w, B, &["new_key"], &[]);
+    let with = VerifyOpts { pre_activate: true, system_dirs: vec![] };
+    let p = verify::verify(&w.cfg, B, &with).unwrap();
+    assert!(!p.iter().any(|l| l.contains("pre-activate")), "{p:?}");
+    assert_eq!(cfg_text(&w), before, "verify applies nothing");
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = 300"));
+
+    let nodelta = World::with_git(FakeGit { extra: vec![("spira/pre-activate.sh".into(), probe.into(), true)], ..Default::default() });
+    nodelta.build(A).unwrap();
+    let p = verify::verify(&nodelta.cfg, A, &with).unwrap().join("\n");
+    assert!(p.contains("new_key is not declared"), "control: without the delta the probe fails: {p}");
+}
+
+#[test]
+fn config_delta_that_leaves_a_required_key_unset_refuses_naming_it_and_changes_nothing() {
+    let w = World::with_git(delta_git("[added]\n\"spira.other\" = 1\n"));
+    let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, A, &["old_key"], &[]);
+    build_with_schema(&w, B, &["new_key"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    let e = activate::activate(&c, B, None).unwrap_err();
+    assert!(e.contains("config has no new_key") && e.contains("nothing changed"), "{e}");
+    assert_eq!(w.current().as_deref(), Some(A));
+    assert_eq!(cfg_text(&w), before);
+}
+
+fn registry_key(name: &str, ty: &str, default: Option<&str>) -> (String, String, bool) {
+    let stmt = default.map(|d| format!("    : \"${{{name}:={d}}}\"\n")).unwrap_or_else(|| "    # NO DEFAULT\n".into());
+    (format!("spira/conf.d/{name}"), format!("TYPE={ty}\nGROUP=test\nDOC=a key\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n{stmt}SPIRA_CONF_DEFAULT_EOF\n"), false)
+}
+
+#[test]
+fn a_registry_key_with_no_delta_entry_is_defaulted_into_the_config_at_activation() {
+    let mut g = delta_git("");
+    g.delta_for = None;
+    g.extra.push(registry_key("SPIRA_NEW_KEY", "u32", Some("32768")));
+    g.extra.push(registry_key("SPIRA_OLD_KEY", "u32", Some("5")));
+    let w = World::with_git(g);
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nold_key = 9\n");
+    build_with_schema(&w, B, &["new_key"], &[]);
+    assert!(!loads(&w, B), "control: the config as found does not load under the new release");
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = 32768") && cfg_text(&w).contains("old_key = 9"), "{}", cfg_text(&w));
+    assert!(loads(&w, B), "a unit that resolves config starts");
+    assert!(w.cfg.state_dir().unwrap().join("config-undo").join(B).exists(), "the defaulted key can be rolled back");
+}
+
+#[test]
+fn a_no_default_key_the_active_release_already_declares_does_not_refuse_activation() {
+    let mut g = FakeGit { validator: true, ..Default::default() };
+    g.extra.push(registry_key("SPIRA_OLD_NODEFAULT", "string", None));
+    let new = registry_key("SPIRA_NEW_KEY", "u32", Some("7"));
+    g.extra_only.push((B.to_string(), new.0, new.1));
+    let w = World::with_git(g);
+    let cfg = Path::new(&w.cfg.toml_spec().unwrap()).to_path_buf();
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\nold_nodefault = \"x\"\n");
+    build_with_schema(&w, A, &[], &[]);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\n");
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert_eq!(w.current().as_deref(), Some(B));
+    assert!(cfg_text(&w).contains("new_key = 7") && !cfg_text(&w).contains("old_nodefault"), "{}", cfg_text(&w));
+}
+
+#[test]
+fn a_registry_key_with_no_default_is_left_out_and_activation_proceeds() {
+    let mut g = FakeGit { validator: true, ..Default::default() };
+    g.extra.push(registry_key("SPIRA_NEW_KEY", "string", None));
+    g.extra.push(registry_key("SPIRA_COMPUTED_KEY", "string", Some("$SPIRA_RUN/x")));
+    let w = World::with_git(g);
+    let before = "[spira]\nid_prefix = \"sp\"\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).expect("an optional key never refuses activation");
+    assert_eq!(w.current().as_deref(), Some(B));
+    let after = cfg_text(&w);
+    assert!(!after.contains("new_key") && !after.contains("computed_key"), "nothing invented for an optional key: {after}");
+}
+
+#[test]
+fn a_failed_switch_puts_the_config_back() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, A, &["old_key"], &["new_key"]);
+    build_with_schema(&w, B, &["new_key"], &["old_key"]);
+    let mut sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    w.install_units(A);
+    sc.poison = Some(format!("{B}/bin/tool"));
+    activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert_eq!(w.current().as_deref(), Some(A));
+    assert_eq!(cfg_text(&w), before);
+}
+
+#[test]
+fn an_added_key_the_operator_already_set_keeps_the_operators_value() {
+    let w = World::with_git(delta_git("[added]\n\"spira.new_key\" = 300\n"));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nnew_key = 9\n");
+    build_with_schema(&w, B, &["new_key"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = 9"), "{}", cfg_text(&w));
+    assert!(!w.cfg.state_dir().unwrap().join("config-undo").join(B).exists(), "nothing changed, so nothing to undo");
+}
+
+#[test]
+fn an_added_key_held_as_the_empty_string_takes_the_releases_value() {
+    let w = World::with_git(delta_git("[added]\n\"spira.new_key\" = \"240\"\n"));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nnew_key = \"\"\n");
+    build_with_schema(&w, B, &["new_key"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = \"240\""), "{}", cfg_text(&w));
+}
+
+#[test]
+fn a_malformed_config_delta_refuses_the_activation() {
+    for bad in ["[added]\n\"spira.x\" = 1\n[extra]\nk = 1\n", "removed = [\"spira.x\"]\n[added]\n\"spira.x\" = 1\n", "removed = [1]\n", "[added]\n\"spira..x\" = 1\n"] {
+        assert!(config_delta::Delta::parse(bad).is_err(), "{bad}");
+    }
+    let w = World::with_git(delta_git("surprise = 1\n"));
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert!(e.contains("config-delta.toml") && e.contains("surprise"), "{e}");
+    assert_eq!(w.current(), None);
+}
+
+#[test]
+fn activate_waits_for_a_running_oneshot_to_exit() {
+    let w = World::new();
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    w.install_units(A);
+    sc.exits_after.borrow_mut().insert("spira-job-prod.service".into(), 3);
+    let mut c = ctx(&w, &sc);
+    c.drain = Duration::from_secs(5);
+    activate::activate(&c, B, None).unwrap();
+    assert_eq!(sc.state("spira-job-prod.service").unwrap().active, "inactive");
+    assert!(sc.exits_after.borrow()["spira-job-prod.service"] == 0, "activation polled the oneshot until it exited");
+}
+
+// ---------------------------------------------------------------- activation installs new units
+
+fn build_with_unit_ensure(w: &World, sha: &str, body: String) {
+    let cargo = FakeCargo { bins: vec!["tool", "unit-ensure"], bodies: vec![("unit-ensure", body)] };
+    w.build_with(sha, &cargo, vec![]).unwrap();
+}
+
+#[test]
+fn activate_runs_the_new_releases_unit_ensure_so_units_it_adds_get_installed() {
+    let w = World::with_git(FakeGit { unit_ensure: true, ..Default::default() });
+    let marker = w.sb.p().join("ensured");
+    build_with_unit_ensure(&w, B, format!("#!/bin/sh\necho \"$SPIRA_HOME $SPIRA_RELEASE\" > {}\n", marker.display()));
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    let rel = w.rel(B).display().to_string();
+    assert_eq!(fs::read_to_string(&marker).unwrap().trim(), format!("{rel}/spira {rel}"), "run from the new release, not the one the caller was on");
+}
+
+#[test]
+fn a_failing_unit_ensure_is_a_loud_activation_error_and_rolls_back_before_any_restart() {
+    let w = World::with_git(FakeGit { unit_ensure: true, ..Default::default() });
+    build_with_unit_ensure(&w, B, "#!/bin/sh\necho 'cannot render spira-new-prod.timer' >&2\nexit 1\n".into());
+    let sc = FakeSystemctl::new(w.units());
+    let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert!(e.contains("unit-ensure could not install its new units"), "{e}");
+    assert!(e.contains("nothing was restarted"), "{e}");
+    assert!(sc.restarts.borrow().is_empty());
+    assert_eq!(w.current(), None, "rolled back to no current release");
+}
+
+const SOCKET_REQUIRING_SVC: &str = "[Unit]\nRequires=foo.socket\n[Service]\nType=simple\nExecStart=@SPIRA_TOOL_BIN@ --serve\n";
+
+fn socket_world() -> World {
+    let git = FakeGit {
+        unit_ensure: true,
+        extra: vec![("systemd/spira-tool.service".into(), SOCKET_REQUIRING_SVC.into(), false)],
+        ..Default::default()
+    };
+    World::with_git(git)
+}
+
+#[test]
+fn a_release_adding_a_socket_its_service_requires_activates_over_a_predecessor_without_it() {
+    let w = socket_world();
+    let body = format!("#!/bin/sh\necho '[Socket]' > {}/foo.socket\n", w.units().display());
+    build_with_unit_ensure(&w, A, body.clone());
+    build_with_unit_ensure(&w, B, body);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    w.install_units(A);
+    fs::remove_file(w.units().join("foo.socket")).ok();
+    let s = activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(s.restarted.contains(&"spira-tool-prod.service".to_string()), "{:?}", s.restarted);
+    assert_eq!(w.current().as_deref(), Some(B));
+}
+
+#[test]
+fn a_failed_restart_over_a_new_socket_still_rolls_back_and_names_the_shipped_unit() {
+    let w = socket_world();
+    let body = format!("#!/bin/sh\necho '[Socket]' > {}/foo.socket\n", w.units().display());
+    build_with_unit_ensure(&w, A, body.clone());
+    build_with_unit_ensure(&w, B, body);
+    let mut sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    w.install_units(A);
+    fs::remove_file(w.units().join("foo.socket")).ok();
+    sc.poison = Some(format!("{B}/bin/tool"));
+    let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert!(e.contains(&format!("rolled back to {A}")), "{e}");
+    assert_eq!(w.current().as_deref(), Some(A));
+}
+
+#[test]
+fn config_for_a_tree_has_its_delta_applied_and_a_key_without_an_entry_stays_absent() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    let spec = w.cfg.toml_spec().unwrap();
+    file(Path::new(&spec), "[spira]\nid_prefix = \"sp\"\nold_key = 1\n");
+    let tree = w.cfg.releases.join("head-tree");
+    file(&tree.join(config_delta::DELTA_PATH), "[added]\n\"spira.new_key\" = 7\n");
+    let (dir, staged) = config_delta::staged_for_tree(&spec, &tree).unwrap().expect("the tree has a delta");
+    let text = fs::read_to_string(&staged).unwrap();
+    assert!(text.contains("new_key = 7") && !text.contains("other_key"), "{text}");
+    let _ = fs::remove_dir_all(dir);
+    let bare = w.cfg.releases.join("bare-tree");
+    fs::create_dir_all(&bare).unwrap();
+    assert!(config_delta::staged_for_tree(&spec, &bare).unwrap().is_none(), "no delta, nothing staged");
+}
+
+#[test]
+fn config_for_resolution_has_the_delta_applied_without_touching_the_files_in_force() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
+    let spec = w.cfg.toml_spec().unwrap();
+    file(Path::new(&spec), before);
+    build_with_schema(&w, B, &["new_key"], &["old_key"]);
+    let (dir, staged) = config_delta::staged_for_resolution(&spec, Some(&w.cfg.releases), B).unwrap().expect("the release has a delta");
+    let text = fs::read_to_string(&staged).unwrap();
+    assert!(text.contains("new_key = 300") && !text.contains("old_key"), "{text}");
+    assert_eq!(cfg_text(&w), before);
+    let _ = fs::remove_dir_all(dir);
+    assert!(config_delta::staged_for_resolution(&spec, Some(&w.cfg.releases), A).unwrap().is_none(), "no release, no delta, nothing to stage");
+}
+
+#[test]
+fn dolt_renders_from_the_install_locations_when_path_omits_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new("dolt-home");
+    let home = tmp.path().to_path_buf();
+    let bin = home.join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let dolt = bin.join("dolt");
+    std::fs::write(&dolt, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&dolt, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut env = Env::new();
+    env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
+    env.insert("PATH".into(), "/nonexistent-scrubbed".into());
+    env.insert("HOME".into(), home.display().to_string());
+    let reg = Registered { releases: "/e".into(), releases_keep: "10".into(), ..Default::default() };
+    let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
+    let got = cfg.host_values().unwrap().remove("DOLT").unwrap();
+    assert_eq!(got, dolt.display().to_string());
+}
+
+#[test]
+fn build_stages_the_candidates_delta_before_any_release_exists_and_without_one_stages_nothing() {
+    let w = World::with_git(delta_git("[added]\n\"spira.groom_gate_label\" = \"placeholder-gate\"\n"));
+    let before = "[spira]\nid_prefix = \"sp\"\n";
+    let spec = w.cfg.toml_spec().unwrap();
+    file(Path::new(&spec), before);
+    let (dir, staged) = config_delta::staged_for_commit(&w.git, &spec, Path::new("/repo"), B).unwrap().expect("the candidate declares a delta");
+    let text = fs::read_to_string(&staged).unwrap();
+    assert!(text.contains("groom_gate_label = \"placeholder-gate\""), "{text}");
+    assert_eq!(cfg_text(&w), before, "staging writes nothing to the files in force");
+    let _ = fs::remove_dir_all(dir);
+    assert!(config_delta::staged_for_commit(&w.git, &spec, Path::new("/repo"), A).unwrap().is_none(), "control: a commit with no delta entry leaves production config as it is, so its missing key stays a refusal naming it");
 }

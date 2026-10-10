@@ -46,8 +46,9 @@ export SPIRA_CONF="$TMP/no-such-conf"
 # NEVER THE REAL STORE. Nothing in this section calls bd (children_ids and spira_repos are
 # both stubbed below), but sourcing pilgrimage.sh still sources conf.sh, whose schema check
 # runs against $SPIRA_DB if a store exists there — a nonexistent path skips it.
-export SPIRA_DB="$TMP/no-such-db"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN" "$TMP/bin"
+SPIRA_DB="$TMP/no-such-db"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN" "$TMP/bin"
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$SPIRA_RUN"
 LCSTATE="$TMP/lc-state"
 # The stub answers `state` from the fixture; every other verb (T3's `close-epic`, sp-hyo5e)
 # is the tree's own spira-lc, found on PATH before the stub shadows it.
@@ -63,12 +64,13 @@ git_work="$TMP/lrepo-work"
 git init -q -b main "$git_work"
 git -C "$git_work" commit -q --allow-empty -m base
 git -C "$git_work" remote add origin "$LREMOTE"
-git -C "$git_work" push -q origin main
-git -C "$git_work" fetch -q origin
+timeout 5 git -C "$git_work" push -q origin main
+timeout 5 git -C "$git_work" fetch -q origin
 
 LMAP="$TMP/lrepo-map"
 printf 'lrepo | %s | push | origin/main | |\n' "$git_work" > "$LMAP"
-export SPIRA_REPO_MAP="$LMAP"
+SPIRA_REPO_MAP="$LMAP"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
 # shellcheck disable=SC1090
 . "$HERE/pilgrimage.sh"   # guarded: sourcing runs no command (see the BASH_SOURCE check)
@@ -132,16 +134,18 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 DB="$SPIRA_DB"
 BD="${TESTDB_BD:-bd}"
-# COCKPIT_DB IS EXPORTED EXPLICITLY, never left to conf.sh's default. The operator's
-# spira.conf may name COCKPIT_DB, and the environment is the only source that outranks it —
-# without this line a suite on his box writes its fixtures into the live database.
-export COCKPIT_DB="$DB"
-export SPIRA_RUN="$TMP/run2"; mkdir -p "$SPIRA_RUN"
+# COCKPIT_DB IS DECLARED EXPLICITLY, never left to the fixture's own default — this suite's
+# isolated SPIRA_TOML can never see a real operator's spira.conf any more (per Ryan
+# 2026-10-05, the one-source-of-config law), but the value still has to point at THIS
+# suite's throwaway database, not whatever the complete fixture declares.
+SPIRA_RUN="$TMP/run2"; mkdir -p "$SPIRA_RUN"
+tl_config COCKPIT_DB="$DB" SPIRA_RUN="$SPIRA_RUN"
 
 child() {   # child <id> <status> <parent>
     printf '{"id":"%s","title":"child %s","description":"d","status":"%s","issue_type":"task","labels":["spira","plan"],"dependencies":[{"issue_id":"%s","depends_on_id":"%s","type":"parent-child"}]}\n' \
         "$1" "$1" "$2" "$1" "$3"
 }
+# batch-job: fixture bd call against the suite's throwaway store
 status_of() { "$BD" -C "$DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
     | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d[0] if isinstance(d,list) else d).get("status") or "")'; }
 
@@ -149,7 +153,18 @@ MAILDIR="$TMP/maildir"
 n_mails() { ls "$MAILDIR/operator/new/" 2>/dev/null | wc -l | tr -d ' '; }
 mail_content() { cat "$MAILDIR/operator/new/"* 2>/dev/null; }
 
-run() { SPIRA_DB="$DB" SPIRA_MAIL="$MAILDIR" pilgrimage.sh check 2>&1; }
+mkdir -p "$SPIRA_RUN/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — mail (shelled out to by
+# pilgrimage.sh) appends every send there (sfail round 3, pattern 7).
+# SPIRA_MAIL_KINDS undeclared resolves to the complete fixture's own unwritable release
+# tree (/fixture/userhome/.../spira/mail/kinds), so lint refuses every send with
+# "unknown kind note" before pilgrimage.sh's own notification ever gets delivered.
+tl_config SPIRA_DB="$DB" SPIRA_MAIL="$MAILDIR" SPIRA_MAIL_INDEX="$MAILDIR/index" \
+    SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_MAIL_MUTE=0 \
+    SPIRA_CONCIERGE_INBOX="$SPIRA_RUN/watchd/concierge-inbox.log"
+export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite" SPIRA_MAIL_OPERATOR_CONSIDERED="test-suite"
+run() { pilgrimage.sh check 2>&1; }
 
 # One seed, three epics: a finished one (announce/close), one still going (silence), and
 # one outside Spira's partition (silence). No branch/landstate for any of them, so all three

@@ -21,7 +21,10 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
         "$_spira_lib_dir" >&2
     return 1 2>/dev/null || exit 1
 }
-. "$_spira_lib_dir/conf.sh"
+. "$_spira_lib_dir/conf.sh" || {
+    printf 'spira: conf.sh could not resolve configuration (see above) — refusing to load lib.sh on unset keys\n' >&2
+    return 1 2>/dev/null || exit 1
+}
 # suite-covers.sh is NOT sourced here (wave 4.36, sp-bobsp): nothing in lib.sh calls its
 # accessors, and the five scripts that do (plan-lint.sh, suite-coverage-json.sh,
 # escape-classify.sh, testenv-guard.sh, testlib.sh) now call `suite-select header ...`
@@ -69,9 +72,9 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # wiki/projects/spira/remaining-bash-inventory.md (operator surface, install/units, persona
 # passes), not on anything left to port here. About twenty of THEIR scripts still `.
 # "$HERE/lib.sh"` for a name this file shims — acceptance-local.sh, branch-guard.sh,
-# branch-sweep.sh, cadence.sh, citations.sh, deploy.sh, disk-remedy.sh, escape-classify.sh,
-# fleet-status.sh, gate-locks.sh, groom-trigger.sh, held.sh, hold.sh, holds.sh,
-# pr-notify.sh, publish-backlog.sh, queue-certified-list.sh, released-defects.sh,
+# branch-sweep.sh, cadence.sh, citations.sh, deploy.sh, escape-classify.sh,
+# gate-locks.sh, groom-trigger.sh, held.sh, hold.sh, holds.sh,
+# pr-notify.sh, publish-backlog.sh, released-defects.sh,
 # release.sh, review.sh, tokens.sh, unhold.sh — plus roughly fifty of this directory's own
 # `test-*.sh` suites that exercise a shim (or one of the allow-listed functions) directly
 # as bash, rather than through the crate's own unit tests. Wave 4 does not own any of
@@ -126,7 +129,7 @@ bdq() {
 }
 
 # Each of these three is also called directly, by name, from several test suites
-# (test-repo-label.sh, test-destructive-bead.sh) — not only from inside bdq() above — so each
+# (test-repo-map.sh, test-destructive-bead.sh) — not only from inside bdq() above — so each
 # gets its own shim onto the binary's `__fence` subcommand rather than relying on bdq()'s own
 # dispatch to reach them.
 _bdq_check_repo_label() {   # _bdq_check_repo_label <create-args> -> 0 or refuse
@@ -200,18 +203,14 @@ bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an integer, 0 on anything unparseable
 
 # --------------------------------------------------------------------------------------
-# Liveness. NEVER pgrep -f: the pattern is a substring of any command line that mentions
-# it, including the caller's own, so a `pgrep -f 'aeon.sh builder'` inside a script named
-# in that pattern reports itself alive. pgrep may nominate; /proc decides, on the actual
-# argv of the recorded pid.
+# Liveness is the lease and nothing else: an aeon is alive while the deadline in its
+# identity's `.lease` file is ahead of the clock, renewed every heartbeat and removed at
+# teardown. No pidfile pid is probed, no /proc cmdline read, and never pgrep -f (the pattern
+# is a substring of any command line that mentions it, the caller's own included).
 #
 # aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes are SHIMS onto `strand aeon-alive
-# / aeon-count / aeons-live-total / aeons-live-lanes` (wave 4.23, sp-0ffox: lib.sh family E
-# -> strand, the owning crate; collapses the bead/cockpit-collect copies of aeon_alive onto
-# this same implementation). The logic — including the exclude-unit threading through
-# aeon_count and the FAYTH_NAME resolution in aeons_live_lanes — lives in
-# strand/src/probe.rs now; this file keeps the names so bash sourcers (fleet-status.sh,
-# hold.sh) need no change.
+# / aeon-count / aeons-live-total / aeons-live-lanes`; the logic lives in
+# strand/src/probe.rs, and this file keeps the names so bash sourcers (hold.sh) need no change.
 #
 # aeons_live_lanes ALONE threads SPIRA_HOME/SPIRA_FAYTHS through explicitly: conf.sh
 # deliberately never exports either (a fact about this one copy of the harness, not
@@ -219,7 +218,7 @@ json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an i
 # and silently count zero lane aeons forever, the exact shape of sp-nki5w's scar. The other
 # three need only SPIRA_RUN/SPIRA_SUMMON/SPIRA_SYSTEMCTL, all already exported.
 # --------------------------------------------------------------------------------------
-aeon_alive() {           # aeon_alive <pidfile> -> 0 if the recorded pid is a live aeon
+aeon_alive() {           # aeon_alive <pidfile> -> 0 if the identity's lease is still running
     strand aeon-alive "$1"
 }
 
@@ -412,7 +411,7 @@ epic_rank_rows() {
 # claim_retry, fayth_exclude, fayth_ready, bulk_ready_by_fayth, ready_shared_exclude ->
 # moved to spira-claim (wave 4.25, sp-obhv6). `ready_shared_exclude`'s only caller besides
 # `fayth_exclude` is test-dispatch-open-children.sh, which calls it directly — kept as its
-# own shim (onto `shared-exclude`, spira-claim/src/ready.rs `shared_exclude3`) rather than
+# own shim (onto `shared-exclude`, spira-claim/src/ready.rs `shared_exclude4`) rather than
 # deleted. `express_ready_in_task_pool` has had no live caller since sentinel.sh (the only
 # thing that ever called it) was retired for the Rust sentinel crate — deleted outright
 # rather than ported (see `test-express-lane.sh`, trimmed to match).
@@ -467,13 +466,11 @@ close_landed_queue_waiters() {
 # sp-du8bv): it decides from the pass's one store snapshot instead of one `bd children` per
 # candidate, which cost 302 s a pass. `sentinel --open-children` runs it alone.
 
-# bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon
-# can claim it: withdraws a CERTIFIED lifecycle row (unless <cause> is admission-exempt — see
-# _census_deliberate_reopen_causes below), writes the <suites> sidecar ($SPIRA_RUN/ejected/), reopens, strips the
-# submitted label, releases the claim and records the cause. Ported to spira-claim (wave
-# 4.19, sp-3wfcb, row I, safety note (c7)); see spira-claim/src/reopen.rs for the contract
-# and the scar (a reopen that keeps the assignee is claimable by nobody). Non-zero RC means
-# bdq reopen, release_claim or the note each separately failed.
+# bead_reopen <id> <cause> [note] [suites] — hand a bead back to its builder through the
+# lifecycle machine (`spira-lc reopen`: the row records the event its state implies; a cause
+# that is admission-exempt leaves the row alone), write the <suites> sidecar
+# ($SPIRA_RUN/ejected/), record the cause and the note. bd's status, label and assignee are
+# not written. Non-zero RC means the machine refused the reopen or the note failed.
 bead_reopen() {
     spira-claim reopen "$@"
 }
@@ -537,10 +534,12 @@ lc_event_bead() {
 # through the stale-lease reaper's HolderDead, not through the next claimant. Also refused:
 # DepthExceeded, when stack-depth exceeds stack-max-depth. The trailing three args are the
 # caller's own stack proposal, forwarded as given; omitted, an unstacked claim.
+# The seventh arg is the claiming persona (fayth), recorded on the row; omitted, NULL.
 #
-# An applied claim writes the `claimed` events row the attempt counters fold.
+# An applied claim appends the `claimed` fact the attempt counters fold.
 lc_claim_bead() {
-    local id="$1" holder="$2" lease_until="$3" stack="${4:-{\}}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version rc
+    local id="$1" holder="$2" lease_until="$3" stack="${4:-}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" persona="${7:-}" row state version cur_holder rc
+    [ -n "$stack" ] || stack='{}'
     # A bead filed by any path that skips row creation (a raw create in the beads CLI — acceptance, and at
     # least four actors in production; sp-tb4yk) has no lifecycle row, and `spira-lc show`
     # cannot tell "no row" from "unreachable". create-bead is idempotent and fails only when
@@ -549,25 +548,32 @@ lc_claim_bead() {
         timeout 5 spira-lc create-bead "$id" >/dev/null 2>&1 || return 2
         row="$(lc_bead_row "$id")" || return 2
     fi
-    IFS=$'\t' read -r state version _ _ <<< "$row"
+    IFS=$'\t' read -r state version cur_holder _ <<< "$row"
     [ -n "$state" ] || return 2
+    [ "$state" = WORKING ] && [ "$cur_holder" = "$holder" ] && return 0
+    local persona_json=null
+    [ -z "$persona" ] || persona_json="\"$persona\""
     lc_event_bead "$id" "$state" "$version" "$holder" \
-        "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until,\"stack\":$stack,\"stack_depth\":$stack_depth,\"stack_max_depth\":$stack_max_depth}}"
+        "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until,\"stack\":$stack,\"stack_depth\":$stack_depth,\"stack_max_depth\":$stack_max_depth,\"persona\":$persona_json}}"
     rc=$?
+    if [ "$rc" -eq 3 ]; then
+        # A refusal is not "not mine" until the row says so: a double-sent claim applies once.
+        row="$(lc_bead_row "$id")" || return 2
+        IFS=$'\t' read -r state _ cur_holder _ <<< "$row"
+        [ "$state" = WORKING ] && [ "$cur_holder" = "$holder" ] && return 0
+    fi
     [ "$rc" -eq 0 ] || return "$rc"
     _bump_write_event "$id" claimed "$holder"
 }
 
-# lc_release_bead <id> <actor> — best-effort Release. release_own_claim's own lifecycle half
-# is `spira-lc unclaim` now (sp-hyo5e), which applies the same Release. Like it, this fires
-# from states where Release is illegal (SUBMITTED, DONE, ...) as often as from WORKING;
-# those refusals are expected, not errors, and are never surfaced to the caller — the row
-# is already exactly where it should be.
+# lc_release_bead <id> <actor> — best-effort Release, sent only from WORKING, the one state
+# where Release applies. Any other state is already where it should be, and sending the
+# event anyway is recorded as a refusal the refusal-rate alarm counts. Never fails the caller.
 lc_release_bead() {
     local id="$1" actor="$2" row state version
     row="$(lc_bead_row "$id")" || return 0
     IFS=$'\t' read -r state version _ _ <<< "$row"
-    [ -n "$state" ] || return 0
+    [ "$state" = WORKING ] || return 0
     lc_event_bead "$id" "$state" "$version" "$actor" '"Release"'
     return 0
 }
@@ -609,7 +615,7 @@ release_own_claim() {
 #
 # PARK, NOT RELEASE. release_own_claim alone puts the bead back on the ready queue, where
 # the sentinel re-summons an aeon within two minutes — an infinite loop burning the pool.
-# Adding the ask label first makes every fayth's --exclude-label filter skip it, so the
+# The ask hold makes the machine leave it out of every fayth's claimable set, so the
 # bead sits open but unclaimed until a human corrects the label or the repo-map. Scar:
 # sp-nlhy accumulated four identical notes, one per summon, before a keyboard session
 # fixed the label by hand. (sp-4l0d)
@@ -617,12 +623,10 @@ release_own_claim() {
 # from every fayth predicate and invisible to the operator.
 park_unmapped() {
     local id="$1" repo_name="$2"
-    bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
     bdq label add "$id" "overseer"          >/dev/null 2>&1 || true
-    # Dual-written, not a replace (sp-ki12s precedent) — the label is still what every
-    # fayth's dispatch exclusion reads until that reader is cut over in the same round.
+    # The hold alone (sp-psztcc): a label standing in for it outlived every withdrawal.
     spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh || true
-    bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Labeled $SPIRA_ASK_LABEL and overseer — no aeon will claim it again until a human corrects the label or adds the repo to the map and removes that label. Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
+    bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Held with an ask (and labelled overseer) — no aeon will claim it again until a human corrects the label or adds the repo to the map and withdraws the ask (spira-lc withdraw-ask $id). Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
     release_own_claim "$id"
 }
 
@@ -746,14 +750,13 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
     return 0
 }
 
-# summon_fayth <fayth> [pool-remaining] [require-label] [reuse-ready] -> 0 if an aeon was
+# summon_fayth <fayth> [pool-remaining] [require-express] [reuse-ready] -> 0 if an aeon was
 # started, 1 otherwise.
 #
-# require-label is passed to the aeon as SPIRA_REQUIRE_LABEL, which it adds to its own
-# FAYTH_LABELS before claiming (aeon.sh). Set it only when the slot itself is restricted —
-# an express grant, say — so the aeon summoned under it cannot claim a bead outside that
-# restriction. A normal summon leaves it unset and claims under the fayth's own predicate
-# exactly as before.
+# A non-empty require-express is passed to the aeon as SPIRA_REQUIRE_EXPRESS, which narrows
+# its ready set to beads whose lifecycle row is express. Set it only when the slot itself is
+# restricted — an express grant, say. A normal summon leaves it unset and claims under the
+# fayth's own predicate exactly as before.
 #
 # reuse-ready=1 skips the fayth_ready bd round trip and uses SUMMON_FAYTH_CACHED_READY
 # (set by the previous call, in this same shell, for the SAME fayth) instead — a caller
@@ -811,7 +814,7 @@ world_gate() {         # world_gate <fayth> <log-prefix> -> 0 if summons are per
 summon_argv() {         # summon_argv <fayth> -> systemd-run property/setenv flags, one per line
     sentinel --summon-argv "$1"
 }
-summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label] -> 0 if an aeon was started, 1 otherwise
+summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-express] -> 0 if an aeon was started, 1 otherwise
     sentinel --summon "$1" "${2:-}" "${3:-}"
 }
 ck7_summon_pass() {
@@ -1216,6 +1219,10 @@ census_deliberate_run_sql() {   # census_deliberate_run_sql [since_epoch_s] -> t
 # conf.sh-withheld kind `fayth_get`'s shim has to carry across the exec boundary by hand.
 census_events_run_sql() {
     census sql run-events "${1:-}"
+}
+# census_event_rows_run_sql [since_epoch_s] -> raw per-event rows for causal-event clustering.
+census_event_rows_run_sql() {
+    census sql run-event-rows "${1:-}"
 }
 
 # counter_label -> the historical sp-attempt-N / sp-reclaim-N / sp-requeue-N bd label a
@@ -1665,11 +1672,16 @@ _spira_config_repo() {
 # SPIRA_WORKSPACES ARE already exported by conf.sh, but SPIRA_REPO_MAP is not, so this still
 # goes through the same threading helper as every other repo-registry shim.
 spira_containment_check() {
-    # prod (or unset) is always allowed; the map is unconstrained — kept as a bash-only
+    # prod is always allowed; the map is unconstrained — kept as a bash-only
     # fast path (never shells to spira-config) so every lib.sh source, in production and in
     # every test fixture that never sets SPIRA_INSTANCE, costs exactly what it always did:
     # nothing. Only a genuinely confined instance pays for the real check.
-    case "${SPIRA_INSTANCE:-prod}" in prod) return 0 ;; esac
+    # An unset instance means config never resolved (conf.sh refused — a containment
+    # violation among the reasons) — never "prod", which would turn that refusal into a pass.
+    case "${SPIRA_INSTANCE-}" in
+        "") echo "spira: config did not resolve (no spira.instance) — refusing" >&2; exit 1 ;;
+        prod) return 0 ;;
+    esac
     _spira_config_repo containment-check && return 0
     exit 1     # the bash original halted the whole sourcing process on a violation, not just this call
 }
@@ -1777,7 +1789,7 @@ repo_land_queued() {
 #
 # PORTED (wave 4.35, sp-kelr2, row V) to maechen-trigger's `lanes` module, called in-process
 # by its own sweep; this is now the one-line shim onto its `repo-lanes` CLI door, which
-# groom-trigger.sh (the one surviving bash caller) and test-repo-lanes.sh both reach the
+# groom-trigger.sh (the one surviving bash caller) and test-repo-map.sh both reach the
 # same way. SPIRA_HOME is threaded explicitly — conf.sh deliberately never exports it (the
 # EXEC-BOUNDARY TRAP comment at the top of this file). `_spira_expand_lanes`, the internal
 # helper this function used to call, had no caller outside this one and is retired rather
@@ -1798,8 +1810,8 @@ spira_lane_admitted() {
 }
 
 # spira_open_trigger_count <labels> -> count of open-or-in_progress beads carrying every
-# label in <labels> (comma-separated), or 0 on a query failure (fail toward filing rather
-# than silently going quiet — the caller's own dedup guard is what a false 0 would defeat).
+# label in <labels> (comma-separated). Non-zero status, no stdout, when the count cannot be
+# read: callers must refuse to file, never treat it as zero.
 # in_progress is included because a claimed trigger bead leaves --status open, and a dedup
 # query scoped to open alone would file a duplicate on the very next tick (sp-mp9s — the
 # defect that motivated including it in maechen-trigger.sh, extracted here so
@@ -2272,7 +2284,7 @@ _tsd_escape() {
 # Ported to Rust, queue's own crate (sp-hwjsq, "wave 4.32" — queue decomposition row AA):
 # queue/src/ops/helpers.rs `certified_list`, same selection any cutter (the batcher,
 # the reconciler's mergeability check, cockpit-collect's "next up" pane) draws from. Kept
-# as a shim: queue-certified-list.sh and cockpit-collect still call this by name.
+# as a shim: cockpit-collect still calls this by name.
 #
 # EXECS `queue-helpers`, NOT `queue` — a SEPARATE binary, on purpose (same crate, a second
 # [[bin]]). The first cut named this subcommand on `queue` itself; that broke production
@@ -2327,7 +2339,7 @@ queue_sort_rows() {
     _pjf="$(mktemp)" || return 1
     printf '%s' "$_pj" > "$_pjf"
     _pj=""
-    queue-helpers sort-rows "$repo" "$base_sha" --prio-file "$_pjf" --express-label "${SPIRA_EXPRESS_LABEL:-express}"
+    queue-helpers sort-rows "$repo" "$base_sha" --prio-file "$_pjf"
     _rc=$?
     rm -f "$_pjf"
     return "$_rc"

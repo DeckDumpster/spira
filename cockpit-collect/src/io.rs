@@ -1,9 +1,7 @@
-//! The impure boundary: every place this crate shells out to `bd`, `git`, `systemctl`,
+//! The impure boundary: every place this crate shells out to `spira-lc`, `git`, `systemctl`,
 //! `/proc`, or a `lib.sh` function it does not re-implement (DESIGN.md "Non-goals" — `lib.sh`
-//! itself is frozen, wave 4's job, never this bead's). Mirrors the exact argv and env
-//! contract `spira/lib.sh`'s `bdq`/`bdjson` and `spira/cockpit.sh`'s helpers used, so a
-//! fixture or a fake binary already on `PATH` for the bash suites works unmodified against
-//! this binary (parity evidence in the delivery report).
+//! itself is frozen, wave 4's job, never this bead's). The fixture and fake binaries
+//! the bash suites put on `PATH` work unmodified against it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,23 +19,28 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// lib.sh (`lib_call`'s own `home` parameter) would have that child's nested conf.sh
 /// silently keep the parent's stale value instead of deriving its own from the file it
 /// was just pointed at). [`SPIRA_MAX_AEONS`] joins this set for a narrower reason: it is
-/// host policy, never exported by conf.sh itself (`law-gates-run-in-a-clean-environment`'s
-/// own scar is `SPIRA_FAYTHS` leaking into a test's own sentinel the same way).
+/// host policy that must never leak to a child's environment either.
 ///
-/// Anything this crate still needs from this set is read through [`Boot`]/[`boot_repo_registry_inputs`]/
-/// [`max_aeons`], never `std::env::var`.
+/// This set is about the EXPORT side only (this process's own `std::env`, and so every
+/// child it spawns) — it has no bearing on reading a value in-process. `SPIRA_MAX_AEONS`
+/// and `SPIRA_REPO_MAP` are both ordinary keys in `resolve()`'s own `values` map
+/// (`resolve::set!` writes every key there; only the typed shell/export side omits this
+/// set), so [`max_aeons`] and `repo_label_keys` read them straight through
+/// `spira_config::process::cfg`, the one door, like any other registered key.
+///
+/// Anything this crate still needs from this set for the CHILD-PROCESS registry bridge is
+/// read through [`Boot`]/[`repo_registry`] instead, never `std::env::var`.
 const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
 
-/// [`bootstrap_config`]'s own answer, cached in-process (never in `std::env`) for the two
-/// call sites that still need a [`NEVER_EXPORTED`] value: [`repo_registry`] and
-/// [`max_aeons`]. Unset outside `main()` — every unit test that exercises those two
-/// functions directly (never calling `bootstrap_config` first) falls back to reading this
-/// process's own environment exactly as it did before this bead, so no test needed
-/// rewiring for a hazard that only matters once this binary starts spawning children.
+/// [`bootstrap_config`]'s own answer, cached in-process (never in `std::env`) for the one
+/// call site that still needs a [`NEVER_EXPORTED`] value for a CHILD process:
+/// [`repo_registry`]. Unset outside `main()` — a unit test that exercises that function
+/// directly (never calling `bootstrap_config` first) falls back to reading this process's
+/// own environment exactly as it did before this bead, so no test needed rewiring for a
+/// hazard that only matters once this binary starts spawning children.
 struct Boot {
     repo_registry_env: BTreeMap<String, String>,
     repo_map_text: Option<String>,
-    max_aeons: String,
 }
 
 static BOOT: OnceLock<Boot> = OnceLock::new();
@@ -115,19 +118,11 @@ pub fn bootstrap_config() {
             (!p.is_empty()).then(|| p.to_string())
         })
         .and_then(|p| std::fs::read_to_string(p).ok());
-    // SPIRA_MAX_AEONS is never a key `resolve()` itself computes (unlike SPIRA_REPO_MAP,
-    // which IS one of its hand-written keys, just withheld from EXPORT_KEYS) — it is host
-    // policy read in-process, straight off this process's own environment, exactly like
-    // `home_repo_default`/`repo` above. `resolved.get("SPIRA_MAX_AEONS")` always answered
-    // "" (the key is simply absent from `values`), so the task-pool ceiling this cached for
-    // [`max_aeons`] — and therefore `slots_keys`' `SP_SLOTS_CEILING` — was silently 0
-    // whenever `bootstrap_config` ran, regardless of what the operator actually set.
-    let max_aeons = env_map.get("SPIRA_MAX_AEONS").cloned().unwrap_or_default();
     if let Some(r) = &resolved {
         repo_registry_env.insert("SPIRA_HOME_REPO".into(), r.get("SPIRA_HOME_REPO").to_string());
         repo_registry_env.insert("SPIRA_REPO_MAP".into(), r.get("SPIRA_REPO_MAP").to_string());
     }
-    let _ = BOOT.set(Boot { repo_registry_env, repo_map_text: map_text, max_aeons });
+    let _ = BOOT.set(Boot { repo_registry_env, repo_map_text: map_text });
 
     let Some(resolved) = resolved else { return };
     for (k, v) in importable(&resolved, &env_map) {
@@ -174,43 +169,34 @@ pub fn repo_registry() -> spira_config::repos::Registry {
     }
 }
 
-/// `SPIRA_MAX_AEONS`, from [`Boot`] when [`bootstrap_config`] has run, else this process's
-/// own environment (unit tests of [`crate::probes::slots_keys`] never call
-/// `bootstrap_config`; see [`BOOT`]'s own doc).
+/// `SPIRA_MAX_AEONS`, the one door: it is an ordinary key in `resolve()`'s own `values`
+/// (never exported to a CHILD process — see [`NEVER_EXPORTED`] — but that is a separate
+/// concern from reading it here, in-process).
 pub fn max_aeons() -> String {
-    match BOOT.get() {
-        Some(b) => b.max_aeons.clone(),
-        None => std::env::var("SPIRA_MAX_AEONS").unwrap_or_default(),
-    }
+    spira_config::process::cfg("SPIRA_MAX_AEONS").unwrap_or_default()
 }
 
-pub fn run_dir() -> PathBuf {
+pub fn try_run_dir() -> Result<PathBuf, String> {
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    spira_config::resolve::resolve_run_dir(&env, &home_dir()).unwrap_or_else(|e| {
-        eprintln!("cockpit-collect: {e}");
-        #[cfg(test)]
-        panic!("run_dir: {e} SPIRA_RUN={:?} SPIRA_HOME={:?}", std::env::var("SPIRA_RUN"), std::env::var("SPIRA_HOME"));
-        #[cfg(not(test))]
-        std::process::exit(1)
-    })
+    spira_config::resolve::resolve_run_dir(&env, &home_dir()).map_err(|e| format!("cockpit-collect: {e}"))
+}
+
+/// Panics when [`try_run_dir`] fails; `main` calls `try_run_dir` first and refuses, so only
+/// a caller that skipped that check reaches the panic.
+pub fn run_dir() -> PathBuf {
+    try_run_dir().unwrap_or_else(|e| panic!("{e}"))
 }
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
 }
 
-/// `bdq <args>`: the harness's one chokepoint for invoking `bd`, reproduced byte-for-byte
-/// enough to matter:
-///   - `SPIRA_BDJSON_FIXTURE` set -> `bdsim.py <fixture> <args>` (the test seam every
-///     `test-cockpit-*.sh` suite drives; inherited from this process's own environment so a
-///     suite that exports it before calling this binary needs no other change).
-///   - otherwise: refuse with no output when `SPIRA_DB` is empty (never fall through to bd's
-///     own auto-discovery — sp-agdzk/sp-25b7s), then
-///     `timeout ${BD_TIMEOUT:-180} ${SPIRA_BD:-bd} -C $SPIRA_DB <args>`, retried up to
-///     `SPIRA_BDQ_CONN_RETRIES` (default 2) times while stderr contains "invalid connection".
-/// Returns `None` on any failure (non-zero exit, refusal, spawn error) — the caller renders
-/// `?`, never 0.
-pub fn bdq(args: &[&str]) -> Option<String> {
+/// `content <args>`: bead content (title, labels, comments) through `spira-lc content`, the
+/// one door — never `bd` itself. `SPIRA_BDJSON_FIXTURE` set -> `bdsim.py <fixture> <args>`
+/// (the test seam the `test-cockpit-*.sh` suites drive). `timeout ${BD_TIMEOUT:-180}`, retried
+/// up to `SPIRA_BDQ_CONN_RETRIES` (default 2) times while stderr contains "invalid
+/// connection". `None` on any failure; the caller renders `?`, never 0.
+pub fn content(args: &[&str]) -> Option<String> {
     if let Ok(fixture) = std::env::var("SPIRA_BDJSON_FIXTURE") {
         if !fixture.is_empty() {
             let out = Command::new("bdsim.py")
@@ -226,8 +212,7 @@ pub fn bdq(args: &[&str]) -> Option<String> {
             return None;
         }
     }
-    let db = std::env::var("SPIRA_DB").ok().filter(|v| !v.is_empty())?;
-    let bd_bin = env_or("SPIRA_BD", "bd");
+    let lc = env_or("SPIRA_LC_BIN", "spira-lc");
     let timeout_s = env_or("BD_TIMEOUT", "180");
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
 
@@ -235,9 +220,8 @@ pub fn bdq(args: &[&str]) -> Option<String> {
     loop {
         let out = Command::new("timeout")
             .arg(&timeout_s)
-            .arg(&bd_bin)
-            .arg("-C")
-            .arg(&db)
+            .arg(&lc)
+            .arg("content")
             .args(args)
             .stdin(Stdio::null())
             .output();
@@ -250,8 +234,6 @@ pub fn bdq(args: &[&str]) -> Option<String> {
         }
         let stderr = String::from_utf8_lossy(&out.stderr);
         let rc = out.status.code().unwrap_or(1);
-        // Collapsed onto bead::bdq::should_retry (sp-pwmlj, wave 4.15) — the same retry
-        // decision bdq's own binary makes, rather than a second copy of it here.
         if !bead::bdq::should_retry(rc, attempt, tries, stderr.contains("invalid connection")) {
             return None;
         }
@@ -259,28 +241,36 @@ pub fn bdq(args: &[&str]) -> Option<String> {
     }
 }
 
-/// `json_only`: `sed -n '/^[[{]/,$p'` — drop any banner/warning lines a wrapper printed to
-/// stdout before the first line that actually starts a JSON value. Collapsed onto
-/// `bead::bdq::json_only` (sp-pwmlj, wave 4.15): this crate's own copy tolerated leading
-/// whitespace before the `[`/`{` (`line.trim_start()` then `starts_with`), which `sed -n
-/// '/^[[{]/,$p'` — and `bdq`'s own fence — do not; an indented JSON-looking line would have
-/// been treated as the payload start here and correctly skipped by the real `bdq`/`bdjson`,
-/// a real divergence this collapse fixes rather than a feature to keep.
+/// Drop any banner lines a wrapper printed before the first line that starts a JSON value.
 pub fn json_only(s: &str) -> &str {
     bead::bdq::json_only(s)
 }
 
-/// `bdjson <args>` == `bdq <args> --json 2>/dev/null | json_only`.
-pub fn bdjson(args: &[&str]) -> Option<String> {
+/// `contentjson <args>` == `content <args> --json | json_only`.
+pub fn contentjson(args: &[&str]) -> Option<String> {
     let mut full: Vec<&str> = args.to_vec();
     full.push("--json");
-    bdq(&full).map(|s| json_only(&s).to_string())
+    content(&full).map(|s| json_only(&s).to_string())
 }
 
-/// Parse a `bdjson`/`bdq --json` response into a `Vec<Value>`, the shape every probe needs:
-/// bd returns either a bare object or an array. Empty/unparseable input (a refusal, per
-/// `bdjson`'s contract) returns `None`, never an empty vec — the two are different claims.
-pub fn bd_rows(raw: Option<String>) -> Option<Vec<serde_json::Value>> {
+/// `contentjson`, memoised for the life of this process: one probe pass reads a full-table list
+/// once however many sections want it. A probe is its own short-lived process, so the memo
+/// never outlives a tick (law-reduce-the-count-never-throttle-the-job).
+pub fn contentjson_shared(args: &[&str]) -> Option<String> {
+    static MEMO: std::sync::Mutex<Vec<(Vec<String>, Option<String>)>> = std::sync::Mutex::new(Vec::new());
+    let key: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    if let Some((_, hit)) = MEMO.lock().ok()?.iter().find(|(k, _)| *k == key) {
+        return hit.clone();
+    }
+    let fresh = contentjson(args);
+    MEMO.lock().ok()?.push((key, fresh.clone()));
+    fresh
+}
+
+/// Parse a `contentjson` response into a `Vec<Value>`, the shape every probe needs:
+/// the answer is either a bare object or an array. Empty/unparseable input (a refusal, per
+/// `contentjson`'s contract) returns `None`, never an empty vec — the two are different claims.
+pub fn json_rows(raw: Option<String>) -> Option<Vec<serde_json::Value>> {
     let raw = raw?;
     if raw.trim().is_empty() {
         return None;
@@ -312,7 +302,7 @@ pub fn lib_call_with_stdin(
 f="$2"; shift 2
 "$f" "$@"
 "#;
-    let mut cmd = Command::new("bash");
+    let mut cmd = spira_config::bounded::bounded("bash");
     cmd.arg("-c")
         .arg(SNIPPET)
         .arg("cockpit-collect-lib-bridge")
@@ -377,7 +367,7 @@ pub fn tsd_slots_sample(run: &Path, frag: &Path) {
     let lanes_live = field("SP_SLOTS_LANES_LIVE");
     let ready = field("SP_SLOTS_READY");
     let paused = field("SP_SLOTS_CAPACITY_PAUSED");
-    let _ = Command::new("tsd-write")
+    let _ = spira_config::bounded::bounded("tsd-write")
         .arg("--family")
         .arg("slots")
         .arg("--root")
@@ -395,7 +385,7 @@ pub fn tsd_slots_sample(run: &Path, frag: &Path) {
 
 /// `git -C <repo> <args>`, stdout on success, `None` on any non-zero exit or spawn failure.
 pub fn git(repo: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
+    let out = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -417,7 +407,7 @@ pub fn unit_active(unit: &str) -> Option<bool> {
     if unit == "?" {
         return None;
     }
-    let out = Command::new("systemctl")
+    let out = spira_config::bounded::bounded("systemctl")
         .args(["--user", "is-active", unit])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -431,7 +421,7 @@ pub fn unit_active(unit: &str) -> Option<bool> {
 }
 
 pub fn unit_show_invocation_id(unit: &str) -> Option<String> {
-    let out = Command::new("systemctl")
+    let out = spira_config::bounded::bounded("systemctl")
         .args(["--user", "show", unit, "-p", "InvocationID", "--value"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -454,7 +444,7 @@ pub fn unit_show_invocation_id(unit: &str) -> Option<String> {
 /// same way `spira/cockpit.sh` invoked it (law-units-build-what-they-exec: never construct
 /// a path to it, resolve it off `PATH` like every other caller in the release).
 pub fn run_tool(name: &str, args: &[&str], stdin: Option<&str>) -> Option<String> {
-    let mut cmd = Command::new(name);
+    let mut cmd = spira_config::bounded::bounded(name);
     cmd.args(args).stderr(Stdio::null());
     if let Some(input) = stdin {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
@@ -507,7 +497,7 @@ pub fn proc_cmdline(pid: i64) -> Option<String> {
 /// `ps -o etimes= -p <pid>` — elapsed seconds since the process started. `None` when the
 /// pid is gone or `ps` cannot be read.
 pub fn proc_etimes(pid: i64) -> Option<i64> {
-    let out = Command::new("ps")
+    let out = spira_config::bounded::bounded("ps")
         .args(["-o", "etimes=", "-p", &pid.to_string()])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -536,7 +526,7 @@ mod tests {
     }
 
     // Pins the sp-pwmlj collapse: before it, this function's own copy tolerated leading
-    // whitespace before `[`/`{` — `sed -n '/^[[{]/,$p'` (and bdq's real fence) do not.
+    // whitespace before `[`/`{` — `sed -n '/^[[{]/,$p'` do not.
     #[test]
     fn json_only_requires_column_one_same_as_the_real_fence() {
         assert_eq!(json_only("  [1]\n"), "");
@@ -544,12 +534,12 @@ mod tests {
 
     #[test]
     fn bd_rows_distinguishes_refusal_from_empty_array() {
-        assert!(bd_rows(None).is_none());
-        assert!(bd_rows(Some("".to_string())).is_none());
-        assert!(bd_rows(Some("   ".to_string())).is_none());
-        assert_eq!(bd_rows(Some("[]".to_string())), Some(vec![]));
+        assert!(json_rows(None).is_none());
+        assert!(json_rows(Some("".to_string())).is_none());
+        assert!(json_rows(Some("   ".to_string())).is_none());
+        assert_eq!(json_rows(Some("[]".to_string())), Some(vec![]));
         assert_eq!(
-            bd_rows(Some(r#"{"id":"sp-1"}"#.to_string())).map(|v| v.len()),
+            json_rows(Some(r#"{"id":"sp-1"}"#.to_string())).map(|v| v.len()),
             Some(1)
         );
     }
@@ -595,39 +585,15 @@ mod tests {
         assert_eq!(got.get("SPIRA_CI_PARK_MAX"), Some(&"5".to_string()));
     }
 
-    #[test]
-    fn repo_registry_reads_live_env_when_boot_never_ran() {
-        // BOOT is a process-global OnceLock that only bootstrap_config() (main() only,
-        // never a test) ever sets, so every test in this binary — this one included —
-        // takes the fallback branch. That fallback must still read a live SPIRA_REPO_MAP
-        // exactly as repo_registry() did before this bead (probes::unsent's own
-        // missing_run_dir_renders_unsent_zero_not_refusal depends on the same thing).
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        assert!(BOOT.get().is_none(), "a prior test in this binary must have called bootstrap_config()");
-        let dir = testkit::TempDir::new("cc-io-repo-registry-fallback");
-        let map = dir.join("repomap");
-        std::fs::write(&map, "x|/some/path\n").unwrap();
-        let saved = std::env::var("SPIRA_REPO_MAP").ok();
-        std::env::set_var("SPIRA_REPO_MAP", &map);
-        let reg = repo_registry();
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-            None => std::env::remove_var("SPIRA_REPO_MAP"),
-        }
-        assert!(reg.map_present(), "repo_registry() did not pick up the live SPIRA_REPO_MAP");
-    }
-
-    #[test]
-    fn max_aeons_falls_back_to_live_env_when_boot_never_ran() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
-        assert!(BOOT.get().is_none());
-        let saved = std::env::var("SPIRA_MAX_AEONS").ok();
-        std::env::set_var("SPIRA_MAX_AEONS", "7");
-        let got = max_aeons();
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_MAX_AEONS", v),
-            None => std::env::remove_var("SPIRA_MAX_AEONS"),
-        }
-        assert_eq!(got, "7");
-    }
+    // repo_registry_reads_live_env_when_boot_never_ran DELETED (per Ryan 2026-10-05, one
+    // source of config): it asserted the registry picks up a SPIRA_REPO_MAP set in the
+    // environment, which is exactly what the registry no longer reads.
+    // max_aeons_falls_back_to_live_env_when_boot_never_ran DELETED (per Ryan 2026-10-05, one
+    // source of config): it asserted that a bare `SPIRA_MAX_AEONS` env override reaches
+    // `max_aeons()` without any `SPIRA_TOML` — exactly the behaviour the one-door law
+    // removes. `max_aeons()` is now a one-line call through `spira_config::process::cfg`,
+    // whose own resolution/caching is spira-config's tested responsibility; there is no
+    // crate-local fallback logic left here to pin with a unit test, and `cfg`'s per-process
+    // cache makes a fixture-driven unit test of this one-liner order-dependent rather than
+    // meaningful (see the triage guide: only a fresh-binary test may vary config per case).
 }

@@ -1,6 +1,0 @@
-TYPE=string
-GROUP=express
-DOC=SPIRA_EXPRESS_LABEL (see spira/conf.sh history for rationale)
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_EXPRESS_LABEL:=express}"
-SPIRA_CONF_DEFAULT_EOF

@@ -65,7 +65,7 @@ spike|${SCOPE},spike|${EXC}
 # classify <beads-json> [parts] [all_parts] -> unclaimable.py's stdout
 classify() {
     local beads_json="$1" parts="${2:-$FULL_PARTS}" all_parts="${3:-$FULL_PARTS}"
-    PARTS="$parts" ALL_PARTS="$all_parts" \
+    PARTS="$parts" ALL_PARTS="$all_parts" HELD_IDS="${HELD_IDS:-}" \
     SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_CI_LABEL="$CI" SPIRA_ASK_LABEL="$ASK" \
     SPIRA_GROOM_ASK_LABEL="$GROOM_ASK" \
         unclaimable.py <<< "$beads_json"
@@ -117,10 +117,16 @@ out2="$(classify "[$(bead sp-unc6c "")]")"
 want "in-scope no-partition bead IS reported (positive control)" "UNCLAIMABLE sp-unc6c" "$out2"
 
 echo
-echo "case 7 — spira-poison and ask-label beads are excluded (have their own check)"
-out="$(classify "[$(bead sp-unc7a spira-poison), $(bead sp-unc7b "$ASK")]")"
-nowant "poisoned bead not flagged by unclaimable check"   "sp-unc7a" "$out"
-nowant "ask-label bead not flagged by unclaimable check"  "sp-unc7b" "$out"
+echo "case 7 — beads the lifecycle machine holds poison/ask are excluded (they have their own check);"
+echo "         a hold LABEL alone is not a hold (sp-psztcc)"
+out="$(HELD_IDS=sp-unc7a,sp-unc7b classify "[$(bead sp-unc7a ""), $(bead sp-unc7b "")]")"
+nowant "poison-held bead not flagged by unclaimable check" "sp-unc7a" "$out"
+nowant "ask-held bead not flagged by unclaimable check"    "sp-unc7b" "$out"
+# An ask bead (the question itself) is not work and never unclaimable — by kind or by its ask label (sp-zf2x7x).
+out="$(classify '[{"id":"sp-unc7d","title":"a question","status":"open","issue_type":"decision","labels":["needs-ryan"]}]')"
+nowant "an ask/decision bead is never reported unclaimable" "sp-unc7d" "$out"
+out="$(classify "[$(bead sp-unc7c spira-poison)]")"
+want "a stale spira-poison label with no hold is still judged (positive control)" "UNCLAIMABLE sp-unc7c" "$out"
 
 echo
 echo "case 7b — a groom-ask bead (already escalated to the operator) is excluded (sp-recur-unclaimable)"
@@ -195,7 +201,11 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up unclaimable || { echo "test-unclaimable: could not build fixture database"; exit 1; }
 
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+# The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
+# SPIRA_HOME any more (sfail round 2, pattern 6) — detect_unclaimable_ready tests against
+# the real chamber (claimers()), which needs this to find it.
+tl_config SPIRA_CHAMBER="$HERE/chamber"
 export SPIRA_CONF="$TMP/no-such.conf"
 acted=0; progressed=0
 act()      { acted=$((acted+1)); }
@@ -281,6 +291,7 @@ chmod +x "$TMP/mock-incident13.sh"
 
 _save_home_repo="${SPIRA_HOME_REPO:-}"
 export SPIRA_HOME_REPO="fixture-home-repo"
+tl_config SPIRA_HOME_REPO="fixture-home-repo"
 SPIRA_INCIDENT_SH="$TMP/mock-incident13.sh" file_unclaimable_incidents \
     "UNCLAIMABLE sp-unc13a — spira with no matching partition"
 export SPIRA_HOME_REPO="$_save_home_repo"

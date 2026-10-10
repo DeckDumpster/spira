@@ -52,16 +52,11 @@ struct FoundDocument {
     doc: StoredDocument,
 }
 
-/// Where a host's composite and version history live absent `$SPIRA_DESIRED_DIR` —
-/// `${XDG_CONFIG_HOME:-$HOME/.config}/spira/desired`. The one place this path is computed, so
-/// `spira compose`/`spira apply` and every reader of the materialised composite agree on it.
-pub fn default_dir() -> PathBuf {
-    let config_home = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"));
-    std::env::var("SPIRA_DESIRED_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| config_home.join("spira").join("desired"))
+/// Where a host's composite and version history live: the registered key `SPIRA_DESIRED_DIR`,
+/// the one place this path is computed so `spira compose`/`spira apply` and every reader of
+/// the materialised composite agree on it. A config that cannot be resolved is a refusal.
+pub fn default_dir() -> Result<PathBuf, String> {
+    spira_config::process::cfg("SPIRA_DESIRED_DIR").map(PathBuf::from)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

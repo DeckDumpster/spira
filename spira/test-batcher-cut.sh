@@ -42,9 +42,12 @@
 #                       excluded from the round pool, not batched.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md spira/testlib/lc-fixture.sh
+# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md spira/testlib/lc-fixture.sh UC-landing-merge-queue-48
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd -P)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# CUT_PART: main runs cases A-F and H, land runs G (land mode) onward; test-batcher-cut-land.sh
+# sets land and sources this file, so the two halves share one fixture build and neither nears the wall bound.
+CUT_PART="${CUT_PART:-main}"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 # batcher, tsd-write and the queue binary case L lands through (queue/DESIGN.md §7.4) are the
@@ -53,9 +56,18 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 . "$HERE/testlib/lc-fixture.sh"
+# testdb.sh sources conf.sh for its own bookkeeping, which (one source of config, per Ryan
+# 2026-10-05) evals spira_config::resolve()'s FULL output into THIS shell — every registered
+# key, including ones with no default, as a plain shell variable. Before that eval existed, a
+# key the suite never declared stayed truly unset; now cut_repo's own
+# `${SPIRA_BATCH_MAXPAR:-16}` sees the complete fixture's base value (8) instead, because
+# sourcing conf.sh already set it. Unset it here, once, right after the only sourcing that
+# pollutes it, so "unset" in cut_repo means what it always meant: no caller override, use the
+# Concierge's own proven 16 (K1's own positive control for this).
+unset SPIRA_BATCH_MAXPAR
 testdb_require test-batcher-cut
 TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
-testdb_up batchercut || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
+testdb_up "batchercut$CUT_PART" || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
 lcfix_up || { echo "test-batcher-cut: could not build a lifecycle fixture"; exit 1; }
 
 # ── the batcher binary (law-absence-needs-a-positive-control: no binary, no suite) ──
@@ -78,8 +90,8 @@ mkdir -p "$REPO/spira"
 : > "$REPO/spira/test-old.sh"
 git -C "$REPO" add -A && git -C "$REPO" commit -q -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LCSTUB" "$QUEUEDIR/$REPONAME"
 
 # A REAL COPY OF lib.sh (and its own conf.sh), same as every other batch.sh suite: the IO
@@ -94,6 +106,9 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/mail"; chmod +x "$SH/mail"
 # bd create directly, so the fayth's own FAYTH_LABELS is what a fake chamber has to supply.
 mkdir -p "$SH/chamber"
 cp "$HERE/chamber/batcher.fayth" "$SH/chamber/"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$SH/chamber"
 
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
@@ -120,6 +135,7 @@ while [ $# -gt 0 ]; do
         --toolchain) toolchain="${2:-}"; shift 2 ;;
         --results-dir) results="${2:-}"; shift 2 ;;
         --attr-spool) spool="${2:-}"; shift 2 ;;
+        --base) shift 2 ;;
         *) wt="$1"; shift ;;  # the round worktree positional
     esac
 done
@@ -253,7 +269,9 @@ certified_rows() {
         read -r st tip ep < "$f"
         [ "$st" = CERTIFIED ] || continue
         grep -qx "$(basename "$f")" "${SPIRA_RUN:-/nonexistent}/lc-taken" 2>/dev/null && continue
-        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
+        ex=0; [ -f "${SPIRA_RUN:-/nonexistent}/lc-express/$(basename "$f")" ] && ex=1
+        sf="$tip"; [ -f "${SPIRA_RUN:-/nonexistent}/lc-unsifted/$(basename "$f")" ] && sf=""
+        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s,"express":"%s","sifted_tip":"%s"}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}" "$ex" "$sf"; sep=','
     done
     printf ']\n'
 }
@@ -268,11 +286,18 @@ case "${1:-}" in
     list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: the stub's CERTIFIED rows
     # read_stack: a bead the machine holds, unstacked; its state and a version for the
     # batcher's own withdrawal (sp-mve9i: Deliver then Returned takes a member to REWORK).
-    show) st=; [ -f "${SPIRA_RUN:-/nonexistent}/lc-stub/${2:-}" ] && read -r st _ < "${SPIRA_RUN}/lc-stub/$2"
-          printf '{"bead":{"bead_id":"%s","state":"%s","version":1}}\n' "${2:-}" "$st"; exit 0 ;;
+    show) st=; tip=; [ -f "${SPIRA_RUN:-/nonexistent}/lc-stub/${2:-}" ] && read -r st tip _ < "${SPIRA_RUN}/lc-stub/$2"
+          printf '{"bead":{"bead_id":"%s","state":"%s","tip":"%s","version":1}}\n' "${2:-}" "$st" "$tip"; exit 0 ;;
     event) f="${SPIRA_RUN:-/nonexistent}/lc-stub/${3:-}"
-           case "$*" in *Returned*) [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; } ;; esac
+           case "$*" in *Returned*|*GateRed*) [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; } ;; esac
            exit 0 ;;
+    # reopen (sp-swh8b8): the door moves the row, then reopens the store — open, unassigned,
+    # no submitted label; here only the store half, the row being this fixture's file.
+    reopen) b="${TESTDB_BD:-$(spira-config get spira.bd 2>/dev/null)}"; d="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
+            "${b:-bd}" ${d:+-C "$d"} update "$2" --status open --assignee "" >/dev/null 2>&1
+            "${b:-bd}" ${d:+-C "$d"} label remove "$2" "$(spira-config get spira.submitted_label 2>/dev/null || echo spira-submitted)" >/dev/null 2>&1
+            f="${SPIRA_RUN:-/nonexistent}/lc-stub/${2:-}"; [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; }
+            exit 0 ;;
     *) exit 0 ;;
 esac
 LCSTUB
@@ -289,12 +314,22 @@ bump_requeue() {
 LIBSPY
 
 cut_repo() {
-    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
+    # ONE SOURCE OF CONFIG (per Ryan 2026-10-05): the registered keys batcher reads via
+    # spira.toml, not env — declared here, fresh per call, so a caller's own VAR=val prefix
+    # (still read as a plain shell var below) still reaches the binary. The maxpar default
+    # (16, "the Concierge's own proven parallelism") is declared explicitly because K1 below
+    # asserts it as the no-override behaviour, not merely whatever the fixture happens to carry.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
+        SPIRA_FORGE="$SH/forge-fixture.sh" \
+        SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-16}" \
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+    [ -n "${SPIRA_BATCHER_WALL_SECS:-}" ] && tl_config SPIRA_BATCHER_WALL_SECS="$SPIRA_BATCHER_WALL_SECS"
+    [ -n "${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" ] && tl_config SPIRA_RELEASE_RUST_TOOLCHAIN="$SPIRA_RELEASE_RUST_TOOLCHAIN"
+    # SPIRA_RUN ALSO AS PLAIN ENV: spira-lc-stub.sh (below) is a fixture script exec'd by
+    # batcher as a child process, and it reads "${SPIRA_RUN:-/nonexistent}" as a raw shell
+    # variable, never through spira-config — tl_config's declaration never reaches it.
+    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
     STUB_RED_SUITES="${STUB_RED_SUITES:-}" \
     STUB_FLAKE_SUITE="${STUB_FLAKE_SUITE:-}" \
     STUB_FLAKE_COUNTER_FILE="${STUB_FLAKE_COUNTER_FILE:-}" \
@@ -303,12 +338,9 @@ cut_repo() {
     STUB_ARGV_LOG="${STUB_ARGV_LOG:-}" \
     STUB_SLEEP_SECS="${STUB_SLEEP_SECS:-}" \
     STUB_EXIT4="${STUB_EXIT4:-}" \
-    SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
-    SPIRA_BATCHER_WALL_SECS="${SPIRA_BATCHER_WALL_SECS:-}" \
-    SPIRA_RELEASE_RUST_TOOLCHAIN="${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" \
     SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-$TMP/lc-default.log}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
-        batcher cut "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
+        batcher "${BATCHER_VERB:-cut}" "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
 B() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" "$@"; }
@@ -333,8 +365,8 @@ print(" ".join(d[0].get("labels") or []))' 2>/dev/null; }
 # A batch member is a bead WAITING FOR A ROUND: open and carrying the submitted label
 # (sp-1346p) — a CERTIFIED record of a closed bead is stale and never batched.
 plant() {   # plant <id> [express]
-    local id="$1" express_label="" lbls="\"spira\",\"plan\",\"repo:$REPONAME\",\"spira-submitted\""
-    [ "${2:-}" = express ] && lbls="$lbls,\"express\""
+    local id="$1" lbls="\"spira\",\"plan\",\"repo:$REPONAME\",\"spira-submitted\""
+    [ "${2:-}" = express ] && { mkdir -p "$RUN/lc-express"; : > "$RUN/lc-express/$id"; }
     printf '{"id":"%s","title":"%s bead","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-25T00:00:00Z"}\n' \
         "$id" "$id" "$lbls" | testdb_seed
 }
@@ -343,7 +375,7 @@ plant() {   # plant <id> [express]
 # CERTIFIED right after an eject (sp-pedat) is actually in, still waiting on its aeon.
 plant_open() {
     local id="$1" lbls="\"spira\",\"plan\",\"repo:$REPONAME\""
-    [ "${2:-}" = express ] && lbls="$lbls,\"express\""
+    [ "${2:-}" = express ] && { mkdir -p "$RUN/lc-express"; : > "$RUN/lc-express/$id"; }
     printf '{"id":"%s","title":"%s bead","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-25T00:00:00Z"}\n' \
         "$id" "$id" "$lbls" | testdb_seed
 }
@@ -355,11 +387,13 @@ certify() {   # certify <id> <tip-sha> [epoch]
 
 lc_certify() {   # lc_certify <id> <tip-sha> [epoch] — a CERTIFIED row on the real machine
     lcfix_seed "$1" CERTIFIED "$2"
-    lcfix_sql -q "UPDATE bead SET updated_at=${3:-$(date +%s)} WHERE bead_id='$1'" >/dev/null 2>&1
+    lcfix_sql -q "UPDATE bead SET updated_at=${3:-$(date +%s)}, sifted_tip='$2' WHERE bead_id='$1'" >/dev/null 2>&1
 }
 
-echo "test-batcher-cut.sh"
+echo "test-batcher-cut.sh ($CUT_PART)"
 testdb_reset
+
+if [ "$CUT_PART" = main ]; then
 
 # =============================================================================
 # CASE A — happy path: an express member merges, the stub corpus is green, a PR
@@ -527,14 +561,14 @@ certify sp-cccc3 "$tip_c" "$(( $(date +%s) - 3600 ))"
 
 printf 'main-version\n' > "$REPO/conflict.txt"
 git -C "$REPO" add conflict.txt && git -C "$REPO" commit -q -m "main: advance conflict.txt"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 rm -f "$QUEUEDIR/$REPONAME/base-moved"
 
-out_c="$(STUB_RED_SUITES="" cut_repo)"
+out_c="$(BATCHER_VERB=sift STUB_RED_SUITES="" cut_repo; STUB_RED_SUITES="" cut_repo)"
 is   "C: sp-cccc3 is reopened"   "open" "$(status_of sp-cccc3)"
-nowant "C: sp-cccc3 no longer submitted — reopened for rebase (sp-1346p)" "spira-submitted" "$(labels_of sp-cccc3)"
-is   "C: bump_requeue stamped merge-conflict" "1" "$(grep -c '^sp-cccc3 merge-conflict$' "$REQUEUE_SPY")"
+is   "C: the pre-round screen sent sp-cccc3 to REWORK (no-rebase)" "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-cccc3")"
+want "C: the screen says so" "SIFT sent sp-cccc3 to REWORK" "$out_c"
 nowant "C: no PR opened for the conflicting-only round" "PR " "$out_c"
 
 # =============================================================================
@@ -589,7 +623,7 @@ is     "D: no second corpus run for an unchanged pool" "0" "$(grep -c '^argv:' "
 
 # The open PR lands: the remote base moves to its head.
 git -C "$REMOTE" update-ref refs/heads/main "$head_case_a"
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 rm -f "$(open_batch_file)"
 : > "$D_ARGV"
 out_d3="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"
@@ -608,10 +642,9 @@ is     "D: prepared record consumed" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" 
 echo
 echo "E. judgement-ci: files a judgement bead for a CI-only red:"
 judge_ci() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+    SPIRA_HOME="$SH" \
         batcher judgement-ci "$REPONAME" "$@" 2>&1
 }
 
@@ -693,6 +726,9 @@ want "F: PLANTED REFUSAL — cut still reports the PR opening" "PR " "$out_f_ref
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
 is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
 is   "F: PLANTED REFUSAL — open-batch version stays unset"  "" "$(open_field version)"
+fi
+
+if [ "$CUT_PART" = land ]; then
 
 # =============================================================================
 # CASE G — land mode (sp-o1jm6): find_repo accepts queue.local, never just queue, and
@@ -720,12 +756,10 @@ localmode  | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_other() {
-    PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_QUEUE_DIR="$QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 SPIRA_FORGE="$SH/forge-fixture.sh" \
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+    PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
         batcher cut "$1" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
@@ -920,12 +954,11 @@ locland   | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_local() {
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
-    SPIRA_RELEASES="$LRELEASES" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
+        SPIRA_RELEASES="$LRELEASES" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" \
     STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
         batcher cut locland --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
@@ -1090,5 +1123,34 @@ is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || e
 is     "N: sp-ciiii stub row stays REWORK — untouched, not re-ejected" \
        "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-ciiii")"
 is     "N: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
+
+# =============================================================================
+# CASE O — sift screens ahead of rounds, never inside the cut (sp-9sbdvw): a cut takes a bead only
+# when the lifecycle row carries a pass at its current tip, and performs no screen work itself.
+# =============================================================================
+echo
+echo "O. a cut reads sift verdicts and screens nothing:"
+rm -f "$(open_batch_file)" "$LCSTUB/sp-ciiii"
+plant sp-coooo express
+git -C "$REPO" worktree add -q -b spira/sp-coooo "$RUN/worktree/sp-coooo" main
+printf 'o\n' > "$RUN/worktree/sp-coooo/o.txt"
+git -C "$RUN/worktree/sp-coooo" add -A
+git -C "$RUN/worktree/sp-coooo" commit -q -m "sp-coooo: work"
+tip_o="$(git -C "$REPO" rev-parse spira/sp-coooo)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-coooo"
+certify sp-coooo "$tip_o"
+mkdir -p "$RUN/lc-unsifted"; : > "$RUN/lc-unsifted/sp-coooo"
+rm -rf "$RUN/sift"
+
+prcreate_before_o="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_o="$(STUB_RED_SUITES="" cut_repo)"
+nowant "O: an unscreened bead is not cut" "PR " "$out_o"
+is     "O: forge pr-create not called" "$prcreate_before_o" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "O: the cut did no screen work" "0" "$([ -e "$RUN/sift" ] && echo 1 || echo 0)"
+rm -f "$RUN/lc-unsifted/sp-coooo"
+out_o="$(STUB_RED_SUITES="" cut_repo)"
+want   "O: the same bead, once it has a pass at its tip, is cut" "PR " "$out_o"
+
+fi
 
 tl_summary

@@ -1,0 +1,17 @@
+epoch = 1800000000
+horizon = 1200000
+goal = "sp-oc01:LANDED"
+real_actors = ["sentinel-summon", "sentinel-landing", "sift"]
+
+[[step]]
+at = 0
+file = "sp-oc01"
+
+[[step]]
+at = 0
+claim = "sp-oc01"
+script = ["commit out/a.txt", "submit-from-main"]
+
+[[expect]]
+name = "branch_tip_was_recorded"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-oc01' AND lc_state = 'SUBMITTED' AND lc_tip = branch_tip"

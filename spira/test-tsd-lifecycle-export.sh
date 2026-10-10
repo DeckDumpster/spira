@@ -82,7 +82,8 @@ seedt sp-tle-b claimed ''    '2026-09-16T00:00:03Z'
 RUN1="$T/run1"; mkdir -p "$RUN1"
 run_export() {   # run_export <mode> <run-dir> [--since <ts>]
     local mode="$1" run="$2"; shift 2
-    SPIRA_RUN="$run" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB" \
+    tl_config SPIRA_RUN="$run" SPIRA_BD="$SPIRA_BD"
+    SPIRA_DB="$SPIRA_DB" \
         "$EXPORT_BIN" "$mode" "$@"
 }
 run_export legacy "$RUN1" --since '2026-09-16T00:00:00Z' >"$T/export1.out" 2>&1
@@ -144,17 +145,17 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$LTMP/server.yaml" > "$LTMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$LTMP/server.yaml" > "$LTMP/server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
 LC_SERVER_PID=$!
 trap 'kill "$LC_SERVER_PID" >/dev/null 2>&1; testdb_drop; rm -rf "$T"' EXIT INT TERM
 
 up=0
 for _ in $(seq 1 50); do
-    "$DOLT_BIN" --data-dir "$LTMP" --host 127.0.0.1 --port "$LPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && { up=1; break; }
+    "$DOLT_BIN" --data-dir "$LTMP" --host 127.0.0.1 --port "$LPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && { up=1; break; } # batch-job: fixture dolt call against the suite's private store
     sleep 0.2
 done
 [ "$up" = 1 ] || bail "lifecycle dolt sql-server never came up: $(cat "$LTMP/server.log")"
-root_lc_sql() { "$DOLT_BIN" --data-dir "$LTMP" --host 127.0.0.1 --port "$LPORT" -u root -p "" --no-tls "$@"; }
+root_lc_sql() { "$DOLT_BIN" --data-dir "$LTMP" --host 127.0.0.1 --port "$LPORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
 
 root_lc_sql sql < "$REPO/lifecycle/schema.sql" >"$LTMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
@@ -167,8 +168,11 @@ root_lc_sql --use-db spira_lifecycle sql -q \
     >/dev/null 2>&1
 
 RUN3="$T/run3"; mkdir -p "$RUN3"
-SPIRA_RUN="$RUN3" \
-    SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
+# SPIRA_LC_PASSWORD_FILE is registered and resolves ambiently via cfg() to the complete
+# fixture's own nonexistent path, which would be preferred over the explicit
+# SPIRA_LC_PASSWORD="" below (sfail round 3, pattern 7 — same cause as test-canary.sh).
+tl_config SPIRA_RUN="$RUN3" SPIRA_LC_PASSWORD_FILE=""
+SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
     SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
     "$EXPORT_BIN" lifecycle >"$T/export3.out" 2>&1
 wantrc "lifecycle export exits 0" 0 $?
@@ -186,8 +190,8 @@ is "row 2: refusal is carried"      "ExpectMismatch" "$(jpy "$FAM3" 'rows[1]["re
 is "row 2: reason pulled from evidence" "flaky" "$(jpy "$FAM3" 'rows[1]["reason"]')"
 
 # re-run: nothing new
-SPIRA_RUN="$RUN3" \
-    SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
+tl_config SPIRA_RUN="$RUN3"
+SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
     SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
     "$EXPORT_BIN" lifecycle >"$T/export3b.out" 2>&1
 is "re-running the lifecycle source exports nothing new" "2" "$(jpy "$FAM3" 'len(rows)')"

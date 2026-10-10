@@ -27,7 +27,7 @@ lcfix_up || { echo "test-skew-refresh: could not build a lifecycle fixture"; exi
 # ── Fixture: a git remote with two commits, REPO left one behind ─────────────────────────
 ORIGIN="$TMP/origin"
 REPO="$TMP/repo"
-git init -q "$ORIGIN"
+git init -q -b main "$ORIGIN"   # the declared base below names origin/main
 git -C "$ORIGIN" config user.email "test@test"
 git -C "$ORIGIN" config user.name "test"
 mkdir -p "$ORIGIN/spira"
@@ -44,7 +44,7 @@ git -C "$ORIGIN" add spira/
 git -C "$ORIGIN" commit -q -m "advance"
 AHEAD_COMMIT="$(git -C "$ORIGIN" rev-parse HEAD)"
 
-git clone -q "$ORIGIN" "$REPO"
+timeout 5 git clone -q "$ORIGIN" "$REPO"
 git -C "$REPO" config user.email "test@test"
 git -C "$REPO" config user.name "test"
 git -C "$REPO" remote set-head origin --auto >/dev/null 2>&1 || true
@@ -73,17 +73,23 @@ esac
 STUBREL
 chmod +x "$STUBBIN/release"
 reset_repo
+# The fixture repo lands on origin/main because the config SAYS so (one source of config):
+# a repo-map row naming its base, and the repo it is. Nothing derives a base any more.
+printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_HOME_REPO=fixture
 
 run_skew_cmd() {
     local run_dir="$1"; shift
+    # SPIRA_RUN/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
+    # through env -i, which clears it.
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
+        SPIRA_TOML="$SPIRA_TOML" \
         skew "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
@@ -193,15 +199,16 @@ reset_repo
 
 run_skew_release() {
     local run_dir="$1"; shift
+    # SPIRA_RUN/SPIRA_RELEASES/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are registered keys (per
+    # Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
+    # through env -i, which clears it.
+    tl_config SPIRA_RUN="$run_dir" SPIRA_RELEASES="$RELEASES" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     env -i PATH="$STUBBIN:$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_RELEASES="$RELEASES" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
+        SPIRA_TOML="$SPIRA_TOML" \
         skew "$@" 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
@@ -264,17 +271,17 @@ git -C "$QREPO" config user.email "test@test"
 git -C "$QREPO" config user.name "test"
 git -C "$QREPO" commit -q --allow-empty -m "queue base"
 git -C "$QREPO" remote add origin "$QORIGIN"
-git -C "$QREPO" push -q origin main
-git -C "$QREPO" fetch -q origin
+timeout 5 git -C "$QREPO" push -q origin main
+timeout 5 git -C "$QREPO" fetch -q origin
 git -C "$QREPO" remote set-head origin --auto >/dev/null 2>&1 || true
 
 # Advance origin/main while QREPO's checkout stays behind.
 _QCLONE="$(mktemp -d "$TMP/qclone-XXXXX")"
-git clone -q "$QORIGIN" "$_QCLONE"
+timeout 5 git clone -q "$QORIGIN" "$_QCLONE"
 git -C "$_QCLONE" commit -q --allow-empty -m "origin advances"
-git -C "$_QCLONE" push -q origin main
+timeout 5 git -C "$_QCLONE" push -q origin main
 rm -rf "$_QCLONE"
-git -C "$QREPO" fetch -q origin
+timeout 5 git -C "$QREPO" fetch -q origin
 
 QUEUE_NEW="$(git -C "$QREPO" rev-parse origin/main)"
 [ "$(git -C "$QREPO" rev-parse HEAD)" != "$QUEUE_NEW" ] \
@@ -290,17 +297,21 @@ cat > "$QSH/repo-map" <<MAP
 qfixture | $QREPO | queue | |
 MAP
 
+# SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_RELEASES/SPIRA_DOLT_DATA/
+# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+# via tl_config and thread SPIRA_TOML through env -i, which clears it. SPIRA_RELEASES must be
+# cleared here too — the release-mode section above (run_skew_release) declared it via
+# tl_config, which persists for the rest of the suite; left set, skew refresh sees a live
+# releases/current symlink and runs release build/verify/activate instead of a plain
+# checkout refresh, which fails here since this fixture carries no real release workspace.
+tl_config SPIRA_RUN="$QRUN" SPIRA_DB="$TMP/qland-no-db" SPIRA_HOME_REPO=qfixture \
+    SPIRA_REPO_MAP="$QSH/repo-map" SPIRA_RELEASES="" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
 q_out="$(env -i PATH="$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$QSH" PATH="$QSH:$PATH" \
-    SPIRA_RUN="$QRUN" \
-    SPIRA_DB="$TMP/qland-no-db" \
     SPIRA_REPO="$QREPO" \
-    SPIRA_HOME_REPO=qfixture \
-    SPIRA_REPO_MAP="$QSH/repo-map" \
-    SPIRA_DOLT_DATA="" \
-    SPIRA_TESTDB_DATA="" \
+    SPIRA_TOML="$SPIRA_TOML" \
     landing-pass land 2>&1)"
 
 QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
@@ -351,30 +362,31 @@ ln -s spira-bootstrap "$LRELEASES/current"   # production runs a release, not a 
 printf '#!/bin/sh\nexit 0\n' > "$TMP/mock-sc"; chmod +x "$TMP/mock-sc"
 
 run_lq() {
+    # SPIRA_HOME_REPO/SPIRA_RUN/SPIRA_QUEUE_DIR/SPIRA_REPO_MAP/SPIRA_RELEASES/SPIRA_DB are
+    # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config
+    # and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_HOME_REPO=lfixq SPIRA_RUN="$LRUN" SPIRA_QUEUE_DIR="$LQDIR" \
+        SPIRA_REPO_MAP="$LRMAP" SPIRA_RELEASES="$LRELEASES" SPIRA_DB="$TMP/local-no-db"
     env -i $(lcfix_env) PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
-        SPIRA_HOME_REPO=lfixq \
         SPIRA_REPO="$LREPO" \
-        SPIRA_RUN="$LRUN" \
-        SPIRA_QUEUE_DIR="$LQDIR" \
-        SPIRA_REPO_MAP="$LRMAP" \
-        SPIRA_RELEASES="$LRELEASES" \
         SPIRA_SYSTEMCTL="$TMP/mock-sc" \
-        SPIRA_DB="$TMP/local-no-db" \
         SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" queue "$@" 2>&1
 }
 run_lskew() {
+    # SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_RELEASES are registered keys (per Ryan 2026-10-05,
+    # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+    tl_config SPIRA_RUN="$LRUN" SPIRA_REPO_MAP="$LRMAP" SPIRA_RELEASES="$LRELEASES"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
         SPIRA_REPO="$LREPO" \
-        SPIRA_RUN="$LRUN" \
-        SPIRA_REPO_MAP="$LRMAP" \
-        SPIRA_RELEASES="$LRELEASES" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$LSH/skew" "$@" 2>&1
 }
 lround() {  # lround <branch> <file> <content> -> commit on local/main's tip, print the head sha

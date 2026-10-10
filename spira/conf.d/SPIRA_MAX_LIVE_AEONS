@@ -9,7 +9,8 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # It is wrong while the constraint is a single shared account, which every aeon draws on
     # and which the operator's own sessions draw on too.
     #
-    # EMPTY BY DEFAULT, meaning no ceiling and exactly the behaviour that shipped: a host
-    # constrained by cores rather than by an account must not acquire this by upgrading.
-    : "${SPIRA_MAX_LIVE_AEONS:=}"
+    # Declared empty, there is no ceiling. An upgraded host keeps what its config declares;
+    # only a fresh install takes the registered default below.
+    # Registered default (sp-kuwp6s, per Ryan 2026-10-07): A small single-box install: two aeons at once across every persona and lane.
+    : "${SPIRA_MAX_LIVE_AEONS:=2}"
 SPIRA_CONF_DEFAULT_EOF

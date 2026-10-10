@@ -185,11 +185,11 @@ printf "SP_SELF_STARVED_W='2'\nSP_SELF_STARVED_LAST='7m ago'\n" >> "$FIXDIR/self
 
 # ---- Render every fixture in ONE health.sh process --------------------------------------
 
+tl_config SPIRA_RUN="$PD/repo/.runtime/spira" SPIRA_SNAP_STALE_S=60
 RENDER_ALL="$(env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$PD/repo" \
-    SPIRA_RUN="$PD/repo/.runtime/spira" \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$PD/repo" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
-    SPIRA_SNAP_STALE_S=60 \
     "$PANE" render-many "$FIXDIR" 0 0 2>/dev/null \
   | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g')"
 
@@ -437,12 +437,11 @@ chmod +x "$TMP/bin/bd-zero-empty"
 # (law-gates-run-in-a-clean-environment). BD_TIMEOUT=1 fails fast against a fake bd.
 run_probe() {
     local sub="$1" bd_bin="$2"; shift 2
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_BD="$TMP/bin/$bd_bin" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$TMP/no-map"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_BD="$TMP/bin/$bd_bin" \
-        SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" \
+        SPIRA_TOML="$SPIRA_TOML" \
         BD_TIMEOUT=1 \
         "$@" \
         cockpit-collect probe "$sub" 2>/dev/null

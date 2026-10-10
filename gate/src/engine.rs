@@ -6,8 +6,10 @@ use crate::def::{self, Resolved};
 use crate::fence;
 use crate::compose::{self, Composition, Forces};
 use crate::key::{self, KeyInputs};
+use crate::machine::{self, GateState, Run};
 use crate::parse::{self, Attribution};
 use crate::ports::{Ctx, Merge, World};
+use crate::toolkey;
 use spira_config::GateMode;
 use std::path::{Path, PathBuf};
 
@@ -61,9 +63,19 @@ pub struct Args {
     pub release_bins: bool,
 }
 
+/// Records a move of the gate machine, or returns the NO_VERDICT that refuses the run.
+macro_rules! mv {
+    ($t:expr, $to:expr, $why:expr) => {
+        if let Err(e) = $t.mv($to, $why) {
+            return e;
+        }
+    };
+}
+
 /// What the finish needs to know about how far the trial got.
 #[derive(Default)]
 struct State {
+    machine: Option<Run>,
     repo_name: String,
     repo: PathBuf,
     run: String,
@@ -176,48 +188,12 @@ impl<'w, W: World> Trial<'w, W> {
         // tree builds — `bin` lines, unit phases) and every other box tool a step might name.
         // Unset SPIRA_RELEASE, or a tail entry inside a release or a checkout, is a refusal
         // naming it, never a fallback.
-        match spira_config::release_path_from_env_with_tail(Some(ctx.var(spira_config::RELEASE_ENV)), ctx.var("SPIRA_PATH")) {
-            Ok(p) => self.s.path = p,
-            Err(e) => return v(NOVERDICT, "release-unset", format!("gate: {e} — refusing to judge")),
-        }
-        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every cargo build the
-        // trial runs — the tools, the unit phases, the build fence, testenv's — compiles
-        // through the box's one sccache, resolved on the PATH the command gets. Resolved here,
-        // required where the trial builds in the tree (below: absent is a refusal, never a cold
-        // build of every dependency); a definition that builds nothing never needs it.
-        // SPIRA_BUILD_CACHE=off opts out, loudly.
-        match w.build_wrapper(&self.s.path, ctx.var(spira_config::build::CACHE_ENV)) {
-            Ok(wr) => {
-                if wr == spira_config::build::Wrapper::Off {
-                    w.eprint(&format!("gate: {}", wr.describe()));
-                }
-                // Every cargo the gate runs — tools, unit phases, the build fence's `make build`,
-                // release-bins — goes through `spira-admit` with the GATE's token (sp-f4ig1-fix,
-                // DESIGN-admission.md D11): it takes a compile lease for that cargo WITHOUT
-                // WAITING (oversubscribing a full pool), so the gate never queues and agent builds
-                // queue behind it instead of competing at full width. testenv's own build does
-                // the same in-process. The token also keeps every other admission inherited.
-                // Without spira-admit on PATH (an older release) the plain wrapper still carries
-                // the token: the gate never waits, it just holds nothing.
-                let who = format!("gate:{br}");
-                // THE SHARED STORE (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process
-                // (`merge_resolved_config`, `Real::context`) the same as every other
-                // `spira.toml`-only key this `ctx` already carries — never a bare env read.
-                let store = spira_config::build::Store::from_values(|k| {
-                    let v = ctx.var(k);
-                    (!v.is_empty()).then(|| v.to_string())
-                });
-                self.s.build_env = match w.which(spira_config::admission::BIN) {
-                    Some(admit) => wr.admitted_env(&admit, ctx.var("SPIRA_RUN"), &who, store.as_ref()),
-                    None => wr.env(store.as_ref()),
-                };
-                self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
-            }
-            Err(e) => self.s.cache_refusal = Some(e),
+        if let Err(e) = self.resolve_build(&ctx, &format!("gate:{br}")) {
+            return v(NOVERDICT, "release-unset", format!("gate: {e} — refusing to judge"));
         }
         self.s.home_dir = ctx.var("HOME").to_string();
         self.s.release = ctx.var(spira_config::RELEASE_ENV).to_string();
-        self.s.timeout = ctx.var_or("SPIRA_GATE_TIMEOUT", "2700").to_string();
+        self.s.timeout = ctx.var("SPIRA_GATE_TIMEOUT").to_string();
         let repo = PathBuf::from(repo);
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
@@ -238,6 +214,10 @@ impl<'w, W: World> Trial<'w, W> {
                 .to_string(),
         );
         self.s.caller = ctx.var_or("SPIRA_GATE_CALLER", &br).to_string();
+        let id = machine::id_for(&self.s.bead, &br);
+        w.machine_clear_cancel(Path::new(&self.s.run), &id);
+        self.s.machine = Some(Run::new(&id, &br, &name));
+        mv!(self, GateState::Queued, &format!("branch {br}"));
 
         let Some(base) = ctx.landref.clone() else {
             return v(NOVERDICT, "no-base", format!(
@@ -427,7 +407,7 @@ impl<'w, W: World> Trial<'w, W> {
         };
 
         // THE VERDICT CACHE.
-        let suites_mode = ctx.var_or("SPIRA_GATE_SUITES", "on").to_string();
+        let suites_mode = ctx.var("SPIRA_GATE_SUITES").to_string();
         // A bead's certification never runs suites-blind: with suites off it still runs the
         // budgeted suites covering what the bead touched, whatever the composition.
         let covered = suites_mode == "off" && !self.s.bead.is_empty();
@@ -454,7 +434,7 @@ impl<'w, W: World> Trial<'w, W> {
         if !self.s.key.is_empty() {
             if let Some(entry) = w.read(&verdict_dir.join(&self.s.key)) {
                 if let Some((when, by)) =
-                    key::cache_fresh(&entry, ctx.var_or("SPIRA_VERDICT_TTL", "0"), w.now())
+                    key::cache_fresh(&entry, ctx.var("SPIRA_VERDICT_TTL"), w.now())
                 {
                     self.s.pass_suites = key::cached_suites(&entry);
                     let hit = v(PASS, "cached", format!(
@@ -468,7 +448,7 @@ impl<'w, W: World> Trial<'w, W> {
             }
         }
 
-        let timeout = ctx.var_or("SPIRA_GATE_TIMEOUT", "2700").to_string();
+        let timeout = ctx.var("SPIRA_GATE_TIMEOUT").to_string();
         let lock_wait: u64 = key::digits(ctx.var("SPIRA_GATE_LOCK_WAIT"))
             .unwrap_or_else(|| key::digits(&timeout).unwrap_or(2700) * 4);
 
@@ -481,7 +461,8 @@ impl<'w, W: World> Trial<'w, W> {
         // are fixed below: a first message on blocking (and one on being admitted, if the
         // wait was not instant), and the wait accumulated into `self.s.waited` so the
         // tree-lock section's own wait adds to it instead of overwriting it.
-        if suites_mode != "off" || covered || !ejected.trim().is_empty() || cached.is_some() {
+        let needs_slot = suites_mode != "off" || covered || !ejected.trim().is_empty() || cached.is_some();
+        if needs_slot {
             let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
             w.mkdir_p(&dir);
             let t0 = w.now();
@@ -526,6 +507,8 @@ impl<'w, W: World> Trial<'w, W> {
             // instead of overwriting it.
             self.s.waited = w.now() - t0;
         }
+        let admitted = if needs_slot { format!("gate slot after {}s", self.s.waited) } else { "fences only: no slot needed".to_string() };
+        mv!(self, GateState::Admitted, &admitted);
 
         // THE TREE, locked for the whole trial.
         let tree = PathBuf::from(format!(
@@ -595,6 +578,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.eprint(&e);
             return v(NOVERDICT, "tree-unidentified", "");
         }
+        mv!(self, GateState::Rebased, &format!("{br} merged onto {base}; the merge is checked out in the gate tree"));
 
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
@@ -622,13 +606,42 @@ impl<'w, W: World> Trial<'w, W> {
                 named.push_str(&s);
             }
         }
-        let mut re = compose::reentry(&named, |s| w.exists(&tree.join("spira").join(s)));
+        let mut re = compose::reentry(&named, |s| {
+            w.exists(&tree.join("spira").join(s)) && w.ls_tree_has(&repo, &rev, &format!("spira/{s}"))
+        });
+        let (deleted, absent): (Vec<String>, Vec<String>) =
+            re.gone.iter().cloned().partition(|s| w.ls_tree_has(&repo, &base_rev, &format!("spira/{s}")));
+        for s in &deleted {
+            w.eprint(&format!("gate: re-entry: {s} deleted by this branch — the deletion answers it"));
+        }
+        if !absent.is_empty() {
+            self.s.suite = absent[0].clone();
+            return v(NOVERDICT, "reentry-missing", format!(
+                "gate: re-entry names suites that exist on neither the base nor this branch: {}\ngate: a deletion by the branch answers a named suite; a suite that never existed (a typo, a stale name) is refused, not dropped.",
+                absent.join(" ")));
+        }
+        re.gone = deleted;
         let allowlist = std::fs::read_to_string(tree.join("spira/skip-allowlist.tsv")).unwrap_or_default();
         let (kept, declared_skips) = compose::drop_declared_skips(&re.required, &allowlist);
         if !declared_skips.is_empty() {
             w.eprint(&format!(
                 "gate: re-entry: not required here (declared skip in spira/skip-allowlist.tsv, cannot run under testenv; the full-suite round proves them): {}",
                 declared_skips.join(" ")
+            ));
+        }
+        let timing = w
+            .read(&Path::new(&self.s.run).join("tsd/suite-timing.jsonl"))
+            .map(|t| suite_select::timing::p90s(&t, 20).by_suite)
+            .unwrap_or_default();
+        let (kept, over) = compose::defer_over_budget(
+            &kept,
+            &timing,
+            phase_cap("gate").unwrap_or(0),
+        );
+        for (s, t) in &over {
+            w.eprint(&format!(
+                "gate: re-entry: {s} deferred to the round — recorded {t}s, past what is left of the gate's {}s suite budget; the round runs it",
+                phase_cap("gate").unwrap_or(0)
             ));
         }
         re.required = kept;
@@ -658,6 +671,9 @@ impl<'w, W: World> Trial<'w, W> {
                 // system dirs, then cargo for the tree builds. Never the inherited PATH.
                 e("PATH", &self.s.path),
                 e(spira_config::RELEASE_ENV, ctx.var(spira_config::RELEASE_ENV)),
+                // The one source of config: testenv and every tool a step runs refuse without
+                // it (2026-10-06: every suites composition was a harness fault, settings-refused).
+                e("SPIRA_TOML", ctx.var("SPIRA_TOML")),
                 // Everything the trial runs is on the gate's admission (sp-f4ig1): its testenv and
                 // cargo take no compile or test slot of their own (no hold-and-wait, no deadlock).
                 e(spira_config::admission::INHERIT_ENV, "gate"),
@@ -700,7 +716,7 @@ impl<'w, W: World> Trial<'w, W> {
                 ),
                 e("SPIRA_BATCH_MAXPAR", ctx.var("SPIRA_BATCH_MAXPAR")),
                 e("SPIRA_VERDICT_REPEAT_CONSIDERED", repeat),
-                e("SPIRA_GATE_BUDGET", ctx.var_or("SPIRA_GATE_BUDGET", "300")),
+                e("SPIRA_GATE_BUDGET", ctx.var("SPIRA_GATE_BUDGET")),
                 e("SPIRA_RUN", &self.s.run),
                 // The runner's budget split and warm path (testenv DESIGN.md §11): the
                 // operator's knobs reach the trial they tune; unset = the runner's defaults.
@@ -729,29 +745,56 @@ impl<'w, W: World> Trial<'w, W> {
         // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree
         // holds, which must be the merge's.
         let want_tree = w.rev_parse(&repo, &format!("{rev}^{{tree}}")).unwrap_or_default();
-        let tools = match tools_for(w, &tree, &want_tree, tree_def.as_ref(), jobs) {
+        let shared = self.shared_tools(&ctx, &tree, &want_tree, tree_def.as_ref());
+        let tools = match tools_for(w, &tree, &want_tree, tree_def.as_ref(), jobs, shared) {
             Ok(t) => t,
             Err(e) => {
                 return v(NOVERDICT, "tools-unattributed", format!("{e}\ngate: no trial of {br} ran — refusing to judge with tools it cannot attribute."));
             }
         };
-        let (rc, out, ph) = run_composed(
-            w,
-            &tree,
-            &comp,
-            &with_bins(
-                env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp),
-                tree_def.as_ref(),
+        let Some(deadline) = key::digits(ctx.var("SPIRA_GATE_DEADLINE")) else {
+            return v(NOVERDICT, "config", format!("gate: SPIRA_GATE_DEADLINE={:?} is not a number of seconds — refusing to run a gate with no wall-clock bound.", ctx.var("SPIRA_GATE_DEADLINE")));
+        };
+        let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);
+        let t_start = self.s.start;
+        let eff = || {
+            let rem = deadline.saturating_sub(w.now().saturating_sub(t_start)).max(1);
+            key::digits(&timeout).map_or(rem, |t| t.min(rem)).to_string()
+        };
+        let fkey = self.fences_key(&want_tree);
+        let mut mark_err: Option<String> = None;
+        let (rc, out, ph) = {
+            let (run_dir, machine) = (Path::new(&self.s.run), &mut self.s.machine);
+            let mut mark = |to: GateState, why: &str| {
+                let Some(r) = machine.as_mut() else { return };
+                let moved = r.enter(to, why, w.now()).and_then(|m| if m { w.machine_save(run_dir, r) } else { Ok(()) });
+                if let Err(e) = moved {
+                    mark_err.get_or_insert(e);
+                }
+            };
+            run_composed(
+                w,
+                &tree,
+                &comp,
+                &with_bins(
+                    env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp),
+                    tree_def.as_ref(),
+                    tools.as_ref(),
+                ),
+                &eff(),
+                &cmd,
                 tools.as_ref(),
-            ),
-            &timeout,
-            &cmd,
-            tools.as_ref(),
-            jobs,
-            &re.required,
-            "",
-        );
+                jobs,
+                &re.required,
+                "",
+                fkey.as_ref(),
+                &mut mark,
+            )
+        };
         self.s.phases.extend(ph);
+        if let Some(e) = mark_err {
+            return v(NOVERDICT, "machine-fault", format!("gate: cannot record the gate's moves: {e} — refusing to judge what it cannot record"));
+        }
         self.s.queue_secs = parse::queue_secs(&out);
         if w.signalled() {
             return v(
@@ -821,7 +864,7 @@ impl<'w, W: World> Trial<'w, W> {
         } else {
             out
         };
-        self.s.suite = parse::red_suites(&out)
+        self.s.suite = parse::red_units(&out)
             .into_iter()
             .next()
             .unwrap_or_else(|| "-".into());
@@ -835,9 +878,17 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: {name}'s build ran out of scratch space mid-trial — the host's room, not a fault in {br}.\n{}",
                 parse::tail_bytes(&out, 4000)));
         }
+        if parse::cache_transport_failure(&out) {
+            return v(NOVERDICT, "build-cache-fault", format!(
+                "gate: {name}'s build lost its compiler cache (sccache transport error) — the host's cache server, not a fault in {br}.\n{}",
+                parse::tail_bytes(&out, 4000)));
+        }
         if let Some(d) = parse::harness_fault_detail(&out) {
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s batch reported a harness fault — container died mid-batch ({d}).\ngate: command: {cmd}\n{out}"));
+        }
+        if rc == 124 && by_deadline {
+            return killed_verdict(&self.s.phases, deadline, w.now().saturating_sub(t_start), &cmd, &out);
         }
         if rc == 124 {
             return v(NOVERDICT, "timeout", format!(
@@ -851,13 +902,13 @@ impl<'w, W: World> Trial<'w, W> {
                 return v(NOVERDICT, "queue", format!(
                     "gate: {name}'s suites trial waited {}s for a testenv slot and gave up inside its share of SPIRA_GATE_BUDGET={}s; it judged nothing.\ngate: this is the host's queue, not a fault in the branch.\ngate: command: {cmd}\n{out}",
                     parse::queue_secs(&out),
-                    ctx.var_or("SPIRA_GATE_BUDGET", "300")));
+                    ctx.var("SPIRA_GATE_BUDGET")));
             }
             if let Some(r) = parse::testenv_fault_reason(&out).filter(|r| r.starts_with("deadline-")) {
                 let phase = &r["deadline-".len()..];
                 return v(NOVERDICT, "budget", format!(
                     "gate: {name}'s suites trial did not fit its budget — phase `{phase}` was cut at its share of SPIRA_GATE_BUDGET={}s; it judged nothing.\ngate: command: {cmd}\n{out}",
-                    ctx.var_or("SPIRA_GATE_BUDGET", "300")));
+                    ctx.var("SPIRA_GATE_BUDGET")));
             }
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s own gate reported a harness fault (exit {NOVERDICT}) — container or install failed.\ngate: command: {cmd}\n{out}"));
@@ -889,7 +940,8 @@ impl<'w, W: World> Trial<'w, W> {
                 w.eprint(&e);
                 return None;
             }
-            match tools_for(w, &tree, &base_tree, bdef.as_ref(), jobs) {
+            let shared = self.shared_tools(&ctx, &tree, &base_tree, bdef.as_ref());
+            match tools_for(w, &tree, &base_tree, bdef.as_ref(), jobs, shared) {
                 Ok(t) => Some(t),
                 Err(e) => {
                     w.eprint(&format!("{e}\ngate: no base trial — {base}'s tools cannot be attributed to {base}'s tree."));
@@ -903,16 +955,19 @@ impl<'w, W: World> Trial<'w, W> {
             // were most of every such base trial's wall (sp-govet: base-gate 164-501 s behind
             // a 12 s fence red).
             //
-            // sp-kqger: A SUITES COMPOSITION NEVER MIRRORS THE BRANCH'S SELECTION ON THE BASE
-            // EITHER, for the same reason — it was the 275-337 s cost this bead exists to cut,
+            // sp-kqger: NEITHER A SUITES NOR A UNIT COMPOSITION MIRRORS THE BRANCH'S SELECTION
+            // ON THE BASE, for the same reason — it was the 275-337 s cost this bead exists to cut,
             // and it answered nothing the branch's own red suites did not already ask. The
             // base's fences run instead (cheap, ~12-60 s); each red suite is judged by the
             // base-suite cache below, or a targeted rerun that pays for only the suites the
             // cache could not answer.
-            let base_comp = if matches!(comp, Composition::Suites { .. }) {
-                Composition::Fences
+            let base_comp = Composition::Fences;
+            let unit_base_cmd;
+            let base_cmd = if matches!(comp, Composition::Unit { .. }) {
+                unit_base_cmd = compose::gate_string(&comp, base_cmd).0;
+                &unit_base_cmd
             } else {
-                self.base_composition(&comp, &ctx, &tree)
+                base_cmd
             };
             let (r, o, ph) = run_composed(
                 w,
@@ -927,15 +982,20 @@ impl<'w, W: World> Trial<'w, W> {
                     bdef.as_ref(),
                     base_tools.as_ref(),
                 ),
-                &timeout,
+                &eff(),
                 base_cmd,
                 base_tools.as_ref(),
                 jobs,
                 &base_required,
                 "base-",
+                self.fences_key(&base_tree).as_ref(),
+                &mut |_, _| {},
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
+            if r == 124 && by_deadline {
+                return killed_verdict(&self.s.phases, deadline, w.now().saturating_sub(t_start), base_cmd, &o);
+            }
             base_rc = r;
             base_out = o;
             base_ran = r != 124 && r != NOVERDICT && !before_tests;
@@ -1001,7 +1061,7 @@ impl<'w, W: World> Trial<'w, W> {
                                 base_bdef,
                                 base_tools_ref,
                             ),
-                            &timeout,
+                            &eff(),
                             "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag",
                         );
                         self.s
@@ -1045,12 +1105,15 @@ impl<'w, W: World> Trial<'w, W> {
                         base_bdef,
                         base_tools_ref,
                     ),
-                    &timeout,
+                    &eff(),
                     &rerun,
                 );
                 self.s
                     .phases
                     .push(("base-rerun".into(), w.now().saturating_sub(t)));
+                if r == 124 && by_deadline {
+                    return deadline_verdict(deadline, "base-rerun", w.now().saturating_sub(t_start), &rerun, &o);
+                }
                 if w.signalled() {
                     return v(
                         NOVERDICT,
@@ -1102,6 +1165,11 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: {name}'s base trial ran out of scratch space — the host's room; it judged neither {base} nor {br}.\n{}",
                 parse::tail_bytes(&base_out, 4000)));
         }
+        if parse::cache_transport_failure(&base_out) {
+            return v(NOVERDICT, "build-cache-fault", format!(
+                "gate: {name}'s base trial lost its compiler cache (sccache transport error); it judged neither {base} nor {br}.\n{}",
+                parse::tail_bytes(&base_out, 4000)));
+        }
         let spaced = |v: &[String]| v.join(" ");
         let attribution = parse::attribute(&out, base_ran, base_rc, &base_out, &absent);
         if matches!(attribution, Attribution::BaseRed(_)) {
@@ -1113,7 +1181,7 @@ impl<'w, W: World> Trial<'w, W> {
                 });
             if retryable {
                 let t = w.now();
-                let (_, o) = w.run_gate(
+                let (rr, o) = w.run_gate(
                     &tree,
                     &with_bins(
                         env(
@@ -1126,12 +1194,15 @@ impl<'w, W: World> Trial<'w, W> {
                         base_bdef,
                         base_tools_ref,
                     ),
-                    &timeout,
+                    &eff(),
                     &base_rerun_cmd(&reds),
                 );
                 self.s
                     .phases
                     .push(("base-retry".into(), w.now().saturating_sub(t)));
+                if rr == 124 && by_deadline {
+                    return deadline_verdict(deadline, "base-retry", w.now().saturating_sub(t_start), &base_rerun_cmd(&reds), &o);
+                }
                 if w.signalled() {
                     return v(
                         NOVERDICT,
@@ -1153,11 +1224,11 @@ impl<'w, W: World> Trial<'w, W> {
             Attribution::BranchRed(s) => {
                 self.s.suite = s;
                 if base_ran && base_rc != 0 {
-                    let base_reds = parse::red_suites(&base_out);
-                    let only: Vec<String> = parse::red_suites(&out).into_iter().filter(|x| !base_reds.contains(x)).collect();
+                    let base_reds = parse::red_units(&base_out);
+                    let (own, inherited): (Vec<String>, Vec<String>) = parse::red_units(&out).into_iter().partition(|x| !base_reds.contains(x));
                     return v(FAIL, "branch-red", format!(
-                        "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: red on this branch and not on {base}: {}\ngate: {base} is red too, on: {}",
-                        spaced(&only), spaced(&base_reds)));
+                        "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: red on this branch and not on {base}: {}\ngate: inherited, not judged (red on {base} too): {}\ngate: {base} is red on: {}",
+                        spaced(&own), spaced(&inherited), spaced(&base_reds)));
                 }
                 v(FAIL, "branch-red", format!(
                     "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: the same command passes against {base}, so this is the branch's own."))
@@ -1168,9 +1239,23 @@ impl<'w, W: World> Trial<'w, W> {
                 v(NOVERDICT, "base-timeout", format!(
                     "gate: {name}'s base trial timed out on {t}— no verdict for {br}.\ngate: a killed suite cannot prove the base is broken; retry when the box is quieter."))
             }
+            Attribution::BaseRed(_) if !parse::red_units(&out).is_empty() => {
+                let reds = parse::red_units(&out);
+                let green: Vec<String> = parse::ran_suites(&out).into_iter().filter(|x| !reds.contains(x)).collect();
+                self.s.pass_suites = if green.is_empty() { "-".into() } else { green.join(",") };
+                let checked = fence::summary(&fences, &out);
+                v(PASS, "pass", format!(
+                    "{}gate: gate PASS covered suites: {}\ngate: inherited, not judged (red on {base} too, so not this branch's): {}\ngate: {base} is red on: {}\n--- {base}'s own output ---\n{}",
+                    if checked.is_empty() { String::new() } else { format!("gate: fences checked: {checked}\n") },
+                    self.s.pass_suites, spaced(&reds), spaced(&parse::red_units(&base_out)), parse::tail_bytes(&base_out, 8000)))
+            }
             Attribution::BaseRed(s) => {
                 let s = if s == "-" && matches!(comp, Composition::Unit { .. }) {
-                    parse::failed_tests(&base_out).into_iter().next().unwrap_or(s)
+                    parse::failed_tests(&base_out)
+                        .into_iter()
+                        .next()
+                        .or_else(|| parse::fence_refusal(&base_out))
+                        .unwrap_or(s)
                 } else {
                     s
                 };
@@ -1180,7 +1265,7 @@ impl<'w, W: World> Trial<'w, W> {
                         parse::tail_bytes(&base_out, 8000)));
                 }
                 self.s.suite = s;
-                let reds = parse::red_suites(&base_out).join("\n");
+                let reds = parse::red_units(&base_out).join("\n");
                 let reds = if reds.is_empty() { "(no suite named; read the output)".to_string() } else { reds };
                 v(BASEFAIL, "base-red", format!(
                     "gate: {name}'s own gate fails against {base} — this branch did not cause it.\ngate: command: {cmd}\ngate: red on {base}: {reds}\n--- {base}'s own output ---\n{}\n--- this branch's output ---\n{}\ngate: fix the repository, or clear that command from {map}.",
@@ -1248,33 +1333,223 @@ impl<'w, W: World> Trial<'w, W> {
         )
     }
 
+    /// `gate warm-tools [--rev <rev>] [repo]`: compute the source key of the tools `rev`'s
+    /// gate.steps builds (default: the repository's landing ref) and, unless the shared store
+    /// already holds it ("already warm <entry>"), build them in a gate tree of their own,
+    /// prove and publish them exactly as a gate's cold tools phase would ("warmed <entry>") —
+    /// off any gate's clock and admission. Exit 0 warm, 1 when anything stops it.
+    pub fn warm(mut self, rev: Option<&str>) -> i32 {
+        let w = self.w;
+        let fail = |m: String| {
+            w.eprint(&format!("gate warm-tools: {m}"));
+            1
+        };
+        let ctx = match w.context(self.a.repo.as_deref()) {
+            Ok(c) => c,
+            Err(e) => return fail(e),
+        };
+        let name = ctx.repo_name.clone();
+        self.s.repo_name = name.clone();
+        self.s.run = ctx.var("SPIRA_RUN").to_string();
+        let Some(root) = ctx.repo_root.clone() else {
+            return fail(format!("repo-map has no entry for '{name}'"));
+        };
+        let repo = PathBuf::from(root);
+        let Some(rev) = rev.map(str::to_string).or_else(|| ctx.landref.clone()) else {
+            return fail(format!("cannot resolve the ref '{name}' lands on"));
+        };
+        let (Some(commit), Some(want)) = (
+            w.rev_parse(&repo, &format!("{rev}^{{commit}}")).filter(|c| !c.is_empty()),
+            w.rev_parse(&repo, &format!("{rev}^{{tree}}")).filter(|t| !t.is_empty()),
+        ) else {
+            return fail(format!("cannot resolve {rev} in {}", repo.display()));
+        };
+        let d = match w.show_blob(&repo, &commit, def::PATH) {
+            None => {
+                println!("nothing to warm: {rev} has no {}", def::PATH);
+                return 0;
+            }
+            Some(b) => match std::str::from_utf8(&b).map_err(|_| "not UTF-8".to_string()).and_then(def::parse) {
+                Ok(d) => d,
+                Err(e) => return fail(format!("{rev}'s {}: {e}", def::PATH)),
+            },
+        };
+        if d.bins.is_empty() {
+            println!("nothing to warm: {rev}'s {} builds no tool", def::PATH);
+            return 0;
+        }
+        if let Err(e) = self.resolve_build(&ctx, &format!("warm-tools:{name}")) {
+            return fail(e);
+        }
+        let tree = PathBuf::from(format!("{}/worktree/.gate-warm.{name}", self.s.run));
+        if let Some(p) = tree.parent() {
+            w.mkdir_p(p);
+        }
+        let lock = PathBuf::from(format!("{}.lock", tree.display()));
+        if !w.tree_lock_open(&lock) || !w.tree_lock_try() {
+            return fail(format!("another warm-tools holds {}", lock.display()));
+        }
+        // The checkout proves HEAD is `commit`; tools_for then proves the tree is `want`.
+        if let Err(e) = w.checkout(&repo, &tree, &commit, &commit) {
+            w.remove_worktree(&repo, &tree);
+            return fail(e);
+        }
+        let rc = self.warm_in(&ctx, &tree, &want, &d);
+        w.release_target(&tree, false);
+        w.remove_worktree(&repo, &tree);
+        rc
+    }
+
+    fn warm_in(&self, ctx: &Ctx, tree: &Path, want: &str, d: &def::Def) -> i32 {
+        let w = self.w;
+        let fail = |m: String| {
+            w.eprint(&format!("gate warm-tools: {m}"));
+            1
+        };
+        let Some(sh) = self.shared_tools(ctx, tree, want, Some(d)) else {
+            return fail(format!("the tools of tree {want} cannot be keyed by their sources — nothing to publish"));
+        };
+        if let Some(e) = shared_hit(w, tree, want, &sh, &d.packages()) {
+            println!("already warm {}", e.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            return 0;
+        }
+        let mut reservation = None;
+        if let Some(vd) = self.prepare_build_tree(ctx, tree, &mut reservation) {
+            return fail(vd.msg);
+        }
+        let jobs = compose::jobs(key::digits(&ctx.host_cores).unwrap_or(1));
+        let tl = match tools_for(w, tree, want, Some(d), jobs, Some(sh.clone())) {
+            Ok(Some(t)) => t,
+            Ok(None) => return fail("no tools".into()),
+            Err(e) => return fail(e),
+        };
+        if let Some(cmd) = &tl.build {
+            let e = |k: &str, v: &str| (k.to_string(), v.to_string());
+            let env: Vec<(String, String)> = vec![
+                e("PATH", &self.s.path),
+                e(spira_config::RELEASE_ENV, ctx.var(spira_config::RELEASE_ENV)),
+                e("HOME", ctx.var("HOME")),
+                e("TERM", "dumb"),
+            ]
+            .into_iter()
+            .chain(self.s.build_env.iter().cloned())
+            .collect();
+            let (rc, out) = w.run_gate(tree, &env, WARM_TIMEOUT, cmd);
+            if rc != 0 {
+                return fail(format!("the tools build failed (exit {rc}): {cmd}\n{out}"));
+            }
+            if let Err(e) = w.install_tools(&tl.tree, &tl.pkgs, &tl.dir, &tl.id) {
+                return fail(e);
+            }
+        }
+        if let Err(e) = tools_proved(w, &tl.dir, &tl.id, &tl.pkgs) {
+            return fail(e);
+        }
+        match publish_shared(w, &tl, &sh) {
+            Some(n) => {
+                println!("warmed {n}");
+                0
+            }
+            None => fail(format!("the tools of tree {want} were built but not published")),
+        }
+    }
+
+    /// The command PATH (from SPIRA_RELEASE) and the build cache's environment, admitted as
+    /// `who`. Err only when SPIRA_RELEASE does not give a PATH; a missing build cache is kept
+    /// in `cache_refusal` for whatever builds to refuse on.
+    fn resolve_build(&mut self, ctx: &Ctx, who: &str) -> Result<(), String> {
+        let w = self.w;
+        match spira_config::release_path_from_env_with_tail(Some(ctx.var(spira_config::RELEASE_ENV)), ctx.var("SPIRA_PATH")) {
+            Ok(p) => self.s.path = p,
+            Err(e) => return Err(e.to_string()),
+        }
+        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every cargo build the
+        // trial runs — the tools, the unit phases, the build fence, testenv's — compiles
+        // through the box's one sccache, resolved on the PATH the command gets. Resolved here,
+        // required where the trial builds in the tree (below: absent is a refusal, never a cold
+        // build of every dependency); a definition that builds nothing never needs it.
+        // SPIRA_BUILD_CACHE=off opts out, loudly.
+        match w.build_wrapper(&self.s.path, ctx.var(spira_config::build::CACHE_ENV)) {
+            Ok(wr) => {
+                if wr == spira_config::build::Wrapper::Off {
+                    w.eprint(&format!("gate: {}", wr.describe()));
+                }
+                // Every cargo the gate runs — tools, unit phases, the build fence's `make build`,
+                // release-bins — goes through `spira-admit` with the GATE's token (sp-f4ig1-fix,
+                // DESIGN-admission.md D11): it takes a compile lease for that cargo WITHOUT
+                // WAITING (oversubscribing a full pool), so the gate never queues and agent builds
+                // queue behind it instead of competing at full width. testenv's own build does
+                // the same in-process. The token also keeps every other admission inherited.
+                // Without spira-admit on PATH (an older release) the plain wrapper still carries
+                // the token: the gate never waits, it just holds nothing.
+                // THE SHARED STORE (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process
+                // (`merge_resolved_config`, `Real::context`) the same as every other
+                // `spira.toml`-only key this `ctx` already carries — never a bare env read.
+                let store = spira_config::build::Store::from_values(|k| {
+                    let v = ctx.var(k);
+                    (!v.is_empty()).then(|| v.to_string())
+                });
+                self.s.build_env = match w.which(spira_config::admission::BIN) {
+                    Some(admit) => wr.admitted_env(&admit, ctx.var("SPIRA_RUN"), who, store.as_ref()),
+                    None => wr.env(store.as_ref()),
+                };
+                self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
+            }
+            Err(e) => self.s.cache_refusal = Some(e),
+        }
+        Ok(())
+    }
+
+    /// The shared-store key of the tools `d` builds in `tree` (toolkey.rs), read from tree
+    /// `want`'s objects. None — the tools are built and kept for this tree alone, as before —
+    /// when the definition builds nothing or any part of the key cannot be read.
+    fn shared_tools(&self, ctx: &Ctx, tree: &Path, want: &str, d: Option<&def::Def>) -> Option<toolkey::Shared> {
+        let d = d.filter(|d| !d.bins.is_empty())?;
+        let w = self.w;
+        let miss = |why: String| {
+            w.eprint(&format!("gate: tools of tree {want} not keyed by their sources ({why}) — built for this tree alone"));
+            None
+        };
+        if want.is_empty() || self.s.run.is_empty() || !crate::cert::is_repo_name(&self.s.repo_name) {
+            return miss("no run directory or repository name".into());
+        }
+        let members = match self.members(ctx, tree) {
+            Ok(m) => m,
+            Err(e) => return miss(format!("cargo metadata: {}", e.trim())),
+        };
+        let pkgs = d.packages();
+        let closure = match toolkey::closure(&members, &pkgs) {
+            Ok(c) => c,
+            Err(e) => return miss(e),
+        };
+        let mut ids = Vec::new();
+        for m in &closure {
+            match w.rev_parse(tree, &format!("{want}:{}", m.dir)) {
+                Some(id) if !id.is_empty() => ids.push((m.name.clone(), m.dir.clone(), id)),
+                _ => return miss(format!("{} has no tree in {want}", m.dir)),
+            }
+        }
+        let roots: Vec<(String, String)> = toolkey::ROOT_INPUTS
+            .iter()
+            .map(|r| (r.to_string(), w.rev_parse(tree, &format!("{want}:{r}")).unwrap_or_else(|| "-".into())))
+            .collect();
+        let recipe = format!("{} profile=aeon {}", pkgs.join(","), spira_config::build::one_shot_words("aeon"));
+        Some(toolkey::Shared {
+            store: Path::new(&self.s.run).join(toolkey::STORE_DIR).join(&self.s.repo_name),
+            base: toolkey::base_key(&recipe, &roots, &ids),
+            dirs: closure.iter().map(|m| m.dir.clone()).collect(),
+        })
+    }
+
     fn members(&self, ctx: &Ctx, tree: &Path) -> Result<Vec<compose::Member>, String> {
         self.w
             .cargo_metadata(tree, &self.s.path, ctx.var("HOME"))
             .and_then(|j| compose::parse_metadata(&j))
     }
 
-    /// The base trial runs the same composition, over the crates the base has: a crate the
-    /// branch adds cannot be tested on a base without it, and its absence is not a red.
-    fn base_composition(&self, comp: &Composition, ctx: &Ctx, tree: &Path) -> Composition {
-        let Composition::Unit { touched, crates } = comp else {
-            return comp.clone();
-        };
-        let Ok(members) = self.members(ctx, tree) else {
-            return comp.clone();
-        };
-        let crates: Vec<String> = crates
-            .iter()
-            .filter(|c| members.iter().any(|m| &m.name == *c))
-            .cloned()
-            .collect();
-        if crates.is_empty() {
-            return Composition::Fences;
-        }
-        Composition::Unit {
-            touched: touched.clone(),
-            crates,
-        }
+    fn fences_key(&self, tree: &str) -> Option<crate::fencecache::Key> {
+        crate::fencecache::path(&self.s.verdict_dir, &self.s.repo_name, tree)
+            .map(|path| crate::fencecache::Key { path, harness: self.s.harness_h.clone() })
     }
 
     /// `gate_at`: through the port, which proves HEAD == want.
@@ -1291,6 +1566,34 @@ impl<'w, W: World> Trial<'w, W> {
     /// EJECTED SUITES: the first line of `$SPIRA_RUN/ejected/<bead>` — the suites a
     /// withdrawal is known to have reddened (spira-claim reopen writes it). Its own
     /// directory, not the retired landstate ledger's (sp-2c1n0).
+    /// Records the run's move to `to`. A move the machine refuses, or cannot write, or a
+    /// `gate cancel` found at the boundary, is the NO_VERDICT that ends the run.
+    fn mv(&mut self, to: GateState, reason: &str) -> Result<(), Verdict> {
+        let w = self.w;
+        let Some(r) = self.s.machine.as_mut() else { return Ok(()) };
+        let run = Path::new(&self.s.run);
+        r.enter(to, reason, w.now()).map_err(|e| v(NOVERDICT, "machine-fault", e))?;
+        w.machine_save(run, r).map_err(|e| {
+            v(NOVERDICT, "machine-fault", format!("gate: cannot record the gate's move to {}: {e} — refusing to judge what it cannot record", to.as_str()))
+        })?;
+        if w.machine_cancelled(run, &r.id) {
+            return Err(v(NOVERDICT, "cancelled", "gate: cancelled by `gate cancel`"));
+        }
+        Ok(())
+    }
+
+    /// The run's last move: its verdict. A record that cannot be written is said, not hidden.
+    fn conclude(&mut self, vd: &Verdict) {
+        let w = self.w;
+        let Some(r) = self.s.machine.as_mut() else { return };
+        let run = Path::new(&self.s.run);
+        let why = format!("{} {}", outcome(vd.status), vd.reason);
+        if let Err(e) = r.enter(GateState::Verdict, &why, w.now()).and_then(|_| w.machine_save(run, r)) {
+            w.eprint(&format!("gate: the verdict could not be recorded for `gate status`: {e}"));
+        }
+        w.machine_clear_cancel(run, &r.id);
+    }
+
     fn ejected(&self, ctx: &Ctx) -> String {
         if self.s.bead.is_empty() {
             return String::new();
@@ -1423,7 +1726,15 @@ impl<'w, W: World> Trial<'w, W> {
     fn finish(&mut self, vd: Verdict) -> i32 {
         let mut vd = vd;
         let w = self.w;
+        if vd.reason == "died" {
+            if let Some(r) = &self.s.machine {
+                if w.machine_cancelled(Path::new(&self.s.run), &r.id) {
+                    vd = v(NOVERDICT, "cancelled", "gate: cancelled by `gate cancel`");
+                }
+            }
+        }
         vd = settle(vd);
+        self.conclude(&vd);
         if !vd.msg.is_empty() {
             w.eprint(&vd.msg);
         }
@@ -1607,6 +1918,64 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
     Some(s)
 }
 
+/// The most a named phase may take, seconds (`base-` prefix ignored). They are the branch
+/// trial's fixed phases and sum under SPIRA_GATE_DEADLINE's 300 s, so the suites keep the rest;
+/// phases not listed take whatever of the deadline is left.
+///
+/// The `tools` cap bounds tools that come from the shared store (toolkey.rs) — an install, or
+/// the build that replaces an install that failed. A COLD build on a store miss (a new source
+/// key, or tools that cannot be keyed) is [`TOOLS_COLD`]: uncapped, bounded only by what is
+/// left of the deadline, so the first gate of a new key can finish and publish it for the rest.
+pub fn phase_cap(name: &str) -> Option<u64> {
+    match name.strip_prefix("base-").unwrap_or(name) {
+        TOOLS_COLD => None,
+        "tools" => Some(40),
+        "fences" => Some(90),
+        "gate" => Some(190),
+        _ => None,
+    }
+}
+
+/// `gate warm-tools`'s bound on its build, seconds: off any gate's clock, but not unbounded.
+pub const WARM_TIMEOUT: &str = "3600";
+
+/// The cap name of a cold tools build (see [`phase_cap`]); metered as `tools` all the same.
+pub const TOOLS_COLD: &str = "tools-cold";
+
+/// The last phase run, if it was killed at its own cap rather than by the whole-gate deadline.
+pub fn phase_cap_hit(phases: &[(String, u64)]) -> Option<(&str, u64, u64)> {
+    let (name, ran) = phases.last()?;
+    let cap = phase_cap(name)?;
+    (*ran >= cap).then_some((name.as_str(), *ran, cap))
+}
+
+/// NO_VERDICT: a phase was killed at its own cap, well inside the whole-gate deadline.
+pub fn phase_cap_verdict(phase: &str, ran: u64, cap: u64, cmd: &str, out: &str) -> Verdict {
+    v(NOVERDICT, "phase-cap", format!(
+        "gate: phase `{phase}` was killed at its {cap}s cap (ran {ran}s) — the whole-gate deadline was not reached; it judged nothing.\ngate: command: {cmd}\n{out}"))
+}
+
+/// The verdict for a gate command killed (rc 124) under the deadline: the phase cap when
+/// the last phase reached its own, else the whole-gate deadline.
+pub fn killed_verdict(phases: &[(String, u64)], deadline: u64, ran: u64, cmd: &str, out: &str) -> Verdict {
+    match phase_cap_hit(phases) {
+        Some((p, r, c)) if ran < deadline => phase_cap_verdict(p, r, c, cmd, out),
+        _ => deadline_verdict(
+            deadline,
+            phases.last().map_or("-", |p| p.0.as_str()),
+            ran,
+            cmd,
+            out,
+        ),
+    }
+}
+
+/// NO_VERDICT: the gate ran out of wall clock — in `phase` — and judged nothing.
+pub fn deadline_verdict(deadline: u64, phase: &str, ran: u64, cmd: &str, out: &str) -> Verdict {
+    v(NOVERDICT, "deadline", format!(
+        "gate: deadline — phase `{phase}` was running when the gate hit its limit (ran {ran}s; whole-gate deadline {deadline}s, SPIRA_GATE_DEADLINE; phase caps in gate/DESIGN.md); it judged nothing.\ngate: command: {cmd}\n{out}"))
+}
+
 /// Run a composition's phases in order, each under what is left of `timeout`, stopping at
 /// the first non-zero status. Returns (status, the phases' output joined, the phase walls).
 /// The base re-run: the named suites through testenv, on the revision in
@@ -1670,6 +2039,12 @@ pub struct Tools {
     pub dir: PathBuf,
     pub id: String,
     pub pkgs: Vec<String>,
+    /// A shared store entry whose sources match this tree's (toolkey.rs): installed instead
+    /// of building. `build` is None then; `fallback` is the build when the install fails.
+    pub from: Option<PathBuf>,
+    pub fallback: Option<String>,
+    /// Where a build's tools are published for the next tree with the same sources.
+    pub publish: Option<toolkey::Shared>,
 }
 
 /// The tools of the trial about to run in `tree`, which must hold `want` (a git tree id).
@@ -1681,6 +2056,7 @@ pub fn tools_for<W: World>(
     want: &str,
     d: Option<&def::Def>,
     jobs: u64,
+    shared: Option<toolkey::Shared>,
 ) -> Result<Option<Tools>, String> {
     let Some(d) = d.filter(|d| !d.bins.is_empty()) else {
         return Ok(None);
@@ -1696,13 +2072,77 @@ pub fn tools_for<W: World>(
     }
     let dir = def::Def::tools_dir(tree, want);
     let pkgs = d.packages();
-    let build = if tools_proved(w, &dir, want, &pkgs).is_ok() {
-        w.eprint(&format!("gate: tools for tree {want} reused from {} (built from this tree)", dir.display()));
-        None
-    } else {
-        d.tools_command(jobs)
+    let mut t = Tools { build: None, tree: tree.to_path_buf(), dir, id: want.to_string(), pkgs, from: None, fallback: None, publish: None };
+    if tools_proved(w, &t.dir, want, &t.pkgs).is_ok() {
+        w.eprint(&format!("gate: tools for tree {want} reused from {} (built from this tree)", t.dir.display()));
+        return Ok(Some(t));
+    }
+    if let Some(sh) = shared {
+        if let Some(entry) = shared_hit(w, tree, want, &sh, &t.pkgs) {
+            w.eprint(&format!(
+                "gate: tools for tree {want} reused from {} (built from the same sources: every closure package, root input and recorded input matches)",
+                entry.display()
+            ));
+            t.from = Some(entry);
+            t.fallback = d.tools_command(jobs);
+            return Ok(Some(t));
+        }
+        t.publish = Some(sh);
+    }
+    t.build = d.tools_command(jobs);
+    Ok(Some(t))
+}
+
+/// The newest entry of the shared store under `sh.base` whose recorded inputs all hold the
+/// same object in tree `want`, whose stamp names it, and which carries every package.
+fn shared_hit<W: World>(w: &W, tree: &Path, want: &str, sh: &toolkey::Shared, pkgs: &[String]) -> Option<PathBuf> {
+    w.tool_entries(&sh.store, &sh.base).into_iter().find(|e| {
+        let name = e.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let stamped = w.read(&e.join(toolkey::KEY)).is_some_and(|k| k.trim() == name);
+        let Some(inputs) = w.read(&e.join(toolkey::INPUTS)).and_then(|t| toolkey::parse_manifest(&t)) else {
+            return false;
+        };
+        stamped
+            && toolkey::entry_name(&sh.base, &toolkey::manifest(&inputs)) == name
+            && pkgs.iter().all(|p| w.exists(&e.join(p)))
+            && inputs.iter().all(|(p, id)| w.rev_parse(tree, &format!("{want}:{p}")).unwrap_or_else(|| "-".into()) == *id)
+    })
+}
+
+/// After a build: record what it read outside the base key's closure, and publish the
+/// installed tools under that key. A failure only costs the next tree a build.
+fn publish_shared<W: World>(w: &W, tl: &Tools, sh: &toolkey::Shared) -> Option<String> {
+    let raw = match w.tool_inputs(&tl.tree, &tl.pkgs) {
+        Ok(r) => r,
+        Err(e) => {
+            w.eprint(&format!("gate: tools of tree {} not published to the shared store: {e}", tl.id));
+            return None;
+        }
     };
-    Ok(Some(Tools { build, tree: tree.to_path_buf(), dir, id: want.to_string(), pkgs }))
+    let extra: std::collections::BTreeSet<String> = raw
+        .iter()
+        .filter_map(|a| toolkey::relative(&tl.tree, a))
+        .filter(|r| !toolkey::covered(r, &sh.dirs))
+        .collect();
+    let inputs: Vec<(String, String)> = extra
+        .into_iter()
+        .map(|r| {
+            let id = w.rev_parse(&tl.tree, &format!("{}:{r}", tl.id)).unwrap_or_else(|| "-".into());
+            (r, id)
+        })
+        .collect();
+    let m = toolkey::manifest(&inputs);
+    let name = toolkey::entry_name(&sh.base, &m);
+    match w.publish_tools(&tl.dir, &tl.pkgs, &sh.store, &name, &m, toolkey::KEEP) {
+        Ok(()) => {
+            w.eprint(&format!("gate: tools of tree {} published as {} ({} recorded input(s) outside the closure)", tl.id, sh.store.join(&name).display(), inputs.len()));
+            Some(name)
+        }
+        Err(e) => {
+            w.eprint(&format!("gate: tools of tree {} not published to the shared store: {e}", tl.id));
+            None
+        }
+    }
 }
 
 /// `dir` is stamped with `id` and holds every package.
@@ -1763,15 +2203,21 @@ pub fn run_composed<W: World>(
     jobs: u64,
     reentry: &[String],
     prefix: &str,
+    fences: Option<&crate::fencecache::Key>,
+    mark: &mut dyn FnMut(GateState, &str),
 ) -> (i32, String, Vec<(String, u64)>) {
+    let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
     let budget = key::digits(timeout);
     let start = w.now();
-    let left = || match budget {
-        Some(b) => b
-            .saturating_sub(w.now().saturating_sub(start))
-            .max(1)
-            .to_string(),
-        None => timeout.to_string(),
+    let left = |name: &str| {
+        let cap = phase_cap(name);
+        match budget {
+            Some(b) => {
+                let rem = b.saturating_sub(w.now().saturating_sub(start)).max(1);
+                cap.map_or(rem, |c| rem.min(c)).to_string()
+            }
+            None => cap.map_or(timeout.to_string(), |c| c.to_string()),
+        }
     };
     let mut phases = Vec::new();
     // THE TOOLS PHASE (sp-quu2w): the binaries the steps call, built from the tree under
@@ -1779,9 +2225,21 @@ pub fn run_composed<W: World>(
     // Built into the shared target/, then installed into the directory keyed by the tree id
     // (sp-g9f3t), and — built or reused — proved before any step reads it.
     if let Some(tl) = tools {
-        if let Some(t) = &tl.build {
+        mark(first_state, "tools");
+        let mut build = tl.build.clone();
+        // A shared entry built from the same sources (toolkey.rs): installed, keyed and
+        // proved like a build; one that cannot be installed is built instead.
+        if let Some(src) = &tl.from {
+            if let Err(e) = w.install_tools_from(src, &tl.pkgs, &tl.dir, &tl.id) {
+                w.eprint(&format!("gate: cannot install tools from {}: {e} — building them", src.display()));
+                build = tl.fallback.clone();
+            }
+        }
+        if let Some(t) = &build {
             let t0 = w.now();
-            let (rc, out) = w.run_gate(tree, env, &left(), t);
+            // Capped only on the reuse path (a failed store install); a miss builds cold.
+            let cap = if tl.from.is_some() { "tools" } else { TOOLS_COLD };
+            let (rc, out) = w.run_gate(tree, env, &left(cap), t);
             phases.push((format!("{prefix}tools"), w.now().saturating_sub(t0)));
             if rc != 0 || w.signalled() {
                 return (rc, format!("{out}\ngate: phase 'tools' failed (exit {rc}): {t}"), phases);
@@ -1789,20 +2247,46 @@ pub fn run_composed<W: World>(
             if let Err(e) = w.install_tools(&tl.tree, &tl.pkgs, &tl.dir, &tl.id) {
                 return (NOVERDICT, format!("{out}\n{TOOLS_UNATTRIBUTED}: {e}"), phases);
             }
+            if let Some(sh) = &tl.publish {
+                let _ = publish_shared(w, tl, sh);
+            }
         }
         if let Err(e) = tools_proved(w, &tl.dir, &tl.id, &tl.pkgs) {
             return (NOVERDICT, e, phases);
         }
     }
     let first = if comp.suites_off() { "fences" } else { "gate" };
+    mark(first_state, if comp.suites_off() { "fences" } else { "the gate command: fences and suites" });
     // A unit composition builds once (sp-aprxm): its build phase, not the build fence.
     let (cmd, _) = compose::gate_string(comp, cmd);
-    let t = w.now();
-    let (rc, mut out) = w.run_gate(tree, env, &left(), &cmd);
-    phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
-    if rc != 0 || w.signalled() {
-        return (rc, out, phases);
-    }
+    let mut fences_rc = 0;
+    let proved = fences
+        .filter(|_| comp.suites_off())
+        .and_then(|k| w.read(&k.path).and_then(|e| crate::fencecache::fresh(&e, &k.harness, &cmd)));
+    let mut out = match proved {
+        Some(o) => {
+            w.eprint(&format!("gate: fences reused from a proved run of this tree ({})", fences.map_or(String::new(), |k| k.path.display().to_string())));
+            o
+        }
+        None => {
+            let t = w.now();
+            let (rc, out) = w.run_gate(tree, env, &left(first), &cmd);
+            phases.push((format!("{prefix}{first}"), w.now().saturating_sub(t)));
+            if w.signalled() || rc == 124 || rc == NOVERDICT || (rc != 0 && !matches!(comp, Composition::Unit { .. })) {
+                return (rc, out, phases);
+            }
+            fences_rc = rc;
+            if let Some(k) = fences.filter(|k| fences_rc == 0 && comp.suites_off() && !k.harness.is_empty()) {
+                if fence::silent(&fence::expected(&cmd), &out).is_empty() {
+                    if let (Some(dir), Some(name)) = (k.path.parent(), k.path.file_name().and_then(|n| n.to_str())) {
+                        w.mkdir_p(dir);
+                        w.write_atomic(dir, name, &crate::fencecache::render(&k.harness, &cmd, &out));
+                    }
+                }
+            }
+            out
+        }
+    };
     let mut steps: Vec<(&str, String)> = match comp {
         Composition::Unit { crates, .. } => compose::unit_commands(crates, jobs).into(),
         _ => Vec::new(),
@@ -1828,8 +2312,10 @@ pub fn run_composed<W: World>(
             out.push_str(&format!(
                 "\ngate: SPIRA_GATE_TIMEOUT ({timeout}s) spent before the {name} phase"
             ));
+            phases.push((format!("{prefix}{name}"), 0));
             return (124, out, phases);
         }
+        mark(GateState::Trial, name);
         let t = w.now();
         let hermetic;
         let step_env = if name == "test" {
@@ -1838,7 +2324,7 @@ pub fn run_composed<W: World>(
         } else {
             env
         };
-        let (r, o) = w.run_gate(tree, step_env, &left(), &c);
+        let (r, o) = w.run_gate(tree, step_env, &left(name), &c);
         phases.push((format!("{prefix}{name}"), w.now().saturating_sub(t)));
         if !o.is_empty() {
             if !out.is_empty() {
@@ -1854,7 +2340,7 @@ pub fn run_composed<W: World>(
             return (r, out, phases);
         }
     }
-    (0, out, phases)
+    (fences_rc, out, phases)
 }
 
 /// `gate --definition [repo-name]` (sp-quu2w): the gate command the landing ref's tree

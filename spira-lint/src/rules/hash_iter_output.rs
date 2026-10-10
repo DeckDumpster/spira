@@ -297,3 +297,9 @@ mod tests {
         assert!(run(&t, &["a/src/lib.rs"])[0].contains("remove the line"));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(HashIterOutput),
+    ]
+}

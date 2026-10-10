@@ -1,29 +1,33 @@
-//! The boundary to the STATE and LIVELOCK detectors, and to the lifecycle hold verb.
-//! The detectors themselves now live in the `strand` crate (wave 4.29, sp-8ofmt) and are
-//! called in-process — [`LibSeam::strand_cfg`] resolves `strand::config::Config` once per
-//! process, the same way `strand`'s own binary does. `bead_reopen`/`bump_poison_cleared`/
-//! `poison_asked_clear`/`conf` and the repo lookups still go through the `bash -c '.
-//! "$LIB"; <func> "$@"'` seam (group 4, last — "leave lib.sh alone"), shared with callers
-//! this crate does not own (`cockpit.sh livelock`, `attempts.sh`, `auron.sh`, `incident.sh`).
-//! Production shells out for real; tests use a recording fake.
+//! The boundary to `all_partition_members` and the lifecycle hold verb (in-process, via the
+//! `strand` crate), and to `bump_poison_cleared`/`poison_asked_clear` and the repo lookups
+//! through the `bash -c '. "$LIB"; <func> "$@"'` seam, shared with callers this crate does
+//! not own. Production shells out for real; tests use a recording fake.
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// One persona's claim predicate: the labels a bead must carry and the labels that exclude it.
+#[derive(Clone, Debug, Default)]
+pub struct PersonaPredicate {
+    pub persona: String,
+    pub labels: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+fn split_labels(s: &str) -> Vec<String> {
+    s.split(',').map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
 pub trait Seam {
-    /// `detect_livelocked` — one `LIVELOCK <id> <category> — <reason>` line per row.
-    fn detect_livelocked(&self) -> Result<String, String>;
-    /// `detect_incident_needs_builder`.
-    fn detect_incident_needs_builder(&self) -> Result<String, String>;
-    /// `bead_reopen <id> <cause> <note>`.
-    fn bead_reopen(&self, id: &str, cause: &str, note: &str) -> Result<(), String>;
+    /// Every persona's claim predicate, read from the chamber; personas with no partition
+    /// (and personas whose predicate refuses to resolve) are omitted.
+    fn persona_predicates(&self) -> Vec<PersonaPredicate>;
     /// `bump_poison_cleared <id> <cause>`.
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String>;
     /// `poison_asked_clear <id>`.
     fn poison_asked_clear(&self, id: &str) -> Result<(), String>;
-    /// A resolved `SPIRA_*` config key, read after sourcing conf.sh/lib.sh (e.g.
-    /// `SPIRA_CI_LABEL`, `SPIRA_INCIDENT_LABEL`, `SPIRA_PLAN_LABEL`). Empty if unset.
+    /// A resolved `SPIRA_*` config key, read after sourcing conf.sh/lib.sh. Empty if unset.
     fn conf(&self, key: &str) -> Result<String, String>;
     /// `all_partition_members` — every open/in_progress bead id across every partition
     /// this roster covers, deduplicated, one per line.
@@ -37,6 +41,8 @@ pub trait Seam {
     /// `spira-lc held <id> poison` — whether the lifecycle machine already holds this
     /// bead's poison lock.
     fn lc_held_poison(&self, id: &str) -> bool;
+    /// `spira-lc unhold <id> <kind> groomer` — lift a hold on the bead's lifecycle row.
+    fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String>;
 }
 
 pub struct LibSeam {
@@ -54,7 +60,10 @@ impl LibSeam {
     /// binary resolves it (env, then the resolved toml config, then the conf.sh default) —
     /// never from this struct's own `lib_sh` path, since the detectors no longer source it.
     fn strand_cfg(&self) -> &strand::config::Config {
-        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
+        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()).unwrap_or_else(|e| {
+            eprintln!("groomer: {e}");
+            std::process::exit(1)
+        }))
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -73,6 +82,7 @@ impl LibSeam {
 
     fn run(&self, args: &[&str]) -> Result<String, String> {
         let script = r#". "$0" >/dev/null 2>&1 || exit 97; "$@""#;
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -95,16 +105,16 @@ impl LibSeam {
 }
 
 impl Seam for LibSeam {
-    fn detect_livelocked(&self) -> Result<String, String> {
-        Ok(strand::detectors::detect_livelocked(self.strand_cfg()))
-    }
-
-    fn detect_incident_needs_builder(&self) -> Result<String, String> {
-        strand::detectors::detect_incident_needs_builder(self.strand_cfg())
-    }
-
-    fn bead_reopen(&self, id: &str, cause: &str, note: &str) -> Result<(), String> {
-        self.run(&["bead_reopen", id, cause, note]).map(|_| ())
+    fn persona_predicates(&self) -> Vec<PersonaPredicate> {
+        let home = self.lib_sh.parent().map(Path::to_path_buf).unwrap_or_default();
+        spira_config::chamber::fayth_names(&home)
+            .into_iter()
+            .filter_map(|f| {
+                let p = spira_config::chamber::fayth_predicate(&home, &f).ok()?;
+                let labels = split_labels(&p.labels);
+                (!labels.is_empty()).then(|| PersonaPredicate { persona: f, labels, exclude: split_labels(&p.exclude_labels) })
+            })
+            .collect()
     }
 
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String> {
@@ -116,14 +126,12 @@ impl Seam for LibSeam {
     }
 
     fn conf(&self, key: &str) -> Result<String, String> {
-        // run_stdin unused here; a plain var read never needs a payload.
         let script = format!(r#". "$0" >/dev/null 2>&1 || exit 97; printf '%s' "${{{key}:-}}""#);
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(script)
             .arg(&self.lib_sh)
-            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
             .envs(spira_config::release_env::child_path_env_for_process())
             .stdin(Stdio::null())
             .output()
@@ -144,7 +152,7 @@ impl Seam for LibSeam {
         // needs lib.sh sourced at all. `bdq state <id> repo` inherits this process's own
         // SPIRA_DB/SPIRA_BD exactly as the bash shim's `command bdq "$@"` did; `state` is
         // not a create, so it never touches the repo-label fence's registry build either.
-        let out = Command::new("bdq").arg("state").arg(id).arg("repo").stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("bdq").arg("state").arg(id).arg("repo").stdin(Stdio::null()).stderr(Stdio::null()).output();
         let name = match out {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
             _ => String::new(),
@@ -166,7 +174,12 @@ impl Seam for LibSeam {
     }
 
     fn lc_held_poison(&self, id: &str) -> bool {
-        Command::new("spira-lc").args(["held", id, "poison"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+        spira_config::bounded::bounded("spira-lc").args(["held", id, "poison"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+    }
+
+    fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String> {
+        let st = spira_config::bounded::bounded("spira-lc").args(["unhold", id, kind, "groomer"]).stdin(Stdio::null()).stdout(Stdio::null()).status().map_err(|e| format!("spira-lc unhold: {e}"))?;
+        if st.success() { Ok(()) } else { Err(format!("spira-lc unhold {id} {kind} exited {}", st.code().unwrap_or(-1))) }
     }
 }
 
@@ -192,8 +205,6 @@ pub mod fake {
 
     #[derive(Default)]
     pub struct FakeSeam {
-        pub livelocked: RefCell<String>,
-        pub incident_needs_builder: RefCell<String>,
         pub calls: RefCell<Vec<String>>,
         pub confs: RefCell<std::collections::BTreeMap<String, String>>,
         pub partition_members: RefCell<String>,
@@ -201,6 +212,7 @@ pub mod fake {
         pub roots: RefCell<std::collections::BTreeMap<String, String>>,
         pub bases: RefCell<std::collections::BTreeMap<String, String>>,
         pub held_poison: RefCell<std::collections::BTreeSet<String>>,
+        pub predicates: RefCell<Vec<PersonaPredicate>>,
     }
 
     impl FakeSeam {
@@ -214,19 +226,8 @@ pub mod fake {
     }
 
     impl Seam for FakeSeam {
-        fn detect_livelocked(&self) -> Result<String, String> {
-            self.calls.borrow_mut().push("detect_livelocked".into());
-            Ok(self.livelocked.borrow().clone())
-        }
-
-        fn detect_incident_needs_builder(&self) -> Result<String, String> {
-            self.calls.borrow_mut().push("detect_incident_needs_builder".into());
-            Ok(self.incident_needs_builder.borrow().clone())
-        }
-
-        fn bead_reopen(&self, id: &str, cause: &str, note: &str) -> Result<(), String> {
-            self.calls.borrow_mut().push(format!("bead_reopen {id} {cause} {note}"));
-            Ok(())
+        fn persona_predicates(&self) -> Vec<PersonaPredicate> {
+            self.predicates.borrow().clone()
         }
 
         fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String> {
@@ -262,6 +263,14 @@ pub mod fake {
 
         fn lc_held_poison(&self, id: &str) -> bool {
             self.held_poison.borrow().contains(id)
+        }
+
+        fn lc_unhold(&self, id: &str, kind: &str) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("lc_unhold {id} {kind}"));
+            if kind == "poison" {
+                self.held_poison.borrow_mut().remove(id);
+            }
+            Ok(())
         }
     }
 }

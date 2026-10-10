@@ -26,12 +26,13 @@ testdb_up census-burst || {
     exit 77
 }
 # shellcheck disable=SC1090
+lc_facts_stub "$TMP/lc"
 . "$HERE/lib.sh"
 
 _insert_event_at() {   # <bead_id> <event_type> <cause> <utc_ts>
     local uuid
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')" || return 1
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+    timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
         "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$1', '$2', 'harness', '$3', '$4')" \
         >/dev/null 2>&1
 }
@@ -62,17 +63,17 @@ for n in 1 2 3 4 5; do
     _insert_event_at "sp-b$n" recurred spaced "2026-09-29 12:$((n * 10)):00"
 done
 
-out="$(census_events_run_sql 2>/dev/null | python3 "$HERE/census/count.py")"
-want "charging unjudged cause: two sweeps = 2 occurrences, 6 beads, 14 detections" \
-    "2 14 sp-requeue-unjudged-unlanded 6" "$out"
+out="$(census_event_rows_run_sql 2>/dev/null | python3 "$HERE/census/cluster.py")"
+want "charging unjudged cause: two sweeps = 2 causal events, 6 victims, 14 detections" \
+    "2 6 14 sp-requeue-unjudged-unlanded" "$out"
 nowant "free killed/slain causes are not ranked at all" "sp-requeue-unjudged-slain" "$out"
 nowant "unjudged-killed is not ranked" "sp-requeue-unjudged-killed" "$out"
-want "independent events ten minutes apart still rank one each" "5 5 sp-recur-spaced" "$out"
+want "independent events ten minutes apart still rank one each" "5 5 5 sp-recur-spaced" "$out"
 
 fold="$(_census_class_fold_map)"
 want "fold map aliases slain onto killed" "sp-requeue-unjudged-slain sp-requeue-unjudged-killed" "$fold"
 
-since="$(census_events_run_sql 1790649952 2>/dev/null | python3 "$HERE/census/count.py")"
-want "windowed query collapses the same way" "2 14 sp-requeue-unjudged-unlanded 6" "$since"
+since="$(census_event_rows_run_sql 1790649952 2>/dev/null | python3 "$HERE/census/cluster.py")"
+want "windowed query collapses the same way" "2 6 14 sp-requeue-unjudged-unlanded" "$since"
 
 tl_summary

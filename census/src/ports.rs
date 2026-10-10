@@ -11,8 +11,11 @@ pub trait World {
 
     // ---- lib.sh seam: the retry-aware SQL runners and the fold map, never re-derived ----
     /// `census_events_run_sql [since_epoch_s]` -> Ok(tabular output) or Err(its stderr) when
-    /// the substrate stayed unreachable after lib.sh's own 3 retries.
+    /// the substrate stayed unreachable after 3 retries.
     fn census_events_run_sql(&self, since: Option<i64>) -> Result<String, String>;
+    /// The same query, unaggregated: one `(event_type, new_value, issue_id, epoch)` row per
+    /// event, for clustering into causal events.
+    fn census_event_rows_run_sql(&self, since: Option<i64>) -> Result<String, String>;
     fn census_handwritten_run_sql(&self) -> String;
     fn census_deliberate_run_sql(&self, since: Option<i64>) -> String;
     /// `_census_class_fold_map` -> "<alias> <canonical>" lines.
@@ -30,11 +33,11 @@ pub trait World {
     fn lc_landed(&self, id: &str) -> i32;
 
     // ---- the census/*.py pipeline, unchanged, run as subprocesses exactly as bash ran them ----
-    /// `count.py < tabular>` -> Ok("<beads> <events> <class>" lines) or Err when the
-    /// process itself could not run.
-    fn count_py(&self, tabular: &str) -> Result<String, String>;
-    /// `merge.py <all-time-file> <since-wm-file>`.
-    fn merge_py(&self, all_time: &str, since_wm: &str) -> String;
+    /// `cluster.py < raw event rows` -> Ok("<causal> <victims> <detections> <class>" lines)
+    /// or Err when the process itself could not run.
+    fn cluster_py(&self, tabular: &str) -> Result<String, String>;
+    /// `cluster_merge.py <all-time-file> <since-wm-file>`.
+    fn cluster_merge_py(&self, all_time: &str, since_wm: &str) -> String;
     /// `covers.py <fold-map-file> < bdq-json>`.
     fn covers_py(&self, bdq_json: &str, fold_map: &str) -> String;
     /// `covers_closed.py <fold-map-file> < bdq-json>`.

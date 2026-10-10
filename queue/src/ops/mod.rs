@@ -6,7 +6,10 @@ pub mod deploy;
 pub mod helpers;
 pub mod land;
 pub mod publish;
+pub mod rebase;
+pub mod round;
 pub mod simple;
+pub mod stage;
 pub mod transition;
 pub mod verdict;
 
@@ -82,7 +85,7 @@ where
     }
     match w.lc.batch_state(batch_id) {
         Some((state, version)) if !state.is_empty() => f(&state, &version),
-        _ => Err((1, String::new())),
+        _ => Err((1, format!("spira-lc has no readable lifecycle row for batch {batch_id} (show-batch returned none)"))),
     }
 }
 

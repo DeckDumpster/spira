@@ -94,6 +94,10 @@ const VARS: &[&str] = &[
     // sp-s8v5r: the shared floor testenv's warm-slot shedding also reads — same tmpfs.
     "SPIRA_TMPFS_SHED_FREE_MIB",
     "SPIRA_RELEASE",
+    // The one source of config (per Ryan 2026-10-05): every Spira tool a step runs — testenv
+    // above all — refuses without it, so a suites composition was a harness fault on every
+    // branch (2026-10-06: "batch: SPIRA_TOML is not set … refusing", reason=settings-refused).
+    "SPIRA_TOML",
     "HOME",
 ];
 
@@ -109,6 +113,7 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_CERTIFY_PAR",
     "SPIRA_GATE_SUITES",
     "SPIRA_GATE_BUDGET",
+    "SPIRA_GATE_DEADLINE",
     "SPIRA_CERTIFY_ALWAYS_COVERS",
     "SPIRA_BATCH_MAXPAR",
     "SPIRA_PATH",
@@ -118,22 +123,17 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_SCCACHE_DAV_ADDR",
 ];
 
-/// Wave 4.8: merges `spira_config::resolve()`'s in-process answer into `kv` after the
-/// `CONTEXT` bash call returns, for every [`RETIRED_VARS`] name — `entry().or_insert()` so
-/// nothing the bash dump itself still supplies is ever overridden.
-///
-/// NOT BEST-EFFORT ANY MORE (sp-1cdgq round 3): a containment refusal or an unreadable
-/// registry used to leave `kv` exactly as `CONTEXT` alone produced it, silently — which is
-/// what let a `--home` with no `conf.d` (production never has one) resolve every
-/// `RETIRED_VARS` name to nothing with no error anywhere. Surfaced to the caller instead.
-fn merge_resolved_config(kv: &mut HashMap<String, String>, home: &Path) -> Result<(), String> {
-    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let repo = spira_config::resolve::derive_home_repo(home, &env_map);
-    let resolved = spira_config::resolve::resolve_for_process(home, &repo, &env_map)?;
+/// ONE SOURCE (per Ryan 2026-10-05): `spira_config::process::cfg` — the same per-process
+/// `$SPIRA_TOML` resolution every other binary now goes through, in place of this crate's own
+/// `resolve_for_process`/`derive_home_repo` call (which duplicated `cfg`'s resolution without
+/// its cache). Every [`RETIRED_VARS`] name is a registered key; a key that does not resolve is
+/// a refusal naming it — never a value `kv` quietly lacks, and never a reason for an `ctx.var_or`
+/// fallback deeper in `engine.rs` to fire. Plain `insert`, not `entry().or_insert()`: `VARS`
+/// and `RETIRED_VARS` are disjoint lists, so there is nothing here to avoid overriding.
+fn merge_resolved_config(kv: &mut HashMap<String, String>) -> Result<(), String> {
     for name in RETIRED_VARS {
-        if let Some(v) = resolved.values.get(*name) {
-            kv.entry((*name).to_string()).or_insert_with(|| v.clone());
-        }
+        let v = spira_config::process::cfg(name)?;
+        kv.insert((*name).to_string(), v);
     }
     Ok(())
 }
@@ -152,6 +152,7 @@ pub struct Real {
     pub home: PathBuf,
     admission: RefCell<Vec<File>>,
     tree_lock: RefCell<Option<File>>,
+    cancel: RefCell<Option<PathBuf>>,
 }
 
 impl Real {
@@ -160,6 +161,7 @@ impl Real {
             home,
             admission: RefCell::new(Vec::new()),
             tree_lock: RefCell::new(None),
+            cancel: RefCell::new(None),
         }
     }
 
@@ -188,6 +190,7 @@ impl Real {
     /// `bash -c '. lib.sh >/dev/null 2>&1; <body>' <args…>`.
     fn lib(&self, body: &str, args: &[&str]) {
         let script = format!(". \"$0\" >/dev/null 2>&1 || exit 97\n{body}");
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let _ = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -213,6 +216,7 @@ fn trim_nl(s: String) -> String {
 
 impl World for Real {
     fn context(&self, repo_name: Option<&str>) -> Result<Ctx, String> {
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg("-c")
             .arg(CONTEXT)
@@ -239,7 +243,7 @@ impl World for Real {
                 kv.insert(k.to_string(), v.to_string());
             }
         }
-        merge_resolved_config(&mut kv, &self.home)?;
+        merge_resolved_config(&mut kv)?;
         let mut take = |k: &str| kv.remove(k);
         let raw_repo_name = take("repo_name").unwrap_or_default();
         let host_cores = take("host_cores").unwrap_or_else(|| "1".into());
@@ -367,6 +371,7 @@ impl World for Real {
         doc.spira.as_ref()?.certify_par.map(u64::from)
     }
     fn cargo_metadata(&self, tree: &Path, path: &str, home: &str) -> Result<String, String> {
+        // batch-job: cargo runs for as long as its work does
         let o = Command::new("cargo")
             .args([
                 "metadata",
@@ -483,7 +488,7 @@ impl World for Real {
         if fs::write(&p, content).is_err() {
             return Ok(());
         }
-        let o = Command::new("bash")
+        let o = spira_config::bounded::bounded("bash")
             .arg("-n")
             .arg(&p)
             .stdin(Stdio::null())
@@ -499,7 +504,7 @@ impl World for Real {
         }
     }
     fn exclude_filter(&self, exclude: &Path, names: &str) -> String {
-        let Ok(mut child) = Command::new("bash")
+        let Ok(mut child) = spira_config::bounded::bounded("bash")
             .arg(exclude)
             .arg("filter")
             .stdin(Stdio::piped())
@@ -521,6 +526,7 @@ impl World for Real {
             .unwrap_or_default()
     }
     fn commit_cite(&self, script: &Path, repo: &Path, base: &str, branch: &str) -> (i32, String) {
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let o = Command::new("bash")
             .arg(script)
             .arg("land")
@@ -550,6 +556,7 @@ impl World for Real {
         // gate fixture builds one — can canonicalize to a path with no `../spira` sibling
         // at all. SPIRA_HOME is passed explicitly, the same value `--home` gave this
         // process, so `skew` finds lib.sh regardless of how its own binary was reached.
+        // batch-job: this runs whatever its caller names, as long as that takes
         let o = Command::new(skew)
             .arg("foreign")
             .arg(repo)
@@ -571,6 +578,7 @@ impl World for Real {
         }
     }
     fn sweep(&self, sweep: &Path, repo: &Path) {
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let _ = Command::new("bash")
             .arg(sweep)
             .arg(repo)
@@ -580,6 +588,7 @@ impl World for Real {
             .status();
     }
     fn yield_sh(&self, y: &Path, run: &str, args: &[&str]) {
+        // batch-job: the yield script runs whatever the gate hands it
         let _ = Command::new("bash")
             .arg(y)
             .args(args)
@@ -592,7 +601,7 @@ impl World for Real {
     fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) {
         // spira-lc's caller verb (lifecycle-cert.sh's lc_certify until sp-arpjt): it reads
         // the switch itself and answers "cannot tell" having touched nothing when it is off.
-        let _ = Command::new("spira-lc")
+        let _ = spira_config::bounded::bounded("spira-lc")
             .args(["certify", bead, tip, outcome, detail, "gate"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -760,6 +769,21 @@ impl World for Real {
     fn install_tools(&self, tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
         install_tools_at(tree, pkgs, dir, tree_id)
     }
+    fn install_tools_from(&self, src: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
+        install_from(src, pkgs, dir, tree_id)?;
+        // Recently used: the store's eviction order.
+        let _ = fs::File::open(src).and_then(|d| d.set_modified(SystemTime::now()));
+        Ok(())
+    }
+    fn tool_inputs(&self, tree: &Path, pkgs: &[String]) -> Result<Vec<String>, String> {
+        tool_inputs_at(tree, pkgs)
+    }
+    fn tool_entries(&self, store: &Path, base: &str) -> Vec<PathBuf> {
+        tool_entries_at(store, base)
+    }
+    fn publish_tools(&self, from: &Path, pkgs: &[String], store: &Path, name: &str, inputs: &str, keep: usize) -> Result<(), String> {
+        publish_tools_at(from, pkgs, store, name, inputs, keep)
+    }
     fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String> {
         spira_config::build::wrapper(path, Some(setting))
     }
@@ -780,7 +804,11 @@ impl World for Real {
         Ok(line)
     }
     fn release_target(&self, tree: &Path, keep_release: bool) {
-        crate::target::release_tree(tree, keep_release);
+        let root = crate::target::tree_root(tree);
+        let mib = crate::target::release_tree(tree, keep_release);
+        if let (Some(root), true) = (root, mib > 0) {
+            spira_config::scratch::record_peak(&spira_config::scratch::ledger_for(&root), &crate::target::composition(tree), mib);
+        }
     }
     fn reserve_scratch(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, class: &str, wait_secs: u64) -> Result<Box<dyn std::any::Any>, String> {
         use crate::target;
@@ -788,11 +816,13 @@ impl World for Real {
             return Ok(Box::new(()));
         };
         let owner = format!("gate-{}", tree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+        let ledger = spira_config::scratch::ledger_for(&root);
+        let mib = spira_config::scratch::estimate_mib(&ledger, &target::composition(tree), lim.reserve_mib);
         let g = spira_config::scratch::reserve_class(
-            &spira_config::scratch::ledger_for(&root),
+            &ledger,
             &owner,
             spira_config::scratch::Class::parse(class),
-            lim.reserve_mib,
+            mib,
             0,
             std::time::Duration::from_secs(wait_secs),
             &|| target::free_mib(&root),
@@ -831,9 +861,10 @@ impl World for Real {
         c.arg(timeout)
             .arg("bash")
             .arg("-c")
-            .arg(cmd)
+            .arg(crate::compose::run_all(cmd))
             .current_dir(tree)
             .env_clear();
+        c.envs(spira_config::vtime::passthrough());
         for (k, v) in env {
             c.env(k, v);
         }
@@ -866,7 +897,7 @@ impl World for Real {
                 Ok(None) => {}
                 Err(_) => break -1,
             }
-            if SIGNALLED.load(Ordering::SeqCst) && !termed {
+            if self.signalled() && !termed {
                 unsafe {
                     libc::kill(child.id() as i32, libc::SIGTERM);
                 }
@@ -875,6 +906,7 @@ impl World for Real {
             std::thread::sleep(Duration::from_millis(100));
         };
         // A leaked grandchild holding the pipe must not hold the verdict hostage forever.
+        // batch-job: waits for a gate step's output pipe to close
         let buf = rx.recv_timeout(Duration::from_secs(30)).unwrap_or_default();
         (status, trim_nl(String::from_utf8_lossy(&buf).into_owned()))
     }
@@ -895,7 +927,17 @@ impl World for Real {
         std::process::id()
     }
     fn signalled(&self) -> bool {
-        SIGNALLED.load(Ordering::SeqCst)
+        SIGNALLED.load(Ordering::SeqCst) || self.cancel.borrow().as_ref().is_some_and(|p| p.is_file())
+    }
+    fn machine_save(&self, run: &Path, r: &crate::machine::Run) -> Result<(), String> {
+        *self.cancel.borrow_mut() = Some(crate::machine::cancel_path(run, &r.id));
+        crate::machine::save(run, r)
+    }
+    fn machine_cancelled(&self, run: &Path, id: &str) -> bool {
+        crate::machine::cancel_requested(run, id)
+    }
+    fn machine_clear_cancel(&self, run: &Path, id: &str) {
+        crate::machine::clear_cancel(run, id)
     }
     fn eprint(&self, s: &str) {
         eprintln!("{s}");
@@ -907,6 +949,11 @@ const NOVERDICT_RC: i32 = crate::engine::NOVERDICT;
 /// [`World::install_tools`] on the filesystem (sp-g9f3t). Copies, never links: a hard link
 /// into `target/aeon` would change under the next build of a different tree.
 pub fn install_tools_at(tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
+    install_from(&tree.join("target").join("aeon"), pkgs, dir, tree_id)
+}
+
+/// [`install_tools_at`] from any directory of built binaries (`<src>/<pkg>`).
+pub fn install_from(src_dir: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
     let parent = dir
         .parent()
         .ok_or_else(|| format!("gate: {} has no parent directory", dir.display()))?;
@@ -926,7 +973,7 @@ pub fn install_tools_at(tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str)
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).map_err(|e| format!("gate: cannot create {}: {e}", tmp.display()))?;
     for p in pkgs {
-        let src = tree.join("target").join("aeon").join(p);
+        let src = src_dir.join(p);
         fs::copy(&src, tmp.join(p)).map_err(|e| {
             let _ = fs::remove_dir_all(&tmp);
             format!("gate: cannot install {} into {}: {e}", src.display(), tmp.display())
@@ -938,6 +985,96 @@ pub fn install_tools_at(tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str)
             let _ = fs::remove_dir_all(&tmp);
             format!("gate: cannot stamp {} for tree {tree_id}: {e}", dir.display())
         })
+}
+
+/// [`World::tool_inputs`] on the filesystem.
+pub fn tool_inputs_at(tree: &Path, pkgs: &[String]) -> Result<Vec<String>, String> {
+    let aeon = tree.join("target").join("aeon");
+    let mut out = Vec::new();
+    for p in pkgs {
+        let d = aeon.join(format!("{p}.d"));
+        let text = fs::read_to_string(&d).map_err(|e| format!("cannot read {}: {e}", d.display()))?;
+        let deps = crate::toolkey::dep_info_paths(&text);
+        if deps.is_empty() {
+            return Err(format!("{} names no source", d.display()));
+        }
+        out.extend(deps);
+    }
+    if let Ok(rd) = fs::read_dir(aeon.join("build")) {
+        for e in rd.flatten() {
+            if let Ok(text) = fs::read_to_string(e.path().join("output")) {
+                out.extend(crate::toolkey::rerun_paths(&text));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn mtime_of(p: &Path) -> SystemTime {
+    fs::metadata(p).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH)
+}
+
+/// Every entry directory of `store` (no dot-named temporaries), most recently used first.
+fn store_entries(store: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = fs::read_dir(store)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| !e.file_name().to_string_lossy().starts_with('.') && e.path().is_dir())
+                .map(|e| e.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort_by_key(|p| std::cmp::Reverse(mtime_of(p)));
+    v
+}
+
+/// [`World::tool_entries`] on the filesystem.
+pub fn tool_entries_at(store: &Path, base: &str) -> Vec<PathBuf> {
+    let prefix = format!("{base}-");
+    store_entries(store)
+        .into_iter()
+        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(&prefix)))
+        .collect()
+}
+
+/// [`World::publish_tools`] on the filesystem.
+pub fn publish_tools_at(from: &Path, pkgs: &[String], store: &Path, name: &str, inputs: &str, keep: usize) -> Result<(), String> {
+    fs::create_dir_all(store).map_err(|e| format!("cannot create {}: {e}", store.display()))?;
+    let dest = store.join(name);
+    let tmp = store.join(format!(".tmp.{name}.{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    let made = (|| -> std::io::Result<()> {
+        fs::create_dir_all(&tmp)?;
+        for p in pkgs {
+            fs::copy(from.join(p), tmp.join(p))?;
+        }
+        fs::write(tmp.join(crate::toolkey::INPUTS), inputs)?;
+        fs::write(tmp.join(crate::toolkey::KEY), format!("{name}\n"))?;
+        Ok(())
+    })();
+    if let Err(e) = made {
+        let _ = fs::remove_dir_all(&tmp);
+        return Err(format!("cannot stage {}: {e}", tmp.display()));
+    }
+    if let Err(e) = fs::rename(&tmp, &dest) {
+        let _ = fs::remove_dir_all(&tmp);
+        if !dest.join(crate::toolkey::KEY).is_file() {
+            return Err(format!("cannot publish {}: {e}", dest.display()));
+        }
+    }
+    // Keep the most recently used; a temporary older than an hour is a crashed publisher's.
+    for old in store_entries(store).into_iter().skip(keep) {
+        let _ = fs::remove_dir_all(old);
+    }
+    if let Ok(rd) = fs::read_dir(store) {
+        for e in rd.flatten() {
+            let stale = SystemTime::now().duration_since(mtime_of(&e.path())).is_ok_and(|a| a > Duration::from_secs(3600));
+            if e.file_name().to_string_lossy().starts_with(".tmp.") && stale {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `date -u +%Y-%m-%dT%H:%M:%SZ` for an epoch.
@@ -1002,114 +1139,35 @@ mod tests {
     // the machine running this suite.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// ONE SOURCE (per Ryan 2026-10-05): `merge_resolved_config` now goes straight through
+    /// `spira_config::process::cfg`, so this is the one test in this binary allowed to drive
+    /// it live (rule: only a test that truly exercises the top-level read may set `SPIRA_TOML`
+    /// — `cfg`'s resolution is cached once per *process*, in a `OnceLock`, so a second test
+    /// pinning a DIFFERENT config file in the same test binary would just see this one's
+    /// answer, not its own; the old "missing registry" sibling test that used to live here
+    /// is gone for exactly that reason, not because the refusal it checked stopped existing —
+    /// that refusal is `spira_config`'s own, and `spira_config`'s own tests are where it
+    /// belongs now).
     #[test]
     fn merge_resolved_config_fills_retired_vars_without_overriding_the_bash_dump() {
-        let _g = ENV_LOCK.lock().unwrap();
-        let saved = std::env::var("SPIRA_TOML").ok();
         let dir = testkit::TempDir::new("gate-real-merge");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_GATE_TIMEOUT"),
-            "TYPE=u32\nGROUP=gate\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_GATE_TIMEOUT:=1234}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_GATE_TIMEOUT", "1234")]);
+        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
+        // lives), never the throwaway fixture dir.
+        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let _g = testkit::env(&[
+            ("SPIRA_HOME", Some(real_home.to_str().unwrap())),
+            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+        ]);
 
         let mut kv = std::collections::HashMap::new();
         kv.insert("SPIRA_GATE_BEAD".to_string(), "sp-xyz".to_string());
-        super::merge_resolved_config(&mut kv, &home).unwrap();
+        let result = super::merge_resolved_config(&mut kv);
 
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
+        let _ = std::fs::remove_dir_all(&dir);
 
+        result.unwrap();
         assert_eq!(kv.get("SPIRA_GATE_BEAD").map(String::as_str), Some("sp-xyz"), "the bash dump's own value must survive the merge");
-        assert_eq!(kv.get("SPIRA_GATE_TIMEOUT").map(String::as_str), Some("1234"), "a RETIRED_VARS key resolve() covers must reach kv in-process");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// sp-1cdgq round 3: a `--home` with no `conf.d` at all is now a named error this
-    /// function surfaces, not a silently-partial merge. `registry::load` is where the fix
-    /// actually lives (spira-config); this proves `merge_resolved_config` no longer
-    /// swallows it with `if let Ok(...)`.
-    #[test]
-    fn merge_resolved_config_surfaces_a_missing_registry_instead_of_merging_nothing() {
-        let _g = ENV_LOCK.lock().unwrap();
-        let saved = std::env::var("SPIRA_TOML").ok();
-        let dir = testkit::TempDir::new("gate-real-merge-missing");
-        let home = dir.join("spira-no-conf-d"); // never created
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
-
-        let mut kv = std::collections::HashMap::new();
-        let err = super::merge_resolved_config(&mut kv, &home);
-
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
-
-        assert_eq!(err, Err(format!("no config registry at {}", home.join("conf.d").display())));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// sp-ohwg7: a podman conmon started by a gate trial held an flock the gate's CALLER
-    /// had open (a lander's `exec 9>…` lock, opened by bash with no O_CLOEXEC) for 53+
-    /// minutes after the caller exited. Reproduced here without podman: `cmd` backgrounds
-    /// a `sleep`, the same shape (a long-lived child, started from inside a locked
-    /// section, that outlives the trial) — before `close_inherited_fds`, it inherits the
-    /// open-but-not-CLOEXEC lock fd by plain fork, and the lock stays held after this test
-    /// drops its own reference.
-    #[test]
-    fn run_gate_never_lets_a_daemon_it_starts_inherit_the_callers_lock_fd() {
-        use crate::ports::World;
-        use std::ffi::CString;
-
-        let dir = testkit::TempDir::new("gate-run-gate-fd-leak");
-        let tree = dir.path();
-        let lockfile = dir.join("caller.lock");
-        let lock_c = CString::new(lockfile.as_os_str().as_encoded_bytes()).unwrap();
-
-        // Simulate the lander's own `exec 9>lockfile; flock 9`: opened directly via
-        // libc::open with no O_CLOEXEC — exactly what bash's redirection does, and
-        // exactly what std::fs::File never does (SAFETY: a plain open/flock on a path we
-        // own, cleaned up below).
-        let lock_fd = unsafe { libc::open(lock_c.as_ptr(), libc::O_WRONLY | libc::O_CREAT, 0o644) };
-        assert!(lock_fd >= 0, "open {}: {}", lockfile.display(), std::io::Error::last_os_error());
-        assert_eq!(unsafe { libc::flock(lock_fd, libc::LOCK_EX) }, 0, "acquire the caller's lock");
-
-        let real = super::Real::new(std::path::PathBuf::new());
-        let env: Vec<(String, String)> = vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())];
-        let (rc, out) = real.run_gate(
-            tree,
-            &env,
-            "10",
-            "sleep 30 >/dev/null 2>&1 & echo $! > child.pid",
-        );
-        assert_eq!(rc, 0, "trial command: {out}");
-
-        // The caller exits: drop our own reference to the lock, exactly as the lander's
-        // own fd 9 closes when its process exits.
-        unsafe { libc::close(lock_fd) };
-
-        // A fresh probe, from a fresh fd: free unless some other open file description —
-        // the backgrounded "daemon", if it inherited one — still holds it.
-        let probe_fd = unsafe { libc::open(lock_c.as_ptr(), libc::O_WRONLY, 0) };
-        assert!(probe_fd >= 0);
-        let free = unsafe { libc::flock(probe_fd, libc::LOCK_EX | libc::LOCK_NB) } == 0;
-        if free {
-            unsafe { libc::flock(probe_fd, libc::LOCK_UN) };
-        }
-        unsafe { libc::close(probe_fd) };
-
-        // Clean up the daemon regardless of the assertion below.
-        if let Ok(s) = std::fs::read_to_string(tree.join("child.pid")) {
-            if let Ok(pid) = s.trim().parse::<i32>() {
-                unsafe { libc::kill(pid, libc::SIGKILL) };
-            }
-        }
-
-        assert!(free, "the backgrounded child inherited the caller's lock fd and is still holding it");
+        assert_eq!(kv.get("SPIRA_GATE_TIMEOUT").map(String::as_str), Some("1234"), "a RETIRED_VARS key cfg() covers must reach kv in-process");
     }
 }

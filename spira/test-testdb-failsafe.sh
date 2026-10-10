@@ -124,9 +124,6 @@ suite_env=(
 # and no longer call testdb_up, so they have no testdb failure mode to protect.
 # test-cockpit-landed.sh no longer exists; a missing suite exited 127 here and read as a
 # pass, so the loop now refuses a suite that is not there.
-# test-loom-page.sh dropped its testdb_up arm (moved to test-cockpit-bd-contract.sh's
-# real-bd row for loom's model.js — coverage row 33): it now runs a fixture-only
-# node --test and never touches SPIRA_DB, so it has nothing left to protect here.
 # test-timeout.sh dropped its testdb_up arm at sp-8itaf: its counters-against-a-real-bd
 # section tested timeouts_of/bump_timeout/spira_ask_timeout_loop, all retired outright
 # (zero live callers); what remains (SP_OPS_AGE, a pure /proc read) sources lib.sh

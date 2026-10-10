@@ -343,3 +343,45 @@ mod units_repo_tests {
         assert_eq!(units_repo(None, rel, git), "/r/rel");
     }
 }
+
+/// `PATH-SHADOW` findings: a unit file or drop-in under `unit_dir` whose `Environment=PATH=`
+/// puts a directory outside `releases` ahead of the release, holding an executable the
+/// release also ships in `bin/` or `spira/` — the unit would run that copy, not the release's.
+pub fn path_shadows(unit_dir: &Path, rel: &Path, releases: &Path) -> Vec<String> {
+    let shipped = |name: &str| ["bin", "spira"].iter().any(|d| crate::fsutil::is_executable(&rel.join(d).join(name)));
+    let mut files = Vec::new();
+    for e in fs::read_dir(unit_dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            files.extend(fs::read_dir(&p).into_iter().flatten().flatten().map(|e| e.path()));
+        } else {
+            files.push(p);
+        }
+    }
+    files.sort();
+    let mut out = Vec::new();
+    for f in files {
+        let Ok(text) = fs::read_to_string(&f) else { continue };
+        for line in text.lines() {
+            let l = line.trim().trim_start_matches("Environment=").trim_matches('"');
+            let Some(path) = l.strip_prefix("PATH=") else { continue };
+            for dir in path.trim_matches('"').split(':').filter(|d| !d.is_empty()) {
+                let d = Path::new(dir);
+                if d.starts_with(releases) {
+                    break;
+                }
+                let hit: Vec<String> = fs::read_dir(d)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .filter(|n| crate::fsutil::is_executable(&d.join(n)) && shipped(n))
+                    .collect();
+                if !hit.is_empty() {
+                    out.push(format!("PATH-SHADOW {}: {dir} precedes the release on PATH and carries {} which the release also ships", f.display(), hit.join(", ")));
+                }
+            }
+        }
+    }
+    out
+}

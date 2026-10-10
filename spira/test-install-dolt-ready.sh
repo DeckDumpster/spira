@@ -154,6 +154,7 @@ import socket, sys, signal
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 s.bind(('127.0.0.1', int(sys.argv[1])))
 s.listen(10)
 while True:
@@ -167,7 +168,7 @@ FAKE_RUN="$TMP/run"
 FAKE_DB="$TMP/db"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN"
 
-_DOLT_PORT="$(python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); print(p)")"
+reserve_port _DOLT_PORT
 _DOLT_DATA="$TMP/dolt-data"
 mkdir -p "$_DOLT_DATA"
 cat > "$_DOLT_DATA/dolt-server.yaml" <<YAML
@@ -233,6 +234,7 @@ case "\$*" in
         [ -f "\$_calls_file" ] && _n="\$(cat "\$_calls_file")"
         _n=\$((_n + 1))
         printf '%s' "\$_n" > "\$_calls_file"
+        printf '%s\\n' "\$*" > "$TMP/bd-init-args"
         case "\$_fail_mode" in
             ok) : ;;
             other)
@@ -272,22 +274,26 @@ BDSTUB
 # Pre-render units for the diff check (dolt not on the render path).
 make_dolt_stub 0
 make_bd_stub ok
+# SPIRA_PATH/SPIRA_WATCHERS/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_RUN/SPIRA_PROD/
+# SPIRA_COCKPIT/SPIRA_BD are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+# SPIRA_MAIL: the fixture's own default (/fixture/userhome/...) isn't writable here — install's
+# units phase ensures every reader mailbox (sp-xp0u2), and a non-writable mail root turns
+# that into "mail: ensure: Permission denied" instead of this suite's own readiness/retry
+# output (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$SPIRA_DIR" \
+    SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd" SPIRA_MAIL="$TMP/mail"
 _rendered="$(env -i \
     "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    "SPIRA_RUN=$FAKE_RUN" \
     "SPIRA_HOME=$SPIRA_DIR" \
-    "SPIRA_PROD=$SPIRA_DIR" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
     SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
     SPIRA_INSTALL_AERC_CONSIDERED=1 \
-    "SPIRA_BD=$MOCK_BIN/bd" \
+    SPIRA_TOML="$SPIRA_TOML" \
     units-install prod --render 2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
@@ -305,27 +311,28 @@ unset _rendered _render_rc
 
 run_install() {
     local output_file="$1"; shift
+    # SPIRA_PATH/SPIRA_WATCHERS/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_BD/SPIRA_DB/
+    # SPIRA_DOLT_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+    # declare via tl_config and thread SPIRA_TOML through env -i, which clears it. Any
+    # SPIRA_INSTALL_DOLT_READY_WAIT=... etc in "$@" are install.rs's own seams, not
+    # registered, so they stay in the env -i prefix below.
+    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+        SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" \
+        SPIRA_BD="$MOCK_BIN/bd" SPIRA_DB="$FAKE_DB" SPIRA_DOLT_DATA="$_DOLT_DATA" SPIRA_ID_PREFIX=lab
     env -i \
         "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-        "SPIRA_RUN=$FAKE_RUN" \
         "SPIRA_HOME=$SPIRA_DIR" \
-        "SPIRA_PROD=$SPIRA_DIR" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$COCKPIT_DIR" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
         SPIRA_INSTALL_AERC_CONSIDERED=1 \
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
-        "SPIRA_BD=$MOCK_BIN/bd" \
-        "SPIRA_DB=$FAKE_DB" \
-        "SPIRA_DOLT_DATA=$_DOLT_DATA" \
         "SPIRA_INSTALL_DOLT_WAIT=10" \
         "SPIRA_INSTALL_DOLT_CLOSE_WAIT=3" \
         "SPIRA_INSTALL_DB_WAIT=5" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@" \
         spira-install prod >"$output_file" 2>&1
     return $?
@@ -333,13 +340,17 @@ run_install() {
 
 reset_state() {
     rm -rf "$FAKE_DB"; mkdir -p "$FAKE_DB"
-    rm -f "$TMP/dolt-ready-calls" "$TMP/bd-init-calls"
+    rm -f "$TMP/dolt-ready-calls" "$TMP/bd-init-calls" "$TMP/bd-init-args"
 }
 
 start_listener() {
     python3 "$TMP/listener.py" "$_DOLT_PORT" &
     _LISTENER_PID=$!
-    sleep 0.3
+    local _i
+    for _i in $(seq 1 100); do
+        python3 -c "import socket,sys; socket.create_connection(('127.0.0.1',int(sys.argv[1])),1).close()" "$_DOLT_PORT" 2>/dev/null && return 0
+        sleep 0.1
+    done
 }
 
 stop_listener() {
@@ -379,6 +390,8 @@ _rc2=$?
 stop_listener
 
 is0 "readiness-wait: install exits 0 despite a slow-to-ready server" "$_rc2"
+want "id-prefix: bd init gets the configured spira.id_prefix" "--prefix lab " "$(cat "$TMP/bd-init-args" 2>/dev/null)"
+nowant "id-prefix: bd init does not get a hard-coded sp" "--prefix sp " "$(cat "$TMP/bd-init-args" 2>/dev/null)"
 _calls2="$(cat "$TMP/dolt-ready-calls" 2>/dev/null || echo 0)"
 [ "${_calls2:-0}" -ge 3 ] \
     && ok  "readiness-wait: install retried the query until it answered" \
@@ -442,7 +455,7 @@ make_bd_stub invalid 999999   # never stops failing
 
 start_listener
 _out5="$(mktemp)"
-run_install "$_out5" "SPIRA_INSTALL_DOLT_READY_WAIT=10"
+run_install "$_out5" "SPIRA_INSTALL_DOLT_READY_WAIT=10" "SPIRA_INSTALL_BD_INIT_TRIES=2"
 _rc5=$?
 stop_listener
 
@@ -450,6 +463,9 @@ is2 "bounded-retry: exits 2 (phase fails)" "$_rc5"
 eq  "bounded-retry: bd init was attempted exactly twice, not forever" \
     "$(cat "$TMP/bd-init-calls" 2>/dev/null || echo 0)" "2"
 want "bounded-retry: reports bd init failure" "bd init (server mode) failed" "$(cat "$_out5")"
+[ ! -e "$FAKE_DB/.beads" ] \
+    && ok  "bounded-retry: the final failure leaves no workspace behind" \
+    || bad "bounded-retry: the final failure leaves no workspace behind" "$FAKE_DB/.beads present"
 
 # ==========================================================================
 echo

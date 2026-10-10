@@ -98,6 +98,7 @@ pub fn cmd_exec(rows: &[Row], name: &str, run: &str) -> i32 {
         eprintln!("watchd: {name}: {prog} is not on PATH — starting it anyway so the failure is systemd's to report");
     }
     use std::os::unix::process::CommandExt;
+    // batch-job: child is spawned or exec-replaced, not awaited under a deadline
     let err = std::process::Command::new(prog).args(&args).exec();
     eprintln!("watchd: could not exec {prog}: {err}");
     1
@@ -383,7 +384,7 @@ pub fn cmd_restart(rows: &[Row], ops: &dyn Ops, ctx: &Context, only: Option<&str
 pub fn cmd_health_ids(ctx: &Context, file: &str) -> i32 {
     let mut prefix = String::new();
     if !ctx.bd.is_empty() && !ctx.db.is_empty() {
-        if let Ok(out) = std::process::Command::new(&ctx.bd).args(["-C", &ctx.db, "config", "get", "issue_prefix"]).output() {
+        if let Ok(out) = spira_config::bounded::bounded(&ctx.bd).args(["-C", &ctx.db, "config", "get", "issue_prefix"]).output() {
             if out.status.success() {
                 prefix = String::from_utf8_lossy(&out.stdout).trim().to_string();
             }
@@ -423,7 +424,7 @@ pub fn cmd_health_view(prog: &str, sess: &str) -> i32 {
         eprintln!("no multiplexer on PATH — what is visible cannot be read");
         return 2;
     }
-    let out = std::process::Command::new(prog).arg("status").output();
+    let out = spira_config::bounded::bounded(prog).arg("status").output();
     let (stdout, rc) = match &out {
         Ok(o) => (String::from_utf8_lossy(&o.stdout).into_owned(), o.status.code().unwrap_or(-1)),
         Err(_) => (String::new(), -1),
@@ -455,13 +456,13 @@ pub fn cmd_health_view(prog: &str, sess: &str) -> i32 {
 }
 
 fn tmux_active_window(session: &str) -> Option<String> {
-    let out = std::process::Command::new("tmux").args(["list-windows", "-t", &format!("={session}"), "-F", "#{window_id}", "-f", "#{window_active}"]).output().ok()?;
+    let out = spira_config::bounded::bounded("tmux").args(["list-windows", "-t", &format!("={session}"), "-F", "#{window_id}", "-f", "#{window_active}"]).output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!s.is_empty()).then_some(s)
 }
 
 fn tmux_window0(session: &str) -> Option<String> {
-    let out = std::process::Command::new("tmux").args(["list-windows", "-t", &format!("={session}"), "-F", "#{window_id}", "-f", "#{==:#{window_index},0}"]).output().ok()?;
+    let out = spira_config::bounded::bounded("tmux").args(["list-windows", "-t", &format!("={session}"), "-F", "#{window_id}", "-f", "#{==:#{window_index},0}"]).output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!s.is_empty()).then_some(s)
 }

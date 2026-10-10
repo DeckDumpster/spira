@@ -158,9 +158,9 @@ schema_custom_types() {
 # is, so routing through it needs no path of our own — and a path of our own is one
 # operator's box baked into a repository meant to be cloned, which inventory.sh refuses and
 # test-conf.sh fails the gate on.
-_sql_scalar()     { bd -C "$SPIRA_DB" sql "$1" 2>/dev/null | sed -n '3p' | tr -d ' '; }
-_store_types()    { bd -C "$SPIRA_DB" types 2>/dev/null | sed -n '/Configured custom types/,$p' | tail -n +2 | tr -d ' ' | grep -v '^$'; }
-_store_statuses() { bd -C "$SPIRA_DB" config get status.custom 2>/dev/null | tail -1 | tr ',' '\n' | tr -d ' ' | grep -v '^$'; }
+_sql_scalar()     { timeout 5 bd -C "$SPIRA_DB" sql "$1" 2>/dev/null | sed -n '3p' | tr -d ' '; }
+_store_types()    { timeout 5 bd -C "$SPIRA_DB" config get types.custom 2>/dev/null | tail -1 | tr ',' '\n' | tr -d ' ' | grep -v '^$'; }
+_store_statuses() { timeout 5 bd -C "$SPIRA_DB" config get status.custom 2>/dev/null | tail -1 | tr ',' '\n' | tr -d ' ' | grep -v '^$'; }
 
 schema_contract() {
     echo "KINDS — declared here; a kind is what a record IS and never changes"

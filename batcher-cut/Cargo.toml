@@ -10,9 +10,13 @@ path = "src/main.rs"
 
 [dependencies]
 batcher = { path = "../batcher" }
+sift = { path = "../sift" }
 spira-config = { path = "../spira-config" }
 suite-select = { path = "../suite-select" }
 gate = { path = "../gate" }
+lifecycle = { path = "../lifecycle" }
+tsd = { path = "../tsd" }
+migration-numbers = { path = "../migration-numbers" }
 serde_json = "1"
 
 

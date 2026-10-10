@@ -136,18 +136,23 @@ export MAILLOG
 # (sp-k6lku, "wave 4.13") through spira_config::repos, not a bash repo_root() seam, so the
 # fixture is the map file itself, not a faked lib.sh function.
 mkdir -p "$T/spira-home"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$T/spira-home/conf.d"
 REPOCHECKOUT="$T/repo-checkout"; mkdir -p "$REPOCHECKOUT/.git"
 REPOMAP="$T/repo-map"
 printf 'widgets | %s\n' "$REPOCHECKOUT" > "$REPOMAP"
 
 run_intake() {
-    env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
-        BDLOG="$BDLOG" CREATED="$CREATED" MAILLOG="$MAILLOG" \
-        SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_MAIL_BIN="$T/bin_mail.sh" \
-        SPIRA_HOME="$T/spira-home" SPIRA_REPO_MAP="$REPOMAP" \
+    tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
         SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="widgets" \
-        SPIRA_GH_INTAKE_API="$API" SPIRA_GH_INTAKE_PRIORITY="2" \
-        SPIRA_SCOPE_LABEL="spira" SPIRA_PLAN_LABEL="plan" \
+        SPIRA_GH_INTAKE_PRIORITY="2" SPIRA_SCOPE_LABEL="spira" SPIRA_PLAN_LABEL="plan"
+    env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        BDLOG="$BDLOG" CREATED="$CREATED" MAILLOG="$MAILLOG" \
+        SPIRA_MAIL_BIN="$T/bin_mail.sh" \
+        SPIRA_HOME="$T/spira-home" \
+        SPIRA_GH_INTAKE_API="$API" \
         GITHUB_TOKEN="canary-token-must-never-be-sent" \
         "$BIN" "$@" 2>&1
 }
@@ -188,10 +193,12 @@ fi
 
 echo
 echo "4. an unresolvable bead repo is refused, not silently skipped"
+tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
+    SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="no-such-repo"
 out="$(env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
-    SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_MAIL_BIN="$T/bin_mail.sh" \
-    SPIRA_HOME="$T/spira-home" SPIRA_REPO_MAP="$REPOMAP" \
-    SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="no-such-repo" \
+    SPIRA_TOML="$SPIRA_TOML" \
+    SPIRA_MAIL_BIN="$T/bin_mail.sh" \
+    SPIRA_HOME="$T/spira-home" \
     SPIRA_GH_INTAKE_API="$API" "$BIN" 2>&1)"; rc=$?
 is "exits 1" "1" "$rc"
 want "names the unresolved repo" "no-such-repo" "$out"

@@ -8,7 +8,7 @@
 //! * `tier-budget-areas` ([`Areas`]): at most one T3 suite per use-case area, unless the area
 //!   ledger grandfathers more.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::rules::covers_entries::covers_of;
@@ -299,4 +299,12 @@ mod tests {
         assert_eq!(area_of("UC-alpha-123"), None);
         assert_eq!(area_of("spira/x.sh"), None);
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(Ledger::suites()),
+        Box::new(Ledger::areas()),
+        Box::new(Areas::default()),
+    ]
 }

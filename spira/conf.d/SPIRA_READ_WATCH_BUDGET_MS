@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=perf
+DOC=MILLISECONDS A HOT READ MAY TAKE BEFORE perf-watch ALARMS. Strictly greater is slow.
+SCHEMA=Milliseconds a hot-read probe may take before perf-watch calls it slow.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # MILLISECONDS A HOT READ MAY TAKE BEFORE perf-watch ALARMS. Strictly greater is slow.
+    : "${SPIRA_READ_WATCH_BUDGET_MS:=500}"
+SPIRA_CONF_DEFAULT_EOF

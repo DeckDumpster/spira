@@ -25,9 +25,10 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # Sections below drive `git commit` directly, rather than through the `env -i` wrapper
 # run_guard() uses, so the pre-commit hook it triggers sources conf.sh in THIS suite's own
-# ambient environment. An operator's SPIRA_TOML, exported for their own shell's
-# convenience, would otherwise leak a real config into the guard's decisions.
-unset SPIRA_TOML SPIRA_CONF 2>/dev/null || true
+# ambient environment. SPIRA_TOML stays set to testlib's own hermetic fixture (per Ryan
+# 2026-10-05, ONE SOURCE OF CONFIG — conf.sh refuses outright with no SPIRA_TOML at all);
+# only the legacy SPIRA_CONF var is cleared so it cannot point at a real config file.
+unset SPIRA_CONF 2>/dev/null || true
 
 # Minimal harness copy the guard resolves relative to its own location.
 SH="$TMP/spira"
@@ -49,8 +50,8 @@ GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" \
 GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
 git -C "$REPO" commit -q -m "initial"
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 # Cache origin/HEAD so spira_landref finds the base without a network call.
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
@@ -61,17 +62,33 @@ GIT_BIN="$(dirname "$(command -v git)")"
 SPIRA_CONFIG_BIN="$(dirname "$(command -v spira-config)")" || bail "spira-config is not on PATH"
 mkdir -p "$TMP/run"
 
+# SPIRA_REPO_MAP/SPIRA_DB/SPIRA_RUN/SPIRA_HOME_REPO are registered keys (per Ryan 2026-10-05,
+# ONE SOURCE OF CONFIG): declare them via tl_config and thread SPIRA_TOML through every env -i
+# call below — env -i clears it otherwise, and no process reads these four from the
+# environment any more.
+#
+# A NAMED ROW, NOT AN EMPTY MAP. Leaving SPIRA_REPO_MAP pointing at a file that does not exist
+# used to mean "the map contributes nothing" — but the complete fixture still declares a
+# `base` of `local/main` for the home repo name `spira` (the production repo's own queue.local
+# setup), and SPIRA_REPO=$REPO makes THIS throwaway checkout answer to that same name. landref's
+# declared-base rung then finds `local/main`, which this repo never created, fails to verify,
+# and refuses outright rather than falling through to the remote-derived rungs — so every call
+# below saw "base branch ... could not be resolved" regardless of which branch was actually
+# checked out. Naming this fixture's own row (base origin/main, which it really has) keeps it
+# out from under the production row's default.
+printf '%s | %s | push | origin/main | |\n' "fixture" "$REPO" > "$TMP/repomap"
+tl_config SPIRA_REPO_MAP="$TMP/repomap" SPIRA_HOME_REPO="fixture" SPIRA_DB="$TMP/none.db" SPIRA_RUN="$TMP/run"
+
 # run_guard <email> <repo> -> exit code of branch-guard.sh staged
 run_guard() {
     local email="$1" root="$2"
     # RUN IN AN EXPLICIT MINIMAL ENVIRONMENT. Ambient conf is the thing that silently decides
     # verdicts in a suite that inherits it. SPIRA_CONF points at a nonexistent file so no
-    # config file is read; SPIRA_REPO_MAP likewise so no map is consulted.
+    # legacy config file is read.
     env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
         GIT_COMMITTER_NAME="test" GIT_COMMITTER_EMAIL="$email" \
         SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$root" \
-        SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" \
-        SPIRA_RUN="$TMP/run" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/branch-guard.sh" staged "$root" >/dev/null 2>&1
 }
 
@@ -89,8 +106,7 @@ git -C "$REPO" add -A
 out="$(env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
     GIT_COMMITTER_NAME="aeon-shiva" GIT_COMMITTER_EMAIL="aeon-shiva@spira.local" \
     SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$REPO" \
-    SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" \
-    SPIRA_RUN="$TMP/run" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$SH/branch-guard.sh" staged "$REPO" 2>&1)"; guard_rc=$?
 is   "aeon on base branch: guard exits 1" 1 "$guard_rc"
 want "aeon on base branch: names the committer email" "aeon-shiva@spira.local" "$out"
@@ -128,12 +144,13 @@ GIT_COMMITTER_NAME="aeon-shiva" GIT_COMMITTER_EMAIL="aeon-shiva@spira.local" \
 git -C "$REPO" commit -q -m "sp-test: aeon commit planted directly on main"
 
 # The check is run with SPIRA_REPO=$REPO so spira_repos returns the home repo name and
-# repo_root resolves to $REPO. SPIRA_REPO_MAP is absent so the map contributes nothing.
+# repo_root resolves to $REPO. The map above names this fixture "fixture" with a declared
+# base of origin/main, which this repo actually has — repo_names/repo_root resolve it as any
+# other mapped row would.
 run_check() {
     env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
         SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$REPO" \
-        SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" \
-        SPIRA_RUN="$TMP/run" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/branch-guard.sh" check 2>&1
 }
 
@@ -146,7 +163,7 @@ want "check: reports SHARED CHECKOUT AHEAD" "SHARED CHECKOUT AHEAD" "$check_out"
 # After pushing, the checkout is no longer ahead. The aeon commit is still the tip on
 # both sides, so AEON COMMIT is still reported but SHARED CHECKOUT AHEAD is not.
 # ---------------------------------------------------------------------------------------
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 
 check_out="$(run_check)"; check_rc=$?
 is   "check: still exits 1 (aeon is still the tip)" 1 "$check_rc"
@@ -163,7 +180,7 @@ git -C "$REPO" add -A
 GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" \
 GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
 git -C "$REPO" commit -q -m "chore: operator commit restoring a clean tip"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 
 check_out="$(run_check)"; check_rc=$?
 is   "check: exits 0 after operator commit" 0 "$check_rc"
@@ -297,7 +314,7 @@ git -C "$HREPO" commit -q -m "seed: harness-shaped clone"
 HREMOTE="$TMP/hrepo-remote.git"
 git init -q --bare -b main "$HREMOTE"
 git -C "$HREPO" remote add origin "$HREMOTE"
-git -C "$HREPO" push -q origin main
+timeout 5 git -C "$HREPO" push -q origin main
 git -C "$HREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
 install_out="$(bash "$HREPO/exclude.sh" install "$HREPO" 2>&1)"; install_rc=$?

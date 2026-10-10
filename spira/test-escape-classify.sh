@@ -134,7 +134,7 @@ lc_mirror_bd "$TMP/lc"
 # what the dedupe considers "already filed", independent of which labels this suite chose.
 count_open() {
     local ref_label; ref_label="ref:$(printf '%s' "$1" | sha256sum | cut -c1-8)"
-    bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label "$ref_label" --json 2>/dev/null \
+    timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label "$ref_label" --json 2>/dev/null \
       | python3 -c '
 import json, sys
 try:
@@ -147,19 +147,17 @@ print(len(items))
 }
 
 file_gap() {
-    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" SPIRA_RUN="$RUN" \
+        SPIRA_MAIL="$TMP/mail" SPIRA_REPO_MAP="$REPO_MAP"
+    env -i HOME="$HOME" PATH="$PATH" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="${SPIRA_BD:-bd}" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_SPOOL="$RUN/spool" \
         SPIRA_INCIDENT_LOG="$RUN/incident.log" \
         SPIRA_INCIDENT_LOCK="$RUN/incident.lock" \
-        SPIRA_RUN="$RUN" \
         SPIRA_HOME="$HERE" \
-        SPIRA_MAIL="$TMP/mail" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_INCIDENT_REPO="spira" \
+        SPIRA_TOML="$SPIRA_TOML" \
         escape-classify.sh record --member mem-a --suite test-esc-miss.sh \
             --class mapping_gap --paths spira/touched.sh --evidence "test fixture" \
             >/dev/null 2>&1
@@ -186,15 +184,19 @@ OLD="$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)"
     done
     printf '{"ts":"%s","family":"escape","member":"m","suite":"s","class":"environment_gap","batch_id":""}\n' "$OLD"
 } > "$CRUN/tsd/escape.jsonl"
-CENSUS="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_RUN="$CRUN" SPIRA_HOME="$HERE" \
+tl_config SPIRA_RUN="$CRUN"
+CENSUS="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_HOME="$HERE" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$HERE/escape-classify.sh" census --hours 168)"
 is "census counts each class in the window; the old row is excluded" \
     "2 mapping_gap, 1 gate_gap, 0 environment_gap, 1 flake" "$CENSUS"
 
-RV_PASS="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_RUN="$CRUN" SPIRA_HOME="$HERE" \
+RV_PASS="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_HOME="$HERE" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$HERE/escape-classify.sh" rerun-verdict --member mem-a --suite s --rerun-rc 0 | tail -1)"
 is "a suite that passes on rerun is a flip" "FLIP" "$RV_PASS"
-RV_FAIL="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_RUN="$CRUN" SPIRA_HOME="$HERE" \
+RV_FAIL="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_HOME="$HERE" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$HERE/escape-classify.sh" rerun-verdict --member mem-a --suite s --rerun-rc 1 | tail -1)"
 is "a suite that fails on rerun is a real red, not a flake" "REAL_RED" "$RV_FAIL"
 

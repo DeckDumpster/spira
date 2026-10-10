@@ -124,9 +124,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # tmux: cockpit panes; doctor.sh WARN.
 # inotify-tools: provides inotifywait; test-mail-deliver.sh exercises the real binary.
 # aerc: test-mail-deliver.sh and related suites use it as a stub target.
-# nodejs: gate the browser page's view model; test-loom-page.sh exits 0 with SKIP
-#         when node is absent, making syntax errors in loom/static/ permanently
-#         invisible. This is the hard argument for including it.
+# nodejs: scripts and suites that still run under node.
 # build-essential: gcc for cargo's C linker when compiling Rust crates.
 # curl+ca-certificates: download gh and dolt release archives.
 # locales: locale-gen; suites need a UTF-8 locale for string operations.
@@ -276,6 +274,7 @@ COPY . /tmp/doctor-check-spira
 RUN install -m 0755 /tmp/doctor-check-spira/testenv/.doctor-check-spira-config /usr/local/bin/spira-config && \
     { spira-config --help >/dev/null 2>&1 || [ $? -ne 126 -a $? -ne 127 ] || \
       { echo "doctor-check: the staged spira-config does not execute on ${TARGETARCH:-this arch} — it is the host's build; a cross-arch --platform build needs a spira-config built for the target" >&2; exit 1; }; } && \
+    SPIRA_TOML=/tmp/doctor-check-spira/testenv/.doctor-check.toml \
     bash /tmp/doctor-check-spira/testenv/doctor-check.sh \
         /tmp/doctor-check-spira/conf.sh \
         /tmp/doctor-check-spira/testenv/doctor-waivers
@@ -297,6 +296,7 @@ ENV CARGO_HOME=/var/spira/cargo
 # by spirauser for the same reason /var/spira/cargo and /workspace are, or install.sh's
 # release bootstrap has nowhere writable to create it.
 RUN _releases="$(env -i HOME=/root PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_REPO=/workspace \
+        SPIRA_TOML=/tmp/doctor-check-spira/testenv/.doctor-check.toml \
         bash -c '. /tmp/doctor-check-spira/conf.sh 2>/dev/null; printf %s "$SPIRA_RELEASES"')" && \
     [ -n "$_releases" ] && \
     mkdir -p /var/spira/cargo /workspace "$_releases" && \

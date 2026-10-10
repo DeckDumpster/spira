@@ -15,7 +15,10 @@
 # tier: T2
 # covers: aeon/src/* spira/chamber/*.fayth spira/lib.sh UC-aeon-execution-06
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd -P)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# PL_PART: main runs the replace and groomer rows, sticking the thrash-banner rows;
+# test-aeon-prompt-layers-sticking.sh sets sticking and sources this file (split for wall time).
+PL_PART="${PL_PART:-main}"
 . "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -30,24 +33,29 @@ echo "T3: real fayth files wire the same mechanism end to end"
 . "$HERE/testdb.sh"
 testdb_require test-aeon-prompt-layers
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up aeonlayers || { echo "test-aeon-prompt-layers: could not build fixture database"; exit 1; }
+testdb_up "aeonlayers$PL_PART" || { echo "test-aeon-prompt-layers: could not build fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
        GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 command -v aeon >/dev/null 2>&1 \
@@ -58,7 +66,8 @@ BIN="$TMP/bin"; mkdir -p "$BIN"
 # `spira-lc list` and its claim a Claim event; the stand-in tells the fixture's bd story in
 # lifecycle terms, ahead of the tree's spira-lc on PATH.
 lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
-export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$BIN/claude"
+export TMP
 # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
 aeon_fixture_agent "$BIN/claude"
 
@@ -91,15 +100,24 @@ FAYTH
     # A minimal chamber .md with the <!-- task --> marker so the split exercises the path.
     printf 'You are test persona %s.\n\nStanding rule: never guess.\n\n<!-- task -->\n\n## The bead\n{{BEAD}}\n\n## Finishing\nClose {{BEAD_ID}}.\n' \
         "$name" > "$SPIRA_HOME/chamber/$name.md"
+    # persona.<name>.model: aeon::conf::persona_model refuses outright when a fayth's
+    # model is undeclared (no built-in fallback, per Ryan 2026-10-05) — the complete
+    # fixture declares every REAL persona's model but has never heard of this suite's own
+    # fayths. tl_config only knows the SPIRA_FOO -> spira.foo mapping, not [persona.*]
+    # tables, so this sets the dotted path directly (same pattern as
+    # test-aeon-teardown-e2e.sh's sweeper fixture).
+    spira-config set "persona.$name.model" claude-sonnet-5-5 "$_TL_CONF_OVERRIDE" >/dev/null \
+        || { printf 'make_fayth: could not declare persona.%s.model\n' "$name" >&2; exit 1; }
 }
 
 make_bead() {           # make_bead -> prints bead id
     local _labels="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$T_LABEL,repo:fixture"
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "layers test bead" --type task \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "layers test bead" --type task \
         -l "$_labels" 2>/dev/null \
         | grep -oE 'sp-[a-z0-9]+' | head -1
 }
 
+if [ "$PL_PART" = main ]; then
 # ==========================================================================================
 echo
 echo "replace fayth: --system-prompt-file in argv, bead body on stdin, no statute in stdin"
@@ -135,14 +153,15 @@ echo "groomer system.md has the five operations; task.md has the finishing contr
 # ==========================================================================================
 # Use a real groomer fayth to verify the content split meets the acceptance criteria.
 # Run through the real chamber file (not the test stub), using a groomer bead.
-# HOME/SPIRA_CONF/SPIRA_TOML pinned to the fixture: sourcing conf.sh unguarded picks up
-# whatever spira.conf/spira.toml the ambient HOME happens to have, and the auto-convert
-# path WRITES there (sp-zs04v.2 — a suite that can reach ~/.config/spira is a production
-# write, not a test).
-GROOMER_LABEL="$(env -i PATH="$PATH" HOME="$TMP" SPIRA_HOME="$SPIRA_HOME" \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_TOML="$TMP/no.toml" \
-    bash -c '. "$SPIRA_HOME/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_GROOMER_LABEL:-groomer}"')"
-BID_G="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "groomer layers test" --type task \
+#
+# GROOMER_LABEL is this suite's OWN SPIRA_GROOMER_LABEL — already resolved into this shell
+# by testdb.sh's sourcing of conf.sh (via testlib.sh's SPIRA_TOML) at the top of this file —
+# not a fresh env -i resolve against a deliberately-missing conf/toml: conf.sh refuses
+# outright with no SPIRA_TOML now (per Ryan 2026-10-05), so that old trick no longer answers
+# with a usable fallback, and the real aeon process below resolves this exact same key from
+# this exact same SPIRA_TOML anyway, so reusing it is also the only way the two agree.
+GROOMER_LABEL="${SPIRA_GROOMER_LABEL:-groom}"
+BID_G="$(BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "groomer layers test" --type task \
     -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$GROOMER_LABEL,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID_G" ]; then
@@ -158,7 +177,9 @@ if [ -n "$BID_G" ]; then
 else
     printf '  skip  groomer bead creation failed (groomer partition not ready)\n'
 fi
+fi
 
+if [ "$PL_PART" = sticking ]; then
 # ==========================================================================================
 echo
 echo "sp-4rzlw: a bead carrying an unresolved thrash streak leads its brief with the sticking point:"
@@ -173,7 +194,7 @@ make_fayth testlayers-sticking "FAYTH_SYSTEM_PROMPT=append"
 # below targets its literal value, not the variable name.
 sed -i "s/$T_LABEL/$ST_LABEL/" "$SPIRA_HOME/chamber/testlayers-sticking.fayth"
 make_sticking_bead() {
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "sticking-point test bead" --type task \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "sticking-point test bead" --type task \
         -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$ST_LABEL,repo:fixture" 2>/dev/null \
         | grep -oE 'sp-[a-z0-9]+' | head -1
 }
@@ -185,7 +206,7 @@ BID_S="$(make_sticking_bead)"
 # never been worked, so it is created from there — the same tip a real thrash requeue would
 # have recorded metadata against on this bead's last (simulated) summon.
 tip0="$(git -C "$REPO" rev-parse --short origin/main)"
-bd -C "$SPIRA_DB" update "$BID_S" \
+timeout 5 bd -C "$SPIRA_DB" update "$BID_S" \
     --set-metadata "thrash_tip=$tip0" \
     --set-metadata "thrash_streak=2" \
     --set-metadata "thrash_last=stuck rerunning the full landing gate locally instead of testenv-batch.sh" \
@@ -215,5 +236,6 @@ BID_CLEAN="$(make_sticking_bead)"
 aeon testlayers-sticking
 task_clean="$(cat "$SPIRA_RUN/$BID_CLEAN.task.md" 2>/dev/null)"
 nowant "a bead with no thrash history gets no STICKING POINT banner" "STICKING POINT" "$task_clean"
+fi
 
 tl_summary

@@ -54,63 +54,29 @@ pub fn self_source() {
 mod tests {
     use super::*;
 
-    // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the
-    // same hazard): the one test below that resolves config takes this lock, and pins
-    // SPIRA_TOML to a nonexistent path, so it never depends on a real operator
-    // config document on the machine running this suite.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn self_source_applies_a_registry_default_without_overriding_an_explicit_value_and_never_leaks_the_forbidden_set() {
-        let _g = ENV_LOCK.lock().unwrap();
-        let saved_release = std::env::var_os("SPIRA_RELEASE");
-        let saved_toml = std::env::var_os("SPIRA_TOML");
-        let saved_right_pct = std::env::var_os("COCKPIT_RIGHT_PCT");
-        let saved_cockpit = std::env::var_os("SPIRA_COCKPIT");
-        let saved_max_aeons = std::env::var_os("SPIRA_MAX_AEONS");
-        std::env::remove_var("SPIRA_COCKPIT");
-        std::env::remove_var("SPIRA_MAX_AEONS");
-
         let dir = testkit::TempDir::new("cockpit-ops-conf");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_COCKPIT"),
-            "TYPE=string\nGROUP=cockpit\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_COCKPIT:=/resolved/cockpit}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::env::set_var("SPIRA_RELEASE", dir.path());
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        // `self_source` derives `home` as `$SPIRA_RELEASE/spira` — point SPIRA_RELEASE at
+        // this tree's release root so `home` lands on the REAL spira/ dir (the registry
+        // `resolve_for_process` validates registered keys against), not a fabricated one.
+        let release_root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_COCKPIT", "/resolved/cockpit")]);
         // conf.sh's own convention is ${VAR:-default}; a caller override must survive.
-        std::env::set_var("COCKPIT_RIGHT_PCT", "50");
+        let env = testkit::env(&[
+            ("SPIRA_COCKPIT", None),
+            ("SPIRA_MAX_AEONS", None),
+            ("SPIRA_RELEASE", Some(release_root)),
+            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+            ("COCKPIT_RIGHT_PCT", Some("50")),
+        ]);
 
         self_source();
 
         let got_cockpit = std::env::var("SPIRA_COCKPIT").ok();
         let got_right_pct = std::env::var("COCKPIT_RIGHT_PCT").ok();
         let got_max_aeons = std::env::var_os("SPIRA_MAX_AEONS");
-
-        match saved_release {
-            Some(v) => std::env::set_var("SPIRA_RELEASE", v),
-            None => std::env::remove_var("SPIRA_RELEASE"),
-        }
-        match saved_toml {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
-        match saved_right_pct {
-            Some(v) => std::env::set_var("COCKPIT_RIGHT_PCT", v),
-            None => std::env::remove_var("COCKPIT_RIGHT_PCT"),
-        }
-        match saved_cockpit {
-            Some(v) => std::env::set_var("SPIRA_COCKPIT", v),
-            None => std::env::remove_var("SPIRA_COCKPIT"),
-        }
-        match saved_max_aeons {
-            Some(v) => std::env::set_var("SPIRA_MAX_AEONS", v),
-            None => std::env::remove_var("SPIRA_MAX_AEONS"),
-        }
-        let _ = std::fs::remove_dir_all(&dir);
+        drop(env);
 
         assert_eq!(got_cockpit, Some("/resolved/cockpit".to_string()), "a registry default must reach the real environment");
         assert_eq!(got_right_pct, Some("50".to_string()), "an explicit env override must survive self_source");
@@ -119,12 +85,7 @@ mod tests {
 
     #[test]
     fn self_source_is_silent_with_no_spira_release() {
-        let _g = ENV_LOCK.lock().unwrap();
-        let saved = std::env::var_os("SPIRA_RELEASE");
-        std::env::remove_var("SPIRA_RELEASE");
+        let _env = testkit::env(&[("SPIRA_RELEASE", None)]);
         self_source(); // must not panic
-        if let Some(v) = saved {
-            std::env::set_var("SPIRA_RELEASE", v);
-        }
     }
 }

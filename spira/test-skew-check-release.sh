@@ -43,6 +43,9 @@ git init -q "$REPO"
 git -C "$REPO" config user.email "test@test"
 git -C "$REPO" config user.name "test"
 mkdir -p "$REPO/spira"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$REPO/spira/conf.d"
 printf '# boundary\n'        > "$REPO/spira/boundary"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/gate.sh"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/lib.sh"
@@ -103,19 +106,35 @@ run_skew() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
 
+    # A registered key passed in "$@" is declared through tl_config instead of forwarded
+    # literally — the compiled `skew` binary resolves fresh from SPIRA_TOML, never from this
+    # process's environment — and dropped from what reaches env -i.
+    # SPIRA_REPO_MAP/SPIRA_HOME_REPO undeclared resolve to the complete fixture's own
+    # home_repo="spira" + a nonexistent repository map — skew looks "spira" up there to find a
+    # git checkout, and finds nothing (sfail round 3, pattern 7).
+    printf 'spira | %s | push | origin/main | |\n' "$REPO" > "$TMP/repomap-main"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+        SPIRA_RELEASES="$RELEASES" SPIRA_HOME_REPO=spira \
+        SPIRA_REPO_MAP="$TMP/repomap-main"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+                tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
+
     # Use the test-specific RELEASES set up by reset_releases, not a new isolated copy.
     # This allows test blocks to control what scenario skew sees.
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
-        "${@}" \
-        skew check 2>&1
+        "${extra[@]+"${extra[@]}"}" \
+        timeout 30 skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -206,17 +225,24 @@ run_skew_noart() {
     # Copy the template to the per-run releases directory (including hidden directories like .tags)
     (cd "$RELEASES_TEMPLATE" && cp -r . "$releases_dir/")
 
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$releases_dir"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+                tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
+
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$NO_GIT_REPO" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$releases_dir" \
-        "${@}" \
-        skew check 2>&1
+        "${extra[@]+"${extra[@]}"}" \
+        timeout 30 skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -276,19 +302,28 @@ run_skew_artifact() {
     # before calling this, so it must read $RELEASES — not a fresh copy of the bare template,
     # which has no `current` and made every artifact case exit 3 ("no release is activated").
     # sp-fghps made the same change to run_skew and missed this one.
+printf 'spira | %s | push | origin/main | |\n' "$ARTIFACT_REPO" > "$TMP/repomap-artifact"
+    tl_config SPIRA_GH="$MOCK_BIN/gh" SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" \
+        SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" SPIRA_GH_INTAKE_REPO="" \
+        SPIRA_RELEASE_REPO="" SPIRA_HOME_REPO=spira \
+        SPIRA_REPO_MAP="$TMP/repomap-artifact"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+                tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
 
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$ARTIFACT_REPO" \
-        SPIRA_GH="$MOCK_BIN/gh" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
-        "${@}" \
-        skew check 2>&1
+        "${extra[@]+"${extra[@]}"}" \
+        timeout 30 skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 
@@ -418,7 +453,12 @@ nowant "artifact-clean: no NOT-LATEST"     "NOT-LATEST" "$art_clean_out"
 # ---------------------------------------------------------------------------
 ORIGIN_CK="$TMP/origin-ck"
 CLONE_CK="$TMP/clone-ck"
-git init -q "$ORIGIN_CK"
+# -b main: the repository-map row below declares base=origin/main literally (pattern 9 — nothing
+# derives a repo's base any more, every landref caller needs a declared row); landref's
+# rung 1 (the declared base) verify_ref()-fails and returns None outright on a mismatch
+# rather than falling through to rung 2, so the host's init.defaultBranch must not be able
+# to pick "master" here.
+git init -q -b main "$ORIGIN_CK"
 git -C "$ORIGIN_CK" config user.email "test@test"
 git -C "$ORIGIN_CK" config user.name "test"
 mkdir -p "$ORIGIN_CK/spira"
@@ -429,7 +469,7 @@ CK_BASE="$(git -C "$ORIGIN_CK" rev-parse HEAD)"
 printf '# v2\n' >> "$ORIGIN_CK/spira/lib.sh"
 git -C "$ORIGIN_CK" add spira/lib.sh
 git -C "$ORIGIN_CK" commit -q -m "advance"
-git clone -q "$ORIGIN_CK" "$CLONE_CK"
+timeout 5 git clone -q "$ORIGIN_CK" "$CLONE_CK"
 git -C "$CLONE_CK" config user.email "test@test"
 git -C "$CLONE_CK" config user.name "test"
 git -C "$CLONE_CK" remote set-head origin --auto >/dev/null 2>&1 || true
@@ -439,17 +479,26 @@ mkdir -p "$RELEASES_CK"   # no current symlink — checkout mode
 
 run_skew_checkout() {
     local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    printf 'spira | %s | push | origin/main | |\n' "$CLONE_CK" > "$TMP/repomap-ck"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+        SPIRA_RELEASES="$RELEASES_CK" SPIRA_HOME_REPO=spira \
+        SPIRA_REPO_MAP="$TMP/repomap-ck"
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+                tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$CLONE_CK" \
-        SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES_CK" \
-        "${@}" \
-        skew check 2>&1
+        "${extra[@]+"${extra[@]}"}" \
+        timeout 30 skew check 2>&1
     return "${PIPESTATUS[0]:-$?}"
 }
 

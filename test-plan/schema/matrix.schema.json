@@ -38,6 +38,23 @@
         }
       }
     },
+    "Launcher": {
+      "description": "A command the harness registers or documents for something outside its own process to run — a status line, a hook, a mail client's outgoing line, a pane's start command. `site` is the repo-relative file that writes it and `needle` a string that file must contain, so the declaration cannot outlive the launcher it names.",
+      "type": "object",
+      "required": [
+        "needle",
+        "site"
+      ],
+      "properties": {
+        "needle": {
+          "type": "string"
+        },
+        "site": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
     "SuiteRef": {
       "description": "One covering suite's row in the derived matrix.",
       "type": "object",
@@ -117,6 +134,16 @@
         },
         "id": {
           "type": "string"
+        },
+        "launcher": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Launcher"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "statement": {
           "type": "string"

@@ -261,6 +261,7 @@ pub struct Podman {
 
 impl Podman {
     fn podman_out(&self, args: &[&str]) -> Option<String> {
+        // batch-job: podman runs for as long as its work does
         let o = Command::new("podman")
             .args(args)
             .stdin(Stdio::null())
@@ -272,6 +273,7 @@ impl Podman {
             .then(|| String::from_utf8_lossy(&o.stdout).into_owned())
     }
     fn podman_quiet(&self, args: &[&str]) -> bool {
+        // batch-job: podman runs for as long as its work does
         Command::new("podman")
             .args(args)
             .stdin(Stdio::null())

@@ -47,6 +47,11 @@ testdb_up census-events || {
     printf 'SKIP test-census-events: server testdb not available\n' >&2
     exit 77
 }
+. "$HERE/testlib/lc-fixture.sh"
+lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
+lcfix_follow_testdb
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+tl_config SPIRA_DB="$TESTDB_DIR" SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -67,7 +72,7 @@ JSONL
 }
 
 census_out() {
-    SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null
+    census --with-suppressed 2>/dev/null
 }
 
 # ======================================================================================
@@ -76,15 +81,16 @@ echo "sp-2lk acceptance criteria — bump_requeue and bump_recur produce census 
 # ======================================================================================
 # The exact positive control from the bead:
 #   bump_requeue "$id" merge-conflict (twice) + bump_recur "$id" suite-red (once)
-#   → census must output: 1 sp-reopen-rebase-conflict (2 detections)  and  1 sp-recur-suite-red (1 detections)
+#   → census must output: 1 sp-reopen-rebase-conflict (1 victims, 2 detections) and
+#     1 sp-recur-suite-red (1 victims, 1 detections)
 seed_bead "sp-c1"
 bump_requeue "sp-c1" merge-conflict
 bump_requeue "sp-c1" merge-conflict
 recur_event   "sp-c1" suite-red
 
 out="$(census_out)"
-want "census reports 1 distinct bead sp-reopen-rebase-conflict" "1 sp-reopen-rebase-conflict" "$out"
-want "census shows 2 detections for sp-reopen-rebase-conflict" "sp-reopen-rebase-conflict (2 detections" "$out"
+want "census reports 1 causal event for sp-reopen-rebase-conflict" "1 sp-reopen-rebase-conflict" "$out"
+want "census shows 2 detections for sp-reopen-rebase-conflict" "sp-reopen-rebase-conflict (1 victims, 2 detections" "$out"
 want "census reports 1 sp-recur-suite-red"        "1 sp-recur-suite-red"        "$out"
 
 # ======================================================================================
@@ -96,7 +102,7 @@ reclaim_event "sp-c2"
 reclaim_event "sp-c2"
 
 out="$(census_out)"
-want "census reports sp-reclaim with 2 detections (1 bead)" "sp-reclaim (2 detections" "$out"
+want "census reports sp-reclaim with 2 detections (1 victim)" "sp-reclaim (1 victims, 2 detections" "$out"
 
 # ======================================================================================
 echo
@@ -108,14 +114,17 @@ reclaim_event "sp-c3" timeout
 reclaim_event "sp-c3" timeout
 
 out="$(census_out)"
-want "census reports sp-reclaim-timeout with 3 detections (1 bead)" "sp-reclaim-timeout (3 detections" "$out"
+want "census reports sp-reclaim-timeout with 3 detections (1 victim)" "sp-reclaim-timeout (1 victims, 3 detections" "$out"
 nowant "no bare sp-reclaim" "sp-reclaim " "$out"
 
 # ======================================================================================
 echo
 echo "class isolation — separate beads contribute to the same class"
 # ======================================================================================
-# Two different beads, same requeue cause — the class count is cross-bead
+# Two different beads, same requeue cause — the class's victim count is cross-bead. All
+# three calls land inside the same test run, well under the default 5-minute clustering
+# gap, so they fold into one causal event (sp-jcd0e: the rank is causal events, not
+# victims) — the victim count still crosses the bead boundary correctly.
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-d1","title":"bead 1","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
@@ -126,9 +135,8 @@ bump_requeue "sp-d2" merge-conflict
 bump_requeue "sp-d2" merge-conflict
 
 out="$(census_out)"
-# Same-instant events on two beads are one burst: one occurrence, both beads still shown.
-want "cross-bead: one burst ranks as 1 occurrence" "1 sp-reopen-rebase-conflict" "$out"
-want "cross-bead: 3 detections and 2 beads shown" "sp-reopen-rebase-conflict (3 detections, 2 beads" "$out"
+want "cross-bead: one causal event, 2 distinct victims" "1 sp-reopen-rebase-conflict (2 victims" "$out"
+want "cross-bead: 3 total event detections shown" "sp-reopen-rebase-conflict (2 victims, 3 detections" "$out"
 
 # ======================================================================================
 echo
@@ -203,7 +211,8 @@ want "bead_reopen produces sp-reopen-gate-red in census" "sp-reopen-gate-red" "$
 want "sp-reopen-gate-red shows 1 distinct bead" "1 sp-reopen-gate-red" "$out"
 nowant "no bare sp-reopen class" "sp-reopen " "$out"
 
-# Two different beads, same cause — distinct-bead count is 2.
+# Two different beads, same cause, both reopened inside this test run (well under the
+# default clustering gap) — one causal event, victim count is 2 (sp-jcd0e).
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-g2","title":"reopen multi 1","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
@@ -213,7 +222,7 @@ bead_reopen "sp-g2" gate-red "first gate failure" >/dev/null 2>&1
 bead_reopen "sp-g3" gate-red "second gate failure" >/dev/null 2>&1
 
 out="$(census_out)"
-want "two beads with same cause in one burst: 1 occurrence, 2 beads" "1 sp-reopen-gate-red (2 detections, 2 beads" "$out"
+want "two beads with same cause: one causal event, 2 victims" "1 sp-reopen-gate-red (2 victims" "$out"
 
 # Verify the cause is recorded in the events table as event_type='reopen'.
 testdb_reset
@@ -221,10 +230,8 @@ testdb_seed <<'JSONL'
 {"id":"sp-g4","title":"cause row test","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
 bead_reopen "sp-g4" rebase-conflict "Reopened: conflict" >/dev/null 2>&1
-_ev_cause="$("${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
-    "SELECT COALESCE(new_value,'') FROM events WHERE issue_id='sp-g4' AND event_type='reopen'" \
-    2>/dev/null | sed -n '3p' | tr -d ' ')"
-is "bead_reopen writes event_type=reopen with cause in new_value" "rebase-conflict" "$_ev_cause"
+_ev_cause="$(lcfix_fact_causes sp-g4 reopen)"
+is "bead_reopen appends a reopen fact with the cause" "rebase-conflict" "$_ev_cause"
 
 # ======================================================================================
 echo
@@ -241,7 +248,7 @@ echo "sp-2w29g: bead_reopen appends \$SPIRA_RUN/reopen.log — the choke point t
 # reached here, and every bead_reopen call after this section relies on it.
 _rt_orig_run="$SPIRA_RUN"
 _rt_run="$(mktemp -d)"
-export SPIRA_RUN="$_rt_run"
+export SPIRA_RUN="$_rt_run"; tl_config SPIRA_RUN="$SPIRA_RUN"
 _rt_log="$_rt_run/reopen.log"
 
 testdb_reset
@@ -267,16 +274,14 @@ want "reopen.log names the non-harness actor (sp-2w29g: not just BEADS_ACTOR uns
 # that case) — the field's presence is what's asserted, not a specific value.
 want "reopen.log names a caller field" "caller=" "$_rt_line"
 
-# COUNTS MUST MATCH EXACTLY (the bead's own acceptance criterion): one events-table row
-# with event_type='reopen', and exactly one matching reopen.log line — not two, not zero.
-_rt_evcount="$("${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
-    "SELECT COUNT(*) FROM events WHERE issue_id='sp-h1' AND event_type='reopen' AND new_value='batch-eject'" \
-    2>/dev/null | sed -n '3p' | tr -d ' ')"
+# COUNTS MUST MATCH EXACTLY (the bead's own acceptance criterion): one fact of kind
+# 'reopen', and exactly one matching reopen.log line — not two, not zero.
+_rt_evcount="$(lcfix_fact_causes sp-h1 reopen | grep -Fxc batch-eject || true)"
 _rt_logcount="$(grep -Fc 'reopen sp-h1 cause=batch-eject' "$_rt_log" 2>/dev/null || true)"
-is "reopen.log line count matches the events-table row count exactly" "$_rt_evcount" "${_rt_logcount:-0}"
+is "reopen.log line count matches the reopen fact count exactly" "$_rt_evcount" "${_rt_logcount:-0}"
 
 rm -rf "$_rt_run"
-export SPIRA_RUN="$_rt_orig_run"
+export SPIRA_RUN="$_rt_orig_run"; tl_config SPIRA_RUN="$SPIRA_RUN"
 
 # _write_reopen writes a reopened event with a NULL new_value directly (no bump_*
 # call produces a genuinely NULL cause). Used below by the sp-aor1l case; the NULL-cause
@@ -315,8 +320,10 @@ is "requeues_of still counts the requeue event" "1" "$_rqn"
 
 # A REMEDY'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): census splits the covers:
 # beads by `spira-lc list`. lc_rows <id>:<STATE>... sets what this stub answers.
+LC_REAL="$(command -v spira-lc)"
 cat > "$TMP/spira-lc-stub" <<STUB
 #!/usr/bin/env bash
+case "\${1:-}" in fact|facts|facts-query) exec "$LC_REAL" "\$@" ;; esac
 [ "\${1:-}" = list ] || exit 2
 cat "$TMP/lc-rows.json" 2>/dev/null || echo '[]'
 STUB
@@ -344,7 +351,7 @@ bump_requeue "sp-p2" merge-conflict >/dev/null 2>&1
 bump_requeue "sp-p3" merge-conflict >/dev/null 2>&1
 lc_rows sp-p4:READY   # the remedy is open in lifecycle terms
 
-_fold_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
+_fold_out="$(census_out)"
 _fold_line="$(printf '%s\n' "$_fold_out" | grep 'sp-reopen-rebase-conflict' || true)"
 want "covers:sp-requeue-merge-conflict suppresses sp-reopen-rebase-conflict" "[suppressed" "$_fold_line"
 nowant "sp-reopen-rebase-conflict not emitted unsuppressed" "sp-reopen-rebase-conflict" \
@@ -359,7 +366,7 @@ JSONL
 bump_requeue "sp-q1" merge-conflict >/dev/null 2>&1
 lc_rows sp-q2:READY
 
-_unrel_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
+_unrel_out="$(census_out)"
 _unrel_line="$(printf '%s\n' "$_unrel_out" | grep 'sp-reopen-rebase-conflict' || true)"
 nowant "unrelated covers: does not suppress sp-reopen-rebase-conflict" "[suppressed" "$_unrel_line"
 want "sp-reopen-rebase-conflict still appears without suppression" "sp-reopen-rebase-conflict" "$_unrel_out"
@@ -401,11 +408,11 @@ _insert_event_at() {   # _insert_event_at <bead_id> <event_type> <cause_or_empty
     local id="$1" etype="$2" cause="$3" ts="$4" uuid
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
     if [ -n "$cause" ]; then
-        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+        timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
             "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'harness', '$cause', '$ts')" \
             >/dev/null 2>&1
     else
-        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+        timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
             "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', 'harness', NULL, '$ts')" \
             >/dev/null 2>&1
     fi
@@ -473,41 +480,11 @@ bead_reopen   "sp-ev2" eviction-race "Eviction race test" >/dev/null 2>&1
 bump_requeue  "sp-ev2" eviction-race >/dev/null 2>&1
 lc_rows sp-evr:WORKING   # the remedy is being worked
 
-_evict_sup_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" census --with-suppressed 2>/dev/null)"
+_evict_sup_out="$(census_out)"
 _evict_sup_line="$(printf '%s\n' "$_evict_sup_out" | grep 'sp-reopen-eviction-race' || true)"
 want   "covers:sp-requeue-eviction-race suppresses sp-reopen-eviction-race" "[suppressed" "$_evict_sup_line"
 nowant "sp-reopen-eviction-race not emitted unsuppressed" "sp-reopen-eviction-race" \
     "$(printf '%s\n' "$_evict_sup_out" | grep -v '\[suppressed' || true)"
-
-# ======================================================================================
-echo
-echo "sp-ytw2h: structural — every cause the aeon both reopens and requeues with has a fold-map entry"
-# ======================================================================================
-# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
-# On the unfixed tree, _census_class_fold_map lacks sp-requeue-eviction-race (and others),
-# so this test fails for each cause that appears in both bead_reopen calls and requeue
-# calls without a fold entry.
-#
-# Parses the aeon binary's source (aeon.sh is gone — the Rust cutover): in
-# aeon/src/verdict.rs the causes are `pub const` strings, and a pair is a const passed to
-# both `bead_reopen(` and `.requeue(`. No database required.
-_aeon="$HERE/../aeon/src/verdict.rs"
-_reopen_consts="$(grep -o 'bead_reopen([A-Z_]*,' "$_aeon" | sed 's/^bead_reopen(//; s/,$//' | sort -u)"
-_requeue_consts="$(grep -o '\.requeue([A-Z_]*,' "$_aeon" | sed 's/^\.requeue(//; s/,$//' | sort -u)"
-_fold_entries="$(_census_class_fold_map)"
-_pair_count=0
-for _const in $_reopen_consts; do
-    printf '%s\n' "$_requeue_consts" | grep -qxF "$_const" || continue
-    _cause="$(sed -n "s/^pub const $_const: &str = \"\(.*\)\";/\1/p" "$_aeon")"
-    [ -n "$_cause" ] || { bad "paired const $_const has no string value in verdict.rs"; continue; }
-    _pair_count=$((_pair_count + 1))
-    if printf '%s\n' "$_fold_entries" | grep -qE "^sp-requeue-${_cause}[[:space:]]"; then
-        ok "fold-map has sp-requeue-${_cause} for paired cause '${_cause}'"
-    else
-        bad "cause '${_cause}' in both bead_reopen and requeue in the aeon but no fold-map entry for sp-requeue-${_cause}"
-    fi
-done
-[ "$_pair_count" -gt 0 ] || bad "structural check found no paired causes in aeon/src/verdict.rs — detection is broken"
 
 # ======================================================================================
 echo

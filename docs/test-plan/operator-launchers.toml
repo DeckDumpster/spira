@@ -1,0 +1,41 @@
+api_version = "test-plan/v1"
+area = "operator-launchers"
+
+[[use_case]]
+id = "UC-operator-launchers-01"
+tier = "T3"
+statement = "The mail client's outgoing command (`mail sendmail`) runs from a bare login environment carrying only the operator's SPIRA_TOML, and refuses without it."
+
+[[use_case]]
+id = "UC-operator-launchers-02"
+tier = "T3"
+statement = "`cockpit.sh status` runs from a bare login environment carrying only the operator's SPIRA_TOML, and refuses without it."
+
+[[use_case]]
+id = "UC-operator-launchers-03"
+tier = "T3"
+statement = "`concierge.sh status` runs from a bare login environment carrying only the operator's SPIRA_TOML, and refuses without it."
+
+[[use_case]]
+id = "UC-operator-launchers-04"
+tier = "T3"
+statement = "The ops pane (`health once`) renders from a bare login environment carrying only the operator's SPIRA_TOML."
+
+[[use_case]]
+id = "UC-operator-launchers-05"
+tier = "T3"
+statement = "The Claude Code SessionStart hook, run as its registered command under the client's minimal environment (no Spira variable at all), runs and exits 0."
+
+[[use_case]]
+id = "UC-operator-launchers-06"
+tier = "T3"
+statement = "The Claude Code status-line meter, run as its registered command under the client's minimal environment (no Spira variable at all), runs and exits 0."
+
+[[use_case]]
+id = "UC-operator-launchers-07"
+tier = "T3"
+statement = "The attention-panel launcher (`cockpit/panel-run.sh`), started by tmux into a pane carrying the tmux server's environment, resolves its configuration and runs."
+[use_case.uncovered]
+reason = "needs a tmux server and a panel with a tty; no sim world drives a pane yet"
+date = "2026-10-06"
+bead = "sp-6c4wc4"

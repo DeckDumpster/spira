@@ -1,7 +1,13 @@
 //! spira-lint [--root <dir>] [--only <rule>] [--base <rev>]
 //! spira-lint --only inventory --scan <file>
 //!
-//! Exit: 0 clean, 1 any finding, 2 usage, 3 a rule refused to report clean.
+//! Exit: 0 clean, 1 any finding, 2 usage, 3 a rule refused to report clean,
+//! 4 the tree could not be walked (git failed) — the tool failed, nothing was linted.
+//!
+//! `--diff <rev>` is `--base <rev>` plus a filter: a finding is reported only when it is on a
+//! line the working tree adds or changes relative to `git merge-base <rev> HEAD`, and a
+//! whole-file finding only for a file the diff touches. Rules that already judge against the
+//! base (`BASE_RELATIVE`) are left whole. Without it, every finding in the tree is reported.
 //!
 //! `--base` defaults to `SPIRA_GATE_BASE` (the gate sets it). On a clean run the positive
 //! controls go to stderr: one `fence: <rule> checked <n> <unit>` per rule that reports one,
@@ -17,14 +23,14 @@
 //! scanning with no patterns at all.
 
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use spira_lint::{all_rules, run, Tree};
 
-const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--emit-allow]\n       spira-lint --only inventory --scan <file>";
+const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev> | --diff <rev>] [--emit-allow]\n       spira-lint --only inventory --scan <file>";
 
 fn default_root() -> Option<PathBuf> {
-    let out = Command::new("git").args(["rev-parse", "--show-toplevel"]).output().ok()?;
+    let out = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().ok()?;
     out.status.success().then(|| PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
 }
 
@@ -33,6 +39,7 @@ fn main() -> ExitCode {
     let mut only: Option<String> = None;
     let mut base: Option<String> = std::env::var("SPIRA_GATE_BASE").ok();
     let mut scan: Option<PathBuf> = None;
+    let mut diff = false;
     let mut emit_allow = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -40,6 +47,10 @@ fn main() -> ExitCode {
             "--root" => root = args.next().map(PathBuf::from),
             "--only" => only = args.next(),
             "--base" => base = args.next(),
+            "--diff" => {
+                base = args.next();
+                diff = true;
+            }
             "--emit-allow" => emit_allow = true,
             "--scan" => scan = args.next().map(PathBuf::from),
             "-h" | "--help" => {
@@ -96,7 +107,7 @@ fn main() -> ExitCode {
         Ok(t) => t.with_base(base),
         Err(e) => {
             eprintln!("spira-lint: {e}");
-            return ExitCode::from(3);
+            return ExitCode::from(4);
         }
     };
     if emit_allow {
@@ -119,6 +130,17 @@ fn main() -> ExitCode {
             }
         };
     }
+    let scope = if diff {
+        match spira_lint::DiffScope::from_tree(&tree) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!("spira-lint: {e}");
+                return ExitCode::from(3);
+            }
+        }
+    } else {
+        None
+    };
     let (mut findings, mut refused) = (0usize, false);
     let mut controls = Vec::new();
     for r in run(&tree, &rules) {
@@ -126,8 +148,13 @@ fn main() -> ExitCode {
             controls.push(format!("fence: {} checked {n} {unit}", r.rule));
         }
         match r.outcome {
-            Ok(v) if v.is_empty() => {}
-            Ok(v) => {
+            Ok(mut v) => {
+                if let Some(s) = scope.as_ref().filter(|_| !spira_lint::BASE_RELATIVE.contains(&r.rule)) {
+                    v.retain(|f| s.keeps(f));
+                }
+                if v.is_empty() {
+                    continue;
+                }
                 findings += v.len();
                 for f in &v {
                     println!("{f}");

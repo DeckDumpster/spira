@@ -1,9 +1,7 @@
 TYPE=string
 GROUP=preflight
-DOC=SPIRA_PREFLIGHT_WALL_SECS — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_PREFLIGHT_WALL_SECS — seconds a queue lock may be held before the reconciler counts it stale.
+SCHEMA=Seconds a queue pre-flight gate may run before the reconciler flags it as over budget (unit: seconds; integer; default 240; sane range 60-900). Parsed as an integer by the reconciler, so it must not be empty.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    : "${SPIRA_PREFLIGHT_WALL_SECS:=240}"
 SPIRA_CONF_DEFAULT_EOF

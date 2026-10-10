@@ -71,6 +71,7 @@ request when `SCCACHE_DAV_TOKEN` is configured.
 | variable | meaning |
 |---|---|
 | `SCCACHE_DAV_ADDR` | `ip:port` to bind. Refused if it starts with `0.0.0.0` or `*` — this store binds the LAN address the round VMs and this host's builds already share, never a wildcard. |
+| `SPIRA_SCCACHE_DAV_TAILNET_ADDR` (spira.toml, read in-process) | optional second `ip:port` to bind, this host's tailnet address, for spill runners on the tailnet; the LAN listener stays. Same wildcard refusal; empty means LAN only. |
 | `SCCACHE_DAV_ROOT` | directory the cache entries live under; created if missing. |
 | `SCCACHE_DAV_TOKEN` | optional bearer token; unset means no auth (LAN-only is the only guard). |
 
@@ -120,3 +121,10 @@ exact shape sccache writes), PROPFIND on a file vs. a directory vs. a miss, MKCO
 idempotence, DELETE's two-call contract, the bearer-token check (absent/wrong/right), path
 traversal, and `config_from_env`'s fail-closed checks. Nothing here reaches a real VM or a
 real Proxmox: that is `round-vm`'s own test suite and the proof run in the bead.
+
+## Size cap
+
+`SPIRA_SCCACHE_DAV_MAX_GB` bounds the store. Every `SWEEP_EVERY` the process deletes the
+least recently used files until the store is under the cap; a GET refreshes the entry's mtime,
+which is the recency it orders by. In-flight PUT tmp files and directories are left alone. A
+missing or zero cap refuses to start.

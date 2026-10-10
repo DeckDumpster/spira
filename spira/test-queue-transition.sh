@@ -51,7 +51,7 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" branch local/main main
 
 RUN="$TMP/run"; QDIR="$RUN/queue"; REPONAME=fixtrans; RELEASES="$TMP/releases"
@@ -92,17 +92,30 @@ chmod +x "$SH/forge-fixture.sh"
 
 export SPIRA_CONF=/nonexistent
 export SPIRA_HOME="$SH"
-export SPIRA_HOME_REPO="$REPONAME"
 export SPIRA_REPO="$REPO"
-export SPIRA_RUN="$RUN"
-export SPIRA_QUEUE_DIR="$QDIR"
-export SPIRA_REPO_MAP="$RMAP"
-export SPIRA_FORGE="$SH/forge-fixture.sh"
-export SPIRA_RELEASES="$RELEASES"
 # queue/DESIGN.md §8 D12: these hand-built heads were never gated; the named override lands them.
 export SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged"
-export SPIRA_QUEUE_TRANSITION_POLLSEC=1
-export SPIRA_QUEUE_TRANSITION_MAXSEC=5
+tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_RUN="$RUN" SPIRA_QUEUE_DIR="$QDIR" \
+    SPIRA_REPO_MAP="$RMAP" SPIRA_FORGE="$SH/forge-fixture.sh" SPIRA_RELEASES="$RELEASES" \
+    SPIRA_QUEUE_TRANSITION_POLLSEC=1 SPIRA_QUEUE_TRANSITION_MAXSEC=5
+# queue.sh's own `agrees()` (transition.rs) refuses unless the legacy repo-map row and
+# spira.toml's repo.<name>.{mode,base} already match — the complete fixture declares no
+# [repo.fixtrans] at all, reading as mode="" base="" ("already disagree"). Declare this
+# suite's own row, matching $RMAP's initial queue.local|local/main exactly; queue.sh's own
+# transitions keep it in sync afterward by writing the same (writable, last-layer) file.
+# THREE SEPARATE `spira-config set` calls do not work here: `path` and `mode` are both
+# mandatory, non-Option fields of [repo.<name>] (spira-config/src/lib.rs RepoSection), and
+# every `set` re-validates the WHOLE document before writing — a call setting only one of
+# them leaves the table with the other missing, so write_doc's validate() refuses every one
+# of the three in turn (silently: stdout was empty, and the real error was on stderr, above
+# the TAP output this harness's tail-only capture never showed). Append the complete table
+# directly instead, so every field exists from the first read.
+cat >> "$_TL_CONF_OVERRIDE" <<REPOFIXTRANS
+[repo.fixtrans]
+path = "$REPO"
+mode = "queue.local"
+base = "local/main"
+REPOFIXTRANS
 
 queue() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
@@ -144,7 +157,7 @@ land() {
     queue land-local "$REPONAME" --head "$head" --members "$id:$tip" >/dev/null
 }
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { bd -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -161,6 +174,10 @@ callcount()     { grep -c "^$1" "$CALL_LOG" 2>/dev/null; }
 clear_calls()   { : > "$CALL_LOG"; }
 publish_file()  { cat "$QDIR/$REPONAME/publish" 2>/dev/null; }
 
+# passed — the full-suite local pass a green round records for its head (sp-x334k): publish refuses a
+# local/main head without one, so every publish here stands on the pass production would have.
+passed() { local o; o="$(spira-config local-pass record full-suite "$(git -C "$REPO" rev-parse local/main)" fixture-round 2>&1)" || echo "# passed() FAILED: $o" >&2; }
+
 # landmode <name> -> "<repo_land> <spira_landref>", read fresh out of the CURRENT repo-map —
 # a subshell sourcing the copied lib.sh under the exact same env the commands above use, so
 # an assertion never trusts its own memory of what it just wrote.
@@ -171,7 +188,7 @@ echo
 echo "1 — to-forge on a repo with nothing new to publish still flips the row"
 # ============================================================================
 BASE0="$(remote_main)"
-out="$(queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "1: to-forge succeeds" || bad "1: to-forge succeeds" "got rc=$rc out=$out"
 want "1: names the new mode" "queue.forge" "$out"
 want "1: repo-map land column now reads queue.forge" "queue.forge" "$(row)"
@@ -203,7 +220,7 @@ land sp-tr1 one.txt one
 HEAD1="$(localmain)"
 nowant "3 setup: production has not moved yet" "$HEAD1" "$(remote_main)"
 
-out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "3: to-forge succeeds on a green publish" || bad "3: to-forge succeeds on a green publish" "got rc=$rc out=$out"
 is "3: production (origin/main) now equals local/main's old tip EXACTLY" "$HEAD1" "$(remote_main)"
 is "3: repo_land now reads queue at origin/main" "queue origin/main" "$(landmode "$REPONAME")"
@@ -227,7 +244,7 @@ land sp-tr2 two.txt two
 HEAD2="$(localmain)"
 PRE_MAIN="$(remote_main)"
 
-out="$(CHECK_STATUS=red queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(CHECK_STATUS=red queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "4: to-forge refuses on a red publish" || bad "4: to-forge refuses on a red publish" "got rc=$rc out=$out"
 want "4: names the red refusal" "red" "$out"
 is "4: repo-map row is untouched (still queue.local)" "queue.local local/main" "$(landmode "$REPONAME")"
@@ -239,7 +256,7 @@ is "4: local/main still exists at its post-land tip" "$HEAD2" "$(localmain)"
 # Prove the refusal really changed nothing, not merely that it reported failure: settle the
 # SAME publish green through the ordinary path, then confirm a retried transition succeeds.
 CHECK_STATUS=green verdict >/dev/null
-out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "4: after settling green, the retried transition succeeds" \
     || bad "4: after settling green, the retried transition succeeds" "got rc=$rc out=$out"
 is "4: production now carries the previously-red round" "$HEAD2" "$(remote_main)"
@@ -256,12 +273,12 @@ PRE_MAIN="$(remote_main)"
 PRE_LOCAL="$(localmain)"
 
 CLONE="$TMP/clone"
-git clone -q "$REMOTE" "$CLONE"
+timeout 5 git clone -q "$REMOTE" "$CLONE"
 git -C "$CLONE" commit -q --allow-empty -m "foreign: not from local/main"
-git -C "$CLONE" push -q origin main
+timeout 5 git -C "$CLONE" push -q origin main
 FOREIGN="$(git -C "$CLONE" rev-parse main)"
 
-out="$(queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "5: to-forge refuses when the forge diverged" || bad "5: to-forge refuses when the forge diverged" "got rc=$rc out=$out"
 [ "$(callcount pr-create)" -eq 0 ] && ok "5: no PR was opened" || bad "5: no PR was opened" "$(cat "$CALL_LOG")"
 is "5: repo-map row is untouched (still queue.local)" "queue.local local/main" "$(landmode "$REPONAME")"
@@ -275,14 +292,14 @@ git -C "$REMOTE" update-ref refs/heads/main "$PRE_MAIN" >/dev/null 2>&1
 echo
 echo "6 — the reverse flip syncs to the forge's CURRENT tip, not a stale one"
 # ============================================================================
-out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(CHECK_STATUS=green queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "6 setup: forward flip succeeds" || bad "6 setup: forward flip succeeds" "got rc=$rc out=$out"
 FORWARD_TIP="$(remote_main)"
 
 # Advance the forge further, directly, as ordinary queue.forge work would.
-git clone -q "$REMOTE" "$TMP/clone-2"
+timeout 5 git clone -q "$REMOTE" "$TMP/clone-2"
 git -C "$TMP/clone-2" commit -q --allow-empty -m "forge-only: landed while in queue.forge mode"
-git -C "$TMP/clone-2" push -q origin main
+timeout 5 git -C "$TMP/clone-2" push -q origin main
 ADVANCED="$(git -C "$TMP/clone-2" rev-parse main)"
 [ "$ADVANCED" != "$FORWARD_TIP" ] && ok "6 setup: the forge actually advanced" \
     || bad "6 setup: the forge actually advanced" "did not move"
@@ -298,12 +315,12 @@ echo
 echo "7 — a bead IN_DELIVERY on spira-lc refuses the transition; once LANDED it proceeds"
 # ============================================================================
 lcfix_seed sp-trbusy IN_DELIVERY "$(localmain)"
-out="$(queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "7: to-forge refuses with work in delivery" || bad "7: to-forge refuses with work in delivery" "got rc=$rc out=$out"
 want "7: names the bead in delivery" "sp-trbusy" "$out"
 is "7: repo-map row is untouched (still queue.local)" "queue.local local/main" "$(landmode "$REPONAME")"
 lcfix_seed sp-trbusy LANDED "$(localmain)"
-out="$(queue to-forge "$REPONAME")"; rc=$?
+passed; out="$(queue to-forge "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "7: the same transition proceeds once the bead is LANDED" \
     || bad "7: the same transition proceeds once the bead is LANDED" "got rc=$rc out=$out"
 

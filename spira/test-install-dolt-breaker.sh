@@ -23,7 +23,7 @@
 #   SPIRA_INSTALL_DB_WAIT — max seconds for the bd probe retry loop (default 30)
 #
 # tier: T1
-# covers: install/src/bin/install.rs
+# covers: install/src/bin/install.rs UC-config-store-preflight-24
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -44,7 +44,7 @@ echo "test-install-dolt-breaker.sh"
 # ---------------------------------------------------------------------------
 
 _TMP1="$(mktemp -d)"; trap 'rm -rf "$_TMP1"' EXIT INT TERM
-_PORT1="$(python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); print(p)")"
+reserve_port _PORT1
 _DBNAME1="testbd$$"
 
 mkdir -p "$_TMP1/db/.beads"
@@ -59,7 +59,7 @@ echo "1. POSITIVE CONTROL — tripped circuit breaker: bd list fails:"
 
 # Ensure port is closed; 10 rapid parallel calls trip the 5-failure threshold.
 for _i in $(seq 1 10); do
-    BD_NON_INTERACTIVE=1 bd -C "$_TMP1/db" list --json >/dev/null 2>&1 &
+    BD_NON_INTERACTIVE=1 timeout 5 bd -C "$_TMP1/db" list --json >/dev/null 2>&1 &
 done
 wait
 unset _i
@@ -89,7 +89,7 @@ else
     bad "clear passes: breaker file not removed" "file still exists: $_breaker_file"
 fi
 
-_clear_err="$(BD_NON_INTERACTIVE=1 bd -C "$_TMP1/db" list --json 2>&1 || true)"
+_clear_err="$(BD_NON_INTERACTIVE=1 timeout 5 bd -C "$_TMP1/db" list --json 2>&1 || true)"
 nowant "clear passes: bd list no longer hits circuit-breaker fast-fail after removal" \
     "circuit breaker" "$_clear_err"
 
@@ -111,6 +111,7 @@ import socket, sys, signal
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 s.bind(('127.0.0.1', int(sys.argv[1])))
 s.listen(10)
 while True:
@@ -226,11 +227,7 @@ FAKE_RUN="$TMP/run"
 FAKE_DB="$TMP/db"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN" "$FAKE_DB"
 
-alloc_port() {
-    python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); print(p)"
-}
-
-_DOLT_PORT="$(alloc_port)"
+reserve_port _DOLT_PORT
 _DOLT_DATA="$TMP/dolt-data"
 mkdir -p "$_DOLT_DATA"
 write_dolt_yaml() {
@@ -296,22 +293,26 @@ BDSTUB
 
 # Pre-render units for the diff check.
 make_bd_stub 1
+# Constant across every env -i invocation below (the pre-render, and both run_install
+# calls further down, which re-declare only what differs: SPIRA_DB, SPIRA_DOLT_DATA).
+# SPIRA_MAIL: the fixture's own default (/fixture/userhome/...) isn't writable here —
+# install's units phase ensures every reader mailbox (sp-xp0u2), and a non-writable mail
+# root turns that into "mail: ensure: Permission denied" instead of this suite's own
+# circuit-breaker output (one source of config, per Ryan 2026-10-05).
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+    SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" \
+    SPIRA_BD="$MOCK_BIN/bd" SPIRA_MAIL="$TMP/mail"
 _rendered="$(env -i \
     "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    "SPIRA_RUN=$FAKE_RUN" \
     "SPIRA_HOME=$SPIRA_DIR" \
-    "SPIRA_PROD=$SPIRA_DIR" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
     SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
     SPIRA_INSTALL_AERC_CONSIDERED=1 \
-    "SPIRA_BD=$MOCK_BIN/bd" \
+    SPIRA_TOML="$SPIRA_TOML" \
     units-install prod --render  2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
@@ -329,27 +330,21 @@ unset _rendered _render_rc
 
 run_install() {
     local output_file="$1"
+    tl_config SPIRA_DB="$FAKE_DB" SPIRA_DOLT_DATA="$_DOLT_DATA"
     env -i \
         "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-        "SPIRA_RUN=$FAKE_RUN" \
         "SPIRA_HOME=$SPIRA_DIR" \
-        "SPIRA_PROD=$SPIRA_DIR" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$COCKPIT_DIR" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
         SPIRA_INSTALL_AERC_CONSIDERED=1 \
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
-        "SPIRA_BD=$MOCK_BIN/bd" \
-        "SPIRA_DB=$FAKE_DB" \
-        "SPIRA_DOLT_DATA=$_DOLT_DATA" \
         "SPIRA_INSTALL_DOLT_WAIT=10" \
         "SPIRA_INSTALL_DOLT_CLOSE_WAIT=3" \
         "SPIRA_INSTALL_DB_WAIT=5" \
+        SPIRA_TOML="$SPIRA_TOML" \
         spira-install prod 2>&1 | tee "$output_file"
     # Return the exit code of install.sh, not tee
     return "${PIPESTATUS[0]}"
@@ -380,28 +375,13 @@ setup_fake_db() {
         "$_DOLT_PORT" "$_DBNAME2" > "$FAKE_DB/.beads/metadata.json"
 }
 
-# Starts the Python listener on $_DOLT_PORT and verifies it actually bound.
-# alloc_port's bind-then-release leaves a gap where a concurrent process (this
-# suite runs under a large parallel batch) can take the port before the real
-# listener does; python's bind then throws and the listener dies immediately.
-# Detect that and retry on a freshly allocated port rather than let install.sh
-# fail at the wrong phase. Sets _py_pid to the listener's pid on success.
+# Starts the Python listener on $_DOLT_PORT (held by reserve_port) and verifies it bound.
+# Sets _py_pid to the listener's pid on success.
 start_dolt_listener() {
-    local attempt
-    for attempt in 1 2 3 4 5; do
-        python3 "$TMP/listener.py" "$_DOLT_PORT" &
-        _py_pid=$!
-        sleep 0.3
-        if kill -0 "$_py_pid" 2>/dev/null && \
-           (echo -n "" >/dev/tcp/127.0.0.1/"$_DOLT_PORT") 2>/dev/null; then
-            return 0
-        fi
-        kill "$_py_pid" 2>/dev/null; wait "$_py_pid" 2>/dev/null || true
-        _DOLT_PORT="$(alloc_port)"
-        write_dolt_yaml
-        setup_fake_db
-    done
-    return 1
+    python3 "$TMP/listener.py" "$_DOLT_PORT" &
+    _py_pid=$!
+    sleep 0.3
+    kill -0 "$_py_pid" 2>/dev/null && (echo -n "" >/dev/tcp/127.0.0.1/"$_DOLT_PORT") 2>/dev/null
 }
 
 # ==========================================================================

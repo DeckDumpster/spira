@@ -9,7 +9,7 @@
 //! The bash fence skipped with exit 0 when it had no base, no Cargo.lock here or none at the
 //! base. Each of those is a refusal here: a fence that cannot compare has not compared.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{Entry, Finding, LintError, Rule, Tree};
@@ -204,4 +204,10 @@ mod tests {
         assert_eq!(version_tuple("1.2.3-rc.1"), None);
         assert!(version_tuple("1.10.0") > version_tuple("1.9.9"));
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(LockfileLint::default()),
+    ]
 }

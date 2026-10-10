@@ -46,7 +46,10 @@ BRIEF="$HERE/chamber/maechen.md"
 SPIRA_CONFIG_DIR="$(command -v spira-config >/dev/null 2>&1 && dirname "$(command -v spira-config)" || true)"
 
 run_conf() {
+    # env -i clears SPIRA_TOML; conf.sh refuses outright without it (per Ryan 2026-10-05,
+    # ONE SOURCE OF CONFIG), so thread testlib's own hermetic fixture through.
     env -i HOME="$T" PATH="${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_CONF="$NONE" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HERE/conf.sh' && $1" 2>/dev/null
 }
 
@@ -80,10 +83,10 @@ is "FAYTH_ASSIGNEE is not set" "UNSET" "$assignee"
 
 # ==========================================================================================
 echo
-echo "maechen.fayth — FAYTH_EXCLUDE_LABELS excludes spira-poison"
+echo "maechen.fayth — FAYTH_EXCLUDE_LABELS names no hold label (poison/ask are lifecycle holds, sp-psztcc)"
 # ==========================================================================================
 excl="$(run_conf ". '$FAYTH' && printf '%s' \"\${FAYTH_EXCLUDE_LABELS:-}\"")"
-want "FAYTH_EXCLUDE_LABELS contains spira-poison" "spira-poison" "$excl"
+nowant "FAYTH_EXCLUDE_LABELS names no spira-poison" "spira-poison" "$excl"
 
 # ==========================================================================================
 echo
@@ -94,6 +97,9 @@ echo "spira_fayths — maechen appears in the persona roster"
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$NONE"
 export SPIRA_RUN="$T"
+# round 3 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without it,
+# spira_fayths cannot enumerate chamber/*.fayth at all.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_CHAMBER="$HERE/chamber"
 . "$HERE/lib.sh"
 roster="$(spira_fayths)"
 want "maechen appears in spira_fayths" "maechen" "$roster"
@@ -145,9 +151,9 @@ want "brief contains Record step"   "Record"   "$brief"
 
 # ==========================================================================================
 echo
-echo "maechen.md — encodes the three-bead threshold"
+echo "maechen.md — encodes the three-causal-event threshold (sp-jcd0e)"
 # ==========================================================================================
-want "brief names the three-bead threshold" "three or more distinct beads" "$brief"
+want "brief names the three-causal-event threshold" "three or more distinct causal events" "$brief"
 want "brief explains two is a coincidence"        "coincidence"                "$brief"
 
 # ==========================================================================================

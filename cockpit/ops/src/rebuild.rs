@@ -26,8 +26,8 @@
 //! `/proc/net/unix` (`procfs::listening_socket_holder`), which cannot match this program's
 //! own argv or an unrelated client the way a pattern match can.
 
-use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -43,6 +43,9 @@ pub struct Rebuild {
     pub sessions: Vec<String>,
     pub concierge: PathBuf,
     pub force: bool,
+    /// Whether a mail pane should exist, from `COCKPIT_MAIL` — resolved once here rather
+    /// than re-read where `verify` checks for the pane.
+    pub mail_wanted: bool,
 }
 
 /// Does the pane's process tree carry `--append-system-prompt`, or is it a client of the
@@ -264,7 +267,7 @@ impl Rebuild {
         // and is carrying a session identity from whoever started it. `tmux-env.sh` stays
         // bash — it is a peer script `layout` also shells out to, not part of this bead.
         if let Some(scrub) = find_sibling_script("tmux-env.sh") {
-            if let Ok(o) = Command::new("bash").arg(&scrub).arg("scrub").output() {
+            if let Ok(o) = spira_config::bounded::bounded("bash").arg(&scrub).arg("scrub").output() {
                 for line in String::from_utf8_lossy(&o.stdout).lines() {
                     out.push(format!("  {line}"));
                 }
@@ -272,6 +275,7 @@ impl Rebuild {
         }
 
         out.push("\n== dashboards".to_string());
+        // batch-job: this runs whatever its caller names, as long as that takes
         let layout_ok = Command::new(&self.layout_bin)
             .args(["up", "--window", "brain:0"])
             .status()
@@ -309,6 +313,7 @@ impl Rebuild {
         out.push("\n== cockpit".to_string());
         if self.view.is_file() {
             for sub in ["build", "sync"] {
+                // batch-job: this runs whatever its caller names, as long as that takes
                 if let Ok(o) = Command::new(&self.view).arg(sub).output() {
                     for line in String::from_utf8_lossy(&o.stdout).lines() {
                         out.push(format!("  {line}"));
@@ -338,8 +343,7 @@ impl Rebuild {
             brain_panes.iter().any(|l| l.is_empty()),
         );
         chk(&mut fail, &mut out, "a pane is tagged health", brain_panes.iter().any(|l| l == "health"));
-        let mail_wanted = std::env::var("COCKPIT_MAIL").ok().filter(|s| !s.is_empty()).is_some();
-        if mail_wanted {
+        if self.mail_wanted {
             chk(&mut fail, &mut out, "brain:0 has a mail pane", brain_panes.iter().any(|l| l == "mail"));
         }
         let brain_win = self.tmux.list_windows("=brain", "#{window_id}").into_iter().next();
@@ -358,7 +362,6 @@ impl Rebuild {
             hunk_win.as_ref().is_some_and(|w| cockpit_wins.contains(w)),
         );
 
-        sleep(Duration::from_secs(3));
         let health_pane = self
             .tmux
             .list_panes("brain:0", "#{pane_id} #{@cockpit}")
@@ -371,11 +374,7 @@ impl Rebuild {
         match health_pane {
             None => chk(&mut fail, &mut out, "health pane renders content", false),
             Some(pid) => {
-                let n = self
-                    .tmux
-                    .capture_pane(&pid)
-                    .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
-                    .unwrap_or(0);
+                let n = wait_for_first_render(&self.tmux, &pid);
                 if n > 0 {
                     out.push(format!("  ok    health pane renders content ({n} non-blank line(s))"));
                 } else {
@@ -398,7 +397,7 @@ impl Rebuild {
         }
 
         out.push("\n== watchers".to_string());
-        if let Ok(o) = Command::new("watchd").arg("status").output() {
+        if let Ok(o) = spira_config::bounded::bounded("watchd").arg("status").output() {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
                 out.push(format!("  {line}"));
             }
@@ -419,6 +418,29 @@ fn chk(fail: &mut u32, out: &mut Vec<String>, label: &str, ok: bool) {
         out.push(format!("  FAIL  {label}"));
         *fail += 1;
     }
+}
+
+/// Non-blank line count of the pane, polled until it first renders or its process exits.
+/// The ceiling only bounds a pane that never renders; a rendering pane returns on the
+/// first sample that shows content (law-a-load-red-waits-on-a-signal).
+fn wait_for_first_render(tmux: &Tmux, pane: &str) -> usize {
+    let count = || {
+        tmux.capture_pane(pane)
+            .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
+            .unwrap_or(0)
+    };
+    for _ in 0..240 {
+        let n = count();
+        if n > 0 {
+            return n;
+        }
+        let dead = tmux.stdout(&["display-message", "-p", "-t", pane, "#{pane_dead}"]).is_none_or(|d| d.trim() != "0");
+        if dead {
+            break;
+        }
+        sleep(Duration::from_millis(250));
+    }
+    count()
 }
 
 fn first_untagged_pane(tmux: &Tmux, window: &str) -> Option<String> {
@@ -456,9 +478,11 @@ const USER_VIEW_REL: &str = ".local/bin/cockpit-remote";
 
 pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
     let home = std::env::var("HOME").unwrap_or_default();
-    let mut view = std::env::var("SPIRA_VIEW")
-        .ok()
-        .filter(|s| !s.is_empty())
+    let mut view = Some(spira_config::process::cfg("SPIRA_VIEW").unwrap_or_else(|e| {
+        eprintln!("rebuild: {e}");
+        std::process::exit(2)
+    }))
+    .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(&home).join(USER_VIEW_REL));
     if !view.is_file() {
@@ -466,18 +490,21 @@ pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
             view = cock.join("remote/cockpit-remote");
         }
     }
-    let cwd = std::env::var("COCKPIT_CWD")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("SPIRA_REPO").ok())
-        .unwrap_or_default();
-    let sessions: Vec<String> = std::env::var("COCKPIT_SESSIONS")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "brain hunk chat".to_string())
+    // COCKPIT_CWD's own toml default already composes `${SPIRA_WIKI:-$SPIRA_REPO}`
+    // (spira/conf.d), so the resolved value carries that fallback — no second one here.
+    let cwd = spira_config::process::cfg("COCKPIT_CWD").unwrap_or_default();
+    // Declared config, the one source: a key that does not resolve refuses, never an empty list.
+    let need = |key: &str| {
+        spira_config::process::cfg(key).unwrap_or_else(|e| {
+            eprintln!("rebuild: {e}");
+            std::process::exit(2)
+        })
+    };
+    let sessions: Vec<String> = need("COCKPIT_SESSIONS")
         .split_whitespace()
         .map(|s| s.to_string())
         .collect();
+    let mail_wanted = !need("COCKPIT_MAIL").is_empty();
     let concierge = std::env::var("COCKPIT_CONCIERGE")
         .ok()
         .filter(|s| !s.is_empty())
@@ -494,6 +521,7 @@ pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
         sessions,
         concierge,
         force,
+        mail_wanted,
     }
 }
 

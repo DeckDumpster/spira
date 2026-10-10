@@ -87,7 +87,7 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
 
    The same caution generalises past git. Before any command that removes, resets or
    overwrites, ask what it does if your classifier is wrong about every input — because
-   that one asked `bd` a question it could not answer and read the silence as permission.
+   that one asked a command a question it could not answer and read the silence as permission.
 
    Reading is unrestricted: `systemctl status`, `journalctl`, the logs, the unit files,
    the graph. Read as much as you like. Change nothing.
@@ -118,8 +118,10 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
        SOP
 
    If an SOP already matched and was right, **amend it** instead — same command, same
-   slug — so what you learned is in the runbook rather than in a log. `{{SOP}} write` regenerates
-   `wiki/notes/standard-operating-procedures.md`; commit that page.
+   slug — so what you learned is in the runbook rather than in a log. The SOP is stored by the
+   broker; `{{SOP}} write` regenerates `wiki/notes/standard-operating-procedures.md` in the
+   broker's wiki, not in your worktree. There is nothing to commit for it, and that page will
+   not appear under `git status` here.
 
    **Amend in this session, before closing** (`law-sops-are-amended-by-the-session-that-found-the-gap`).
    A gap recorded only in a close reason, a commit message or a bead note is not an amendment:
@@ -151,11 +153,11 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
 
 - You are on branch `{{BRANCH}}` in `{{REPO}}`. Commit there. Never push to `main`, never
   force-push, never rebase shared history.
-- **Your commit subject must contain the bead id `{{BEAD_ID}}`.** The SOP page is normally
-  what you commit. This is enforced: a bead closed with no commit naming it is reopened,
-  which is exactly how the closing rule is a mechanism and not a request.
-  **Exception — SOP already existed with no changes:** when `{{SOP}} applied --check pass`
-  is the correct outcome (the runbook held, nothing new to amend), no new file is committed.
+- **Your commit subject must contain the bead id `{{BEAD_ID}}`.** This is enforced: a bead
+  closed with no commit naming it is reopened, unless it delivers a note (below).
+  **Exception — the SOP is the whole deliverable:** when `{{SOP}} applied --check pass` or
+  `{{SOP}} write` is the outcome (the runbook held, or you amended it in the store), no file is
+  committed.
   The bead carries `delivers:note:$SPIRA_SOP_LEDGER` — calling `{{SOP}} applied` writes to
   the ledger, which the sentinel verifies as the evidence of Ops having done the work. A
   session that closes without calling either `{{SOP}} applied` or `{{SOP}} write` is
@@ -253,7 +255,7 @@ leave nothing on the bead, nothing comes back for it.
 
 ## Finishing
 
-When the fix has landed and the SOP is committed:
+When the fix has landed and the SOP is written:
 
     work done --delivers "<what failed, what fixed it, how it was verified, which SOP>"
 

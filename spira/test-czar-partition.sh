@@ -21,7 +21,7 @@
 # test-builder-qa-proposed.sh uses.
 #
 # tier: T1
-# covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh spira-claim/* UC-dispatch-09
+# covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh spira-claim/* UC-dispatch-09 UC-config-store-preflight-15
 # hermetic-ok: no real database, no systemd; SPIRA_BD and SPIRA_SUMMON are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -33,8 +33,11 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run"
 
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
+# The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
+# SPIRA_HOME any more (sfail round 2, pattern 6) — without this, czar.fayth/builder.fayth
+# are never found in the real chamber this suite reads.
+tl_config SPIRA_RUN="$T/run" SPIRA_CHAMBER="$HERE/chamber"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -78,9 +81,13 @@ lc_mirror_bd "$T/lc"
 
 # SPIRA_SCOPE_LABEL pinned to the fixture's own scope label, so czar.fayth's FAYTH_LABELS
 # (scope + czar label) is a predicate both fixture beads could satisfy but for the czar label.
-czar_count="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira \
+# SPIRA_BD is declared BOTH ways: spira-claim itself resolves it via cfg() (tl_config), but
+# the spira-lc stand-in lc_mirror_bd installs is a plain bash stub reading ${SPIRA_BD:-bd}
+# straight from its own inherited env, not through config at all — it needs the real export.
+tl_config SPIRA_BD="$FAKE_BD" SPIRA_SCOPE_LABEL=spira
+czar_count="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" \
     fayth_ready czar 2>/dev/null)"
-czar_set="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira \
+czar_set="$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" \
     _spira_claim fayth-ready czar --json 2>/dev/null)"
 # POSITIVE CONTROL: the fixture reaches spira-claim — exactly one bead counts.
 is     "positive control: fayth_ready czar counts exactly one bead" "1" "$czar_count"

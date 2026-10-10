@@ -6,7 +6,7 @@ branch became a shared catch-all across five beads and was never merged — see
 [[sp-n1twd]] below for exactly what that bead's own work still owed and how this page
 differs from its draft.
 
-Subjects: `incident.sh`, `census.sh` (and the `count.py`/`merge.py`/`covers.py` files it
+Subjects: `incident.sh`, `census.sh` (and the `cluster.py`/`cluster_merge.py`/`covers.py` files it
 calls), `maechen-trigger.sh` + `chamber/maechen.md`, `auron.sh` + `auron-classify.py`,
 `strand.sh` + `strand-classify.py`, `watchtower.sh`, `czar-pass` → `czar-pass/src/main.rs` (on
 the reconciler-engine, sp-pu7v6), `czar-fence.sh`, `groomer`, `groom-trigger.sh`,
@@ -114,7 +114,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | D7 | strand-classify.py harness + `starved` positive control | 6 test-strand-* files | **Open** (`sp-fhzib.4`) |
 | D8 | `strand.sh check --from` + mail stub | strand-capacity, strand-pool-paused, strand-partition, strand-lock | **Open** (`sp-fhzib.4`) |
 | D9 | Halted-world skip + stable-ref pattern | watchtower.sh, watchtower-czar-outcome.sh, watchtower-queue.sh, czar-pass.sh | Partially resolved: watchtower-queue.sh is gone; the remaining three still each carry their own halt-guard assertion (`sp-fhzib.4`'s shared T1 table is `sp-fhzib.5`'s further scope, undone). |
-| D10 | Livelock categories + detector re-run | test-livelock.sh, test-groomer-sweep.sh | **Open** (`sp-fhzib.4`) |
+| D10 | Livelock categories + detector re-run | test-livelock.sh | **Open** (`sp-fhzib.4`) |
 | D11 | Close-reason phrase flags | test-livelock.sh, test-ops-closing.sh | **Open** (`sp-fhzib.4`) |
 | D12 | "Every snapshot section present" loop | test-watchtower.sh, test-watchtower-lapse.sh | **Open** (`sp-fhzib.4`) |
 | D13 | Watermark prose greps of maechen.md | test-maechen.sh, test-maechen-sibling-blind.sh | Resolved (`sp-fhzib.3`) |

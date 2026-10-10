@@ -199,6 +199,9 @@ impl Lib for FakeLib {
     fn ask_budget_deferred(&self, br: &str, repo: &str, n: u32) {
         self.rec(format!("ask_budget_deferred {br} {repo} {n}"));
     }
+    fn ask_repo_unreadable(&self, repo: &str, path: &Path) {
+        self.rec(format!("ask_repo_unreadable {repo} {}", path.display()));
+    }
     fn rebase(&self, br: &str, onto: &str, _: &Path, _: &str) -> Rebase {
         self.rec(format!("rebase {br} {onto}"));
         self.rebase_fail.borrow().get(br).cloned().unwrap_or(Rebase { ok: true, ..Default::default() })
@@ -391,6 +394,12 @@ impl Tools for FakeTools {
         self.forge_calls.borrow_mut().push("pr-list-open".into());
         self.forge_pr_list_open.borrow().clone()
     }
+    fn forge_pr_mergeability(&self, _: &Path, _: &str) -> Option<String> {
+        None
+    }
+    fn forge_pr_red(&self, _: &Path, _: &str) -> Option<crate::ports::PrRed> {
+        None
+    }
     fn forge_pr_automerge(&self, _: &Path, selector: &str) -> bool {
         self.forge_calls.borrow_mut().push(format!("pr-automerge {selector}"));
         self.forge_automerge_ok.get()
@@ -515,6 +524,7 @@ impl H {
             external_ref: None,
             title: String::new(),
             notes: Vec::new(),
+            express: labels.contains(&"express"),
         };
         self.beads.rows.borrow_mut().insert(id.into(), b.clone());
         b
@@ -631,7 +641,8 @@ fn a_base_red_with_no_suite_name_is_keyed_by_the_base_sha() {
     fs::write(&h.s.incident, "").unwrap();
     h.run();
     let inc = h.lib.find("incident ");
-    assert!(inc.starts_with("incident plan spira basefail:spira:-@"), "{inc}");
+    assert!(inc.starts_with("incident  spira basefail:spira:-@"), "{inc}");
+    assert!(!inc.split_whitespace().nth(1).is_some_and(|l| l.split(',').any(|x| x == "plan")), "a base-red incident is never claimable plan work: {inc}");
     assert!(!inc.contains("basefail:spira:- "), "{inc}");
 }
 
@@ -648,7 +659,7 @@ fn a_red_base_files_one_incident_per_repository_per_pass_and_charges_nobody() {
     h.run();
     assert_eq!(h.lib.count("incident "), 1);
     let inc = h.lib.find("incident ");
-    assert!(inc.starts_with("incident plan spira basefail:spira:test-x.sh spira's own gate fails against local/main — nothing can land"), "{inc}");
+    assert!(inc.starts_with("incident  spira basefail:spira:test-x.sh spira's own gate fails against local/main — nothing can land"), "{inc}");
     assert!(inc.contains("  failing suite    test-x.sh\n  gate verdict     BASE_FAIL (base-red)"), "{inc}");
     assert!(h.logged("CHECK6 spira: the base's own red is sp-inc1 (suite test-x.sh)"));
     assert!(!h.lib.has("reopen"));
@@ -683,7 +694,8 @@ fn a_branch_that_no_longer_merges_is_red_no_rebase_and_returned() {
     h.closed("sp-a", "t1");
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (1, "gate:   spira/lib.sh\ngate: VERDICT=FAIL reason=no-rebase branch=spira/sp-a repo=spira suite=-\n".into()));
     h.run();
-    assert!(h.lib.has("reopen sp-a cert-gate-red"), "the bead is returned for a rebase");
+    assert!(h.lib.has("reopen sp-a no-rebase"), "the bead is returned for a rebase, uncharged");
+    assert!(!h.lib.has("cert-gate-red"), "a moved base is not a judged red");
     assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("reopen sp-a") && c.contains("gate:   spira/lib.sh")), "the note names the conflicting paths");
     assert!(!h.lib.has("noverdict"), "a conflict is never NO_VERDICT");
 }
@@ -861,6 +873,30 @@ fn a_branch_gone_mid_pass_is_never_evidence_of_unlanded_work() {
     p2.walk_repo(&repo);
     assert!(h.logged("CHECK6 sp-a: spira/sp-a is gone since this pass began and t1 is on origin/main — landed and reaped, not reopening"));
     assert!(!h.lib.has("reopen"));
+}
+
+#[test]
+fn the_sole_repository_not_being_a_git_checkout_is_an_alert() {
+    let mut h = H::new(LandMode::QueueLocal);
+    let release = h.dir.join("spira-releases/abc");
+    fs::create_dir_all(&release).unwrap();
+    h.repos[0].path = release.clone();
+    h.run();
+    assert!(h.logged(&format!("CHECK6 spira: {} is not a git checkout — skipped", release.display())));
+    assert!(h.lib.has(&format!("ask_repo_unreadable spira {}", release.display())));
+}
+
+#[test]
+fn a_checkout_among_several_repositories_skipped_is_not_an_alert() {
+    let mut h = H::new(LandMode::QueueLocal);
+    let release = h.dir.join("spira-releases/abc");
+    fs::create_dir_all(&release).unwrap();
+    let mut other = h.repos[0].clone();
+    other.name = "other".into();
+    other.path = release;
+    h.repos.push(other);
+    h.run();
+    assert!(!h.lib.has("ask_repo_unreadable"));
 }
 
 #[test]
@@ -1102,6 +1138,9 @@ fn push_mode_lands_on_a_real_remote() {
         }
         fn ask_budget_deferred(&self, a: &str, b: &str, n: u32) {
             self.0.ask_budget_deferred(a, b, n)
+        }
+        fn ask_repo_unreadable(&self, a: &str, b: &Path) {
+            self.0.ask_repo_unreadable(a, b)
         }
         fn rebase(&self, a: &str, b: &str, c: &Path, d: &str) -> Rebase {
             self.0.rebase(a, b, c, d)
@@ -1390,23 +1429,19 @@ fn the_context_answer_parses_into_settings_and_rows() {
     let dir = crate::testutil::tmpdir("context-answer");
     let map = dir.join("repomap-fixture");
     fs::write(&map, "spira | /h | queue.local\nother |\n").unwrap();
-    let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
-    let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
-    std::env::set_var("SPIRA_REPO_MAP", &map);
-    std::env::set_var("SPIRA_HOME_REPO", "spira");
+    // Declared config (the one source): the registry reads the map and home repo from the
+    // SPIRA_TOML it resolves, never from the environment.
+    let cfgdir = testkit::TempDir::new("lp-registry-cfg");
+    let toml = spira_config::process::fixture_toml(cfgdir.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
+    let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
 
     let ans = "run=/r\0db=/db\0land_maxsec=3600\0gate_reserve=2700\0";
-    let (s, repos) = crate::real::parse_context(ans, Path::new("/home")).unwrap();
-    let no_map = crate::real::parse_context("db=x\0", Path::new("/h"));
+    // The home is the checkout's own spira/ (conf.d, the key registry, lives there).
+    let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let (s, repos) = crate::real::parse_context(ans, &real_home).unwrap();
+    let no_map = crate::real::parse_context("db=x\0", &real_home);
 
-    match prev_map {
-        Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-        None => std::env::remove_var("SPIRA_REPO_MAP"),
-    }
-    match prev_home_repo {
-        Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
-        None => std::env::remove_var("SPIRA_HOME_REPO"),
-    }
+    drop(env);
 
     assert_eq!((s.run.as_path(), s.land_maxsec, s.gate_reserve), (Path::new("/r"), 3600, 2700));
     assert_eq!(s.home_repo, "spira");
@@ -1554,6 +1589,12 @@ impl Tools for Injecting<'_> {
     }
     fn forge_pr_list_open(&self, r: &Path) -> Vec<(u64, String)> {
         self.t.forge_pr_list_open(r)
+    }
+    fn forge_pr_mergeability(&self, r: &Path, s: &str) -> Option<String> {
+        self.t.forge_pr_mergeability(r, s)
+    }
+    fn forge_pr_red(&self, r: &Path, s: &str) -> Option<crate::ports::PrRed> {
+        self.t.forge_pr_red(r, s)
     }
     fn forge_pr_automerge(&self, r: &Path, s: &str) -> bool {
         self.t.forge_pr_automerge(r, s)

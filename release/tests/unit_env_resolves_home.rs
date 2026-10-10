@@ -55,6 +55,33 @@ use std::process::{Command, Stdio};
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("release/ has a parent").to_path_buf()
 }
+
+/// The REAL `SPIRA_SCOPE_LABEL` this checkout's own fayth labels resolve to, computed the
+/// same way `FIXTURE_BD_SCRIPT`'s own `scope=` line does: the basename of the parent of
+/// `git rev-parse --git-common-dir` — the MAIN repository's directory name, which in a
+/// worktree checkout (as this one is) is NOT this directory's own name. `complete.toml`'s
+/// fixture placeholder (`spira.scope_label = "spira"`) is wrong for a worktree whose main
+/// repo is named anything else, so every real `.fayth`'s `FAYTH_LABELS` (which all
+/// reference `$SPIRA_SCOPE_LABEL`) filtered out this fixture's own planted beads entirely —
+/// `in_scope`/`labels_match` (spira-claim/src/ready.rs) require an EXACT label match, not a
+/// substring, so a wrong scope label is indistinguishable from "nothing ready". Declared in
+/// `fixture_toml` below so `spira-claim`'s own resolved config agrees with the labels the
+/// fixture's `bd`/`spira-lc` stubs actually hand back.
+fn real_scope_label() -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace_root().join("spira"))
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .unwrap_or_else(|e| panic!("cannot run git rev-parse --git-common-dir: {e}"));
+    assert!(out.status.success(), "git rev-parse --git-common-dir failed: {}", String::from_utf8_lossy(&out.stderr));
+    let common_dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Path::new(&common_dir)
+        .parent()
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| panic!("git-common-dir {common_dir:?} has no parent with a basename"))
+}
 /// The cargo profile this test binary was itself built in, from its own path
 /// (`<target>/<profile-dir>/deps/<exe>`; `debug` is the `dev` profile). Building the fixture
 /// binary in the SAME profile reuses what is already built — without it, a gate testing under
@@ -93,11 +120,8 @@ fn build_bin(package: &str, bin: &str) -> PathBuf {
 
 /// A tiny shell script, written executable, at `path`.
 fn write_script(path: &Path, body: &str) {
-    std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    let mut perm = std::fs::metadata(path).unwrap().permissions();
-    perm.set_mode(0o755);
-    std::fs::set_permissions(path, perm).unwrap();
+    // testkit::write_exe: no write descriptor a concurrent fork could inherit (ETXTBSY under load).
+    testkit::write_exe(path, &format!("#!/bin/sh\n{body}\n"));
 }
 
 /// One fixture release root: `<root>/bin/{sentinel,spira-claim,spira-config,watchd,bd,
@@ -108,6 +132,11 @@ struct Fixture {
     root: PathBuf,
     home: PathBuf,
     systemd_run_log: PathBuf,
+    /// A complete config file (`spira_config::process::fixture_toml`), for `run_unit` to
+    /// hand every exec'd binary via `SPIRA_TOML` — none of the rendered unit templates carry
+    /// it themselves (it is not a registered key, per Ryan 2026-10-05: one source of
+    /// config), and every binary this file execs now refuses outright without it.
+    toml: PathBuf,
     /// Kept alive for as long as the fixture is in use — `TempDir::drop` removes
     /// everything under it.
     _dir: testkit::TempDir,
@@ -150,7 +179,47 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     if with_aeon {
         write_script(&root.join("bin/aeon"), "exit 0");
     }
-    Fixture { root, home, systemd_run_log, _dir: t }
+    // `run` and `db` match what `run_unit`'s own rendered `host` map hands these same units
+    // as `SPIRA_RUN`/`SPIRA_DB` — so a binary reading them through `cfg` (sentinel,
+    // spira-claim, watchd) agrees with what the unit's own `Environment=` lines say.
+    //
+    // `chamber`/`chamber_overlay` are NOT derived from `$SPIRA_HOME` by `spira_config`'s own
+    // resolve() any more — SPIRA_CHAMBER has no procedural step there (unlike
+    // SPIRA_RELEASES/SPIRA_RUN/SPIRA_INSTANCE), so it is resolved generically, straight from
+    // whatever the config file declares. The complete fixture `fixture_toml` writes declares a
+    // fixed placeholder (`/fixture/userhome/spira/spira-releases/<sha>/spira/chamber`) that does
+    // not exist on disk — without this override, spira-claim/sentinel read THAT path and see
+    // "no fayth in the chamber" for every real fayth, never this fixture's own `root/spira/
+    // chamber` (the real chamber, symlinked in above, or `build_fixture_with_planted_fayth`'s
+    // own planted one). `chamber_overlay` is pointed at a directory that does not exist,
+    // matching an operator who configured none.
+    let run_s = home.join(".local/share/spira/run").display().to_string();
+    let db_s = home.join(".local/share/spira/db").display().to_string();
+    let chamber_s = root.join("spira/chamber").display().to_string();
+    let overlay_s = home.join("chamber-overlay-unset").display().to_string();
+    // SPIRA_BD has no registry default (resolves empty unless set) — `complete.toml`'s own
+    // fixture placeholder (`/fixture/userhome/.local/bin/bd`) does not exist on this machine, so
+    // spira-claim's `bd list` call failed with "No such file or directory" until this named
+    // the fixture's own `bd` stub (written to `root/bin/bd` above) explicitly.
+    let bd_s = root.join("bin/bd").display().to_string();
+    // SPIRA_SCOPE_LABEL: see `real_scope_label`'s own doc — `complete.toml`'s "spira"
+    // placeholder does not match this (worktree) checkout's real git-common-dir basename,
+    // so every real fayth's partition filter (`in_scope`/`labels_match`, exact-match on
+    // labels) silently excluded every one of this fixture's planted beads.
+    let scope_s = real_scope_label();
+    let toml = spira_config::process::fixture_toml(
+        &home,
+        &[
+            ("SPIRA_RUN", &run_s),
+            ("SPIRA_DB", &db_s),
+            ("SPIRA_INSTANCE", "prod"),
+            ("SPIRA_CHAMBER", &chamber_s),
+            ("SPIRA_CHAMBER_OVERLAY", &overlay_s),
+            ("SPIRA_BD", &bd_s),
+            ("SPIRA_SCOPE_LABEL", &scope_s),
+        ],
+    );
+    Fixture { root, home, systemd_run_log, toml, _dir: t }
 }
 
 /// A `bd` stub that answers a DIFFERENT, deterministic ready count depending on which
@@ -276,10 +345,12 @@ fn exec_start_argv(rendered: &str) -> Vec<String> {
 
 /// Renders `template` from this checkout's own `systemd/` against `fixture`'s release
 /// root, execs `argv_override` (or the template's own `ExecStart=` argv when empty) under
-/// `env -i` plus EXACTLY the rendered `Environment=` lines, `HOME=<fixture home>` and
-/// `extra_env` (operational overrides a real unit never carries but this bead's own part 3
-/// explicitly sanctions stubbing, e.g. none for the generic cases). Returns (exit code,
-/// combined stdout+stderr).
+/// `env -i` plus EXACTLY the rendered `Environment=` lines, `HOME=<fixture home>`,
+/// `SPIRA_TOML=<fixture.toml>` (not a registered key, so no template carries it itself, but
+/// every binary this file execs now refuses outright without it — per Ryan 2026-10-05, one
+/// source of config) and `extra_env` (operational overrides a real unit never carries but
+/// this bead's own part 3 explicitly sanctions stubbing, e.g. none for the generic cases).
+/// Returns (exit code, combined stdout+stderr).
 fn run_unit(fixture: &Fixture, template: &str, argv_override: &[&str], extra_env: &[(&str, &str)]) -> (i32, String) {
     let text = std::fs::read_to_string(workspace_root().join("systemd").join(template))
         .unwrap_or_else(|e| panic!("cannot read systemd/{template}: {e}"));
@@ -287,6 +358,7 @@ fn run_unit(fixture: &Fixture, template: &str, argv_override: &[&str], extra_env
     host.insert("SPIRA_RUN".to_string(), fixture.home.join(".local/share/spira/run").to_string_lossy().into_owned());
     host.insert("SPIRA_PATH_TAIL".to_string(), String::new());
     host.insert("SPIRA_DB".to_string(), fixture.home.join(".local/share/spira/db").to_string_lossy().into_owned());
+    host.insert("SPIRA_TOML".to_string(), fixture.toml.to_string_lossy().into_owned());
     let rendered = release::units::render(template, &text, &fixture.root, &host, None, "prod")
         .unwrap_or_else(|e| panic!("rendering {template}: {e}"));
     let env = unit_env(&rendered);
@@ -295,7 +367,7 @@ fn run_unit(fixture: &Fixture, template: &str, argv_override: &[&str], extra_env
     let (bin, rest) = (argv[0].clone(), &argv[1..]);
 
     let mut cmd = Command::new("env");
-    cmd.arg("-i").arg(format!("HOME={}", fixture.home.display()));
+    cmd.arg("-i").arg(format!("HOME={}", fixture.home.display())).arg(format!("SPIRA_TOML={}", fixture.toml.display()));
     for (k, v) in &env {
         cmd.arg(format!("{k}={v}"));
     }
@@ -410,6 +482,7 @@ fn spira_landing_pass_service_already_carries_spira_home_explicitly_and_is_never
     host.insert("SPIRA_PATH_TAIL".to_string(), String::new());
     host.insert("SPIRA_REPO_MAP".to_string(), "/not/the/default/location".to_string());
     host.insert("SPIRA_DB".to_string(), fx.home.join(".local/share/spira/db").to_string_lossy().into_owned());
+    host.insert("SPIRA_TOML".to_string(), fx.toml.to_string_lossy().into_owned());
     let rendered = release::units::render("spira-landing-pass.service", &text, &fx.root, &host, None, "prod").expect("render landing-pass");
     let env = unit_env(&rendered);
     let home = env.get("SPIRA_HOME").cloned().unwrap_or_default();
@@ -588,8 +661,17 @@ fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_
 
     let spira_config_bin = build_bin("spira-config", "spira-config");
 
-    // Exactly CHECK6's own forwarded keys (`dispatch.rs`'s `setenv` list), plus `HOME` —
-    // never `SPIRA_REPO_DERIVED`.
+    // `spira_config::repos::registry_env` (per Ryan 2026-10-05: one source of config) now
+    // drops any `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` it finds in the environment outright,
+    // whatever forwarded them, and resolves both fresh from `$SPIRA_TOML` instead — so the
+    // two real env vars below are no longer what this test's assertion rests on; this file
+    // declares the same values for `spira-config repo root` to read instead.
+    // `SPIRA_REPO_DERIVED` is still deliberately absent — that is this test's whole point
+    // (see this test's own doc above) — and `fixture_toml` never touches it either.
+    let toml = spira_config::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &catalog.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
+
+    // Exactly CHECK6's own forwarded keys (`dispatch.rs`'s `setenv` list), plus `HOME` and
+    // `SPIRA_TOML` — never `SPIRA_REPO_DERIVED`.
     let mut cmd = Command::new("env");
     cmd.arg("-i")
         .arg(format!("HOME={}", home.display()))
@@ -599,6 +681,7 @@ fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_
         .arg(format!("SPIRA_REPO={}", release.display()))
         .arg(format!("SPIRA_REPO_MAP={}", catalog.display()))
         .arg("SPIRA_HOME_REPO=spira")
+        .arg(format!("SPIRA_TOML={}", toml.display()))
         .arg(&spira_config_bin)
         .arg("repo")
         .arg("root")

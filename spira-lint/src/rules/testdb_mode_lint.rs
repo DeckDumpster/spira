@@ -7,7 +7,7 @@
 //! a header, `# testdb-mode: server — <reason>`, anywhere in the file, with non-empty text
 //! after the em dash.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 
 use crate::{direct_child, Entry, Finding, LintError, Rule, Tree};
 
@@ -172,4 +172,10 @@ mod tests {
         t.write("spira/lib.sh", "echo\n");
         assert_eq!(run(&t, &["spira/lib.sh"]), Err(LintError::EmptyScope));
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(TestdbModeLint::default()),
+    ]
 }

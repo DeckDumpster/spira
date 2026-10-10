@@ -104,11 +104,13 @@ exit 0
 MOCK
 chmod +x "$WBIN/systemctl"
 
+tl_config SPIRA_RUN="$WRUN"
 run_start() {
     : > "$MOCK_LOG"
     env -i HOME="$WTMP/home" PATH="$WBIN:$PATH" \
-        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_RUN="$WRUN" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_SYSTEMCTL="$WBIN/systemctl" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "${@}" "$WORLD" start >/dev/null 2>&1
 }
 
@@ -172,24 +174,43 @@ BASE_ENV=(
     HOME="$TMP/home"
     PATH="$MOCK_BIN:$PATH"
     SPIRA_CONF=/nonexistent
-    SPIRA_RUN="$RUN"
-    SPIRA_INSTANCE=test
-    SPIRA_WATCHERS="$MAN"
+    SPIRA_MAIL_OPERATOR_CONSIDERED=test-suite
     SPIRA_HOME="$HERE"
-    SPIRA_MAIL="$MAIL"
+    SPIRA_TOML="$SPIRA_TOML"
 )
+# SPIRA_MAIL_REPEAT_WINDOW=0: this section sends several DISTINCT escalations to operator
+# with the SAME literal subject ("A watcher has stopped producing events") in one shared
+# SPIRA_RUN — mail's own repeat-check would otherwise silently swallow every one after the
+# first, which is correct anti-spam behaviour in production and exactly wrong for a test
+# proving each condition escalates on its own.
+# SPIRA_MAIL_MUTE=0: the complete fixture declares mail_mute = true, which delivers to
+# "cur" (already-seen) rather than "new" (mail_deliver, sp-9hwim) — every asks()/grep check
+# below reads "$MAIL/operator/new", so this suite declares its own unmuted intent (one
+# source of config, per Ryan 2026-10-05), persisting for every later section too (sections
+# 4-8 want the same unmuted behaviour).
+# SPIRA_MAIL_KINDS="$HERE/mail/kinds": the complete fixture's default names a release-shaped
+# path ("/fixture/userhome/.../spira-releases/current/spira/mail/kinds") that conf.sh no longer
+# derives from SPIRA_HOME; watchd's escalation sends "--kind question", and `mail send`
+# refuses any kind it cannot find a <kind>.md file for in SPIRA_MAIL_KINDS. Declare this
+# suite's own real checkout, the same pattern test-mail-aeon.sh uses for SPIRA_CHAMBER.
+tl_config SPIRA_RUN="$RUN" SPIRA_INSTANCE=test SPIRA_WATCHERS="$MAN" SPIRA_MAIL="$MAIL" \
+    SPIRA_NOTIFY_AGE=0 SPIRA_ACTIONABLE=WAKEME SPIRA_MAIL_REPEAT_WINDOW=0 SPIRA_MAIL_MUTE=0 \
+    SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 
 run_notify() {
-    # SPIRA_MAIL_REPEAT_WINDOW=0: this section sends several DISTINCT escalations to
-    # operator with the SAME literal subject ("A watcher has stopped producing events") in
-    # one shared SPIRA_RUN — mail's own repeat-check would otherwise silently swallow
-    # every one after the first, which is correct anti-spam behaviour in production and
-    # exactly wrong for a test proving each condition escalates on its own.
+    # Extra args split: SPIRA_* overrides (SPIRA_MAIL_READERS, SPIRA_MAIL_UNREAD_AGE) are
+    # registered keys, declared via tl_config; ACTIVE_STATE is a mock-systemctl-only knob,
+    # forwarded through env -i as before.
+    local -a _passthrough=()
+    local _kv
+    for _kv in "$@"; do
+        case "$_kv" in
+            SPIRA_*) tl_config "$_kv" ;;
+            *) _passthrough+=("$_kv") ;;
+        esac
+    done
     env -i "${BASE_ENV[@]}" \
-        SPIRA_NOTIFY_AGE=0 \
-        SPIRA_ACTIONABLE=WAKEME \
-        SPIRA_MAIL_REPEAT_WINDOW=0 \
-        "${@}" \
+        "${_passthrough[@]}" \
         watchd notify 2>/dev/null
     local _rc=$?
     # sp-pnogc (round 209, check 8): a real condition, not a timing guess — bash prints
@@ -206,9 +227,12 @@ run_notify() {
     return "$_rc"
 }
 
-asks()     { find "$MAIL/operator/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
+ROUTED='Routed here from an operator ask'
+ask_files() { { find "$MAIL/operator/new" -type f 2>/dev/null; grep -rl "$ROUTED" "$MAIL/concierge/new" 2>/dev/null; } || true; }
+asks()     { ask_files | wc -l | tr -d ' '; }
 reset_run() {
     rm -rf "$MAIL/operator"
+    grep -rl "$ROUTED" "$MAIL/concierge/new" 2>/dev/null | xargs -r rm -f
     rm -f "$WDIR/"*.unhealthy "$WDIR/notify-health.escalated" 2>/dev/null
 }
 # An old unread message in the concierge mailbox (mtime = 1 hour ago).
@@ -247,15 +271,9 @@ echo
 echo "3d. active AND watching its registered mailbox -> healthy, no escalation:"
 reset_run
 backdate "$MD_UF"
-inotifywait -m -q -e close_write -e moved_to "$CONCIERGE_NEW" >/dev/null 2>&1 &
-WATCH_PID=$!
-tries=0
-while ! pgrep -f "inotifywait -m -q -e close_write -e moved_to $CONCIERGE_NEW\$" >/dev/null 2>&1 \
-      && [ "$tries" -lt 50 ]; do
-    sleep 0.1; tries=$((tries+1))
-done
+printf '%s\n' "$(( $(date +%s) + 60 ))" > "$RUN/mail-deliver-concierge.lease"
 run_notify ACTIVE_STATE=active SPIRA_MAIL_READERS="concierge=echo wake" || true
-kill "$WATCH_PID" 2>/dev/null; wait "$WATCH_PID" 2>/dev/null || true
+rm -f "$RUN/mail-deliver-concierge.lease"
 is "no escalation when watching every registered mailbox" "0" "$(asks)"
 is "unhealthy file is cleared once healthy" "1" "$([ -f "$MD_UF" ] && echo 0 || echo 1)"
 
@@ -269,8 +287,8 @@ backdate "$MD_UF"
 run_notify ACTIVE_STATE=inactive SPIRA_MAIL_READERS="concierge=echo wake" SPIRA_MAIL_UNREAD_AGE=0 || true
 
 total="$(asks)"
-liveness="$(grep -l 'stopped producing events' "$MAIL/operator/new/"* 2>/dev/null | wc -l | tr -d ' ')"
-aged="$(grep -l 'is not reading its mail' "$MAIL/operator/new/"* 2>/dev/null | wc -l | tr -d ' ')"
+liveness="$(ask_files | xargs -r grep -l 'stopped producing events' 2>/dev/null | wc -l | tr -d ' ')"
+aged="$(ask_files | xargs -r grep -l 'is not reading its mail' 2>/dev/null | wc -l | tr -d ' ')"
 
 is "4a: exactly two operator messages total" "2" "$total"
 is "4b: exactly one liveness message from watchd" "1" "$liveness"
@@ -287,9 +305,11 @@ echo "5. LOG PATH — the unit's StandardOutput is the path watchd's own status 
 LOGRUN="$TMP/logpath-run"
 LOGWATCHERS="$TMP/logpath-watchers"
 printf 'mail-deliver|extern|mail-deliver\n' > "$LOGWATCHERS"
+tl_config SPIRA_RUN="$LOGRUN" SPIRA_WATCHERS="$LOGWATCHERS"
 expected_logfile="$(
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_RUN="$LOGRUN" \
-        SPIRA_WATCHERS="$LOGWATCHERS" "$WATCHD" status 2>/dev/null \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        "$WATCHD" status 2>/dev/null \
         | awk '$1=="mail-deliver" { print $NF }'
 )"
 is "5a: watchd status computes the log under watchd/" "$LOGRUN/watchd/mail-deliver.log" "$expected_logfile"
@@ -331,8 +351,9 @@ STUB
 chmod +x "$TMP/wake-stub-t1.sh"
 
 ATT1="$TMP/wake-attempts-t1.log"; : > "$ATT1"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_RUN="$WRUN1" SPIRA_MAIL="$WMAIL1" \
-    SPIRA_CONF=/nonexistent SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1" \
+tl_config SPIRA_RUN="$WRUN1" SPIRA_MAIL="$WMAIL1" SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1"
+env -i HOME="$TMP/home" PATH="$PATH" \
+    SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _wake_loop wakebox "$2"' _ "$HERE/spira-mail-deliver.sh" "$TMP/wake-stub-t1.sh" \
     > "$ATT1" 2>&1 &
 LOOP1_PID=$!
@@ -372,8 +393,9 @@ STUB
 chmod +x "$TMP/wake-stub-t2.sh"
 
 ATT2="$TMP/wake-attempts-t2.log"; : > "$ATT2"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_RUN="$WRUN2" SPIRA_MAIL="$WMAIL2" \
-    SPIRA_CONF=/nonexistent SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1" \
+tl_config SPIRA_RUN="$WRUN2" SPIRA_MAIL="$WMAIL2" SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1"
+env -i HOME="$TMP/home" PATH="$PATH" \
+    SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _wake_loop wakebox "$2"' _ "$HERE/spira-mail-deliver.sh" "$TMP/wake-stub-t2.sh" \
     > "$ATT2" 2>&1 &
 LOOP2_PID=$!
@@ -385,7 +407,7 @@ while [ "$(_wake_count "$ATT2")" -lt 1 ] && [ "$tries" -lt 150 ]; do
 done
 first_seen="$(_wake_count "$ATT2")"
 
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_MAIL="$WMAIL2" SPIRA_CONF=/nonexistent \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_TOML="$SPIRA_TOML" \
     mail read wakebox >/dev/null 2>&1
 
 sleep 2.5
@@ -410,8 +432,8 @@ echo "8a. POSITIVE CONTROL — an event present from the start settles near-inst
 rm -rf "$SDIR"; mkdir -p "$SDIR"
 msg_event > "$SDIR/event1"
 t0=$SECONDS
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
-    SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0 \
+tl_config SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _settle_wait "$2"' _ "$HERE/spira-mail-deliver.sh" "$SDIR"
 elapsed=$((SECONDS - t0))
 is "8a: an already-present event settles well under the reply window" "1" "$([ "$elapsed" -le 2 ] && echo 1 || echo 0)"
@@ -421,8 +443,8 @@ echo "8b. a reply-only burst still waits the full reply window (no regression):"
 rm -rf "$SDIR"; mkdir -p "$SDIR"
 msg_reply > "$SDIR/reply1"
 t0=$SECONDS
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
-    SPIRA_MAIL_SETTLE=3 SPIRA_MAIL_SETTLE_EVENT=0 \
+tl_config SPIRA_MAIL_SETTLE=3 SPIRA_MAIL_SETTLE_EVENT=0
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _settle_wait "$2"' _ "$HERE/spira-mail-deliver.sh" "$SDIR"
 elapsed=$((SECONDS - t0))
 is "8b: reply-only settle takes the full SPIRA_MAIL_SETTLE window" "1" "$([ "$elapsed" -ge 3 ] && echo 1 || echo 0)"
@@ -435,13 +457,29 @@ msg_reply > "$SDIR/reply1"
 ( sleep 2; msg_event > "$SDIR/event1" ) &
 DROP_PID=$!
 t0=$SECONDS
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent \
-    SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0 \
+tl_config SPIRA_MAIL_SETTLE=10 SPIRA_MAIL_SETTLE_EVENT=0
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. "$1"; _settle_wait "$2"' _ "$HERE/spira-mail-deliver.sh" "$SDIR"
 elapsed=$((SECONDS - t0))
 wait "$DROP_PID" 2>/dev/null
 is "8c: a mid-window event cuts the wait short, not the full reply window" "1" \
     "$([ "$elapsed" -ge 2 ] && [ "$elapsed" -le 4 ] && echo 1 || echo 0)"
 is "8c: well under the 10s liveness bound end to end" "1" "$([ "$elapsed" -le 10 ] && echo 1 || echo 0)"
+
+echo
+echo "9. WATCH LEASE — health is the lease, never a process scan:"
+LRUN="$TMP/lease-run"; mkdir -p "$LRUN"
+tl_config SPIRA_RUN="$LRUN" SPIRA_MAIL_READERS="leasebox=echo wake"
+lease_health() {
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        bash "$HERE/spira-mail-deliver.sh" health >/dev/null 2>&1
+    echo $?
+}
+is "9a: no lease -> not watching" "1" "$(lease_health)"
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+    bash -c '. "$1"; _renew_watch_lease leasebox' _ "$HERE/spira-mail-deliver.sh"
+is "9b: a renewed lease -> watching" "0" "$(lease_health)"
+printf '%s\n' "$(( $(date +%s) - 5 ))" > "$LRUN/mail-deliver-leasebox.lease"
+is "9c: an expired lease -> not watching" "1" "$(lease_health)"
 
 tl_summary

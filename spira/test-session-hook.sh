@@ -85,19 +85,20 @@ RUN="$TMP/elsewhere/run"; mkdir -p "$RUN/watchd"
 MANIFEST="$TMP/elsewhere/watchers"
 MAIL_DIR="$TMP/elsewhere/mail"
 mkdir -p "$MAIL_DIR/concierge/new" "$MAIL_DIR/concierge/cur" "$MAIL_DIR/concierge/tmp"
-CONF="$TMP/spira.conf"
-cat > "$CONF" <<EOF
-SPIRA_ID_PREFIX = sp
 # THE FIXTURE DECLARES ITSELF IN FORCE. The hook refuses to print from a harness that is not
 # the one systemd runs, so a clone that left SPIRA_PROD at its derived default would be silent
 # here and every assertion below would pass on an empty string.
-SPIRA_PROD = $CLONE/spira
-SPIRA_RUN = $RUN
-SPIRA_WATCHERS = $MANIFEST
-SPIRA_CLIENT_SETTINGS = $TMP/elsewhere/settings.json
-SPIRA_MAIL = $MAIL_DIR
-SPIRA_MAIL_SESSION_MAILBOX = concierge
-EOF
+#
+# conf.sh no longer reads a legacy spira.conf at all (per Ryan 2026-10-05, the
+# one-source-of-config law — "no legacy spira.conf, no conversion"), so these are declared
+# through tl_config/SPIRA_TOML instead of a hand-written $TMP/spira.conf.
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's own
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — the hook (and mail, underneath it)
+# reads/appends it directly, and that path does not exist here (sfail round 3, pattern 7).
+tl_config SPIRA_ID_PREFIX=sp SPIRA_PROD="$CLONE/spira" SPIRA_RUN="$RUN" \
+    SPIRA_WATCHERS="$MANIFEST" SPIRA_CLIENT_SETTINGS="$TMP/elsewhere/settings.json" \
+    SPIRA_MAIL="$MAIL_DIR" SPIRA_MAIL_INDEX="$MAIL_DIR/index" SPIRA_MAIL_SESSION_MAILBOX=concierge \
+    SPIRA_CONCIERGE_INBOX="$RUN/watchd/concierge-inbox.log"
 
 cat > "$MANIFEST" <<'EOF'
 answers|daemon|/bin/sleep 3600
@@ -116,10 +117,32 @@ PY
 
 # hook <event> <source> [env...] — run the hook exactly as the client does: the payload on
 # stdin, in a minimal environment that cannot reach the operator's configuration.
+#
+# A registered key passed in [env...] (SPIRA_WATCHERS, SPIRA_RUN, SPIRA_VIEW) is declared
+# through tl_config instead — session.sh's conf.sh resolves these from SPIRA_TOML only, never
+# from this process's environment — and dropped from what is forwarded to env -i; everything
+# else (SPIRA_AEON, SPIRA_CONCIERGE, a PATH override) is forwarded exactly as before.
 hook() {
     local ev="$1" src="$2"; shift 2
+    local extra=() _a
+    for _a in "$@"; do
+        case "$_a" in
+            SPIRA_WATCHERS=*|SPIRA_RUN=*|SPIRA_VIEW=*) tl_config "$_a" ;;
+            *) extra+=("$_a") ;;
+        esac
+    done
+    # SPIRA_RELEASE (not SPIRA_HOME) is what the real registered hook command sets
+    # (release/src/session_hook.rs's hook_command: "env SPIRA_RELEASE=<releases>/current ...
+    # <releases>/current/spira/hooks/session.sh") — session.sh can source conf.sh via its own
+    # BASH_SOURCE, but the compiled `watchd` binary it shells out to has no such trick and
+    # needs SPIRA_HOME/SPIRA_RELEASE in its own environment (locate_home: "named, never
+    # searched for"). Without it every watchd call here refused "neither SPIRA_HOME nor
+    # SPIRA_RELEASE is set", which the hook swallows into a generic "status unavailable" line.
     printf '{"hook_event_name":"%s","source":"%s"}' "$ev" "$src" \
-      | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 "$@" \
+      | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
+        SPIRA_RELEASE="$CLONE" \
+        "${extra[@]+"${extra[@]}"}" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 
@@ -186,7 +209,8 @@ is "and prints nothing at all" "" "$out3"
 echo
 echo "it never breaks a session start"
 run_raw() {                        # run_raw <stdin> — the hook with an arbitrary payload
-    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 \
+    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_CONFIG_WRITE=1 \
         bash "$CLONE/spira/hooks/session.sh"
 }
 out4="$(run_raw 'not json at all')"; is "malformed stdin still exits clean" "0" "$?"
@@ -288,6 +312,14 @@ ohook() { hook SessionStart startup SPIRA_RUN="$ORUN" SPIRA_WATCHERS="$OMANIFEST
 oout="$(ohook SPIRA_VIEW=/bin/true)"
 has "a configured optional row is a watcher like any other" "$oout" "view"
 
+# Reset SPIRA_VIEW back to "not configured" — tl_config persists, unlike the old per-call
+# env prefix, so the positive control's /bin/true above would otherwise leak into this
+# negative control. "Not configured" means truly EMPTY (watchd/src/manifest.rs's optional-row
+# rule: an empty key makes the row Kind::Off, never checked for DEGRADED; a non-empty value,
+# even a nonexistent path, is "configured but broken" and DOES show DEGRADED). The complete
+# fixture's own declared default is a non-empty nonexistent path — exactly that "configured
+# but broken" case, not "unconfigured" — so it must be overridden to "" here, not to a path.
+tl_config SPIRA_VIEW=""
 offout="$(ohook)"
 has  "an unconfigured one is still named in the table"  "$offout" "view"
 hasnt "no Monitor latch is emitted for it"              "$offout" "tail view"
@@ -380,7 +412,8 @@ hasnt "a non-concierge session gets no arm instruction" "$nout" "MANDATORY FIRST
 
 cout="$(hook SessionStart startup SPIRA_CONCIERGE=1)"
 has "the concierge session gets the arm instruction"    "$cout" "MANDATORY FIRST ACTION"
-has "naming inbox-triage as the Monitor to arm"          "$cout" "inbox-triage"
+has "naming watchd next as the background job to run"    "$cout" "next concierge-inbox"
+hasnt "and not a Monitor to arm"                         "$cout" "Monitor command="
 has "naming the durable inbox path"                      "$cout" "$RUN/watchd/concierge-inbox.log"
 has "it still gets the ordinary watcher table too"       "$cout" "## Spira watchers"
 

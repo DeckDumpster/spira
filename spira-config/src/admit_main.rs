@@ -16,13 +16,16 @@ fn var(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.trim().is_empty())
 }
 
-/// `$SPIRA_RUN`, else spira.toml's `run`.
+/// `spira.run`, resolved through config; a resolution failure is named, not read as unset.
 fn run_dir() -> Option<PathBuf> {
-    var("SPIRA_RUN").map(PathBuf::from).or_else(|| {
-        let p = spira_config::discover(None)?;
-        let doc = spira_config::load(&p).ok()?;
-        spira_config::get_path(&doc, "spira.run").filter(|r| !r.is_empty()).map(PathBuf::from)
-    })
+    match spira_config::process::cfg("SPIRA_RUN") {
+        Ok(r) if !r.is_empty() => Some(PathBuf::from(r)),
+        Ok(_) => None,
+        Err(e) => {
+            say(&e);
+            None
+        }
+    }
 }
 
 fn who() -> String {
@@ -87,6 +90,7 @@ fn wrapper(args: Vec<OsString>) -> ExitCode {
         Some(inner) => (OsString::from(inner), &args[..]),
         None => (args[0].clone(), &args[1..]),
     };
+    // batch-job: child is spawned or exec-replaced, not awaited under a deadline
     let e = Command::new(&prog).args(argv).exec();
     say(&format!("cannot exec {}: {e}", prog.to_string_lossy()));
     ExitCode::from(127)
@@ -203,6 +207,7 @@ fn run(args: &[OsString]) -> ExitCode {
     let inherit = var(admission::INHERIT_ENV);
     let q = admission::Request { run: &run, pool, holder_pid: std::process::id(), who: &who, inherit: inherit.as_deref(), weight };
     let g = admission::acquire_real(&q, &mut |l: &str| say(l));
+    // batch-job: the admitted command is whatever the caller asked to run under admission
     let status = Command::new(prog).args(&cmd[1..]).env(admission::INHERIT_ENV, &g.token).status();
     drop(g);
     match status {

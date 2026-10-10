@@ -26,16 +26,13 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF=""
-# NEITHER THE LEGACY .conf NOR A REAL spira.toml MAY BE READ. SPIRA_CONF="" blocks the
-# first; SPIRA_TOML pinned to a file that does not exist blocks spira_toml_file's own
-# fallback search, which would otherwise reach the operator's real
-# ~/.config/spira/spira.toml on this very box — exactly the leak the "environment wins"
-# rule does not protect against for a key this suite deliberately leaves UNSET to observe
-# the code default.
-export SPIRA_TOML="$TMP/elsewhere/no.toml"
-export SPIRA_RUN="$TMP/elsewhere/run"
-export SPIRA_CONCIERGE_INBOX="$TMP/elsewhere/inbox.log"
-export SPIRA_CONCIERGE_INBOX_DEDUP=2
+# THE LEGACY .conf MAY NOT BE READ (SPIRA_CONF="" blocks it). Registered config now comes
+# only from SPIRA_TOML — testlib.sh's complete fixture plus this suite's own override file,
+# declared below via tl_config — so there is no env fallback left that could leak the
+# operator's real ~/.config/spira/spira.toml.
+SPIRA_CONCIERGE_INBOX="$TMP/elsewhere/inbox.log"
+tl_config SPIRA_RUN="$TMP/elsewhere/run" SPIRA_CONCIERGE_INBOX="$SPIRA_CONCIERGE_INBOX" \
+    SPIRA_CONCIERGE_INBOX_DEDUP=2
 
 echo "inbox-append.sh — one line per call, at the configured (non-default) path"
 is "the inbox does not exist yet" "0" "$([ -f "$SPIRA_CONCIERGE_INBOX" ] && echo 1 || echo 0)"
@@ -49,11 +46,13 @@ n="$(wc -l < "$SPIRA_CONCIERGE_INBOX")"
 is  "a second call appends, never truncates" "2" "$n"
 
 echo
-echo "SPIRA_MAIL_READERS defaults the concierge reader to the inbox (deliverable 4)"
-default_readers="$(env -u SPIRA_MAIL_READERS bash -c '. "'"$HERE"'/conf.sh"; printf %s "$SPIRA_MAIL_READERS"')"
-is   "the default names the concierge mailbox" "concierge=inbox-append.sh" "$default_readers"
-# POSITIVE CONTROL: an operator override still wins — the default only fills what is unset.
-overridden="$(SPIRA_MAIL_READERS="concierge=echo wake" bash -c '. "'"$HERE"'/conf.sh"; printf %s "$SPIRA_MAIL_READERS"')"
+echo "SPIRA_MAIL_READERS: an explicit override still wins over the fixture default"
+# DELETED: the "nothing set -> code default" case. Under the one-source-of-config law
+# there is no env-read default left to observe (SPIRA_MAIL_READERS, like every registered
+# key, now resolves from SPIRA_TOML alone); the complete fixture supplies its own baseline
+# value, so "env -u SPIRA_MAIL_READERS" no longer exercises a fallback path at all.
+tl_config SPIRA_MAIL_READERS="concierge=echo wake"
+overridden="$(bash -c '. "'"$HERE"'/conf.sh"; printf %s "$SPIRA_MAIL_READERS"')"
 is   "an explicit SPIRA_MAIL_READERS is never overwritten" "concierge=echo wake" "$overridden"
 
 echo
@@ -61,7 +60,11 @@ echo "the inbox-keeper watchd row — a harness watchd row, not an operator over
 want "spira/watchers carries an inbox-keeper daemon row" \
     "inbox-keeper|daemon|inbox-keeper.sh" "$(cat "$HERE/watchers")"
 MAN="$TMP/elsewhere/manifest-check"
-SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere/no-overlay" watchd manifest \
+# SPIRA_WATCHERS is registered too and resolves from the complete fixture's own bogus
+# default when undeclared (sfail round 3, pattern 7) — watchd never derives it from
+# SPIRA_HOME any more.
+tl_config SPIRA_WATCHERS="$HERE/watchers" SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere/no-overlay"
+watchd manifest \
     > "$MAN" 2>"$TMP/elsewhere/manifest.err"; rc=$?
 is   "the shipped manifest, alone, still parses" "0" "$rc"
 want "and names inbox-keeper as a daemon row" "inbox-keeper|daemon" "$(cat "$MAN")"

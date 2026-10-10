@@ -56,10 +56,12 @@ pub trait Bd {
 
 /// A bead as the lifecycle machine holds it: its state and the commit that state names (the
 /// delivery's merge sha once landed, else the bead's tip).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LcBead {
     pub state: String,
     pub sha: String,
+    /// The row's `reason`: a SUPERSEDED row's successor id, a DROPPED row's drop reason.
+    pub reason: String,
 }
 
 /// The lifecycle machine (`spira-lc show`), the one source of bead state.

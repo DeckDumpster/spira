@@ -3,7 +3,7 @@
 //! stdout/stderr/exit code. Replaces spira/mail.sh (sp-ooh1k).
 //!
 //!   mail send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
-//!                       [--default D] [--class permissions|policy|destructive] [--bead ID] [--digest] < body
+//!                       [--default D] [--class permissions|policy|destructive] [--bead ID] [--digest] [--dry-run] < body
 //!   mail template <kind>
 //!   mail list <mailbox> [--unread]
 //!   mail read <mailbox> [<message>]
@@ -67,6 +67,7 @@ fn run_send(args: &[String]) -> ExitCode {
     let mut bead = String::new();
     let mut urgent = false;
     let mut digest = false;
+    let mut dry_run = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -103,6 +104,10 @@ fn run_send(args: &[String]) -> ExitCode {
                 digest = true;
                 i += 1;
             }
+            "--dry-run" => {
+                dry_run = true;
+                i += 1;
+            }
             other => {
                 eprintln!("mail send: unknown option: {other}");
                 return ExitCode::FAILURE;
@@ -110,7 +115,10 @@ fn run_send(args: &[String]) -> ExitCode {
         }
     }
 
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     if let Err(e) = mail::maildir::mailbox_valid(&mailbox) {
         return fail(format!("send: {e}"));
     }
@@ -122,16 +130,26 @@ fn run_send(args: &[String]) -> ExitCode {
     };
 
     let bd = bd_cli(&env);
-    let send_args = SendArgs { mailbox: &mailbox, from: from.as_deref(), subject: &subject, kind: &kind, default: &default, class: &class, bead: &bead, urgent, digest };
+    let send_args = SendArgs { mailbox: &mailbox, from: from.as_deref(), subject: &subject, kind: &kind, default: &default, class: &class, bead: &bead, urgent, digest, dry_run };
     match cmds::send(&bd, &env, &send_args, body) {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(out) => {
+            if dry_run {
+                for step in &out.steps {
+                    println!("mail send --dry-run: {step}");
+                }
+            }
+            ExitCode::SUCCESS
+        }
         Err(e) => fail(format!("send: {e}")),
     }
 }
 
 fn run_template(args: &[String]) -> ExitCode {
     let kind = args.first().cloned().unwrap_or_default();
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     match cmds::template(&env.kinds_dir, &kind) {
         Ok(t) => {
             println!("{t}");
@@ -144,7 +162,10 @@ fn run_template(args: &[String]) -> ExitCode {
 fn run_list(args: &[String]) -> ExitCode {
     let mailbox = args.first().cloned().unwrap_or_default();
     let unread_only = args.get(1).map(String::as_str) == Some("--unread");
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     match cmds::list(&env, &mailbox, unread_only) {
         Ok(out) => {
             if !out.is_empty() {
@@ -159,7 +180,10 @@ fn run_list(args: &[String]) -> ExitCode {
 fn run_read(args: &[String]) -> ExitCode {
     let mailbox = args.first().cloned().unwrap_or_default();
     let msg = args.get(1).map(String::as_str);
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     match cmds::read_cmd(&env, &mailbox, msg) {
         Ok(content) => {
             print!("{content}");
@@ -172,7 +196,10 @@ fn run_read(args: &[String]) -> ExitCode {
 
 fn run_count(args: &[String]) -> ExitCode {
     let mailbox = args.first().cloned().unwrap_or_default();
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     match cmds::count(&env, &mailbox) {
         Ok(n) => {
             println!("{n}");
@@ -184,7 +211,10 @@ fn run_count(args: &[String]) -> ExitCode {
 
 fn run_unread_age(args: &[String]) -> ExitCode {
     let mailbox = args.first().cloned().unwrap_or_default();
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     match cmds::unread_age(&env, &mailbox) {
         Ok(Some(secs)) => {
             println!("{secs}");
@@ -199,7 +229,10 @@ fn run_done(args: &[String]) -> ExitCode {
     let mailbox = args.first().cloned().unwrap_or_default();
     let msgid = args.get(1).cloned().unwrap_or_default();
     let note = if args.len() > 2 { Some(args[2..].join(" ")) } else { None };
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     match cmds::done(&env, &mailbox, &msgid, note.as_deref()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => fail(format!("done: {e}")),
@@ -211,12 +244,24 @@ fn run_sendmail(_args: &[String]) -> ExitCode {
     if io::stdin().read_to_string(&mut raw).is_err() {
         return fail("sendmail: could not read stdin");
     }
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     let bd = bd_cli(&env);
     let db_configured = !env.db.is_empty();
+    let spool = sendmail::spool_message(&env.run_dir, &raw);
     match sendmail::sendmail(&bd, &LcCli, db_configured, &env.home, &env.mail_root, env.mute, &raw) {
-        Ok(_) => ExitCode::SUCCESS,
-        Err(e) => fail(format!("sendmail: {e}")),
+        Ok(_) => {
+            if let Some(p) = spool {
+                let _ = std::fs::remove_file(p);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            let kept = spool.map(|p| format!(" (message kept at {})", p.display())).unwrap_or_default();
+            fail(format!("sendmail: {e}{kept}"))
+        }
     }
 }
 
@@ -232,7 +277,10 @@ fn run_tidy(args: &[String]) -> ExitCode {
             }
         }
     }
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     if let Err(e) = mail::maildir::mailbox_valid(&mailbox) {
         return fail(format!("tidy: {e}"));
     }
@@ -252,7 +300,10 @@ fn run_tidy(args: &[String]) -> ExitCode {
 
 fn run_ensure(args: &[String]) -> ExitCode {
     let mailbox = args.first().cloned().unwrap_or_default();
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     if let Err(e) = mail::maildir::mailbox_valid(&mailbox) {
         eprintln!("mail ensure: {e}");
         return ExitCode::from(2);
@@ -265,7 +316,10 @@ fn run_ensure(args: &[String]) -> ExitCode {
 
 fn run_sweep_dismissed(args: &[String]) -> ExitCode {
     let mailbox = args.first().cloned().unwrap_or_else(|| "operator".to_string());
-    let env = Env::load();
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
     if let Err(e) = mail::maildir::mailbox_valid(&mailbox) {
         return fail(format!("sweep-dismissed: {e}"));
     }

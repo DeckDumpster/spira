@@ -33,13 +33,20 @@ testdb_require test-verdict-flow
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up verdict-flow || { echo "test-verdict-flow: could not build fixture database"; exit 1; }
+# A close goes through spira-lc (sp-3fue0j); this fixture has no lifecycle store, so it closes the store.
+lc_close_stub "$TMP/lc" "$SPIRA_BD" "$SPIRA_DB"
 
-export SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=""
-export SPIRA_ID_PREFIX="sp"
 export SPIRA_HOME="$TMP/home"
-export SPIRA_RUN="$TMP/run"
+SPIRA_RUN="$TMP/run"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
+# SPIRA_CONCIERGE_INBOX EXPLICITLY: mail_readers still names inbox-append.sh for the
+# concierge mailbox (SPIRA_MAIL_READERS="" does not appear to suppress it), and that script
+# resolves SPIRA_CONCIERGE_INBOX from config — the complete fixture's own value is a fixed,
+# unwritable "/fixture/userhome/..." path now, not derived from whatever SPIRA_RUN we declare.
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="sp" SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL_MUTE=0 \
+    SPIRA_MAIL_READERS="" SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"
 # sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
 # resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
 # registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before
@@ -49,6 +56,7 @@ ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 run() { mail "$@"; }
 
 bead_status() {
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -58,6 +66,7 @@ print(d[0].get("status") or "")' 2>/dev/null
 }
 
 bead_close_reason() {
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -67,6 +76,7 @@ print(d[0].get("close_reason") or "")' 2>/dev/null
 }
 
 bead_open_deps() {   # count open BLOCKING deps only; relates-to links are not blockers
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -77,6 +87,7 @@ print(len([x for x in deps if x.get("status") != "closed" and x.get("dependency_
 }
 
 bead_relates_count() {   # count relates-to deps in either direction — direction is not the point
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -87,6 +98,7 @@ print(len([x for x in deps if x.get("dependency_type") == "relates-to"]))' 2>/de
 }
 
 bead_notes() {
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -124,11 +136,11 @@ xbead_of() {   # xbead_of <mailbox> -> X-Spira-Bead of the newest message
 # command substitution runs in a subshell and any variable this set would be lost on return.
 send_question() {
     local mailbox="$1" work_bead="${2:-}"
-    local args=(send "$mailbox" --from "Builder <builder@spira>" --subject "Should I proceed with option A?" \
-        --kind question --default "proceed with option A")
+    local args=(send "$mailbox" --from "Builder <builder@spira>" --subject "Should I proceed with option A? [${work_bead:-none} ${3:-}]" \
+        --kind question --class policy --default "proceed with option A")
     [ -n "$work_bead" ] && args+=(--bead "$work_bead")
     if [ "${3:-}" = "allow-blocking" ]; then
-        SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_ALLOW_BLOCKING=1 \
+        SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" SPIRA_MAIL_ALLOW_BLOCKING=1 \
             run "${args[@]}" <<'BODY' >/dev/null 2>"$TMP/send.err"
 ## Question
 
@@ -137,9 +149,13 @@ Should I proceed with option A or wait?
 ## Default
 
 proceed with option A
+
+## Class basis
+
+needs a policy ruling
 BODY
     else
-        SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" run "${args[@]}" \
+        SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" run "${args[@]}" \
             <<'BODY' >/dev/null 2>"$TMP/send.err"
 ## Question
 
@@ -148,6 +164,10 @@ Should I proceed with option A or wait?
 ## Default
 
 proceed with option A
+
+## Class basis
+
+needs a policy ruling
 BODY
     fi
 }
@@ -256,7 +276,7 @@ echo "UC-15: a reply to a bare tracking bead (no kind) closes that bead directly
 BEAD_T="sp-vf-track"
 seed_bead "$BEAD_T"
 is "SEEN RED: tracking bead is open before sendmail" "open" "$(bead_status "$BEAD_T")"
-SPIRA_MAIL_LINT_CONSIDERED="test" run send operator --from "Gate <gate@spira>" \
+SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" run send operator --from "Gate <gate@spira>" \
     --subject "Test message" --bead "$BEAD_T" <<< "body" >/dev/null 2>&1
 MSGID_T="$(msgid_of operator)"
 compose_reply "$MSGID_T" "All looks good." "Re: Test message" | run sendmail >/dev/null 2>&1; rc=$?
@@ -290,9 +310,9 @@ echo "UC-16: accept-default closes the decision bead with the message's default"
 
 BEAD_ACC="sp-vf-accept"
 seed_bead "$BEAD_ACC"
-SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" \
     run send operator --from "Gate <gate@spira>" --subject "Accept test" \
-    --kind decision --default "take the accept-test default" --bead "$BEAD_ACC" <<< "body" >/dev/null 2>&1
+    --kind decision --class policy --default "take the accept-test default" --bead "$BEAD_ACC" <<< "$(printf 'body\n\n## Class basis\nneeds a policy ruling\n')" >/dev/null 2>&1
 accept_msg_name="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
 accept_msg="${accept_msg_name:+$SPIRA_MAIL/operator/new/$accept_msg_name}"
 [ -n "$accept_msg" ] && [ -f "$accept_msg" ] || { echo "test-verdict-flow: could not send accept test message"; exit 1; }
@@ -301,8 +321,8 @@ dec_bead_accept="$(awk '/^[[:space:]]*$/ { exit }
 ' "$accept_msg")"
 is "SEEN RED: decision bead is open before accept-default" "open" "$(bead_status "${dec_bead_accept:-none}")"
 
-printf 'SPIRA_MAIL_UNREAD_AGE = 4242\n' > "$TMP/accept.conf"
-accept_out="$(SPIRA_CONF="$TMP/accept.conf" bash "$HERE/../aerc/accept-default.sh" < "$accept_msg" 2>&1)"; rc=$?
+tl_config SPIRA_MAIL_UNREAD_AGE=4242
+accept_out="$(bash "$HERE/../aerc/accept-default.sh" < "$accept_msg" 2>&1)"; rc=$?
 isz "accept-default exits 0 with a config file present" "$rc"
 [ "$rc" = 0 ] || printf '    %s\n' "$accept_out"
 is "accept-default closes the decision bead (not the work bead)" "closed" "$(bead_status "${dec_bead_accept:-none}")"
@@ -324,7 +344,7 @@ echo "UC-18: one real close — uphold closes the suit bead with reason 'upheld'
 
 SUIT1="sp-vf-suit1"
 seed_bead "$SUIT1"
-SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" \
     run send operator --from "Gate <gate@spira>" --subject "Suit test" --bead "$SUIT1" --kind suit <<< "body" >/dev/null 2>&1
 MSGID_S1="$(msgid_of operator)"
 is "SEEN RED: suit bead is open before reply" "open" "$(bead_status "$SUIT1")"

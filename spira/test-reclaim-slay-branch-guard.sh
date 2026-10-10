@@ -56,7 +56,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 lc_socket_mirror "$TMP/lcsock"
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
+SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_REPO="$REPO"
 # THE HOME IS NAMED, NEVER INFERRED. slay and `sending destroy-branch` find lib.sh through
 # $SPIRA_HOME, else by walking up from their own canonical exe path. conf.sh sets SPIRA_HOME
@@ -67,7 +67,7 @@ export SPIRA_REPO="$REPO"
 # every tree, base included. test-sending.sh names SPIRA_HOME="$HERE" the same way.
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$TMP/no-such-conf"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 export SPIRA_REAPLOG="$SPIRA_RUN/reap.log"
 printf '# fixture\n' > "$TMP/repo-map"
 
@@ -75,8 +75,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 
 # shellcheck disable=SC1090
@@ -125,8 +125,8 @@ land() {
     local id="$1" br="spira/$1"
     git -C "$REPO" merge -q --squash "$br" >/dev/null 2>&1
     git -C "$REPO" commit -q -m "squash-land sp-$id"
-    git -C "$REPO" push -q origin main
-    git -C "$REPO" fetch -q origin
+    timeout 5 git -C "$REPO" push -q origin main
+    timeout 5 git -C "$REPO" fetch -q origin
 }
 
 teardown() {

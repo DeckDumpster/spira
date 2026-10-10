@@ -415,6 +415,15 @@ does not rebase cleanly is reopened by the harness, which costs a whole second s
     )
 }
 
+/// The bead's last fast-tier red, as the first section of the brief; empty when there is none.
+pub fn fast_tier_red_brief(digest: &str) -> String {
+    let d = digest.trim();
+    if d.is_empty() {
+        return String::new();
+    }
+    format!("## Your last closeout failed — fix this first\n\n{d}\n\nReproduce with `cargo check` before you submit.\n\n")
+}
+
 pub fn thrash_banner(streak: &str, last: &str) -> String {
     let last = if last.is_empty() { "?" } else { last };
     format!(

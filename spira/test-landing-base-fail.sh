@@ -8,7 +8,7 @@
 # Extracted from test-landing.sh to reduce the critical-path suite time.
 #
 # tier: T2
-# covers: landing-pass/* spira/lib.sh spira/incident.sh incident/*
+# covers: landing-pass/* spira/lib.sh spira/incident.sh incident/* UC-landing-merge-queue-10
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -32,8 +32,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 lc_path_stub "$SH" "$TMP/lcfix"
 
@@ -67,6 +67,7 @@ if [ -s "$c" ]; then
     while read -r id pid; do
         [ -n "$id" ] || continue
         printf "%s\\n" "$pid" > "$SPIRA_RUN/aeon-builder-$id.pid"
+        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-builder-$id.lease"
     done < "$c"
     : > "$c"
 fi
@@ -78,18 +79,19 @@ cat > "$SH/repo-map" <<MAP
 $REPONAME | $REPO | push | |
 MAP
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
 notes_of() { B show "$1" 2>/dev/null; }
 
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
+    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
 landing() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
         PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
@@ -144,7 +146,7 @@ echo "gate: VERDICT=BASE_FAIL reason=base-red branch=$1 repo=${2:-?} suite='"$BA
 exit 76'
 
 incidents() {
-    B list --status open,in_progress --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:$REPONAME" --json 2>/dev/null \
+    B list --status open,in_progress --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}repo:$REPONAME" --json 2>/dev/null \
       | python3 -c '
 import json, sys
 try: d = json.load(sys.stdin)
@@ -179,7 +181,7 @@ if [ -n "$inc_id" ]; then
     want "and says no bead was reopened or charged"    "no attempt charged" "$shown"
     want "and carries the gate's own output"           "this branch did not cause it" "$shown"
     labels="$(B label list "$inc_id" 2>&1)"
-    want "it lands in the builders partition"          "plan" "$labels"
+    nowant "it is not offered as builder work (no plan label)" "plan" "$labels"
     want "labelled with the repository"                "repo:$REPONAME" "$labels"
 fi
 

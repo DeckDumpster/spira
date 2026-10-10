@@ -108,25 +108,14 @@ pub fn lane_check(
 // ---------------------------------------------------------------------------------------
 
 /// The `-l` label list for a `work`-kind filing: the persona's own `FAYTH_LABELS`, plus
-/// `repo:<repo>`, plus the express label when asked.
-pub fn work_labels(fayth_labels: &str, repo: &str, express_label: &str, express: bool) -> String {
-    let mut out = format!("{fayth_labels},repo:{repo}");
-    if express {
-        out.push(',');
-        out.push_str(express_label);
-    }
-    out
+/// `repo:<repo>`. Express is lifecycle state, never a label.
+pub fn work_labels(fayth_labels: &str, repo: &str) -> String {
+    format!("{fayth_labels},repo:{repo}")
 }
 
 /// The `-l` label list for a non-`work` kind: the scope label, `insight` for the `insight`
-/// kind, `repo:<repo>` when a repo was given, and the express label when asked.
-pub fn non_work_labels(
-    scope_label: &str,
-    insight_label: Option<&str>,
-    repo: Option<&str>,
-    express_label: &str,
-    express: bool,
-) -> String {
+/// kind, and `repo:<repo>` when a repo was given.
+pub fn non_work_labels(scope_label: &str, insight_label: Option<&str>, repo: Option<&str>) -> String {
     let mut out = scope_label.to_string();
     if let Some(ins) = insight_label {
         out.push(',');
@@ -135,10 +124,6 @@ pub fn non_work_labels(
     if let Some(r) = repo {
         out.push_str(",repo:");
         out.push_str(r);
-    }
-    if express {
-        out.push(',');
-        out.push_str(express_label);
     }
     out
 }
@@ -287,6 +272,32 @@ pub fn parse_show_row(json: &str) -> Option<ShowRow> {
     })
 }
 
+/// The `priority` field of one `bd show --json` payload (object or one-element array).
+pub fn parse_priority(json: &str) -> Option<i64> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let obj = match &v {
+        serde_json::Value::Array(a) => a.first()?,
+        other => other,
+    };
+    obj.get("priority").and_then(|p| p.as_i64())
+}
+
+/// A priority argument: 0..=4, optionally written `P1`.
+pub fn parse_priority_arg(arg: &str) -> Option<i64> {
+    let n: i64 = arg.strip_prefix('P').unwrap_or(arg).parse().ok()?;
+    (0..=4).contains(&n).then_some(n)
+}
+
+/// The note recorded on a bead whose priority was changed through `amend`.
+pub fn priority_note(actor: &str, old: Option<i64>, new: i64, reason: Option<&str>) -> String {
+    let old = old.map_or("unknown".to_string(), |o| format!("P{o}"));
+    let mut note = format!("Priority changed P{new} (was {old}) by {actor}.");
+    if let Some(r) = reason {
+        note.push_str(&format!(" Reason: {r}"));
+    }
+    note
+}
+
 /// Parses one `bd dep list <id> --type blocks --json` payload into the list of
 /// `depends_on_id`s, reading whichever key the store actually used (`depends_on_id` for a
 /// batch shape, `id` for a single-id shape — `_bead_lint`'s own comment on why both exist).
@@ -308,6 +319,21 @@ pub fn parse_blocks_targets(json: &str) -> Vec<String> {
         })
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+/// The id `bd create` printed: bare under `--silent`, or the `id` of the object (or
+/// one-element array) under `--json`.
+pub fn parse_created_id(out: &str) -> Option<String> {
+    let out = out.trim();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(out) {
+        let obj = match &v {
+            serde_json::Value::Array(a) => a.first()?,
+            other => other,
+        };
+        return obj.get("id").and_then(|x| x.as_str()).map(str::to_string);
+    }
+    let last = out.lines().last()?.trim();
+    (!last.is_empty() && !last.contains(char::is_whitespace)).then(|| last.to_string())
 }
 
 /// The `branch:` label a bead carries, if any (first one found, matching the bash's
@@ -340,6 +366,14 @@ pub fn is_blocks_type(dep_type: Option<&str>) -> bool {
 pub fn incident_blocks_refusal(id: &str, depid: &str, incident_label: &str) -> String {
     format!(
         "bead: dep add: refusing — {depid} carries the {incident_label} label and can never finish (an alarm re-arms on every recurrence); a blocks edge onto it has no completion path. Use: bd dep relate {id} {depid}"
+    )
+}
+
+/// The refusal for a `blocks` edge onto an epic: an epic closes only when its children
+/// close, so the child could never become ready.
+pub fn epic_blocks_refusal(id: &str, depid: &str) -> String {
+    format!(
+        "bead: dep add: refusing — {depid} is an epic, which closes only when its children close; a blocks edge onto it deadlocks {id}. Use: bead.sh dep add {id} {depid} --type parent-child"
     )
 }
 
@@ -488,34 +522,27 @@ mod tests {
     // -- label composition ----------------------------------------------------------------
 
     #[test]
-    fn work_labels_appends_repo_and_express() {
-        assert_eq!(
-            work_labels("testscope,plan", "testrepo", "express", false),
-            "testscope,plan,repo:testrepo"
-        );
-        assert_eq!(
-            work_labels("testscope,plan", "testrepo", "express", true),
-            "testscope,plan,repo:testrepo,express"
-        );
+    fn work_labels_appends_repo_and_never_express() {
+        assert_eq!(work_labels("testscope,plan", "testrepo"), "testscope,plan,repo:testrepo");
     }
 
     #[test]
     fn non_work_labels_event_has_no_partition() {
-        let got = non_work_labels("testscope", None, None, "express", false);
+        let got = non_work_labels("testscope", None, None);
         assert_eq!(got, "testscope");
         assert!(!got.contains("plan"));
     }
 
     #[test]
     fn non_work_labels_insight_carries_its_label() {
-        let got = non_work_labels("testscope", Some("insight"), None, "express", false);
+        let got = non_work_labels("testscope", Some("insight"), None);
         assert_eq!(got, "testscope,insight");
     }
 
     #[test]
-    fn non_work_labels_repo_and_express() {
-        let got = non_work_labels("testscope", None, Some("testrepo"), "express", true);
-        assert_eq!(got, "testscope,repo:testrepo,express");
+    fn non_work_labels_carry_the_repo() {
+        let got = non_work_labels("testscope", None, Some("testrepo"));
+        assert_eq!(got, "testscope,repo:testrepo");
     }
 
     // -- lint judge -------------------------------------------------------------------------
@@ -608,6 +635,22 @@ mod tests {
     }
 
     #[test]
+    fn priority_helpers() {
+        assert_eq!(parse_priority(r#"[{"priority":2}]"#), Some(2));
+        assert_eq!(parse_priority(r#"{"priority":0}"#), Some(0));
+        assert_eq!(parse_priority("{}"), None);
+        assert_eq!(parse_priority_arg("P1"), Some(1));
+        assert_eq!(parse_priority_arg("4"), Some(4));
+        assert_eq!(parse_priority_arg("5"), None);
+        assert_eq!(parse_priority_arg("high"), None);
+        assert_eq!(
+            priority_note("ryan", Some(2), 1, Some("blocks the round")),
+            "Priority changed P1 (was P2) by ryan. Reason: blocks the round"
+        );
+        assert_eq!(priority_note("ryan", None, 1, None), "Priority changed P1 (was unknown) by ryan.");
+    }
+
+    #[test]
     fn parse_show_row_none_on_garbage() {
         assert!(parse_show_row("not json").is_none());
     }
@@ -619,6 +662,15 @@ mod tests {
             parse_blocks_targets(json),
             vec!["sp-a".to_string(), "sp-b".to_string()]
         );
+    }
+
+    #[test]
+    fn parse_created_id_reads_silent_and_json_shapes() {
+        assert_eq!(parse_created_id("sp-abc1\n").as_deref(), Some("sp-abc1"));
+        assert_eq!(parse_created_id("{\"id\":\"sp-x\"}").as_deref(), Some("sp-x"));
+        assert_eq!(parse_created_id("[{\"id\":\"sp-y\"}]").as_deref(), Some("sp-y"));
+        assert_eq!(parse_created_id("created a thing"), None);
+        assert_eq!(parse_created_id(""), None);
     }
 
     #[test]
@@ -656,6 +708,13 @@ mod tests {
         assert!(is_blocks_type(Some("blocked-by")));
         assert!(is_blocks_type(Some("depends-on")));
         assert!(!is_blocks_type(Some("relates-to")));
+    }
+
+    #[test]
+    fn epic_blocks_refusal_names_parent_child() {
+        let msg = epic_blocks_refusal("sp-a", "sp-e");
+        assert!(msg.contains("--type parent-child"));
+        assert!(msg.contains("sp-e"));
     }
 
     #[test]

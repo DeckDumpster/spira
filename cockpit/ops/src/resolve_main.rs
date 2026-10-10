@@ -11,58 +11,52 @@ use cockpit_ops::resolve::{run, usage_error, BdResult, Closer, Outcome, USAGE};
 struct RealBd;
 
 impl Closer for RealBd {
-    fn close(&self, db: &Path, id: &str, reason: &str) -> BdResult {
-        let bd = db::bd_bin();
-        let out = Command::new(&bd)
-            .arg("-C")
-            .arg(db)
-            .args(["close", id, "--force", "--reason", reason])
-            .env("BEADS_ACTOR", "claude")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output();
-        match out {
-            Ok(o) => {
-                // Concatenated, not byte-interleaved — see ../DESIGN.md Decisions.
-                let mut combined = String::from_utf8_lossy(&o.stdout).into_owned();
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                if !stderr.is_empty() {
-                    if !combined.is_empty() && !combined.ends_with('\n') {
-                        combined.push('\n');
-                    }
-                    combined.push_str(&stderr);
-                }
-                BdResult {
-                    success: o.status.success(),
-                    combined,
-                }
-            }
-            Err(e) => BdResult {
-                success: false,
-                combined: format!("failed to run {bd}: {e}"),
-            },
+    // Through the lifecycle machine (sp-3fue0j): the row's end is recorded, then the store
+    // closed — a raw `bd close` here left resolved beads READY on their rows. `db` is the
+    // store spira-lc itself resolves from config.
+    fn close(&self, _db: &Path, id: &str, reason: &str) -> BdResult {
+        match spira_config::lifecycle_row::close(id, reason, "claude", None) {
+            Ok(()) => BdResult { success: true, combined: String::new() },
+            Err(e) => BdResult { success: false, combined: e },
         }
     }
 
-    fn show_json(&self, db: &Path, id: &str) -> String {
+    fn show_json(&self, _db: &Path, id: &str) -> String {
         Command::new("timeout")
             .arg("5")
-            .arg(db::bd_bin())
-            .arg("-C")
-            .arg(db)
-            .args(["show", id, "--json"])
+            .arg(db::lc_bin())
+            .args(["content", "show", id, "--json"])
             .stdin(Stdio::null())
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
             .unwrap_or_default()
     }
 
-    fn withdraw_ask(&self, work_bead: &str) -> (i32, String) {
-        // spira-lc by name on the launcher's PATH (sp-gypjk).
-        match Command::new("timeout").args(["5", "spira-lc", "withdraw-ask", work_bead, "claude"]).stdin(Stdio::null()).output() {
-            Ok(o) => (o.status.code().unwrap_or(2), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
-            Err(e) => (2, format!("running spira-lc: {e}")),
+    fn has_lifecycle_row(&self, id: &str) -> Result<bool, String> {
+        match Command::new("timeout").args(["5", "spira-lc", "show", id]).stdin(Stdio::null()).output() {
+            Ok(o) => match o.status.code() {
+                Some(0) => Ok(true),
+                Some(1) => Ok(false),
+                code => Err(format!("spira-lc show exit {code:?}: {}", String::from_utf8_lossy(&o.stderr))),
+            },
+            Err(e) => Err(format!("running spira-lc: {e}")),
         }
+    }
+
+    fn is_ask(&self, id: &str) -> Result<bool, String> {
+        spira_config::lifecycle_row::is_ask(id)
+    }
+
+    fn withdraw_ask_row(&self, id: &str, reason: &str) -> (i32, String) {
+        let mut c = Command::new(spira_config::lc_call::lc_bin());
+        c.args(["close-ask", id, "--exit", "withdrawn", "--quote", reason, "--actor", "claude"]);
+        spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
+    }
+
+    fn withdraw_ask(&self, work_bead: &str) -> (i32, String) {
+        let mut c = Command::new(spira_config::lc_call::lc_bin());
+        c.args(["withdraw-ask", work_bead, "claude"]);
+        spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
     }
 }
 

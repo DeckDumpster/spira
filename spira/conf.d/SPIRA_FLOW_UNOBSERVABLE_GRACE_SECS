@@ -1,9 +1,7 @@
 TYPE=string
 GROUP=flow
-DOC=SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS — seconds a blind flow detector may stand before it alerts.
+SCHEMA=Seconds the flow detector may be unable to observe (query layer unreachable) before it alerts; deliberately independent of flow_grace_secs (unit: seconds; integer; default 3600; sane range 900-14400). Parsed as an integer, so it must not be empty.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    : "${SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS:=3600}"
 SPIRA_CONF_DEFAULT_EOF

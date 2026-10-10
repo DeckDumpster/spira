@@ -55,7 +55,7 @@ mkdir -p "$NOT_SPIRA"
 bash "$SCRIPT" "$NOT_SPIRA" >/dev/null 2>&1
 wantrc "tree with no spira/build-tarball.sh -> exit 2" "2" "$?"
 
-podman container exists "$CNAME" 2>/dev/null \
+timeout 5 podman container exists "$CNAME" 2>/dev/null \
     && bad "usage errors never start a container" "container $CNAME exists" \
     || ok "usage errors never start a container"
 
@@ -189,12 +189,25 @@ wantrc "a malformed --predecessor tag -> exit 2" "2" "$?"
 bash "$SCRIPT" "$FT" --predecessor-tarball "$SCRATCH/spira-20990101T000000Z.tar.gz" >/dev/null 2>&1
 wantrc "--predecessor-tarball without --predecessor -> exit 2" "2" "$?"
 
+printf 'fake aged\n' > "$SCRATCH/spira-20990102T000000Z.tar.gz"
+rm -f "$FT/.stub-rc" "$FT/.stub-args"; printf '0\n' > "$FT/.stub-rc"
+SPIRA_ACCEPTANCE_LOCAL_NAME="$CNAME" SPIRA_ACCEPTANCE_LOCAL_FORENSICS="$SCRATCH/forensics-aged" \
+    bash "$SCRIPT" "$FT" --predecessor spira-release-spira-20990101T000000Z \
+        --predecessor-tarball "$SCRATCH/spira-20990101T000000Z.tar.gz" \
+        --aged-base spira-release-spira-20990102T000000Z \
+        --aged-tarball "$SCRATCH/spira-20990102T000000Z.tar.gz" >"$SCRATCH/aged.out" 2>&1
+_stub_args="$(cat "$FT/.stub-args" 2>/dev/null || true)"
+want "stub received --aged-tag" "--aged-tag spira-release-spira-20990102T000000Z" "$_stub_args"
+want "stub received --aged-tarball in the container" "--aged-tarball /tmp/aged-spira-20990102T000000Z.tar.gz" "$_stub_args"
+bash "$SCRIPT" "$FT" --aged-base spira-release-spira-20990102T000000Z >/dev/null 2>&1
+wantrc "--aged-base without --predecessor -> exit 2" "2" "$?"
+
 # ===========================================================================
 echo
 echo "7. Container is torn down after the run either way"
 # ===========================================================================
 
-podman container exists "$CNAME" 2>/dev/null \
+timeout 5 podman container exists "$CNAME" 2>/dev/null \
     && bad "container torn down after a FAIL run" "container $CNAME still exists" \
     || ok "container torn down after a FAIL run"
 

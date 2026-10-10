@@ -40,14 +40,13 @@ SCOPE_LABEL="spherescope"
 RUN="$TMP/run"; mkdir -p "$RUN"
 # The lifecycle rows this world implies (sp-mve9i: the probes read state from spira-lc).
 lc_mirror_bd "$TMP/lc"
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
+    SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL="$SCOPE_LABEL" SPIRA_ASK_LABEL=needs-ryan
 sphere() {    # sphere <fixture-file>
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_BDJSON_FIXTURE="$1" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        SPIRA_SCOPE_LABEL="$SCOPE_LABEL" \
-        SPIRA_ASK_LABEL=needs-ryan \
+        SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect probe sphere 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }

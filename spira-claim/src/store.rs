@@ -1,12 +1,15 @@
 //! The only I/O: reading bd and spira-lc through their CLIs, and config through
 //! spira-config. Every read is bounded in time and in argv size. DESIGN.md §2 "Data in".
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::events::{self, EventRow};
-use crate::rank::{self, ReadyRow};
+use lifecycle::bead::BeadState;
+
+use crate::rank::{self, LifecycleRow, ReadyRow};
 
 /// Ids per `bd sql` events query and per `bd list --id` call: keeps the argv bounded.
 pub const EVENT_CHUNK: usize = 200;
@@ -20,68 +23,77 @@ pub struct Store {
     pub timeout: Duration,
 }
 
-/// Values from spira.toml through the spira-config library (law-config-through-the-cli-only:
-/// never parsed here).
+/// Values from spira.toml through spira-config's ONE DOOR (per Ryan 2026-10-05, one source
+/// of config): `spira_config::process::cfg`/`cfg_parse`, `$SPIRA_TOML` resolved once per
+/// process — never parsed here, never an env override, never a caller-supplied default.
+/// Every field here is a registered key (`spira/conf.d/SPIRA_*`); [`load_config`] reads each
+/// one exactly once, at construction, and is the ONLY place in this crate that may.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
+    /// `spira.bd` (`SPIRA_BD`) — the `bd` binary to exec. Registered but documented as
+    /// carrying no default of its own (conf.d: "resolves empty unless set"); an empty
+    /// resolved value is passed through as-is — `Store::new` no longer substitutes the
+    /// literal `"bd"` for it (see the migration report: this is a behaviour change).
+    pub bd: String,
+    /// `spira.db` (`SPIRA_DB`) — `None` when the declared value is "" (conf.d: deliberately
+    /// `=` not `:=`, "an explicitly empty SPIRA_DB means 'no database for this run'"), same
+    /// as this field's own pre-cfg() emptiness check; never a substituted default.
     pub db: Option<String>,
-    pub stack_max_depth: Option<u32>,
-    pub submitted_label: Option<String>,
+    pub stack_max_depth: u32,
+    pub submitted_label: String,
     /// `spira.run` — the runtime directory (`unpoison`: ask history, audit log).
-    pub run: Option<String>,
+    pub run: String,
     /// `spira.ask_label` — the operator-ask label (`unpoison`: the ask it closes).
-    pub ask_label: Option<String>,
-    /// `spira.scope_label` (`ready_args`/`fayth_ready`; conf.sh's own default for this one
-    /// is procedural — `SPIRA_HOME_REPO` — so a caller with no toml value falls back to the
-    /// already-exported `$SPIRA_SCOPE_LABEL` rather than this field, never to a constant).
-    pub scope_label: Option<String>,
-    /// `spira.no_loop_label` (default `no-loop`, conf.d/SPIRA_NO_LOOP_LABEL).
-    pub no_loop_label: Option<String>,
-    /// `spira.queue_wait_label` (default `spira-queue-waiting`) — one of `fayth_exclude`'s
-    /// shared exclusions; UNEXPORTED by conf.sh, so this field (resolved in-process) is the
-    /// only correct source for a separate process (the exec-boundary trap).
-    pub queue_wait_label: Option<String>,
-    /// `spira.open_children_label` (default `spira-open-children`) — ditto, unexported.
-    pub open_children_label: Option<String>,
-    /// `spira.claim_retries` (default 3) — `SPIRA_CLAIM_RETRIES`, unexported.
-    pub claim_retries: Option<u32>,
-    /// `spira.claim_retry_delay_s` (default 1) — `SPIRA_CLAIM_RETRY_DELAY_S`, unexported.
-    pub claim_retry_delay_s: Option<u32>,
+    pub ask_label: String,
+    /// `spira.scope_label`.
+    pub scope_label: String,
+    /// `spira.no_loop_label` (conf.d/SPIRA_NO_LOOP_LABEL).
+    pub no_loop_label: String,
+    /// `spira.queue_wait_label` — one of `fayth_exclude`'s shared exclusions.
+    pub queue_wait_label: String,
+    /// `spira.open_children_label` — ditto.
+    pub open_children_label: String,
+    /// `spira.claim_retries` — `SPIRA_CLAIM_RETRIES`.
+    pub claim_retries: u32,
+    /// `spira.claim_retry_delay_s` — `SPIRA_CLAIM_RETRY_DELAY_S`.
+    pub claim_retry_delay_s: u32,
+    /// `spira.fayths` (`SPIRA_FAYTHS`, a list) — the roster override `fayth-exclude`/
+    /// `fayth-ready`/`bulk-ready-by-fayth` pass to `spira_config::chamber::spira_fayths`;
+    /// "" means no override (per Ryan 2026-10-05: no direct env read — `roster` used to
+    /// read `SPIRA_FAYTHS` itself).
+    pub fayths: String,
+    /// `SPIRA_INCIDENT_LABEL` — an incident never stacks on a fix that has not landed.
+    pub incident_label: String,
 }
 
-pub fn load_config() -> Config {
-    let Some(path) = spira_config::discover(None) else { return Config::default() };
-    match spira_config::load(&path) {
-        Ok(doc) => {
-            let s = doc.spira.unwrap_or_default();
-            Config {
-                db: s.db,
-                stack_max_depth: s.stack_max_depth,
-                submitted_label: s.submitted_label,
-                run: s.run,
-                ask_label: s.ask_label,
-                scope_label: s.scope_label,
-                no_loop_label: s.no_loop_label,
-                queue_wait_label: s.queue_wait_label,
-                open_children_label: s.open_children_label,
-                claim_retries: s.claim_retries.as_deref().and_then(|v| v.trim().parse().ok()),
-                claim_retry_delay_s: s.claim_retry_delay_s.as_deref().and_then(|v| v.trim().parse().ok()),
-            }
-        }
-        Err(e) => {
-            eprintln!("spira-claim: config {}: {e} — using defaults", path.display());
-            Config::default()
-        }
-    }
+/// Every field of [`Config`], each its own `cfg`/`cfg_parse` call — `Err` names the first
+/// key that would not resolve and refuses; the caller (`dispatch`) turns that into
+/// `Outcome::cannot_tell` rather than guessing a value for any of the rest.
+pub fn load_config() -> Result<Config, String> {
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    Ok(Config {
+        bd: spira_config::process::cfg("SPIRA_BD")?,
+        db: (!db.is_empty()).then_some(db),
+        stack_max_depth: spira_config::process::cfg_parse("SPIRA_STACK_MAX_DEPTH")?,
+        submitted_label: spira_config::process::cfg("SPIRA_SUBMITTED_LABEL")?,
+        run: spira_config::process::cfg("SPIRA_RUN")?,
+        ask_label: spira_config::process::cfg("SPIRA_ASK_LABEL")?,
+        scope_label: spira_config::process::cfg("SPIRA_SCOPE_LABEL")?,
+        no_loop_label: spira_config::process::cfg("SPIRA_NO_LOOP_LABEL")?,
+        queue_wait_label: spira_config::process::cfg("SPIRA_QUEUE_WAIT_LABEL")?,
+        open_children_label: spira_config::process::cfg("SPIRA_OPEN_CHILDREN_LABEL")?,
+        claim_retries: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRIES")?,
+        claim_retry_delay_s: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRY_DELAY_S")?,
+        fayths: spira_config::process::cfg("SPIRA_FAYTHS")?,
+        incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
+    })
 }
 
 impl Store {
     pub fn new(db_flag: Option<String>, timeout_s: u64, cfg: &Config) -> Store {
         Store {
-            bd: std::env::var("SPIRA_BD").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "bd".into()),
-            db: db_flag
-                .or_else(|| std::env::var("SPIRA_DB").ok().filter(|s| !s.is_empty()))
-                .or_else(|| cfg.db.clone()),
+            bd: cfg.bd.clone(),
+            db: db_flag.or_else(|| cfg.db.clone()),
             lc: "spira-lc".into(), // by name, on the launcher's PATH (sp-gypjk)
             timeout: Duration::from_secs(timeout_s.max(1)),
         }
@@ -96,6 +108,12 @@ impl Store {
         c
     }
 
+    pub fn lc_cmd(&self, args: &[String]) -> Command {
+        let mut c = Command::new(&self.lc);
+        c.args(args);
+        c
+    }
+
     /// Run `bd <args>` to completion; `Err` names the verb and bd's own first stderr line
     /// (or the timeout/spawn failure). `pub` so `cmd_claim_retry` (the
     /// generic bd-retry verb, which takes arbitrary caller argv main.rs never parses) can
@@ -104,15 +122,24 @@ impl Store {
         run(self.bd_cmd(args), self.timeout).map_err(|e| format!("bd {}: {e}", args.first().unwrap_or(&"")))
     }
 
-    /// Every folded event for `ids`, one query per [`EVENT_CHUNK`] ids.
+    /// Every folded event for `ids`, one query per [`EVENT_CHUNK`] ids: bd's own rows (its
+    /// claim/close/reopen events and the history written before the move) and the facts the
+    /// harness has appended to the lifecycle log since.
     pub fn events(&self, ids: &[String]) -> Result<Vec<EventRow>, String> {
         let mut out = Vec::new();
         for chunk in ids.chunks(EVENT_CHUNK) {
             let q = events_sql(chunk);
             let text = self.bd(&["sql", "--json", &q])?;
             out.extend(events::parse_rows(&text)?);
+            out.extend(self.facts(chunk)?);
         }
         Ok(out)
+    }
+
+    pub fn facts(&self, ids: &[String]) -> Result<Vec<EventRow>, String> {
+        let args = ["facts".to_string(), "--ids".into(), ids.join(",")];
+        let text = run(self.lc_cmd(&args), self.timeout).map_err(|e| format!("spira-lc facts: {e}"))?;
+        events::parse_rows(&text)
     }
 
     /// bd rows by id, `--status all`, chunked.
@@ -134,19 +161,56 @@ impl Store {
         rank::parse_ready(&text)
     }
 
-    pub fn lifecycle_snapshot(&self) -> Result<String, String> {
-        let mut c = Command::new(&self.lc);
-        c.arg("list");
-        run(c, self.timeout).map_err(|e| format!("spira-lc list: {e}"))
+    /// The lifecycle rows in `states`. Never the whole store: it holds every bead ever.
+    pub fn lifecycle_in_states(&self, states: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {
+        self.lc_list(&["--state", &states.join(",")])
     }
 
-    /// lib.sh `release_claim <id>` (wave 4.19, row I): `bd assign <id> ""`. `bd assign`
-    /// refuses to overwrite another actor's LIVE in_progress claim unless forced, which is
-    /// the safety property — this runs from callers racing a database aeons are claiming
-    /// out of concurrently, and the primitive that loses a race harmlessly is the correct
-    /// one. Never `bd unclaim --force`, which by definition does not lose that race.
-    pub fn release_claim(&self, id: &str) -> Result<(), String> {
-        self.bd(&["assign", id, ""]).map(|_| ())
+    /// The lifecycle rows of exactly `ids`, one `spira-lc list --ids` per [`EVENT_CHUNK`].
+    pub fn lifecycle_of(&self, ids: &[String]) -> Result<HashMap<String, LifecycleRow>, String> {
+        let mut out = HashMap::new();
+        for chunk in ids.chunks(EVENT_CHUNK) {
+            out.extend(self.lc_list(&["--ids", &chunk.join(",")])?);
+        }
+        Ok(out)
+    }
+
+    pub fn express_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
+        Ok(self.lc_list(&["--express"])?.into_keys().collect())
+    }
+
+    fn lc_list(&self, filter: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {
+        let mut c = Command::new(&self.lc);
+        c.arg("list").args(filter);
+        let text = run(c, self.timeout).map_err(|e| format!("spira-lc list: {e}"))?;
+        crate::rank::parse_lifecycle(&text)
+    }
+
+    /// The machine's return-to-rework, through the one client of `spira-lc reopen`.
+    pub fn lc_reopen(&self, id: &str, cause: &str, actor: &str) -> Result<(), String> {
+        spira_config::lifecycle_row::reopen_with(&self.lc, id, cause, actor)
+    }
+
+    /// `spira-lc release <id> <actor>`: hand back a claim this caller holds. Only a WORKING
+    /// row has a claim to hand back; any other state is left unwritten, because the machine
+    /// would refuse the Release and record the refusal on the bead's timeline.
+    pub fn release_claim(&self, id: &str, actor: &str) -> Result<(), String> {
+        let rows = self.lifecycle_of(&[id.to_string()])?;
+        if rows.get(id).is_some_and(|r| r.state == BeadState::Working) {
+            return self.lc_verb(&["release", id, actor], &[0, 1, 3]);
+        }
+        Ok(())
+    }
+
+    fn lc_verb(&self, args: &[&str], ok: &[i32]) -> Result<(), String> {
+        let mut c = Command::new(&self.lc);
+        c.args(args);
+        let r = run_full(c, self.timeout, None)?;
+        if ok.contains(&r.code) {
+            return Ok(());
+        }
+        let said = r.stderr.lines().chain(r.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("no output");
+        Err(format!("spira-lc {} exit {}: {said}", args[0], r.code))
     }
 }
 

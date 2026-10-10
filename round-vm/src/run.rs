@@ -2,7 +2,7 @@
 //! telemetry and binaries → manifest → install by tree sha → release.
 
 use std::collections::{BTreeSet, HashSet};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use std::fs;
@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -32,6 +32,14 @@ pub struct RunArgs {
     pub results_dir: Option<PathBuf>,
     /// DESIGN.md §2.2a: stream results while the corpus runs, and serve attribution reruns.
     pub attr_spool: Option<PathBuf>,
+    /// The landing ref the round is judged against: the VM runs `spira-lint --base` on it and
+    /// attributes a hit to the member whose diff touches the file. Absent: no lint step.
+    pub base: Option<String>,
+    /// The spira-lc batch this pass belongs to: the suites boundary is recorded on it live.
+    pub round_batch: Option<String>,
+    pub round_repo: Option<String>,
+    /// Words of a command run with each suite's name appended, the moment that suite goes red.
+    pub on_red: Option<Vec<String>>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -54,6 +62,10 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--toolchain" => r.toolchain = Some(val()?).filter(|v| !v.is_empty()),
             "--results-dir" => r.results_dir = Some(PathBuf::from(val()?)),
             "--attr-spool" => r.attr_spool = Some(PathBuf::from(val()?)),
+            "--base" => r.base = Some(val()?).filter(|v| !v.is_empty()),
+            "--round-batch" => r.round_batch = Some(val()?).filter(|v| !v.is_empty()),
+            "--round-repo" => r.round_repo = Some(val()?).filter(|v| !v.is_empty()),
+            "--on-red" => r.on_red = Some(val()?.split_whitespace().map(String::from).collect()).filter(|v: &Vec<String>| !v.is_empty()),
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
     }
@@ -71,6 +83,24 @@ pub trait Host: Sync {
     fn image_tag(&self, tree: &Path, commit: &str) -> Result<String, String>;
     /// Fetches `branch` of `tree`'s repository into the mirror as `refs/heads/<as_ref>`.
     fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String>;
+    /// Every suite file name committed in `tree`'s HEAD.
+    fn suites_in(&self, tree: &Path) -> Result<Vec<String>, String>;
+    /// Recorded median wall seconds per suite (`testenv --report`).
+    fn suite_medians(&self) -> Result<std::collections::HashMap<String, f64>, String>;
+}
+
+/// The explicit longest-first suite list for a full-corpus round, naming on stderr every suite
+/// with no recorded time.
+fn lpt_suites(host: &dyn Host, tree: &Path) -> Result<String, String> {
+    let all = host.suites_in(tree)?;
+    if all.is_empty() {
+        return Err(format!("no spira/test-*.sh suites in {}", tree.display()));
+    }
+    let (list, unknown) = crate::lpt::order(&all, &host.suite_medians()?);
+    if !unknown.is_empty() {
+        eprintln!("round-vm run: ALARM — no recorded time, scheduled first: {}", unknown.join(" "));
+    }
+    Ok(list.join(","))
 }
 
 pub struct BatchJob {
@@ -87,6 +117,11 @@ pub struct BatchJob {
     pub testenv_registry: Option<String>,
     /// Seconds of setup (script start to the suites launching) beyond which the run reports SETUP-SLOW.
     pub setup_alarm_secs: u64,
+    /// Mirror ref `base` holds the landing ref; set: the round lints before its suites.
+    pub lint: bool,
+    /// The head's image tag differs from what the template (or the landing ref) holds: the VM
+    /// builds `localhost/spira-testenv:<tag>` as a declared setup step instead of refusing it.
+    pub build_image: bool,
 }
 
 /// The VM side, reached only by address.
@@ -116,7 +151,7 @@ pub fn shell_quote(s: &str) -> String {
 /// build is incremental on the one just made) and stages `target/release`'s executables
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8"
+host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" lint="$9" build_image="${10}"
 t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 if ! command -v cargo >/dev/null 2>&1; then
@@ -166,7 +201,52 @@ if ! cargo build -q --profile release --workspace --config profile.release.incre
     exit 4
 fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
-rel_sha="$(target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
+# THE UNIT-TEST BINARIES COMPILE HERE, in the build phase and outside the suite clock; the unit
+# run below is the same command, which then compiles nothing. A scrubbed environment: the
+# launcher's SPIRA_RELEASE/SPIRA_REPO/PATH leak into tests that resolve configuration.
+unit_cargo() {
+    env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
+        SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
+        GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
+        cargo test --profile release --workspace --config profile.release.incremental=false "$@"
+}
+unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
+mkdir -p "$(dirname "$unit_build_mark")"
+echo building > "$unit_build_mark"
+t_ut=$(date +%s)
+if ! unit_cargo --no-run > ~/round-unit-build.log 2>&1; then
+    echo "round-vm: the round's unit-test build failed:" >&2
+    tail -60 ~/round-unit-build.log >&2
+    exit 4
+fi
+echo built > "$unit_build_mark"
+unit_total=$(grep -c '^ *Executable ' ~/round-unit-build.log)
+echo "round-vm: built ${unit_total} unit-test binaries in $(( $(date +%s) - t_ut ))s" >&2
+# One line per unit-test binary as it finishes, from cargo's own "Running" and "test result:"
+# lines on stdin: UNIT-TEST <binary> ok|FAILED (k/M). The totals are the --no-run listing's.
+unit_stream() {
+    awk -v total="$1" -v prog="$2" '
+        /^ *Running / { name = $0; if (match(name, /\(.*\)/)) { name = substr(name, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", name); sub(/-[0-9a-f]+$/, "", name) } else { sub(/^ *Running /, "", name) } next }
+        /^ *Doc-tests / { name = "doc-tests " $2; next }
+        /^test result: / { k++; st = ($3 == "ok.") ? "ok" : "FAILED"; if (st == "FAILED") reds = reds " " name
+            printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", name, st, k, total > "/dev/stderr"; fflush("/dev/stderr")
+            printf "%d %d%s\n", k, total, reds > prog; close(prog) }'
+}
+# The round's one source of config: the tree's complete fixture, with this VM's own paths
+# declared over it. Nothing here is searched for or defaulted.
+mkdir -p "$HOME/round-work/.runtime/spira"
+cat > "$HOME/round-config.toml" <<ROUNDCFG
+[spira]
+run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-results from
+releases = "$HOME/round-releases"
+home_repo = "$HOME/round-work"
+batch_maxpar = $maxpar
+ROUNDCFG
+export SPIRA_TOML="$HOME/round-work/spira-config/tests/fixtures/complete.toml:$HOME/round-config.toml"
+SPIRA_TOML="$(target/release/release config-stage "$HOME/round-work")" || { echo "round-vm: cannot apply the head's config delta" >&2; exit 2; }
+export SPIRA_TOML
+rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_REPO="$HOME/round-work"
 export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -187,40 +267,134 @@ if [ -z "$tag" ]; then
     exit 3
 elif podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
     echo "round-vm: template image: localhost/spira-testenv:$tag present" >&2
+elif [ -n "$build_image" ]; then
+    echo "round-vm: IMAGE-BUILD: localhost/spira-testenv:$tag is not on this VM; the round's head changed the image closure, so it is built here as a declared setup step" >&2
+    t_img=$(date +%s)
+    if ! testenv container image >&2 || ! podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
+        echo "round-vm: IMAGE-BUILD-FAILED: localhost/spira-testenv:$tag could not be built on this VM" >&2
+        exit 3
+    fi
+    echo "round-vm: IMAGE-BUILD: built localhost/spira-testenv:$tag in $(( $(date +%s) - t_img ))s (counted as setup)" >&2
 else
     echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
     exit 3
 fi
 setup_secs=$(( $(date +%s) - t_start ))
-export SPIRA_BATCH_MAXPAR="$maxpar"
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
+sig_out="$HOME/round-work/.runtime/spira/tsd/vm-signals.jsonl"
+mkdir -p "$(dirname "$sig_out")"
+cpu_now() { awk '/^cpu /{t=0; for(i=2;i<=9;i++) t+=$i; print t, $6, $9}' /proc/stat; }
+(
+    prev="$(cpu_now)"
+    while sleep 10; do
+        cur="$(cpu_now)"
+        psi="$(awk '/^some/{sub("avg10=","",$2); print $2}' /proc/pressure/io 2>/dev/null)"
+        infl="$(cat /sys/block/*/inflight 2>/dev/null | awk '{s+=$1+$2} END{print s+0}')"
+        printf '%s %s %s %s\n' "$prev" "$cur" "${psi:-0}" "$infl" | awk -v ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -v host="$(hostname)" \
+            '{dt=$4-$1; if (dt<=0) next; printf "{\"ts\":\"%s\",\"host\":\"%s\",\"family\":\"vm-signals\",\"iowait_pct\":%.2f,\"steal_pct\":%.2f,\"io_psi_some_avg10\":%s,\"disk_inflight\":%d}\n", ts, host, 100*($5-$2)/dt, 100*($6-$3)/dt, $7, $8}' >> "$sig_out"
+        prev="$cur"
+    done
+) &
+sampler_pid=$!
 set +e
+# THE ROUND'S LINT: the full spira-lint on the merged tree against the landing ref, before the suites.
+# A hit is a red round, named for the member whose diff touches the file (a hit in a file no
+# member touched is the base's own). Recorded as a suite result after the suites, so a certifier reading results sees it.
+lint_rc=0
+lint_secs=0
+if [ -n "$lint" ]; then
+    t_lint=$(date +%s)
+    "$HOME/round-work/target/release/spira-lint" --root "$HOME/round-work" --base origin/base > ~/round-lint.out 2> ~/round-lint.err
+    lint_rc=$?
+    lint_secs=$(( $(date +%s) - t_lint ))
+    if [ "$lint_rc" -ne 0 ]; then
+        {
+            while IFS= read -r finding; do
+                path="${finding#*: }"; path="${path%%:*}"
+                who="the base itself (no member's diff touches $path)"
+                for c in $(git -C "$HOME/round-work" rev-list --first-parent --reverse origin/base..HEAD); do
+                    if git -C "$HOME/round-work" diff --name-only "$c^1" "$c" | grep -qxF -- "$path"; then
+                        subj="$(git -C "$HOME/round-work" log -1 --format=%s "$c")"
+                        who="$(printf '%s\n' "$subj" | sed -n 's/.*merge \([^ ]*\) .*/\1/p')"
+                        who="${who:-commit ${c:0:12} $subj}"
+                        break
+                    fi
+                done
+                echo "member=$who $finding"
+            done < ~/round-lint.out
+            cat ~/round-lint.err
+        } > ~/round-lint.report
+        echo "round-vm: LINT: RED (spira-lint rc=$lint_rc)" >&2
+        head -60 ~/round-lint.report >&2
+    fi
+    echo "round-vm: LINT: ${lint_secs}s of the 900s cap (rc=$lint_rc)" >&2
+fi
+# THE BASE FENCES the gate runs on every branch beyond the lint (gate.steps), on the merged
+# tree: a round that passes the suites but breaks one is red. build-fence is the workspace
+# build above and the unit tests below.
+fence_fail=""
+fence_run() {
+    local name="$1"; shift
+    ( cd "$HOME/round-work" && "$@" ) > ~/round-fence-"$name".out 2>&1
+    local frc=$?
+    if [ "$frc" -ne 0 ]; then
+        echo "round-vm: FENCE $name: RED (rc=$frc)" >&2
+        head -40 ~/round-fence-"$name".out >&2
+        fence_fail="$fence_fail $name"
+    fi
+}
+if [ -n "$lint" ]; then
+    fence_run lifecycle-guard "$HOME/round-work/target/release/lifecycle-guard" --gate .
+    fence_run boundary bash spira/boundary.sh check
+fi
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
-# They run beside the suites, on the build above; a red here makes the round red.
-# A SCRUBBED ENVIRONMENT: the launcher's SPIRA_RELEASE/SPIRA_REPO/PATH exported above leak
-# into tests that resolve configuration (4 reds on 2026-10-05); the tests get HOME, cargo's own
-# PATH, the build cache and a git identity (a round VM's root has none), nothing else.
-env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
-    CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
-    SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
-    GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-    cargo test -q --profile release --workspace --no-fail-fast --config profile.release.incremental=false > ~/round-unit-tests.log 2>&1 &
+# They run beside the suites, on the binaries built above; a red here makes the round red.
+unit_progress="$HOME/round-work/.runtime/spira/batch-results/unit-progress"
+mkdir -p "$(dirname "$unit_progress")"
+: > ~/round-unit-tests.log
+unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
+tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_total" "$unit_progress" &
+stream_pid=$!
+# The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
-    testenv --mode parallel --profile release --suites "$suites" round
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round
 else
-    testenv --mode parallel --profile release round
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" round
 fi
 rc=$?
+if kill -0 "$unit_pid" 2>/dev/null; then echo "round-vm: UNIT-TESTS: waiting (suites done, unit job still running)" >&2; fi
 wait "$unit_pid"; unit_rc=$?
+wait "$stream_pid"
+if [ "$lint_rc" -ne 0 ]; then
+    rdir="$HOME/round-work/.runtime/spira/batch-results"
+    leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
+    leaf="${leaf:-$rdir}"
+    mkdir -p "$leaf"
+    cp ~/round-lint.report "$leaf/spira-lint.out"
+    echo "red 1 $lint_secs - - - $lint_rc" > "$leaf/spira-lint.result"
+    [ "$rc" -eq 0 ] && rc=1
+fi
+if [ -n "$fence_fail" ]; then
+    rdir="$HOME/round-work/.runtime/spira/batch-results"
+    leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
+    leaf="${leaf:-$rdir}"
+    mkdir -p "$leaf"
+    for name in $fence_fail; do
+        cp ~/round-fence-"$name".out "$leaf/fence-$name.out"
+        echo "red 1 0 - - - 1" > "$leaf/fence-$name.result"
+    done
+    [ "$rc" -eq 0 ] && rc=1
+fi
 if [ "$unit_rc" -eq 0 ]; then
     echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
 else
-    echo "round-vm: UNIT-TESTS: FAIL (cargo test rc=$unit_rc):" >&2
-    grep -E '^(test .* FAILED|failures:|---- |error(\[|:))' ~/round-unit-tests.log | head -40 >&2
+    echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
+    grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
     [ "$rc" -eq 0 ] && rc=1
 fi
 suites_secs=$(( $(date +%s) - t_start - setup_secs ))
+kill "$sampler_pid" 2>/dev/null; wait "$sampler_pid" 2>/dev/null
 echo "round-vm: setup ${setup_secs}s, suites ${suites_secs}s" >&2
 if [ "$setup_secs" -gt "$setup_alarm" ]; then
     echo "round-vm: SETUP-SLOW: setup took ${setup_secs}s, over the ${setup_alarm}s limit — something is being built or fetched that the template should hold" >&2
@@ -247,6 +421,8 @@ pub fn remote_command(job: &BatchJob) -> String {
         job.cache_home.clone().unwrap_or_default(),
         job.testenv_registry.clone().unwrap_or_default(),
         job.setup_alarm_secs.to_string(),
+        if job.lint { "1" } else { "" }.to_string(),
+        if job.build_image { "1" } else { "" }.to_string(),
     ];
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -s -- {}", quoted.join(" "))
@@ -352,6 +528,15 @@ pub(crate) fn git(args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// The addresses on each line of `ip -br addr`, prefix lengths stripped.
+fn host_addresses(ip_br_addr: &str) -> Vec<String> {
+    ip_br_addr
+        .lines()
+        .flat_map(|l| l.split_whitespace().skip(2))
+        .map(|a| a.split('/').next().unwrap_or(a).to_string())
+        .collect()
+}
+
 fn pid_alive(pid: i32) -> bool {
     // SAFETY: signal 0 only checks existence.
     pid > 0 && unsafe { libc::kill(pid, 0) } == 0
@@ -422,9 +607,39 @@ impl Host for GitHost {
         r
     }
 
+    fn suites_in(&self, tree: &Path) -> Result<Vec<String>, String> {
+        let out = git(&["-C", &tree.to_string_lossy(), "ls-tree", "--name-only", "HEAD", "spira/"])?;
+        let mut v: Vec<String> = out
+            .lines()
+            .filter_map(|l| l.strip_prefix("spira/"))
+            .filter(|n| n.starts_with("test-") && n.ends_with(".sh"))
+            .map(str::to_string)
+            .collect();
+        v.sort();
+        Ok(v)
+    }
+
+    fn suite_medians(&self) -> Result<std::collections::HashMap<String, f64>, String> {
+        let o = command("testenv").arg("--report").stdin(Stdio::null()).output().map_err(|e| format!("testenv --report: {e}"))?;
+        if !o.status.success() {
+            return Err(format!("testenv --report exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).trim()));
+        }
+        crate::lpt::parse_medians(&String::from_utf8_lossy(&o.stdout))
+    }
+
     fn prepare_mirror(&self, tree: &Path) -> Result<(), String> {
         if self.listen.is_empty() {
             return Err("no listen address for the mirror daemon (SPIRA_ROUND_VM_HOST_ADDR)".into());
+        }
+        let out = command("ip").args(["-br", "addr"]).stdin(Stdio::null()).output().map_err(|e| format!("ip -br addr: {e}"))?;
+        let addrs = host_addresses(&String::from_utf8_lossy(&out.stdout));
+        if !out.status.success() || !addrs.iter().any(|a| a == &self.listen) {
+            return Err(format!(
+                "{} is not an address of this host (ip -br addr: {}); a pinned round_vm_host_addr no longer names this host — \
+                 set it to auto, which resolves the address each round",
+                self.listen,
+                addrs.join(" ")
+            ));
         }
         fs::create_dir_all(&self.state_dir).map_err(|e| e.to_string())?;
         let mirror = self.state_dir.join("mirror.git");
@@ -437,10 +652,16 @@ impl Host for GitHost {
 
         let pidfile = self.state_dir.join("git-daemon.pid");
         let running = |p: &Path| fs::read_to_string(p).ok().and_then(|s| s.trim().parse().ok()).map(pid_alive).unwrap_or(false);
+        let addrfile = self.state_dir.join("git-daemon.addr");
+        let bound_to = fs::read_to_string(&addrfile).ok().map(|s| s.trim().to_string());
         if running(&pidfile) {
-            return Ok(());
+            if bound_to.as_deref() == Some(self.listen.as_str()) {
+                return Ok(());
+            }
+            stop_mirror(&self.state_dir)?;
         }
         let _ = fs::remove_file(&pidfile);
+        let _ = fs::remove_file(&addrfile);
         let st = command("git")
             .arg("daemon")
             .arg("--reuseaddr")
@@ -457,7 +678,7 @@ impl Host for GitHost {
             .map_err(|e| format!("git daemon: {e}"))?;
         for _ in 0..20 {
             if running(&pidfile) {
-                return Ok(());
+                return fs::write(&addrfile, &self.listen).map_err(|e| format!("{}: {e}", addrfile.display()));
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
@@ -466,7 +687,7 @@ impl Host for GitHost {
 
     fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String> {
         let m = self.state_dir.join("mirror.git").to_string_lossy().to_string();
-        git(&["--git-dir", &m, "fetch", "--quiet", &tree.to_string_lossy(), &format!("+refs/heads/{branch}:refs/heads/{as_ref}")]).map(|_| ())
+        git(&["--git-dir", &m, "fetch", "--quiet", &tree.to_string_lossy(), &format!("+{branch}:refs/heads/{as_ref}")]).map(|_| ())
     }
 }
 
@@ -603,6 +824,89 @@ pub struct RunEnv<'a> {
     pub deps: &'a Deps<'a>,
     pub host: &'a dyn Host,
     pub remote: &'a dyn Remote,
+    pub record: &'a dyn Recorder,
+}
+
+/// Writes a pass boundary onto the round's batch row.
+pub trait Recorder: Sync {
+    fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
+    fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
+    fn progress(&self, batch: &str, body: &str) -> Result<(), String>;
+}
+
+/// `queue round suites-started`: the lifecycle machine's own verb, so a refusal names the phase.
+pub struct QueueRecorder;
+
+impl Recorder for QueueRecorder {
+    fn progress(&self, batch: &str, body: &str) -> Result<(), String> {
+        use std::io::Write;
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", "30", "spira-lc", "batch-progress", batch]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| format!("cannot run spira-lc: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(body.as_bytes());
+        }
+        let out = child.wait_with_output().map_err(|e| format!("spira-lc batch-progress: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("spira-lc batch-progress refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
+    fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", "60", "queue", "round", "pass-start", batch]).args(repo).stdin(Stdio::null());
+        let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("queue round pass-start refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
+    fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", "60", "queue", "round", "suites-started", batch]).args(repo).stdin(Stdio::null());
+        let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("queue round suites-started refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+}
+
+/// The pass's live counts onto its batch row; telemetry, so a refusal is logged and never fails the pass.
+fn publish_progress(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress) {
+    let (Some(batch), Some(body)) = (args.round_batch.as_deref(), progress.take_publish()) else { return };
+    if let Err(e) = env.record.progress(batch, &body) {
+        eprintln!("round-vm run: {e}");
+    }
+}
+
+/// The suites boundary, written the first time the pass is seen past its build. A refused write is
+/// kept so the pass ends a fault: a pass the batch row cannot follow is not one to certify.
+fn record_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, refused: &mut Option<String>) {
+    let Some(batch) = args.round_batch.as_deref() else { return };
+    publish_progress(env, args, progress);
+    if progress.take_suites_began() {
+        if let Err(e) = env.record.suites_started(batch, args.round_repo.as_deref()) {
+            eprintln!("round-vm run: {e}");
+            refused.get_or_insert(e);
+        }
+    }
+}
+
+/// A batch that finished between two polls is still recorded; a refused record turns a judged pass
+/// (green or red) into a fault.
+fn settle_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, results_dir: &Path, refused: &mut Option<String>, code: i32) -> i32 {
+    progress.update(results_dir);
+    record_boundary(env, args, progress, refused);
+    match refused {
+        Some(e) if code == 0 || code == 1 => {
+            eprintln!("round-vm run: the pass could not be recorded on its batch ({e}); it is not judged");
+            2
+        }
+        _ => code,
+    }
 }
 
 /// `round-vm run`. Returns the process exit code (DESIGN.md §2.2).
@@ -613,7 +917,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         return 2;
     }
     let Some(host_addr) = cfg.host_addr.clone() else {
-        eprintln!("round-vm run: SPIRA_ROUND_VM_HOST_ADDR not set");
+        eprintln!("round-vm run: this host's address is unresolved (SPIRA_ROUND_VM_HOST_ADDR, auto by default)");
         return 2;
     };
     if fs::File::open(&cfg.host_key).is_err() {
@@ -637,69 +941,185 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
             return 2;
         }
     };
-    if let Some(code) = stale_template(env, &args.tree_dir, &commit_sha) {
-        return code;
-    }
+    let build_image = image_build_declared(env, args, &commit_sha);
+    let ordered;
+    let args = if args.suites.is_none() {
+        match lpt_suites(env.host, &args.tree_dir) {
+            Ok(list) => {
+                ordered = RunArgs { suites: Some(list), ..args.clone() };
+                &ordered
+            }
+            Err(e) => {
+                eprintln!("round-vm run: cannot order the corpus longest-first: {e}");
+                return 2;
+            }
+        }
+    } else {
+        args
+    };
     if let Err(e) = env.host.prepare_mirror(&args.tree_dir) {
         eprintln!("round-vm run: cannot prepare the mirror from {}: {e}", args.tree_dir.display());
         return 2;
     }
-    let (vm, mode) = match env.pool.acquire(env.deps, Some(ProcId::current())) {
+    if let Some(base) = &args.base {
+        if let Err(e) = env.host.mirror_ref(&args.tree_dir, base, "base") {
+            eprintln!("round-vm run: cannot mirror the base {base}: {e}");
+            return 2;
+        }
+    }
+    let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
+    let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
+    let budgets = crate::progress::Budgets { vm: cfg.vm_budget_secs, build: cfg.build_budget_secs };
+    let progress = Mutex::new(crate::progress::Progress::start(&cfg.run_dir, &results_dir, &commit_sha, &tree_sha, total, cfg.cap_secs, budgets).on_red(args.on_red.clone()));
+    if let Some(batch) = args.round_batch.as_deref() {
+        // A pass already recorded by certify is refused here; only an unrecorded start needs the write.
+        if let Err(e) = env.record.pass_started(batch, args.round_repo.as_deref()) {
+            eprintln!("round-vm run: {e}");
+        }
+    }
+    let acquired = {
+        let leasing = AtomicBool::new(true);
+        std::thread::scope(|sc| {
+            sc.spawn(|| {
+                let mut beat = 0u32;
+                while leasing.load(Ordering::SeqCst) {
+                    beat += 1;
+                    if beat % 10 != 1 {
+                        std::thread::sleep(Duration::from_millis(50));
+                        continue;
+                    }
+                    let detail = pool_detail(&env.pool.state_file());
+                    let mut p = progress.lock().unwrap_or_else(|e| e.into_inner());
+                    match detail {
+                        Some(d) => p.detail(&results_dir, d),
+                        None => p.tick(&results_dir),
+                    }
+                    drop(p);
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            });
+            let got = env.pool.acquire(env.deps, Some(ProcId::current()));
+            leasing.store(false, Ordering::SeqCst);
+            got
+        })
+    };
+    let mut progress = progress.into_inner().unwrap_or_else(|e| e.into_inner());
+    let (vm, mode) = match acquired {
         Ok(v) => v,
         Err(e) => {
             eprintln!("round-vm run: acquire failed: {e}");
+            progress.finish(&results_dir, 2);
             return 2;
         }
     };
     eprintln!("round-vm run: {} {} {}", vm.handle, vm.addr, mode.as_str());
-    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha);
-    if let Err(e) = env.pool.release(&vm.handle, env.deps.factory) {
+    let host_addr = if crate::ec2::is_ec2_handle(&vm.handle) {
+        match crate::config::str_env_opt("SPIRA_ROUND_VM_EC2_HOST_ADDR") {
+            Some(a) => a,
+            None => {
+                eprintln!("round-vm run: SPIRA_ROUND_VM_EC2_HOST_ADDR is not set; a spilled VM cannot reach this host");
+                let _ = env.pool.release(&vm.handle, ProcId::current(), env.deps.factory);
+                return 2;
+            }
+        }
+    } else {
+        host_addr
+    };
+    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, progress, results_dir);
+    if let Err(e) = env.pool.release(&vm.handle, ProcId::current(), env.deps.factory) {
         eprintln!("round-vm run: warning: release of {} failed: {e}", vm.handle);
     }
     code
 }
 
-/// Exit 3 (no verdict) when the recorded template holds a different image than the tree
-/// needs: refusing here costs seconds, where a VM that cannot find its image costs a boot.
-/// A record that describes a template `pve.env` no longer names is not evidence either way.
-fn stale_template(env: &RunEnv, tree: &Path, commit: &str) -> Option<i32> {
-    let rec = Record::read(&env.cfg.state_dir)?;
-    if let Ok(pe) = PveEnv::load(&env.cfg.pve_env_path, &|k| std::env::var(k).ok()) {
-        if pe.template_vmid != rec.vmid {
-            eprintln!("round-vm run: template.json describes template {}, pve.env names {} — not checking the image tag", rec.vmid, pe.template_vmid);
-            return None;
-        }
-    }
+/// True when the head's image is one the template does not hold, so the VM must build it:
+/// the recorded template names another tag, or (no usable record) the `--base` ref's tag
+/// differs from the head's. Only this declaration lets the VM build an image; any other
+/// absent image is still refused there.
+fn image_build_declared(env: &RunEnv, args: &RunArgs, commit: &str) -> bool {
+    let tree = &args.tree_dir;
     let tag = match env.host.image_tag(tree, commit) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("round-vm run: cannot compute the tree's image tag ({e}) — the VM will check it");
-            return None;
+            return false;
         }
     };
-    if rec.holds(&tag) {
-        return None;
+    if let Some(rec) = Record::read(&env.cfg.state_dir) {
+        let names_it = PveEnv::load(&env.cfg.pve_env_path, &|k| std::env::var(k).ok()).map(|pe| pe.template_vmid == rec.vmid).unwrap_or(true);
+        if names_it {
+            if rec.holds(&tag) {
+                return false;
+            }
+            eprintln!(
+                "round-vm run: IMAGE-BUILD declared: template {} holds {}, this tree needs localhost/spira-testenv:{tag} — the VM builds it in setup",
+                rec.vmid, rec.image
+            );
+            return true;
+        }
+        eprintln!("round-vm run: template.json describes template {}, pve.env names another — not checking the image tag against it", rec.vmid);
     }
-    eprintln!(
-        "round-vm run: TEMPLATE-STALE: template {} holds {}, this tree needs localhost/spira-testenv:{tag} — refusing to boot a VM that would cold-build it; run `round-vm refresh` (it records the new template and recycles the warm pool)",
-        rec.vmid, rec.image
-    );
-    Some(3)
+    let Some(base) = &args.base else { return false };
+    match env.host.image_tag(tree, base) {
+        Ok(b) if b != tag => {
+            eprintln!("round-vm run: IMAGE-BUILD declared: the head's image tag {tag} differs from {base}'s {b} — the VM builds it in setup");
+            true
+        }
+        _ => false,
+    }
 }
 
-fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str) -> i32 {
+/// What the pool is doing for the lease, from its own state: the VM being provisioned, else the
+/// latest transition it recorded. `None` while the state file says nothing.
+fn pool_detail(state_file: &Path) -> Option<String> {
+    let s = crate::pool::read_state(state_file).ok()?;
+    if let Some(pr) = &s.provisioning {
+        return Some(match &pr.vmid {
+            Some(id) => format!("provisioning VM {id}"),
+            None => "provisioning a VM".to_string(),
+        });
+    }
+    let e = s.events.last()?;
+    Some(format!("VM {} {:?}: {}", e.vm, e.to, e.reason).to_lowercase())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool, progress: crate::progress::Progress, results_dir: PathBuf) -> i32 {
+    let watch = crate::load::Watch::start(&vm.handle);
+    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image, progress, results_dir);
+    watch.finish();
+    rc
+}
+
+#[allow(clippy::too_many_arguments)]
+fn on_vm_run(
+    env: &RunEnv,
+    args: &RunArgs,
+    vm: &Vm,
+    mode: AcquireMode,
+    host_addr: &str,
+    commit_sha: &str,
+    tree_sha: &str,
+    build_image: bool,
+    mut progress: crate::progress::Progress,
+    results_dir: PathBuf,
+) -> i32 {
     let cfg = env.cfg;
     let maxpar = args.maxpar.unwrap_or(cfg.maxpar);
+    progress.detail(&results_dir, format!("adopting VM {} at {}", vm.handle, vm.addr));
     let reachable = (0..cfg.ssh_tries.max(1)).any(|i| {
         if i > 0 {
             std::thread::sleep(cfg.boot_poll);
+            progress.tick(&results_dir);
         }
         env.remote.reachable(&vm.addr)
     });
     if !reachable {
         eprintln!("round-vm run: VM {} at {} never became reachable over ssh", vm.handle, vm.addr);
+        progress.finish(&results_dir, 2);
         return 2;
     }
+    progress.enter(&results_dir, "build", Some(format!("VM {}", vm.handle)));
     let job = BatchJob {
         host_addr: host_addr.to_string(),
         mirror_port: cfg.mirror_port,
@@ -709,21 +1129,49 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         cache_home: cfg.cache_home.clone(),
         testenv_registry: cfg.testenv_registry.clone(),
         setup_alarm_secs: cfg.setup_alarm_secs,
+        lint: args.base.is_some(),
+        build_image,
     };
     let t0 = Instant::now();
+    let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
+    let mut refused: Option<String> = None;
     let Some(spool_dir) = args.attr_spool.clone() else {
-        let remote_rc = match env.remote.run_batch(&vm.addr, &job) {
+        let streamed = std::thread::scope(|sc| {
+            let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
+            let mut last: Option<Instant> = None;
+            while !batch.is_finished() {
+                if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
+                    stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                    progress.update(&results_dir);
+                    record_boundary(env, args, &mut progress, &mut refused);
+                    last = Some(Instant::now());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let _ = fs::remove_dir_all(&stream_scratch);
+            batch.join().unwrap_or_else(|_| Err("the batch thread panicked".into()))
+        });
+        let remote_rc = match streamed {
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
+                progress.finish(&results_dir, 2);
                 return 2;
             }
             Ok(rc) => rc,
             Err(e) => {
                 eprintln!("round-vm run: {e}");
+                progress.finish(&results_dir, 2);
                 return 2;
             }
         };
-        return after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
+        progress.update(&results_dir);
+        record_boundary(env, args, &mut progress, &mut refused);
+        progress.enter(&results_dir, "salvage", None);
+        let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
+        let code = settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code);
+        progress.finish(&results_dir, code);
+        publish_progress(env, args, &mut progress);
+        return code;
     };
 
     // DESIGN.md §2.2a: stream results while the corpus runs; serve attribution reruns on this
@@ -731,8 +1179,6 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
     let pid = std::process::id();
     let in_flight = AtomicUsize::new(0);
     let mirror_lock = Mutex::new(());
-    let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
-    let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{pid}"));
     std::thread::scope(|sc| {
         let mut server = Server {
             spool: Spool { dir: spool_dir },
@@ -752,11 +1198,9 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         let mut last: Option<Instant> = None;
         while !batch.is_finished() {
             if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
-                if env.remote.pull(&vm.addr, REMOTE_RESULTS, &stream_scratch).is_ok() {
-                    if let Err(e) = stream_into(&stream_scratch, &results_dir) {
-                        eprintln!("round-vm run: streaming results: {e}");
-                    }
-                }
+                stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                progress.update(&results_dir);
+                record_boundary(env, args, &mut progress, &mut refused);
                 last = Some(Instant::now());
             }
             server.serve(sc, false);
@@ -768,7 +1212,13 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 (2, false)
             }
-            Ok(Ok(rc)) => (after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs()), true),
+            Ok(Ok(rc)) => {
+                progress.update(&results_dir);
+                record_boundary(env, args, &mut progress, &mut refused);
+                progress.enter(&results_dir, "salvage", None);
+                let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs());
+                (settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code), true)
+            }
             Ok(Err(e)) => {
                 eprintln!("round-vm run: {e}");
                 (2, false)
@@ -778,6 +1228,8 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
                 (2, false)
             }
         };
+        progress.finish(&results_dir, code);
+        publish_progress(env, args, &mut progress);
         if let Err(e) = server.spool.corpus_done(code) {
             eprintln!("round-vm run: {e}");
         }
@@ -786,6 +1238,16 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         }
         code
     })
+}
+
+/// One streaming pass: every verdict the VM has so far lands in `results_dir`, so a run cut
+/// before its final pull keeps them.
+fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Path) {
+    if remote.pull(addr, REMOTE_RESULTS, scratch).is_ok() {
+        if let Err(e) = stream_into(scratch, results_dir) {
+            eprintln!("round-vm run: streaming results: {e}");
+        }
+    }
 }
 
 /// `run`'s exit code for a non-zero remote exit (DESIGN.md §2.2): testenv's own contract
@@ -800,6 +1262,24 @@ pub fn exit_for_remote(rc: i32) -> i32 {
             2
         }
     }
+}
+
+/// A run cut by a signal still holds the verdicts its VM produced: pulls them into
+/// `results_dir` (results already there are kept) before the VM is released. Bounded by
+/// `within`, because the caller's kill-after is seconds away. Returns how many were new.
+pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> usize {
+    let pulled = std::thread::scope(|sc| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        sc.spawn(move || {
+            let _ = fs::remove_dir_all(scratch);
+            let ok = remote.pull(addr, REMOTE_RESULTS, scratch).is_ok();
+            let _ = tx.send(ok);
+        });
+        rx.recv_timeout(within).unwrap_or(false)
+    });
+    let n = if pulled { stream_into(scratch, results_dir).unwrap_or(0) } else { 0 };
+    let _ = fs::remove_dir_all(scratch);
+    n
 }
 
 /// Where the VM's testenv writes the corpus's results.
@@ -866,6 +1346,7 @@ fn after_batch(
         batch_wall_secs: wall,
         build_wall_secs: build,
         suite_wall_secs_sum: suite_sum,
+        provider: if crate::ec2::is_ec2_handle(&vm.handle) { "ec2" } else { "proxmox" }.to_string(),
     };
     let mdir = cfg.state_dir.join("manifests");
     let written = fs::create_dir_all(&mdir)
@@ -896,6 +1377,7 @@ fn after_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Fields;
     use crate::pool::{Attempt, Spawner};
     use crate::provider::Timing;
     use crate::testutil::{FakeAlarm, FakeProvider, TempDir};
@@ -959,6 +1441,14 @@ mod tests {
     }
 
     #[test]
+    fn the_heads_config_delta_is_staged_before_the_release_build_reads_config() {
+        let export = REMOTE_SCRIPT.find("export SPIRA_TOML=\"$HOME/round-work/spira-config/tests/fixtures/complete.toml:").unwrap();
+        let stage = REMOTE_SCRIPT.find("release config-stage \"$HOME/round-work\"").expect("the delta must be applied");
+        let build = REMOTE_SCRIPT.find("release build").unwrap();
+        assert!(export < stage && stage < build);
+    }
+
+    #[test]
     fn the_vm_is_a_launcher_release_path_set_outright_before_any_harness_script() {
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         let stage = REMOTE_SCRIPT.find("release build").unwrap();
@@ -995,6 +1485,152 @@ mod tests {
         assert!(!REMOTE_SCRIPT.contains("/home/"), "no literal home directory — cache_home is an operator-supplied argument, not a hardcoded path");
     }
 
+    fn sh(home: &Path, script: &str) -> std::process::Output {
+        std::process::Command::new("bash").arg("-c").arg(script).env_clear().env("HOME", home).env("PATH", "/usr/bin:/bin")
+            .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t")
+            .output().unwrap()
+    }
+
+    fn fence_post_segment() -> String {
+        let c = REMOTE_SCRIPT.find("if [ -n \"$fence_fail\" ]; then\n    rdir=").unwrap();
+        let d = c + REMOTE_SCRIPT[c..].find("\nfi\n").unwrap() + 4;
+        REMOTE_SCRIPT[c..d].to_string()
+    }
+
+    fn unit_stream_fn() -> String {
+        let a = REMOTE_SCRIPT.find("unit_stream() {").unwrap();
+        let b = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
+        REMOTE_SCRIPT[a..b].to_string()
+    }
+
+    #[test]
+    fn the_unit_test_binaries_compile_in_the_build_phase_and_the_run_is_the_same_command() {
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let no_run = REMOTE_SCRIPT.find("unit_cargo --no-run").unwrap();
+        let suites = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        let run = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast").unwrap();
+        assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
+        let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
+        let body = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
+        assert!(body.contains("cargo test --profile release --workspace --config profile.release.incremental=false"), "{body}");
+        assert_eq!(REMOTE_SCRIPT.matches("cargo test").count(), 1, "one definition of the unit command, shared by compile and run");
+    }
+
+    #[test]
+    fn a_cargo_log_streams_one_line_per_binary_in_order_and_a_red_when_it_fails() {
+        let d = TempDir::new();
+        let log = "   Running unittests src/lib.rs (target/release/deps/alpha-0123abcd)\nrunning 1 test\ntest result: ok. 1 passed; 0 failed\n\
+                   \x20    Running tests/it.rs (target/release/deps/it-feedbeef)\ntest result: FAILED. 0 passed; 1 failed\n\
+                   \x20  Doc-tests beta\ntest result: ok. 0 passed; 0 failed\n";
+        fs::write(d.path().join("cargo.log"), log).unwrap();
+        let script = format!("{}\nunit_stream 3 ~/prog < cargo.log", unit_stream_fn());
+        let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).env_clear().env("HOME", d.path()).env("PATH", "/usr/bin:/bin").output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(lines, ["round-vm: UNIT-TEST alpha ok (1/3)", "round-vm: UNIT-TEST it FAILED (2/3)", "round-vm: UNIT-TEST doc-tests beta ok (3/3)"], "{err}");
+        assert_eq!(fs::read_to_string(d.path().join("prog")).unwrap().trim(), "3 3 it");
+    }
+
+    fn lint_segments() -> (String, String) {
+        let a = REMOTE_SCRIPT.find("lint_rc=0\nlint_secs=0").unwrap();
+        let b = REMOTE_SCRIPT.find("# THE WORKSPACE'S OWN UNIT TESTS").unwrap();
+        let c = REMOTE_SCRIPT.find("if [ \"$lint_rc\" -ne 0 ]; then\n    rdir=").unwrap();
+        let d = c + REMOTE_SCRIPT[c..].find("\nfi\n").unwrap() + 4;
+        (REMOTE_SCRIPT[a..b].to_string(), REMOTE_SCRIPT[c..d].to_string())
+    }
+
+    /// A round of two members on a base; the stub lint reports `hit` (exit 1) or nothing (exit 0).
+    fn lint_fixture(d: &TempDir, hit: Option<&str>) -> std::process::Output {
+        fence_fixture(d, hit, 0, 0)
+    }
+
+    /// As [`lint_fixture`], with the lifecycle-guard and boundary fences exiting `guard_rc` and `boundary_rc`.
+    fn fence_fixture(d: &TempDir, hit: Option<&str>, guard_rc: i32, boundary_rc: i32) -> std::process::Output {
+        let home = d.path();
+        let w = home.join("round-work");
+        fs::create_dir_all(w.join("target/release")).unwrap();
+        let stub = match hit {
+            Some(h) => format!("#!/bin/sh\necho '{h}'\nexit 1\n"),
+            None => "#!/bin/sh\nexit 0\n".to_string(),
+        };
+        testkit::write_exe(w.join("target/release/spira-lint"), &stub);
+        testkit::write_exe(w.join("target/release/lifecycle-guard"), &format!("#!/bin/sh\n[ \"$1\" = --gate ] || exit 9\necho 'guard finding'\nexit {guard_rc}\n"));
+        fs::create_dir_all(w.join("spira")).unwrap();
+        fs::write(w.join("spira/boundary.sh"), format!("[ \"$1\" = check ] || exit 9\necho 'README is stale'\nexit {boundary_rc}\n")).unwrap();
+        let (lint, post) = lint_segments();
+        let fences = fence_post_segment();
+        let script = format!(
+            "set -e; cd ~/round-work; git init -q -b main .; echo x > base.txt; git add base.txt; git commit -qm base; \
+             git update-ref refs/remotes/origin/base HEAD; \
+             echo 1 > ok.rs; git add ok.rs; git commit -qm 'spira: round r-1: merge sp-clean (aaa)'; \
+             echo 2 > bad.rs; git add bad.rs; git commit -qm 'spira: round r-1: merge sp-dirty (bbb)'; \
+             set +e; rc=0; lint=1; {lint}\n{post}\n{fences}\necho rc=$rc"
+        );
+        sh(home, &script)
+    }
+
+    #[test]
+    fn a_round_whose_member_adds_a_lint_hit_goes_red_naming_that_member() {
+        let d = TempDir::new();
+        let (lint, _) = lint_segments();
+        assert!(lint.contains("--base origin/base"), "the lint is judged against the mirrored landing ref");
+        let o = lint_fixture(&d, Some("call-deadline: bad.rs:3: a call without a deadline"));
+        let err = String::from_utf8_lossy(&o.stderr);
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert!(out.contains("rc=1"), "{out}{err}");
+        assert!(err.contains("member=sp-dirty call-deadline: bad.rs:3"), "{err}");
+        assert!(!err.contains("member=sp-clean"), "{err}");
+        let res = fs::read_to_string(d.path().join("round-work/.runtime/spira/batch-results/spira-lint.result")).unwrap();
+        assert!(res.starts_with("red "), "{res}");
+        assert!(err.contains("of the 900s cap"), "the lint's wall time is reported: {err}");
+    }
+
+    #[test]
+    fn a_round_that_breaks_only_a_base_fence_goes_red_naming_the_fence() {
+        let d = TempDir::new();
+        let o = fence_fixture(&d, None, 0, 1);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(String::from_utf8_lossy(&o.stdout).contains("rc=1"), "{err}");
+        assert!(err.contains("FENCE boundary: RED"), "{err}");
+        assert!(!err.contains("FENCE lifecycle-guard"), "{err}");
+        let r = d.path().join("round-work/.runtime/spira/batch-results");
+        assert!(fs::read_to_string(r.join("fence-boundary.result")).unwrap().starts_with("red "));
+        assert!(fs::read_to_string(r.join("fence-boundary.out")).unwrap().contains("README is stale"));
+        assert!(!r.join("spira-lint.result").exists(), "the lint was clean");
+    }
+
+    #[test]
+    fn a_lifecycle_guard_finding_alone_makes_the_round_red() {
+        let d = TempDir::new();
+        let o = fence_fixture(&d, None, 1, 0);
+        assert!(String::from_utf8_lossy(&o.stderr).contains("FENCE lifecycle-guard: RED"));
+        assert!(d.path().join("round-work/.runtime/spira/batch-results/fence-lifecycle-guard.result").exists());
+    }
+
+    #[test]
+    fn a_hit_in_a_file_no_member_touched_is_the_bases_own() {
+        let d = TempDir::new();
+        let o = lint_fixture(&d, Some("call-deadline: base.txt:1: old"));
+        assert!(String::from_utf8_lossy(&o.stderr).contains("member=the base itself"), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+
+    #[test]
+    fn a_clean_round_is_unaffected_by_the_lint() {
+        let d = TempDir::new();
+        let o = lint_fixture(&d, None);
+        let out = String::from_utf8_lossy(&o.stdout);
+        assert!(out.contains("rc=0"), "{out}{}", String::from_utf8_lossy(&o.stderr));
+        assert!(!d.path().join("round-work/.runtime").exists());
+        assert!(String::from_utf8_lossy(&o.stderr).contains("of the 900s cap"));
+    }
+
+    #[test]
+    fn base_is_parsed_and_asks_the_job_to_lint() {
+        let a = parse_run_args(&["/t".into(), "--base".into(), "local/main".into()]).unwrap();
+        assert_eq!(a.base.as_deref(), Some("local/main"));
+        assert!(parse_run_args(&["/t".into()]).unwrap().base.is_none());
+    }
+
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&BatchJob {
@@ -1006,8 +1642,10 @@ mod tests {
             cache_home: Some("/opt/spira/cargo".into()),
             testenv_registry: Some("registry.example/spira".into()),
             setup_alarm_secs: 45,
+            lint: false,
+            build_image: false,
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45'");
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '' ''");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -1033,11 +1671,15 @@ mod tests {
         {
             return;
         }
+        let d = TempDir::new();
+        let cache_home = d.path().join("cargo-home");
         let out = Command::new("bash")
             .arg("-c")
             .arg(REMOTE_SCRIPT)
             .arg("round-vm-test")
-            .args(["host", "9430", "", "16", "", "/nonexistent-cargo-home", "", "60"])
+            .args(["host", "9430", "", "16", ""])
+            .arg(&cache_home)
+            .args(["", "60", "", ""])
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", "/nonexistent-home")
             .output()
@@ -1134,6 +1776,14 @@ mod tests {
     }
 
     #[test]
+    fn host_addresses_reads_ip_br_addr() {
+        let out = "lo UNKNOWN 127.0.0.1/8 ::1/128\neth0 UP 192.168.15.174/22 fe80::1/64\n";
+        let a = host_addresses(out);
+        assert!(a.iter().any(|x| x == "192.168.15.174") && a.iter().any(|x| x == "127.0.0.1"));
+        assert!(!a.iter().any(|x| x == "192.168.1.56"));
+    }
+
+    #[test]
     fn a_real_mirror_daemon_listens_where_told_and_teardown_closes_it() {
         let d = TempDir::new();
         let tree = d.path().join("tree");
@@ -1148,6 +1798,17 @@ mod tests {
         let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into() };
         host.prepare_mirror(&tree).unwrap();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok(), "daemon not listening");
+        let old_pid = fs::read_to_string(state.join("git-daemon.pid")).unwrap();
+        host.prepare_mirror(&tree).unwrap();
+        assert_eq!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon on the right address is kept");
+        fs::write(state.join("git-daemon.addr"), "192.0.2.1").unwrap();
+        host.prepare_mirror(&tree).unwrap();
+        assert_ne!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon recorded on another address is restarted");
+        assert_eq!(fs::read_to_string(state.join("git-daemon.addr")).unwrap(), "127.0.0.1");
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
+        let foreign = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into() };
+        let e = foreign.prepare_mirror(&tree).unwrap_err();
+        assert!(e.contains("not an address of this host") && e.contains("set it to auto"), "{e}");
         stop_mirror(&state).unwrap();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener survived teardown");
     }
@@ -1163,11 +1824,17 @@ mod tests {
         fn prepare_mirror(&self, _: &Path) -> Result<(), String> {
             Ok(())
         }
-        fn image_tag(&self, tree: &Path, _: &str) -> Result<String, String> {
-            if tree.ends_with("tag-unreadable") { Err("no closure".into()) } else if tree.ends_with("newer-image") { Ok("tagB".into()) } else { Ok("tagA".into()) }
+        fn image_tag(&self, tree: &Path, rev: &str) -> Result<String, String> {
+            if rev == "main" { Ok("tagA".into()) } else if tree.ends_with("tag-unreadable") { Err("no closure".into()) } else if tree.ends_with("newer-image") { Ok("tagB".into()) } else { Ok("tagA".into()) }
         }
         fn mirror_ref(&self, _: &Path, branch: &str, _: &str) -> Result<(), String> {
             if branch == "missing" { Err("no such branch".into()) } else { Ok(()) }
+        }
+        fn suites_in(&self, _: &Path) -> Result<Vec<String>, String> {
+            Ok(vec!["test-fast.sh".into(), "test-slow.sh".into()])
+        }
+        fn suite_medians(&self) -> Result<std::collections::HashMap<String, f64>, String> {
+            Ok([("test-fast.sh".to_string(), 2.0), ("test-slow.sh".to_string(), 90.0)].into())
         }
     }
 
@@ -1190,6 +1857,9 @@ mod tests {
         /// (job id, whether the batch was still running when the job started)
         attrs: Mutex<Vec<(String, bool)>>,
         batch_running: std::sync::atomic::AtomicBool,
+        /// the corpus runs until its results have been pulled once, then the connection drops
+        hold_for_stream: bool,
+        result_pulls: std::sync::atomic::AtomicUsize,
     }
     impl FakeRemote {
         fn green() -> FakeRemote {
@@ -1212,6 +1882,8 @@ mod tests {
                 hold_for_attr: false,
                 attrs: Mutex::new(vec![]),
                 batch_running: std::sync::atomic::AtomicBool::new(false),
+                hold_for_stream: false,
+                result_pulls: std::sync::atomic::AtomicUsize::new(0),
             }
         }
     }
@@ -1225,6 +1897,9 @@ mod tests {
             if self.hold_for_attr {
                 wait_until(|| !self.attrs.lock().unwrap().is_empty());
             }
+            if self.hold_for_stream {
+                wait_until(|| self.result_pulls.load(std::sync::atomic::Ordering::SeqCst) > 0);
+            }
             self.batch_running.store(false, std::sync::atomic::Ordering::SeqCst);
             self.rc.clone()
         }
@@ -1237,6 +1912,9 @@ mod tests {
             Ok(if job.job == "j2" { 1 } else { 0 })
         }
         fn pull(&self, _: &str, remote_path: &str, local: &Path) -> Result<(), String> {
+            if remote_path == REMOTE_RESULTS {
+                self.result_pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             let files = self.files.get(remote_path).ok_or("no such remote dir")?;
             for (rel, body) in files {
                 let p = local.join(rel);
@@ -1270,14 +1948,41 @@ mod tests {
         let run_dir = d.path().join("run");
         let key = d.path().join("host_key");
         fs::write(&key, "k").unwrap();
-        let mut src = BTreeMap::new();
-        src.insert("SPIRA_RUN".to_string(), run_dir.to_string_lossy().to_string());
-        src.insert("SPIRA_ROUND_VM_HOST_ADDR".to_string(), "192.168.1.10".to_string());
-        src.insert("SPIRA_ROUND_VM_CACHE_HOME".to_string(), "/opt/spira/cargo".to_string());
-        src.insert("SPIRA_ROUND_VM_HOST_KEY".to_string(), key.to_string_lossy().to_string());
-        src.insert("SPIRA_ROUND_VM_SSH_TRIES".to_string(), "2".to_string());
-        src.insert("SPIRA_ROUND_VM_BOOT_POLL".to_string(), "0".to_string());
-        let cfg = Config::load(&src).unwrap();
+        // Values passed directly to Config::build (DESIGN.md / round-vm's config migration
+        // notes) — this used to be a fake env Config::load read through; now it is the
+        // Fields literal the old defaults would have produced, with this fixture's own
+        // overrides (host_key/host_addr/cache_home/ssh_tries/boot_poll) spelled out alongside
+        // them instead of layered on top by Config::load itself.
+        let cfg = Config::build(Fields {
+            run: run_dir.to_string_lossy().to_string(),
+            spira_home: None,
+            pve_env: String::new(),
+            ssh_user: "root".to_string(),
+            ssh_port: 22,
+            state_dir: run_dir.join("round-vm").to_string_lossy().to_string(),
+            host_key: key.to_string_lossy().to_string(),
+            host_pubkey: format!("{}.pub", key.to_string_lossy()),
+            host_addr: Some("192.168.1.10".to_string()),
+            cache_home: Some("/opt/spira/cargo".to_string()),
+            testenv_registry: None,
+            vcpus: 16,
+            maxpar: 16,
+            max_retries: 0,
+            retry_interval_secs: 60,
+            mirror_port: 9430,
+            setup_alarm_secs: 180,
+            acquire_deadline_secs: 3600,
+            mailbox: "operator".to_string(),
+            net_iface: "ens18".to_string(),
+            boot_tries: 60,
+            boot_poll_secs: 0,
+            ssh_tries: 2,
+            stream_every_secs: 10,
+            attr_linger_secs: 3600,
+            cap_secs: 1234,
+            vm_budget_secs: 300,
+            build_budget_secs: 600,
+        });
         Fixture { d, fp: FakeProvider::new(), cfg }
     }
 
@@ -1287,6 +1992,7 @@ mod tests {
         let f = move || {
             Ok(Attempt {
                 provider: Box::new(fp.clone()),
+                spill: None,
                 iface: "ens18".into(),
                 ssh_user: "root".into(),
                 pubkey: "k".into(),
@@ -1295,7 +2001,85 @@ mod tests {
         };
         let alarm = FakeAlarm::default();
         let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
-        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote }, a)
+        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: &FakeRecorder::default() }, a)
+    }
+
+    fn go_recorded(fx: &Fixture, remote: &FakeRemote, a: &RunArgs, rec: &FakeRecorder) -> i32 {
+        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
+        let fp = fx.fp.clone();
+        let f = move || {
+            Ok(Attempt {
+                provider: Box::new(fp.clone()),
+                spill: None,
+                iface: "ens18".into(),
+                ssh_user: "root".into(),
+                pubkey: "k".into(),
+                timing: Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 },
+            })
+        };
+        let alarm = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
+        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: rec }, a)
+    }
+
+    #[derive(Default)]
+    struct FakeRecorder {
+        calls: Mutex<Vec<String>>,
+        bodies: Mutex<Vec<(String, String)>>,
+        refuse: bool,
+    }
+
+    impl Recorder for FakeRecorder {
+        fn pass_started(&self, batch: &str, _: Option<&str>) -> Result<(), String> {
+            self.calls.lock().unwrap().push(format!("start {batch}"));
+            Ok(())
+        }
+        fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
+            self.calls.lock().unwrap().push(format!("{batch} {}", repo.unwrap_or("-")));
+            if self.refuse { Err("the batch is ATTRIBUTING, not CI_RUNNING".into()) } else { Ok(()) }
+        }
+        fn progress(&self, batch: &str, body: &str) -> Result<(), String> {
+            self.bodies.lock().unwrap().push((batch.to_string(), body.to_string()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_pass_with_a_batch_records_its_suites_boundary_once() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), round_repo: Some("sp".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
+        assert_eq!(*rec.calls.lock().unwrap(), vec!["start r-9".to_string(), "r-9 sp".to_string()]);
+        let bodies = rec.bodies.lock().unwrap();
+        let (batch, last) = bodies.last().expect("the pass publishes its counts onto the batch row");
+        let v: Value = serde_json::from_str(last).unwrap();
+        assert_eq!((batch.as_str(), v["total"].as_u64(), v["phase"].as_str()), ("r-9", Some(2), Some("done")));
+    }
+
+    #[test]
+    fn a_pass_with_no_batch_records_nothing() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
+        assert!(rec.calls.lock().unwrap().is_empty() && rec.bodies.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_refused_record_makes_the_pass_a_fault_not_a_verdict() {
+        let fx = fixture();
+        let rec = FakeRecorder { refuse: true, ..Default::default() };
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 2);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!(v["verdict"].as_str(), Some("fault"));
+    }
+
+    #[test]
+    fn the_round_flags_are_parsed() {
+        let a = parse_run_args(&args(&["t", "--round-batch", "r-1", "--round-repo=sp"])).unwrap();
+        assert_eq!((a.round_batch.as_deref(), a.round_repo.as_deref()), (Some("r-1"), Some("sp")));
     }
 
     fn tree(fx: &Fixture) -> RunArgs {
@@ -1317,14 +2101,40 @@ mod tests {
     }
 
     #[test]
-    fn a_run_refuses_when_the_recorded_template_holds_another_image_and_boots_nothing() {
+    fn a_head_whose_image_the_template_lacks_declares_the_build_and_a_matching_one_does_not() {
         let mut fx = fixture();
         record_template(&mut fx, "130", "localhost/spira-testenv:tagA", "130");
         let remote = FakeRemote::green();
-        assert_eq!(go(&fx, &remote, &newer_tree(&fx)), 3);
-        assert!(remote.jobs.lock().unwrap().is_empty(), "no batch ran");
-        assert!(fx.fp.name("100").is_none(), "no VM was acquired");
-        assert_eq!(go(&fx, &FakeRemote::green(), &tree(&fx)), 0, "positive control: the matching tree runs");
+        assert_eq!(go(&fx, &remote, &newer_tree(&fx)), 0);
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'180' '' '1'"), "declared: {:?}", remote.jobs.lock().unwrap());
+        let remote = FakeRemote::green();
+        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'180' '' ''"), "no image change, no build: {:?}", remote.jobs.lock().unwrap());
+    }
+
+    #[test]
+    fn without_a_record_the_base_tag_decides_whether_the_build_is_declared() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let mut a = tree(&fx);
+        a.base = Some("main".into());
+        assert_eq!(go(&fx, &remote, &a), 0);
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'1' ''"), "same tag as base: {:?}", remote.jobs.lock().unwrap());
+        let remote = FakeRemote::green();
+        let mut a = newer_tree(&fx);
+        a.base = Some("main".into());
+        assert_eq!(go(&fx, &remote, &a), 0);
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'1' '1'"), "newer tag than base: {:?}", remote.jobs.lock().unwrap());
+    }
+
+    #[test]
+    fn the_remote_script_builds_a_declared_image_in_setup_and_still_refuses_an_undeclared_one() {
+        let declared = REMOTE_SCRIPT.find("elif [ -n \"$build_image\" ]").expect("a declared branch");
+        let refuse = REMOTE_SCRIPT.find("refusing to cold-build it").unwrap();
+        let setup = REMOTE_SCRIPT.find("setup_secs=$(( $(date +%s) - t_start ))").unwrap();
+        assert!(declared < refuse && refuse < setup, "the build is before the setup clock stops, the refusal stays the fallback");
+        assert!(REMOTE_SCRIPT[declared..refuse].contains("testenv container image"));
+        assert!(REMOTE_SCRIPT[declared..refuse].contains("exit 3"), "a failed build gives no verdict");
     }
 
     #[test]
@@ -1345,6 +2155,32 @@ mod tests {
     }
 
     #[test]
+    fn a_signalled_run_salvages_the_verdicts_its_vm_already_produced() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let dest = fx.cfg.run_dir.join("salvaged");
+        let scratch = fx.cfg.state_dir.join(".salvage-test");
+        let n = salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5));
+        assert_eq!(n, 2);
+        assert!(dest.join("test-a.sh.result").is_file());
+        assert!(!scratch.exists(), "scratch is removed");
+        let mut none = FakeRemote::green();
+        none.files.clear();
+        assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5)), 0, "an unreachable VM salvages nothing and does not fail");
+    }
+
+    #[test]
+    fn the_remote_script_records_vm_wide_signals_beside_the_suite_times() {
+        let sampler = REMOTE_SCRIPT.find("sampler_pid=$!").expect("a sampler is started");
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        let stop = REMOTE_SCRIPT.find("kill \"$sampler_pid\"").expect("and stopped");
+        assert!(sampler < batch && batch < stop, "it brackets the suites");
+        for f in ["vm-signals", "iowait_pct", "steal_pct", "io_psi_some_avg10", "disk_inflight", "tsd/vm-signals.jsonl"] {
+            assert!(REMOTE_SCRIPT.contains(f), "{f}");
+        }
+    }
+
+    #[test]
     fn green_run_pulls_everything_writes_the_manifest_installs_and_releases() {
         let fx = fixture();
         let remote = FakeRemote::green();
@@ -1360,7 +2196,7 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' '/opt/spira/cargo' '' '180'"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'test-slow.sh,test-fast.sh' '24' '' '/opt/spira/cargo' '' '180' '' ''"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
@@ -1516,6 +2352,46 @@ mod tests {
         assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=0\n");
         assert!(fs::read_to_string(fx.d.path().join("results/test-b.sh.result")).is_ok(), "the corpus's results streamed in");
         assert!(fx.fp.live_vms().is_empty(), "released once the spool closed");
+    }
+
+    #[test]
+    fn a_run_publishes_its_progress_and_leaves_it_done_with_the_verdict() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), ..tree(&fx) };
+        assert_eq!(go(&fx, &remote, &a), 0);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("green")));
+        assert_eq!((v["done"].as_u64(), v["total"].as_u64(), v["cap"].as_u64()), (Some(2), Some(2), Some(1234)));
+        assert!(v["suites_started"].as_u64().is_some());
+        let seq: Vec<&str> = v["phases"].as_array().unwrap().iter().map(|e| e["phase"].as_str().unwrap()).collect();
+        assert_eq!(seq, ["vm", "build", "suites", "salvage", "done"], "a pass through the fake pool walks every phase in order");
+        let starts: Vec<u64> = v["phases"].as_array().unwrap().iter().map(|e| e["started"].as_u64().unwrap()).collect();
+        assert!(starts.windows(2).all(|w| w[0] <= w[1]), "{starts:?}");
+        assert_eq!(v["phase_started"], *starts.last().unwrap());
+    }
+
+    #[test]
+    fn a_run_whose_ssh_fails_is_left_done_with_a_fault() {
+        let fx = fixture();
+        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), ..tree(&fx) };
+        assert_eq!(go(&fx, &remote, &a), 2);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("fault")));
+    }
+
+    #[test]
+    fn a_run_cut_before_its_final_pull_keeps_the_verdicts_already_produced() {
+        let mut fx = fixture();
+        fx.cfg.stream_every = Duration::ZERO;
+        let remote = FakeRemote { hold_for_stream: true, rc: Ok(255), ..FakeRemote::green() };
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), ..tree(&fx) };
+        assert_eq!(go(&fx, &remote, &a), 2);
+        for s in ["test-a.sh", "test-b.sh"] {
+            assert!(fx.d.path().join("results").join(format!("{s}.result")).is_file(), "{s} streamed before the cut");
+        }
+        assert!(fx.fp.live_vms().is_empty());
     }
 
     #[test]

@@ -24,7 +24,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use spira_config::repos::Registry;
 
@@ -72,7 +72,7 @@ fn list_beads(cfg: &Config, args: &[&str]) -> Vec<Bead> {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn git_branch_exists(repo: &Path, branch: &str) -> bool {
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .current_dir(repo)
         .args(["show-ref", "--verify", "-q", &format!("refs/heads/{branch}")])
         .stdin(Stdio::null())
@@ -84,7 +84,7 @@ fn git_branch_exists(repo: &Path, branch: &str) -> bool {
 }
 
 fn git_rev_list_count(repo: &Path, range: &str) -> Option<u64> {
-    let o = Command::new("git").current_dir(repo).args(["rev-list", "--count", range]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let o = spira_config::bounded::bounded("git").current_dir(repo).args(["rev-list", "--count", range]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     if !o.status.success() {
         return None;
     }
@@ -253,8 +253,12 @@ pub fn detect_livelocked(cfg: &Config) -> String {
 
         if reg.map_present() {
             let valid: HashSet<String> = reg.names().into_iter().collect();
+            // Held is the lifecycle row's ask/poison hold, never a label (sp-psztcc).
+            let held: HashSet<String> = spira_config::lc_state::list()
+                .map(|rows| rows.into_iter().filter(|r| r.held("ask") || r.held("poison")).map(|r| r.bead_id).collect())
+                .unwrap_or_default();
             for b in list_beads(cfg, &[]) {
-                if b.has(&cfg.vocab.ask) || b.has(&cfg.groom_ask_label) || b.has(&cfg.vocab.poison) {
+                if held.contains(&b.id) || b.has(&cfg.groom_ask_label) {
                     continue;
                 }
                 let repo_labels: Vec<&str> = b.labels.iter().filter_map(|l| l.strip_prefix("repo:")).collect();

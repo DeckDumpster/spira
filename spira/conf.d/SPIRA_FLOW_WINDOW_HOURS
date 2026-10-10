@@ -1,9 +1,7 @@
 TYPE=string
 GROUP=flow
-DOC=SPIRA_FLOW_WINDOW_HOURS — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_FLOW_WINDOW_HOURS — hours of landings the flow invariants measure over.
+SCHEMA=Trailing window the flow reconciler measures velocity, stage dwell and round health over (unit: hours; decimal; default 0.5; sane range 0.1-6). Parsed as a number, so it must not be empty. Shorter reacts faster and is noisier.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    : "${SPIRA_FLOW_WINDOW_HOURS:=0.5}"
 SPIRA_CONF_DEFAULT_EOF

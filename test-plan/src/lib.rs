@@ -83,14 +83,28 @@ pub struct Uncovered {
     pub bead: String,
 }
 
+/// A command the harness registers or documents for something outside its own process to
+/// run — a status line, a hook, a mail client's outgoing line, a pane's start command.
+/// `site` is the repo-relative file that writes it and `needle` a string that file must
+/// contain, so the declaration cannot outlive the launcher it names.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Launcher {
+    pub site: String,
+    pub needle: String,
+}
+
 /// One row of a catalogue: `UC-<area>-NN`, its tier, the behaviour it states, and — only
-/// while nothing covers it — why.
+/// while nothing covers it — why. A use case with a `launcher` is that launcher's own
+/// "start it as its launcher does and check it starts" case.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UseCase {
     pub id: String,
     pub tier: Tier,
     pub statement: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<Launcher>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uncovered: Option<Uncovered>,
 }
@@ -270,6 +284,61 @@ pub fn orphan_violations(
     out
 }
 
+/// T0-T3 use cases no suite covers and no `[use_case.uncovered]` marker explains.
+pub fn coverage_gaps(catalogues: &[LoadedCatalogue], suites: &[SuiteCoverage]) -> Vec<String> {
+    let covered: BTreeSet<&str> = suites.iter().flat_map(|s| s.uc_ids()).collect();
+    let mut out = Vec::new();
+    for uc in catalogues.iter().flat_map(|lc| lc.catalogue.use_case.iter()) {
+        if !matches!(uc.tier, Tier::T0 | Tier::T1 | Tier::T2 | Tier::T3) {
+            continue;
+        }
+        if uc.uncovered.is_none() && !covered.contains(uc.id.as_str()) {
+            out.push(format!(
+                "gap: {} [{}] has no covering suite and no [use_case.uncovered] marker",
+                uc.id,
+                uc.tier.as_str()
+            ));
+        }
+    }
+    out
+}
+
+/// Launchers no suite covers. An `[use_case.uncovered]` marker does not silence this: it
+/// explains the gap, the launcher is still a launcher nobody has started the way its
+/// launcher starts it.
+pub fn launcher_gaps(catalogues: &[LoadedCatalogue], suites: &[SuiteCoverage]) -> Vec<String> {
+    let covered: BTreeSet<&str> = suites.iter().flat_map(|s| s.uc_ids()).collect();
+    let mut out = Vec::new();
+    for uc in catalogues.iter().flat_map(|lc| lc.catalogue.use_case.iter()) {
+        let Some(l) = &uc.launcher else { continue };
+        if !covered.contains(uc.id.as_str()) {
+            out.push(format!(
+                "launcher gap: {} [{}] {} ({}) has no covering suite",
+                uc.id,
+                uc.tier.as_str(),
+                l.site,
+                l.needle
+            ));
+        }
+    }
+    out
+}
+
+/// A declared launcher whose `site` is gone or no longer contains its `needle`: the
+/// launcher was moved or rewritten and the catalogue still names the old one.
+pub fn launcher_site_violations(catalogues: &[LoadedCatalogue], root: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for uc in catalogues.iter().flat_map(|lc| lc.catalogue.use_case.iter()) {
+        let Some(l) = &uc.launcher else { continue };
+        match std::fs::read_to_string(root.join(&l.site)) {
+            Ok(t) if t.contains(&l.needle) => {}
+            Ok(_) => out.push(format!("{}: launcher site {} no longer contains {:?}", uc.id, l.site, l.needle)),
+            Err(e) => out.push(format!("{}: launcher site {}: {e}", uc.id, l.site)),
+        }
+    }
+    out
+}
+
 /// A suite whose measured p50 (`timings`, keyed by suite path, milliseconds) exceeds its
 /// declared tier's provisional budget. Reported, never failed — TIER HONESTY in the matrix.
 pub fn tier_budget_flags(suites: &[SuiteCoverage], timings: &BTreeMap<String, f64>) -> Vec<String> {
@@ -312,6 +381,8 @@ pub struct UseCaseMatrix {
     pub tier: Tier,
     pub statement: String,
     pub covering_suites: Vec<SuiteRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<Launcher>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uncovered: Option<Uncovered>,
 }
@@ -379,6 +450,7 @@ pub fn build_matrix(
                 tier: uc.tier,
                 statement: uc.statement.clone(),
                 covering_suites,
+                launcher: uc.launcher.clone(),
                 uncovered: uc.uncovered.clone(),
             });
         }
@@ -425,9 +497,13 @@ pub fn render_markdown(doc: &MatrixDoc) -> String {
                     .collect::<Vec<_>>()
                     .join("<br>")
             };
+            let gap = if uc.launcher.is_some() { "**LAUNCHER GAP**" } else { "**GAP**" };
             let status = match &uc.uncovered {
+                Some(u) if uc.launcher.is_some() && uc.covering_suites.is_empty() => {
+                    format!("{gap} — uncovered: {} ({}, {})", u.reason, u.date, u.bead)
+                }
                 Some(u) => format!("uncovered: {} ({}, {})", u.reason, u.date, u.bead),
-                None if uc.covering_suites.is_empty() => String::from("**GAP**"),
+                None if uc.covering_suites.is_empty() => String::from(gap),
                 None => String::from("covered"),
             };
             out.push_str(&format!(
@@ -461,6 +537,48 @@ mod tests {
             path: format!("{area}.toml"),
             catalogue: parse_catalogue(toml_text).expect("valid fixture"),
         }
+    }
+
+    const LAUNCHER_CAT: &str = "api_version = \"test-plan/v1\"\narea = \"ops\"\n\n[[use_case]]\nid = \"UC-ops-01\"\ntier = \"T2\"\nstatement = \"starts\"\nlauncher = { site = \"a/b.rs\", needle = \"statusLine\" }\n\n[use_case.uncovered]\nreason = \"r\"\ndate = \"2026-10-06\"\nbead = \"sp-x\"\n";
+
+    fn suite(covers: &[&str]) -> SuiteCoverage {
+        SuiteCoverage { path: "spira/test-a.sh".into(), tier: Some("T2".into()), covers: covers.iter().map(|c| c.to_string()).collect() }
+    }
+
+    #[test]
+    fn an_unmarked_uncovered_uc_is_a_gap_and_a_marker_or_cover_clears_it() {
+        let bare = "api_version = \"test-plan/v1\"\narea = \"ops\"\n\n[[use_case]]\nid = \"UC-ops-01\"\ntier = \"T2\"\nstatement = \"s\"\n";
+        let marked = format!("{bare}\n[use_case.uncovered]\nreason = \"r\"\ndate = \"2026-10-08\"\nbead = \"sp-x\"\n");
+        assert_eq!(coverage_gaps(&[lc("ops", bare)], &[]).len(), 1);
+        assert!(coverage_gaps(&[lc("ops", &marked)], &[]).is_empty());
+        assert!(coverage_gaps(&[lc("ops", bare)], &[suite(&["UC-ops-01"])]).is_empty());
+        let t4 = bare.replace("T2", "T4");
+        assert!(coverage_gaps(&[lc("ops", &t4)], &[]).is_empty());
+    }
+
+    #[test]
+    fn an_uncovered_launcher_is_a_gap_even_with_an_uncovered_marker() {
+        let cats = [lc("ops", LAUNCHER_CAT)];
+        let gaps = launcher_gaps(&cats, &[suite(&["spira/x.sh"])]);
+        assert_eq!(gaps.len(), 1, "{gaps:?}");
+        assert!(gaps[0].contains("UC-ops-01") && gaps[0].contains("a/b.rs"), "{gaps:?}");
+        assert!(launcher_gaps(&cats, &[suite(&["UC-ops-01"])]).is_empty());
+        let md = render_markdown(&build_matrix(&cats, &[], &BTreeMap::new()));
+        assert!(md.contains("**LAUNCHER GAP**"), "{md}");
+    }
+
+    #[test]
+    fn a_launcher_site_must_still_contain_its_needle() {
+        let t = testkit::TempDir::new("launcher-sites");
+        let cats = [lc("ops", LAUNCHER_CAT)];
+        let missing = launcher_site_violations(&cats, t.path());
+        assert_eq!(missing.len(), 1, "{missing:?}");
+        std::fs::create_dir_all(t.join("a")).unwrap();
+        std::fs::write(t.join("a/b.rs"), "no marker here").unwrap();
+        let stale = launcher_site_violations(&cats, t.path());
+        assert!(stale[0].contains("no longer contains"), "{stale:?}");
+        std::fs::write(t.join("a/b.rs"), "doc.insert(\"statusLine\")").unwrap();
+        assert!(launcher_site_violations(&cats, t.path()).is_empty());
     }
 
     #[test]

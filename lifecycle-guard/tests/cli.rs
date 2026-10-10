@@ -156,12 +156,6 @@ fn landstate_direct_path_read_is_reported_in_rust() {
 }
 
 #[test]
-fn landstate_findings_are_silent_inside_the_allow_listed_crates() {
-    let findings = run("landstate_allowlist", None);
-    assert!(findings.is_empty(), "expected no findings, got {findings:#?}");
-}
-
-#[test]
 fn exit_code_is_nonzero_iff_findings_exist() {
     let clean = Command::new(env!("CARGO_BIN_EXE_lifecycle-guard"))
         .arg(fixture("clean"))
@@ -295,10 +289,9 @@ fn landing_pass_oracle_subcommands_are_landstate_calls() {
     );
 }
 
-/// The machine boundary is the lifecycle crate and spira-lc's one migration reader, not the
-/// whole of spira-lc: a second, ledger-backed answer inside spira-lc is a finding too.
+/// No crate is exempt: a ledger-backed answer inside spira-lc is a finding like any other.
 #[test]
-fn spira_lc_beyond_its_migration_reader_is_held_to_the_rule() {
+fn spira_lc_is_held_to_the_rule() {
     let findings = run("spira_lc_beyond_classifier", None);
     assert_eq!(classes(&findings), vec!["landstate-path"], "{findings:#?}");
     assert_eq!(findings[0]["file"], "spira-lc/src/answer.rs");
@@ -423,4 +416,19 @@ fn gate_mode_refuses_a_rust_bd_status_read() {
     assert!(!out.contains("not yet refused at the gate: bd-status-read"), "{out}");
     assert!(!out.contains("fence: lifecycle-guard"), "a refused run proves nothing: {out}");
     assert!(err.contains("REFUSED"), "{err}");
+}
+
+#[test]
+fn the_shipped_chamber_names_bd_nowhere() {
+    let chamber = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
+    let out = Command::new(env!("CARGO_BIN_EXE_lifecycle-guard"))
+        .arg("--json")
+        .arg(&chamber)
+        .output()
+        .expect("run lifecycle-guard");
+    let findings: Vec<Value> = serde_json::from_slice(&out.stdout).expect("valid JSON findings");
+    let bd: Vec<&Value> = findings.iter().filter(|f| f["class"] == "brief-bd").collect();
+    assert!(bd.is_empty(), "a persona names bd: {bd:#?}");
+    let personas = std::fs::read_dir(&chamber).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "fayth")).count();
+    assert!(personas >= 8, "the chamber scan saw only {personas} fayth files");
 }

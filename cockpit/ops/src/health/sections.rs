@@ -36,6 +36,31 @@ pub struct DrainState {
     pub stamp_mtime: Option<i64>,
 }
 
+/// The one line a pane shows when its config cannot be resolved: never a path it made up.
+pub fn refusal_lines(err: &str) -> Vec<String> {
+    vec![format!("{B}{BAD} \u{25a0} health: config unresolved {RST}{DIM}{err}{RST}")]
+}
+
+/// Resolves the sentinel timer the way `spira_unit` does: the instance-qualified unit (the
+/// instance is always part of the name, `prod` included), else the plain one. `probe` returns
+/// `(is-enabled succeeded, is-active text)`; a unit neither enabled nor active is unknown to
+/// systemd, and its "inactive" says nothing, so nothing resolving yields `None`.
+pub fn sentinel_timer_active(instance: &str, probe: impl Fn(&str) -> (bool, String)) -> Option<bool> {
+    let plain = "spira-sentinel.timer".to_string();
+    let mut candidates = Vec::new();
+    if !instance.is_empty() {
+        candidates.push(format!("spira-sentinel-{instance}.timer"));
+    }
+    candidates.push(plain);
+    for unit in candidates {
+        let (enabled, text) = probe(&unit);
+        if enabled || text == "active" {
+            return Some(text == "active");
+        }
+    }
+    None
+}
+
 fn halt_banner(h: &HaltState) -> Vec<String> {
     if !h.stamp_exists && h.sentinel_active == Some(true) {
         return Vec::new();
@@ -169,6 +194,11 @@ pub fn header_line(
     } else if firing != "0" {
         let keys = snap.q("SP_AURON_KEYS").replace(',', " ");
         out.push(format!(" {DIM}ALERT{RST}  {BAD}{B}{firing}{RST} firing  {BAD}{keys}{RST}"));
+    }
+
+    let lc_stale = snap.get("SP_LC_STALE_S").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    if lc_stale > 0 {
+        out.push(format!(" {DIM}lifecycle{RST}  {BAD}STALE {lc_stale}s{RST} — last good read, the store did not answer"));
     }
 
     let overrides_n = snap.get("SP_OVERRIDES_N").unwrap_or("0");
@@ -307,7 +337,7 @@ fn unread_row(label: &str, what: &str) -> String {
 /// One aeon's four rows for `now_section`. `lease` is `?` or minutes. Trailing moments
 /// (`SP_AEON{i}_ACT{j}`) are rendered newest-last when present; otherwise the single
 /// `SP_AEON{i}_ACT` plus `SP_AEON{i}_SAID` fall back to the original single-line shape.
-fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lines: i64) -> Vec<String> {
+fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lines: i64, working: &[(String, String)]) -> Vec<String> {
     let g = |k: &str| snap.q(&format!("SP_AEON{i}_{k}")).to_string();
     let nm = g("NAME");
     let fy = g("FAYTH");
@@ -336,8 +366,9 @@ fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lin
 
     let mut out = Vec::new();
     let label = if is_first { "NOW" } else { "   " };
+    let phase = working.iter().find(|(b, _)| *b == bd).map_or("?", |(_, p)| p.as_str());
     let tail = fit(
-        &format!("the {fy} on {model_disp} \u{b7} {mn}m \u{b7} {tn} turns \u{b7} ctx {} \u{b7} {fl} files", tok(&cx)),
+        &format!("the {fy} on {model_disp} \u{b7} {phase} \u{b7} {mn}m \u{b7} {tn} turns \u{b7} ctx {} \u{b7} {fl} files", tok(&cx)),
         cols - 9 - nm.chars().count() as i64,
     );
     out.push(format!("{DIM}{label}{RST}    {OK}{B}{nm}{RST} {DIM}{tail}{RST}"));
@@ -410,11 +441,17 @@ fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lin
     out
 }
 
-pub fn now_section(snap: &Snapshot, cols: i64, live_aeon_n: i64, trace_lines: i64) -> Vec<String> {
+/// NOW reads the WORKING rows of the lifecycle store (`(bead, phase)`; `None` when the store
+/// cannot answer). The snapshot only adds the detail a row does not carry.
+pub fn now_section(snap: &Snapshot, cols: i64, working: Option<&[(String, String)]>, trace_lines: i64) -> Vec<String> {
+    let live_aeon_n = working.map_or(-1, |w| w.len() as i64);
+    let rows = working.unwrap_or(&[]);
     let snap_n_raw = snap.get("SP_AEON_N");
     if snap_n_raw.is_none() || snap_n_raw == Some("?") {
         return if live_aeon_n > 0 {
             vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} details pending snapshot{RST}")]
+        } else if live_aeon_n == 0 {
+            vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")]
         } else {
             vec![unread_row("NOW", "cannot read the aeon roster")]
         };
@@ -424,15 +461,18 @@ pub fn now_section(snap: &Snapshot, cols: i64, live_aeon_n: i64, trace_lines: i6
         return vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")];
     }
     if snap_n == 0 && live_aeon_n > 0 {
-        return vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} not yet in snapshot{RST}")];
+        let phases: Vec<String> = rows.iter().map(|(b, p)| format!("{b} {p}")).collect();
+        return vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} {}{RST}", phases.join(", "))];
     }
     let mut out = Vec::new();
     for i in 0..snap_n as usize {
-        out.extend(now_aeon_rows(snap, cols, i, i == 0, trace_lines));
+        out.extend(now_aeon_rows(snap, cols, i, i == 0, trace_lines, rows));
     }
     let extra = live_aeon_n - snap_n;
     if extra > 0 {
-        out.push(format!("        {DIM}+{extra} more aeon(s) live \u{2014} not yet in snapshot{RST}"));
+        let shown: Vec<&str> = (0..snap_n as usize).filter_map(|i| snap.get(&format!("SP_AEON{i}_BEAD"))).collect();
+        let rest: Vec<String> = rows.iter().filter(|(b, _)| !shown.contains(&b.as_str())).map(|(b, p)| format!("{b} {p}")).collect();
+        out.push(format!("        {DIM}+{extra} more aeon(s) live \u{2014} not yet in snapshot: {}{RST}", rest.join(", ")));
     }
     out
 }
@@ -772,6 +812,17 @@ pub fn ci_section(snap: &Snapshot, cols: i64) -> Vec<String> {
     out
 }
 
+/// `flow_lines` — the reconciler time series' two headlines. A headline the collector could
+/// not read renders `?` in the bad colour; it is never a zero.
+pub fn flow_lines(snap: &Snapshot) -> Vec<String> {
+    let row = |label: &str, key: &str| {
+        let v = snap.get(key).filter(|s| !s.is_empty()).unwrap_or("?");
+        let col = if v == "?" { BAD } else { "" };
+        format!(" {DIM}{label}{RST} {col}{v}{}", if col.is_empty() { "" } else { RST })
+    };
+    vec![row("WHERE ", "SP_TSD_WHERE"), row("REWORK", "SP_TSD_REWORK")]
+}
+
 /// `standing_lines` — the fixed-height figures: ATTN, SEND, BEADS, LAND, LOCK, GATE, SUITES,
 /// BOX, MAIL, OPS. Always emitted in full; never part of the elastic share.
 fn pools_row(snap: &Snapshot) -> String {
@@ -1094,6 +1145,29 @@ fn now_placeholder() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn production_instance_timer_is_resolved_not_reported_inactive() {
+        let probe = |u: &str| {
+            if u == "spira-sentinel-prod.timer" { (true, "active".to_string()) } else { (false, "inactive".to_string()) }
+        };
+        let active = sentinel_timer_active("prod", probe);
+        assert_eq!(active, Some(true));
+        let h = HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: active };
+        assert!(halt_banner(&h).is_empty());
+    }
+
+    #[test]
+    fn unresolvable_timer_is_unknown_never_inactive() {
+        assert_eq!(sentinel_timer_active("prod", |_| (false, "inactive".to_string())), None);
+    }
+
+    #[test]
+    fn config_failure_renders_a_refusal_not_a_path() {
+        let out = refusal_lines("SPIRA_TOML is not set").join("\n");
+        assert!(out.contains("SPIRA_TOML is not set"));
+        assert!(!out.contains("/tmp"));
+    }
+
     use super::*;
 
     fn snap(pairs: &[(&str, &str)]) -> Snapshot {
@@ -1129,17 +1203,39 @@ mod tests {
     }
 
     #[test]
-    fn now_section_unread_when_snapshot_missing_and_no_live_aeons() {
+    fn now_section_unread_when_the_lifecycle_store_cannot_answer() {
         let s = snap(&[]);
-        let out = now_section(&s, 80, 0, 2);
+        let out = now_section(&s, 80, None, 2);
         assert_eq!(out.len(), 1);
         assert!(out[0].contains("cannot read the aeon roster"));
     }
 
     #[test]
+    fn now_section_says_idle_from_the_store_even_with_no_snapshot() {
+        let out = now_section(&snap(&[]), 80, Some(&[]), 2);
+        assert!(out[0].contains("no aeon working"), "{out:?}");
+    }
+
+    #[test]
+    fn now_section_names_the_phase_the_row_records_for_a_snapshotted_aeon() {
+        let s = snap(&[("SP_AEON_N", "1"), ("SP_AEON0_BEAD", "sp-a"), ("SP_AEON0_NAME", "aeon-x"), ("SP_AEON0_FAYTH", "builder")]);
+        let working = vec![("sp-a".to_string(), "session".to_string())];
+        let out = now_section(&s, 120, Some(&working), 0).join("\n");
+        assert!(out.contains("\u{b7} session \u{b7}"), "{out}");
+    }
+
+    #[test]
+    fn now_section_names_a_working_row_the_snapshot_has_not_caught_up_to() {
+        let s = snap(&[("SP_AEON_N", "0")]);
+        let working = vec![("sp-new".to_string(), "building".to_string())];
+        let out = now_section(&s, 120, Some(&working), 0).join("\n");
+        assert!(out.contains("1 aeon(s) live") && out.contains("sp-new building"), "{out}");
+    }
+
+    #[test]
     fn now_section_idle_when_both_zero() {
         let s = snap(&[("SP_AEON_N", "0")]);
-        let out = now_section(&s, 80, 0, 2);
+        let out = now_section(&s, 80, Some(&[]), 2);
         assert_eq!(out, vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")]);
     }
 
@@ -1183,6 +1279,15 @@ mod tests {
     fn ci_section_prints_even_at_zero() {
         let s = snap(&[("SP_AWAITING_N", "0"), ("SP_AWAITING_STUCK", "0")]);
         assert_eq!(ci_section(&s, 80), vec![format!(" {DIM}CI{RST}     {DIM}nothing parked on CI{RST}")]);
+    }
+
+    #[test]
+    fn flow_lines_render_the_headlines_and_question_marks_never_zero() {
+        let ok = flow_lines(&snap(&[("SP_TSD_WHERE", "WORKING 3 (12m)"), ("SP_TSD_REWORK", "1 reopened / 9 landed")])).join("\n");
+        assert!(ok.contains("WORKING 3 (12m)") && ok.contains("1 reopened / 9 landed"), "{ok}");
+        let bad = flow_lines(&snap(&[("SP_TSD_WHERE", "?")])).join("\n");
+        assert_eq!(bad.matches('?').count(), 2, "{bad}");
+        assert!(!bad.contains(" 0"), "{bad}");
     }
 
     #[test]

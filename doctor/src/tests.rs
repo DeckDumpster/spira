@@ -34,6 +34,7 @@ pub struct Fake {
     pub store_meta: RefCell<BTreeMap<PathBuf, StoreMeta>>,
     pub active_units: RefCell<Vec<String>>,
     pub tcp_open: RefCell<bool>,
+    pub root_passwordless: RefCell<Option<bool>>,
     pub bd_first_id: RefCell<Option<String>>,
     pub bump_ok: RefCell<bool>,
     pub counter: RefCell<String>,
@@ -52,6 +53,7 @@ pub struct Fake {
     pub sccache_show_stats: RefCell<Option<String>>,
     pub sccache_dav_addr: RefCell<Option<String>>,
     pub daemon_bases: RefCell<Vec<String>>,
+    pub hooks_path: RefCell<Option<String>>,
 }
 
 impl Default for Fake {
@@ -79,6 +81,7 @@ impl Default for Fake {
             store_meta: RefCell::new(BTreeMap::new()),
             active_units: RefCell::new(Vec::new()),
             tcp_open: RefCell::new(false),
+            root_passwordless: RefCell::new(None),
             bd_first_id: RefCell::new(None),
             bump_ok: RefCell::new(false),
             counter: RefCell::new("0".into()),
@@ -97,6 +100,7 @@ impl Default for Fake {
             sccache_show_stats: RefCell::new(None),
             sccache_dav_addr: RefCell::new(None),
             daemon_bases: RefCell::new(Vec::new()),
+            hooks_path: RefCell::new(None),
         }
     }
 }
@@ -171,6 +175,9 @@ impl World for Fake {
     fn dolt_metrics_disabled(&self) -> bool {
         *self.dolt_metrics_off.borrow()
     }
+    fn dolt_root_passwordless(&self, _host: &str, _port: u16) -> Option<bool> {
+        *self.root_passwordless.borrow()
+    }
     fn dolt_events_count(&self) -> usize {
         *self.dolt_events.borrow()
     }
@@ -224,6 +231,9 @@ impl World for Fake {
     }
     fn sccache_dav_addr(&self) -> Option<String> {
         self.sccache_dav_addr.borrow().clone()
+    }
+    fn git_hooks_path(&self, _repo: &Path) -> Option<String> {
+        self.hooks_path.borrow().clone()
     }
     fn out(&self, s: &str) {
         self.stdout.borrow_mut().push(s.to_string());
@@ -302,90 +312,63 @@ fn hotfix_past_alert_threshold_fails() {
 }
 
 // ============================================================================ config files
+//
+// `check_config_files` no longer goes through `World` at all (per Ryan 2026-10-05: one
+// source of config) — it calls `spira_config::locate`/`load`/`process::cfg` directly, so
+// these are real-environment tests, not `Fake`-driven ones. `Fake::default()` is passed
+// only to satisfy the function's `&dyn World` parameter, which the function itself ignores.
 
 #[test]
-fn config_files_none_present() {
+fn config_files_fails_when_spira_toml_is_unset() {
+    let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CONF", None)]);
     let f = Fake::default();
-    assert_eq!(levels(&check_config_files(&f)), vec![Level::Ok]);
+    let out = check_config_files(&f);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0].level, Level::Fail);
+    assert!(out[0].msg.contains("SPIRA_TOML is not set"), "{:?}", out[0].msg);
 }
 
 #[test]
-fn config_files_both_present_warns() {
+fn config_files_fails_when_a_named_layer_is_missing() {
+    let d = testkit::TempDir::new("doctor-config-files-missing-layer");
+    let missing = d.join("no-such-file.toml");
+    let _env = testkit::env(&[("SPIRA_TOML", missing.to_str())]);
     let f = Fake::default();
-    f.set("SPIRA_CONF_FILE", "/etc/spira.conf");
-    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
-    f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
-    *f.config_valid.borrow_mut() = Ok(());
     let out = check_config_files(&f);
-    assert_eq!(out[0].level, Level::Warn);
-    assert_eq!(out[1].level, Level::Ok);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0].level, Level::Fail);
+    assert!(out[0].msg.contains("does not exist"), "{:?}", out[0].msg);
+    assert!(out[0].msg.contains("no-such-file.toml"), "{:?}", out[0].msg);
 }
 
 #[test]
-fn config_files_toml_fails_validation() {
+fn config_files_fails_when_the_document_does_not_validate() {
+    let d = testkit::TempDir::new("doctor-config-files-malformed");
+    let bad = d.join("bad-config.toml");
+    std::fs::write(&bad, "this is not [valid toml").unwrap();
+    let _env = testkit::env(&[("SPIRA_TOML", bad.to_str())]);
     let f = Fake::default();
-    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
-    f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
-    *f.config_valid.borrow_mut() = Err("bad key".into());
     let out = check_config_files(&f);
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert_eq!(out[0].level, Level::Ok, "the layer itself exists, so this line still passes");
     assert_eq!(out[1].level, Level::Fail);
+    assert!(out[1].msg.contains("fails validation"), "{:?}", out[1].msg);
 }
 
+/// THE ONE TEST in this binary allowed to drive `spira_config::process::cfg` for real
+/// (its resolution is cached once per process, in a `OnceLock`) — a complete fixture (every
+/// registered key declared) must clear all three stages: set, validates, every key
+/// resolves. `SPIRA_HOME` is the checkout's own `spira/` (where `conf.d` — the key
+/// registry this last stage enumerates — actually lives), never a throwaway fixture dir.
 #[test]
-fn config_files_migrates_before_validating_when_migrate_has_output() {
-    // sp-oppza: `spira-config migrate <file>` runs immediately before `validate`, in that
-    // order, and its output (only when non-empty) is logged as a plain, unranked line —
-    // never folded into the validate verdict, and never gating on migrate's own exit code.
+fn config_files_passes_when_every_registered_key_resolves() {
+    let d = testkit::TempDir::new("doctor-config-files-complete");
+    let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let toml = spira_config::process::fixture_toml(d.path(), &[]);
+    let _env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
     let f = Fake::default();
-    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
-    f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
-    *f.config_migrate.borrow_mut() = "spira-config migrate: /etc/spira-cfg.toml: set spira.id_prefix = \"sp\" from goal".into();
-    *f.config_valid.borrow_mut() = Ok(());
-
     let out = check_config_files(&f);
-    // out[0]: the TOML_NAME-only line (no spira.conf); out[1]: the migrate note; out[2]: validates.
-    assert_eq!(out.len(), 3, "{out:?}");
-    assert_eq!(out[1].level, Level::Raw);
-    assert_eq!(out[1].msg, "spira-config migrate: /etc/spira-cfg.toml: set spira.id_prefix = \"sp\" from goal");
-    assert_eq!(out[2].level, Level::Ok);
-}
-
-#[test]
-fn config_files_migrate_silent_when_it_had_nothing_to_do() {
-    // The common case (a box whose config already has id_prefix, or predates nothing):
-    // migrate prints nothing, so no extra line appears at all — not even an empty one.
-    let f = Fake::default();
-    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
-    f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
-    *f.config_valid.borrow_mut() = Ok(());
-
-    let out = check_config_files(&f);
-    assert!(!out.iter().any(|l| l.level == Level::Raw), "{out:?}");
-}
-
-#[test]
-fn config_files_migrate_output_ignores_its_own_exit_code() {
-    // Even when validate then fails, the migrate note (if any) still precedes it and is
-    // still just logged, never turned into a FAIL of its own — validate is the one gate.
-    let f = Fake::default();
-    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
-    f.which.borrow_mut().insert("spira-config".into(), "/bin/spira-config".into());
-    *f.config_migrate.borrow_mut() = "spira-config migrate: /etc/spira-cfg.toml: some note".into();
-    *f.config_valid.borrow_mut() = Err("bad key".into());
-
-    let out = check_config_files(&f);
-    assert_eq!(out.len(), 3, "{out:?}");
-    assert_eq!(out[1].level, Level::Raw);
-    assert_eq!(out[2].level, Level::Fail);
-}
-
-#[test]
-fn config_files_toml_but_no_spira_config_binary_fails() {
-    let f = Fake::default();
-    f.set("SPIRA_TOML_FILE", "/etc/spira-cfg.toml");
-    let out = check_config_files(&f);
-    assert_eq!(out[1].level, Level::Fail);
-    assert!(out[1].msg.contains("spira-config is not on PATH"));
+    assert_eq!(levels(&out), vec![Level::Ok, Level::Ok, Level::Ok], "{out:?}");
 }
 
 // ============================================================================ chamber overlays
@@ -707,30 +690,19 @@ fn backend_check_fails_when_show_stats_answers_with_no_cache_location_line() {
     assert!(lines[0].msg.contains("did not report a Cache location"), "{:?}", lines[0].msg);
 }
 
-/// THE FULL PIPELINE (sp-xtdqi-3): an address resolved from a fixture config document
-/// (the host config document's own `[spira]` table) — never the environment, which is deliberately
-/// empty here — feeds `check_sccache_backend`, which FAILS on a fake "Local disk" location.
-/// This is the exact production scenario (configured, unexported, server on the wrong
-/// backend) that used to report "no shared store configured" blind, because `World::env`
-/// (`conf.sh`'s own bash capture) never carries a NO-DEFAULT key like this one even when
-/// the host config document genuinely configures it.
+/// THE FULL PIPELINE (sp-xtdqi-3): an address that lives only in the host config
+/// document — never the environment — still feeds `check_sccache_backend`, which FAILS on
+/// a fake "Local disk" location. This is the exact production scenario (configured,
+/// unexported, server on the wrong backend) that used to report "no shared store
+/// configured" blind, because `World::env` (`conf.sh`'s own bash capture) never carried a
+/// NO-DEFAULT key like this one even when the host config document genuinely configured
+/// it. `World::sccache_dav_addr` resolves this through `spira_config::process::cfg` alone
+/// now (per Ryan 2026-10-05: one source of config) — the address below stands in for that
+/// already-proven resolution; this test is about `check_sccache_backend`'s own judgement.
 #[test]
 fn backend_check_fails_on_an_address_resolved_from_a_fixture_config_with_nothing_exported() {
-    let d = testkit::TempDir::new("doctor-backend-fixture-config");
-    let home = d.path().join("home");
-    std::fs::create_dir_all(home.join("conf.d")).unwrap();
-    std::fs::write(
-        home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"),
-        "TYPE=string\nGROUP=sccache\nDOC=test fixture\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # NO DEFAULT.\nSPIRA_CONF_DEFAULT_EOF\n",
-    )
-    .unwrap();
-    let toml = spira_config::validate("[spira]\nid_prefix = \"sp\"\nsccache_dav_addr = \"192.168.1.56:9431\"\n").unwrap();
-    let env: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new(); // deliberately unexported
-    let addr = crate::real::resolve_sccache_dav_addr(&home, &home, &env, Some(&toml));
-    assert_eq!(addr.as_deref(), Some("192.168.1.56:9431"), "sanity: must resolve before feeding the check");
-
     let f = Fake::default();
-    *f.sccache_dav_addr.borrow_mut() = addr;
+    *f.sccache_dav_addr.borrow_mut() = Some("192.168.1.56:9431".to_string());
     *f.sccache_show_stats.borrow_mut() = Some("Cache location                  Local disk: \"/var/cache/sccache\"\n".into());
     let lines = check_sccache_backend(&f);
     assert_eq!(levels(&lines), vec![Level::Fail], "{lines:?}");
@@ -1188,4 +1160,53 @@ fn dolt_telemetry_check_is_silent_on_a_host_that_runs_no_dolt_server() {
     *f.dolt_metrics_off.borrow_mut() = false;
     *f.dolt_events.borrow_mut() = 500;
     assert!(check_dolt_telemetry(&f).is_empty());
+}
+
+fn root_fixture(state: Option<bool>) -> Fake {
+    let f = Fake::default();
+    f.env.borrow_mut().insert("SPIRA_DB".into(), "/db".into());
+    f.files.borrow_mut().push(PathBuf::from("/db/.beads/metadata.json"));
+    f.store_meta.borrow_mut().insert(PathBuf::from("/db/.beads/metadata.json"), StoreMeta { dolt_server_host: "127.0.0.1".into(), dolt_server_port: Some(3307), ..Default::default() });
+    *f.root_passwordless.borrow_mut() = state;
+    f
+}
+
+#[test]
+fn doctor_flags_a_passwordless_dolt_root() {
+    let out = check_root_closed(&root_fixture(Some(true)));
+    assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("passwordless")), "{out:?}");
+}
+
+#[test]
+fn doctor_accepts_a_closed_dolt_root_and_is_silent_when_it_cannot_probe() {
+    assert!(check_root_closed(&root_fixture(Some(false))).iter().all(|l| l.level == Level::Ok));
+    assert!(check_root_closed(&root_fixture(None)).is_empty());
+}
+
+// ============================================================================ git hooks
+
+fn hooks_fixture(path: Option<&str>) -> Fake {
+    let f = Fake::default();
+    f.set("SPIRA_REPO", "/repo");
+    f.set("SPIRA_HOME", "/repo/spira");
+    *f.hooks_path.borrow_mut() = path.map(String::from);
+    f
+}
+
+#[test]
+fn hooks_path_fails_naming_a_displaced_value() {
+    let out = check_hooks_path(&hooks_fixture(Some("/somewhere/else")));
+    assert_eq!(levels(&out), vec![Level::Fail]);
+    assert!(out[0].msg.contains("/somewhere/else") && out[0].msg.contains("/repo/spira/hooks"), "{:?}", out[0].msg);
+}
+
+#[test]
+fn hooks_path_fails_when_unset() {
+    assert_eq!(levels(&check_hooks_path(&hooks_fixture(None))), vec![Level::Fail]);
+}
+
+#[test]
+fn hooks_path_passes_relative_and_absolute_forms() {
+    assert_eq!(levels(&check_hooks_path(&hooks_fixture(Some("spira/hooks")))), vec![Level::Ok]);
+    assert_eq!(levels(&check_hooks_path(&hooks_fixture(Some("/repo/spira/hooks/")))), vec![Level::Ok]);
 }

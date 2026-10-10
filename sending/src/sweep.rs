@@ -74,10 +74,6 @@ fn superseded(b: &Value) -> bool {
     })
 }
 
-fn status(b: &Value) -> Option<&str> {
-    b.get("status").and_then(Value::as_str)
-}
-
 pub struct Ctx<'a> {
     pub w: &'a dyn World,
     pub repo: &'a Path,
@@ -110,7 +106,7 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
 
     // SQUASH-MERGED: a merged PR whose head is still the branch tip captured every commit.
     // The network call, reached only here.
-    if b.is_some_and(|b| status(b) == Some("closed") || labels(b).iter().any(|l| l == c.submitted_label)) {
+    if b.is_some_and(|b| labels(b).iter().any(|l| l == c.submitted_label)) || (b.is_some() && c.w.lc_past_builder(id)) {
         let tip = g.rev_parse(br);
         if let Some(pr) = c.w.pr_merged_tip(c.repo, br) {
             if !pr.is_empty() && tip.as_deref() == Some(pr.as_str()) {
@@ -124,13 +120,13 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     // this branch, so every commit unique to it must already be on the base (git cherry), or
     // this would delete work under a LANDED that is true about the past.
     if b.is_some() && c.w.lc_landed(id) {
-        if g.cherry_unapplied(lr, br) {
+        if g.cherry_unapplied(lr, br) && !g.landed_by_subject(lr, br, id, 2000) {
             return Disp::KeepCherryUnapplied;
         }
         return Disp::SendOtherPr;
     }
 
-    if b.is_some_and(|b| b.get("status").is_some()) {
+    if b.is_some() {
         return Disp::KeepUnlanded;
     }
     // No bead, and not an ancestor (that one was sent at the first check): real commits
@@ -168,8 +164,8 @@ impl<'a> Sweep<'a> {
                 break;
             }
             match self.opts.scope {
-                Scope::SkipQueue if r.queued => continue,
-                Scope::QueueOnly if !r.queued => continue,
+                Scope::SkipQueue if r.forge_queued => continue,
+                Scope::QueueOnly if !r.forge_queued => continue,
                 _ => {}
             }
             self.repo(r);
@@ -340,7 +336,7 @@ impl<'a> Sweep<'a> {
                     self.say(&format!("KEEP   {id}  {ahead} commit(s) not in {lr}, none naming the bead — an empty diff is not evidence of landing"));
                     return;
                 }
-                if ahead > 0 {
+                if ahead > 0 && !self.w.lc_terminal(id) {
                     let proof = format!("merge-tree:{}", g.rev_parse(lr).unwrap_or_default());
                     self.w.content_on_base(id, &proof);
                 }

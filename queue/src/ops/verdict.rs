@@ -129,6 +129,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             let _ = std::fs::remove_file(&pfile);
             landing_log(&c.s.run, &format!("QUEUE PUBLISH_ABANDONED {} repo={name} pr={pr} state={s}", w.clock.now()));
             w.lib.notify(
+                &c.s.mailbox,
                 name,
                 &format!("publish PR {pr} abandoned ({s})"),
                 &format!("PR {pr} for {name} is {s}, not open — retiring the publish record without moving {remote}/{forge_branch}. A closed-unmerged PR is never green regardless of what its CI says; the next publish carries anything since."),
@@ -149,6 +150,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
                     "verdict {name}: publish PR {pr} green but {remote}/{forge_branch} would not fast-forward — something moved it; leaving the record for a hand look"
                 ));
                 w.lib.notify(
+                    &c.s.mailbox,
                     name,
                     &format!("publish PR {pr} green but fast-forward refused"),
                     &format!("{remote}/{forge_branch} did not fast-forward to {head} for PR {pr} — something else moved it. Left open for a hand look."),
@@ -158,7 +160,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             w.forge.pr_close(&c.s.forge, path, &pr);
             let _ = std::fs::remove_file(&pfile);
             landing_log(&c.s.run, &format!("QUEUE PUBLISH_GREEN {} repo={name} pr={pr} head={head}", w.clock.now()));
-            w.lib.notify(name, &format!("publish PR {pr} merged"), &format!("{remote}/{forge_branch} fast-forwarded to {head} (PR {pr})."));
+            w.lib.notify(&c.s.mailbox, name, &format!("publish PR {pr} merged"), &format!("{remote}/{forge_branch} fast-forwarded to {head} (PR {pr})."));
             w.out(format!("verdict {name}: publish PR {pr} green — {remote}/{forge_branch} fast-forwarded to {head}"));
             OK
         }
@@ -185,6 +187,9 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     let (pr, forge_sha, head) = (field("pr"), field("base"), field("head"));
     let suites = red_suites_csv(out);
     let run_url = tagged(out, "run-url: ").last().map(|s| s.to_string()).unwrap_or_default();
+    let run_id = tagged(out, "run-id: ").last().map(|s| s.trim().to_string()).filter(|s| !s.is_empty() && s.chars().all(|ch| ch.is_ascii_digit())).unwrap_or_default();
+    let failed_steps = tagged(out, "failed-step: ");
+    let step_log = tagged(out, "step-log: ");
     let ids: Vec<String> = kv.members().into_iter().map(|m| m.id).filter(|i| !i.is_empty()).collect();
     let member_ids = ids.join(",");
 
@@ -193,28 +198,66 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     // one-off range, not a round, and the batcher's own attribution (attrib.rs, sp-hvtgs)
     // has no seam for that shape. The fix-forward bead still files either way; it just
     // names red suites and members instead of a local reproduction.
+    let fail_lines = if suites.is_empty() {
+        String::new()
+    } else {
+        w.forge.run_id(&c.s.forge, path, &field("branch")).map(|run| w.forge.fail_lines(&c.s.forge, path, &run, &suites.replace(',', " "))).unwrap_or_default()
+    };
+    let fail_lines = fail_lines.trim_end().to_string();
     w.forge.pr_close(&c.s.forge, path, &pr);
+
+    let filed_marker = c.queue_file(&format!("publish-red-run-{run_id}"));
+    if !run_id.is_empty() {
+        if let Ok(Some(prior)) = records::read_kv(&filed_marker) {
+            let _ = std::fs::remove_file(&pfile);
+            let _ = write_atomic(&c.queue_file("publish-red"), &format!("head={head}\nfix_forward={}\nsuites={suites}\n", prior.get("fix_forward").unwrap_or("<create-failed>")));
+            w.out(format!("verdict {name}: publish PR {pr} red — run {run_id} already has tracker {}; not filing another", prior.get("fix_forward").unwrap_or("?")));
+            return OK;
+        }
+    }
 
     let mut body = format!("Publish PR {pr} red for {name} ({}).\n\n", if run_url.is_empty() { "run link unavailable" } else { &run_url });
     body.push_str(&format!("Published range: {}..{}\n", short(&forge_sha), short(&head)));
     body.push_str(&format!("Red suites: {}\n\n", if suites.is_empty() { "<none named>" } else { &suites }));
+    if !fail_lines.is_empty() {
+        body.push_str(&format!("Failing lines:\n{fail_lines}\n\n"));
+    }
+    if !failed_steps.is_empty() {
+        body.push_str("Failed steps:\n");
+        for f in &failed_steps {
+            body.push_str(&format!("- {f}\n"));
+        }
+        if !step_log.is_empty() {
+            body.push_str(&format!("\nLog tail of the failed step:\n{}\n", step_log.join("\n")));
+        }
+        body.push('\n');
+    }
     body.push_str(&format!("Members in this publish: {}\n\n", if member_ids.is_empty() { "<none>" } else { &member_ids }));
     body.push_str("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened.");
     let title = if suites.is_empty() { format!("publish PR {pr} red for {name}") } else { format!("publish PR {pr} red for {name}: {suites}") };
     let actor = w.var("SPIRA_QUEUE_ACTOR").unwrap_or_else(|| "queue.sh".into());
     let prior = records::read_kv(&c.queue_file("publish-red")).ok().flatten().filter(|k| !suites.is_empty() && k.get("suites") == Some(suites.as_str()));
     let amended = prior.as_ref().and_then(|k| k.get("fix_forward")).filter(|id| id.starts_with(|ch: char| ch.is_ascii_alphanumeric()) && !id.starts_with('<')).map(str::to_string).filter(|id| {
-        w.lib.amend_bug(&actor, id, &format!("Publish PR {pr} red again for the same suites ({suites}); {}. Range {}..{}; members: {}.", if run_url.is_empty() { "run link unavailable" } else { &run_url }, short(&forge_sha), short(&head), if member_ids.is_empty() { "<none>" } else { &member_ids }))
+        w.lib.amend_bug(&actor, id, &format!("Publish PR {pr} red again for the same suites ({suites}); {}. Range {}..{}; members: {}.{}", if run_url.is_empty() { "run link unavailable" } else { &run_url }, short(&forge_sha), short(&head), if member_ids.is_empty() { "<none>" } else { &member_ids }, if fail_lines.is_empty() { String::new() } else { format!("\nFailing lines:\n{fail_lines}") }))
     });
-    let fid = amended.clone().or_else(|| w.lib.create_bug(&actor, &title, &c.s.verdict.incident_priority, &format!("spira,plan,repo:{name}"), &body));
+    let mut labels = format!("spira,plan,repo:{name}");
+    if !c.s.verdict.red_tracker_label.is_empty() {
+        labels.push(',');
+        labels.push_str(&c.s.verdict.red_tracker_label);
+    }
+    let fid = amended.clone().or_else(|| w.lib.create_bug(&actor, &title, &c.s.verdict.incident_priority, &labels, &body));
     let fid_s = fid.clone().unwrap_or_else(|| "<create-failed>".into());
 
     let _ = std::fs::remove_file(&pfile);
+    if !run_id.is_empty() && fid.is_some() {
+        let _ = write_atomic(&filed_marker, &format!("fix_forward={fid_s}\n"));
+    }
     // Read by `publish`: holds off the next publish of this same head.
     let _ = write_atomic(&c.queue_file("publish-red"), &format!("head={head}\nfix_forward={fid_s}\nsuites={suites}\n"));
     let suites_s = if suites.is_empty() { "none".to_string() } else { suites.clone() };
     landing_log(&c.s.run, &format!("QUEUE PUBLISH_RED {} repo={name} pr={pr} suites={suites_s} fix_forward={fid_s}", w.clock.now()));
     w.lib.notify(
+        &c.s.mailbox,
         name,
         &format!("publish PR {pr} red"),
         &format!("PR {pr} red (suites: {suites_s}). Fix-forward bead: {}.", fid.clone().unwrap_or_else(|| "<create failed>".into())),
@@ -343,6 +386,11 @@ pub fn parse_run_metadata(meta: &str) -> (Option<u64>, Option<u64>) {
     (started, last)
 }
 
+/// The run's declared job timeout in seconds, which the stuck-run cap may never undercut.
+pub fn parse_declared_timeout(meta: &str) -> Option<u64> {
+    meta.lines().filter_map(|l| l.strip_prefix("timeout-sec: ")?.trim().parse().ok()).max()
+}
+
 struct Batch<'a> {
     name: &'a str,
     path: &'a Path,
@@ -404,10 +452,9 @@ fn pending(w: &World, c: &Ctx, b: &Batch) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     let now = w.clock.now();
     let run = w.forge.run_id(&c.s.forge, b.path, &b.branch);
-    let (started, last) = match &run {
-        Some(r) => parse_run_metadata(&w.forge.run_metadata(&c.s.forge, b.path, r)),
-        None => (None, None),
-    };
+    let meta = run.as_ref().map(|r| w.forge.run_metadata(&c.s.forge, b.path, r)).unwrap_or_default();
+    let (started, last) = parse_run_metadata(&meta);
+    let maxsec = c.s.verdict.ci_maxsec.max(parse_declared_timeout(&meta).unwrap_or(0));
     let run_age = match (started, &run) {
         (Some(s), _) => Some(now.saturating_sub(s)),
         (None, None) => Some(now.saturating_sub(b.kv.get("opened").and_then(|o| o.trim().parse().ok()).unwrap_or(0))),
@@ -415,7 +462,7 @@ fn pending(w: &World, c: &Ctx, b: &Batch) -> i32 {
     };
     let idle = last.map(|l| now.saturating_sub(l));
     let run_s = run.clone().unwrap_or_default();
-    match classify_pending(run_age, idle, c.s.verdict.ci_maxsec, c.s.verdict.ci_idle_sec) {
+    match classify_pending(run_age, idle, maxsec, c.s.verdict.ci_idle_sec) {
         Pending::WaitUnknown => w.out(format!("verdict {name}: PR {pr} pending (run {run_s} age unknown)")),
         Pending::WaitRunning => w.out(format!("verdict {name}: PR {pr} pending (run age {}s)", run_age.unwrap_or(0))),
         Pending::WaitProgressing => w.out(format!(
@@ -546,6 +593,7 @@ fn fast_forward(w: &World, c: &Ctx, b: &Batch, base: &str, remote: &str, base_br
     w.out(format!("verdict {name}: PR {pr} landed by fast-forward ({})", b.head));
     lc_land(w, b);
     w.lib.notify(
+        &c.s.mailbox,
         name,
         &format!("PR {pr} merged (fast-forward)"),
         &format!("PR {pr} merged onto {base_branch} by fast-forward (head {}). Members: {}", b.head, b.members_str()),
@@ -617,7 +665,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
         if w.git.worktree_add_detached(b.path, &wt, cur) {
             let mut conflict = None;
             for m in &b.members {
-                if !w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &m.tip) {
+                if !super::round::merge_member(w, c, &wt, &m.id, &m.tip) {
                     w.git.merge_abort(&wt);
                     conflict = Some(m.id.clone());
                     break;
@@ -633,7 +681,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
                         return FAIL;
                     }
                     w.out(format!("verdict {name}: PR {pr} rebuilt on moved base ({cur}) — re-pushed (head {h})"));
-                    w.lib.notify(name, &format!("PR {pr} rebuilt (base moved)"), &format!("PR {pr} rebuilt onto moved base {cur} and force-pushed (head {h})."));
+                    w.lib.notify(&c.s.mailbox, name, &format!("PR {pr} rebuilt (base moved)"), &format!("PR {pr} rebuilt onto moved base {cur} and force-pushed (head {h})."));
                     return OK;
                 }
             } else if let Some(id) = conflict {

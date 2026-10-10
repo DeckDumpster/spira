@@ -8,26 +8,30 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(repo).args(args).output().ok()?;
+    let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }
     Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-/// `git merge-base --is-ancestor <candidate> <base>` — the fact the migration classifier's
-/// rule 1 (a legacy LANDED record whose tip is an ancestor of base) needs, and the fast path in [`content_on_base`] below.
+/// `git merge-base --is-ancestor <candidate> <base>` — the fast path in [`content_on_base`] below.
 pub fn is_ancestor(repo: &Path, candidate: &str, base: &str) -> bool {
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(repo)
         .args(["merge-base", "--is-ancestor", candidate, base])
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// The commits reachable from `tip` and not from `base`; `None` when git cannot resolve either.
+pub fn commits_above(repo: &Path, base: &str, tip: &str) -> Option<std::collections::BTreeSet<String>> {
+    let out = git_output(repo, &["rev-list", tip, &format!("^{base}")])?;
+    Some(out.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 
 /// Ports lib.sh's old bash content check's two-step proof: ancestor first (cheap, and correct whenever
@@ -81,6 +85,7 @@ pub fn landing_lines(repo: &Path, base: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use std::fs;
 
     struct ScratchRepo {

@@ -6,11 +6,10 @@
 //! `spira_config_set_at`, which this shells to the same binary rather than re-deriving.
 //!
 //! Names neither config filename itself: every path this file builds goes through
-//! `spira_config::toml_path_at`/`repo_map_candidate`/`convert_command` (config-fence: only
+//! `spira_config::toml_path_at`/`convert_command` (config-fence: only
 //! spira-config may name the typed config file or the repo map).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The write target a writer at `conf`/`toml` should target (conf.sh's own cross-root
 /// helper) — `toml` itself if it exists; else a full `spira-config convert` from `conf`
@@ -59,7 +58,9 @@ fn fayth_paths(home: &Path) -> Result<Vec<PathBuf>, String> {
 /// when it was already correct or the write failed (the failure itself already reported on
 /// stderr).
 pub fn seed_prod_instance(conf: &Path, toml: &Path, instance: &str, home: &Path) -> Option<String> {
-    let rm = spira_config::repo_map_candidate(conf.parent(), home);
+    // No map is discovered or read from the environment (per Ryan 2026-10-05): the repo map is
+    // declared in the config file itself (spira.repo_map), which this convert does not invent.
+    let rm: Option<PathBuf> = None;
     let fy = match fayth_paths(home) {
         Ok(f) => f,
         Err(e) => {
@@ -68,7 +69,7 @@ pub fn seed_prod_instance(conf: &Path, toml: &Path, instance: &str, home: &Path)
         }
     };
     let target = write_target_for(conf, toml, home, rm.as_deref(), &fy)?;
-    let current = Command::new("spira-config")
+    let current = spira_config::bounded::bounded("spira-config")
         .args(["get", "spira.instance"])
         .arg(&target)
         .output()
@@ -78,7 +79,7 @@ pub fn seed_prod_instance(conf: &Path, toml: &Path, instance: &str, home: &Path)
     if current.as_deref() == Some(instance) {
         return None;
     }
-    let ok = Command::new("spira-config").args(["set", "spira.instance", instance]).arg(&target).status().map(|s| s.success()).unwrap_or(false);
+    let ok = spira_config::bounded::bounded("spira-config").args(["set", "spira.instance", instance]).arg(&target).status().map(|s| s.success()).unwrap_or(false);
     if ok {
         Some(format!("install: seeded {} with instance = {instance}", target.display()))
     } else {

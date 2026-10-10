@@ -55,17 +55,17 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
             w.err("census: events substrate is unreachable — cannot produce a census");
             return 1;
         };
-        w.merge_py(&all_time, &since_wm)
+        w.cluster_merge_py(&all_time, &since_wm)
     } else {
         all_time
             .lines()
             .filter_map(|l| {
                 let mut it = l.split_whitespace();
-                let beads = it.next()?;
+                let causal = it.next()?;
+                let victims = it.next()?;
                 let events = it.next()?;
                 let class = it.next()?;
-                let beads_part = it.next().map(|d| format!(", {d} beads")).unwrap_or_default();
-                Some(format!("{beads} {class} ({events} detections{beads_part})"))
+                Some(format!("{causal} {class} ({victims} victims, {events} detections)"))
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -202,11 +202,11 @@ fn split3(line: &str) -> (String, String, String) {
     (it.next().unwrap_or("").to_string(), it.next().unwrap_or("").to_string(), it.next().unwrap_or("").to_string())
 }
 
-/// `_census_raw` (all-time) / the since-watermark variant: `census_events_run_sql [since] |
-/// python3 count.py`.
+/// All-time / since-watermark causal-event counts: the raw event rows clustered by
+/// `cluster.py` (`SPIRA_CENSUS_CLUSTER_GAP_S`).
 fn census_counts(w: &dyn World, since: Option<i64>) -> Result<String, String> {
-    let tabular = w.census_events_run_sql(since)?;
-    w.count_py(&tabular)
+    let tabular = w.census_event_rows_run_sql(since)?;
+    w.cluster_py(&tabular)
 }
 
 /// Reads and validates the watermark file exactly as census.sh did: a missing file and an

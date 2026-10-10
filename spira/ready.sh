@@ -37,7 +37,7 @@
 #   SPIRA_LOOM_PROBE   — if set, called instead of the Python HTTP probe;
 #                        must print "200 Nms", "ERR Nms reason", or "NNN Nms"
 set -uo pipefail
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh" || exit 1
 
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
 
@@ -145,6 +145,7 @@ echo "database"
 if ! [ -d "$SPIRA_DB/.beads" ]; then
     FAIL "database absent — no .beads at $SPIRA_DB" \
          "Create it: bd -C $SPIRA_DB init"
+# batch-job: full store listing, the health probe of the ready poller
 elif ! _db_out="$(timeout 30 "$SPIRA_BD" -C "$SPIRA_DB" list --limit 0 --json 2>&1)"; then
     _rdy_dp=""
     if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
@@ -189,6 +190,7 @@ echo "ready work"
 # =============================================================================
 # sentinel --report lists the open plan beads. Each line of open work is
 # indented with two spaces. A timeout guards against a slow or stuck database.
+# batch-job: sentinel report over every rig
 if ! _rep="$(timeout 20 sentinel --report 2>&1)"; then
     UNKN "ready work — sentinel --report failed or timed out" \
          "$(printf '%s' "$_rep" | head -2)"
@@ -207,9 +209,9 @@ fi
 echo ""
 echo "loom"
 # =============================================================================
-# Probe Loom at $SPIRA_LOOM_ADDR/api/beads. python3 is a fatal doctor requirement
+# Probe Loom at $SPIRA_LOOM_ADDR/stuck. python3 is a fatal doctor requirement
 # so it is always available. SPIRA_LOOM_PROBE overrides the HTTP call for test fixtures.
-_loom_url="http://$SPIRA_LOOM_ADDR/api/beads"
+_loom_url="http://$SPIRA_LOOM_ADDR/stuck"
 # loom is in every release's bin/ (sp-gypjk): there is no "not built" state to skip on.
 {
     _loom_probe_cmd="${SPIRA_LOOM_PROBE:-}"

@@ -7,10 +7,9 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    spira_config::vtime::now_epoch()
 }
 
 /// `date -u +%Y-%m-%dT%H:%M:%SZ` for an epoch, without a subprocess.

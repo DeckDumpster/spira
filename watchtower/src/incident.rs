@@ -3,7 +3,7 @@
 //! <title> -` with the body on stdin and the same `SPIRA_INCIDENT_*` environment.
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Resolves `$SPIRA_INCIDENT_SH`, falling back to `incident.sh` on PATH — the same
 /// `${SPIRA_INCIDENT_SH:-$(command -v incident.sh)}` every bash call site used.
@@ -102,13 +102,20 @@ impl Finding {
     }
 }
 
-/// Runs `bash <incident_sh> file <title> -`, body on stdin, discarding stdout — the exact
-/// shape of `bash "$INC" file "..." - >/dev/null || true` at every bash call site: a failed
-/// filing is logged by the caller, never fatal to the check that found the thing.
-pub fn file(incident_sh: &str, f: &Finding) -> bool {
-    let mut cmd = Command::new("bash");
-cmd.envs(spira_config::release_env::child_path_env_for_process());
-    cmd.arg(incident_sh).arg("file").arg(&f.title).arg("-");
+/// Hands a detector's condition to the Concierge inbox as one deduplicated note
+/// (`incident.sh alarm`), never a bead. 
+pub fn alarm(incident_sh: &str, f: &Finding) -> bool {
+    run_verb(incident_sh, "alarm", f)
+}
+
+fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> bool {
+    if let Some(cause) = f.cause.as_deref().filter(|c| crate::ctrl_gate::condition_suspended(c)) {
+        crate::log::log(&format!("watchtower: {cause} is suspended in the control plane — not filing {}", f.title));
+        return false;
+    }
+    let mut cmd = spira_config::bounded::bounded("bash");
+    cmd.envs(spira_config::release_env::child_path_env_for_process());
+    cmd.arg(incident_sh).arg(verb).arg(&f.title).arg("-");
     cmd.env("SPIRA_DB", &f.db);
     cmd.env("SPIRA_INCIDENT_TYPE", &f.incident_type);
     cmd.env("SPIRA_INCIDENT_PRIORITY", f.priority.to_string());
@@ -196,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn file_writes_the_env_and_stdin_a_fake_incident_sh_expects() {
+    fn alarm_writes_the_env_and_stdin_a_fake_incident_sh_expects() {
         let d = testkit::TempDir::new("wt-inc-file");
         let inc = d.join("inc.sh");
         let capture = d.join("capture.txt");
@@ -211,8 +218,8 @@ mod tests {
         let f = Finding::new("db", "spira", "TITLE HERE", "the body\nsecond line\n")
             .priority(1)
             .reference("incident:x-1");
-        assert!(file(inc.to_str().unwrap(), &f));
+        assert!(alarm(inc.to_str().unwrap(), &f));
         let got = std::fs::read_to_string(&capture).unwrap();
-        assert!(got.contains("file\nTITLE HERE\nREF=incident:x-1\nPRI=1\nthe body\nsecond line"));
+        assert!(got.contains("alarm\nTITLE HERE\nREF=incident:x-1\nPRI=1\nthe body\nsecond line"));
     }
 }

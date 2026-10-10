@@ -31,9 +31,12 @@
 # runs do not claim it. Only the current case's bead is available for the next aeon.
 #
 # tier: T2
-# covers: aeon/src/*
+# covers: aeon/src/* UC-aeon-execution-16
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# PD_PART: main runs cases 0 and 1, rest runs cases 2 and 3; test-aeon-prod-dirty-rest.sh
+# sets rest and sources this file (split for wall time).
+PD_PART="${PD_PART:-main}"
 . "$HERE/testlib.sh"
 
 # CLEAR ANY INHERITED SHARED FIXTURE before building our own. An aeon session exports
@@ -55,7 +58,7 @@ unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN \
 testdb_require test-aeon-prod-dirty
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up aeonproddirty || { echo "test-aeon-prod-dirty: could not build a fixture database"; exit 1; }
+testdb_up "aeonproddirty$PD_PART" || { echo "test-aeon-prod-dirty: could not build a fixture database"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 # ---- harness repo (SPIRA_REPO) --------------------------------------------------------
@@ -63,12 +66,12 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 # inside this repo so conf.sh derives SPIRA_REPO = the git root = this checkout.
 # Topology matches production: harness and bead target are separate checkouts.
 HARNESS_ORIGIN="$TMP/harness.git"; git init -q --bare -b main "$HARNESS_ORIGIN"
-HARNESS="$TMP/harness"; git clone -q "$HARNESS_ORIGIN" "$HARNESS" 2>/dev/null
+HARNESS="$TMP/harness"; timeout 5 git clone -q "$HARNESS_ORIGIN" "$HARNESS" 2>/dev/null
 git -C "$HARNESS" config user.email t@t; git -C "$HARNESS" config user.name t
 printf 'harness script v1\n' > "$HARNESS/incident.sh"
 git -C "$HARNESS" add incident.sh
 git -C "$HARNESS" commit -qm "seed harness"
-git -C "$HARNESS" push -q origin main 2>/dev/null
+timeout 5 git -C "$HARNESS" push -q origin main 2>/dev/null
 
 # THE GUARD: set SPIRA_REPO explicitly to the harness checkout so both the test and the
 # verdict block address the same path. conf.sh uses ${SPIRA_REPO:-derived}, so an already-
@@ -77,10 +80,10 @@ export SPIRA_REPO="$HARNESS"
 
 # ---- bead target repo (separate from SPIRA_REPO) --------------------------------------
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # ---- harness setup --------------------------------------------------------------------
 # SPIRA_HOME is a subdirectory of HARNESS (a git-tracked repo), so conf.sh derives
@@ -89,8 +92,12 @@ export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+# The complete fixture declares a non-empty SPIRA_CHAMBER ("/fixture/userhome/.../chamber");
+# nothing derives it from SPIRA_HOME any more (sfail round 2, pattern 6) — without this
+# the aeon never finds this fixture's builder.fayth at all.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 # builder.fayth: excludes spira-poison so beads from completed cases are skipped.
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
@@ -104,7 +111,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 
 # ---- shim: stands in for claude -------------------------------------------------------
 # conf.sh replaces $PATH entirely, so a PATH shim silently runs the real model.
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS
+BIN="$TMP/bin"; mkdir -p "$BIN"; export TMP HARNESS
+tl_config SPIRA_AGENT="$BIN/claude"
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
 # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
@@ -151,7 +159,7 @@ not_reopened() {  # not_reopened <case-name> <bead-id>
 }
 
 latest_note() {   # latest_note <bead-id>
-    bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+    timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -160,20 +168,25 @@ print(d[0].get("notes","") if d else "")' 2>/dev/null
 
 # Helper: poison a bead so later aeon runs skip it (isolates cases from each other).
 poison_bead() {
-    bd -C "$SPIRA_DB" label add "$1" spira-poison >/dev/null 2>&1 || true
+    timeout 5 bd -C "$SPIRA_DB" label add "$1" spira-poison >/dev/null 2>&1 || true
 }
 
+if [ "$PD_PART" = main ]; then
 # ============================================================
 echo
 echo "CASE 0 (positive control): OWN WORKTREE dirty — the submission is refused, back to rework:"
 echo "-----------------------------------------------------------------------"
 printf 'own-dirty' > "$TMP/shim-dirty"
-b1="$(bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --type task \
+b1="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "case 0 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
-nowant "own-dirty: the hand-on is refused (not SUBMITTED)" "SUBMITTED" "$(lc_row_state "$b1")"
+st0="$(lc_row_state "$b1")"
+nowant "own-dirty: the hand-on is refused (not SUBMITTED)" "SUBMITTED" "$st0"
+# When it is not refused, say why: the row's own history and the aeon's last ledger lines.
+[ "$st0" = SUBMITTED ] && { timeout 5 bd -C "$SPIRA_DB" show "$b1" --json 2>&1 | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print("bd:", d.get("status"), d.get("labels"), d.get("assignee"))' 2>&1; grep -rhE "reopen|bead_reopen|spira-lc" "$SPIRA_RUN"/*.log 2>/dev/null | tail -8; } | sed 's/^/# /'
+
 note1="$(latest_note "$b1")"
 want "own-dirty: note names the modified path" "f" "$note1"
 want "own-dirty: note names the override variable" "SPIRA_ALLOW_PROD_DIRTY" "$note1"
@@ -183,7 +196,7 @@ echo
 echo "CASE 1: SPIRA_REPO dirty, own worktree clean — the hand-on stands (regression for sp-nqtrg):"
 echo "-----------------------------------------------------------------------"
 printf 'repo-dirty' > "$TMP/shim-dirty"
-b2="$(bd -C "$SPIRA_DB" create --title "test: repo dirty only" --type task \
+b2="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: repo dirty only" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b2" ] || { bad "case 1 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
@@ -192,13 +205,15 @@ not_reopened "repo-dirty" "$b2"
 # Restore HARNESS so it does not affect later cases.
 git -C "$HARNESS" checkout -q -- incident.sh 2>/dev/null || true
 poison_bead "$b2"
+fi
 
+if [ "$PD_PART" = rest ]; then
 # ============================================================
 echo
 echo "CASE 2: both clean — the hand-on stands (baseline):"
 echo "-----------------------------------------------------------------------"
 printf 'clean' > "$TMP/shim-dirty"
-b3="$(bd -C "$SPIRA_DB" create --title "test: clean" --type task \
+b3="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: clean" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b3" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
@@ -210,11 +225,12 @@ echo
 echo "CASE 3: own worktree dirty with SPIRA_ALLOW_PROD_DIRTY=1 — the hand-on stands (override):"
 echo "-----------------------------------------------------------------------"
 printf 'own-dirty' > "$TMP/shim-dirty"
-b4="$(bd -C "$SPIRA_DB" create --title "test: own dirty with override" --type task \
+b4="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: own dirty with override" --type task \
         -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b4" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
 SPIRA_ALLOW_PROD_DIRTY=1 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "override (despite dirty worktree)" "$b4"
+fi
 
 echo
 tl_summary

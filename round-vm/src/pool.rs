@@ -8,14 +8,25 @@ use std::time::Duration;
 use crate::alarm::Alarm;
 use crate::procs::FileLock;
 use crate::provider::{destroy_verified, provision, DestroyError, Provider, ProvisionSpec, Timing};
+use crate::machine::VmState;
+use crate::spill::{decide, Place, Rule};
 use crate::schema::{now, AcquireMode, Lease, Outage, PoolState, ProcId, Provisioning, Vm};
 
 /// Everything one attempt needs, built fresh from config and pve.env each time (G7).
 pub struct Attempt {
     pub provider: Box<dyn Provider>,
+    pub spill: Option<SpillPlan>,
     pub iface: String,
     pub ssh_user: String,
     pub pubkey: String,
+    pub timing: Timing,
+}
+
+/// Where a pass may run instead of the local pool, and the rule that sends it there.
+pub struct SpillPlan {
+    pub ec2: std::sync::Arc<dyn Provider>,
+    pub rule: Rule,
+    pub pressure: Box<dyn Fn() -> Option<f64>>,
     pub timing: Timing,
 }
 
@@ -79,6 +90,7 @@ impl Pool {
         let path = self.state_file();
         let mut s = read_state(&path)?;
         let before = s.clone();
+        s.adopt_untracked();
         let r = f(&mut s);
         if s != before {
             write_state(&path, &s)?;
@@ -89,23 +101,36 @@ impl Pool {
     /// Destroys what nobody owns any more (G2): every `doomed` VM, a provision whose owner
     /// died, and every lease held by a process that is gone.
     fn reap(s: &mut PoolState, p: &dyn Provider, t: Timing) {
-        if let Some(prov) = &s.provisioning {
+        if let Some(prov) = s.provisioning.clone() {
             if !prov.owner.alive() {
                 if let Some(id) = &prov.vmid {
+                    s.note(id, VmState::Doomed, "its provisioner died");
                     s.doomed.push(id.clone());
                 }
                 s.provisioning = None;
             }
         }
+        let (orphans, running): (Vec<Provisioning>, Vec<Provisioning>) = s.spilled.drain(..).partition(|pr| !pr.owner.alive());
+        s.spilled = running;
+        for id in orphans.into_iter().filter_map(|pr| pr.vmid) {
+            s.note(&id, VmState::Doomed, "its spilled provisioner died");
+            s.doomed.push(id);
+        }
         let (dead, live): (Vec<Lease>, Vec<Lease>) =
             s.leases.drain(..).partition(|l| l.owner.map(|o| !o.alive()).unwrap_or(false));
         s.leases = live;
+        for l in &dead {
+            s.note(&l.vm.handle, VmState::Doomed, "its lease holder is gone");
+        }
         s.doomed.extend(dead.into_iter().map(|l| l.vm.handle));
         let doomed = std::mem::take(&mut s.doomed);
         for id in doomed {
             match destroy_verified(p, &id, t) {
-                Ok(()) => {}
-                Err(DestroyError::NotOurs(e)) => eprintln!("{e}"),
+                Ok(()) => s.settle(&id, "destroy verified"),
+                Err(DestroyError::NotOurs(e)) => {
+                    eprintln!("{e}");
+                    s.settle(&id, "not ours; nothing to destroy");
+                }
                 Err(DestroyError::Failed(e)) => {
                     eprintln!("{e}");
                     if !s.doomed.contains(&id) {
@@ -116,9 +141,31 @@ impl Pool {
         }
     }
 
+    /// Records the VMID `me` was just issued as its provision in flight.
+    fn began(s: &mut PoolState, me: ProcId, id: &str) {
+        if let Some(pr) = s.provisioning.as_mut().filter(|pr| pr.owner == me) {
+            pr.vmid = Some(id.to_string());
+            s.note(id, VmState::Provisioning, "provision started");
+        }
+    }
+
+    /// A provision of `me` that failed: its VM is doomed if it could not be destroyed, else gone.
+    fn ended_failed(s: &mut PoolState, me: ProcId, doomed: Option<&str>, reason: &str) {
+        let Some(id) = s.provisioning.as_ref().filter(|pr| pr.owner == me).and_then(|pr| pr.vmid.clone()) else { return };
+        if s.state_of(&id) != Some(VmState::Provisioning) {
+            return;
+        }
+        if doomed == Some(id.as_str()) {
+            s.note(&id, VmState::Doomed, reason);
+        } else {
+            s.note(&id, VmState::Destroyed, reason);
+        }
+    }
+
     /// Leases `vm`, ends any outage, and starts the one background provision of the next VM
     /// if nothing is ready or in flight (G1).
-    fn hand_out(s: &mut PoolState, vm: &Vm, owner: Option<ProcId>, spawner: &dyn Spawner) {
+    fn hand_out(s: &mut PoolState, vm: &Vm, owner: Option<ProcId>, spawner: &dyn Spawner, why: &str) {
+        s.note(&vm.handle, VmState::Leased, why);
         s.leases.push(Lease { vm: vm.clone(), owner, since: now() });
         s.outage = None;
         if s.ready.is_none() && s.provisioning.is_none() {
@@ -162,6 +209,9 @@ impl Pool {
         let mut waited = false;
         let started = std::time::Instant::now();
         let mut waiting_on = String::from("the first attempt");
+        let mut wait_since: Option<std::time::Instant> = None;
+        let mut spill_failed = false;
+        let mut reaped_stale = false;
         loop {
             if !self.acquire_deadline.is_zero() && started.elapsed() >= self.acquire_deadline {
                 return Err(format!(
@@ -177,18 +227,36 @@ impl Pool {
                     continue;
                 }
             };
+            if !std::mem::replace(&mut reaped_stale, true) {
+                self.reap_stale(&attempt);
+            }
+            if let Some(plan) = attempt.spill.as_ref().filter(|_| !spill_failed) {
+                if let Place::Ec2(reason) = decide(&plan.rule, wait_since.map(|t| t.elapsed()), (plan.pressure)()) {
+                    match self.spill(&attempt, plan, owner, &reason) {
+                        Ok(vm) => return Ok((vm, AcquireMode::Cold)),
+                        Err(e) => {
+                            eprintln!("round-vm: spill to EC2 failed, staying local: {e}");
+                            spill_failed = true;
+                        }
+                    }
+                }
+            }
             let p = attempt.provider.as_ref();
             let next = self.with_state(|s| {
                 Self::reap(s, p, attempt.timing);
+                if s.refreshing.map(|r| !r.alive()).unwrap_or(false) {
+                    s.refreshing = None;
+                }
                 if let Some(vm) = s.ready.take() {
                     if p.alive(&vm.handle).unwrap_or(false) {
-                        Self::hand_out(s, &vm, owner, deps.spawner);
+                        Self::hand_out(s, &vm, owner, deps.spawner, "warm VM handed out (provider: proxmox)");
                         return Next::Got(vm);
                     }
+                    s.note(&vm.handle, VmState::Doomed, "died while ready");
                     s.doomed.push(vm.handle);
                     Self::reap(s, p, attempt.timing);
                 }
-                if s.provisioning.is_some() {
+                if s.provisioning.is_some() || s.refreshing.map(|r| r.alive()).unwrap_or(false) {
                     return Next::Wait;
                 }
                 s.provisioning = Some(Provisioning { owner: me, vmid: None, since: now() });
@@ -198,16 +266,13 @@ impl Pool {
                 Next::Got(vm) => return Ok((vm, if waited { AcquireMode::Cold } else { AcquireMode::Warm })),
                 Next::Wait => {
                     waited = true;
+                    wait_since.get_or_insert_with(std::time::Instant::now);
                     waiting_on = "the provision in flight to finish".into();
                     std::thread::sleep(self.wait_poll);
                 }
                 Next::Provision => {
                     let result = provision(p, &attempt.spec(), &mut |id| {
-                        let _ = self.with_state(|s| {
-                            if let Some(pr) = s.provisioning.as_mut().filter(|pr| pr.owner == me) {
-                                pr.vmid = Some(id.to_string());
-                            }
-                        });
+                        let _ = self.with_state(|s| Self::began(s, me, id));
                     });
                     let clear_mine = |s: &mut PoolState| {
                         if s.provisioning.as_ref().map(|pr| pr.owner == me).unwrap_or(false) {
@@ -218,12 +283,13 @@ impl Pool {
                         Ok(vm) => {
                             self.with_state(|s| {
                                 clear_mine(s);
-                                Self::hand_out(s, &vm, owner, deps.spawner);
+                                Self::hand_out(s, &vm, owner, deps.spawner, "provisioned for this acquire (provider: proxmox)");
                             })?;
                             return Ok((vm, AcquireMode::Cold));
                         }
                         Err(f) => {
                             self.with_state(|s| {
+                                Self::ended_failed(s, me, f.doomed.as_deref(), &f.reason);
                                 clear_mine(s);
                                 s.doomed.extend(f.doomed.clone());
                             })?;
@@ -232,6 +298,72 @@ impl Pool {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Destroys what the provider says outlived the run deadline: a leak (G2), whoever holds it.
+    pub fn reap_stale(&self, attempt: &Attempt) {
+        let stale = attempt.provider.stale();
+        if stale.is_empty() {
+            return;
+        }
+        let _ = self.with_state(|s| {
+            for h in &stale {
+                eprintln!("round-vm: {h} outlived the run deadline; destroying it");
+                s.leases.retain(|l| &l.vm.handle != h);
+                s.spilled.retain(|pr| pr.vmid.as_deref() != Some(h));
+                if s.ready.as_ref().map(|v| &v.handle == h).unwrap_or(false) {
+                    s.ready = None;
+                }
+                if matches!(s.state_of(h), Some(VmState::Provisioning | VmState::Ready | VmState::Leased | VmState::Released)) {
+                    s.note(h, VmState::Doomed, "outlived the run deadline");
+                }
+                if !s.doomed.contains(h) {
+                    s.doomed.push(h.clone());
+                }
+            }
+            Self::reap(s, attempt.provider.as_ref(), attempt.timing);
+        });
+    }
+
+    /// Provisions this pass's VM on EC2. Recorded in `spilled` before the instance exists
+    /// (G2); leased on success; destroyed or doomed on failure.
+    fn spill(&self, attempt: &Attempt, plan: &SpillPlan, owner: Option<ProcId>, reason: &str) -> Result<Vm, String> {
+        let me = ProcId::current();
+        let why = format!("spilled to ec2: {reason}");
+        let mut handle: Option<String> = None;
+        let spec = ProvisionSpec { timing: plan.timing, ..attempt.spec() };
+        let result = provision(plan.ec2.as_ref(), &spec, &mut |id| {
+            handle = Some(id.to_string());
+            let _ = self.with_state(|s| {
+                s.spilled.push(Provisioning { owner: me, vmid: Some(id.to_string()), since: now() });
+                s.note(id, VmState::Provisioning, &why);
+            });
+        });
+        match result {
+            Ok(vm) => {
+                self.with_state(|s| {
+                    s.spilled.retain(|pr| pr.vmid.as_deref() != Some(&vm.handle));
+                    s.note(&vm.handle, VmState::Leased, &format!("{why} (provider: ec2)"));
+                    s.leases.push(Lease { vm: vm.clone(), owner, since: now() });
+                    s.outage = None;
+                })?;
+                Ok(vm)
+            }
+            Err(f) => {
+                self.with_state(|s| {
+                    if let Some(h) = &handle {
+                        s.spilled.retain(|pr| pr.vmid.as_deref() != Some(h));
+                        if f.doomed.as_deref() == Some(h.as_str()) {
+                            s.note(h, VmState::Doomed, &f.reason);
+                            s.doomed.push(h.clone());
+                        } else {
+                            s.note(h, VmState::Destroyed, &f.reason);
+                        }
+                    }
+                })?;
+                Err(f.reason)
             }
         }
     }
@@ -258,22 +390,23 @@ impl Pool {
         };
         let p = attempt.provider.as_ref();
         let result = provision(p, &attempt.spec(), &mut |id| {
-            let _ = self.with_state(|s| {
-                if let Some(pr) = s.provisioning.as_mut().filter(|pr| pr.owner == me) {
-                    pr.vmid = Some(id.to_string());
-                }
-            });
+            let _ = self.with_state(|s| Self::began(s, me, id));
         });
         self.with_state(|s| {
+            if let Err(f) = &result {
+                Self::ended_failed(s, me, f.doomed.as_deref(), &f.reason);
+            }
             if mine(s) {
                 s.provisioning = None;
             }
             match result {
                 Ok(vm) if s.ready.is_none() => {
+                    s.note(&vm.handle, VmState::Ready, "background provision finished");
                     s.ready = Some(vm);
                     Ok(())
                 }
                 Ok(vm) => {
+                    s.note(&vm.handle, VmState::Doomed, "a VM was already ready");
                     s.doomed.push(vm.handle);
                     Self::reap(s, p, attempt.timing);
                     Err("round-vm: _provision-bg: a VM was already ready; destroyed the extra one".to_string())
@@ -288,23 +421,54 @@ impl Pool {
 
     /// Destroys `handle` and verifies it is gone. It is recorded as doomed first, so a
     /// crash mid-destroy is finished by the next acquire.
-    pub fn release(&self, handle: &str, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<(), String> {
+    /// Refused, naming the holder, while a live process other than `caller` holds the lease.
+    pub fn release(&self, handle: &str, caller: ProcId, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<(), String> {
+        self.release_inner(handle, caller, false, factory)
+    }
+
+    fn release_inner(&self, handle: &str, caller: ProcId, any_lease_holds: bool, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<(), String> {
         let attempt = factory()?;
         self.with_state(|s| {
+            if let Some(l) = s.leases.iter().find(|l| l.vm.handle == handle) {
+                if any_lease_holds {
+                    return Err(format!("round-vm: refusing to destroy VM {handle}: leased since {}", l.since));
+                }
+                if let Some(h) = l.owner.filter(|o| *o != caller && o.alive()) {
+                    return Err(format!(
+                        "round-vm: refusing to release VM {handle}: leased since {} to live run {h} (caller run {caller})",
+                        l.since
+                    ));
+                }
+            }
             s.leases.retain(|l| l.vm.handle != handle);
             if s.ready.as_ref().map(|v| v.handle == handle).unwrap_or(false) {
                 s.ready = None;
             }
+            match s.state_of(handle) {
+                Some(VmState::Ready | VmState::Leased) => s.note(handle, VmState::Released, if any_lease_holds { "recycled" } else { "released" }),
+                Some(VmState::Provisioning) => s.note(handle, VmState::Doomed, "released while provisioning"),
+                _ => {}
+            }
             if !s.doomed.iter().any(|d| d == handle) {
                 s.doomed.push(handle.to_string());
             }
-        })?;
+            Ok(())
+        })??;
         let r = destroy_verified(attempt.provider.as_ref(), handle, attempt.timing);
         match r {
             Ok(()) | Err(DestroyError::NotOurs(_)) => {
-                self.with_state(|s| s.doomed.retain(|d| d != handle))?;
+                self.with_state(|s| {
+                    s.doomed.retain(|d| d != handle);
+                    s.settle(handle, "destroy verified");
+                })?;
             }
-            Err(DestroyError::Failed(_)) => {}
+            Err(DestroyError::Failed(ref e)) => {
+                self.with_state(|s| {
+                    if s.state_of(handle) == Some(VmState::Released) {
+                        s.note(handle, VmState::Doomed, &format!("destroy failed: {e}"));
+                    }
+                })?;
+            }
         }
         r.map_err(|e| e.to_string())
     }
@@ -317,16 +481,56 @@ impl Pool {
             if let Some(pr) = s.provisioning.take() {
                 h.extend(pr.vmid);
             }
+            h.retain(|id| !s.leases.iter().any(|l| &l.vm.handle == id));
             h
         })?;
         let mut released = 0;
         for h in &handles {
-            match self.release(h, factory) {
+            match self.release_inner(h, ProcId::current(), true, factory) {
                 Ok(()) => released += 1,
                 Err(e) => eprintln!("{e}"),
             }
         }
         Ok(released)
+    }
+
+    /// Claims the pool for a template refresh: refused (with the reason) while a round holds
+    /// a lease, a provision is in flight, or another refresh runs. While claimed, `acquire`
+    /// waits, so no round starts on a VM the refresh is about to recycle.
+    pub fn begin_refresh(&self, me: ProcId) -> Result<Result<(), String>, String> {
+        self.with_state(|s| {
+            if let Some(r) = s.refreshing.filter(|r| r.alive()) {
+                return Err(format!("another refresh (pid {}) holds the pool", r.pid));
+            }
+            let (live, dead): (Vec<Lease>, Vec<Lease>) = s.leases.drain(..).partition(|l| l.owner.map(|o| o.alive()).unwrap_or(true));
+            s.leases = live;
+            for l in dead {
+                s.note(&l.vm.handle, VmState::Doomed, "its lease holder is gone");
+                s.doomed.push(l.vm.handle);
+            }
+            if let Some(l) = s.leases.first() {
+                return Err(format!("a round holds VM {} (leased since {})", l.vm.handle, l.since));
+            }
+            if s.provisioning.as_ref().map(|p| p.owner.alive()).unwrap_or(false) {
+                return Err("a VM is being provisioned for a round".into());
+            }
+            s.refreshing = Some(me);
+            Ok(())
+        })
+    }
+
+    pub fn end_refresh(&self, me: ProcId) {
+        let _ = self.with_state(|s| {
+            if s.refreshing == Some(me) {
+                s.refreshing = None;
+            }
+        });
+    }
+
+    /// The VMs `owner` holds leases on, without releasing them.
+    pub fn leased_to(&self, owner: ProcId) -> Vec<Vm> {
+        self.with_state(|s| s.leases.iter().filter(|l| l.owner == Some(owner)).map(|l| l.vm.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// Releases every VM `owner` holds: its leases and a provision it had in flight (a `run`
@@ -339,14 +543,74 @@ impl Pool {
                     h.extend(pr.vmid.clone());
                     s.provisioning = None;
                 }
+                h.extend(s.spilled.iter().filter(|pr| pr.owner == owner).filter_map(|pr| pr.vmid.clone()));
+                s.spilled.retain(|pr| pr.owner != owner);
                 h
             })
             .unwrap_or_default();
         for h in handles {
-            if let Err(e) = self.release(&h, factory) {
+            if let Err(e) = self.release(&h, owner, factory) {
                 eprintln!("{e}");
             }
         }
+    }
+
+    /// Starts the one background provision when nothing is ready, in flight or being refreshed:
+    /// the warm spare a due pass finds waiting. Returns whether it started one.
+    pub fn ensure_spare(&self, spawner: &dyn Spawner) -> Result<bool, String> {
+        self.with_state(|s| {
+            let busy = s.ready.is_some()
+                || s.provisioning.as_ref().map(|p| p.owner.alive()).unwrap_or(false)
+                || s.refreshing.map(|r| r.alive()).unwrap_or(false);
+            if busy {
+                return Ok(false);
+            }
+            let owner = spawner.spawn_next()?;
+            s.provisioning = Some(Provisioning { owner, vmid: None, since: now() });
+            Ok(true)
+        })?
+    }
+
+    /// `status --json`: the pool as the event log records it.
+    pub fn status_json(&self) -> Result<String, String> {
+        let mut s = read_state(&self.state_file())?;
+        s.adopt_untracked();
+        let t = now();
+        let age = |since: u64| t.saturating_sub(since);
+        let vms: Vec<_> = s
+            .vms()
+            .into_iter()
+            .map(|(vm, state, since, reason)| {
+                let addr = s.ready.iter().map(|v| (&v.handle, &v.addr)).chain(s.leases.iter().map(|l| (&l.vm.handle, &l.vm.addr))).find(|(h, _)| **h == vm).map(|(_, a)| a.clone());
+                serde_json::json!({"vm": vm, "state": state.as_str(), "since": since, "age_secs": age(since), "reason": reason, "addr": addr})
+            })
+            .collect();
+        let leases: Vec<_> = s
+            .leases
+            .iter()
+            .map(|l| serde_json::json!({"vm": l.vm.handle, "addr": l.vm.addr, "owner": l.owner.map(|o| o.to_string()), "since": l.since, "age_secs": age(l.since)}))
+            .collect();
+        let doomed: Vec<_> = s
+            .doomed
+            .iter()
+            .map(|h| {
+                let since = s.events.iter().rev().find(|e| &e.vm == h).map_or(0, |e| e.at);
+                serde_json::json!({"vm": h, "since": since, "age_secs": age(since)})
+            })
+            .collect();
+        let tail = s.events.len().saturating_sub(50);
+        let v = serde_json::json!({
+            "ready": s.ready.as_ref().map(|v| serde_json::json!({"vm": v.handle, "addr": v.addr})),
+            "provisioning": s.provisioning.as_ref().filter(|p| p.owner.alive()).map(|p| serde_json::json!({"owner": p.owner.to_string(), "vm": p.vmid, "since": p.since, "age_secs": age(p.since)})),
+            "refreshing": s.refreshing.filter(|r| r.alive()).map(|r| r.to_string()),
+            "outage": s.outage.as_ref().map(|o| serde_json::json!({"reason": o.reason, "since": o.since, "age_secs": age(o.since)})),
+            "template": crate::template::Record::read(&self.state_dir).map(|r| serde_json::json!({"vmid": r.vmid, "image": r.image})),
+            "leases": leases,
+            "doomed": doomed,
+            "vms": vms,
+            "events": &s.events[tail..],
+        });
+        serde_json::to_string_pretty(&v).map_err(|e| e.to_string())
     }
 
     /// The three `status` lines.
@@ -383,7 +647,7 @@ mod tests {
     }
 
     fn attempt(p: &FakeProvider) -> Attempt {
-        Attempt { provider: Box::new(p.clone()), iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: T }
+        Attempt { provider: Box::new(p.clone()), spill: None, iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: T }
     }
 
     /// Records spawns; hands back the test process's own identity as the "background"
@@ -649,10 +913,59 @@ mod tests {
         let pl = pool(&d, 1);
         let f = || Ok(attempt(&fp));
         let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
-        pl.release(&vm.handle, &f).unwrap();
+        pl.release(&vm.handle, ProcId::current(), &f).unwrap();
         assert!(fp.name(&vm.handle).is_none());
         let s = read_state(&pl.state_file()).unwrap();
         assert!(s.leases.is_empty() && s.doomed.is_empty());
+    }
+
+    #[test]
+    fn release_refuses_a_vm_leased_to_another_live_run_and_names_it() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let holder = ProcId::current();
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, Some(holder)).unwrap();
+        let stranger = ProcId { pid: holder.pid, start: holder.start + 1 };
+        let e = pl.release(&vm.handle, stranger, &f).unwrap_err();
+        assert!(e.contains("refusing") && e.contains(&holder.to_string()), "{e}");
+        assert!(fp.name(&vm.handle).is_some());
+        assert_eq!(fp.count("stop"), 0);
+        assert_eq!(fp.count("destroy"), 0);
+        assert_eq!(read_state(&pl.state_file()).unwrap().leases.len(), 1);
+        pl.release(&vm.handle, holder, &f).unwrap();
+        assert!(fp.name(&vm.handle).is_none());
+    }
+
+    #[test]
+    fn a_stale_lease_is_released_by_anyone() {
+        let d = TempDir::new();
+        let fp = FakeProvider::new();
+        fp.plant("311", "round-311");
+        let pl = pool(&d, 1);
+        pl.with_state(|s| {
+            s.leases.push(Lease { vm: Vm { handle: "311".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0 })
+        })
+        .unwrap();
+        let f = || Ok(attempt(&fp));
+        pl.release("311", ProcId::current(), &f).unwrap();
+        assert!(fp.name("311").is_none());
+    }
+
+    #[test]
+    fn a_second_acquire_never_stops_the_first_runs_vm() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &sp };
+        let (first, _) = pl.acquire(&deps, Some(ProcId::current())).unwrap();
+        pl.with_state(|s| s.provisioning = None).unwrap();
+        let (second, _) = pl.acquire(&deps, Some(ProcId::current())).unwrap();
+        assert_ne!(first.handle, second.handle);
+        assert!(fp.name(&first.handle).is_some());
+        assert_eq!(fp.count("stop"), 0);
     }
 
     #[test]
@@ -662,7 +975,7 @@ mod tests {
         fp.plant("9000", "ci-template");
         let pl = pool(&d, 1);
         let f = || Ok(attempt(&fp));
-        let e = pl.release("9000", &f).unwrap_err();
+        let e = pl.release("9000", ProcId::current(), &f).unwrap_err();
         assert!(e.contains("refusing"), "{e}");
         assert!(fp.name("9000").is_some());
         assert!(read_state(&pl.state_file()).unwrap().doomed.is_empty());
@@ -711,6 +1024,47 @@ mod tests {
     }
 
     #[test]
+    fn a_refresh_is_refused_while_a_round_holds_a_vm_and_blocks_acquire_while_it_runs() {
+        let d = TempDir::new();
+        let pl = pool(&d, 3);
+        let me = ProcId::current();
+        let fp = FakeProvider::new();
+        let f = || Ok(attempt(&fp));
+        let sp = FakeSpawner::default();
+        let al = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &al, spawner: &sp };
+        pl.acquire(&deps, Some(me)).unwrap();
+        let why = pl.begin_refresh(me).unwrap().unwrap_err();
+        assert!(why.contains("a round holds VM"), "{why}");
+        pl.with_state(|s| s.leases.clear()).unwrap();
+        pl.with_state(|s| s.provisioning = None).unwrap();
+        pl.begin_refresh(me).unwrap().unwrap();
+        assert!(pl.begin_refresh(me).unwrap().unwrap_err().contains("another refresh"));
+        pl.end_refresh(me);
+        assert!(pl.with_state(|s| s.refreshing).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_recycle_never_destroys_a_vm_another_caller_leases() {
+        let d = TempDir::new();
+        let pl = pool(&d, 3);
+        let fp = FakeProvider::new();
+        let f = || Ok(attempt(&fp));
+        let sp = FakeSpawner::default();
+        let al = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &al, spawner: &sp };
+        let (leased, _) = pl.acquire(&deps, None).unwrap();
+        pl.with_state(|s| {
+            s.ready = Some(leased.clone());
+            s.provisioning = Some(Provisioning { owner: ProcId::current(), vmid: Some(leased.handle.clone()), since: 0 });
+        })
+        .unwrap();
+        assert_eq!(pl.recycle(&f).unwrap(), 0);
+        assert!(fp.name(&leased.handle).is_some(), "the leased VM is untouched");
+        assert!(pl.with_state(|s| s.leases.len()).unwrap() == 1);
+    }
+
+    #[test]
     fn status_reports_ready_provisioning_and_outage() {
         let d = TempDir::new();
         let pl = pool(&d, 1);
@@ -727,5 +1081,202 @@ mod tests {
         );
         pl.with_state(|s| s.provisioning = Some(Provisioning { owner: dead_proc(), vmid: None, since: 0 })).unwrap();
         assert!(pl.status().unwrap().contains("provisioning: none"));
+    }
+
+    fn trail(pl: &Pool, vm: &str) -> Vec<(VmState, String)> {
+        read_state(&pl.state_file()).unwrap().events.iter().filter(|e| e.vm == vm).map(|e| (e.to, e.reason.clone())).collect()
+    }
+
+    #[test]
+    fn a_cold_acquire_and_release_record_provisioning_leased_released_destroyed() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        let states = |pl: &Pool| trail(pl, &vm.handle).into_iter().map(|(s, _)| s).collect::<Vec<_>>();
+        assert_eq!(states(&pl), vec![VmState::Provisioning, VmState::Leased]);
+        pl.release(&vm.handle, ProcId::current(), &f).unwrap();
+        assert_eq!(states(&pl), vec![VmState::Provisioning, VmState::Leased, VmState::Released, VmState::Destroyed]);
+        assert!(trail(&pl, &vm.handle).iter().all(|(_, why)| !why.is_empty()));
+    }
+
+    #[test]
+    fn a_background_provision_records_ready_and_a_warm_acquire_leases_it() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &sp };
+        pl.acquire(&deps, None).unwrap();
+        pl.provision_background(&f).unwrap();
+        let ready = pl.with_state(|s| s.ready.clone()).unwrap().unwrap();
+        assert_eq!(trail(&pl, &ready.handle).last().map(|t| t.0), Some(VmState::Ready));
+        let (vm, mode) = pl.acquire(&deps, None).unwrap();
+        assert_eq!((vm.handle == ready.handle, mode), (true, AcquireMode::Warm));
+        assert_eq!(trail(&pl, &vm.handle).last().map(|t| t.0), Some(VmState::Leased));
+    }
+
+    #[test]
+    fn status_json_returns_exactly_the_recorded_state() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        let j: serde_json::Value = serde_json::from_str(&pl.status_json().unwrap()).unwrap();
+        assert_eq!(j["leases"][0]["vm"], vm.handle.as_str());
+        assert_eq!(j["vms"][0]["state"], "leased");
+        assert_eq!(j["vms"][0]["vm"], vm.handle.as_str());
+        assert!(j["ready"].is_null() && j["template"].is_null() && j["doomed"].as_array().unwrap().is_empty());
+        assert_eq!(j["provisioning"]["owner"], ProcId::current().to_string());
+        pl.release(&vm.handle, ProcId::current(), &f).unwrap();
+        let j: serde_json::Value = serde_json::from_str(&pl.status_json().unwrap()).unwrap();
+        assert!(j["leases"].as_array().unwrap().is_empty() && j["vms"].as_array().unwrap().is_empty());
+        assert_eq!(j["events"].as_array().unwrap().last().unwrap()["to"], "destroyed");
+    }
+
+    #[test]
+    fn status_json_shows_a_doomed_vm_and_the_template() {
+        let d = TempDir::new();
+        let pl = pool(&d, 1);
+        crate::template::Record { vmid: "900".into(), image: "reg:tag".into() }.write(&pl.state_dir).unwrap_or_else(|_| {
+            std::fs::create_dir_all(&pl.state_dir).unwrap();
+            crate::template::Record { vmid: "900".into(), image: "reg:tag".into() }.write(&pl.state_dir).unwrap();
+        });
+        pl.with_state(|s| s.doomed.push("77".into())).unwrap();
+        let j: serde_json::Value = serde_json::from_str(&pl.status_json().unwrap()).unwrap();
+        assert_eq!((j["doomed"][0]["vm"].as_str(), j["template"]["vmid"].as_str()), (Some("77"), Some("900")));
+        assert_eq!(j["vms"][0]["state"], "doomed");
+    }
+
+    #[test]
+    fn a_warm_spare_is_started_only_when_nothing_is_ready_or_in_flight() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        assert!(pl.ensure_spare(&sp).unwrap());
+        assert!(!pl.ensure_spare(&sp).unwrap(), "one provision in flight is the spare");
+        assert_eq!(sp.count(), 1);
+        let f = || Ok(attempt(&fp));
+        let _ = &alarm;
+        pl.provision_background(&f).unwrap();
+        assert!(!pl.ensure_spare(&sp).unwrap(), "a ready VM is the spare");
+        assert_eq!(sp.count(), 1);
+    }
+
+    fn ec2_provider(d: &TempDir, fake: &crate::testutil::FakeEc2) -> Arc<dyn Provider> {
+        let key = d.path().join("ts.key");
+        std::fs::write(&key, "tskey").unwrap();
+        let cfg = crate::ec2::Ec2Config {
+            profile: "p".into(), region: "r".into(), ami: "a".into(), instance_type: "t".into(), subnet: "s".into(),
+            security_group: String::new(), instance_profile: String::new(), tailscale_key_file: key.to_string_lossy().into(),
+            run_deadline: Duration::from_secs(7200), host_addr: "h".into(),
+        };
+        Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
+    }
+
+    fn spilling(p: &FakeProvider, ec2: Arc<dyn Provider>, pressure: Option<f64>) -> Attempt {
+        let plan = SpillPlan {
+            ec2: ec2.clone(),
+            rule: Rule { wait: Duration::ZERO, io_full_avg60: 30.0 },
+            pressure: Box::new(move || pressure),
+            timing: T,
+        };
+        let routed = crate::route::Routed { local: Box::new(p.clone()), ec2: Some(ec2) };
+        Attempt { provider: Box::new(routed), spill: Some(plan), iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: T }
+    }
+
+    fn lease_reason(pl: &Pool, handle: &str) -> String {
+        let s = read_state(&pl.state_file()).unwrap();
+        s.events.iter().rev().find(|e| e.vm == handle && e.to == VmState::Leased).map(|e| e.reason.clone()).unwrap_or_default()
+    }
+
+    #[test]
+    fn io_pressure_above_the_threshold_runs_the_pass_on_ec2_and_records_why() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(41.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
+        assert!(fp.live_vms().is_empty(), "nothing was provisioned locally");
+        assert_eq!(sp.count(), 0, "a spill does not start a local background provision");
+        let why = lease_reason(&pl, &vm.handle);
+        assert!(why.contains("spilled to ec2") && why.contains("io pressure") && why.contains("provider: ec2"), "{why}");
+        assert!(read_state(&pl.state_file()).unwrap().spilled.is_empty());
+        pl.release(&vm.handle, ProcId::current(), &f).unwrap();
+        assert!(fake.ids().is_empty(), "the instance is terminated on release");
+    }
+
+    #[test]
+    fn without_pressure_the_pass_runs_local_and_says_so() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(3.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(!crate::ec2::is_ec2_handle(&vm.handle));
+        assert!(fake.ids().is_empty());
+        assert!(lease_reason(&pl, &vm.handle).contains("provider: proxmox"));
+    }
+
+    #[test]
+    fn a_pool_that_cannot_lease_within_the_wait_spills() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        pl.with_state(|s| s.provisioning = Some(Provisioning { owner: ProcId::current(), vmid: None, since: now() })).unwrap();
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle));
+        assert!(lease_reason(&pl, &vm.handle).contains("no local VM within"));
+    }
+
+    #[test]
+    fn a_failed_spill_falls_back_to_local_and_leaks_nothing() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        fake.fail_run();
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(99.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(!crate::ec2::is_ec2_handle(&vm.handle));
+        let s = read_state(&pl.state_file()).unwrap();
+        assert!(s.spilled.is_empty() && s.doomed.is_empty());
+    }
+
+    #[test]
+    fn acquire_reaps_a_stale_tagged_instance_and_leaves_an_untagged_one() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        fake.plant("i-old", Some("ec2-old"), "round-ec2-old", 1);
+        fake.plant("i-untagged", None, "round-ec2-old2", 1);
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
+        pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert_eq!(fake.ids(), ["i-untagged"]);
+    }
+
+    #[test]
+    fn a_dead_spilled_provisioner_is_destroyed_by_the_next_acquire() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        fake.plant("i-gone", Some("ec2-gone"), "round-ec2-gone", crate::schema::now());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        pl.with_state(|s| {
+            s.spilled.push(Provisioning { owner: dead_proc(), vmid: Some("ec2-gone".into()), since: now() });
+            s.note("ec2-gone", VmState::Provisioning, "spilled");
+        })
+        .unwrap();
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
+        pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(fake.ids().is_empty(), "{:?}", fake.ids());
     }
 }

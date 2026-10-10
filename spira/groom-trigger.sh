@@ -61,7 +61,10 @@ fi
 # D14), which is also where in_progress got included (sp-mp9s): a claimed trigger bead
 # leaves --status open, and a query scoped to open alone would file a duplicate on the
 # very next tick.
-open_count="$(spira_open_trigger_count "$LABELS")"
+if ! open_count="$(spira_open_trigger_count "$LABELS")"; then
+    log "cannot count open triggers (spira-lc or bd unreadable) — refusing to file, retrying next pass"
+    exit 0
+fi
 if [ "${open_count:-0}" -gt 0 ] 2>/dev/null; then
     log "trigger already open ($open_count bead(s) with labels [$LABELS]) — skipping"
     exit 0
@@ -95,7 +98,7 @@ fi
 # work (READY, WORKING, REWORK — what bd's open,in_progress meant). bd status is inert for a
 # work bead (sp-mve9i, design §3.4); the dedup above reads the same rows. A machine that
 # cannot answer counts 0, so only landings can lift the score (never a spurious trigger).
-_total_json="$("${SPIRA_LC_BIN:-spira-lc}" list 2>/dev/null)" || _total_json="[]"
+_total_json="$("${SPIRA_LC_BIN:-spira-lc}" list --live 2>/dev/null)" || _total_json="[]"
 [ -z "$_total_json" ] && _total_json="[]"
 _total_open="$(printf '%s\n' "$_total_json" \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d if r.get("state") in ("READY", "WORKING", "REWORK")))' 2>/dev/null)" || _total_open=0
@@ -127,10 +130,10 @@ fi
 # not a question Ryan answers. Priority 3: hygiene work, not urgent, but important
 # enough to run on schedule. No repo: label — the groomer reads the whole graph,
 # not one repository.
-if "$BD" -C "$DB" create \
+if SPIRA_DB="$DB" SPIRA_BD="$BD" bdq create \
     "Groomer pass — scheduled graph hygiene" \
     --type task \
-    --label "$LABELS,delivers:note:${SPIRA_RUN}/groom.log" \
+    --label "$LABELS,groom-trigger,delivers:note:${SPIRA_RUN}/groom.log" \
     --priority 3 \
     --description "Scheduled trigger: the groomer persona will claim this bead, run a hygiene pass over the open bead graph (splitting unsplittable beads, merging duplicates, closing stale premises, correcting mislabelled lanes), and close this bead when finished. See spira/chamber/groomer.md for the pass procedure." \
 ; then

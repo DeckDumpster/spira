@@ -6,7 +6,7 @@
 //! NAMED ARGUMENTS ONLY, same as the bash version and for the same scar: a bare word here
 //! used to become the bead id, so a reason written beside the id silently replaced it.
 //!
-//! WHAT MOVED WHERE (DESIGN.md Decisions has the full account): the marker write, the
+//! WHAT MOVED WHERE (DESIGN.md Decisions has the full account): the disposition record, the
 //! hold-vs-aeon distinction, the systemd-unit-or-pid stop and the wait/escalate-to-KILL
 //! loop are native Rust (`spira_world::proc`, `spira_world::sysctl`) — this is the part of
 //! the original file that was genuinely process-control logic, and the part whose own
@@ -20,7 +20,6 @@
 
 use std::env;
 use std::path::PathBuf;
-use std::process::Command;
 
 use spira_world::{seam, sysctl};
 
@@ -136,15 +135,6 @@ fn spira_run() -> PathBuf {
     })
 }
 
-fn now_iso() -> String {
-    Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
-}
-
 fn epoch() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -174,6 +164,13 @@ fn main() {
     let args = parse_args(&argv);
     let id = &args.id;
     let run = spira_run();
+    // `SLAY_FINISH` reads this itself (bdq label add) — resolved here, at the top, and
+    // handed in explicitly rather than left for the seam's bash to inherit from whatever
+    // happens to be in the ambient environment (per Ryan 2026-10-05: one source of config).
+    let submitted_label = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").unwrap_or_else(|e| {
+        eprintln!("slay.sh: FATAL: {e}");
+        std::process::exit(1);
+    });
     let exe = env::current_exe().ok();
     let lib_sh = exe.as_deref().and_then(spira_world::locate_home).map(|h| h.join("lib.sh"));
 
@@ -185,7 +182,7 @@ fn main() {
         .map(|(out, _)| out.trim().to_string())
         .unwrap_or_default();
     if found != *id {
-        let db = spira_config::resolve::key_for_process("SPIRA_DB").unwrap_or_else(|e| format!("(unresolved: {e})"));
+        let db = spira_config::process::cfg("SPIRA_DB").unwrap_or_else(|e| format!("(unresolved: {e})"));
         eprintln!("slay.sh: no bead {id} in {db} — refusing to act");
         if !found.is_empty() {
             eprintln!("slay.sh: the store answered with {found} instead (prefix match)");
@@ -195,9 +192,8 @@ fn main() {
 
     let mut fail = false;
 
-    // ---- 1. the marker ------------------------------------------------------------------
-    let marker = run.join(format!("{id}.slain"));
-    let _ = std::fs::write(&marker, format!("{}\t{}\n", now_iso(), args.why));
+    // ---- 1. the disposition: the row says why the session ends -------------------------
+    let _ = spira_config::bounded::bounded("spira-lc").args(["disposition", id, "slain", &args.why, "slay"]).output();
 
     // ---- 2/3. the holder (aeon OR manual hold) ------------------------------------------
     let mut name = String::new();
@@ -214,11 +210,11 @@ fn main() {
             String::new()
         };
         if !hbpid.is_empty() {
-            let _ = Command::new("kill").arg(&hbpid).status();
+            let _ = spira_config::bounded::bounded("kill").arg(&hbpid).status();
         }
         let _ = std::fs::remove_file(&hold_pid_file);
         let _ = std::fs::remove_file(&hb_file);
-        let _ = Command::new("spira-lc").args(["unhold", id, "operator", "slay"]).output();
+        let _ = spira_config::bounded::bounded("spira-lc").args(["unhold", id, "manual", "slay"]).output();
         say(&format!(
             "hold: manual hold released for {id} (holder pid {}, heartbeat {})",
             if hpid.is_empty() { "?" } else { &hpid },
@@ -253,11 +249,11 @@ fn main() {
                 say(&format!("aeon: {} pid {pid} is {unit} — stopping the unit", if name.is_empty() { "?" } else { &name }));
                 if !sysctl::run_ok(&["stop", &unit]) {
                     say(&format!("aeon: systemctl stop failed — sending TERM to {pid}"));
-                    let _ = Command::new("kill").args(["-TERM", &pid]).status();
+                    let _ = spira_config::bounded::bounded("kill").args(["-TERM", &pid]).status();
                 }
             } else {
                 say(&format!("aeon: {} pid {pid} has no unit — sending TERM", if name.is_empty() { "?" } else { &name }));
-                let _ = Command::new("kill").args(["-TERM", &pid]).status();
+                let _ = spira_config::bounded::bounded("kill").args(["-TERM", &pid]).status();
             }
             let t0 = epoch();
             loop {
@@ -269,7 +265,7 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 if epoch() - t0 >= 60 {
                     say("aeon: still alive after 60s — KILL");
-                    let _ = Command::new("kill").args(["-KILL", &pid]).status();
+                    let _ = spira_config::bounded::bounded("kill").args(["-KILL", &pid]).status();
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     if let Some(pf) = &pf {
                         let _ = std::fs::remove_file(pf);
@@ -286,13 +282,13 @@ fn main() {
             }
         }
     }
-    let _ = std::fs::remove_file(&marker);
 
     // ---- 4a/5/4b/6 — everything downstream that still needs lib.sh's chokepoints -------
     let (mode, reason) = match &args.mode_close {
         Some(r) => ("close", r.as_str()),
         None => ("reopen", ""),
     };
+    let run_str = run.to_string_lossy().into_owned();
     let seam_fail = match lib_sh.as_deref() {
         Some(lib) => {
             let (out, ok) = seam::run(
@@ -308,6 +304,8 @@ fn main() {
                     ("SLAY_NAME", &name),
                     ("SLAY_PID", &pid),
                     ("SLAY_UNIT", &unit),
+                    ("SPIRA_RUN", &run_str),
+                    ("SPIRA_SUBMITTED_LABEL", &submitted_label),
                 ],
                 "",
             );

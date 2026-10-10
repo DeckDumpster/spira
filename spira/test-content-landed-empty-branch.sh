@@ -43,8 +43,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 
 # shellcheck disable=SC1090
@@ -90,9 +90,9 @@ git -C "$REPO" worktree add -q "$TMP/wt-sq-land" origin/main
 printf 'squashed\n' > "$TMP/wt-sq-land/sq.txt"
 git -C "$TMP/wt-sq-land" add sq.txt
 git -C "$TMP/wt-sq-land" commit -q -m "sp-sq: squash merged to main"
-git -C "$REPO" push -q origin \
+timeout 5 git -C "$REPO" push -q origin \
     "$(git -C "$TMP/wt-sq-land" rev-parse HEAD):refs/heads/main"
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" worktree remove "$TMP/wt-sq-land" 2>/dev/null || true
 
 _sq_ahead="$(git -C "$REPO" rev-list --count "origin/main..spira/sp-sq" 2>/dev/null)"

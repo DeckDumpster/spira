@@ -13,11 +13,12 @@
 //! mounts ([`stage_runner`]), so the host and the runner always speak the same protocol —
 //! never the candidate's binary, which may predate it.
 
+use std::process::Command;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -178,6 +179,7 @@ fn run_step(step: &Step) -> (i32, String) {
         Ok(f) => f,
         Err(e) => return (127, format!("plan: {e}")),
     };
+    // batch-job: this runs whatever its caller names, as long as that takes
     let st = Command::new(prog)
         .args(args)
         .envs(step.env.iter().map(|(k, v)| (k, v)))

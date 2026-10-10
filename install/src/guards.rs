@@ -146,6 +146,20 @@ pub fn conflict_instance_arg(instance: &str, conf_instance: Option<&str>, conf_f
     }
 }
 
+/// The instance to install: the configured `spira.instance`, which an explicit request (argument
+/// or `SPIRA_INSTANCE`) must agree with — a disagreement is refused, never resolved either way.
+pub fn settle_instance(requested: Option<&str>, configured: Option<&str>) -> Result<String, Conflict> {
+    match (requested, configured) {
+        (Some(r), Some(c)) if r != c => Err(Conflict::new(
+            format!("instance '{r}' disagrees with spira.instance='{c}' in the config"),
+            "re-run without an instance argument, or edit spira.instance in the config",
+        )),
+        (Some(r), _) => Ok(r.to_string()),
+        (None, Some(c)) => Ok(c.to_string()),
+        (None, None) => Ok("prod".to_string()),
+    }
+}
+
 /// Conflict 4b: another installed instance's sentinel already points its `SPIRA_RUN` at this
 /// one's run directory. `other_sentinels` is `(unit_basename, its StandardOutput run dir)`,
 /// already resolved and canonicalised by the caller.
@@ -321,6 +335,16 @@ mod tests {
         assert!(conflict_instance_arg("prod", None, "spira.conf").is_ok());
         assert!(conflict_instance_arg("prod", Some("prod"), "spira.conf").is_ok());
         let e = conflict_instance_arg("test", Some("prod"), "spira.conf").unwrap_err();
+        assert!(e.message.contains("disagrees"), "{}", e.message);
+    }
+
+    #[test]
+    fn settle_instance_follows_the_config_and_refuses_a_disagreeing_request() {
+        assert_eq!(settle_instance(None, Some("lab")).unwrap(), "lab");
+        assert_eq!(settle_instance(Some("lab"), Some("lab")).unwrap(), "lab");
+        assert_eq!(settle_instance(Some("lab"), None).unwrap(), "lab");
+        assert_eq!(settle_instance(None, None).unwrap(), "prod");
+        let e = settle_instance(Some("prod"), Some("lab")).unwrap_err();
         assert!(e.message.contains("disagrees"), "{}", e.message);
     }
 

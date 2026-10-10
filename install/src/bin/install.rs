@@ -8,8 +8,10 @@
 //! them are this bead's scope.
 //!
 //! usage: spira-install [<instance>] [--dry-run] [--ephemeral] [--laptop] [--skip-build]
-//!                       [--no-session-hook] [--system-user]
+//!                       [--no-session-hook] [--system-user] [--populate-lifecycle]
 //!   --system-user is standalone: root, phase 6.5 only.
+//!   --populate-lifecycle is standalone: phase 4.6 only (the one-time lifecycle population,
+//!   idempotent — the same step every full install runs after the lifecycle store).
 
 use install::bootstrap::{self, nonempty_env};
 use install::checks;
@@ -28,10 +30,11 @@ struct Opts {
     skip_build: bool,
     no_session_hook: bool,
     system_user: bool,
+    populate_lifecycle: bool,
 }
 
 fn parse_args() -> Result<Opts, String> {
-    let mut o = Opts { instance: None, dry: false, ephemeral: false, laptop: false, skip_build: false, no_session_hook: false, system_user: false };
+    let mut o = Opts { instance: None, dry: false, ephemeral: false, laptop: false, skip_build: false, no_session_hook: false, system_user: false, populate_lifecycle: false };
     for a in std::env::args().skip(1) {
         match a.as_str() {
             "--dry-run" => o.dry = true,
@@ -40,6 +43,7 @@ fn parse_args() -> Result<Opts, String> {
             "--skip-build" => o.skip_build = true,
             "--no-session-hook" => o.no_session_hook = true,
             "--system-user" => o.system_user = true,
+            "--populate-lifecycle" => o.populate_lifecycle = true,
             s if s.starts_with("--") => return Err(format!("unknown flag: {s}")),
             s if o.instance.is_none() => o.instance = Some(s.to_string()),
             s => return Err(format!("extra argument: {s}")),
@@ -163,7 +167,7 @@ fn aerc_install_can_be_skipped(current: Option<&str>) -> bool {
 }
 
 /// Phase -1: put ~/.local/bin on PATH (for the doctor this process runs next), set dolt's
-/// metrics.disabled, and fetch every dependency doctor would otherwise FAIL on
+/// metrics.disabled and bd's metrics off, and fetch every dependency doctor would otherwise FAIL on
 /// (law-install-installs-every-dependency, operator ruling 2026-10-03: install provides every
 /// dependency, there is no optional tier) — duckdb, sccache (with its webdav backend),
 /// inotifywait, and aerc (copied from this release's own vendored binary — sp-41so3; see
@@ -191,10 +195,116 @@ fn dependencies(dry: bool) -> Result<(), String> {
         info("set dolt metrics.disabled true (dolt config --global)");
     }
 
+    bd_metrics_off(dry)?;
+
     fetch_duckdb(dry, &bin)?;
     fetch_sccache(dry, &bin)?;
     fetch_inotifywait(dry, &bin)?;
     install_aerc(dry, &bin, spira_config::release_env::own_release_root_for_process().as_deref())?;
+    install_sendmail(dry, &home, &bin)?;
+    Ok(())
+}
+
+fn bd_metrics_state() -> Option<bool> {
+    let o = Command::new("timeout").args(["5", "bd", "metrics", "status"]).output().ok()?;
+    let text = String::from_utf8_lossy(&o.stdout);
+    let line = text.lines().find(|l| l.starts_with("Anonymous usage metrics:"))?;
+    Some(line.trim_end().ends_with("ON"))
+}
+
+fn bd_metrics_off(dry: bool) -> Result<(), String> {
+    match bd_metrics_state() {
+        None => {
+            eprintln!("install: cannot read bd metrics status — run: bd metrics off");
+            Ok(())
+        }
+        Some(false) => {
+            skip("bd metrics already OFF");
+            Ok(())
+        }
+        Some(true) if dry => {
+            would("run: bd metrics off");
+            Ok(())
+        }
+        Some(true) => {
+            run_ok("timeout", &["5", "bd", "metrics", "off"]).map_err(|e| format!("cannot turn bd metrics off: {e}"))?;
+            if bd_metrics_state() != Some(false) {
+                return Err("bd metrics status still shows ON after `bd metrics off`".into());
+            }
+            info("set bd metrics OFF (bd metrics off)");
+            Ok(())
+        }
+    }
+}
+
+fn render_sendmail_wrapper(releases: &str, toml: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         # spira-sendmail — aerc's outgoing command; written by spira-install, rewritten on every install.\n\
+         R=$(readlink -f '{releases}/current') || exit 1\n\
+         [ -x \"$R/bin/mail\" ] || {{ echo \"spira-sendmail: $R/bin/mail is not executable\" >&2; exit 1; }}\n\
+         [ \"${{1:-}}\" = --check ] && exit 0\n\
+         exec env SPIRA_RELEASE=\"$R\" SPIRA_TOML='{toml}' PATH=\"$R/bin:$R/spira:/usr/local/bin:/usr/bin:/bin\" \"$R/bin/mail\" sendmail \"$@\"\n"
+    )
+}
+
+/// Returns `conf` with every `outgoing =` line pointing at `wrapper`, or `None` when there was
+/// nothing to change.
+fn rewrite_aerc_outgoing(conf: &str, wrapper: &str) -> Option<String> {
+    let want = format!("outgoing = {wrapper}");
+    let mut changed = false;
+    let out: Vec<String> = conf
+        .lines()
+        .map(|l| {
+            let is_outgoing = l.trim_start().strip_prefix("outgoing").is_some_and(|r| r.trim_start().starts_with('='));
+            if is_outgoing && l.trim() != want {
+                changed = true;
+                want.clone()
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    changed.then(|| out.join("\n") + "\n")
+}
+
+/// Installs `spira-sendmail` into `bin` and points an existing aerc account at it, so a release
+/// cut cannot leave the operator's reply path at a binary that no longer exists. An absent
+/// accounts.conf is left alone: no aerc account, nothing to repoint.
+fn install_sendmail(dry: bool, home: &str, bin: &Path) -> Result<(), String> {
+    let (Some(releases), Some(toml)) = (nonempty_env("SPIRA_RELEASES"), nonempty_env("SPIRA_TOML")) else {
+        info("spira-sendmail NOT installed — SPIRA_RELEASES or SPIRA_TOML is unset");
+        return Ok(());
+    };
+    let wrapper = bin.join("spira-sendmail");
+    let body = render_sendmail_wrapper(releases.trim_end_matches('/'), &toml);
+    if dry {
+        would(&format!("write {}", wrapper.display()));
+    } else if std::fs::read_to_string(&wrapper).ok().as_deref() == Some(body.as_str()) {
+        skip(&format!("{} is current", wrapper.display()));
+    } else {
+        std::fs::create_dir_all(bin).map_err(|e| format!("mkdir {}: {e}", bin.display()))?;
+        let tmp = bin.join(".spira-sendmail.new");
+        std::fs::write(&tmp, &body).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod spira-sendmail: {e}"))?;
+        std::fs::rename(&tmp, &wrapper).map_err(|e| format!("install {}: {e}", wrapper.display()))?;
+        info(&format!("installed {}", wrapper.display()));
+    }
+
+    let conf_dir = nonempty_env("XDG_CONFIG_HOME").unwrap_or_else(|| format!("{home}/.config"));
+    let conf = Path::new(&conf_dir).join("aerc/accounts.conf");
+    let Ok(text) = std::fs::read_to_string(&conf) else {
+        skip(&format!("no {} — nothing to repoint", conf.display()));
+        return Ok(());
+    };
+    match rewrite_aerc_outgoing(&text, &wrapper.display().to_string()) {
+        None => skip(&format!("aerc outgoing already {}", wrapper.display())),
+        Some(_) if dry => would(&format!("repoint aerc outgoing in {} at {}", conf.display(), wrapper.display())),
+        Some(new) => {
+            std::fs::write(&conf, new).map_err(|e| format!("write {}: {e}", conf.display()))?;
+            info(&format!("repointed aerc outgoing in {} at {}", conf.display(), wrapper.display()));
+        }
+    }
     Ok(())
 }
 
@@ -425,10 +535,26 @@ fn would(s: &str) {
 
 /// Run a bare-name tool, inheriting stdio, returning its exit code (127 on a spawn failure).
 fn tool_status(name: &str, args: &[&str]) -> i32 {
+    // batch-job: this runs whatever its caller names, as long as that takes
     Command::new(name).args(args).status().map(|s| s.code().unwrap_or(1)).unwrap_or(127)
 }
 
+/// Every `*.toml` directly inside `dir`, sorted — the operator's own fragments, composed after
+/// the shipped default. An absent directory is no fragments.
+fn operator_fragments(dir: &Path) -> Vec<String> {
+    let mut found: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+    found
+}
+
 fn tool_output(name: &str, args: &[&str], extra_env: &[(&str, &str)]) -> (i32, String) {
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut c = Command::new(name);
     c.args(args);
     for (k, v) in extra_env {
@@ -440,6 +566,26 @@ fn tool_output(name: &str, args: &[&str], extra_env: &[(&str, &str)]) -> (i32, S
     }
 }
 
+/// `spira.instance` from the config alone — `SPIRA_INSTANCE` removed from the environment it is
+/// resolved against, since the override would otherwise answer for the file. `None` while no
+/// config file exists yet.
+fn configured_instance() -> Option<String> {
+    let spec = spira_config::process::spec().ok()?;
+    if !spec.split(':').any(|p| Path::new(p).is_file()) {
+        return None;
+    }
+    let mut env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    env.remove("SPIRA_INSTANCE");
+    let home = spira_config::resolve::locate_home_for_process().ok()?;
+    spira_config::resolve::resolve_instance(&env, &home).ok()
+}
+
+fn refuse_instance(c: &install::guards::Conflict) -> ExitCode {
+    eprintln!("install: {}", c.message);
+    eprintln!("install:   remedy: {}", c.remedy);
+    ExitCode::from(2)
+}
+
 fn main() -> ExitCode {
     let opts = match parse_args() {
         Ok(o) => o,
@@ -448,19 +594,33 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if let Some(i) = &opts.instance {
-        std::env::set_var("SPIRA_INSTANCE", i);
-    }
-    if opts.ephemeral && nonempty_env("SPIRA_INSTANCE").is_none() {
-        std::env::set_var("SPIRA_INSTANCE", format!("eph-{}", std::process::id()));
-    }
+    let requested = opts.instance.clone().or_else(|| nonempty_env("SPIRA_INSTANCE"));
+    let ephemeral = opts.ephemeral && requested.is_none();
     if let Some(p) = nonempty_env("CONFIGURE_PROD") {
         std::env::set_var("SPIRA_PROD", p);
     }
-    let instance = nonempty_env("SPIRA_INSTANCE").unwrap_or_else(|| "prod".into());
+    let mut instance = if ephemeral {
+        format!("eph-{}", std::process::id())
+    } else {
+        match install::guards::settle_instance(requested.as_deref(), configured_instance().as_deref()) {
+            Ok(i) => i,
+            Err(c) => return refuse_instance(&c),
+        }
+    };
+    std::env::set_var("SPIRA_INSTANCE", &instance);
 
     if opts.system_user {
         return standalone_system_user(&instance, opts.dry);
+    }
+    if opts.populate_lifecycle {
+        phase("phase 4.6: lifecycle population");
+        return match populate_phase(opts.dry) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("install: phase lifecycle population failed — {e}");
+                ExitCode::from(2)
+            }
+        };
     }
 
     // ---- phase -1: dependencies ----------------------------------------------------------
@@ -509,19 +669,42 @@ fn main() -> ExitCode {
 
     // ---- phase 1: config --------------------------------------------------------------
     phase("phase 1: config");
-    let conf_dest = nonempty_env("XDG_CONFIG_HOME").map(|x| format!("{x}/spira/spira.conf")).or_else(|| nonempty_env("HOME").map(|h| format!("{h}/.config/spira/spira.conf"))).unwrap_or_default();
+    // The one config (per Ryan 2026-10-07): the file SPIRA_TOML names — normally
+    // produced by `release install-tarball` from the operator's answers. One already there is
+    // validated and used, never overwritten; a missing one is produced here (asked for on a
+    // terminal; with no terminal the refusal names each missing input).
     let mut changes = 0u32;
-    if Path::new(&conf_dest).is_file() {
-        skip(&format!("config exists at {conf_dest}"));
-    } else if opts.dry {
-        would("run: spira/configure.sh --out ...");
+    if opts.dry {
+        would("ensure the config SPIRA_TOML names (spira-config init)");
     } else {
-        info("running configure.sh");
-        if tool_status("configure.sh", &[]) != 0 {
-            eprintln!("install: phase config failed — configure.sh exited non-zero");
-            return ExitCode::from(2);
+        let conf_d = match spira_config::resolve::locate_home_for_process() {
+            Ok(h) => spira_config::resolve::default_conf_d(&h),
+            Err(e) => {
+                eprintln!("install: phase config failed — {e}");
+                return ExitCode::from(2);
+            }
+        };
+        match spira_config::init::ensure_from_cli(None, None, &Default::default(), &conf_d) {
+            Ok(spira_config::init::Outcome::Existing(p)) => skip(&format!("config exists at {}", p.display())),
+            Ok(spira_config::init::Outcome::Written(p)) => {
+                info(&format!("wrote {}", p.display()));
+                changes += 1;
+            }
+            Err(e) => {
+                eprintln!("install: phase config failed — {e}");
+                return ExitCode::from(2);
+            }
         }
-        changes += 1;
+    }
+
+    if !ephemeral {
+        match install::guards::settle_instance(requested.as_deref(), configured_instance().as_deref()) {
+            Ok(i) => {
+                instance = i;
+                std::env::set_var("SPIRA_INSTANCE", &instance);
+            }
+            Err(c) => return refuse_instance(&c),
+        }
     }
 
     // Resolve the locations the rest of install reads, now that the config exists. They
@@ -634,9 +817,9 @@ fn main() -> ExitCode {
         // A bead count, not just an existence check (original: `bd -C $SPIRA_DB list --limit
         // 0 --json`, 10s timeout, length of the JSON array, "?" on any failure to parse or
         // to run at all). This ALSO proves the post-init skip check keeps -C — only the
-        // fresh-init call below lost it (test-install-bd-init-cwd.sh property 3).
+        // fresh-init call below lost it.
         let bead_count = Command::new("timeout")
-            .args(["10", "bd", "-C", &db, "list", "--limit", "0", "--json"])
+            .args(["5", "bd", "-C", &db, "list", "--limit", "0", "--json"])
             .output()
             .ok()
             .and_then(|o| o.status.success().then(|| o.stdout))
@@ -655,6 +838,17 @@ fn main() -> ExitCode {
         } else {
             info(&format!("initialising database at {db}"));
             let _ = std::fs::create_dir_all(&db);
+            let id_prefix = match spira_config::resolve::key_for_process("SPIRA_ID_PREFIX") {
+                Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+                Ok(_) => {
+                    eprintln!("install: spira.id_prefix resolved empty — refusing to init the database");
+                    return ExitCode::from(2);
+                }
+                Err(e) => {
+                    eprintln!("install: cannot resolve spira.id_prefix: {e}");
+                    return ExitCode::from(2);
+                }
+            };
             if let Some(_dd) = &dolt_data {
                 if which_prog("dolt").is_none() {
                     eprintln!("install: phase database failed — dolt is not on PATH — required to init the database");
@@ -663,6 +857,7 @@ fn main() -> ExitCode {
                 if !tcp_up(dolt_port) {
                     info(&format!("starting dolt server on port {dolt_port} for database init"));
                     let yaml = format!("{}/dolt-server.yaml", dolt_data.clone().unwrap());
+                    // batch-job: child is spawned or exec-replaced, not awaited under a deadline
                     dolt_bg = Command::new("dolt").args(["sql-server", "--config", &yaml]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();
                     if !wait_tcp(dolt_port, 30) {
                         if let Some(mut c) = dolt_bg.take() {
@@ -672,7 +867,7 @@ fn main() -> ExitCode {
                         return ExitCode::from(2);
                     }
                 }
-                let ready_max: u64 = nonempty_env("SPIRA_INSTALL_DOLT_READY_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
+                let ready_max: u64 = nonempty_env("SPIRA_INSTALL_DOLT_READY_WAIT").and_then(|v| v.parse().ok()).unwrap_or(120);
                 if !wait_dolt_query(dolt_port, ready_max) {
                     if let Some(mut c) = dolt_bg.take() {
                         let _ = c.kill();
@@ -681,16 +876,18 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
                 let dbname = Path::new(&db).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let max_tries: u32 = nonempty_env("SPIRA_INSTALL_BD_INIT_TRIES").and_then(|v| v.parse().ok()).unwrap_or(3).max(1);
                 let mut tries = 0;
                 loop {
                     tries += 1;
-                    let (rc, out) = bd_output(&db, &["init", "--non-interactive", "--prefix", "sp", "--skip-agents", "--skip-hooks", "--server", "--server-host", "127.0.0.1", "--server-port", &dolt_port.to_string(), "--database", &dbname, "--external", "-q"]);
+                    let (rc, out) = bd_output(&db, &["init", "--non-interactive", "--prefix", &id_prefix, "--skip-agents", "--skip-hooks", "--server", "--server-host", "127.0.0.1", "--server-port", &dolt_port.to_string(), "--database", &dbname, "--external", "-q"]);
                     if rc == 0 {
                         break;
                     }
-                    if tries < 2 && out.contains("invalid connection") {
-                        info("  bd init hit an invalid connection — removing the partial database and retrying");
-                        let _ = std::fs::remove_dir_all(Path::new(&db).join(".beads"));
+                    clean_partial_init(&db, &dbname, dolt_port);
+                    if tries < max_tries && out.contains("invalid connection") {
+                        info(&format!("  bd init hit an invalid connection — removed the partial database, retrying: {}", out.trim().lines().last().unwrap_or("")));
+                        std::thread::sleep(std::time::Duration::from_secs(2 * tries as u64));
                         continue;
                     }
                     eprint!("{out}");
@@ -700,14 +897,14 @@ fn main() -> ExitCode {
                     eprintln!("install: phase database failed — bd init (server mode) failed");
                     return ExitCode::from(2);
                 }
-                let _ = Command::new("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
+                let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
             } else {
                 // cwd == SPIRA_DB, not -C: see bd_output's doc comment above for why.
-                if Command::new("bd").current_dir(&db).arg("init").status().map(|s| s.success()).unwrap_or(false) != true {
+                if bd_init_bounded().current_dir(&db).args(["init", "--prefix", &id_prefix]).status().map(|s| s.success()).unwrap_or(false) != true {
                     eprintln!("install: phase database failed — bd init failed");
                     return ExitCode::from(2);
                 }
-                let _ = Command::new("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
+                let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
             }
             changes += 1;
         }
@@ -715,13 +912,13 @@ fn main() -> ExitCode {
 
     // bd reads beads.role from the cwd's git config, not from -C; every caller runs from some
     // other checkout, so only the user-global value reaches all of them.
-    let role_set = Command::new("git").args(["config", "--global", "--get", "beads.role"]).output().map(|o| o.status.success() && !o.stdout.is_empty()).unwrap_or(false);
+    let role_set = spira_config::bounded::bounded("git").args(["config", "--global", "--get", "beads.role"]).output().map(|o| o.status.success() && !o.stdout.is_empty()).unwrap_or(false);
     if role_set {
         skip("beads.role already set (git config --global)");
     } else if opts.dry {
         would("run: git config --global beads.role maintainer");
     } else {
-        if Command::new("git").args(["config", "--global", "beads.role", "maintainer"]).status().map(|s| s.success()).unwrap_or(false) {
+        if spira_config::bounded::bounded("git").args(["config", "--global", "beads.role", "maintainer"]).status().map(|s| s.success()).unwrap_or(false) {
             info("set beads.role maintainer (git config --global)");
             changes += 1;
         } else {
@@ -729,12 +926,12 @@ fn main() -> ExitCode {
         }
     }
 
-    let metrics_off = Command::new("dolt").args(["config", "--global", "--get", "metrics.disabled"]).output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true").unwrap_or(false);
+    let metrics_off = spira_config::bounded::bounded("dolt").args(["config", "--global", "--get", "metrics.disabled"]).output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true").unwrap_or(false);
     if metrics_off {
         skip("dolt metrics.disabled already true");
     } else if opts.dry {
         would("run: dolt config --global --add metrics.disabled true");
-    } else if Command::new("dolt").args(["config", "--global", "--add", "metrics.disabled", "true"]).status().map(|s| s.success()).unwrap_or(false) {
+    } else if spira_config::bounded::bounded("dolt").args(["config", "--global", "--add", "metrics.disabled", "true"]).status().map(|s| s.success()).unwrap_or(false) {
         info("set dolt metrics.disabled true (dolt config --global)");
         changes += 1;
     } else {
@@ -864,7 +1061,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
             info(&format!("dolt-beads.service listening on port {bp}"));
-            let _ = Command::new("bd").args(["-C", &db, "doctor", "--fix", "--yes"]).env("BD_NON_INTERACTIVE", "1").status();
+            let _ = spira_config::bounded::bounded("bd").args(["-C", &db, "doctor", "--fix", "--yes"]).env("BD_NON_INTERACTIVE", "1").status();
             let db_max: u64 = nonempty_env("SPIRA_INSTALL_DB_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
             if !wait_bd_list(&db, db_max) {
                 eprintln!("install: phase units failed — bd did not accept connections within {db_max}s after dolt-beads.service started");
@@ -897,17 +1094,31 @@ fn main() -> ExitCode {
         info("lifecycle store NOT built — SPIRA_INSTALL_LC_STORE_CONSIDERED is set (a fixture with no real Dolt server); spira-lc will not answer until install runs without it");
     } else if opts.dry {
         would("apply lifecycle/schema.sql, lifecycle/migrations/*.sql (spira-lc admin-migrate) and lifecycle/grants.sql as the Dolt admin");
+        if let Err(e) = populate_phase(true) {
+            eprintln!("install: phase lifecycle population failed — {e}");
+            return ExitCode::from(2);
+        }
     } else {
-        let port = nonempty_env("SPIRA_LC_PORT").and_then(|p| p.parse().ok()).or_else(|| dolt_data.as_ref().and_then(|dd| read_yaml_port(&format!("{dd}/dolt-server.yaml")))).unwrap_or(3307);
+        let port = lc_port(dolt_data.as_deref());
         match lifecycle_store_phase(port) {
             Ok(lines) => {
                 for l in lines {
                     info(&l);
                 }
                 changes += 1;
+                // ---- phase 4.6: lifecycle population (sp-k62xz8) --------------------------
+                // The store now exists and its user can write: every bead already in the
+                // beads database gets its row, once — before lc-serve starts answering for it.
+                phase("phase 4.6: lifecycle population");
+                if let Err(e) = populate_phase(false) {
+                    eprintln!("install: phase lifecycle population failed — {e}");
+                    return ExitCode::from(2);
+                }
                 // lc-serve.service was enabled in phase 4, before this store existed, and may
                 // have given up (StartLimitBurst): restart it now and require it to be active —
                 // fail closed, since an aeon cannot claim without it (sp-xfqnr).
+                // batch-job: one start of the socket; bounded by timeout 30.
+                let _ = Command::new("timeout").args(["30", "systemctl", "--user", "start", "lc-serve.socket"]).status();
                 // batch-job: one restart of a service during install; bounded by timeout 30.
                 let _ = Command::new("timeout").args(["30", "systemctl", "--user", "restart", "lc-serve.service"]).status();
                 let mut active = false;
@@ -937,18 +1148,41 @@ fn main() -> ExitCode {
 
     // Linger.
     let linger_user = nonempty_env("USER").unwrap_or_else(whoami);
-    let cur_linger = Command::new("loginctl").args(["show-user", &linger_user, "-p", "Linger"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let cur_linger = spira_config::bounded::bounded("loginctl").args(["show-user", &linger_user, "-p", "Linger"]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     if cur_linger == "Linger=yes" {
         skip(&format!("linger already enabled for {linger_user}"));
     } else if opts.dry {
         would(&format!("run: loginctl enable-linger {linger_user}"));
     } else {
-        let _ = Command::new("loginctl").args(["enable-linger", &linger_user]).status();
+        let _ = spira_config::bounded::bounded("loginctl").args(["enable-linger", &linger_user]).status();
         if let Some(run) = nonempty_env("SPIRA_RUN") {
             let _ = std::fs::create_dir_all(&run);
             let _ = std::fs::write(Path::new(&run).join("install-linger-enabled"), "");
         }
         info(&format!("enabled linger for {linger_user}"));
+        changes += 1;
+    }
+
+    // ---- phase 4.7: desired state ---------------------------------------------------------
+    phase("phase 4.7: desired state");
+    let release_root = nonempty_env("SPIRA_HOME").map(|h| PathBuf::from(h).parent().map(Path::to_path_buf).unwrap_or_default()).unwrap_or_default();
+    let default_doc = release_root.join("desired-state/examples/default.toml");
+    if !opts.dry && !default_doc.is_file() {
+        skip(&format!("no default desired state at {} — this install carries none to compose", default_doc.display()));
+    } else if opts.dry {
+        would(&format!("run: spira compose {} + every *.toml in SPIRA_DESIRED_FRAGMENTS_DIR", default_doc.display()));
+    } else {
+        let mut docs = vec![default_doc.to_string_lossy().into_owned()];
+        if let Ok(dir) = spira_config::process::cfg("SPIRA_DESIRED_FRAGMENTS_DIR") {
+            docs.extend(operator_fragments(Path::new(&dir)));
+        }
+        let args: Vec<&str> = std::iter::once("compose").chain(docs.iter().map(String::as_str)).collect();
+        let (rc, out) = tool_output("spira", &args, &[]);
+        print!("{out}");
+        if rc != 0 {
+            eprintln!("install: phase desired state failed — spira compose exited {rc}; the reconciler has no composite to converge to");
+            return ExitCode::from(2);
+        }
         changes += 1;
     }
 
@@ -1000,13 +1234,19 @@ fn main() -> ExitCode {
     // ---- phase 6: cockpit -------------------------------------------------------------------
     phase("phase 6: cockpit");
     let home = nonempty_env("SPIRA_HOME").unwrap_or_default();
-    let cockpit_dir = Path::new(&home).parent().map(|p| p.join("cockpit")).unwrap_or_default();
+    let release_dir = Path::new(&home).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let cockpit_dir = release_dir.join("cockpit/remote");
+    let link_root = match nonempty_env("SPIRA_RELEASES").map(|r| PathBuf::from(r).join("current")) {
+        Some(cur) if cur.exists() => cur.join("cockpit/remote"),
+        _ => cockpit_dir.clone(),
+    };
     let bin_dir = nonempty_env("HOME").map(|h| PathBuf::from(h).join(".local/bin")).unwrap_or_default();
     for prog in ["cockpit", "cockpit-remote"] {
-        let src = cockpit_dir.join(prog);
+        let found = cockpit_dir.join(prog);
+        let src = link_root.join(prog);
         let link = bin_dir.join(prog);
-        if !src.is_file() {
-            skip(&format!("{prog} not found at {} — skipping", src.display()));
+        if !found.is_file() {
+            eprintln!("  WARN: {prog} not found at {} — {} NOT linked", found.display(), link.display());
             continue;
         }
         if std::fs::read_link(&link).map(|t| t == src).unwrap_or(false) {
@@ -1024,8 +1264,8 @@ fn main() -> ExitCode {
             }
         }
     }
-    if which_prog("tmux").is_some() && Command::new("tmux").args(["list-panes", "-a"]).output().map(|o| o.status.success()).unwrap_or(false) {
-        let panel = Command::new("tmux").args(["list-panes", "-a", "-F", "#{@cockpit}"]).output().map(|o| String::from_utf8_lossy(&o.stdout).lines().filter(|l| *l == "panel").count()).unwrap_or(0);
+    if which_prog("tmux").is_some() && spira_config::bounded::bounded("tmux").args(["list-panes", "-a"]).output().map(|o| o.status.success()).unwrap_or(false) {
+        let panel = spira_config::bounded::bounded("tmux").args(["list-panes", "-a", "-F", "#{@cockpit}"]).output().map(|o| String::from_utf8_lossy(&o.stdout).lines().filter(|l| *l == "panel").count()).unwrap_or(0);
         if panel > 0 {
             skip("cockpit panes already present");
         } else if opts.dry {
@@ -1069,7 +1309,7 @@ fn main() -> ExitCode {
 }
 
 fn whoami() -> String {
-    Command::new("id").arg("-un").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    spira_config::bounded::bounded("id").arg("-un").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
 }
 
 fn which_prog(p: &str) -> Option<String> {
@@ -1077,7 +1317,7 @@ fn which_prog(p: &str) -> Option<String> {
 }
 
 fn is_root() -> bool {
-    Command::new("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0").unwrap_or(false)
+    spira_config::bounded::bounded("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0").unwrap_or(false)
 }
 
 fn is_git_checkout(mut path: &str) -> bool {
@@ -1103,6 +1343,7 @@ fn git_remotes(db: &str) -> Vec<String> {
     if !Path::new(db).join(".git").exists() {
         return Vec::new();
     }
+    // batch-job: git history or network operation, as long as the repository is large
     Command::new("git").args(["-C", db, "remote"]).output().map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).collect()).unwrap_or_default()
 }
 
@@ -1128,7 +1369,20 @@ fn read_yaml_port(path: &str) -> Option<u16> {
 }
 
 fn tcp_up(port: u16) -> bool {
-    std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+    std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), std::time::Duration::from_secs(1)).is_ok()
+}
+
+fn clean_partial_init(db: &str, dbname: &str, port: u16) {
+    let _ = std::fs::remove_dir_all(Path::new(db).join(".beads"));
+    let _ = std::fs::remove_dir_all(Path::new(db).join(".dolt"));
+    if dbname.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && !dbname.is_empty() {
+        // batch-job: dropping the partial database; bounded at 30 s.
+        match Command::new("timeout").args(["30", "dolt", "--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "--user", "root", "--password", "", "sql", "-q", &format!("DROP DATABASE IF EXISTS `{dbname}`")]).stdin(Stdio::null()).output() {
+            Ok(o) if !o.status.success() => eprintln!("install: could not drop the partial database {dbname}: {}", String::from_utf8_lossy(&o.stderr).trim()),
+            Err(e) => eprintln!("install: could not drop the partial database {dbname}: {e}"),
+            _ => {}
+        }
+    }
 }
 
 fn wait_tcp(port: u16, max_secs: u64) -> bool {
@@ -1154,7 +1408,7 @@ fn wait_tcp_down(port: u16, max_secs: u64) {
 fn wait_dolt_query(port: u16, max_secs: u64) -> bool {
     let start = std::time::Instant::now();
     loop {
-        let ok = Command::new("dolt").args(["--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "--user", "root", "--password", "", "sql", "-q", "select 1"]).stdin(Stdio::null()).output().map(|o| o.status.success()).unwrap_or(false);
+        let ok = spira_config::bounded::bounded("dolt").args(["--host", "127.0.0.1", "--port", &port.to_string(), "--no-tls", "--user", "root", "--password", "", "sql", "-q", "select 1"]).stdin(Stdio::null()).output().map(|o| o.status.success()).unwrap_or(false);
         if ok {
             return true;
         }
@@ -1169,7 +1423,7 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
     let start = std::time::Instant::now();
     let mut attempt: u64 = 0;
     loop {
-        let ok = Command::new("bd").args(["-C", db, "list", "--json"]).env("BD_NON_INTERACTIVE", "1").output().map(|o| o.status.success()).unwrap_or(false);
+        let ok = spira_config::bounded::bounded("bd").args(["-C", db, "list", "--json"]).env("BD_NON_INTERACTIVE", "1").output().map(|o| o.status.success()).unwrap_or(false);
         if ok {
             return true;
         }
@@ -1182,6 +1436,16 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
     }
 }
 
+/// `bd`, bounded for `bd init`: creating a fresh database's schema takes far longer than the
+/// 5 s a call that must merely answer gets — under that bound `bd init` was killed mid-schema
+/// on every fresh install ("failed to initialize schema: context canceled").
+const BD_INIT_SECS: &str = "300";
+fn bd_init_bounded() -> Command {
+    let mut c = Command::new("timeout");
+    c.arg(BD_INIT_SECS).arg("bd");
+    c
+}
+
 /// Runs `bd <args>` with `db` as cwd, not `-C db` — `bd init`'s own remote-less repository
 /// is allowed (db_git_guard, above), and `-C` makes a fresh `bd init` look inside a
 /// directory that does not have a beads project yet, which is exactly what `bd` refuses
@@ -1189,7 +1453,7 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
 /// retirement). Only the init call needs this; every other `bd` call in this binary keeps
 /// `-C` for the already-initialised database it is allowed to name from outside.
 fn bd_output(db: &str, args: &[&str]) -> (i32, String) {
-    let mut c = Command::new("bd");
+    let mut c = bd_init_bounded();
     c.current_dir(db).args(args).env("BD_NON_INTERACTIVE", "1");
     match c.output() {
         Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
@@ -1281,7 +1545,7 @@ fn proc_cmdlines() -> Vec<(String, String)> {
 }
 
 fn flock_free(path: &str) -> bool {
-    Command::new("flock").arg("-n").arg(path).arg("true").status().map(|s| s.success()).unwrap_or(true)
+    spira_config::bounded::bounded("flock").arg("-n").arg(path).arg("true").status().map(|s| s.success()).unwrap_or(true)
 }
 
 fn dolt_servers() -> Vec<(String, String)> {
@@ -1329,11 +1593,11 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
         ));
     }
 
-    if Command::new("getent").arg("group").arg(&group).status().map(|s| !s.success()).unwrap_or(true) {
+    if spira_config::bounded::bounded("getent").arg("group").arg(&group).status().map(|s| !s.success()).unwrap_or(true) {
         info(&format!("create group {group}"));
         run_ok("groupadd", &["--system", &group])?;
     }
-    if Command::new("id").arg("-u").arg(&user).status().map(|s| !s.success()).unwrap_or(true) {
+    if spira_config::bounded::bounded("id").arg("-u").arg(&user).status().map(|s| !s.success()).unwrap_or(true) {
         info(&format!("create user {user} (system, no login, no home)"));
         run_ok("useradd", &["--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--gid", &group, &user])?;
     }
@@ -1371,6 +1635,7 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
 }
 
 fn run_ok(prog: &str, args: &[&str]) -> Result<(), String> {
+    // batch-job: this runs whatever its caller names, as long as that takes
     Command::new(prog).args(args).status().map_err(|e| format!("cannot run {prog}: {e}")).and_then(|s| if s.success() { Ok(()) } else { Err(format!("{prog} {} failed ({s})", args.join(" "))) })
 }
 
@@ -1401,7 +1666,7 @@ fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
 }
 
 fn group_gid(group: &str) -> Option<u32> {
-    let out = Command::new("getent").args(["group", group]).output().ok()?;
+    let out = spira_config::bounded::bounded("getent").args(["group", group]).output().ok()?;
     String::from_utf8_lossy(&out.stdout).trim().split(':').nth(2)?.parse().ok()
 }
 
@@ -1415,10 +1680,53 @@ fn same_user_credential_path() -> String {
     })
 }
 
+/// The port the lifecycle store's Dolt listens on: `SPIRA_LC_PORT`, else the beads Dolt's own
+/// `dolt-server.yaml` (the store shares that server), else 3307.
+fn lc_port(dolt_data: Option<&str>) -> u16 {
+    nonempty_env("SPIRA_LC_PORT").and_then(|p| p.parse().ok()).or_else(|| dolt_data.and_then(|dd| read_yaml_port(&format!("{dd}/dolt-server.yaml")))).unwrap_or(3307)
+}
+
+/// Phase 4.6 (sp-k62xz8): the one-time lifecycle population — every bead in the beads
+/// database with no lifecycle row gets one, by spira-lc's own classifier
+/// (`install::populate`). Runs as the lifecycle user every other spira-lc caller connects as,
+/// over a direct connection (classify is never forwarded to lc-serve). Idempotent: a second
+/// run creates nothing. `SPIRA_INSTALL_LC_POPULATE_CONSIDERED` skips it, saying so.
+fn populate_phase(dry: bool) -> Result<(), String> {
+    if nonempty_env("SPIRA_INSTALL_LC_POPULATE_CONSIDERED").is_some() {
+        info("lifecycle population NOT run — SPIRA_INSTALL_LC_POPULATE_CONSIDERED is set; beads already in the database have no lifecycle row until install runs without it");
+        return Ok(());
+    }
+    let need = |k: &str| bootstrap::declared(k).ok_or_else(|| format!("{k} is declared empty — cannot locate what the population reads"));
+    let inputs = install::populate::Inputs {
+        bd_bin: bootstrap::declared("SPIRA_BD").unwrap_or_else(|| "bd".into()),
+        bd_db: need("SPIRA_DB")?,
+        queue_dir: need("SPIRA_QUEUE_DIR")?,
+        ask_label: bootstrap::declared("SPIRA_ASK_LABEL"),
+    };
+    if dry {
+        would(&format!("run: spira-lc {}", install::populate::args(&inputs).join(" ")));
+        return Ok(());
+    }
+    let port = lc_port(bootstrap::declared("SPIRA_DOLT_DATA").as_deref());
+    let counts = install::populate::run(&inputs, |args| {
+        // batch-job: one-time install population of the lifecycle store; bounded at 600 s by timeout(1).
+        let out = Command::new("timeout").arg("600").arg("spira-lc").args(args).env("SPIRA_LC_PORT", port.to_string()).stdin(Stdio::null()).output();
+        match out {
+            Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
+            Err(e) => (127, format!("cannot run spira-lc: {e}")),
+        }
+    })?;
+    info(&format!("lifecycle population: {} bead(s) in the database, {} row(s) created, {} already present", counts.beads, counts.created, counts.present));
+    if let Some(w) = install::populate::unknown_repo_line(&counts.unknown_repo) {
+        eprintln!("install: WARNING: {w}");
+    }
+    Ok(())
+}
+
 /// Phase 4.5 (sp-xfqnr): build spira_lifecycle through `spira-lc`'s admin verbs, as the Dolt
-/// admin (`SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD`, default root with an empty
-/// password — what a fresh dolt-beads.service has, and what cutover-deploy.sh defaults to),
-/// against the SQL this release ships beside its unit templates.
+/// admin: `SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD` when set, else root with the
+/// password this phase provisions on first run (a fresh Dolt's root has none, and is never
+/// left that way), against the SQL this release ships beside its unit templates.
 fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
     use install::lifecycle_store::{self, Admin};
     let host = nonempty_env("SPIRA_LC_HOST");
@@ -1429,13 +1737,7 @@ fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
     let cred = same_user_credential_path();
     let rw = lifecycle_store::read_credential(Path::new(&cred))?;
     let ro = lifecycle_store::read_credential(Path::new(&format!("{cred}-ro")))?;
-    let admin = Admin {
-        user: nonempty_env("SPIRA_LC_ADMIN_USER").unwrap_or_else(|| "root".into()),
-        password: std::env::var("SPIRA_LC_ADMIN_PASSWORD").unwrap_or_default(),
-        host,
-        port,
-    };
-    lifecycle_store::apply(&lifecycle_dir, &std::env::temp_dir(), &admin, &rw, &ro, |args, env| {
+    let run = |args: &[String], env: &[(String, String)]| {
         // batch-job: one-time install DDL against the local Dolt server; bounded at 120 s by timeout(1).
         let mut c = Command::new("timeout");
         c.arg("120").arg("spira-lc").args(args).stdin(Stdio::null());
@@ -1446,7 +1748,26 @@ fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
             Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
             Err(e) => (127, format!("cannot run spira-lc: {e}")),
         }
-    })
+    };
+    let mut lines = Vec::new();
+    let admin = if let Some(user) = nonempty_env("SPIRA_LC_ADMIN_USER") {
+        Admin { user, password: std::env::var("SPIRA_LC_ADMIN_PASSWORD").unwrap_or_default(), host, port }
+    } else {
+        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let admin_cred = nonempty_env("SPIRA_LC_ADMIN_PASSWORD_FILE").unwrap_or_else(|| spira_config::resolve::lc_admin_credential_default(&env_map));
+        let (admin, msg) = lifecycle_store::ensure_admin(Path::new(&admin_cred), &std::env::temp_dir(), host, port, run)?;
+        lines.push(msg);
+        let beads_cred = nonempty_env("BEADS_CREDENTIALS_FILE").unwrap_or_else(|| format!("{}/.config/beads/credentials", bootstrap::env_var("HOME")));
+        let beads_dir = bootstrap::declared("SPIRA_DB").ok_or("SPIRA_DB is declared empty — cannot locate the beads database bd must connect to")?;
+        let metadata = Path::new(&beads_dir).join(".beads/metadata.json");
+        let meta_text = std::fs::read_to_string(&metadata).map_err(|e| format!("cannot read {}: {e}", metadata.display()))?;
+        let db = serde_json::from_str::<serde_json::Value>(&meta_text).ok().and_then(|v| v.get("dolt_database").and_then(|d| d.as_str().map(String::from)))
+            .ok_or_else(|| format!("{} names no dolt_database", metadata.display()))?;
+        lines.extend(lifecycle_store::ensure_beads_user(Path::new(&beads_cred), &metadata, &db, &admin, &std::env::temp_dir(), run)?);
+        admin
+    };
+    lines.extend(lifecycle_store::apply(&lifecycle_dir, &std::env::temp_dir(), &admin, &rw, &ro, run)?);
+    Ok(lines)
 }
 
 fn create_same_user_credential(path: &str) -> Result<(), String> {
@@ -1546,6 +1867,20 @@ mod dependency_fetch_tests {
     #[test]
     fn sccache_help_has_webdav_missing_line_fails() {
         assert!(!sccache_help_has_webdav("sccache: error: no such option --help\n"));
+    }
+
+    #[test]
+    fn aerc_outgoing_at_a_deleted_checkout_path_is_rewritten() {
+        let conf = "[spira]\nsource = maildir:///m\noutgoing = /co/spira/mail.sh\nfrom = O <o@s>\n";
+        let new = rewrite_aerc_outgoing(conf, "/h/.local/bin/spira-sendmail").unwrap();
+        assert_eq!(new, "[spira]\nsource = maildir:///m\noutgoing = /h/.local/bin/spira-sendmail\nfrom = O <o@s>\n");
+        assert!(rewrite_aerc_outgoing(&new, "/h/.local/bin/spira-sendmail").is_none());
+    }
+
+    #[test]
+    fn sendmail_wrapper_names_release_and_toml_and_supports_check() {
+        let w = render_sendmail_wrapper("/r", "/t.toml");
+        assert!(w.contains("readlink -f '/r/current'") && w.contains("SPIRA_TOML='/t.toml'") && w.contains("--check"));
     }
 
     #[test]

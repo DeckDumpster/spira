@@ -4,7 +4,8 @@ DOC=THE COLLECTIVE LANE CAP — how many fleet slots lanes may hold at once.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # THE COLLECTIVE LANE CAP — how many fleet slots lanes may hold at once.
     # When set with SPIRA_MAX_LIVE_AEONS, the last fleet slot prefers a lane: a task fayth
-    # is held back when any lane has ready work and lanes are below this cap. Empty by
-    # default: no collective cap and no preference rule.
-    : "${SPIRA_LANES_MAX_LIVE:=}"
+    # is held back when any lane has ready work and lanes are below this cap. Declared
+    # empty: no collective cap and no preference rule.
+    # Registered default (sp-kuwp6s, per Ryan 2026-10-07): A small single-box install: lanes hold at most one fleet slot at once.
+    : "${SPIRA_LANES_MAX_LIVE:=1}"
 SPIRA_CONF_DEFAULT_EOF

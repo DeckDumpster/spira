@@ -2,7 +2,7 @@
 #
 # test-lifecycle-classify.sh — the migration classifier end to end (design §4, sp-t93ky):
 # `spira-lc classify` against a REAL bd (testdb.sh, not a stub), a real scratch git
-# repository, real landstate/queue files on disk, and a throwaway spira_lifecycle Dolt
+# repository, a real queue file on disk, and a throwaway spira_lifecycle Dolt
 # server of its own.
 #
 # WHAT THIS PROVES
@@ -73,11 +73,11 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
 SERVER_PID=$!
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         up=1; break
     fi
     sleep 0.2
@@ -92,12 +92,19 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
-unset SPIRA_LC_SOCKET
+# SPIRA_LC_SOCKET and SPIRA_LC_PASSWORD_FILE are registered — spira-lc resolves both
+# straight from SPIRA_TOML (never from inherited env), so unsetting/exporting the shell
+# variable directly no longer steers it. SPIRA_LC_SOCKET is pointed at a path that cannot
+# exist, forcing the host/port connection this suite is testing; SPIRA_LC_PASSWORD_FILE is
+# given a real (empty) credential file, matching the dolt server's own empty root password
+# (sfail round 3, patterns 2 and 7).
+LC_CRED_FILE="$TMP/spira-lc.credential"; : > "$LC_CRED_FILE"
+tl_config SPIRA_LC_SOCKET=/nonexistent/spira-lc.sock SPIRA_LC_PASSWORD_FILE="$LC_CRED_FILE"
 
 "$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
 
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls --use-db spira_lifecycle "$@"; }
+root_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls --use-db spira_lifecycle "$@"; }
 row_count() { root_sql sql -q "SELECT COUNT(*) AS n FROM $1" -r json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])' 2>/dev/null || echo "?"; }
 
 # ── the scratch git repository ────────────────────────────────────────────────────────
@@ -121,13 +128,10 @@ esac
 ok "POSITIVE CONTROL: the content-on-base fixture's own subject matches neither landed() shape"
 git -C "$GITREPO" branch spira/sp-contentbase HEAD
 
-# ── the legacy record fixtures (landstate + queue) ────────────────────────────────────
-LANDSTATE="$TMP/landstate"
+# ── the legacy record fixture (queue) ─────────────────────────────────────────────────
 QUEUE="$TMP/queue"
-mkdir -p "$LANDSTATE" "$QUEUE/demo"
+mkdir -p "$QUEUE/demo"
 NOW="$(date +%s)"
-printf 'CERTIFIED none %s' "$NOW" > "$LANDSTATE/sp-certified"
-printf 'CERTIFIED none %s' "$NOW" > "$LANDSTATE/sp-contradiction"
 {
     printf 'pr=\n'
     printf 'head=deadbeef\n'
@@ -155,14 +159,14 @@ testdb_seed <<JSONL
 {"id":"sp-dropped","title":"dropped bead","type":"task","status":"closed","labels":["repo:demo","spira-dropped"]}
 {"id":"sp-certified","title":"certified bead","type":"task","status":"open","labels":["repo:demo","spira-submitted"]}
 {"id":"sp-contentbase","title":"content on base bead","type":"task","status":"closed","labels":["repo:demo"]}
-{"id":"sp-contradiction","title":"closed but still certified","type":"task","status":"closed","labels":["repo:demo"]}
+{"id":"sp-contradiction","title":"closed with no landing evidence","type":"task","status":"closed","labels":["repo:demo"]}
 {"id":"sp-batched","title":"batched bead","type":"task","status":"open","labels":["repo:demo"]}
 JSONL
 wantrc "bd fixtures seed cleanly into a real, throwaway bd" 0 $?
 
 # ── dry run: computes and reports, writes nothing ──────────────────────────────────────
 DRY_OUT="$("$BIN" classify --home "$CONF_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
-    --landstate-dir "$LANDSTATE" --queue-dir "$QUEUE" --repo demo --dry-run 2>"$TMP/dry.err")"
+    --queue-dir "$QUEUE" --repo demo --dry-run 2>"$TMP/dry.err")"
 DRY_RC=$?
 wantrc "dry run exits cleanly" 0 "$DRY_RC"
 want "dry run reports its config source" '"source": "spira.conf+repo-map"' "$DRY_OUT"
@@ -172,7 +176,7 @@ is "dry run leaves the event table at zero rows" "0" "$(row_count event)"
 
 # ── the real run ────────────────────────────────────────────────────────────────────────
 REAL_OUT="$("$BIN" classify --home "$CONF_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
-    --landstate-dir "$LANDSTATE" --queue-dir "$QUEUE" --repo demo 2>"$TMP/real.err")"
+    --queue-dir "$QUEUE" --repo demo 2>"$TMP/real.err")"
 REAL_RC=$?
 wantrc "the real run exits cleanly" 0 "$REAL_RC"
 cat "$TMP/real.err" >&2
@@ -183,9 +187,9 @@ is "sp-ready classifies READY" "READY" "$(state_of sp-ready)"
 is "sp-successor classifies READY" "READY" "$(state_of sp-successor)"
 is "sp-superseded classifies SUPERSEDED via the supersedes dependency" "SUPERSEDED" "$(state_of sp-superseded)"
 is "sp-dropped classifies DROPPED via the spira-dropped label" "DROPPED" "$(state_of sp-dropped)"
-is "sp-certified classifies CERTIFIED via the ledger" "CERTIFIED" "$(state_of sp-certified)"
+is "sp-certified, open with no landing evidence, classifies READY" "READY" "$(state_of sp-certified)"
 is "sp-contentbase classifies LANDED via content-on-base, NOT via any commit subject" "LANDED" "$(state_of sp-contentbase)"
-is "sp-contradiction (closed, ledger CERTIFIED) still classifies CERTIFIED — the ledger outranks bare bd status" "CERTIFIED" "$(state_of sp-contradiction)"
+is "sp-contradiction (closed, no landing evidence) classifies DROPPED as the residue default" "DROPPED" "$(state_of sp-contradiction)"
 is "sp-batched classifies IN_DELIVERY via open batch membership" "IN_DELIVERY" "$(state_of sp-batched)"
 
 delivery_state="$(root_sql sql -q "SELECT state AS n FROM delivery WHERE bead_id = 'sp-batched'" -r json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["n"] if d else "MISSING")' 2>/dev/null)"
@@ -202,7 +206,7 @@ events_after_first_run="$(row_count event)"
 
 # ── re-running is a no-op ──────────────────────────────────────────────────────────────
 RERUN_OUT="$("$BIN" classify --home "$CONF_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
-    --landstate-dir "$LANDSTATE" --queue-dir "$QUEUE" --repo demo 2>"$TMP/rerun.err")"
+    --queue-dir "$QUEUE" --repo demo 2>"$TMP/rerun.err")"
 wantrc "the rerun also exits cleanly" 0 $?
 want "the rerun classifies nothing new" '"classified": 0' "$RERUN_OUT"
 is "the rerun leaves the event log exactly as the first run left it" "$events_after_first_run" "$(row_count event)"
@@ -210,7 +214,7 @@ is "sp-ready's state survives the rerun unchanged" "READY" "$(state_of sp-ready)
 
 # ── repository configuration detection: spira.toml gives the same answers ─────────────
 TOML_OUT="$("$BIN" classify --home "$TOML_HOME" --bd-bin "$SPIRA_BD" --bd-db "$SPIRA_DB" \
-    --landstate-dir "$LANDSTATE" --queue-dir "$QUEUE" --repo demo --dry-run 2>"$TMP/toml.err")"
+    --queue-dir "$QUEUE" --repo demo --dry-run 2>"$TMP/toml.err")"
 wantrc "classify against a spira.toml home exits cleanly" 0 $?
 want "it reports spira.toml as its configuration source" '"source": "spira.toml"' "$TOML_OUT"
 want "it reports the same fixtures already classified as skipped, not reclassified" '"skipped_already_classified": 8' "$TOML_OUT"

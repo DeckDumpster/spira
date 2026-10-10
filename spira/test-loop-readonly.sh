@@ -90,7 +90,8 @@ tar -czf "$TARBALL" -C "$SCRATCH" "$_name" \
     && ok "tarball built" \
     || { bad "tarball" "tar failed"; printf '%s passed, %s failed\n' "$_TL_PASS" "$_TL_FAIL"; exit 1; }
 
-SPIRA_SYSTEMCTL="$MOCK_SC" SPIRA_RELEASES="$RELEASES" SPIRA_RUN="$SPIRA_RUN_DIR" \
+tl_config SPIRA_RELEASES="$RELEASES" SPIRA_RUN="$SPIRA_RUN_DIR"
+SPIRA_SYSTEMCTL="$MOCK_SC" \
     release install-tarball "$TARBALL" >/dev/null 2>&1
 iszero "release install-tarball exits 0" "$?"
 
@@ -171,21 +172,21 @@ git -c user.email=t@t -c user.name=t init -q -b main "$GIT_REPO"
 git -C "$GIT_REPO" -c user.email=t@t -c user.name=t \
     commit -q --allow-empty -m base
 git -C "$GIT_REPO" remote add origin "$GIT_REMOTE"
-git -C "$GIT_REPO" push -q origin main
-git -C "$GIT_REPO" fetch -q origin
+timeout 5 git -C "$GIT_REPO" push -q origin main
+timeout 5 git -C "$GIT_REPO" fetch -q origin
 
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6); the release tarball's real
+# chamber/ is what sentinel must be pointed at explicitly.
+tl_config SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$(command -v bd)}" SPIRA_FAYTHS=builder SPIRA_MAX_AEONS=1 \
+    SPIRA_NOTIFY="$STUB_NOTIFY" SPIRA_CHAMBER="$CURRENT/spira/chamber"
 SENTINEL_OUT="$(
     SPIRA_HOME="$CURRENT/spira" \
     SPIRA_REPO="$GIT_REPO" \
-    SPIRA_RUN="$SPIRA_RUN_DIR" \
-    SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$(command -v bd)}" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_FAYTHS=builder \
-    SPIRA_MAX_AEONS=1 \
     SPIRA_SUMMON="$STUB_SUMMON" \
     SPIRA_LAUNCH="$STUB_LAUNCH" \
-    SPIRA_NOTIFY="$STUB_NOTIFY" \
     SPIRA_SYSTEMCTL="$MOCK_SC" \
     SPIRA_SKIP_RECLAIM=1 \
     SPIRA_INFERENCE_EVERY=99999 \

@@ -1,9 +1,7 @@
 TYPE=u32
 GROUP=batch
-DOC=SPIRA_BATCH_MEM_PER_SUITE_MIB — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_BATCH_MEM_PER_SUITE_MIB — Memory reserved per suite when admitting a batch, in MiB.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    # Registered default (sp-kuwp6s, per Ryan 2026-10-07): Memory reserved per suite when admitting a batch, in MiB.
+    : "${SPIRA_BATCH_MEM_PER_SUITE_MIB:=192}"
 SPIRA_CONF_DEFAULT_EOF

@@ -1,9 +1,7 @@
 TYPE=string
 GROUP=round
-DOC=SPIRA_ROUND_VM_MIRROR_PORT — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_ROUND_VM_MIRROR_PORT — port the round VM's git mirror daemon listens on.
+SCHEMA=TCP port round-vm serves its state mirror on (unit: port number; default 9430; range 1-65535). Parsed as an integer, so it must not be empty.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    : "${SPIRA_ROUND_VM_MIRROR_PORT:=9430}"
 SPIRA_CONF_DEFAULT_EOF

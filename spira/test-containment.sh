@@ -24,7 +24,7 @@
 #   C — a prod config with the (example) repos loads unchanged.
 #
 # tier: T1
-# covers: spira/lib.sh spira/conf.sh
+# covers: spira/lib.sh spira/conf.sh UC-config-store-preflight-16
 # defect: sp-g2vl
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -53,14 +53,13 @@ mkdir -p "$WS"
 # Helper: source lib.sh in an isolated subprocess with a given repo-map and instance.
 # Returns the exit status of that subprocess.
 load() {       # load <instance> <map-path>
+    tl_config SPIRA_INSTANCE="${1:-prod}" SPIRA_WORKSPACES="$WS" SPIRA_REPO_MAP="${2:-}" \
+        SPIRA_WATCHERS="$HARNESS/spira/watchers"
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_INSTANCE="${1:-prod}" \
-        SPIRA_WORKSPACES="$WS" \
-        SPIRA_REPO_MAP="${2:-}" \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HARNESS/spira/conf.sh'; . '$HARNESS/spira/lib.sh'; echo loaded" 2>&1
 }
 
@@ -163,14 +162,16 @@ rc=$?
 is "prod loads map with real remote (rc=0)" "0" "$rc"
 want "prod real-remote map prints 'loaded'" "loaded" "$out"
 
-# Unset SPIRA_INSTANCE behaves identically to prod.
+# Unset SPIRA_INSTANCE behaves identically to prod: the complete fixture's own base value
+# for spira.instance is "prod" (per Ryan 2026-10-05, nothing has a default beyond what the
+# fixture declares), so clear any override an earlier `load` call left behind.
+spira-config unset spira.instance "$_TL_CONF_OVERRIDE" >/dev/null
+tl_config SPIRA_WORKSPACES="$WS" SPIRA_REPO_MAP="$MAP_OUTSIDE" SPIRA_WATCHERS="$HARNESS/spira/watchers"
 out="$(env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_WORKSPACES="$WS" \
-        SPIRA_REPO_MAP="$MAP_OUTSIDE" \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HARNESS/spira/conf.sh'; . '$HARNESS/spira/lib.sh'; echo loaded" 2>&1)"
 rc=$?
 is "unset SPIRA_INSTANCE behaves like prod (rc=0)" "0" "$rc"
@@ -186,14 +187,13 @@ echo "D — workspace root / passes containment for all absolute paths:"
 # becomes "/*", which correctly matches every absolute path.
 
 load_ws() {  # load_ws <workspaces> <instance> <map-path>
+    tl_config SPIRA_INSTANCE="${2:-prod}" SPIRA_WORKSPACES="$1" SPIRA_REPO_MAP="${3:-}" \
+        SPIRA_WATCHERS="$HARNESS/spira/watchers"
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_INSTANCE="${2:-prod}" \
-        SPIRA_WORKSPACES="$1" \
-        SPIRA_REPO_MAP="${3:-}" \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c ". '$HARNESS/spira/conf.sh'; . '$HARNESS/spira/lib.sh'; echo loaded" 2>&1
 }
 
@@ -222,6 +222,35 @@ out_d2="$(load_ws "/" test "$MAP_REAL_REMOTE" 2>&1)"
 rc_d2=$?
 is   "D2: ws=/ still refuses a clone with a real remote" "1" "$rc_d2"
 want "D2: ws=/ refusal mentions containment" "containment" "$out_d2"
+
+# ===========================================================================
+echo
+echo "E (G12) — symlinks are resolved before the path check; ssh:// and git@ remotes are real:"
+# ===========================================================================
+LINK_OUT="$WS/link-out"; ln -s "$REPO_OUTSIDE" "$LINK_OUT"
+MAP_LINK_OUT="$TMP/map-link-out"
+printf 'repo-link | %s | main | origin/main | |\n' "$LINK_OUT" >"$MAP_LINK_OUT"
+out="$(load test "$MAP_LINK_OUT" 2>&1)"; rc=$?
+is   "E1: a path under the workspaces root that links OUT of it is refused" "1" "$rc"
+want "E1: refusal names the entry" "repo-link" "$out"
+
+REPO_IN="$WS/repo-in"; git init -q "$REPO_IN"; git -C "$REPO_IN" commit -q --allow-empty -m in
+LINK_IN="$TMP/link-in"; ln -s "$REPO_IN" "$LINK_IN"
+MAP_LINK_IN="$TMP/map-link-in"
+printf 'repo-in | %s | main | origin/main | |\n' "$LINK_IN" >"$MAP_LINK_IN"
+out="$(load test "$MAP_LINK_IN" 2>&1)"; rc=$?
+is   "E2: a path outside the root that links INTO it is accepted (rc=0)" "0" "$rc"
+want "E2: prints 'loaded'" "loaded" "$out"
+
+for url in "ssh://git@example.invalid/x/y.git" "git@example.invalid:x/y.git"; do
+    tag="${url%%[:/]*}"; tag="${tag%%@*}"
+    R="$WS/repo-$tag"; git init -q "$R"; git -C "$R" commit -q --allow-empty -m r
+    git -C "$R" remote add origin "$url"
+    M="$TMP/map-$tag"; printf 'repo-%s | %s | main | origin/main | |\n' "$tag" "$R" >"$M"
+    out="$(load test "$M" 2>&1)"; rc=$?
+    is   "E3: $url remote is refused" "1" "$rc"
+    want "E3: $url refusal mentions containment" "containment" "$out"
+done
 
 # ===========================================================================
 echo

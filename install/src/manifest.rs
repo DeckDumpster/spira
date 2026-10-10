@@ -120,6 +120,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-warden.timer", true));
     m.units.push(t("spira-moot-sweep.service", false));
     m.units.push(t("spira-moot-sweep.timer", true));
+    m.units.push(t("spira-incident-settle.service", false));
+    m.units.push(t("spira-incident-settle.timer", true));
     m.units.push(t("spira-verify-asks.service", false));
     m.units.push(t("spira-verify-asks.timer", true));
     m.units.push(t("spira-gate-check.service", false));
@@ -132,12 +134,28 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-verdict.timer", true));
     m.units.push(t("spira-publish.service", false));
     m.units.push(t("spira-publish.timer", true));
+    m.units.push(t("spira-worktree-reaper.service", false));
+    m.units.push(t("spira-worktree-reaper.timer", true));
     m.units.push(t("spira-straggler-sweep.service", false));
     m.units.push(t("spira-straggler-sweep.timer", true));
+    m.units.push(t("spira-reap-terminal.service", false));
+    m.units.push(t("spira-reap-terminal.timer", true));
     m.units.push(t("spira-sop-lint.service", false));
     m.units.push(t("spira-sop-lint.timer", true));
+    m.units.push(t("spira-event-continuity.service", false));
+    m.units.push(t("spira-event-continuity.timer", true));
     m.units.push(t("spira-escape-census.service", false));
     m.units.push(t("spira-escape-census.timer", true));
+    m.units.push(t("spira-perf-watch.service", false));
+    m.units.push(t("spira-perf-watch.timer", true));
+    m.units.push(t("spira-perf-happy-path.service", false));
+    m.units.push(t("spira-perf-happy-path.timer", true));
+    m.units.push(t("spira-reclaim.service", false));
+    m.units.push(t("spira-reclaim.timer", true));
+    m.units.push(t("spira-refusal-watch.service", false));
+    m.units.push(t("spira-refusal-watch.timer", true));
+    m.units.push(t("spira-target-reap.service", false));
+    m.units.push(t("spira-target-reap.timer", true));
 
     // promote.sh / spira-promote.*: retired by deploy.sh's split-checkout replacement.
     m.optional.push("spira-promote.service".into());
@@ -154,9 +172,11 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // split exists to keep away from the operator, so it is declined there.
     if inputs.lc_system_mode {
         m.optional.push("lc-serve.service".into());
+        m.optional.push("lc-serve.socket".into());
         m.notes.push("spira-lc runs as a system service (--system-user) — not installing lc-serve.service.".into());
     } else {
-        m.units.push(t("lc-serve.service", true));
+        m.units.push(t("lc-serve.socket", true));
+        m.units.push(t("lc-serve.service", false));
     }
 
     if inputs.inotify_present {
@@ -234,6 +254,12 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
 
     m.units.push(t("spira-landing-pass.service", false));
     m.units.push(t("spira-landing-pass.timer", true));
+    m.units.push(t("spira-rounds.service", false));
+    m.units.push(t("spira-rounds.timer", true));
+    m.units.push(t("spira-rounds-forge.service", false));
+    m.units.push(t("spira-rounds-forge.timer", true));
+    m.units.push(t("spira-sift.service", false));
+    m.units.push(t("spira-sift.timer", true));
 
     m.units.push(t("spira-gate-worker.service", false));
     m.units.push(t("spira-gate-worker.timer", true));
@@ -415,8 +441,9 @@ mod tests {
     fn lc_serve_is_installed_and_enabled_only_in_same_user_mode() {
         let m = build(&inputs()).unwrap();
         let u = m.units.iter().find(|u| u.name == "lc-serve.service").expect("same-user mode installs it");
-        assert!(u.enable);
-        assert!(m.enable("prod").contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
+        assert!(!u.enable, "socket-activated, never enabled directly");
+        assert!(m.enable("prod").contains(&"lc-serve.socket".to_string()), "shared name, never instance-suffixed");
+        assert!(!m.enable("prod").contains(&"lc-serve.service".to_string()));
         assert!(!m.optional.contains(&"lc-serve.service".to_string()));
 
         let mut i = inputs();
@@ -433,6 +460,19 @@ mod tests {
         let mut i = inputs();
         i.watch_names = Err("the watcher manifest is malformed".into());
         assert!(build(&i).is_err());
+    }
+
+    #[test]
+    fn the_worktree_reaper_is_shipped_with_its_unit_files_and_enabled() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-worktree-reaper.timer" && u.enable));
+        assert!(m.units.iter().any(|u| u.name == "spira-worktree-reaper.service" && !u.enable));
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
+        for f in ["spira-worktree-reaper.service", "spira-worktree-reaper.timer"] {
+            assert!(root.join(f).is_file(), "{f} is in the manifest but not on disk");
+        }
+        let svc = std::fs::read_to_string(root.join("spira-worktree-reaper.service")).unwrap();
+        assert!(svc.contains("sending reap-stale"));
     }
 
     #[test]
@@ -494,6 +534,18 @@ mod tests {
     }
 
     #[test]
+    fn the_target_reap_timer_is_installed_enabled_and_runs_the_floor_mode() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-target-reap.service" && !u.enable));
+        assert!(m.units.iter().any(|u| u.name == "spira-target-reap.timer" && u.enable));
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+        let svc = std::fs::read_to_string(dir.join("spira-target-reap.service")).unwrap();
+        assert!(svc.contains("bin/target-reap --if-below-floor"));
+        let timer = std::fs::read_to_string(dir.join("spira-target-reap.timer")).unwrap();
+        assert!(timer.contains("OnUnitActiveSec=2min") && timer.contains("Unit=spira-target-reap.service"));
+    }
+
+    #[test]
     fn enable_lists_per_instance_names_then_watchers_in_manifest_order() {
         let m = build(&inputs()).unwrap();
         let en = m.enable("prod");
@@ -536,7 +588,7 @@ mod tests {
     #[test]
     fn union_template_names_carries_a_conditionally_declined_template() {
         let names = union_template_names();
-        for n in ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer", "sccache-dav.service", "dolt-beads.service", "spira-mail-deliver.service", "lc-serve.service"] {
+        for n in ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer", "sccache-dav.service", "dolt-beads.service", "spira-mail-deliver.service", "lc-serve.service", "lc-serve.socket"] {
             assert!(names.contains(&n.to_string()), "{n} missing from union: {names:?}");
         }
         assert!(!names.iter().any(|n| n == "spira-watch@.service"), "the watcher template itself must never appear");

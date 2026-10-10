@@ -23,6 +23,9 @@ pub struct Member {
     /// stacked-dependents-2026-09-28 §1). Empty for an unstacked member — the pool's default,
     /// and byte-identical to today's behaviour wherever a caller never populates it.
     pub stack: BTreeMap<Id, String>,
+    /// Blocks-type prerequisites of this bead that have not landed (`spira-lc list`'s
+    /// `blocked_by`): admitted only with each of them merged ahead of it in the same round.
+    pub blocked_by: Vec<Id>,
 }
 
 /// Lowest number is most urgent; an unknown priority sorts last so it never manufactures an
@@ -61,7 +64,7 @@ pub fn topo_order(members: &[Member]) -> Vec<Member> {
         let ready: Vec<usize> = remaining
             .iter()
             .enumerate()
-            .filter(|(_, m)| m.stack.keys().all(|p| !ids.contains(p) || placed.contains(p)))
+            .filter(|(_, m)| m.stack.keys().chain(m.blocked_by.iter()).all(|p| !ids.contains(p) || placed.contains(p)))
             .map(|(i, _)| i)
             .collect();
         let idx = if ready.is_empty() {
@@ -120,33 +123,13 @@ pub fn clean_title(t: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------------------
-// A. Adaptive trigger
+// A. Trigger and selection: a round is always running while the pool is non-empty
 // ---------------------------------------------------------------------------------------
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct PoolHistory {
-    pub certify_rate_per_min: f64,
-    pub round_duration_mins: f64,
-}
-
-/// N ≈ certify rate × round duration, clamped to [1, 30]. The pool that fills during one
-/// round is the next round. Floor of 1, not a larger bootstrap number: no history yet means
-/// `h` is `PoolHistory::default()`, and law-batcher-earns-the-round-by-parity's own rule is
-/// to cut on the first certified member until there is real history to adapt from.
-pub fn adaptive_n(h: PoolHistory) -> u32 {
-    let raw = (h.certify_rate_per_min * h.round_duration_mins).round();
-    if raw.is_nan() {
-        return 1;
-    }
-    raw.clamp(1.0, 30.0) as u32
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TriggerReason {
-    /// The certified pool reached N.
+    /// The pool is non-empty and no round is running: the next round starts at once.
     PoolFull(u32),
-    /// Nothing new has arrived for Q minutes.
-    Idle { waited_mins: u64 },
     /// An express or main-red fix cuts a round of its own, at once.
     Express(Id),
     MainRed,
@@ -158,12 +141,6 @@ pub enum TriggerReason {
 
 pub struct TriggerInputs<'a> {
     pub pool: &'a [Member],
-    pub now: u64,
-    /// Time the most recently certified member in the pool arrived; None when the pool is
-    /// empty (nothing to be idle about).
-    pub last_arrival: Option<u64>,
-    pub n: u32,
-    pub q_minutes: u64,
     /// A main-red fix is waiting: cut at once regardless of pool size.
     pub main_red: bool,
     /// A batch PR is already open: the only back pressure (law-queue-back-pressure-is-an-
@@ -188,16 +165,69 @@ pub fn should_cut(t: &TriggerInputs) -> Option<TriggerReason> {
     if t.batch_open {
         return Some(TriggerReason::Prepare(t.pool.len() as u32));
     }
-    if t.pool.len() as u32 >= t.n {
-        return Some(TriggerReason::PoolFull(t.pool.len() as u32));
+    Some(TriggerReason::PoolFull(t.pool.len() as u32))
+}
+
+/// Drops every member with a `blocked_by` prerequisite that is not itself a surviving member
+/// (so it merges ahead of it, `topo_order`), to a fixed point. The refusals name the blocker.
+pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
+    let mut kept = pool;
+    let mut refusals = Vec::new();
+    loop {
+        let ids: std::collections::BTreeSet<Id> = kept.iter().map(|m| m.id.clone()).collect();
+        let (ok, blocked): (Vec<Member>, Vec<Member>) = kept.into_iter().partition(|m| m.blocked_by.iter().all(|b| ids.contains(b)));
+        if blocked.is_empty() {
+            return (ok, refusals);
+        }
+        for m in &blocked {
+            let b = m.blocked_by.iter().find(|b| !ids.contains(*b)).expect("a blocked member has an absent blocker");
+            refusals.push(format!("{}: blocked by {b}, which has not landed and is not in this round — not cut", m.id));
+        }
+        kept = ok;
     }
-    if let Some(last) = t.last_arrival {
-        let waited = t.now.saturating_sub(last) / 60;
-        if waited >= t.q_minutes {
-            return Some(TriggerReason::Idle { waited_mins: waited });
+}
+
+/// What kind of round `select_round` cut from the pool.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RoundKind {
+    /// Two or more members share this epic root, so the round is that feature.
+    Feature(Id),
+    CatchAll,
+}
+
+/// The epic a bead id belongs to: the id before its first `.`.
+pub fn epic_root(id: &str) -> &str {
+    id.split('.').next().unwrap_or(id)
+}
+
+/// Feature-first, else catch-all (law-a-round-is-feature-first-then-catch-all). The feature is
+/// the epic root shared by the most members, at least two (ties go to the lower root id);
+/// the round is those members, every pool member they stack on or that stacks on them,
+/// transitively, and every express member. Anything else waits for the next round. With no
+/// such epic the round is the whole pool.
+pub fn select_round(pool: Vec<Member>) -> (Vec<Member>, RoundKind) {
+    let mut groups: BTreeMap<&str, usize> = BTreeMap::new();
+    for m in &pool {
+        *groups.entry(epic_root(&m.id)).or_default() += 1;
+    }
+    let best = groups.iter().filter(|(_, n)| **n >= 2).max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0))).map(|(r, _)| r.to_string());
+    let Some(root) = best else { return (pool, RoundKind::CatchAll) };
+    let mut keep: std::collections::BTreeSet<Id> =
+        pool.iter().filter(|m| m.express || epic_root(&m.id) == root).map(|m| m.id.clone()).collect();
+    loop {
+        let before = keep.len();
+        for m in &pool {
+            let needs_kept = m.stack.keys().chain(m.blocked_by.iter()).any(|p| keep.contains(p));
+            let needed_by_kept = pool.iter().any(|o| keep.contains(&o.id) && (o.stack.contains_key(&m.id) || o.blocked_by.contains(&m.id)));
+            if needs_kept || needed_by_kept {
+                keep.insert(m.id.clone());
+            }
+        }
+        if keep.len() == before {
+            break;
         }
     }
-    None
+    (pool.into_iter().filter(|m| keep.contains(&m.id)).collect(), RoundKind::Feature(root))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -495,8 +525,7 @@ fn ev(kind: &'static str, ids: Vec<Id>, text: String) -> Event {
 pub fn cut_event(reason: &TriggerReason, combined: &Combined) -> Event {
     let ids: Vec<Id> = combined.merged.iter().map(|m| m.id.clone()).collect();
     let why = match reason {
-        TriggerReason::PoolFull(n) => format!("pool reached {n}"),
-        TriggerReason::Idle { waited_mins } => format!("idle {waited_mins}m with nothing new"),
+        TriggerReason::PoolFull(n) => format!("{n} waiting, no round running"),
         TriggerReason::Express(id) => format!("express {id}"),
         TriggerReason::MainRed => "main red".to_string(),
         TriggerReason::BaseFix(id) => format!("base-red fix {id}, landing alone"),

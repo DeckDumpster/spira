@@ -34,11 +34,11 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
     FA_ORIGIN="$FA_TMP/origin.git"; git init -q --bare -b main "$FA_ORIGIN"
-    FA_REPO="$FA_TMP/repo"; git clone -q "$FA_ORIGIN" "$FA_REPO" 2>/dev/null
+    FA_REPO="$FA_TMP/repo"; timeout 5 git clone -q "$FA_ORIGIN" "$FA_REPO" 2>/dev/null
     git -C "$FA_REPO" config user.email t@t; git -C "$FA_REPO" config user.name t
     printf 'seed\n' > "$FA_REPO/f"
     git -C "$FA_REPO" add f; git -C "$FA_REPO" commit -qm seed
-    git -C "$FA_REPO" push -q origin main 2>/dev/null
+    timeout 5 git -C "$FA_REPO" push -q origin main 2>/dev/null
 
     FA_HOME="$FA_TMP/home"; mkdir -p "$FA_HOME/chamber"
     printf '. "%s/lib.sh"\n' "$HERE" > "$FA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; the real one, as aeon.sh did
@@ -48,10 +48,27 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     cp -r "$HERE/conf.d" "$FA_HOME/"
     FA_RUN="$FA_TMP/run"; mkdir -p "$FA_RUN"
     FA_REPO_MAP="$FA_TMP/repo-map"
-    export SPIRA_HOME="$FA_HOME" SPIRA_RUN="$FA_RUN" SPIRA_REPO_MAP="$FA_REPO_MAP"
+    export SPIRA_HOME="$FA_HOME"
+    # ONE SOURCE OF CONFIG (per Ryan 2026-10-05): these are registered keys (spira/conf.d) —
+    # no process reads them from the environment any more, and SPIRA_CHAMBER no longer
+    # derives from SPIRA_HOME (the complete fixture declares its own path), so this fixture
+    # must declare all of them through tl_config, not export. Plain (non-exported) shell
+    # copies of SPIRA_RUN/SPIRA_REPO_MAP are kept too — this file's own code still reads
+    # them directly (fa_run_aeon's "$SPIRA_RUN/worktree", the repo-map write below).
+    SPIRA_RUN="$FA_RUN"; SPIRA_REPO_MAP="$FA_REPO_MAP"; SPIRA_MAIL="$FA_TMP/mail"
+    # SPIRA_ASK_LABEL: the complete fixture declares "needs-ryan"; every caller in this
+    # fixture and its suite (the claude shims' own `${SPIRA_ASK_LABEL:-needs-operator}`
+    # fallback — never reached anyway, since the model session's restricted env carries no
+    # SPIRA_ASK_LABEL at all — and builder.fayth's FAYTH_EXCLUDE_LABELS below) was written
+    # against "needs-operator". aeon's own ask_label() now resolves the registered key from
+    # the one source with no code-level default (per Ryan 2026-10-05), so it would otherwise
+    # disagree with every literal here and open_ask_blocker would never match the shim's
+    # decision bead. Declare the suite's own value so both sides agree.
+    # literal-ok: the fixture declares the ask label its shims and beads agree on
+    SPIRA_ASK_LABEL="needs-operator"
+    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_CHAMBER="$FA_HOME/chamber" \
+        SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
     printf 'fixture | %s | push | origin/main | |\n' "$FA_REPO" > "$SPIRA_REPO_MAP"
-    export SPIRA_MAIL="$FA_TMP/mail"
-    export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
     cat > "$FA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
@@ -65,9 +82,12 @@ FAYTH
     # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; a
     # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
     lc_aeon_mirror "$FA_TMP/lcm"; export PATH="$FA_TMP/lcm:$PATH"
-    export SPIRA_AGENT="$FA_BIN/claude" TMP="$FA_TMP"
+    export TMP="$FA_TMP"
     # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
+    # It only `export`s SPIRA_AGENT (testlib.sh, not edited here) — a registered key, so the
+    # aeon binary also needs it declared through tl_config, read back from what it set.
     aeon_fixture_agent "$FA_BIN/claude"
+    tl_config SPIRA_AGENT="$SPIRA_AGENT"
     command -v aeon >/dev/null 2>&1 \
         || { printf 'full-aeon-fixture: aeon is not on PATH — refusing to run\n' >&2; exit 1; }
 }
@@ -94,7 +114,7 @@ fa_run_aeon() {   # fa_run_aeon [fayth] -> prints the aeon binary's rc; output c
 fa_out() { cat "$FA_TMP/out" 2>/dev/null; }
 
 fa_field() {   # fa_field <id> <json-field>
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
@@ -105,7 +125,7 @@ print(d[0].get(sys.argv[1], "") or "")' "$2" 2>/dev/null
 fa_status() { fa_field "$1" status; }
 fa_notes()  { fa_field "$1" notes; }
 
-fa_labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
+fa_labels() { timeout 5 bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
 
 fa_ledger_lines() {   # fa_ledger_lines <id> -> every "done builder <id>" line, in order
     grep " done builder $1 " "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null

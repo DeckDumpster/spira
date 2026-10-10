@@ -9,8 +9,8 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc::notify_live_aeon;
 use bead::{
-    branch_candidate, branch_label, chamber_partitions, incident_blocks_refusal, is_blocks_type,
-    awaits_dispatch, lane_check, lint_judge, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    branch_candidate, branch_label, chamber_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
+    awaits_dispatch, lane_check, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -40,14 +40,17 @@ fn main() {
         "event" => cmd_event(&rest),
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&home, &rest[1..]),
+            Some("remove") => cmd_dep_remove(&home, &rest[1..]),
+            Some("epic-edges") => cmd_dep_epic_edges(&home),
+            Some("convert") => cmd_dep_convert(&home, &rest[1..]),
             _ => {
-                eprintln!("usage: bead.sh dep add <id> <depends-on-id> [--type <type>]");
+                eprintln!("usage: bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>");
                 2
             }
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -84,6 +87,7 @@ const BDQ_SCRIPT: &str = r#"home="$1"; shift; . "$home/lib.sh" || exit 90; bdq "
 /// Runs `bdq` with inherited stdio (the shape every state-changing call needs: `bd`'s own
 /// stdout/stderr must reach the original caller exactly as it would running the bash).
 fn bdq_status(home: &str, args: &[String]) -> i32 {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     Command::new("bash")
         .arg("-c")
         .arg(BDQ_SCRIPT)
@@ -101,6 +105,11 @@ fn bdq_status(home: &str, args: &[String]) -> i32 {
 /// Runs `bdq` capturing stdout, discarding stderr (`2>/dev/null`, matching every read call
 /// `bead.sh`'s own sweep made).
 fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
+    bdq_capture_with(home, args, Stdio::null())
+}
+
+fn bdq_capture_with(home: &str, args: &[String], stderr: Stdio) -> (i32, String) {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     let out = Command::new("bash")
         .arg("-c")
         .arg(BDQ_SCRIPT)
@@ -110,8 +119,9 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
         // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
         // release's bin/+spira/ on the CHILD's PATH, never only inherited.
         .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(stderr)
         .output();
     match out {
         Ok(o) => (
@@ -122,24 +132,104 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
     }
 }
 
-fn s(strs: &[&str]) -> Vec<String> {
-    strs.iter().map(|s| s.to_string()).collect()
+/// Whether `id` carries the incident label. A bd parent cannot be blocked on its own child,
+/// so a remedy filed under an incident is wired as a plain blocks edge instead of a child.
+fn is_incident(home: &str, id: &str) -> bool {
+    let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
+    let (_, out) = bdq_capture(home, &s(&["show", id, "--json"]));
+    parse_show_row(&out).map(|r| r.labels.contains(&incident_label)).unwrap_or(false)
 }
 
-/// `spira_config::resolve::resolve_for_process`, called in-process (wave 4.9, sp-k80sa:
-/// this replaces `bead.sh`'s own narrow `export SPIRA_HOME SPIRA_REPO_MAP
-/// SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL SPIRA_CZAR_LABEL`, which only existed to carry
-/// those across the `exec` boundary into this binary). `home` is this process's own
-/// `--home` argument, never read back out of `$SPIRA_HOME` — that var is a per-copy fact
-/// `spira_config::resolve` deliberately never derives, so it must be the caller's own
-/// input, not something this resolves. A failure (no config document resolves, or a parse
-/// error) yields an empty `Resolved`, matching this crate's existing "missing config
-/// degrades to the caller's own default" behaviour everywhere else.
-fn resolved_config(home: &str) -> spira_config::resolve::Resolved {
-    let home_path = Path::new(home);
-    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-    let repo = spira_config::resolve::derive_home_repo(home_path, &env_map);
-    spira_config::resolve::resolve_or_say("bead", home_path, &repo, &env_map)
+/// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
+/// set that incident is wired to block on the new bead in the same step
+/// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
+fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>) -> i32 {
+    if incident.is_none() && mirror.is_none() && !express {
+        return bdq_status(home, args);
+    }
+    let (code, stdout) = bdq_capture_with(home, args, Stdio::inherit());
+    print!("{stdout}");
+    if code != 0 {
+        return code;
+    }
+    let Some(new_id) = parse_created_id(&stdout) else {
+        if let Some(incident) = incident {
+            eprintln!("bead: file: created a remedy for incident {incident} but could not read its id; add the edge: bd dep add {incident} <id>");
+            return 1;
+        }
+        eprintln!("bead: file: created, but could not read its id to mirror its title or mark it express; `spira-lc backfill-titles` fills the title, `bead.sh amend <id> --express` marks it");
+        return 0;
+    };
+    let mut rc = 0;
+    if let Some((title, priority)) = mirror {
+        match submitted_tip {
+            Some(tip) => {
+                if let Err(e) = create_submitted_row(&new_id, title, priority, tip) {
+                    eprintln!("bead: file: {new_id} filed but its lifecycle row was not created SUBMITTED: {e}; it is not claimable until one exists: spira-lc create-bead {new_id} --submitted-tip {tip}");
+                    rc = 1;
+                }
+            }
+            None => mirror_to_lifecycle(&new_id, Some(title), priority),
+        }
+    }
+    if express {
+        if let Err(e) = spira_config::lifecycle_row::set_express(&new_id, true) {
+            eprintln!("bead: file: {new_id} filed but not marked express: {e}; mark it: bead.sh amend {new_id} --express");
+            rc = 1;
+        }
+    }
+    if let Some(incident) = incident {
+        let r = bdq_status(home, &s(&["dep", "add", incident, &new_id, "--type", "blocks"]));
+        if r != 0 {
+            eprintln!("bead: file: {new_id} filed but the blocks edge {incident} -> {new_id} failed; add it: bd dep add {incident} {new_id}");
+        }
+        rc |= r;
+    }
+    rc
+}
+
+/// bd's priority when `-p` is not given.
+const BD_DEFAULT_PRIORITY: i64 = 2;
+
+/// Write the bead's title and priority into its lifecycle row, which the ops views read
+/// instead of bd. Detached: filing has a server deadline and a second connect inside it
+/// overran it. A write that fails is repaired by `spira-lc backfill-titles`.
+fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64) {
+    let mut args = vec!["30".to_string(), "spira-lc".into(), "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
+    if let Some(t) = title {
+        args.extend(["--title".to_string(), t.to_string()]);
+    }
+    // batch-job: detached, bounded by timeout(1), one point write
+    let spawned = Command::new("timeout")
+        .args(&args)
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    if spawned.is_err() {
+        eprintln!("bead: {id} filed, but its title and priority were not mirrored to the lifecycle store; `spira-lc backfill-titles` fills them");
+    }
+}
+
+/// Synchronous, unlike the mirror: the row must exist SUBMITTED before this call returns.
+fn create_submitted_row(id: &str, title: &str, priority: i64, tip: &str) -> Result<(), String> {
+    let bin = spira_config::lifecycle_row::lc_bin();
+    let out = Command::new("timeout")
+        .args(["5", &bin, "create-bead", id, "--priority", &priority.to_string(), "--title", title, "--submitted-tip", tip])
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {bin}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!("{bin} create-bead exited {}: {}{}", out.status.code().map_or("signal".into(), |c| c.to_string()), String::from_utf8_lossy(&out.stdout).trim(), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+}
+
+fn s(strs: &[&str]) -> Vec<String> {
+    strs.iter().map(|s| s.to_string()).collect()
 }
 
 /// `FAYTH_LABELS`, plainly evaluated — delegates to `spira_config::chamber::fayth_get`
@@ -216,7 +306,7 @@ fn schema_sh(home: &str) -> String {
 /// `schema.sh type-of <kind>` — `Ok(bd_type)` or `Err(())` (stderr discarded: `bead.sh`
 /// prints its own "unknown kind" message, never schema.sh's).
 fn schema_type_of(home: &str, kind: &str) -> Result<String, ()> {
-    let out = Command::new(schema_sh(home))
+    let out = spira_config::bounded::bounded(schema_sh(home))
         .arg("type-of")
         .arg(kind)
         .output()
@@ -231,7 +321,7 @@ fn schema_type_of(home: &str, kind: &str) -> Result<String, ()> {
 /// `schema.sh kinds` — passed straight through to stdout by `contract` (bash's own
 /// behaviour: the call sits inline between two of `_bead_contract`'s own `printf`s).
 fn schema_kinds_passthrough(home: &str) -> String {
-    Command::new(schema_sh(home))
+    spira_config::bounded::bounded(schema_sh(home))
         .arg("kinds")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
@@ -242,7 +332,7 @@ fn schema_kinds_passthrough(home: &str) -> String {
 /// non-work path reads from the live schema rather than an inline bash default, so this
 /// bridges rather than duplicating `schema_name`'s own default table.
 fn schema_name(home: &str, key: &str) -> String {
-    Command::new(schema_sh(home))
+    spira_config::bounded::bounded(schema_sh(home))
         .arg("name")
         .arg(key)
         .output()
@@ -254,25 +344,34 @@ fn schema_name(home: &str, key: &str) -> String {
 // Repository map / env helpers
 // =========================================================================================
 
-/// `SPIRA_REPO_MAP`, resolved in-process (wave 4.9, sp-k80sa) rather than read back out of
-/// this binary's own environment — `bead.sh` no longer re-exports it across the `exec`
-/// boundary (see `resolved_config`'s own doc).
-fn load_repos(home: &str) -> std::collections::BTreeMap<String, spira_config::RepoSection> {
-    let path = match resolved_config(home).values.get("SPIRA_REPO_MAP") {
-        Some(p) if !p.is_empty() => p.clone(),
-        _ => return std::collections::BTreeMap::new(),
-    };
+/// `SPIRA_REPO_MAP` through `cfg` (per Ryan 2026-10-05: one source of config) — the config
+/// file `cfg` reads is the same whatever `--home` says; `--home` only ever selects
+/// chamber/registry PATHS (`chamber_home`/`chamber_dir`/`fayth_names`), never which
+/// config file is in force.
+fn load_repos() -> std::collections::BTreeMap<String, spira_config::RepoSection> {
+    let path = cfg_label("SPIRA_REPO_MAP");
+    if path.is_empty() {
+        return std::collections::BTreeMap::new();
+    }
     match std::fs::read_to_string(&path) {
         Ok(content) => repos_by_name(&content),
         Err(_) => std::collections::BTreeMap::new(),
     }
 }
 
-fn env_default(key: &str, default: &str) -> String {
-    env::var(key)
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| default.to_string())
+/// One source of config (per Ryan 2026-10-05): a registered key's value, through
+/// `spira_config::process::cfg`, resolved from `$SPIRA_TOML`. Several of these keys treat
+/// a resolved empty string as a legitimate, documented value (SPIRA_SCOPE_LABEL's "no
+/// scope exclusion", in particular) — that passes straight through unchanged. Only an
+/// actual resolution failure refuses, naming the key; it is never silently substituted.
+fn cfg_label(key: &str) -> String {
+    match spira_config::process::cfg(key) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("bead: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
 // =========================================================================================
@@ -293,6 +392,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut kind: Option<String> = None;
     let mut express = false;
     let mut submitted = false;
+    let mut tip: Option<String> = None;
     let mut json = false;
     let mut parent: Option<String> = None;
 
@@ -325,6 +425,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             }
             "--express" => express = true,
             "--submitted" => submitted = true,
+            "--tip" => {
+                i += 1;
+                tip = args.get(i).cloned();
+            }
             "--json" => json = true,
             other => {
                 eprintln!("bead: unknown option: {other}");
@@ -334,7 +438,12 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         i += 1;
     }
 
-    let repos = load_repos(home);
+    let incident_parent = match &parent {
+        Some(p) if is_incident(home, p) => parent.take(),
+        _ => None,
+    };
+
+    let repos = load_repos();
     if let Some(r) = &repo {
         if !repos.contains_key(r) {
             let valid = repos.keys().cloned().collect::<Vec<_>>().join(" ");
@@ -366,10 +475,18 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
     };
-    let express_label = env_default("SPIRA_EXPRESS_LABEL", "express");
 
     if submitted && kind != "work" {
         eprintln!("bead: --submitted applies only to work beads");
+        return 2;
+    }
+
+    if submitted && tip.as_deref().is_none_or(str::is_empty) {
+        eprintln!("bead: --submitted requires --tip <sha>: the lifecycle row is created SUBMITTED at that tip, so no claimable READY window exists");
+        return 2;
+    }
+    if tip.is_some() && !submitted {
+        eprintln!("bead: --tip applies only with --submitted");
         return 2;
     }
 
@@ -413,11 +530,12 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
 
-        let mut labels = work_labels(&fayth_labels, &repo, &express_label, express);
+        let mut labels = work_labels(&fayth_labels, &repo);
         if submitted {
             labels.push(',');
-            labels.push_str(&env_default("SPIRA_SUBMITTED_LABEL", "spira-submitted"));
+            labels.push_str(&cfg_label("SPIRA_SUBMITTED_LABEL"));
         }
+        let title_for_mirror = title.clone();
         let mut bd_args = s(&["create"]);
         bd_args.push(title);
         bd_args.push("-l".into());
@@ -440,7 +558,8 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_status(home, &bd_args)
+        let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
+        bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref())
     } else {
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
@@ -448,13 +567,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         } else {
             None
         };
-        let labels = non_work_labels(
-            &scope_label,
-            insight_label.as_deref(),
-            repo.as_deref(),
-            &express_label,
-            express,
-        );
+        let labels = non_work_labels(&scope_label, insight_label.as_deref(), repo.as_deref());
 
         let mut bd_args = s(&["create"]);
         bd_args.push(title);
@@ -488,7 +601,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_status(home, &bd_args)
+        bdq_create(home, &bd_args, incident_parent.as_deref(), None, express, None)
     }
 }
 
@@ -505,6 +618,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     let mut note: Option<String> = None;
     let mut body_file: Option<String> = None;
     let mut express = false;
+    let mut priority: Option<i64> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -518,6 +632,14 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                 body_file = args.get(i).cloned();
             }
             "--express" => express = true,
+            "--priority" | "-p" => {
+                i += 1;
+                let Some(p) = args.get(i).and_then(|a| bead::parse_priority_arg(a)) else {
+                    eprintln!("bead: amend: --priority takes 0..4 (or P0..P4)");
+                    return 2;
+                };
+                priority = Some(p);
+            }
             other => {
                 eprintln!("bead: amend: unknown option: {other}");
                 return 2;
@@ -525,17 +647,42 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
         i += 1;
     }
-    if note.is_none() && body_file.is_none() && !express {
-        eprintln!("bead: amend: --note, --body-file, or --express required");
+    if note.is_none() && body_file.is_none() && !express && priority.is_none() {
+        eprintln!("bead: amend: --note, --body-file, --express, or --priority required");
         return 2;
     }
 
     let mut changed = String::new();
     let mut rc = 0;
+    if let Some(new) = priority {
+        let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
+        let Some(old) = bead::parse_priority(&out) else {
+            eprintln!("bead: amend: cannot read the current priority of {id}; refusing");
+            return 1;
+        };
+        let actor = std::env::var("BEADS_ACTOR")
+            .ok()
+            .filter(|a| !a.is_empty())
+            .or_else(|| std::env::var("USER").ok().filter(|a| !a.is_empty()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let upd = bdq_status(home, &s(&["update", &id, "-p", &new.to_string()]));
+        rc |= upd;
+        if upd == 0 {
+            mirror_to_lifecycle(&id, None, new);
+            let text = bead::priority_note(&actor, Some(old), new, note.as_deref());
+            rc |= bdq_status(home, &s(&["note", &id, &text]));
+            changed.push_str(&text);
+            note = None;
+        }
+    }
     if express {
-        let express_label = env_default("SPIRA_EXPRESS_LABEL", "express");
-        rc |= bdq_status(home, &s(&["label", "add", &id, &express_label]));
-        changed.push_str("Marked express.");
+        match spira_config::lifecycle_row::set_express(&id, true) {
+            Ok(()) => changed.push_str("Marked express."),
+            Err(e) => {
+                eprintln!("bead: amend: {id} not marked express: {e}");
+                rc |= 1;
+            }
+        }
     }
     if let Some(n) = &note {
         rc |= bdq_status(
@@ -564,7 +711,13 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         changed.push_str("Description updated.");
     }
 
-    notify_live_aeon(&id, &changed);
+    // Best-effort notification, same as bdq's own `acknowledge_forced_edit`: the real
+    // amend above has already landed, so a config-resolution failure here must not abort
+    // and lose `rc` — `notify_live_aeon` already treats an empty SPIRA_RUN/SPIRA_MAIL as
+    // "nothing to notify".
+    let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
+    let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
+    notify_live_aeon(&id, &changed, &run, &mail);
     rc
 }
 
@@ -583,7 +736,7 @@ fn cmd_contract(home: &str) -> i32 {
     print!("{}", schema_kinds_passthrough(home));
     println!();
     println!("REPOS");
-    print!("{}", repos_section(&load_repos(home)));
+    print!("{}", repos_section(&load_repos()));
     0
 }
 
@@ -606,14 +759,21 @@ fn cmd_event(args: &[String]) -> i32 {
     // always setting SPIRA_RUN. Matched here as a plain string join, not `Path::join` on an
     // empty base (which would silently go relative instead) — see DESIGN.md "event".
     // Unset or empty SPIRA_RUN is refused by name (sp-0c1wz): the old join made a relative
-    // path and the event vanished with rc 0. Every real caller's conf.sh environment sets it.
-    let run_dir = match env::var("SPIRA_RUN") {
+    // path and the event vanished with rc 0. SPIRA_RUN is a registered key, so this now
+    // reads it through `cfg` rather than the process environment directly.
+    let run_dir = match spira_config::process::cfg("SPIRA_RUN") {
         Ok(v) if !v.is_empty() => PathBuf::from(v),
-        _ => {
-            eprintln!("spira_event: SPIRA_RUN is unset — refusing rather than drop the event");
+        Ok(_) => {
+            eprintln!("spira_event: SPIRA_RUN resolved empty — refusing rather than drop the event");
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("spira_event: {e}");
             return 2;
         }
     };
+    // SPIRA_EVENT_COOLDOWN / SPIRA_NOW are not registered config keys (spira/conf.d has no
+    // entry for either) — left as plain env reads with their existing defaults.
     let cooldown: i64 = env::var("SPIRA_EVENT_COOLDOWN").ok().and_then(|v| v.parse().ok()).unwrap_or(3600);
     let now: i64 = env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
         std::time::SystemTime::now()
@@ -639,7 +799,7 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     let labels_csv = args.first().cloned().unwrap_or_default();
     let ty = args.get(1).map(String::as_str).unwrap_or("task");
     let labels = labels_csv.replace(',', " ");
-    let scope = env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    let scope = cfg_label("SPIRA_SCOPE_LABEL");
     if !scope.is_empty() && !labels.split_whitespace().any(|l| l == scope) {
         return 0;
     }
@@ -651,7 +811,7 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
         })
         .collect();
     let partitions = chamber_partitions(&personas, &scope);
-    let no_loop = env::var("SPIRA_NO_LOOP_LABEL").unwrap_or_default();
+    let no_loop = cfg_label("SPIRA_NO_LOOP_LABEL");
     // A bead being filed is about to wait for dispatch.
     let (_, out) = lint_judge(&labels, true, ty, &partitions.join(" "), &no_loop);
     if out.iter().any(|l| l.starts_with("no partition label")) {
@@ -663,6 +823,16 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
         return 1;
     }
     0
+}
+
+/// Finished, by the lifecycle machine's own judgement (law-the-lifecycle-is-the-only-authority-on-
+/// bead-state): never bd's status. A bead the machine has no row for, or a state it cannot read,
+/// is treated as not finished, so the incident checks still run.
+fn lc_done(lc: &mut Option<Result<HashMap<String, spira_config::lc_state::Row>, String>>, id: &str) -> bool {
+    match lc.get_or_insert_with(|| spira_config::lc_state::list().map(spira_config::lc_state::index)) {
+        Ok(rows) => rows.get(id).is_some_and(|r| r.terminal()),
+        Err(_) => false,
+    }
 }
 
 fn cmd_lint(home: &str, args: &[String]) -> i32 {
@@ -683,13 +853,13 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
     // NOTE: the scope exclusion here defaults to EMPTY, not "spira" — `_bead_lint` itself
     // reads `${SPIRA_SCOPE_LABEL:-}`, a different default than `file`'s `schema.sh name
     // scope` call. Preserved exactly; see DESIGN.md.
-    let scope_for_partitions = env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    let scope_for_partitions = cfg_label("SPIRA_SCOPE_LABEL");
     let partitions = chamber_partitions(&personas, &scope_for_partitions);
     let partitions_joined = partitions.join(" ");
 
-    let no_loop_label = env::var("SPIRA_NO_LOOP_LABEL").unwrap_or_default();
-    let ask_label = env::var("SPIRA_ASK_LABEL").unwrap_or_default();
-    let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
+    let no_loop_label = cfg_label("SPIRA_NO_LOOP_LABEL");
+    let ask_label = cfg_label("SPIRA_ASK_LABEL");
+    let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
 
     let mut n = 0u32;
     let mut bad = 0u32;
@@ -794,6 +964,26 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         } else {
             false
         };
+        if row.labels.iter().any(|l| l == &incident_label) && !lc_done(&mut lc, id) {
+            let (_, rel_out) =
+                bdq_capture(home, &s(&["dep", "list", id, "--type", "relates-to", "--json"]));
+            for oid in parse_blocks_targets(&rel_out) {
+                if blocks_targets.contains(&oid) {
+                    continue;
+                }
+                let (_, oout) = bdq_capture(home, &s(&["show", &oid, "--json"]));
+                let Some(orow) = parse_show_row(&oout) else { continue };
+                if lc_done(&mut lc, &oid) || orow.labels.iter().any(|l| l == &incident_label) {
+                    continue;
+                }
+                eprintln!(
+                    "bead: {id}: open remedy {oid} is linked relates-to only (an incident with a fix in flight must block on it; use bd dep add {id} {oid})"
+                );
+                bad += 1;
+                rc = 1;
+            }
+        }
+
         let (_, lines) = lint_judge(
             &labels_joined,
             awaits,
@@ -871,15 +1061,21 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
     };
 
     if is_blocks_type(dep_type.as_deref()) {
-        let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
+        let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
         let (_, out) = bdq_capture(home, &s(&["show", &depid, "--json"]));
-        let target_labels = parse_show_row(&out).map(|r| r.labels).unwrap_or_default();
+        let target = parse_show_row(&out);
+        if target.as_ref().is_some_and(|r| r.issue_type == "epic") {
+            eprintln!("{}", epic_blocks_refusal(&id, &depid));
+            return 1;
+        }
+        let target_labels = target.map(|r| r.labels).unwrap_or_default();
         if target_labels.iter().any(|l| l == &incident_label) {
             eprintln!("{}", incident_blocks_refusal(&id, &depid, &incident_label));
             return 1;
         }
     }
 
+    let (id_for_mirror, depid_for_mirror) = (id.clone(), depid.clone());
     let mut call = s(&["dep", "add"]);
     call.push(id);
     call.push(depid);
@@ -888,5 +1084,128 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
         call.push(t.clone());
     }
     call.extend(rest);
-    bdq_status(home, &call)
+    let rc = bdq_status(home, &call);
+    if rc == 0 {
+        mirror_dep("dep-add", &id_for_mirror, &depid_for_mirror, dep_type.as_deref().map(dep_type_name));
+    }
+    rc
+}
+
+/// bd's spellings of a `blocks` edge, normalised to the name the lifecycle store records.
+fn dep_type_name(t: &str) -> &str {
+    if is_blocks_type(Some(t)) {
+        "blocks"
+    } else {
+        t
+    }
+}
+
+/// Mirror one dependency edge into the lifecycle store, which `ops_live` reads for `claimable`
+/// and `blocker`. bd already holds the edge, so a failed mirror is reported and repaired by
+/// `spira-lc backfill-deps --force`, never turned into a failed `dep`.
+fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
+    let mut args = vec!["30".to_string(), "spira-lc".into(), verb.into(), id.into(), depid.into()];
+    if let Some(t) = dep_type {
+        args.extend(["--type".to_string(), t.to_string()]);
+    }
+    // batch-job: one point write, bounded by timeout(1)
+    let done = Command::new("timeout")
+        .args(&args)
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if !done.is_ok_and(|s| s.success()) {
+        eprintln!("bead: {verb}: {id} -> {depid} is in bd but was not mirrored to the lifecycle store; `spira-lc backfill-deps --force` repairs it");
+    }
+}
+
+// =========================================================================================
+// dep epic-edges / dep convert — the reconciler's observation and remedy for a blocks edge
+// onto an open epic.
+// =========================================================================================
+
+fn cmd_dep_epic_edges(home: &str) -> i32 {
+    let (code, out) = bdq_capture(home, &s(&["list", "--type", "epic", "--brief", "--json", "--limit", "0"]));
+    if code != 0 {
+        eprintln!("bead: dep epic-edges: bd list exited {code}");
+        return 1;
+    }
+    let epics = parse_list_ids(&out);
+    if epics.is_empty() {
+        return 0;
+    }
+    for epic in &epics {
+        let (code, out) = bdq_capture(home, &s(&["dep", "list", epic, "--direction", "up", "--type", "blocks", "--json"]));
+        if code != 0 {
+            eprintln!("bead: dep epic-edges: bd dep list {epic} exited {code}");
+            return 1;
+        }
+        for child in parse_blocks_targets(&out) {
+            println!("{child} {epic}");
+        }
+    }
+    0
+}
+
+fn cmd_dep_convert(home: &str, args: &[String]) -> i32 {
+    let (id, epic) = match args {
+        [i, e] if !i.starts_with('-') && !e.starts_with('-') => (i.clone(), e.clone()),
+        _ => {
+            eprintln!("usage: bead.sh dep convert <id> <epic-id>");
+            return 2;
+        }
+    };
+    let (_, out) = bdq_capture(home, &s(&["show", &epic, "--json"]));
+    if parse_show_row(&out).is_none_or(|r| r.issue_type != "epic") {
+        eprintln!("bead: dep convert: refusing — {epic} is not an epic");
+        return 1;
+    }
+    let rc = bdq_status(home, &s(&["dep", "remove", &id, &epic]));
+    if rc != 0 {
+        return rc;
+    }
+    let rc = bdq_status(home, &s(&["dep", "add", &id, &epic, "--type", "parent-child"]));
+    if rc != 0 {
+        bdq_status(home, &s(&["dep", "add", &id, &epic, "--type", "blocks"]));
+        return rc;
+    }
+    println!("converted edge: {id} -> {epic} blocks => parent-child");
+    0
+}
+
+// =========================================================================================
+// dep remove
+// =========================================================================================
+
+fn cmd_dep_remove(home: &str, args: &[String]) -> i32 {
+    let (id, depid) = match args {
+        [i, d] if !i.starts_with('-') && !d.starts_with('-') => (i.clone(), d.clone()),
+        _ => {
+            eprintln!("usage: bead.sh dep remove <id> <depends-on-id>");
+            return 2;
+        }
+    };
+
+    for b in [&id, &depid] {
+        let (_, out) = bdq_capture(home, &s(&["show", b, "--json"]));
+        if parse_show_row(&out).is_none() {
+            eprintln!("bead: dep remove: refusing — unknown bead {b}");
+            return 1;
+        }
+    }
+
+    let (_, out) = bdq_capture(home, &s(&["dep", "list", &id, "--json"]));
+    if !parse_blocks_targets(&out).iter().any(|t| t == &depid) {
+        eprintln!("bead: dep remove: refusing — {id} has no dependency edge on {depid}");
+        return 1;
+    }
+
+    let rc = bdq_status(home, &s(&["dep", "remove", &id, &depid]));
+    if rc == 0 {
+        mirror_dep("dep-remove", &id, &depid, None);
+        println!("removed edge: {id} -> {depid}");
+    }
+    rc
 }

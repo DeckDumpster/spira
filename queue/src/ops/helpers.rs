@@ -52,7 +52,7 @@ pub fn is_suite_transition(repo: &Path, tip: &str, base: &str) -> bool {
             return false;
         }
     };
-    let out = Command::new("git").arg("-C").arg(repo).args(["diff", "--name-only", base, tip]).stdin(Stdio::null()).stderr(Stdio::null()).output();
+    let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(["diff", "--name-only", base, tip]).stdin(Stdio::null()).stderr(Stdio::null()).output();
     match out {
         // grep -F: a fixed-string SUBSTRING match against any changed-path line, not an
         // exact-line match — preserved here rather than tightened, to keep the port's
@@ -111,7 +111,7 @@ fn value_as_i64(v: &serde_json::Value) -> Option<i64> {
 /// cut nothing for nine hours with 40 branches certified and waiting). So unparseable
 /// `prio_json` returns every row in its ORIGINAL order, never dropped, with a warning
 /// naming why ranking was skipped.
-pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express_label: &str) -> (Vec<RankedRow>, Option<String>) {
+pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express: &HashSet<String>) -> (Vec<RankedRow>, Option<String>) {
     let parsed: Result<serde_json::Value, _> = serde_json::from_str(prio_json);
     let Ok(parsed) = parsed else {
         let unranked = rows
@@ -125,7 +125,6 @@ pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express_
         other => vec![other],
     };
     let mut prio_map: HashMap<String, i64> = HashMap::new();
-    let mut express_set: HashSet<String> = HashSet::new();
     for x in items {
         if !x.is_object() {
             continue;
@@ -133,15 +132,11 @@ pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express_
         let Some(id) = x.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else { continue };
         let prio = x.get("priority").and_then(value_as_i64).unwrap_or(9);
         prio_map.insert(id.to_string(), prio);
-        let has_label = x.get("labels").and_then(|v| v.as_array()).is_some_and(|a| a.iter().any(|l| l.as_str() == Some(express_label)));
-        if has_label {
-            express_set.insert(id.to_string());
-        }
     }
     let mut keyed: Vec<(i64, i64, i64, i64, String, String)> = rows
         .iter()
         .map(|(id, tip, epoch, is_trans)| {
-            let express = if express_set.contains(id) { 0 } else { 1 };
+            let express = if express.contains(id) { 0 } else { 1 };
             let prio = *prio_map.get(id).unwrap_or(&9);
             let trans = if *is_trans { 0 } else { 1 };
             (express, prio, trans, *epoch, id.clone(), tip.clone())
@@ -177,7 +172,7 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
             return false;
         }
     };
-    let listing = Command::new(forge)
+    let listing = spira_config::bounded::bounded(forge)
         .arg("runs-for-branch")
         .arg(repo)
         .arg(branch)
@@ -196,7 +191,7 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
         }
         let status = it.next().unwrap_or("");
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let cancelled = Command::new(forge).arg("run-cancel").arg(repo).arg(run_id).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        let cancelled = spira_config::bounded::bounded(forge).arg("run-cancel").arg(repo).arg(run_id).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         if cancelled {
             append_log(&run_dir, "landing.log", &format!("{tag} RUN_CANCEL {now} branch={branch} run={run_id} status={status}"));
         } else {
@@ -208,19 +203,18 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
     all_ok
 }
 
-/// `queue_notify_concierge <name> <subject-suffix> <body>`: mails the concierge mailbox
-/// (`$SPIRA_MAIL_SESSION_MAILBOX`, default `concierge`) as a machine event for a mutation
-/// the owner just made to an open batch (eject, rebuild, force-push, merge).
-/// spira-mail-deliver.sh watches every registered mailbox and wakes its reader the moment
-/// new mail lands (law-machine-events-wake-in-real-time), so the Concierge learns of it
-/// within seconds — never by polling the queue by hand. Best-effort, as the bash body was
-/// (`|| true`): a mail failure never blocks the mutation it is reporting on.
-pub fn notify(name: &str, subject: &str, body: &str) {
-    let mailbox = std::env::var("SPIRA_MAIL_SESSION_MAILBOX").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "concierge".into());
+/// `queue_notify_concierge <name> <subject-suffix> <body>`: mails `mailbox`
+/// (`Settings::mailbox`, i.e. `SPIRA_MAIL_SESSION_MAILBOX`'s declared value) as a machine
+/// event for a mutation the owner just made to an open batch (eject, rebuild, force-push,
+/// merge). spira-mail-deliver.sh watches every registered mailbox and wakes its reader the
+/// moment new mail lands (law-machine-events-wake-in-real-time), so the Concierge learns of
+/// it within seconds — never by polling the queue by hand. Best-effort, as the bash body
+/// was (`|| true`): a mail failure never blocks the mutation it is reporting on.
+pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
     let full_subject = format!("Merge queue: {name} {subject}");
     let full_body = format!("## Alert\n{body}\n");
-    if let Ok(mut child) = Command::new("mail")
-        .args(["send", &mailbox, "--from", "Spira Queue <queue@spira>", "--subject", &full_subject, "--kind", "alert"])
+    if let Ok(mut child) = spira_config::bounded::bounded("mail")
+        .args(["send", mailbox, "--from", "Spira Queue <queue@spira>", "--subject", &full_subject, "--kind", "alert"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -237,14 +231,14 @@ pub fn notify(name: &str, subject: &str, body: &str) {
 /// Row 4 of the local/main design: is `forge_sha` an ancestor of `local_sha`? Under
 /// queue.local the forge's main moves only by our own publishes, so a non-ancestor means
 /// something pushed outside the publish queue; the first sighting of each foreign tip mails
-/// the concierge (marker `queue/<name>/divergence-alarmed`, cleared once healthy). Never
+/// `mailbox` (marker `queue/<name>/divergence-alarmed`, cleared once healthy). Never
 /// rebases. A check that cannot run is `CannotCheck`, never `Diverged`.
-pub fn check_divergence(queue_dir: &Path, name: &str, repo: &Path, forge_sha: &str, local_sha: &str) -> Divergence {
+pub fn check_divergence(mailbox: &str, queue_dir: &Path, name: &str, repo: &Path, forge_sha: &str, local_sha: &str) -> Divergence {
     if queue_dir.as_os_str().is_empty() {
         return Divergence::CannotCheck("the queue directory is not configured, so the divergence marker cannot be placed".into());
     }
     let statefile = queue_dir.join(name).join("divergence-alarmed");
-    let status = Command::new("git")
+    let status = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(repo)
         .args(["merge-base", "--is-ancestor", forge_sha, local_sha])
@@ -264,7 +258,7 @@ pub fn check_divergence(queue_dir: &Path, name: &str, repo: &Path, forge_sha: &s
     let foreign_range = format!("{local_sha}..{forge_sha}");
     let already = std::fs::read_to_string(&statefile).ok().map(|s| s.trim().to_string()).unwrap_or_default();
     if already != forge_sha {
-        let foreign = Command::new("git")
+        let foreign = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(repo)
             .args(["log", "--format=%h %s", &foreign_range])
@@ -283,13 +277,13 @@ pub fn check_divergence(queue_dir: &Path, name: &str, repo: &Path, forge_sha: &s
             "{name}'s forge target ({forge_sha}) is not an ancestor of local/main ({local_sha}) — something pushed to the forge outside the publish queue. Foreign commit(s):\n{}\n\nPublishing is refused until this is reconciled by hand. Never rebase silently.",
             if foreign.is_empty() { "<none found>" } else { &foreign }
         );
-        notify(name, "divergence: forge is not an ancestor of local/main", &body);
+        notify(mailbox, name, "divergence: forge is not an ancestor of local/main", &body);
     }
     Divergence::Diverged(foreign_range)
 }
 
 /// `spira_git_push <repo> [push-args...]`: push with the GitHub App identity when
-/// `SPIRA_GH_APP_ID`/`SPIRA_GH_APP_INSTALLATION_ID` are set, routing the push over HTTPS
+/// `SPIRA_GH_APP_ID`/`SPIRA_GH_APP_INSTALLATION_ID` are declared in config, routing the push over HTTPS
 /// using the App installation token as the credential, so pushes are attributed to the
 /// App rather than to the operator's SSH key. Returns the built (not yet run) `Command` so
 /// callers can choose stdio: queue's own in-process push (R12) discards stderr as the old
@@ -297,7 +291,17 @@ pub fn check_divergence(queue_dir: &Path, name: &str, repo: &Path, forge_sha: &s
 /// separate seam) inherits it, since `spira_git_push` itself never redirected anything —
 /// that was always the call site's choice.
 pub fn git_push_cmd(repo: &Path, args: &[String]) -> Command {
-    let app_configured = std::env::var("SPIRA_GH_APP_ID").ok().filter(|s| !s.is_empty()).is_some() && std::env::var("SPIRA_GH_APP_INSTALLATION_ID").ok().filter(|s| !s.is_empty()).is_some();
+    let declared = |key: &str| match spira_config::process::cfg(key) {
+        Ok(v) => !v.is_empty(),
+        Err(e) => {
+            eprintln!("queue: {e}");
+            false
+        }
+    };
+    push_command(repo, args, declared("SPIRA_GH_APP_ID") && declared("SPIRA_GH_APP_INSTALLATION_ID"))
+}
+
+pub(crate) fn push_command(repo: &Path, args: &[String], app_configured: bool) -> Command {
     let mut c = Command::new("git");
     c.arg("-C").arg(repo);
     if app_configured {
@@ -324,7 +328,7 @@ mod tests {
     #[test]
     fn unparseable_prio_json_fails_open_in_original_order_with_a_warning() {
         let rows = [row("sp-a", "ta", 6, false), row("sp-b", "tb", 5, true)];
-        let (ranked, warn) = sort_rows(&rows, "{not json", "express");
+        let (ranked, warn) = sort_rows(&rows, "{not json", &HashSet::new());
         assert!(warn.unwrap().contains("ranking failed"));
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-a", "sp-b"], "original order preserved, nothing dropped");
@@ -336,7 +340,7 @@ mod tests {
     #[test]
     fn priority_orders_rows_and_wins_over_a_transition_tiebreak() {
         let rows = [row("sp-p1", "t1", 2, true), row("sp-p0", "t2", 1, false)];
-        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-p0","priority":0},{"id":"sp-p1","priority":1}]"#, "express");
+        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-p0","priority":0},{"id":"sp-p1","priority":1}]"#, &HashSet::new());
         assert!(warn.is_none());
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-p0", "sp-p1"], "a P0 without a transition still sorts ahead of a P1 with one");
@@ -345,7 +349,7 @@ mod tests {
     #[test]
     fn within_one_priority_a_transition_sorts_first_despite_a_later_epoch() {
         let rows = [row("sp-p", "tp", 1, false), row("sp-t", "tt", 2, true)];
-        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-t","priority":2},{"id":"sp-p","priority":2}]"#, "express");
+        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-t","priority":2},{"id":"sp-p","priority":2}]"#, &HashSet::new());
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-t", "sp-p"]);
     }
@@ -353,7 +357,7 @@ mod tests {
     #[test]
     fn express_ranks_ahead_of_everything_else() {
         let rows = [row("sp-hi-prio", "t1", 1, false), row("sp-express", "t2", 9, false)];
-        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-hi-prio","priority":0},{"id":"sp-express","priority":9,"labels":["express"]}]"#, "express");
+        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-hi-prio","priority":0},{"id":"sp-express","priority":9}]"#, &HashSet::from(["sp-express".to_string()]));
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-express", "sp-hi-prio"]);
     }
@@ -361,7 +365,7 @@ mod tests {
     #[test]
     fn malformed_prio_entries_default_to_priority_nine_rather_than_crashing() {
         let rows = [row("sp-a", "ta", 1, false)];
-        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-a","priority":"not-a-number"}]"#, "express");
+        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-a","priority":"not-a-number"}]"#, &HashSet::new());
         assert!(warn.is_none());
         assert_eq!(ranked[0].prio, 9);
     }
@@ -381,13 +385,13 @@ pub fn land_close_reason(sha: &str) -> String {
 
 /// Close a landed member's bead and reap its branch, in-process — no landing-pass oracle
 /// and no second ledger: the queue records LANDED on spira-lc (`lc_deliver` / the batch's
-/// `land` cascade), the one record. Idempotent both ways: a bead already `closed`, or one
-/// never marked submitted, is left alone. Best-effort throughout — a failed close is left
+/// `land` cascade), the one record. A bead never marked submitted is left alone; the close
+/// itself is idempotent and refused by spira-lc for a row not in delivery. Best-effort throughout — a failed close is left
 /// submitted for CHECK 5, a missed reap is left for the Sending.
 pub fn close_on_land(w: &World, submitted_label: &str, id: &str, sha: &str) {
     let Ok(rows) = w.bd.show(&[id.to_string()]) else { return };
     let Some(row) = rows.iter().find(|r| r.id == id) else { return };
-    if row.status.as_deref() == Some("closed") || !row.labels.iter().any(|l| l == submitted_label) {
+    if !row.labels.iter().any(|l| l == submitted_label) {
         return;
     }
     let shown = if sha.is_empty() { "unknown" } else { sha };

@@ -51,10 +51,12 @@ run_now() {
     # now_keys needs (law-gates-run-in-a-clean-environment).
     # BD_TIMEOUT=1: bdjson calls fail fast against a nonexistent database. The default of
     # 180s per call would stall 3 aeons × 2 calls = 6 minutes of waiting for nothing.
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    # SPIRA_DB declared via tl_config too (round-3 caveat audit): cockpit-collect resolves
+    # it via cfg().
+    tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_DB="$TMP/nodb"
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" BD_TIMEOUT=1 \
+        BD_TIMEOUT=1 \
         "$@" \
         cockpit-collect probe now 2>/dev/null
 }
@@ -70,6 +72,7 @@ make_aeon() {
     local pid="$!"
     PIDS+=("$pid")
     echo "$pid" > "$RUN/aeon-builder-${bead}.pid"
+    printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-builder-${bead}.lease"
 }
 
 # make_gate <bead> -> start a fake gate process and write the gate-run pid file.
@@ -218,8 +221,13 @@ for line in sys.stdin.read().splitlines():
 
 pane() {
     # SPIRA_RUN="$PD" so health.sh reads $PD/cockpit.env (which snap() writes).
-    env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$TMP" SPIRA_RUN="$PD" \
+    # SPIRA_DB declared too (round-3 caveat audit): cockpit/ops's db.rs resolves it via
+    # cfg().
+    tl_config SPIRA_RUN="$PD" SPIRA_DB="$TMP/nodb"
+    # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): health refuses outright
+    # without one (sfail round 3, pattern 1).
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
         "$PANE" once "${1:-0}" "${2:-0}" 2>/dev/null \
       | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'

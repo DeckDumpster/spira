@@ -1,7 +1,7 @@
 //! sending — the Sending (DESIGN.md). Delete the branch and the worktree of every bead whose
 //! work has landed, and nothing else.
 //!
-//!   sending                     one pass over every repository
+//!   sending --all               one pass over every repository (no arguments: usage, exit 2)
 //!   sending --dry-run           print each branch's disposition, change nothing
 //!   sending <bead-id|branch>    send exactly one bead's branch and worktree
 //!   sending --status-from <f>   read `id<TAB>status` from a file instead of bd (tests)
@@ -16,10 +16,12 @@
 //! lib.sh's now-shimmed functions call, and the ones other bash callers (`held.sh`) use by
 //! bare name instead of bypassing the chokepoint:
 //!
+//!   sending reap-terminal [--dry-run]   remove terminal beads' worktrees and aged scratch
 //!   sending destroy-worktree    [--status-from <f>] <id> <path> <repo> <why>
 //!   sending destroy-branch      [--status-from <f>] [--base <ref>] <id> <branch> <repo> <why> [<caller>]
 //!   sending reap-landed-branch  [--status-from <f>] <id> <branch> <repo> <why> [<caller>]
 //!   sending prune               <repo>
+//!   sending reap-stale          [--dry-run] [--idle-hours <n>]
 //!   sending salvage             <id> <worktree-path>
 //!   sending witness             [--status-from <f>] <id>
 //!
@@ -41,7 +43,7 @@ use std::path::{Path, PathBuf};
 use sending::ports::World;
 use sending::real::{self, Real};
 use sending::sweep::Sweep;
-use sending::{locate_home, parse, reap};
+use sending::{locate_home, parse, reap, terminal};
 
 /// Pulls a leading `--status-from <f>` / `--base <r>` pair out of `args`, wherever it
 /// appears, leaving the rest in order — the chokepoint subcommands accept these mixed in
@@ -60,6 +62,11 @@ fn die(msg: &str) -> ExitCodeLike {
     2
 }
 
+fn fail(msg: &str) -> ExitCodeLike {
+    eprintln!("sending: {msg}");
+    1
+}
+
 type ExitCodeLike = i32;
 
 /// Builds the `Real` world the chokepoint subcommands that touch bd need (destroy-worktree,
@@ -70,7 +77,7 @@ type ExitCodeLike = i32;
 fn real_world(status: Option<String>) -> Result<Real, String> {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sending"));
     let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe).ok_or("cannot find lib.sh (set SPIRA_HOME)")?;
-    Ok(Real::minimal(home, status))
+    Ok(Real::minimal(home, real::run_dir()?, status))
 }
 
 fn cmd_destroy_worktree(mut args: Vec<String>) -> ExitCodeLike {
@@ -120,20 +127,85 @@ fn cmd_destroy_branch(mut args: Vec<String>) -> ExitCodeLike {
     }
 }
 
+/// `reap-terminal [--dry-run]`: the worktree directory's reaper (terminal.rs). It refuses,
+/// deleting nothing, when the lifecycle machine does not answer with at least one row.
+fn cmd_reap_terminal(mut args: Vec<String>) -> ExitCodeLike {
+    let dry = match args.as_slice() {
+        [] => false,
+        [f] if f == "--dry-run" => true,
+        _ => return die("reap-terminal [--dry-run]"),
+    };
+    args.clear();
+    let max_age_hours = match spira_config::process::cfg_parse::<u64>("SPIRA_SCRATCH_MAX_AGE_HOURS") {
+        Ok(h) => h,
+        Err(e) => return die(&e),
+    };
+    // batch-job: a unit with TimeoutStartSec=900 may outwait a loaded store; 5 s failed it intermittently.
+    let rows = match spira_config::lc_state::list_within(&spira_config::lifecycle_row::lc_bin(), 120) {
+        Ok(r) if !r.is_empty() => r,
+        Ok(_) => return die("reap-terminal: the lifecycle machine listed no beads — refusing to judge against nothing"),
+        Err(e) => return die(&format!("reap-terminal: cannot read the lifecycle machine: {e}")),
+    };
+    let states = rows.into_iter().map(|r| (r.bead_id, r.state)).collect();
+    let w = match real_world(None) {
+        Ok(w) => w,
+        Err(e) => return die(&e),
+    };
+    terminal::run(&w, &states, std::time::Duration::from_secs(max_age_hours * 3600), dry)
+}
+
 fn cmd_prune(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 1 {
         return die("prune <repo>");
     }
-    let reaplog_path = real::reaplog_path();
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let reaplog_path = real::reaplog_path_in(&run);
     i32::from(!reap::prune_worktrees(&reaplog_path, Path::new(&args[0])))
+}
+
+fn cmd_reap_stale(mut args: Vec<String>) -> ExitCodeLike {
+    let dry = match args.iter().position(|a| a == "--dry-run") {
+        Some(i) => {
+            args.remove(i);
+            true
+        }
+        None => false,
+    };
+    let idle_secs = match take_flag(&mut args, "--idle-hours") {
+        None => sending::stale::DEFAULT_IDLE_SECS,
+        Some(h) => match h.parse::<u64>() {
+            Ok(h) => h * 3600,
+            Err(_) => return die("reap-stale [--dry-run] [--idle-hours <n>]"),
+        },
+    };
+    if !args.is_empty() {
+        return die("reap-stale [--dry-run] [--idle-hours <n>]");
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sending"));
+    let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
+        return die("cannot find lib.sh (set SPIRA_HOME)");
+    };
+    let (w, repos) = match Real::new(home, None) {
+        Ok(x) => x,
+        Err(e) => return die(&format!("cannot read the harness context: {e}")),
+    };
+    let t = sending::stale::run(&w, &repos, sending::stale::Opts { dry, idle_secs });
+    println!("reap-stale: {} {}, {} kept, {} failed", t.removed, if dry { "would be removed" } else { "removed" }, t.kept, t.failed);
+    i32::from(t.failed > 0)
 }
 
 fn cmd_salvage(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 2 {
         return die("salvage <id> <worktree-path>");
     }
-    let run = real::run_dir();
-    let reaplog_path = real::reaplog_path();
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let reaplog_path = real::reaplog_path_in(&run);
     i32::from(reap::salvage(&run, &reaplog_path, &args[0], Path::new(&args[1])).is_err())
 }
 
@@ -148,7 +220,10 @@ fn cmd_holder_alive(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 1 {
         return die("holder-alive <id>");
     }
-    let run = real::run_dir();
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
     i32::from(!reap::holder_alive(&run, &args[0]))
 }
 
@@ -175,7 +250,11 @@ fn cmd_reaplog(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 2 && args.len() != 3 {
         return die("reaplog <verb> <id> [<detail>]");
     }
-    let reaplog_path = real::reaplog_path();
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let reaplog_path = real::reaplog_path_in(&run);
     reap::reaplog(&reaplog_path, &args[0], &args[1], args.get(2).map(String::as_str).unwrap_or(""));
     0
 }
@@ -245,7 +324,9 @@ fn main() {
             "destroy-worktree" => Some(cmd_destroy_worktree(rest())),
             "destroy-branch" => Some(cmd_destroy_branch(rest())),
             "reap-landed-branch" => Some(cmd_reap_landed_branch(rest())),
+            "reap-terminal" => Some(cmd_reap_terminal(rest())),
             "prune" => Some(cmd_prune(rest())),
+            "reap-stale" => Some(cmd_reap_stale(rest())),
             "salvage" => Some(cmd_salvage(rest())),
             "witness" => Some(cmd_witness(rest())),
             "hold-alive" => Some(cmd_hold_alive(rest())),
@@ -260,6 +341,11 @@ fn main() {
         }
     }
 
+    if args.is_empty() {
+        eprintln!("usage: sending <verb> | sending [--dry-run] [--no-fetch] [--skip-queue|--queue-only] [--budget-secs <n>] [<bead-id|branch>]");
+        eprintln!("       verbs: reap-terminal destroy-worktree destroy-branch reap-landed-branch prune salvage witness");
+        std::process::exit(2);
+    }
     let (opts, status) = match parse(&args) {
         Ok(p) => p,
         Err(e) => {

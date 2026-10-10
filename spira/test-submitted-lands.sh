@@ -63,24 +63,25 @@ trap '[ -n "$SERVE_PID" ] && kill "$SERVE_PID" >/dev/null 2>&1; lcfix_down; test
 testdb_up submittedlands || { echo "test-submitted-lands: could not build a fixture database"; exit 1; }
 lcfix_up || { echo "test-submitted-lands: could not build a lifecycle fixture"; exit 1; }
 LC_SOCK="$TMP/lc.sock"
-SPIRA_LC_SOCKET="$LC_SOCK" spira-lc serve "$LC_SOCK" > "$TMP/serve.log" 2>&1 &
+tl_config SPIRA_LC_SOCKET="$LC_SOCK"
+spira-lc serve "$LC_SOCK" > "$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
 for _ in $(seq 1 50); do [ -S "$LC_SOCK" ] && break; sleep 0.1; done
 [ -S "$LC_SOCK" ] || bail "spira-lc serve never opened its socket: $(cat "$TMP/serve.log")"
-export SPIRA_LC_SOCKET="$LC_SOCK"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 echo "test-submitted-lands.sh"
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
-git -C "$REPO" fetch -q origin
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main 2>/dev/null || true
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
 # own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
@@ -88,8 +89,8 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 find "$HERE" -maxdepth 1 \( -name '*.sh' -o -name '*.py' \) ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SPIRA_HOME/$1"; chmod +x "$SPIRA_HOME/$1"; }
@@ -131,7 +132,7 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # conversion any more. conf.sh replaces PATH, so the model is injected through SPIRA_AGENT,
 # and $TMP is baked in because the restricted environment does not carry it. The fixture
 # ids are sp-sl1..sp-sl4, not sp-sl-1: `work` refuses a binding that is not sp-<alnum>.
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude"
+BIN="$TMP/bin"; mkdir -p "$BIN"; tl_config SPIRA_AGENT="$BIN/claude"
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-submitted-lands: aeon is not on PATH" >&2; exit 1; }
 cat > "$BIN/claude" <<SHIM
@@ -147,7 +148,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { bd -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -166,16 +167,17 @@ run_aeon() {
     [ "$(cat "$TMP/submit.rc" 2>/dev/null)" = 0 ] && return 0
     { cat "$TMP/submit.out" 2>/dev/null; tail -n 15 "$TMP/aeon.out"; } | sed 's/^/# /'
 }
+tl_config SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh"
 landing() {
     rm -f "$SPIRA_RUN/landing.progress" "$TMP/gate-state"
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh" \
+    SPIRA_REPO="$REPO" \
         landing-pass land 2>&1
 }
 sending() {
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_GH="$SPIRA_HOME/gh" \
-        command sending 2>&1
+    SPIRA_REPO="$REPO" \
+        command sending --all 2>&1
 }
-on_base() { git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
+on_base() { timeout 5 git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
 branch_tip() { git -C "$REPO" rev-parse "spira/$1" 2>/dev/null; }
 
 # ======================================================================================
@@ -235,8 +237,8 @@ git -C "$REPO" worktree remove --force "$TMP/wt3"
 seed sp-sl3 SUBMITTED "$(branch_tip sp-sl3)"
 git -C "$REPO" checkout -q main 2>/dev/null; git -C "$REPO" reset -q --hard origin/main
 git -C "$REPO" merge -q --no-ff -m "Merge pull request #3 from spira/sp-sl3" spira/sp-sl3
-git -C "$REPO" push -q origin main 2>/dev/null
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" fetch -q origin
 is   "setup: open and SUBMITTED before the sweep" "open SUBMITTED" "$(field sp-sl3 status) $(lcfix_state sp-sl3)"
 out="$(sending)"
 want "the Sending sends the landed branch"             "sp-sl3" "$out"

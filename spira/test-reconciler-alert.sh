@@ -17,7 +17,7 @@
 #   6. An unreadable (unobservable) input drives the same alert path as a gap, once past its
 #      own grace — never silently treated as satisfied, never silently skipped either.
 #   7. A remedy that did not close its gap is named as having failed in the evidence.
-#   8. When the Concierge is not running, the same alert lands in operator mail as a note
+#   8. When the Concierge is not running, the alert is still queued in its mailbox, never the operator's
 #      instead of being typed into a session nobody is reading.
 #   9. The operator path accepts exactly permissions, policy and destructive: each reaches
 #      operator mail as a question with its default. Any other class is refused by
@@ -47,8 +47,8 @@ command -v reconciler-alert >/dev/null 2>&1 || bail "reconciler-alert is not on 
 # Real mail and its real conf.sh, so this suite exercises the actual lint and the actual
 # alert.md kind file this bead adds — not a hand-written model of what mail accepts.
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
-export SPIRA_DB="$T/db"                 # never the operator's real store (law-run-the-suite-in-a-container)
+SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_DB="$T/db"; tl_config SPIRA_DB="$SPIRA_DB"        # never the operator's real store (law-run-the-suite-in-a-container)
 # sp-70ocl dropped mail's literal "needs-operator" Rust fallback: mail now refuses to file
 # any question/decision ask (mail/src/cmds.rs::send) when SPIRA_ASK_LABEL does not resolve,
 # rather than guessing. A real install's conf.sh always exports it; this fixture has no
@@ -56,21 +56,30 @@ export SPIRA_DB="$T/db"                 # never the operator's real store (law-r
 # spira_config derive one — resolve_run_dir's own sp-ivfu3-2 note), so it must pin
 # SPIRA_ASK_LABEL explicitly too, or every `mail send ... --kind question` call in section 9
 # below silently refuses instead of reaching the operator.
-export SPIRA_ASK_LABEL="needs-operator"
+tl_config SPIRA_ASK_LABEL="needs-operator"
+# SPIRA_MAIL/SPIRA_MAIL_KINDS/SPIRA_MAIL_INDEX/SPIRA_MAIL_MUTE: all four now declared by the
+# fixture (a fictional /fixture/userhome/... tree, mail_mute=true) instead of deriving from
+# SPIRA_RUN/SPIRA_HOME — left alone, `mail send` tries to create its mailbox under that
+# unwritable fixture path (permission denied) or refuses on an unknown kind, and even once
+# those are fixed, a muted send lands straight in cur/ as already-seen, so every
+# mailcount()/mailfile() in this suite (which only looks at new/) reads empty (one source of
+# config, per Ryan 2026-10-05).
+tl_config SPIRA_MAIL="$SPIRA_RUN/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
+    SPIRA_MAIL_INDEX="$SPIRA_RUN/mail/index" SPIRA_MAIL_MUTE=0
 mkdir -p "$SPIRA_RUN"
 
-# Stub concierge.sh: "status" answers from a file the scenario toggles, so the fixture never
-# starts a real tmux session. SPIRA_REPO is where czar-pass/main.sh's own convention (and
-# doctor.sh) expect concierge.sh to live: $SPIRA_REPO/concierge.sh.
-FX_REPO="$T/fx-repo"; mkdir -p "$FX_REPO"
-export SPIRA_REPO="$FX_REPO"
-cat > "$FX_REPO/concierge.sh" <<'CEOF'
+# Stub tmux: "has-session -t =concierge" answers from a file the scenario toggles, so the
+# fixture never starts a real tmux session. reconciler-alert runs tmux by bare name, so the
+# stub is found on PATH ahead of the real one.
+STUB_BIN="$T/stub-bin"; mkdir -p "$STUB_BIN"
+cat > "$STUB_BIN/tmux" <<'CEOF'
 #!/usr/bin/env bash
-[ "${1:-}" = status ] || exit 2
+[ "${1:-}" = has-session ] && [ "${3:-}" = "=concierge" ] || exit 2
 [ -f "$CONCIERGE_RUNNING_FLAG" ] && exit 0
 exit 1
 CEOF
-chmod +x "$FX_REPO/concierge.sh"
+chmod +x "$STUB_BIN/tmux"
+export PATH="$STUB_BIN:$PATH"
 export CONCIERGE_RUNNING_FLAG="$T/concierge-running"
 touch "$CONCIERGE_RUNNING_FLAG"   # concierge running by default; case 8 removes it
 
@@ -145,20 +154,19 @@ msg="$(cat "$newest")"
 want "the failed remedy is named" "reset-failed + start spira-landing — did not close the gap" "$msg"
 
 # ==========================================================================================
-printf '\n%s\n' "8. concierge not running: the same alert lands in operator mail as a note"
+printf '\n%s\n' "8. concierge not running: the alert is queued for the concierge, never the operator"
 # ==========================================================================================
 rm -f "$CONCIERGE_RUNNING_FLAG"
 before_concierge="$(mailcount concierge)"
+before_operator="$(mailcount operator)"
 out="$(reconciler-alert gap --invariant land-rate --now 6000 --state "$STATE" \
     --status gap --desired "land rate > 0 over 30m" --observed "0 landed in 30m, work waiting" \
     --since 4200 --is-gap 2>&1)"
 want "reports concierge not running" "concierge not running" "$out"
-is   "concierge mailbox unchanged" "$before_concierge" "$(mailcount concierge)"
-is   "exactly one note reaches the operator" "1" "$(mailcount operator)"
-msg="$(cat "$(mailfile operator)")"
-want "forwarded as a note, not an alert"      "X-Spira-Kind: note" "$msg"
-want "says why it was forwarded"              "Concierge is not running" "$msg"
-want "the evidence is still inline"           "invariant: land-rate" "$msg"
+is   "the alert is queued in the concierge mailbox" "$((before_concierge + 1))" "$(mailcount concierge)"
+is   "the operator mailbox is untouched" "$before_operator" "$(mailcount operator)"
+msg="$(cat "$(ls -t "$SPIRA_RUN/mail/concierge/new"/* | head -1)")"
+want "the evidence is still inline" "invariant: land-rate" "$msg"
 
 # ==========================================================================================
 printf '\n%s\n' "9. the operator path: permissions, policy, destructive; nothing else"

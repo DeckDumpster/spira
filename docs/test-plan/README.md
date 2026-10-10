@@ -97,10 +97,9 @@ Each arrives with its own bead, as `docs/test-plan/<area>.md` (prose) plus
 `spira/plan-lint.sh` fails a suite that lacks either header line, and fails
 a `# covers:` UC id that names no use case in any `docs/test-plan/*.toml`
 catalogue (via `test-plan validate`, which also refuses a malformed
-catalogue file itself). It also reports, without failing, every T0–T3 use
-case with no covering suite and no `uncovered` marker — that check starts
-failing once the area pages land (`spira/test-plan-lint.sh` is this lint's
-own fence). Run `spira/plan-lint.sh --help` for exact invocation and exit
+catalogue file itself). It also fails every T0–T3 use
+case with no covering suite and no `uncovered` marker (`spira/test-plan-lint.sh` is
+this lint's own fence). Run `spira/plan-lint.sh --help` for exact invocation and exit
 codes.
 
 `spira/plan-lint.sh --orphans <base-ref>` is the other hard failure: a

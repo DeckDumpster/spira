@@ -77,12 +77,18 @@ want   "names the reason"                     "reason=phantom-bead-id" "$out"
 want   "names the phantom id"                 "sp-totallyfake999" "$out"
 nowant "never a silent PASS"                  "VERDICT=PASS" "$out"
 
+# A non-sp installation: a phantom id under its own prefix is refused, not invisible.
+commit_citing spira/sp-cc1x xx-totallyfake999
+out="$(rungate_real spira/sp-cc1x SPIRA_ID_PREFIX=xx)"; rc=$?
+is     "a phantom id under a non-sp prefix: exits FAIL"  1 "$rc"
+want   "names the phantom id"                            "xx-totallyfake999" "$out"
+
 # --------------------------------------------------------------------------------------
 # SEEN GREEN (positive control for the case above). The identical shape of commit, now
 # citing a bead that is real and OPEN, passes — the fence discriminates rather than
 # refusing every citation it sees.
 # --------------------------------------------------------------------------------------
-OPEN_ID="$(bd -C "$SPIRA_DB" create "commit-cite fixture: open" --json 2>/dev/null \
+OPEN_ID="$(timeout 5 bd -C "$SPIRA_DB" create "commit-cite fixture: open" --json 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 [ -n "$OPEN_ID" ] || { echo "test-commit-cite: could not create the fixture bead"; exit 1; }
 commit_citing spira/sp-cc2 "$OPEN_ID"
@@ -94,7 +100,7 @@ want "and says PASS"                               "VERDICT=PASS" "$out"
 # A citation naming a real bead is valid REGARDLESS OF STATUS — existence is the only
 # claim a citation makes. A CLOSED bead satisfies it exactly as well as an open one.
 # --------------------------------------------------------------------------------------
-CLOSED_ID="$(bd -C "$SPIRA_DB" create "commit-cite fixture: closed" --json 2>/dev/null \
+CLOSED_ID="$(timeout 5 bd -C "$SPIRA_DB" create "commit-cite fixture: closed" --json 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 testdb_restate "$CLOSED_ID" closed     # closed on purpose: fixture data, not a bd close (sp-voip5)
 commit_citing spira/sp-cc3 "$CLOSED_ID"

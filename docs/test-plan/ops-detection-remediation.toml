@@ -24,7 +24,7 @@ statement = "The dedup lookup is label-keyed (`ref:<hash>`) and issues zero `bd 
 [[use_case]]
 id = "UC-ops-detection-remediation-05"
 tier = "T1"
-statement = "A declared `SPIRA_INCIDENT_REPO` becomes `repo:<name>`; an undeclared repo yields `needs-repo-triage` plus exactly one operator mail whose subject leads with `<unit> on <host>: <path>` provenance."
+statement = "A declared `SPIRA_INCIDENT_REPO` is recorded as the bead's repo; an undeclared repo yields `needs-repo-triage` and a note naming the missing declaration."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-06"
@@ -101,6 +101,11 @@ id = "UC-ops-detection-remediation-20"
 tier = "T1"
 statement = "The strand classifier: ready work with no live aeon is `starved`; capacity-paused, pool-paused, fleet-saturated and pass-truncated each replace `starved` with an info row; a deferred bead with a live blocker or an ask label is exempt, otherwise `deferred-unescalated`; an expired lease with a live holder pidfile is not a ghost; starved rows cite only their own partition's beads and state slots."
 
+[use_case.uncovered]
+reason = "the classifier is Rust (strand::classify) with its cases in cargo tests; the strand binary has no bash seam that feeds it a bead graph, only the already-classified tsv path"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+
 [[use_case]]
 id = "UC-ops-detection-remediation-21"
 tier = "T2"
@@ -156,6 +161,11 @@ id = "UC-ops-detection-remediation-31"
 tier = "T1"
 # literal-ok: use-case prose naming the label the groomer removes, not a comparison against it
 statement = "The groomer sweep applies its remedies idempotently — adds `overseer` to asks, removes `awaiting-ci` on push repos, closes description-less unmapped litter naming the predicate, and reports only described or unclaimable beads — logging each action; a dry run writes nothing; after a sweep the detector reports only what the sweep cannot fix."
+
+[use_case.uncovered]
+reason = "groomer sweep deleted: the lifecycle machine's enforced transitions replace its STATE remedies, and its three suites went with it; no remedy remains to cover"
+date = "2026-10-03"
+bead = "sp-ey9x8.6"
 
 [[use_case]]
 id = "UC-ops-detection-remediation-32"

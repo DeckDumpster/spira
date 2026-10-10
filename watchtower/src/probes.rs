@@ -37,7 +37,7 @@ fn sha_of(path: &str) -> &str {
 
 // ---- (a) units whose rendered release is not current -------------------------------
 
-pub fn units_off_current(show: &str, current: &str) -> Vec<(String, String)> {
+pub fn units_off_current(show: &str, current: &str, running: &dyn Fn(u32) -> Option<String>) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for block in show.split("\n\n") {
         let id = block.lines().find_map(|l| l.strip_prefix("Id="));
@@ -48,12 +48,25 @@ pub fn units_off_current(show: &str, current: &str) -> Vec<(String, String)> {
             .find_map(|w| w.trim_start_matches("Environment=").trim_matches(['"', '\'']).strip_prefix("SPIRA_RELEASE="));
         if let (Some(id), Some(r)) = (id, release) {
             let sha = sha_of(r);
-            if sha != current {
-                out.push((id.to_string(), sha.to_string()));
+            let started = if sha == "current" {
+                let pid = block.lines().find_map(|l| l.strip_prefix("MainPID=")).and_then(|p| p.trim().parse::<u32>().ok()).filter(|p| *p != 0);
+                pid.and_then(running)
+            } else {
+                Some(sha.to_string())
+            };
+            if let Some(started) = started.filter(|s| s != current) {
+                out.push((id.to_string(), started));
             }
         }
     }
     out
+}
+
+fn process_release(releases: &str, pid: u32) -> Option<String> {
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    let canon_root = std::fs::canonicalize(releases).ok()?;
+    let rest = exe.strip_prefix(&canon_root).ok().or_else(|| exe.strip_prefix(releases).ok())?;
+    rest.components().next().map(|c| c.as_os_str().to_string_lossy().into_owned())
 }
 
 pub fn release_currency(cfg: &Cfg) -> Reading {
@@ -61,9 +74,9 @@ pub fn release_currency(cfg: &Cfg) -> Reading {
     let Some(current) = std::fs::read_link(Path::new(rel).join("current")).ok().map(|t| sha_of(&t.to_string_lossy()).to_string()) else {
         return Reading::Unknown;
     };
-    let Some(show) = systemctl_show(cfg, &[&cfg.unit_glob, "-p", "Id", "-p", "Environment"]) else { return Reading::Unknown };
+    let Some(show) = systemctl_show(cfg, &[&cfg.unit_glob, "-p", "Id", "-p", "Environment", "-p", "MainPID"]) else { return Reading::Unknown };
     Reading::Standing(
-        units_off_current(&show, &current)
+        units_off_current(&show, &current, &|pid| process_release(rel, pid))
             .into_iter()
             .map(|(unit, sha)| Cond {
                 key: unit.clone(),
@@ -83,11 +96,16 @@ pub fn release_currency(cfg: &Cfg) -> Reading {
 pub struct Run {
     pub active_state: String,
     pub invocation: String,
+    pub result: String,
+    pub exec_status: String,
 }
+
+const SIGTERM: &str = "15";
 
 /// `Some((invocation, count))` is the new tally; `None` drops the unit.
 pub fn tally(prev: Option<(&str, i64)>, run: &Run) -> Option<(String, i64)> {
     match run.active_state.as_str() {
+        "failed" if run.result == "signal" && run.exec_status == SIGTERM => None,
         "failed" => match prev {
             Some((inv, n)) if inv == run.invocation => Some((inv.to_string(), n)),
             Some((_, n)) => Some((run.invocation.clone(), n + 1)),
@@ -118,9 +136,9 @@ fn render_tally(m: &BTreeMap<String, (String, i64)>) -> String {
 }
 
 fn unit_run(cfg: &Cfg, unit: &str) -> Option<Run> {
-    let show = systemctl_show(cfg, &[unit, "-p", "ActiveState", "-p", "InvocationID"])?;
+    let show = systemctl_show(cfg, &[unit, "-p", "ActiveState", "-p", "InvocationID", "-p", "Result", "-p", "ExecMainStatus"])?;
     let get = |k: &str| show.lines().find_map(|l| l.strip_prefix(k)).unwrap_or("").trim().to_string();
-    Some(Run { active_state: get("ActiveState="), invocation: get("InvocationID=") })
+    Some(Run { active_state: get("ActiveState="), invocation: get("InvocationID="), result: get("Result="), exec_status: get("ExecMainStatus=") })
 }
 
 fn last_log_lines(cfg: &Cfg, unit: &str) -> String {
@@ -139,6 +157,7 @@ pub fn failing_units(cfg: &Cfg, run_dir: &Path) -> Reading {
             units.push(u.clone());
         }
     }
+    let units = crate::ctrl_gate::without_suspended(units);
     let mut next = BTreeMap::new();
     let mut standing = Vec::new();
     for unit in units {
@@ -176,9 +195,18 @@ pub fn df_avail_mib_and_used_pct(df_out: &str) -> Option<(i64, i64)> {
     Some((avail, pct))
 }
 
-fn df(cfg: &Cfg, path: &str) -> Option<(i64, i64)> {
-    let out = crate::deadline::output("conditions df", Command::new(&cfg.df_bin).args(["--output=avail,pcent", "-BM", path])).ok()?;
-    out.status.success().then(|| df_avail_mib_and_used_pct(&String::from_utf8_lossy(&out.stdout))).flatten()
+pub fn df_size_mib(df_out: &str) -> Option<i64> {
+    df_out.lines().last()?.split_whitespace().nth(2)?.trim_end_matches('M').parse().ok()
+}
+
+fn df(cfg: &Cfg, path: &str) -> Option<(i64, i64, Option<i64>)> {
+    let out = crate::deadline::output("conditions df", Command::new(&cfg.df_bin).args(["--output=avail,pcent,size", "-BM", path])).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (avail, pct) = df_avail_mib_and_used_pct(&text)?;
+    Some((avail, pct, df_size_mib(&text)))
 }
 
 /// The `full avg60` of a `/proc/pressure/<resource>` file.
@@ -194,9 +222,12 @@ fn cond(key: &str, title: String, body: String, sustain: i64) -> Cond {
 pub fn pressure(cfg: &Cfg) -> Reading {
     let mut standing = Vec::new();
     let mut readable = false;
-    if let Some((avail, _)) = df(cfg, &cfg.tmp_path) {
+    if let Some((avail, _, size)) = df(cfg, &cfg.tmp_path) {
         readable = true;
-        if avail < cfg.tmp_floor_mib {
+        // A filesystem smaller than the floor can never satisfy it: that is a prerequisite
+        // for install-time checking, not a condition a tick can clear.
+        let unsatisfiable = size.is_some_and(|sz| sz < cfg.tmp_floor_mib);
+        if avail < cfg.tmp_floor_mib && !unsatisfiable {
             standing.push(cond(
                 "tmp-free",
                 format!("LOW SPACE: {} has {avail} MiB free, below the {} MiB testenv slots need", cfg.tmp_path, cfg.tmp_floor_mib),
@@ -205,7 +236,7 @@ pub fn pressure(cfg: &Cfg) -> Reading {
             ));
         }
     }
-    if let Some((_, used)) = df(cfg, "/") {
+    if let Some((_, used, _)) = df(cfg, "/") {
         readable = true;
         let free = 100 - used;
         if free < cfg.disk_floor_pct {
@@ -341,6 +372,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_sigterm_stop_is_not_a_failed_run() {
+        let term = Run { result: "signal".into(), exec_status: "15".into(), ..run("failed", "i2") };
+        assert_eq!(tally(Some(("i1", 2)), &term), None);
+        let kill = Run { exec_status: "9".into(), ..term };
+        assert_eq!(tally(Some(("i1", 2)), &kill), Some(("i2".into(), 3)));
+    }
+
+    #[test]
     fn rowless_finds_an_injected_rowless_bead_and_caps_the_list() {
         let open: Vec<String> = ["sp-a", "sp-b", "sp-c"].iter().map(|s| s.to_string()).collect();
         let rows: Vec<String> = ["sp-a", "sp-c", "sp-gone"].iter().map(|s| s.to_string()).collect();
@@ -384,12 +423,25 @@ mod tests {
     #[test]
     fn units_off_current_names_only_units_rendering_another_release() {
         let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/aaa PATH=/x\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/bbb\n\nId=spira-c-prod.service\nEnvironment=\n";
-        assert_eq!(units_off_current(show, "bbb"), vec![("spira-a-prod.service".to_string(), "aaa".to_string())]);
-        assert!(units_off_current(show, "aaa").iter().any(|(u, _)| u == "spira-b-prod.service"));
+        assert_eq!(units_off_current(show, "bbb", &|_| None), vec![("spira-a-prod.service".to_string(), "aaa".to_string())]);
+        assert!(units_off_current(show, "aaa", &|_| None).iter().any(|(u, _)| u == "spira-b-prod.service"));
+    }
+
+    #[test]
+    fn units_rendering_the_current_symlink_are_current() {
+        let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/current/\n\nId=spira-c-prod.service\nEnvironment=SPIRA_RELEASE=/r/aaa\n";
+        assert_eq!(units_off_current(show, "bbb", &|_| None), vec![("spira-c-prod.service".to_string(), "aaa".to_string())]);
+    }
+
+    #[test]
+    fn a_unit_rendering_current_is_stale_only_when_its_process_started_from_another_release() {
+        let show = "Id=spira-a-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=11\n\nId=spira-b-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=22\n\nId=spira-c-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=0\n\nId=spira-d-prod.service\nEnvironment=SPIRA_RELEASE=/r/current\nMainPID=33\n";
+        let running = |pid: u32| match pid { 11 => Some("old".to_string()), 22 => Some("new".to_string()), _ => None };
+        assert_eq!(units_off_current(show, "new", &running), vec![("spira-a-prod.service".to_string(), "old".to_string())]);
     }
 
     fn run(state: &str, inv: &str) -> Run {
-        Run { active_state: state.into(), invocation: inv.into() }
+        Run { active_state: state.into(), invocation: inv.into(), result: "exit-code".into(), exec_status: "1".into() }
     }
 
     #[test]
@@ -492,5 +544,25 @@ mod tests {
         c.df_bin = df.to_string_lossy().into_owned();
         let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
         assert_eq!(keys, vec!["tmp-free", "root-disk"]);
+    }
+
+    #[test]
+    fn tmp_free_is_not_raised_on_a_filesystem_smaller_than_the_floor() {
+        let d = testkit::TempDir::new("wt-df-small");
+        let mut c = cfg(&d);
+        let df = d.join("df");
+        testkit::write_exe(&df, "#!/bin/bash\necho 'Avail Use% 1Mblocks'\nif [ \"${@: -1}\" = / ]; then echo '90000M  92% 99999M'; else echo '50M  10% 80M'; fi\n");
+        c.df_bin = df.to_string_lossy().into_owned();
+        let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
+        assert_eq!(keys, vec!["root-disk"]);
+        testkit::write_exe(&df, "#!/bin/bash\necho 'Avail Use% 1Mblocks'\necho '50M  10% 4000M'\n");
+        let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
+        assert_eq!(keys, vec!["tmp-free"]);
+    }
+
+    #[test]
+    fn df_size_is_the_third_column() {
+        assert_eq!(df_size_mib("Avail Use% 1M-blocks\n 5000M  83% 8000M\n"), Some(8000));
+        assert_eq!(df_size_mib("Avail Use%\n 5000M  83%\n"), None);
     }
 }

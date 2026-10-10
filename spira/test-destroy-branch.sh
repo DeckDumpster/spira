@@ -43,15 +43,15 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REAPLOG="$SPIRA_RUN/reap.log"
-export SPIRA_REPO_MAP="$TMP/no-such-repo-map"   # not in the map; landref falls to origin/HEAD
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$TMP/no-such-repo-map"   # not in the map; landref falls to origin/HEAD
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" commit -q --allow-empty -m base
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" remote set-head origin main
 
 # shellcheck disable=SC1090
@@ -108,8 +108,8 @@ squash_land() {
     local id="$1"; local br="spira/$id"
     git -C "$REPO" merge -q --squash "$br" >/dev/null 2>&1
     git -C "$REPO" commit -q -m "squash-land sp-$id"
-    git -C "$REPO" push -q origin main
-    git -C "$REPO" fetch -q origin
+    timeout 5 git -C "$REPO" push -q origin main
+    timeout 5 git -C "$REPO" fetch -q origin
 }
 
 # ======================================================================================

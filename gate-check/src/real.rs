@@ -11,12 +11,19 @@ use std::process::{Command, Stdio};
 pub struct Real {
     pub home: PathBuf,
     pub db: Option<String>,
+    /// `SPIRA_BD`, resolved once at the process's top level (`spira_config::process::cfg`)
+    /// and handed down — no literal `"bd"` fallback here; an unset/empty value is
+    /// the config file's own answer (see `spira/conf.d/SPIRA_BD`), not this crate's to invent.
+    bd: String,
+    /// `SPIRA_FLAKY_GH_REPO`, resolved the same way — empty means "no scan" per
+    /// `spira/conf.d/SPIRA_FLAKY_GH_REPO`.
+    flaky_repo: Option<String>,
     registry: OnceCell<spira_config::repos::Registry>,
 }
 
 impl Real {
-    pub fn new(home: PathBuf, db: Option<String>) -> Real {
-        Real { home, db, registry: OnceCell::new() }
+    pub fn new(home: PathBuf, db: Option<String>, bd: String, flaky_repo: Option<String>) -> Real {
+        Real { home, db, bd, flaky_repo, registry: OnceCell::new() }
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -31,8 +38,7 @@ impl Real {
     }
 
     fn bd(&self) -> Command {
-        let bd = std::env::var("SPIRA_BD").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "bd".to_string());
-        let mut c = Command::new(bd);
+        let mut c = Command::new(&self.bd);
         if let Some(db) = &self.db {
             c.arg("-C").arg(db);
         }
@@ -47,6 +53,7 @@ impl Real {
 
     fn seam(&self, body: &str, args: &[&str]) -> String {
         let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let out = Command::new("bash")
             .arg("-c")
             .arg(script)
@@ -141,7 +148,7 @@ impl World for Real {
 
     fn file_bead(&self, title: &str, repo: &str, priority: i64, body: &str) {
         // bead.sh by name on the launcher's PATH (sp-gypjk).
-        let mut c = Command::new("bead.sh");
+        let mut c = spira_config::bounded::bounded("bead.sh");
         c.arg("file").arg(title).arg("--for").arg("builder").arg("--repo").arg(repo).arg("-p").arg(priority.to_string()).arg("--body-file").arg("-");
         c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
         if let Ok(mut child) = c.spawn() {
@@ -153,13 +160,13 @@ impl World for Real {
     }
 
     fn flaky_repo(&self) -> Option<String> {
-        let repo = std::env::var("SPIRA_FLAKY_GH_REPO").ok().filter(|v| !v.is_empty())?;
-        let has_gh = Command::new("sh").arg("-c").arg("command -v gh").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        let repo = self.flaky_repo.clone()?;
+        let has_gh = spira_config::bounded::bounded("sh").arg("-c").arg("command -v gh").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         if has_gh { Some(repo) } else { None }
     }
 
     fn gh_recent_run_ids(&self, repo: &str, limit: u32) -> Vec<String> {
-        let out = Command::new("gh")
+        let out = spira_config::bounded::bounded("gh")
             .args(["run", "list", "--repo", repo, "--status", "completed", "--limit", &limit.to_string(), "--json", "databaseId", "--jq", ".[].databaseId"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -168,17 +175,17 @@ impl World for Real {
     }
 
     fn gh_jobs_json(&self, repo: &str, run_id: &str) -> String {
-        let out = Command::new("gh").args(["api", &format!("repos/{repo}/actions/runs/{run_id}/jobs")]).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("gh").args(["api", &format!("repos/{repo}/actions/runs/{run_id}/jobs")]).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
     fn gh_annotations_json(&self, repo: &str, job_id: &str) -> String {
-        let out = Command::new("gh").args(["api", &format!("repos/{repo}/check-runs/{job_id}/annotations")]).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("gh").args(["api", &format!("repos/{repo}/check-runs/{job_id}/annotations")]).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
     fn gh_last_green_main_sha(&self, repo: &str) -> Option<String> {
-        let out = Command::new("gh")
+        let out = spira_config::bounded::bounded("gh")
             .args(["run", "list", "--repo", repo, "--branch", "main", "--status", "success", "--limit", "1", "--json", "headSha", "--jq", ".[0].headSha"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -189,7 +196,7 @@ impl World for Real {
     }
 
     fn gh_failed_main_runs(&self, repo: &str, limit: u32) -> Vec<(String, String)> {
-        let out = Command::new("gh")
+        let out = spira_config::bounded::bounded("gh")
             .args([
                 "run",
                 "list",
@@ -220,7 +227,7 @@ impl World for Real {
     }
 
     fn gh_fail_lines(&self, repo: &str, run_id: &str) -> String {
-        let out = Command::new("gh").args(["run", "view", run_id, "--repo", repo, "--log-failed"]).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("gh").args(["run", "view", run_id, "--repo", repo, "--log-failed"]).stdin(Stdio::null()).stderr(Stdio::null()).output();
         let text = out.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
         let mut lines: Vec<String> = Vec::new();
         for l in text.lines() {
@@ -238,12 +245,12 @@ impl World for Real {
     }
 
     fn git_log_range(&self, repo_root: &Path, from: &str, to: &str) -> String {
-        let out = Command::new("git").arg("-C").arg(repo_root).arg("log").arg("--oneline").arg(format!("{from}..{to}")).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("git").arg("-C").arg(repo_root).arg("log").arg("--oneline").arg(format!("{from}..{to}")).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 
     fn tsd_ingest(&self, _home: &Path, repo: &str, run_id: &str) {
-        let _ = Command::new("tsd-ingest.sh").arg(repo).arg(run_id).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        let _ = spira_config::bounded::bounded("tsd-ingest.sh").arg(repo).arg(run_id).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
     }
 
     fn print(&self, s: &str) {

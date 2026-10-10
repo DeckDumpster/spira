@@ -1,0 +1,21 @@
+[Unit]
+Description=Spira reap-terminal — remove terminal beads' worktrees and aged scratch from run/worktree
+Documentation=file://@SPIRA_PROD_ROOT@/sending/DESIGN.md
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/sending reap-terminal
+TimeoutStartSec=900
+StandardOutput=append:@SPIRA_RUN@/reap-terminal.log
+StandardError=append:@SPIRA_RUN@/reap-terminal.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=work

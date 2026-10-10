@@ -60,6 +60,8 @@ printf 'ok 0 56 - parallel diff 0\n'   > "$RESULTS/test-baz.result"
 printf 'red 0 78 fp parallel diff 1\n' > "$RESULTS/test-red.result"
 printf 'skip 0 0 - parallel diff 77\n' > "$RESULTS/test-skip.result"
 
+# gate-timing.sh reads SPIRA_BATCH_LEDGER/SPIRA_RUN directly from its own process
+# environment (it never sources conf.sh) — not registered-key config, a plain env prefix.
 SPIRA_BATCH_LEDGER="$LEDGER" SPIRA_RUN="$TMP" \
     bash "$GATE_TIMING" "$RESULTS" green
 

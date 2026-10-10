@@ -44,7 +44,7 @@ impl Default for RealLifecycle {
 
 impl Lifecycle for RealLifecycle {
     fn bead(&self, id: &str) -> Result<Option<LcBead>, String> {
-        let o = Command::new(&self.bin)
+        let o = spira_config::bounded::bounded(&self.bin)
             .args(["show", id])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -67,7 +67,7 @@ pub fn parse_show(code: Option<i32>, stdout: &[u8]) -> Result<Option<LcBead>, St
     let text = |x: Option<&serde_json::Value>| x.and_then(|t| t.as_str()).unwrap_or("").to_string();
     let merge = text(v.get("delivery").and_then(|d| d.get("merge_sha")));
     let sha = if merge.is_empty() { text(bead.get("tip")) } else { merge };
-    Ok(Some(LcBead { state: text(bead.get("state")), sha }))
+    Ok(Some(LcBead { state: text(bead.get("state")), sha, reason: text(bead.get("reason")) }))
 }
 
 pub struct RealBd {
@@ -148,18 +148,9 @@ impl Bd for RealBd {
         matches!(status, Ok(s) if s.success())
     }
 
+    // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn close(&self, id: &str, reason: &str) -> bool {
-        let status = self
-            .cmd()
-            .arg("close")
-            .arg(id)
-            .arg("--reason")
-            .arg(reason)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        matches!(status, Ok(s) if s.success())
+        spira_config::lifecycle_row::close(id, reason, "gh-intake", None).is_ok()
     }
 
     fn show_json(&self, id: &str) -> Option<serde_json::Value> {
@@ -255,7 +246,7 @@ pub struct RealMail {
 
 impl Mail for RealMail {
     fn send_operator_note(&self, subject: &str, body: &[u8]) -> bool {
-        let mut child = match Command::new(&self.mail_bin)
+        let mut child = match spira_config::bounded::bounded(&self.mail_bin)
             .args(["send", "operator", "--from", "gh-intake <intake@spira>", "--subject", subject, "--kind", "note"])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -274,7 +265,7 @@ impl Mail for RealMail {
     /// lib.sh `gh_issue_ask_unlanded`'s mail call (sp-j3fim): stdout discarded, stderr
     /// captured as the error text exactly as `_err="$(... 2>&1 >/dev/null)"` did.
     fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<(), String> {
-        let mut child = Command::new(&self.mail_bin)
+        let mut child = spira_config::bounded::bounded(&self.mail_bin)
             .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

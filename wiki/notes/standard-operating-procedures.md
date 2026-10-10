@@ -376,9 +376,8 @@ already `duplicate`/closed with ref: on the survivor -> not a new race.
 
 ```
 collapse, don't re-diagnose the race each time:
-  bd -C "$SPIRA_DB" duplicate <id-to-drop> --of <survivor>
+  work incident collapse <id-to-drop> --of <survivor>
   bd -C "$SPIRA_DB" label add <survivor> "ref:<hash>"
-  bd -C "$SPIRA_DB" label add <id-to-drop> "duplicate-of:<survivor>"
 Keep the actively-worked bead (owner/branch/submitted) as survivor. The
 duplicate-of: label is REQUIRED: it is what stops the meter re-counting
 this pair (fixed by sp-sxrf8 in dup_refs_keys(), cockpit.sh:2002).

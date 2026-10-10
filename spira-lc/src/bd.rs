@@ -1,18 +1,22 @@
 //! Shells to `bd` for the non-lifecycle half of the aeon semantic layer (design §3.5):
 //! titles, descriptions, dependencies, notes and filing stay bd's job (§3.3/3.4) — this
-//! module never touches `spira_lifecycle`. Resolved the same way the harness's shell code
-//! resolves them, `SPIRA_BD`/`SPIRA_DB`, read directly since a Rust binary cannot source
-//! `conf.sh`.
+//! module never touches `spira_lifecycle`. `SPIRA_BD`/`SPIRA_DB` are declared config
+//! (spira/conf.d), resolved from `$SPIRA_TOML` (one source of config, per Ryan 2026-10-05) —
+//! never this process's own environment.
 
 use std::process::Command;
 
-fn bd_bin() -> String {
-    std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string())
+fn bd_bin() -> Result<String, String> {
+    // SPIRA_BD resolves empty when unset (no default in its registry entry); an empty program
+    // name fails every call, so the door's store half silently never ran in such a setup
+    // (test-aeon-prod-dirty, sp-swh8b8). Empty means bd on PATH, as every other bd caller reads it.
+    spira_config::process::cfg("SPIRA_BD").map(|b| if b.trim().is_empty() { "bd".to_string() } else { b })
 }
 
-fn run(args: &[&str]) -> Result<String, String> {
-    let mut cmd = Command::new(bd_bin());
-    if let Ok(db) = std::env::var("SPIRA_DB") {
+pub fn run(args: &[&str]) -> Result<String, String> {
+    let mut cmd = spira_config::bounded::bounded(bd_bin()?);
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    if !db.is_empty() {
         cmd.args(["-C", &db]);
     }
     cmd.args(args);
@@ -42,6 +46,17 @@ pub fn repo_label(bead_id: &str) -> Result<Option<String>, String> {
     Ok(labels.iter().filter_map(|l| l.as_str()).find_map(|l| l.strip_prefix("repo:").map(str::to_string)))
 }
 
+/// Every label on `bead_id`, read from bd.
+pub fn labels(bead_id: &str) -> Result<Vec<String>, String> {
+    let out = run(&["show", bead_id, "--json"])?;
+    let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
+    let doc = match &parsed {
+        serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+        v => v.clone(),
+    };
+    Ok(doc.get("labels").and_then(|l| l.as_array()).map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()).unwrap_or_default())
+}
+
 /// The live [`crate::callers::Bd`]: bd itself, resolved as [`run`] resolves it.
 pub struct LiveBd;
 
@@ -56,7 +71,43 @@ impl crate::callers::Bd for LiveBd {
         doc.get("issue_type").and_then(|t| t.as_str()).map(str::to_string).ok_or_else(|| format!("bd show {id}: no issue_type"))
     }
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
-        run(&["close", id, "--reason", reason]).map(|_| ())
+        // --force: the lifecycle row is already terminal when `close` gets here, so the store
+        // must follow it; a refused store close would leave the two disagreeing again.
+        run(&["close", id, "--force", "--reason", reason]).map(|_| ())
+    }
+    fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String> {
+        crate::bd_facts::closed(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
+    }
+    fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
+        crate::bd_facts::known(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
+    }
+    fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String> {
+        let out = run(&["show", id, "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
+        let doc = match &parsed {
+            serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+            v => v.clone(),
+        };
+        let labels = doc.get("labels").and_then(|l| l.as_array()).cloned().unwrap_or_default();
+        Ok(labels.iter().filter_map(|l| l.as_str()).filter_map(|l| l.strip_prefix("work-bead:").map(str::to_string)).collect())
+    }
+    fn external(&mut self, id: &str) -> Result<bool, String> {
+        let out = run(&["show", id, "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
+        let doc = match &parsed {
+            serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+            v => v.clone(),
+        };
+        Ok(doc.get("external_ref").and_then(|r| r.as_str()).is_some_and(|r| !r.trim().is_empty()))
+    }
+    fn reopen(&mut self, id: &str) -> Result<(), String> {
+        // The store follows the row the door just moved: open, unassigned, and no longer wearing
+        // the submitted label (a legacy state label; best effort, it may not be there).
+        run(&["update", id, "--status", "open", "--assignee", ""]).map(|_| ())?;
+        if let Some(label) = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()) {
+            let _ = run(&["label", "remove", id, &label]);
+        }
+        Ok(())
     }
 }
 
@@ -68,11 +119,15 @@ pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
 /// enforce), with `--parent` set by this layer, never the caller — see bead.sh's own
 /// `--parent` doc for why an inherited `branch:` label made `groomer split-piece` a
 /// two-step dance that this avoids by filing with the right labels from the start.
-pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Result<String, String> {
+pub fn file_child(title: &str, persona: &str, repo: &str, parent: Option<&str>) -> Result<String, String> {
     // bead.sh, by name on the launcher's PATH (sp-gypjk) — never repository-relative.
     let bead_sh = "bead.sh";
-    let out = Command::new(bead_sh)
-        .args(["file", title, "--for", persona, "--repo", repo, "--parent", parent])
+    let mut cmd = spira_config::bounded::bounded(bead_sh);
+    cmd.args(["file", title, "--for", persona, "--repo", repo]);
+    if let Some(parent) = parent {
+        cmd.args(["--parent", parent]);
+    }
+    let out = cmd
         .output()
         .map_err(|e| format!("running {bead_sh}: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -82,6 +137,18 @@ pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Resul
     Ok(stdout.trim().to_string())
 }
 
+/// `bead.sh dep add <id> <depends-on>`: `id` is blocked until `depends-on` is closed.
+pub fn add_blocker(id: &str, depends_on: &str) -> Result<(), String> {
+    let out = spira_config::bounded::bounded("bead.sh")
+        .args(["dep", "add", id, depends_on, "--type", "blocks"])
+        .output()
+        .map_err(|e| format!("running bead.sh: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(())
+}
+
 /// `mail send operator` — an ask carrying the channel back (design §3.5's `work
 /// blocked`, and the supersede-by confirmation request). `--bead` ties the tracking
 /// decision bead mail files to the one this layer is bound to.
@@ -89,7 +156,7 @@ pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, bod
     // mail, by name on the launcher's PATH (sp-gypjk); SPIRA_MAIL_SH is the harness-wide
     // binary-override seam.
     let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string());
-    let mut child = Command::new(&mail_sh)
+    let mut child = spira_config::bounded::bounded(&mail_sh)
         .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -109,8 +176,9 @@ pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, bod
 /// `bd <args>` with `stdin` piped in when given — the lane verbs' one door to bd
 /// (sp-st0mm). Same `SPIRA_BD`/`SPIRA_DB` resolution as [`run`].
 pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
-    let mut cmd = Command::new(bd_bin());
-    if let Ok(db) = std::env::var("SPIRA_DB") {
+    let mut cmd = Command::new(bd_bin()?);
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    if !db.is_empty() {
         cmd.args(["-C", &db]);
     }
     cmd.args(args);
@@ -140,7 +208,22 @@ pub fn tool_env(program: &str, args: &[String], stdin: Option<&str>, actor: &str
     spawn(cmd, stdin, program)
 }
 
-fn spawn(mut cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
+/// [`tool_env`] for a tool whose stderr is part of its answer even on success (mail's
+/// "routed to the concierge" notice): nothing it says is dropped.
+pub fn tool_env_noisy(program: &str, args: &[String], stdin: Option<&str>, actor: &str, secs: u64, env: &[(&str, &str)]) -> (i32, String) {
+    let mut cmd = Command::new("timeout");
+    cmd.arg(secs.to_string()).arg(program).args(args).env("SPIRA_FAYTH", actor);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    spawn_with(cmd, stdin, program, true)
+}
+
+fn spawn(cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
+    spawn_with(cmd, stdin, what, false)
+}
+
+fn spawn_with(mut cmd: Command, stdin: Option<&str>, what: &str, keep_stderr: bool) -> (i32, String) {
     use std::io::Write;
     use std::process::Stdio;
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -161,8 +244,49 @@ fn spawn(mut cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
     };
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     match out.status.code() {
+        Some(0) if keep_stderr => (0, format!("{stdout}{}", String::from_utf8_lossy(&out.stderr))),
         Some(0) => (0, stdout),
         Some(c) => (c, format!("{stdout}{}", String::from_utf8_lossy(&out.stderr))),
         None => (2, format!("{what} was killed by a signal: {stdout}{}", String::from_utf8_lossy(&out.stderr))),
+    }
+}
+
+#[cfg(test)]
+mod noisy_tests {
+    use super::*;
+
+    fn sh(script: &str) -> (i32, String) {
+        tool_env_noisy("sh", &["-c".to_string(), script.to_string()], None, "t", 10, &[])
+    }
+
+    #[test]
+    fn a_refused_ask_exits_nonzero_with_the_reason() {
+        let (code, out) = sh("echo 'mail: lint: unknown kind x' >&2; exit 1");
+        assert_eq!(code, 1);
+        assert!(out.contains("unknown kind x"), "{out}");
+    }
+
+    #[test]
+    fn a_successful_ask_still_shows_the_stderr_notice() {
+        let (code, out) = sh("echo 'mail: routed to the concierge' >&2");
+        assert_eq!(code, 0);
+        assert!(out.contains("routed to the concierge"), "{out}");
+        assert!(!tool("sh", &["-c".to_string(), "echo hidden >&2".to_string()], None, "t", 10).1.contains("hidden"));
+    }
+}
+
+impl crate::ask::AskSource for LiveBd {
+    fn open_asks(&mut self, ask_label: &str) -> Result<Vec<(String, Vec<String>)>, String> {
+        let out = run(&["list", "--type", "decision", "--label", ask_label, "--status", "open", "--limit", "0", "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd list --json: {e}"))?;
+        let rows = parsed.as_array().cloned().unwrap_or_default();
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let id = r.get("id")?.as_str()?.to_string();
+                let works = r.get("labels").and_then(|l| l.as_array()).map(|l| l.iter().filter_map(|x| x.as_str()).filter_map(|x| x.strip_prefix("work-bead:").map(str::to_string)).collect()).unwrap_or_default();
+                Some((id, works))
+            })
+            .collect())
     }
 }

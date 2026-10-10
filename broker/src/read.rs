@@ -1,4 +1,3 @@
-use std::process::Command;
 use crate::policy::ReadVerb;
 
 // Safe JSON fields for run-view: status and timing only, no log content.
@@ -34,8 +33,9 @@ pub fn run(raw: &[String]) -> Result<(), String> {
     }
 
     let repo_path = match repo_map_lookup(&repo) {
-        Some(p) => p,
-        None => return Err(format!("broker read: repo '{}' not in repo-map", repo)),
+        Ok(Some(p)) => p,
+        Ok(None) => return Err(format!("broker read: repo '{}' not in repo-map", repo)),
+        Err(e) => return Err(format!("broker read: repo-map lookup failed: {}", e)),
     };
 
     let mut artifact: Option<String> = None;
@@ -62,10 +62,11 @@ pub fn run(raw: &[String]) -> Result<(), String> {
             let dir = match output_dir {
                 Some(d) => d,
                 None => {
-                    let run = spira_config::resolve::run_dir_for_process()
-                        .map_err(|e| format!("broker read artifact-download: {e}"))?
-                        .to_string_lossy()
-                        .into_owned();
+                    // SPIRA_RUN is a registered key — resolved the same way every other
+                    // SPIRA_RUN read in this crate resolves it, not via the env-var-first
+                    // helper spira-config also exposes.
+                    let run = spira_config::process::cfg("SPIRA_RUN")
+                        .map_err(|e| format!("broker read artifact-download: {e}"))?;
                     format!("{}/broker/artifacts/{}", run, number)
                 }
             };
@@ -89,10 +90,10 @@ fn artifact_download_args(run_id: &str, name: &str, dir: &str) -> Vec<String> {
 }
 
 fn gh_run_view(repo_path: &str, run_id: &str) -> Result<String, String> {
-    let output = Command::new(gh_bin())
+    let output = spira_config::bounded::bounded(gh_bin())
         .args(run_view_args(run_id))
         .current_dir(repo_path)
-        .envs(crate::token::gh_env())
+        .envs(crate::token::gh_env()?)
         .output()
         .map_err(|e| format!("gh failed: {e}"))?;
     if output.status.success() {
@@ -106,10 +107,10 @@ fn gh_run_view(repo_path: &str, run_id: &str) -> Result<String, String> {
 }
 
 fn gh_artifact_download(repo_path: &str, run_id: &str, name: &str, dir: &str) -> Result<(), String> {
-    let output = Command::new(gh_bin())
+    let output = spira_config::bounded::bounded(gh_bin())
         .args(artifact_download_args(run_id, name, dir))
         .current_dir(repo_path)
-        .envs(crate::token::gh_env())
+        .envs(crate::token::gh_env()?)
         .output()
         .map_err(|e| format!("gh failed: {e}"))?;
     if output.status.success() {
@@ -122,6 +123,8 @@ fn gh_artifact_download(repo_path: &str, run_id: &str, name: &str, dir: &str) ->
     }
 }
 
+// SPIRA_BROKER_GH is not a registered config key (spira/conf.d has no entry) — a
+// test-only override of the gh binary, left on the process environment.
 fn gh_bin() -> String {
     std::env::var("SPIRA_BROKER_GH")
         .ok()
@@ -129,7 +132,7 @@ fn gh_bin() -> String {
         .unwrap_or_else(|| "gh".to_string())
 }
 
-fn repo_map_lookup(repo: &str) -> Option<String> {
+fn repo_map_lookup(repo: &str) -> Result<Option<String>, String> {
     crate::repo_map::lookup(repo)
 }
 

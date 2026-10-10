@@ -4,9 +4,7 @@
 //! mail, checking whether the Concierge is running — is a caller's job (sp-fufyb); nothing
 //! here reads a clock, a file or a socket.
 //!
-//! Used by reconciler-flow only. reconciler's structural `escalate()` deliberately does not
-//! call this — it files a bead through incident.sh, whose own recurrence-count dedup already
-//! absorbs a persisting gap, which a live mail destination cannot do for itself.
+//! Used by reconciler, reconciler-flow and reconciler-alert: one note per gap streak.
 
 use crate::core::{RawStatus, Verdict};
 
@@ -32,7 +30,7 @@ pub fn should_alert(verdict: &Verdict, prev_alerted_since: Option<u64>) -> (bool
 /// desired vs observed, how long it has been true, and the last remedy tried (if any).
 pub fn compose_alert(invariant: &str, now: u64, verdict: &Verdict, last_remedy: Option<&str>) -> String {
     let (desired, observed) = match &verdict.status {
-        RawStatus::Satisfied => ("satisfied".to_string(), "satisfied".to_string()),
+        RawStatus::Satisfied | RawStatus::Deliberate { .. } => ("satisfied".to_string(), "satisfied".to_string()),
         RawStatus::Gap { desired, observed, .. } => (desired.clone(), observed.clone()),
         RawStatus::Unobservable { reason } => ("(unobservable)".to_string(), reason.clone()),
     };

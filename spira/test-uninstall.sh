@@ -43,6 +43,12 @@ nofile()  { [ ! -e "$2" ] && ok "$1" || bad "$1" "expected absent: $2"; }
 echo "test-uninstall.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# round 4 fix (pattern 7): SPIRA_WORKSPACES is a registered key; undeclared, a non-prod
+# SPIRA_INSTANCE (this suite uses "test") gets confined to the complete fixture's
+# placeholder /fixture/userhome/spira, and every path under $TMP (SPIRA_RUN included) is
+# outside it — units-install refuses with a containment violation. Declare this suite's
+# own workspaces root wide enough to cover everything under $TMP.
+tl_config SPIRA_WORKSPACES="$TMP"
 
 # A2's installed-release model runs install.sh from releases/current, not a git
 # checkout — SPIRA_REPO is not a git repo here, and SPIRA_INSTALL_FORCE=1 skips
@@ -57,17 +63,25 @@ mkdir -p "$FAKE_REPO"
 FIXTURE="$TMP/harness"
 mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira" "$FIXTURE/cockpit"
 
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
+for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.socket; do
     [ -e "$f" ] || continue
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
 for f in conf.sh lib.sh owned.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
+# round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches) and every
+# binary reads <home>/conf.d to resolve its config schema at all — give this fixture
+# home the real registry (conf.sh's own symlink above is not enough on its own).
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$FIXTURE/spira/"
 # Link the real uninstall.sh so the test drives it.
 ln -s "$HERE/uninstall.sh" "$FIXTURE/spira/uninstall.sh"
 printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
 printf '# empty\n' > "$FIXTURE/spira/watchers"
+# round 3 fix (pattern 7): SPIRA_WATCHERS is a registered key; undeclared, units-install
+# resolves it to the complete fixture's placeholder
+# /fixture/userhome/spira/spira-releases/current/spira/watchers, which does not exist.
+tl_config SPIRA_WATCHERS="$FIXTURE/spira/watchers"
 
 # NO STUB FOR `release` (sp-7jr34). owned.sh's session-hook status and uninstall.sh's own
 # removal both now call the real `release session-hook` — exactly the removal this suite
@@ -109,6 +123,12 @@ cat > "$MOCK_BIN/systemctl" <<'MOCK'
 printf '%s\n' "$*" >> "${MOCK_LOG}"
 case "$*" in
     *"spira-landing*"*"spira-aeon-*"*)
+        # A worker whose main process exited but whose cgroup still holds a child is
+        # "deactivating": listed only to a sweep that asks for that state (sp-kuwp6s).
+        if [ -n "${MOCK_DEACTIVATING:-}" ]; then
+            case "$*" in *deactivating*) printf '%s\n' "$MOCK_DEACTIVATING" ;; esac
+            exit 0
+        fi
         # The first sweep sees MOCK_TRANSIENT_UNITS; a later one (after the timers are
         # stopped) sees MOCK_LATE_TRANSIENT — a transient a sentinel pass started in between.
         n=$(( $(cat "${MOCK_LIST_COUNT:-/dev/null}" 2>/dev/null || echo 0) + 1 ))
@@ -145,19 +165,23 @@ chmod +x "$MOCK_BIN/tmux"
 # ---------------------------------------------------------------------------
 un() {
     > "$MOCK_LOG"; > "$LINGER_LOG"; > "$LAYOUT_LOG"
+    # SPIRA_PATH/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/
+    # SPIRA_INSTANCE/SPIRA_CLIENT_SETTINGS are registered keys (per Ryan 2026-10-05, ONE
+    # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which
+    # clears it. SPIRA_CLIENT_SETTINGS's own conf.d default derives from $HOME, but that
+    # derivation no longer happens for registered keys (release/src/main.rs reads it via
+    # cfg(), no env fallback) — undeclared, `release session-hook uninstall` (run with
+    # `|| true` in uninstall.sh) silently fails to resolve it and the seeded hooks fixture
+    # at $SETTINGS is never touched.
+    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+        SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" SPIRA_COCKPIT="$REAL_COCKPIT" \
+        SPIRA_INSTANCE=test SPIRA_CLIENT_SETTINGS="$TMP/home/.claude/settings.json"
     env -i \
         "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
         "SPIRA_HOME=$FIXTURE/spira" \
-        "SPIRA_PROD=$FIXTURE/spira" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "SPIRA_INSTANCE=test" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
         "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
         "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
         "SPIRA_TMUX=$MOCK_BIN/tmux" \
@@ -168,6 +192,8 @@ un() {
         "MOCK_TRANSIENT_UNITS=${MOCK_TRANSIENT_UNITS:-}" \
         "MOCK_LIST_COUNT=${MOCK_LIST_COUNT:-}" \
         "MOCK_LATE_TRANSIENT=${MOCK_LATE_TRANSIENT:-}" \
+        "MOCK_DEACTIVATING=${MOCK_DEACTIVATING:-}" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$FIXTURE/spira/uninstall.sh" test --yes "$@" 2>&1
 }
 
@@ -177,20 +203,20 @@ un() {
 # ---------------------------------------------------------------------------
 _seed_units() {
     local rendered rc
+    # SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
+    # SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+    # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
+        SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     rendered="$(env -i \
         "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
         "SPIRA_HOME=$FIXTURE/spira" \
-        "SPIRA_PROD=$FIXTURE/spira" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "SPIRA_INSTANCE=test" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
         "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
         "SPIRA_INSTALL_FORCE=1" \
+        SPIRA_TOML="$SPIRA_TOML" \
         units-install test --render 2>&1)"
     rc=$?
     if [ "$rc" != 0 ]; then
@@ -313,20 +339,24 @@ echo "INSTANCE AWARENESS — refuses multiple instances; accepts explicit:"
 > "$DEST/spira-sentinel-prod.service"
 > "$DEST/spira-sentinel-test.service"
 
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are
+# registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and
+# thread SPIRA_TOML through env -i, which clears it. SPIRA_INSTANCE is reset to the
+# complete fixture's own base value ("prod") rather than left at "test" from the un()
+# calls above — this case is testing the no-explicit-CLI-argument ambiguity refusal, which
+# the unconvertible absence of SPIRA_INSTANCE used to give it for free.
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_INSTANCE=prod
 multi_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_RUN=$SPIRA_RUN_DIR" \
     "SPIRA_HOME=$FIXTURE/spira" \
-    "SPIRA_PROD=$FIXTURE/spira" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$REAL_COCKPIT" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
     "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
     "SPIRA_TMUX=$MOCK_BIN/tmux" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$FIXTURE/spira/uninstall.sh" 2>&1)"
 multi_rc=$?
 
@@ -335,22 +365,22 @@ want    "instance: names the instances found" "prod" "$multi_out"
 want    "instance: names the instances found" "test" "$multi_out"
 
 # Explicit argument should be accepted even with multiple sentinels.
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
+# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
 explicit_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_RUN=$SPIRA_RUN_DIR" \
     "SPIRA_HOME=$FIXTURE/spira" \
-    "SPIRA_PROD=$FIXTURE/spira" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$REAL_COCKPIT" \
-    "SPIRA_INSTANCE=test" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
     "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
     "SPIRA_TMUX=$MOCK_BIN/tmux" \
     "MOCK_LINGER=yes" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$FIXTURE/spira/uninstall.sh" test --yes 2>&1)"
 explicit_rc=$?
 iszero "instance: explicit 'test' arg accepted" "$explicit_rc"
@@ -426,6 +456,17 @@ want "late transient: the audit worker started mid-uninstall is stopped" "stop s
 want "late transient: and reported"                                      "stopping spira-audit.service" "$late_out"
 unset MOCK_LIST_COUNT MOCK_LATE_TRANSIENT
 
+# A worker left deactivating by a lingering child (sp-kuwp6s: spira-audit held in stop-sigterm
+# by bd's detached send-metrics) is swept too, and what is left in it is killed outright.
+_seed_units || { printf 'fixture: re-seed for deactivating transient failed\n'; exit 1; }
+export MOCK_DEACTIVATING="spira-audit.service loaded deactivating stop-sigterm sentinel --audit"
+: > "$MOCK_LOG"
+deact_out="$(un)"
+want "deactivating transient: what is left in it is killed" "kill --signal=SIGKILL spira-audit.service" "$(cat "$MOCK_LOG")"
+want "deactivating transient: then stopped"                 "stop spira-audit.service" "$(cat "$MOCK_LOG")"
+want "deactivating transient: and reported"                 "stopping spira-audit.service" "$deact_out"
+unset MOCK_DEACTIVATING
+
 # ==========================================================================
 echo
 echo "--purge — config and runtime directories removed:"
@@ -436,22 +477,22 @@ mkdir -p "$CONF_DIR"
 printf 'SPIRA_ID_PREFIX=sp\nSPIRA_INSTANCE=test\n' > "$CONF_DIR/spira.conf"
 mkdir -p "$SPIRA_RUN_DIR/archive"
 
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
+# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
 purge_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_RUN=$SPIRA_RUN_DIR" \
     "SPIRA_HOME=$FIXTURE/spira" \
-    "SPIRA_PROD=$FIXTURE/spira" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$REAL_COCKPIT" \
-    "SPIRA_INSTANCE=test" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
     "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
     "SPIRA_TMUX=$MOCK_BIN/tmux" \
     "MOCK_LINGER=no" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$FIXTURE/spira/uninstall.sh" test --yes --purge 2>&1)"
 purge_rc=$?
 
@@ -472,21 +513,21 @@ echo "--dry-run — nothing changed:"
 _seed_units || { printf 'fixture: re-seed for dry-run failed\n'; exit 1; }
 _unit_before="$(ls -1 "$DEST" 2>/dev/null | wc -l | tr -d ' ')"
 
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
+# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
 dryrun_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_RUN=$SPIRA_RUN_DIR" \
     "SPIRA_HOME=$FIXTURE/spira" \
-    "SPIRA_PROD=$FIXTURE/spira" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$REAL_COCKPIT" \
-    "SPIRA_INSTANCE=test" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
     "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
     "SPIRA_TMUX=$MOCK_BIN/tmux" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$FIXTURE/spira/uninstall.sh" test --dry-run 2>&1)"
 dryrun_rc=$?
 
@@ -543,21 +584,18 @@ _seed_purgedb() {
 # un(), plus the fake bd backend and a real .beads dir for the purge-database count.
 un_purgedb() {
     local confirm="$1"; shift
+    # SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DB/SPIRA_BD/
+    # SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE
+    # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
+        SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DB="$PURGEDB_DIR" \
+        SPIRA_BD="$MOCK_BIN/bd" SPIRA_DOLT_DATA="$PURGEDB_DOLT" SPIRA_TESTDB_DATA="$PURGEDB_TESTDB"
     env -i \
         "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
         "SPIRA_HOME=$FIXTURE/spira" \
-        "SPIRA_PROD=$FIXTURE/spira" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "SPIRA_INSTANCE=test" \
-        "SPIRA_DB=$PURGEDB_DIR" \
-        "SPIRA_BD=$MOCK_BIN/bd" \
-        "SPIRA_DOLT_DATA=$PURGEDB_DOLT" \
-        "SPIRA_TESTDB_DATA=$PURGEDB_TESTDB" \
         "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
         "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
         "SPIRA_TMUX=$MOCK_BIN/tmux" \
@@ -565,6 +603,7 @@ un_purgedb() {
         "LINGER_LOG=$LINGER_LOG" \
         "LAYOUT_LOG=$LAYOUT_LOG" \
         "FAKE_BD_LIST_JSON=$FAKE_BD_LIST_JSON" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$FIXTURE/spira/uninstall.sh" test --yes "$@" <<< "$confirm" 2>&1
 }
 
@@ -594,6 +633,23 @@ nowant "purge-database: plain --purge does not prompt for a count" "Type the cou
 isdir  "purge-database: plain --purge leaves .beads intact"        "$PURGEDB_DIR/.beads"
 
 rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
+
+# ==========================================================================
+echo
+echo "BEADS CREDENTIAL SECTION — uninstall removes the section install wrote, and only it:"
+# ==========================================================================
+BCRED="$TMP/home/.config/beads/credentials"
+mkdir -p "$(dirname "$BCRED")"
+printf '[10.0.0.1:3307]\npassword = other\n[127.0.0.1:3307]\npassword = beadspw\n' > "$BCRED"
+un >/dev/null
+isfile "beads credential: the file survives while another section remains" "$BCRED"
+nowant "beads credential: install's section is gone"  "beadspw" "$(cat "$BCRED")"
+want   "beads credential: another host's section is kept" "[10.0.0.1:3307]" "$(cat "$BCRED")"
+printf '[127.0.0.1:3307]\npassword = beadspw\n' > "$BCRED"
+un >/dev/null
+nofile "beads credential: a file left with nothing is removed" "$BCRED"
+un >/dev/null
+iszero "beads credential: a second run with no file exits 0" "$?"
 
 # ==========================================================================
 echo
@@ -646,21 +702,21 @@ chmod +x "$RACE_BIN/systemctl"
 # THE REAL RUN: uninstall.sh must stop every .timer before any .service, so
 # by the time it reaches the broker service the firing can no longer happen.
 : > "$RACE_STATE/active"; rm -f "$RACE_STATE/timer_stopped"
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
+# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+tl_config SPIRA_PATH="$RACE_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
 race_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$RACE_BIN" \
-    "SPIRA_RUN=$SPIRA_RUN_DIR" \
     "SPIRA_HOME=$FIXTURE/spira" \
-    "SPIRA_PROD=$FIXTURE/spira" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$REAL_COCKPIT" \
-    "SPIRA_INSTANCE=test" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     "SPIRA_SYSTEMCTL=$RACE_BIN/systemctl" \
     "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
     "SPIRA_TMUX=$MOCK_BIN/tmux" \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash "$FIXTURE/spira/uninstall.sh" test --yes 2>&1)"
 race_rc=$?
 

@@ -55,6 +55,30 @@ gate [--home <spira-dir>] --definition [repo-name] # the landing ref's gate comm
   live_workers`) keep matching.
 * A missing `<branch>` prints usage and exits 1, as `${1:?}` did.
 
+### The gate machine
+
+A run moves queued → admitted → rebased → fences → trial → verdict (`machine.rs`); every move is
+an event with a reason, kept in `$SPIRA_RUN/gate-machine/<bead>.json` (the branch name stands in
+when no bead is named; the latest run replaces the last).
+
+* `queued` when the branch and base resolve; `admitted` once a slot is held (`fences only: no slot
+  needed` when none is taken); `rebased` once the merge is checked out in the gate tree; `fences`
+  while the tools build and the fences run; `trial` for the build, test and re-entry phases. A suites
+  composition runs fences and suites as one gate command, so it goes rebased → trial. `verdict`
+  carries `<OUTCOME> <reason>`.
+* A move the table does not allow, or a record that cannot be written, ends the run NO_VERDICT
+  `machine-fault`; a refusal names the run, its state and the state refused.
+* `gate status <bead>` prints the record as JSON (`state`, `reason`, `since`, `age_s`,
+  `cancel_requested`, `events`); exit 1 when no run is recorded.
+* `gate cancel <bead> [--why <text>]` leaves a request. The run sees it at its next move, in its
+  waits and while a phase runs (the same check `signalled` makes), and ends NO_VERDICT
+  `cancelled`. A bead whose run is at `verdict`, or that has none, is refused naming the state.
+  No pid is signalled and no process is matched.
+* A gate killed by SIGKILL cannot record its end; its record stays at the state it died in, with an
+  `age_s` that keeps growing. `gate wait` is what notices that death.
+* The record file moves into the lifecycle store once the write path has been measured to have room
+  for it (state-machines item 9); the table and the two reads are what move.
+
 ### Callers (all unchanged: they call `gate.sh`)
 
 | caller | how | reads |
@@ -80,6 +104,8 @@ reached the bash.
 | `SPIRA_VERDICTS` | the verdict cache | `$SPIRA_RUN/verdicts` |
 | `SPIRA_VERDICT_TTL` | seconds a cached PASS is good; non-numeric reads 0 | 0 |
 | `SPIRA_GATE_TIMEOUT` | `timeout` on the gate command | 2700 |
+| `SPIRA_GATE_DEADLINE` | whole-gate wall clock from the end of the waits: every phase, base trial included. At expiry NO_VERDICT `reason=deadline` naming the running phase; never a pass | 300 |
+| `SPIRA_GATE_BUDGET` | the selector's prediction of suite time (testenv `--deadline`); with the fixed phases it fits the deadline | 140 |
 | `SPIRA_GATE_LOCK_WAIT` | wait for an admission slot and for the tree lock | `4 × SPIRA_GATE_TIMEOUT` |
 | `SPIRA_CERTIFY_PAR` | admission pool size; unset or non-numeric derives `min(nproc/4, MemAvailable/400MiB)`, at least 1, re-read every second | derived |
 | `SPIRA_GATE_SUITES` | `off` skips admission unless the round named suites against the bead; in the key; passed through | `on` |
@@ -235,6 +261,18 @@ The mode (`gate_mode`) is read just before the key, since it is part of it.
 The meter is armed as soon as the repository resolves, so the early refusals (conflict among
 them) now write a gate.log row. The bash armed it later and those refusals were invisible in
 the log (law-absence-needs-a-positive-control).
+
+### The verdict is the set of results (sp-9yumzh)
+
+A gate string that is a plain `&&` chain of `bash`, `"$VAR"` and `{ }` steps is run by
+`real.rs` through `compose::run_all`: every step runs, each prints `gate-step <ok|RED> rc=<n> :: <unit>`,
+and the exit is the first non-zero status (a step's 75 wins). A red fence no longer stops the
+suites step. Every fence and every suite is a unit (`parse::red_units`); attribution judges
+each against the base on that unit. A branch whose every red is red on the base too is
+**PASS**, the shared units listed as `inherited, not judged` with the base's output; a branch
+with any unit the base is green on is `FAIL branch-red` naming its own units and the inherited
+ones. `BASE_FAIL base-red` remains only where a red names no unit. Unit mode runs its build and
+test phases after a red fence for the same reason.
 
 ### Attribution (`parse::attribute`; per suite since sp-hh5h0)
 
@@ -654,6 +692,47 @@ gate that cannot answer the question cannot rule it out either.)
 * **Fail closed after the phase too.** Whether built or reused, before any step runs the gate
   re-reads `TREE` and checks every package exists there; otherwise `tools-unattributed`
   exactly as above. An install that fails is the same.
+
+### Tools keyed by their source closure (2026-10-06)
+
+"Reuse only for the same tree" made every new branch rebuild every tool from an empty target
+(20-35 s idle, 100-296 s under load, of the 300 s cap), though a tool depends on far less than
+the tree. `toolkey.rs` adds a shared store, `<run>/gate-tools/<repo>/<base>-<h>`:
+
+* **Base key** (known before any build, read from tree `<want>`'s objects): the recipe (the
+  `bin` packages, the aeon profile words), the object ids of the root build inputs
+  (`Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`, `.cargo`), and the git tree id of each
+  workspace package in the normal+build dependency closure of the `bin` packages (cargo
+  metadata; dev dependencies are not in a binary).
+* **Recorded inputs** (known only after a build): every other in-tree file the build read —
+  cargo's dep-info for each binary plus each build script's `rerun-if-changed` (spira-config's
+  reads `spira/conf.d`) — as `INPUTS` lines `<path>\t<object id>`; `<h>` hashes them. Paths
+  outside the tree (registry crates: `Cargo.lock`) and under `target/` (generated) are not
+  recorded.
+* **Reuse:** when the tree-keyed directory is absent, the newest entry under the base key whose
+  `KEY` stamp is its own name, whose `INPUTS` hash to its name, which holds every package and
+  every one of whose recorded inputs has the same object id in `<want>`, is copied into the
+  tree-keyed directory (stamped with the tree id) — no build, no `tools` phase. Everything
+  after is unchanged: the steps read the tree-keyed directory, proved as above. An entry that
+  cannot be installed (evicted mid-copy) is built instead.
+* **Publish:** after a build, install and proof, the tools are copied to a dot-named temporary
+  in the store, `INPUTS` and `KEY` written, and renamed into place (an existing entry of the
+  same name is someone else's identical publish). The eight most recently used entries are
+  kept.
+* **The tools cap is for reuse.** sp-juboj's 40 s `tools` cap bounds the reuse path (the
+  build that replaces a failed store install). A cold build on a store miss, or of tools that
+  cannot be keyed, runs under the cap name `tools-cold` — bounded only by what is left of
+  `SPIRA_GATE_DEADLINE` — so the first gate of a new key can finish and publish it. It is
+  metered as `tools`.
+* **`gate warm-tools [--rev <rev>] [--repo <name>]`** builds and publishes the tools of
+  `<rev>` (default: the landing ref) exactly as a cold tools phase would — in its own gate
+  tree `<run>/worktree/.gate-warm.<repo>` (locked, on tmpfs, removed after), through the build
+  cache, bounded by an hour, never a gate's clock — and prints `warmed <entry>`; a key the
+  store already holds is a no-op, `already warm <entry>`. Run it after a landing that moves
+  the key, so the next gates reuse.
+* **No key, no sharing:** when any part of the base key cannot be read (no metadata, a `bin`
+  package that is not a member, a closure directory with no tree) the tools are built and kept
+  for the tree alone, as before, and the trial says why. The tree-mismatch refusal is unchanged.
 
 ### The finding (sp-g9f3t)
 
@@ -1106,3 +1185,12 @@ With `SPIRA_GATE_CPU_QUOTA` set (percent, `400` = four cores), the binary re-exe
 (`SPIRA_GATE_IN_UNIT` marks the child). A set but unusable quota is `NO_VERDICT
 reason=cgroup-unavailable`, never an unconfined run. The suite width defaults to the
 cgroup-aware core count, so `SPIRA_GATE_HOST_CORES` is gone.
+
+## The deadline and the phase caps (sp-juboj)
+
+`SPIRA_GATE_DEADLINE` is enforced: each phase and each base-side call runs under
+`min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, and a phase with a cap (`phase_cap`: tools 40 s,
+fences 90 s, gate 190 s; `base-` ignored) is cut at it. The branch trial's fixed caps sum under the
+deadline. A kill at either is NO_VERDICT `deadline` naming the last phase in `gate.log`'s `phases=`. An
+operator `SPIRA_GATE_TIMEOUT` shorter than the deadline keeps reason `timeout`. The watchtower pages
+(`GATE SLOW`) when the p90 of `ran` less `waited` over 24 h exceeds `SPIRA_WATCH_GATE_P90_LIMIT` (300).

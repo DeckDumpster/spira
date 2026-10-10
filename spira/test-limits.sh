@@ -57,9 +57,10 @@ EPOCH=1750000000
 # stdin is the hook blob for `line` mode and is ignored by `env`.
 meter() {
     local mode="$1" at="$2"; shift 2
+    tl_config SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
+        SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL"
     env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
-        SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
-        SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_NOW="$at" \
         ctx-meter.sh "$mode" "$@" 2>/dev/null
 }

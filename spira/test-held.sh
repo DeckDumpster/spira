@@ -15,15 +15,15 @@
 #   4. NAMED-REPO ARGUMENT: a repo argument restricts the table to that repo and excludes
 #      every other hold-mode repo's branches.
 #
-#   5. FAIL CLOSED: a branch whose bead cannot be read (bd itself refuses, not merely a
-#      bead the store has never heard of) is reported UNKNOWN, never downgraded to ORPHAN,
+#   5. FAIL CLOSED: a branch whose bead cannot be read (the lifecycle machine itself refuses, not
+#      merely a bead it holds no row for) is reported UNKNOWN, never downgraded to ORPHAN,
 #      and held.sh exits non-zero (law-a-control-that-cannot-check-must-refuse).
 #
-# A REAL git REPO IN A TEMP DIR, and a hand-written bd STUB (SPIRA_BD) instead of a
-# throwaway database. held.sh reaches bd through exactly one seam — `bdjson show <id>`,
-# called by _bead_status — and that seam's only job is classification (present / absent /
-# unreadable), not bd's own filtering or query behaviour. A stub answering that one shape is
-# not a model of bd that can drift; it is the seam contract itself
+# A REAL git REPO IN A TEMP DIR, and a hand-written spira-lc STUB instead of a
+# throwaway database. held.sh reaches the machine through exactly one seam — `spira-lc state
+# <id>`, called by _bead_status — and that seam's only job is classification (row / no row /
+# unreadable, by exit code). A stub answering that one shape is not a model of the machine
+# that can drift; it is the seam contract itself
 # (law-a-control-that-cannot-check-must-refuse still runs against the real held.sh, only the
 # bead lookup is swapped).
 #
@@ -40,7 +40,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 trap 'exit 143' INT TERM
 
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such-conf"
 # NEVER THE REAL STORE. conf.sh only runs bd's schema check against a $SPIRA_DB that already
 # exists on disk — a nonexistent path skips it, and skipping it is what keeps this suite from
@@ -50,35 +50,27 @@ export SPIRA_DB="$TMP/no-such-db"
 printf 'test-held.sh\n'
 
 # ---------------------------------------------------------------------------
-# The bd stub. held.sh's only bd call is `bdjson show <id>`, issued by _bead_status.
-# This answers it from a fixed table: known ids are closed beads, anything else is "[]"
-# (bd's own shape for "no such bead"), and one id can be told to fail outright via an env
-# toggle the suite sets only for the fail-closed section.
+# The lifecycle stub. held.sh's only read of a bead is `spira-lc state <id>`, issued by
+# _bead_status. This answers it from a fixed table: known ids have a row, anything else has
+# none (exit 1, the machine's own "no row"), and one id can be told to fail outright (exit 2,
+# "cannot tell") via an env toggle the suite sets only for the fail-closed section.
 # ---------------------------------------------------------------------------
-STUB_BD="$TMP/bd-stub"
-cat > "$STUB_BD" <<'EOF'
+LCBIN="$TMP/lcbin"; mkdir -p "$LCBIN"
+cat > "$LCBIN/spira-lc" <<'LCSTUB'
 #!/usr/bin/env bash
-id=""; skip_next=0
-for a in "$@"; do
-    if [ "$skip_next" = 1 ]; then skip_next=0; continue; fi
-    case "$a" in
-        -C)      skip_next=1 ;;
-        show)    ;;
-        -*)      ;;
-        *)       id="$a" ;;
-    esac
-done
-if [ "$id" = tst-unknown ] && [ "${SPIRA_TEST_BD_FAIL_UNKNOWN:-0}" = 1 ]; then
-    printf 'bd-stub: simulated store failure\n' >&2
-    exit 1
+[ "${1:-}" = state ] || exit 2
+id="${2:-}"
+if [ "$id" = tst-unknown ] && [ "${SPIRA_TEST_LC_FAIL_UNKNOWN:-0}" = 1 ]; then
+    printf 'lc-stub: simulated machine failure\n' >&2
+    exit 2
 fi
 case "$id" in
-    tst-held|tst-empty|tst-r2held) printf '[{"id":"%s","status":"closed"}]\n' "$id" ;;
-    *)                             printf '[]\n' ;;
+    tst-held|tst-empty|tst-r2held) printf 'WORKING\n' ;;
+    *)                             exit 1 ;;
 esac
-EOF
-chmod +x "$STUB_BD"
-export SPIRA_BD="$STUB_BD"
+LCSTUB
+chmod +x "$LCBIN/spira-lc"
+export PATH="$LCBIN:$PATH"
 
 # ---------------------------------------------------------------------------
 # Build a no-remote fixture git repo with three kinds of spira/* branches.
@@ -104,7 +96,7 @@ git -C "$REPO" checkout -q -b spira/tst-orphan
 git -C "$REPO" commit --allow-empty -m "orphan work"
 git -C "$REPO" checkout -q "$BASE_BR"
 
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 # Six-column row: name | path | land | base | format | gate
 printf 'fixture | %s | hold | | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
@@ -184,9 +176,9 @@ nowant "named arg excludes the other repo's name"   "fixture2"          "$tbl_na
 nowant "named arg excludes the other repo's branch" "spira/tst-r2held"  "$tbl_named"
 
 # ===========================================================================
-# SECTION 5 — bd unreadable: UNKNOWN, never ORPHAN, exit non-zero (sp-f84wv).
+# SECTION 5 — lifecycle machine unreadable: UNKNOWN, never ORPHAN, exit non-zero (sp-f84wv).
 # ===========================================================================
-printf '\nbd unreadable -> UNKNOWN, never ORPHAN, exit non-zero:\n'
+printf '\nlifecycle machine unreadable -> UNKNOWN, never ORPHAN, exit non-zero:\n'
 
 git -C "$REPO" checkout -q -b spira/tst-unknown
 git -C "$REPO" commit --allow-empty -m "unknown work"
@@ -196,15 +188,15 @@ git -C "$REPO" checkout -q "$BASE_BR"
 # legitimately ORPHAN — proving the matcher can tell "gone" from "unreadable" apart
 # (law-absence-needs-a-positive-control).
 baseline_line="$(held.sh fixture 2>&1 | grep 'tst-unknown')"
-want "tst-unknown is ORPHAN when bd works and the bead is absent" "ORPHAN" "$baseline_line"
+want "tst-unknown is ORPHAN when the machine works and the bead is absent" "ORPHAN" "$baseline_line"
 
-unk_tbl="$(SPIRA_TEST_BD_FAIL_UNKNOWN=1 held.sh fixture 2>&1)"; unk_rc=$?
-if [ "$unk_rc" -ne 0 ]; then ok "held.sh exits non-zero when bd is unreadable"
-else bad "held.sh exits non-zero when bd is unreadable: got exit 0"; fi
+unk_tbl="$(SPIRA_TEST_LC_FAIL_UNKNOWN=1 held.sh fixture 2>&1)"; unk_rc=$?
+if [ "$unk_rc" -ne 0 ]; then ok "held.sh exits non-zero when the lifecycle machine is unreadable"
+else bad "held.sh exits non-zero when the lifecycle machine is unreadable: got exit 0"; fi
 
 unk_line="$(printf '%s\n' "$unk_tbl" | grep 'tst-unknown')"
-want   "tst-unknown row shows UNKNOWN when bd fails"          "UNKNOWN" "$unk_line"
-nowant "tst-unknown row is never reported ORPHAN when bd fails" "ORPHAN" "$unk_line"
-want "table names the unknown count" "unknown — bd could not be read" "$unk_tbl"
+want   "tst-unknown row shows UNKNOWN when the machine fails"          "UNKNOWN" "$unk_line"
+nowant "tst-unknown row is never reported ORPHAN when the machine fails" "ORPHAN" "$unk_line"
+want "table names the unknown count" "unknown — lifecycle machine could not be read" "$unk_tbl"
 
 tl_summary

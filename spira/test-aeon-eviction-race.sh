@@ -53,12 +53,15 @@ testdb_up aeonevictionrace || {
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+# round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
+# fixture declares its own /fixture/userhome/.../chamber. Declare this suite's real one.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
 # own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
@@ -67,8 +70,15 @@ cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
+# round 2 fix: the complete fixture now declares scope_label="spira" as its base value, so
+# builder.fayth's FAYTH_LABELS (resolved against aeon's real config, not this shell's unset
+# $SPIRA_SCOPE_LABEL) would require a "spira" label the seeded beads below never carry —
+# nothing would ever be ready to claim. Declare the empty scope this suite has always meant.
+tl_config SPIRA_SCOPE_LABEL=""
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
@@ -79,6 +89,7 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$SPIRA_AGENT"
 # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
 aeon_fixture_agent "$BIN/claude"
 command -v aeon >/dev/null 2>&1 \
@@ -93,18 +104,18 @@ export PATH="$BIN:$PATH"
 # The shim commits, records a batch-ejected REWORK row at the real (post-commit) tip, then
 # closes — reproducing the original race: the eviction is recorded, then the in-flight aeon
 # closes the bead anyway.
-cat > "$BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
+{ printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
 cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
 tip="$(git rev-parse HEAD)"
-mkdir -p "$SPIRA_RUN/lc-row"; printf 'REWORK batch-ejected %s\n' "$tip" > "$SPIRA_RUN/lc-row/$id"
+mkdir -p "$RUN_DIR/lc-row"; printf 'REWORK batch-ejected %s\n' "$tip" > "$RUN_DIR/lc-row/$id"
 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
 SHIM
+} > "$BIN/claude"
 chmod +x "$BIN/claude"
 
 seed() {
@@ -113,10 +124,10 @@ seed() {
         "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
-field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+field() { timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
-notes() { bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
+notes() { timeout 5 bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
 
 # THE RACE IS GONE WITH bd STATUS (sp-mve9i, design §3.4). The aeon reads its bead's close
 # from the lifecycle row, never bd status. An evicted builder's bd close is inert: the row

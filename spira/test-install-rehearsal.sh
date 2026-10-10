@@ -82,7 +82,7 @@ ok "user systemd running (probe exits 0)"
 # not polluted.
 # ---------------------------------------------------------------------------
 SPIRA_RUN_CTR="/tmp/spira-reh"
-CEXEC=(podman exec --user spirauser
+CEXEC=(timeout 5 podman exec --user spirauser
     -e XDG_RUNTIME_DIR=/run/user/1001
     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus"
     -e "PATH=${STUBS_CTR}:/tmp/spira-prod/bin:/tmp/spira-prod/spira:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -155,6 +155,14 @@ done
 " >&2
 iszero "stubs created inside container" "$?"
 
+# The tree's own spira-config, staged as the fake release's bin/spira-config: the image
+# carries none (testenv/Containerfile removes it), and conf.sh fails closed without it.
+_sc="$(command -v spira-config 2>/dev/null || true)"
+[ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
+timeout 5 podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 \
+    && timeout 5 podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
+iszero "the tree's spira-config is staged in the container's release bin/" "$?"
+
 # ===========================================================================
 echo
 echo "configure — non-interactive spira.conf bootstrap:"
@@ -172,6 +180,19 @@ echo "configure — non-interactive spira.conf bootstrap:"
     "$CNAME" bash /workspace/spira/configure.sh >&2
 iszero "configure.sh exits 0" "$?"
 
+# configure.sh and ready.sh run before install puts the release's bin/ on PATH: they must
+# find spira-config in their own release tree. PATH here holds no Spira directory at all.
+"${CEXEC[@]}" \
+    -e "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    -e "CONFIGURE_OUT=/tmp/spira-reh-nopath.conf" \
+    -e "CONFIGURE_PROD=/tmp/spira-prod/spira" \
+    -e "CONFIGURE_MAX_AEONS=1" \
+    -e "CONFIGURE_MAX_LIVE_AEONS=1" \
+    -e "CONFIGURE_LOOM_ADDR=127.0.0.1:7300" \
+    -e "CONFIGURE_DOLT_DATA=" \
+    "$CNAME" bash /tmp/spira-prod/spira/configure.sh >&2
+iszero "configure.sh exits 0 with a PATH lacking the release bin" "$?"
+
 # ===========================================================================
 echo
 echo "stage spira-install (sp-31dm0: systemd/install.sh is retired; it is a compiled binary now):"
@@ -181,8 +202,15 @@ echo "stage spira-install (sp-31dm0: systemd/install.sh is retired; it is a comp
 _si="$(command -v spira-install 2>/dev/null || true)"
 [ -n "$_si" ] || bail "spira-install is not on PATH (the tree's build provides it)"
 INSTALL_BIN="/tmp/spira-install"
+# batch-job: copying the staged installer into the rehearsal container and marking it executable
 podman cp "$_si" "$CNAME:$INSTALL_BIN" >&2 && podman exec "$CNAME" chmod 0755 "$INSTALL_BIN" >&2
 iszero "the tree's spira-install is staged in the container" "$?"
+
+_sc="$(command -v spira-config 2>/dev/null || true)"
+[ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
+# batch-job: staging the tree's spira-config into the fake release bin/ conf.sh resolves through
+podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 && podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
+iszero "the tree's spira-config is staged in the container's release bin/" "$?"
 
 # Create the fake database marker. The .beads directory satisfies directory-existence
 # checks in ready.sh ("database absent — no .beads") and seed.sh without requiring

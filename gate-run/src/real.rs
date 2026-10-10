@@ -6,7 +6,6 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Real {
     pub home: PathBuf,
@@ -36,7 +35,7 @@ impl Real {
 
 impl World for Real {
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String> {
-        let o = Command::new("git")
+        let o = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(repo)
             .arg("rev-parse")
@@ -98,7 +97,7 @@ impl World for Real {
     }
 
     fn now(&self) -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+        spira_config::vtime::now_epoch()
     }
 
     fn sleep(&self, secs: u64) {
@@ -165,12 +164,14 @@ impl World for Real {
 
     fn spawn_detached(&self, branch: &str, repo_name: &str) {
         let exe = self.exe();
-        let use_setsid = Command::new("sh").arg("-c").arg("command -v setsid").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        let use_setsid = spira_config::bounded::bounded("sh").arg("-c").arg("command -v setsid").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         let mut c = if use_setsid {
+            // batch-job: setsid runs for as long as its work does
             let mut c = Command::new("setsid");
             c.arg(&exe);
             c
         } else {
+            // batch-job: this runs whatever its caller names, as long as that takes
             Command::new(&exe)
         };
         c.arg("--home").arg(&self.home).arg("--exec").arg(branch).arg(repo_name);
@@ -190,6 +191,7 @@ impl World for Real {
             Err(_) => return 1,
         };
         // gate.sh by name on the launcher's PATH (sp-gypjk).
+        // batch-job: this runs whatever its caller names, as long as that takes
         let status = Command::new("gate.sh")
             .arg(branch)
             .arg(repo_name)
@@ -207,5 +209,17 @@ impl World for Real {
     fn print(&self, s: &str) {
         print!("{s}");
         let _ = std::io::stdout().flush();
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::World;
+
+    #[test]
+    fn world_now_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || Real::new(std::path::PathBuf::from("/nonexistent")).now());
+        assert_eq!(got, 1_900_000_000);
     }
 }

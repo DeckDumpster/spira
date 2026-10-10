@@ -30,8 +30,10 @@ means the same thing.
 | `round-vm teardown` | — | 0; stops the mirror daemon for the state dir (nothing running is success) |
 | `round-vm acquire` | `<handle> <addr> <warm\|cold>` | 0 success; 1 gave up (only when `SPIRA_ROUND_VM_MAX_RETRIES` > 0) |
 | `round-vm release <handle>` | nothing | 0 destroyed and verified gone; 1 failed; 2 usage |
-| `round-vm run <tree-dir> [--suites CSV] [--maxpar N] [--toolchain V] [--results-dir D]` | the remote batch's own output | see 2.2 |
+| `round-vm run <tree-dir> [--suites CSV; absent = whole corpus, longest recorded median first, unrecorded first with an alarm] [--maxpar N] [--toolchain V] [--results-dir D] [--base REF]` | the remote batch's own output | see 2.2 |
 | `round-vm status` | exactly three lines: `ready: <handle> <addr>\|none`, `provisioning: pid <pid>\|none`, `outage: <reason>\|none` | 0 |
+| `round-vm status --json` | the pool as recorded: `ready`, `provisioning`, `refreshing`, `outage`, `template`, `leases`, `doomed`, `vms` (state, since, age, reason) and the last 50 `events` | 0 |
+| `round-vm warm` | `spare: provisioning\|not needed` — starts the background provision when nothing is ready, in flight or refreshing | 0 |
 | `round-vm _provision-bg` | internal: the one background provision | 0 |
 | `round-vm template <tree-dir>` | `<new-template-vmid> <image-ref>` | 0 built, verified a template; 1 failed (the half-built VM destroyed, or named if it could not be); 2 usage/preflight |
 
@@ -93,11 +95,19 @@ code, because testenv had grown a second binary (`bd-meter`) and the remote `car
 testenv` could no longer choose one. Every remote `cargo run` names `--bin testenv`, and
 testenv declares `default-run`.
 
+**The lint step.** With `--base <ref>` the host mirrors that ref as `base`, and the VM runs the
+tree's own `spira-lint --base origin/base` before the suites. A hit makes the round red: a
+`spira-lint.result` (status `red`) and `spira-lint.out` land in the results beside the suites,
+each finding is printed as `member=<bead> <finding>` for the first member commit (first-parent
+walk of `base..HEAD`) whose diff touches the file — `the base itself` when none does — and the
+step's wall time is reported as `LINT: <n>s of the 900s cap`. Without `--base` no lint runs.
+`queue round certify` and `batcher-cut` both pass it.
+
 ### 2.2a `run --attr-spool <dir>` — streaming and attribution reruns (sp-hvtgs)
 
 The batcher attributes a red round **while its corpus runs** (batcher-cut DESIGN.md §4). Two
-additions to `run`, both active only when `--attr-spool <dir>` is given; without it `run` is
-unchanged.
+additions to `run`; streaming (1) runs on every `run`, so a run killed by a wall cap keeps every
+verdict already produced — the spool (2) is active only when `--attr-spool <dir>` is given.
 
 1. **Streaming.** While the remote batch runs, every `SPIRA_ROUND_VM_STREAM_SECS` (default 10)
    `run` pulls `round-work/.runtime/spira/batch-results/` and copies each suite's `.out` and then
@@ -160,7 +170,11 @@ nothing. Otherwise it builds a template as above, then — in this order — wri
 ready VM and any provision in flight were cloned from the old template; leased VMs finish).
 `round-vm run` reads `template.json` before acquiring a VM and exits 3 `TEMPLATE-STALE` when
 the recorded image is not the tree's; a record for a template `pve.env` no longer names is
-ignored. The VM-side `IMAGE-ABSENT` check remains the backstop. Every run reports
+ignored. A tree whose image the template does not hold is not refused: `run` declares the
+build (the recorded template names another tag, or with no record the `--base` ref's tag
+differs from the head's), passes it to the VM as the tenth script argument, and the VM runs
+`testenv container image` inside setup (`IMAGE-BUILD`, counted in `setup Ns`, not the suites).
+An undeclared absent image is still refused by the VM-side `IMAGE-ABSENT` check. Every run reports
 `setup Ns, suites Ns` and `SETUP-SLOW` past `SPIRA_ROUND_VM_SETUP_ALARM_SECS` (default 180: a
 healthy warm round measured 108 s of setup, a cold image build 1314 s).
 
@@ -206,6 +220,22 @@ healthy warm round measured 108 s of setup, a cold image build 1314 s).
 the VM already holds the round's tag (`testenv container tag`, from the staged release), and says so on the round's stderr either way:
 `round-vm: template image: <ref> present` or `... absent — this round builds it; refresh
 the template with round-vm template`.
+
+### 2.6 Spill to EC2
+
+A pass runs on EC2 instead of the local pool when `SPIRA_ROUND_VM_SPILL=ec2` and either the
+pass has waited `SPIRA_ROUND_VM_SPILL_WAIT_SECS` (30) without a local lease, or this box's
+`/proc/pressure/io` `full avg60` is above `SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60` (30). An unreadable
+pressure never spills; a spill that fails falls back to local for that acquire. The lease event
+records the provider and the reason (`spilled to ec2: ...`, `provider: proxmox`), and the manifest
+carries `provider`. A spilled pass is not the pool of one (G1): it is recorded in `spilled` before
+its instance exists and leased on success, so G2 holds. It starts no local background provision.
+
+Keys (round-vm's own, read from the environment): `SPIRA_ROUND_VM_EC2_PROFILE`, `_REGION`, `_AMI`,
+`_INSTANCE_TYPE` (c6i.8xlarge), `_SUBNET`, `_SECURITY_GROUP`, `_INSTANCE_PROFILE` (SSM),
+`_TAILSCALE_KEY_FILE`, `_HOST_ADDR` (this host's tailnet address, handed to the instance as the
+mirror and cache address), `_RUN_DEADLINE` (7200 s), `_BOOT_TRIES`. The provider refuses to
+start naming what is missing; the pool then stays local and says so.
 
 ### 2.3 Guarantees
 
@@ -285,7 +315,7 @@ pub struct Config {
     pub host_pubkey: PathBuf,        // SPIRA_ROUND_VM_HOST_PUBKEY / round_vm_host_pubkey/ <host_key>.pub
     pub host_addr: Option<String>,   // SPIRA_ROUND_VM_HOST_ADDR   / round_vm_host_addr
     pub vcpus: u32,                  // SPIRA_ROUND_VM_VCPUS       / round_vm_vcpus      / 16
-    pub maxpar: u32,                 // SPIRA_ROUND_VM_MAXPAR      / round_vm_maxpar     / 16
+    pub maxpar: u32,                 // SPIRA_ROUND_VM_MAXPAR      / round_vm_maxpar     / empty = vcpus
     pub retry_interval: Duration,    // SPIRA_ROUND_VM_RETRY_INTERVAL / round_vm_retry_interval / 60 s
     pub max_retries: u32,            // SPIRA_ROUND_VM_MAX_RETRIES / round_vm_max_retries/ 0 = forever
     pub acquire_deadline: Duration,  // SPIRA_ROUND_VM_ACQUIRE_DEADLINE secs / 3600; 0 = forever (env only)
@@ -330,6 +360,17 @@ pub struct Outage { pub reason: String, pub since: u64 }
 pub struct ProcId { pub pid: u32, pub start: u64 }
 ```
 
+#### Pool events
+
+Each VM moves provisioning → ready → leased → released / doomed → destroyed (`machine.rs`);
+a provision that fails after its clone goes provisioning → doomed or destroyed. Every move is
+a `PoolEvent{vm, to, reason, at}` in `PoolState.events`, bounded by dropping destroyed VMs'
+history first. A move the table does not allow is refused, naming the VM's state, and writes
+nothing. A pool file from before events existed is given an `adopted` history on first read.
+`status --json` reads the events back; no operator-facing tool reads the files (lint rule
+`pool-state-readers`). Moving the events into the lifecycle store waits on the write-path
+measurement (item 9 of the state-machines design); the table and the reader are what move.
+
 ### 3.3 Provider seam
 
 ```rust
@@ -369,6 +410,19 @@ insecure fallback. Responses it reads, each wrapped in `{"data": ...}`:
 | `POST .../agent/file-write` | `null` |
 | `POST .../status/shutdown`, `POST .../template` | a task UPID string (or `null`) |
 | `GET .../qemu/<id>/config` | `{"template": 1, ...}` (absent when not a template) |
+
+### 3.5 EC2 provider
+
+`ec2.rs` implements the seam over an `Ec2Api` (the `aws` CLI under a named profile in
+production, an in-memory account in tests). A handle is `ec2-...`; `route.rs` sends every call
+for such a handle to it and everything else to the local provider, so provision, key delivery
+and verified destroy are the same code for both. Every instance carries tag `spira-round-vm=<handle>`
+and `Name=round-<handle>`; instances are found only through the tag, so an untagged instance
+cannot be addressed (G4), and `destroy` refuses a tagged instance whose name is not ours. The
+instance joins the tailnet from user-data (ephemeral, `tag:round-vm`); its address is the online
+tailnet peer of that name. Keys and commands go through SSM, which also diagnoses an instance that
+never reached the tailnet before it is destroyed. The leak reaper (`Provider::stale`, run at the start of
+every acquire) destroys any tagged instance older than the run deadline.
 
 ### 3.4 Round result (`<state>/manifests/<tree-sha>.json`)
 

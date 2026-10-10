@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cockpit_ops::health::frame::{render, FrameInputs};
 use cockpit_ops::health::model::Snapshot;
-use cockpit_ops::health::sections::{DrainState, HaltState};
+use cockpit_ops::health::sections::{refusal_lines, sentinel_timer_active, DrainState, HaltState};
 
 const HELP: &str = "usage: health [once [rows [cols]]|render-many <dir> [rows [cols]]|loop]";
 
@@ -59,30 +59,19 @@ fn read_snapshot(path: &Path) -> (String, bool) {
     }
 }
 
-/// `spira_unit sentinel timer` then `systemctl --user is-active <unit>`, best-effort: tries
-/// the per-instance unit name first (`sentinel-<instance>.timer`), falling back to the plain
-/// name — `conf.sh`'s own `spira_unit` helper is out of this bead's scope (group 4, last),
-/// so this is a deliberately narrower reimplementation of just the one call site needs. See
-/// `../DESIGN.md` Decisions.
 fn sentinel_active() -> Option<bool> {
-    let instance = env_nonempty("SPIRA_INSTANCE");
-    let mut candidates = Vec::new();
-    if let Some(i) = &instance {
-        if i != "prod" {
-            candidates.push(format!("spira-sentinel-{i}.timer"));
-        }
-    }
-    candidates.push("spira-sentinel.timer".to_string());
+    let instance = spira_config::process::cfg("SPIRA_INSTANCE").unwrap_or_default();
     let systemctl = env_nonempty("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string());
-    for unit in candidates {
-        if let Ok(out) = Command::new(&systemctl).args(["--user", "is-active", &unit]).output() {
-            let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !state.is_empty() {
-                return Some(state == "active");
-            }
-        }
-    }
-    None
+    let run = |verb: &str, unit: &str| {
+        spira_config::bounded::bounded(&systemctl).args(["--user", verb, unit]).output().ok()
+    };
+    sentinel_timer_active(&instance, |unit| {
+        let enabled = run("is-enabled", unit).is_some_and(|o| o.status.success());
+        let text = run("is-active", unit)
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        (enabled, text)
+    })
 }
 
 fn gather_halt(run: &str) -> HaltState {
@@ -111,33 +100,17 @@ fn gather_drain(run: &str) -> DrainState {
     DrainState { stamp_mtime: mtime }
 }
 
-/// Aeons genuinely live right now, from `/proc` (cheap, exact — the snapshot can be up to
-/// 120s stale, so a short-lived aeon can start and finish inside one collector pass and read
-/// as absent for its whole life without this).
-fn live_aeon_n(run: &str) -> i64 {
-    let mut n = 0i64;
-    let Ok(rd) = std::fs::read_dir(run) else { return 0 };
-    for ent in rd.flatten() {
-        let name = ent.file_name();
-        let name = name.to_string_lossy();
-        if !(name.starts_with("aeon-") && name.ends_with(".pid")) {
-            continue;
-        }
-        let Ok(pid_s) = std::fs::read_to_string(ent.path()) else { continue };
-        let Ok(pid) = pid_s.trim().parse::<i32>() else { continue };
-        let Some(argv) = cockpit_ops::procfs::cmdline(pid) else { continue };
-        let joined = argv.join(" ");
-        if joined.contains("aeon.sh") || joined.split('/').next_back().map(|b| b == "aeon" || b.starts_with("aeon ")).unwrap_or(false) || joined.contains("/aeon ") || joined.ends_with("/aeon") {
-            n += 1;
-        }
-    }
-    n
+/// The WORKING rows of the lifecycle store with their phase: an aeon's presence and place in
+/// its run are the machine's read, never a pidfile or a `/proc` entry.
+fn working_rows() -> Option<Vec<(String, String)>> {
+    let rows = spira_config::lc_state::list_state_with(&cockpit_ops::db::lc_bin(), "WORKING").ok()?;
+    Some(rows.into_iter().map(|r| (r.bead_id, r.phase.unwrap_or_else(|| "?".to_string()))).collect())
 }
 
 fn renderer_rev() -> String {
     let Some(release) = env_nonempty("SPIRA_RELEASE") else { return String::new() };
     let dir = Path::new(&release).join("cockpit");
-    Command::new("git")
+    spira_config::bounded::bounded("git")
         .args(["-C"])
         .arg(&dir)
         .args(["rev-parse", "--short", "HEAD"])
@@ -154,7 +127,7 @@ fn renderer_rev() -> String {
 /// a reader can legitimately disagree. Only meaningful (and only called) when the
 /// snapshot is absent at `run`; mirrors `snap_absent_banner`'s own probe exactly.
 fn mismatch_alt(run: &str) -> Option<String> {
-    let instance = env_nonempty("SPIRA_INSTANCE").unwrap_or_else(|| "prod".to_string());
+    let instance = spira_config::process::cfg("SPIRA_INSTANCE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "prod".to_string());
     let inst_sfx = if instance == "prod" { String::new() } else { format!("-{instance}") };
     let mut alts = Vec::new();
     if let Some(repo) = env_nonempty("SPIRA_REPO") {
@@ -181,13 +154,13 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
     let now = now_epoch();
     let age_secs = snap.get("SP_AT").and_then(|v| v.parse::<i64>().ok()).map(|at| now - at);
     let hhmm = {
-        let out = Command::new("date").arg("+%H:%M").output().ok();
+        let out = spira_config::bounded::bounded("date").arg("+%H:%M").output().ok();
         out.filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default()
     };
-    let snap_stale_s = env_nonempty("SPIRA_SNAP_STALE_S").and_then(|s| s.parse().ok()).unwrap_or(60);
-    let trace_lines = env_nonempty("SPIRA_COCKPIT_TRACE_LINES").and_then(|s| s.parse().ok()).unwrap_or(2);
+    let snap_stale_s = spira_config::process::cfg_parse::<i64>("SPIRA_SNAP_STALE_S").unwrap_or(60);
+    let trace_lines = spira_config::process::cfg_parse::<i64>("COCKPIT_TRACE_LINES").unwrap_or(2);
 
     let inputs = FrameInputs {
         // 'static is a lie we immediately own up to: content is leaked intentionally for the
@@ -199,7 +172,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
         hhmm,
         age_secs,
         snap_stale_s,
-        live_aeon_n: live_aeon_n(run),
+        working: working_rows(),
         trace_lines,
         halt: gather_halt(run),
         drain: gather_drain(run),
@@ -213,12 +186,21 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
     (inputs, content)
 }
 
-fn run_dir() -> String {
-    env_nonempty("SPIRA_RUN").unwrap_or_else(|| "/tmp/spira-run".to_string())
+fn run_dir() -> Result<String, String> {
+    spira_config::process::cfg("SPIRA_RUN").and_then(|s| {
+        if s.is_empty() {
+            Err("SPIRA_RUN is empty".to_string())
+        } else {
+            Ok(s)
+        }
+    })
 }
 
 fn do_render(rows: i64, cols: i64) -> Vec<String> {
-    let run = run_dir();
+    let run = match run_dir() {
+        Ok(r) => r,
+        Err(e) => return refusal_lines(&e),
+    };
     let (mut inputs, _content) = build_inputs(&run);
     inputs.cols = cols;
     render(rows, cols, &inputs)
@@ -290,7 +272,15 @@ fn main() {
                 }
                 let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                 println!("=== {stem} ===");
-                let run = run_dir();
+                let run = match run_dir() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        for line in refusal_lines(&e) {
+                            println!("{line}");
+                        }
+                        continue;
+                    }
+                };
                 let (mut inputs, _c) = build_inputs(&run);
                 let (content, exists) = read_snapshot(&path);
                 let frag_snap = Snapshot::parse(&content);
@@ -320,6 +310,7 @@ fn main() {
             install_sigwinch_handler();
             loop {
                 paint(&mut last_frame);
+                let config_failed = run_dir().is_err();
                 // Sleep in short slices rather than one flat `sleep(tick)`, so a resize
                 // (SIGWINCH) repaints within a fraction of a second instead of waiting out
                 // whatever is left of the current tick — belt-and-suspenders on top of the
@@ -334,8 +325,8 @@ fn main() {
                     std::thread::sleep(slice.min(target - waited));
                     waited += slice;
                 }
-                if !conf_file.is_empty() && conf_mtime(&conf_file) != conf_mtime_0 {
-                    eprintln!("health: config changed — restarting");
+                if config_failed || (!conf_file.is_empty() && conf_mtime(&conf_file) != conf_mtime_0) {
+                    eprintln!("health: config changed or unresolved — restarting");
                     let exe = std::env::current_exe().unwrap_or_else(|_| "health".into());
                     let _ = Command::new(exe).arg("loop").exec_replace();
                 }

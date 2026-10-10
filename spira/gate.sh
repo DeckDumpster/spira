@@ -29,7 +29,10 @@ case "${SPIRA_GATE_CAP_SECS:-}" in
     ''|*[!0-9]*) ;;
     *) [ "$SPIRA_GATE_CAP_SECS" -ge 1 ] && [ "$SPIRA_GATE_CAP_SECS" -lt 300 ] && GATE_CAP_SECS="$SPIRA_GATE_CAP_SECS" ;;
 esac
-timeout -k 10 "$GATE_CAP_SECS" gate --home "$(dirname "$0")" "$@" &
+# Idle I/O class and low CPU priority are inherited by every git/find/lint child, so gate
+# checkouts yield to production I/O instead of driving pressure stalls.
+fence=(); command -v ionice >/dev/null 2>&1 && fence+=(ionice -c3); command -v nice >/dev/null 2>&1 && fence+=(nice -n 10)
+timeout -k 10 "$GATE_CAP_SECS" "${fence[@]}" gate --home "$(dirname "$0")" "$@" &
 gate_pid=$!
 trap 'kill -TERM "$gate_pid" 2>/dev/null' TERM INT HUP
 rc=0

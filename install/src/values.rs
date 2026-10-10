@@ -40,6 +40,8 @@ pub struct HostValues {
     pub sccache_dav_addr: String,
     pub repo_map: String,
     pub lc_password_file: String,
+    /// The spec SPIRA_TOML names — the one source every rendered unit runs under.
+    pub toml: String,
 }
 
 impl HostValues {
@@ -55,6 +57,7 @@ impl HostValues {
         m.insert("SPIRA_DB".into(), self.db.clone());
         m.insert("SPIRA_REPO_MAP".into(), self.repo_map.clone());
         m.insert("SPIRA_LC_PASSWORD_FILE".into(), self.lc_password_file.clone());
+        m.insert("SPIRA_TOML".into(), self.toml.clone());
         m.insert("SPIRA_COCKPIT".into(), self.cockpit.clone());
         m.insert("SPIRA_DOLT_DATA".into(), self.dolt_data.clone());
         m.insert("SPIRA_SCCACHE_DAV_ADDR".into(), self.sccache_dav_addr.clone());
@@ -149,6 +152,7 @@ mod tests {
             watchtower_start_timeout_s: "360".into(),
             path_tail: "".into(),
             lc_password_file: "/h/lc.credential".into(),
+            toml: "/h/cfg.toml".into(),
             sccache_dav_addr: "".into(),
             repo_map: "".into(),
         }
@@ -165,7 +169,10 @@ mod tests {
         assert!(out.contains("\nExecStart=/h/bin/spira-lc serve %t/spira-lc/sock\n"), "{out}");
         assert!(out.contains("\nEnvironment=SPIRA_LC_SOCKET=%t/spira-lc/sock\n"));
         assert!(out.contains("\nEnvironment=SPIRA_LC_PASSWORD_FILE=/h/lc.credential\n"));
-        assert!(out.contains("\nRuntimeDirectory=spira-lc\n"));
+        assert!(out.contains("\nRequires=lc-serve.socket\n"));
+        assert!(!out.contains("RuntimeDirectory"), "the socket unit owns the runtime directory");
+        let sock = render_file(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/lc-serve.socket"), &hv(), None).unwrap();
+        assert!(sock.contains("\nListenStream=%t/spira-lc/sock\n"), "{sock}");
         for k in ["SPIRA_RELEASE=/h", "SPIRA_HOME=/h/spira", "SPIRA_REPO=/h", "SPIRA_DB=/db", "SPIRA_RUN=/run"] {
             assert!(out.contains(&format!("\nEnvironment={k}\n")), "{k}");
         }

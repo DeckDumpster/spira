@@ -18,6 +18,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 export SPIRA_NO_LOOP_LABEL="no-loop"
+tl_config SPIRA_NO_LOOP_LABEL="no-loop"
 
 echo "test-bead-lint.sh"
 
@@ -34,10 +35,25 @@ testdb_up bead_lint || { printf 'test-bead-lint: could not build fixture databas
 # status (sp-mve9i): this world's machine mirrors the store (open READY, closed LANDED).
 lc_mirror_bd "$TMP/lc"
 run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from ONE call
-    LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    # SPIRA_DB/SPIRA_BD/SPIRA_NO_LOOP_LABEL/SPIRA_ASK_LABEL are registered keys (per Ryan
+    # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
+    # which no process reads them from any more.
+    # round 3 fix: the complete fixture declares scope_label="spira" as its base value,
+    # so the partition check would require a bare "spira" label none of this suite's
+    # fixture beads carry (they use "repo:spira", a different label). Declare the empty
+    # scope this suite has always meant.
+    # round 4 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME even when
+    # SPIRA_HOME is the real repo — without it, bead lint's partition check cannot read
+    # chamber/*.fayth at all, so it never recognises a valid partition label.
+    # The incident-edge check (bead/src/main.rs::cfg_label) reads SPIRA_INCIDENT_LABEL, not
+    # SPIRA_ALARM_LABEL — that name was never a real key, even before the migration; pin it
+    # to a non-default so this proves the check reads the configured key, not a literal
+    # "incident".
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" SPIRA_SCOPE_LABEL="" \
+        SPIRA_CHAMBER="$HERE/chamber" SPIRA_INCIDENT_LABEL="incident-test"
+    LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" \
-        SPIRA_ALARM_LABEL="incident-test" \
         bead.sh lint "$@" 2>&1)"
     LINT_RC=$?
 }
@@ -110,9 +126,9 @@ echo "T4: a work bead blocks-dependent on an incident/alarm bead (sp-3bc6t, sp-i
 # ===========================================================================================
 # THE POSITIVE CONTROL IS FIRST: a plain work bead wired to block on an incident-labelled
 # bead — exactly the sp-pyowh/sp-kogm shape — must be caught before checking the shapes
-# that must pass it through. SPIRA_ALARM_LABEL is pinned to a non-default
+# that must pass it through. SPIRA_INCIDENT_LABEL is pinned to a non-default
 # ("incident-test") by run_lint so this proves the check reads the configured key rather
-# than a literal "alarm".
+# than a literal "incident".
 testdb_seed <<'JSONL'
 {"id":"sp-lint-inc-alarm","title":"recurring alarm","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-09-25T00:00:00Z"}
 {"id":"sp-lint-inc-work","title":"work bead wrongly blocked on the alarm","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-inc-work","depends_on_id":"sp-lint-inc-alarm","type":"blocks"}]}
@@ -135,5 +151,58 @@ wantrc "the alarm itself, with no outgoing blocks edge, passes alone" "0" "$LINT
 
 run_lint sp-lint-work-b
 wantrc "a work-onto-work blocks edge passes alone (positive control for the accept path)" "0" "$LINT_RC"
+
+# ===========================================================================================
+echo
+echo "T5: an incident whose open remedy is linked relates-to only (law-a-bug-with-a-fix-in-flight-depends-on-it)"
+# ===========================================================================================
+testdb_seed <<'JSONL'
+{"id":"sp-lint-rem-bad","title":"incident, remedy only related","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-bad","depends_on_id":"sp-lint-rem-fix1","type":"relates-to"}]}
+{"id":"sp-lint-rem-fix1","title":"remedy one","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-rem-good","title":"incident, remedy blocks","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-good","depends_on_id":"sp-lint-rem-fix2","type":"blocks"}]}
+{"id":"sp-lint-rem-fix2","title":"remedy two","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-rem-done","title":"incident, remedy landed","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-done","depends_on_id":"sp-lint-rem-fix3","type":"relates-to"}]}
+{"id":"sp-lint-rem-fix3","title":"remedy three, closed","status":"closed","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+JSONL
+
+run_lint sp-lint-rem-bad
+wantrc "relates-to-only open remedy exits 1" "1" "$LINT_RC"
+want   "relates-to-only open remedy is flagged" \
+       "sp-lint-rem-bad: open remedy sp-lint-rem-fix1 is linked relates-to only" "$LINT_OUT"
+
+run_lint sp-lint-rem-good
+wantrc "a blocks-linked open remedy passes" "0" "$LINT_RC"
+
+run_lint sp-lint-rem-done
+wantrc "a relates-to remedy that already closed passes" "0" "$LINT_RC"
+
+echo
+echo "T5b: filing a remedy under an incident adds the blocks edge in the same step"
+testdb_seed <<'JSONL'
+{"id":"sp-lint-fil-inc","title":"incident to remedy","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-fil-work","title":"ordinary parent","status":"open","issue_type":"task","labels":["spira","repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+JSONL
+
+printf 'harness | /tmp/harness | push | origin/main | | true | plan\n' > "$TMP/repos.tbl"
+file_under() {            # file_under <parent> -> FILE_OUT (new id), FILE_RC
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_CHAMBER="$HERE/chamber" SPIRA_INCIDENT_LABEL="incident-test" \
+        SPIRA_REPO_MAP="$TMP/repos.tbl"
+    FILE_OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_BEAD_LANE_OVERRIDE=1 \
+        bead.sh file "remedy for $1" --for builder --repo harness --parent "$1" 2>"$TMP/file.err")"
+    FILE_RC=$?
+}
+blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depends on
+    SPIRA_DB="$SPIRA_DB" timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" dep list "$1" --type blocks --json 2>/dev/null \
+        | python3 -c 'import json,sys; print(" ".join(d.get("depends_on_id") or d.get("id") for d in json.load(sys.stdin)))'
+}
+
+file_under sp-lint-fil-inc
+wantrc "filing a remedy under an incident exits 0" "0" "$FILE_RC"
+want   "the incident now blocks on the new remedy" "$(printf %s "$FILE_OUT" | head -n1)" "$(blocks_of sp-lint-fil-inc)"
+
+file_under sp-lint-fil-work
+wantrc "filing under an ordinary bead exits 0 (positive control)" "0" "$FILE_RC"
+is     "an ordinary parent gets no blocks edge" "" "$(blocks_of sp-lint-fil-work)"
 
 tl_summary

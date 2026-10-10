@@ -23,7 +23,7 @@
 #   SPIRA_INSTALL_DOLT_CLOSE_WAIT — max seconds to wait for port close (default 30)
 #
 # tier: T1
-# covers: install/src/bin/install.rs
+# covers: install/src/bin/install.rs UC-config-store-preflight-24
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -42,7 +42,7 @@ fi
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# Fixture layout (mirrors test-install-dolt-mode.sh).
+# Fixture layout (same skeleton as the other install suites).
 # ---------------------------------------------------------------------------
 . "$HERE/lib-test-install.sh"
 FIXTURE="$TMP/harness"
@@ -165,22 +165,21 @@ FAKE_RUN="$TMP/run"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN"
 
 # Pre-render units so the diff check passes.
+# SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA declared empty on purpose (not "use the default"; see
+# test-deploy-preflight-new-unit.sh).
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$FAKE_RUN" \
+    SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd"
 _rendered="$(env -i \
+    SPIRA_TOML="$SPIRA_TOML" \
     "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    "SPIRA_RUN=$FAKE_RUN" \
     "SPIRA_HOME=$SPIRA_DIR" \
-    "SPIRA_PROD=$SPIRA_DIR" \
     "SPIRA_REPO=$FAKE_REPO" \
-    "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
     SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
     SPIRA_INSTALL_AERC_CONSIDERED=1 \
-    "SPIRA_BD=$MOCK_BIN/bd" \
     units-install prod --render  2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
@@ -204,23 +203,35 @@ run_install() {
         install_args+=("$_a")
     done
     unset _a in_env
+    # SPIRA_DB is registered too (install's bootstrap.rs resolves it via cfg()) — the
+    # round-3 caveat's audit item.
+    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+        SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" \
+        SPIRA_BD="$MOCK_BIN/bd" SPIRA_DB="$FAKE_DB"
+    # A caller's extra_env assignment (SPIRA_DOLT_DATA=... / SPIRA_INSTALL_DOLT_WAIT=... at
+    # the call sites below) is routed to tl_config when it names a registered key, so it
+    # reaches spira-install through SPIRA_TOML; everything else still rides env -i.
+    local env_extra=() _kv _k
+    for _kv in "${extra_env[@]+"${extra_env[@]}"}"; do
+        _k="${_kv%%=*}"
+        if [ -f "$HERE/conf.d/$_k" ]; then
+            tl_config "$_kv"
+        else
+            env_extra+=("$_kv")
+        fi
+    done
+    unset _kv _k
     env -i \
+        SPIRA_TOML="$SPIRA_TOML" \
         "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-        "SPIRA_RUN=$FAKE_RUN" \
         "SPIRA_HOME=$SPIRA_DIR" \
-        "SPIRA_PROD=$SPIRA_DIR" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$COCKPIT_DIR" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
         SPIRA_INSTALL_AERC_CONSIDERED=1 \
-        "SPIRA_BD=$MOCK_BIN/bd" \
-        "SPIRA_DB=$FAKE_DB" \
-        "${extra_env[@]+"${extra_env[@]}"}" \
+        "${env_extra[@]+"${env_extra[@]}"}" \
         spira-install "${install_args[@]+"${install_args[@]}"}" 2>&1
 }
 
@@ -245,7 +256,7 @@ rm -rf "$FAKE_DB"; mkdir -p "$FAKE_DB"
 
 # A fresh db is needed so phase 3 runs bd init (which checks port open).
 # Start nc briefly so phase 3's bd init can proceed, then stop it so phase 4 times out.
-nc -lk "$_dolt_port" >/dev/null 2>&1 & _nc_init=$!
+nc -lk "$_dolt_port" >/dev/null 2>&1 & _nc_init=$! # batch-job: long-lived fixture listener, killed by the suite teardown
 sleep 0.1
 
 _timeout_out="$(run_install prod -- \
@@ -269,10 +280,10 @@ echo "2. PORT-OPEN WAIT — port opens within the window: reaches phase 7:"
 # nc starts after 3s. SPIRA_INSTALL_DOLT_WAIT=10 gives it room.
 rm -rf "$FAKE_DB"; mkdir -p "$FAKE_DB"
 
-nc -lk "$_dolt_port" >/dev/null 2>&1 & _nc_init2=$!
+nc -lk "$_dolt_port" >/dev/null 2>&1 & _nc_init2=$! # batch-job: long-lived fixture listener, killed by the suite teardown
 sleep 0.1
 
-{ sleep 3; nc -lk "$_dolt_port" >/dev/null 2>&1; } & _nc_delayed=$!
+{ sleep 3; nc -lk "$_dolt_port" >/dev/null 2>&1; } & _nc_delayed=$! # batch-job: long-lived fixture listener, killed by the suite teardown
 
 _wait_out="$(run_install prod -- \
     "SPIRA_DOLT_DATA=$_dolt_data" \
@@ -322,7 +333,7 @@ DOLTMOCK
 chmod +x "$MOCK_BIN/dolt"
 
 # After 2s the mock dolt's nc will have closed; start a new nc to simulate the unit.
-{ sleep 4; nc -lk "$_nc_port2" >/dev/null 2>&1; } & _nc_unit=$!
+{ sleep 4; nc -lk "$_nc_port2" >/dev/null 2>&1; } & _nc_unit=$! # batch-job: long-lived fixture listener, killed by the suite teardown
 
 _close_out="$(run_install prod -- \
     "SPIRA_DOLT_DATA=$_dolt_data" \

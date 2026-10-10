@@ -52,7 +52,7 @@ git init -q -b main "$REPO"
 printf 'base\n' > "$REPO/marker"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 
 # Two branches, each touching its own file — distinguishable in the tree at trial time.
 for i in 1 2; do
@@ -80,14 +80,26 @@ barrier_cmd() {
 BARDIR="$TMP/barrier"
 BARSECS=30
 
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_VERDICT_TTL=0
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
+    # Any caller override: a registered key goes to tl_config too; anything else (e.g. the
+    # non-registered SPIRA_GATE_LOG/SPIRA_GATE_LOCK_WAIT seams) stays a plain env assignment.
+    # NEVER called from here when two rungate calls race in parallel (this suite's own
+    # concurrent cases pass no registered-key override) — tl_config writes the ONE shared
+    # override file, and two concurrent writers to it would race/corrupt it.
+    local extra_env=() kv k
+    for kv in "$@"; do
+        k="${kv%%=*}"
+        if [ -f "$HERE/conf.d/$k" ]; then tl_config "$kv"; else extra_env+=("$kv"); fi
+    done
     env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
+        SPIRA_TOML="$SPIRA_TOML" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
-        SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
-        "$@" bash "$SH/gate.sh" "$br" repo
+        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" \
+        SPIRA_GATE_LOG="$GATELOG" \
+        SPIRA_VERDICTS="$VDIR" \
+        "${extra_env[@]}" bash "$SH/gate.sh" "$br" repo
 }
 
 # label_self_overlaps <label> <events-file> — 0 (true) iff two START/END windows recorded
@@ -143,6 +155,14 @@ is "neither gate observed the other's branch" "" "$crossed"
 # --------------------------------------------------------------------------------------
 : > "$EVENTS"  # fresh: case 1's spira/sp-t1 window must not be mistaken for one of this pair
 GATELOG1B="$TMP/gate1b.log"
+# The complete fixture declares gate_lock_wait="0" (spira-config/tests/fixtures/complete.toml),
+# where conf.sh's old unset-env read resolved empty and fell back to 4x the gate timeout
+# (engine.rs's lock_wait default). A registered 0 now wins outright, so the waiter refuses
+# with lock-timeout after 0s instead of actually waiting out gate1's ~GATE_SECS hold — declare
+# a real wait window for this suite's own genuine contention (one source of config, per Ryan
+# 2026-10-05). Set once, sequentially, before the two concurrent calls below (never from
+# inside a parallel rungate: tl_config writes the one shared override file).
+tl_config SPIRA_GATE_LOCK_WAIT=10
 ( rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b1.out" 2>&1; echo $? > "$TMP/g1b1.rc" ) &
 ( rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b2.out" 2>&1; echo $? > "$TMP/g1b2.rc" ) &
 wait

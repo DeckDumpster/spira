@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tier: T1
 # requires: testenv
-# covers: spira/suite-state-fence.sh testenv/src/suites/* UC-safety-fences-28
+# covers: spira/suite-state-fence.sh testenv/src/suites/* UC-safety-fences-28 UC-test-infrastructure-32
 #
 # suite-state-fence.sh's own logic — everything that was never suite-state.sh's
 # (sp-9gd4e). The parse/lint structural cases (missing reason, bead-less quarantine,

@@ -44,9 +44,9 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" remote set-head origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
@@ -58,9 +58,8 @@ stub gh 'exit 1'
 printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$REPONAME" "$REPO" push main '' '' > "$SH/repo-map"
 
 in_fixture() {
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map"
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
         "$@"
 }
 
@@ -78,9 +77,8 @@ chmod +x "$SH/spira-lc"
 lc_socket_mirror "$TMP/lcsock"
 
 sending() {
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map"
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
         command sending --no-fetch 2>&1
 }
 
@@ -133,8 +131,8 @@ git -C "$REPO" add sp-keep.txt
 git -C "$REPO" commit -q -m "sp-keep: real work"
 git -C "$REPO" checkout -q main
 
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 
 # ---------------------------------------------------------------------------
 # Bead database seed. Note: bd import uses "type" for dependency kinds.
@@ -172,7 +170,7 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "All shapes in one pass:"
-out="$(sending)"
+out="$(sending --all 2>&1)"
 printf '%s\n' "$out" >&2
 
 # Shape A

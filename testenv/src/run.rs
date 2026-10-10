@@ -2,17 +2,19 @@
 //! cache, build, stand up the container, install, run, record, judge, tear down. Every exit
 //! goes through [`Finish`], which is printed as the final `VERDICT` line.
 
+use std::process::Command;
 use spira_config::admission;
 use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
 use crate::cli::{Invocation, RunArgs, SuitesArg};
 use crate::fixture::{Fixtures, Session, SetupFault, WORKSPACE};
+use crate::phase::{RunEvent, RunLog};
 use crate::prebuilt::{self, Prebuilt};
 use crate::record::{suite_line, Mode, Producer, ResultRecord, Status};
 use crate::runtime::{cancelled, ContainerRuntime, RC_DEADLINE};
 use crate::schedule::{self, Job, MaxparInputs};
 use crate::selection;
-use crate::settings::{Settings, Source};
+use crate::settings::Settings;
 use crate::skipgate::{self, SkipGate};
 use crate::suite::{SuiteHeaders, SuiteState, SuiteStates};
 use crate::timing::{self, RoundPhaseRow, SuiteTimingRow};
@@ -27,7 +29,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// How a run ended; rendered as the last stdout line.
@@ -83,6 +85,15 @@ impl Finish {
             selected_none: true,
             deferred: None,
             skipped: 0,
+        }
+    }
+
+    /// The verdict word and, for a fault, its reason: what the run's event record keeps.
+    pub fn verdict_parts(&self) -> (String, String) {
+        match self.rc {
+            0 => ("GREEN".into(), "-".into()),
+            1 => ("RED".into(), "-".into()),
+            _ => ("FAULT".into(), self.reason.unwrap_or("harness").into()),
         }
     }
 
@@ -164,6 +175,11 @@ pub struct Deps<'a> {
     pub harness: Harness,
     pub env: &'a dyn Fn(&str) -> Option<String>,
     pub config: Option<&'a SpiraToml>,
+    /// Loaded once at the true top level (`main`), per Ryan 2026-10-05: one source of
+    /// config. Pure logic (`run`, `report`, `warm_refill`, `warm_sweep`, ...) reads this
+    /// field, never the environment or `spira_config::process::cfg` directly — which is
+    /// what lets a test drive it per-case with a plain struct literal.
+    pub settings: Settings,
     pub stdin: &'a dyn Fn() -> String,
     /// Every stdout line (logs, per-suite lines, helper output, the VERDICT).
     pub out: &'a (dyn Fn(&str) + Sync),
@@ -208,16 +224,8 @@ pub fn execute(inv: Invocation, deps: &Deps) -> i32 {
     }
 }
 
-fn settings(deps: &Deps) -> Settings {
-    let src = Source {
-        env: deps.env,
-        config: deps.config,
-    };
-    Settings::load(&src, &deps.harness.root, now_epoch())
-}
-
 fn report(n: usize, deps: &Deps) -> i32 {
-    let s = settings(deps);
+    let s = deps.settings.clone();
     let text =
         fs::read_to_string(tsd::family_path(&s.run, timing::SUITE_TIMING)).unwrap_or_default();
     let meds = timing::suite_medians(&text, n.max(1));
@@ -308,6 +316,17 @@ fn verified(repo: &Path, r: &str) -> bool {
 /// spira_landref's rungs: declared base, origin/HEAD, ask the remote once, the local HEAD
 /// branch of a remote-less repository.
 fn landref(repo: &RepoRef, deps: &Deps) -> Option<String> {
+    landref_configured(repo, deps).or_else(|| {
+        let has_cfg = deps
+            .config
+            .and_then(|c| c.repo.get(&repo.name))
+            .and_then(|r| r.base.as_ref())
+            .is_some_and(|b| !b.is_empty());
+        (!has_cfg && verified(&repo.path, "local/main")).then(|| "local/main".to_string())
+    })
+}
+
+fn landref_configured(repo: &RepoRef, deps: &Deps) -> Option<String> {
     if let Some(base) = deps
         .config
         .and_then(|c| c.repo.get(&repo.name))
@@ -362,6 +381,7 @@ fn helper(
     if !script.is_file() {
         return None;
     }
+    // batch-job: part of a testenv trial, which is bounded by the trial deadline, not per call
     let mut cmd = Command::new("bash");
 cmd.envs(spira_config::release_env::child_path_env_for_process());
     cmd.arg(script).args(args).stderr(Stdio::inherit());
@@ -391,6 +411,7 @@ fn helper_bin(bin: &Path, args: &[&str], extra_env: &[(&str, String)]) -> Option
     if !bin.is_file() {
         return None;
     }
+    // batch-job: part of a testenv trial, which is bounded by the trial deadline, not per call
     let mut cmd = Command::new(bin);
     cmd.args(args).stderr(Stdio::inherit());
     for (k, v) in extra_env {
@@ -518,6 +539,7 @@ fn sweep_orphans(s: &Settings, deps: &Deps) {
 
 /// podman's StartedAt (`2026-09-28 12:34:56.123 +0000 UTC`), via `date -d` as the script did.
 fn parse_started_at(s: &str) -> Option<u64> {
+    // batch-job: part of a testenv trial, which is bounded by the trial deadline, not per call
     let o = Command::new("date")
         .args(["-d", s, "+%s"])
         .stderr(Stdio::null())
@@ -550,6 +572,7 @@ fn write_meta(results: &Path, name: &str, pairs: &[(&str, String)]) {
 struct Phases {
     last: Instant,
     done: Vec<(&'static str, f64)>,
+    log: Option<RunLog>,
 }
 
 impl Phases {
@@ -557,6 +580,20 @@ impl Phases {
         Phases {
             last: start,
             done: Vec::new(),
+            log: None,
+        }
+    }
+    /// Starts the run's event record and replays the phases closed before it had a place.
+    fn attach(&mut self, results: &Path) {
+        let log = RunLog::begin(results);
+        for (n, _) in &self.done {
+            note(log.record(RunEvent::Phase { name: (*n).into() }, now_epoch()));
+        }
+        self.log = Some(log);
+    }
+    fn record(&self, name: &str) {
+        if let Some(l) = &self.log {
+            note(l.record(RunEvent::Phase { name: name.into() }, now_epoch()));
         }
     }
     /// Close the phase that ran since the previous mark.
@@ -565,6 +602,7 @@ impl Phases {
         self.done
             .push((name, now.saturating_duration_since(self.last).as_secs_f64()));
         self.last = now;
+        self.record(name);
     }
     /// Close the time since the previous mark as `parts` measured elsewhere (inside the
     /// setup exec): every part but the first as given, the first gets the remainder (the
@@ -576,6 +614,7 @@ impl Phases {
         let first = (total - rest).max(0.0);
         for (i, (n, s)) in parts.iter().enumerate() {
             self.done.push((n, if i == 0 { first } else { *s }));
+            self.record(n);
         }
         let carry = std::time::Duration::from_secs_f64(carry.clamp(0.0, total));
         self.last = now.checked_sub(carry).unwrap_or(now);
@@ -616,8 +655,25 @@ impl Drop for RefillOnDrop<'_> {
     }
 }
 
+fn note(r: Result<(), String>) {
+    if let Err(e) = r {
+        stderr(&format!("batch: run event not recorded: {e}"));
+    }
+}
+
+/// Runs, then records the verdict in the run's event file once one was started.
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
-    let s = settings(deps);
+    let results = std::cell::RefCell::new(None);
+    let fin = run_recorded(args, deps, &results);
+    if let Some(dir) = results.into_inner() {
+        let (word, reason) = fin.verdict_parts();
+        note(RunLog::in_dir(&dir).record(RunEvent::Verdict { word, reason }, now_epoch()));
+    }
+    fin
+}
+
+fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option<PathBuf>>) -> Finish {
+    let s = deps.settings.clone();
     // sp-tj8k3: a given-but-bad SPIRA_BATCH_MAXPAR (zero, negative, not a number) refuses by
     // name before any work starts — it is never silently folded into "unset" (the
     // scheduler's own bounded default) or, worse, read as "unlimited".
@@ -988,6 +1044,8 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         stderr(&format!("batch: cannot create {}: {e}", results.display()));
         return Finish::fault(2, "results-dir", 0);
     }
+    ph.attach(&results);
+    *started.borrow_mut() = Some(results.clone());
 
     // ---- lifecycle state (from the revision, never the installed harness) -----------
     let states = SuiteStates::parse(
@@ -1449,8 +1507,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let jobs: Vec<Job> = runnable
         .iter()
         .map(|n| Job {
-            name: n.clone(),
-            exclusive: headers[n].exclusive.clone(),
+            weight: headers[n].pids.unwrap_or(schedule::DEFAULT_PIDS_WEIGHT),
+            lane: headers[n].lane.clone(),
+            ..Job::new(n, headers[n].exclusive.clone())
         })
         .collect();
     // Order is never implicit (per Ryan 2026-10-03, sp-kitrt). An explicit --suites list is the
@@ -1477,6 +1536,62 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             schedule::order(&jobs, &timing::mean_wall_by_suite(&timing_text))
         }
     };
+    let (jobs, sim_jobs) = if args.mode == Mode::Parallel {
+        schedule::split_sim(jobs)
+    } else {
+        (jobs, Vec::new())
+    };
+    let sim_session = (!sim_jobs.is_empty()).then(|| {
+        let mut ss = Session::new(deps.rt, &format!("{instance}-sim"), &pdir);
+        ss.bins = session.bins.clone();
+        ss.liveness_retries = session.liveness_retries;
+        ss.liveness_sleep = session.liveness_sleep;
+        ss.setup_deadline = session.setup_deadline;
+        ss.queue_bound = session.queue_bound;
+        ss.pids_limit = Some(schedule::SIM_PIDS_LIMIT);
+        ss.memory = Some(schedule::SIM_MEMORY.to_string());
+        ss
+    });
+    let mut sim_fixtures = None;
+    let mut _sim_guard = None;
+    if let Some(ss) = &sim_session {
+        let owner_file = deps.owner_dir.join(format!("{}.owner", ss.name));
+        if !claim_owner(&owner_file) {
+            deps.log(&format!("{} is claimed by another live pid — refusing to share it", ss.name));
+            return Finish::fault(2, "concurrent-run", 0);
+        }
+        let home = deps.owner_dir.join(format!("spira-batch-{}", ss.instance));
+        let _ = fs::create_dir_all(&home);
+        _sim_guard = Some(ContainerGuard { session: ss, owner_file, key_owner: None, home, deps });
+        deps.log(&format!(
+            "starting sim-lane container {} (pids {}, memory {}, slots {}) for {} suite(s)",
+            ss.name,
+            schedule::SIM_PIDS_LIMIT,
+            schedule::SIM_MEMORY,
+            schedule::SIM_SLOTS,
+            sim_jobs.len()
+        ));
+        if let Err(f) = ss.up(&wt.path) {
+            deps.log(f.message());
+            return Finish::fault(f.rc(), "container-up", 0);
+        }
+        let sim_setup = match ss.setup(&runner, !s.skip_install, std::iter::empty(), &|m| deps.log(m)) {
+            Ok(v) => v,
+            Err(SetupFault { fault, reason }) => {
+                deps.log(fault.message());
+                return Finish::fault(fault.rc(), reason, 0);
+            }
+        };
+        sim_fixtures = Some(if sim_setup.template.ok() {
+            Fixtures::Server
+        } else {
+            match ss.baseline().0 {
+                Some(t) => Fixtures::Shared(t),
+                None => Fixtures::PerSuite,
+            }
+        });
+        ph.mark("sim-lane");
+    }
     match args.mode {
         // sp-tj8k3: maxpar is always a positive, bounded count now — "unlimited" is no
         // longer a value `mx.value` ever carries (0 refuses before this point is reached).
@@ -1583,7 +1698,22 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     }
     let cpu0 = util::cpu_jiffies(&util::read("/proc/stat"));
     let t_suites = Instant::now();
-    let outcome = batch::run(&session, &cfg, &hooks, &fixtures, &jobs);
+    let outcome = match (&sim_session, &sim_fixtures) {
+        (Some(ss), Some(sf)) => {
+            let sim_cfg = BatchCfg { maxpar: schedule::SIM_SLOTS, ..cfg.clone() };
+            let (mut main_out, sim_out) = std::thread::scope(|sc| {
+                let sim = sc.spawn(|| batch::run(ss, &sim_cfg, &hooks, sf, &sim_jobs));
+                let main = batch::run(&session, &cfg, &hooks, &fixtures, &jobs);
+                (main, sim.join().unwrap_or_default())
+            });
+            main_out.absorb(sim_out);
+            main_out
+        }
+        _ => batch::run(&session, &cfg, &hooks, &fixtures, &jobs),
+    };
+    if let Some(line) = sim_session.as_ref().and_then(|x| x.pids_peak_line()) {
+        deps.log(&format!("sim container: {line}"));
+    }
     let suites_wall = t_suites.elapsed().as_secs();
     ph.mark("suites");
     let cpu1 = util::cpu_jiffies(&util::read("/proc/stat"));
@@ -1604,6 +1734,10 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
                 deps.log(&format!("WARNING cgroup peak {peak}MiB exceeds {}% of MemTotal ({total}MiB) — SPIRA_BATCH_PEAK_WARN_FRAC or runner allocation needs adjustment", s.peak_warn_frac));
             }
         }
+    }
+
+    if let Some(line) = session.pids_peak_line() {
+        deps.log(&line);
     }
 
     // ---- unreached: selected, no record, never overwriting a completed one ---------
@@ -1930,6 +2064,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         let _ = fs::write(&verdict_path, f.render());
     }
     if deferred.is_empty() {
+        record_full_suite_pass(&s.run, &commit, &selected, &suite_dir, &|m| deps.log(m));
         deps.log("all suites passed");
     } else {
         deps.log("every suite that finished before the deadline passed");
@@ -1944,11 +2079,27 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     }
 }
 
+/// A green, undeferred run whose selection is every suite in the tree is the full-suite round
+/// that publish looks for (law-nothing-runs-on-ci-until-it-passes-locally).
+pub(crate) fn record_full_suite_pass(run: &Path, commit: &str, selected: &[String], suite_dir: &Path, log: &dyn Fn(&str)) {
+    let mut got: Vec<&str> = selected.iter().map(String::as_str).collect();
+    got.sort_unstable();
+    let all = crate::suites::model::population(suite_dir);
+    if got != all.iter().map(String::as_str).collect::<Vec<_>>() {
+        return;
+    }
+    let now = iso_utc(now_epoch());
+    match spira_config::local_pass::record(run, spira_config::local_pass::Kind::FullSuite, commit, "testenv", &now) {
+        Ok(()) => log(&format!("recorded a full-suite local pass for {commit}")),
+        Err(e) => log(&format!("could not record the full-suite pass: {e}")),
+    }
+}
+
 /// `testenv warm refill <i>` (DESIGN.md §11.2): wait for slot `i`'s lock, run the orphan
 /// sweeps the trials no longer run inline, boot the slot's spare and record it. Detached from
 /// the trial that spawned it; a failure only means the next trial boots cold.
 pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
-    let s = settings(deps);
+    let s = deps.settings.clone();
     let (_, lock_path, _) = warm::paths(&s.run, i);
     let end = Instant::now() + Duration::from_secs(s.warm_boot_timeout);
     let lock = loop {
@@ -2023,7 +2174,7 @@ pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
 /// `testenv warm sweep`: both orphan sweeps, detached from the gate trial that spawned it
 /// (D12). One sweeper at a time: a sweep already running is this one's work done.
 pub fn warm_sweep(deps: &Deps) -> i32 {
-    let s = settings(deps);
+    let s = deps.settings.clone();
     let Some(_lock) = worktree::try_lock(&s.run.join("testenv-sweep.lock")) else {
         return 0;
     };
@@ -2247,7 +2398,7 @@ fn refuse_repeat(
             ("SPIRA_INCIDENT_DELIVERS", "action".into()),
         ];
         let title = format!("repeat attempt: no change — {br}");
-        let _ = helper(&incident, &["file", &title, "-"], &env, Some(&body));
+        let _ = helper(&incident, &["alarm", &title, "-"], &env, Some(&body));
     }
 }
 

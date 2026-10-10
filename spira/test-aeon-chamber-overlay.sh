@@ -27,7 +27,10 @@
 # tier: T1
 # covers: aeon/src/* spira/chamber/builder.md spira/conf.sh doctor/src/*
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# OV_PART: main runs the golden renders and doctor rows, overlay the three overlay renders;
+# test-aeon-chamber-overlay-mech.sh sets overlay and sources this file (split for wall time).
+OV_PART="${OV_PART:-main}"
 . "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
@@ -35,17 +38,17 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 testdb_require test-aeon-chamber-overlay
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up aeonchamberov || { echo "test-aeon-chamber-overlay: could not build fixture database"; exit 1; }
+testdb_up "aeonchamberov$OV_PART" || { echo "test-aeon-chamber-overlay: could not build fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
        GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
@@ -54,16 +57,22 @@ cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 # THE REAL BUILDER PERSONA, not a synthetic stand-in — the golden check means nothing
 # against a brief this suite invented.
 cp "$HERE/chamber/builder.md" "$HERE/chamber/builder.fayth" "$SPIRA_HOME/chamber/"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
-export SPIRA_CHAMBER_OVERLAY="$TMP/overlay-empty"   # deliberately absent for the golden check
+SPIRA_CHAMBER_OVERLAY="$TMP/overlay-empty"   # deliberately absent for the golden check
+# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# now (no longer derived from SPIRA_HOME when unset), so the fixture persona built above
+# under $SPIRA_HOME/chamber would otherwise never be found.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+    SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY" SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 
 command -v aeon >/dev/null 2>&1 \
     || { printf 'test-aeon-chamber-overlay: aeon is not on PATH\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
-export SPIRA_AGENT="$BIN/claude" TMP
+export TMP
+tl_config SPIRA_AGENT="$BIN/claude"
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$TMP/claude-argv"
@@ -78,7 +87,7 @@ aeon() { command aeon --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 T_LABEL="test-chamber-overlay-bead"
 make_bead() {
     local _labels="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},$T_LABEL,repo:fixture"
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "chamber overlay test bead" --type task \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "chamber overlay test bead" --type task \
         -l "$_labels" 2>/dev/null \
         | grep -oE 'sp-[a-z0-9]+' | head -1
 }
@@ -131,6 +140,7 @@ PATH="$STUB_BIN:$PATH"   # the stubs, by name, ahead of the tree's build
 
 # ==========================================================================================
 echo "test-aeon-chamber-overlay.sh"
+if [ "$OV_PART" = main ]; then
 echo
 echo "GOLDEN: the rendered builder brief has no gate-run.sh instruction, no overlay present"
 # ==========================================================================================
@@ -166,11 +176,14 @@ nowant "and the legacy bd-close instruction is absent" "bd -C $SPIRA_DB close" "
 # later section's make_bead to reclaim.
 close_bead "$BID_F1"
 
+fi
+if [ "$OV_PART" = overlay ]; then
 # ==========================================================================================
 echo
 echo "OVERLAY: a section file replaces one ## heading, an append file is appended"
 # ==========================================================================================
-export SPIRA_CHAMBER_OVERLAY="$TMP/overlay"; mkdir -p "$SPIRA_CHAMBER_OVERLAY"
+SPIRA_CHAMBER_OVERLAY="$TMP/overlay"; mkdir -p "$SPIRA_CHAMBER_OVERLAY"
+tl_config SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY"
 printf '## Tests\n\nOperator-overlaid Tests section — run only test-fixture-thing.sh.\n' \
     > "$SPIRA_CHAMBER_OVERLAY/builder.Tests.md"
 printf 'Operator append: a standing local note for every builder session.\n' \
@@ -220,20 +233,23 @@ want "SEEN RED CONTROL: the block overlay text appears" "Operator override of th
 rm -f "$SPIRA_CHAMBER_OVERLAY/blocks/PARK.md"
 close_bead "$BID_B"
 
+fi
+if [ "$OV_PART" = main ]; then
 # ==========================================================================================
 echo
 echo "doctor reports an active overlay by name and reports none when the directory is empty"
 # ==========================================================================================
 mkdir -p "$SPIRA_CHAMBER_OVERLAY"
 printf 'Operator append.\n' > "$SPIRA_CHAMBER_OVERLAY/builder.append.md"
-out_active="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY" \
-    SPIRA_DB="$SPIRA_DB" doctor 2>&1)"
+tl_config SPIRA_CHAMBER_OVERLAY="$SPIRA_CHAMBER_OVERLAY" SPIRA_DB="$SPIRA_DB"
+out_active="$(SPIRA_HOME="$SPIRA_HOME" doctor 2>&1)"
 want "doctor names the active overlay file" "builder.append.md" "$out_active"
 rm -f "$SPIRA_CHAMBER_OVERLAY/builder.append.md"
 
 EMPTY_OVERLAY="$TMP/overlay-none"
-out_none="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_CHAMBER_OVERLAY="$EMPTY_OVERLAY" \
-    SPIRA_DB="$SPIRA_DB" doctor 2>&1)"
+tl_config SPIRA_CHAMBER_OVERLAY="$EMPTY_OVERLAY" SPIRA_DB="$SPIRA_DB"
+out_none="$(SPIRA_HOME="$SPIRA_HOME" doctor 2>&1)"
 want "doctor reports none active when the overlay directory is empty" "none active" "$out_none"
+fi
 
 tl_summary

@@ -24,6 +24,7 @@ pub struct FileConfig<'a> {
     pub home_repo: &'a str,
     pub known_repos: &'a [String],
     pub ask_label: &'a str,
+    pub express: bool,
     pub provenance: &'a str,
 }
 
@@ -132,8 +133,7 @@ pub fn file_one(
         Some(DedupHit::Closed { id, closed_at: Some(closed_at) }) => {
             let closed_ts = parse_iso8601(&closed_at);
             let cause = closed_ts.map(|ts| decide::reopen_cause(ts, now, cfg.watcher_interval_s)).unwrap_or("recurrence");
-            let _ = cause;
-            bd.reopen(cfg.db, &id);
+            bd.reopen(cfg.db, &id, cause);
             let note = format!(
                 "Recurrence at {} — same failure fingerprint, dedup within {}-day window",
                 iso_now_public(now),
@@ -146,6 +146,9 @@ pub fn file_one(
         // pile notes under a row that stays LANDED. The recurrence is a new incident: a fresh
         // bead (and, through `Bd::create`, a fresh row) citing the closed one, linked to it;
         // the closed bead and its row are left exactly as they are.
+        Some(DedupHit::Terminal { id: pred, .. }) if bd.live_successor(cfg.db, &pred).is_some() => {
+            bump_and_note(bd, mailer, clock, cfg, &pred, reference, title, payload, false, now, log)
+        }
         Some(DedupHit::Terminal { id: pred, closed_at }) => {
             let predecessor = Predecessor { id: &pred, closed_at: closed_at.as_deref() };
             file_new(bd, cfg, reference, title, payload, labels, Some(predecessor), log)
@@ -174,7 +177,7 @@ fn bump_and_note(
     now: i64,
     log: &mut Vec<String>,
 ) -> FileOutcome {
-    let ev_n = ports::recurs_of(bd, cfg.db, id);
+    let ev_n = ports::recurs_of(bd, id);
     let events_unknown = ev_n.is_none();
     let n = ev_n.unwrap_or(0) + 1;
 
@@ -192,7 +195,7 @@ fn bump_and_note(
         bd.label_add(cfg.db, id, &format!("payload-hash:{new_hash}"));
     }
 
-    ports::bump_recur(bd, cfg.db, id, cfg.cause);
+    ports::bump_recur(bd, id, cfg.cause);
     let log_suffix = if was_reopened { " (reopened from closed)" } else { "" };
     log.push(format!("{reference} recurred ({n}) — {id}{log_suffix}"));
 
@@ -289,6 +292,12 @@ fn file_new(
         bd.set_state(cfg.db, &id, &format!("repo={effective}"));
     }
 
+    if cfg.express {
+        if let Err(e) = spira_config::lifecycle_row::set_express(&id, true) {
+            log.push(format!("warning: {id} filed but not marked express: {e}"));
+        }
+    }
+
     match cfg.delivers_pref {
         Some("note") => {
             // Reachable exactly when the ledger is under $SPIRA_RUN (a session here can
@@ -379,6 +388,25 @@ pub fn iso_now_public(epoch: i64) -> String {
     format!("{date}T{:02}:{:02}:{:02}Z", secs_of_day / 3600, (secs_of_day % 3600) / 60, secs_of_day % 60)
 }
 
+/// Collapse `dup` into `survivor`: bd's `duplicate`, then the `duplicate-of:` label that
+/// keeps the dedup meter from counting the pair as live surplus. Refuses before any write
+/// when the two are the same bead or `dup` already carries a `duplicate-of:` label.
+pub fn collapse(bd: &dyn Bd, db: &str, dup: &str, survivor: &str) -> Result<(), String> {
+    if dup.eq_ignore_ascii_case(survivor) {
+        return Err(format!("{dup} cannot be a duplicate of itself"));
+    }
+    if let Some(l) = bd.label_list(db, dup).into_iter().find(|l| l.starts_with("duplicate-of:")) {
+        return Err(format!("{dup} is already collapsed ({l})"));
+    }
+    if !bd.duplicate(db, dup, survivor) {
+        return Err(format!("bd duplicate {dup} --of {survivor} failed"));
+    }
+    if !bd.label_add(db, dup, &format!("duplicate-of:{survivor}")) {
+        return Err(format!("{dup} was marked duplicate but the duplicate-of:{survivor} label could not be added; the meter will still count it"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,6 +425,8 @@ mod tests {
         bodies: RefCell<HashMap<String, String>>,
         reopened: RefCell<Vec<String>>,
         related: RefCell<Vec<(String, String)>>,
+        successors: RefCell<HashMap<String, String>>,
+        duplicated: RefCell<Vec<(String, String)>>,
         labels: RefCell<HashMap<String, Vec<String>>>,
         notes: RefCell<HashMap<String, Vec<String>>>,
         next_id: RefCell<u32>,
@@ -459,7 +489,7 @@ mod tests {
         fn set_state(&self, _db: &str, _id: &str, _kv: &str) -> bool {
             true
         }
-        fn reopen(&self, _db: &str, id: &str) -> bool {
+        fn reopen(&self, _db: &str, id: &str, _cause: &str) -> bool {
             self.reopened.borrow_mut().push(id.to_string());
             if let Some(row) = self.rows.borrow_mut().iter_mut().find(|r| r.id == id) {
                 row.status = BeadStatus::Open;
@@ -471,6 +501,13 @@ mod tests {
             self.related.borrow_mut().push((a.to_string(), b.to_string()));
             true
         }
+        fn duplicate(&self, _db: &str, id: &str, survivor: &str) -> bool {
+            self.duplicated.borrow_mut().push((id.to_string(), survivor.to_string()));
+            true
+        }
+        fn live_successor(&self, _db: &str, id: &str) -> Option<String> {
+            self.successors.borrow().get(id).cloned()
+        }
         fn show_closed_at(&self, _db: &str, id: &str) -> Option<String> {
             self.rows.borrow().iter().find(|r| r.id == id).and_then(|r| r.closed_at.clone())
         }
@@ -480,9 +517,30 @@ mod tests {
         fn reachable(&self, _db: &str) -> bool {
             self.reachable
         }
-        fn sql(&self, _db: &str, _query: &str) -> Result<String, String> {
-            Ok("header\n----\n0\n".to_string())
+        fn fact(&self, _id: &str, _kind: &str, _cause: &str) -> bool {
+            true
         }
+        fn fact_count(&self, _id: &str, _kind: &str) -> Option<usize> {
+            Some(0)
+        }
+    }
+
+    #[test]
+    fn collapse_marks_the_duplicate_and_labels_it_for_the_meter() {
+        let bd = FakeBd::new();
+        bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: BeadStatus::Open, external_ref: None, labels: vec![], closed_at: None });
+        collapse(&bd, "db", "sp-a", "sp-b").unwrap();
+        assert_eq!(*bd.duplicated.borrow(), vec![("sp-a".to_string(), "sp-b".to_string())]);
+        assert_eq!(bd.label_list("db", "sp-a"), vec!["duplicate-of:sp-b".to_string()]);
+    }
+
+    #[test]
+    fn collapse_refuses_self_and_already_collapsed_before_writing() {
+        let bd = FakeBd::new();
+        assert!(collapse(&bd, "db", "sp-a", "sp-a").is_err());
+        bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: BeadStatus::Open, external_ref: None, labels: vec!["duplicate-of:sp-c".into()], closed_at: None });
+        assert!(collapse(&bd, "db", "sp-a", "sp-b").unwrap_err().contains("already collapsed"));
+        assert!(bd.duplicated.borrow().is_empty());
     }
 
     struct FakeMailer {
@@ -520,6 +578,7 @@ mod tests {
             home_repo: "spira",
             known_repos: known,
             ask_label: "needs-ryan", // literal-ok: test fixture value, not a config default read at runtime.
+            express: false,
             provenance: "foo.service on host: ?",
         }
     }
@@ -652,6 +711,36 @@ mod tests {
         let again = file_one(&bd, &mailer, &clock, &c, "incident:landed", "landed failed again", b"fresh payload", "spira,incident", &mut log);
         assert!(matches!(again, FileOutcome::Filed(ref id) if *id == new_id));
         assert_eq!(bd.created.borrow().len(), 1);
+    }
+
+    /// A terminal incident superseded by a live bead has its fix in flight: the recurrence
+    /// bumps it and files nothing (law-a-bug-with-a-fix-in-flight-depends-on-it).
+    #[test]
+    fn a_recurrence_across_a_supersede_to_a_live_bead_files_nothing() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_790_812_800);
+        let known = vec!["spira".to_string()];
+        let c = cfg(&known);
+        bd.rows.borrow_mut().push(BeadRow {
+            id: "sp-dup".into(),
+            status: BeadStatus::Terminal,
+            external_ref: Some("basefail:r:test-a.sh".into()),
+            labels: vec![],
+            closed_at: Some("2026-09-30T00:00:00Z".into()),
+        });
+        bd.successors.borrow_mut().insert("sp-dup".into(), "sp-fix".into());
+        let mut log = vec![];
+        for _ in 0..2 {
+            let out = file_one(&bd, &mailer, &clock, &c, "basefail:r:test-a.sh", "t", b"p", "spira", &mut log);
+            assert!(matches!(out, FileOutcome::Filed(ref id) if id == "sp-dup"));
+        }
+        assert_eq!(bd.created.borrow().len(), 0, "no bead filed while the fix is in flight");
+        assert_eq!(bd.notes.borrow().get("sp-dup").map(Vec::len), Some(2), "each recurrence is recorded on the incident");
+
+        bd.successors.borrow_mut().clear();
+        file_one(&bd, &mailer, &clock, &c, "basefail:r:test-a.sh", "t", b"p", "spira", &mut log);
+        assert_eq!(bd.created.borrow().len(), 1, "with no live successor the recurrence files fresh");
     }
 
     /// A handed-on but non-terminal incident (SUBMITTED) still absorbs the recurrence: its

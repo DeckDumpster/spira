@@ -17,9 +17,13 @@ use crate::seam::{self, Op};
 
 pub struct Real {
     home: PathBuf,
+    run: PathBuf,
     status: String,
     settings: BTreeMap<String, String>,
     pub submitted_label: String,
+    /// `SPIRA_GH`, a registered config key — empty for a `Real::minimal` instance (the
+    /// chokepoint subcommands never call `pr_merged_tip`, so it is never resolved for them).
+    gh: String,
     beads: RefCell<Option<BTreeMap<String, Value>>>,
     /// The sweep's one `spira-lc list`, keyed by bead id: the claim witness for every bead
     /// the pass judges (sp-mve9i).
@@ -39,7 +43,7 @@ impl Real {
     /// they are handed a repo PATH directly, as the retired bash functions were, and must
     /// not be made to depend on the repo-name registry resolving at all.
     pub fn new(home: PathBuf, status: Option<String>) -> Result<(Real, Vec<Repo>), String> {
-        let mut r = Real::minimal(home, status);
+        let mut r = Real::minimal(home, run_dir()?, status);
         let a = r.seam(Op::Context, &[]);
         if a.rc != 0 {
             return Err(format!("the lib.sh context seam exited {}", a.rc));
@@ -57,18 +61,31 @@ impl Real {
             .into_iter()
             .map(|name| {
                 let root = reg.root(&name).map(PathBuf::from);
-                let queued = reg.land_queued(&name);
-                Repo { name, root, queued }
+                let forge_queued = reg.land_forge_queued(&name);
+                Repo { name, root, forge_queued }
             })
             .collect();
-        r.submitted_label = r.setting("submitted", "spira-submitted");
+        // SPIRA_SUBMITTED_LABEL/SPIRA_GH are registered config keys (spira/conf.d) — the one
+        // source of config, read here rather than through the lib.sh context seam's own
+        // (now-removed) `${VAR:-default}` echoes.
+        r.submitted_label = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL")?;
+        r.gh = spira_config::process::cfg("SPIRA_GH")?;
         Ok((r, repos))
     }
 
     /// No context seam call at all — just `home`/`status`, for a caller that only needs
     /// the Base/Bead seams (each self-contained) and never the repository registry.
-    pub fn minimal(home: PathBuf, status: Option<String>) -> Real {
-        Real { home, status: status.unwrap_or_default(), settings: BTreeMap::new(), submitted_label: String::new(), beads: RefCell::new(None), claims: RefCell::new(None) }
+    pub fn minimal(home: PathBuf, run: PathBuf, status: Option<String>) -> Real {
+        Real {
+            home,
+            run,
+            status: status.unwrap_or_default(),
+            settings: BTreeMap::new(),
+            submitted_label: String::new(),
+            gh: String::new(),
+            beads: RefCell::new(None),
+            claims: RefCell::new(None),
+        }
     }
 
     fn setting(&self, k: &str, default: &str) -> String {
@@ -86,17 +103,17 @@ impl Real {
         spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home)
     }
 
-    /// `$SPIRA_RUN`, read straight from the environment — not through the context seam's
-    /// own `run=` echo of the same variable, so this works whether or not that seam ran.
+    /// `SPIRA_RUN`, through [`run_dir`] — not through the context seam, so this works
+    /// whether or not that seam ran.
     pub fn run(&self) -> PathBuf {
-        run_dir()
+        self.run.clone()
     }
 
     /// `${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}` — the chokepoint's own log, as a real path
     /// (distinct from the `World::reaplog` trait method, which is display text for a "see
     /// …" message and keeps its existing placeholder default unchanged).
     pub fn reaplog_path(&self) -> PathBuf {
-        reaplog_path()
+        reaplog_path_in(&self.run)
     }
 
     /// `bdq label remove <id> <label>`, needed by
@@ -128,6 +145,7 @@ impl Real {
         // `-s sending.seam.sh`: bash still reads the script from stdin; the extra word is only
         // so lib.sh's spira_caller (which names the `*.sh` programs up the process chain in
         // every reap-log line) can name this one — a bare `bash` under a binary names nothing.
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let child = Command::new("bash")
             .args(["-s", "sending.seam.sh"])
             .stdin(Stdio::piped())
@@ -233,6 +251,20 @@ impl World for Real {
     fn prune(&self, repo: &Path) {
         reap::prune_worktrees(&self.reaplog_path(), repo);
     }
+    fn lc_past_builder(&self, id: &str) -> bool {
+        let row = match self.claims.borrow().as_ref() {
+            Some(m) => m.get(id).cloned(),
+            None => spira_config::lc_state::row_with(&spira_config::lifecycle_row::lc_bin(), id).ok().flatten(),
+        };
+        row.is_some_and(|r| r.past_builder())
+    }
+    fn lc_terminal(&self, id: &str) -> bool {
+        let row = match self.claims.borrow().as_ref() {
+            Some(m) => m.get(id).cloned(),
+            None => spira_config::lc_state::row_with(&spira_config::lifecycle_row::lc_bin(), id).ok().flatten(),
+        };
+        row.is_some_and(|r| r.terminal())
+    }
     fn lc_landed(&self, id: &str) -> bool {
         // Bounded like every other subprocess here: a hung record answers "not landed".
         Command::new("timeout")
@@ -243,7 +275,7 @@ impl World for Real {
             .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "LANDED")
     }
     fn content_on_base(&self, id: &str, proof: &str) {
-        let _ = Command::new("spira-lc")
+        let _ = spira_config::bounded::bounded("spira-lc")
             .args(["content-on-base", id, proof, "sending"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -252,8 +284,8 @@ impl World for Real {
     }
     fn pr_merged_tip(&self, repo: &Path, br: &str) -> Option<String> {
         let o = Command::new("timeout")
-            .arg(self.setting("gh_timeout", "120"))
-            .arg(self.setting("gh", "gh"))
+            .arg(self.setting("gh_timeout", "5"))
+            .arg(&self.gh)
             .args(["pr", "view", br, "--json", "state,headRefOid", "-q", r#"select(.state=="MERGED") | .headRefOid"#])
             .current_dir(repo)
             .stdin(Stdio::null())
@@ -326,7 +358,7 @@ mod tests {
         std::fs::write(repo.join("f"), "x").unwrap();
         run_git(&repo, &["add", "f"]);
         run_git(&repo, &["commit", "-q", "-m", "x"]);
-        let r = Real::minimal(dir.path().to_path_buf(), None);
+        let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);
         let base = r.base(&repo).expect("a repo with no remote resolves through rung 4");
         assert_eq!(base.landref, "trunk");
         assert_eq!(base.landrefs, vec!["trunk".to_string()]);
@@ -336,26 +368,23 @@ mod tests {
     #[test]
     fn base_is_none_for_a_path_that_is_not_a_git_checkout() {
         let dir = testkit::TempDir::new("sending-real-base-not-a-repo");
-        let r = Real::minimal(dir.path().to_path_buf(), None);
+        let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);
         assert_eq!(r.base(dir.path()), None);
     }
 }
 
-/// `spira.run` resolved in-process (env override, then the config); the process refuses,
-/// named, when it cannot — an empty run directory would put the reap log at the filesystem
-/// root.
-pub fn run_dir() -> PathBuf {
-    spira_config::resolve::run_dir_for_process().unwrap_or_else(|e| {
-        eprintln!("sending: {e}");
-        std::process::exit(1)
-    })
+/// `SPIRA_RUN`, a registered config key (spira/conf.d) — the one source of config, through
+/// `spira_config::process::cfg`; an error, named, when it cannot resolve. An empty run
+/// directory would put the reap log at the filesystem root.
+pub fn run_dir() -> Result<PathBuf, String> {
+    spira_config::process::cfg("SPIRA_RUN").map(PathBuf::from).map_err(|e| e.to_string())
 }
 
-/// `$SPIRA_REAPLOG`, else `reap.log` under [`run_dir`].
-pub fn reaplog_path() -> PathBuf {
+/// `$SPIRA_REAPLOG`, else `reap.log` under `run`.
+pub fn reaplog_path_in(run: &Path) -> PathBuf {
     match std::env::var("SPIRA_REAPLOG") {
         Ok(rl) if !rl.is_empty() => PathBuf::from(rl),
-        _ => run_dir().join(REAPLOG_NAME),
+        _ => run.join(REAPLOG_NAME),
     }
 }
 

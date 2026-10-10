@@ -171,21 +171,73 @@ fn config_from_env_refuses_a_wildcard_bind_and_missing_vars() {
         (Some("0.0.0.0:9431"), Some("/tmp/x"), None),
         (Some("192.168.1.56:9431"), None, None),
     ] {
-        // SAFETY: tests run single-threaded for env vars via a lock would be the normal
-        // concern, but this crate's tests never run this check concurrently with another
-        // that reads these same three variables.
-        for (k, v) in [("SCCACHE_DAV_ADDR", addr), ("SCCACHE_DAV_ROOT", root), ("SCCACHE_DAV_TOKEN", token)] {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
+        let _env = testkit::env(&[("SCCACHE_DAV_ADDR", addr), ("SCCACHE_DAV_ROOT", root), ("SCCACHE_DAV_TOKEN", token)]);
         assert!(sccache_dav::config_from_env().is_err(), "{addr:?} {root:?}");
     }
-    std::env::set_var("SCCACHE_DAV_ADDR", "192.168.1.56:9431");
-    std::env::set_var("SCCACHE_DAV_ROOT", "/tmp/sccache-dav-store");
-    std::env::remove_var("SCCACHE_DAV_TOKEN");
+    let _env = testkit::env(&[
+        ("SCCACHE_DAV_ADDR", Some("192.168.1.56:9431")),
+        ("SCCACHE_DAV_ROOT", Some("/tmp/sccache-dav-store")),
+        ("SCCACHE_DAV_TOKEN", None),
+    ]);
     let cfg = sccache_dav::config_from_env().expect("a valid config");
     assert_eq!(cfg.addr, "192.168.1.56:9431");
     assert!(cfg.token.is_none());
+}
+
+#[test]
+fn listen_addrs_maps_config_to_listeners() {
+    let lan = "192.168.1.56:9431";
+    assert_eq!(sccache_dav::listen_addrs(lan, "").unwrap(), [lan]);
+    assert_eq!(sccache_dav::listen_addrs(lan, "  ").unwrap(), [lan]);
+    assert_eq!(sccache_dav::listen_addrs(lan, lan).unwrap(), [lan]);
+    assert_eq!(sccache_dav::listen_addrs(lan, "100.64.0.9:9431").unwrap(), [lan, "100.64.0.9:9431"]);
+    assert!(sccache_dav::listen_addrs(lan, "0.0.0.0:9431").is_err());
+    assert!(sccache_dav::listen_addrs(lan, "*:9431").is_err());
+}
+
+fn put_aged(root: &std::path::Path, rel: &str, bytes: usize, age_secs: u64) {
+    let p = root.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, vec![b'x'; bytes]).unwrap();
+    let t = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+    std::fs::File::options().write(true).open(&p).unwrap().set_modified(t).unwrap();
+}
+
+#[test]
+fn eviction_removes_the_least_recently_used_until_under_the_cap() {
+    let d = scratch();
+    put_aged(d.path(), "a/oldest", 100, 3000);
+    put_aged(d.path(), "b/middle", 100, 2000);
+    put_aged(d.path(), "c/newest", 100, 1000);
+    put_aged(d.path(), "c/inflight.tmp-77", 500, 9000);
+
+    let ev = sccache_dav::evict_to_cap(d.path(), 250);
+
+    assert_eq!((ev.files, ev.bytes, ev.remaining), (1, 100, 200));
+    assert!(!d.path().join("a/oldest").exists());
+    assert!(d.path().join("b/middle").exists() && d.path().join("c/newest").exists());
+    assert!(d.path().join("c/inflight.tmp-77").exists(), "an in-flight PUT is never evicted");
+    assert!(d.path().join("a").is_dir(), "shard directories stay");
+}
+
+#[test]
+fn eviction_under_the_cap_deletes_nothing() {
+    let d = scratch();
+    put_aged(d.path(), "a/f", 100, 5000);
+    assert_eq!(sccache_dav::evict_to_cap(d.path(), 100).files, 0);
+    assert!(d.path().join("a/f").exists());
+}
+
+#[tokio::test]
+async fn a_get_marks_the_entry_read_so_it_outlives_an_unread_newer_one() {
+    let d = scratch();
+    put_aged(d.path(), "a/hit", 100, 5000);
+    put_aged(d.path(), "b/unread", 100, 1000);
+    let addr = spawn(d.path().to_path_buf(), None).await;
+
+    assert_eq!(req(addr, "GET", "/a/hit", None, b"").await.code, 200);
+    sccache_dav::evict_to_cap(d.path(), 100);
+
+    assert!(d.path().join("a/hit").exists(), "read just now");
+    assert!(!d.path().join("b/unread").exists());
 }

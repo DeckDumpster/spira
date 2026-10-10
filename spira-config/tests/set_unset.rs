@@ -152,3 +152,50 @@ fn set_repo_land_alias_round_trips_through_the_binary() {
     assert_eq!(String::from_utf8_lossy(&via_mode.stdout).trim(), "queue.local");
 
 }
+
+#[test]
+fn set_refuses_a_checked_in_fixture_and_leaves_no_backup() {
+    let dir = scratch_dir("fixture-refused");
+    let fixtures = dir.join("tests/fixtures");
+    fs::create_dir_all(&fixtures).unwrap();
+    let toml = write_tmp(&fixtures, "complete.toml", "[repo.home]\npath = \"/srv/home\"\nmode = \"push\"\n");
+    let before = fs::read(&toml).unwrap();
+
+    let result = spira_config(&["set", "repo.home.base", "main", toml.to_str().unwrap()]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("checked-in test fixture"));
+    assert_eq!(fs::read(&toml).unwrap(), before);
+    assert!(backups_in(&fixtures).is_empty());
+}
+
+// Setting one key changes only that key's line: an earlier key set to "", comments, key order
+// and quoting style of every other line all survive byte-identical.
+#[test]
+fn set_leaves_every_other_line_byte_identical() {
+    let dir = scratch_dir("only-named-key");
+    let original = "# operator's note\n[spira]\nzeta_label = 'x'   # trailing\nid_prefix = \"sp\"\n\n[repo.r]\npath = \"/x\"\nmode = \"queue.local\"\n";
+    let toml = write_tmp(&dir, "spira.toml", original);
+    let f = toml.to_str().unwrap();
+
+    let a = spira_config(&["set", "spira.scope_label", "", f]);
+    assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+    let after_a = fs::read_to_string(&toml).unwrap();
+    assert!(after_a.contains("scope_label = \"\""), "{after_a}");
+    for line in original.lines() {
+        assert!(after_a.lines().any(|l| l == line), "line {line:?} changed:\n{after_a}");
+    }
+
+    let b = spira_config(&["set", "spira.batcher_enable", "1", f]);
+    assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+    let after_b = fs::read_to_string(&toml).unwrap();
+    assert!(after_b.contains("scope_label = \"\""), "{after_b}");
+    for line in after_a.lines() {
+        assert!(after_b.lines().any(|l| l == line), "line {line:?} changed:\n{after_b}");
+    }
+    assert!(after_b.contains("batcher_enable = \"1\""), "{after_b}");
+
+    let c = spira_config(&["set", "spira.batcher_enable", "0", f]);
+    assert!(c.status.success());
+    let after_c = fs::read_to_string(&toml).unwrap();
+    assert_eq!(after_c.replace("batcher_enable = \"0\"", "batcher_enable = \"1\""), after_b);
+}

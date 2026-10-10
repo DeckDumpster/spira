@@ -1,0 +1,42 @@
+epoch = 1800000000
+horizon = 3600000
+settle = 900000
+goal = "sp-lg01:LANDED"
+real_actors = ["sentinel-summon", "sentinel-landing", "sift"]
+
+[[actor]]
+name = "slow-gate-worker"
+command = "gate-worker run"
+first = 900000
+every = 60000
+duration_min = 300000
+duration_max = 300000
+
+[[step]]
+at = 0
+command = 'spira-config set spira.batcher_enable 0 "$SPIRA_TOML"'
+
+[[step]]
+at = 0
+file = "sp-lg01"
+
+[[step]]
+at = 0
+claim = "sp-lg01"
+script = ["commit out/a.txt", "submit"]
+
+[[step]]
+at = 600000
+command = 'spira-config set spira.batcher_enable 1 "$SPIRA_TOML"'
+
+[[invariant]]
+name = "landed_is_final"
+sql = "SELECT b.seq, b.bead, b.lc_state FROM bead_state b WHERE b.lc_state <> 'LANDED' AND EXISTS (SELECT 1 FROM bead_state p WHERE p.bead = b.bead AND p.seq < b.seq AND p.lc_state = 'LANDED')"
+
+[[invariant]]
+name = "no_stale_admission"
+sql = "SELECT seq, bead, lc_state FROM bead_state WHERE lc_state IN ('SUBMITTED', 'CERTIFIED') AND on_local_main"
+
+[[expect]]
+name = "gate_ran_after_the_round_landed"
+sql = "SELECT 1 FROM events e WHERE e.actor = 'slow-gate-worker' AND e.kind = 'start' AND e.vtime > (SELECT min(v.vtime) FROM events v JOIN bead_state b ON b.seq = v.seq WHERE b.lc_state = 'LANDED')"

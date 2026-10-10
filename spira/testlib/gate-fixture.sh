@@ -57,13 +57,26 @@ gate_fixture_branch() {
 }
 
 # gate_fixture_run <branch> <repo-name> [VAR=VAL ...] — the copied gate.sh, in the fixed env.
+# The fixed config (and any REGISTERED VAR=VAL override, spira/conf.d/<VAR>) is a layer for
+# THIS call only (tl_layer), so it never persists into the rest of the suite; anything else
+# rides the env -i prefix. SPIRA_DB names a store that cannot exist: a branch that cites a
+# bead is judged against an unreadable store unless the caller declares a real one.
 gate_fixture_run() {
     local br="$1" repo="$2"; shift 2
-    env -i HOME="$HOMEDIR" SPIRA_RELEASE="$REL" PATH="$REL/bin:$REL/spira:/usr/local/bin:/usr/bin:/bin" \
+    local -a env_extra=() decl=(SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$MAP" SPIRA_VERDICT_TTL=0 SPIRA_DB="$SPIRA_DB_NONE")
+    local kv k toml
+    for kv in "$@"; do
+        k="${kv%%=*}"
+        if [ -f "$HERE/conf.d/$k" ]; then
+            decl+=("$kv")
+        else
+            env_extra+=("$kv")
+        fi
+    done
+    toml="$(tl_layer "${decl[@]}")" || { echo "gate_fixture_run: cannot declare the call's config" >&2; return 1; }
+    env -i SPIRA_TOML="$toml" HOME="$HOMEDIR" SPIRA_RELEASE="$REL" PATH="$REL/bin:$REL/spira:/usr/local/bin:/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" \
+        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" \
         SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" \
-        SPIRA_VERDICT_TTL=0 \
-        "$@" bash "$SH/gate.sh" "$br" "$repo" 2>&1
+        "${env_extra[@]}" bash "$SH/gate.sh" "$br" "$repo" 2>&1
 }

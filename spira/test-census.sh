@@ -33,6 +33,11 @@ testdb_up census || {
     exit 77
 }
 
+. "$HERE/testlib/lc-fixture.sh"
+lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
+lcfix_follow_testdb
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+
 # Source lib.sh for bump_requeue/bead_reopen and the shared _bump_write_event helper.
 # These write the event rows census.sh reads; adding labels via 'bd label add' only
 # creates 'label_added' events, which census never queries. Protect SPIRA_DB since
@@ -50,7 +55,7 @@ recur_event()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
 reclaim_event() { _bump_write_event "${1:-}" reclaimed "${2:-unrecorded}"; }
 
 CENSUS="$(command -v census)"
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 REMEDY_LABEL=maechen-remedy
 
 # A REMEDY'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): census lists the covers:
@@ -59,9 +64,11 @@ REMEDY_LABEL=maechen-remedy
 # file: `list` has a row only for a bead with a file, `state` answers SUBMITTED for one
 # without (known, not landed).
 LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE"
+LC_REAL="$(command -v spira-lc)"
 cat > "$TMP/spira-lc-stub" <<STUB
 #!/usr/bin/env bash
 case "\${1:-}" in
+    fact|facts|facts-query) exec "$LC_REAL" "\$@" ;;
     state) if [ -s "$LCSTATE/\${2:-}" ]; then cat "$LCSTATE/\${2:-}"; else echo SUBMITTED; fi ;;
     list)  first=1; printf '['
            for f in "$LCSTATE"/*; do [ -s "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0
@@ -73,20 +80,18 @@ STUB
 chmod +x "$TMP/spira-lc-stub"
 
 run_census() {
-    env SPIRA_DB="$SPIRA_DB" \
-        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
-        SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+        SPIRA_RUN="${_CENSUS_RUN:-$TMP/no-run}"
+    env SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
-        SPIRA_RUN="${_CENSUS_RUN:-$TMP/no-run}" \
         "$CENSUS" "$@" 2>/dev/null
 }
 
 run_census_repo() {  # run_census_repo <repo-path> [census-args...]
     local _rp="$1"; shift
-    env SPIRA_DB="$SPIRA_DB" \
-        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
-        SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL"
+    env SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$_rp" \
@@ -102,7 +107,7 @@ echo "test-census.sh"
 
 # ==============================================================================
 echo
-echo "1. bump_* writes -> census reads (real events table, distinct beads not events)"
+echo "1. bump_* writes -> census reads (real events table, causal events not victim beads)"
 # ==============================================================================
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): an empty store first, to
 # show absence is detectable before relying on it.
@@ -122,9 +127,12 @@ bump_requeue "$bid_c" quota-exceeded
 reclaim_event "$bid_c"
 
 out1="$(run_census)"
-want "bump_recur: one burst over 2 beads, 4 detections" "1 sp-recur-suite-red (4 detections, 2 beads" "$out1"
-want "bump_requeue: 1 distinct bead, 1 detection"  "1 sp-requeue-quota-exceeded (1" "$out1"
-want "bump_reclaim: 1 distinct bead, 1 detection"  "1 sp-reclaim (1"          "$out1"
+# All four bump_recur calls above land within the same test run, well inside the default
+# clustering gap — one causal event, two victims (sp-jcd0e: causal events, not victims,
+# decide the rank; the victim count is still reported alongside).
+want "bump_recur: 1 causal event (a burst), 2 victims, 4 detections" "1 sp-recur-suite-red (2 victims, 4" "$out1"
+want "bump_requeue: 1 causal event, 1 victim, 1 detection"  "1 sp-requeue-quota-exceeded (1 victims, 1" "$out1"
+want "bump_reclaim: 1 causal event, 1 victim, 1 detection"  "1 sp-reclaim (1 victims, 1"          "$out1"
 
 # UC-ops-detection-remediation-07's Sin-escalation recurrence counter is now
 # incident::ports::recurs_of (Rust, cargo test -p incident) rather than a lib.sh
@@ -141,10 +149,8 @@ testdb_reset
 bid_g="$(plant_bead "reopen-cause-bead")"
 bead_reopen "$bid_g" gate-red "Reopened by test: sp-0wwcn" >/dev/null 2>&1
 
-_ev_cause="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-    "SELECT COALESCE(new_value,'') FROM events WHERE issue_id='$bid_g' AND event_type='reopen'" \
-    2>/dev/null | sed -n '3p' | tr -d ' ')"
-is "bead_reopen writes event_type=reopen with cause in new_value" "gate-red" "$_ev_cause"
+_ev_cause="$(lcfix_fact_causes "$bid_g" reopen)"
+is "bead_reopen appends a reopen fact with the cause" "gate-red" "$_ev_cause"
 
 out2="$(run_census)"
 want "census reports sp-reopen-gate-red from the real reopen row" "1 sp-reopen-gate-red" "$out2"
@@ -181,12 +187,12 @@ echo "3. since-filter reaches the real SQL (watermark narrows the query)"
 # ==============================================================================
 # A stale event (before the watermark) and a live one (after) — the since-watermark
 # query must see only the live one, proving SPIRA_RUN/maechen.watermark really reaches
-# census_events_run_sql's since-clause and not just merge.py's ranking (table-tested
-# separately in test-census-pipeline.sh).
+# census_event_rows_run_sql's since-clause and not just cluster_merge.py's ranking
+# (table-tested separately in test-census-pipeline.sh).
 testdb_reset
 bid_stale="$(plant_bead "stale-watermark-bead")"
 _uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
-"${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
     "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$_uuid', '$bid_stale', 'recurred', 'harness', 'stale-class', FROM_UNIXTIME(1000000000))" \
     >/dev/null 2>&1
 
@@ -197,9 +203,9 @@ _CENSUS_RUN="$TMP/wm-run"; mkdir -p "$_CENSUS_RUN"
 printf '1500000000\n' > "$_CENSUS_RUN/maechen.watermark"
 out3="$(run_census)"
 unset _CENSUS_RUN
-want "since-filter: live class counted since the watermark" "1 sp-recur-live-class (1 detections, 1 all-time)" "$out3"
+want "since-filter: live class counted since the watermark" "1 sp-recur-live-class (1 victims, 1 detections, 1 all-time)" "$out3"
 want "since-filter: stale class shows 0 since watermark, 1 all-time" \
-    "0 sp-recur-stale-class (0 detections, 1 all-time)" "$out3"
+    "0 sp-recur-stale-class (0 victims, 0 detections, 1 all-time)" "$out3"
 
 # ==============================================================================
 echo
@@ -238,9 +244,8 @@ git init -q "$FIXTURE_REPO" \
 
 
 run_census_fixture() {
-    env SPIRA_DB="$SPIRA_DB" \
-        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
-        SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL"
+    env SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$FIXTURE_REPO" \

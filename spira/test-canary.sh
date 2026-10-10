@@ -38,6 +38,19 @@ tl_subshell_safe
 # The stage finds every compiled binary (sentinel, strand, aeon, landing-pass, spira-config)
 # by bare name on the PATH testlib.sh set for this suite (sp-gypjk) — nothing to pin.
 
+# `release`'s own Config::from_env resolves SPIRA_LC_PASSWORD_FILE via cfg() ambiently —
+# the complete fixture declares a path that does not exist on disk
+# (/fixture/userhome/.config/spira/spira-lc.credential), which `release stage up`'s own
+# root schema-apply step then tries to read and fails. This suite never declared its own
+# (sfail round 3, pattern 7); stage's throwaway dolt server takes no password, so empty.
+tl_config SPIRA_LC_PASSWORD_FILE=""
+# SPIRA_CHAMBER is registered too: chamber_dir_with() prefers a non-empty resolved config
+# value over deriving <home>/chamber, and the complete fixture declares one
+# (.../spira-releases/current/spira/chamber) that `release stage up`'s own eval never
+# overrides for its dynamic STAGE_ROOT. Cleared so chamber resolution falls through to
+# whatever SPIRA_HOME the stage sets (sfail round 4, same shape as pattern 6/7).
+tl_config SPIRA_CHAMBER=""
+
 isnt()   { [ "$2" != "$3" ] && ok "$1" || bad "$1" "did not want [$2] got [$3]"; }
 exists() { [ -e "$2" ] && ok "$1" || bad "$1" "expected file/dir: $2"; }
 isexec() { [ -x "$2" ] && ok "$1" || bad "$1" "expected executable: $2"; }
@@ -55,9 +68,26 @@ print(b.get(sys.argv[1]) or "")' "$2" 2>/dev/null
 # ─── T1: stage up creates expected structure ──────────────────────────────────
 printf '\nT1: stage up creates expected structure\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
+    # SPIRA_LC_PASSWORD_FILE is registered (spira-lc/src/db.rs resolves it via cfg(), not
+    # raw env, unlike SPIRA_LC_PORT/SPIRA_LC_USER which stay raw env) — this suite's own
+    # earlier override (cleared to "" so `release stage up`'s OWN schema-apply step, which
+    # inherits the operator's env, doesn't choke on the fixture's bogus credential path)
+    # would otherwise persist and starve any `spira-lc` call below of the stage's real,
+    # just-generated credential (eval'd above as a plain var).
+    # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
+    # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
+    # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
+    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
+        SPIRA_DB="${SPIRA_DB:-}"
 
     [ -n "${STAGE_ROOT:-}" ] && ok "STAGE_ROOT is set" || bad "STAGE_ROOT is set" "empty"
     [ -d "${STAGE_ROOT:-/nonexistent}" ] && ok "STAGE_ROOT is a directory" || bad "STAGE_ROOT is a directory" "$STAGE_ROOT"
@@ -116,9 +146,26 @@ printf '\nT1: stage up creates expected structure\n'
 # ─── T2: all stage paths are under STAGE_ROOT ────────────────────────────────
 printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
+    # SPIRA_LC_PASSWORD_FILE is registered (spira-lc/src/db.rs resolves it via cfg(), not
+    # raw env, unlike SPIRA_LC_PORT/SPIRA_LC_USER which stay raw env) — this suite's own
+    # earlier override (cleared to "" so `release stage up`'s OWN schema-apply step, which
+    # inherits the operator's env, doesn't choke on the fixture's bogus credential path)
+    # would otherwise persist and starve any `spira-lc` call below of the stage's real,
+    # just-generated credential (eval'd above as a plain var).
+    # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
+    # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
+    # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
+    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
+        SPIRA_DB="${SPIRA_DB:-}"
 
     for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_SUMMON SPIRA_LAUNCH \
                SPIRA_LC_PASSWORD_FILE SPIRA_LC_SOCKET SPIRA_LC_DATA_DIR; do
@@ -139,13 +186,30 @@ printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
 # ─── T3: stage db is usable (real bd round-trip) ─────────────────────────────
 printf '\nT3: stage db is usable\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
+    # SPIRA_LC_PASSWORD_FILE is registered (spira-lc/src/db.rs resolves it via cfg(), not
+    # raw env, unlike SPIRA_LC_PORT/SPIRA_LC_USER which stay raw env) — this suite's own
+    # earlier override (cleared to "" so `release stage up`'s OWN schema-apply step, which
+    # inherits the operator's env, doesn't choke on the fixture's bogus credential path)
+    # would otherwise persist and starve any `spira-lc` call below of the stage's real,
+    # just-generated credential (eval'd above as a plain var).
+    # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
+    # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
+    # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
+    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
+        SPIRA_DB="${SPIRA_DB:-}"
 
     # Create a bead; bd exits non-zero on a broken db
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
-    created_id="$(bd -C "$SPIRA_DB" create "canary test bead" --type task \
+    created_id="$(timeout 5 bd -C "$SPIRA_DB" create "canary test bead" --type task \
         --labels "spira,plan" --silent 2>/dev/null | tr -d '[:space:]')"
     [ -n "$created_id" ] && ok "bd create succeeds in stage db" \
                          || bad "bd create succeeds in stage db" "empty id"
@@ -153,13 +217,13 @@ printf '\nT3: stage db is usable\n'
     # POSITIVE CONTROL: verify the bead IS visible in the stage db
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
     want "created bead visible in stage db" "${created_id:-<no id>}" \
-        "$(bd -C "$SPIRA_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
+        "$(timeout 5 bd -C "$SPIRA_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
 
     # The bead must NOT be visible in the real SPIRA_DB (if one is set)
     if [ -n "${_REAL_DB:-}" ] && [ -d "$_REAL_DB" ]; then
         # hermetic-ok: $_REAL_DB is the pre-stage SPIRA_DB, read-only here to verify isolation
         nowant "stage bead not visible in real db" "${created_id:-<no id>}" \
-            "$(bd -C "$_REAL_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
+            "$(timeout 5 bd -C "$_REAL_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
     else
         ok "real db isolation (no real db to check against)"
     fi
@@ -168,6 +232,11 @@ printf '\nT3: stage db is usable\n'
 # ─── T4: stage down removes the root completely ───────────────────────────────
 printf '\nT4: stage down removes STAGE_ROOT\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     saved_root="$STAGE_ROOT"
@@ -196,13 +265,30 @@ printf '\nT5: stage down refuses a non-stage path\n'
 # ─── T6: canary-worker claims through the machine, commits, submits ──────────
 printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
 (
+    # Reset before every stage boot: a prior T-block's post-eval sync below (real stage
+    # credential, for ITS OWN spira-lc calls) would otherwise leak into THIS stage's own
+    # `release stage up` schema-apply bootstrap as a stale, now-torn-down path — the
+    # "cannot tell: reading ... No such file or directory" failure this round surfaced.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
+    # SPIRA_LC_PASSWORD_FILE is registered (spira-lc/src/db.rs resolves it via cfg(), not
+    # raw env, unlike SPIRA_LC_PORT/SPIRA_LC_USER which stay raw env) — this suite's own
+    # earlier override (cleared to "" so `release stage up`'s OWN schema-apply step, which
+    # inherits the operator's env, doesn't choke on the fixture's bogus credential path)
+    # would otherwise persist and starve any `spira-lc` call below of the stage's real,
+    # just-generated credential (eval'd above as a plain var).
+    # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
+    # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
+    # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
+    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
+        SPIRA_DB="${SPIRA_DB:-}"
 
     # Create an unparented plan bead (there is no goal epic, sp-k6m1m)
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
-    bead="$(bd -C "$SPIRA_DB" create "t6 task" --type task \
+    bead="$(timeout 5 bd -C "$SPIRA_DB" create "t6 task" --type task \
         --labels "spira,plan" --silent 2>/dev/null | tr -d '[:space:]')"
     [ -n "$bead" ] || { printf '  FATAL: could not create bead\n'; exit 1; }
 
@@ -237,6 +323,9 @@ printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
 # ─── T7: full end-to-end canary ───────────────────────────────────────────────
 printf '\nT7: full canary (sentinel + landing)\n'
 (
+    # Reset before canary boots its own stage internally (same leak as the T-blocks above:
+    # a prior block's real, now-torn-down stage credential must not survive into this one).
+    tl_config SPIRA_LC_PASSWORD_FILE=""
     # canary.sh runs `sentinel` and `landing-pass` by name, on this suite's PATH.
     # Capture what canary prints; exit code is what matters.
     out="$(release canary 2>&1)"

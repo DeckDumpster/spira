@@ -41,6 +41,30 @@ pub fn failed_tests(out: &str) -> Vec<String> {
     seen
 }
 
+/// The fence named by the first `<fence>: REFUSED` line, e.g. `lifecycle-guard`; failing that,
+/// the first line opening with a hyphenated lowercase rule token and `: `, e.g. a lint's
+/// `process-exit-in-library: ...`.
+pub fn fence_refusal(out: &str) -> Option<String> {
+    let ident = |n: &str| {
+        !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    };
+    out.lines()
+        .find_map(|l| {
+            let name = l.trim().split_once(": REFUSED")?.0;
+            ident(name).then(|| name.to_string())
+        })
+        .or_else(|| {
+            out.lines().find_map(|l| {
+                let name = l.split_once(": ")?.0;
+                let rule = name.contains('-')
+                    && !name.starts_with('-')
+                    && !name.ends_with('-')
+                    && name.chars().all(|c| c.is_ascii_lowercase() || c == '-');
+                rule.then(|| name.to_string())
+            })
+        })
+}
+
 /// `ran_suites`: every suite the runner reported any status for.
 pub fn ran_suites(out: &str) -> Vec<String> {
     suites_where(
@@ -163,6 +187,51 @@ pub fn suites_step_ran(out: &str) -> bool {
         || !ran_suites(out).is_empty()
 }
 
+/// The `gate-step <ok|RED> rc=<n> :: <unit>` lines [`compose::run_all`](crate::compose::run_all)
+/// prints: each step's unit and whether it was red, in order.
+pub fn step_units(out: &str) -> Vec<(String, bool)> {
+    out.lines()
+        .filter_map(|l| {
+            let rest = l.trim().strip_prefix("gate-step ")?;
+            let (head, unit) = rest.split_once(" :: ")?;
+            let unit = unit.trim();
+            (!unit.is_empty()).then(|| (unit.to_string(), head.starts_with("RED")))
+        })
+        .collect()
+}
+
+/// Every independent unit that is red in `out`: red suites, red fence steps (the suites step
+/// only when it named no suite), and unit phases that failed.
+pub fn red_units(out: &str) -> Vec<String> {
+    let mut units = red_suites(out);
+    let named = !units.is_empty();
+    for (u, red) in step_units(out) {
+        if red && !(named && u == "suites") && !units.contains(&u) {
+            units.push(u);
+        }
+    }
+    for l in out.lines() {
+        let Some(name) = l.trim().strip_prefix("gate: phase '").and_then(|r| r.split('\'').next()) else {
+            continue;
+        };
+        let u = format!("phase:{name}");
+        if !units.contains(&u) {
+            units.push(u);
+        }
+    }
+    units
+}
+
+/// A build whose compiler-cache server dropped the connection: the cache's fault, never a
+/// red on either side of the base comparison.
+pub fn cache_transport_failure(out: &str) -> bool {
+    let lower = out.to_lowercase();
+    lower.contains("sccache: error")
+        && ["connection reset", "connection refused", "failed to execute compile"]
+            .iter()
+            .any(|m| lower.contains(m))
+}
+
 /// Whose fault a failed branch trial is (`gate_attribute`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attribution {
@@ -175,11 +244,12 @@ pub enum Attribution {
 /// `base_rc` is only read when `base_ran`. `absent_on_base`: branch reds whose suite file
 /// the base does not have — the branch's own by construction.
 ///
-/// EACH RED IS JUDGED AGAINST THE BASE ON THAT SUITE (sp-hh5h0). A branch red is the
-/// branch's when the base ran that suite and it was not red there, or the base lacks it. A
-/// branch red the base never ran is not evidence either way: base-untestable, never
-/// branch-red on a base that merely did not look. Only when every branch red is red on the
-/// base too does the base's own rule apply (all timeouts → base-timeout, else base-red).
+/// EACH RED IS JUDGED AGAINST THE BASE ON ITS OWN UNIT (sp-hh5h0; every fence and suite is a
+/// unit). A branch red is the branch's when the base ran that unit and it was not red there,
+/// or the base lacks it. A branch red the base never ran is not evidence either way:
+/// base-untestable, never branch-red on a base that merely did not look. Only when every
+/// branch red is red on the base too does the base's own rule apply (all timeouts →
+/// base-timeout, else base-red: the caller subtracts those units rather than holding the branch).
 pub fn attribute(
     branch_out: &str,
     base_ran: bool,
@@ -190,21 +260,38 @@ pub fn attribute(
     if !base_ran {
         return Attribution::BaseUntestable;
     }
-    let branch_reds = red_suites(branch_out);
-    let base_reds = red_suites(base_out);
+    let branch_reds = red_units(branch_out);
+    let base_reds = red_units(base_out);
     if branch_reds.is_empty() {
-        // A red that names no suite (a fence, a unit phase): judged on the command whole.
+        // A red that names no unit (a legacy string, an unnamed phase): judged on the command whole.
         if base_rc == 0 {
             return Attribution::BranchRed("-".into());
         }
     } else {
         let base_ran_set = ran_suites(base_out);
-        if let Some(s) = branch_reds.iter().find(|s| {
-            absent_on_base.contains(s) || (base_ran_set.contains(s) && !base_reds.contains(s))
-        }) {
+        let base_steps = step_units(base_out);
+        let own = |u: &String| {
+            if absent_on_base.contains(u) {
+                return Some(true);
+            }
+            if base_reds.contains(u) {
+                return Some(false);
+            }
+            if u.ends_with(".sh") {
+                return base_ran_set.contains(u).then_some(true);
+            }
+            if u.starts_with("phase:") {
+                return (base_rc == 0).then_some(true);
+            }
+            if base_steps.is_empty() {
+                return (base_rc == 0).then_some(true);
+            }
+            Some(true)
+        };
+        if let Some(s) = branch_reds.iter().find(|u| own(u) == Some(true)) {
             return Attribution::BranchRed(s.clone());
         }
-        if branch_reds.iter().any(|s| !base_reds.contains(s)) {
+        if branch_reds.iter().any(|u| own(u).is_none()) {
             return Attribution::BaseUntestable;
         }
     }
@@ -229,13 +316,50 @@ pub fn tail_bytes(s: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    const NONE: &[String] = &[];
+    const STEPS_BASE: &str = "gate-step RED rc=1 :: spira-lint\ngate-step ok rc=0 :: build-fence\n  test-s1.sh RED rc=1";
+
+    #[test]
+    fn a_unit_red_on_both_is_inherited_and_the_branchs_own_is_named() {
+        let branch = "gate-step RED rc=1 :: spira-lint\ngate-step RED rc=1 :: lifecycle-guard\n  test-s1.sh RED rc=1\n  test-s2.sh RED rc=1";
+        assert_eq!(attribute(branch, true, 1, STEPS_BASE, NONE), Attribution::BranchRed("lifecycle-guard".into()));
+        assert_eq!(red_units(branch), vec!["test-s1.sh", "test-s2.sh", "spira-lint", "lifecycle-guard"]);
+        let inherited = "gate-step RED rc=1 :: spira-lint\n  test-s1.sh RED rc=1";
+        assert_eq!(attribute(inherited, true, 1, STEPS_BASE, NONE), Attribution::BaseRed("test-s1.sh".into()));
+    }
+
+    #[test]
+    fn a_fence_red_does_not_hide_the_suites_that_ran() {
+        let out = "gate-step RED rc=1 :: lifecycle-guard\n  test-s2.sh RED rc=1\ngate-step RED rc=1 :: suites";
+        assert_eq!(red_units(out), vec!["test-s2.sh", "lifecycle-guard"]);
+    }
+
     use super::*;
+
+    #[test]
+    fn a_cache_transport_error_is_found_and_a_compile_error_is_not() {
+        let wedged = "error: could not compile `x`\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)\n";
+        assert!(cache_transport_failure(wedged));
+        assert!(!cache_transport_failure("error[E0308]: mismatched types\n --> src/lib.rs:1:1\n"));
+        assert!(!cache_transport_failure("test result: FAILED. Connection reset by peer in a test\n"));
+    }
 
     #[test]
     fn failed_tests_reads_cargo_failure_lines_only() {
         let out = "test a::ok ... ok\ntest a::bad ... FAILED\ntest a::bad ... FAILED\ntest result: FAILED. 1 passed\n";
         assert_eq!(failed_tests(out), vec!["a::bad".to_string()]);
         assert!(failed_tests("test result: FAILED\n").is_empty());
+    }
+
+    #[test]
+    fn fence_refusal_names_the_fence() {
+        let out = "x\nlifecycle-guard: REFUSED ... bead/src/main.rs:717\n";
+        assert_eq!(fence_refusal(out), Some("lifecycle-guard".to_string()));
+        assert_eq!(fence_refusal("some text: REFUSED\n"), None);
+        assert_eq!(fence_refusal("all green"), None);
+        let lint = "scanning\nprocess-exit-in-library: spira/x.rs:13: lists a path that no longer needs an exception\n";
+        assert_eq!(fence_refusal(lint), Some("process-exit-in-library".to_string()));
+        assert_eq!(fence_refusal("error: boom\ngate: x\nsome-text here: y\n"), None);
     }
 
     #[test]
@@ -315,7 +439,7 @@ mod tests {
         assert_eq!(harness_fault_detail("nothing"), None);
     }
 
-    const NONE: &[String] = &[];
+
 
     #[test]
     fn attribution_base_untestable_when_the_base_did_not_run() {

@@ -83,12 +83,12 @@ behavior:
   event_scheduler: "OFF"
 YAML
 
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
 SERVER_PID=$!
 
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         up=1
         break
     fi
@@ -96,7 +96,7 @@ for _ in $(seq 1 50); do
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+root_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
 
 # spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk).
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
@@ -110,6 +110,12 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# SPIRA_LC_PASSWORD_FILE EXPLICITLY, EMPTY: it is a registered key, resolved from SPIRA_TOML
+# alone now — left undeclared it falls to the complete fixture's own (nonexistent) path, and
+# every spira-lc call refuses before reaching the dolt server. Empty matches root's actual
+# password here; switched to the real one below once this suite moves to spira_lc.
+LC_CRED="$TMP/lc.credential"; : > "$LC_CRED"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_CRED"
 
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
@@ -126,6 +132,8 @@ cat "$TMP/grants.log" >&2
 # superuser privileges would be a false green.
 export SPIRA_LC_USER=spira_lc
 export SPIRA_LC_PASSWORD="$PASS"
+printf '%s' "$PASS" > "$LC_CRED"
+tl_config SPIRA_LC_PASSWORD_FILE="$LC_CRED"
 
 lc() { spira-lc "$@"; }
 batch_field() {   # batch_field <batch-id> <column>
@@ -159,12 +167,101 @@ certify_stacked() {
     lc event bead "$id" --expect SUBMITTED --version 2 --actor test --kind '{"GatePass":{"tip":"'"$tip"'","gate_key":"k1"}}' >/dev/null
 }
 
+# submit <id> <tip> — claim and submit only: a SUBMITTED row, no per-bead gate.
+submit() {
+    local id="$1" tip="$2"
+    lc create-bead "$id" >/dev/null
+    lc event bead "$id" --expect READY --version 0 --actor test --kind '{"Claim":{"holder":"aeon-1","lease_until":1}}' >/dev/null
+    lc event bead "$id" --expect WORKING --version 1 --actor test --kind "{\"Submit\":{\"tip\":\"$tip\"}}" >/dev/null
+}
+
+# ── a round takes SUBMITTED beads directly (law-a-round-is-feature-first-then-catch-all) ─
+submit sp-lc-sub tipS
+certify sp-lc-cer tipC
+out="$(lc cut batch-sub --repo spira --head HS --base BS --members "sp-lc-sub:tipS,sp-lc-cer:tipC" --actor test)"
+wantrc "cut admits a SUBMITTED member beside a CERTIFIED one" 0 $?
+is "the SUBMITTED member enters delivery" "IN_DELIVERY" "$(member_field sp-lc-sub bead state)"
+is "the CERTIFIED member enters delivery" "IN_DELIVERY" "$(member_field sp-lc-cer bead state)"
+submit sp-lc-rw tipR
+v="$(lc show sp-lc-rw | python3 -c 'import json,sys; print(json.load(sys.stdin)["bead"]["version"])')"
+lc event bead sp-lc-rw --expect SUBMITTED --version "$v" --actor test --kind '{"GateRed":{"tip":"tipR","reason":"suites-failed"}}' >/dev/null
+lc cut batch-rw --repo spira --head HR --base BR --members "sp-lc-rw:tipR" --actor test >/dev/null 2>&1
+wantrc "cut still refuses a REWORK member" 3 $?
+
+# ── an applied event's states come from the row it applied to (sp-zt7r2p) ───────────────
+ev_field() {   # ev_field <machine> <key> <event> <column>
+    root_sql --use-db spira_lifecycle sql -q "SELECT $4 AS v FROM event WHERE machine = '$1' AND lc_key = '$2' AND event = '$3' AND applied = 1 ORDER BY seq DESC LIMIT 1" -r json \
+        | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["v"] if d else "")' 2>/dev/null
+}
+is "a SUBMITTED member's Deliver logs SUBMITTED as its from_state" "SUBMITTED" "$(ev_field bead sp-lc-sub Deliver from_state)"
+is "...and as its expect" "SUBMITTED" "$(ev_field bead sp-lc-sub Deliver expect)"
+is "a CERTIFIED member's Deliver logs CERTIFIED" "CERTIFIED" "$(ev_field bead sp-lc-cer Deliver from_state)"
+is "a delivery row that did not exist is enqueued from NONE" "NONE" "$(ev_field delivery sp-lc-sub Enqueued from_state)"
+is "...and cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-sub Cut from_state)"
+
+certify sp-lc-bx tipBX
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO delivery (bead_id, mode, state, batch_id, version) VALUES ('sp-lc-bx', 'queue', 'BATCHED', 'batch-elsewhere', 1)" >/dev/null
+out="$(lc cut batch-bx --repo spira --head HX --base BX --members "sp-lc-bx:tipBX" --actor test 2>&1)"
+wantrc "a cut over a member BATCHED in another batch is refused" 3 $?
+want "...naming that batch" "batch-elsewhere" "$out"
+is "...and the member's bead is untouched" "CERTIFIED" "$(member_field sp-lc-bx bead state)"
+is "...and its delivery row still names the other batch" "batch-elsewhere" "$(member_field sp-lc-bx delivery batch_id)"
+
+certify sp-lc-ex tipEX
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO delivery (bead_id, mode, state, version) VALUES ('sp-lc-ex', 'queue', 'EXITED', 4)" >/dev/null
+lc cut batch-ex --repo spira --head HE --base BE --members "sp-lc-ex:tipEX" --actor test >/dev/null
+wantrc "a cut over an EXITED delivery row re-queues it by compare-and-swap" 0 $?
+is "...logging the EXITED row it was" "EXITED" "$(ev_field delivery sp-lc-ex Enqueued from_state)"
+is "...then the cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-ex Cut from_state)"
+is "...to BATCHED in the new batch" "batch-ex" "$(member_field sp-lc-ex delivery batch_id)"
+is "...at version 6" "6" "$(member_field sp-lc-ex delivery version)"
+
+CONT_RUN="$TMP/continuity-run"; mkdir -p "$CONT_RUN"
+cont() { SPIRA_TOML="$(tl_layer SPIRA_RUN="$CONT_RUN")" spira-lc event-continuity; }
+# ── event continuity: red first on a planted break, then on the real log ────────────────
+cont >/dev/null
+wantrc "the log the cascades above wrote is continuous" 0 $?
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-brk','A','X','X','Y',1,'{}','t',1),('bead','sp-lc-brk','B','Q','Q','R',1,'{}','t',2),('bead','sp-lc-brk','C','Q','Q','S',1,'{}','t',3)" >/dev/null
+out="$(cont)"
+wantrc "a planted break is reported" 3 $?
+want "...naming the key" '"key":"sp-lc-brk"' "$out"
+is "...once, the first break only" "1" "$(printf '%s\n' "$out" | grep -c sp-lc-brk)"
+root_sql --use-db spira_lifecycle sql -q "DELETE FROM event WHERE lc_key = 'sp-lc-brk'" >/dev/null
+
+# ── a baseline turns history into a success: only a break past it is red ────────────────
+rm -f "$CONT_RUN/event-continuity.baseline"
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-old','A','X','X','Y',1,'{}','t',1),('bead','sp-lc-old','B','Q','Q','R',1,'{}','t',2)" >/dev/null
+out="$(cont)"; rc=$?
+wantrc "first run over old breaks exits 0" 0 $rc
+want "...and still reports them" '"key":"sp-lc-old"' "$out"
+want "...recording a baseline" "event-continuity.baseline" "$(ls "$CONT_RUN")"
+cont >/dev/null
+wantrc "a later run with no new break exits 0" 0 $?
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-new','A','X','X','Y',1,'{}','t',1),('bead','sp-lc-new','B','Q','Q','R',1,'{}','t',2)" >/dev/null
+out="$(cont)"; rc=$?
+wantrc "a new break exits 3" 3 $rc
+want "...naming the new key" '"key":"sp-lc-new"' "$out"
+root_sql --use-db spira_lifecycle sql -q "DELETE FROM event WHERE lc_key IN ('sp-lc-old','sp-lc-new')" >/dev/null
+
+# ── migration 0013 corrects the hard-coded Deliver/Cut states from their predecessors ───
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-mig','Submit','WORKING','WORKING','SUBMITTED',1,'{}','t',1),('bead','sp-lc-mig','Deliver','CERTIFIED','CERTIFIED','IN_DELIVERY',1,'{}','t',2),('delivery','sp-lc-mig','Cut','QUEUED','QUEUED','BATCHED',1,'{}','t',3)" >/dev/null
+cont >/dev/null
+wantrc "POSITIVE CONTROL: the old hard-coded states are seen as breaks" 3 $?
+root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0019-event-continuity.sql" >/dev/null 2>&1
+wantrc "migration 0013 applies" 0 $?
+is "the Deliver now says what the bead was" "SUBMITTED" "$(ev_field bead sp-lc-mig Deliver from_state)"
+is "the Cut of a row with no predecessor says NONE" "NONE" "$(ev_field delivery sp-lc-mig Cut from_state)"
+cont >/dev/null
+wantrc "...and the log is continuous again" 0 $?
+root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0019-event-continuity.sql" >/dev/null 2>&1
+wantrc "migration 0013 is idempotent" 0 $?
+
 # ── criterion 1: a green batch lands every member atomically in one transaction ──────────
 certify sp-lc-1 tipA
 certify sp-lc-2 tipB
 out="$(lc cut batch-green --repo spira --head H1 --base B1 --members "sp-lc-1:tipA,sp-lc-2:tipB" --actor test)"
 wantrc "cut opens batch-green with two members" 0 $?
-want "cut applied every step" '"applied":[true,true,true,true]' "$out"
+want "cut applied every step" '"applied":[true,true,true,true,true,true]' "$out"
 
 v="$(batch_field batch-green version)"
 lc event batch batch-green --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
@@ -210,7 +307,7 @@ UPDATE delivery SET state = 'EXITED', merge_sha = 'should-never-be-seen', versio
 SELECT SLEEP(5);
 COMMIT;
 SQL
-as_spira_lc() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$PASS" --no-tls --use-db spira_lifecycle "$@"; }
+as_spira_lc() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u spira_lc -p "$PASS" --no-tls --use-db spira_lifecycle "$@"; }
 as_spira_lc sql < "$TMP/kill.sql" >/dev/null 2>&1 &
 KILL_PID=$!
 sleep 0.5
@@ -323,7 +420,7 @@ certify sp-lc-s2 tipS2
 certify sp-lc-s3 tipS3
 out="$(lc stack batch-stack --members "sp-lc-s2:tipS2,sp-lc-s3:tipS3" --actor test)"
 wantrc "stack applies" 0 $?
-want "stack applied every step" '"applied":[true,true,true,true]' "$out"
+want "stack applied every step" '"applied":[true,true,true,true,true,true]' "$out"
 
 is "stack does not insert a second batch row — still OPEN" "OPEN" "$(batch_field batch-stack state)"
 is "stack advances the batch's version by exactly the new member count" "3" "$(batch_field batch-stack version)"
@@ -379,7 +476,7 @@ wantrc "settle applies even though the caller's own --requeue still names the st
 
 is "batch settles" "SETTLED" "$(batch_field batch-stacked-red state)"
 is "ejected prerequisite A needs rework" "REWORK" "$(member_field sp-f-a bead state)"
-is "A's reason names the direct eject" "batch-ejected" "$(member_field sp-f-a bead reason)"
+is "A's reason names the direct red eject" "batch-ejected-red" "$(member_field sp-f-a bead reason)"
 is "SEEN RED FIRST: B follows A into REWORK rather than the caller's own --requeue leaving it CERTIFIED" \
     "REWORK" "$(member_field sp-f-b bead state)"
 is "B's reason names base-withdrawn — collateral, not itself accused" "base-withdrawn" "$(member_field sp-f-b bead reason)"
@@ -423,8 +520,9 @@ want "the settle summary meters both cascaded members" '"base_withdrawn":2' "$ou
 # commands queue.sh's _lc_cut_batch/_lc_eject_member/_lc_abandon_batch issued (create-bead
 # per member then cut; show-batch for the CAS state/version, then abandon-batch or
 # eject-member) against this suite's already-running server.
-export SPIRA_RUN="$TMP/queue-shell-run"
+SPIRA_RUN="$TMP/queue-shell-run"
 mkdir -p "$SPIRA_RUN/landstate" "$SPIRA_RUN/queue/fixture-repo"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 _lc_cut_batch() {   # _lc_cut_batch <batch-id> <repo> <head> <base> <actor> <id:tip>...
     local batch_id="$1" repo="$2" head="$3" base="$4" actor="$5" _m csv=""; shift 5
     for _m in "$@"; do lc create-bead "${_m%%:*}" >/dev/null 2>&1 || true; csv="${csv:+$csv,}$_m"; done
@@ -462,7 +560,7 @@ rc=$?
 wantrc "_lc_cut_batch refuses a member that is not CERTIFIED there" 3 $rc
 is "a refused cut leaves no batch row behind" "" "$(batch_field batch-q-refuse state)"
 
-# _lc_eject_member: legal from OPEN/CI_RUNNING, returns only the named member to
+# _lc_eject_member: legal from OPEN/CI_RUNNING/GREEN, returns only the named member to
 # CERTIFIED, and does not move the batch or touch survivors — distinct from settle's own
 # CI-driven eject, which only runs after a real Red (design: the event log is the record
 # of what happened, and no Red ever fired here).
@@ -477,14 +575,23 @@ is "batch stays OPEN — eject does not move it" "OPEN" "$(batch_field batch-q-e
 is "ejected member returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-q-e1 bead state)"
 is "survivor is left alone in the batch" "IN_DELIVERY" "$(member_field sp-lc-q-e2 bead state)"
 
-# POSITIVE CONTROL: eject-member refuses once CI has moved the batch past OPEN/CI_RUNNING.
+# Eject from GREEN is legal: the head changes, so the certification is void and the batch
+# returns to OPEN with the member back at CERTIFIED.
 v="$(batch_field batch-q-eject version)"
 lc event batch batch-q-eject --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
 v="$(batch_field batch-q-eject version)"
 lc event batch batch-q-eject --expect CI_RUNNING --version "$v" --actor test --kind '"Green"' >/dev/null
+is "batch reaches GREEN before the eject" "GREEN" "$(batch_field batch-q-eject state)"
+out="$(_lc_eject_member batch-q-eject sp-lc-q-e2 queue "eject after green")"
+wantrc "_lc_eject_member applies from GREEN" 0 $?
+is "an eject from GREEN returns the batch to OPEN" "OPEN" "$(batch_field batch-q-eject state)"
+is "the member ejected from GREEN returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-q-e2 bead state)"
+
+# POSITIVE CONTROL: eject-member still refuses once the batch is terminal.
+out="$(_lc_abandon_batch batch-q-eject queue "close it")"
 out="$(_lc_eject_member batch-q-eject sp-lc-q-e2 queue "too late")"
 rc=$?
-wantrc "_lc_eject_member refuses once the batch has moved past CI (GREEN)" 3 $rc
+wantrc "_lc_eject_member refuses once the batch is terminal (ABANDONED)" 3 $rc
 
 # _lc_abandon_batch: accepts from any non-terminal state, returns every member.
 certify sp-lc-q-a1 tipQA1
@@ -504,6 +611,38 @@ is "member 2 returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-q-a2 bead s
 out="$(_lc_abandon_batch batch-q-never-cut queue "no such batch")"
 rc=$?
 wantrc "_lc_abandon_batch fails closed when the batch row does not exist" 1 $rc
+
+# ── an abandon returns each member to the state it entered delivery from ───────────────────
+submit sp-lc-o-sub tipOS
+certify sp-lc-o-cer tipOC
+lc cut batch-q-prior --repo fixture-repo --head headO --base baseO \
+    --members "sp-lc-o-sub:tipOS,sp-lc-o-cer:tipOC" --actor test >/dev/null
+out="$(_lc_abandon_batch batch-q-prior queue "prior state")"
+wantrc "abandoning a mixed round applies" 0 $?
+is "a SUBMITTED member returns to SUBMITTED, never promoted" "SUBMITTED" "$(member_field sp-lc-o-sub bead state)"
+is "a CERTIFIED member returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-o-cer bead state)"
+
+# ── an IN_DELIVERY bead no open batch names is requeued by the invariant ───────────────────
+# POSITIVE CONTROL: the planted orphan is seen first, then a bead held by an open batch is not.
+submit sp-lc-orph-sub tipPS
+certify sp-lc-orph-cer tipPC
+certify sp-lc-held tipPH
+lc cut batch-orph --repo fixture-repo --head headP --base baseP \
+    --members "sp-lc-orph-sub:tipPS,sp-lc-orph-cer:tipPC" --actor test >/dev/null
+lc cut batch-held --repo fixture-repo --head headH --base baseH --members "sp-lc-held:tipPH" --actor test >/dev/null
+v="$(batch_field batch-orph version)"
+lc event batch batch-orph --expect OPEN --version "$v" --actor test --kind '{"Abandon":{"reason":"planted"}}' >/dev/null
+is "the planted orphans are stranded IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-orph-sub bead state)"
+out="$(lc requeue-orphans --actor test)"
+want "a dry run names the SUBMITTED orphan" 'sp-lc-orph-sub' "$out"
+want "a dry run names the CERTIFIED orphan" 'sp-lc-orph-cer' "$out"
+nowant "a bead held by an open batch is not an orphan" 'sp-lc-held' "$out"
+is "a dry run changes nothing" "IN_DELIVERY" "$(member_field sp-lc-orph-sub bead state)"
+out="$(lc requeue-orphans --actor test --apply)"
+wantrc "requeue-orphans --apply succeeds" 0 $?
+is "the SUBMITTED orphan returns to SUBMITTED" "SUBMITTED" "$(member_field sp-lc-orph-sub bead state)"
+is "the CERTIFIED orphan returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-orph-cer bead state)"
+is "the held member stays IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-held bead state)"
 
 # ── criterion 6, hand half (sp-f3af9): queue.sh's own eject cascades identically ─────────
 # A hand eject through _lc_eject_member (the same call queue.sh's cmd_eject makes) must
@@ -562,4 +701,140 @@ count_closed="$("$CLAIM_BIN" select --fayth test --blockers machine \
 wantrc "spira-claim select runs cleanly once the epic closes" 0 $?
 is "B is claimable once the epic closes — the hand-ordered epic edge, unchanged" "1" "$count_closed"
 
+# ── a round's passes: red pass 1 → eject → rebuild → green pass 2, and a pass killed at the cap ──
+certify sp-lc-p-1 tipP1
+certify sp-lc-p-2 tipP2
+lc cut batch-passes --repo fixture-repo --head headP0 --base baseP --members "sp-lc-p-1:tipP1,sp-lc-p-2:tipP2" --actor test >/dev/null
+pev() {   # pev <batch> <kind-json>: the event at the batch's current state and version
+    lc event batch "$1" --expect "$(batch_field "$1" state)" --version "$(batch_field "$1" version)" --actor test --kind "$2"
+}
+pev batch-passes '{"PassStarted":{"n":1,"head":"headP1"}}' >/dev/null
+is "PassStarted moves the round to CI_RUNNING, phase build" "CI_RUNNING build 1" "$(batch_field batch-passes state) $(batch_field batch-passes phase) $(batch_field batch-passes pass)"
+out="$(pev batch-passes '{"PassGreen":{"n":1,"suites_s":1,"build_s":1}}' 2>&1)"
+wantrc "a green before the suites started is refused" 3 $?
+want "the refusal names the round's phase" "phase build" "$out"
+pev batch-passes '{"SuitesStarted":{"n":1}}' >/dev/null
+is "SuitesStarted moves the phase to suites" "suites" "$(batch_field batch-passes phase)"
+pev batch-passes '{"PassRed":{"n":1,"red_suites":["test-x.sh"],"suites_s":90,"build_s":30}}' >/dev/null
+is "a red pass ends in ATTRIBUTING" "ATTRIBUTING" "$(batch_field batch-passes state)"
+_lc_eject_member batch-passes sp-lc-p-1 queue "red on test-x.sh" >/dev/null
+wantrc "a member is ejected from an ATTRIBUTING round" 0 $?
+pev batch-passes '{"PassRebuilt":{"head":"headP2"}}' >/dev/null
+is "a rebuilt round reopens for the next pass" "OPEN" "$(batch_field batch-passes state)"
+pev batch-passes '{"PassStarted":{"n":2,"head":"headP2"}}' >/dev/null
+pev batch-passes '{"SuitesStarted":{"n":2}}' >/dev/null
+passes_json="$(lc list --batches)"
+pfield() { printf '%s' "$passes_json" | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["batch_id"]=="batch-passes"][0]; print(eval(sys.argv[1]))' "$1"; }
+is "list --batches reports pass 2 in the suites phase" "2 suites" "$(pfield 'str(b["pass"]) + " " + b["phase"]')"
+is "list --batches reports pass 1's verdict, red suites and timings" "red ['test-x.sh'] 30 90" "$(pfield '" ".join(str(b["passes"][0][k]) for k in ("verdict", "red_suites", "build_s", "suites_s"))')"
+is "list --batches counts the eject against pass 1" "1 0" "$(pfield '" ".join(str(p["ejects"]) for p in b["passes"])')"
+is "pass 2 has no verdict yet" "None" "$(pfield 'b["last_pass"]["verdict"]')"
+nowant "phase_since is reported" "None" "$(pfield 'b["phase_since"]')"
+pev batch-passes '{"PassGreen":{"n":2,"suites_s":80,"build_s":20}}' >/dev/null
+is "the second pass reaches GREEN" "GREEN" "$(batch_field batch-passes state)"
+
+certify sp-lc-p-3 tipP3
+lc cut batch-cap --repo fixture-repo --head headC --base baseC --members "sp-lc-p-3:tipP3" --actor test >/dev/null
+pev batch-cap '{"PassStarted":{"n":1,"head":"headC"}}' >/dev/null
+pev batch-cap '{"SuitesStarted":{"n":1}}' >/dev/null
+pev batch-cap '{"PassIncomplete":{"n":1,"reason":"over the 900s cap"}}' >/dev/null
+passes_json="$(lc list --batches)"
+pfield() { printf '%s' "$passes_json" | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["batch_id"]=="batch-cap"][0]; print(eval(sys.argv[1]))' "$1"; }
+is "a pass killed at the cap is incomplete, in ATTRIBUTING, neither red nor green" "incomplete ATTRIBUTING" "$(pfield 'b["last_pass"]["verdict"] + " " + b["state"]')"
+
+# ── a round staged behind a running one: members untouched until promoted ───────────────
+certify sp-lc-g1 tipG1
+certify sp-lc-g2 tipG2
+out="$(lc stage batch-staged --repo spira --head headG --base baseG --members "sp-lc-g1:tipG1,sp-lc-g2:tipG2" --actor test --parent batch-running)"
+wantrc "stage writes the staged round" 0 $?
+is "a staged round is STAGED, behind its parent" "STAGED batch-running" "$(batch_field batch-staged state) $(batch_field batch-staged parent)"
+is "staging delivers no member" "CERTIFIED CERTIFIED" "$(member_field sp-lc-g1 bead state) $(member_field sp-lc-g2 bead state)"
+out="$(lc stage batch-staged-stale --repo spira --head h --base b --members "sp-lc-g1:tip-does-not-match" --actor test --parent batch-running)"
+wantrc "PLANTED VIOLATION: stage refuses a member whose tip does not match" 3 $?
+is "the refused stage wrote no row" "" "$(batch_field batch-staged-stale state)"
+out="$(lc promote batch-staged --head headG2 --base baseG2 --actor test)"
+wantrc "promote cuts the staged round" 0 $?
+is "a promoted round is OPEN at the rebuilt head and base" "OPEN headG2 baseG2" "$(batch_field batch-staged state) $(batch_field batch-staged head) $(batch_field batch-staged base)"
+is "promotion delivers every member" "IN_DELIVERY IN_DELIVERY" "$(member_field sp-lc-g1 bead state) $(member_field sp-lc-g2 bead state)"
+is "promotion batches each member's delivery onto the round" "BATCHED" "$(member_field sp-lc-g2 delivery state)"
+out="$(lc promote batch-staged --head h --base b --actor test)"
+wantrc "PLANTED VIOLATION: a round already OPEN is not promoted again" 3 $?
+
+certify sp-lc-g3 tipG3
+lc stage batch-staged-dead --repo spira --head headD --base baseD --members "sp-lc-g3:tipG3" --actor test --parent batch-running >/dev/null
+lc event batch batch-staged-dead --expect STAGED --version 0 --actor test --kind '{"Discard":{"reason":"parent red"}}' >/dev/null
+is "a discarded stage is DISCARDED with its reason" "DISCARDED parent red" "$(batch_field batch-staged-dead state) $(batch_field batch-staged-dead reason)"
+is "discarding returns nothing: the member is still CERTIFIED" "CERTIFIED" "$(member_field sp-lc-g3 bead state)"
+out="$(lc promote batch-staged-dead --head h --base b --actor test)"
+wantrc "PLANTED VIOLATION: a discarded stage is not promoted" 3 $?
+
+# ── an aeon's phase and disposition on the WORKING row, against the real store ──
+lc create-bead sp-lc-ph >/dev/null
+lc event bead sp-lc-ph --expect READY --version 0 --actor aeon-ph --kind '{"Claim":{"holder":"aeon-ph","lease_until":1}}' >/dev/null
+phase_of() { lc show sp-lc-ph | python3 -c 'import json,sys; print(json.load(sys.stdin)["bead"]["aeon_phase"])'; }
+is "a claim starts the row in phase claimed" "claimed" "$(phase_of)"
+lc phase sp-lc-ph aeon-ph building >/dev/null
+wantrc "the holder records its next phase" 0 $?
+is "show reads exactly the recorded phase" "building" "$(phase_of)"
+out="$(lc phase sp-lc-ph aeon-ph claimed 2>&1)"
+wantrc "a step back is refused" 3 $?
+want "the refusal names the state and phase" "WORKING/building" "$out"
+lc phase sp-lc-ph aeon-other session >/dev/null 2>&1
+wantrc "a phase from a non-holder is refused" 3 $?
+is "the refused moves left the phase where it was" "building" "$(phase_of)"
+lc disposition sp-lc-ph lapsed "300	last words" watchdog >/dev/null
+wantrc "a lapsed disposition is recorded" 0 $?
+lc disposition sp-lc-ph slain "by hand" slay >/dev/null
+wantrc "a stronger disposition replaces it" 0 $?
+lc disposition sp-lc-ph thrash "x" heartbeat >/dev/null 2>&1
+wantrc "a weaker one never does" 3 $?
+is "list --state WORKING carries the phase and the disposition" "building slain by hand" "$(lc list --state WORKING | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["bead_id"]=="sp-lc-ph"][0]; print(b["aeon_phase"], b["disposition"], b["disposition_note"])')"
+lc release sp-lc-ph aeon-ph >/dev/null
+is "leaving WORKING clears the phase and the disposition" "None None" "$(lc show sp-lc-ph | python3 -c 'import json,sys; b=json.load(sys.stdin)["bead"]; print(b["aeon_phase"], b["disposition"])')"
+lc disposition sp-lc-ph slain "late" slay >/dev/null 2>&1
+wantrc "a disposition outside WORKING is refused" 3 $?
+
+
+# ── mid-pass failures: each red suite is a Failed event and a MENDING row; the machine expires the row ──
+certify sp-lc-m-1 tipM1
+lc cut batch-mend --repo fixture-repo --head headM --base baseM --members "sp-lc-m-1:tipM1" --actor test >/dev/null
+pev batch-mend '{"PassStarted":{"n":1,"head":"headM"}}' >/dev/null
+out="$(pev batch-mend '{"Failed":{"suite":"test-early.sh","n":1}}' 2>&1)"
+wantrc "a failure reported before the suites phase is refused" 3 $?
+want "the refusal names the phase" "phase build" "$out"
+pev batch-mend '{"SuitesStarted":{"n":1}}' >/dev/null
+pev batch-mend '{"Failed":{"suite":"test-z.sh","n":1}}' >/dev/null
+wantrc "the first red suite is recorded" 0 $?
+pev batch-mend '{"Failed":{"suite":"test-b.sh","n":1}}' >/dev/null
+wantrc "the second red suite is recorded" 0 $?
+v="$(batch_field batch-mend version)"
+lc event batch batch-mend --expect CI_RUNNING --version "$v" --actor test --kind '{"Failed":{"suite":"test-b.sh","n":1}}' >/dev/null
+wantrc "a suite reported twice is already recorded, not an error" 0 $?
+is "a repeated failure appends no event" "$v" "$(batch_field batch-mend version)"
+is "the pass is neither stopped nor judged by its failures" "CI_RUNNING suites" "$(batch_field batch-mend state) $(batch_field batch-mend phase)"
+failed_order="$(lc history batch-mend --machine batch | python3 -c 'import json,sys; print(" ".join(json.loads(e["evidence"])["Failed"]["suite"] for e in json.load(sys.stdin) if e["event"]=="Failed" and e["applied"]=="1"))')"
+is "the Failed events are logged in the order the suites failed" "test-z.sh test-b.sh" "$failed_order"
+mrows() { lc mending list --batch batch-mend | python3 -c 'import json,sys; r={x["suite"]:x for x in json.load(sys.stdin)}; print(eval(sys.argv[1]))' "$1"; }
+is "each failure opens a WAITING row with no deadline yet" "WAITING None WAITING None" "$(mrows '" ".join(str(x) for x in [r["test-z.sh"]["state"], r["test-z.sh"]["deadline"], r["test-b.sh"]["state"], r["test-b.sh"]["deadline"]])')"
+before="$(date +%s)"
+lc mending pickup batch-mend --pass 1 --suite test-z.sh --deadline-secs 8 --actor mender-z >/dev/null
+wantrc "a mender picks up the first failure" 0 $?
+lc mending pickup batch-mend --pass 1 --suite test-b.sh --deadline-secs 600 --actor mender-b >/dev/null
+wantrc "a mender picks up the second failure" 0 $?
+after="$(date +%s)"
+is "a deadline is the pickup time plus the seconds given" "ok ok" "$(mrows '" ".join(str(x) for x in [("ok" if '"$before"'+8 <= r["test-z.sh"]["deadline"] <= '"$after"'+8 else r["test-z.sh"]), ("ok" if '"$before"'+600 <= r["test-b.sh"]["deadline"] <= '"$after"'+600 else r["test-b.sh"])])')"
+lc mending event batch-mend --pass 1 --suite test-z.sh --actor mender-z --kind '{"Diagnosis":{"text":"half a diagnosis"}}' >/dev/null
+wantrc "the mender writes a diagnosis" 0 $?
+lc mending event batch-mend --pass 1 --suite test-b.sh --actor mender-b --kind '{"Expire":{"at":0}}' >/dev/null 2>&1
+wantrc "a mender cannot expire a row itself" 3 $?
+lc mending event batch-mend --pass 1 --suite test-b.sh --actor mender-b --kind '{"Pickup":{"at":0,"deadline_s":99999}}' >/dev/null 2>&1
+wantrc "a mender cannot move its deadline by picking up again" 3 $?
+is "a sweep before the deadline changes nothing" "0" "$(lc mending sweep --actor test)"
+sleep 9
+is "a sweep after the deadline expires exactly the overdue row" "1" "$(lc mending sweep --actor test)"
+is "the overdue row is RETURNED with the diagnosis so far; the other still MENDING" "RETURNED half a diagnosis MENDING" "$(mrows '" ".join(str(x) for x in [r["test-z.sh"]["state"], r["test-z.sh"]["diagnosis"], r["test-b.sh"]["state"]])')"
+out="$(lc mending event batch-mend --pass 1 --suite test-z.sh --actor mender-z --kind '{"Mended":{"at":0}}' 2>&1)"
+wantrc "a late outcome is refused once the machine has returned the row" 3 $?
+is "the expiry never touched the pass" "CI_RUNNING suites" "$(batch_field batch-mend state) $(batch_field batch-mend phase)"
+is "the machine's expiry is on the log under its own actor" "test" "$(lc history 'batch-mend#1#test-z.sh' --machine mending | python3 -c 'import json,sys; print([e for e in json.load(sys.stdin) if e["event"]=="Expire" and e["applied"]=="1"][0]["actor"])')"
 tl_summary

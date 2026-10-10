@@ -31,8 +31,12 @@ fn build_intent(args: &Args, fayth: &str, aeon: &str, now: u64, id: &str) -> ser
 }
 
 pub fn run(args: Args) -> Result<(), String> {
-    let run_dir = std::env::var("SPIRA_RUN")
-        .map_err(|_| "broker submit: SPIRA_RUN is not set".to_string())?;
+    // SPIRA_RUN is a registered key (spira/conf.d) — the one source is the config file.
+    let run_dir = spira_config::process::cfg("SPIRA_RUN")
+        .map_err(|e| format!("broker submit: {e}"))?;
+    // FAYTH_NAME and SPIRA_AEON are not registered config keys (spira/conf.d has no
+    // entry for either) — per-invocation identity set by the aeon's own runtime, left
+    // on the process environment.
     let fayth = std::env::var("FAYTH_NAME").unwrap_or_default();
     let aeon  = std::env::var("SPIRA_AEON").unwrap_or_default();
 

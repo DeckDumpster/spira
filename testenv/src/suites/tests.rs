@@ -187,10 +187,24 @@ fn scratch(tag: &str) -> testkit::TempDir {
 impl T {
     fn new(tag: &str) -> T {
         let dir = scratch(tag);
-        let env = |_: &str| None;
-        let mut s = Settings::load(&crate::settings::Source { env: &env, config: None }, &dir.join("root"));
-        s.state = dir.join("state");
-        s.gate_list = dir.join("root/spira/gate-suites");
+        // A literal, not `Settings::load`: every field here is a registered config key now
+        // resolved through `spira_config::process::cfg`, which this test cannot drive
+        // per-case (it is a per-process cache, not something an empty env fakes out).
+        let mut s = Settings {
+            root: dir.join("root"),
+            suite_dir: dir.join("root/spira"),
+            state: dir.join("state"),
+            stale: 21_600,
+            priority: 3,
+            gate_list: dir.join("root/spira/gate-suites"),
+            suite_state_file: "spira/suite-state".into(),
+            flake_at: 2,
+            flake_window: 604_800,
+            max_age: 604_800,
+            aeon: false,
+            git_name: "spira".into(),
+            git_email: "spira@spira.invalid".into(),
+        };
         let git = FGit::default();
         // the home repository at its landing ref: the suites and the lifecycle file
         let mut tree = BTreeMap::new();

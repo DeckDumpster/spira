@@ -21,7 +21,7 @@
 # exactly test-aeon-sweep.sh's own `command aeon --home ...` pattern for the same reason
 # (the wrapper function below is itself named `auron`, shadowing the bare binary name).
 # tier: T2
-# covers: auron/src/* spira/conf.sh
+# covers: auron/src/* spira/conf.sh UC-ops-detection-remediation-19
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -71,14 +71,21 @@ cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 # INSTALLED harness directory and this suite would read the operator's real repositories.
 printf 'brain | %s | push | origin/main | |\n' "$TMP/repo" > "$SH/repo-map"
 
+# A close goes through spira-lc (sp-3fue0j); this fixture has no lifecycle store, so it closes the
+# store, through whichever bd and database the case declared last (read at each call).
+lc_close_stub "$TMP/lc"
 auron() {   # auron [--report] — one run against the fixture, with a chosen database
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
-    SPIRA_REPO="$TMP/repo" SPIRA_EXPORTER="" SPIRA_SYSTEMCTL=true \
+    # SPIRA_DB is registered and auron resolves it via cfg(), not env (confirmed in
+    # auron/src/main.rs) — the AURON_DB override must go through tl_config too, or the
+    # fallback/saturation cases silently keep using the real, reachable database.
+    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" SPIRA_DB="${AURON_DB:-$SPIRA_DB}"
+    SPIRA_HOME="$SH" \
+    SPIRA_REPO="$TMP/repo" SPIRA_SYSTEMCTL=true \
     SPIRA_AURON_SENTINEL_LOG="$RUN/sentinel.log" \
         command auron --home "$SH" "$@" 2>&1
 }
 alert_status() {   # alert_status <key> -> "<id> <status>", or "-" if there is no bead
-    bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
+    timeout 5 bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
         | sed -n '/^[[{]/,$p' | KEY="$1" python3 -c '
 import sys, os, json
 try: d = json.load(sys.stdin)
@@ -90,7 +97,7 @@ else:
     print("-")'
 }
 n_alert_beads() {
-    bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
+    timeout 5 bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
         | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -98,7 +105,7 @@ except Exception: d = []
 print(len(d if isinstance(d, list) else [d]))'
 }
 n_probe_beads() {   # open + closed auron:probe beads
-    bd -C "$SPIRA_DB" list --all --limit 0 --label auron:probe --json 2>/dev/null \
+    timeout 5 bd -C "$SPIRA_DB" list --all --limit 0 --label auron:probe --json 2>/dev/null \
         | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -106,7 +113,7 @@ except Exception: d = []
 print(len(d if isinstance(d, list) else [d]))'
 }
 create_probe() {    # create_probe -> id on stdout
-    bd -C "$SPIRA_DB" create --title "Auron write probe" --type event -p 0 \
+    timeout 5 bd -C "$SPIRA_DB" create --title "Auron write probe" --type event -p 0 \
         --labels "auron:probe,overseer" \
         --body "write-path probe — updated on every Auron pass" --json 2>/dev/null \
         | python3 -c '
@@ -145,7 +152,7 @@ ID="${st%% *}"
 # nothing about either half's code would announce a drift. `needs-ryan` must be absent, or
 # the bead lands in DECISIONS — the one list whose value is that nothing leaves it unless
 # the operator moved it.
-kind="$(bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+kind="$(timeout 5 bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 print("%s|%s" % (d.get("issue_type"), ",".join(sorted(d.get("labels") or []))))' 2>/dev/null)"
@@ -176,7 +183,7 @@ flaps="$(awk -F'\t' '$1=="sentinel-stalled"{print $7}' "$RUN/auron.state")"
 # ONE CURRENT VALUE, NOT AN ACCUMULATION. `--add-label` alone would leave `flaps:1` beside
 # `flaps:2`, and the pane reads the first it finds — so the count would freeze at 1 while
 # the state file went on counting, and the number the operator sees is the one that matters.
-lab="$(bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+lab="$(timeout 5 bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 print(",".join(sorted(l for l in (d.get("labels") or []) if l.startswith("flaps:"))))' 2>/dev/null)"
@@ -186,11 +193,11 @@ is "the pane's flaps: label is the count, and there is only one" "flaps:2" "$lab
 # exactly what the flap count exists to surface, so a returning condition clears it — while
 # `silent-until:` is the pane's own affordance and Auron must never touch it, or a silence
 # the operator asked for would evaporate on the next pass.
-bd -C "$SPIRA_DB" update "$ID" --add-label acked >/dev/null 2>&1
-bd -C "$SPIRA_DB" update "$ID" --add-label "silent-until:2099-01-01T00:00:00Z" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" update "$ID" --add-label acked >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" update "$ID" --add-label "silent-until:2099-01-01T00:00:00Z" >/dev/null 2>&1
 heal; auron >/dev/null; auron >/dev/null       # clears
 wedge; auron >/dev/null; auron >/dev/null      # and returns
-lab="$(bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+lab="$(timeout 5 bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 ls = d.get("labels") or []
@@ -253,7 +260,8 @@ chmod +x "$WRITE_FAIL_BD"
 # A healthy loop — no conditions firing. With a working database, the write probe
 # creates its bead and publishes SP_AURON_DB_WRITE=ok.
 heal; rm -f "$RUN/auron.state"   # clear state so probe starts fresh
-SPIRA_BD="$TESTDB_BD" auron >/dev/null
+tl_config SPIRA_BD="$TESTDB_BD"
+auron >/dev/null
 grep -q 'SP_AURON_DB_WRITE=ok' "$RUN/auron.status" \
     && ok "write probe: healthy database shows write ok" \
     || bad "write probe baseline" "SP_AURON_DB_WRITE is not ok before the fault"
@@ -267,7 +275,8 @@ grep -q 'SP_AURON_DB_READ=ok' "$RUN/auron.status" \
 # Now switch to the write-fail shim. Reads succeed, writes fail.
 # The write probe detects the failure and the fallback file appears.
 rm -f "$RUN/auron.state"   # clear state so probe tries to create (which will fail)
-SPIRA_BD="$WRITE_FAIL_BD" auron >/dev/null
+tl_config SPIRA_BD="$WRITE_FAIL_BD"
+auron >/dev/null
 grep -q 'SP_AURON_DB_READ=ok' "$RUN/auron.status" \
     && ok "write probe: read path still shows ok during write-only failure" \
     || bad "write probe read during fault" "SP_AURON_DB_READ is not ok with writes broken"
@@ -287,7 +296,8 @@ print(d.get("db_reachable"), d.get("db_write_ok"))' "$RUN/auron.alerts.json" 2>/
     || bad "write probe fallback content" "got [$fb_write]"
 
 # Restore the healthy database. The fallback file is removed and writes are ok again.
-SPIRA_BD="$TESTDB_BD" auron >/dev/null
+tl_config SPIRA_BD="$TESTDB_BD"
+auron >/dev/null
 grep -q 'SP_AURON_DB_WRITE=ok' "$RUN/auron.status" \
     && ok "write probe: write ok restored after the fault clears" \
     || bad "write probe restore" "SP_AURON_DB_WRITE is not ok after restoring the database"
@@ -315,7 +325,8 @@ chmod +x "$REDERIVE_FAIL_BD"
 
 heal; rm -f "$RUN/auron.state"   # empty state: PROBE_ID empty, re-derive will run
 _n_probes_before="$(n_probe_beads)"
-SPIRA_BD="$REDERIVE_FAIL_BD" auron >/dev/null
+tl_config SPIRA_BD="$REDERIVE_FAIL_BD"
+auron >/dev/null
 _n_probes_after="$(n_probe_beads)"
 [ "$_n_probes_after" = "$_n_probes_before" ] \
     && ok "re-derive fail: no probe bead created when re-derive fails" \
@@ -336,10 +347,11 @@ _p1="$(create_probe)"; _p2="$(create_probe)"; _p3="$(create_probe)"
 if [ -z "$_p1" ] || [ -z "$_p2" ] || [ -z "$_p3" ]; then
     bad "extras setup" "could not create three probe beads for extras test"
 else
-    SPIRA_BD="$TESTDB_BD" auron >/dev/null
+    tl_config SPIRA_BD="$TESTDB_BD"
+    auron >/dev/null
     # Exactly 1 probe bead should be open; all others (pre-existing + 2 of the 3 new ones)
     # should be closed rather than deleted.
-    n_open="$(bd -C "$SPIRA_DB" list --limit 0 --label auron:probe --json 2>/dev/null \
+    n_open="$(timeout 5 bd -C "$SPIRA_DB" list --limit 0 --label auron:probe --json 2>/dev/null \
         | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -369,7 +381,8 @@ TIMEOUT_BD="$TMP/timeout-bd"
 chmod +x "$TIMEOUT_BD"
 
 heal; rm -f "$RUN/auron.state"
-AURON_DB=/nonexistent-spira-db SPIRA_BD="$TIMEOUT_BD" auron >/dev/null
+tl_config SPIRA_BD="$TIMEOUT_BD"
+AURON_DB=/nonexistent-spira-db auron >/dev/null
 grep -q 'SP_AURON_DB_READ=saturated' "$RUN/auron.status" \
     && ok "saturation: timeout on read probe reports DB_READ=saturated" \
     || bad "saturation read" "expected SP_AURON_DB_READ=saturated, got $(grep SP_AURON_DB_READ "$RUN/auron.status" 2>/dev/null || echo none)"
@@ -381,6 +394,11 @@ grep -q 'SP_AURON_DB_SATURATED=1' "$RUN/auron.status" \
 [ -r "$RUN/auron.alerts.json" ] \
     && ok "saturation: fallback file written on timeout" \
     || bad "saturation fallback" "no fallback file on timeout"
+
+# Reset SPIRA_BD back to the real store: it stays declared in the override file (there is
+# no implicit per-call env scoping any more) until something changes it again, so every
+# bare `auron`/`auron_restart` call below would otherwise keep hitting the 124-exit stub.
+tl_config SPIRA_BD="$TESTDB_BD"
 
 echo
 echo "auron.sh — restart loop detection via stub systemctl:"
@@ -410,15 +428,19 @@ RESTART_SC="$TMP/restart-sc"
 chmod +x "$RESTART_SC"
 
 auron_restart() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
-    SPIRA_REPO="$TMP/repo" SPIRA_EXPORTER="" \
+    # SPIRA_DB via tl_config too: auron resolves it via cfg(), not the plain env prefix
+    # below (same gap as auron()'s own call above it, line 78).
+    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" \
+        SPIRA_AURON_RESTARTS=3 SPIRA_AURON_RESTART_WINDOW=3600 \
+        SPIRA_DB="${AURON_DB:-$SPIRA_DB}"
+    SPIRA_HOME="$SH" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
+    SPIRA_REPO="$TMP/repo" \
     SPIRA_SYSTEMCTL="$RESTART_SC" \
     SPIRA_AURON_SENTINEL_LOG="$RUN/sentinel.log" \
-    SPIRA_AURON_RESTARTS=3 SPIRA_AURON_RESTART_WINDOW=3600 \
         command auron --home "$SH" "$@" 2>&1
 }
 restart_alert_status() {
-    bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
+    timeout 5 bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
         | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, os, json
 key = "restart-loop:spira-cockpit-prod.service"
@@ -457,7 +479,7 @@ _rst_id="${_rst%% *}"
 
 # Third pass on the same standing loop: no duplicate bead.
 auron_restart >/dev/null
-_rst_n="$(bd -C "$SPIRA_DB" list --all --limit 0 --label "alert:restart-loop:spira-cockpit-prod.service" --json 2>/dev/null \
+_rst_n="$(timeout 5 bd -C "$SPIRA_DB" list --all --limit 0 --label "alert:restart-loop:spira-cockpit-prod.service" --json 2>/dev/null \
     | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)

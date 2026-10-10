@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::cfg::{Cfg, Context};
+use crate::cfg::{Cfg, Context, Declared};
 use crate::host::{Host, Io, Out, Spec};
 use crate::seams;
 use crate::store::{self, Bd, Snapshot};
@@ -24,7 +24,7 @@ pub enum Mode {
     LandEscalate,
     /// `summon_fayth` alone (wave 4.27, family G): lib.sh's own shim target, and
     /// czar-pass's direct call — no lib.sh sourcing at all any more.
-    Summon { fayth: String, pool: Option<i64>, require_label: String },
+    Summon { fayth: String, pool: Option<i64>, require_express: bool },
     /// `summon_argv` alone: `aeon --escape`'s own seam reaches it through lib.sh's shim.
     SummonArgv { fayth: String },
     /// `world_gate` alone: ditto.
@@ -87,7 +87,7 @@ impl Mode {
             Some("--summon") => Mode::Summon {
                 fayth: args.get(1).cloned().unwrap_or_default(),
                 pool: args.get(2).filter(|s| !s.is_empty()).and_then(|s| s.parse().ok()),
-                require_label: args.get(3).cloned().unwrap_or_default(),
+                require_express: args.get(3).is_some_and(|s| !s.is_empty()),
             },
             Some("--summon-argv") => Mode::SummonArgv { fayth: args.get(1).cloned().unwrap_or_default() },
             Some("--world-gate") => Mode::WorldGate {
@@ -127,12 +127,13 @@ impl<'a> Sentinel<'a> {
     pub fn new(
         h: &'a Host<'a>,
         ctx: Context,
+        declared: Declared,
         home: &Path,
         mode: Mode,
         exe: String,
         pass_id: String,
     ) -> Sentinel<'a> {
-        let cfg = Cfg::from_context(&ctx, home);
+        let cfg = Cfg::from_context(&ctx, home, declared);
         let tally_file = cfg
             .run
             .join(format!(".sentinel-tally.{}", std::process::id()));
@@ -264,7 +265,7 @@ impl<'a> Sentinel<'a> {
         o
     }
 
-    /// `[ -x mail ] && mail send operator --from … --subject … --kind question
+    /// `[ -x mail ] && mail send concierge --from … --subject … --kind question
     /// --default … <<body` → true only when the ask was accepted.
     pub fn mail(
         &self,
@@ -279,7 +280,7 @@ impl<'a> Sentinel<'a> {
             "mail",
             vec![
                 "send".into(),
-                "operator".into(),
+                "concierge".into(),
                 "--from".into(),
                 from.into(),
                 "--subject".into(),
@@ -365,7 +366,7 @@ impl<'a> Sentinel<'a> {
             Mode::SummonOnly => self.summon_only(),
             Mode::OpenChildren { dry } => self.open_children_only(*dry),
             Mode::LandEscalate => self.land_escalate_cmd(),
-            Mode::Summon { fayth, pool, require_label } => self.summon_cmd(fayth, *pool, require_label),
+            Mode::Summon { fayth, pool, require_express } => self.summon_cmd(fayth, *pool, *require_express),
             Mode::SummonArgv { fayth } => self.summon_argv_cmd(fayth),
             Mode::WorldGate { fayth, prefix } => self.world_gate_cmd(fayth, prefix),
             Mode::NamedUnitStop { glob } => self.named_unit_stop_cmd(glob),
@@ -460,13 +461,8 @@ impl<'a> Sentinel<'a> {
                 self.h.set_env("SPIRA_LIST_SNAPSHOT", &p.to_string_lossy());
             }
         }
-        if snap.ready.is_some() {
-            if let Some(p) = self.temp_file("ready-snapshot", &snap.ready_raw) {
-                self.h.set_env("SPIRA_READY_SNAPSHOT", &p.to_string_lossy());
-            }
-            if self.mode == Mode::Pass {
-                self.export_ready_cache();
-            }
+        if snap.ready.is_some() && self.mode == Mode::Pass {
+            self.export_ready_cache();
         }
     }
 
@@ -527,6 +523,10 @@ impl<'a> Sentinel<'a> {
         if let Some(rows) = &lc_rows {
             self.check2c(rows);
         }
+        self.phase("CHECK2d");
+        if let Some(rows) = &lc_rows {
+            self.check2d(&snap, rows);
+        }
         self.phase("CHECK3");
         let plan_ready = self.check3(plan_ready, plan_inprog, n_open);
 
@@ -536,14 +536,14 @@ impl<'a> Sentinel<'a> {
         self.check6();
         self.phase("CHECK3b");
         // S4 is retired (wave 4.28, sp-fbqsv): mark_queue_waiters/close_landed_queue_waiters
-        // are native now, reading the pass's own broad ready snapshot already in memory
-        // rather than round-tripping through $SPIRA_READY_SNAPSHOT's temp file.
+        // are native now, reading the pass's own broad ready snapshot already in memory.
         self.mark_queue_waiters(snap.ready.as_deref());
         self.close_landed_queue_waiters();
         // CHECK 3c from the snapshot: one walk in memory, never one `bd children` per
         // candidate (sp-du8bv: that loop was 91% of every pass).
         self.phase("CHECK3c");
         self.mark_open_children(&snap, false);
+        self.close_landed_red_trackers(&snap, false);
         self.phase("CHECK7");
         self.ck7_summon_pass();
 
@@ -663,11 +663,9 @@ impl<'a> Sentinel<'a> {
     pub fn plan_ready_live(&self) -> Option<usize> {
         let o = self.h.run(Spec::args_owned(
             self.cfg.claim_bin.clone(),
-            vec![
-                "ready-count".into(),
-                self.cfg.plan_labels().join(","),
-                format!("spira-poison,{}", self.cfg.ask),
-            ],
+            // No exclude labels: poison and ask are holds on the row, which the machine's own
+            // claimable set already leaves out (sp-psztcc).
+            vec!["ready-count".into(), self.cfg.plan_labels().join(",")],
         ));
         if o.ok() { o.stdout.trim().parse().ok() } else { None }
     }
@@ -756,7 +754,7 @@ pub fn grep_w(text: &str, word: &str) -> bool {
     false
 }
 
-/// The pidfile fallback of `aeon_count`: live pidfiles whose process is an aeon; dead ones
+/// The pidfile fallback of `aeon_count`: pidfiles whose identity lease is running; dead ones
 /// are removed, as aeon_count does.
 pub fn pid_count(run: &Path, fayth: &str) -> usize {
     let prefix = format!("aeon-{fayth}-");
@@ -769,28 +767,13 @@ pub fn pid_count(run: &Path, fayth: &str) -> usize {
         if !(name.starts_with(&prefix) && name.ends_with(".pid")) {
             continue;
         }
-        let alive = std::fs::read_to_string(e.path())
-            .ok()
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty())
-            .and_then(|p| std::fs::read(format!("/proc/{p}/cmdline")).ok())
-            .map(|c| is_aeon_cmdline(&c))
-            .unwrap_or(false);
-        if alive {
+        if sending::reap::aeon_alive(&e.path()) {
             n += 1;
         } else {
             let _ = std::fs::remove_file(e.path());
         }
     }
     n
-}
-
-/// An aeon's /proc cmdline: the bash runner (`… aeon.sh …`) or the Rust binary, whose argv[0]
-/// is `…/aeon` (lib.sh aeon_alive's rule after the cutover).
-pub fn is_aeon_cmdline(c: &[u8]) -> bool {
-    let argv0 = c.split(|b| *b == 0).next().unwrap_or(&[]);
-    let argv0 = String::from_utf8_lossy(argv0);
-    String::from_utf8_lossy(c).contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
 }
 
 /// All of stdin, for the standalone CLI modes whose shim passes along another function's
@@ -835,14 +818,6 @@ pub fn is_exec(p: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn aeon_cmdline_matches_the_script_and_the_binary_only() {
-        assert!(super::is_aeon_cmdline(b"bash\0/h/spira/aeon.sh\0builder\0"));
-        assert!(super::is_aeon_cmdline(b"/r/current/bin/aeon\0--home\0/r/current/spira\0builder\0"));
-        assert!(!super::is_aeon_cmdline(b"/usr/bin/sleep\0aeon\0"));
-        assert!(!super::is_aeon_cmdline(b"/r/bin/aeonic\0"));
-    }
-
     use super::*;
 
     #[test]

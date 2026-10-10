@@ -22,6 +22,8 @@ pub enum ReturnedReason {
     PushRejected,
     /// queue mode: the batch settled red and this member was ejected.
     BatchEjected,
+    /// queue mode: as `BatchEjected`, and the member's own tip is what a round judged red.
+    BatchEjectedRed,
     /// queue mode: this member was not itself red, but was stacked (design stacked-
     /// dependents-2026-09-28 §1) on a prerequisite that was ejected from the same round —
     /// the cascade §3 describes: "the batch machine's SETTLED emits returned for the
@@ -38,6 +40,7 @@ impl ReturnedReason {
             ReturnedReason::PrChangesRequested => "pr-changes-requested",
             ReturnedReason::PushRejected => "push-rejected",
             ReturnedReason::BatchEjected => "batch-ejected",
+            ReturnedReason::BatchEjectedRed => "batch-ejected-red",
             ReturnedReason::BaseWithdrawn => "base-withdrawn",
         }
     }
@@ -49,6 +52,7 @@ impl ReturnedReason {
             "pr-changes-requested" => ReturnedReason::PrChangesRequested,
             "push-rejected" => ReturnedReason::PushRejected,
             "batch-ejected" => ReturnedReason::BatchEjected,
+            "batch-ejected-red" => ReturnedReason::BatchEjectedRed,
             "base-withdrawn" => ReturnedReason::BaseWithdrawn,
             _ => return None,
         })
@@ -183,11 +187,12 @@ impl HoldCause {
 mod tests {
     use super::*;
 
-    const ALL_RETURNED: [ReturnedReason; 5] = [
+    const ALL_RETURNED: [ReturnedReason; 6] = [
         ReturnedReason::PrClosedUnmerged,
         ReturnedReason::PrChangesRequested,
         ReturnedReason::PushRejected,
         ReturnedReason::BatchEjected,
+        ReturnedReason::BatchEjectedRed,
         ReturnedReason::BaseWithdrawn,
     ];
     const ALL_GATE_RED: [GateRedReason; 6] = [

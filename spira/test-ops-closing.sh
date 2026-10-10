@@ -8,12 +8,9 @@
 # standing in for the model: a builder's hand-on standing as SUBMITTED, and the retired SOP
 # closing rule's key being ignored with a warning.
 #
-# THE CLOSE-REASON FENCE'S AEON ROWS ARE GONE (sp-v62vn). The fence lives in the verdict's
-# closed branch (aeon verdict.rs), and every session is restricted now and hands its bead on
-# only through the work verbs, so decide::builder_closed is false for every session and the
-# fence is reached by none. Its T3 rows asserted that unreachable path and are deleted, not
-# rewritten; UC-aeon-execution-16 is marked uncovered in docs/test-plan/aeon-execution.toml.
-# The T1 table over close-reason-flags.py stays: lib.sh's detect_invalid_closed shares it.
+# The close-reason fence judges the restricted hand-on (decide::builder_submitted): a refused
+# submission reopens in bd and returns the lifecycle row to REWORK, asserted on the row.
+# The T1 table over close-reason-flags.py: lib.sh's detect_invalid_closed shares it.
 #
 # WHAT "SILENCE" MEANS, EXACTLY, and why the distinction is the entire suite. A session may
 # end three honest ways, and each is one command:
@@ -61,7 +58,7 @@
 # defect: sp-9pyr
 # tier: T3
 # covers: aeon/src/* sop/src/*.rs spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
-# covers: aeon/src/* spira/close-reason-flags.py spira/chamber/ops.fayth spira/test-ops-closing.sh
+# covers: aeon/src/* spira/close-reason-flags.py spira/chamber/ops.fayth spira/test-ops-closing.sh UC-aeon-execution-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -77,10 +74,10 @@ testdb_up opsclosing || { echo "test-ops-closing: could not build a fixture data
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/close-reason-flags.py" "$HOMEDIR/"
@@ -89,6 +86,9 @@ cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$REPO_MAP"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$HOMEDIR/chamber"
 
 # A FAYTH NOT CALLED ops, so nothing here can key on the persona's name.
 for f in builder; do
@@ -122,7 +122,10 @@ cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
-bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
+case "$(cat "$TMP/act")" in
+    bad-reason) bd -C "$SPIRA_DB" close "$id" --reason "DIAGNOSED: X. TEMPORARY WORKAROUND: Y must be removed once fix lands." >/dev/null 2>&1 ;;
+    *)          bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1 ;;
+esac
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
 SHIM
@@ -138,23 +141,26 @@ aeon_fixture_agent "$BIN/claude"
 run_aeon() {             # run_aeon <fayth> <act>
     printf '%s' "$2" > "$TMP/act"
     rm -rf "$RUN/worktree"
-    env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_PATH="${SPIRA_PATH:-}" TMP="$TMP" \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_WIKI="" \
-        SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_WIKI="" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$SPIRA_AGENT" \
-        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
+        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}"
+    env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_TOML="$SPIRA_TOML" TMP="$TMP" \
+        SPIRA_CONF="$TMP/nonexistent.conf" \
+        SPIRA_HOME="$HOMEDIR" \
         BEADS_NO_AUTO_IMPORT=1 \
-        timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
+        timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1 # batch-job: runs a whole aeon session under the suite's own 300 s ceiling
 }
 seed() {                 # seed <id> [extra-label]
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\"${2:+,\"$2\"}"
     printf '{"id":"%s","title":"unit failed","status":"open","issue_type":"bug","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
+# batch-job: fixture bd call against the suite's throwaway store
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
-labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
+labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; } # batch-job: fixture bd call against the suite's throwaway store
+notes()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | tr -s '[:space:]' ' '; } # batch-job: fixture bd call against the suite's throwaway store
 
 fresh() {                # fresh <bead-id> [extra-label] — an empty world with one bead
     testdb_reset
@@ -225,5 +231,25 @@ wantrc "temporarily fixed matches" 0 "$CRF_RC"
 
 crf "a TEMPORARY workaround was used, in lowercase"
 wantrc "matching is case-insensitive" 0 "$CRF_RC"
+
+OPS_MD="$HERE/chamber/ops.md"
+if grep -Eq 'commit that page|SOP page is normally' "$OPS_MD"; then _rc=1; else _rc=0; fi
+wantrc "ops.md does not tell the aeon to commit a page the broker wrote" 0 "$_rc"
+grep -q "not in your worktree" "$OPS_MD"; wantrc "ops.md says where sop write puts the page" 0 "$?"
+_probe="commit that page"; printf '%s\n' "$_probe" | grep -Eq 'commit that page|SOP page is normally'
+wantrc "the matcher fires on the old instruction" 0 "$?"
+
+# ===========================================================================================
+echo
+echo "T3: a submission whose close reason has a statute phrase is refused back to REWORK:"
+# ===========================================================================================
+fresh sp-oc-13; run_aeon builder bad-reason
+is   "the lifecycle row goes back to REWORK"   REWORK  "$(SPIRA_RUN="$RUN" lc_row_state sp-oc-13)"
+is   "the bd bead is reopened"                 open    "$(field sp-oc-13 status)"
+want "the note names the matched phrase"       "TEMPORARY WORKAROUND" "$(notes sp-oc-13)"
+want "the log names the override"              "SPIRA_CLOSE_REASON_OVERRIDE" "$(cat "$TMP/out")"
+
+fresh sp-oc-14; run_aeon builder none
+is   "a clean close reason stands SUBMITTED"   SUBMITTED "$(SPIRA_RUN="$RUN" lc_row_state sp-oc-14)"
 
 tl_summary

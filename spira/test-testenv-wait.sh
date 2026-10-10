@@ -95,17 +95,15 @@ mkdir -p "$TMP/home" "$TMP/run" "$TMP/verdicts"
 # no such layer — `env` execs directly into testenv, keeping the same pid.
 (
     cd "$REPO"
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_VERDICT_TTL=0 SPIRA_BATCH_PSI_THRESHOLD=0 \
+        SPIRA_BATCH_MAXPAR=2
     env \
         SPIRA_TESTENV_HARNESS="$ROOT" \
-        SPIRA_RUN="$TMP/run" \
         SPIRA_VERDICTS="$TMP/verdicts" \
-        SPIRA_VERDICT_TTL=0 \
         SPIRA_TESTENV_WARM_SLOTS=0 \
         SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB=0 \
         SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB=0 \
         SPIRA_BATCH_LIVENESS_SLEEP=0 \
-        SPIRA_BATCH_PSI_THRESHOLD=0 \
-        SPIRA_BATCH_MAXPAR=2 \
         HOME="$TMP/home" \
         testenv --profile dev --suites test-a.sh topic "$REPO" >"$OUT2" 2>&1 &
     echo $! > "$OUT2.pid"

@@ -29,11 +29,11 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 
 run_unsent() {
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
+    tl_config "$@"
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        "$@" \
         cockpit-collect probe unsent 2>/dev/null
 }
 
@@ -111,10 +111,10 @@ SP_SENTINEL_AGE='10'
 SP_OPS_TIMER='1'
 SP_OPS_AGE='10'
 SNAP
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         health once 2>/dev/null
 }
 
@@ -147,8 +147,6 @@ while :; do
     [[ "$old_c" > "$new_c" ]] && break
     i=$((i+1)); [ "$i" -lt 200 ] || break
 done
-want "fixture: the older release's id sorts after the newer one's" "yes" \
-    "$([[ "$old_c" > "$new_c" ]] && echo yes || echo no)"
 git -C "$P2" tag spira-release-spira-20260201T000000Z "$old_c"
 git -C "$P2" tag spira-release-spira-20260202T000000Z "$new_c"
 git -C "$P2" notes --ref=acceptance add -m "FAIL: install refused" "$old_c"

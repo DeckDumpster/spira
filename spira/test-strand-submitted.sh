@@ -45,6 +45,9 @@ mkdir -p "$TMP/run" "$TMP/home"
 # THE STRAND IS A BINARY (strand.sh is gone), invoked by name from the tree's build on PATH. Its roster
 # probe sources lib.sh from SPIRA_HOME, so the stub home carries the real lib.sh.
 for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$TMP/home/$_s"; done
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so the stub home needs the registry too.
+ln -s "$HERE/conf.d" "$TMP/home/conf.d"
 
 SUBMITTED=mysubmitted-nondefault
 
@@ -67,12 +70,14 @@ chmod +x "$TMP/mock-bd"
 lc_mirror_bd "$TMP/lc"
 
 run_report() {
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_SUBMITTED_LABEL="$SUBMITTED" \
+        SPIRA_BD="$TMP/mock-bd"
+    # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH above) is
+    # exec'd as strand's own child and reads them as raw shell variables, never through
+    # spira-config — tl_config's declaration never reaches a child process's environment.
     SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" \
-    SPIRA_RUN="$TMP/run" \
-    SPIRA_BD="$TMP/mock-bd" \
-    SPIRA_DB="$TMP/no-db" \
+    SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
     SPIRA_SUMMON=stub \
-    SPIRA_SUBMITTED_LABEL="$SUBMITTED" \
     SPIRA_LABELS="spira,test-groom" \
         strand report 2>/dev/null
 }
@@ -85,9 +90,11 @@ echo "case 0 — positive control: the ready set holds the bead → starved IS r
 # ======================================================================================
 # Same run, but the configured submitted label is a different one, so strand's exclude list
 # never names the bead's label, spira-claim hands the bead back, and starvation is real.
-out0="$(SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" SPIRA_RUN="$TMP/run" SPIRA_BD="$TMP/mock-bd" \
-        SPIRA_DB="$TMP/no-db" SPIRA_SUMMON=stub \
-        SPIRA_SUBMITTED_LABEL=some-other-label-entirely \
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_SUBMITTED_LABEL=some-other-label-entirely \
+    SPIRA_BD="$TMP/mock-bd"
+out0="$(SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" \
+        SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
+        SPIRA_SUMMON=stub \
         SPIRA_LABELS="spira,test-groom" \
             strand report 2>/dev/null)"
 want "positive control: starved IS reported" "starved" "$out0"

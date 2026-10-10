@@ -26,6 +26,9 @@ echo "test-incident-systemd.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
+# locate_home no longer searches: SPIRA_HOME IS the home, and every binary reads
+# <home>/conf.d for the registry.
+ln -s "$HERE/conf.d" "$TMP/home/conf.d"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/mail"
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 # sp-jgjvh: incident beads are work beads, so incident's dedup reads each one's state from
@@ -35,11 +38,13 @@ export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 lc_mirror_bd "$TMP/lc"
 
 sysinc() {  # sysinc <unit>
+    tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"
     env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-        SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
+        STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+        SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
         SPIRA_INCIDENT_LOCK="$TMP/run/systemd-test.lock" \
         SPIRA_INCIDENT_CAUSE=systemd-fail \
+        SPIRA_TOML="$SPIRA_TOML" \
         incident.sh systemd "$1"
 }
 bead_of() {
@@ -85,11 +90,7 @@ echo "a second failure of the same unit dedupes to a recurrence, not a second be
 sysinc "spira-test-unit.service" >/dev/null 2>&1
 _second_bid="$(bead_of "spira-test-unit.service")"
 is "the second filing finds the same bead (dedup on incident:<unit>)" "$bid" "$_second_bid"
-_recur_events="$(python3 -c '
-import json
-d = json.load(open("'"$STUB_BD_STATE"'"))
-print(sum(1 for e in d["events"] if e["issue_id"] == "'"$bid"'" and e["event_type"] == "recurred"))
-')"
+_recur_events="$(lc_fact_count "$TMP/lc" "$bid" recurred)"
 is "the second failure is recorded as one recurrence" "1" "$_recur_events"
 
 # ======================================================================================
@@ -97,10 +98,11 @@ echo
 echo "an unreachable database leaves the systemd-triggered filing spooled, not lost:"
 # ======================================================================================
 rm -rf "$TMP/run/incident-spool"; mkdir -p "$TMP/run/incident-spool"
+tl_config SPIRA_BD="$TMP/no-such-bd" SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run"
 out2="$(env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$TMP/no-such-bd" \
-    SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
+    SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/systemd-test.lock" \
+    SPIRA_TOML="$SPIRA_TOML" \
     incident.sh systemd "spira-db-down-unit.service" 2>&1)"; rc2=$?
 is "exits non-zero when the database is unreachable" "1" "$rc2"
 _spooled="$(find "$TMP/run/incident-spool" -maxdepth 1 -type f ! -name '*.bad' 2>/dev/null | wc -l | tr -d ' ')"

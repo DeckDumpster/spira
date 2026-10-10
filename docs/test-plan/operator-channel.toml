@@ -300,3 +300,21 @@ statement = "The SOP ledger: applied appends one complete JSON record at the con
 reason = "sop.sh is retired (sp-8fsql); applied's ledger-append decision tree (bad-argument refusals write nothing, one complete JSON record per call, epoch order, the three-valued log read) is now `logic::applied`/`ledger.rs` in the `sop` crate, covered by `cargo test -p sop` (sop/DESIGN.md §5), which plan-matrix's suite-header scan over spira/test-*.sh cannot see. spira/test-sop.sh is repointed to a thin T1 wiring smoke test of the real binary against a real scratch store; it still exercises `applied` end to end but the decision-tree cases it used to carry by name are what moved."
 date = "2026-09-30"
 bead = "sp-8fsql"
+
+[[use_case]]
+id = "UC-operator-channel-46"
+tier = "T2"
+statement = "The outgoing line of the operator's aerc account, run as aerc runs it (an environment carrying none of the developer's shell), sends a reply and the original is marked answered."
+launcher = { site = "aerc/accounts.conf", needle = "outgoing" }
+
+[[use_case]]
+id = "UC-operator-channel-47"
+tier = "T2"
+statement = "The statusLine command release session-hook registers, run exactly as the client runs it, prints the meter and exits 0 — it does not refuse for want of a mandatory config value."
+launcher = { site = "release/src/session_hook.rs", needle = "meter_command" }
+
+[[use_case]]
+id = "UC-operator-channel-48"
+tier = "T2"
+statement = "The SessionStart command release session-hook registers, run exactly as the client runs it, prints the watcher summary — it does not go silent for want of a mandatory config value."
+launcher = { site = "release/src/session_hook.rs", needle = "hook_command" }

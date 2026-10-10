@@ -43,6 +43,13 @@ pub const WORKSPACE: &str = "/workspace";
 /// host's writeback and overran bd's 10 s read timeout (`[mysql] i/o timeout`).
 pub const CONTAINER_TESTDB_ROOT: &str = "/tmp/spira-testdb";
 
+/// Pure over the two cgroup files' contents (`pids.max` is a number or the word `max`).
+pub fn pids_peak_line(peak: &str, max: &str) -> Option<String> {
+    let peak: u64 = peak.trim().parse().ok()?;
+    let max = max.trim();
+    (max == "max" || max.parse::<u64>().is_ok()).then(|| format!("peak tasks {peak} of {max}"))
+}
+
 /// What the one setup exec established ([`Session::setup`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Setup {
@@ -92,6 +99,31 @@ fn tail(s: &str, n: usize) -> String {
 /// — set outright, never appended to (sp-isom7).
 pub const IMAGE_PATH: &str =
     "/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/// Writes the container's config file ([`Fixture::config_toml`]): the complete fixture with
+/// the installed release (`…/spira-releases/current`) rewritten to the staged one and
+/// `/fixture/userhome` to this user's `$HOME`, then the batch's own keys set over it. The
+/// container is its own (confined) instance whose workspaces root is the batch run directory,
+/// so the containment check passes on the merits — never named `prod` to skip it
+/// (law-never-disarm-a-check-to-proceed).
+const CONFIGURE_SCRIPT: &str = r#"set -eu
+sed -e "s#/fixture/userhome/spira/spira-releases/current#$SPIRA_RELEASE#g" -e "s#/fixture/userhome#$HOME#g" "$CONFIGURE_FIXTURE" > "$CONFIGURE_OUT.tmp"
+set_key() { "$SPIRA_RELEASE/bin/spira-config" set "spira.$1" "$2" "$CONFIGURE_OUT.tmp" >/dev/null; }
+set_key instance "$CONFIGURE_INSTANCE"
+set_key workspaces "$CONFIGURE_RUN"
+set_key prod "$CONFIGURE_PROD"
+set_key chamber "$CONFIGURE_PROD/chamber"
+set_key ctrl "$CONFIGURE_RUN/control"
+set_key bd "$(command -v bd)"
+set_key run "$CONFIGURE_RUN"
+set_key testdb_data "$CONFIGURE_TESTDB_DATA"
+set_key max_aeons "$CONFIGURE_MAX_AEONS"
+set_key max_live_aeons "$CONFIGURE_MAX_LIVE_AEONS"
+set_key loom_addr "$CONFIGURE_LOOM_ADDR"
+set_key dolt_data "$CONFIGURE_DOLT_DATA"
+set_key sccache_dav_addr ""
+mv "$CONFIGURE_OUT.tmp" "$CONFIGURE_OUT"
+"#;
 
 /// Stage the tree under test as a release layout (DESIGN.md §5, sp-isom7): `$1` is the
 /// release root (made afresh), `$2` the build's artifact directory, `$3` the tree; the rest are
@@ -293,6 +325,9 @@ pub struct Session<'a> {
     pub setup_deadline: Option<Instant>,
     /// Seconds `up` may wait for a container slot before it is a queue fault, not a boot one.
     pub queue_bound: Option<u64>,
+    /// `up`'s `--pids-limit` / `--memory` for a container with a budget of its own.
+    pub pids_limit: Option<u32>,
+    pub memory: Option<String>,
 }
 
 fn kv(k: &str, v: impl Into<String>) -> (String, String) {
@@ -312,6 +347,8 @@ impl<'a> Session<'a> {
             liveness_sleep: Duration::from_secs(3),
             setup_deadline: None,
             queue_bound: None,
+            pids_limit: None,
+            memory: None,
         }
     }
 
@@ -330,6 +367,7 @@ impl<'a> Session<'a> {
     pub fn release_env(&self) -> Vec<(String, String)> {
         vec![
             kv("SPIRA_RELEASE", &self.release),
+            kv("SPIRA_TOML", self.config_toml()),
             kv("PATH", self.release_path()),
         ]
     }
@@ -403,6 +441,12 @@ impl<'a> Session<'a> {
         if self.setup_deadline.is_some() {
             args.push("--no-build".into());
         }
+        if let Some(p) = self.pids_limit {
+            args.extend(["--pids-limit".into(), p.to_string()]);
+        }
+        if let Some(m) = &self.memory {
+            args.extend(["--memory".into(), m.clone()]);
+        }
         let up = self.rt.testenv(&args, self.setup_deadline);
         if up.rc == RC_DEADLINE {
             return Err(Fault::Deadline("up"));
@@ -440,18 +484,30 @@ impl<'a> Session<'a> {
         Ok(())
     }
 
+    /// The container's one source of config: the tree's complete fixture with every
+    /// `/fixture/userhome` path moved under the container user's own home, then this batch's own
+    /// values declared over it ([`CONFIGURE_SCRIPT`]). Every later step and suite names it
+    /// through `SPIRA_TOML` ([`Self::release_env`]); nothing is derived or defaulted.
+    pub fn config_toml(&self) -> String {
+        format!("/tmp/spira-batch-{}.toml", self.instance)
+    }
+
     pub fn configure_request(&self) -> ExecRequest {
         let mut env = self.user_env();
         env.extend([
+            kv("CONFIGURE_OUT", self.config_toml()),
+            kv("CONFIGURE_FIXTURE", format!("{WORKSPACE}/spira-config/tests/fixtures/complete.toml")),
+            kv("CONFIGURE_INSTANCE", &self.instance),
             kv("CONFIGURE_PROD", self.in_release("spira")),
+            kv("CONFIGURE_RUN", self.batch_run()),
+            kv("CONFIGURE_TESTDB_DATA", self.testdb_data()),
             kv("CONFIGURE_MAX_AEONS", "1"),
             kv("CONFIGURE_MAX_LIVE_AEONS", "1"),
             kv("CONFIGURE_LOOM_ADDR", "127.0.0.1:7300"),
             kv("CONFIGURE_DOLT_DATA", ""),
         ]);
         env.extend(self.release_env());
-        let configure = self.in_release("spira/configure.sh");
-        self.setup_as_user(&["bash", &configure], env)
+        self.setup_as_user(&["bash", "-c", CONFIGURE_SCRIPT], env)
     }
 
     pub fn suspend_request(&self, unit: &str, reason: &str) -> ExecRequest {
@@ -488,6 +544,7 @@ impl<'a> Session<'a> {
                 reason,
                 "--owner",
                 "sp-fud1",
+                "--force",
             ],
             env,
         )
@@ -919,6 +976,15 @@ impl<'a> Session<'a> {
         (bytes > 0).then_some(bytes / 1_048_576)
     }
 
+    /// `peak tasks N of LIMIT` from the container cgroup's `pids.peak` and `pids.max`, if the
+    /// kernel exposes them.
+    pub fn pids_peak_line(&self) -> Option<String> {
+        let cg = self.rt.inspect(&self.name, "{{.State.CgroupPath}}")?;
+        let dir = format!("/sys/fs/cgroup/{}", cg.trim_start_matches('/'));
+        let read = |f: &str| std::fs::read_to_string(format!("{dir}/{f}")).ok();
+        pids_peak_line(&read("pids.peak")?, &read("pids.max")?)
+    }
+
     pub fn down(&self) -> ExecOutcome {
         self.rt.testenv(
             &[
@@ -1155,6 +1221,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_summary_line_parses_a_cgroup_peak() {
+        assert_eq!(pids_peak_line("21345\n", "32768\n").as_deref(), Some("peak tasks 21345 of 32768"));
+        assert_eq!(pids_peak_line("7\n", "max\n").as_deref(), Some("peak tasks 7 of max"));
+        assert_eq!(pids_peak_line("", "32768"), None);
+        assert_eq!(pids_peak_line("12", "lots"), None);
+    }
+
+    #[test]
     fn suspension_reasons_do_not_blame_the_image_rustc() {
         for (unit, reason) in SUSPENDED_UNITS {
             assert!(!reason.contains("rustc") && !reason.contains("lockfile"), "{unit}: {reason}");
@@ -1225,7 +1299,7 @@ mod tests {
         assert_eq!(argv.len(), 7);
         assert_eq!(argv[6][1..3], ["testdb", "template"]);
         rt.execs.lock().unwrap().remove(0);
-        assert_eq!(argv[0], vec!["bash", "/tmp/spira-release-abc123/spira/configure.sh"]);
+        assert_eq!(argv[0], vec!["bash", "-c", CONFIGURE_SCRIPT]);
         assert_eq!(
             argv[1][..6],
             ["bash", "-c", "exec \"$0\" \"$@\"", "/tmp/spira-release-abc123/bin/ctrl", "suspend", "spira-loom"]

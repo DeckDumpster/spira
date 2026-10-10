@@ -17,6 +17,7 @@ pub struct Cfg {
     pub snap_stale_s: i64,
     pub gate_window_s: i64,
     pub gate_silence_window_s: i64,
+    pub gate_p90_limit_s: i64,
     pub gate_log: Option<PathBuf>,
     pub yield_window_s: i64,
     pub yield_sh: Option<String>,

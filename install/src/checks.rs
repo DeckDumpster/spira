@@ -44,7 +44,7 @@ pub fn check_landref(host: &HostValues) -> Result<(), String> {
         return Ok(());
     }
     let git = |args: &[&str]| -> (bool, String) {
-        let out = Command::new("git").arg("-C").arg(repo).args(args).output();
+        let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).output();
         match out {
             Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).trim().to_string()),
             Err(_) => (false, String::new()),
@@ -62,6 +62,7 @@ pub fn check_landref(host: &HostValues) -> Result<(), String> {
     let base = if ok && !base.is_empty() {
         base
     } else {
+        // batch-job: git history or network operation, as long as the repository is large
         let _ = Command::new("git").arg("-C").arg(repo).args(["remote", "set-head", "origin", "-a"]).status();
         let (ok2, b2) = git(&["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]);
         if ok2 {

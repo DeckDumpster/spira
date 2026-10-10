@@ -46,7 +46,7 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" push -q origin main
 git -C "$REPO" branch local/main main
 
 RUN="$TMP/run"; QDIR="$RUN/queue"; REPONAME=fixpub; RELEASES="$TMP/releases"
@@ -92,34 +92,32 @@ esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 
+mkdir -p "$RUN/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — mail (the divergence alarm) appends
+# every send there (sfail round 3, pattern 7).
+# SPIRA_MAIL_KINDS undeclared resolves to the complete fixture's own unwritable release
+# tree, so lint refuses the divergence alarm's send outright ("unknown kind") before it ever
+# reaches the concierge mailbox; SPIRA_MAIL_MUTE defaults to true for the same reason.
+tl_config SPIRA_HOME_REPO="$REPONAME" SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
+    SPIRA_MAIL_INDEX="$RUN/mail/index" SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_MAIL_MUTE=0 \
+    SPIRA_QUEUE_DIR="$QDIR" SPIRA_REPO_MAP="$RMAP" SPIRA_FORGE="$SH/forge-fixture.sh" \
+    SPIRA_RELEASES="$RELEASES" SPIRA_CONCIERGE_INBOX="$RUN/watchd/concierge-inbox.log"
 queue() {
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_MAIL="$RUN/mail" \
-    SPIRA_QUEUE_DIR="$QDIR" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
-    SPIRA_RELEASES="$RELEASES" \
-        SPIRA_HOME="$SH" command queue "$@" 2>&1
+        command queue "$@" 2>&1
 }
 verdict() {
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO="$REPO" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_MAIL="$RUN/mail" \
-    SPIRA_QUEUE_DIR="$QDIR" \
-    SPIRA_REPO_MAP="$RMAP" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
     FIXTURE_RED_SUITES="${RED_SUITES:-}" \
     FIXTURE_PR_STATE="${PR_STATE:-open}" \
-        SPIRA_HOME="$SH" command queue verdict "$REPONAME" 2>&1
+        command queue verdict "$REPONAME" 2>&1
 }
 # mk_bins <head> — land-local now refuses without a --with-bins corpus for the tree it is
 # landing; every head this suite lands needs one (see test-land-local-release.sh for the
@@ -154,7 +152,7 @@ land() {
     queue land-local "$REPONAME" --head "$head" --members "$id:$tip" >/dev/null
 }
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { bd -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -167,6 +165,10 @@ seed() {   # seed <id>
 remote_main()  { git -C "$REMOTE" rev-parse main 2>/dev/null; }
 localmain()    { git -C "$REPO" rev-parse local/main; }
 publish_file() { cat "$QDIR/$REPONAME/publish" 2>/dev/null; }
+
+# passed — the full-suite local pass a green round records for its head (sp-x334k): publish refuses a
+# local/main head without one, so every publish here stands on the pass production would have.
+passed() { local o; o="$(spira-config local-pass record full-suite "$(git -C "$REPO" rev-parse local/main)" fixture-round 2>&1)" || echo "# passed() FAILED: $o" >&2; }
 callcount()    { grep -c "^$1" "$CALL_LOG" 2>/dev/null; }
 clear_calls()  { : > "$CALL_LOG"; }
 landing_log()  { cat "$RUN/landing.log" 2>/dev/null; }
@@ -183,7 +185,7 @@ clear_mail()   { rm -f "$RUN"/mail/concierge/new/* 2>/dev/null; }
 echo
 echo "1 — nothing to publish is a no-op: no branch, no PR, no record"
 # ============================================================================
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "1: exit 0 with nothing to publish" || bad "1: exit 0 with nothing to publish" "got rc=$rc out=$out"
 want "1: reports nothing to publish" "nothing to publish" "$out"
 [ "$(callcount pr-create)" -eq 0 ] && ok "1: forge never asked to open a PR" \
@@ -200,7 +202,7 @@ seed sp-pub1
 land sp-pub1 one.txt one
 HEAD1="$(localmain)"; TIP1="$LAST_TIP"
 
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "2: publish opens a PR (exit 0)" || bad "2: publish opens a PR (exit 0)" "got rc=$rc out=$out"
 want "2: names the PR" "PR 1 opened" "$out"
 is "2: publish record's head is local/main's tip" "$HEAD1" "$(sed -n 's/^head=//p' "$QDIR/$REPONAME/publish")"
@@ -228,7 +230,7 @@ seed sp-pub2
 land sp-pub2 two.txt two
 HEAD2="$(localmain)"; TIP2="$LAST_TIP"
 
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "3: second publish opens a new PR" || bad "3: second publish opens a new PR" "got rc=$rc out=$out"
 want "3: publish record carries only sp-pub2, not sp-pub1 again" "sp-pub2:$TIP2" "$(publish_file)"
 nowant "3: sp-pub1 is not re-published" "sp-pub1" "$(publish_file)"
@@ -247,7 +249,7 @@ land sp-pub3 three.txt three
 HEAD3="$(localmain)"
 PRE_MAIN="$(remote_main)"
 
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 
 out="$(CHECK_STATUS=red RED_SUITES="test-example-suite.sh" verdict)"; rc=$?
 [ "$rc" -eq 0 ] && ok "4: verdict settles the red publish" || bad "4: verdict settles the red publish" "got rc=$rc out=$out"
@@ -283,7 +285,7 @@ land sp-pub3b threeb.txt threeb
 HEAD3B="$(localmain)"
 PRE_MAIN_3B="$(remote_main)"
 
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 
 # Closing a PR retriggers its Gate run (to cancel the superseded one), and that retrigger
 # run can itself conclude green — required jobs skip rather than run once the PR is closed.
@@ -302,7 +304,7 @@ clear_calls
 seed sp-pub3c
 land sp-pub3c threec.txt threec
 HEAD3C="$(localmain)"
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 out="$(PR_STATE=merged CHECK_STATUS=green verdict)"; rc=$?
 is "4c-merged: a PR reported merged (never our own doing) also never fast-forwards again here" \
     "$PRE_MAIN_3B" "$(remote_main)"
@@ -314,7 +316,7 @@ clear_log
 seed sp-pub3d
 land sp-pub3d threed.txt threed
 HEAD3D="$(localmain)"
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 out="$(PR_STATE=unknown verdict)"; rc=$?
 want "4c-unknown: an unreadable PR state waits rather than guessing" "waiting" "$out"
 [ -f "$QDIR/$REPONAME/publish" ] && ok "4c-unknown: the publish record is left in place" \
@@ -334,12 +336,12 @@ echo "5 — origin/main not an ancestor of local/main: publish refuses, alarms t
 clear_calls
 # Simulate a foreign write straight to the forge's main, bypassing the publish queue.
 CLONE="$TMP/clone"
-git clone -q "$REMOTE" "$CLONE"
+timeout 5 git clone -q "$REMOTE" "$CLONE"
 git -C "$CLONE" commit -q --allow-empty -m "foreign: not from local/main"
-git -C "$CLONE" push -q origin main
+timeout 5 git -C "$CLONE" push -q origin main
 FOREIGN="$(git -C "$CLONE" rev-parse main)"
 
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "5: publish refuses when the forge diverged" || bad "5: publish refuses when the forge diverged" "got rc=$rc out=$out"
 want "5: names the refusal" "not an ancestor" "$out"
 [ "$(callcount pr-create)" -eq 0 ] && ok "5: no PR was opened" || bad "5: no PR was opened" "$(cat "$CALL_LOG")"
@@ -350,7 +352,7 @@ is "5: the divergence alarm fired exactly once" "1" "$(mail_count)"
 want "5: the alarm names the foreign commit" "foreign: not from local/main" "$(mail_body)"
 want "5: the alarm says never to rebase silently" "Never rebase silently" "$(mail_body)"
 
-out="$(queue publish "$REPONAME")"; rc=$?
+passed; out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -ne 0 ] && ok "5b: a second publish attempt on the same divergence still refuses" \
     || bad "5b: a second publish attempt on the same divergence still refuses" "got rc=$rc out=$out"
 is "5b: the repeated refusal does not re-alarm (one alarm per divergence)" "1" "$(mail_count)"
@@ -367,7 +369,7 @@ seed sp-pub4
 land sp-pub4 four.txt four
 [ -f "$QDIR/$REPONAME/publish" ] && bad "6 setup: no stray publish record before this case" "found one" \
     || true
-queue publish "$REPONAME" >/dev/null
+passed; queue publish "$REPONAME" >/dev/null
 [ -f "$QDIR/$REPONAME/publish" ] && ok "6: a publish PR is open going into the local cut" \
     || bad "6: a publish PR is open going into the local cut" "no record at $QDIR/$REPONAME/publish"
 
@@ -399,10 +401,10 @@ clear_mail
 # never one land-local triggers itself (no forge round trip belongs on the round-build
 # critical path). This proves land-local's own check, independent of any publish attempt.
 CLONE2="$TMP/clone2"
-git clone -q "$REMOTE" "$CLONE2"
+timeout 5 git clone -q "$REMOTE" "$CLONE2"
 git -C "$CLONE2" commit -q --allow-empty -m "foreign2: bypassed the publish queue again"
-git -C "$CLONE2" push -q origin main
-git -C "$REPO" fetch -q origin main
+timeout 5 git -C "$CLONE2" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin main
 
 seed sp-pub6
 git -C "$REPO" checkout -qb round-sp-pub6 local/main

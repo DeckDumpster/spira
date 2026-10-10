@@ -36,7 +36,7 @@
 # a stub that emits controlled output with a non-default prefix is the right dependency.
 #
 # tier: T1
-# covers: spira/gate-check.sh
+# covers: spira/gate-check.sh UC-landing-merge-queue-52
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -47,7 +47,7 @@ testdb_require test-gate-check-stuck
 trap 'testdb_drop' EXIT INT TERM
 testdb_up gate_check_stuck || { echo "test-gate-check-stuck: could not build fixture"; exit 1; }
 
-B() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
@@ -75,8 +75,9 @@ cp "$HERE/gate-check.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$SH
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 # Run gate-check.sh: a real bd against the fixture, no repo-map so discover is a no-op.
-gate_out="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO_MAP="$TMP/empty-map" SPIRA_CONF="$TMP/no.conf" \
+tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$TMP/empty-map"
+gate_out="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_CONF="$TMP/no.conf" \
     bash "$SH/gate-check.sh" 2>/dev/null)"
 
 # THE POSITIVE CONTROL: a stuck gate must appear in the stuck count.
@@ -101,8 +102,9 @@ GATE_ID2=$(B gate create --type=gh:run --blocks sp-work2 2>/dev/null \
 # Set an await_id: gate-check will try gh and may error, but the gate is NOT stuck.
 B update "$GATE_ID2" --await-id "99999" 2>/dev/null >/dev/null
 
-gate_out2="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO_MAP="$TMP/empty-map" SPIRA_CONF="$TMP/no.conf" \
+tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$TMP/empty-map"
+gate_out2="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_CONF="$TMP/no.conf" \
     bash "$SH/gate-check.sh" 2>/dev/null)"
 
 nowant "gate with await_id is not stuck" "stuck" "$gate_out2"
@@ -155,9 +157,10 @@ mkdir -p "$TMP/run/events"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/notify.log"\n' "$TMP" > "$TMP/sbin/ask.sh"
 chmod +x "$TMP/sbin/ask.sh"
 
-SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/fake-db" \
-    SPIRA_REPO_MAP="$TMP/empty-map" SPIRA_CONF="$TMP/no.conf" \
-    SPIRA_ID_PREFIX=tt SPIRA_BD="$TMP/sbin/bd" SPIRA_NOTIFY="$TMP/sbin/ask.sh" \
+tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$TMP/empty-map" \
+    SPIRA_ID_PREFIX=tt SPIRA_BD="$TMP/sbin/bd" SPIRA_NOTIFY="$TMP/sbin/ask.sh"
+SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_DB="$TMP/fake-db" \
+    SPIRA_CONF="$TMP/no.conf" \
     bash "$SH/gate-check.sh" 2>/dev/null
 
 bd_calls="$(cat "$BD_LOG" 2>/dev/null)"

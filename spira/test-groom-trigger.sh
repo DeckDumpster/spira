@@ -102,17 +102,27 @@ FIVE_OPEN='[{"bead_id":"x1","state":"READY"},{"bead_id":"x2","state":"WORKING"},
 # still apply. SPIRA_BD is the stub. BD_LOG_PATH is the argv capture file.
 # LC_LIST_OUTPUT feeds the lifecycle rows (the backlog count and the dedup's open check);
 # BD_LIST_OUTPUT feeds the dedup's bd list response. SPIRA_RUN=$T/run gives tests a writable, predictable lastpass dir.
+# SPIRA_HOME="$HERE": groom-trigger.sh's own conf.sh derives SPIRA_HOME from $_spira_conf_here
+# (where conf.sh sits) when unset, but that derivation is a local, unexported shell var —
+# `maechen-trigger --home "$SPIRA_HOME" open-trigger-count ...` (lib.sh's
+# spira_open_trigger_count) only feeds its own `--home` flag from it, which maechen-trigger
+# uses for repo-registry lookups, NEVER for locating $SPIRA_TOML: that is
+# spira_config::process::cfg's own locate_home_for_process, which reads SPIRA_HOME/
+# SPIRA_RELEASE straight out of the environment and refuses when neither is an actual env
+# var. Production has SPIRA_RELEASE ambient from the unit; this suite's env -i has neither,
+# so maechen-trigger refused before ever calling bd, and groom-trigger.sh's dedup silently
+# read that failure as "0 open" and fell through to the short-circuit instead (one source of
+# config, per Ryan 2026-10-05).
 run_trigger() {
     mkdir -p "$T/run"
+    tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$STUB_BD"
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_RUN="$T/run" \
-        SPIRA_REPO_MAP="$GROOM_MAP" \
         groom-trigger.sh "$@" 2>&1
 }
 
@@ -167,18 +177,36 @@ esac
 STUB
 chmod +x "$FAIL_BD"
 : > "$BD_LOG"
-out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$FAIL_BD"
+out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$FAIL_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
         BD_LIST_OUTPUT="[]" \
-        SPIRA_RUN="$T/run" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_REPO_MAP="$GROOM_MAP" \
         groom-trigger.sh 2>&1)"; rc=$?
 is   "create failure exits 1" 1 "$rc"
 want "failure log mentions ERROR" "ERROR" "$out"
+
+# ==========================================================================================
+echo
+echo "REFUSAL: spira-lc cannot answer — nothing is filed and the log names the refusal"
+# ==========================================================================================
+DEAD_LC="$T/dead-lc"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$DEAD_LC"
+chmod +x "$DEAD_LC"
+: > "$BD_LOG"
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_BD="$STUB_BD"
+out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF="$NONE" \
+        BD_LOG_PATH="$BD_LOG" \
+        SPIRA_LC_BIN="$DEAD_LC" \
+        BD_LIST_OUTPUT="[]" \
+        groom-trigger.sh 2>&1)"; rc=$?
+is     "unreadable machine exits 0"          0          "$rc"
+nowant "unreadable machine: no create"       "create"   "$(cat "$BD_LOG")"
+want   "unreadable machine: refusal logged"  "refusing to file" "$out"
 
 # ==========================================================================================
 echo
@@ -189,17 +217,14 @@ echo "LABELS: custom SPIRA_SCOPE_LABEL and SPIRA_GROOMER_LABEL are used"
 # thing the config key exists to stop.
 : > "$BD_LOG"
 BD_LIST_OUTPUT="[]"
+tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
+    SPIRA_SCOPE_LABEL="myproject" SPIRA_GROOMER_LABEL="hygiene" SPIRA_BD="$STUB_BD"
 out="$(BD_LIST_OUTPUT="[]" \
-    env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_RUN="$T/run" \
-        SPIRA_REPO_MAP="$GROOM_MAP" \
-        SPIRA_SCOPE_LABEL="myproject" \
-        SPIRA_GROOMER_LABEL="hygiene" \
     groom-trigger.sh 2>&1)"; rc=$?
 is   "custom labels exits 0"                        0           "$rc"
 want "custom scope label in create args"            "myproject" "$(cat "$BD_LOG")"
@@ -208,7 +233,8 @@ want "custom groomer label in create args"          "hygiene"   "$(cat "$BD_LOG"
 # partition labels only (strip delivers:* labels whose path may contain the default
 # scope name as a directory component — e.g. /path/to/.runtime/spira/groom.log).
 label_arg="$(grep 'create' "$BD_LOG" | grep -oP '(?<=--label )\S+')"
-partition_labels="$(printf '%s' "${label_arg:-}" | tr ',' '\n' | grep -v '^delivers:' | paste -sd, -)"
+partition_labels="$(printf '%s' "${label_arg:-}" | tr ',' '\n' | grep -v -e '^delivers:' -e '^groom-trigger$' | paste -sd, -)"
+want   "trigger marker in --label"                  "groom-trigger" "$label_arg"
 nowant "default scope label not in --label" "spira"  "${partition_labels:-}"
 nowant "default groom label not in --label" ",groom" "${partition_labels:-}"
 
@@ -220,19 +246,16 @@ echo "EMPTY SCOPE: SPIRA_SCOPE_LABEL='' produces only the groomer label (no lead
 # comma in the label string would produce a malformed bd --label argument and could match
 # nothing or everything. Verify no leading comma appears in the bd create call.
 : > "$BD_LOG"
-out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
+    SPIRA_SCOPE_LABEL="" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
+out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_RUN="$T/run" \
-        SPIRA_REPO_MAP="$GROOM_MAP" \
-        SPIRA_SCOPE_LABEL="" \
-        SPIRA_GROOMER_LABEL="groom" \
     groom-trigger.sh 2>&1)"; rc=$?
 is     "empty scope exits 0"               0     "$rc"
-nowant "no leading comma in labels"        ",groom" "$(grep 'create' "$BD_LOG")"
+nowant "no leading comma in labels"        "--label ," "$(grep 'create' "$BD_LOG")"
 want   "groomer label present without scope" "groom" "$(cat "$BD_LOG")"
 
 # ==========================================================================================
@@ -246,15 +269,14 @@ CONSUME_MAP="$T/consume-map"
 printf 'home-tg | /tmp/home-tg | push | origin/main | | | consume\n' > "$CONSUME_MAP"
 printf 'plan-only | /tmp/plan-only | push | origin/main | | | consume\n' >> "$CONSUME_MAP"
 : > "$BD_LOG"
-out_ng="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+tl_config SPIRA_DB="$T/fixture.db" SPIRA_REPO_MAP="$CONSUME_MAP" \
+    SPIRA_HOME_REPO="home-tg" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
+out_ng="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_REPO_MAP="$CONSUME_MAP" \
-    SPIRA_HOME_REPO="home-tg" \
-    SPIRA_GROOMER_LABEL="groom" \
+    SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="[]" \
     groom-trigger.sh 2>&1)"; rc_ng=$?
 is     "no-groom-map: trigger exits 0"        0 "$rc_ng"
 nowant "no-groom-map: no bd create call"      "create" "$(cat "$BD_LOG")"
@@ -262,16 +284,14 @@ want   "no-groom-map: logs skipping trigger"  "skipping trigger" "$out_ng"
 
 # POSITIVE CONTROL: develop mode admits groom — trigger must fire.
 : > "$BD_LOG"
-out_gp="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" \
+    SPIRA_HOME_REPO="spira" SPIRA_GROOMER_LABEL="groom" SPIRA_BD="$STUB_BD"
+out_gp="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
     SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_RUN="$T/run" \
-    SPIRA_REPO_MAP="$GROOM_MAP" \
-    SPIRA_GROOMER_LABEL="groom" \
     groom-trigger.sh 2>&1)"; rc_gp=$?
 is   "groom-admitted map: trigger exits 0"      0        "$rc_gp"
 want "groom-admitted map: bd create is called"  "create" "$(cat "$BD_LOG")"
@@ -306,30 +326,24 @@ echo "SHORT-CIRCUIT: custom SPIRA_GROOM_THRESHOLD respected"
 # Two unfinished rows (score=2; the SUBMITTED one is past the builder) with threshold=2 must fire; with threshold=3 must not.
 TWO_OPEN='[{"bead_id":"y1","state":"READY"},{"bead_id":"y2","state":"WORKING"},{"bead_id":"y3","state":"SUBMITTED"}]'
 : > "$BD_LOG"
-out_t2="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+tl_config SPIRA_DB="$T/fixture.db" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$GROOM_MAP" SPIRA_GROOM_THRESHOLD="2" SPIRA_BD="$STUB_BD"
+out_t2="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
     SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$TWO_OPEN" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_RUN="$T/run" \
-    SPIRA_REPO_MAP="$GROOM_MAP" \
-    SPIRA_GROOM_THRESHOLD="2" \
     groom-trigger.sh 2>&1)"; rc_t2=$?
 is   "threshold=2, score=2: exits 0"        0        "$rc_t2"
 want "threshold=2, score=2: create called"  "create" "$(cat "$BD_LOG")"
 : > "$BD_LOG"
-out_t3="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
+tl_config SPIRA_GROOM_THRESHOLD="3" SPIRA_BD="$STUB_BD"
+out_t3="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_HOME="$HERE" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
     SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$TWO_OPEN" \
-    SPIRA_DB="$T/fixture.db" \
-    SPIRA_RUN="$T/run" \
-    SPIRA_REPO_MAP="$GROOM_MAP" \
-    SPIRA_GROOM_THRESHOLD="3" \
     groom-trigger.sh 2>&1)"; rc_t3=$?
 is     "threshold=3, score=2: exits 0"          0         "$rc_t3"
 nowant "threshold=3, score=2: no create call"   "create"  "$(cat "$BD_LOG")"

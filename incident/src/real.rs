@@ -4,7 +4,6 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::decide::{status_of_lc, BeadRow, BeadStatus, Scope};
 use crate::ports::{Bd, Clock, Mailer};
@@ -16,15 +15,19 @@ pub struct RealBd {
 }
 
 impl RealBd {
-    pub fn from_env() -> RealBd {
-        RealBd {
-            bd_bin: std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
+    /// `SPIRA_BD` is a registered key (spira/conf.d) — the one source of config (per Ryan
+    /// 2026-10-05), through `spira_config::process::cfg`, never a literal default.
+    /// `BD_TIMEOUT`/`SPIRA_BDQ_CONN_RETRIES` carry no `spira/conf.d/<KEY>` entry, so they
+    /// stay ad hoc environment reads, unchanged.
+    pub fn from_env() -> Result<RealBd, String> {
+        Ok(RealBd {
+            bd_bin: spira_config::process::cfg("SPIRA_BD")?,
             timeout_secs: std::env::var("BD_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(180),
             retries: std::env::var("SPIRA_BDQ_CONN_RETRIES").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
-        }
+        })
     }
 
-    fn run(&self, db: &str, args: &[&str]) -> Result<(i32, String, String), String> {
+    pub(crate) fn run(&self, db: &str, args: &[&str]) -> Result<(i32, String, String), String> {
         let mut attempt = 0u32;
         loop {
             attempt += 1;
@@ -38,6 +41,17 @@ impl RealBd {
                 return Ok((rc, stdout, stderr));
             }
         }
+    }
+
+    fn run_lc(&self, args: &[&str]) -> Result<(i32, String, String), String> {
+        let mut cmd = Command::new("timeout");
+        cmd.arg(self.timeout_secs.to_string()).arg(spira_config::lifecycle_row::lc_bin()).args(args);
+        let out = cmd.output().map_err(|e| format!("spira-lc: {e}"))?;
+        Ok((
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        ))
     }
 
     fn run_stdin(&self, db: &str, args: &[&str], stdin_body: &str) -> Result<(i32, String, String), String> {
@@ -233,11 +247,32 @@ impl Bd for RealBd {
     fn set_state(&self, db: &str, id: &str, kv: &str) -> bool {
         self.run(db, &["set-state", id, kv]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
-    fn reopen(&self, db: &str, id: &str) -> bool {
-        self.run(db, &["reopen", id]).map(|(rc, ..)| rc == 0).unwrap_or(false)
+    fn reopen(&self, _db: &str, id: &str, cause: &str) -> bool {
+        spira_config::lifecycle_row::reopen(id, cause, "incident").is_ok()
     }
     fn relate(&self, db: &str, a: &str, b: &str) -> bool {
         self.run(db, &["dep", "relate", a, b]).map(|(rc, ..)| rc == 0).unwrap_or(false)
+    }
+    fn duplicate(&self, db: &str, id: &str, survivor: &str) -> bool {
+        self.run(db, &["duplicate", id, "--of", survivor]).map(|(rc, ..)| rc == 0).unwrap_or(false)
+    }
+    fn live_successor(&self, db: &str, id: &str) -> Option<String> {
+        let (rc, out, _) = self.run(db, &["show", id, "--json"]).ok()?;
+        if rc != 0 {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_str(json_only(&out)).ok()?;
+        let obj = if v.is_array() { v.get(0)?.clone() } else { v };
+        let successor = obj
+            .get("dependencies")?
+            .as_array()?
+            .iter()
+            .find(|d| d.get("dependency_type").and_then(|t| t.as_str()) == Some("supersedes"))?
+            .get("id")?
+            .as_str()?
+            .to_string();
+        let row = spira_config::lc_state::row(&successor).ok()??;
+        (!row.terminal()).then_some(successor)
     }
     fn show_closed_at(&self, db: &str, id: &str) -> Option<String> {
         let (rc, out, _) = self.run(db, &["show", id, "--json"]).ok()?;
@@ -263,12 +298,16 @@ impl Bd for RealBd {
     fn reachable(&self, db: &str) -> bool {
         self.run(db, &["list", "--limit", "1"]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
-    fn sql(&self, db: &str, query: &str) -> Result<String, String> {
-        let (rc, out, err) = self.run(db, &["sql", query])?;
+    fn fact(&self, id: &str, kind: &str, cause: &str) -> bool {
+        let args = ["fact", id, "--kind", kind, "--actor", "incident", "--cause", cause];
+        self.run_lc(&args).map(|(rc, ..)| rc == 0).unwrap_or(false)
+    }
+    fn fact_count(&self, id: &str, kind: &str) -> Option<usize> {
+        let (rc, out, _) = self.run_lc(&["facts", "--ids", id, "--kinds", kind]).ok()?;
         if rc != 0 {
-            return Err(err);
+            return None;
         }
-        Ok(out)
+        serde_json::from_str::<Vec<serde_json::Value>>(json_only(&out)).ok().map(|v| v.len())
     }
 }
 
@@ -277,7 +316,7 @@ pub struct RealMailer;
 impl Mailer for RealMailer {
     fn send_operator_question(&self, subject: &str, default: &str, body: &str) -> bool {
         let full_body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{body}\n");
-        let mut cmd = Command::new("mail");
+        let mut cmd = spira_config::bounded::bounded("mail");
         cmd.envs(spira_config::release_env::child_path_env_for_process());
         cmd.args(["send", "operator", "--from", "Incident <incident@spira>", "--subject", subject, "--kind", "question", "--default", default])
             .stdin(Stdio::piped())
@@ -295,7 +334,7 @@ pub struct RealClock;
 
 impl Clock for RealClock {
     fn now(&self) -> i64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+        spira_config::vtime::now_epoch() as i64
     }
 }
 
@@ -359,5 +398,17 @@ mod tests {
     #[test]
     fn rows_from_json_empty_array_is_empty_vec() {
         assert_eq!(rows_from_json("[]\n").len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::Clock;
+
+    #[test]
+    fn real_clock_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock.now() as u64);
+        assert_eq!(got, 1_900_000_000);
     }
 }

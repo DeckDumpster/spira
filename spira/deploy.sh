@@ -149,8 +149,8 @@ _named_tag=1
 if [ "$tag" = "latest" ]; then
     _named_tag=0
     tag=""
-    git -C "$SPIRA_REPO" fetch --tags --quiet 2>/dev/null || true
-    _rel_list="$(gh --repo "$_gh_repo" release list --json tagName,isDraft 2>/dev/null)" \
+    timeout 5 git -C "$SPIRA_REPO" fetch --tags --quiet 2>/dev/null || true
+    _rel_list="$(timeout 5 gh --repo "$_gh_repo" release list --json tagName,isDraft 2>/dev/null)" \
         || _rel_list=""
     if [ -n "$_rel_list" ]; then
         tag="$(printf '%s' "$_rel_list" | python3 -c '
@@ -171,7 +171,7 @@ except Exception:
             tag="$(git -C "$SPIRA_REPO" tag --list 'spira-release-*' \
                     --sort=-version:refname 2>/dev/null | head -1)"
         else
-            tag="$(git ls-remote --tags "https://github.com/$_gh_repo" \
+            tag="$(timeout 5 git ls-remote --tags "https://github.com/$_gh_repo" \
                     'refs/tags/spira-release-*' 2>/dev/null \
                 | awk '{print $2}' | sed 's|refs/tags/||' \
                 | sort -V | tail -1)"
@@ -201,7 +201,7 @@ fi
 # Refuse a draft release before any disruptive action.
 _draft_info=""
 [ -n "$local_tarball" ] \
-    || _draft_info="$(gh --repo "$_gh_repo" release view "$tag" --json isDraft 2>/dev/null)" \
+    || _draft_info="$(timeout 5 gh --repo "$_gh_repo" release view "$tag" --json isDraft 2>/dev/null)" \
     || _draft_info=""
 if [ -n "$_draft_info" ]; then
     _is_draft="$(printf '%s' "$_draft_info" \
@@ -223,7 +223,7 @@ _assets_json=""
 if [ -n "$local_tarball" ]; then
     _assets_json="$(printf '{"assets":[{"name":"%s"}]}' "$(basename "$local_tarball")")"
 else
-    _assets_json="$(gh --repo "$_gh_repo" release view "$tag" --json assets 2>/dev/null)" \
+    _assets_json="$(timeout 5 gh --repo "$_gh_repo" release view "$tag" --json assets 2>/dev/null)" \
         || _assets_json=""
 fi
 _asset_name="$(printf '%s' "${_assets_json:-}" | python3 -c '
@@ -333,6 +333,7 @@ if [ -n "$local_tarball" ]; then
         printf 'deploy: could not copy %s\n' "$local_tarball" >&2; exit 2; }
 else
     log "deploy: fetching $tag"
+    # batch-job: release asset download
     gh --repo "$_gh_repo" release download "$tag" \
         --pattern "${release_stem}.tar.gz" \
         --dir "$_deploy_tmp" || {
@@ -347,12 +348,15 @@ _tarball="$_deploy_tmp/${release_stem}.tar.gz"
 # Check DB migration compatibility before drain so a mismatch does not strand the instance.
 if [ -d "${SPIRA_DB:-}/.beads" ]; then
     log "deploy: checking DB migration compatibility"
+    # batch-job: schema migration over the whole store
     _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)"
     _mig_rc=$?
     if [ "$_mig_rc" -ne 0 ] \
             && printf '%s' "$_mig_out" | grep -qE 'unreachable|connection refused'; then
         log "deploy: Dolt server not running — starting"
+        # batch-job: starts the dolt server
         "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dolt start 2>/dev/null || true
+        # batch-job: schema migration over the whole store
         _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)"
         _mig_rc=$?
     fi
@@ -406,6 +410,16 @@ _pre_deploy_unit_state="$SPIRA_RUN/pre-deploy-unit-state.$$"
 # A fatal here means the box has a pre-existing problem; fix it and re-run deploy.
 log "deploy: pre-deploy health check"
 _pre_deploy_fails="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1 | grep '^  FAIL  ')" || true
+# A unit failed on a config key the incoming release fills in (config-delta.toml) cannot be
+# cured before activation, which is what applies the delta: it is named here, then re-run and
+# judged under the incoming release below, where a unit it still fails keeps the deploy red.
+_pre_deploy_failed_units="$(printf '%s\n' "$_pre_deploy_fails" | grep ' is a failed systemd unit$')" || true
+if [ -n "$_pre_deploy_failed_units" ]; then
+    log "deploy: WARNING: units already failed before this deploy — re-run under $release_stem after activation:"
+    printf '%s\n' "$_pre_deploy_failed_units" >&2
+    _pre_deploy_fails="$(printf '%s\n' "$_pre_deploy_fails" | grep -v ' is a failed systemd unit$')" || true
+fi
+unset _pre_deploy_failed_units
 if [ -n "$_pre_deploy_fails" ]; then
     printf 'deploy: pre-deploy health check has failures — fix before deploying:\n' >&2
     printf '%s\n' "$_pre_deploy_fails" >&2
@@ -555,6 +569,16 @@ _rollback() {
 # regenerates a document holding only the one key just written, the "gutted spira.toml"
 # failure this bead retires.
 _new_prod="$SPIRA_RELEASES/current/spira"
+if [ -z "$(spira_toml_file)" ]; then
+    mapfile -t _fayths < <(_spira_fayth_paths)
+    _fayth_args=(); for _f in "${_fayths[@]}"; do _fayth_args+=(--fayth "$_f"); done
+    _converted="$(spira-config convert-legacy "$SPIRA_CONFIG_HOME" --home "$HOME" ${_fayth_args[@]+"${_fayth_args[@]}"})" \
+        || { _rollback "converting the pre-cutover config failed"; }
+    if [ -n "$_converted" ]; then
+        export SPIRA_TOML="$_converted"
+        log "deploy: pre-cutover config converted — SPIRA_TOML = $_converted"
+    fi
+fi
 _conf_path="$(spira_toml_write_target)"
 if [ -n "$_conf_path" ] && [ -f "$_conf_path" ]; then
     _conf_backup="${_conf_path}.pre-deploy.$$"
@@ -707,4 +731,6 @@ if [ -n "${prev_release:-}" ] && [ -n "${SPIRA_REPO:-}" ] \
    && git -C "$SPIRA_REPO" rev-parse -q --verify "${release_stem}^{commit}" >/dev/null 2>&1; then
     "$SPIRA_HOME/verify-landed.sh" --range "${prev_release}..${release_stem}" --repo "$SPIRA_REPO" \
         || log "deploy: post-deploy verification reported a problem (deploy stands)"
+    "$SPIRA_HOME/first-run.sh" --range "${prev_release}..${release_stem}" --repo "$SPIRA_REPO" \
+        || log "deploy: first-run reported a problem (deploy stands)"
 fi

@@ -41,8 +41,10 @@ echo "T1: argument parsing — before testdb/bd is ever touched, no store"
 # would fail with a store error instead of the usage message asserted for.
 T1TMP="$(mktemp -d)"; trap 'rm -rf "$T1TMP"' EXIT INT TERM
 slay_noargv() {   # slay_noargv <args...> -> stdout+stderr, with SLAY_RC set
+    tl_config SPIRA_RUN="$T1TMP/run" SPIRA_DB="$T1TMP/no-such-store"
     SLAY_OUT="$(env -i PATH="$PATH" HOME="$T1TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$T1TMP/no.conf" SPIRA_RUN="$T1TMP/run" SPIRA_DB="$T1TMP/no-such-store" \
+        SPIRA_CONF="$T1TMP/no.conf" \
+        SPIRA_TOML="$SPIRA_TOML" \
         slay "$@" 2>&1)"
     SLAY_RC=$?
 }
@@ -116,17 +118,17 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
 LC_SERVER_PID=$!
 lc_up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
         lc_up=1; break
     fi
     sleep 0.2
 done
 [ "$lc_up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
-lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
+lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
 
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
 export SPIRA_LC_HOST=127.0.0.1
@@ -135,24 +137,30 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP/lc-data"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
+# (spira-lc/src/db.rs password_from) — the complete fixture's own declared path does not
+# exist for this suite's throwaway server. testlib/lc-fixture.sh's own pattern: an empty
+# (root, no password) credential file, declared (SPIRA_LC_SOCKET already unset above).
+: > "$TMP/lc-credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential" SPIRA_LC_SOCKET=""
 spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
 wantrc "spira-lc schema applies cleanly" 0 $?
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
+SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_REPO="$REPO"
 export SPIRA_CONF="$TMP/no-such-conf"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$TMP/repo-map"
 printf '# fixture — empty\n' > "$TMP/repo-map"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 
 # shellcheck disable=SC1090
@@ -213,17 +221,17 @@ teardown() {
 }
 
 # ======================================================================================
-# STRUCTURAL: the slain marker is the first action.
+# STRUCTURAL: the slain disposition is the first action.
 #
-# The marker must be written before anything is stopped, because aeon.sh's exit path
-# reads it to decide whether to charge an attempt. If the kill arrives before the marker,
+# The disposition must be recorded on the row before anything is stopped, because the aeon's
+# exit path reads it to decide whether to charge an attempt. If the kill arrives first,
 # the exit path sees a normal 143 and charges — and three charges poison the bead.
 # ======================================================================================
 echo "structural:"
 
-first_action="$(sed -n '/^\s*\/\/ ---- 1\. the marker/,/^\s*\/\/ ---- 2/p' "$SLAY" \
+first_action="$(sed -n '/^\s*\/\/ ---- 1\. the disposition/,/^\s*\/\/ ---- 2/p' "$SLAY" \
                 | grep -vE '^\s*(//|$)' | head -1)"
-want "the marker is the first action" 'slain' "$first_action"
+want "the slain disposition is the first action" 'slain' "$first_action"
 
 # ======================================================================================
 # DEFAULT SLAY (reopen) — bead goes from in_progress to open, unassigned, work removed.
@@ -249,7 +257,7 @@ is  "the lifecycle row is released instead — WORKING to READY" READY "$(lc_sta
 is  "bead is unassigned"       ""   "$(assignee_of sp-s1)"
 is  "worktree is gone"         no   "$([ -d "$SPIRA_RUN/worktree/sp-s1" ] && echo yes || echo no)"
 is  "branch is gone"           1    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s1 2>/dev/null; echo $?)"
-is  "marker is cleaned up"     no   "$([ -f "$SPIRA_RUN/sp-s1.slain" ] && echo yes || echo no)"
+is  "no marker file is left"   no   "$([ -f "$SPIRA_RUN/sp-s1.slain" ] && echo yes || echo no)"
 want "reports slain"            "slain: sp-s1" "$out"
 teardown sp-s1
 

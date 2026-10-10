@@ -25,6 +25,7 @@ has() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 log() { :; }
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
@@ -57,18 +58,22 @@ export CALLS
 # A non-default ask label and repo-map path, pinned here rather than inherited from this
 # host's own conf.sh — a fixture that asserted against the shipped default would pass just
 # as well if park_unmapped had the literal "needs-operator" written into it.
-export PATH="$TMP/bin:$PATH" SPIRA_BD=bd SPIRA_DB=fixture BEADS_ACTOR=aeon-tester \
-    SPIRA_ASK_LABEL=needs-fixture-operator SPIRA_REPO_MAP="$TMP/fixture-repo-map"
+# SPIRA_BD/SPIRA_DB/SPIRA_ASK_LABEL/SPIRA_REPO_MAP are registered keys (per Ryan
+# 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
+# which no process reads them from any more.
+tl_config SPIRA_BD=bd SPIRA_DB=fixture SPIRA_ASK_LABEL=needs-fixture-operator \
+    SPIRA_REPO_MAP="$TMP/fixture-repo-map"
+export PATH="$TMP/bin:$PATH" BEADS_ACTOR=aeon-tester
 park_unmapped sp-typo1 typo-repo
 n_calls="$(grep -c . "$CALLS" || true)"
 [ "${n_calls:-0}" -gt 0 ] && ok "positive control: bd was called at all ($n_calls call(s))" \
     || bad "positive control: bd was called at all" "no bd invocation recorded"
 
 echo
-echo "case 1 — both labels are applied, in order, before the claim is released:"
+echo "case 1 — the ask hold and the overseer label land before the claim is released; no ask label (sp-psztcc):"
 # ======================================================================================
 calls="$(cat "$CALLS")"
-has "ask label ($SPIRA_ASK_LABEL) is applied" "label add sp-typo1 $SPIRA_ASK_LABEL" "$calls"
+case "$calls" in *"label add sp-typo1 $SPIRA_ASK_LABEL"*) bad "no ask label ($SPIRA_ASK_LABEL) — the hold is the row's" "it was added" ;; *) ok "no ask label ($SPIRA_ASK_LABEL) — the hold is the row's" ;; esac
 has "overseer label is applied"               "label add sp-typo1 overseer"        "$calls"
 has "a note is left on the bead"              "note sp-typo1"                      "$calls"
 has "the ask hold is put on the lifecycle row"  "spira-lc hold sp-typo1 ask"        "$calls"
@@ -77,14 +82,11 @@ has "the ask hold is put on the lifecycle row"  "spira-lc hold sp-typo1 ask"    
 has "the claim is released (spira-lc unclaim under the aeon's name)" \
     "spira-lc unclaim sp-typo1 aeon-tester" "$calls"
 
-ask_line="$(grep -n "label add sp-typo1 $SPIRA_ASK_LABEL" "$CALLS" | head -1 | cut -d: -f1)"
 overseer_line="$(grep -n "label add sp-typo1 overseer" "$CALLS" | head -1 | cut -d: -f1)"
 note_line="$(grep -n "note sp-typo1" "$CALLS" | head -1 | cut -d: -f1)"
 hold_line="$(grep -n "spira-lc hold sp-typo1 ask" "$CALLS" | head -1 | cut -d: -f1)"
 release_line="$(grep -n "spira-lc unclaim sp-typo1 " "$CALLS" | head -1 | cut -d: -f1)"
 
-[ "${ask_line:-0}" -lt "${release_line:-999}" ] && ok "ask label lands before the release" \
-    || bad "ask label lands before the release" "ask at line $ask_line, release at $release_line"
 [ "${overseer_line:-0}" -lt "${release_line:-999}" ] && ok "overseer label lands before the release" \
     || bad "overseer label lands before the release" "overseer at line $overseer_line, release at $release_line"
 [ "${note_line:-0}" -lt "${release_line:-999}" ] && ok "note lands before the release" \
@@ -97,7 +99,7 @@ echo "case 2 — the note names the repo and the repo-map, not a generic message
 # ======================================================================================
 note_call="$(grep 'note sp-typo1' "$CALLS" | head -1)"
 has "note names the offending repo" "repo:typo-repo" "$note_call"
-has "note names the ask label"      "$SPIRA_ASK_LABEL" "$note_call"
+has "note says how to lift the hold" "spira-lc withdraw-ask sp-typo1" "$note_call"
 
 echo
 echo "case 3 — no BEADS_ACTOR (no live aeon identity): the bead is still labeled, but the release itself fails safely:"
@@ -109,7 +111,7 @@ echo "case 3 — no BEADS_ACTOR (no live aeon identity): the bead is still label
 unset BEADS_ACTOR SPIRA_AEON
 park_unmapped sp-typo2 other-repo
 calls2="$(cat "$CALLS")"
-has  "labels still applied without an actor identity" "label add sp-typo2 $SPIRA_ASK_LABEL" "$calls2"
+has  "the ask hold is still put without an actor identity" "spira-lc hold sp-typo2 ask" "$calls2"
 if [[ "$calls2" == *"unclaim sp-typo2"* || "$calls2" == *"update sp-typo2 --status"* ]]; then
     bad "release is refused without an actor identity" "an unclaim/update call was still issued"
 else

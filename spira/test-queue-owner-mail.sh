@@ -35,8 +35,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
@@ -62,22 +62,35 @@ FORGE
 chmod +x "$SH/forge-fixture.sh"
 
 MAIL="$RUN/mail"
+# round 3 fix (pattern 7): the complete fixture mutes mail by default (mail_mute=true);
+# the ejection notification would be filed straight to cur/ (already seen) rather than
+# new/, so concierge_unread() would never see it.
+tl_config SPIRA_MAIL_MUTE=0
+# round 4 fix (pattern 7): SPIRA_MAIL_KINDS is a registered key too; undeclared, it fell
+# through to the complete fixture's own default
+# (/fixture/userhome/spira/spira-releases/current/spira/mail/kinds), so mail's own lint
+# refused queue_notify_concierge's send with "unknown kind ... — rule: kind must be a
+# file in ..." before anything landed in the concierge mailbox — the real cause behind
+# every assertion below (confirmed by replaying the same `mail send` call by hand against
+# this suite's fixture). The real kinds directory lives in this tree at spira/mail/kinds.
+tl_config SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 
 queue() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${TESTDB_BD:-bd}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
-    SPIRA_MAIL="$MAIL" \
+    # SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_REPO_MAP/SPIRA_QUEUE_DIR/SPIRA_FORGE/SPIRA_MAIL are
+    # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config,
+    # not the env prefix below, which no process reads them from any more.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_HOME_REPO="$REPONAME" SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_FORGE="$SH/forge-fixture.sh" SPIRA_MAIL="$MAIL"
+    SPIRA_HOME="$SH" \
         SPIRA_HOME="$SH" command queue "$@"
 }
 
 concierge_unread() {
     # mail is a compiled binary now (sp-ooh1k) — never `bash <path>`, which only ever
     # worked while this was a shell script. $SH is on PATH (below), so bare name resolves
-    # to the symlinked real binary staged there.
-    SPIRA_HOME="$SH" SPIRA_MAIL="$MAIL" PATH="$SH:$PATH" mail count concierge 2>/dev/null
+    # to the symlinked real binary staged there. SPIRA_MAIL unchanged from queue()'s tl_config.
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" mail count concierge 2>/dev/null
 }
 
 echo "test-queue-owner-mail.sh"

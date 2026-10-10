@@ -41,19 +41,20 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
 
 # A bare origin and a clone for the aeon's worktree (needed by non-sweep path).
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # Minimal harness layout in $TMP.
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 # Custom fayth: uses the test-label partition; no SOP_REQUIRED so the closing rule
@@ -68,13 +69,21 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} on {{BRANCH}}\n{{PARK}}\n' \
     > "$SPIRA_HOME/chamber/testsweep.md"
+# persona.testsweep.model: aeon::conf::persona_model refuses outright when a fayth's
+# model is undeclared (no built-in fallback, per Ryan 2026-10-05) — the complete fixture
+# declares every REAL persona's model but has never heard of this suite's own "testsweep"
+# fayth. tl_config only knows the SPIRA_FOO -> spira.foo mapping, not [persona.*] tables,
+# so this sets the dotted path directly (same pattern as test-aeon-teardown-e2e.sh's
+# sweeper fixture).
+spira-config set persona.testsweep.model claude-sonnet-5-5 "$_TL_CONF_OVERRIDE" >/dev/null \
+    || { printf 'test-aeon-sweep: could not declare persona.testsweep.model\n' >&2; exit 1; }
 
 # Mock claude binary. THE GUARD IS NOT DECORATION: conf.sh replaces $PATH, so a PATH
 # shim would reach the real model through the replaced PATH and run it at full cost.
 command -v aeon >/dev/null 2>&1 \
     || { printf 'test-aeon-sweep: aeon is not on PATH — refusing to run the real model\n' >&2; exit 1; }
 
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+BIN="$TMP/bin"; mkdir -p "$BIN"; SPIRA_AGENT="$BIN/claude"; export TMP; tl_config SPIRA_AGENT="$SPIRA_AGENT"
 # The lifecycle machine (testlib lc_aeon_mirror): since sp-v62vn the aeon's ready set is
 # `spira-lc list` and its claim a Claim event; the stand-in tells the fixture's bd story in
 # lifecycle terms, ahead of the tree's spira-lc on PATH.
@@ -95,12 +104,12 @@ chmod +x "$BIN/claude"
 aeon() { command aeon --home "$SPIRA_HOME" "$@" 2>/dev/null; }
 
 # bd helpers against the fixture database.
-bead_status()   { BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+bead_status()   { BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
     | python3 -c 'import json,sys; r=json.load(sys.stdin); d=r[0] if isinstance(r,list) else r; print(d.get("status","?"))'; }
-bead_labels()   { BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+bead_labels()   { BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
     | python3 -c 'import json,sys; r=json.load(sys.stdin); d=r[0] if isinstance(r,list) else r; print(",".join(d.get("labels",[]))  )'; }
 any_attempt()   {  # any_attempt -> 1 if any bead carries an sp-attempt label
-    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
+    BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" list --json 2>/dev/null \
         | python3 -c '
 import json,sys
 try: rows = json.load(sys.stdin)
@@ -117,7 +126,7 @@ sys.exit(1)' 2>/dev/null
 # assertion it backs — a control placed after the assertion it supports cannot validate
 # it; if it fails last, the preceding 'no attempt label' assertion has already been
 # accepted as meaningful when it is not.
-BID_PC="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "positive control bead" --type task \
+BID_PC="$(BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "positive control bead" --type task \
     -l "$FAYTH_LABELS_T,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID_PC" ] || { printf 'test-aeon-sweep: could not create positive control bead\n' >&2; exit 1; }
@@ -147,7 +156,7 @@ labels_pc="$(bead_labels "$BID_PC" 2>/dev/null || true)"
 
 # BID_PC now carries a branch label. Sweep assertions below are scoped to BID
 # (not the whole database) because BID_PC's labels would otherwise confound them.
-BID="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "sweep test incident" --type task \
+BID="$(BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "sweep test incident" --type task \
     -l "$FAYTH_LABELS_T,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID" ] || { printf 'test-aeon-sweep: could not create bead\n' >&2; exit 1; }

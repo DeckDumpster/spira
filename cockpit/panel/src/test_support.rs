@@ -1,14 +1,25 @@
-//! A throwaway `bd` on `SPIRA_PATH`, for gap #3 of
+//! A throwaway `bd` on a stub directory, for gap #3 of
 //! docs/test-plan/cockpit-observability.md: model.rs's `close_decision`, `comment`, `run_as`
 //! and the enact path, plus store.rs's `refresh`, are the only cockpit surfaces that change
 //! bead state, and none of them had ever run against anything but the real `bd`.
 //!
-//! `bin()` (store.rs) resolves `bd` by searching `SPIRA_PATH` first, so pointing that at a
-//! directory holding a recording stub is the whole seam — no code under test changes.
+//! `store::bin`/`store::child_path` resolve `bd` by searching `cfg.extra_path` first, so
+//! pointing that at a directory holding a recording stub is the whole seam — no code under
+//! test changes. Per Ryan 2026-10-05 (one source of config), this no longer mutates
+//! `SPIRA_PATH`/`COCKPIT_DB`/`SPIRA_DB`/`SPIRA_OPERATOR_ACTOR`: `spira_config::process::cfg`
+//! resolves those keys from `$SPIRA_TOML` ONCE per process and caches the answer forever, so a
+//! test that varied them through the environment would only ever affect whichever test ran
+//! first in this shared test binary. `StubBd::cfg()` hands back an explicit `store::Cfg`
+//! instead, built from this stub's own fields, for the caller to pass into the function under
+//! test directly — the same "pure logic takes config as arguments" rule the production call
+//! sites (`App`, built once in `main`) now follow too.
 //!
-//! ENV VARS ARE PROCESS-GLOBAL, so every test using this must hold `LOCK` for as long as the
-//! stub is in scope. `StubBd` does that itself (the guard lives in the struct) — a caller
-//! only has to keep the `StubBd` alive, not remember the lock.
+//! ENV VARS ARE STILL PROCESS-GLOBAL for every OTHER knob here (`BD_CLOSE_RC`, `MAIL_RC`,
+//! `LC_RC`, `RULE_RC`, `SPIRA_RULE`, …) — those are read by the stub shell scripts themselves,
+//! or by `model::rule_sh` (not a registered config key), never by `spira_config`. Every test
+//! using this must still hold `LOCK` for as long as the stub is in scope; `StubBd` does that
+//! itself (the guard lives in the struct) — a caller only has to keep the `StubBd` alive, not
+//! remember the lock.
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
@@ -18,9 +29,16 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 pub struct StubBd {
     dir: testkit::TempDir,
     log: std::path::PathBuf,
-    set_vars: Vec<String>,
-    saved_spira_path: Option<String>,
+    env_edits: Vec<(String, String)>,
+    env_guard: Option<testkit::EnvGuard>,
     mail_inbox: Option<std::path::PathBuf>,
+    /// `Cfg::db`, settable with `.db(...)`. Empty by default — most tests pass a db path
+    /// straight into the function under test (e.g. `close_decision("/fake/db", …)`) and never
+    /// need this; `comment`/`enact`/`refresh` read it from `Cfg` instead, so they use this.
+    db: String,
+    /// `Cfg::operator_actor`, settable with `.operator_actor(...)`. Defaults to "operator",
+    /// the same registry default `SPIRA_OPERATOR_ACTOR` carries.
+    operator_actor: String,
     _guard: MutexGuard<'static, ()>,
 }
 
@@ -33,12 +51,24 @@ impl StubBd {
         let dir = testkit::TempDir::new(&format!("panel-stub-bd-{n}"));
         let log = dir.join("argv.log");
         std::fs::write(&log, "").expect("init argv log");
-        let script = dir.join("bd");
+        let script = dir.join("spira-lc");
         // testkit::write_exe, never fs::write + set_mode/set_permissions (sp-os3of).
         testkit::write_exe(
             &script,
             &format!(
                 r#"#!/usr/bin/env bash
+if [ "$1" = close ]; then
+    id="$2"; actor=""; shift 2
+    while [ $# -gt 0 ]; do case "$1" in --actor) actor="$2"; shift 2 ;; *) shift ;; esac; done
+    reason="$(cat)"
+    {{ printf 'ARGV: close %s --reason %s --force\n' "$id" "$reason"; printf 'ACTOR: %s\n' "$actor"; }} >> {log:?}
+    [ -n "${{BD_CLOSE_ERR:-}}" ] && printf '%s\n' "$BD_CLOSE_ERR" >&2
+    exit "${{BD_CLOSE_RC:-0}}"
+fi
+if [ "$1" != content ]; then
+    [ -f {armed:?} ] && printf 'LC: %s\n' "$*" >> {log:?}
+    exit "${{LC_RC:-0}}"
+fi
 {{ printf 'ARGV: %s\n' "$*"; printf 'ACTOR: %s\n' "${{BEADS_ACTOR:-<none>}}"; }} >> {log:?}
 case " $* " in
     *" close "*)
@@ -65,34 +95,68 @@ esac
 [ -n "$out" ] && printf '%s' "$out"
 [ -n "$err" ] && printf '%s\n' "$err" >&2
 exit "$rc"
-"#
+"#,
+                armed = dir.join("lc.armed"),
             ),
         );
 
-        let saved_spira_path = std::env::var("SPIRA_PATH").ok();
-        std::env::set_var("SPIRA_PATH", &dir);
         Self {
             dir,
             log,
-            set_vars: Vec::new(),
-            saved_spira_path,
+            env_edits: Vec::new(),
+            env_guard: None,
             mail_inbox: None,
+            db: String::new(),
+            operator_actor: "operator".to_string(),
             _guard: guard,
         }
     }
 
-    /// Sets an env var for the stub's lifetime; removed on drop.
+    /// Sets an env var for the stub's lifetime; removed on drop. For the stub SCRIPTS' own
+    /// knobs (`BD_CLOSE_RC`, `MAIL_RC`, `LC_RC`, `RULE_RC`, …) and for `SPIRA_RULE` (not a
+    /// registered config key) — never for `SPIRA_DB`/`SPIRA_OPERATOR_ACTOR`, which are
+    /// `Cfg` fields now; use `.db(...)`/`.operator_actor(...)` for those.
     pub fn env(mut self, k: &str, v: &str) -> Self {
-        std::env::set_var(k, v);
-        self.set_vars.push(k.to_string());
+        // The testkit lock is not reentrant: release the guard (restoring) before retaking
+        // it with every edit made so far.
+        self.env_guard = None;
+        self.env_edits.push((k.to_string(), v.to_string()));
+        let edits: Vec<(&str, Option<&str>)> =
+            self.env_edits.iter().map(|(k, v)| (k.as_str(), Some(v.as_str()))).collect();
+        self.env_guard = Some(testkit::env(&edits));
         self
+    }
+
+    /// `Cfg::db` for the `Cfg` this stub hands back from [`StubBd::cfg`].
+    pub fn db(mut self, v: &str) -> Self {
+        self.db = v.to_string();
+        self
+    }
+
+    /// `Cfg::operator_actor` for the `Cfg` this stub hands back from [`StubBd::cfg`].
+    pub fn operator_actor(mut self, v: &str) -> Self {
+        self.operator_actor = v.to_string();
+        self
+    }
+
+    /// The `store::Cfg` to pass into whatever is under test: `extra_path` points at this
+    /// stub's directory (where the fake `bd`/`mail`/`rule.sh`/`spira-lc` live), `db` and
+    /// `operator_actor` are whatever `.db(...)`/`.operator_actor(...)` set, or the defaults.
+    pub fn cfg(&self) -> crate::store::Cfg {
+        crate::store::Cfg {
+            db: self.db.clone(),
+            extra_path: vec![self.dir.path().to_string_lossy().into_owned()],
+            operator_actor: self.operator_actor.clone(),
+        }
     }
 
     /// Also installs a `rule.sh` stub beside the `bd` one and points `SPIRA_RULE` at it, for
     /// `enact`/`enact_law`/`suit_verdict` — the panel's other bead-state-changing surface,
     /// which shells to `rule.sh` before it ever touches `bd`. Argv goes to the SAME log,
     /// prefixed `RULE:`, so a test can assert the enact-then-label ORDER, not just that both
-    /// ran. Controlled by `RULE_RC` / `RULE_ERR`.
+    /// ran. Controlled by `RULE_RC` / `RULE_ERR`. `SPIRA_RULE` is not a registered config key
+    /// (`model::rule_sh` reads it straight from the environment, by design), so this still
+    /// mutates env rather than going through `Cfg`.
     pub fn rule(mut self) -> Self {
         let script = self.dir.join("rule.sh");
         // testkit::write_exe, never fs::write + set_mode/set_permissions (sp-os3of).
@@ -108,15 +172,14 @@ exit "$rc"
                 log = self.log
             ),
         );
-        std::env::set_var("SPIRA_RULE", &script);
-        self.set_vars.push("SPIRA_RULE".to_string());
-        self
+        self.env("SPIRA_RULE", script.to_str().expect("utf-8 stub path"))
     }
 
-    /// Also installs a `mail` stub beside the `bd` one — on `SPIRA_PATH`, so the panel's
-    /// by-name `mail` (child_path) finds it first — for `close_decision`/`comment`'s mail-delivery leg. The stub's stdin (the whole
-    /// RFC 5322 message) is captured to its own file, since argv alone (`sendmail`) says
-    /// nothing about what was sent. Controlled by `MAIL_RC`.
+    /// Also installs a `mail` stub beside the `bd` one — on the stub dir `Cfg::extra_path`
+    /// names, so the panel's by-name `mail` (child_path) finds it first — for
+    /// `close_decision`/`comment`'s mail-delivery leg. The stub's stdin (the whole RFC 5322
+    /// message) is captured to its own file, since argv alone (`sendmail`) says nothing about
+    /// what was sent. Controlled by `MAIL_RC`.
     pub fn mail(mut self) -> Self {
         let script = self.dir.join("mail");
         let inbox = self.dir.join("mail-inbox");
@@ -139,19 +202,9 @@ exit "$rc"
         self
     }
 
-    /// Also installs a `spira-lc` stub on `SPIRA_PATH` — the verdict's hold-lifting leg
-    /// (sp-v62vn follow-up). Argv goes to the same log, prefixed `LC:`; exit `LC_RC`.
+    /// The stub's non-`content` verbs (the verdict's hold-lifting leg) log `LC:` and exit `LC_RC`.
     pub fn lc(self) -> Self {
-        testkit::write_exe(
-            &self.dir.join("spira-lc"),
-            &format!(
-                r#"#!/usr/bin/env bash
-printf 'LC: %s\n' "$*" >> {log:?}
-exit "${{LC_RC:-0}}"
-"#,
-                log = self.log
-            ),
-        );
+        std::fs::write(self.dir.join("lc.armed"), "").expect("arm the spira-lc stub");
         self
     }
 
@@ -165,17 +218,5 @@ exit "${{LC_RC:-0}}"
 
     pub fn argv_log(&self) -> String {
         std::fs::read_to_string(&self.log).unwrap_or_default()
-    }
-}
-
-impl Drop for StubBd {
-    fn drop(&mut self) {
-        for k in &self.set_vars {
-            std::env::remove_var(k);
-        }
-        match &self.saved_spira_path {
-            Some(p) => std::env::set_var("SPIRA_PATH", p),
-            None => std::env::remove_var("SPIRA_PATH"),
-        }
     }
 }

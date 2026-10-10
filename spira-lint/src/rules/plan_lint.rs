@@ -12,7 +12,7 @@
 //! `testlib-migrated`/`tmp-leak` pattern) so the rule can gate every *new* suite without
 //! failing every branch on debt it did not add.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 use std::collections::BTreeSet;
 
 use test_plan::load_catalogues;
@@ -252,4 +252,10 @@ mod tests {
         assert_eq!(r.check(&tree), Ok(vec![]));
         assert_eq!(r.checked(), Some((1, "suites".to_string())));
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(PlanLint::default()),
+    ]
 }

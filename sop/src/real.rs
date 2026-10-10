@@ -1,7 +1,6 @@
 use crate::ports::{Bd, Clock, Proc};
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Shells out to `lib.sh` exactly as `gate-check`'s Rust port already shells out to
 /// `repo_root` — see `ports.rs`'s `Bd` doc comment for why this is the right boundary
@@ -20,7 +19,7 @@ impl RealBd {
     /// read as shell syntax.
     fn seam(&self, body: &str, args: &[&str], stdin: Option<&[u8]>) -> (bool, Vec<u8>) {
         let script = format!(". \"$0\" >/dev/null || {{ echo \"sop: cannot source $0 (set SPIRA_HOME)\" >&2; exit 96; }}\n{body}");
-        let mut cmd = Command::new("bash");
+        let mut cmd = spira_config::bounded::bounded("bash");
 cmd.envs(spira_config::release_env::child_path_env_for_process());
         cmd.arg("-c").arg(script).arg(format!("{}/lib.sh", self.spira_home)).args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
@@ -105,7 +104,7 @@ pub struct RealProc;
 
 impl Proc for RealProc {
     fn inventory_scan(&self, text: &str) -> Result<Vec<String>, String> {
-        let mut child = Command::new("spira-lint")
+        let mut child = spira_config::bounded::bounded("spira-lint")
             .args(["--only", "inventory", "--scan", "/dev/stdin"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -142,27 +141,30 @@ impl Proc for RealProc {
     }
 }
 
-pub struct RealClock;
+/// `tz` is `SPIRA_TZ`'s declared value (spira-config's one door), resolved once at the
+/// process's top level and passed down here — never read from the environment in this
+/// struct (per Ryan 2026-10-05: one source of config).
+pub struct RealClock {
+    pub tz: String,
+}
 
 impl Clock for RealClock {
     fn now(&self) -> (u64, String) {
-        let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-        let epoch = d.as_secs();
+        let epoch = spira_config::vtime::now_epoch();
         let iso = fmt_iso(epoch);
         (epoch, iso)
     }
 
     fn today(&self) -> String {
-        let tz = std::env::var("SPIRA_TZ").or_else(|_| std::env::var("TZ")).unwrap_or_default();
-        let out = Command::new("date")
-            .env("TZ", tz)
+        let out = spira_config::bounded::bounded("date")
+            .env("TZ", &self.tz)
             .args(["+%Y-%m-%d"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output();
         match out {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-            _ => fmt_iso(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs())[..10]
+            _ => fmt_iso(spira_config::vtime::now_epoch())[..10]
                 .to_string(),
         }
     }
@@ -209,7 +211,7 @@ pub fn resolve_out_path(sop_page: Option<&str>, spira_wiki: Option<&str>) -> Opt
 }
 
 fn git_out(args: &[&str], cwd: Option<&str>) -> Option<String> {
-    let mut cmd = Command::new("git");
+    let mut cmd = spira_config::bounded::bounded("git");
     if let Some(d) = cwd {
         cmd.arg("-C").arg(d);
     }
@@ -270,4 +272,16 @@ mod tests {
         assert_eq!(fmt_iso(1790726400 + 13 * 3600 + 45 * 60 + 7), "2026-09-30T13:45:07Z");
     }
 
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+    use crate::ports::Clock;
+
+    #[test]
+    fn real_clock_honours_spira_now() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock { tz: "UTC".into() }.now().0);
+        assert_eq!(got, 1_900_000_000);
+    }
 }

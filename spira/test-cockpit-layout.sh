@@ -144,13 +144,11 @@ WH_EXPECTED=$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -t cockpit -p '#{windo
 _fake_release="$TMP/fake-release"
 mkdir -p "$_fake_release/bin"
 ln -sf "$(command -v "$LAYOUT")" "$_fake_release/bin/layout"
+tl_config SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_RUN="$RUN" COCKPIT_CLIENT_IDLE_SECS=2
 SPIRA_RELEASE="$_fake_release" \
-SPIRA_COCKPIT="$COCKPIT_DIR" \
 SPIRA_REPO="$TMP" \
-SPIRA_RUN="$RUN" \
 SPIRA_HOME="$HERE" \
 SPIRA_CONF="$TMP/no.conf" \
-COCKPIT_CLIENT_IDLE_SECS=2 \
     "$LAYOUT" ensure 2>/dev/null || true
 
 sleep 0.2

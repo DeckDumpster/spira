@@ -13,7 +13,7 @@ FAYTH_DESC="Judge — settles a double-red or CI-only red with the authority des
 # io.rs) — never by hand and never by the plan — so this can only ever see a round this crate
 # or queue verdict could not resolve itself.
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_BATCH_JUDGEMENT_LABEL"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
 # Statutes only, same reasoning as builder: this persona writes code and pushes commits, it
 # never executes a runbook.

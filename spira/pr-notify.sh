@@ -110,7 +110,7 @@ for pr in prs:
 # asked (a transient network error, not "no open PRs" — those two must never look alike).
 _open_prs() {
     local repo_dir="$1" json rc
-    json="$(cd "$repo_dir" && gh pr list --state open \
+    json="$(cd "$repo_dir" && timeout 5 gh pr list --state open \
         --json number,title,headRefName,statusCheckRollup 2>/dev/null)"
     rc=$?
     [ "$rc" -eq 0 ] || return 1
@@ -159,7 +159,7 @@ _pr_transitions() {
     local m final
     for m in "${!prev_status[@]}"; do
         [ -n "${cur_status[$m]+x}" ] && continue
-        final="$(cd "$repo_dir" && gh pr view "$m" --json state -q .state 2>/dev/null)"
+        final="$(cd "$repo_dir" && timeout 5 gh pr view "$m" --json state -q .state 2>/dev/null)"
         case "$final" in
             MERGED) _report "MERGED #$m ${prev_title[$m]} [$repo_name]" ;;
             CLOSED) _report "CLOSED #$m ${prev_title[$m]} [$repo_name]" ;;
@@ -184,7 +184,7 @@ _pr_transitions() {
 # branch not yet batched is ordinary, not a stray.
 _branchless_prs() {
     local repo_dir="$1" repo_name="$2" base="$3"
-    git -C "$repo_dir" fetch --quiet 2>/dev/null || true
+    timeout 5 git -C "$repo_dir" fetch --quiet 2>/dev/null || true
     local ref short ahead pr_n
     while IFS= read -r ref; do
         ref="${ref#  }"
@@ -194,7 +194,7 @@ _branchless_prs() {
         case "$short" in spira/*) ;; *) continue ;; esac
         ahead="$(git -C "$repo_dir" rev-list --count "origin/$base..origin/$short" 2>/dev/null)"
         case "$ahead" in ""|0) continue ;; esac
-        pr_n="$(cd "$repo_dir" && gh pr list --head "$short" --state open \
+        pr_n="$(cd "$repo_dir" && timeout 5 gh pr list --head "$short" --state open \
             --json number --jq 'length' 2>/dev/null)" || pr_n=""
         case "$pr_n" in ""|0) _report "⚠ BRANCH $short: no PR [$repo_name]" ;; esac
     done < <(git -C "$repo_dir" branch -r 2>/dev/null)

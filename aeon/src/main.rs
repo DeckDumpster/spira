@@ -83,6 +83,20 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
 /// bash seam round trip at all — `merge_resolved_config` already runs entirely in-process
 /// (`spira_config::resolve::resolve_for_process`); the bash seam exists only to source a
 /// fayth file and lib.sh's own derived values, neither of which this subcommand needs.
+fn run_stop(args: &[String]) -> i32 {
+    let original: BTreeMap<String, String> = std::env::vars().collect();
+    let exe = std::env::current_exe().ok();
+    let Some(home) = conf::resolve_home(None, &original, exe.as_deref()) else {
+        fatal("cannot find the harness's spira/ directory (set SPIRA_HOME)")
+    };
+    let mut snap = seam::Snapshot::default();
+    if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
+        fatal(&format!("config resolution: {e}"));
+    }
+    let conf = Conf::new(&snap, &home);
+    aeon::stop::run(&conf.run, args, util::now_epoch())
+}
+
 fn run_capacity(args: &[String]) -> i32 {
     let original: BTreeMap<String, String> = std::env::vars().collect();
     // The lifecycle machine is the only mode (sp-v62vn): a retired switch saying off is
@@ -107,6 +121,29 @@ fn run_capacity(args: &[String]) -> i32 {
     aeon::capacity_cli::run(&conf, &exec, util::now_epoch(), args)
 }
 
+/// `aeon fast-tier <repo> <work> <branch> <base>`: the handoff's fast tier (`fast_tier::red`)
+/// against a checkout, with an absent tool or a tree without the fence refused rather than
+/// skipped. Exit 0 green, 1 red (the text on stdout), 2 usage, 3 a tool failure that judges nothing.
+fn run_fast_tier(args: &[String]) -> i32 {
+    let [repo, work, branch, base] = args else {
+        eprintln!("usage: aeon fast-tier <repo> <work> <branch> <base>");
+        return 2;
+    };
+    let original: BTreeMap<String, String> = std::env::vars().collect();
+    let env = Env::new(original.clone(), original);
+    let (git, exec) = (RealGit { env: &env }, RealExec { env: &env, timeout: None });
+    match aeon::fast_tier::red(&git, &exec, Path::new(repo), Path::new(work), branch, base, true) {
+        Some(red) => {
+            println!("{}", red.text);
+            if red.harness { 3 } else { 1 }
+        }
+        None => {
+            println!("fast tier green: {branch} against {base}");
+            0
+        }
+    }
+}
+
 fn main() {
     let t0 = util::now_epoch();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -120,6 +157,12 @@ fn main() {
         };
         print!("{}", aeon::naming::aeon_named(Path::new(pf)));
         std::process::exit(0);
+    }
+    if args.first().map(String::as_str) == Some("fast-tier") {
+        std::process::exit(run_fast_tier(&args[1..]));
+    }
+    if args.first().map(String::as_str) == Some("stop") {
+        std::process::exit(run_stop(&args[1..]));
     }
     if args.first().map(String::as_str) == Some("capacity") {
         std::process::exit(run_capacity(&args[1..]));
@@ -186,12 +229,22 @@ fn main() {
         let rc = aeon::escape::run(&seam, &exec, &env, &sink, &conf, &summon_bin, &home, &cli.fayth, cli.escape_dry_run, util::now_epoch());
         std::process::exit(rc);
     }
+    // SPIRA_BD is registered but carries no conf.d default ("resolves empty unless set via
+    // environment or the config file") — the real config file always sets it explicitly (per Ryan
+    // 2026-10-05: one source of config), so an empty resolution here refuses by name rather
+    // than guessing "bd". BD_TIMEOUT/SPIRA_BDQ_CONN_RETRIES/SPIRA_BDJSON_FIXTURE are not
+    // registered config keys (spira/conf.d has no entry for any of them).
+    let bd_bin = conf.s("SPIRA_BD");
+    if bd_bin.is_empty() {
+        fatal("SPIRA_BD resolved empty — refusing rather than guessing a bd binary");
+    }
     let bd = BdCli {
-        bd: conf.or("SPIRA_BD", "bd"),
+        bd: bd_bin,
         db: conf.db(),
         timeout_s: conf.n("BD_TIMEOUT", 180).max(1) as u64,
         conn_retries: conf.n("SPIRA_BDQ_CONN_RETRIES", 2).max(1) as u32,
-        fixture: Some(conf.s("SPIRA_BDJSON_FIXTURE")).filter(|s| !s.is_empty()),
+        // Not a registered config key — `Conf::or`, not the strict `Conf::s`.
+        fixture: Some(conf.or("SPIRA_BDJSON_FIXTURE", "")).filter(|s| !s.is_empty()),
         home: home.clone(),
         env: &env,
     };

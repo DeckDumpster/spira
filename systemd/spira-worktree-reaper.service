@@ -1,0 +1,21 @@
+[Unit]
+Description=Spira worktree reaper — remove worktrees of finished, merged or idle beads
+Documentation=file://@SPIRA_PROD_ROOT@/sending/DESIGN.md
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/sending reap-stale
+TimeoutStartSec=1800
+StandardOutput=append:@SPIRA_RUN@/worktree-reaper.log
+StandardError=append:@SPIRA_RUN@/worktree-reaper.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=work

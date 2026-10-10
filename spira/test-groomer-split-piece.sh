@@ -37,7 +37,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-labels_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
+labels_of() { timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -55,6 +55,11 @@ testdb_reset
 
 export SPIRA_CONF="/nonexistent-$$.conf"
 
+mkdir -p "$TMP/chamber"
+printf 'FAYTH_LABELS=spira,plan\n' > "$TMP/chamber/builder.fayth"
+printf 'FAYTH_LABELS=spira,groom\n' > "$TMP/chamber/groomer.fayth"
+export SPIRA_CHAMBER="$TMP/chamber"
+
 seed() {
     printf '{"id":"%s","title":"%s","status":"open","issue_type":"task","labels":["plan","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$2" | testdb_seed
@@ -68,13 +73,13 @@ echo
 echo "PLANT THE OFFENDER: a bare 'bd create --parent' inherits the parent's branch:"
 # ======================================================================================
 seed sp-tgsp-bare "parent, split by hand"
-bd -C "$SPIRA_DB" set-state sp-tgsp-bare "branch=spira/sp-tgsp-bare" >/dev/null 2>&1
-bd -C "$SPIRA_DB" label add sp-tgsp-bare "delivers:beads" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" set-state sp-tgsp-bare "branch=spira/sp-tgsp-bare" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" label add sp-tgsp-bare "delivers:beads" >/dev/null 2>&1
 
-bare_child="$(bd -C "$SPIRA_DB" create --parent sp-tgsp-bare --title "bare piece" --type task \
+bare_child="$(timeout 5 bd -C "$SPIRA_DB" create --parent sp-tgsp-bare --title "bare piece" --type task \
     -l "plan,repo:fixture" --silent 2>/dev/null)"
 [ -n "$bare_child" ] || { echo "test-groomer-split-piece: setup failed: bd create --parent returned no id" >&2; exit 1; }
-bare_branch="$(bd -C "$SPIRA_DB" state "$bare_child" branch 2>/dev/null)"
+bare_branch="$(timeout 5 bd -C "$SPIRA_DB" state "$bare_child" branch 2>/dev/null)"
 is "offender: bare create --parent hands the child the PARENT's branch" \
    "spira/sp-tgsp-bare" "$bare_branch"
 case " $(labels_of "$bare_child") " in
@@ -87,15 +92,15 @@ echo
 echo "split-piece gives the new piece its OWN branch, derived from its own id:"
 # ======================================================================================
 seed sp-tgsp-orig "parent, split via split-piece"
-bd -C "$SPIRA_DB" set-state sp-tgsp-orig "branch=spira/sp-tgsp-orig" >/dev/null 2>&1
-bd -C "$SPIRA_DB" label add sp-tgsp-orig "delivers:beads" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" set-state sp-tgsp-orig "branch=spira/sp-tgsp-orig" >/dev/null 2>&1
+timeout 5 bd -C "$SPIRA_DB" label add sp-tgsp-orig "delivers:beads" >/dev/null 2>&1
 
 child="$(groomer split-piece sp-tgsp-orig --title "piece one" --type task -l "plan,repo:fixture" 2>"$TMP/err")"
 rc=$?
 is "split-piece exits 0" "0" "$rc"
 [ -n "$child" ] || { echo "test-groomer-split-piece: split-piece returned no id" >&2; exit 1; }
 
-child_branch="$(bd -C "$SPIRA_DB" state "$child" branch 2>/dev/null)"
+child_branch="$(timeout 5 bd -C "$SPIRA_DB" state "$child" branch 2>/dev/null)"
 is "split-piece: child's branch is its OWN, spira/<child-id> (positive control)" \
    "spira/$child" "$child_branch"
 [ "$child_branch" != "spira/sp-tgsp-orig" ] \
@@ -108,10 +113,28 @@ case " $(labels_of "$child") " in
 esac
 
 # The child must actually be a child of the original (--parent honoured).
-parent_of_child="$(bd -C "$SPIRA_DB" children sp-tgsp-orig 2>/dev/null)"
+parent_of_child="$(timeout 5 bd -C "$SPIRA_DB" children sp-tgsp-orig 2>/dev/null)"
 case "$parent_of_child" in
     *"$child"*) ok "split-piece: the new piece is recorded as a child of the original" ;;
     *) bad "split-piece: the new piece is recorded as a child of the original" "not found in: $parent_of_child" ;;
+esac
+
+echo
+# ======================================================================================
+echo "split-piece: a piece of a groom parent is built, not groomed:"
+# ======================================================================================
+printf '{"id":"%s","title":"%s","status":"open","issue_type":"task","labels":["spira","groom","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    sp-tgsp-groom "groom parent" | testdb_seed
+gchild="$(groomer split-piece sp-tgsp-groom --title "groom piece" --type task 2>"$TMP/gerr")"
+is "groom-parent split-piece exits 0" "0" "$?"
+glabels=" $(labels_of "$gchild") "
+case "$glabels" in
+    *" plan "*) ok "groom-parent piece carries plan" ;;
+    *) bad "groom-parent piece carries plan" "labels:$glabels" ;;
+esac
+case "$glabels" in
+    *" groom "*) bad "groom-parent piece does not carry groom" "labels:$glabels" ;;
+    *) ok "groom-parent piece does not carry groom" ;;
 esac
 
 echo

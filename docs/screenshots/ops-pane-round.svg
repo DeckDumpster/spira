@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="558" height="309" viewBox="0 0 557.6 309.0" font-family="DejaVu Sans Mono,Menlo,monospace" font-size="14.0">
+<rect width="100%" height="100%" fill="#101010"/>
+<text x="10.0" y="21.2" fill="#d0d0d0" xml:space="preserve">=== 1-certifying ===</text>
+<text x="10.0" y="38.2" fill="#d0d0d0" xml:space="preserve"> ROUND  </text>
+<text x="77.2" y="38.2" fill="#ffffff" font-weight="bold" xml:space="preserve">r-auto-56</text>
+<text x="169.6" y="38.2" fill="#00cdcd" xml:space="preserve">certifying</text>
+<text x="270.4" y="38.2" fill="#00cd00" xml:space="preserve">307s/900s</text>
+<text x="346.0" y="38.2" fill="#d0d0d0" xml:space="preserve">  2 member(s)</text>
+<text x="10.0" y="55.2" fill="#d0d0d0" xml:space="preserve">        sp-a1  in</text>
+<text x="10.0" y="72.2" fill="#d0d0d0" xml:space="preserve">        sp-b2  in</text>
+<text x="77.2" y="89.2" fill="#cdcd00" xml:space="preserve">ejected</text>
+<text x="136.0" y="89.2" fill="#d0d0d0" xml:space="preserve"> sp-c3  red: test-queue.sh</text>
+<text x="10.0" y="106.2" fill="#d0d0d0" xml:space="preserve">=== 2-amber ===</text>
+<text x="10.0" y="123.2" fill="#d0d0d0" xml:space="preserve"> ROUND  </text>
+<text x="77.2" y="123.2" fill="#ffffff" font-weight="bold" xml:space="preserve">r-auto-56</text>
+<text x="169.6" y="123.2" fill="#00cdcd" xml:space="preserve">certifying</text>
+<text x="270.4" y="123.2" fill="#cdcd00" xml:space="preserve">788s/900s</text>
+<text x="346.0" y="123.2" fill="#d0d0d0" xml:space="preserve">  2 member(s)</text>
+<text x="10.0" y="140.2" fill="#d0d0d0" xml:space="preserve">        sp-a1  in</text>
+<text x="10.0" y="157.2" fill="#d0d0d0" xml:space="preserve">        sp-b2  in</text>
+<text x="77.2" y="174.2" fill="#cdcd00" xml:space="preserve">ejected</text>
+<text x="136.0" y="174.2" fill="#d0d0d0" xml:space="preserve"> sp-c3  red: test-queue.sh</text>
+<text x="10.0" y="191.2" fill="#d0d0d0" xml:space="preserve">=== 3-overcap ===</text>
+<text x="10.0" y="208.2" fill="#d0d0d0" xml:space="preserve"> ROUND  </text>
+<text x="77.2" y="208.2" fill="#ffffff" font-weight="bold" xml:space="preserve">r-auto-56</text>
+<text x="169.6" y="208.2" fill="#00cdcd" xml:space="preserve">landing</text>
+<text x="245.2" y="208.2" fill="#cd0000" xml:space="preserve">1018s/900s</text>
+<text x="329.2" y="208.2" fill="#d0d0d0" xml:space="preserve">  2 member(s)</text>
+<text x="10.0" y="225.2" fill="#d0d0d0" xml:space="preserve">        sp-a1  in</text>
+<text x="10.0" y="242.2" fill="#d0d0d0" xml:space="preserve">        sp-b2  in</text>
+<text x="77.2" y="259.2" fill="#cdcd00" xml:space="preserve">ejected</text>
+<text x="136.0" y="259.2" fill="#d0d0d0" xml:space="preserve"> sp-c3  red: test-queue.sh</text>
+<text x="10.0" y="276.2" fill="#d0d0d0" xml:space="preserve">=== 4-idle ===</text>
+<text x="10.0" y="293.2" fill="#d0d0d0" xml:space="preserve"> ROUND  idle  last r-auto-55 </text>
+<text x="253.6" y="293.2" fill="#00cd00" xml:space="preserve">GREEN landed</text>
+<text x="354.4" y="293.2" fill="#d0d0d0" xml:space="preserve"> 7m ago  pool </text>
+<text x="472.0" y="293.2" fill="#ffffff" font-weight="bold" xml:space="preserve">3</text>
+<text x="480.4" y="293.2" fill="#d0d0d0" xml:space="preserve"> waiting</text>
+</svg>

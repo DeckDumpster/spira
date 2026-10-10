@@ -20,7 +20,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const DEFAULT_ROOT: &str = "/var/tmp/spira-testdb";
 /// The database every template (and so every fixture) holds; unique per server, so fixed.
 pub const DATABASE: &str = "sptest";
+// batch-job: waiting for a throwaway dolt server to come up
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
+// batch-job: waiting for a throwaway dolt server to stop
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const PORT_ATTEMPTS: u32 = 5;
 
@@ -472,6 +474,7 @@ fn build_template(tmp: &Path, tools: &Tools) -> Result<(), String> {
     let log = tmp.join("server.log");
     let (pid, port) = start_server_any(&tools.dolt, &data, None, &log)?;
     let cfg = data.join("config.yaml");
+    // batch-job: this runs whatever its caller names, as long as that takes
     let out = Command::new("env")
         .arg("-i")
         .arg(format!(
@@ -579,6 +582,7 @@ pub fn up(
     };
     if owner > 0 {
         if let Some(exe) = self_exe {
+            // batch-job: this runs whatever its caller names, as long as that takes
             let mut cmd = Command::new(exe);
             cmd.args(["testdb", "reap", "--fixture"])
                 .arg(&fx)
@@ -714,6 +718,7 @@ fn unique_dir(tag: &str) -> PathBuf {
 fn embedded_bd_init(bd: &str, cwd: &Path) -> Result<(), String> {
     let path = std::env::var("PATH").unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
+    // batch-job: this runs whatever its caller names, as long as that takes
     let out = Command::new("env")
         .arg("-i")
         .arg(format!("PATH={path}"))
@@ -887,7 +892,7 @@ pub fn embedded_reset(dir: &Path, baseline: &Path) -> Result<(), String> {
 /// measured at ~19s) never blocks the caller past a Podman exec timeout — the same reason
 /// `testdb_drop` backgrounded this with a bare `&` before it moved here.
 fn background_rm(p: &Path) {
-    let mut cmd = Command::new("rm");
+    let mut cmd = spira_config::bounded::bounded("rm");
     cmd.arg("-rf")
         .arg(p)
         .stdin(Stdio::null())

@@ -116,7 +116,11 @@ pub struct LcRow {
     pub holder: Option<String>,
     pub lease_until: Option<i64>,
     pub holds: Vec<String>,
+    pub tip: Option<String>,
+    pub stack: Vec<String>,
     pub version: Option<String>,
+    pub reason: Option<String>,
+    pub updated_at: Option<i64>,
 }
 
 fn scalar(v: Option<&Value>) -> Option<String> {
@@ -143,6 +147,18 @@ pub fn parse_holds(v: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
+/// The prerequisite ids of a row's `stack` (a JSON object, or a JSON-encoded string of one).
+pub fn parse_stack(v: Option<&Value>) -> Vec<String> {
+    match v {
+        Some(Value::Object(m)) => m.keys().cloned().collect(),
+        Some(Value::String(s)) if !s.trim().is_empty() => match serde_json::from_str::<Value>(s) {
+            Ok(Value::Object(m)) => m.keys().cloned().collect(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
 pub fn parse_lc_rows(s: &str) -> Result<Vec<LcRow>, String> {
     let v: Value =
         serde_json::from_str(s.trim()).map_err(|e| format!("spira-lc list: not JSON: {e}"))?;
@@ -158,7 +174,11 @@ pub fn parse_lc_rows(s: &str) -> Result<Vec<LcRow>, String> {
                 .and_then(|x| x.trim().parse::<f64>().ok())
                 .map(|f| f as i64),
             holds: parse_holds(r.get("holds")),
+            tip: scalar(r.get("tip")).filter(|x| !x.is_empty()),
+            stack: parse_stack(r.get("stack")),
             version: scalar(r.get("version")),
+            reason: scalar(r.get("reason")).filter(|x| !x.is_empty()),
+            updated_at: scalar(r.get("updated_at")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
         })
         .filter(|r| !r.bead_id.is_empty())
         .collect())

@@ -38,6 +38,7 @@ testdb_up holds || {
 
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such-conf"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 
 REPO="$TMP/repo"
 git init -q "$REPO"
@@ -69,6 +70,7 @@ git -C "$REPO" checkout -q "$BASE_BR"
 FIXTURE_REPOS="$TMP/fixture-repos"
 printf 'fixture | %s | queue | | |\n' "$REPO" > "$FIXTURE_REPOS"
 export "SPIRA_REPO_""MAP=$FIXTURE_REPOS"
+tl_config SPIRA_REPO_MAP="$FIXTURE_REPOS"
 
 testdb_reset
 testdb_seed <<JSONL
@@ -76,6 +78,20 @@ testdb_seed <<JSONL
 {"id":"tst-holder","title":"holder bead","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
 {"id":"tst-closed","title":"closed bead","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL
+
+LCBIN="$TMP/lcbin"; mkdir -p "$LCBIN" "$TMP/lcstate"
+cat > "$LCBIN/spira-lc" <<'LC'
+#!/usr/bin/env bash
+[ "${1:-}" = state ] || exit 2
+[ "${SPIRA_TEST_LC_FAIL:-}" = "$2" ] && { printf 'lc-stub: simulated machine failure\n' >&2; exit 2; }
+[ -f "$SPIRA_TEST_LC_STATE/$2" ] || exit 1
+cat "$SPIRA_TEST_LC_STATE/$2"
+LC
+chmod +x "$LCBIN/spira-lc"
+export SPIRA_TEST_LC_STATE="$TMP/lcstate"
+printf 'WORKING\n' > "$TMP/lcstate/tst-holder"
+printf 'LANDED\n' > "$TMP/lcstate/tst-closed"
+PATH="$LCBIN:$PATH"
 
 out="$(holds.sh --repo fixture spira/batch.sh)"; rc=$?
 wantrc "holder case exits 0"                     0 "$rc"
@@ -90,27 +106,15 @@ is     "untouched path reports nothing" "" "$empty_out"
 
 # ===========================================================================================
 echo
-echo "T2: bd unreadable — fail closed, never mistaken for a clean empty result"
+echo "T2: lifecycle machine unreadable — fail closed, never mistaken for a clean empty result"
 # ===========================================================================================
 
-REAL_BD="$(command -v bd)"
-STUB_BD="$TMP/bd-stub"
-cat > "$STUB_BD" <<EOF
-#!/usr/bin/env bash
-for a in "\$@"; do
-    [ "\$a" = "tst-holder" ] && { printf 'bd-stub: simulated store failure\n' >&2; exit 1; }
-done
-exec "$REAL_BD" "\$@"
-EOF
-chmod +x "$STUB_BD"
-
-unk_out="$(SPIRA_BD="$STUB_BD" holds.sh --repo fixture spira/batch.sh 2>/dev/null)"
+unk_out="$(SPIRA_TEST_LC_FAIL=tst-holder holds.sh --repo fixture spira/batch.sh 2>/dev/null)"
 unk_rc=$?
-if [ "$unk_rc" -ne 0 ]; then ok "holds.sh exits non-zero when bd is unreadable"
-else bad "holds.sh exits non-zero when bd is unreadable" "got exit 0"; fi
-# Exit 0 with empty stdout means "checked, found nothing"; this run's exit code is the ONLY
-# thing telling it apart from that — its (also empty) stdout looks identical either way.
+if [ "$unk_rc" -ne 0 ]; then ok "holds.sh exits non-zero when the lifecycle machine is unreadable"
+else bad "holds.sh exits non-zero when the lifecycle machine is unreadable" "got exit 0"; fi
 unset unk_out
+PATH="${PATH#"$LCBIN:"}"
 
 # ===========================================================================================
 echo
@@ -123,6 +127,14 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
+# round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
+# fixture declares its own /fixture/userhome/.../chamber. Declare this suite's real one.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+# round 2 fix: the complete fixture declares scope_label="spira" as its base value, so
+# builder.fayth's FAYTH_LABELS (resolved against the real config, not this shell's unset
+# $SPIRA_SCOPE_LABEL) would require a "spira" label the seeded beads never carry — nothing
+# would ever be ready for the claiming aeon below. Declare the empty scope this suite means.
+tl_config SPIRA_SCOPE_LABEL=""
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
@@ -134,6 +146,7 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n<!-- task -->\n{{BEAD}}\n{{P
     > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$SPIRA_AGENT"
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -141,6 +154,11 @@ printf '{"type":"result","subtype":"success","is_error":false,"result":"done","n
 exit 0
 SHIM
 chmod +x "$BIN/claude"
+# The claim goes through the lifecycle (sp-860zj) and the session runs restricted (sp-v62vn):
+# the bd fixture is told to the aeon in lifecycle terms, and the shim gets back the TMP it
+# records the prompt into.
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+aeon_fixture_agent "$BIN/claude"
 
 # FAYTH_LABELS reads $SPIRA_PLAN_LABEL/$SPIRA_SCOPE_LABEL, not a literal "plan" — a fixture
 # bead must carry whatever this environment actually configured, or "nothing ready to claim"
@@ -150,8 +168,8 @@ _t5_lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-pl
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-20T00:00:00Z"}
-{"id":"tst-holder","title":"holder bead","status":"open","issue_type":"task","labels":[$_t5_lbl],"updated_at":"2026-09-20T00:00:00Z"}
-{"id":"tst-claim","title":"claim bead","description":"a case in spira/batch.sh needs one more branch","status":"open","issue_type":"task","labels":[$_t5_lbl,"repo:fixture"],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"tst-holder","title":"holder bead","status":"open","issue_type":"task","priority":4,"labels":[$_t5_lbl],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"tst-claim","title":"claim bead","description":"a case in spira/batch.sh needs one more branch","status":"open","issue_type":"task","priority":0,"labels":[$_t5_lbl,"repo:fixture"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL
 
 rm -rf "$SPIRA_RUN/worktree"

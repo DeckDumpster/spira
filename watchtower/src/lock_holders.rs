@@ -144,7 +144,7 @@ pub fn run(now: i64, stalled_for: &str, ctx: &Ctx) {
         .priority(if suspects > 0 { 1 } else { 2 })
         .reference("incident:queue-lock-holders")
         .cause("queue-lock-holders");
-    incident::file(ctx.incident_sh, &f);
+    incident::alarm(ctx.incident_sh, &f);
 }
 
 #[cfg(test)]

@@ -1,0 +1,227 @@
+api_version = "test-plan/v1"
+area = "config-store-preflight"
+
+[[use_case]]
+id = "UC-config-store-preflight-01"
+tier = "T1"
+statement = "every configuration key resolves with precedence environment > spira.conf > derived default"
+
+[[use_case]]
+id = "UC-config-store-preflight-02"
+tier = "T1"
+statement = "spira_conf_read applies only well-formed key=value rows and refuses a malformed or inline-commented row rather than executing or silently accepting it"
+
+[use_case.uncovered]
+reason = "gap G1: no test for a malformed or inline-commented spira.conf row; needs the spira-config reader's Rust tests"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-03"
+tier = "T1"
+statement = "derived defaults are computed from the install location and stay compatible across the shipped key set"
+
+[[use_case]]
+id = "UC-config-store-preflight-04"
+tier = "T1"
+statement = "prod keeps unqualified paths and unit names; a non-prod instance qualifies its database, runtime directory and units so it never shares prod's"
+
+[[use_case]]
+id = "UC-config-store-preflight-05"
+tier = "T1"
+statement = "mutable state resolves under the runtime directory, never inside the harness tree"
+
+[[use_case]]
+id = "UC-config-store-preflight-06"
+tier = "T1"
+statement = "the shipped defaults load on a fresh clone and every shipped script parses"
+
+[[use_case]]
+id = "UC-config-store-preflight-07"
+tier = "T1"
+statement = "configure.sh writes configuration idempotently and round-trips through the reader"
+
+[[use_case]]
+id = "UC-config-store-preflight-08"
+tier = "T1"
+statement = "every program the harness executes is declared in the bin manifest"
+
+[[use_case]]
+id = "UC-config-store-preflight-09"
+tier = "T1"
+statement = "when $SPIRA_DB/.beads metadata and the bd binary disagree, or the store cannot be resolved, conf.sh refuses at source time and names cause and remedy"
+
+[[use_case]]
+id = "UC-config-store-preflight-10"
+tier = "T1"
+statement = "a store 'locked by another process' result is a configuration error after bounded retry, never a pass"
+
+[[use_case]]
+id = "UC-config-store-preflight-11"
+tier = "T1"
+statement = "the schema-version check is stamped and cached so repeated sources do not re-probe bd"
+
+[[use_case]]
+id = "UC-config-store-preflight-12"
+tier = "T1"
+statement = "repo-map rows parse exactly and the lanes parser rejects malformed rows"
+
+[[use_case]]
+id = "UC-config-store-preflight-13"
+tier = "T1"
+statement = "repo: labels resolve to a repo-map row, and bdq create with an unresolvable label fails closed"
+
+[[use_case]]
+id = "UC-config-store-preflight-14"
+tier = "T0"
+statement = "no shipped chamber persona carries a literal repository name; the fence over shipped text is the gate's own invocation"
+
+[[use_case]]
+id = "UC-config-store-preflight-15"
+tier = "T1"
+statement = "persona partitions (repo scope of builder, qa, czar) stay disjoint and are derived from the repo-map"
+
+[[use_case]]
+id = "UC-config-store-preflight-16"
+tier = "T1"
+statement = "a non-prod instance refuses repositories outside its workspace or with network remotes"
+
+[[use_case]]
+id = "UC-config-store-preflight-17"
+tier = "T1"
+statement = "a roster WARN for a fayth with no repository is reported once and does not repeat"
+
+[use_case.uncovered]
+reason = "test-roster-warn.sh no longer exists"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-18"
+tier = "T1"
+statement = "configured bead-id prefixes are honoured by id validation"
+
+[[use_case]]
+id = "UC-config-store-preflight-19"
+tier = "T1"
+statement = "schema.sh resolves the declared schema additions (_is_work, the priority CHECK) and kinds map to types"
+
+[[use_case]]
+id = "UC-config-store-preflight-20"
+tier = "T3"
+statement = "schema-apply.sh applies the schema additions to a server store idempotently and compatibly"
+
+[[use_case]]
+id = "UC-config-store-preflight-21"
+tier = "T1"
+statement = "schema-apply.sh refuses an embedded-mode store, naming cause and remedy"
+
+[[use_case]]
+id = "UC-config-store-preflight-22"
+tier = "T1"
+statement = "a PreToolUse command that deletes schema_migrations rows is refused"
+
+[use_case.uncovered]
+reason = "test-schema-migration-guard.sh no longer exists"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-23"
+tier = "T1"
+statement = "install phase 3 provisions the store in server mode, never embedded, and propagates seed failure"
+
+[use_case.uncovered]
+reason = "install phase 3 is the Rust install crate; bash test-install-bd-init-cwd.sh was deleted"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-24"
+tier = "T1"
+statement = "install phase 4 waits for the store port with a bounded timeout and clears the breaker before probing"
+
+[[use_case]]
+id = "UC-config-store-preflight-25"
+tier = "T2"
+statement = "the bd and Dolt contract the harness relies on holds against a real bd init"
+
+[[use_case]]
+id = "UC-config-store-preflight-26"
+tier = "T1"
+statement = "beads-push reports a push only when the remote head proves it happened"
+
+[[use_case]]
+id = "UC-config-store-preflight-27"
+tier = "T2"
+statement = "runtime health checks the store, naming cause and remedy for each failed condition"
+
+[use_case.uncovered]
+reason = "doctor is the Rust doctor crate; bash test-doctor-*.sh deleted (sp-utt1i); its tests are in doctor/src/tests.rs"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-28"
+tier = "T2"
+statement = "runtime health checks version pins"
+
+[use_case.uncovered]
+reason = "doctor is the Rust doctor crate (doctor/src/tests.rs); the bash test-doctor-*.sh rows were deleted by sp-utt1i"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-29"
+tier = "T2"
+statement = "runtime health checks enabled units against installed units"
+
+[use_case.uncovered]
+reason = "doctor is the Rust doctor crate (doctor/src/tests.rs); the bash test-doctor-*.sh rows were deleted by sp-utt1i"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-30"
+tier = "T2"
+statement = "runtime health checks the environment it runs in"
+
+[use_case.uncovered]
+reason = "doctor is the Rust doctor crate (doctor/src/tests.rs); the bash test-doctor-*.sh rows were deleted by sp-utt1i"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-31"
+tier = "T2"
+statement = "under installing mode, conditions a later install phase will create downgrade to WARN"
+
+[use_case.uncovered]
+reason = "doctor is the Rust doctor crate (doctor/src/tests.rs); the bash test-doctor-*.sh rows were deleted by sp-utt1i"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-32"
+tier = "T2"
+statement = "every program the harness depends on is checked for presence"
+
+[use_case.uncovered]
+reason = "doctor is the Rust doctor crate (doctor/src/tests.rs); the bash test-doctor-*.sh rows were deleted by sp-utt1i"
+date = "2026-10-08"
+bead = "sp-n071y"
+
+[[use_case]]
+id = "UC-config-store-preflight-33"
+tier = "T0"
+statement = "every shipped script passes a syntax sweep"
+
+[[use_case]]
+id = "UC-config-store-preflight-34"
+tier = "T2"
+statement = "the health command is read-only"
+
+[use_case.uncovered]
+reason = "doctor is the Rust doctor crate; read-only claim has no suite"
+date = "2026-10-08"
+bead = "sp-n071y"

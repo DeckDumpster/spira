@@ -26,10 +26,12 @@ mod check4;
 mod detect;
 mod dispatch;
 mod fresh;
+mod holds;
 mod host;
 mod lifecycle;
 mod model;
 mod open_children;
+mod red_trackers;
 mod pass;
 mod render;
 mod seams;
@@ -42,7 +44,7 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-use cfg::{Context, Repo};
+use cfg::{Context, Declared, Repo};
 use host::{Clock, Host, Io, RealClock, RealRunner, RealSink, Runner, Spec};
 use pass::{Mode, Sentinel};
 
@@ -146,7 +148,7 @@ fn resolve_repos(vars: &std::collections::BTreeMap<String, String>, home: &Path)
                 .and_then(|r| spira_config::repos::landrefs(&reg, r))
                 .map(|(base, local)| std::iter::once(base).chain(local).collect())
                 .unwrap_or_default();
-            Repo { name: name.clone(), root, landrefs, queued: reg.land_queued(&name) }
+            Repo { name: name.clone(), root, landrefs, forge_queued: reg.land_forge_queued(&name) }
         })
         .collect()
 }
@@ -181,6 +183,13 @@ fn main() {
         Ok(c) => c,
         Err(e) => std::process::exit(fatal(&e)),
     };
+    // One source of config (per Ryan 2026-10-05): every registered key `Cfg` needs, read
+    // once here via spira_config::process::cfg/cfg_parse — never defaulted, never a second
+    // reading off the probe's own Context.
+    let declared = match Declared::resolve() {
+        Ok(d) => d,
+        Err(e) => std::process::exit(fatal(&e)),
+    };
     // The retired lifecycle switch (sp-v62vn): a unit environment saying off is refused.
     match spira_config::check_lifecycle_switch_env(std::env::var(spira_config::LIFECYCLE_ENFORCE_ENV).ok().as_deref()) {
         Ok(Some(w)) => eprintln!("sentinel: {w}"),
@@ -196,6 +205,7 @@ fn main() {
     let s = Sentinel::new(
         &h,
         ctx,
+        declared,
         &home,
         mode,
         exe.to_string_lossy().into_owned(),

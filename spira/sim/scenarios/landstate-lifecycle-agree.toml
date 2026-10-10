@@ -1,0 +1,33 @@
+epoch = 1800000000
+horizon = 2400000
+goal = "sp-la01:LANDED"
+real_actors = ["sentinel-summon", "sentinel-landing", "sift"]
+
+[[actor]]
+name = "gate-worker"
+command = "gate-worker run"
+first = 20000
+every = 30000
+duration_min = 2000
+duration_max = 10000
+
+[[step]]
+at = 0
+command = 'spira-config set spira.batcher_enable 0 "$SPIRA_TOML"'
+
+[[step]]
+at = 0
+file = "sp-la01"
+
+[[step]]
+at = 0
+claim = "sp-la01"
+script = ["commit out/a.txt", "submit"]
+
+[[step]]
+at = 1000000
+command = 'spira-config set spira.batcher_enable 1 "$SPIRA_TOML"'
+
+[[expect]]
+name = "certified_by_the_gate_before_the_round"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-la01' AND lc_state = 'CERTIFIED' AND lc_tip = branch_tip AND (landstate IS NULL OR landstate = 'CERTIFIED')"

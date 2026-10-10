@@ -174,7 +174,7 @@ pub fn cmd_tail(rows: &[Row], run: &str, conf_file: &str, actionable: &str, now:
     if !lf.exists() {
         eprintln!("watchd: {} does not exist yet — waiting for it", lf.display());
     }
-    let mut file = wait_for_file(&lf);
+    let Some(mut file) = wait_for_file(&lf) else { return 0 };
     let mut byte_offset = byte_offset_of_line(&mut file, start_line).unwrap_or(0);
     let mut line = start_line;
     let stdout = std::io::stdout();
@@ -193,13 +193,13 @@ pub fn cmd_tail(rows: &[Row], run: &str, conf_file: &str, actionable: &str, now:
     }
 }
 
-fn wait_for_file(path: &Path) -> File {
+fn wait_for_file(path: &Path) -> Option<File> {
     loop {
         if let Ok(f) = File::open(path) {
-            return f;
+            return Some(f);
         }
         if STOP.load(Ordering::SeqCst) {
-            std::process::exit(0);
+            return None;
         }
         std::thread::sleep(Duration::from_millis(200));
     }

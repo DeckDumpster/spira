@@ -6,7 +6,9 @@
 //! were three separate re-derivations (the exact drift lib.sh's own comments warn about);
 //! in Rust they are one function each, called from three binaries.
 
+pub mod checkpoint;
 pub mod fleet;
+pub mod notice;
 pub mod proc;
 pub mod round;
 pub mod seam;
@@ -26,14 +28,13 @@ fn resolve_home() -> PathBuf {
     locate_home(&exe).unwrap_or_default()
 }
 
-/// `spira.run`, resolved in-process through `spira_config` (`SPIRA_RUN` in the environment
-/// still wins outright — every systemd unit sets it explicitly, so a production unit's
-/// behaviour is unchanged — else the resolved config document, else the derived XDG default).
-/// law-a-binary-resolves-the-config-it-reads (sp-ivfu3): this used to default to the
-/// literal `/tmp/spira` whenever `SPIRA_RUN` was unset, which is exactly what a bare
-/// operator shell (no systemd unit to set it) got — `world status` read and wrote the
-/// wrong run directory while reporting on the real one. REFUSES, named, rather than
-/// guessing, when `spira_config` itself cannot resolve.
+/// `spira.run`, resolved in-process through `spira_config` — the declared value in
+/// `$SPIRA_TOML`, else the derived XDG default; no environment override (per Ryan
+/// 2026-10-05: one source of config). law-a-binary-resolves-the-config-it-reads
+/// (sp-ivfu3): this used to default to the literal `/tmp/spira` whenever `SPIRA_RUN` was
+/// unset, which is exactly what a bare operator shell (no systemd unit to set it) got —
+/// `world status` read and wrote the wrong run directory while reporting on the real one.
+/// REFUSES, named, rather than guessing, when `spira_config` itself cannot resolve.
 pub fn spira_run() -> Result<PathBuf, String> {
     let env_map: BTreeMap<String, String> = env::vars().collect();
     spira_config::resolve::resolve_run_dir(&env_map, &resolve_home())
@@ -66,11 +67,18 @@ pub fn locate_home(exe: &Path) -> Option<PathBuf> {
         .map(|c| c.canonicalize().unwrap_or(c))
 }
 
-/// `$SPIRA_PROD` if set, else `$SPIRA_HOME` — the same "both homes" fallback `live_aeons`
-/// and `live_workers` use in world.sh, because in split-checkout mode every aeon executes
-/// `$SPIRA_PROD/aeon.sh` while `$SPIRA_HOME` is the development checkout.
-pub fn spira_prod_or_home(home: &Path) -> PathBuf {
-    env::var_os("SPIRA_PROD").map(PathBuf::from).unwrap_or_else(|| home.to_path_buf())
+/// `SPIRA_PROD`'s declared value if non-empty, else `home` — the same "both homes" fallback
+/// `live_aeons` and `live_workers` use in world.sh, because in split-checkout mode every
+/// aeon executes `$SPIRA_PROD/aeon.sh` while `home` is the development checkout. `prod` is
+/// the caller's own `spira_config::process::cfg("SPIRA_PROD")` read, resolved once at the
+/// binary's top level and handed in here — never read from the environment in this pure
+/// function (per Ryan 2026-10-05: one source of config).
+pub fn spira_prod_or_home(home: &Path, prod: &str) -> PathBuf {
+    if prod.is_empty() {
+        home.to_path_buf()
+    } else {
+        PathBuf::from(prod)
+    }
 }
 
 /// The world-halt stamp path: `$SPIRA_RUN/world.halted`.
@@ -84,9 +92,9 @@ pub fn halt_stamp() -> Result<PathBuf, String> {
 /// `landing.sh`'s retirement into that binary), and whatever `landing-pass` resolves to
 /// on the launcher's own PATH right now. world.sh's own comment: "both homes, for the
 /// same reason live_aeons matches both" — this is that set, gathered once so `status` and
-/// any other caller can't each grow their own partial copy.
-pub fn live_worker_paths(home: &Path) -> Vec<String> {
-    let prod = spira_prod_or_home(home);
+/// any other caller can't each grow their own partial copy. `prod` is the caller's own
+/// already-resolved [`spira_prod_or_home`] result — passed through, not re-derived.
+pub fn live_worker_paths(home: &Path, prod: &Path) -> Vec<String> {
     let mut v = vec![
         home.join("gate.sh").to_string_lossy().into_owned(),
         prod.join("gate.sh").to_string_lossy().into_owned(),
@@ -122,78 +130,57 @@ pub fn instance_suffix() -> Result<String, String> {
 mod tests {
     use super::*;
 
-    /// Serializes this crate's own env-mutating tests against each other — `cargo test`
-    /// runs them on separate threads by default, and `std::env::set_var` is process-global
-    /// (the same hazard `spira_config`'s own `ENV_LOCK` exists for, `pub(crate)` there so
-    /// this crate needs its own).
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// `resolve_for_process` needs a real, readable `conf.d` under `SPIRA_HOME` to resolve
-    /// ANY key at all (an existing-but-empty directory is fine; a missing one is a named
-    /// refusal — see `spira_config::registry::load`'s own doc). Pointing `SPIRA_HOME` at
-    /// this fixture, rather than leaving it unset and trusting `resolve_home`'s own
-    /// ancestor search to stumble onto this checkout's real `spira/conf.d`, is what keeps
-    /// these two tests hermetic: the gate builds from a tmpfs copy with no `spira/`
-    /// sibling at the same relative depth, where that ancestor search finds nothing.
-    fn fixture_harness_home(tag: &str) -> testkit::TempDir {
-        let home = testkit::TempDir::new(tag);
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        home
-    }
-
     /// sp-ivfu3: the old contract was "defaults to the literal /tmp/spira when SPIRA_RUN is
     /// unset" — exactly the bug (a bare shell silently read/wrote the wrong run directory).
-    /// The new contract: resolved in-process via spira_config, which still produces a real
-    /// path with NO env/toml override present (the derived XDG default), never /tmp/spira.
+    /// `spira_config::resolve::resolve_run_dir` itself has since dropped the "derive an XDG
+    /// default with no config at all" rung too (per Ryan 2026-10-05: one source of config —
+    /// `resolve_run_dir`'s own doc now says "no environment override and no fallback home");
+    /// the new contract is simply: the DECLARED value in `$SPIRA_TOML` reaches this crate,
+    /// never a guess, and never that `/tmp/spira` literal.
     #[test]
-    fn spira_run_resolves_via_config_never_the_tmp_spira_literal() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_RUN", "SPIRA_HOME", "SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, env::var(n).ok())).collect();
-        for n in names {
-            env::remove_var(n);
-        }
-        let xdg_home = testkit::TempDir::new("spira-world-run-default");
-        let harness_home = fixture_harness_home("spira-world-run-default-harness");
-        env::set_var("HOME", xdg_home.to_str().unwrap());
-        env::set_var("XDG_CONFIG_HOME", xdg_home.join("no-such-xdg").to_str().unwrap());
-        env::set_var("SPIRA_HOME", harness_home.to_str().unwrap());
+    fn spira_run_resolves_the_declared_value_never_a_guessed_default() {
+        let dir = testkit::TempDir::new("spira-world-run-declared");
+        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
+        // lives); the complete fixture's own baked `run`/`workspaces`/`instance` are already
+        // mutually consistent (run nests under workspaces), so no override is needed here.
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[]);
+        let guard = testkit::env(&[
+            ("SPIRA_RUN", None),
+            ("SPIRA_CONF", None),
+            ("SPIRA_REPO", None),
+            ("XDG_CONFIG_HOME", None),
+            ("HOME", None),
+            ("SPIRA_HOME", real_home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+        ]);
 
         let got = spira_run();
+        drop(guard);
 
-        for (n, v) in saved {
-            match v {
-                Some(v) => env::set_var(n, v),
-                None => env::remove_var(n),
-            }
-        }
         let got = got.unwrap();
         assert_ne!(got, PathBuf::from("/tmp/spira"));
-        assert_eq!(got, xdg_home.join(".local/share/spira/run"));
+        assert_eq!(got, PathBuf::from("/fixture/userhome/spira/run"), "the complete fixture's own declared spira.run");
     }
 
     #[test]
-    fn instance_suffix_defaults_to_prod_suffixed() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let names = ["SPIRA_INSTANCE", "SPIRA_HOME", "SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
-        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, env::var(n).ok())).collect();
-        for n in names {
-            env::remove_var(n);
-        }
-        let xdg_home = testkit::TempDir::new("spira-world-instance-default");
-        let harness_home = fixture_harness_home("spira-world-instance-default-harness");
-        env::set_var("HOME", xdg_home.to_str().unwrap());
-        env::set_var("XDG_CONFIG_HOME", xdg_home.join("no-such-xdg").to_str().unwrap());
-        env::set_var("SPIRA_HOME", harness_home.to_str().unwrap());
+    fn instance_suffix_reaches_the_declared_instance() {
+        let dir = testkit::TempDir::new("spira-world-instance-declared");
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[]);
+        let guard = testkit::env(&[
+            ("SPIRA_INSTANCE", None),
+            ("SPIRA_CONF", None),
+            ("SPIRA_REPO", None),
+            ("XDG_CONFIG_HOME", None),
+            ("HOME", None),
+            ("SPIRA_HOME", real_home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+        ]);
 
         let got = instance_suffix();
+        drop(guard);
 
-        for (n, v) in saved {
-            match v {
-                Some(v) => env::set_var(n, v),
-                None => env::remove_var(n),
-            }
-        }
-        assert_eq!(got.unwrap(), "-prod", "the real installed units are always instance-qualified");
+        assert_eq!(got.unwrap(), "-prod", "the complete fixture's own declared spira.instance, suffixed");
     }
 }

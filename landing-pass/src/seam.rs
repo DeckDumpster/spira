@@ -104,13 +104,13 @@ __kv bd_timeout "${BD_TIMEOUT:-180}"
 __kv id_prefix "${SPIRA_ID_PREFIX:-sp}"
 __kv land_maxsec "${SPIRA_LAND_MAXSEC:-3600}"
 __kv gate_reserve "${SPIRA_LAND_GATE_RESERVE:-1200}"
+__kv gate_timeout "${SPIRA_GATE_TIMEOUT:-2700}"
 __kv gate_lock_wait "${SPIRA_GATE_LOCK_WAIT:-}"
 __kv certify_par "${SPIRA_CERTIFY_PAR:-}"
 __kv gate_worker "${SPIRA_GATE_WORKER:-1}"
 __kv verdict_ttl "${SPIRA_VERDICT_TTL:-0}"
 __kv verdicts "${SPIRA_VERDICTS:-${SPIRA_RUN:-}/verdicts}"
 __kv deferral_at "${SPIRA_DEFERRAL_ESCALATE_AT:-5}"
-__kv express_label "${SPIRA_EXPRESS_LABEL:-express}"
 __kv cutover_label "${SPIRA_CUTOVER_ROUND_LABEL:-cutover-round}"
 __kv submitted_label "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"
 __kv rebase_escalate_at "${SPIRA_REBASE_ESCALATE_AT:-3}"
@@ -137,8 +137,9 @@ const INCIDENT: &str = r#"case "$1" in
     */*) [ -r "$1" ] || exit 2; __p="$1" ;;
     *) __p="$(command -v "$1")" || exit 2 ;;
 esac
+if [ -n "$2" ]; then export SPIRA_INCIDENT_LABELS="$2"; else unset SPIRA_INCIDENT_LABELS; fi
 __id="$(SPIRA_INCIDENT_TYPE=bug SPIRA_INCIDENT_PRIORITY=1 SPIRA_INCIDENT_ACTOR=landing \
-    SPIRA_INCIDENT_LABELS="$2" SPIRA_INCIDENT_REPO="$3" SPIRA_INCIDENT_REF="$4" \
+    SPIRA_INCIDENT_REPO="$3" SPIRA_INCIDENT_REF="$4" \
     SPIRA_INCIDENT_CAUSE=base-suite-red bash "$__p" file "$5" - <<< "$6")" || exit 1
 printf '\036%s' "$__id"
 exit 0
@@ -326,10 +327,12 @@ mod tests {
         // 1;;` branch for an unmapped name.
         let map = dir.join("repomap-fixture");
         std::fs::write(&map, format!("spira | {} | queue.local\nother | {}\nghost |\n", h.display(), o.display())).unwrap();
-        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
-        let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
-        std::env::set_var("SPIRA_REPO_MAP", &map);
-        std::env::set_var("SPIRA_HOME_REPO", "spira");
+        // Declared config (the one source): the registry reads the map and home repo from
+        // the SPIRA_TOML it resolves, never from the environment.
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), dir.join("conf.d")).unwrap();
+        let cfgdir = testkit::TempDir::new("lp-seam-registry-cfg");
+        let toml = spira_config::process::fixture_toml(cfgdir.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
+        let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
 
         let lib = r#"SPIRA_RUN=/run/x; SPIRA_TOML_FILE=/cfg/doc
 log() { echo "L $*"; }
@@ -344,14 +347,7 @@ log() { echo "L $*"; }
             crate::real::parse_context(&split(&out).answer, &dir)
         })();
 
-        match prev_map {
-            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-            None => std::env::remove_var("SPIRA_REPO_MAP"),
-        }
-        match prev_home_repo {
-            Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
-            None => std::env::remove_var("SPIRA_HOME_REPO"),
-        }
+        drop(env);
 
         let (s, repos) = result.unwrap();
         assert_eq!(s.run, std::path::PathBuf::from("/run/x"));

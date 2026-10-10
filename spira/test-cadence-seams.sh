@@ -21,9 +21,10 @@ SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT INT TERM
 
 export SPIRA_SYSTEMD_USER_DIR="$SCRATCH"
-export SPIRA_INSTANCE=prod
-export SPIRA_OPERATOR=testop
-export SPIRA_TZ=UTC
+SPIRA_INSTANCE=prod
+SPIRA_OPERATOR=testop
+SPIRA_TZ=UTC
+tl_config SPIRA_INSTANCE="$SPIRA_INSTANCE" SPIRA_OPERATOR="$SPIRA_OPERATOR" SPIRA_TZ="$SPIRA_TZ"
 # shellcheck disable=SC1091
 . "$HERE/cadence.sh"
 

@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=census
+DOC=SPIRA_CENSUS_CLUSTER_GAP_S — same-class census events less than this many seconds apart are one causal event, so a single detector sweep ranks as one occurrence, not one per victim.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    #
+    # SPIRA_CENSUS_CLUSTER_GAP_S — census/cluster.py's clustering gap. Same-class events less
+    # than this many seconds apart are one causal event; 300 = 5 minutes.
+    : "${SPIRA_CENSUS_CLUSTER_GAP_S:=300}"
+SPIRA_CONF_DEFAULT_EOF

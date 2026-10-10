@@ -56,14 +56,14 @@ export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 ORIGIN="$TMP/origin.git"
 REPO="$TMP/repo"
 git init -q --bare -b trunk "$ORIGIN"
-git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name t
 
 printf 'base\n' > "$REPO/f"
 git -C "$REPO" add f
 git -C "$REPO" commit -qm "initial commit"
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 printf 'a\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-aaa — first bead"
@@ -71,7 +71,7 @@ git -C "$REPO" commit -qm "sp-aaa — first bead"
 printf 'b\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-bbb — second bead"
 
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 # ---- harness fixture -------------------------------------------------------
 SH="$TMP/spira"
@@ -87,6 +87,11 @@ done
 # left $SH with no conf.d/ and no conf-gen.sh, so sourcing conf.sh refused with "conf-gen.sh
 # failed to regenerate conf.d.*.generated.sh" the moment review.sh tried to source it.
 ln -s "$HERE/conf.sh" "$SH/conf.sh"
+# SPIRA_HOME=$SH is handed to the binaries via env -i below; the repo registry's
+# config resolution reads conf.d straight off SPIRA_HOME (not through conf.sh's
+# readlink-to-the-real-file trick), so $SH needs its own registry symlink too
+# (pattern 1, per Ryan 2026-10-05).
+ln -s "$HERE/conf.d" "$SH/conf.d"
 chmod +x "$SH/review.sh" "$SH/release.sh"
 
 REPO_MAP="$TMP/repo-map"
@@ -134,29 +139,32 @@ chmod +x "$FAKE_CLAUDE"
 
 # ---- helpers ----------------------------------------------------------------
 run_review() {
+    # SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_ID_PREFIX/SPIRA_DB/SPIRA_BD/SPIRA_AGENT/
+    # SPIRA_REVIEWER_VERDICTS/SPIRA_REVIEWER_MODEL/SPIRA_REVIEWER_TIMEOUT are registered
+    # keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread
+    # SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_AGENT="$FAKE_CLAUDE" \
+        SPIRA_REVIEWER_VERDICTS="$VERDICTS" SPIRA_REVIEWER_MODEL=claude-test-model \
+        SPIRA_REVIEWER_TIMEOUT=30
+    # round 5 fix (pattern 1/7): the repo registry reads SPIRA_HOME's own conf.d/config
+    # registry now; env -i never carried SPIRA_HOME at all ("no config registry at ...").
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
-        SPIRA_REPO="$SH" \
-        SPIRA_ID_PREFIX=sp \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
-        SPIRA_AGENT="$FAKE_CLAUDE" \
-        SPIRA_REVIEWER_VERDICTS="$VERDICTS" \
-        SPIRA_REVIEWER_MODEL=claude-test-model \
-        SPIRA_REVIEWER_TIMEOUT=30 \
+        SPIRA_HOME="$SH" SPIRA_REPO="$SH" \
         FAKE_REVIEW_VERDICT="${FAKE_REVIEW_VERDICT:-ship}" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/review.sh" "$@" 2>&1
 }
 
 run_release() {
+    # SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_ID_PREFIX are registered keys (per Ryan 2026-10-05,
+    # ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
-        SPIRA_REPO="$SH" \
-        SPIRA_ID_PREFIX=sp \
+        SPIRA_HOME="$SH" SPIRA_REPO="$SH" \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash "$SH/release.sh" "$@" 2>&1
 }
 
@@ -208,7 +216,7 @@ echo "3. BLOCK — review exits 1 and files findings as beads"
 # Cut a second release tag (one new commit) for the block scenario.
 printf 'c\n' >> "$REPO/f"; git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-ccc — third bead"
-git -C "$REPO" push -q origin trunk 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 TAG2="$(run_release cut fixture)"
 [ -n "$TAG2" ] || { echo "SETUP FAILED: could not cut second release tag"; exit 1; }
 
@@ -224,11 +232,12 @@ want "block: findings > 0"     "findings: 1"     "$(cat "$vfile2" 2>/dev/null)"
 
 # A finding bead must have been filed in the database.
 db_count() {
+    # SPIRA_DB/SPIRA_BD/SPIRA_ID_PREFIX are registered keys (per Ryan 2026-10-05, ONE
+    # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_ID_PREFIX=sp
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
-        SPIRA_ID_PREFIX=sp \
+        SPIRA_TOML="$SPIRA_TOML" \
         bash -c '. '"$SH/lib.sh"'; bdjson list --status open --label review-finding --limit 0 2>/dev/null | python3 -c "
 import json,sys
 try:
@@ -243,11 +252,10 @@ bead_count="$(db_count)"
     || bad "block: finding bead filed" "got count=$bead_count, want >=1"
 
 # The bead title must name the finding.
+# SPIRA_DB/SPIRA_BD/SPIRA_ID_PREFIX unchanged from db_count's tl_config declaration above.
 bead_titles="$(env -i PATH="$PATH" HOME="$HOME" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="$SPIRA_BD" \
-    SPIRA_ID_PREFIX=sp \
+    SPIRA_TOML="$SPIRA_TOML" \
     bash -c '. '"$SH/lib.sh"'; bdjson list --status open --label review-finding --limit 0 2>/dev/null | python3 -c "
 import json,sys
 try:

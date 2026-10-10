@@ -27,7 +27,10 @@ impl Branches for Repos<'_> {
 struct Wall;
 impl Clock for Wall {
     fn now_ms(&self) -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+        match spira_config::vtime::override_epoch() {
+            Some(s) => s * 1000,
+            None => SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+        }
     }
 }
 
@@ -47,6 +50,7 @@ fn main() -> ExitCode {
         eprintln!("gate-worker: SPIRA_HOME is unset");
         return ExitCode::FAILURE;
     };
+    let exe = std::env::current_exe().unwrap_or_else(|_| home.clone());
     let out = Reporter::stdout(None);
     let (s, repos) = match load_context(&home, &out) {
         Ok(x) => x,
@@ -93,19 +97,28 @@ fn main() -> ExitCode {
             let gate = RealGate(&tools);
             let branches = Repos(&repos);
             let log = |m: &str| println!("{m}");
+            // SPIRA_GATE_TIMEOUT is a registered key (spira/conf.d) — the one source of
+            // config, read once here rather than from the process environment.
+            let gate_timeout = match spira_config::process::cfg("SPIRA_GATE_TIMEOUT") {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("gate-worker: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
             let w = Worker {
                 queue: &queue,
                 gate: &gate,
                 branches: &branches,
                 clock: &Wall,
-                lock_wait: lock_wait(std::env::var("SPIRA_GATE_TIMEOUT").ok().as_deref(), s.gate_lock_wait.as_deref()),
+                lock_wait: lock_wait(Some(&gate_timeout), s.gate_lock_wait.as_deref()),
                 log: &log,
                 slot,
             };
             let filed = w.drain_while(&|| {
-                let current = release_is_current(&home);
+                let current = release_is_current(&exe);
                 if !current {
-                    println!("gate-worker: release {} is no longer current — exiting so the next tick runs the new one", home.display());
+                    println!("gate-worker: release {} is no longer current — exiting so the next tick runs the new one", exe.display());
                 }
                 current
             });
@@ -118,4 +131,16 @@ fn main() -> ExitCode {
         let _ = c.wait();
     }
     result
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+
+
+    #[test]
+    fn wall_honours_spira_now_in_ms() {
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || Wall.now_ms() / 1000);
+        assert_eq!(got, 1_900_000_000);
+    }
 }

@@ -5,7 +5,7 @@
 
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use sha2::{Digest, Sha256};
 
@@ -144,12 +144,16 @@ pub fn parse_iso(s: &str) -> Option<i64> {
 }
 
 /// Mails the aeon actually working `id`, if one is alive and its mailbox is open.
-pub fn notify_live_aeon(id: &str, message: &str) {
-    if id.is_empty() || message.is_empty() {
+///
+/// `run`/`mail` are `SPIRA_RUN`/`SPIRA_MAIL` (both registered config keys) — this is pure
+/// logic, so it takes them as arguments rather than reading config itself (per Ryan
+/// 2026-10-05: one source of config); callers resolve them through
+/// `spira_config::process::cfg` at their own top level.
+pub fn notify_live_aeon(id: &str, message: &str, run: &str, mail: &str) {
+    if id.is_empty() || message.is_empty() || run.is_empty() {
         return;
     }
-    let Some(run) = std::env::var("SPIRA_RUN").ok().filter(|r| !r.is_empty()) else { return };
-    let Ok(entries) = std::fs::read_dir(&run) else { return };
+    let Ok(entries) = std::fs::read_dir(run) else { return };
     let suffix = format!("-{id}.pid");
     let mut candidates: Vec<String> = entries
         .filter_map(|e| e.ok())
@@ -161,7 +165,6 @@ pub fn notify_live_aeon(id: &str, message: &str) {
         if !aeon_alive(&format!("{run}/{name}")) {
             continue;
         }
-        let mail = std::env::var("SPIRA_MAIL").unwrap_or_default();
         if !Path::new(&format!("{mail}/aeon-{id}/new")).is_dir() {
             break;
         }
@@ -175,7 +178,7 @@ pub fn aeon_alive(pidfile: &str) -> bool {
 }
 
 fn mail_send(aeon_id: &str, body: &str) {
-    let Ok(mut child) = Command::new("mail")
+    let Ok(mut child) = spira_config::bounded::bounded("mail")
         .args(["send", aeon_id, "--from", "amend <amend@spira>", "--subject", "Update while you work"])
         .env("SPIRA_MAIL_LINT_CONSIDERED", "1")
         .stdin(Stdio::piped())
@@ -239,6 +242,8 @@ mod tests {
             holder: Some(holder.to_string()).filter(|h| !h.is_empty()),
             lease_until: lease,
             holds: vec![],
+            express: false,
+            ..Default::default()
         };
         let live = live_claim(Some(&row("WORKING", "aeon-x", Some(now + 3600))), now).unwrap();
         assert_eq!((live.assignee.as_str(), live.lease.as_str()), ("aeon-x", "2026-10-02T13:00:00Z"));

@@ -65,7 +65,6 @@ pub trait Proc {
 pub trait Clock {
     /// `(unix epoch, ISO-8601 UTC "YYYY-MM-DDTHH:MM:SSZ")`, from ONE read.
     fn now(&self) -> (u64, String);
-    /// Today's date, `YYYY-MM-DD`, in `SPIRA_TZ` (default `TZ`, else UTC) — `synth`'s
-    /// "as of" line.
+    /// Today's date, `YYYY-MM-DD`, in `SPIRA_TZ`'s declared value — `synth`'s "as of" line.
     fn today(&self) -> String;
 }

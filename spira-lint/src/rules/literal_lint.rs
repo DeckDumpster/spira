@@ -1,8 +1,8 @@
 //! `literal-lint` — refuse configured-name literals outside the files that declare them.
 //! Contract: DESIGN.md. Ported from `spira/literal-lint.sh` (deleted).
 
-use std::process::Command;
 
+use std::process::Command;
 use regex::bytes::Regex;
 
 use crate::{lines, trim_lead, Entry, Finding, LintError, Rule, Tree};
@@ -75,17 +75,25 @@ fn configured_names_env(schema: &std::path::Path, extra_env: &[(&str, &str)]) ->
 /// that does not exist, so the names are the tree's declarations plus any override the
 /// environment carries — the same on every box, whatever its config file or its mtimes.
 /// (Unpinned, the same tree flipped between 0 and 5 findings on the gate on mtimes alone.)
+/// SPIRA_TOML is pinned to the TREE's own complete fixture, never the box's file: under one
+/// source of config (per Ryan 2026-10-05) a missing spec is a refusal, so a path that does not
+/// exist would make every schema read fail and fall back to the shipped defaults.
 const BOX_CONFIG_PINS: &[(&str, &str)] = &[
     ("SPIRA_CONF", "/nonexistent/spira-lint/conf"),
-    ("SPIRA_TOML", "/nonexistent/spira-lint/config"),
     ("SPIRA_CHAMBER", "/nonexistent/spira-lint/chamber"),
 ];
+/// The tree's complete fixture, relative to its `spira/schema.sh`.
+const TREE_FIXTURE: &str = "../spira-config/tests/fixtures/complete.toml";
 
 fn run_schema(schema: &std::path::Path, args: &[&str], extra_env: &[(&str, &str)]) -> Option<String> {
+    // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(schema);
     cmd.args(args);
     for (k, v) in BOX_CONFIG_PINS {
         cmd.env(k, v);
+    }
+    if let Some(dir) = schema.parent() {
+        cmd.env("SPIRA_TOML", dir.join(TREE_FIXTURE));
     }
     for (k, v) in extra_env {
         cmd.env(k, v);
@@ -151,6 +159,8 @@ fn exempt(path: &str) -> bool {
     path == OWN_SOURCE
         || b == "schema.sh"
         || b == "conf.sh"
+        // The complete config fixture IS a declaration of every key's value, labels included.
+        || path.starts_with("spira-config/tests/fixtures/")
         // sp-g3uwp: spira/conf.d/<KEY> is conf.sh's own former defaults block, split one
         // file per key — the canonical place a label's default literal is declared, exactly
         // as conf.sh itself already was exempt for. conf.d.keys.generated.sh and
@@ -378,4 +388,10 @@ mod tests {
         let (names, _) = configured_names_env(&schema, &[("HOME", home), ("SPIRA_ASK_LABEL", "needs-env")]);
         assert!(names.contains(&"needs-env".to_string()), "{names:?}");
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(LiteralLint),
+    ]
 }

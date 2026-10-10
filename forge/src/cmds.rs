@@ -118,6 +118,41 @@ pub fn pr_state(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
     ok(vec![word.to_string()])
 }
 
+// ── pr-red ───────────────────────────────────────────────────────────────────────────────
+
+const PR_RED_BAD: [&str; 5] = ["FAILURE", "CANCELLED", "TIMED_OUT", "STALE", "ACTION_REQUIRED"];
+const PR_RED_MAX_LINES: usize = 20;
+
+/// A PR whose required check is red: `head <sha>`, then per failing job `job <name>` and the
+/// `fail-line: <text>` lines of its log. Silent when nothing is red or it cannot be read —
+/// never a guess at red.
+pub fn pr_red(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
+    let r = gh.call(Some(repo), &["pr", "view", selector, "--json", "headRefOid,statusCheckRollup"]);
+    let Some(v) = parse(&r.stdout) else { return ok(vec![]) };
+    let Some(checks) = v.get("statusCheckRollup").and_then(Value::as_array) else { return ok(vec![]) };
+    let mut lines = Vec::new();
+    for c in checks {
+        let concl = jstr(c, "conclusion").unwrap_or_default();
+        if !PR_RED_BAD.contains(&concl.as_str()) {
+            continue;
+        }
+        if lines.is_empty() {
+            lines.push(format!("head {}", jstr(&v, "headRefOid").unwrap_or_default()));
+        }
+        lines.push(format!("job {}", jstr(c, "name").unwrap_or_default()));
+        let job_id = jstr(c, "detailsUrl")
+            .and_then(|u| u.rsplit_once("/job/").map(|(_, id)| id.chars().take_while(char::is_ascii_digit).collect::<String>()))
+            .filter(|id| !id.is_empty());
+        if let Some(id) = job_id {
+            let log = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")]);
+            for l in log.text().lines().filter(|l| l.contains("FAIL") || l.contains("not ok")).take(PR_RED_MAX_LINES) {
+                lines.push(format!("fail-line: {}", l.trim()));
+            }
+        }
+    }
+    ok(lines)
+}
+
 // ── pr-automerge (new) ───────────────────────────────────────────────────────────────────
 
 /// Arms squash auto-merge — `land_pr`'s `ghq pr merge --auto --squash` (DESIGN.md §6).
@@ -164,6 +199,7 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, branch: &str) -> 
 
     let mut jobs_json = String::new();
     let mut build_err_lines: Vec<String> = Vec::new();
+    let mut step_lines: Vec<String> = Vec::new();
     let mut run_attributable = false;
     if status == "green" || status == "red" {
         run_attributable = true;
@@ -182,6 +218,15 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, branch: &str) -> 
             if let Some(build_job_id) = jv.as_ref().and_then(|v| bad_job_id(v, "build")) {
                 let logs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{build_job_id}/logs")]);
                 build_err_lines = extract_build_errors(&logs.text());
+            }
+        }
+        if status == "red" {
+            if let Some(v) = &jv {
+                for (job_id, job, step) in failed_steps(v) {
+                    let logs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs")]);
+                    step_lines.push(format!("failed-step: {job} / {step}"));
+                    step_lines.extend(step_log_tail(&logs.text(), STEP_LOG_TAIL).into_iter().map(|l| format!("step-log: {l}")));
+                }
             }
         }
         if status == "red" {
@@ -211,6 +256,14 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, branch: &str) -> 
     }
     if run_attributable && !run_url.is_empty() {
         lines.push(format!("run-url: {run_url}"));
+    }
+    if run_attributable {
+        if let Some(rid) = &run_id {
+            lines.push(format!("run-id: {rid}"));
+        }
+    }
+    if status == "red" {
+        lines.extend(step_lines);
     }
     for l in &build_err_lines {
         if !l.is_empty() {
@@ -243,6 +296,40 @@ fn job_bad(v: &Value, name: &str) -> bool {
         }
     }
     false
+}
+
+const STEP_LOG_TAIL: usize = 20;
+const MAX_FAILED_JOBS: usize = 3;
+
+/// `(job id, job name, step name)` for the first failed step of each failed job.
+fn failed_steps(v: &Value) -> Vec<(String, String, String)> {
+    let Some(jobs) = v.get("jobs").and_then(Value::as_array) else { return Vec::new() };
+    let mut out = Vec::new();
+    for j in jobs {
+        if jstr(j, "conclusion").as_deref() != Some("failure") {
+            continue;
+        }
+        let (Some(id), Some(name)) = (j.get("id"), jstr(j, "name")) else { continue };
+        let step = j
+            .get("steps")
+            .and_then(Value::as_array)
+            .and_then(|ss| ss.iter().find(|s| jstr(s, "conclusion").as_deref() == Some("failure")))
+            .and_then(|s| jstr(s, "name"))
+            .unwrap_or_else(|| "<unknown step>".into());
+        out.push((id.to_string(), name, step));
+        if out.len() == MAX_FAILED_JOBS {
+            break;
+        }
+    }
+    out
+}
+
+/// The last `n` lines of a job log up to its final `##[error]` line (post-step cleanup after
+/// the failure is dropped), with GitHub's per-line timestamp stripped and blanks removed.
+fn step_log_tail(log: &str, n: usize) -> Vec<String> {
+    let lines: Vec<&str> = log.lines().map(|l| l.split_once(' ').filter(|(t, _)| t.ends_with('Z') && t.contains('T')).map_or(l, |(_, r)| r)).filter(|l| !l.trim().is_empty()).collect();
+    let end = lines.iter().rposition(|l| l.starts_with("##[error]")).map_or(lines.len(), |i| i + 1);
+    lines[end.saturating_sub(n)..end].iter().map(|l| l.to_string()).collect()
 }
 
 fn bad_job_id(v: &Value, name: &str) -> Option<String> {
@@ -631,12 +718,29 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
         if u > 0 {
             lines.push(format!("last-activity: {u}"));
         }
+        let wf = jstr(&v, "path").unwrap_or_default();
+        let sha = jstr(&v, "head_sha").unwrap_or_default();
+        let wf = wf.split('@').next().unwrap_or("");
+        if !wf.is_empty() && !sha.is_empty() {
+            let src = gh.call(Some(repo), &["api", "-H", "Accept: application/vnd.github.raw", &format!("repos/{{owner}}/{{repo}}/contents/{wf}?ref={sha}")]);
+            if src.code == 0 {
+                if let Some(m) = declared_timeout_minutes(&String::from_utf8_lossy(&src.stdout)) {
+                    lines.push(format!("timeout-sec: {}", m * 60));
+                }
+            }
+        }
     }
     let jobs_json = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs")]);
     if let Some(v) = parse(&jobs_json.stdout) {
         if let Some(jobs) = v.get("jobs").and_then(Value::as_array) {
             let mut latest = 0u64;
             for j in jobs {
+                if jstr(j, "completed_at").is_none() && jstr(j, "started_at").is_some() {
+                    if let Some(id) = j.get("id").and_then(Value::as_u64) {
+                        let log = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")]);
+                        latest = latest.max(last_log_stamp(&String::from_utf8_lossy(&log.stdout)));
+                    }
+                }
                 for f in ["started_at", "completed_at"] {
                     let e = epoch(&jstr(j, f).unwrap_or_default());
                     latest = latest.max(e);
@@ -656,6 +760,19 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
         }
     }
     ok(lines)
+}
+
+/// The largest `timeout-minutes:` a workflow file declares (the longest job bounds the run).
+fn declared_timeout_minutes(yaml: &str) -> Option<u64> {
+    yaml.lines()
+        .filter_map(|l| l.trim_start().strip_prefix("timeout-minutes:"))
+        .filter_map(|v| v.split('#').next().unwrap_or("").trim().parse::<u64>().ok())
+        .max()
+}
+
+/// Epoch of the last timestamped line of a job log (`2026-10-10T12:00:00.1234567Z msg`); 0 when none parses.
+fn last_log_stamp(log: &str) -> u64 {
+    log.lines().rev().find_map(|l| l.get(..19).map(epoch).filter(|e| *e > 0)).unwrap_or(0)
 }
 
 // ── run-cancel / workflow-rerun / pr-close / pr-comment / dispatch ─────────────────────────

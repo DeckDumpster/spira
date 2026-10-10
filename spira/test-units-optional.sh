@@ -52,16 +52,18 @@ _units() {
         done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
         path="$shadow"
     fi
+    # SPIRA_WATCHERS no longer derives from SPIRA_HOME (one source of config, per Ryan
+    # 2026-10-05): point it at the real manifest beside this suite, or units-install
+    # refuses outright ("no watcher manifest at /fixture/userhome/...").
+    tl_config SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$TMP/run" \
+        SPIRA_WATCHERS="$HERE/watchers"
     env -i \
         PATH="$path" \
         HOME="$HOME" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$HERE" \
         SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
-        SPIRA_INSTANCE=prod \
-        SPIRA_DOLT_DATA= \
-        SPIRA_TESTDB_DATA= \
         SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
         units-install --list-templates 2>"$TMP/notes" \
         | awk '
             /^UNITS / { units = units " " $2 }

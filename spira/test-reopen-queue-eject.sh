@@ -29,6 +29,9 @@ testdb_require test-reopen-queue-eject
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 gate_fixture_init "$TMP"
 BR=spira/sp-ej1
+mkdir -p "$REPO/spira"; printf '#!/bin/bash\n' > "$REPO/spira/test-other.sh"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base: the suite the sidecar names"
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 gate_fixture_branch "$BR"
 
 # HOST MAILBOX SENTINEL (sp-rya9d): models whatever SPIRA_MAIL an outer process (an aeon
@@ -86,9 +89,9 @@ is "no eject history: nothing reaches the gate command" "" "$(seen_ejected sp-no
 # RUN, so its ejected/ is the directory gate.sh's subprocess below reads.
 # ---------------------------------------------------------------------------
 _hostmail_before="$(_maildir_count "$HOSTMAIL/concierge")"
+tl_config SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}"
 (
-    export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
-           SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
+    export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE"
     . "$HERE/lib.sh"
     bead_reopen sp-ej1 eject-red "" test-other.sh >/dev/null 2>&1
 )

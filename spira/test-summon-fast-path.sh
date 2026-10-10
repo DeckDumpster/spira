@@ -57,10 +57,15 @@ trap _fastpath_cleanup EXIT
 trap '_fastpath_cleanup; trap - INT; kill -INT $$' INT
 trap '_fastpath_cleanup; trap - TERM; kill -TERM $$' TERM
 mkdir -p "$T/run" "$T/chamber" "$T/bin"
-export SPIRA_RUN="$T/run"
+# lib.sh sources conf.sh, which resolves every registered key straight from SPIRA_TOML
+# (inherited here — this is the main suite shell, not under env -i), so these are declared
+# through tl_config rather than export, or conf.sh's own resolve would overwrite them right
+# back to the fixture's values the moment lib.sh is sourced below.
+# SPIRA_CHAMBER too — the fixture declares a fixed, nonexistent path; nothing derives it
+# from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db" SPIRA_CHAMBER="$T/chamber"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T" PATH="$T:$PATH"
-export SPIRA_DB="$T/no-db"
 
 # `summon_argv` (section E) is a `sentinel --summon-argv` shim now (wave 4.27, family G,
 # sp-gzmd2) — a real subprocess with SPIRA_HOME=$T, which needs a working $T/lib.sh to
@@ -106,7 +111,7 @@ is "positive control: no unit at all -> aeon_count returns 0" "0" "$(aeon_count 
 # pidfile yet (it writes one only after claiming a bead) — the fast path must still see
 # this aeon as live, or a second summon lands on a slot that is not actually free.
 printf 'spira-aeon-builder-1700000000.service\n' > "$MOCK_UNITS_FILE"
-rm -f "$SPIRA_RUN"/aeon-builder-*.pid
+rm -f "$SPIRA_RUN"/aeon-builder-*.pid "$SPIRA_RUN"/aeon-builder-*.lease
 is "the pidfile gap: a live unit with NO pidfile still counts as 1" "1" "$(aeon_count builder)"
 
 # PRECISION: a unit for a DIFFERENT fayth does not count toward this one.
@@ -178,6 +183,7 @@ _wait_execed_as() {   # _wait_execed_as <pid> <needle> -> 0 once /proc/<pid>/cmd
 }
 _wait_execed_as "$FAKE_AEON_PID" "aeon.sh" || bail "fixture never exec'd into aeon.sh"
 printf '%s' "$FAKE_AEON_PID" > "$SPIRA_RUN/aeon-builder-sp-fallback.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-builder-sp-fallback.lease"
 is "fallback: a live pidfile still counts (no real systemd needed)" "1" "$(aeon_count builder)"
 kill "$FAKE_AEON_PID" 2>/dev/null; wait "$FAKE_AEON_PID" 2>/dev/null
 rm -f "$SPIRA_RUN"/aeon-builder-*.pid
@@ -285,14 +291,18 @@ chmod +x "$LCBIN/spira-lc"
 run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
     local run="$1"; shift
     mkdir -p "$run"
+    tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$DSTUBS/counting-bd" \
+        SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL="" SPIRA_MAX_AEONS=2 \
+        SPIRA_CHAMBER="$DSTUBS/chamber"
+    # SPIRA_DB/SPIRA_BD also passed literally: the spira-lc stub chain (lc_mirror_bd,
+    # wrapped by LCBIN's counting shim) is plain bash reading them straight from its own
+    # environment, never through spira-config (sfail round 3, pattern 8).
     env -i \
-        PATH="$PATH" HOME="$HOME" \
-        SPIRA_HOME="$DSTUBS" PATH="$LCBIN:$DSTUBS:$PATH" \
-        SPIRA_RUN="$run" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$DSTUBS/counting-bd" \
+        PATH="$LCBIN:$DSTUBS:$PATH" HOME="$HOME" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$DSTUBS" \
         SPIRA_SUMMON="$DSTUBS/mock-summon" \
-        SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=2 \
+        SPIRA_DB="$SPIRA_DB" SPIRA_BD="$DSTUBS/counting-bd" \
         "$@" \
         sentinel --summon-only 2>&1
 }
@@ -367,8 +377,8 @@ export SPIRA_SUMMON="$T/bin/mock-summon-noop"   # already an absolute path; crea
 sentinel_path="$(PATH="$T/bin:$PATH" command -v sentinel)"
 argv="$(PATH="$T/bin:$PATH" summon_argv racer | tr '\n' ' ')"
 case "$argv" in
-    *"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $sentinel_path --summon-only"*)
-        ok "summon_argv: ExecStopPost refills via --summon-only, not a full pass" ;;
+    *"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet "*"--setenv=SPIRA_TOML="*" $sentinel_path --summon-only"*)
+        ok "summon_argv: ExecStopPost refills via --summon-only, not a full pass, with SPIRA_TOML" ;;
     *) bad "summon_argv: ExecStopPost refills via --summon-only" "got: $argv (sentinel resolved to $sentinel_path)" ;;
 esac
 unset SPIRA_SUMMON 2>/dev/null || true

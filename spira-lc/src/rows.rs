@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 
+use lifecycle::ask::{AskRow, AskState};
 use lifecycle::batch::{BatchRow, BatchState};
 use lifecycle::bead::{BeadRow, BeadState, HoldKind};
 use lifecycle::delivery::{DeliveryRow, DeliveryState, Exit, Mode};
@@ -37,7 +38,7 @@ fn json_col(row: &Value, col: &str) -> Value {
 
 pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError> {
     let rows = conn.query(&format!(
-        "SELECT bead_id, state, tip, gate_key, holder, lease_until, holds, reason, version, stack, stack_depth, since FROM bead WHERE bead_id = '{}'",
+        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip FROM bead WHERE bead_id = '{}'",
         escape(bead_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
@@ -57,6 +58,7 @@ pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError
         tip: text(row, "tip"),
         gate_key: text(row, "gate_key"),
         holder: text(row, "holder"),
+        persona: text(row, "persona"),
         lease_until: number(row, "lease_until"),
         holds,
         reason: text(row, "reason"),
@@ -64,6 +66,12 @@ pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError
         stack,
         stack_depth: number(row, "stack_depth").unwrap_or(0) as u32,
         since: number(row, "since"),
+        express: number(row, "express").is_some_and(|n| n != 0),
+        phase: text(row, "aeon_phase").as_deref().and_then(lifecycle::bead::AeonPhase::from_str),
+        disposition: text(row, "disposition").as_deref().and_then(lifecycle::bead::DispositionStatus::from_str),
+        disposition_note: text(row, "disposition_note"),
+        ejected_red_tip: text(row, "ejected_red_tip"),
+        sifted_tip: text(row, "sifted_tip"),
     }))
 }
 
@@ -71,11 +79,12 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
     let holds_json = Value::Array(row.holds.iter().map(|h| Value::String(h.as_str().to_string())).collect());
     let stack_json = Value::Object(row.stack.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect());
     format!(
-        "state = '{}', tip = {}, gate_key = {}, holder = {}, lease_until = {}, holds = '{}', reason = {}, version = {}, stack = '{}', stack_depth = {}, since = {}, updated_at = {}",
+        "state = '{}', tip = {}, gate_key = {}, holder = {}, persona = {}, lease_until = {}, holds = '{}', reason = {}, version = {}, stack = '{}', stack_depth = {}, since = {}, express = {}, aeon_phase = {}, disposition = {}, disposition_note = {}, ejected_red_tip = {}, sifted_tip = {}, updated_at = {}",
         row.state.as_str(),
         opt_str(&row.tip),
         opt_str(&row.gate_key),
         opt_str(&row.holder),
+        opt_str(&row.persona),
         opt_num(row.lease_until),
         holds_json,
         opt_str(&row.reason),
@@ -83,13 +92,19 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
         stack_json,
         row.stack_depth,
         opt_num(row.since),
+        u8::from(row.express),
+        row.phase.map_or_else(|| "NULL".to_string(), |p| format!("'{}'", p.as_str())),
+        row.disposition.map_or_else(|| "NULL".to_string(), |d| format!("'{}'", d.as_str())),
+        opt_str(&row.disposition_note),
+        opt_str(&row.ejected_red_tip),
+        opt_str(&row.sifted_tip),
         crate::db::now_epoch(),
     )
 }
 
 pub fn fetch_delivery(conn: &Conn, bead_id: &str) -> Result<Option<DeliveryRow>, DbError> {
     let rows = conn.query(&format!(
-        "SELECT bead_id, mode, state, batch_id, pr, merge_sha, version FROM delivery WHERE bead_id = '{}'",
+        "SELECT bead_id, mode, state, batch_id, pr, merge_sha, ci, version FROM delivery WHERE bead_id = '{}'",
         escape(bead_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
@@ -105,6 +120,7 @@ pub fn fetch_delivery(conn: &Conn, bead_id: &str) -> Result<Option<DeliveryRow>,
         pr: number(row, "pr").map(|n| n as u64),
         merge_sha: text(row, "merge_sha"),
         exit: None,
+        ci: text(row, "ci").and_then(|c| lifecycle::delivery::CiState::from_str(&c)),
         version: number(row, "version").unwrap_or(0) as u64,
     }))
 }
@@ -118,18 +134,19 @@ pub fn delivery_set_clause(row: &DeliveryRow) -> String {
     };
     let _ = exit_note; // the exit itself is recorded on the event, not on this cache row.
     format!(
-        "state = '{}', batch_id = {}, pr = {}, merge_sha = {}, version = {}",
+        "state = '{}', batch_id = {}, pr = {}, merge_sha = {}, ci = {}, version = {}",
         row.state.as_str(),
         opt_str(&row.batch_id),
         opt_num(row.pr.map(|n| n as i64)),
         opt_str(&row.merge_sha),
+        opt_str(&row.ci.map(|c| c.as_str().to_string())),
         row.version,
     )
 }
 
 pub fn fetch_batch(conn: &Conn, batch_id: &str) -> Result<Option<BatchRow>, DbError> {
     let rows = conn.query(&format!(
-        "SELECT batch_id, repo, state, parent, head, base, run, reason, version FROM batch WHERE batch_id = '{}'",
+        "SELECT batch_id, repo, state, parent, head, base, run, reason, pass, phase, version FROM batch WHERE batch_id = '{}'",
         escape(batch_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
@@ -144,20 +161,55 @@ pub fn fetch_batch(conn: &Conn, batch_id: &str) -> Result<Option<BatchRow>, DbEr
         base: text(row, "base"),
         run: text(row, "run"),
         reason: text(row, "reason"),
+        pass: number(row, "pass").unwrap_or(0) as u32,
+        phase: text(row, "phase").as_deref().and_then(lifecycle::batch::BatchPhase::from_str),
         version: number(row, "version").unwrap_or(0) as u64,
     }))
 }
 
 pub fn batch_set_clause(row: &BatchRow) -> String {
     format!(
-        "state = '{}', parent = {}, head = {}, base = {}, run = {}, reason = {}, version = {}",
+        "state = '{}', parent = {}, head = {}, base = {}, run = {}, reason = {}, pass = {}, phase = {}, version = {}",
         row.state.as_str(),
         opt_str(&row.parent),
         opt_str(&row.head),
         opt_str(&row.base),
         opt_str(&row.run),
         opt_str(&row.reason),
+        row.pass,
+        opt_str(&row.phase.map(|p| p.as_str().to_string())),
         row.version,
+    )
+}
+
+pub fn fetch_ask(conn: &Conn, ask_id: &str) -> Result<Option<AskRow>, DbError> {
+    let rows = conn.query(&format!(
+        "SELECT ask_id, state, work_bead, closed_by, quote, channel, version FROM ask WHERE ask_id = '{}'",
+        escape(ask_id)
+    ))?;
+    let Some(row) = rows.first() else { return Ok(None) };
+    let state = AskState::from_str(&text(row, "state").unwrap_or_default())
+        .ok_or_else(|| DbError::CannotTell(format!("bad state in ask row: {row}")))?;
+    Ok(Some(AskRow {
+        ask_id: ask_id.to_string(),
+        state,
+        work_bead: text(row, "work_bead"),
+        closed_by: text(row, "closed_by"),
+        quote: text(row, "quote"),
+        channel: text(row, "channel"),
+        version: number(row, "version").unwrap_or(0) as u64,
+    }))
+}
+
+pub fn ask_set_clause(row: &AskRow) -> String {
+    format!(
+        "state = '{}', closed_by = {}, quote = {}, channel = {}, version = {}, closed_at = {}",
+        row.state.as_str(),
+        opt_str(&row.closed_by),
+        opt_str(&row.quote),
+        opt_str(&row.channel),
+        row.version,
+        if row.state.is_terminal() { crate::db::now_epoch().to_string() } else { "NULL".to_string() },
     )
 }
 

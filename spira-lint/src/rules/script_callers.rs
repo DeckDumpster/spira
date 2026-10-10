@@ -7,7 +7,7 @@
 //! czar-pass each defaulted `SPIRA_FORGE` to the retired `forge.sh`, and nothing at the gate
 //! had read a Rust source for the name of a script.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
@@ -683,3 +683,9 @@ mod tests {
     }
 }
 
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ScriptCallers::default()),
+    ]
+}

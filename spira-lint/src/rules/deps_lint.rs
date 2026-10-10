@@ -19,7 +19,7 @@ pub const SYSTEM_ALLOW: &[&str] = &[
     "bash", "sh", "dash", "env", "true", "false", "sort", "cut", "awk", "gawk", "sed", "grep", "find", "cat",
     "echo", "printf", "date", "kill", "sleep", "wait", "read", "test", "mkdir", "rmdir", "rm", "mv", "cp", "ln", "df",
     "stat", "sha256sum", "wc", "tr", "head", "tail", "tee", "diff", "patch", "timeout", "curl", "gcc", "nc", "ps",
-    "dirname", "basename",
+    "dirname", "basename", "ionice", "nice",
     "setsid", "pgrep", "fuser", "script", "systemctl", "systemd-run", "stty", "loginctl", "id", "getent", "install",
     "nodejs", // an alternate name for node on some platforms
     "gate_meter", "yield_note", "fayth_names", // shell functions, not programs
@@ -197,4 +197,10 @@ mod tests {
         t.write(MANIFEST, "[[dep]\n");
         assert!(matches!(run(&t, &[MANIFEST, "spira/y.sh"]), Err(LintError::BadAllow { .. })));
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(DepsLint),
+    ]
 }

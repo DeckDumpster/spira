@@ -79,9 +79,10 @@ write_sc
 run() {   # run <world.sh args...> -> sets $out and $rc
     : > "$CALLS"
     rc=0
-    out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no.conf" \
-           SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl" \
-           SPIRA_CTRL="$TMP/ctrl.json" SPIRA_INSTANCE=prod \
+    tl_config SPIRA_PROD="$SH" SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" \
+        SPIRA_CTRL="$TMP/ctrl.json" SPIRA_INSTANCE=prod
+    out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_CONF="$TMP/no.conf" \
+           SPIRA_SYSTEMCTL="$TMP/systemctl" \
            "$SH/world.sh" "$@" 2>&1)" || rc=$?
 }
 

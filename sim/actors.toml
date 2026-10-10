@@ -1,0 +1,42 @@
+[[actor]]
+name = "landing-pass"
+command = "landing-pass --pass"
+timer = "spira-landing-pass.timer"
+duration = "land.land-local"
+
+[[actor]]
+name = "gate-worker"
+command = "gate-worker run"
+timer = "spira-gate-worker.timer"
+duration = "gate.ran"
+staged = true
+
+[[actor]]
+name = "sentinel-summon"
+command = "sim summon"
+timer = "spira-sentinel.timer"
+duration = "land.phase.tools"
+
+[[actor]]
+name = "sentinel-landing"
+command = "landing-pass land"
+timer = "spira-sentinel.timer"
+duration = "land.land-local"
+
+[[actor]]
+name = "sift"
+command = "batcher sifts"
+timer = "spira-sift.timer"
+duration = "land.phase.fences"
+
+[[actor]]
+name = "rounds"
+command = "batcher rounds"
+timer = "spira-rounds.timer"
+duration = "land.phase.gate"
+
+[[actor]]
+name = "publish"
+command = "queue publish-settle"
+timer = "spira-publish.timer"
+duration = "land.phase.tools"

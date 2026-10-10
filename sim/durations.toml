@@ -1,0 +1,76 @@
+[series."gate.ran"]
+n = 5488
+mu = 4.115621298857822
+sigma = 2.3478472536116963
+min = 1.0
+max = 5821.0
+
+[series."land.land-local"]
+n = 202
+mu = 2.9301697275539
+sigma = 0.47197894831374737
+min = 1.0
+max = 117.0
+
+[series."land.phase.base-fences"]
+n = 7
+mu = 4.6963148647880475
+sigma = 1.544014676868408
+min = 28.0
+max = 637.0
+
+[series."land.phase.build"]
+n = 87
+mu = 2.0708783709636447
+sigma = 1.2176927057671982
+min = 1.0
+max = 119.0
+
+[series."land.phase.fences"]
+n = 122
+mu = 3.173204204513109
+sigma = 0.366369508098581
+min = 12.0
+max = 60.0
+
+[series."land.phase.gate"]
+n = 81
+mu = 5.172618408807832
+sigma = 1.017895826597795
+min = 16.0
+max = 648.0
+
+[series."land.phase.reentry"]
+n = 9
+mu = 4.78772488307601
+sigma = 0.19758046607862115
+min = 93.0
+max = 150.0
+
+[series."land.phase.release-bins"]
+n = 138
+mu = 3.472394264238095
+sigma = 2.1103417690546316
+min = 1.0
+max = 923.0
+
+[series."land.phase.test"]
+n = 89
+mu = 2.2583869297655967
+sigma = 1.5533758869336418
+min = 1.0
+max = 177.0
+
+[series."land.phase.tools"]
+n = 150
+mu = 2.782642494606008
+sigma = 0.9321948118569551
+min = 1.0
+max = 2077.0
+
+[series."land.total"]
+n = 203
+mu = 5.431005386000773
+sigma = 0.7462875217081413
+min = 41.0
+max = 2293.0

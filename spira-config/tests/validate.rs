@@ -106,8 +106,8 @@ mod spira_section {
 
     #[test]
     fn unknown_key() {
-        let err = validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nspelled_rong = 1\n").unwrap_err();
-        assert!(err.starts_with("spira.spelled_rong"), "{err}");
+        let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nspelled_rong = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.spelled_rong")), "{w:?}");
     }
 
     #[test]
@@ -246,9 +246,9 @@ mod retired_keys {
     }
 
     #[test]
-    fn a_misspelt_key_still_fails() {
-        let err = validate("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap_err();
-        assert!(err.starts_with("spira.queue_batch_idle_cutt"), "{err}");
+    fn a_misspelt_key_warns_and_is_ignored() {
+        let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.queue_batch_idle_cutt")), "{w:?}");
     }
 
     #[test]
@@ -307,11 +307,11 @@ mod repo_section {
 
     #[test]
     fn unknown_key() {
-        let err = validate(
+        let (_, w) = spira_config::validate_with_warnings(
             "[repo.home]\npath = \"/srv/checkouts/home\"\nmode = \"push\"\nnickname = \"x\"\n",
         )
-        .unwrap_err();
-        assert!(err.starts_with("repo.home.nickname"), "{err}");
+        .unwrap();
+        assert!(w.iter().any(|m| m.starts_with("repo.home.nickname")), "{w:?}");
     }
 
     #[test]
@@ -347,10 +347,11 @@ mod persona_section {
 
     #[test]
     fn unknown_key() {
-        let err =
-            validate("[persona.builder]\nmodel = \"claude-sonnet-5\"\nfavorite_color = \"blue\"\n")
-                .unwrap_err();
-        assert!(err.starts_with("persona.builder.favorite_color"), "{err}");
+        let (_, w) = spira_config::validate_with_warnings(
+            "[persona.builder]\nmodel = \"claude-sonnet-5\"\nfavorite_color = \"blue\"\n",
+        )
+        .unwrap();
+        assert!(w.iter().any(|m| m.starts_with("persona.builder.favorite_color")), "{w:?}");
     }
 
     #[test]
@@ -389,4 +390,48 @@ fn a_non_batcher_batcher_bin_is_read_as_batcher_enable_0() {
     assert_eq!(doc.spira.as_ref().unwrap().batcher_enable, None);
     let (doc, _) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/bin/true\"\nbatcher_enable = \"1\"\n").unwrap();
     assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("1"));
+}
+
+#[test]
+fn the_cli_accepts_a_key_a_newer_release_wrote_with_a_warning() {
+    let dir = testkit::TempDir::new("spira-newer-key");
+    let f = dir.path().join("spira.toml");
+    std::fs::write(&f, "[spira]\nid_prefix = \"sp\"\nadmit_stagger_secs_from_the_future = 3\n").unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_spira-config")).arg("validate").arg(&f).output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(err.contains("warning") && err.contains("admit_stagger_secs_from_the_future") && err.contains("newer release"), "{err}");
+    std::fs::write(&f, "[spira]\nid_prefix = \"sp\"\nadmit_stagger_secs_from_the_future = 3\nmax_aeons = true\n").unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_spira-config")).arg("validate").arg(&f).output().unwrap();
+    assert!(!out.status.success(), "a malformed known value must still refuse");
+}
+
+const MODELS: &str = "[persona.ops]\nmodel = \"claude-x\"\n[persona.warden]\nmodel = \"claude-x\"\n";
+
+#[test]
+fn strict_validation_refuses_a_rostered_persona_with_no_declared_model() {
+    let roster = "[spira]\nid_prefix = \"sp\"\nfayths = [\"ops\", \"warden\"]\n[persona.ops]\nmodel = \"claude-x\"\n";
+    let err = spira_config::validate_strict(roster).unwrap_err();
+    assert!(err.contains("persona.warden.model"), "{err}");
+    spira_config::validate_strict(&format!("{roster}[persona.warden]\nmodel = \"claude-x\"\n")).expect("every rostered persona declares a model");
+}
+
+#[test]
+fn strict_validation_refuses_a_declared_lane_the_roster_omits() {
+    let base = "[spira]\nid_prefix = \"sp\"\nlanes = \"ops warden\"\n";
+    let omits = format!("{base}fayths = [\"ops\", \"builder\"]\n");
+    let err = spira_config::validate_strict(&omits).unwrap_err();
+    assert!(err.contains("spira.lanes") && err.contains("spira.fayths") && err.contains("warden"), "{err}");
+    let covers = format!("{base}fayths = [\"ops\", \"warden\"]\n{MODELS}");
+    spira_config::validate_strict(&covers).expect("a roster naming every lane passes");
+    spira_config::validate_strict(base).expect("no explicit roster means every chamber fayth");
+}
+
+#[test]
+fn strict_validation_refuses_a_timer_partition_label_whose_persona_is_unrostered() {
+    let omits = "[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nfayths = [\"ops\"]\n";
+    let err = spira_config::validate_strict(omits).unwrap_err();
+    assert!(err.contains("spira.warden_label") && err.contains("spira.fayths"), "{err}");
+    let ok = format!("[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nfayths = [\"ops\", \"warden\"]\n{MODELS}");
+    spira_config::validate_strict(&ok).expect("rostered");
 }

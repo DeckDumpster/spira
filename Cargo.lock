@@ -126,10 +126,14 @@ version = "0.1.0"
 dependencies = [
  "batcher",
  "gate",
+ "lifecycle",
+ "migration-numbers",
  "serde_json",
+ "sift",
  "spira-config",
  "suite-select",
  "testkit",
+ "tsd",
 ]
 
 [[package]]
@@ -149,6 +153,7 @@ name = "beads-store"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -234,8 +239,13 @@ dependencies = [
 name = "cockpit-ops"
 version = "1.0.0"
 dependencies = [
+ "bead",
+ "crossterm",
  "libc",
  "regex",
+ "sending",
+ "serde",
+ "serde_json",
  "spira-config",
  "testkit",
 ]
@@ -439,6 +449,7 @@ version = "1.0.0"
 dependencies = [
  "landing-pass",
  "libc",
+ "spira-config",
  "testkit",
 ]
 
@@ -467,6 +478,7 @@ dependencies = [
 name = "gh-intake"
 version = "1.0.0"
 dependencies = [
+ "lifecycle",
  "serde_json",
  "sha2",
  "spira-config",
@@ -582,10 +594,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "inbox-triage"
+name = "inbox-rules"
 version = "1.0.0"
 dependencies = [
  "regex",
+]
+
+[[package]]
+name = "inbox-triage"
+version = "1.0.0"
+dependencies = [
+ "inbox-rules",
  "serde_json",
  "spira-config",
  "testkit",
@@ -628,6 +647,7 @@ name = "intent-report"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "spira-config",
  "tsd",
 ]
 
@@ -717,6 +737,7 @@ name = "loom"
 version = "1.0.0"
 dependencies = [
  "axum",
+ "cockpit-ops",
  "serde_json",
  "spira-config",
  "testkit",
@@ -758,6 +779,13 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "migration-numbers"
+version = "0.1.0"
+dependencies = [
+ "testkit",
+]
 
 [[package]]
 name = "mime"
@@ -833,6 +861,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "perf-watch"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -877,7 +914,9 @@ name = "queue"
 version = "1.0.0"
 dependencies = [
  "gate",
+ "landing-pass",
  "libc",
+ "migration-numbers",
  "release",
  "serde",
  "serde_json",
@@ -956,12 +995,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "reclaim"
+version = "0.1.0"
+dependencies = [
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "reconciler"
 version = "1.0.0"
 dependencies = [
  "reconciler-engine",
  "serde_json",
  "spira-config",
+ "spira-ctrl",
  "spira-desired-state",
  "testkit",
 ]
@@ -982,6 +1030,7 @@ version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -1004,6 +1053,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "refusal-watch"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -1156,6 +1214,7 @@ version = "1.0.0"
 dependencies = [
  "axum",
  "httpdate",
+ "spira-config",
  "testkit",
  "tokio",
 ]
@@ -1205,6 +1264,7 @@ version = "1.0.0"
 dependencies = [
  "aeon",
  "libc",
+ "sending",
  "serde",
  "serde_json",
  "sha2",
@@ -1305,6 +1365,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "sift"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "signal-hook"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1338,11 +1407,18 @@ dependencies = [
 [[package]]
 name = "sim"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "spira-config",
+ "testkit",
+ "toml",
+]
 
 [[package]]
 name = "skew"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "spira-config",
 ]
 
@@ -1402,6 +1478,7 @@ dependencies = [
  "serde_path_to_error",
  "testkit",
  "toml",
+ "toml_edit",
  "tsd",
 ]
 
@@ -1424,6 +1501,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "sha2",
+ "spira-config",
  "testkit",
  "toml",
 ]
@@ -1453,6 +1531,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "spira-sim"
+version = "0.1.0"
+dependencies = [
+ "queue",
+ "serde",
+ "serde_json",
+ "sim",
+ "spira-config",
+ "testkit",
+ "toml",
+]
+
+[[package]]
 name = "spira-supervise"
 version = "1.0.0"
 dependencies = [
@@ -1465,6 +1556,7 @@ dependencies = [
 name = "spira-world"
 version = "1.0.0"
 dependencies = [
+ "sending",
  "serde_json",
  "spira-config",
  "spira-ctrl",
@@ -1697,6 +1789,7 @@ dependencies = [
  "lifecycle",
  "serde",
  "serde_json",
+ "spira-config",
 ]
 
 [[package]]
@@ -1790,6 +1883,7 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 name = "watchd"
 version = "1.0.0"
 dependencies = [
+ "inbox-rules",
  "libc",
  "regex",
  "serde_json",
@@ -1801,9 +1895,11 @@ dependencies = [
 name = "watchtower"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "spira-config",
+ "spira-ctrl",
  "testkit",
 ]
 

@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=testenv
+DOC=HOW LONG A WORKTREE MUST BE UNTOUCHED BEFORE target-reap TAKES ITS target/.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A WORKTREE MUST BE UNTOUCHED BEFORE target-reap TAKES ITS target/. Idle means no
+    # live process in it and no file outside target/ modified this many seconds.
+    : "${SPIRA_REAP_IDLE_SECS:=21600}"
+SPIRA_CONF_DEFAULT_EOF

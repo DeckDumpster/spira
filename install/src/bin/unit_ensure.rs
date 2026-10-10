@@ -16,7 +16,7 @@ fn main() -> ExitCode {
 
     if diff {
         // unit-ensure.sh --diff execs install.sh --diff — the same diff, from units-install.
-        let status = std::process::Command::new("units-install").arg(&instance).arg("--diff").status();
+        let status = spira_config::bounded::bounded("units-install").arg(&instance).arg("--diff").status();
         return match status {
             Ok(s) => ExitCode::from(s.code().unwrap_or(1) as u8),
             Err(e) => {
@@ -53,7 +53,7 @@ fn main() -> ExitCode {
     let no_suspend = |_: &str| false; // unit-ensure.sh never read ctrl.sh's suspended set either.
     let ctx = Ctx { unit_dir: &dir, templates_dir: &templates_dir, host: &host, manifest: &manifest, systemctl: &systemctl, suspended: &no_suspend, world_halted, skip_migrate_watchers: false };
 
-    let r = ensure::run(&ctx);
+    let r = ensure::run(&ctx, bootstrap::declared("SPIRA_BROKER_ENABLE").is_some_and(|v| v == "1"));
     for e in &r.errors {
         eprintln!("unit-ensure: {e}");
     }

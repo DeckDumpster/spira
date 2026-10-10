@@ -20,7 +20,8 @@ use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "usage: release acceptance <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
                           [--notes-repo <path>] [--file-defects] [--bd-db <path>] [--agent <path>]
-                          [--waive-upgrade] [--tarball <path>] [--prev-tarball <path>]";
+                          [--waive-upgrade] [--tarball <path>] [--prev-tarball <path>]
+                          [--aged-tag <tag> [--aged-tarball <path>]]";
 
 /// The binaries every release must ship executable in `bin/` (phase A, and its positive control).
 pub const RELEASE_BINS: &[&str] = &["loom", "panel", "broker", "spira-supervise", "landing-pass"];
@@ -28,6 +29,9 @@ pub const RELEASE_BINS: &[&str] = &["loom", "panel", "broker", "spira-supervise"
 /// Phase D's operator override: a REAL key conf.sh honours (an unknown one is refused, so it
 /// would never be in force), whose non-default value changes nothing on an acceptance box.
 pub const OVERRIDE_KEY: &str = "SPIRA_CHECK5_MAX_FILE";
+
+/// The note line that records an upgrade waiver on the cut it was given for.
+pub const WAIVER_LINE: &str = "upgrade phases waived by operator";
 
 /// What the caller asked for (the command line), before anything is resolved.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -42,6 +46,8 @@ pub struct Args {
     pub agent: Option<String>,
     pub tarball: Option<PathBuf>,
     pub prev_tarball: Option<PathBuf>,
+    pub aged_tag: Option<String>,
+    pub aged_tarball: Option<PathBuf>,
     pub notes_repo: Option<PathBuf>,
 }
 
@@ -69,6 +75,8 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--scratch-repo" => scratch = Some(val()?.into()),
             "--tarball" => a.tarball = Some(val()?.into()),
             "--prev-tarball" => a.prev_tarball = Some(val()?.into()),
+            "--aged-tarball" => a.aged_tarball = Some(val()?.into()),
+            "--aged-tag" => a.aged_tag = Some(val()?).filter(|s| !s.is_empty()),
             "--prev-tag" => a.prev_tag = Some(val()?).filter(|s| !s.is_empty()),
             "--bd-db" => a.bd_db = Some(val()?.into()),
             "--agent" => a.agent = Some(val()?).filter(|s| !s.is_empty()),
@@ -93,6 +101,14 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     // take when no predecessor exists.
     if a.waive_upgrade {
         a.prev_tag = None;
+        a.aged_tag = None;
+        a.aged_tarball = None;
+    }
+    if a.aged_tag.is_some() && a.prev_tag.is_none() {
+        return Err("--aged-tag needs --prev-tag: it only replaces phase D's base".into());
+    }
+    if a.aged_tarball.is_some() && a.aged_tag.is_none() {
+        return Err("--aged-tarball needs --aged-tag".into());
     }
     Ok(a)
 }
@@ -127,8 +143,13 @@ impl Opts {
     pub fn release_src(&self) -> PathBuf {
         self.tmp.join("release-source")
     }
-    pub fn conf(&self) -> PathBuf {
-        self.xdg_config.join("spira/spira.conf")
+    /// The one config: where `release install-tarball` produces it on a fresh box.
+    pub fn toml(&self) -> PathBuf {
+        spira_config::toml_path_at(&self.xdg_config.join("spira"))
+    }
+    /// The operator's answers phase A hands the installer (`Run::answers_text`).
+    pub fn answers(&self) -> PathBuf {
+        self.tmp.join("answers")
     }
     pub fn scratch_name(&self) -> String {
         self.a.scratch_repo.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
@@ -262,7 +283,7 @@ impl<'h> Run<'h> {
         let run = &self.o.spira_run;
         if run.is_dir() {
             put("run-listing.txt", Cmd::new("ls").arg("-laR").arg(run.display().to_string()));
-            for f in files_named(run, |n| n.ends_with(".log")) {
+            for f in files_named(run, |n| n.ends_with(".log") && !is_secret(n)) {
                 if let Some(n) = f.file_name() {
                     let _ = fs::copy(&f, dir.join(n));
                 }
@@ -273,7 +294,7 @@ impl<'h> Run<'h> {
         }
         // The instance's whole config directory (its conf and repository map), file by file.
         if let Ok(rd) = fs::read_dir(self.o.xdg_config.join("spira")) {
-            for e in rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())) {
+            for e in rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file()) && !is_secret(&e.file_name().to_string_lossy())) {
                 let _ = fs::copy(e.path(), dir.join(e.file_name()));
             }
         }
@@ -285,6 +306,12 @@ impl<'h> Run<'h> {
         put("df.txt", Cmd::new("df").arg("-h"));
         println!("snapshot: {}", dir.display());
     }
+}
+
+/// A forensics snapshot is uploaded as an artifact, so a credential-named file is never collected.
+pub fn is_secret(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.contains("credential") || n.contains("password") || n.contains("secret") || n.contains("token") || n.ends_with(".key") || n.ends_with(".pem")
 }
 
 /// The first whitespace-separated field of every non-empty line.
@@ -349,17 +376,6 @@ pub fn bd_json(out: &str) -> Option<Vec<serde_json::Value>> {
         v @ serde_json::Value::Object(_) => Some(vec![v]),
         _ => None,
     }
-}
-
-/// Whether `bd show <id> --json` says the aeon's close is recorded: status closed, or open
-/// carrying `spira-submitted` (sp-qsona: only the landing pass closes a work bead).
-/// Unreadable is not finished.
-pub fn bead_finished(show_json: &str) -> bool {
-    let Some(v) = bd_json(show_json) else { return false };
-    let Some(r) = v.first() else { return false };
-    let closed = r.get("status").and_then(|s| s.as_str()) == Some("closed");
-    let submitted = r.get("labels").and_then(|l| l.as_array()).is_some_and(|l| l.iter().any(|x| x.as_str() == Some("spira-submitted")));
-    closed || submitted
 }
 
 /// Whether a lifecycle history (`lifecycle_states`) shows the model's work handed off: it
@@ -431,27 +447,24 @@ pub fn land_modes_missing(modes: &[String]) -> Vec<&'static str> {
     LAND_MODES.iter().copied().filter(|m| !modes.iter().any(|x| if *m == "queue" { is_queue_mode(x) } else { x == m })).collect()
 }
 
+/// Units installed only while `SPIRA_REPO` is a git checkout. A deploy re-renders under the
+/// release directory, which is not one, so an upgrade and a rollback never keep these.
+const GIT_CHECKOUT_UNITS: [&str; 2] = ["spira-cert-sweep-", "spira-round-template-"];
+
 /// The installed `spira-*` unit files, "name state" per line, sorted; transient units
-/// excluded (a landing pass alive at snapshot time is not part of an install).
+/// excluded (a landing pass alive at snapshot time is not part of an install), and so are
+/// the `GIT_CHECKOUT_UNITS`.
 pub fn unit_set(list_unit_files: &str) -> Vec<String> {
     let mut v: Vec<String> = list_unit_files
         .lines()
         .filter_map(|l| {
             let mut f = l.split_whitespace();
             let (n, s) = (f.next()?, f.next().unwrap_or(""));
-            (n.starts_with("spira-") && s != "transient").then(|| format!("{n} {s}"))
+            (n.starts_with("spira-") && s != "transient" && !GIT_CHECKOUT_UNITS.iter().any(|p| n.starts_with(p))).then(|| format!("{n} {s}"))
         })
         .collect();
     v.sort();
     v
-}
-
-/// The value of the first `KEY = value` line for `key` in a spira.conf text.
-pub fn conf_line_value(text: &str, key: &str) -> Option<String> {
-    text.lines().find_map(|l| {
-        let (k, v) = l.split_once('=')?;
-        (k.trim() == key).then(|| v.trim_start().to_string())
-    })
 }
 
 /// The acceptance note recorded on `refs/tags/<tag>` (DESIGN.md "acceptance", Schema).
@@ -476,7 +489,7 @@ impl Note<'_> {
             s.push_str(&format!("\naged-install from={p}: {}", self.verdict));
         }
         if self.waived {
-            s.push_str("\nupgrade phases waived by operator");
+            s.push_str(&format!("\n{WAIVER_LINE}"));
         }
         s
     }

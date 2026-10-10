@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # test-plan-lint.sh — the test-plan lint's own fence: every suite declares its tier and UC
-# coverage, every UC id it names exists in the typed catalogue, a gap in T0-T3 coverage is
-# reported without failing the lint, and a suite deletion that orphans a use case's last
+# coverage, every UC id it names exists in the typed catalogue, a T0-T3 use case with no cover
+# and no uncovered marker fails the lint, and a suite deletion that orphans a use case's last
 # cover is refused unless the catalogue marks it uncovered.
 #
 # THE POSITIVE CONTROL IS FIRST (law-absence-needs-a-positive-control): a
@@ -20,7 +20,7 @@
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-lint.sh spira/suite-coverage-json.sh suite-select/
+# covers: spira/plan-lint.sh spira/suite-coverage-json.sh suite-select/ test-plan/ docs/test-plan/*.toml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -59,19 +59,19 @@ statement = "a claim writes a lease"
 
 [[use_case]]
 id = "UC-dispatch-02"
-tier = "T2"
+tier = "T4"
 statement = "a stale lease is reclaimed"
 
 [[use_case]]
 id = "UC-dispatch-05"
-tier = "T2"
+tier = "T4"
 statement = "used only by the --orphans section below"
 EOF
 
 # A clean suite that stays in the tree so withdrawing a planted offender does
 # not leave an empty corpus (empty corpus is its own, distinct exit code).
 CLEAN="$ROOT/spira/test-planted-clean.sh"
-printf '#!/usr/bin/env bash\n# tier: T0\n# covers: spira/lib.sh\necho clean\n' > "$CLEAN"
+printf '#!/usr/bin/env bash\n# tier: T0\n# covers: spira/lib.sh UC-dispatch-01\necho clean\n' > "$CLEAN"
 commit "seed"
 
 PLANTED="$ROOT/spira/test-planted.sh"
@@ -129,21 +129,68 @@ out="$(lint --check "$BADFILE")"; rc=$?
 isnz "--check: a standalone suite missing headers fails" "$rc"
 
 # ==========================================================================
-# --gaps: UC-dispatch-02 (T2) is declared but no suite in the corpus covers
-# it — reported, but the lint's own exit code stays 0 (report, not fail).
+# --gaps: a T2 use case no suite covers and no marker explains fails the lint; the marker
+# clears it; a cover clears it.
 # ==========================================================================
+cp "$ROOT/docs/test-plan/dispatch.toml" "$TMP/dispatch.toml.orig"
+printf '\n[[use_case]]\nid = "UC-dispatch-06"\ntier = "T2"\nstatement = "planted gap"\n' \
+    >> "$ROOT/docs/test-plan/dispatch.toml"
 out="$(lint --gaps)"; rc=$?
-isz "--gaps never fails the lint" "$rc"
-want "--gaps reports the uncovered T2 use case" "UC-dispatch-02" "$out"
+isnz "SEEN RED: --gaps fails on an uncovered T2 use case" "$rc"
+want "--gaps reports the uncovered T2 use case" "UC-dispatch-06" "$out"
+out="$(lint)"; rc=$?
+isnz "SEEN RED: the default lint fails on an uncovered T2 use case" "$rc"
+want "and names it" "UC-dispatch-06" "$out"
 
-# Cover it, then the gap must clear.
-printf '#!/usr/bin/env bash\n# tier: T2\n# covers: spira/dispatch.sh UC-dispatch-02\necho hi\n' \
-    > "$ROOT/spira/test-covers-02.sh"
+printf '\n[use_case.uncovered]\nreason = "r"\ndate = "2026-10-08"\nbead = "sp-x"\n' >> "$ROOT/docs/test-plan/dispatch.toml"
 out="$(lint --gaps)"; rc=$?
-isz "--gaps still exits 0 once covered" "$rc"
-[[ "$out" != *"UC-dispatch-02"* ]] && ok "--gaps: covering a use case clears its gap" \
-    || bad "--gaps: covering a use case clears its gap" "still reported: $out"
-rm "$ROOT/spira/test-covers-02.sh"
+isz "SEEN GREEN: an uncovered marker clears the gap" "$rc"
+out="$(lint)"; rc=$?
+isz "SEEN GREEN: and the default lint passes" "$rc"
+
+cp "$TMP/dispatch.toml.orig" "$ROOT/docs/test-plan/dispatch.toml"
+printf '\n[[use_case]]\nid = "UC-dispatch-06"\ntier = "T2"\nstatement = "planted gap"\n' \
+    >> "$ROOT/docs/test-plan/dispatch.toml"
+printf '#!/usr/bin/env bash\n# tier: T2\n# covers: spira/dispatch.sh UC-dispatch-06\necho hi\n' \
+    > "$ROOT/spira/test-covers-06.sh"
+out="$(lint --gaps)"; rc=$?
+isz "SEEN GREEN: covering a use case clears its gap" "$rc"
+rm "$ROOT/spira/test-covers-06.sh"
+cp "$TMP/dispatch.toml.orig" "$ROOT/docs/test-plan/dispatch.toml"
+
+# ==========================================================================
+# LAUNCHERS: a use case with a launcher table is a gap until a suite covers it, whatever
+# its uncovered marker says; a launcher whose site lost its needle fails the lint.
+# ==========================================================================
+cat > "$ROOT/docs/test-plan/launch.toml" <<'EOF'
+api_version = "test-plan/v1"
+area = "launch"
+
+[[use_case]]
+id = "UC-launch-01"
+tier = "T2"
+statement = "the registered status command starts"
+launcher = { site = "somewhere/registers.rs", needle = "status_cmd" }
+
+[use_case.uncovered]
+reason = "not yet"
+date = "2026-10-06"
+bead = "sp-x"
+EOF
+mkdir -p "$ROOT/somewhere"
+echo 'fn status_cmd() {}' > "$ROOT/somewhere/registers.rs"
+out="$(lint --gaps)"; rc=$?
+isz "--gaps with a launcher still exits 0 (launcher gaps are reported)" "$rc"
+want "an uncovered launcher is reported even with an uncovered marker" "launcher gap: UC-launch-01" "$out"
+printf '#!/usr/bin/env bash\n# tier: T2\n# covers: spira/x.sh UC-launch-01\necho hi\n' > "$ROOT/spira/test-launch.sh"
+out="$(lint --gaps)"
+[[ "$out" != *"launcher gap"* ]] && ok "covering the launcher clears its gap" \
+    || bad "covering the launcher clears its gap" "still reported: $out"
+echo 'fn renamed() {}' > "$ROOT/somewhere/registers.rs"
+out="$(lint)"; rc=$?
+isnz "SEEN RED: a launcher site that lost its needle fails the lint" "$rc"
+want "and names the launcher" "UC-launch-01" "$out"
+rm -rf "$ROOT/docs/test-plan/launch.toml" "$ROOT/somewhere" "$ROOT/spira/test-launch.sh"
 
 # ==========================================================================
 # An empty corpus refuses to report clean (law-absence-needs-a-positive-control).

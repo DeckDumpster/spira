@@ -22,10 +22,14 @@ impl Real {
     /// Resolves `home` (an explicit, valid `$SPIRA_HOME` first; else release-relative:
     /// `<release>/bin/doctor` -> `<release>/spira/`), then captures conf.sh's derived
     /// environment once.
-    pub fn new() -> Real {
-        let home = Self::resolve_home();
+    pub fn try_new() -> Result<Real, String> {
+        let home = Self::resolve_home()?;
         let env = Self::capture_env(&home);
-        Real { home, env }
+        Ok(Real { home, env })
+    }
+
+    pub fn new() -> Real {
+        Real::try_new().unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// `argv[0]`'s directory, never `current_exe()`'s. `current_exe()` canonicalizes every
@@ -35,12 +39,12 @@ impl Real {
     /// resolution always missed silently there (empty output, exit code standing in for a
     /// verdict). `argv[0]` is exactly the path PATH search resolved to, unresolved further
     /// — bash's own `$0`/`${BASH_SOURCE[0]}` never re-resolved it either.
-    fn resolve_home() -> PathBuf {
+    fn resolve_home() -> Result<PathBuf, String> {
         if let Ok(h) = std::env::var("SPIRA_HOME") {
             if !h.is_empty() {
                 let p = PathBuf::from(&h);
                 if p.join("conf.sh").is_file() {
-                    return p;
+                    return Ok(p);
                 }
             }
         }
@@ -49,17 +53,14 @@ impl Real {
                 if let Some(release_dir) = bin_dir.parent() {
                     let candidate = release_dir.join("spira");
                     if candidate.join("conf.sh").is_file() {
-                        return candidate;
+                        return Ok(candidate);
                     }
                 }
             }
         }
         match std::env::var("SPIRA_HOME") {
-            Ok(h) if !h.is_empty() => PathBuf::from(h),
-            _ => {
-                eprintln!("doctor: SPIRA_HOME is not set and no spira/conf.sh sits beside the executable");
-                std::process::exit(3)
-            }
+            Ok(h) if !h.is_empty() => Ok(PathBuf::from(h)),
+            _ => Err("doctor: SPIRA_HOME is not set and no spira/conf.sh sits beside the executable".to_string()),
         }
     }
 
@@ -72,7 +73,7 @@ impl Real {
         // binary's own release root; prepend its bin/+spira/ onto the child's PATH rather
         // than only inheriting whatever PATH this process happened to start with.
         let envs = spira_config::release_env::child_path_env(home.parent(), std::env::var("PATH").ok().as_deref());
-        let mut cmd = Command::new("bash");
+        let mut cmd = spira_config::bounded::bounded("bash");
         cmd.arg("-c").arg(script).envs(envs);
         let out = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output();
         let mut map = BTreeMap::new();
@@ -113,7 +114,7 @@ impl Real {
         // law-a-binary-resolves-the-config-it-reads (sp-kgzql): see capture_env's own note —
         // `self.home` is always `<release>/spira`, so its parent is this binary's release.
         let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 }
@@ -124,8 +125,35 @@ impl Default for Real {
     }
 }
 
+// Registered config keys (spira/conf.d) this crate's generic `World::env` seam also
+// serves — $SPIRA_TOML only, through `spira_config::process::cfg`, never the captured
+// conf.sh environment, never the raw environment, never a fallback (per Ryan 2026-10-05:
+// one source of config). Every other name `env()` is called with has no `spira/conf.d`
+// entry and keeps reading the captured `conf.sh` snapshot, exactly as before.
+const RESOLVED_KEYS: &[&str] = &[
+    "COCKPIT_MAIL",
+    "COCKPIT_SESSIONS",
+    "SPIRA_BD",
+    "SPIRA_BD_TAG",
+    "SPIRA_CHAMBER_OVERLAY",
+    "SPIRA_DB",
+    "SPIRA_DOLT_DATA",
+    "SPIRA_INSTANCE",
+    "SPIRA_MAIL_MUTE",
+    "SPIRA_OPERATED",
+    "SPIRA_OVERRIDES",
+    "SPIRA_RELEASES",
+    "SPIRA_REPO_MAP",
+    "SPIRA_ROUND_VM_MIRROR_PORT",
+    "SPIRA_RUN",
+    "SPIRA_SNAP_STALE_S",
+];
+
 impl World for Real {
     fn env(&self, k: &str) -> Option<String> {
+        if RESOLVED_KEYS.contains(&k) {
+            return spira_config::process::cfg(k).ok();
+        }
         self.env.get(k).cloned().or_else(|| std::env::var(k).ok())
     }
 
@@ -146,11 +174,12 @@ impl World for Real {
     }
 
     fn release_status(&self) -> String {
+        // batch-job: release runs for as long as its work does
         Command::new("release").arg("status").stdin(Stdio::null()).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
     fn spira_config_validate(&self, toml_path: &Path) -> Result<(), String> {
-        let out = Command::new("spira-config").arg("validate").arg(toml_path).stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("spira-config").arg("validate").arg(toml_path).stdin(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => Ok(()),
             Ok(o) => Err(format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
@@ -162,7 +191,7 @@ impl World for Real {
         // Exit code deliberately ignored — matching doctor.sh's own `mig="$(spira-config
         // migrate "$toml" 2>&1)"`, which never checked it either; only the text, when
         // non-empty, is logged.
-        Command::new("spira-config")
+        spira_config::bounded::bounded("spira-config")
             .arg("migrate")
             .arg(toml_path)
             .stdin(Stdio::null())
@@ -199,7 +228,7 @@ impl World for Real {
     }
 
     fn overrides_doctor(&self) -> Result<String, String> {
-        let out = Command::new("overrides.sh").arg("doctor").stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("overrides.sh").arg("doctor").stdin(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
             Ok(o) => Err(String::from_utf8_lossy(&o.stdout).into_owned()),
@@ -222,7 +251,7 @@ impl World for Real {
         has_file_within(path, "Cargo.toml", 2)
     }
     fn gate_definition(&self, home: &Path, name: &str) -> Result<String, String> {
-        let out = Command::new("gate").arg("--home").arg(home).arg("--definition").arg(name).stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("gate").arg("--home").arg(home).arg("--definition").arg(name).stdin(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).trim_end().to_string()),
             Ok(o) => Err(format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)).trim().to_string()),
@@ -253,7 +282,7 @@ impl World for Real {
     }
     fn bd_role_warnings(&self, db: &Path, cwd: &Path) -> Option<usize> {
         let o = Command::new("timeout")
-            .arg("60")
+            .arg("5")
             .arg(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
             .arg("-C")
             .arg(db)
@@ -276,7 +305,7 @@ impl World for Real {
         })
     }
     fn systemd_user_is_active(&self, unit: &str) -> bool {
-        Command::new(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
+        spira_config::bounded::bounded(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
             .args(["--user", "is-active", "--quiet", unit])
             .stdin(Stdio::null())
             .status()
@@ -292,7 +321,7 @@ impl World for Real {
     }
 
     fn dolt_metrics_disabled(&self) -> bool {
-        Command::new(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
+        spira_config::bounded::bounded(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
             .args(["config", "--global", "--get", "metrics.disabled"])
             .stdin(Stdio::null())
             .output()
@@ -304,8 +333,25 @@ impl World for Real {
         std::fs::read_dir(dir).map(|d| d.count()).unwrap_or(0)
     }
 
+    fn dolt_root_passwordless(&self, host: &str, port: u16) -> Option<bool> {
+        if !self.tcp_connect(host, port) {
+            return None;
+        }
+        let out = spira_config::bounded::bounded(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
+            .args(["--host", host, "--port", &port.to_string(), "--user", "root", "--no-tls", "sql", "-q", "SELECT 1"])
+            .env("DOLT_CLI_PASSWORD", "")
+            .stdin(Stdio::null())
+            .output()
+            .ok()?;
+        if out.status.success() {
+            return Some(true);
+        }
+        let text = String::from_utf8_lossy(&out.stderr).to_lowercase() + &String::from_utf8_lossy(&out.stdout).to_lowercase();
+        text.contains("access denied").then_some(false)
+    }
+
     fn bd_first_id(&self, db: &Path) -> Option<String> {
-        let out = Command::new(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
             .arg("-C")
             .arg(db)
             .args(["list", "--limit", "1", "--json"])
@@ -321,7 +367,7 @@ impl World for Real {
             self.home.display(),
             self.home.display()
         );
-        Command::new("bash").arg("-c").arg(script).arg("--").arg(id).arg(etype).arg(actor).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+        spira_config::bounded::bounded("bash").arg("-c").arg(script).arg("--").arg(id).arg(etype).arg(actor).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
     }
     fn counter_events_query(&self, id: &str, etype: &str) -> String {
         let out = self.seam("_counter_events_query \"$1\" \"$2\"", &[id, etype]);
@@ -333,7 +379,7 @@ impl World for Real {
     }
 
     fn systemd_failed_units(&self, pattern: &str) -> Result<Vec<String>, String> {
-        let out = Command::new(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
             .args(["--user", "list-units", "--state=failed", "--no-legend", "--plain"])
             .arg(pattern)
             .stdin(Stdio::null())
@@ -347,7 +393,7 @@ impl World for Real {
     fn watchd_manifest(&self) -> Result<String, String> {
         // watchd is the Rust binary now (sp-07yxy's own concurrent landing) -- was
         // watchd.sh; carried into this port per the coordinator's instruction, sp-yyk47.
-        let out = Command::new("watchd").arg("manifest").stdin(Stdio::null()).output();
+        let out = spira_config::bounded::bounded("watchd").arg("manifest").stdin(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
             Ok(_) => Err("watchd manifest failed".into()),
@@ -355,7 +401,7 @@ impl World for Real {
         }
     }
     fn systemd_enabled_unit_files(&self, pattern: &str) -> Result<Vec<String>, String> {
-        let out = Command::new(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()))
             .args(["--user", "list-unit-files", "--no-legend", "--state=enabled"])
             .arg(pattern)
             .stdin(Stdio::null())
@@ -369,7 +415,7 @@ impl World for Real {
     }
     fn systemd_installed_unit_execs(&self) -> Result<Vec<(String, String, String)>, String> {
         let sc = self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string());
-        let out = Command::new(&sc)
+        let out = spira_config::bounded::bounded(&sc)
             .args(["--user", "list-unit-files", "--no-legend", "--plain", "spira-*.service", "beads-push.service"])
             .stdin(Stdio::null())
             .output()
@@ -388,7 +434,7 @@ impl World for Real {
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             let mut f = line.split_whitespace();
             let (Some(unit), Some(state)) = (f.next(), f.next()) else { continue };
-            let show = Command::new(&sc).args(["--user", "show", unit, "-p", "ExecStart", "--value"]).stdin(Stdio::null()).output();
+            let show = spira_config::bounded::bounded(&sc).args(["--user", "show", unit, "-p", "ExecStart", "--value"]).stdin(Stdio::null()).output();
             let text = show.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
             let path = text.split("path=").nth(1).and_then(|r| r.split([' ', ';']).next()).unwrap_or("").to_string();
             rows.push((unit.to_string(), state.to_string(), path));
@@ -407,7 +453,7 @@ impl World for Real {
     }
 
     fn bd_version(&self) -> Option<String> {
-        let out = Command::new(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
             .arg("version")
             .stdin(Stdio::null())
             .output()
@@ -426,7 +472,7 @@ impl World for Real {
     }
 
     fn concierge_stray_holders(&self, concierge_sh: &Path) -> Vec<String> {
-        Command::new("bash")
+        spira_config::bounded::bounded("bash")
             .arg(concierge_sh)
             .arg("_stray-holders")
             .stdin(Stdio::null())
@@ -446,7 +492,7 @@ impl World for Real {
         // resolved the right path for the caller's own FAIL message; this call used to
         // throw that resolution away and search PATH a second time, blind, and lose.
         let bin = self.which("sccache").unwrap_or_else(|| PathBuf::from("sccache"));
-        Command::new(bin)
+        spira_config::bounded::bounded(bin)
             .arg("--help")
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -461,7 +507,7 @@ impl World for Real {
         // already running, since sccache's client only ever queries an existing daemon's
         // socket and never re-applies a later invocation's environment to it.
         let bin = self.which("sccache").unwrap_or_else(|| PathBuf::from("sccache"));
-        let mut cmd = Command::new(bin);
+        let mut cmd = spira_config::bounded::bounded(bin);
         cmd.arg("--show-stats").stdin(Stdio::null()).stderr(Stdio::null());
         if let Some(addr) = self.sccache_dav_addr() {
             let endpoint = if addr.contains("://") { addr } else { format!("http://{addr}") };
@@ -471,11 +517,13 @@ impl World for Real {
         cmd.output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
     }
 
+    /// `SPIRA_SCCACHE_DAV_ADDR` is a registered key (spira/conf.d) with no registry
+    /// default — the one source of config (per Ryan 2026-10-05), through
+    /// `spira_config::process::cfg`, never the raw environment and never a second,
+    /// crate-local document discovery.
     fn sccache_dav_addr(&self) -> Option<String> {
-        let env_map: BTreeMap<String, String> = std::env::vars().collect();
-        let repo = spira_config::resolve::derive_home_repo(&self.home, &env_map);
-        let toml = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());
-        resolve_sccache_dav_addr(&self.home, &repo, &env_map, toml.as_ref())
+        let v = spira_config::process::cfg("SPIRA_SCCACHE_DAV_ADDR").ok().filter(|v| !v.is_empty())?;
+        spira_config::hostaddr::resolve_hostport(&v).ok()
     }
 
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String> {
@@ -486,22 +534,15 @@ impl World for Real {
             .collect()
     }
 
+    fn git_hooks_path(&self, repo: &Path) -> Option<String> {
+        let o = std::process::Command::new("timeout").arg("5").arg("git").arg("-C").arg(repo).args(["config", "--get", "core.hooksPath"]).output().ok()?;
+        let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        (o.status.success() && !v.is_empty()).then_some(v)
+    }
+
     fn out(&self, s: &str) {
         println!("{s}");
     }
-}
-
-/// [`World::sccache_dav_addr`]'s pure core (sp-xtdqi-3): env first, then `toml`'s `[spira]`
-/// table — `spira_config::resolve::resolve`'s own precedence, the same one
-/// `spira_config::build::Store` uses for a real build. Split out from
-/// `Real::sccache_dav_addr` so a test can drive it with a fixture `home`/`conf.d` and an
-/// explicit, already-parsed document — never real process env or real file discovery,
-/// which would need the crate-wide env lock every other env-mutating test here takes.
-pub(crate) fn resolve_sccache_dav_addr(home: &Path, repo: &Path, env: &BTreeMap<String, String>, toml: Option<&spira_config::SpiraToml>) -> Option<String> {
-    let conf_d = spira_config::resolve::default_conf_d(home);
-    let resolved = spira_config::resolve::resolve(spira_config::resolve::ResolveInput { env, home, repo, toml, conf_d: &conf_d }).ok()?;
-    let v = resolved.get(spira_config::build::STORE_ADDR_ENV);
-    (!v.is_empty()).then(|| v.to_string())
 }
 
 /// `--base-path` of a `git daemon` argv serving `port`; None for any other process.
@@ -620,24 +661,6 @@ fn extract_semver(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Guards the two tests below that must prove resolution goes through `self.env("PATH")`
-    /// rather than this PROCESS's own ambient one — which, under an ordinary `cargo test`
-    /// shell, already contains `~/.cargo/bin` and would make the bug invisible (the real
-    /// `sccache` answers instead of the fake one, "passing" for the wrong reason). Scoped
-    /// to just these two tests; nothing else here touches process env, and both take this
-    /// lock for their entire body before restoring the real PATH.
-    static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    struct PathGuard(Option<std::ffi::OsString>);
-    impl Drop for PathGuard {
-        fn drop(&mut self) {
-            match &self.0 {
-                Some(p) => std::env::set_var("PATH", p),
-                None => std::env::remove_var("PATH"),
-            }
-        }
-    }
-
     /// sccache 0.18.0's real `--help` output (captured live, built with `--features
     /// webdav`) — the exact text [`World::sccache_help`]'s caller (`check_sccache`) parses
     /// for the "Enabled features:" block. A fake script printing anything else would not
@@ -663,18 +686,24 @@ mod tests {
     /// production under a launcher's trimmed `env -i ... PATH=...`.
     #[test]
     fn sccache_help_resolves_through_self_env_path_not_the_bare_ambient_one() {
-        let _lock = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = PathGuard(std::env::var_os("PATH"));
         // The exact shape of the production repro (`env -i ... PATH=$R/bin:/usr/bin:/bin
         // doctor`): no `~/.cargo/bin`, so a bare `Command::new("sccache")` finds nothing —
         // this process's OWN ambient PATH, inherited by `cargo test`'s shell, would
         // otherwise still contain the real cargo-installed sccache and hide the bug.
-        std::env::set_var("PATH", "/usr/bin:/bin");
         let d = testkit::TempDir::new("doctor-real-sccache-help");
         let bin = fake_sccache(d.path(), REAL_SCCACHE_018_HELP);
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), d.path().display().to_string());
         let real = Real { home: PathBuf::from("/nonexistent-sp-xtdqi-3"), env };
+        // `check_sccache` (below) reads `SPIRA_OPERATED`, a `RESOLVED_KEYS` name — through
+        // `spira_config::process::cfg`, a process-global `OnceLock`. Same reasoning as the
+        // `sccache_show_stats` test below: seed it with the identical real-home + complete
+        // fixture so whichever test's setup wins the race leaves a valid resolution behind
+        // for every later test in this binary, including `tests::
+        // config_files_passes_when_every_registered_key_resolves`.
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = spira_config::process::fixture_toml(d.path(), &[]);
+        let _cfg_env = testkit::env(&[("PATH", Some("/usr/bin:/bin")), ("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
         let help = real.sccache_help().expect("the fake script is reachable through self.env(\"PATH\")");
         assert!(help.contains("WebDAV:    true"), "{help}");
         // check_sccache (lib.rs) is the actual caller this bug broke: FAIL became OK only
@@ -689,9 +718,6 @@ mod tests {
     /// when one is configured.
     #[test]
     fn sccache_show_stats_resolves_through_self_env_path_and_carries_the_store_vars() {
-        let _lock = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = PathGuard(std::env::var_os("PATH"));
-        std::env::set_var("PATH", "/usr/bin:/bin");
         let d = testkit::TempDir::new("doctor-real-show-stats");
         let log = d.path().join("calls.log");
         let script = format!(
@@ -707,9 +733,17 @@ mod tests {
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
         std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
         let real = Real { home, env };
-        // No SPIRA_TOML for this real process to discover; the point here is PATH
-        // resolution and env-var plumbing, covered for the config side by
-        // `resolve_sccache_dav_addr`'s own tests below.
+        // `sccache_show_stats` calls `self.sccache_dav_addr()`, which goes through
+        // `spira_config::process::cfg` unconditionally now (per Ryan 2026-10-05) — its
+        // resolution is a process-global `OnceLock`, so SOME test in this binary has to
+        // seed it with a real, complete fixture before anything touches it, or whichever
+        // test runs first wins with no config at all and poisons the rest (exactly what
+        // broke `tests::config_files_passes_when_every_registered_key_resolves`). This
+        // uses the identical `real_home` + complete-fixture shape that test uses, so
+        // either one winning the race leaves the same, valid resolution behind.
+        let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = spira_config::process::fixture_toml(d.path(), &[]);
+        let _cfg_env = testkit::env(&[("PATH", Some("/usr/bin:/bin")), ("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
         let stats = real.sccache_show_stats().expect("reachable through self.env(\"PATH\")");
         assert!(stats.contains("webdav"), "{stats}");
         let calls = std::fs::read_to_string(&log).unwrap();
@@ -718,50 +752,5 @@ mod tests {
 
     fn conf_d_stub() -> String {
         "TYPE=string\nGROUP=sccache\nDOC=test fixture\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # NO DEFAULT.\nSPIRA_CONF_DEFAULT_EOF\n".to_string()
-    }
-
-    fn fixture_toml(addr: &str) -> spira_config::SpiraToml {
-        spira_config::validate(&format!("[spira]\nid_prefix = \"sp\"\nsccache_dav_addr = \"{addr}\"\n")).unwrap()
-    }
-
-    /// THE POSITIVE CONTROL for the config-resolution bug (sp-xtdqi-3): the address lives
-    /// ONLY in the host config document — `env` here is deliberately empty, simulating the
-    /// normal case where an operator sets `sccache_dav_addr` in the host config document and exports
-    /// nothing. `conf.sh`'s own bash capture (`World::env`) never carries a NO-DEFAULT key
-    /// like this one even when it IS configured; `resolve_sccache_dav_addr` must still find
-    /// it by resolving in-process, never by reading `World::env`.
-    #[test]
-    fn resolve_sccache_dav_addr_finds_a_key_that_lives_only_in_the_config_document() {
-        let d = testkit::TempDir::new("doctor-resolve-addr");
-        let home = d.path().join("home");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
-        let toml = fixture_toml("192.168.1.56:9431");
-        let env: BTreeMap<String, String> = BTreeMap::new(); // deliberately unexported
-        let addr = resolve_sccache_dav_addr(&home, &home, &env, Some(&toml));
-        assert_eq!(addr, Some("192.168.1.56:9431".to_string()));
-    }
-
-    #[test]
-    fn resolve_sccache_dav_addr_prefers_the_environment_over_the_config_document() {
-        let d = testkit::TempDir::new("doctor-resolve-addr-env-wins");
-        let home = d.path().join("home");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
-        let toml = fixture_toml("192.168.1.56:9431");
-        let mut env = BTreeMap::new();
-        env.insert("SPIRA_SCCACHE_DAV_ADDR".to_string(), "10.0.0.9:9431".to_string());
-        let addr = resolve_sccache_dav_addr(&home, &home, &env, Some(&toml));
-        assert_eq!(addr, Some("10.0.0.9:9431".to_string()));
-    }
-
-    #[test]
-    fn resolve_sccache_dav_addr_is_none_when_neither_names_a_store() {
-        let d = testkit::TempDir::new("doctor-resolve-addr-none");
-        let home = d.path().join("home");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
-        let env: BTreeMap<String, String> = BTreeMap::new();
-        assert_eq!(resolve_sccache_dav_addr(&home, &home, &env, None), None);
     }
 }

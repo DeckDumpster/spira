@@ -155,3 +155,9 @@ mod tests {
         assert_eq!(run(&t, &["spira/sub/test-x.sh", "spira/lib.sh"]), Err(LintError::EmptyScope));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(TestlibMigrated),
+    ]
+}

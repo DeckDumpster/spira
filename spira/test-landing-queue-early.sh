@@ -60,8 +60,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 lc_path_stub "$SH" "$TMP/lcfix"
 
@@ -82,14 +82,15 @@ stub gh         'exit 1'
 # assertions read.
 stub queue 'if [ "${1:-}" = step ]; then verdict-fixture "${2:-}"; fi; exit 0'
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
+    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" SPIRA_GATE_WORKER=0
 landing() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-        SPIRA_GATE_WORKER=0 PATH="$SH:$PATH" landing-pass land 2>&1
+    SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
+        PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
 seed() {

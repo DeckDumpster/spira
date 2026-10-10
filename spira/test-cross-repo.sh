@@ -55,18 +55,18 @@ lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 # TWO REPOS: the home repo the harness is installed in, and the "second" repo that the
 # bead's repo: label names. A bead for "second" must never touch the home repo.
 HOME_ORIGIN="$TMP/home-origin.git"; git init -q --bare -b main "$HOME_ORIGIN"
-HOME_REPO="$TMP/home"; git clone -q "$HOME_ORIGIN" "$HOME_REPO" 2>/dev/null
+HOME_REPO="$TMP/home"; timeout 5 git clone -q "$HOME_ORIGIN" "$HOME_REPO" 2>/dev/null
 git -C "$HOME_REPO" config user.email t@t; git -C "$HOME_REPO" config user.name t
 printf 'home-seed\n' > "$HOME_REPO/home.txt"
 git -C "$HOME_REPO" add home.txt; git -C "$HOME_REPO" commit -qm "home seed"
-git -C "$HOME_REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$HOME_REPO" push -q origin main 2>/dev/null
 
 SECOND_ORIGIN="$TMP/second-origin.git"; git init -q --bare -b main "$SECOND_ORIGIN"
-SECOND_REPO="$TMP/second"; git clone -q "$SECOND_ORIGIN" "$SECOND_REPO" 2>/dev/null
+SECOND_REPO="$TMP/second"; timeout 5 git clone -q "$SECOND_ORIGIN" "$SECOND_REPO" 2>/dev/null
 git -C "$SECOND_REPO" config user.email t@t; git -C "$SECOND_REPO" config user.name t
 printf 'second-seed\n' > "$SECOND_REPO/second.txt"
 git -C "$SECOND_REPO" add second.txt; git -C "$SECOND_REPO" commit -qm "second seed"
-git -C "$SECOND_REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$SECOND_REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/harness"; mkdir -p "$SPIRA_HOME/chamber"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
@@ -78,8 +78,12 @@ cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 # gains a new sourced dependency. Only production scripts; test-*.sh are excluded.
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): prove the fixture harness loads
 # before any assertion runs.
 bash -c ". \"$SPIRA_HOME/lib.sh\"" \
@@ -87,7 +91,8 @@ bash -c ". \"$SPIRA_HOME/lib.sh\"" \
 
 # THE REPO-MAP: two repos, neither the other's alias. "home" maps to the home checkout;
 # "second" maps to the second checkout. The bead will carry repo:second.
-export SPIRA_REPO_MAP="$TMP/repo-map"
+SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'home   | %s | push | origin/main | |\n' "$HOME_REPO"   > "$SPIRA_REPO_MAP"
 printf 'second | %s | push | origin/main | |\n' "$SECOND_REPO" >> "$SPIRA_REPO_MAP"
 
@@ -111,7 +116,9 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
 #
 # SPIRA_AGENT IS THE INJECTION POINT: the aeon (the tree's own build, on this suite's PATH)
 # runs the shim below as its agent, so the real model can never run.
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP SPIRA_DB
+BIN="$TMP/bin"; mkdir -p "$BIN"
+tl_config SPIRA_AGENT="$BIN/claude"
+export TMP SPIRA_DB
 
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
@@ -137,12 +144,13 @@ aeon_fixture_agent "$BIN/claude"
 
 # SPIRA_HOME_REPO names the home repo in the map. Without it, lib.sh derives the home from
 # the basename of SPIRA_REPO, and that must match a key in the repo-map.
-export SPIRA_HOME_REPO=home SPIRA_SCOPE_LABEL=home
+SPIRA_HOME_REPO=home SPIRA_SCOPE_LABEL=home
+tl_config SPIRA_HOME_REPO="$SPIRA_HOME_REPO" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL"
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; \
-    SPIRA_REPO="$HOME_REPO" SPIRA_HOME_REPO=home \
+    SPIRA_REPO="$HOME_REPO" \
     aeon --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
 
 seed() {

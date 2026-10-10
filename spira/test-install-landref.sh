@@ -60,20 +60,20 @@ printf 'initial\n' > "$REPO/f"
 git -C "$REPO" add f
 git -C "$REPO" commit -qm "initial"
 git -C "$REPO" remote add origin "$ORIGIN"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 # Cache origin/HEAD so spira_landref finds the base without a network call.
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
 # A second commit on origin that the local checkout is missing (used for the BEHIND case).
 CLONE="$TMP/clone"
-git clone -q "$ORIGIN" "$CLONE" 2>/dev/null
+timeout 5 git clone -q "$ORIGIN" "$CLONE" 2>/dev/null
 git -C "$CLONE" config user.email t@t
 git -C "$CLONE" config user.name test
 printf 'extra\n' > "$CLONE/g"
 git -C "$CLONE" add g
 git -C "$CLONE" commit -qm "extra commit"
-git -C "$CLONE" push -q origin main
+timeout 5 git -C "$CLONE" push -q origin main
 
 # ---------------------------------------------------------------------------
 # Minimal harness fixture. units-install resolves the landref check directly against
@@ -85,12 +85,16 @@ git -C "$CLONE" push -q origin main
 # ---------------------------------------------------------------------------
 FIXTURE="$TMP/harness"
 mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.yaml; do
+for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.socket "$HERE/../systemd/"*.yaml; do
     [ -e "$f" ] || continue
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
 ln -s "$HERE/conf.sh"  "$FIXTURE/spira/conf.sh"
 ln -s "$HERE/lib.sh"   "$FIXTURE/spira/lib.sh"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so a fixture spira/ with none refuses config resolution
+# outright (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d"   "$FIXTURE/spira/conf.d"
 
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"
@@ -142,17 +146,16 @@ inst() {
         shift
     done
     [ "${1:-}" = "--" ] && shift
+    tl_config SPIRA_REPO_MAP=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     env -i \
+        SPIRA_TOML="$SPIRA_TOML" \
         "PATH=$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_REPO=$repo" \
-        SPIRA_REPO_MAP=/nonexistent \
         "SPIRA_HOME=$FIXTURE/spira" \
-        "SPIRA_RUN=$TMP/run" \
         "SPIRA_DB=$TMP/db" \
-        SPIRA_DOLT_DATA= \
-        SPIRA_TESTDB_DATA= \
         "SPIRA_INSTALL_FORCE=$force" \
         units-install "$@" 2>&1
 }
@@ -199,7 +202,7 @@ echo "POSITIVE CONTROL — behind landref: fence fires."
 # Push one commit directly to origin without pulling into REPO.
 # ===========================================================================
 
-git -C "$REPO" fetch -q origin  # updates origin/main tracking ref
+timeout 5 git -C "$REPO" fetch -q origin  # updates origin/main tracking ref
 behind_count="$(git -C "$REPO" rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)"
 if [ "${behind_count:-0}" -lt 1 ]; then
     bad "behind setup" "REPO should be behind origin/main but behind_count=$behind_count"
@@ -222,7 +225,7 @@ out_behind_force="$(inst "$REPO" SPIRA_INSTALL_FORCE=1)"; rc_behind_force=$?
 nowant "force when behind: no behind-refuse in output" "refusing — checkout is" "$out_behind_force"
 
 # Pull to bring the checkout current.
-git -C "$REPO" pull -q --rebase origin main 2>/dev/null
+timeout 5 git -C "$REPO" pull -q --rebase origin main 2>/dev/null
 
 # ===========================================================================
 echo

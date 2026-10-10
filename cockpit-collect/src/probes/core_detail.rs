@@ -3,14 +3,14 @@
 //! ported section by section (DESIGN.md "Design"), each section keeping the bash's own
 //! comment naming why it exists, condensed.
 
-use super::{push, Kv};
+use super::{push, Cfg, Kv};
 use crate::io;
 use crate::quoting::{parse_iso8601, rel_age, sanitize, sanitize_title};
 use serde_json::Value;
 use spira_config::nonwork::{self, Kind};
 use std::collections::{HashMap, HashSet};
 
-pub fn core_detail_keys() -> Kv {
+pub fn core_detail_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let home = io::home_dir();
     let run = io::run_dir();
@@ -27,11 +27,11 @@ pub fn core_detail_keys() -> Kv {
         }
     }
 
-    next_section(&mut out, &part_map);
+    next_section(&mut out, &part_map, cfg);
     recent_section(&mut out, &run);
     inflow_section(&mut out, &run);
-    awaiting_ci_section(&mut out);
-    throughput_section(&mut out, &run);
+    awaiting_ci_section(&mut out, cfg);
+    throughput_section(&mut out, &run, cfg);
     tokens_section(&mut out);
 
     out
@@ -41,10 +41,9 @@ pub fn core_detail_keys() -> Kv {
 // NEXT
 // ---------------------------------------------------------------------------------------
 
-fn next_section(out: &mut Kv, part_map: &HashMap<String, String>) {
-    let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
-    let ci_label = std::env::var("SPIRA_CI_LABEL").unwrap_or_else(|_| "gh:run".to_string());
-    let queue_wait = std::env::var("SPIRA_QUEUE_WAIT_LABEL").unwrap_or_default();
+fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
+    let ci_label = &cfg.ci_label;
+    let queue_wait = &cfg.queue_wait_label;
 
     if part_map.is_empty() {
         push(out, "SP_NEXT_N", "?");
@@ -56,7 +55,9 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>) {
     let mut seen: HashSet<String> = HashSet::new();
     let mut refused = false;
     for (labels, name) in part_map {
-        let mut excl = format!("spira-poison,{ask},{ci_label}");
+        // Poison and ask are lifecycle holds, already left out of the machine's claimable set;
+        // only the labels that are not holds remain (sp-psztcc).
+        let mut excl = ci_label.to_string();
         if !queue_wait.is_empty() {
             excl = format!("{excl},{queue_wait}");
         }
@@ -64,7 +65,7 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>) {
         // machine's READY/REWORK rows — never bd's own `ready`, whose status and assignee
         // nobody claims by any more.
         let raw = io::run_tool("spira-claim", &["ready-count", labels, &excl, "--json"], None);
-        match io::bd_rows(raw) {
+        match io::json_rows(raw) {
             None => refused = true,
             Some(part_rows) => {
                 for mut r in part_rows {
@@ -254,8 +255,8 @@ fn leading_timestamp(line: &str) -> Option<&str> {
 }
 
 fn title_map() -> HashMap<String, String> {
-    let raw = io::bdjson(&["list", "--all", "--limit", "0"]);
-    let Some(rows) = io::bd_rows(raw) else { return HashMap::new() };
+    let raw = io::contentjson_shared(&["list", "--all", "--limit", "0"]);
+    let Some(rows) = io::json_rows(raw) else { return HashMap::new() };
     rows.iter()
         .filter_map(|i| {
             let id = i.get("id").and_then(Value::as_str)?.to_string();
@@ -270,8 +271,8 @@ fn title_map() -> HashMap<String, String> {
 // ---------------------------------------------------------------------------------------
 
 fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
-    let raw = io::bdjson(&["list", "--all", "--limit", "0"]);
-    let Some(rows) = io::bd_rows(raw) else {
+    let raw = io::contentjson_shared(&["list", "--all", "--limit", "0"]);
+    let Some(rows) = io::json_rows(raw) else {
         push(out, "SP_INFLOW_WIN", "?");
         push(out, "SP_INFLOW_N", "?");
         push(out, "SP_INFLOW_DEFECT", "?");
@@ -332,10 +333,10 @@ fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
 // AWAITING CI
 // ---------------------------------------------------------------------------------------
 
-fn awaiting_ci_section(out: &mut Kv) {
-    let ci_max: i64 = std::env::var("SPIRA_CI_PARK_MAX").ok().and_then(|v| v.parse().ok()).filter(|v| *v > 0).unwrap_or(5400);
+fn awaiting_ci_section(out: &mut Kv, cfg: &Cfg) {
+    let ci_max: i64 = cfg.ci_park_max;
     let now = io::now();
-    let raw = io::bdq(&["gate", "list", "--json"]);
+    let raw = io::content(&["gate", "list", "--json"]);
     let rows: Option<Vec<Value>> = raw.and_then(|s| {
         let t = s.trim();
         if t.is_empty() {
@@ -376,8 +377,13 @@ fn awaiting_ci_section(out: &mut Kv) {
         }
         let mut title = sanitize(i.get("description").and_then(Value::as_str).unwrap_or(""));
         title.truncate(80);
+        // SPIRA_CI_PARK_MAX = 0 disables the deadline outright (conf.d's own doc: "set it
+        // to 0 to disable the deadline, which reinstates the permanent invisible park and
+        // should be a deliberate choice") — a park with a known age never reads as overdue
+        // in that state. A park whose `created_at` cannot even be parsed stays overdue
+        // regardless: that is a data problem, not a timing one.
         let is_overdue = match t {
-            Some(t) => (now - t) > ci_max,
+            Some(t) => ci_max > 0 && (now - t) > ci_max,
             None => true,
         };
         let title = if is_overdue {
@@ -403,10 +409,10 @@ fn awaiting_ci_section(out: &mut Kv) {
 // THROUGHPUT / TOKENS — both fully delegated to their existing external tools.
 // ---------------------------------------------------------------------------------------
 
-fn throughput_section(out: &mut Kv, run: &std::path::Path) {
-    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+fn throughput_section(out: &mut Kv, run: &std::path::Path, cfg: &Cfg) {
+    let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let raw = io::bdjson(&["list", "--all", "--limit", "0", "--label", &label]).unwrap_or_default();
+    let raw = io::contentjson(&["list", "--all", "--limit", "0", "--label", &label]).unwrap_or_default();
     let landing_log = run.join("landing.log");
     if let Some(sparklines) = io::run_tool("cockpit-sparklines.py", &[landing_log.to_str().unwrap_or("")], Some(&raw)) {
         for line in sparklines.lines() {

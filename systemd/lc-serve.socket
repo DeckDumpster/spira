@@ -1,0 +1,11 @@
+[Unit]
+Description=Socket for the same-user spira-lc lifecycle service
+Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
+
+[Socket]
+ListenStream=%t/spira-lc/sock
+SocketMode=0660
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target

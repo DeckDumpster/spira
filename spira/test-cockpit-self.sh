@@ -200,10 +200,10 @@ BASE_PATH="$PATH"
 COCKPIT_DIR="$(dirname "$HEALTH")"
 
 run_health() {   # run_health: sources cockpit.env and renders once at 80 cols
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         "$HEALTH" once 0 80 2>/dev/null
 }
 

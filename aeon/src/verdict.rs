@@ -1,29 +1,18 @@
 //! After the session (DESIGN.md §4.6): the wiki commit and the verdict fences. Closed is not
 //! landed — every fence reads the commit graph or the store, never the session's word.
 //!
-//! The reopen causes are consts: census.sh folds `sp-requeue-<cause>` for every cause that is
-//! both a bead_reopen cause and a REQUEUE_CAUSE here (test-census-events.sh sp-ytw2h scans
-//! for them).
-
 use std::path::Path;
 
 use crate::bd;
 use crate::decide;
-use crate::ports::{s, Bd, Exec, Git};
+use crate::ports::{s, Git};
 use crate::run::Run;
 use crate::trace;
 use crate::util;
 
 pub const PROD_DIRTY: &str = "prod-dirty";
-pub const DESC_CHANGED_SINCE_CLAIM: &str = "desc-changed-since-claim";
 pub const UNFINISHED_REASON: &str = "unfinished-reason";
 pub const GROOM_SILENT: &str = "groom-silent";
-pub const REBASE_CONFLICT: &str = "rebase-conflict";
-pub const WORKFLOW_RUN_MISSING: &str = "workflow-run-missing";
-pub const WORKFLOW_RUN_WRONG_BRANCH: &str = "workflow-run-wrong-branch";
-pub const WORKFLOW_RUN_STALE_SHA: &str = "workflow-run-stale-sha";
-pub const WORKFLOW_RUN_WRONG_FILE: &str = "workflow-run-wrong-file";
-pub const WORKFLOW_RUN_UNVERIFIABLE: &str = "workflow-run-unverifiable";
 
 /// `verdict_committed <repo> <branch> <id> [window]` -> is a commit naming `id` already on
 /// the branch, or (failing that) on the landing refs? Walks the branch first (this session's
@@ -49,107 +38,6 @@ pub fn verdict_committed(git: &dyn Git, land_refs: &str, repo: &Path, branch: &s
     args.extend(refs.into_iter().map(String::from));
     let land_subjects = git.git(repo, &args.iter().map(String::as_str).collect::<Vec<_>>()).stdout;
     land_subjects.contains(id)
-}
-
-/// `delivers_verdict <id> <delivers-string> <since-epoch>` -> (verified?, failure reason).
-/// The one case block for `delivers:TYPE` evidence, shared by the verdict (checking its own
-/// session's work, since-epoch = SESSION_EPOCH) and sentinel CHECK5 (checking a closed
-/// bead's window since started_at) — both get the same verdict for the same evidence by
-/// construction, because it is the same function (now duplicated once, natively, in each
-/// crate, rather than both shelling into one bash copy).
-///
-/// RECOGNISED TYPES: beads (a child bead — not this aeon's own state-change event record —
-/// names id as source), note/report:/abs/path (the file exists and postdates since-epoch; a
-/// path under `.../applied.jsonl` is checked for a record naming id instead, since mtime
-/// alone on that shared ledger is satisfied by any concurrent aeon's own application),
-/// check:<command> (exits 0 within `timeout_s`), action (no machine check — the close reason
-/// is the evidence).
-pub fn delivers_verdict(bd: &dyn Bd, exec: &dyn Exec, timeout_s: u64, id: &str, delivers: &str, since: i64) -> (bool, String) {
-    for item in delivers.split(';').filter(|d| !d.is_empty()) {
-        let (dtype, dval) = item.split_once(':').unwrap_or((item, item));
-        match dtype {
-            "beads" => {
-                let children = bd::json(bd, &["children", id]);
-                if bd::child_work_count(&children) <= 0 {
-                    return (false, format!("delivers:beads declared but no child beads name {id} as source"));
-                }
-            }
-            "note" | "report" => {
-                if dval == dtype {
-                    return (false, format!("delivers:{dtype} has no file path — use delivers:{dtype}:/absolute/path"));
-                }
-                let p = Path::new(dval);
-                if !p.is_file() {
-                    return (false, format!("delivers:{dtype}: {dval} does not exist"));
-                }
-                if dval.ends_with("/applied.jsonl") {
-                    let text = std::fs::read_to_string(p).unwrap_or_default();
-                    let needle = regex::Regex::new(&format!(r#""bead"\s*:\s*"{}""#, regex::escape(id))).unwrap();
-                    if !text.lines().any(|l| needle.is_match(l)) {
-                        return (false, format!("delivers:{dtype}: {dval} has no record naming bead {id}"));
-                    }
-                } else {
-                    let mt = std::fs::metadata(p)
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs() as i64)
-                        .unwrap_or(0);
-                    if mt <= since {
-                        return (false, format!("delivers:{dtype}: {dval} exists but predates the window (mtime {mt} <= {since})"));
-                    }
-                }
-            }
-            "check" => {
-                if dval == dtype {
-                    return (false, "delivers:check has no command — use delivers:check:<command>".into());
-                }
-                let o = exec.exec("timeout", &s(&[&timeout_s.to_string(), "bash", "-c", dval]), None, None);
-                if o.code == 124 {
-                    return (false, format!("delivers:check: command timed out after {timeout_s}s: {dval}"));
-                } else if o.code != 0 {
-                    return (false, format!("delivers:check: command exited non-zero: {dval}"));
-                }
-            }
-            "action" => {}
-            other => {
-                return (false, format!("delivers:{other} is not a recognised type (beads, note, report, check, action)"));
-            }
-        }
-    }
-    (true, String::new())
-}
-
-/// `close_verdict <id> <closed> <superseded> <delivers> <committed> <since-epoch>` ->
-/// keep|committed, keep|superseded, keep|delivers, reopen|delivers-mismatch or
-/// reopen|closed-without-commit. Not-closed and committed=true both answer keep|committed —
-/// the caller only acts on this after it already knows the bead is closed.
-///
-/// THE GIT WALK IS THE CALLER'S OWN (`verdict_committed`, or CHECK5's walk)
-/// — this only decides a CLOSED, NOT-YET-committed bead's fate given delivers evidence
-/// already available.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CloseVerdict {
-    pub outcome: String,
-    pub reason: String,
-    pub msg: String,
-}
-
-pub fn close_verdict(bd: &dyn Bd, exec: &dyn Exec, delivers_timeout_s: u64, id: &str, closed: bool, superseded: bool, delivers: &str, committed: bool, since: i64) -> CloseVerdict {
-    if !closed || committed {
-        return CloseVerdict { outcome: "keep".into(), reason: "committed".into(), msg: String::new() };
-    }
-    if superseded {
-        return CloseVerdict { outcome: "keep".into(), reason: "superseded".into(), msg: String::new() };
-    }
-    if !delivers.is_empty() {
-        let (ok, fail) = delivers_verdict(bd, exec, delivers_timeout_s, id, delivers, since);
-        if ok {
-            return CloseVerdict { outcome: "keep".into(), reason: "delivers".into(), msg: format!("{delivers} verified") };
-        }
-        return CloseVerdict { outcome: "reopen".into(), reason: "delivers-mismatch".into(), msg: fail };
-    }
-    CloseVerdict { outcome: "reopen".into(), reason: "closed-without-commit".into(), msg: String::new() }
 }
 
 impl Run<'_> {
@@ -191,11 +79,11 @@ impl Run<'_> {
 
     /// `bead_reopen`, plus the lifecycle half when the session handed on by submitting.
     fn refuse(&mut self, submitted: bool, cause: &str, note: &str) {
-        self.bead_reopen(cause, note);
         if submitted {
             let id = self.s.bead.clone();
             self.lc_rework(&id);
         }
+        self.bead_reopen(cause, note);
     }
 
     fn requeue(&mut self, cause: &str, why: String) {
@@ -244,21 +132,13 @@ impl Run<'_> {
         let f = self.fayth.name.clone();
         let repo = self.s.repo.display().to_string();
         let branch = self.s.branch.clone();
-        let base = self.s.base.clone();
-        let restricted = self.s.lc_model_restricted;
 
         let row = bd::show(self.d.bd, &id);
-        // The close is the lifecycle row's, never bd's status (design §3.4, sp-mve9i).
         let lc = self.lc_bead(&id);
-        let mut closed = decide::builder_closed(restricted, lc.as_ref());
-        // A restricted session hands on by `work submit`, never a bd close: the guards below
-        // judge that hand-on too, or every one of them is dead code (every session is restricted).
-        let submitted = decide::builder_submitted(restricted, lc.as_ref());
+        let submitted = decide::builder_submitted(self.s.lc_model_restricted, lc.as_ref());
         let st = decide::ledger_word(lc.as_ref());
         let superseded = row.as_ref().is_some_and(|r| r.superseded());
-        let delivers = row.as_ref().map(|r| r.delivers()).unwrap_or_default();
-        let issue_type = row.as_ref().and_then(|r| r.issue_type.clone()).unwrap_or_default();
-        let window = self.conf.n("SPIRA_VERDICT_WINDOW", 400);
+        let window = self.conf.i("SPIRA_VERDICT_WINDOW");
         let land_refs = match spira_config::repos::landrefs(&self.conf.repos, &repo) {
             Some((base, Some(local))) => format!("{base} {local}"),
             Some((base, None)) => base,
@@ -268,36 +148,11 @@ impl Run<'_> {
         self.s.committed = committed;
         let cy = if committed { "yes" } else { "no" };
         let sup = if superseded { "1" } else { "0" };
-        self.log(&format!("{f}: {id} status={st} committed={cy} superseded={sup} delivers={}", if delivers.is_empty() { "none" } else { &delivers }));
-
-        // ---- close_verdict: the same decision sentinel CHECK 5 makes, natively in each crate ----
-        let delivers_timeout = self.conf.n("SPIRA_DELIVERS_CHECK_TIMEOUT", 60).max(1) as u64;
-        let cv = close_verdict(self.d.bd, self.d.exec, delivers_timeout, &id, closed, superseded, &delivers, committed, self.s.session_epoch);
-        match (cv.outcome.as_str(), cv.reason.as_str()) {
-            ("keep", "delivers") => self.log(&format!("{f}: {id} closed with nothing committed and NOT reopened — {}", cv.msg)),
-            ("keep", "superseded") => self.log(&format!("{f}: {id} closed with nothing committed and NOT reopened — superseded, so its work landed under another id")),
-            ("reopen", "delivers-mismatch") => {
-                let producer = row.as_ref().and_then(|r| r.created_by.clone()).unwrap_or_default();
-                let pm = if producer.is_empty() { String::new() } else { format!(" Escalate to {producer} if the criterion cannot be met — the delivers: label may not be removed.") };
-                self.bead_reopen("delivers-mismatch", &format!("Reopened by aeon.sh: {}. Set delivers:TYPE labels that match the evidence actually produced.{pm}", cv.msg));
-                self.log(&format!("{f}: {id} REOPENED — delivers not verified: {}", cv.msg));
-            }
-            ("reopen", "closed-without-commit") => {
-                if self.sv("bead_is_work_type", &s(&[&issue_type])).success() {
-                    self.log(&format!("{f}: {id} closed with nothing committed — work type, left to the submitted conversion at teardown"));
-                } else if self.sv("bead_is_decision_type", &s(&[&issue_type])).success() {
-                    self.log(&format!("{f}: {id} closed with nothing committed — decision type, no commit expected, close stands"));
-                } else {
-                    self.bead_reopen("closed-without-commit", &format!("Reopened by aeon.sh: closed without a commit naming {id} on {branch}. Closed is not landed."));
-                    self.log(&format!("{f}: {id} REOPENED — closed with nothing committed"));
-                }
-            }
-            _ => {}
-        }
+        self.log(&format!("{f}: {id} status={st} committed={cy} superseded={sup}"));
 
         // ---- own-worktree dirty guard ----
         let work = self.s.work.clone().unwrap_or_default();
-        if (closed || submitted) && committed && !self.conf.set_nonempty("SPIRA_ALLOW_PROD_DIRTY") {
+        if submitted && committed && !self.conf.set_nonempty("SPIRA_ALLOW_PROD_DIRTY") {
             let dirty = self.d.git.git(&work, &["status", "--porcelain", "--untracked-files=no"]).stdout.trim_end().to_string();
             if !dirty.is_empty() {
                 let spd_base = if let Some(b) = spira_config::repos::landref(&self.conf.repos, &work.display().to_string()) {
@@ -319,30 +174,14 @@ impl Run<'_> {
                 }
                 n.push_str("\n\nOverride (only when the modification is intentional and will be committed separately): SPIRA_ALLOW_PROD_DIRTY=1");
                 self.refuse(submitted, PROD_DIRTY, &n);
-                closed = false;
                 let first5 = names.iter().take(5).map(|s| format!("{s} ")).collect::<String>();
                 self.log(&format!("{f}: {id} REOPENED — own worktree dirty: {first5}"));
                 self.requeue(PROD_DIRTY, format!("Bead closed while the aeon's own worktree ({w}) carried uncommitted tracked modifications. Commit or restore the staged/modified files, then resume this bead."));
             }
         }
 
-        // ---- description changed since claim, unacknowledged ----
-        if closed && !superseded {
-            let shown = bd::json(self.d.bd, &["show", &id]);
-            let claimed = bead::claimdesc::metadata_value(&shown, bead::claimdesc::HASH_KEY);
-            if !claimed.is_empty() {
-                let now = bead::claimdesc::desc_hash(&shown);
-                if now.is_some_and(|n| n != claimed) {
-                    self.bead_reopen(DESC_CHANGED_SINCE_CLAIM, "Reopened by aeon: this bead's description changed after it was claimed and before it closed, and the change was never acknowledged (no --force-claimed re-stamp). The session worked from whatever it read at claim time, not from what the bead says now. Re-verify the close against the current description before re-closing.");
-                    self.log(&format!("{f}: {id} REOPENED — description changed since claim, unacknowledged"));
-                    closed = false;
-                    self.requeue(DESC_CHANGED_SINCE_CLAIM, "This bead's description changed after this session claimed it and before it closed, unacknowledged. The session's work reflects the description as claimed, not as it now reads — re-verify against the current text before re-closing.".into());
-                }
-            }
-        }
-
         // ---- close-reason fence (law-no-close-reason-admits-unfinished) ----
-        if (closed || submitted) && committed {
+        if submitted && committed {
             let cr = bd::show(self.d.bd, &id).and_then(|r| r.close_reason).unwrap_or_default();
             if !cr.is_empty() && !self.conf.set_nonempty("SPIRA_CLOSE_REASON_OVERRIDE") {
                 let o = self.d.exec.exec("close-reason-flags.py", &s(&[&cr]), None, None);
@@ -350,15 +189,13 @@ impl Run<'_> {
                 if !hit.is_empty() {
                     self.refuse(submitted, UNFINISHED_REASON, &format!("Reopened by aeon.sh: close reason contains a statute phrase (\"{hit}\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer depends-on-fix {id} --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."));
                     self.ts_print(&format!("{f}: {id} REOPENED — close reason contains statute phrase: {hit}. Override: SPIRA_CLOSE_REASON_OVERRIDE=<why>"));
-                    closed = false;
-                    self.requeue(UNFINISHED_REASON, format!("Close reason contained a statute phrase (\"{hit}\"). File the remainder as a bead, cite its id in the reason, then re-close."));
+                        self.requeue(UNFINISHED_REASON, format!("Close reason contained a statute phrase (\"{hit}\"). File the remainder as a bead, cite its id in the reason, then re-close."));
                 }
             }
         }
 
         // ---- the groom escalation rule ----
-        let mut groom_silent = false;
-        if self.fayth.groom_escalation_check && (closed || submitted) && !superseded {
+        if self.fayth.groom_escalation_check && submitted && !superseded {
             let text = std::fs::read_to_string(self.run_dir().join("groom.log")).unwrap_or_default();
             let new: String = text.lines().skip(self.s.groom_lines_before).map(|l| format!("{l}\n")).collect();
             let new = new.trim_end_matches('\n').to_string();
@@ -371,10 +208,8 @@ impl Run<'_> {
                 let unproven = trace::groom_claims_verified(&new, &aj, self.s.session_epoch);
                 if !unproven.is_empty() {
                     self.refuse(submitted, "no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail send operator --kind question, then re-run the pass."));
-                    let _ = self.d.bd.bd(&s(&["label", "add", &id, "spira-poison"]));
                     let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "poison", &format!("groom log claimed ESCALATED for {unproven} with no ask bead"), &f]), None, None);
                     self.ts_print(&format!("{f}: {id} REOPENED and POISONED — groom log claimed ESCALATED for {unproven} but no ask bead found in this session"));
-                    groom_silent = true;
                     if committed {
                         self.requeue(GROOM_SILENT, format!("Groom log claimed escalation for {unproven} without a matching ask bead; the close was undone and the trigger poisoned."));
                     }
@@ -383,147 +218,6 @@ impl Run<'_> {
                 }
             }
         }
-
-        // ---- close-time workflow-run fence (law-a-workflow-lands-on-its-own-run) ----
-        if closed && committed {
-            if self.conf.set_nonempty("SPIRA_WORKFLOW_RUN_CONSIDERED") {
-                self.log(&format!("{f}: {id} workflow-run fence skipped (SPIRA_WORKFLOW_RUN_CONSIDERED={})", self.conf.s("SPIRA_WORKFLOW_RUN_CONSIDERED")));
-            } else {
-                // aeon.sh passed SPIRA_DB="$DB" under `set -u`; with DB unset the check never
-                // ran and read as OK. It runs here exactly when bash's would (DESIGN.md §8).
-                let r = match self.d.env.original.get("DB") {
-                    Some(db) => {
-                        let wf = self.conf.or("SPIRA_WORKFLOW_ONLY_PATHS", "spira/acceptance-ci.sh spira/acceptance-agent.sh spira/build-tarball.sh");
-                        let a = s(&[
-                            &format!("BEAD_ID={id}"),
-                            &format!("SPIRA_BD={}", self.conf.or("SPIRA_BD", "bd")),
-                            &format!("SPIRA_DB={db}"),
-                            &format!("SPIRA_REPO={repo}"),
-                            &format!("BRANCH={branch}"),
-                            &format!("BASE={base}"),
-                            &format!("SPIRA_GH_API={}", self.conf.or("SPIRA_GH_API", "https://api.github.com")),
-                            &format!("SPIRA_WORKFLOW_ONLY_PATHS={wf}"),
-                            "workflow-run-check.py",
-                        ]);
-                        let o = self.d.exec.exec("env", &a, None, None);
-                        if o.success() { o.text() } else { String::new() }
-                    }
-                    None => String::new(),
-                };
-                self.workflow_fence(&r, &mut closed);
-            }
-        }
-
-        // ---- closed behind the base is not finished ----
-        // A superseded close is not judged by whether its stale branch still replays: its
-        // work landed under the successor's id, so a conflict is expected (sp-dz39p).
-        if closed && committed && !superseded && !groom_silent {
-            if !self.s.base_remote.is_empty() && !self.d.git.git(&self.s.repo, &["fetch", "-q", &self.s.base_remote]).success() {
-                self.log(&format!("{f}: fetch of {} failed — judging currency against a possibly stale {base}", self.s.base_remote));
-            }
-            let fq = self.s.base_fq.clone();
-            if self.d.git.git(&self.s.repo, &["merge-base", "--is-ancestor", &fq, &format!("refs/heads/{branch}")]).success() {
-                self.log(&format!("{f}: {id} closed current with {base}"));
-            } else {
-                let rb = self.d.seam.call("_aeon_rebase", &s(&[&branch, &fq, &repo, &self.s.repo_name]));
-                for l in rb.stderr.lines() {
-                    self.d.sink.out(l);
-                }
-                if rb.success() {
-                    self.log(&format!("{f}: {id} closed behind {base} — rebased by the harness after close (the session did not)"));
-                    self.note(&format!("Rebased onto {base} by aeon.sh after the session closed the bead without doing so. The replay was clean; the landing gate judges the rebased tree."));
-                } else {
-                    self.s.rebase_conflicts = rb.stdout.trim_end().to_string();
-                    let conflicts = if self.s.rebase_conflicts.is_empty() { "unknown".to_string() } else { self.s.rebase_conflicts.clone() };
-                    let cited = if restricted { false } else { self.content_on_base(&fq, &branch) };
-                    if cited {
-                        self.log(&format!("{f}: {id} closed behind {base} but its content is already on {base} — retiring as landed"));
-                        // A failed event is logged, never discarded: the bead would keep reading unlanded.
-                        let proof = format!("merge-tree:{fq}");
-                        let mo = self.d.exec.exec("spira-lc", &s(&["content-on-base", &id, &proof, "aeon"]), None, None);
-                        if !mo.success() {
-                            self.log(&format!("{f}: {id} spira-lc content-on-base {proof} FAILED (rc={}): {}", mo.code, mo.first_err_line()));
-                        }
-                        if self.sdo("spira_destroy_branch", &s(&[&id, &branch, &repo, &format!("content already on {base}"), "content-landed"])) != 0 {
-                            self.log(&format!("{f}: {id} branch retire failed"));
-                        }
-                    } else {
-                        let others = self.sv("other_beads_on_conflicts", &s(&[&repo, &branch, &base, &self.s.rebase_conflicts])).text();
-                        let mut n = format!("Reopened by aeon.sh: closed behind {base} and {branch} does not rebase onto it — conflicts in {conflicts}. The brief asked for this rebase before closing.");
-                        if !others.is_empty() {
-                            n.push_str(&format!(" Those files were changed on {base} by {others} — check whether this work is already landed before resolving."));
-                        } else {
-                            n.push_str(" A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it.");
-                        }
-                        self.bead_reopen(REBASE_CONFLICT, &n);
-                        self.requeue(REBASE_CONFLICT, format!("{branch} would not rebase onto {base} (conflicts in {conflicts}); the next aeon is handed the rebase."));
-                        self.log(&format!("{f}: {id} REOPENED — closed behind {base}, conflicts in {conflicts}"));
-                    }
-                }
-            }
-        }
-    }
-
-    /// Does `base` already hold every change `branch` makes? Content, not ancestry: a merge of the
-    /// two that leaves base's own tree unchanged.
-    fn content_on_base(&self, base: &str, branch: &str) -> bool {
-        let mt = self.d.git.git(&self.s.repo, &["merge-tree", "--write-tree", base, &format!("refs/heads/{branch}")]);
-        if !mt.success() {
-            return false;
-        }
-        let merged = mt.text().lines().next().unwrap_or("").trim().to_string();
-        let tree = self.d.git.git(&self.s.repo, &["rev-parse", &format!("{base}^{{tree}}")]);
-        tree.success() && !merged.is_empty() && merged == tree.text().trim()
-    }
-
-    fn workflow_fence(&mut self, r: &str, closed: &mut bool) {
-        let id = self.s.bead.clone();
-        let f = self.fayth.name.clone();
-        let branch = self.s.branch.clone();
-        let (cause, note, log, why) = if r.is_empty() || r == "OK" {
-            return;
-        } else if r == "NO_URL" {
-            (
-                WORKFLOW_RUN_MISSING,
-                format!("Reopened by aeon.sh: branch touches CI workflow files but close reason has no GitHub Actions run URL (law-a-workflow-lands-on-its-own-run). Include https://github.com/.../actions/runs/<id> for a run on {branch} where the changed step executed. Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>; or: bd note {id} \"WORKFLOW_RUN_CONSIDERED: <reason>\"."),
-                format!("{f}: {id} REOPENED — close reason has no workflow run URL (law-a-workflow-lands-on-its-own-run)"),
-                format!("Close reason has no GitHub Actions run URL for the changed workflow. Include a run URL on branch {branch} where the changed step executed, then re-close."),
-            )
-        } else if let Some(b) = r.strip_prefix("WRONG_BRANCH:") {
-            (
-                WORKFLOW_RUN_WRONG_BRANCH,
-                format!("Reopened by aeon.sh: cited run is on branch \"{b}\", not \"{branch}\" (law-a-workflow-lands-on-its-own-run). The run must be dispatched on the bead's branch. Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>."),
-                format!("{f}: {id} REOPENED — cited workflow run is on branch {b}, not {branch}"),
-                format!("Cited run is on branch \"{b}\", not \"{branch}\". Dispatch on the bead branch, then re-close."),
-            )
-        } else if let Some(sha) = r.strip_prefix("SHA_NOT_ANCESTOR:") {
-            (
-                WORKFLOW_RUN_STALE_SHA,
-                format!("Reopened by aeon.sh: cited run is at commit {sha} which is not an ancestor of the current branch tip — the run tested a stale tree (law-a-workflow-lands-on-its-own-run). Ask the concierge to push the current tip and re-dispatch. Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>."),
-                format!("{f}: {id} REOPENED — cited workflow run SHA {sha} is not an ancestor of {branch}"),
-                format!("Cited run is at stale commit {sha}. Push the current tip and re-dispatch on {branch}, then re-close."),
-            )
-        } else if let Some(p) = r.strip_prefix("WRONG_WORKFLOW:") {
-            (
-                WORKFLOW_RUN_WRONG_FILE,
-                format!("Reopened by aeon.sh: cited run is for workflow \"{p}\" but the changed workflow files are different (law-a-workflow-lands-on-its-own-run). Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>."),
-                format!("{f}: {id} REOPENED — cited workflow run is for {p}, not the changed workflow"),
-                format!("Cited run is for workflow \"{p}\", not the changed workflow. Dispatch the correct workflow on {branch}, then re-close."),
-            )
-        } else if r.starts_with("RUN_NOT_FOUND:") || r.starts_with("API_FAIL:") {
-            (
-                WORKFLOW_RUN_UNVERIFIABLE,
-                format!("Reopened by aeon.sh: could not verify the cited workflow run URL ({r}) (law-a-workflow-lands-on-its-own-run). Override: SPIRA_WORKFLOW_RUN_CONSIDERED=<reason>."),
-                format!("{f}: {id} REOPENED — workflow run URL could not be verified ({r})"),
-                format!("Cited workflow run URL could not be verified ({r}). Use SPIRA_WORKFLOW_RUN_CONSIDERED=<reason> if this is a transient network issue."),
-            )
-        } else {
-            return;
-        };
-        self.bead_reopen(cause, &note);
-        self.log(&log);
-        *closed = false;
-        self.requeue(cause, why);
     }
 }
 
@@ -532,7 +226,6 @@ mod tests {
     use super::*;
     use crate::util::Out;
     use std::collections::BTreeMap;
-    use std::sync::Mutex;
 
     // ---- verdict_committed -----------------------------------------------------------
 
@@ -561,111 +254,5 @@ mod tests {
 
         // Empty landrefs short-circuits without a second git call that would need a ref.
         assert!(!verdict_committed(&git2, "", Path::new("/repo"), "mybranch", "sp-a", 400));
-    }
-
-    // ---- delivers_verdict / close_verdict ----------------------------------------------
-
-    struct FakeBd(Mutex<String>);
-    impl Bd for FakeBd {
-        fn bd(&self, _args: &[String]) -> Out {
-            Out::ok(self.0.lock().unwrap().clone())
-        }
-    }
-    struct FakeExec;
-    impl Exec for FakeExec {
-        fn exec(&self, prog: &str, args: &[String], _stdin: Option<Vec<u8>>, _cwd: Option<&Path>) -> Out {
-            assert_eq!(prog, "timeout");
-            match args[3].as_str() {
-                "true" => Out::ok(""),
-                "false" => Out::fail(1, ""),
-                "sleep 999" => Out::fail(124, ""),
-                other => panic!("unexpected check command: {other}"),
-            }
-        }
-    }
-
-    #[test]
-    fn delivers_verdict_beads() {
-        let bd = FakeBd(Mutex::new(r#"[{"id":"sp-child","issue_type":"task"}]"#.into()));
-        let exec = FakeExec;
-        let (ok, _) = delivers_verdict(&bd, &exec, 5, "sp-a", "beads", 0);
-        assert!(ok);
-        *bd.0.lock().unwrap() = "[]".into();
-        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "beads", 0);
-        assert!(!ok);
-        assert!(fail.contains("no child beads name sp-a"), "{fail}");
-    }
-
-    #[test]
-    fn delivers_verdict_note_and_report() {
-        let d = testkit::TempDir::new("aeon-delivers");
-        let bd = FakeBd(Mutex::new(String::new()));
-        let exec = FakeExec;
-        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "note", 0);
-        assert!(!ok);
-        assert!(fail.contains("has no file path"), "{fail}");
-
-        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("note:{}/missing", d.display()), 0);
-        assert!(!ok);
-        assert!(fail.contains("does not exist"), "{fail}");
-
-        let p = d.join("report.md");
-        std::fs::write(&p, "x").unwrap();
-        let now = crate::util::now_epoch();
-        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("report:{}", p.display()), now + 1000);
-        assert!(!ok, "{fail}");
-        assert!(fail.contains("predates the window"), "{fail}");
-        let (ok, _) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("report:{}", p.display()), now - 1000);
-        assert!(ok);
-
-        let applied = d.join("applied.jsonl");
-        std::fs::write(&applied, "{\"bead\": \"sp-other\"}\n").unwrap();
-        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("report:{}", applied.display()), 0);
-        assert!(!ok);
-        assert!(fail.contains("no record naming bead sp-a"), "{fail}");
-        std::fs::write(&applied, "{\"bead\": \"sp-a\"}\n").unwrap();
-        let (ok, _) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("report:{}", applied.display()), 0);
-        assert!(ok);
-    }
-
-    #[test]
-    fn delivers_verdict_check_and_action() {
-        let bd = FakeBd(Mutex::new(String::new()));
-        let exec = FakeExec;
-        assert!(delivers_verdict(&bd, &exec, 5, "sp-a", "check:true", 0).0);
-        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "check:false", 0);
-        assert!(!ok);
-        assert!(fail.contains("exited non-zero"), "{fail}");
-        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "check:sleep 999", 0);
-        assert!(!ok);
-        assert!(fail.contains("timed out"), "{fail}");
-        assert!(delivers_verdict(&bd, &exec, 5, "sp-a", "action", 0).0);
-        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "weird:x", 0);
-        assert!(!ok);
-        assert!(fail.contains("not a recognised type"), "{fail}");
-    }
-
-    #[test]
-    fn close_verdict_precedence() {
-        let bd = FakeBd(Mutex::new(String::new()));
-        let exec = FakeExec;
-        // Not closed, or committed: keep|committed, regardless of anything else.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", false, false, "", true, 0);
-        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "committed"));
-        let c = close_verdict(&bd, &exec, 5, "sp-a", true, false, "", true, 0);
-        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "committed"));
-        // Superseded wins over a missing commit.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", true, true, "", false, 0);
-        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "superseded"));
-        // No delivers label at all: reopen.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", true, false, "", false, 0);
-        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("reopen", "closed-without-commit"));
-        // delivers:action always verifies.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", true, false, "action", false, 0);
-        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "delivers"));
-        // delivers:check failing: reopen with the failure as the message.
-        let c = close_verdict(&bd, &exec, 5, "sp-a", true, false, "check:false", false, 0);
-        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("reopen", "delivers-mismatch"));
-        assert!(c.msg.contains("exited non-zero"));
     }
 }

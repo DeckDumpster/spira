@@ -3,7 +3,6 @@
 //! without a live Dolt server (law-gates-run-in-a-clean-environment) — the same split
 //! `rebase-stale::seam::Seam` uses for the lib.sh boundary.
 
-use std::io::Write;
 use std::process::{Command, Stdio};
 
 pub trait Bd {
@@ -26,7 +25,9 @@ pub trait Bd {
     fn show_json(&self, id: &str) -> Result<serde_json::Value, String>;
     /// `set-state <id> <key>=<value>`.
     fn set_state(&self, id: &str, kv: &str) -> Result<(), String>;
-    /// `supersede <id> --with <successor>`.
+    /// Whether the lifecycle machine holds the bead in a terminal state; Err when it has no row.
+    fn lifecycle_terminal(&self, id: &str) -> Result<bool, String>;
+    /// Close `<id>` superseded by `<successor>`, through the lifecycle machine.
     fn supersede(&self, id: &str, with: &str) -> Result<(), String>;
     /// `dep add <bug-id> <fix-id>`.
     fn dep_add(&self, bug_id: &str, fix_id: &str) -> Result<(), String>;
@@ -71,19 +72,6 @@ impl RealBd {
             .map_err(|e| format!("{} {}: {e}", self.bd, args.join(" ")))
     }
 
-    fn run_stdin(&self, args: &[&str], payload: &str) -> Result<std::process::ExitStatus, String> {
-        let mut child = self
-            .cmd()
-            .args(args)
-            .stdin(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("{} {}: {e}", self.bd, args.join(" ")))?;
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(payload.as_bytes());
-        }
-        child.wait().map_err(|e| format!("{} {}: {e}", self.bd, args.join(" ")))
-    }
-
     fn ok(status: std::process::ExitStatus, what: &str) -> Result<(), String> {
         if status.success() {
             Ok(())
@@ -108,7 +96,8 @@ impl Bd for RealBd {
     }
 
     fn close(&self, id: &str, reason: &str) -> Result<(), String> {
-        Self::ok(self.run_stdin(&["close", id, "--reason-file", "-"], reason)?, "close")
+        // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
+        spira_config::lifecycle_row::close(id, reason, "groomer", None)
     }
 
     fn note(&self, id: &str, text: &str) -> Result<(), String> {
@@ -145,7 +134,14 @@ impl Bd for RealBd {
     }
 
     fn supersede(&self, id: &str, with: &str) -> Result<(), String> {
-        Self::ok(self.run_inherit(&["supersede", id, "--with", with])?, "supersede")
+        spira_config::lifecycle_row::close(id, &format!("superseded by {with}"), "groomer", Some(with))
+    }
+
+    fn lifecycle_terminal(&self, id: &str) -> Result<bool, String> {
+        match spira_config::lc_state::row(id)? {
+            Some(r) => Ok(r.terminal()),
+            None => Err(format!("no lifecycle row for {id}")),
+        }
     }
 
     fn dep_add(&self, bug_id: &str, fix_id: &str) -> Result<(), String> {
@@ -165,6 +161,7 @@ pub mod fake {
         pub calls: RefCell<Vec<String>>,
         pub labels: RefCell<std::collections::BTreeMap<String, Vec<String>>>,
         pub shows: RefCell<std::collections::BTreeMap<String, serde_json::Value>>,
+        pub states: RefCell<std::collections::BTreeMap<String, String>>,
         pub next_child_id: RefCell<Option<String>>,
         pub fail_create: RefCell<bool>,
     }
@@ -180,6 +177,10 @@ pub mod fake {
 
         pub fn set_labels(&self, id: &str, labels: &[&str]) {
             self.labels.borrow_mut().insert(id.to_string(), labels.iter().map(|s| s.to_string()).collect());
+        }
+
+        pub fn set_lifecycle(&self, id: &str, state: &str) {
+            self.states.borrow_mut().insert(id.to_string(), state.to_string());
         }
 
         pub fn set_show(&self, id: &str, v: serde_json::Value) {
@@ -239,6 +240,10 @@ pub mod fake {
         fn set_state(&self, id: &str, kv: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("set-state {id} {kv}"));
             Ok(())
+        }
+
+        fn lifecycle_terminal(&self, id: &str) -> Result<bool, String> {
+            self.states.borrow().get(id).map(|s| spira_config::lc_state::is_terminal(s)).ok_or_else(|| format!("no lifecycle row for {id}"))
         }
 
         fn supersede(&self, id: &str, with: &str) -> Result<(), String> {

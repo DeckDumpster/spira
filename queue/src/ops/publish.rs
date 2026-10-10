@@ -6,6 +6,7 @@ use super::{czar_ok, Acquire, Ctx, idents, landing_log, lock, lock_held_by_calle
 use crate::model::{LandMode, Member};
 use crate::ports::Divergence;
 use crate::records::{self, write_atomic, Kv};
+use spira_config::local_pass;
 
 pub fn publish(w: &World, repo: Option<&str>) -> i32 {
     publish_with(w, repo, lock_held_by_caller(w))
@@ -66,7 +67,7 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         w.err(format!("queue.sh publish: cannot resolve {base}"));
         return FAIL;
     };
-    match w.lib.divergence(&c.s.queue_dir, &name, &path, &forge_sha, &head_sha) {
+    match w.lib.divergence(&c.s.mailbox, &c.s.queue_dir, &name, &path, &forge_sha, &head_sha) {
         Divergence::Ancestor => {}
         Divergence::Diverged(foreign) => {
             w.err(format!(
@@ -108,6 +109,20 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
     if members.is_empty() {
         w.err(format!("queue.sh publish: {name} has new commits on {base} but no land commit (spira: land <id>) in range — refusing"));
         return FAIL;
+    }
+
+    let who = w.env.var("USER").unwrap_or_else(|| "unknown".into());
+    let override_reason = w.env.var(local_pass::OVERRIDE_ENV);
+    match local_pass::check(&c.s.run, local_pass::Kind::FullSuite, &head_sha, override_reason.as_deref(), &who, &w.clock.now().to_string()) {
+        Ok(local_pass::Verdict::Passed) => {}
+        Ok(local_pass::Verdict::Overridden(why)) => {
+            w.out(format!("queue.sh publish: full-suite local-pass check for {head_sha} OVERRIDDEN by {who}: {why}"));
+            landing_log(&c.s.run, &format!("QUEUE PUBLISH_OVERRIDE {} repo={name} head={head_sha} by={who}", w.clock.now()));
+        }
+        Err(why) => {
+            w.err(format!("queue.sh publish: refusing to open a publish PR for {head_sha}: {why}"));
+            return FAIL;
+        }
     }
 
     let stamp = w.clock.stamp();
@@ -272,6 +287,10 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
     let kv = records::read_kv(&pfile).ok().flatten();
     let pr = kv.as_ref().map(|kv| observe(w, c, &path, kv));
     let action = decide(pr);
+    if action != Settle::Wait && round_pass_running(w, c) {
+        w.out(format!("{} publish-settle {name}: a round pass holds the hypervisor; deferring {action:?} to the next tick", w.clock.now()));
+        return OK;
+    }
     let now = w.clock.now();
     let pr_no = kv.as_ref().and_then(|k| k.get("pr")).unwrap_or("").to_string();
     w.out(format!("{now} publish-settle {name}: pr={} -> {action:?}", if pr_no.is_empty() { "none" } else { &pr_no }));
@@ -287,6 +306,28 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
             publish_with(w, Some(&name), true)
         }
     }
+}
+
+const LIVE_PHASES: [&str; 5] = ["vm", "build", "unit-build", "suites", "unit-tests"];
+const PROGRESS_FRESH_SECS: u64 = 600;
+
+/// A publish PR's CI provisions VMs beside the round VM and starves its pass, so the cut waits.
+/// A pass counts as running when its progress file is in a live phase and fresh, or its batch is
+/// CI_RUNNING; an unreadable round record or batch state counts as running.
+fn round_pass_running(w: &World, c: &Ctx) -> bool {
+    if progress_live(&c.s.run, w.clock.now()) {
+        return true;
+    }
+    let Some(kv) = records::read_kv(&c.queue_file(crate::ops::round::RECORD)).ok().flatten() else { return false };
+    let Some(batch) = kv.get("batch_id") else { return false };
+    w.lc.batch_state(batch).map_or(true, |(s, _)| s == "CI_RUNNING")
+}
+
+fn progress_live(run: &std::path::Path, now: u64) -> bool {
+    let Some(v) = std::fs::read_to_string(run.join("round-progress.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { return false };
+    let live = v["phase"].as_str().is_some_and(|p| LIVE_PHASES.contains(&p));
+    let at = v["updated_at"].as_u64().unwrap_or(0);
+    live && now.saturating_sub(at) < PROGRESS_FRESH_SECS
 }
 
 fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {

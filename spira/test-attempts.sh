@@ -28,8 +28,9 @@
 #
 # defect: sp-sc3 sp-qd2ul
 # tier: T2
-# covers: spira/*.sh
+# covers: spira/*.sh UC-aeon-execution-20
 set -uo pipefail
+CLAIM_SEQ=0   # one minute per seeded event, past the double-claim window
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
@@ -47,7 +48,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # further down still needs them.
 # ======================================================================================
 TMP="$(mktemp -d)"
-export SPIRA_DB="${SPIRA_DB:-$TMP/no-such-db}" SPIRA_RUN="$TMP/run"
+lc_facts_stub "$TMP/lc"
+export SPIRA_DB="${SPIRA_DB:-$TMP/no-such-db}"
+tl_config SPIRA_RUN="$TMP/run"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -157,7 +160,7 @@ claimed() {
     local id="$1" n="$2" i=0 uuid
     while [ "$i" -lt "$n" ]; do
         uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
-        bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'status_changed', 'harness', '{\"status\":\"in_progress\"}', NOW())" >/dev/null 2>&1
+        bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'status_changed', 'harness', '{\"status\":\"in_progress\"}', DATE_ADD(NOW(), INTERVAL $((++CLAIM_SEQ)) MINUTE))" >/dev/null 2>&1
         i=$((i+1))
     done
 }

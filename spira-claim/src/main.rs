@@ -40,6 +40,13 @@ impl Outcome {
     fn cannot_tell(msg: impl Into<String>) -> Self {
         Outcome { code: CANNOT_TELL, out: String::new(), err: format!("spira-claim: cannot tell: {}", msg.into()) }
     }
+    /// A real error — never `CANNOT_TELL` (callers read that 2 as "no fayth / nothing
+    /// there", not "something is broken"): code 1, the message, no `USAGE_TEXT`. Per the
+    /// Concierge's sp-hh599 decision (2026-10-05): `store::load_config`'s own failure is
+    /// this, for every verb, not a per-verb "cannot tell".
+    fn error(msg: impl Into<String>) -> Self {
+        Outcome { code: 1, out: String::new(), err: format!("spira-claim: {}", msg.into()) }
+    }
 }
 
 const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--json]
@@ -53,10 +60,10 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
        spira-claim shared-exclude                                            (ready_shared_exclude)
-       spira-claim ready-count <labels> [<exclude-labels>] [--json]          (ready_count; prints '0' on a failed query too; --json: the rows)
+       spira-claim ready-count <labels> [<exclude-labels>] [--json] [--express]          (ready_count; prints '0' on a failed query too; --json: the rows)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
-       spira-claim fayth-ready <fayth> [--json]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
+       spira-claim fayth-ready <fayth> [--json] [--express]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
        spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; the machine's claimable set)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
@@ -74,12 +81,12 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim deliberate-causes                                      (lib.sh _census_deliberate_reopen_causes; wave 4.19)
        spira-claim deliberate-exempt <cause>                              (lib.sh _census_reopen_admission_exempt; wave 4.19)
   thresholds: --poison-at N (3) --requeue-at N (5) --reclaim-at N (5)
-  common:     --db PATH  --timeout-s N (60)
+  common:     --db PATH  --timeout-s N (15)
   exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed;
         stack also 3 = not claimable (its own JSON still names the reason);
         deadlocked also 3 = a candidate was refused or a lift did not verify;
         write-event also 1 = could not write (a no-op on an empty bead/event-type is 0);
-        reopen also 1 = bdq reopen/release_claim/note each separately failed (bd refused);
+        reopen also 1 = the lifecycle reopen/note each separately failed (refused);
         deliberate-exempt is a bare exit code (0 exempt, 1 not), no stdout;
         fayth-ready also exits 2 (no fayth in the chamber) or 1 (query failed) — stdout is
         '0' in both cases, matching fayth_ready's own historic contract (sp-3ntca)";
@@ -92,7 +99,7 @@ struct Args {
     all: Vec<(String, String)>,
 }
 
-const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run", "--apply", "--raw"];
+const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run", "--apply", "--raw", "--express"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Args, String> {
@@ -161,7 +168,7 @@ fn read_source(path: &str, stdin: &mut dyn Read) -> Result<String, String> {
 }
 
 fn store(a: &Args, cfg: &Config) -> Result<Store, String> {
-    let t = a.num("--timeout-s", 60)?;
+    let t = a.num("--timeout-s", 15)?;
     Ok(Store::new(a.get("--db").map(str::to_string), t as u64, cfg))
 }
 
@@ -196,15 +203,25 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
     // spira-claim's own by the generic `Args` parser, so this verb bypasses it entirely and
     // takes `raw[1..]` as the literal bd argv, never parsed here.
     if verb == "claim-retry" {
-        return cmd_claim_retry(&raw[1..], &store::load_config());
+        return match store::load_config() {
+            Ok(cfg) => cmd_claim_retry(&raw[1..], &cfg),
+            Err(e) => Outcome::error(format!("config: {e}")),
+        };
     }
     let a = match Args::parse(&raw[1..]) {
         Ok(a) => a,
         Err(e) => return Outcome::usage(e),
     };
     // Config only for verbs that read a store or a config key: `decide` is called once per
-    // bead per CHECK 4 pass and must not re-read (or warn about) spira.toml each time.
-    let config = if verb == "decide" { Config::default() } else { store::load_config() };
+    // bead per CHECK 4 pass and must not re-read (or refuse over) spira.toml each time.
+    let config = if verb == "decide" {
+        Config::default()
+    } else {
+        match store::load_config() {
+            Ok(c) => c,
+            Err(e) => return Outcome::error(format!("config: {e}")),
+        }
+    };
     let mut env = Env { stdin, config };
     match verb.as_str() {
         "attempts" | "requeues" => cmd_count(verb, &a, &mut env),
@@ -376,20 +393,6 @@ fn read_ready(a: &Args, env: &mut Env) -> Result<Vec<ReadyRow>, Outcome> {
     rank::parse_ready(&text).map_err(Outcome::cannot_tell)
 }
 
-/// The lifecycle rows the epic lookup reads a child's progress from (sp-mve9i: a work bead's
-/// state is its row, never bd's status). `known` is a snapshot the caller already holds
-/// (machine-mode `select`). Otherwise `spira-lc list` is read, and a machine that cannot
-/// answer is cannot-tell — never a guess from bd, which would be the very read this replaces
-/// (DESIGN.md §6a).
-fn epic_lc(st: &Store, known: Option<&HashMap<String, LifecycleRow>>) -> Result<HashMap<String, LifecycleRow>, Outcome> {
-    if let Some(m) = known {
-        return Ok(m.clone());
-    }
-    st.lifecycle_snapshot()
-        .and_then(|t| rank::parse_lifecycle(&t))
-        .map_err(|e| Outcome::cannot_tell(format!("epic lookup: lifecycle snapshot: {e} (the machine must answer)")))
-}
-
 fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow], known: Option<&HashMap<String, LifecycleRow>>) -> Result<EpicLookup, Outcome> {
     let parents = rank::parents(rows);
     if parents.is_empty() {
@@ -398,14 +401,16 @@ fn fetch_lookup(a: &Args, env: &Env, rows: &[ReadyRow], known: Option<&HashMap<S
     let s = store(a, &env.config).map_err(Outcome::usage)?;
     let epics = s.list_by_ids(&parents).map_err(Outcome::cannot_tell)?;
     let prio = epics.iter().map(|e| (e.id.clone(), e.priority.unwrap_or(99))).collect();
-    let lc = epic_lc(&s, known)?;
-    let mut started = Vec::new();
+    let mut kids_of = Vec::new();
     for p in &parents {
-        let kids = s.children(p).map_err(Outcome::cannot_tell)?;
-        if rank::epic_started(&kids, &lc) {
-            started.push(p.clone());
-        }
+        kids_of.push((p.clone(), s.children(p).map_err(Outcome::cannot_tell)?));
     }
+    // A child's progress is its lifecycle row (never bd's status); a machine that cannot
+    // answer is cannot-tell, and only the children's own rows are asked for.
+    let mut lc = known.cloned().unwrap_or_default();
+    let missing: Vec<String> = kids_of.iter().flat_map(|(_, k)| k.iter().map(|c| c.id.clone())).filter(|id| !lc.contains_key(id)).collect();
+    lc.extend(s.lifecycle_of(&missing).map_err(|e| Outcome::cannot_tell(format!("epic lookup: lifecycle rows: {e} (the machine must answer)")))?);
+    let started = kids_of.into_iter().filter(|(_, kids)| rank::epic_started(kids, &lc)).map(|(p, _)| p).collect();
     Ok(EpicLookup { prio, started })
 }
 
@@ -445,7 +450,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         "machine" => true,
         v => return Outcome::usage(format!("--blockers takes bd or machine, not {v:?}")),
     };
-    let stack_max = match a.num("--stack-max-depth", env.config.stack_max_depth.unwrap_or(rank::STACK_CEILING)) {
+    let stack_max = match a.num("--stack-max-depth", env.config.stack_max_depth) {
         Ok(n) => n.min(rank::STACK_CEILING),
         Err(e) => return Outcome::usage(e),
     };
@@ -459,11 +464,13 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(s) => s,
             Err(e) => return Outcome::usage(e),
         };
-        let lc_text = match a.get("--lifecycle") {
-            Some(p) => read_source(p, env.stdin),
-            None => st.lifecycle_snapshot(),
+        let mut ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        ids.extend(rank::all_blockers(&rows));
+        let lc_rows = match a.get("--lifecycle") {
+            Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
+            None => st.lifecycle_of(&ids),
         };
-        let lc = match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+        let mut lc = match lc_rows {
             Ok(m) => m,
             Err(e) => {
                 return Outcome::cannot_tell(format!(
@@ -471,6 +478,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
                 ))
             }
         };
+        rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
         let wanted = rank::all_blockers(&rows);
         let recs = match a.get("--blocker-records") {
             Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),
@@ -481,7 +489,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(r) => rank::index_rows(r),
             Err(e) => return Outcome::cannot_tell(format!("{fayth}: blocker records: {e}")),
         };
-        rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, stack_max), Verdict::Claimable { .. }));
+        rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }));
         machine_lc = Some(lc);
     }
 
@@ -499,8 +507,14 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Err(o) => return o,
         },
     };
+    let rework: BTreeSet<String> = machine_lc
+        .iter()
+        .flat_map(|m| m.values())
+        .filter(|r| r.state == lifecycle::bead::BeadState::Rework && r.tip.is_some() && r.holds.is_empty())
+        .map(|r| r.bead_id.clone())
+        .collect();
     if a.has("--top-tier") {
-        return Outcome::ok(rank::top_tier(&rows, &lookup).iter().fold(String::new(), |mut s, l| {
+        return Outcome::ok(rank::top_tier(&rows, &lookup, &rework).iter().fold(String::new(), |mut s, l| {
             s.push_str(l);
             s.push('\n');
             s
@@ -513,7 +527,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         },
         None => BTreeSet::new(),
     };
-    let ranked = rank::rank(&rows, &lookup, &resumable);
+    let ranked = rank::rank(&rows, &lookup, &resumable, &rework);
     if a.has("--json") {
         return Outcome::ok(format!("{}\n", serde_json::to_string_pretty(&ranked).unwrap()));
     }
@@ -537,7 +551,7 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         Ok(b) => b,
         Err(o) => return o,
     };
-    let stack_max = match a.num("--stack-max-depth", env.config.stack_max_depth.unwrap_or(rank::STACK_CEILING)) {
+    let stack_max = match a.num("--stack-max-depth", env.config.stack_max_depth) {
         Ok(n) => n.min(rank::STACK_CEILING),
         Err(e) => return Outcome::usage(e),
     };
@@ -552,27 +566,32 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         },
         Err(e) => return Outcome::cannot_tell(format!("{bead}: {e}")),
     };
-    let lc = {
-        let lc_text = match a.get("--lifecycle") {
-            Some(p) => read_source(p, env.stdin),
-            None => st.lifecycle_snapshot(),
+    let wanted = rank::blockers(&cand);
+    let mut lc = {
+        let lc_rows = match a.get("--lifecycle") {
+            Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
+            None => {
+                let mut ids = wanted.clone();
+                ids.push(bead.clone());
+                st.lifecycle_of(&ids)
+            }
         };
-        match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+        match lc_rows {
             Ok(m) => m,
             Err(e) => return Outcome::cannot_tell(format!("{bead}: lifecycle snapshot: {e}")),
         }
     };
-    let wanted = rank::blockers(&cand);
     let recs = match a.get("--blocker-records") {
         Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),
         None if wanted.is_empty() => Ok(Vec::new()),
         None => st.list_by_ids(&wanted),
     };
+    rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let bd = match recs {
         Ok(r) => rank::index_rows(r),
         Err(e) => return Outcome::cannot_tell(format!("{bead}: blocker records: {e}")),
     };
-    match rank::stack_plan(&cand, &lc, &bd, stack_max) {
+    match rank::stack_plan(&cand, &lc, &bd, rank::stack_cap(&cand, &env.config.incident_label, stack_max)) {
         Ok((stack, depth)) => {
             let v = serde_json::json!({"claimable": true, "stack": stack, "stack_depth": depth, "stack_max_depth": stack_max});
             Outcome::ok(format!("{}\n", v))
@@ -627,62 +646,34 @@ fn fayth_home() -> Result<std::path::PathBuf, String> {
     }
 }
 
-/// `flag` (a CLI override, mainly for tests) if given, else `toml` (spira-config's
-/// `resolve()`, read in-process — the correct source for a key conf.sh never exports:
-/// `SPIRA_QUEUE_WAIT_LABEL`/`SPIRA_OPEN_CHILDREN_LABEL`/`SPIRA_CLAIM_RETRIES`/
-/// `SPIRA_CLAIM_RETRY_DELAY_S` are all in this boat), else `env_key` (several of these ARE
-/// exported by conf.sh — `SPIRA_SCOPE_LABEL`, `SPIRA_NO_LOOP_LABEL`, `SPIRA_SUBMITTED_LABEL`
-/// — so reading them straight from the environment is correct there too, and harmless as a
-/// fallback for the others), else `default` (the conf.d-documented default).
-fn resolved_label(flag: Option<&str>, toml: Option<&str>, env_key: &str, default: &str) -> String {
-    if let Some(v) = flag.filter(|v| !v.is_empty()) {
-        return v.to_string();
+/// `flag` (a CLI override, kept only for tests that want to pin a label without a toml
+/// fixture) if given and non-empty, else `env.config`'s own already-resolved value — the
+/// ONE source of config (per Ryan 2026-10-05): `Config` (see store.rs) is the only reader
+/// of `SPIRA_QUEUE_WAIT_LABEL`/`SPIRA_OPEN_CHILDREN_LABEL`/`SPIRA_SCOPE_LABEL`/
+/// `SPIRA_NO_LOOP_LABEL`/`SPIRA_SUBMITTED_LABEL`/`SPIRA_CLAIM_RETRIES`/
+/// `SPIRA_CLAIM_RETRY_DELAY_S`, and it already refused at construction if any could not
+/// resolve — no caller-side default survives here.
+fn resolved_label(flag: Option<&str>, configured: &str) -> String {
+    match flag {
+        Some(v) if !v.is_empty() => v.to_string(),
+        _ => configured.to_string(),
     }
-    if let Some(v) = toml.filter(|v| !v.is_empty()) {
-        return v.to_string();
-    }
-    if let Ok(v) = std::env::var(env_key) {
-        if !v.is_empty() {
-            return v;
-        }
-    }
-    default.to_string()
 }
 
-// EVERY default below is "", NOT the conf.d-documented value (e.g. "no-loop",
-// "spira-queue-waiting") — matching each bash original's own bare `${VAR:-}` fallback
-// (READY_ARGS, ready_raw_args, ready_shared_exclude never hardcode a default themselves;
-// only conf.sh's *derivation* does, and conf.sh running is a precondition this port cannot
-// observe). The lib.sh shims thread the caller's CURRENT value of the unexported ones
-// (`_spira_claim`'s own env prefix) explicitly across the exec boundary, so this process
-// sees exactly what the calling shell held — empty if conf.sh never ran (every suite that
-// sources lib.sh alone), derived if it did (production) — never a value of this port's own
-// invention. A direct caller that skips the shim (a test, or a future Rust caller) still
-// gets spira.toml's value when one is configured, and "" otherwise — the same "no
-// restriction" default the bash functions themselves fall back to.
 fn no_loop_label(a: &Args, env: &Env) -> String {
-    resolved_label(a.get("--noloop-label"), env.config.no_loop_label.as_deref(), "SPIRA_NO_LOOP_LABEL", "")
+    resolved_label(a.get("--noloop-label"), &env.config.no_loop_label)
 }
 
 fn scope_label(a: &Args, env: &Env) -> String {
-    resolved_label(a.get("--scope-label"), env.config.scope_label.as_deref(), "SPIRA_SCOPE_LABEL", "")
+    resolved_label(a.get("--scope-label"), &env.config.scope_label)
 }
 
 fn queue_wait_label(env: &Env) -> String {
-    resolved_label(None, env.config.queue_wait_label.as_deref(), "SPIRA_QUEUE_WAIT_LABEL", "")
+    env.config.queue_wait_label.clone()
 }
 
 fn open_children_label(env: &Env) -> String {
-    resolved_label(None, env.config.open_children_label.as_deref(), "SPIRA_OPEN_CHILDREN_LABEL", "")
-}
-
-/// `ready_shared_exclude`'s own reading of `SPIRA_SUBMITTED_LABEL` (bare `${VAR:-}`) —
-/// distinct from [`reopen_submitted_label`]'s `${SPIRA_SUBMITTED_LABEL:-spira-submitted}`
-/// fallback. The same key, two different bash functions, two different embedded defaults —
-/// both kept exactly. (`epics`/`select` read no label: a child's progress is its lifecycle
-/// row, sp-mve9i.)
-fn submitted_label_f(env: &Env) -> String {
-    resolved_label(None, env.config.submitted_label.as_deref(), "SPIRA_SUBMITTED_LABEL", "")
+    env.config.open_children_label.clone()
 }
 
 /// `READY_ARGS`, resolved from this call's flags/config/environment.
@@ -715,7 +706,7 @@ fn cmd_ready_args(a: &Args, env: &mut Env) -> Outcome {
 /// one ready set for a reader that shows beads rather than counts them, so nothing outside
 /// spira-claim asks bd for "ready" itself.
 fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express"]) {
         return Outcome::usage(e);
     }
     let (labels, exclude) = match a.pos.as_slice() {
@@ -745,27 +736,12 @@ fn ready_rows_json(a: &Args, env: &Env, labels: &str, exclude: &str) -> Outcome 
 
 /// bd query argv, retried (lib.sh:609 `claim_retry`). Dispatched from `dispatch()` before
 /// `Args::parse` ever sees the argv — see the comment there.
-/// `cfg`'s toml value, else `$<env_key>` (bash's own `${VAR:-default}` reads this
-/// unconditionally — a test, or an operator's own shell, that exports it must still win),
-/// else `default`.
-fn resolved_u32(cfg: Option<u32>, env_key: &str, default: u32) -> u32 {
-    if let Some(v) = cfg {
-        return v;
-    }
-    if let Ok(v) = std::env::var(env_key) {
-        if let Ok(n) = v.trim().parse() {
-            return n;
-        }
-    }
-    default
-}
-
 fn cmd_claim_retry(bd_args: &[String], cfg: &Config) -> Outcome {
     if bd_args.is_empty() {
         return Outcome::usage("claim-retry needs bd query arguments");
     }
-    let tries = resolved_u32(cfg.claim_retries, "SPIRA_CLAIM_RETRIES", 3).max(1);
-    let delay = std::time::Duration::from_secs(resolved_u32(cfg.claim_retry_delay_s, "SPIRA_CLAIM_RETRY_DELAY_S", 1) as u64);
+    let tries = cfg.claim_retries.max(1);
+    let delay = std::time::Duration::from_secs(cfg.claim_retry_delay_s as u64);
     let st = Store::new(None, 60, cfg);
     let mut args: Vec<&str> = bd_args.iter().map(String::as_str).collect();
     args.push("--json");
@@ -789,19 +765,17 @@ fn cmd_claim_retry(bd_args: &[String], cfg: &Config) -> Outcome {
 }
 
 /// `spira_fayths`'s roster, as a `Vec<String>` — `fayth-exclude`/`fayth-ready`/
-/// `bulk-ready-by-fayth` all need it, and `SPIRA_FAYTHS` (host policy, unexported by
-/// design) must still be threaded through the environment when a caller wants to narrow
-/// it — unlike `SPIRA_HOME` (see [`fayth_home`]), nothing self-locates a roster override.
-fn roster(home: &std::path::Path) -> Vec<String> {
-    spira_config::chamber::spira_fayths(home, std::env::var("SPIRA_FAYTHS").ok().as_deref())
-        .split_whitespace()
-        .map(str::to_string)
-        .collect()
+/// `bulk-ready-by-fayth` all need it. `SPIRA_FAYTHS` (`spira.fayths`, a list) is the one
+/// source of config now (per Ryan 2026-10-05): `env.config.fayths`, read once at
+/// construction — never the environment directly.
+fn roster(home: &std::path::Path, fayths: &str) -> Vec<String> {
+    let ov = (!fayths.is_empty()).then_some(fayths);
+    spira_config::chamber::spira_fayths(home, ov).split_whitespace().map(str::to_string).collect()
 }
 
 fn fayth_exclude_str(env: &Env, home: &std::path::Path, me: &str, own: &str) -> String {
-    let shared = ready::shared_exclude3(&queue_wait_label(env), &submitted_label_f(env), &open_children_label(env));
-    ready::fayth_exclude(me, own, &roster(home), &shared)
+    let shared = ready::shared_exclude(&queue_wait_label(env), &open_children_label(env));
+    ready::fayth_exclude(me, own, &roster(home, &env.config.fayths), &shared)
 }
 
 /// `fayth-exclude <fayth> [own-exclusions]`: `fayth_exclude` (lib.sh:666).
@@ -821,7 +795,7 @@ fn cmd_fayth_exclude(a: &Args, env: &mut Env) -> Outcome {
     Outcome::ok(fayth_exclude_str(env, &home, &me, own))
 }
 
-/// `shared-exclude`: `ready_shared_exclude` (lib.sh:652) — the three labels every "is this
+/// `shared-exclude`: `ready_shared_exclude` (lib.sh:652) — the four labels every "is this
 /// claimable" predicate excludes regardless of caller. `fayth_exclude`/`fayth-exclude`
 /// folds this in already; this verb exists only because `test-dispatch-open-children.sh`
 /// calls `ready_shared_exclude` directly, not through `fayth_exclude`.
@@ -829,7 +803,7 @@ fn cmd_shared_exclude(a: &Args, env: &Env) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
-    Outcome::ok(ready::shared_exclude3(&queue_wait_label(env), &submitted_label_f(env), &open_children_label(env)))
+    Outcome::ok(ready::shared_exclude(&queue_wait_label(env), &open_children_label(env)))
 }
 
 /// `SPIRA_READY_CACHE`'s own lookup (`awk -v f="$f" '$1==f{print $2} END{...}'`): the
@@ -852,7 +826,7 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
     let st = store(a, &env.config)?;
-    let lc = rank::parse_lifecycle(&st.lifecycle_snapshot()?)?;
+    let mut lc = st.lifecycle_in_states(&["READY", "REWORK"])?;
     let ids = ready::lifecycle_ready_ids(&lc);
     let want: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
     let mut rows = if ids.is_empty() { Vec::new() } else { st.list_by_ids(&ids)? };
@@ -861,8 +835,16 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     let wanted = rank::all_blockers(&rows);
     let recs = if wanted.is_empty() { Vec::new() } else { st.list_by_ids(&wanted)? };
     let bd = rank::index_rows(recs);
-    let stack_max = env.config.stack_max_depth.unwrap_or(rank::STACK_CEILING).min(rank::STACK_CEILING);
-    Ok(rows.into_iter().filter(|r| matches!(rank::claimable(r, &lc, &bd, stack_max), Verdict::Claimable { .. })).collect())
+    let blocker_rows: Vec<String> = wanted.iter().filter(|b| !lc.contains_key(*b)).cloned().collect();
+    lc.extend(st.lifecycle_of(&blocker_rows)?);
+    rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
+    let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
+    let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
+    Ok(rows
+        .into_iter()
+        .filter(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }))
+        .filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id)))
+        .collect())
 }
 
 /// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of FOUR things
@@ -893,7 +875,7 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
 /// `--json` prints the counted rows instead of their number: an aeon's ready set, so what it
 /// claims from is what the sentinel summoned it for.
 fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express"]) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {
@@ -916,7 +898,7 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
     }
     let json = a.has("--json");
     if let Ok(cache) = std::env::var("SPIRA_READY_CACHE") {
-        if !cache.is_empty() && !json {
+        if !cache.is_empty() && !json && !a.has("--express") {
             if let Ok(text) = std::fs::read_to_string(&cache) {
                 return Outcome::ok(ready_cache_lookup(&text, &me).to_string());
             }
@@ -933,7 +915,7 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {}", first_line(&e)) },
     };
     let part = ready::FaythPart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
-    let mine = ready::partition(&rows, &part, &queue_wait_label(env), &submitted_label_f(env));
+    let mine = ready::partition(&rows, &part, &queue_wait_label(env));
     if json {
         return Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()));
     }
@@ -952,7 +934,7 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
     };
     let mut parts = Vec::new();
     let mut warnings = Vec::new();
-    for f in roster(&home) {
+    for f in roster(&home, &env.config.fayths) {
         // sp-xsnid: a fayth whose predicate would WIDEN (a bare config reference resolved
         // empty) is skipped exactly like a declared-empty one — `bulk_ready_by_fayth`'s
         // own `[ -n "$inc" ] || continue` already never widened on an empty label, only
@@ -983,7 +965,7 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
         Ok(r) => r,
         Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-fayth: {}", first_line(&e))),
     };
-    let counts = ready::bucket(&rows, &parts, &queue_wait_label(env), &submitted_label_f(env));
+    let counts = ready::bucket(&rows, &parts, &queue_wait_label(env));
     Outcome {
         code: 0,
         out: counts.into_iter().fold(String::new(), |mut s, (name, n)| {
@@ -1049,24 +1031,12 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
     if st.db.is_none() {
         return Outcome::cannot_tell("no bead store: --db, $SPIRA_DB and spira.db are all unset — nothing was written");
     }
-    let Some(run_dir) = env_nonempty("SPIRA_RUN").or_else(|| env.config.run.clone()) else {
-        return Outcome::cannot_tell("SPIRA_RUN is unset and spira.run is not configured — nothing was written");
-    };
-    let run_dir = std::path::PathBuf::from(run_dir);
+    // SPIRA_RUN and SPIRA_ASK_LABEL are both registered keys — `env.config` already
+    // refused at construction if either could not resolve (per Ryan 2026-10-05, one
+    // source of config), so neither is re-read from the environment or re-derived here.
+    let run_dir = std::path::PathBuf::from(&env.config.run);
     let asked_dir = env_nonempty("SPIRA_POISON_ASKED").map(Into::into).unwrap_or_else(|| run_dir.join("poison-asked"));
-    let ask_label = match env_nonempty("SPIRA_ASK_LABEL").or_else(|| env.config.ask_label.clone()) {
-        Some(l) => l,
-        None => {
-            let home = match fayth_home() {
-                Ok(h) => h,
-                Err(e) => return Outcome::cannot_tell(format!("{e} — nothing was written")),
-            };
-            match spira_config::resolve::resolve_ask_label(&std::env::vars().collect(), &home) {
-                Ok(l) => l,
-                Err(e) => return Outcome::cannot_tell(format!("{e} — nothing was written")),
-            }
-        }
-    };
+    let ask_label = env.config.ask_label.clone();
     let mut live = unpoison::Live {
         store: st,
         run_dir,
@@ -1113,14 +1083,14 @@ fn cmd_audit(a: &Args, env: &mut Env) -> Outcome {
         events_by.entry(r.issue_id.clone()).or_default().push(r);
     }
     let lc = {
-        let lc_text = match a.get("--lifecycle") {
-            Some(p) => read_source(p, env.stdin),
+        let lc_rows = match a.get("--lifecycle") {
+            Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
             None => match store(a, &env.config) {
-                Ok(s) => s.lifecycle_snapshot(),
+                Ok(s) => s.lifecycle_of(&ids),
                 Err(e) => return Outcome::usage(e),
             },
         };
-        match lc_text.and_then(|t| rank::parse_lifecycle(&t)) {
+        match lc_rows {
             Ok(m) => m,
             Err(e) => return Outcome::cannot_tell(format!("lifecycle snapshot: {e} (the machine must answer)")),
         }
@@ -1155,14 +1125,12 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
         return Outcome::cannot_tell("no bead store: --db, $SPIRA_DB and spira.db are all unset — nothing was written");
     }
     // Only `mark_poison_lifted` (sp-wiyr2) touches run_dir; every other World method this
-    // verb calls is store-only, but that one write is load-bearing (DESIGN.md §9), so it is
-    // resolved exactly as `unpoison` resolves it and refused the same way when it is not.
-    let Some(run_dir) = env_nonempty("SPIRA_RUN").or_else(|| env.config.run.clone()) else {
-        return Outcome::cannot_tell("SPIRA_RUN is unset and spira.run is not configured — nothing was written");
-    };
+    // verb calls is store-only, but that one write is load-bearing (DESIGN.md §9). SPIRA_RUN
+    // is a registered key — `env.config` already refused at construction if it could not
+    // resolve, exactly as `unpoison` relies on the same guarantee.
     let mut live = unpoison::Live {
         store: st,
-        run_dir: std::path::PathBuf::from(run_dir),
+        run_dir: std::path::PathBuf::from(&env.config.run),
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: actor.clone(),
@@ -1177,10 +1145,10 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
 // accessors, now one-line shims in lib.sh onto the verbs below. See counters.rs.
 // =========================================================================================
 
-/// `$SPIRA_RUN`, resolved the same way `unpoison`/`deadlocked` resolve it: the
-/// environment wins, then spira-config's `spira.run`.
-fn resolved_run_dir(env: &Env) -> Option<std::path::PathBuf> {
-    env_nonempty("SPIRA_RUN").or_else(|| env.config.run.clone()).map(std::path::PathBuf::from)
+/// `$SPIRA_RUN` — `env.config.run`, the one source of config; always present (`Config`
+/// refused at construction otherwise).
+fn resolved_run_dir(env: &Env) -> std::path::PathBuf {
+    std::path::PathBuf::from(&env.config.run)
 }
 
 fn cmd_write_event(a: &Args, env: &Env) -> Outcome {
@@ -1234,11 +1202,7 @@ fn cmd_lapse_record(a: &Args, env: &Env) -> Outcome {
         [b, q, l, t] => (b.clone(), q.clone(), l.clone(), t.clone()),
         _ => return Outcome::usage("lapse-record: expected <bead> <quiet-s> <last-action> <tip>"),
     };
-    // Best-effort, same as bash: no SPIRA_RUN/spira.run means nowhere to write, which is
-    // silent rather than an error — a lapse record is a diagnostic, not load-bearing.
-    if let Some(run_dir) = resolved_run_dir(env) {
-        counters::write_lapse_record(&run_dir, &bead, &quiet, &last, &tip);
-    }
+    counters::write_lapse_record(&resolved_run_dir(env), &bead, &quiet, &last, &tip);
     Outcome::ok(String::new())
 }
 
@@ -1310,12 +1274,11 @@ fn cmd_ask_clear(a: &Args, env: &Env) -> Outcome {
         [id] if !id.is_empty() => id.clone(),
         _ => return Outcome::usage("ask-clear: expected <bead>"),
     };
-    // Best-effort, same as the retired poison_asked_clear's `rm -f ... || true`: no
-    // SPIRA_RUN/spira.run, or a remove that fails, is silent.
-    if let Some(run_dir) = resolved_run_dir(env) {
-        let asked_dir = env_nonempty("SPIRA_POISON_ASKED").map(std::path::PathBuf::from).unwrap_or_else(|| run_dir.join("poison-asked"));
-        let _ = std::fs::remove_file(asked_dir.join(&id));
-    }
+    // Best-effort, same as the retired poison_asked_clear's `rm -f ... || true`: a remove
+    // that fails is silent.
+    let run_dir = resolved_run_dir(env);
+    let asked_dir = env_nonempty("SPIRA_POISON_ASKED").map(std::path::PathBuf::from).unwrap_or_else(|| run_dir.join("poison-asked"));
+    let _ = std::fs::remove_file(asked_dir.join(&id));
     Outcome::ok(String::new())
 }
 
@@ -1323,14 +1286,6 @@ fn cmd_ask_clear(a: &Args, env: &Env) -> Outcome {
 // wave 4.19 (sp-3wfcb) — lib.sh family I's `bead_reopen`/`release_claim`, plus the census
 // admission-exemption list both it and row M's SQL producers read. See reopen.rs.
 // =========================================================================================
-
-/// `${SPIRA_SUBMITTED_LABEL:-spira-submitted}` — `bead_reopen`'s own bare-env reading (lib.sh
-/// never threads this one through a flag), resolved the way every unexported conf key in
-/// this file is: toml wins when configured, else the environment (conf.sh does export this
-/// one in production), else the literal default conf.d documents.
-fn reopen_submitted_label(env: &Env) -> String {
-    resolved_label(None, env.config.submitted_label.as_deref(), "SPIRA_SUBMITTED_LABEL", "spira-submitted")
-}
 
 /// One line per reopen in `$SPIRA_RUN/reopen.log`, written here so no caller can skip it. The
 /// caller is the parent's argv[0] read from /proc, never matched from a command-line pattern.
@@ -1345,7 +1300,7 @@ fn trace_reopen(run_dir: &std::path::Path, id: &str, cause: &str, actor: &str) {
         .and_then(|a| a.rsplit('/').next().map(str::to_string))
         .filter(|a| !a.is_empty())
         .unwrap_or_else(|| "unknown".into());
-    let ts = std::process::Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output().ok()
+    let ts = spira_config::bounded::bounded("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output().ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(run_dir.join("reopen.log")) {
         let _ = writeln!(f, "{ts} reopen {id} cause={cause} actor={actor} caller={caller}");
@@ -1377,7 +1332,7 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         Err(e) => return Outcome::usage(e),
     };
     let actor = env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into());
-    let run_dir = resolved_run_dir(env).unwrap_or_default();
+    let run_dir = resolved_run_dir(env);
     trace_reopen(&run_dir, &id, &cause, &actor);
     let mut live = unpoison::Live {
         store: st,
@@ -1386,7 +1341,7 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         ask_label: String::new(),
         beads_actor: actor,
     };
-    let o = reopen::Opts { id: id.clone(), cause, note, suites, submitted_label: reopen_submitted_label(env) };
+    let o = reopen::Opts { id: id.clone(), cause, note, suites };
     let rc = reopen::run(&o, &mut live);
     if rc == 0 {
         Outcome::ok(String::new())
@@ -1407,7 +1362,7 @@ fn cmd_release(a: &Args, env: &Env) -> Outcome {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
-    match st.release_claim(&id) {
+    match st.release_claim(&id, &env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into())) {
         Ok(()) => Outcome::ok(String::new()),
         Err(e) => Outcome { code: 1, out: String::new(), err: format!("spira-claim: release: {e}") },
     }

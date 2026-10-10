@@ -117,6 +117,14 @@ impl<'a> Pass<'a> {
         (crate::model::handed_on(&st), st)
     }
 
+    /// A red gate that already wrote REWORK leaves the bead claimable; the reopen's resume
+    /// note and requeue bump are then ours to record.
+    pub(crate) fn record_rework(&self, id: &str, cause: &str, note: &str) {
+        self.log(&format!("CHECK6 {id}: bead is now REWORK (gate red) — recording the resume note and requeue bump, not reopening"));
+        self.lib.note(id, note);
+        self.lib.bump_requeue(id, cause);
+    }
+
     /// `bd show` rows joined to their lifecycle states. A store or machine that cannot be
     /// read is said loudly: nothing reads as handed on this pass.
     pub(crate) fn show_rows(&self, _repo: &std::path::Path, ids: &[String]) -> Result<Vec<BeadRow>, String> {
@@ -232,6 +240,9 @@ impl<'a> Pass<'a> {
         }
         if !repo.path.join(".git").exists() {
             self.log(&format!("CHECK6 {name}: {} is not a git checkout — skipped", repo.path.display()));
+            if self.repos.len() == 1 {
+                self.lib.ask_repo_unreadable(name, &repo.path);
+            }
             return;
         }
         let refs = self.git.spira_refs(&repo.path);
@@ -272,7 +283,7 @@ impl<'a> Pass<'a> {
             }
         };
         let rows: Vec<OrderRow> =
-            refs.iter().map(|(b, _)| OrderRow::of(b, beads.get(b.trim_start_matches("spira/")), &self.s.express_label)).collect();
+            refs.iter().map(|(b, _)| OrderRow::of(b, beads.get(b.trim_start_matches("spira/")))).collect();
         let order = certify_order(name, &rows);
         let by_branch: HashMap<&str, &OrderRow> = rows.iter().map(|r| (r.branch.as_str(), r)).collect();
         let fix_front: Vec<&str> =
@@ -491,10 +502,16 @@ impl<'a> Pass<'a> {
         if g.outcome != GateOutcome::Pass {
             let reason = g.reason_or("unspecified");
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
-            match g.outcome {
-                GateOutcome::Fail => drop(self.lc_certify(id, &tip, "red", &reason)),
-                GateOutcome::NoVerdict => drop(self.lc_certify(id, &tip, "infra", "")),
-                _ => {}
+            let moved = matches!(g.outcome, GateOutcome::Fail | GateOutcome::NoVerdict)
+                && self.git.rev_parse(&repo.path, br).unwrap_or_default() != tip;
+            if moved {
+                self.log(&format!("CHECK6 {id}: {br} moved during the gate — verdict on {tip} not recorded"));
+            } else {
+                match g.outcome {
+                    GateOutcome::Fail => drop(self.lc_certify(id, &tip, "red", &reason)),
+                    GateOutcome::NoVerdict => drop(self.lc_certify(id, &tip, "infra", "")),
+                    _ => {}
+                }
             }
             match g.outcome {
                 GateOutcome::BaseFail => {
@@ -506,7 +523,7 @@ impl<'a> Pass<'a> {
                 }
                 _ => {
                     let (closed, st) = self.handed_on_now(id);
-                    if !closed {
+                    if !closed && st != "REWORK" {
                         self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not reopening {br}"));
                         return Flow::Next;
                     }
@@ -517,7 +534,12 @@ impl<'a> Pass<'a> {
                         "Reopened by sentinel: branch {br} failed {name}'s certification gate. The branch carries {n} commit(s) from the previous session — the next aeon should resume from the existing work, not restart.\n{scope_part}\n\n{}",
                         tail_lines(&g.out, 20)
                     );
-                    self.lib.reopen(id, "cert-gate-red", &note);
+                    let cause = crate::model::red_cause("cert-gate-red", &reason);
+                    if !closed {
+                        self.record_rework(id, &cause, &note);
+                        return Flow::Next;
+                    }
+                    self.lib.reopen(id, &cause, &note);
                     self.out.progress(&format!("reopened {id} — failed the certification gate"));
                     self.lib.event(
                         "bead.reopened",
@@ -612,7 +634,7 @@ impl<'a> Pass<'a> {
                         break;
                     }
                 };
-                let (wait, note) = gate_lock_wait(self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
+                let (wait, note) = gate_lock_wait(self.s.gate_timeout, self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
                 if let Some(n) = note {
                     self.log(&n);
                 }
@@ -712,7 +734,7 @@ impl<'a> Pass<'a> {
         pending.extend(added.iter().cloned());
         let rows: Vec<OrderRow> = pending
             .iter()
-            .map(|b| OrderRow::of(b, w.beads.get(b.trim_start_matches("spira/")), &self.s.express_label))
+            .map(|b| OrderRow::of(b, w.beads.get(b.trim_start_matches("spira/"))))
             .collect();
         *pending = certify_order(&repo.name, &rows);
         self.log(&format!("CHECK6 {}: candidates refreshed — {} newly ready: {}", repo.name, added.len(), added.join(" ")));
@@ -732,7 +754,7 @@ impl<'a> Pass<'a> {
 
     pub(crate) fn run_gate(&self, name: &str, br: &str, id: &str) -> GateRun {
         self.set_run(name, br, "gate");
-        let (wait, note) = gate_lock_wait(self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
+        let (wait, note) = gate_lock_wait(self.s.gate_timeout, self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
         if let Some(n) = note {
             self.log(&n);
         }
@@ -758,6 +780,7 @@ impl<'a> Pass<'a> {
             }
             return;
         }
+        self.lib.bump_requeue(id, crate::model::BASE_RED_CAUSE);
         if !w.basefail_filed.get() {
             w.basefail_filed.set(true);
             let sha = self.git.rev_parse(&w.repo.path, &w.base_fq).unwrap_or_default();
@@ -772,7 +795,7 @@ impl<'a> Pass<'a> {
             return;
         }
         let named = if suite == "-" { "- (the gate named none; read its output below)".to_string() } else { suite.to_string() };
-        let labels = if self.s.scope_label.is_empty() { "plan".to_string() } else { format!("{},plan", self.s.scope_label) };
+        let labels = self.s.scope_label.clone();
         let title = format!("{name}'s own gate fails against {base} — nothing can land");
         let payload = [
             format!("{name}'s landing gate was run against {base} itself and failed there, so every branch of"),

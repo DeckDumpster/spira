@@ -42,7 +42,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 # Source lib.sh in a controlled environment with SPIRA_RUN and SPIRA_CONF pointing
 # at our temp dir so no host configuration or pid files leak into the test results.
-export SPIRA_RUN="$T/run"; mkdir -p "$SPIRA_RUN/worktree"
+SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN"; mkdir -p "$SPIRA_RUN/worktree"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_REAPLOG="$T/reap.log"
 # shellcheck disable=SC1090
@@ -57,8 +57,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 
 echo "test-worktree-absent.sh"
 echo

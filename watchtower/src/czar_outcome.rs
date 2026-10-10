@@ -11,7 +11,6 @@ use crate::log::{log, parse_iso_utc};
 use serde::Deserialize;
 use spira_config::lc_state;
 use std::collections::HashMap;
-use std::process::Command;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TriggerBead {
@@ -144,7 +143,7 @@ pub fn join_states(mut beads: Vec<TriggerBead>, lc: &HashMap<String, lc_state::R
 }
 
 fn query_bd(bd_bin: &str, db: &str, label: &str) -> Vec<TriggerBead> {
-    let out = Command::new(bd_bin)
+    let out = spira_config::bounded::bounded(bd_bin)
         .args(["-C", db, "list", "--label", label, "--all", "--json", "--limit", "0", "--brief"])
         .output();
     let out = match out {
@@ -180,7 +179,7 @@ pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str,
                 .priority(1)
                 .reference(format!("incident:czar-unclaimed-{id}"))
                 .cause("czar-unclaimed");
-                incident::file(incident_sh, &f);
+                incident::alarm(incident_sh, &f);
                 log(&format!(
                     "watchtower: czar-outcome-check filed unclaimed escalation for {id}"
                 ));
@@ -199,7 +198,7 @@ pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str,
                 .priority(1)
                 .reference(format!("incident:czar-not-cleared-{id}"))
                 .cause("czar-not-cleared");
-                incident::file(incident_sh, &f);
+                incident::alarm(incident_sh, &f);
                 log(&format!(
                     "watchtower: czar-outcome-check filed not-cleared escalation for {id}"
                 ));

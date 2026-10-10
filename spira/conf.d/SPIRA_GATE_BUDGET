@@ -9,10 +9,9 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # Rust gate passes it to testenv as `--deadline`. The mechanism exists because the
     # previous 43-suite gate was not built in a day: each suite was individually
     # justified while the total grew to 17 minutes unchecked. A budget is the only thing
-    # that makes that argument explicit. Set against a measurement taken when this key
-    # was added (2026-09-08, ~210s); 300 gives headroom while still bounding the next
-    # suite added without argument. (gate-spira.sh's own overrun bead-filing — a second,
+    # that makes that argument explicit. It is the suites' share of SPIRA_GATE_DEADLINE:
+    # 140 plus the fixed phases (tools, fences) fits the whole-gate deadline. (gate-spira.sh's own overrun bead-filing — a second,
     # separate mechanism — was retired with it, sp-hyc3a/sp-nhid0: no caller since
     # sp-b99nj, 2026-09-26, and no analog before this change either.)
-    : "${SPIRA_GATE_BUDGET:=300}"
+    : "${SPIRA_GATE_BUDGET:=140}"
 SPIRA_CONF_DEFAULT_EOF

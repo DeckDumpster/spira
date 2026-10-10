@@ -31,11 +31,12 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
-export SPIRA_AGENT="$BIN/claude" TMP
+export TMP
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_AGENT="$BIN/claude"
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$TMP/claude-argv"
@@ -78,16 +79,13 @@ WIKI_DIR="$TMP/wiki"
 mkdir -p "$WIKI_DIR"
 
 rm -f "$TMP/claude-argv"
+tl_config SPIRA_TOKEN_PROJECTS="$TMP/projects" SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 \
+    SPIRA_CTX_LIMIT=1000000 SPIRA_ARCHIVIST_TIMEOUT=10 SPIRA_CHAMBER="$HERE/chamber" \
+    SPIRA_WIKI="$WIKI_DIR"
 env -i HOME="$TMP/home" PATH="$PATH" \
     SPIRA_CONF="$TMP/no-such.conf" \
     SPIRA_HOME="$HERE" \
-    SPIRA_RUN="$TMP/run" \
-    SPIRA_TOKEN_PROJECTS="$TMP/projects" \
-    SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 SPIRA_CTX_LIMIT=1000000 \
-    SPIRA_ARCHIVIST_TIMEOUT=10 \
-    SPIRA_CHAMBER="$HERE/chamber" \
-    SPIRA_AGENT="$BIN/claude" \
-    SPIRA_WIKI="$WIKI_DIR" \
+    SPIRA_TOML="$SPIRA_TOML" \
     TMP="$TMP" \
     archivist now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
 argv_arc_wiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
@@ -99,16 +97,18 @@ want "archivist: wiki path in argv"                     "$WIKI_DIR"  "$argv_arc_
 echo
 echo "archivist WITHOUT SPIRA_WIKI does NOT add --add-dir:"
 # ==========================================================================================
+# SPIRA_WIKI="" EXPLICITLY: the fixture's base layer declares a non-empty wiki path, so
+# merely leaving this key out of the override no longer means "unset" — it would read the
+# fixture's value and add --add-dir anyway. The empty string is the actual value this case
+# needs.
 rm -f "$TMP/claude-argv"
+tl_config SPIRA_TOKEN_PROJECTS="$TMP/projects" SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 \
+    SPIRA_CTX_LIMIT=1000000 SPIRA_ARCHIVIST_TIMEOUT=10 SPIRA_CHAMBER="$HERE/chamber" \
+    SPIRA_WIKI=""
 env -i HOME="$TMP/home" PATH="$PATH" \
     SPIRA_CONF="$TMP/no-such.conf" \
     SPIRA_HOME="$HERE" \
-    SPIRA_RUN="$TMP/run" \
-    SPIRA_TOKEN_PROJECTS="$TMP/projects" \
-    SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 SPIRA_CTX_LIMIT=1000000 \
-    SPIRA_ARCHIVIST_TIMEOUT=10 \
-    SPIRA_CHAMBER="$HERE/chamber" \
-    SPIRA_AGENT="$BIN/claude" \
+    SPIRA_TOML="$SPIRA_TOML" \
     TMP="$TMP" \
     archivist now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
 argv_arc_nowiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"

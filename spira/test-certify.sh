@@ -23,7 +23,7 @@
 # The bare remote is real git so ancestry checks are real.
 #
 # tier: T2
-# covers: landing-pass/* spira/conf.sh spira/lib.sh queue/src/* queue/src/ops/* spira/gate.sh
+# covers: landing-pass/* spira/conf.sh spira/lib.sh queue/src/* queue/src/ops/* spira/gate.sh UC-landing-merge-queue-01 UC-landing-merge-queue-03
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -44,8 +44,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 lc_path_stub "$SH" "$TMP/lcfix"
 
@@ -81,7 +81,7 @@ NOVERDICT)
     exit 0 ;;
 esac'
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 status_of() {
     B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
@@ -100,10 +100,13 @@ write_map
 
 landing() {
     rm -f "$RUN/landing.progress" "$GATE_COUNT" "$QUEUE_LOG"
-    SPIRA_GATE_WORKER=0 SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" PATH="$TMP/stubbin:$SH:$PATH" \
+    # SPIRA_DB declared via tl_config too (round-3 caveat audit): landing-pass resolves it
+    # via cfg(), already correct here by coincidence (testdb_up's own tl_config), but
+    # explicit now rather than relying on that.
+    tl_config SPIRA_GATE_WORKER=0 SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_DB="$SPIRA_DB"
+    SPIRA_HOME="$SH" \
+    SPIRA_REPO="$REPO" PATH="$TMP/stubbin:$SH:$PATH" \
         landing-pass land 2>&1
 }
 
@@ -230,8 +233,8 @@ PUSHREPO="$TMP/push-repo"
 git init -q -b main "$PUSHREPO"
 git -C "$PUSHREPO" commit -q --allow-empty -m base
 git -C "$PUSHREPO" remote add origin "$PUSHREMOTE"
-git -C "$PUSHREPO" push -q origin main
-git -C "$PUSHREPO" fetch -q origin
+timeout 5 git -C "$PUSHREPO" push -q origin main
+timeout 5 git -C "$PUSHREPO" fetch -q origin
 mkdir -p "$RUN/worktree-push"
 git -C "$PUSHREPO" worktree add -q -b "spira/sp-push-a" "$RUN/worktree-push/sp-push-a" main
 printf 'push-work\n' > "$RUN/worktree-push/sp-push-a/sp-push-a.txt"

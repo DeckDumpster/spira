@@ -17,7 +17,7 @@ use crate::ports::Git;
 use crate::report::Reporter;
 use regex::Regex;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // land_subject
@@ -64,7 +64,7 @@ pub fn is_work_type(t: &str, close_types: &str) -> bool {
 /// `cmd_ghq`) — there is no `ghq` binary on PATH to exec. This calls that same subcommand
 /// directly, exactly what the bash shim would have called.
 pub fn pr_merged(repo: &Path, branch: &str) -> bool {
-    let mut c = Command::new("bdq");
+    let mut c = spira_config::bounded::bounded("bdq");
     c.current_dir(repo).arg("__ghq").args(["pr", "view", branch, "--json", "state", "-q", ".state"]);
     c.stdin(Stdio::null()).stderr(Stdio::null());
     match c.output() {
@@ -156,25 +156,17 @@ fn label_value<'a>(labels: &'a [String], prefix: &str) -> Option<&'a str> {
     labels.iter().find_map(|l| l.strip_prefix(prefix))
 }
 
-/// `bdq close <id> --reason-file -`, the reason on stdin — the exact shape
-/// the retired bash close's heredoc wrote. `true` only on a clean exit.
+/// The close through the lifecycle machine (sp-3fue0j): the row is already LANDED here, so
+/// `spira-lc close` records nothing new and closes the store. `true` only on a clean exit.
 fn bdq_close(id: &str, reason: &str) -> bool {
-    let mut c = Command::new("bdq");
-    c.args(["close", id, "--reason-file", "-"]);
-    c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
-    let Ok(mut child) = c.spawn() else { return false };
-    if let Some(mut si) = child.stdin.take() {
-        use std::io::Write;
-        let _ = si.write_all(reason.as_bytes());
-    }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    spira_config::lifecycle_row::close_landed(id, reason, "landing-pass").is_ok()
 }
 
 /// `sending reap-landed-branch [--status-from <f>] <id> <branch> <repo> <why>` — the same
 /// shim `spira_reap_landed_branch` execs. `Ok(())` sent, `Err(its output)` otherwise
 /// (failed or refused — both are "left for the Sending" from here).
 fn sending_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, why: &str) -> Result<(), String> {
-    let mut c = Command::new("sending");
+    let mut c = spira_config::bounded::bounded("sending");
     c.arg("reap-landed-branch");
     if let Some(f) = status_file {
         c.arg("--status-from").arg(f);
@@ -213,7 +205,7 @@ pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, row: Option<&Be
     out.log(&format!("land-close {id}: closed at {shown_sha} (submitted -> landed)"));
 
     let (Some(repo_label), Some(branch_label)) = (label_value(&row.labels, "repo:"), label_value(&row.labels, "branch:")) else { return };
-    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), home);
+    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), home);
     let Some(root) = reg.root(repo_label) else { return };
     if !git.branch_exists(Path::new(&root), branch_label) {
         return;
@@ -286,6 +278,13 @@ mod tests {
     }
 
     #[test]
+    fn other_bead_ids_keeps_a_longer_id_distinct_from_its_prefix() {
+        let subjects = "sp-a9gk: fix\nsp-a9g: other";
+        assert_eq!(other_bead_ids(subjects, "sp-a9g"), "sp-a9gk");
+        assert_eq!(other_bead_ids(subjects, "sp-a9gk"), "sp-a9g");
+    }
+
+    #[test]
     fn other_beads_on_conflicts_is_empty_when_files_is_empty() {
         let dir = testkit::TempDir::new("land-verify-other-beads-empty");
         git_init(&dir);
@@ -332,6 +331,7 @@ mod tests {
             external_ref: None,
             title: String::new(),
             notes: Vec::new(),
+            express: false,
         }
     }
 

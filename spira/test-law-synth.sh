@@ -20,7 +20,7 @@
 # case so silence from the negative case looks like failure, not peace.
 #
 # tier: T2
-# covers: rule.sh spira/law-synth.sh cockpit-collect/src/* UC-operator-channel-43
+# covers: rule.sh spira/law-synth.sh cockpit-collect/src/* UC-operator-channel-43 UC-cockpit-observability-18
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -52,13 +52,17 @@ git -C "$WIKI_TMP" config user.name "test" 2>/dev/null
 git -C "$WIKI_TMP" add wiki/notes/common-law.md 2>/dev/null
 git -C "$WIKI_TMP" commit -q -m "test: baseline common-law" 2>/dev/null
 
-run_synth()          { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" bash "$LAW_SYNTH_SH" 2>&1; }
-run_synth_override() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" LAW_SYNTH_OVERRIDE=1 bash "$LAW_SYNTH_SH" 2>&1; }
+# SPIRA_DB/SPIRA_WIKI are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# declare via tl_config, not the env prefixes below, which no process reads any more.
+run_synth()          { tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP"; bash "$LAW_SYNTH_SH" 2>&1; }
+run_synth_override() { tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP"; LAW_SYNTH_OVERRIDE=1 bash "$LAW_SYNTH_SH" 2>&1; }
 
 echo "=== law-synth.sh: no SPIRA_WIKI configured ==="
 
 # No SPIRA_WIKI at all → exits 0, says nothing was synthesised, writes nothing (sp-fe3ee).
-out_synth_nowiki=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="" bash "$LAW_SYNTH_SH" 2>&1); rc_synth_nowiki=$?
+# The empty value here is the real "no wiki configured" state under test, not a default.
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI=""
+out_synth_nowiki=$(bash "$LAW_SYNTH_SH" 2>&1); rc_synth_nowiki=$?
 is     "law-synth: no SPIRA_WIKI exits 0"                     "0" "$rc_synth_nowiki"
 want   "law-synth: no SPIRA_WIKI: reports nothing synthesised" "nothing to synthesise" "$out_synth_nowiki"
 nowant "law-synth: no SPIRA_WIKI: does NOT write"               "wrote"                 "$out_synth_nowiki"
@@ -70,7 +74,7 @@ echo "=== law-synth.sh: wrong-database guard ==="
 # assert a refusal law-synth.sh is right to make. It went unseen while this suite was a T4
 # host case that every container run skipped.
 for i in $(seq 1 10); do
-    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-seed-$i" "Seed statute $i." >/dev/null 2>&1
+    timeout 5 "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-seed-$i" "Seed statute $i." >/dev/null 2>&1
 done
 
 # POSITIVE CONTROL: pointed at real book.
@@ -98,7 +102,7 @@ is "law-synth: empty database: page untouched" "$page_before_negative" "$page_af
 
 # NEGATIVE CONTROL 2: pointed at a database with far fewer laws than the committed page.
 for i in 1 2 3; do
-    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-floor-test-$i" \
+    timeout 5 "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-floor-test-$i" \
         "Floor test statute $i." >/dev/null 2>&1 || true
 done
 out_synth_floor=$(run_synth); rc_synth_floor=$?
@@ -112,7 +116,7 @@ is "law-synth: LAW_SYNTH_OVERRIDE=1 overrides floor check" "0" "$rc_synth_force"
 echo
 echo "=== cockpit-collect statute_keys: SP_STATUTE_SKEW against a real mismatch ==="
 
-run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" cockpit-collect probe statute 2>/dev/null; }
+run_statute_keys() { tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP"; cockpit-collect probe statute 2>/dev/null; }
 
 # POSITIVE CONTROL: fixture db has 3 law- entries (from the floor test above); the committed
 # page has 10 ### headings. 3 < 10/2 → MISMATCH.
@@ -122,12 +126,17 @@ nowant "statute_keys: mismatch → SP_STATUTE_SKEW is not OK"         "SKEW=OK" 
 
 # Add 8 more law- entries so the db has 11 (>= 10/2 = 5, and exceeds the page).
 for i in $(seq 4 11); do
-    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-ok-test-$i" \
+    timeout 5 "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-ok-test-$i" \
         "OK test statute $i." >/dev/null 2>&1 || true
 done
 out_ok=$(run_statute_keys)
 want   "statute_keys: counts match → SP_STATUTE_SKEW=OK"   "SKEW=OK"  "$out_ok"
 nowant "statute_keys: counts match → not MISMATCH"          "MISMATCH" "$out_ok"
+
+out_nowiki=$( tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI=""; cockpit-collect probe statute 2>/dev/null )
+want   "statute_keys: no wiki → SP_STATUTE_SKEW is ?"       "SKEW=?"   "$out_nowiki"
+want   "statute_keys: no wiki → SP_STATUTE_DB_N is ?"       "DB_N=?"   "$out_nowiki"
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP"
 
 db_n="$(printf '%s' "$out_ok" | grep '^SP_STATUTE_DB_N=' | cut -d= -f2)"
 page_n="$(printf '%s' "$out_ok" | grep '^SP_STATUTE_PAGE_N=' | cut -d= -f2)"
@@ -138,16 +147,25 @@ case "$page_n" in ''|*[!0-9]*) bad "SP_STATUTE_PAGE_N is numeric" "got: $page_n"
 
 echo "=== law-synth.sh: configured statute source ==="
 
-out_page=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" SPIRA_STATUTE_PAGE="wiki/other/statutes.md" LAW_SYNTH_OVERRIDE=1 bash "$LAW_SYNTH_SH" 2>&1); rc_page=$?
+# SPIRA_DB/SPIRA_WIKI/SPIRA_STATUTE_PAGE/SPIRA_STATUTE_SOURCE are registered keys (per
+# Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefixes
+# below, which no process reads any more.
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" SPIRA_STATUTE_PAGE="wiki/other/statutes.md"
+out_page=$(LAW_SYNTH_OVERRIDE=1 bash "$LAW_SYNTH_SH" 2>&1); rc_page=$?
 is "law-synth: custom SPIRA_STATUTE_PAGE exits 0" "0" "$rc_page"
 [ -f "$WIKI_TMP/wiki/other/statutes.md" ] \
     && ok "law-synth: custom page written" || bad "law-synth: custom page written" "$out_page"
 
-out_kind=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" SPIRA_STATUTE_SOURCE="notion" bash "$LAW_SYNTH_SH" 2>&1); rc_kind=$?
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" SPIRA_STATUTE_SOURCE="notion"
+out_kind=$(bash "$LAW_SYNTH_SH" 2>&1); rc_kind=$?
 if [ "$rc_kind" -ne 0 ]; then ok "law-synth: unknown source kind refused"; else bad "law-synth: unknown source kind refused" "rc=0"; fi
 want "law-synth: unknown source kind named" "notion" "$out_kind"
 
-out_esc=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" SPIRA_STATUTE_PAGE="../escape.md" bash "$LAW_SYNTH_SH" 2>&1); rc_esc=$?
+# Restore SPIRA_STATUTE_SOURCE to its default (llm-wiki): the "notion" override above must
+# not leak into this case, or the refusal below would be for the wrong reason.
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" SPIRA_STATUTE_PAGE="../escape.md" \
+    SPIRA_STATUTE_SOURCE="llm-wiki"
+out_esc=$(bash "$LAW_SYNTH_SH" 2>&1); rc_esc=$?
 if [ "$rc_esc" -ne 0 ] && [ ! -e "$TMP/escape.md" ]; then ok "law-synth: page outside the wiki refused"; else bad "law-synth: page outside the wiki refused" "rc=$rc_esc"; fi
 
 echo

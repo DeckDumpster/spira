@@ -21,7 +21,7 @@ pub fn hold_tag(kind: &str) -> Option<(&'static str, &'static str)> {
         "poison" => ("Poison", "attempts-exhausted"),
         "ask" => ("Ask", "operator-question"),
         "wait" => ("Wait", "unlanded-blocker"),
-        "operator" => ("Operator", "manual-hold"),
+        "manual" => ("Manual", "manual-hold"),
         _ => return None,
     })
 }
@@ -109,14 +109,16 @@ pub fn wait_decisions(
     out
 }
 
-/// CHECK 2 (reaper half): WORKING rows whose lease expired more than `grace` ago, not
-/// wait-held → (id, seconds since expiry).
-pub fn stale_leases(rows: &[LcRow], now: i64, grace: i64) -> Vec<(String, i64)> {
+/// CHECK 2 (reaper half): WORKING rows, not wait-held, whose lease expired more than `grace`
+/// ago, or has expired at all with no live holder → (id, seconds since expiry).
+/// A holder whose session is provably gone (`gone`) is reaped at once, lease or no lease.
+pub fn stale_leases(rows: &[LcRow], now: i64, grace: i64, alive: impl Fn(&str) -> bool, gone: impl Fn(&str) -> bool) -> Vec<(String, i64)> {
     rows.iter()
         .filter(|r| r.state == "WORKING" && !r.holds.iter().any(|h| h == "wait"))
         .filter_map(|r| {
-            let lu = r.lease_until?;
-            (now - lu > grace).then(|| (r.bead_id.clone(), now - lu))
+            let past = now - r.lease_until.unwrap_or(now);
+            let session_gone = r.holder.as_deref().is_some_and(&gone);
+            (session_gone || (r.lease_until.is_some() && (past > grace || (past > 0 && !alive(&r.bead_id))))).then(|| (r.bead_id.clone(), past))
         })
         .collect()
 }
@@ -349,12 +351,20 @@ impl<'a> Sentinel<'a> {
             .collect();
         let now = self.h.now();
         let mut n = 0;
-        for (id, ago) in stale_leases(&rows, now, self.cfg.reclaim_grace) {
+        for (id, ago) in stale_leases(&rows, now, self.cfg.reclaim_grace, |id| self.holder_alive(id), |h| spira_config::session::session_gone(h, &spira_config::admission::RealProcs)) {
+            if let Some(now_state) = self.lc_live_state(&id).filter(|st| st != "WORKING") {
+                self.log(&format!("CHECK2 {id}: skipped HolderDead — the bead moved to {now_state} since the sweep read it"));
+                continue;
+            }
             if !self.lc_apply(&id, HOLDER_DEAD) {
                 continue;
             }
             self.write_event_row(&id, "reclaimed", "stale-lease");
-            let note = format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60);
+            let note = if ago > 0 {
+                format!("Reclaimed by CHECK 2: in_progress with a lease that expired {}m ago and was never released.", ago / 60)
+            } else {
+                "Reclaimed by CHECK 2: the holder's session is gone and never released the claim.".to_string()
+            };
             self.bd()
                 .quiet(self.h, &["note", &id, "--stdin"], Some(&note));
             n += 1;
@@ -364,7 +374,7 @@ impl<'a> Sentinel<'a> {
         }
     }
 
-    /// lib.sh `_bump_write_event`: one events row, best-effort.
+    /// One attempt-history fact appended to the lifecycle event log, best-effort.
     pub fn write_event_row(&self, id: &str, etype: &str, cause: &str) {
         let actor = self
             .ctx
@@ -372,17 +382,9 @@ impl<'a> Sentinel<'a> {
             .filter(|s| !s.is_empty())
             .unwrap_or("harness")
             .to_string();
-        let uuid = uuid4();
-        let q = format!(
-            "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('{uuid}', '{}', '{}', '{}', '{}', UTC_TIMESTAMP())",
-            sql_str(id),
-            sql_str(etype),
-            sql_str(&actor),
-            sql_str(cause)
-        );
-        let args = vec!["-C".to_string(), self.cfg.db.clone(), "sql".into(), q];
+        let args = ["fact", id, "--kind", etype, "--actor", &actor, "--cause", cause].map(String::from).to_vec();
         let _ = self.h.run(
-            Spec::args_owned(self.cfg.bd.clone(), args)
+            Spec::args_owned(self.cfg.lc_bin.clone(), args)
                 .out(Io::Null)
                 .err(Io::Null)
                 .timeout(self.cfg.bd_timeout),
@@ -441,34 +443,6 @@ impl<'a> Sentinel<'a> {
         ));
         self.act(&format!("backfilled {} rowless bead(s)", rowless_ids.len() - failed.len()));
     }
-}
-
-fn sql_str(s: &str) -> String {
-    s.replace('\'', "''")
-}
-
-/// A random v4 UUID from /dev/urandom (python's uuid.uuid4()).
-pub fn uuid4() -> String {
-    let mut b = [0u8; 16];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        use std::io::Read;
-        let _ = f.read_exact(&mut b);
-    }
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let h = b.iter().fold(String::new(), |mut s, x| {
-        use std::fmt::Write;
-        let _ = write!(s, "{x:02x}");
-        s
-    });
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
 }
 
 #[cfg(test)]
@@ -578,7 +552,38 @@ mod tests {
                 ..Default::default()
             },
         ];
-        assert_eq!(stale_leases(&rows, 1000, 500), vec![("a".to_string(), 900)]);
+        assert_eq!(stale_leases(&rows, 1000, 500, |_| true, |_| false), vec![("a".to_string(), 900)]);
+    }
+
+    #[test]
+    fn a_holder_whose_session_is_gone_is_reaped_before_its_lease_expires() {
+        let row = |id: &str, holder: &str| LcRow {
+            bead_id: id.into(),
+            state: "WORKING".into(),
+            holder: Some(holder.into()),
+            lease_until: Some(9_000),
+            ..Default::default()
+        };
+        let rows = vec![row("orphan", "aeon-mindy@7.99"), row("running", "aeon-mindy@8.120")];
+        let gone = |h: &str| h == "aeon-mindy@7.99";
+        assert_eq!(stale_leases(&rows, 1000, 500, |_| true, gone), vec![("orphan".to_string(), -8000)]);
+    }
+
+    #[test]
+    fn stale_leases_reap_at_expiry_only_when_the_holder_is_gone() {
+        let row = |id: &str, lu| LcRow {
+            bead_id: id.into(),
+            state: "WORKING".into(),
+            lease_until: Some(lu),
+            ..Default::default()
+        };
+        let rows = vec![row("dead", 900), row("live", 900), row("unexpired", 2000)];
+        let alive = |id: &str| id == "live";
+        assert_eq!(stale_leases(&rows, 1000, 500, alive, |_| false), vec![("dead".to_string(), 100)]);
+        assert_eq!(
+            stale_leases(&rows, 1500, 500, alive, |_| false),
+            vec![("dead".to_string(), 600), ("live".to_string(), 600)]
+        );
     }
 
     #[test]
@@ -610,13 +615,6 @@ mod tests {
                 "INCONSISTENT\tb\tREADY with a holder still set"
             ]
         );
-    }
-
-    #[test]
-    fn uuid_is_v4_shaped() {
-        let u = uuid4();
-        assert_eq!(u.len(), 36);
-        assert_eq!(&u[14..15], "4");
     }
 
     // ── CHECK-ROWLESS ─────────────────────────────────────────────────────────────────

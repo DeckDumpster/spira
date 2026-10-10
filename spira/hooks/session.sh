@@ -2,7 +2,7 @@
 #
 # session.sh — the coding agent's SessionStart hook: what is watching, what is unread,
 # unread mail, and — on the concierge socket only — the mandatory first action to arm the
-# inbox-triage Monitor. Registered by `release session-hook install`.
+# inbox waiter. Registered by `release session-hook install`.
 #
 # WHY A HOOK CAN ONLY PRINT. A command hook communicates with the client through stdout,
 # stderr and an exit code only — it cannot call a tool. The OUTER HARNESS owns the watcher
@@ -78,7 +78,7 @@ except Exception: print("")' 2>/dev/null)"
 # THE CONCIERGE'S MANDATORY FIRST ACTION, ON EVERY SessionStart SOURCE — startup, resume,
 # clear, compact and fork all open a context with no Monitor attached, which is the only
 # condition this is about (same reasoning as the "no source is special" comment below). It
-# does not wait on WATCHD or a manifest: the inbox-triage Monitor is how mail and watcher
+# does not wait on WATCHD or a manifest: the inbox waiter (`watchd next`) is how mail and watcher
 # events reach this session AT ALL now that a keystroke wake no longer does, so it must stay
 # constantly attached. SPIRA_CONCIERGE is exported only by concierge.sh's own launcher, so
 # every other session on the box gets none of this.
@@ -86,8 +86,8 @@ if [ -n "${SPIRA_CONCIERGE:-}" ]; then
     _cinbox="$SPIRA_CONCIERGE_INBOX"
     _cunread="$(wc -l < "$_cinbox" 2>/dev/null || echo 0)"
     case "$_cunread" in *[!0-9]*|'') _cunread=0 ;; esac
-    printf 'MANDATORY FIRST ACTION: arm the Concierge inbox monitor before anything else — Monitor command=%s, timeout_ms=1800000, description="concierge inbox (triaged)". Every watcher and mail event reaches you ONLY through %s (%s lines); nothing types into the pane. Re-arm it at every 30-minute expiry. Then read recent inbox lines: tail -20 %s\n' \
-        "$(command -v inbox-triage || printf inbox-triage)" "$_cinbox" "$_cunread" "$_cinbox"
+    printf 'MANDATORY FIRST ACTION: start the Concierge inbox waiter as a background job before anything else — Bash run_in_background, command=%s next concierge-inbox. It exits when an inbox line needs you, printing it; act on it, then run the same command again as a background job so you are never without one. Every watcher and mail event reaches you ONLY through %s (%s lines); nothing types into the pane. Then read recent inbox lines: tail -20 %s\n' \
+        "$(command -v watchd || printf watchd)" "$_cinbox" "$_cunread" "$_cinbox"
 fi
 
 WATCHD=watchd

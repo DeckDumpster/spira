@@ -30,6 +30,7 @@ pub struct RealUnpack;
 
 impl Unpack for RealUnpack {
     fn extract(&self, tarball: &Path, into: &Path) -> Result<(), String> {
+        // batch-job: tar runs for as long as its work does
         let st = Command::new("tar").arg("-xzf").arg(tarball).arg("-C").arg(into).status().map_err(|e| format!("cannot run tar: {e}"))?;
         if !st.success() {
             return Err(format!("tar -xzf {} failed ({st})", tarball.display()));

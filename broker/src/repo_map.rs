@@ -17,18 +17,23 @@ pub fn parse(content: &str, repo: &str) -> Option<String> {
     None
 }
 
-pub fn lookup(repo: &str) -> Option<String> {
+pub fn lookup(repo: &str) -> Result<Option<String>, String> {
     let map_path: PathBuf = {
-        let v = std::env::var("SPIRA_REPO_MAP").unwrap_or_default();
+        // SPIRA_REPO_MAP is a registered key — resolved from spira.toml, no fallback.
+        let v = spira_config::process::cfg("SPIRA_REPO_MAP")?;
         if !v.is_empty() {
             PathBuf::from(v)
         } else {
+            // SPIRA_HOME is not a registered config key (spira/conf.d has no entry) —
+            // left on the process environment.
             let home = std::env::var("SPIRA_HOME").unwrap_or_default();
             PathBuf::from(home).join("repo-map")
         }
     };
-    let content = std::fs::read_to_string(&map_path).ok()?;
-    parse(&content, repo)
+    match std::fs::read_to_string(&map_path) {
+        Ok(content) => Ok(parse(&content, repo)),
+        Err(_) => Ok(None),
+    }
 }
 
 #[cfg(test)]

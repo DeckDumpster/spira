@@ -13,7 +13,7 @@ FAYTH_DESC="Maechen — the unsent historian: reads the failure distribution, na
 # claiming a work bead but by a trigger that fires a sweep. The label is read from
 # SPIRA_MAECHEN_LABEL so the operator can rename it without touching this file.
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_MAECHEN_LABEL"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
 # Statutes only. Maechen reads failure patterns and writes designs — a runbook shelf
 # for production incidents would push the statutes it actually needs off the context budget.

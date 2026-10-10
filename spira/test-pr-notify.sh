@@ -51,18 +51,29 @@ command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 
 # ALL VALUES PINNED TO NON-DEFAULTS so sourcing pr-notify.sh cannot read the operator's own
 # configuration (law-gates-run-in-a-clean-environment).
-CONF="$TMP/spira.conf"
+# conf.sh no longer reads a legacy spira.conf at all — SPIRA_TOML is the one source of config
+# (per Ryan 2026-10-05) — so the pinning that used to live in a hand-written $CONF file goes
+# through tl_config, into this suite's own override layer, instead.
+CONF="$TMP/spira.conf"   # unread now; kept only as a stable name for exports below
 RUN="$TMP/run"
-printf 'SPIRA_ID_PREFIX = sp\nSPIRA_RUN = %s\n' "$RUN" > "$CONF"
 # REPO_MAP PINNED (empty for now) BEFORE THE FIRST SOURCE BELOW: an unset SPIRA_REPO_MAP
-# falls back to this checkout's own real repo-map, auto-converting it into this fixture's
-# spira.toml — and every later, smaller fixture conversion then trips spira-config convert's
-# shrink guard, so $CONF's SPIRA_RUN is silently never read.
+# would otherwise read whatever the fixture's own base layer declares.
 REPO_MAP="$TMP/repo-map"
 : > "$REPO_MAP"
-export SPIRA_CONF="$CONF" HOME="$TMP/home" SPIRA_REPO_MAP="$REPO_MAP"
+# SPIRA_MAIL AND SPIRA_MAIL_KINDS TOO: the complete fixture's own defaults are fixed,
+# unwritable "/fixture/userhome/..." paths now (one source of config, never derived from
+# SPIRA_RUN at runtime) — SPIRA_MAIL because the tick3 assertions below read mail straight
+# out of "$RUN/mail/concierge/", and SPIRA_MAIL_KINDS because "mail send --kind event"
+# lints the kind against a real file in that directory (this checkout's own mail/kinds/,
+# which does carry event.md, unlike the fixture's unreachable one).
+tl_config SPIRA_ID_PREFIX=sp SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$REPO_MAP" \
+    SPIRA_MAIL="$RUN/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+export SPIRA_CONF="$CONF" HOME="$TMP/home"
 # An operator-muted host files mail into cur/, where the unread-count checks never look.
-export SPIRA_MAIL_MUTE=0
+# SPIRA_CONCIERGE_INBOX EXPLICITLY: mail's default reader for the concierge mailbox
+# (inbox-append.sh) resolves this from config, and the complete fixture's own value is a
+# fixed, unwritable "/fixture/userhome/..." path now.
+tl_config SPIRA_MAIL_MUTE=0 SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"
 
 # SOURCEABLE, AND SILENT WHEN IT IS (pr-notify.sh's own guard): this reaches _PR_STATUS_PY
 # without triggering a live repo-map scan.
@@ -150,9 +161,16 @@ esac
 GHEOF
 chmod +x "$GH_BIN/gh"
 
+# SPIRA_HOME EXPLICITLY, on every env -i call below: pr-notify.sh's own conf.sh sourcing
+# finds it as a plain, never-exported shell variable (its own $HERE), which is enough for
+# pr-notify.sh itself but not for `mail send concierge`, a separate process that needs
+# SPIRA_HOME or SPIRA_RELEASE in ITS OWN environment (spira_config::resolve::locate_home) —
+# without it, "mail send" fails outright ("neither SPIRA_HOME nor SPIRA_RELEASE is set") and
+# every tick3 mail assertion below reads an empty mailbox.
 run() {  # run [args...] -> pr-notify.sh in a clean env; stdout in $TMP/out
+    tl_config SPIRA_REPO_MAP="$REPO_MAP" SPIRA_MAIL_MUTE=0
     env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
-        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_MAIL_MUTE=0 \
+        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
 }
@@ -278,16 +296,16 @@ printf 'base\n' > "$BRANCH_REPO/readme"
 git -C "$BRANCH_REPO" add readme
 git -C "$BRANCH_REPO" commit -q -m "base"
 BARE="$TMP/bare-remote"
-git clone --quiet --bare "$BRANCH_REPO" "$BARE"
+timeout 5 git clone --quiet --bare "$BRANCH_REPO" "$BARE"
 git -C "$BRANCH_REPO" remote add origin "$BARE"
-git -C "$BRANCH_REPO" fetch --quiet origin
+timeout 5 git -C "$BRANCH_REPO" fetch --quiet origin
 git -C "$BRANCH_REPO" checkout -q -b spira/test-bead
 printf 'aeon work\n' > "$BRANCH_REPO/work"
 git -C "$BRANCH_REPO" add work
 git -C "$BRANCH_REPO" commit -q -m "spira/test-bead: work"
-git -C "$BRANCH_REPO" push -q origin spira/test-bead
+timeout 5 git -C "$BRANCH_REPO" push -q origin spira/test-bead
 git -C "$BRANCH_REPO" checkout -q main
-git -C "$BRANCH_REPO" fetch --quiet origin
+timeout 5 git -C "$BRANCH_REPO" fetch --quiet origin
 
 BRANCH_MAP="$TMP/branch-repo-map"
 printf '%s|%s|pr\n'   "branchrepo" "$BRANCH_REPO" >  "$BRANCH_MAP"
@@ -306,8 +324,9 @@ GHEOF
 chmod +x "$GH_BIN/gh"
 
 runb() {  # runb <args...> -> pr-notify.sh against BRANCH_MAP
+    tl_config SPIRA_REPO_MAP="$BRANCH_MAP"
     env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
-        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$BRANCH_MAP" \
+        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         GH_BRANCH_HAS_PR="${GH_BRANCH_HAS_PR:-0}" \
         pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
@@ -376,8 +395,9 @@ red_json 1 "Round batch" suites > "$TMP/repos/queue-repo/.gh-pr-list.json"
 rm -f "$TMP/repos/queue-repo/.gh-pr-state"
 
 run_gone() {
+    tl_config SPIRA_REPO_MAP="$GONE_MAP"
     env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
-        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$GONE_MAP" \
+        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         pr-notify.sh --show > "$TMP/out" 2>"$TMP/err"
 }
@@ -408,9 +428,9 @@ GREEN #1 Round batch [queue-repo]: lands automatically
 EOF
 
 actionable() {
+    tl_config SPIRA_REPO_MAP="$GONE_MAP" SPIRA_ACTIONABLE="${SPIRA_ACTIONABLE_OVERRIDE:-}"
     env -i HOME="$TMP/home" PATH="$PATH" \
-        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$GONE_MAP" SPIRA_REPO="$TMP/empty-repo" \
-        SPIRA_ACTIONABLE="${SPIRA_ACTIONABLE_OVERRIDE:-}" \
+        SPIRA_CONF="$CONF" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/empty-repo" \
         pr-notify.sh actionable "$FLOG"
 }
 
@@ -421,6 +441,11 @@ has  "actionable filter: the mapped repo's RED survives"                "$out9" 
 hasnt "actionable filter: the unmapped repo's RED is dropped"            "$out9" "gone-repo"
 hasnt "actionable filter: OPENED is not actionable"                      "$out9" "OPENED"
 hasnt "actionable filter: GREEN is not actionable (it lands itself)"     "$out9" "GREEN"
+
+# SPIRA_ACTIONABLE RESTORED (pattern 10): tl_config persists for the rest of the suite, and
+# none of run()/runb()/run_gone() below mention this key, so the override above would
+# otherwise go on filtering every later pr-notify.sh call too.
+tl_config SPIRA_ACTIONABLE=
 
 echo "10. the mailed log is marked delivered, so watchd notify has no unread stream to escalate"
 mkdir -p "$RUN/watchd"

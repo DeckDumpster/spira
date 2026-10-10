@@ -3,7 +3,6 @@
 
 use super::*;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// One place builds each kind of call, so no call site can be written without its
@@ -13,35 +12,37 @@ impl Run<'_> {
         p.display().to_string()
     }
 
-    /// The acceptance run's own bootstrap `spira.conf` (phase A, fresh install) — just
-    /// enough for `install.sh`/`configure.sh` to proceed non-interactively, written BEFORE
-    /// either runs so this run needs no prompt. `SPIRA_ID_PREFIX` is REQUIRED here for the
-    /// same reason `configure.sh` itself writes it for a real install (sp-k6m1m):
-    /// `spira-config validate` (doctor, pre-activate) refuses a `[spira]` table that sets
-    /// anything but names no id prefix — and this file already sets `SPIRA_OPERATED` and
-    /// `SPIRA_RELEASES`, so it is never the empty table that check lets through. Regression
-    /// sp-oppza: this bootstrap file, not `configure.sh` (which never overwrites a file
-    /// already here), is what a fresh acceptance install's box actually gets — omitting the
-    /// key here broke phase A the moment sp-k6m1m made it required.
-    pub(super) fn bootstrap_conf_text(&self, releases: &Path) -> String {
+    /// The operator's answers for phase A's fresh install — what a human gives the
+    /// installer on a new box (per Ryan 2026-10-07: install PRODUCES the config from
+    /// user-provided inputs). `release install-tarball --answers` turns them into the one
+    /// config file, every path pinned; nothing here writes config itself. `operated = 0` and
+    /// the agent are this run's own: no operator is watching, and the agent is a stub.
+    pub(super) fn answers_text(&self, releases: &Path) -> String {
+        let db = &self.o.bd_db;
+        let data = db.parent().unwrap_or(Path::new("/"));
         let mut c = String::new();
+        c.push_str("instance = prod\nid_prefix = sp\n");
+        c.push_str(&format!("home_repo = {}\n", self.o.scratch_name()));
+        c.push_str(&format!("home_repo_path = {}\n", Self::s(&self.o.a.scratch_repo)));
+        c.push_str(&format!("db = {}\n", Self::s(db)));
+        c.push_str(&format!("run = {}\n", Self::s(&self.o.spira_run)));
+        c.push_str(&format!("releases = {}\n", Self::s(releases)));
+        c.push_str(&format!("dolt_data = {}\n", Self::s(&data.join("dolt"))));
+        c.push_str("operated = 0\n");
+        c.push_str(&format!("release_repo = {}\n", Self::s(&self.o.release_src())));
         if let Some(a) = &self.o.a.agent {
-            c.push_str(&format!("SPIRA_AGENT = {a}\n"));
+            c.push_str(&format!("agent = {a}\n"));
         }
-        c.push_str("SPIRA_OPERATED = 0\n");
-        c.push_str("SPIRA_ID_PREFIX = sp\n");
-        c.push_str(&format!("SPIRA_RELEASES = {}\n", Self::s(releases)));
-        c.push_str(&format!("SPIRA_RELEASE_REPO = {}\n", Self::s(&self.o.release_src())));
         c
     }
 
     /// The release under test's launcher environment — what a launcher gives every Spira
     /// process: `SPIRA_RELEASE` naming `current`, `PATH` with its `bin/` and `spira/` first
-    /// (every tool is called by bare name, sp-gypjk), and `SPIRA_CONF` (DESIGN.md Decision 2).
+    /// (every tool is called by bare name, sp-gypjk), and `SPIRA_TOML`, the one source of config.
     fn launcher_env(&self) -> Vec<(String, String)> {
         let cur = self.o.releases().join("current");
         vec![
-            ("SPIRA_CONF".into(), Self::s(&self.o.conf())),
+            ("SPIRA_TOML".into(), Self::s(&self.o.toml())),
             ("SPIRA_RELEASE".into(), Self::s(&cur)),
             ("PATH".into(), format!("{}:{}:{}", Self::s(&cur.join("bin")), Self::s(&cur.join("spira")), self.o.base_path)),
         ]
@@ -62,10 +63,16 @@ impl Run<'_> {
         }
     }
 
+    /// `deploy.sh` re-renders units, so it needs the `SPIRA_HOME_REPO` the install had: without
+    /// it the cert-sweep and round-template units resolve out of the manifest and are pruned.
+    fn deploy_sh(&self) -> Cmd {
+        self.forge(self.tool("deploy.sh")).env("SPIRA_HOME_REPO", self.o.scratch_name())
+    }
+
     /// `deploy.sh` of the release under test: always `--allow-draft` (acceptance runs before
     /// the draft is published), and the local tarball when this run was handed one.
     fn deploy_tag(&self) -> Cmd {
-        let mut c = self.forge(self.tool("deploy.sh")).arg("--allow-draft");
+        let mut c = self.deploy_sh().arg("--allow-draft");
         if let Some(t) = &self.o.a.tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
@@ -73,9 +80,9 @@ impl Run<'_> {
     }
 
     /// `deploy.sh` of the predecessor (a rollback), with its local tarball when handed one.
-    fn deploy_prev(&self, prev: &str) -> Cmd {
-        let mut c = self.forge(self.tool("deploy.sh"));
-        if let Some(t) = &self.o.a.prev_tarball {
+    fn deploy_prev(&self, prev: &str, tarball: Option<&Path>) -> Cmd {
+        let mut c = self.deploy_sh();
+        if let Some(t) = tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
         c.arg(prev)
@@ -139,11 +146,15 @@ impl Run<'_> {
     /// aged install, over real surviving state where units are already active, and failed
     /// the second restart deterministically enough under host load to make install.sh refuse.
     fn install_tarball(&self, tb: &Path) -> i32 {
+        // A fresh box names no harness home and no release: install-tarball takes both from
+        // the tarball it installs, exactly as it must for an operator's first install.
         let c = Cmd::new(Self::s(&self.o.release_bin))
             .arg("install-tarball")
             .arg("--skip-restart")
             .arg(Self::s(tb))
-            .env("SPIRA_CONF", Self::s(&self.o.conf()))
+            .arg("--answers")
+            .arg(Self::s(&self.o.answers()))
+            .env("SPIRA_TOML", Self::s(&self.o.toml()))
             .env("SPIRA_RELEASES", Self::s(&self.o.releases()))
             .env("SPIRA_RUN", Self::s(&self.o.tmp.join("run")));
         self.h.show(&c)
@@ -190,6 +201,17 @@ impl Run<'_> {
     fn start_sentinel(&self) {
         let unit = first_fields(&self.systemctl(&["list-unit-files", "spira-sentinel*.service", "--no-legend", "--plain"]).out).into_iter().next().unwrap_or_default();
         self.systemctl(&["start", &unit]);
+    }
+
+    /// A predecessor installs the round-template refresh on any box with a git home repo, and
+    /// its refresh needs a round VM host this box does not have: it fails on its first tick and
+    /// the predecessor's own deploy.sh then refuses on the failed unit. Take the unit out of
+    /// the box the way an operator without a VM host would.
+    fn without_round_vm_host(&self) {
+        for u in first_fields(&self.systemctl(&["list-unit-files", "spira-round-template*", "--no-legend", "--plain"]).out) {
+            self.systemctl(&["disable", "--now", &u]);
+            self.systemctl(&["reset-failed", &u]);
+        }
     }
 
     fn gh(&self, args: &[&str]) -> Cmd {
@@ -264,13 +286,9 @@ impl Run<'_> {
         unit_set(&self.systemctl(&["list-unit-files", "--no-legend"]).out)
     }
 
-    /// The model's part is over: the bead store says closed/submitted, or (the lifecycle
-    /// cutover: a model finishes with `work submit` and never closes the bead itself) its
-    /// lifecycle history has reached SUBMITTED.
+    /// The model's part is over: its lifecycle history has reached SUBMITTED (a model finishes
+    /// with `work submit` and never closes the bead itself).
     fn bead_finished(&self, id: &str) -> bool {
-        if bead_finished(&self.h.run(&self.bd(&["show", id, "--json"])).out) {
-            return true;
-        }
         let hist = self.h.run(&self.tool("spira-lc").args(["history", id]));
         hist.rc == 0 && lifecycle_submitted(&lifecycle_states(&hist.out))
     }
@@ -356,6 +374,42 @@ impl Run<'_> {
         }
     }
 
+    /// A stub builder's handoff through the release's own fast tier (`aeon fast-tier`, the
+    /// code the aeon's teardown runs before it hands a branch on). The tier only exists in a
+    /// harness tree, so the scratch repo cannot host it — a tree carrying `gate.steps` takes
+    /// over that repository's landing gate — and the release's own tree, minus what a release
+    /// adds, is committed as the base of a temporary repository instead.
+    fn fast_tier_handoff(&mut self, label: &str) {
+        let cur = self.o.releases().join("current");
+        let dir = self.o.tmp.join(format!("fast-tier-{}", label.replace(' ', "-")));
+        let (cur_s, dir_s) = (Self::s(&cur), Self::s(&dir));
+        let seed = self.h.run(
+            &Cmd::new("bash")
+                .arg("-c")
+                .arg(FAST_TIER_SEED)
+                .arg("_")
+                .arg(&cur_s)
+                .arg(&dir_s)
+                .env("GIT_AUTHOR_NAME", "Spira Acceptance")
+                .env("GIT_AUTHOR_EMAIL", "acceptance@spira.local")
+                .env("GIT_COMMITTER_NAME", "Spira Acceptance")
+                .env("GIT_COMMITTER_EMAIL", "acceptance@spira.local"),
+        );
+        let name = format!("{label}: stub builder's probe committed on a branch of the release's own tree");
+        self.check(&name, seed.rc == 0, || format!("exit {}\n{}", seed.rc, tail(&seed.text, 8)));
+        if seed.rc != 0 {
+            return;
+        }
+        // The check must be able to fail: without a base, spira-lint's diff rules refuse.
+        let bare = self.h.run(&self.tool("bash").arg("-c").arg(FAST_TIER_BARE_LINT).arg("_").arg(&dir_s));
+        let name = format!("{label}: positive control: spira-lint with no base refuses");
+        self.check(&name, bare.rc != 0, || format!("exit 0 — a bare spira-lint passed:\n{}", tail(&bare.text, 8)));
+        let c = self.tool("aeon").args(["fast-tier", &dir_s, &dir_s, FAST_TIER_BRANCH, "main"]);
+        let out = self.h.run(&c);
+        let name = format!("{label}: stub builder's handoff passes the fast tier (rebase check, spira-lint against the base, build fence)");
+        self.check(&name, out.rc == 0, || format!("exit {}\n{}", out.rc, tail(&out.text, 12)));
+    }
+
     fn rev(&self, r: &str) -> Option<String> {
         let o = self.h.run(&self.git(&["rev-parse", r]));
         (o.rc == 0).then(|| o.out.trim().to_string()).filter(|s| !s.is_empty())
@@ -374,6 +428,28 @@ impl Run<'_> {
         (o.rc == 0).then(|| o.out.lines().filter(|l| !l.is_empty()).count())
     }
 }
+
+const FAST_TIER_BRANCH: &str = "spira/acceptance-fast-tier";
+
+/// `$1` the release, `$2` the new repository: the release's tree without `bin/`, `model-bin/`,
+/// MANIFEST or the compat links into `bin/` (all added by a release build, none tracked) is the
+/// base on `main`; the stub builder's probe is one commit on its branch.
+const FAST_TIER_SEED: &str = r#"set -e
+rel="$1"; dir="$2"
+rm -rf "$dir"; mkdir -p "$dir"
+git init -q -b main "$dir"
+(cd "$rel" && find . \( -path ./bin -o -path ./model-bin -o -path ./MANIFEST \) -prune -o ! \( -type l -lname '../bin/*' \) -print0 \
+    | tar --null --no-recursion -T - -cf -) | tar --no-same-permissions -xf - -C "$dir"
+chmod -R u+w "$dir"
+git -C "$dir" add -A
+git -C "$dir" commit -q -m "base: the release's own tree"
+git -C "$dir" checkout -q -b spira/acceptance-fast-tier
+printf 'acceptance-fast-tier\n' > "$dir/acceptance-probe-fast-tier.txt"
+git -C "$dir" add acceptance-probe-fast-tier.txt
+git -C "$dir" commit -q -m "acceptance-fast-tier: acceptance probe"
+"#;
+
+const FAST_TIER_BARE_LINT: &str = r#"cd "$1" && exec env -u SPIRA_GATE_BASE spira-lint --only plan-matrix"#;
 
 /// The builder partition labels the probe bead must carry.
 struct Labels {
@@ -395,6 +471,23 @@ fn tarball_in(dir: &Path) -> Option<PathBuf> {
 fn tail(text: &str, n: usize) -> String {
     let l: Vec<&str> = text.lines().collect();
     l[l.len().saturating_sub(n)..].join("\n")
+}
+
+/// The nearest earlier tag with an acceptance note, when that note records an upgrade waiver:
+/// a waiver covers its own cut only.
+fn waived_predecessor(h: &dyn Host, repo: Option<&Path>, tag: &str) -> Option<String> {
+    let repo = repo?.display().to_string();
+    let listed = h.run(&Cmd::new("git").args(["-C", &repo, "tag", "--list", "--sort=-creatordate"]));
+    if listed.rc != 0 {
+        return None;
+    }
+    for t in listed.out.lines().map(str::trim).skip_while(|t| *t != tag).skip(1) {
+        let note = h.run(&Cmd::new("git").args(["-C", &repo, "notes", "--ref=acceptance", "show", &format!("refs/tags/{t}")]));
+        if note.rc == 0 && !note.out.trim().is_empty() {
+            return note.out.lines().any(|l| l == WAIVER_LINE).then(|| t.to_string());
+        }
+    }
+    None
 }
 
 /// The whole run; the exit code.
@@ -435,6 +528,13 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         return 2;
     }
 
+    if prev.is_none() {
+        if let Some(w) = waived_predecessor(h, r.o.notes_repo.as_deref(), &tag) {
+            eprintln!("release acceptance: refusing {tag}: {w} carries an upgrade waiver, so this cut must run phases B/C/D (--prev-tag, no --waive-upgrade)");
+            return 2;
+        }
+    }
+
     // ---- phase A --------------------------------------------------------------------------
     r.phase("phase-A");
     println!("\nphase A — positive control: binary check catches missing binary");
@@ -452,12 +552,10 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     println!("\nphase A — fresh install from {tag} tarball");
     let releases = r.o.releases();
     let _ = fs::create_dir_all(&releases);
-    let conf = r.o.conf();
-    let _ = fs::create_dir_all(conf.parent().unwrap_or(Path::new("/")));
     let _ = fs::create_dir_all(r.o.release_src());
-    let c = r.bootstrap_conf_text(&releases);
-    if let Err(e) = fs::write(&conf, c) {
-        r.bad("phase A: spira.conf written", &format!("{}: {e}", conf.display()));
+    let answers = r.o.answers();
+    if let Err(e) = fs::write(&answers, r.answers_text(&releases)) {
+        r.bad("phase A: operator answers written", &format!("{}: {e}", answers.display()));
     }
 
     let tarball = match r.o.a.tarball.clone() {
@@ -573,6 +671,11 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         });
     }
 
+    if releases.join("current").is_dir() {
+        println!("\nphase A — a builder's handoff passes the fast tier");
+        r.fast_tier_handoff("phase A");
+    }
+
     println!("\nphase A — uninstall and clean state");
     let rc = h.run(&r.uninstall()).rc;
     r.is0("phase A: uninstall.sh --yes exits 0", rc);
@@ -601,6 +704,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
                     r.install_tarball(&tb);
                     r.sync_scratch("phase B");
                     let prc = r.install_sh();
+                    r.without_round_vm_host();
                     r.is0(&format!("phase B: install.sh ({pt}) exits 0"), prc);
                     // A failed install leaves the database down; deploy.sh would then read as an
                     // upgrade failure. Attribute it to the install instead.
@@ -680,7 +784,7 @@ fn phase_bc(r: &mut Run, tag: &str, pt: &str) {
 
     r.phase("phase-C");
     println!("\nphase C — rollback: deploy {pt}, verify unit set restored");
-    let rc = h.show(&r.deploy_prev(pt));
+    let rc = h.show(&r.deploy_prev(pt, r.o.a.prev_tarball.as_deref()));
     r.is0(&format!("phase C: deploy.sh {pt} (rollback) exits 0"), rc);
     r.check_oneshots("phase C");
     let post = r.unit_set();
@@ -697,18 +801,32 @@ fn phase_bc(r: &mut Run, tag: &str, pt: &str) {
 #[allow(clippy::too_many_arguments)]
 fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir: &Path, labels: &Labels, land_ref: &str) {
     let h = r.h;
-    // Reuse phase B's predecessor tarball.
-    let aged = match r.o.a.prev_tarball.clone().or(prev_tb).or_else(|| tarball_in(prev_dir)) {
-        Some(t) => {
-            r.ok(&format!("phase D: prev tarball already present: {}", t.file_name().unwrap_or_default().to_string_lossy()));
-            Some(t)
+    // The aged base is --aged-tag when given (a release many cuts behind), else phase B's predecessor.
+    let (pt, aged): (String, Option<PathBuf>) = match r.o.a.aged_tag.clone() {
+        Some(at) => {
+            let t = r.acquire(&at, r.o.a.aged_tarball.clone().as_deref(), &prev_dir.join("aged"));
+            r.is0(&format!("phase D: aged base tarball present ({at})"), if t.is_some() { 0 } else { 1 });
+            if let Some(tb) = &t {
+                r.stage_release_source(tb, &at);
+            }
+            (at, t)
         }
         None => {
-            let t = r.download(pt, prev_dir);
-            r.is0(&format!("phase D: gh release download {pt} (aged base)"), if t.is_some() { 0 } else { 1 });
-            t
+            let t = match r.o.a.prev_tarball.clone().or(prev_tb).or_else(|| tarball_in(prev_dir)) {
+                Some(t) => {
+                    r.ok(&format!("phase D: prev tarball already present: {}", t.file_name().unwrap_or_default().to_string_lossy()));
+                    Some(t)
+                }
+                None => {
+                    let t = r.download(pt, prev_dir);
+                    r.is0(&format!("phase D: gh release download {pt} (aged base)"), if t.is_some() { 0 } else { 1 });
+                    t
+                }
+            };
+            (pt.to_string(), t)
         }
     };
+    let pt = pt.as_str();
     if let Some(tb) = &aged {
         r.install_tarball(tb);
     }
@@ -725,10 +843,12 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     if arc != 0 {
         return;
     }
+    r.without_round_vm_host();
 
     // Seed: an open bead, a closed bead, two statutes.
-    h.run(&r.bd(&["create", "--title", "aged-install: open seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
+    let s1 = h.run(&r.bd(&["create", "--title", "aged-install: open seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
     let s2 = h.run(&r.bd(&["create", "--title", "aged-install: closed seed bead (pre-upgrade)", "--label", "acceptance-seed", "--type", "task"]));
+    let seeds: Vec<String> = [&s1, &s2].iter().filter_map(|o| extract_bead_id(&o.text)).collect();
     if let Some(id) = extract_bead_id(&s2.text) {
         h.run(&r.bd(&["close", &id, "--reason", "acceptance: closed for aged-install migration test"]));
     }
@@ -738,10 +858,11 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     let pre_beads = r.count_beads();
     let pre_mems = r.count_memories();
 
-    let conf = r.o.conf();
+    // The operator's override goes where every operator edit goes: the one config file.
+    let conf = r.o.toml();
+    let path = format!("spira.{}", OVERRIDE_KEY.trim_start_matches("SPIRA_").to_ascii_lowercase());
     let val = (20 + r.o.pid % 70).to_string();
-    let appended = fs::OpenOptions::new().append(true).open(&conf).and_then(|mut f| write!(f, "\n{OVERRIDE_KEY} = {val}\n"));
-    if let Err(e) = appended {
+    if let Err(e) = spira_config::set_paths_in_file(&conf, &[(&path, &val)]) {
         r.bad("phase D: operator override written", &format!("{}: {e}", conf.display()));
     }
 
@@ -763,9 +884,15 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
             (Some(a), Some(b)) => r.bad("phase D: memory count preserved through migration", &format!("before={a} after={b} — rows lost")),
             (a, b) => r.bad("phase D: memory count preserved through migration", &format!("could not count memories: before={a:?} after={b:?}")),
         }
+        for id in &seeds {
+            let hist = h.run(&r.tool("spira-lc").args(["history", id]));
+            r.check(&format!("phase D: pre-upgrade bead {id} has lifecycle rows after the aged upgrade"), hist.rc == 0 && !lifecycle_states(&hist.out).is_empty(), || {
+                format!("spira-lc history {id} rc={} — {}", hist.rc, tail(&hist.text, 3))
+            });
+        }
         let doc = h.show(&r.tool("doctor"));
         r.is0("phase D: doctor no fatal after aged upgrade", doc);
-        let got = fs::read_to_string(&conf).ok().and_then(|t| conf_line_value(&t, OVERRIDE_KEY)).unwrap_or_default();
+        let got = spira_config::load(&conf).ok().and_then(|d| spira_config::get_path(&d, &path)).unwrap_or_default();
         r.is_same("phase D: operator override survived aged upgrade", &val, &got);
 
         h.sleep(120);
@@ -793,6 +920,10 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     }
 
     if drc == 0 {
+        r.fast_tier_handoff("phase D");
+    }
+
+    if drc == 0 {
         let script = r.o.releases().join("current/spira/cutover-deploy.sh");
         r.check("phase D: upgraded release carries cutover-deploy.sh", script.is_file(), || format!("missing: {}", script.display()));
         if script.is_file() {
@@ -809,7 +940,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     // A migration that prevents downgrade must make deploy REFUSE and name it
     // (law-pin-by-migration-count).
     println!("\nphase D — aged rollback: deploy {pt} (refuse-or-succeed)");
-    let rb = h.run(&r.deploy_prev(pt));
+    let rb = h.run(&r.deploy_prev(pt, aged.as_deref()));
     if rb.rc != 0 {
         if rb.text.to_lowercase().contains("migrat") {
             r.ok("phase D: rollback refused — names migration (law-pin-by-migration-count)");

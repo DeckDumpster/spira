@@ -14,11 +14,15 @@ After=default.target
 # name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
 # checkout's root until the release deploy lands).
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/beads-push.sh
-TimeoutStartSec=3600
+TimeoutStartSec=1800
+IOSchedulingClass=idle
+Nice=19
+CPUQuota=50%
 StandardOutput=append:@SPIRA_RUN@/beads-push.log
 StandardError=append:@SPIRA_RUN@/beads-push.log
 

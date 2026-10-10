@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
-use crate::cfg::Context;
+use crate::cfg::{Context, Declared};
 use crate::host::{Clock, Host, Out, Runner, Sink, Spec};
 use crate::pass::{Mode, Sentinel};
 
@@ -164,6 +164,89 @@ impl World {
         );
         Context::parse(&b).unwrap()
     }
+
+    /// Every REGISTERED key `Cfg` needs (`Declared`), built the same way `ctx()` builds
+    /// its `Context` — defaults overridable per-test via `extra` — but never through
+    /// `cfg()`/`$SPIRA_TOML`: a literal fixture, so these tests stay independent of
+    /// `spira_config::process::cfg`'s process-wide cache (one source of config).
+    pub fn declared(&self, extra: &[(&str, &str)]) -> Declared {
+        let run = self.run.to_string_lossy().into_owned();
+        let mut env: Vec<(&str, &str)> = vec![
+            ("SPIRA_RUN", &run),
+            ("SPIRA_DB", "/db"),
+            ("SPIRA_BD", "bd"),
+            ("SPIRA_SCOPE_LABEL", "spira"),
+            ("SPIRA_ASK_LABEL", "needs-operator"), // literal-ok: test fixture
+            ("SPIRA_NO_LOOP_LABEL", "no-loop"), // literal-ok: test fixture
+            ("SPIRA_INCIDENT_LABEL", "incident"),
+            ("SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting"),
+            ("SPIRA_OPEN_CHILDREN_LABEL", ""),
+            ("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
+            ("SPIRA_WORK_CLOSE_TYPES", "task bug feature"),
+            ("SPIRA_RECLAIM_GRACE_SECS", "10800"),
+            ("SPIRA_CHECK5_MAX_FILE", "5"),
+            ("SPIRA_CHECK5_MAX_RESOLVE", "50"),
+            // literal-ok: the pre-migration Rust default this fixture stands in for, so
+            // existing argv assertions (dispatch tests' RuntimeMaxSec=3600) don't drift.
+            // spira/conf.d/SPIRA_LAND_MAXSEC's own declared default is 5400.
+            ("SPIRA_LAND_MAXSEC", "3600"),
+            ("SPIRA_MAX_AEONS", ""),
+            ("SPIRA_MAX_LIVE_AEONS", ""),
+            ("SPIRA_LANES_MAX_LIVE", ""),
+            ("SPIRA_QUEUE_THROTTLE_OVERRIDE", ""),
+            ("SPIRA_SUMMON_LOCK_WAIT", "30"),
+            ("SPIRA_LANES", "ops groomer qa maechen czar warden"),
+            ("SPIRA_REPO_MAP", ""),
+            ("SPIRA_GH", ""),
+            ("SPIRA_BATCH_MAXPAR", ""),
+        ];
+        let owned: Vec<(String, String)> = extra
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        env.retain(|(k, _)| !owned.iter().any(|(x, _)| x == k));
+        for (k, v) in &owned {
+            env.push((k.as_str(), v.as_str()));
+        }
+        let get = |k: &str| {
+            env.iter()
+                .rev()
+                .find(|(x, _)| *x == k)
+                .map(|(_, v)| v.to_string())
+                .unwrap_or_default()
+        };
+        let opt = |k: &str| {
+            let v = get(k);
+            if v.is_empty() { None } else { v.parse().ok() }
+        };
+        Declared {
+            run: PathBuf::from(get("SPIRA_RUN")),
+            db: get("SPIRA_DB"),
+            bd: get("SPIRA_BD"),
+            scope: get("SPIRA_SCOPE_LABEL"),
+            ask: get("SPIRA_ASK_LABEL"),
+            no_loop: get("SPIRA_NO_LOOP_LABEL"),
+            incident_label: get("SPIRA_INCIDENT_LABEL"),
+            queue_wait: get("SPIRA_QUEUE_WAIT_LABEL"),
+            open_children: get("SPIRA_OPEN_CHILDREN_LABEL"),
+            red_tracker: get("SPIRA_RED_TRACKER_LABEL"),
+            submitted: get("SPIRA_SUBMITTED_LABEL"),
+            work_types: get("SPIRA_WORK_CLOSE_TYPES").split_whitespace().map(str::to_string).collect(),
+            reclaim_grace: get("SPIRA_RECLAIM_GRACE_SECS").parse().unwrap_or(10800),
+            c5_max_file: get("SPIRA_CHECK5_MAX_FILE").parse().unwrap_or(5),
+            c5_max_resolve: get("SPIRA_CHECK5_MAX_RESOLVE").parse().unwrap_or(50),
+            land_maxsec: get("SPIRA_LAND_MAXSEC"),
+            max_aeons: opt("SPIRA_MAX_AEONS"),
+            max_live_aeons: opt("SPIRA_MAX_LIVE_AEONS"),
+            lanes_max_live: opt("SPIRA_LANES_MAX_LIVE"),
+            queue_throttle_override: get("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
+            summon_lock_wait: get("SPIRA_SUMMON_LOCK_WAIT").parse().unwrap_or(30),
+            lanes: get("SPIRA_LANES"),
+            repo_map: get("SPIRA_REPO_MAP"),
+            gh: get("SPIRA_GH"),
+            batch_maxpar: get("SPIRA_BATCH_MAXPAR"),
+        }
+    }
 }
 
 /// testkit::write_exe, never write + chmod: see testkit/DESIGN.md (ETXTBSY).
@@ -205,6 +288,12 @@ pub fn standard(r: &FakeRunner) {
 /// re-read before every write (fresh.rs) consults. Missing ids are omitted, as bd does.
 pub fn show_from(list: &'static str) -> impl Fn(&Spec) -> Option<Out> {
     move |s| {
+        if s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("show") {
+            let rows: Vec<serde_json::Value> = serde_json::from_str(&lc_mirror(list)).unwrap();
+            let id = s.args.get(1)?;
+            let row = rows.iter().find(|r| r["bead_id"].as_str() == Some(id.as_str()))?;
+            return ok(&serde_json::json!({"bead": row}).to_string());
+        }
         if !is_bd(s, "show") {
             return None;
         }
@@ -263,10 +352,13 @@ pub fn run_mode<'a>(
     extra: &[(&str, &str)],
     repos: Option<&[&str]>,
 ) -> i32 {
+    let chamber = w.home.join("chamber");
+    let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", chamber.to_str())]);
     let h: &'a Host<'a> = Box::leak(Box::new(Host::new(r, clock, sink)));
     let s = Sentinel::new(
         h,
         w.ctx(extra, repos),
+        w.declared(extra),
         &w.home,
         mode,
         "/opt/bin/sentinel".into(),
@@ -355,7 +447,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
             // the snapshot paths reached strand
             assert!(env_of(s, "SPIRA_LIST_SNAPSHOT")
                 .is_some_and(|p| std::fs::read_to_string(p).unwrap().contains("sp-epic")));
-            assert!(env_of(s, "SPIRA_READY_SNAPSHOT").is_some());
+            assert!(env_of(s, "SPIRA_READY_SNAPSHOT").is_none());
             let cache = std::fs::read_to_string(env_of(s, "SPIRA_READY_CACHE").unwrap()).unwrap();
             assert_eq!(cache, "builder 1\nops 0\n");
             return ok("RECLAIMED sp-x — ghost\nSTRANDED plan sp-y — stuck\n");
@@ -552,7 +644,7 @@ fn ask_already_open_queries_open_asks_by_label_and_matches_the_subject_substring
         ok(r#"[{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open"}]"#)
     });
     let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));
-    let s = Sentinel::new(h, w.ctx(&[], None), &w.home, Mode::Report, "sentinel".into(), "p".into());
+    let s = Sentinel::new(h, w.ctx(&[], None), w.declared(&[]), &w.home, Mode::Report, "sentinel".into(), "p".into());
     assert!(s.ask_already_open("Spira is landing nothing"), "{}", sink.text());
     assert!(!s.ask_already_open("no bead carries this subject"));
 }
@@ -608,7 +700,7 @@ fn starved_plan_recomputes_then_judges_once_an_hour() {
     let recount = r
         .find(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count"))
         .expect("recount");
-    assert_eq!(recount.line(), "spira-claim ready-count spira,plan spira-poison,needs-operator"); // literal-ok: asserts argv built from the fixture
+    assert_eq!(recount.line(), "spira-claim ready-count spira,plan"); // literal-ok: asserts argv built from the fixture
     assert!(sink.has("spira: recomputed is_blocked"));
     assert!(sink.has("STARVED — 1 open, 0 ready, 0 running. Dropping to inference."));
     let refl = r.find(|s| s.prog.ends_with("/reflect.sh")).unwrap();
@@ -788,7 +880,7 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_label: String::new() },
+        Mode::Summon { fayth: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
@@ -809,7 +901,7 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_label: "express".into() },
+        Mode::Summon { fayth: "builder".into(), pool: None, require_express: true },
         &[("PATH", &format!("{}:/usr/bin:/bin", bin.display()))],
         None,
     );
@@ -820,8 +912,8 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
     assert!(launch.args.contains(&w.home.to_string_lossy().into_owned()));
     assert!(launch.args.contains(&"builder".to_string()));
     assert!(launch.args.iter().any(|a| a.starts_with("--unit=spira-aeon-builder-")));
-    assert!(launch.args.contains(&"--setenv=SPIRA_REQUIRE_LABEL=express".to_string()));
-    assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to 'express'"), "{}", sink.text());
+    assert!(launch.args.contains(&"--setenv=SPIRA_REQUIRE_EXPRESS=1".to_string()));
+    assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to express"), "{}", sink.text());
 }
 
 /// sp-hh599, law-a-control-that-cannot-check-must-refuse: `fayth_ready`'s own rc contract
@@ -849,7 +941,7 @@ fn summon_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_label: String::new() },
+        Mode::Summon { fayth: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
@@ -974,8 +1066,8 @@ fn ck7_summon_pass_rotates_across_two_real_passes() {
 
 /// A `spira-claim` stub answering `fayth-exclude` (empty — no exclusions in this
 /// fixture), `fayth-ready` (ordinary per-fayth readiness; "builder" alone is ready) and
-/// `ready-count` (the express-composed query `express_ready_in_task_pool` issues — ready
-/// only when the label list it was handed carries ",express").
+/// `ready-count` (the express query `express_ready_in_task_pool` issues — ready only when
+/// it was handed `--express`).
 fn stub_express_claim(r: &FakeRunner) {
     r.on(|s| {
         if s.prog != "spira-claim" {
@@ -986,7 +1078,7 @@ fn stub_express_claim(r: &FakeRunner) {
         match verb {
             "fayth-exclude" => ok(""),
             "fayth-ready" => ok(if arg1 == "builder" { "1" } else { "0" }),
-            "ready-count" => ok(if arg1.contains(",express") { "1" } else { "0" }),
+            "ready-count" => ok(if s.args.iter().any(|a| a == "--express") { "1" } else { "0" }),
             _ => None,
         }
     });
@@ -1016,15 +1108,15 @@ fn express_ready_in_task_pool_bypasses_the_throttle_and_summons() {
     let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
     assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
     assert!(
-        sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1 (restricted to 'express')"),
+        sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1 (restricted to express)"),
         "{}",
         sink.text()
     );
     assert!(sink.has("ACT summoned a builder aeon"), "{}", sink.text());
     let launch = r.find(|s| s.prog == "systemd-run").expect("systemd-run must have been called");
     assert!(
-        launch.args.iter().any(|a| a == "--setenv=SPIRA_REQUIRE_LABEL=express"),
-        "express grant must restrict the summoned aeon to the express label: {:?}",
+        launch.args.iter().any(|a| a == "--setenv=SPIRA_REQUIRE_EXPRESS=1"),
+        "express grant must restrict the summoned aeon to express: {:?}",
         launch.args
     );
     // Exactly one summon: the express grant sets the pool to EXACTLY 1 — a second ready
@@ -1071,9 +1163,8 @@ fn no_express_ready_stays_throttled() {
 /// `${VAR:+...}` guard) — exactly `builder.fayth`'s own real shape — and nothing in this
 /// fixture resolves it (no `spira.toml`, no `conf.d` registry under `w.home`), so
 /// `fayth_predicate` refuses rather than handing back an empty label
-/// `express_ready_in_task_pool` would otherwise compose into `",express"` and query as
-/// "anything carrying the express label" — the whole queue's worth of express-tagged
-/// work, not builder's own partition. The refusal must be LOUD (CLAIM-ERROR, stderr) and
+/// `express_ready_in_task_pool` would otherwise query as "anything express" — the whole
+/// queue's worth of express work, not builder's own partition. The refusal must be LOUD (CLAIM-ERROR, stderr) and
 /// must never reach `ready-count` for builder at all.
 #[test]
 fn express_ready_in_task_pool_a_claim_error_is_loud_and_never_widens() {
@@ -1168,6 +1259,26 @@ fn express_ready_but_capacity_unknown_does_not_summon() {
 // CHECK 2 / 2c (lifecycle)
 
 #[test]
+fn on_check2_skips_a_stale_holder_whose_bead_moved_since_the_read() {
+    let (w, r, sink, clock) = setup("check2-moved");
+    let lease = NOW - 20_000;
+    r.on(move |s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(&format!(
+                r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"3"}}]"#
+            ));
+        }
+        if s.prog == "spira-lc" && s.args[0] == "show" {
+            return ok(r#"{"bead":{"state":"READY","version":"4"}}"#);
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    assert!(r.find(|s| s.prog == "spira-lc" && s.args[0] == "event").is_none(), "{}", sink.text());
+    assert!(sink.has("CHECK2 sp-b: skipped HolderDead — the bead moved to READY"), "{}", sink.text());
+}
+
+#[test]
 fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
     let (w, r, sink, clock) = setup("check2");
     let lease = NOW - 20_000;
@@ -1217,9 +1328,10 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
         ]
     );
     assert!(r
-        .find(|s| is_bd(s, "sql")
-            && s.args[3].contains("'sp-b', 'reclaimed', 'harness', 'stale-lease'"))
+        .find(|s| s.prog == "spira-lc"
+            && s.args == ["fact", "sp-b", "--kind", "reclaimed", "--actor", "harness", "--cause", "stale-lease"])
         .is_some());
+    assert!(r.find(|s| is_bd(s, "sql")).is_none(), "a fact is never a bd write");
     let note = r.find(|s| is_bd(s, "note")).unwrap();
     assert_eq!(note.args, vec!["-C", "/db", "note", "sp-b", "--stdin"]);
     assert_eq!(String::from_utf8(note.stdin.unwrap()).unwrap(), "Reclaimed by CHECK 2: in_progress with a lease that expired 333m ago and was never released.");
@@ -1256,7 +1368,7 @@ fn on_plan_ready_is_spira_claims_and_in_progress_is_the_machines_working_rows() 
     let q = r
         .find(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count"))
         .expect("plan_ready asks spira-claim");
-    assert_eq!(q.args, vec!["ready-count", "spira,plan", "spira-poison,needs-operator"]); // literal-ok: asserts argv built from the fixture
+    assert_eq!(q.args, vec!["ready-count", "spira,plan"]); // literal-ok: asserts argv built from the fixture
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"), 1, "the counts reuse the pass's one lifecycle read");
     assert_eq!(r.count(|s| is_bd(s, "recompute-blocked")), 0, "work is running: CHECK 3 has nothing to free");
     assert!(!sink.has("STARVED"), "{}", sink.text());
@@ -1467,6 +1579,7 @@ fn check4_poisons_asks_mails_and_clears() {
         })
         .unwrap();
     assert!(env_of(&ask, "SPIRA_MAIL_REPEAT_CONSIDERED").is_none());
+    assert_eq!(ask.args[..2], ["send", "concierge"], "a poison alert is the concierge's, never the operator's");
     let body = String::from_utf8(ask.stdin.unwrap()).unwrap();
     assert!(body.starts_with("## Question\nSpira bead sp-p — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?\n\n## Default\nif the work is correct"), "{body}");
     assert!(body.contains("BEAD    sp-p  [open, PNone, open ?]\nTITLE   Poison me"));
@@ -1844,12 +1957,14 @@ fn sending_7c_7d_count_what_their_seams_report() {
     assert!(sink.has("ACT freed 1 branch-collision worktree(s)"));
     assert!(sink.has("ACT unlabeled 1 inherited branch-collision bead(s)"));
     assert!(sink.has("CHECK7d: 1 bead(s) whose recorded branch is held by another bead's worktree — parking with needs-operator")); // literal-ok: asserts log text built from the fixture
+    // Parked by the row's ask hold and the overseer label, never the ask label (sp-psztcc).
     assert!(
-        r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-c3", "needs-operator"]) // literal-ok: the fixture's SPIRA_ASK_LABEL default
+        r.find(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("hold") && s.args.get(1).map(String::as_str) == Some("sp-c3") && s.args.get(2).map(String::as_str) == Some("ask"))
             .is_some(),
         "sp-c3 (no free, no inherited label) is parked: {:#?}",
         r.lines()
     );
+    assert!(r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-c3", "needs-operator"]).is_none(), "{:#?}", r.lines()); // literal-ok: the fixture's SPIRA_ASK_LABEL default
     assert!(r.find(|s| s.prog == "sending" && s.args.first().map(String::as_str) == Some("destroy-worktree")).is_some());
 
     // the next audit finds every base unchanged and does not walk
@@ -1901,6 +2016,9 @@ fn probe_failure_is_reported() {
     assert_eq!(env_of(&s, "SENTINEL_LIB"), Some("/h/lib.sh"));
 }
 
+// `resolve_repos` reads `$SPIRA_TOML` only (`spira_config::repos::registry_env` drops
+// inherited repo-map keys), so tests here pin it through `testkit::env`.
+
 /// `resolve_repos` (sp-k6lku, "wave 4.13"): a trait seam over the registry, not a bash
 /// probe — the fixture here is a real repo-map FILE, the thing `spira_config::repos`
 /// itself reads, not a faked `repo_root`/`spira_landrefs` bash function (which is exactly
@@ -1912,37 +2030,49 @@ fn probe_failure_is_reported() {
 #[test]
 fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
     let d = testkit::TempDir::new("sentinel-resolve-repos");
+    let home = d.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // A home lives in a checkout (as in production), so the forwarded SPIRA_REPO is that
+    // checkout itself, not an override of the home repo's root.
+    assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&home).status().unwrap().success());
+    std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), home.join("conf.d")).unwrap();
     let map = d.join("repo-map");
     std::fs::write(&map, "other|/nonexistent/other|queue.local||\n").unwrap();
-    let mut vars = std::collections::BTreeMap::new();
-    vars.insert("SPIRA_REPO_MAP".to_string(), map.to_string_lossy().into_owned());
-    vars.insert("SPIRA_HOME_REPO".to_string(), "spira".to_string());
-    vars.insert("SPIRA_REPO".to_string(), "/h".to_string());
-    vars.insert("SPIRA_REPO_DERIVED".to_string(), "/h".to_string());
+    // SPIRA_REPO_MAP/SPIRA_HOME_REPO are registered keys now — the only way in is a real
+    // spira.toml, not entries in the `vars` map handed to `resolve_repos`.
+    let toml = spira_config::process::fixture_toml(
+        &d,
+        &[("SPIRA_REPO_MAP", map.to_str().unwrap()), ("SPIRA_HOME_REPO", "spira")],
+    );
+    let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
 
-    let repos = crate::resolve_repos(&vars, Path::new("/h"));
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert("SPIRA_REPO".to_string(), home.to_string_lossy().into_owned());
+
+    let repos = crate::resolve_repos(&vars, &home);
+
+    drop(env);
 
     let spira = repos.iter().find(|r| r.name == "spira").expect("home repo always present");
     assert_eq!(spira.root, None, "unmapped — never a guessed default of the home checkout");
-    assert!(!spira.queued);
+    assert!(!spira.forge_queued);
 
     let other = repos.iter().find(|r| r.name == "other").expect("every mapped name, not only the home repo");
     assert_eq!(other.root.as_deref(), Some("/nonexistent/other"));
-    assert!(other.queued, "queue.local counts as queued");
+    assert!(!other.forge_queued, "queue.local is swept: no forge retires its branches");
     assert!(other.landrefs.is_empty(), "no declared base and no real checkout to ask — refuse, never guess");
 }
 
-// ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
-// hazard): the one test below that resolves config takes this lock, and pins SPIRA_TOML to
-// a nonexistent path — locate()'s own exclusive-pin rule ("not a file" means "no config",
-// never "keep looking") — so it never depends on, or interferes with, a real operator
-// spira.toml on the machine running this suite.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
+// `resolve_for_process` requires `$SPIRA_TOML` to name a file that actually exists
+// (`crate::load` reads it — "every listed file must exist", spira-config/src/lib.rs's
+// `load_layered`) — a missing pin is a hard refusal, not "no config, use defaults" the way
+// `locate()`'s own richer `LocateOutcome` still treats it. So this test points `SPIRA_TOML`
+// at a real `spira_config::process::fixture_toml` fixture (every key declared, including
+// the ones `resolve()` now refuses to guess, e.g. SPIRA_REPO_MAP) instead of a nonexistent
+// path — it still never depends on, or interferes with, a real operator spira.toml on the
+// machine running this suite. `testkit::env` keeps this safe under parallel test threads.
 #[test]
 fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
-    let _g = ENV_LOCK.lock().unwrap();
-    let saved = std::env::var("SPIRA_TOML").ok();
     let w = World::new("probe-merge");
     std::fs::create_dir_all(w.home.join("conf.d")).unwrap();
     std::fs::write(
@@ -1950,7 +2080,13 @@ fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
         "TYPE=u32\nGROUP=queue\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_CI_PARK_MAX:=9}\"\nSPIRA_CONF_DEFAULT_EOF\n",
     )
     .unwrap();
-    std::env::set_var("SPIRA_TOML", w.dir.join("no-such-spira.toml"));
+    // The generic registry pass only visits a key present in `conf_d` above, but still
+    // prefers a toml declaration over that file's own default expression — so the fixture
+    // declares SPIRA_CI_PARK_MAX=9 explicitly too, rather than trusting the complete
+    // fixture's own baked-in value (it declares a different one) to agree with the assert
+    // below.
+    let toml = spira_config::process::fixture_toml(&w.dir, &[("SPIRA_CI_PARK_MAX", "9")]);
+    let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
 
     // @vars already carries SPIRA_HOME_REPO_RESOLVED from the (fixed) script itself —
     // merge_resolved_config must never override it — and nothing else, matching the
@@ -1960,10 +2096,7 @@ fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
     r.on(move |_| ok(raw));
     let ctx = crate::probe(&r, &w.home, false);
 
-    match saved {
-        Some(v) => std::env::set_var("SPIRA_TOML", v),
-        None => std::env::remove_var("SPIRA_TOML"),
-    }
+    drop(env);
 
     let ctx = ctx.unwrap();
     assert_eq!(ctx.get("SPIRA_HOME_REPO_RESOLVED"), Some("spira"), "the script's own value must survive the merge");
@@ -1988,10 +2121,15 @@ fn roster_warnings_name_each_left_out_persona_once() {
         None,
     );
     let ctx = || Context::parse(&b).unwrap();
+    // SPIRA_RUN/SPIRA_DB above are the probe's identity Context, not `d`: `Cfg` now takes
+    // registered-key values from `Declared` only, so this test's own roster-stamp
+    // assertion (`w.run.join(...)`) needs `d.run` set to match.
+    let declared = || Declared { run: w.run.clone(), db: "/db".into(), ..Declared::test_default() };
     let h = Host::new(&r, &clock, &sink);
     Sentinel::new(
         &h,
         ctx(),
+        declared(),
         &w.home,
         Mode::Report,
         "x".into(),
@@ -2009,6 +2147,7 @@ fn roster_warnings_name_each_left_out_persona_once() {
     Sentinel::new(
         &h2,
         ctx(),
+        declared(),
         &w.home,
         Mode::Report,
         "x".into(),
@@ -2039,8 +2178,8 @@ fn phases_are_tsd_rows_for_the_full_pass_only() {
     assert_eq!(
         checks,
         [
-            "setup", "CHECK1", "CHECK2", "CHECK2b", "CHECK2c", "CHECK3", "CHECK6", "CHECK3b",
-            "CHECK3c", "CHECK7", "CHECK8"
+            "setup", "CHECK1", "CHECK2", "CHECK2b", "CHECK2c", "CHECK2d", "CHECK3", "CHECK6",
+            "CHECK3b", "CHECK3c", "CHECK7", "CHECK8"
         ]
         .map(|c| format!("check={c}"))
     );
@@ -2254,8 +2393,24 @@ fn check3c_skips_a_bead_that_moved_since_the_snapshot() {
         .find(|s| is_bd(s, "label")
             && s.args[2..] == ["label", "remove", "sp-done", "spira-open-children"])
         .is_some());
-    assert!(sink.has("CHECK3c sp-a: open in this pass's snapshot, closed now — skipped"));
+    assert!(sink.has("CHECK3c sp-a: READY in this pass's snapshot, LANDED now — skipped"));
     assert_eq!(r.count(|s| is_bd(s, "show")), 1, "one re-read for the whole check");
+}
+
+#[test]
+fn check3c_fence_reads_the_row_not_bd_status() {
+    let (w, r, sink, clock) = setup("fresh3c-row");
+    open_children_world(&r);
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("show") {
+            return ok(r#"{"bead":{"state":"SUBMITTED"}}"#);
+        }
+        None
+    });
+    let extra = [("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children")];
+    run_mode(&w, &r, &sink, &clock, Mode::OpenChildren { dry: false }, &extra, None);
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "{:#?}", r.lines());
+    assert!(sink.has("CHECK3c sp-a: READY in this pass's snapshot, SUBMITTED now — skipped"), "{}", sink.text());
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2288,9 +2443,11 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     let (_t, old, new) = two_releases("argv");
     let path = format!("{old}/bin:{old}/spira:/usr/bin");
     let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));
+    let extra = [("SPIRA_RELEASE", old.as_str()), ("PATH", path.as_str())];
     let s = Sentinel::new(
         h,
-        w.ctx(&[("SPIRA_RELEASE", old.as_str()), ("PATH", path.as_str())], None),
+        w.ctx(&extra, None),
+        w.declared(&extra),
         &w.home,
         Mode::SummonOnly,
         "/opt/bin/sentinel".into(),
@@ -2300,6 +2457,8 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     assert!(argv.contains(&format!("--setenv=SPIRA_RELEASE={new}")), "{argv}");
     assert!(argv.contains(&format!("--setenv=PATH={new}/bin:")), "{argv}");
     assert!(!argv.contains(&old), "no token may name the caller's release: {argv}");
+    assert!(argv.contains("--property=IOSchedulingClass=idle"), "{argv}");
+    assert!(argv.contains("--property=IOWeight=10"), "{argv}");
 }
 
 #[test]
@@ -2394,4 +2553,110 @@ fn check4_stale_clear_reads_the_lifecycle_row_not_bd_status() {
     );
     assert!(r.find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-h").is_none(), "{:#?}", r.lines());
     assert!(!sink.has("stale poison cleared"), "{}", sink.text());
+}
+
+fn tip_world(tag: &str, recorded: &str, now: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
+    let (w, r, sink, clock) = audit_world(tag);
+    std::fs::create_dir_all(w.run.join("poison-tip")).unwrap();
+    std::fs::write(w.run.join("poison-tip/sp-h"), format!("{recorded}\n")).unwrap();
+    let now = now.to_string();
+    r.on(move |s| {
+        if s.prog == "git" && s.args.iter().any(|a| a == "rev-parse") && s.args.iter().any(|a| a == "refs/heads/spira/sp-h") {
+            ok(&format!("{now}\n"))
+        } else if s.prog == "spira-claim" && s.args[0] == "unpoison" {
+            ok("")
+        } else {
+            None
+        }
+    });
+    (w, r, sink, clock)
+}
+
+#[test]
+fn a_poison_is_lifted_with_its_cause_when_the_beads_tip_has_moved() {
+    let (w, r, sink, clock) = tip_world("c4tip-moved", "aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb");
+    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[("SPIRA_SKIP_RECLAIM", "1")], Some(&["spira\t/src/spira\torigin/main\t0"]));
+    let un = r.find(|s| s.prog == "spira-claim" && s.args[0] == "unpoison").expect("no unpoison call");
+    assert!(un.args.iter().any(|a| a == "sp-h"), "{:?}", un.args);
+    assert!(un.args.iter().any(|a| a.starts_with("tip-changed: aaaaaaaaaaaa -> bbbbbbbbbbbb")), "{:?}", un.args);
+    assert!(sink.has("CHECK4 sp-h: poison lifted — tip-changed"), "{}", sink.text());
+    assert!(!w.run.join("poison-tip/sp-h").exists());
+}
+
+#[test]
+fn a_poison_whose_tip_has_not_moved_is_not_lifted_by_the_tip_rule() {
+    let (w, r, sink, clock) = tip_world("c4tip-same", "aaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa");
+    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[("SPIRA_SKIP_RECLAIM", "1")], Some(&["spira\t/src/spira\torigin/main\t0"]));
+    assert!(r.find(|s| s.prog == "spira-claim" && s.args[0] == "unpoison").is_none());
+    assert!(!sink.has("poison lifted — tip-changed"));
+}
+
+// ---------------------------------------------------------------------------------------
+// CHECK 2d (ask holds outliving their cause)
+
+#[test]
+fn on_check2d_a_repo_map_hold_is_withdrawn_when_the_map_resolves_and_starvation_is_announced() {
+    let (w, r, sink, clock) = setup("check2d");
+    let checkout = w.dir.join("checkout");
+    std::fs::create_dir_all(checkout.join(".git")).unwrap();
+    let repo = format!("spira\t{}\t\t0", checkout.display());
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            let held = |id: &str| format!(
+                r#"{{"bead_id":"{id}","state":"READY","holds":"[\"ask\"]","reason":"repo:spira has no mapped entry","updated_at":"1","version":"2"}}"#
+            );
+            return ok(&format!("[{},{},{},{}]", held("sp-h1"), held("sp-h2"), held("sp-h3"), r#"{"bead_id":"sp-free","state":"READY","holds":"[]","version":"1"}"#));
+        }
+        if s.prog == "spira-lc" && s.args[0] == "show" {
+            return ok(r#"{"bead":{"state":"READY","version":"2"}}"#);
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], Some(&[repo.as_str()]));
+    let withdrawn: Vec<String> = r
+        .calls
+        .borrow()
+        .iter()
+        .filter(|s| s.prog == "spira-lc" && s.args[0] == "event")
+        .map(|s| format!("{} {}", s.args[2], s.args.last().unwrap()))
+        .collect();
+    assert_eq!(withdrawn, ["sp-h1 \"AskWithdrawn\"", "sp-h2 \"AskWithdrawn\"", "sp-h3 \"AskWithdrawn\""], "{}", sink.text());
+    assert!(sink.has("CHECK2d STARVED: 3 of 4 READY beads are held"), "{}", sink.text());
+    let ev = r.find(|s| seam_name(s).as_deref() == Some("sentinel-event")).expect("a starvation event");
+    let stdin = String::from_utf8(ev.stdin.unwrap()).unwrap();
+    assert!(stdin.starts_with("queue.starved\0-\03 of 4 READY beads are held"), "{stdin}");
+}
+
+#[test]
+fn on_check2d_an_unresolved_repo_map_hold_stands() {
+    let (w, r, sink, clock) = setup("check2d-unresolved");
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(r#"[{"bead_id":"sp-h1","state":"READY","holds":"[\"ask\"]","reason":"repo:spira has no mapped entry","updated_at":"1","version":"2"}]"#);
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "event"), 0, "{}", sink.text());
+}
+
+#[test]
+fn two_beads_touching_one_file_are_both_left_claimable() {
+    let (w, r, sink, clock) = setup("ov-gone");
+    let repo_root = w.dir.join("repo");
+    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
+    let root = repo_root.to_string_lossy().into_owned();
+    r.on(move |s| {
+        (s.prog == "spira-config" && s.args == ["repo", "root", "spira"]).then(|| ok(&format!("{root}\n"))).flatten()
+    });
+    const LIST: &str = r#"[
+      {"id":"sp-a","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
+      {"id":"sp-b","status":"open","issue_type":"task","labels":["spira","repo:spira"]}
+    ]"#;
+    r.on(|s| (is_bd(s, "list") && s.args.iter().any(|a| a == "--exclude-type")).then(|| ok(LIST)).flatten());
+    r.on(|s| (s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")).then(|| ok(&lc_mirror(LIST))).flatten());
+    r.on(|s| (s.prog == "git" && s.args.join(" ").contains(" diff ")).then(|| ok("shared.txt\n")).flatten());
+    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(&["spira\t/src/spira\torigin/main\t0"]));
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "{}", sink.text());
+    assert!(!sink.has("OVERLAP") && !sink.has("DEFERRED"), "{}", sink.text());
 }

@@ -16,7 +16,7 @@
 #
 # defect: sp-6hdi
 # tier: T1
-# covers: spira/lib.sh UC-safety-fences-14
+# covers: spira/lib.sh UC-safety-fences-13 UC-safety-fences-14
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -38,12 +38,18 @@ STUB_BD="$TMP/bd"
 printf '#!/usr/bin/env bash\nprintf "bd-called\\n"; exit 0\n' > "$STUB_BD"
 chmod +x "$STUB_BD"
 
+# These registered keys are constant across every check_*/run_bdq call below; declared once
+# via tl_config (the compiled `bdq` binary each bash -c execs resolves fresh from SPIRA_TOML,
+# never from this process's inherited env — per Ryan 2026-10-05, the one-source-of-config
+# law), with SPIRA_TOML threaded through the env -i helpers below so it survives to reach it.
+tl_config SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" \
+    SPIRA_ASK_LABEL="$ASK_LABEL"
+
 # Run _bdq_check_destructive directly for fine-grained tests of each pattern.
 check_title() {  # check_title <title> <labels> -> combined stdout+stderr
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" \
-        SPIRA_ASK_LABEL="$ASK_LABEL" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" \
         bash -c '. "$1/lib.sh"; _bdq_check_destructive create "$2" --labels "$3"' \
             -- "$HERE" "$1" "$2" 2>&1
 }
@@ -51,9 +57,8 @@ check_title() {  # check_title <title> <labels> -> combined stdout+stderr
 # Same, but puts the text in the description rather than the title.
 check_desc() {  # check_desc <desc> <labels> -> combined stdout+stderr
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" \
-        SPIRA_ASK_LABEL="$ASK_LABEL" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" \
         bash -c '. "$1/lib.sh"; _bdq_check_destructive create "clean title" -d "$2" --labels "$3"' \
             -- "$HERE" "$1" "$2" 2>&1
 }
@@ -61,11 +66,10 @@ check_desc() {  # check_desc <desc> <labels> -> combined stdout+stderr
 # Run bdq create end-to-end, with no repo: label so the repo-label check passes trivially.
 run_bdq() {  # run_bdq <title> <labels> -> combined stdout+stderr
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" BD_TIMEOUT=10 \
-        SPIRA_ASK_LABEL="$ASK_LABEL" \
-        bash -c '. "$1/lib.sh"; bdq create "$2" --labels "$3"' \
-            -- "$HERE" "$1" "$2" 2>&1
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" BD_TIMEOUT=10 \
+        bash -c '. "$1/lib.sh"; bdq create "$2" --labels "$3" -d "$4"' \
+            -- "$HERE" "$1" "$2" "$(printf '## Question\nApprove the step?\nDefault: decline\nClass: destructive')" 2>&1
 }
 
 # ==========================================================================
@@ -176,15 +180,15 @@ echo "DELETE FROM schema_migrations refused even with needs-ryan:"
 
 check_schema_title() {  # check_schema_title <title> <labels> -> combined stdout+stderr
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" \
         bash -c '. "$1/lib.sh"; _bdq_check_schema_delete create "$2" --labels "$3"' \
             -- "$HERE" "$1" "$2" 2>&1
 }
 check_schema_desc() {  # check_schema_desc <desc> <labels> -> combined stdout+stderr
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" \
         bash -c '. "$1/lib.sh"; _bdq_check_schema_delete create "clean title" -d "$2" --labels "$3"' \
             -- "$HERE" "$1" "$2" 2>&1
 }

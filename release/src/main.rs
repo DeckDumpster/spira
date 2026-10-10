@@ -7,6 +7,7 @@ use release::config::{self, Config, Flags};
 use release::git::RealGit;
 use release::install::{self, InstallOpts, RealUnpack};
 use release::intake::{self, RealTemplates};
+use release::machine::{self, ReleaseState};
 use release::session_hook;
 use release::stage::{self, StageOpts};
 use release::systemctl::RealSystemctl;
@@ -18,11 +19,12 @@ use std::time::Duration;
 const USAGE: &str = "usage:
   release build <commit> [--repo R] [--target-dir T | --bin-dir D]
   release verify <sha> [--no-pre-activate]
-  release activate <sha> [--hotfix <reason>] [--repo R] [--landed-ref REF] [--settle SECS]
-  release rollback [--repo R] [--settle SECS]
+  release config-stage <tree>   (prints SPIRA_TOML with <tree>'s config delta applied; the layers stay in a scratch dir)
+  release activate <sha> [--hotfix <reason>] [--repo R] [--landed-ref REF] [--settle SECS] [--drain-wait SECS]
+  release rollback [--repo R] [--settle SECS] [--drain-wait SECS]
   release prune [--keep N]
-  release status
-  release install-tarball <tarball> [--dry-run] [--settle SECS] [--skip-restart]
+  release status [--json]
+  release install-tarball <tarball> [--answers FILE] [--dry-run] [--settle SECS] [--skip-restart]
   release stage up [ROOT]
   release stage down <ROOT>
   release canary [--stage ROOT] [--deadline SECS]
@@ -41,11 +43,14 @@ struct Args {
     hotfix: Option<String>,
     landed_ref: String,
     settle: Duration,
+    drain: Duration,
     pre_activate: bool,
     dry_run: bool,
     stage: Option<String>,
     deadline: Duration,
     skip_restart: bool,
+    answers: Option<PathBuf>,
+    json: bool,
 }
 
 fn parse(argv: &[String]) -> Result<Args, String> {
@@ -58,11 +63,15 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         hotfix: None,
         landed_ref: "local/main".into(),
         settle: Duration::from_secs(3),
+        drain: Duration::from_secs(2700), // batch-job: bounded wait for a running gate to finish, defaults to the gate cap
         pre_activate: true,
         dry_run: false,
         stage: None,
+        // batch-job: a release restart waits on every unit to come back
         deadline: Duration::from_secs(120),
         skip_restart: false,
+        answers: None,
+        json: false,
     };
     let mut it = argv.iter();
     while let Some(x) = it.next() {
@@ -76,10 +85,13 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--bin-dir" => a.bin_dir = Some(val(x)?.into()),
             "--hotfix" => a.hotfix = Some(val(x)?),
             "--landed-ref" => a.landed_ref = val(x)?,
+            "--drain-wait" => a.drain = Duration::from_secs(val(x)?.parse().map_err(|_| "--drain-wait needs whole seconds".to_string())?),
             "--settle" => a.settle = Duration::from_secs(val(x)?.parse().map_err(|_| "--settle needs whole seconds".to_string())?),
             "--no-pre-activate" => a.pre_activate = false,
             "--dry-run" => a.dry_run = true,
             "--skip-restart" => a.skip_restart = true,
+            "--json" => a.json = true,
+            "--answers" => a.answers = Some(val(x)?.into()),
             "--stage" => a.stage = Some(val(x)?),
             "--deadline" => a.deadline = Duration::from_secs(val(x)?.parse().map_err(|_| "--deadline needs whole seconds".to_string())?),
             "-h" | "--help" => return Err(String::new()),
@@ -112,12 +124,43 @@ fn resolve_stage_opts(env: &config::Env, root: Option<PathBuf>) -> Result<StageO
     Ok(StageOpts { root, harness_spira, bd_embedded, testdb_baseline, scope_label: String::new() })
 }
 
+/// Records `sha` entering `to` on the release machine. A configuration with no run directory has
+/// nowhere to record, and is not an error for the build and verify steps that run without one.
+fn record(cfg: &Config, sha: &str, to: ReleaseState, why: &str) -> Result<(), String> {
+    match cfg.state_dir() {
+        Ok(state) => machine::enter(&state, sha, to, why),
+        Err(_) => Ok(()),
+    }
+}
+
 fn usage_err(m: String) -> (u8, String) {
     (2, if m.is_empty() { USAGE.to_string() } else { format!("{m}\n{USAGE}") })
 }
 
 fn fail_err(m: String) -> (u8, String) {
     (1, m)
+}
+
+/// [`Config::resolve`], except that `verify` and `activate` of a release resolve against the
+/// layers with that release's own config delta already applied: this binary is the new
+/// release's, its registry requires the keys the delta adds, and `activate` is what writes them.
+/// The real spec stays in `env`, so units are still rendered with, and the delta still applied
+/// to, the files in force.
+fn resolve_config(a: &Args, env: &config::Env, cmd: &str, rest: &[String]) -> Result<Config, String> {
+    let staged = match (cmd, rest.first(), env.get("SPIRA_TOML").filter(|s| !s.is_empty())) {
+        ("verify" | "activate", Some(sha), Some(spec)) => release::config_delta::staged_for_resolution(spec, a.flags.releases.as_deref(), sha)?,
+        ("build", Some(commit), Some(spec)) => {
+            let repo = release::repo::resolve(a.repo.as_deref().map(Path::new), env).or_else(|| a.repo.clone().map(PathBuf::from)).or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("."));
+            release::config_delta::staged_for_commit(&RealGit, spec, &repo, commit)?
+        }
+        _ => None,
+    };
+    let Some((dir, spec)) = staged else { return Config::resolve(&a.flags, env) };
+    std::env::set_var("SPIRA_TOML", &spec);
+    let cfg = Config::resolve(&a.flags, env);
+    std::env::set_var("SPIRA_TOML", env.get("SPIRA_TOML").map(String::as_str).unwrap_or_default());
+    let _ = std::fs::remove_dir_all(dir);
+    cfg
 }
 
 /// The release root `install`/`status` address the hook/meter through, and its PATH tail.
@@ -162,14 +205,23 @@ fn release_root_for_session_hook(flags: &Flags, env: &config::Env) -> Result<(Pa
 /// PATH tail, so [`Config::resolve`] is called only on those two branches — never
 /// unconditionally, which would refuse an uninstall on a box whose releases directory
 /// cannot be found (exactly the state an uninstall may be reached from).
+///
+/// NOTE (per Ryan 2026-10-05, one source of config): every branch, `uninstall`/`prune`
+/// included, now resolves `SPIRA_CLIENT_SETTINGS` through `cfg` before it does anything
+/// else, which means `$SPIRA_TOML` must resolve even for an operation this function was
+/// built to keep independent of `Config::resolve`'s own (heavier) requirements. If that
+/// turns out to be the wrong trade for `uninstall`/`prune` specifically, the fix is to give
+/// `SPIRA_CLIENT_SETTINGS` its own narrower resolution path, not to revert this read to a
+/// raw environment lookup.
 fn session_hook_cmd(env: &config::Env, a: &Args, rest: &[String]) -> Result<(), (u8, String)> {
     let (sub, srest) = rest.split_first().ok_or_else(|| usage_err("session-hook needs a subcommand: install, status, uninstall or prune <substring>".into()))?;
-    let settings = env
-        .get("SPIRA_CLIENT_SETTINGS")
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| env.get("HOME").filter(|s| !s.is_empty()).map(|h| PathBuf::from(h).join(".claude/settings.json")))
-        .ok_or_else(|| fail_err("no settings file: set SPIRA_CLIENT_SETTINGS or HOME".into()))?;
+    // SPIRA_CLIENT_SETTINGS is a registered key (spira/conf.d) — its own registered default
+    // is already `$HOME/.claude/settings.json`, so no local HOME-derived fallback is needed
+    // here any more (per Ryan 2026-10-05: one source of config). `HOME` itself is not
+    // registered and is read only inside `cfg`'s own resolution now, not here.
+    let settings = spira_config::process::cfg("SPIRA_CLIENT_SETTINGS")
+        .map_err(fail_err)
+        .and_then(|s| if s.is_empty() { Err(fail_err("SPIRA_CLIENT_SETTINGS resolved empty".into())) } else { Ok(PathBuf::from(s)) })?;
     let mut doc = session_hook::load(&settings).map_err(fail_err)?;
     match sub.as_str() {
         "uninstall" => {
@@ -193,7 +245,8 @@ fn session_hook_cmd(env: &config::Env, a: &Args, rest: &[String]) -> Result<(), 
     }
 
     let (current, tail) = release_root_for_session_hook(&a.flags, env)?;
-    let paths = session_hook::resolve(&current, &tail, settings).map_err(fail_err)?;
+    let toml = spira_config::process::spec().map_err(fail_err)?;
+    let paths = session_hook::resolve(&current, &tail, &toml, settings).map_err(fail_err)?;
     match sub.as_str() {
         "install" => {
             if !srest.is_empty() {
@@ -228,13 +281,20 @@ fn session_hook_cmd(env: &config::Env, a: &Args, rest: &[String]) -> Result<(), 
 /// unit directory — [`config::unit_dir_from_env`], never the full [`Config`], which would
 /// couple every intake call to the releases directory resolving even though intake has
 /// nothing to do with one.
+///
+/// NOTE (per Ryan 2026-10-05, one source of config): `SPIRA_ALERT_GLOB` below now resolves
+/// through `cfg`, so every subcommand still needs `$SPIRA_TOML` to resolve, even though it
+/// no longer needs the releases directory specifically to.
 fn intake_cmd(env: &config::Env, rest: &[String]) -> Result<(), (u8, String)> {
     let (sub, srest) = rest.split_first().ok_or_else(|| usage_err("intake needs a subcommand: install, status or uninstall".into()))?;
     if !srest.is_empty() {
         return Err(usage_err(format!("intake {sub} takes no arguments")));
     }
     let unit_dir = config::unit_dir_from_env(env).map_err(fail_err)?;
-    let pattern = env.get("SPIRA_ALERT_GLOB").filter(|s| !s.is_empty()).cloned();
+    // SPIRA_ALERT_GLOB is a registered key (spira/conf.d); its own registered default is
+    // empty, meaning "none" — intake::NO_GLOB already covers that case below.
+    let pattern = spira_config::process::cfg("SPIRA_ALERT_GLOB").map_err(fail_err).map(|s| if s.is_empty() { None } else { Some(s) })?;
+    // SPIRA_SYSTEMCTL_RELOAD is not a registered key (no spira/conf.d/ entry) — ambient env.
     let reload = env.get("SPIRA_SYSTEMCTL_RELOAD").map(|s| s != "0").unwrap_or(true);
     let sc = RealSystemctl::from_env();
     match sub.as_str() {
@@ -283,6 +343,67 @@ fn intake_cmd(env: &config::Env, rest: &[String]) -> Result<(), (u8, String)> {
     Ok(())
 }
 
+/// The installing release's own tree, unpacked to a scratch directory for as long as this
+/// process runs: removed on drop.
+struct Scratch(PathBuf);
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// `spira/` of the release in `tarball`, read out of it: its key registry and its personas
+/// (`chamber/`) are what a fresh box's config is written against, and what this process reads that config with.
+fn tarball_home(tarball: &Path) -> Result<(Scratch, PathBuf), String> {
+    let scratch = Scratch(std::env::temp_dir().join(format!("release-install-home-{}", std::process::id())));
+    std::fs::create_dir_all(&scratch.0).map_err(|e| format!("{}: {e}", scratch.0.display()))?;
+    // batch-job: tar reads one directory out of the tarball being installed
+    let st = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(tarball)
+        .arg("-C")
+        .arg(&scratch.0)
+        .args(["--wildcards", "*/spira/conf.d/*", "*/spira/chamber/*"])
+        .status()
+        .map_err(|e| format!("cannot run tar: {e}"))?;
+    if !st.success() {
+        return Err(format!("{} carries no spira/conf.d or spira/chamber ({st})", tarball.display()));
+    }
+    let top = std::fs::read_dir(&scratch.0).map_err(|e| e.to_string())?.flatten().next().ok_or("empty extraction")?.path();
+    Ok((scratch, top.join("spira")))
+}
+
+/// Install-tarball is the first step of a fresh install, so it runs where nothing is set up:
+/// no harness home of its own (a `release` binary taken out of the tarball) and no config.
+/// The home is then the installing release's own tree; the config is the file `SPIRA_TOML`
+/// names, else the canonical location — produced from `answers` (or a prompt on a terminal)
+/// when absent, every other key at that release's registered default. When `SPIRA_TOML` was
+/// unset it names the file for the rest of this process, and the operator is told to export
+/// it for the steps that follow.
+fn ensure_install_env(env: &config::Env, tarball: &Path, answers: Option<&Path>) -> Result<Option<Scratch>, String> {
+    use spira_config::init;
+    let own = spira_config::resolve::locate_home_for_process().ok().map(|h| spira_config::resolve::default_conf_d(&h)).filter(|d| d.is_dir());
+    let mut scratch = None;
+    let conf_d = match own {
+        Some(d) => d,
+        None => {
+            let (s, home) = tarball_home(tarball)?;
+            std::env::set_var("SPIRA_HOME", &home);
+            scratch = Some(s);
+            spira_config::resolve::default_conf_d(&home)
+        }
+    };
+    let out = init::default_out(env)?;
+    if let init::Outcome::Written(p) = init::ensure_from_cli(Some(out.clone()), answers, &Default::default(), &conf_d)? {
+        println!("release: wrote {} from the operator's answers", p.display());
+    }
+    if env.get("SPIRA_TOML").is_none_or(|t| t.is_empty()) {
+        std::env::set_var("SPIRA_TOML", &out);
+        println!("release: SPIRA_TOML names the one config — export SPIRA_TOML={} for the steps that follow", out.display());
+    }
+    Ok(scratch)
+}
+
 fn run(argv: &[String]) -> Result<(), (u8, String)> {
     let usage = |m: String| (2u8, if m.is_empty() { USAGE.to_string() } else { format!("{m}\n{USAGE}") });
     let a = parse(argv).map_err(usage)?;
@@ -326,7 +447,9 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
                 Some(_) => StageOpts { root: None, harness_spira: PathBuf::new(), bd_embedded: PathBuf::new(), testdb_baseline: None, scope_label: String::new() },
                 None => resolve_stage_opts(&env, None).map_err(fail)?,
             };
-            let verdict_window = env.get("SPIRA_VERDICT_WINDOW").and_then(|s| s.parse().ok()).unwrap_or(400);
+            // SPIRA_VERDICT_WINDOW is a registered key (spira/conf.d); its own registered
+            // default (400) replaces the literal that used to live here.
+            let verdict_window = spira_config::process::cfg_parse::<usize>("SPIRA_VERDICT_WINDOW").map_err(fail)?;
             let o = CanaryOpts { external_stage, stage_opts, deadline: a.deadline, verdict_window };
             let r = canary::canary(&o).map_err(fail)?;
             println!("release: canary PASS — commit '{}' on origin/main in {}s (stage {})", r.commit, r.elapsed.as_secs(), r.stage_root.display());
@@ -343,12 +466,27 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         // directory — resolving the full Config would refuse every one of them on a box
         // whose releases directory cannot be found, which is exactly the state an uninstall
         // may be reached from.
+        "config-stage" => {
+            want(1)?;
+            let spec = env.get("SPIRA_TOML").filter(|s| !s.is_empty()).ok_or_else(|| fail("config-stage needs SPIRA_TOML naming the layers to apply the delta to".into()))?;
+            let staged = release::config_delta::staged_for_tree(spec, Path::new(&rest[0])).map_err(fail)?;
+            println!("{}", staged.map_or_else(|| spec.clone(), |(_, s)| s));
+            return Ok(());
+        }
         "session-hook" => return session_hook_cmd(&env, &a, rest),
         "intake" => return intake_cmd(&env, rest),
         _ => {}
     }
 
-    let cfg = Config::resolve(&a.flags, &env).map_err(|e| (1, e))?;
+    // A fresh box has no config yet: install-tarball is the first step of an install, so it
+    // PRODUCES the config from the operator's answers (per Ryan 2026-10-07) — before anything
+    // reads config. An existing file is validated and used, never overwritten.
+    let mut _home = None;
+    if cmd == "install-tarball" && !a.dry_run {
+        let tb = rest.first().ok_or_else(|| usage("install-tarball takes 1 argument(s)".into()))?;
+        _home = ensure_install_env(&env, Path::new(tb), a.answers.as_deref()).map_err(fail)?;
+    }
+    let cfg = resolve_config(&a, &env, &cmd, rest).map_err(|e| (1, e))?;
     let repo = || release::repo::resolve(a.repo.as_deref().map(Path::new), &env).or_else(|| a.repo.clone().map(PathBuf::from)).or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from));
     match cmd.as_str() {
         "build" => {
@@ -359,6 +497,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             }
             let o = BuildOpts { repo: &r, commit: &rest[0], target_dir: a.target_dir.clone(), system_dirs: system_dirs(), bin_dir: a.bin_dir.clone() };
             let b = build::build(&cfg, &RealGit, &RealCargo, &o).map_err(fail)?;
+            record(&cfg, &b.sha, ReleaseState::Cut, "built").map_err(fail)?;
             println!("{}", b.sha);
         }
         "verify" => {
@@ -367,21 +506,30 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             if !p.is_empty() {
                 return Err((1, format!("release {} FAILS verify:\n  {}", rest[0], p.join("\n  "))));
             }
+            record(&cfg, &rest[0], ReleaseState::Accepted, "verified").map_err(fail)?;
             println!("release {} verifies", rest[0]);
         }
         "activate" | "rollback" => {
             let sc = RealSystemctl::from_env();
-            let ctx = Ctx { cfg: &cfg, sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle };
+            let ctx = Ctx { cfg: &cfg, sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain };
             if cmd == "activate" {
                 want(1)?;
+                if activate::current(&cfg).as_deref() != Some(rest[0].as_str()) {
+                    record(&cfg, &rest[0], ReleaseState::Published, "activation started").map_err(fail)?;
+                }
                 let (s, p) = release::prune::activate_and_prune(&ctx, &rest[0], a.hotfix.as_deref()).map_err(fail)?;
+                record(&cfg, &rest[0], ReleaseState::Activated, "current switched").map_err(fail)?;
                 println!("release: {} active; {} unit file(s) rewritten, restarted [{}], deferred to next start [{}]; {} release(s) pruned", rest[0], s.rewritten.len(), s.restarted.join(" "), s.deferred.join(" "), p.removed.len());
                 if !p.failed.is_empty() {
                     eprintln!("release: WARN: prune could not remove: {}", p.failed.join("; "));
                 }
             } else {
                 want(0)?;
+                let from = activate::current(&cfg);
                 let sha = activate::rollback(&ctx).map_err(fail)?;
+                if let Some(from) = from {
+                    record(&cfg, &from, ReleaseState::RolledBack, &format!("rolled back to {sha}")).map_err(fail)?;
+                }
                 println!("release: rolled back to {sha}");
             }
         }
@@ -395,7 +543,12 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         }
         "status" => {
             want(0)?;
-            print!("{}", activate::status(&cfg).map_err(fail)?);
+            if a.json {
+                let state = cfg.state_dir().map_err(fail)?;
+                println!("{}", machine::status_all_json(&state, activate::current(&cfg).as_deref()).map_err(fail)?);
+            } else {
+                print!("{}", activate::status(&cfg).map_err(fail)?);
+            }
         }
         "install-tarball" => {
             want(1)?;

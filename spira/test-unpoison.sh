@@ -55,19 +55,24 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
 LC_SERVER_PID=$!
 lc_up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
         lc_up=1; break
     fi
     sleep 0.2
 done
 [ "$lc_up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
-lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; }
+lc_root_sql() { "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LCPORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
 
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"; mkdir -p "$SPIRA_RUN"
+# SPIRA_LC_PASSWORD_FILE/SPIRA_LC_SOCKET are registered keys; undeclared, they resolve to
+# the complete fixture's own dummy paths ("reading .../spira-lc.credential: No such file"),
+# not "unset" — this suite connects with direct TCP params below, so both must be declared
+# empty to mean exactly that, not left to the fixture's own (unreachable) defaults.
+tl_config SPIRA_LC_PASSWORD_FILE="" SPIRA_LC_SOCKET=""
 # The machine is seeded and asserted on below (spira-claim/DESIGN.md §8.7).
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LCPORT"

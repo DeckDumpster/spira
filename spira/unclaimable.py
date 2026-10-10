@@ -36,6 +36,9 @@ scope_label = os.environ.get("SPIRA_SCOPE_LABEL", "spira")
 partition_labels = sorted({lab for inc, _ in all_parts.values() for lab in inc if lab != scope_label})
 ci_label = os.environ.get("SPIRA_CI_LABEL", "awaiting-ci")  # literal-ok: Python fallback for direct invocation without conf.sh
 ask_label = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
+# Ids the lifecycle machine holds ask/poison: parked deliberately, by the row's hold —
+# never a label standing in for it (sp-psztcc).
+held_ids = {i for i in os.environ.get("HELD_IDS", "").split(",") if i}
 groom_ask_label = os.environ.get("SPIRA_GROOM_ASK_LABEL", "groom-asked")  # literal-ok: Python fallback for direct invocation without conf.sh
 
 for bead in beads:
@@ -44,7 +47,12 @@ for bead in beads:
     # groom_ask_label marks a bead the groomer has already escalated to the operator — a
     # deliberate parked state (law-a-deliberate-state-is-not-a-fault), not a fault this
     # detector should keep re-reporting until the operator answers.
-    if L & {ask_label, groom_ask_label, "spira-poison"}:
+    # Not work, so never "unclaimable": a decision/ask bead (the question itself), an event or
+    # an epic. Judged by the bead's kind — the ask LABEL marks an ask bead too, kept for asks
+    # filed before their type was set (sp-zf2x7x: the hold-only cut flagged ask beads).
+    if bead.get("issue_type") in ("decision", "event", "epic") or ask_label in L:
+        continue
+    if bid in held_ids or groom_ask_label in L:
         continue
     # A REPORT ABOUT AN UNCLAIMABLE BEAD IS NOT ITSELF A SUBJECT. The report is filed into
     # the incident partition, so whenever that partition is unservable the report is

@@ -26,7 +26,7 @@
 # the excluding.
 #
 # tier: T1
-# covers: spira/chamber/builder.fayth spira/lib.sh spira-claim/*
+# covers: spira/chamber/builder.fayth spira/lib.sh spira-claim/* UC-config-store-preflight-15
 # hermetic-ok: no real database, no systemd; SPIRA_BD and SPIRA_SUMMON are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -38,7 +38,9 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run"
 
 export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at the real chamber this suite reads fayths from.
+tl_config SPIRA_RUN="$T/run" SPIRA_CHAMBER="$HERE/chamber"
 export SPIRA_CONF="$T/no-such.conf"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
@@ -79,15 +81,19 @@ case " \$* " in *" list "*) cat "$FIXTURE" ;; *) echo '[]' ;; esac
 EOF
 chmod +x "$FAKE_BD"
 lc_mirror_bd "$T/lc"
+tl_config SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira SPIRA_BD="$FAKE_BD"
 
+# SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of the
+# real one) is exec'd as spira-claim's own child and reads them as raw shell variables,
+# never through spira-config — tl_config's declaration above never reaches it.
 ready_builder() {   # ready_builder [--json]
-    PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira \
+    PATH="$T/lc:$PATH" SPIRA_DB="/fake/db" SPIRA_BD="$FAKE_BD" \
         _spira_claim fayth-ready builder "$@" 2>/dev/null
 }
 # POSITIVE CONTROL: the fixture reaches spira-claim at all — the plain bead counts. A machine
 # that answered nothing would read 0 and make the exclusion below vacuous.
 is "positive control: fayth_ready builder counts the plain plan bead" "1" \
-    "$(PATH="$T/lc:$PATH" SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" SPIRA_SCOPE_LABEL=spira fayth_ready builder 2>/dev/null)"
+    "$(PATH="$T/lc:$PATH" SPIRA_DB="/fake/db" SPIRA_BD="$FAKE_BD" fayth_ready builder 2>/dev/null)"
 builder_set="$(ready_builder --json)"
 want   "fayth_ready builder's set holds the plain plan bead" "sp-qaplain" "$builder_set"
 nowant "fayth_ready builder's set excludes the qa-proposed bead" "sp-qaprop" "$builder_set"

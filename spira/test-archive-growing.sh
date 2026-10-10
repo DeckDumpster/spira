@@ -35,8 +35,10 @@ EOF
 done
 
 arch() {
-    env -i PATH="$TMP/shim:$PATH" HOME="$TMP/h" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        SPIRA_DB="$TMP/db" SPIRA_ARCHIVE="$TMP/arch" SPIRA_TOKEN_PROJECTS="$TMP/projects" ${GROW:+GROW=1} \
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_ARCHIVE="$TMP/arch" \
+        SPIRA_TOKEN_PROJECTS="$TMP/projects"
+    env -i PATH="$TMP/shim:$PATH" HOME="$TMP/h" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        ${GROW:+GROW=1} \
         "$HERE/archive.sh" "$@" 2>&1
 }
 

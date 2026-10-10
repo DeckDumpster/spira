@@ -128,3 +128,49 @@ fn the_real_registry_converts_every_key_it_declares() {
     assert!(warnings.0.is_empty(), "{:?}", warnings.0);
     assert!(export_sh(&doc).lines().count() > 100);
 }
+
+const HARD_REQUIRED_NUMERIC: &[&str] = &[
+    "SPIRA_PREFLIGHT_WALL_SECS",
+    "SPIRA_FLOW_WINDOW_HOURS",
+    "SPIRA_FLOW_BASELINE_HOURS",
+    "SPIRA_FLOW_GRACE_SECS",
+    "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS",
+    "SPIRA_ROUND_VM_SSH_PORT",
+    "SPIRA_ROUND_VM_MAX_RETRIES",
+    "SPIRA_ROUND_VM_MIRROR_PORT",
+    "SPIRA_ROUND_VM_RETRY_INTERVAL",
+    "SPIRA_ROUND_VM_VCPUS",
+];
+
+#[test]
+fn a_key_a_consumer_parses_as_a_number_has_a_default_and_a_schema_description() {
+    let registry = spira_config::registry::load(&spira_dir().join("conf.d")).unwrap();
+    let schema = serde_json::to_value(json_schema()).unwrap();
+    let props = &schema["definitions"]["SpiraSection"]["properties"];
+    let mut missing = Vec::new();
+    for key in HARD_REQUIRED_NUMERIC {
+        let k = registry.get(*key).unwrap_or_else(|| panic!("{key} is not registered"));
+        let value = k.default_expr().unwrap_or("");
+        if value.is_empty() || value.parse::<f64>().is_err() {
+            missing.push(format!("{key}: default {value:?} is not a number"));
+        }
+        let field = codegen::field_of(key);
+        let desc = props[field.as_str()]["description"].as_str().unwrap_or("");
+        if desc.trim().is_empty() {
+            missing.push(format!("{key}: schema carries no description"));
+        }
+    }
+    assert!(missing.is_empty(), "{missing:#?}");
+}
+
+#[test]
+fn the_required_key_check_sees_a_planted_offender() {
+    let dir = testkit::TempDir::new("spira-config-registry-offender");
+    fs::write(
+        dir.path().join("SPIRA_PLANTED"),
+        "TYPE=string\nGROUP=x\nDOC=x\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # NO DEFAULT\nSPIRA_CONF_DEFAULT_EOF\n",
+    )
+    .unwrap();
+    let registry = spira_config::registry::load(dir.path()).unwrap();
+    assert!(registry["SPIRA_PLANTED"].default_expr().is_none());
+}

@@ -135,7 +135,7 @@ pub const ROWLESS_CONTROLS: &[(&str, &str)] =
 
 /// Test code decides nothing in production: a file under a `tests/` directory, or named
 /// `tests.rs` / `*_tests.rs`.
-fn is_test_file(rel: &str) -> bool {
+pub(crate) fn is_test_file(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     rel.starts_with("tests/") || rel.contains("/tests/") || name == "tests.rs" || name.ends_with("_tests.rs")
 }
@@ -144,13 +144,16 @@ fn is_test_file(rel: &str) -> bool {
 fn in_scope(rel: &str) -> bool {
     !(rel.starts_with("lifecycle/")
         || rel.starts_with("lifecycle-guard/")
-        || rel == "spira-lc/src/bd_facts.rs" || rel == "spira-config/src/nonwork.rs")
+        || rel == "spira-lc/src/bd_facts.rs" || rel == "spira-config/src/nonwork.rs"
+        // The machine's door to bd: the store half of close/reopen writes bd's status after
+        // the row has moved (sp-3fue0j, sp-swh8b8) — a write that follows the machine.
+        || rel == "spira-lc/src/bd.rs")
 }
 
 /// `code` (masked) with every short, identifier-like string literal's text put back from
 /// `orig`, byte for byte (masking keeps lengths), so `"closed"` reads as itself while a
 /// long or escaped literal stays blank.
-fn restore_short_literals(orig: &str, code: &str) -> String {
+pub(crate) fn restore_short_literals(orig: &str, code: &str) -> String {
     let ob = orig.as_bytes();
     let mut cb = code.as_bytes().to_vec();
     let mut i = 0;
@@ -346,6 +349,24 @@ mod tests {
         assert_eq!(lines("watchtower/src/probes.rs", "rowless_beads"), vec![4]);
         assert_eq!(lines("sentinel/src/lifecycle.rs", "rowless_too"), vec![2, 4], "a name that only starts the same");
         assert_eq!(lines("sentinel/src/store.rs", "rowless"), vec![2, 4], "the same name in another file");
+    }
+
+    #[test]
+    fn rowless_controls_match_the_design() {
+        let design = include_str!("../DESIGN.md");
+        let section = design.split("### The rowless controls").nth(1).unwrap().split("\n### ").next().unwrap();
+        let named: Vec<(String, String)> = section
+            .lines()
+            .filter_map(|l| l.strip_prefix("- `"))
+            .filter_map(|l| {
+                let (file, rest) = l.split_once("` `")?;
+                Some((file.to_string(), rest.split('`').next()?.to_string()))
+            })
+            .collect();
+        let coded: Vec<(String, String)> =
+            ROWLESS_CONTROLS.iter().map(|(f, n)| (f.to_string(), n.to_string())).collect();
+        assert!(!named.is_empty(), "the design lists the controls");
+        assert_eq!(named, coded, "an exception not named in the design is refused");
     }
 
     #[test]

@@ -1,0 +1,36 @@
+# Keys this release adds to the one source (release/src/config_delta.rs, sp-pr6jn6), applied at activation.
+removed = ["spira.express_label", "spira.overlap_defer_label"]
+[added]
+"spira.gate_deadline" = 300
+"spira.scratch_max_age_hours" = 24
+"spira.sccache_dav_max_gb" = 40
+"spira.round_certify_wall_secs" = 900
+"spira.preflight_wall_secs" = "240"
+"spira.flow_window_hours" = "0.5"
+"spira.flow_baseline_hours" = "24"
+"spira.flow_grace_secs" = "1800"
+"spira.flow_unobservable_grace_secs" = "3600"
+"spira.round_vm_ssh_port" = "22"
+"spira.round_vm_vcpus" = "16"
+"spira.round_vm_maxpar" = ""
+"spira.round_vm_retry_interval" = "60"
+"spira.round_vm_max_retries" = "0"
+"spira.round_vm_mirror_port" = "9430"
+"spira.reap_idle_secs" = 21600
+"spira.reap_disk_floor_gib" = 50
+"spira.store_check_timeout" = "30"
+"spira.desired_fragments_dir" = "/etc/spira/desired.d"
+"spira.reconciler_shadow_kinds" = ""
+"spira.reconciler_effect_passes" = "2"
+"spira.census_cluster_gap_s" = "300"
+"spira.czar_stage_reconciler_stale" = "shadow"
+"spira.admit_stagger_secs" = 30
+"spira.testenv_pids_limit" = "32768"
+"spira.groom_gate_label" = "placeholder-gate"
+"spira.read_watch_budget_ms" = 500
+"spira.read_watch_interval" = 300
+"spira.read_watch_remind" = 3600
+"spira.lc_timeout" = 30
+"spira.lc_live_check_secs" = 60
+"spira.red_tracker_label" = "spira-red-tracker"
+"spira.sccache_dav_tailnet_addr" = ""

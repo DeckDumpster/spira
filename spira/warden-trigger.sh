@@ -22,21 +22,33 @@ if ! flock --nonblock 9; then
     exit 0
 fi
 
-open_count="$(spira_open_trigger_count "$LABELS")"
+if ! open_count="$(spira_open_trigger_count "$LABELS")"; then
+    log "cannot count open triggers (spira-lc or bd unreadable) — refusing to file, retrying next pass"
+    exit 0
+fi
 if [ "${open_count:-0}" -gt 0 ] 2>/dev/null; then
     log "sweep already open ($open_count bead(s) with labels [$LABELS]) — skipping"
     exit 0
 fi
 
-if "$BD" -C "$DB" create \
+LC="${SPIRA_LC_BIN:-spira-lc}"
+
+if ! id="$(timeout 5 "$BD" -C "$DB" create \
     "Warden sweep — landed work in force, anomalies attributed" \
     --type task \
+    --silent \
     --label "$LABELS,delivers:note:${SPIRA_RUN}/warden.log" \
     --priority 3 \
     --description "Scheduled sweep: the warden persona judges whether landed fixes are in force (filing a follow-up for any that are not) and attributes anomalies no probe could. See spira/chamber/warden.md." \
-; then
-    log "warden sweep bead filed (labels: $LABELS)"
-else
+)" || [ -z "$id" ]; then
     log "ERROR: failed to file warden sweep bead"
     exit 1
 fi
+id="$(printf '%s\n' "$id" | tail -n 1)"
+
+# A bead with no lifecycle row is unclaimable; the row is created in the same pass as the filing.
+if ! timeout 5 "$LC" create-bead "$id" --priority 3 >/dev/null 2>&1; then
+    log "ERROR: warden sweep $id filed but its lifecycle row was not created — unclaimable until: spira-lc create-bead $id"
+    exit 1
+fi
+log "warden sweep bead $id filed with lifecycle row (labels: $LABELS)"

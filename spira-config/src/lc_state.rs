@@ -17,6 +17,36 @@ use std::process::{Command, Stdio};
 
 use crate::lifecycle_row::lc_bin;
 
+/// The `wait` hold's reason that makes it a timed snooze: `snooze-until:<epoch seconds>`.
+pub const SNOOZE_PREFIX: &str = "snooze-until:";
+
+pub fn snooze_reason(until: i64) -> String {
+    format!("{SNOOZE_PREFIX}{until}")
+}
+
+/// The `wait` hold's reason for an aeon checkpointed across a world stop:
+/// `checkpoint-until:<epoch seconds>`. It keeps the bead unclaimable like a snooze, and
+/// `world start` lifts it; the expiry only bounds a stop that is never followed by a start.
+pub const CHECKPOINT_PREFIX: &str = "checkpoint-until:";
+
+pub fn checkpoint_reason(until: i64) -> String {
+    format!("{CHECKPOINT_PREFIX}{until}")
+}
+
+pub fn is_checkpoint(reason: &str) -> bool {
+    reason.starts_with(CHECKPOINT_PREFIX)
+}
+
+pub fn snooze_until(reason: &str) -> Option<i64> {
+    let rest = reason.strip_prefix(SNOOZE_PREFIX).or_else(|| reason.strip_prefix(CHECKPOINT_PREFIX))?;
+    rest.split_whitespace().next()?.parse().ok()
+}
+
+/// Whether a wait hold's reason names a timed directive anywhere, so a malformed one can be refused.
+pub fn names_directive(reason: &str) -> bool {
+    reason.contains(SNOOZE_PREFIX) || reason.contains(CHECKPOINT_PREFIX)
+}
+
 /// One `spira_lifecycle.bead` row, as `spira-lc list` / `show` print it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Row {
@@ -25,6 +55,12 @@ pub struct Row {
     pub holder: Option<String>,
     pub lease_until: Option<i64>,
     pub holds: Vec<String>,
+    pub express: bool,
+    /// The prerequisite bead ids this bead's current work is stacked on.
+    pub stack: Vec<String>,
+    pub phase: Option<String>,
+    pub disposition: Option<String>,
+    pub disposition_note: Option<String>,
 }
 
 impl Row {
@@ -88,6 +124,18 @@ fn holds(v: Option<&Value>) -> Vec<String> {
     arr.into_iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
 }
 
+fn stack(v: Option<&Value>) -> Vec<String> {
+    let obj = match v {
+        Some(Value::String(s)) if !s.trim().is_empty() => serde_json::from_str::<Value>(s).ok(),
+        Some(o) => Some(o.clone()),
+        None => None,
+    };
+    match obj {
+        Some(Value::Object(m)) => m.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn row_of(r: &Value) -> Row {
     Row {
         bead_id: scalar(r.get("bead_id")).unwrap_or_default(),
@@ -95,6 +143,11 @@ fn row_of(r: &Value) -> Row {
         holder: scalar(r.get("holder")).filter(|h| !h.is_empty()),
         lease_until: scalar(r.get("lease_until")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
         holds: holds(r.get("holds")),
+        express: matches!(scalar(r.get("express")).as_deref(), Some("1" | "true")),
+        stack: stack(r.get("stack")),
+        phase: scalar(r.get("aeon_phase")).filter(|x| !x.is_empty()),
+        disposition: scalar(r.get("disposition")).filter(|x| !x.is_empty()),
+        disposition_note: scalar(r.get("disposition_note")),
     }
 }
 
@@ -114,9 +167,13 @@ pub fn parse_show(text: &str) -> Result<Option<Row>, String> {
 }
 
 fn run(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
-    // The call-deadline cap (spira-lint): 5 s, the same bound sending's lifecycle read keeps.
+    run_within(bin, args, 5)
+}
+
+fn run_within(bin: &str, args: &[&str], secs: u32) -> Result<(i32, String), String> {
+    // batch-job: the interactive default is 5 s (the call-deadline cap); a batch caller passes more.
     let out = Command::new("timeout")
-        .arg("5")
+        .arg(secs.to_string())
         .arg(bin)
         .args(args)
         .stdin(Stdio::null())
@@ -127,6 +184,7 @@ fn run(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
     if code != 0 && code != 1 {
         let why = String::from_utf8_lossy(&out.stderr);
         let why = why.lines().find(|l| !l.trim().is_empty()).unwrap_or("no message");
+        let why = if code == 124 { format!("timed out after {secs}s") } else { why.to_string() };
         return Err(format!("{bin} {} exited {code}: {why}", args.join(" ")));
     }
     Ok((code, stdout))
@@ -135,10 +193,37 @@ fn run(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
 /// Every lifecycle row (`spira-lc list`). Err when the machine cannot answer: a caller that
 /// cannot read the state must not decide as if it had (law-a-control-that-cannot-check-must-refuse).
 pub fn list_with(bin: &str) -> Result<Vec<Row>, String> {
-    match run(bin, &["list"])? {
+    list_within(bin, 5)
+}
+
+/// The rows in one state (`spira-lc list --state <STATE>`): what a reader that wants only
+/// the WORKING aeons asks, instead of every row.
+pub fn list_state_with(bin: &str, state: &str) -> Result<Vec<Row>, String> {
+    match run_within(bin, &["list", "--state", state], 5)? {
         (0, out) => parse_rows(&out),
+        (rc, _) => Err(format!("{bin} list --state {state} exited {rc}")),
+    }
+}
+
+/// `list_with` for a batch caller that can wait out a loaded store: `secs` bounds the read.
+pub fn list_within(bin: &str, secs: u32) -> Result<Vec<Row>, String> {
+    parse_rows(&list_raw_within(bin, secs)?)
+}
+
+/// `spira-lc list`'s stdout, unparsed, for a caller that keeps the last good answer.
+pub fn list_raw_with(bin: &str) -> Result<String, String> {
+    list_raw_within(bin, 5)
+}
+
+fn list_raw_within(bin: &str, secs: u32) -> Result<String, String> {
+    match run_within(bin, &["list"], secs)? {
+        (0, out) => Ok(out),
         (rc, _) => Err(format!("{bin} list exited {rc}")),
     }
+}
+
+pub fn list_raw() -> Result<String, String> {
+    list_raw_with(&lc_bin())
 }
 
 pub fn list() -> Result<Vec<Row>, String> {
@@ -165,6 +250,17 @@ pub fn index(rows: Vec<Row>) -> HashMap<String, Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_checkpoint_reason_snoozes_like_a_timed_wait_and_is_told_apart() {
+        let r = checkpoint_reason(1_900_000_000);
+        assert_eq!(snooze_until(&r), Some(1_900_000_000));
+        assert!(is_checkpoint(&r) && !is_checkpoint(&snooze_reason(5)));
+        assert_eq!(snooze_until(&snooze_reason(5)), Some(5));
+        assert_eq!(snooze_until("snooze-until:7 because the upstream lands"), Some(7));
+        assert_eq!(snooze_until("snooze-until:soon"), None);
+        assert!(names_directive("see snooze-until:7") && !names_directive("blocker unlanded"));
+    }
 
     #[test]
     fn predicates_name_the_old_bd_decisions() {
@@ -202,5 +298,14 @@ mod tests {
         let bin = bin.to_string_lossy().into_owned();
         assert_eq!(row_with(&bin, "sp-x"), Ok(None));
         assert!(list_with(&bin).unwrap_err().contains("exited 2"));
+    }
+
+    #[test]
+    fn a_list_past_its_deadline_says_it_timed_out() {
+        let t = testkit::TempDir::new("lcstate-deadline");
+        let bin = t.path().join("lc");
+        testkit::write_exe(&bin, "#!/bin/sh\nexec sleep 5\n");
+        let bin = bin.to_string_lossy().into_owned();
+        assert!(list_within(&bin, 1).unwrap_err().contains("timed out after 1s"));
     }
 }

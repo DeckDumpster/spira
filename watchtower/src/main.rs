@@ -9,15 +9,16 @@ mod czar_outcome;
 mod deadline;
 mod deploy_fault;
 mod disk_mem;
-mod disabled_timer;
 mod drift;
 mod env;
+mod ctrl_gate;
 mod failed_units;
 mod gate_wait;
 mod git;
 mod incident;
 mod lc;
 mod lapsed;
+mod load_fence;
 mod lock_holders;
 mod log;
 mod pr_stall;
@@ -25,6 +26,7 @@ mod probes;
 mod release_skew;
 mod sccache_wedge;
 mod seams;
+mod dolt_drop;
 mod slow_query;
 mod sweep;
 mod throttle;
@@ -50,6 +52,12 @@ fn raw_env(k: &str) -> Option<String> {
 /// containment refusal) yields an empty [`spira_config::resolve::Resolved`] — [`getenv`]'s
 /// own `unwrap_or(default)` callers see exactly the behaviour this crate had before this
 /// bead, never a panic.
+///
+/// ONE SOURCE OF CONFIG (per Ryan 2026-10-05): every key this registry declares
+/// (`spira/conf.d/SPIRA_*`) now reads through [`reg`]/[`reg_i64`] instead — the process's
+/// single `$SPIRA_TOML` resolution, with no env override and no caller-supplied default.
+/// `getenv`/`getenv_i64` (and this cache) remain only for the keys `spira/conf.d` does not
+/// declare at all — listed in the migration report, never both ways for the same key.
 fn resolved_config() -> &'static spira_config::resolve::Resolved {
     static RESOLVED: std::sync::OnceLock<spira_config::resolve::Resolved> = std::sync::OnceLock::new();
     RESOLVED.get_or_init(|| {
@@ -62,7 +70,8 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
 
 /// The environment, then `spira_config::resolve()`'s in-process answer — never the
 /// reverse, so a test or a fixture's explicit env override still wins exactly as it did
-/// before this bead.
+/// before this bead. For a key `spira/conf.d` registers, use [`reg`]/[`reg_i64`] instead —
+/// this path is for the unregistered keys only (see the migration report).
 fn getenv(k: &str) -> Option<String> {
     raw_env(k).or_else(|| {
         let v = resolved_config().get(k);
@@ -74,6 +83,32 @@ fn getenv_i64(k: &str, default: i64) -> i64 {
     getenv(k).and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
+/// A registered config key's declared value — `spira_config::process::cfg`, the one
+/// source of config: `$SPIRA_TOML`, resolved once per process, no env override, no
+/// default. `Err` (key not registered, or the config cannot be resolved) refuses the
+/// process outright; it never substitutes a value.
+fn reg(key: &str) -> String {
+    spira_config::process::cfg(key).unwrap_or_else(|e| {
+        eprintln!("watchtower: FATAL: {e}");
+        std::process::exit(1);
+    })
+}
+
+/// [`reg`], parsed as any `FromStr` type — refusing the same way on an unparsable value.
+fn reg_parse<T: std::str::FromStr>(key: &str) -> T
+where
+    T::Err: std::fmt::Display,
+{
+    spira_config::process::cfg_parse::<T>(key).unwrap_or_else(|e| {
+        eprintln!("watchtower: FATAL: {e}");
+        std::process::exit(1);
+    })
+}
+
+fn reg_i64(key: &str) -> i64 {
+    reg_parse(key)
+}
+
 fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -82,15 +117,10 @@ fn now() -> i64 {
 }
 
 fn spira_run() -> PathBuf {
-    getenv("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp/spira-run"))
+    PathBuf::from(reg("SPIRA_RUN"))
 }
 
-/// `$SPIRA_HOME`, falling back to `lib.sh`'s own directory on PATH. Used only for
-/// `--disabled-timer-check`'s `world.sh`/`ctrl.sh` seam, which the bash reached the same
-/// way (`. "${SPIRA_HOME}/world.sh"` — a literal `$SPIRA_HOME`, never `$0`-relative): a
-/// test that overrides `SPIRA_HOME` means that seam too, and production always sets it
-/// anyway. The fallback only matters for a suite run in a clean `env -i` that puts
-/// `spira/` on PATH without setting `SPIRA_HOME` at all.
+/// `$SPIRA_HOME`, falling back to `lib.sh`'s own directory on PATH.
 fn spira_home() -> String {
     if let Some(h) = getenv("SPIRA_HOME") {
         return h;
@@ -112,14 +142,6 @@ fn spira_home() -> String {
 /// itself — only what its ALREADY-real functions read. `SPIRA_HOME` still reaches those
 /// functions correctly: it is inherited in the subprocess's own environment, never passed
 /// as the sourcing path.
-fn resolved_ask_label() -> String {
-    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    spira_config::resolve::resolve_ask_label(&env, std::path::Path::new(&lib_sh_dir())).unwrap_or_else(|e| {
-        eprintln!("watchtower: FATAL: {e}");
-        std::process::exit(1);
-    })
-}
-
 fn lib_sh_dir() -> String {
     incident::which("lib.sh")
         .and_then(|p| std::path::Path::new(&p).parent().map(|d| d.to_string_lossy().into_owned()))
@@ -135,20 +157,21 @@ fn world_halted(run: &std::path::Path) -> bool {
 }
 
 fn build_sweep_cfg() -> sweep::Cfg {
-    let start_s = getenv_i64("SPIRA_WATCHTOWER_START_TIMEOUT_S", 360).max(0) as u64;
+    let start_s = reg_i64("SPIRA_WATCHTOWER_START_TIMEOUT_S").max(0) as u64;
     deadline::init(
-        Duration::from_secs(getenv_i64("SPIRA_WATCHTOWER_PROBE_TIMEOUT_S", 30).max(1) as u64),
+        Duration::from_secs(reg_i64("SPIRA_WATCHTOWER_PROBE_TIMEOUT_S").max(1) as u64),
         Duration::from_secs(start_s.saturating_sub(30).max(30)),
     );
     sweep::Cfg {
         spira_run: spira_run(),
         lib_sh_dir: lib_sh_dir(),
-        db: getenv("SPIRA_DB").unwrap_or_default(),
-        home_repo: getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
-        ask_label: resolved_ask_label(),
-        snap_stale_s: getenv_i64("SPIRA_SNAP_STALE_S", 60),
+        db: reg("SPIRA_DB"),
+        home_repo: reg("SPIRA_HOME_REPO"),
+        ask_label: reg("SPIRA_ASK_LABEL"),
+        snap_stale_s: reg_i64("SPIRA_SNAP_STALE_S"),
         gate_window_s: getenv_i64("SPIRA_WATCH_GATE_WINDOW", 21600),
         gate_silence_window_s: getenv_i64("SPIRA_WATCH_GATE_SILENCE_WINDOW", 3600),
+        gate_p90_limit_s: getenv_i64("SPIRA_WATCH_GATE_P90_LIMIT", 300),
         gate_log: getenv("SPIRA_GATE_LOG").map(PathBuf::from),
         yield_window_s: getenv_i64("SPIRA_YIELD_WINDOW", 86400),
         yield_sh: getenv("SPIRA_YIELD_SH"),
@@ -171,7 +194,7 @@ fn build_sweep_cfg() -> sweep::Cfg {
         lapsed_marker: getenv("SPIRA_LAPSED_MARKER").map(PathBuf::from),
         failed_units_state: getenv("SPIRA_FAILED_UNITS_STATE").map(PathBuf::from),
         throttle_stamp: getenv("SPIRA_THROTTLE_STAMP").map(PathBuf::from),
-        queue_throttle_override: getenv("SPIRA_QUEUE_THROTTLE_OVERRIDE").unwrap_or_default(),
+        queue_throttle_override: reg("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
         incident_sh: resolved_incident_sh(),
         suites_sh: getenv("SPIRA_SUITES_SH"),
         moot_sh: getenv("SPIRA_MOOT_SH"),
@@ -196,12 +219,12 @@ fn main() {
                 return;
             }
             let inc = resolved_incident_sh();
-            let db = getenv("SPIRA_DB").unwrap_or_default();
-            let home_repo = getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string());
+            let db = reg("SPIRA_DB");
+            let home_repo = reg("SPIRA_HOME_REPO");
             let cfg = throttle::Cfg {
-                depth_at: getenv_i64("SPIRA_QUEUE_THROTTLE_DEPTH_AT", 16),
-                release_at: getenv_i64("SPIRA_QUEUE_THROTTLE_RELEASE_AT", 8),
-                stall_mins: getenv_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS", 50),
+                depth_at: reg_i64("SPIRA_QUEUE_THROTTLE_DEPTH_AT"),
+                release_at: reg_i64("SPIRA_QUEUE_THROTTLE_RELEASE_AT"),
+                stall_mins: reg_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS"),
             };
             let stamp = getenv("SPIRA_THROTTLE_STAMP").map(PathBuf::from).unwrap_or_else(|| run.join("queue-throttled"));
             let tc_repo = getenv("SPIRA_TC_REPO").or_else(|| getenv("SPIRA_REPO"));
@@ -216,7 +239,7 @@ fn main() {
                 home_repo: &home_repo,
                 incident_sh: &inc,
                 stamp: &stamp,
-                override_off: getenv("SPIRA_QUEUE_THROTTLE_OVERRIDE").as_deref() == Some("off"),
+                override_off: reg("SPIRA_QUEUE_THROTTLE_OVERRIDE") == "off",
                 repo: tc_repo.as_deref(),
                 land_ref: tc_land_ref.as_deref(),
                 land_ref_default_for_log: "origin/main",
@@ -229,15 +252,15 @@ fn main() {
                 return;
             }
             let cfg = czar_outcome::Cfg {
-                outcome_mins: getenv_i64("SPIRA_CZAR_OUTCOME_MINS", 30),
-                unclaimed_mins: getenv_i64("SPIRA_CZAR_UNCLAIMED_MINS", 10),
-                label: getenv("SPIRA_CZAR_LABEL").unwrap_or_else(|| "czar-trigger".to_string()),
+                outcome_mins: reg_i64("SPIRA_CZAR_OUTCOME_MINS"),
+                unclaimed_mins: reg_i64("SPIRA_CZAR_UNCLAIMED_MINS"),
+                label: reg("SPIRA_CZAR_LABEL"),
             };
             czar_outcome::run(
                 n,
                 "bd",
-                &getenv("SPIRA_DB").unwrap_or_default(),
-                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &reg("SPIRA_DB"),
+                &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
                 &cfg,
             );
@@ -248,15 +271,15 @@ fn main() {
                 return;
             }
             let cfg = pr_stall::Cfg {
-                stall_secs: getenv_i64("SPIRA_PR_STALL_MINS", 60) * 60,
-                gh_bin: getenv("SPIRA_GH").unwrap_or_else(|| "gh".to_string()),
+                stall_secs: reg_i64("SPIRA_PR_STALL_MINS") * 60,
+                gh_bin: reg("SPIRA_GH"),
                 gh_timeout: Duration::from_secs(getenv_i64("GH_TIMEOUT", 120) as u64),
             };
             pr_stall::run(
                 n,
                 &lib_sh_dir(),
-                &getenv("SPIRA_DB").unwrap_or_default(),
-                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &reg("SPIRA_DB"),
+                &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
                 &cfg,
             );
@@ -266,7 +289,7 @@ fn main() {
                 log::log("watchtower: lock-holders-check skipped — world is halted");
                 return;
             }
-            let stall_mins = getenv_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS", 50);
+            let stall_mins = reg_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS");
             let tc_repo = getenv("SPIRA_TC_REPO").or_else(|| getenv("SPIRA_REPO"));
             let land_ref = getenv("SPIRA_TC_LAND_REF")
                 .or_else(|| tc_repo.as_deref().and_then(|r| git::spira_landref(&lib_sh_dir(), r)));
@@ -279,7 +302,7 @@ fn main() {
                 log::log(&format!("watchtower: lock-holders-check — no stall (depth={depth} since_land={}m)", throttle::disp(since)));
                 return;
             }
-            let queue_dir = getenv("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue"));
+            let queue_dir = PathBuf::from(reg("SPIRA_QUEUE_DIR"));
             lock_holders::run(
                 n,
                 &format!("depth {depth}, no landing for {}m", throttle::disp(since)),
@@ -287,27 +310,10 @@ fn main() {
                     run: &run,
                     queue_dir: &queue_dir,
                     proc_root: std::path::Path::new("/proc"),
-                    db: &getenv("SPIRA_DB").unwrap_or_default(),
-                    home_repo: &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                    db: &reg("SPIRA_DB"),
+                    home_repo: &reg("SPIRA_HOME_REPO"),
                     incident_sh: &resolved_incident_sh(),
                 },
-            );
-        }
-        Some("--disabled-timer-check") => {
-            if world_halted(&run) {
-                log::log("watchtower: disabled-timer-check skipped — world is halted");
-                return;
-            }
-            let cfg = disabled_timer::Cfg {
-                systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
-                instance_suffix: getenv("SPIRA_INSTANCE").map(|i| format!("-{i}")).unwrap_or_default(),
-            };
-            disabled_timer::run(
-                &spira_home(),
-                &getenv("SPIRA_DB").unwrap_or_default(),
-                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
-                &resolved_incident_sh(),
-                &cfg,
             );
         }
         Some("--release-skew-check") => {
@@ -322,8 +328,8 @@ fn main() {
             release_skew::run(
                 n,
                 &run,
-                &getenv("SPIRA_DB").unwrap_or_default(),
-                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &reg("SPIRA_DB"),
+                &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
                 &cfg,
             );
@@ -339,13 +345,13 @@ fn main() {
                 retry_secs: getenv_i64("SPIRA_DEPLOY_FAULT_RETRY_SECS", 1800),
                 build_timeout_secs: getenv_i64("SPIRA_DEPLOY_FAULT_BUILD_TIMEOUT", 1800).max(1) as u64,
             };
-            let queue_dir = getenv("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue"));
+            let queue_dir = PathBuf::from(reg("SPIRA_QUEUE_DIR"));
             deploy_fault::run(
                 n,
                 &queue_dir,
                 &run,
-                &getenv("SPIRA_DB").unwrap_or_default(),
-                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &reg("SPIRA_DB"),
+                &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
                 &cfg,
             );
@@ -363,11 +369,22 @@ fn main() {
             sccache_wedge::run(
                 n,
                 std::path::Path::new("/proc"),
-                &getenv("SPIRA_DB").unwrap_or_default(),
-                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &reg("SPIRA_DB"),
+                &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
                 &cfg,
             );
+        }
+        Some("--load-fence-check") => {
+            let cfg = load_fence::Cfg {
+                comms: getenv("SPIRA_LOAD_FENCE_COMMS")
+                    .unwrap_or_else(|| load_fence::DEFAULT_COMMS.to_string())
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect(),
+                owner_mark: getenv("SPIRA_LOAD_FENCE_OWNER_MARK").unwrap_or_else(|| load_fence::DEFAULT_OWNER_MARK.to_string()),
+            };
+            load_fence::run(std::path::Path::new("/proc"), &cfg);
         }
         Some("--conditions-check") => {
             if world_halted(&run) {
@@ -377,22 +394,28 @@ fn main() {
             let cfg = probes::Cfg {
                 systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
                 journalctl: getenv("SPIRA_JOURNALCTL").unwrap_or_else(|| "journalctl".to_string()),
-                releases: getenv("SPIRA_RELEASES"),
-                keep: getenv_i64("SPIRA_RELEASES_KEEP", 100).max(1) as usize,
-                store_slack: getenv_i64("SPIRA_RELEASE_STORE_SLACK", 20).max(0) as usize,
-                unit_glob: getenv("SPIRA_RELEASE_CURRENCY_UNITS").unwrap_or_else(|| "spira-*-prod.service".to_string()),
-                stale_release_secs: getenv_i64("SPIRA_RELEASE_STALE_SECS", 3600),
-                failed_runs: getenv_i64("SPIRA_FAILED_UNIT_RUNS", 3),
+                releases: {
+                    // SPIRA_RELEASES is registered but its declared value may legitimately be
+                    // "" (not configured) — preserved as `None`, same as `getenv`'s own
+                    // empty-filters-to-None before this bead; not a substituted default.
+                    let r = reg("SPIRA_RELEASES");
+                    (!r.is_empty()).then_some(r)
+                },
+                keep: reg_i64("SPIRA_RELEASES_KEEP").max(1) as usize,
+                store_slack: reg_i64("SPIRA_RELEASE_STORE_SLACK").max(0) as usize,
+                unit_glob: reg("SPIRA_RELEASE_CURRENCY_UNITS"),
+                stale_release_secs: reg_i64("SPIRA_RELEASE_STALE_SECS"),
+                failed_runs: reg_i64("SPIRA_FAILED_UNIT_RUNS"),
                 tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| "/tmp".to_string()),
                 tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
                 df_bin: getenv("SPIRA_DF").unwrap_or_else(|| "df".to_string()),
-                disk_floor_pct: getenv_i64("SPIRA_DISK_FLOOR_PCT", 15),
+                disk_floor_pct: reg_i64("SPIRA_DISK_FLOOR_PCT"),
                 psi_dir: getenv("SPIRA_PSI_DIR").unwrap_or_else(|| "/proc/pressure".to_string()),
-                psi_full_avg60: getenv("SPIRA_PSI_FULL_AVG60").and_then(|v| v.parse().ok()).unwrap_or(10.0),
-                psi_sustain_secs: getenv_i64("SPIRA_PSI_SUSTAIN_SECS", 300),
+                psi_full_avg60: reg_parse::<f64>("SPIRA_PSI_FULL_AVG60"),
+                psi_sustain_secs: reg_i64("SPIRA_PSI_SUSTAIN_SECS"),
             };
-            let db = getenv("SPIRA_DB").unwrap_or_default();
-            let home_repo = getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string());
+            let db = reg("SPIRA_DB");
+            let home_repo = reg("SPIRA_HOME_REPO");
             let inc = resolved_incident_sh();
             let lc_bin = spira_config::lifecycle_row::lc_bin();
             let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, bd: "bd", lc_bin: &lc_bin };
@@ -409,6 +432,21 @@ fn main() {
             };
             conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg));
         }
+        Some("--dolt-drop-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: dolt-drop-check skipped \u{2014} world is halted");
+                return;
+            }
+            let log_path = getenv("SPIRA_DOLT_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("dolt-beads.log"));
+            dolt_drop::run(
+                &log_path,
+                &getenv("SPIRA_DB").unwrap_or_default(),
+                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &resolved_incident_sh(),
+                getenv_i64("SPIRA_DOLT_DROP_WINDOW_MINS", 5).max(1) as usize,
+                getenv_i64("SPIRA_DOLT_DROP_PER_MIN", 30).max(1) as usize,
+            );
+        }
         Some("--slow-query-check") => {
             if world_halted(&run) {
                 log::log("watchtower: slow-query-check skipped \u{2014} world is halted");
@@ -418,8 +456,8 @@ fn main() {
             slow_query::run(
                 &run,
                 &log_path,
-                &getenv("SPIRA_DB").unwrap_or_default(),
-                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &reg("SPIRA_DB"),
+                &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
             );
         }
@@ -431,8 +469,8 @@ fn main() {
             drift::run(
                 &spira_home(),
                 &getenv("SPIRA_REPO").unwrap_or_default(),
-                &getenv("SPIRA_DB").unwrap_or_default(),
-                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &reg("SPIRA_DB"),
+                &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
             );
         }
@@ -447,33 +485,28 @@ fn main() {
 mod tests {
     use super::*;
 
-    /// Wave 4.8: `getenv`/`getenv_i64` now fall back to `spira_config::resolve()` between
-    /// the raw environment and the caller's own hardcoded default. This is the ONLY test
-    /// in this binary that calls `getenv`/`resolved_config` — the `OnceLock` inside
-    /// `resolved_config` computes once per process and never resets, so a second test with
-    /// a different fixture could not observe a different answer. SPIRA_HOME points at a
-    /// throwaway fixture with its own `conf.d` (never the real box's), so this never reads
-    /// an operator's actual config document or registry.
+    /// `getenv`/`getenv_i64` are for a key `spira/conf.d` does not register (a registered
+    /// one reads through `reg`/`reg_i64` instead). `spira_config::resolve()` now refuses
+    /// any key the config file does not explicitly declare — including a fake conf.d entry's
+    /// own `DEFAULT` block, which is documentation only; nothing evaluates it anymore (per
+    /// Ryan 2026-10-05: no config is a refusal, never a computed default). So there is no
+    /// registry fallback left for an unregistered key at all: `resolved_config()` yields
+    /// nothing for `SPIRA_DISK_WARN_PCT` (a real call site in this crate that stays on
+    /// `getenv_i64` because it is not in `spira/conf.d`), and `getenv_i64` falls straight
+    /// to the caller's own hardcoded default — an explicit env override still wins over
+    /// that. This is the ONLY test in this binary that calls `getenv`/`resolved_config` —
+    /// the `OnceLock` inside `resolved_config` computes once per process and never resets,
+    /// so a second test with a different fixture could not observe a different answer.
     #[test]
-    fn getenv_falls_back_to_the_registry_then_the_callers_default() {
-        let dir = testkit::TempDir::new("watchtower-getenv");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_SNAP_STALE_S"),
-            "TYPE=u32\nGROUP=cockpit\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_SNAP_STALE_S:=77}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::env::set_var("SPIRA_HOME", &home);
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
-        std::env::remove_var("SPIRA_SNAP_STALE_S");
+    fn getenv_falls_back_to_the_callers_default_with_no_registry_fallback() {
+        let g = testkit::env(&[("SPIRA_TOML", Some("/no/such/spira-toml-for-this-test")), ("SPIRA_DISK_WARN_PCT", None)]);
 
-        assert_eq!(getenv_i64("SPIRA_SNAP_STALE_S", 60), 77, "a registry default must reach getenv_i64 without an env override");
+        assert_eq!(getenv_i64("SPIRA_DISK_WARN_PCT", 90), 90, "no registry fallback for an unregistered key: the caller's own default must win");
         assert_eq!(getenv("SPIRA_NO_SUCH_KEY_AT_ALL_EVER"), None, "an unresolved key still falls through to None");
 
-        std::env::set_var("SPIRA_SNAP_STALE_S", "99");
-        assert_eq!(getenv_i64("SPIRA_SNAP_STALE_S", 60), 99, "an explicit env override still wins over the registry");
-        let _ = std::fs::remove_dir_all(&dir);
+        drop(g);
+        let _g = testkit::env(&[("SPIRA_TOML", Some("/no/such/spira-toml-for-this-test")), ("SPIRA_DISK_WARN_PCT", Some("99"))]);
+        assert_eq!(getenv_i64("SPIRA_DISK_WARN_PCT", 90), 99, "an explicit env override still wins over the registry");
     }
 
     #[test]
@@ -485,7 +518,7 @@ mod tests {
         std::fs::write(run.join("world.halted"), "").unwrap();
         assert!(world_halted(&run), "marker present: halted");
         let src = include_str!("main.rs");
-        for sub in ["throttle-check", "czar-outcome-check", "pr-stall-check", "disabled-timer-check"] {
+        for sub in ["throttle-check", "czar-outcome-check", "pr-stall-check", "release-skew-check"] {
             let msg = format!("watchtower: {sub} skipped \u{2014} world is halted");
             assert!(src.contains(&format!("\"{}\"", msg)), "{sub} must carry the halted-world skip");
         }

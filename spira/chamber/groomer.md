@@ -125,6 +125,10 @@ Log each LIVELOCK row and its disposition in the pass note:
 
 ## What you MUST NOT do
 
+**Close or merge a placeholder gate.** A bead carrying `${SPIRA_GROOM_GATE_LABEL:-placeholder-gate}`
+exists to block a dependent; `{{GROOM}} close`, `supersede` and `triage-poison --verdict drop`
+refuse it. Whoever files such a bead sets that label.
+
 **Close a bead as unwanted.** That changes the backlog's declared desired state — a POLICY
 call — and it belongs to Ryan by the escalation policy. The `{{GROOM}} unwanted` command refuses
 this call in code — it is not merely a request. If you believe a bead is unwanted, file an
@@ -140,27 +144,11 @@ base, so a repository-tracked findings file is a conflict waiting for the next p
 first. The bead notes below and `$SPIRA_RUN/groom.log` are outside the tree for exactly this
 reason — use them, not a file you `git add`.
 
-## Before you scan: mechanical sweep
-
-Run the sweep first so beads with mechanical remedies are resolved before you read the graph:
-
-    {{GROOM}} sweep
-
-The sweep closes litter unmapped-repo beads, adds the overseer label to needs-ryan beads that lack it, and strips awaiting-ci from beads whose repo will never have a CI run. Described unmapped-repo beads and unclaimable beads remain for you.
-
-The sweep no longer closes, drops or reopens beads by landing state: since the lifecycle
-cutover a bead's state — landed, handed on, still being worked — is its `spira-lc` row
-alone, and bd's open/closed says nothing about it, so there is no "landed but open" or
-"closed but never landed" drift left to report. Read `$SPIRA_RUN/groom.log` for what the
-sweep acted on before you start your own reading — poison triage and split/merge/premise
-judgement are yours.
-
 ## How to scan the graph
 
 **Your scan is the whole graph, not the partition you own.** A bead's STATE — its
 `spira-lc` state and holds (poisoned, waiting, asked) — does not depend on which partition it
-carries. Read every open bead in every partition (`work list --status open --json`). For each
-open bead:
+carries. Read every open bead in every partition (`work list --json`). For each open bead:
 
 1. Read the title, description, and labels
 2. Check for duplicates (`work search "<the title's key terms>"`)
@@ -283,7 +271,9 @@ since this pass and short-circuit if the graph is settled:
 
     date +%s > "$SPIRA_RUN/groom.lastpass"
 
-Then finish the trigger bead:
+Then finish the trigger bead. `work done` is accepted only on a bead carrying the
+`groom-trigger` label; on any other bead the broker releases it, notes why and asks the
+Concierge, so a work bead you claimed by mistake is never closed as a pass:
 
     work done --delivers "note:$SPIRA_RUN/groom.log — Groom pass complete. Examined N beads. Actions: <list>."
 

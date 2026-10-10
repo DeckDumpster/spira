@@ -9,7 +9,7 @@ use crate::incident::{self, Finding};
 use crate::log::log;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cond {
@@ -80,19 +80,9 @@ pub(crate) fn unfinished(lc_bin: &str, ids: Vec<String>) -> Option<Vec<String>> 
     Some(out)
 }
 
+// Through the lifecycle machine (sp-3fue0j), never a raw bd close.
 fn close_bead(ctx: &Ctx, id: &str, why: &str) -> bool {
-    use std::io::Write;
-    let child = Command::new(ctx.bd)
-        .args(["-C", ctx.db, "close", id, "--reason-file", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-    let Ok(mut child) = child else { return false };
-    if let Some(mut si) = child.stdin.take() {
-        let _ = si.write_all(format!("OUTCOME: delivered\n{why}\n").as_bytes());
-    }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    spira_config::lifecycle_row::close_with(ctx.lc_bin, id, &format!("OUTCOME: delivered\n{why}\n"), "watchtower", None).is_ok()
 }
 
 pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {
@@ -123,7 +113,7 @@ pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {
                     continue;
                 }
                 let f = Finding::new(ctx.db, ctx.home_repo, &c.title, &c.body).priority(c.priority).reference(&c.reference).cause(probe);
-                if incident::file(ctx.incident_sh, &f) {
+                if incident::alarm(ctx.incident_sh, &f) {
                     let _ = std::fs::write(filed_dir.join(&k), &c.reference);
                     log(&format!("watchtower: conditions: filed {} ({probe})", c.reference));
                 }
@@ -161,8 +151,9 @@ pub mod tests {
             std::fs::create_dir_all(dir.join("run")).unwrap();
             let bd = "#!/bin/bash\nS=\"$(dirname \"$0\")/store\"\ntouch \"$S\"\ncase \"$3\" in\nlist) ref=\"$5\"; ids=$(awk -v r=\"$ref\" '$2==r{print $1}' \"$S\"); printf '['; s=''; for i in $ids; do printf '%s{\"id\":\"%s\"}' \"$s\" \"$i\"; s=','; done; printf ']\\n';;\nclose) id=\"$4\"; cat > /dev/null; grep -v \"^$id \" \"$S\" > \"$S.n\"; mv \"$S.n\" \"$S\"; echo \"$id\" >> \"$(dirname \"$0\")/closed\";;\nesac\n";
             let inc = "#!/bin/bash\nD=\"$(dirname \"$0\")\"\ncat > /dev/null\nn=$(wc -l < \"$D/store\"); echo \"b$((n+1)) $SPIRA_INCIDENT_REF\" >> \"$D/store\"; echo \"$2\" >> \"$D/filed\"\n";
-            // The lifecycle machine: every bead the store still lists is READY (unfinished).
-            let lc = "#!/bin/bash\n[ \"$1\" = show ] || exit 2\nprintf '{\"bead\":{\"bead_id\":\"%s\",\"state\":\"READY\",\"holds\":[]}}\\n' \"$2\"\n";
+            // The lifecycle machine: every bead the store still lists is READY (unfinished), and
+            // a close goes through it (sp-3fue0j), which closes the store — here, the bd stub.
+            let lc = "#!/bin/bash\nif [ \"$1\" = close ]; then exec \"$(dirname \"$0\")/bd\" -C db close \"$2\" --reason-file -; fi\n[ \"$1\" = show ] || exit 2\nprintf '{\"bead\":{\"bead_id\":\"%s\",\"state\":\"READY\",\"holds\":[]}}\\n' \"$2\"\n";
             for (n, body) in [("bd", bd), ("inc.sh", inc), ("lc", lc)] {
                 let p = dir.join(n);
                 testkit::write_exe(&p, body);

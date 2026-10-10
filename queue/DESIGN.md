@@ -111,10 +111,11 @@ nothing changed), then effects in order.
 | `open-batch` | queue | queue lock | refuse if a batch is open. Candidates from `--members` or ranked CERTIFIED (`queue_sort_rows`); admission (closed or submitted); assemble in `$SPIRA_RUN/worktree/.open-batch-<repo>-<pid>` with `land_subject` merges; `format_batch`; branch `spira/queue/<stamp>`; pre-flight gate unless `--skip-pregate` (wall 124 → open anyway); push; `pr-create` (body on stdin); open record; **switch ON only**: spira-lc cut → `batch_id`/`version` (§10); members `BATCHED`; clear `queue-stuck-<repo>`; `QUEUE BATCH … source=open-batch`. |
 | `claim` | any | queue lock | `--reason` required (exit 2); open batch required; already concierge-owned without `--force` → refuse. Rewrite record: `owner=concierge`, `pre_claim_owner=<prev>`, `claim_reason=<one line>`. Mail. |
 | `release` | any | queue lock | open batch, owned by concierge, else refuse. `owner=<pre_claim_owner>`, drop claim keys. |
-| `land-local` | queue.local | queue lock unless LOCK_HELD | base must be a local branch; resolve head; divergence alarm (cached forge ref, never refuses); `base` ancestor of head, else refuse; **the head's tree carries a gate PASS or round GREEN certificate, else refuse (§8 D12; `SPIRA_LAND_UNGATED=<reason>` overrides, logged)**; the round's binaries when `--worktree` is named (§8 D2); for the harness repository while a release is in force, `--worktree` required (§8 D13); CAS `update-ref`; round-seq+1, `refs/archive/rounds/<n>`; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`, a line; then the release (§8 D13): `release build <head> --bin-dir` → `release verify` → `release activate`, a failure a loud deploy fault (exit 3, distinct from a refusal's 1) that reverts nothing; mail; summary line. |
+| `land-local` | queue.local | queue lock unless LOCK_HELD | base must be a local branch; resolve head; divergence alarm (cached forge ref, never refuses); `base` ancestor of head, else refuse; **the head's tree carries a round GREEN certificate (the full corpus on a round VM; a budgeted gate PASS does not count), else refuse (§8 D12; `SPIRA_LAND_UNGATED=<reason>` overrides, logged)**; the round's binaries when `--worktree` is named (§8 D2); for the harness repository while a release is in force, `--worktree` required (§8 D13); CAS `update-ref`; round-seq+1, `refs/archive/rounds/<n>`; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`, a line; then the release (§8 D13): `release build <head> --bin-dir` → `release verify` → `release activate`, a failure a loud deploy fault (exit 3, distinct from a refusal's 1) that reverts nothing; mail; summary line. |
 | `publish` | queue.local | queue lock unless LOCK_HELD | local base; forge target; refuse if a `publish` record exists; fetch; divergence check refuses; equal → "nothing to publish", exit 0; members from land commits (§8 D4), none → refuse; push `spira/publish/<stamp>`; pr-create; `publish` record; `QUEUE PUBLISH` line. |
 | `to-forge` | queue.local | queue lock, whole move | agreement check (§6 R1); **in-delivery refusal** (§8 D5); local base exists, not checked out; re-read mode under lock; final publish (lock held); poll the verdict's publish settle (in process) until the record is gone (3 → refuse; deadline → refuse); fetch, forge tip == local tip; write mode `queue.forge`, base `<remote>/<branch>` (§8 D6); verify; archive `refs/archive/<local-base>`, delete local branch; mail. |
 | `to-local` | queue (forge) | queue lock | agreement check; in-delivery refusal; base remote-tracking; `local/<branch>` absent and not checked out; re-read mode; fetch; an archived `refs/archive/local/<branch>` must be an ancestor of the forge tip; create `local/<branch>` at the forge tip; write mode `queue.local`, base `local/<branch>` (branch deleted if that fails); verify; mail. |
+| `rebase-waiting [repo]` | any | none | started detached at the end of `land-local` (and so `round land`) once the landing is recorded. For every bead SUBMITTED or CERTIFIED, or REWORK with reason `no-rebase`, whose `spira/<id>` is in the repo: `rebase-stale <id> <repo>`, four at a time. Exit 0 with a tip the row does not carry: `Submit{tip}` in place (REWORK: `Claim` then `Submit`, actor `rebase-stale`). Exit 1: `GateRed{no-rebase}` if the row still waits, and a `rebase-conflict` comment naming the paths (for the mender). Exit 2/3: logged, nothing moved. One `QUEUE REBASE-WAITING` line per bead. Exit 0 always but for an unreachable spira-lc. |
 | `rollback-local` | queue.local | queue lock unless LOCK_HELD | round-seq ≥ 2; `refs/archive/rounds/<n-1>`; a release in force and `$SPIRA_RELEASES/<prev>` present; `release verify <prev>` → `release activate <prev>` (never rebuilt, §8 D13); CAS the ref back; mail. Bead state untouched. |
 
 The czar fence (`SPIRA_FAYTH=czar` with `SPIRA_CZAR_CLASS`) runs `czar-fence.sh <class>`
@@ -506,7 +507,7 @@ data, not the code; the refusal is the contract).
      when its own `tree=` and `repo=` equal the head's tree and repository, and it says
      either `verdict=PASS source=gate` or `verdict=GREEN source=round`. Anything else
      refuses, changes nothing and exits 1:
-     `queue.sh land-local: no gate PASS or round GREEN for <head>'s tree <T> in <repo> —
+     `queue.sh land-local: no round GREEN for <head>'s tree <T> in <repo> —
      nothing certified what would land; run: bash $SPIRA_HOME/gate.sh <head-arg> <repo>, then
      retry (or SPIRA_LAND_UNGATED=<reason> to land it ungated, logged); refused, nothing
      changed`. "Anything else" covers no file, an unreadable file, a mismatched tree or repo,
@@ -635,6 +636,22 @@ from §2.2/§8:
 | stats, CLI, records, idents | `stats::tests`, `cli::tests`, `records::tests`, `ident::tests`, `model::tests`, `lock::tests` |
 | the seam mechanism itself, for real through bash with a stand-in lib.sh | `seam::tests::values_travel_on_stdin_with_newlines_and_empties_intact`, `real::tests::context_seam_round_trips_through_bash`, `real::tests::answer_seams_ignore_log_lines_and_carry_failures` |
 
+## Staged rounds
+
+A queue.local round's suites run for minutes while the next round could already be assembled.
+`round stage` does that behind the open round `N`; the batch row is STAGED, parented to `N`,
+and no bead moves, so a discarded stage returns nothing.
+
+| verb | effect |
+|---|---|
+| `round stage --members` | needs an open round. Admits as `round open` does (SUBMITTED or CERTIFIED at the named tip, blockers landed or merged ahead — `N`'s members count as ahead), skips `N`'s own members, merges onto `N`'s head with open's merges (`land_subject`, the queue's git identity, the same order), runs the gate's fences on the result, then writes the STAGED row and `round-staged`. One stage per repo. |
+| `round stage-test` | refused until `N`'s phase is `green`; runs the round VM on the staged head and records `tested_tree` on a green. |
+| `round promote` | refused while any round is open. `N` not LANDED, a member no longer admissible, or a member that no longer merges onto the moved base: STAGED → DISCARDED with the reason, exit 1. Otherwise the members are re-merged onto the landing ref only if it is not the head `N` landed at, then spira-lc `promote` cuts STAGED → OPEN and delivers the members in one transaction. A green `tested_tree` equal to the promoted head's tree is attested through `round certify --attest`; otherwise the round waits for its own pass. |
+| `round discard --reason` | STAGED → DISCARDED by hand. |
+
+`N` going red, being abandoned or being emptied discards the stage behind it; `round open`
+discards a stage whose round is gone.
+
 ## 10. Lifecycle machine
 
 There is no lifecycle switch: sp-v62vn retired `lifecycle_enforce`, and spira-lc is the
@@ -653,3 +670,12 @@ stderr, the queue-side action proceeds (the machine's own state is the record of
 | `to-forge`, `to-local` (D5) | probe; in delivery = open batch record, BATCHED landstate, or IN_DELIVERY row of this repo; a failed read refuses |
 | `submit`, `protect`, `stats`, `flush`, `step`, `claim`, `release`, `land-local`, `publish`, `rollback-local` | none. queue emits no `stack`, `land` or `settle` events: those belong to batcher-cut (`stack`/`land` of a round) and verdict (`settle`) |
 
+## Suite-state branches
+
+Lifecycle governs beads (`lifecycle/DESIGN.md`). A suite-state branch (`spira/suite-state`'s
+edits, `$SPIRA_SUITE_STATE_FILE`) is not a bead, so it is the one thing the queue certifies
+on its own record rather than a lifecycle row. This is a specific written exception, not a
+precedent: any other branch needs a bead and a row, and a suite-state edit that is filed as a
+change bead (`spira/<bead>`, sp-lck63) is an ordinary bead branch and takes the lifecycle
+route. The exception is not extended to other bead-less branches, and a guard finding on it
+is cleared as `lifecycle-guard/DESIGN.md` "Clearing a finding" says.

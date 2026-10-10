@@ -1,10 +1,10 @@
 //! `release verify <sha>` (DESIGN.md "verify"). Reports every failure, not just the first.
 
+use std::process::Command;
 use crate::config::Config;
 use crate::fsutil;
 use crate::manifest::Manifest;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub struct VerifyOpts {
     pub pre_activate: bool,
@@ -64,12 +64,28 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
         } else {
             match pre_activate_env(cfg, &rel) {
                 Ok(envs) => {
+                    // batch-job: this runs whatever its caller names, as long as that takes
                     let mut cmd = Command::new(&pa);
                     cmd.arg(&rel);
                     for (k, v) in &envs {
                         cmd.env(k, v);
                     }
-                    match cmd.output() {
+                    let scratch = match staged_config(cfg, &rel) {
+                        Ok(Some((dir, spec))) => {
+                            cmd.env("SPIRA_TOML", spec);
+                            Some(dir)
+                        }
+                        Ok(None) => None,
+                        Err(e) => {
+                            problems.push(format!("cannot apply the release's config delta for pre-activate: {e}"));
+                            return Ok(problems);
+                        }
+                    };
+                    let res = cmd.output();
+                    if let Some(d) = scratch {
+                        let _ = std::fs::remove_dir_all(d);
+                    }
+                    match res {
                         Ok(out) if out.status.success() => {}
                         Ok(out) => {
                             let err = String::from_utf8_lossy(&out.stderr);
@@ -84,6 +100,22 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
         }
     }
     Ok(problems)
+}
+
+/// The config layers with the release's own delta applied, in a scratch dir, and the
+/// `SPIRA_TOML` naming them: pre-activate judges the release against the config it will run
+/// with, never the one in force. `None` when the release declares no delta.
+fn staged_config(cfg: &Config, rel: &Path) -> Result<Option<(PathBuf, String)>, String> {
+    let Some(delta) = crate::config_delta::load(rel)? else { return Ok(None) };
+    let txn = crate::config_delta::prepare(cfg, rel, &delta)?;
+    let dir = crate::config_delta::scratch_dir()?;
+    match txn.stage(&dir) {
+        Ok(spec) => Ok(Some((dir, spec))),
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            Err(e)
+        }
+    }
 }
 
 /// The `SPIRA_RELEASE` and `PATH` overrides `verify`'s pre-activate child runs with

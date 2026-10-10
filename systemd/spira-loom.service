@@ -1,7 +1,6 @@
 [Unit]
-# The Loom server — a read endpoint over the live beads graph, with the page that draws it.
-# One binary, two routes: GET /api/beads returns the graph; GET / returns the page.
-Description=Loom — a read endpoint over the live beads graph
+# The Loom server — the stuck page, the lifecycle view and the ops read endpoint.
+Description=Loom — where work is stuck, read from the lifecycle store
 Documentation=file://@SPIRA_HOME@/loom.sh
 After=default.target
 StartLimitIntervalSec=60
@@ -13,6 +12,7 @@ StartLimitBurst=5
 # name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
 # checkout's root until the release deploy lands).
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=simple

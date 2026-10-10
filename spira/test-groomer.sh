@@ -37,6 +37,12 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): groomer refuses outright
+# ("neither SPIRA_HOME nor SPIRA_RELEASE is set") without one, and every binary reads
+# <home>/conf.d directly (sfail round 3, pattern 1).
+STUB_HOME="$T/home-stub"; mkdir -p "$STUB_HOME"
+ln -s "$HERE/conf.d" "$STUB_HOME/conf.d"
+
 # Build a stub bd that records its arguments and returns appropriate responses. The stub
 # is queried by checking the recorded argv file; each invocation appends a newline-delimited
 # record. For 'show' commands, return JSON with status field. For other commands, just record.
@@ -75,10 +81,27 @@ chmod +x "$STUB_BD"
 # Run groomer in a clean environment. SPIRA_CONF points to a nonexistent file so no
 # real config is read; defaults from conf.sh still apply. SPIRA_BD is the stub so no real
 # bd is called. SPIRA_DB is a temp path (bd never runs, so the value does not need to exist).
+# A close goes through spira-lc (sp-3fue0j); with no lifecycle store here, it closes the store.
+lc_close_stub "$T/lc" "$STUB_BD" "$T/fixture.db"
+# The depends-on-fix refusal reads the fix's lifecycle row: a fix whose id starts "closed-" is
+# LANDED, any other is WORKING.
+mkdir -p "$T/lcshow"
+cat > "$T/lcshow/spira-lc" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = show ]; then
+    st=WORKING; case "\$2" in closed-*) st=LANDED ;; esac
+    printf '{"bead":{"bead_id":"%s","state":"%s","version":1,"holder":null,"lease_until":null,"holds":[]}}\n' "\$2" "\$st"
+    exit 0
+fi
+exec "$T/lc/spira-lc" "\$@"
+STUB
+chmod +x "$T/lcshow/spira-lc"
+SPIRA_LC_BIN="$T/lcshow/spira-lc"; export SPIRA_LC_BIN
 run_groomer() {
-    env -i HOME="$T" PATH="$PATH" \
+    tl_config SPIRA_BD="$STUB_BD"
+    env -i SPIRA_TOML="$SPIRA_TOML" HOME="$T" PATH="$PATH" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_CONF="$NONE" \
-        SPIRA_BD="$STUB_BD" \
+        SPIRA_HOME="$STUB_HOME" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_DB="$T/fixture.db" \
         groomer "$@" 2>&1
@@ -106,8 +129,8 @@ echo "groomer supersede <id> --with <successor>"
 : > "$BD_LOG"
 out="$(run_groomer supersede sp-aaa --with sp-bbb)"; rc=$?
 is   "supersede exits 0"                    0                  "$rc"
-want "bd called with supersede"             "supersede sp-aaa" "$(cat "$BD_LOG")"
-want "bd called with --with successor"      "--with sp-bbb"    "$(cat "$BD_LOG")"
+want "closed through the lifecycle door"     "close sp-aaa"     "$(cat "$BD_LOG")"
+want "the reason names the successor"        "superseded by sp-bbb" "$(cat "$BD_LOG")"
 
 # ==========================================================================================
 echo

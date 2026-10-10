@@ -71,11 +71,12 @@ SESSJSONL
 # conf.sh's default derivation, which would run `git -C <this checkout>` against the
 # real, possibly large repo tokens.sh happens to live in — a fact about this box that
 # has nothing to do with the token split under test (law-gates-run-in-a-clean-environment).
+tl_config SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ" \
+    SPIRA_TOKEN_WINDOW_H=87600
 run_tokens() {
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_REPO_MAP="$TMP/no-map" \
-        SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ" \
-        SPIRA_TOKEN_WINDOW_H=87600 SPIRA_CONF="$TMP/no.conf" \
+        SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_CONF="$TMP/no.conf" \
+        SPIRA_TOML="$SPIRA_TOML" \
         tokens.sh "$1" 2>/dev/null
 }
 
@@ -127,10 +128,10 @@ cp "$PROJ/$WT_DIR_NAME/transcript.jsonl" "$PROJ2/-some-other-project/"
 cp "$PROJ/$ARC_DIR_NAME/arc.jsonl"       "$PROJ2/$ARC_DIR_NAME/"
 cp "$PROJ/$SESS_DIR_NAME/session.jsonl"  "$PROJ2/$SESS_DIR_NAME/"
 
+tl_config SPIRA_TOKEN_PROJECTS="$PROJ2"
 ENV2="$(env -i PATH="$PATH" HOME="$TMP" \
-    SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_REPO_MAP="$TMP/no-map" \
-    SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ2" \
-    SPIRA_TOKEN_WINDOW_H=87600 SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_TOML="$SPIRA_TOML" \
     tokens.sh env 2>/dev/null)"
 field2() { sed -n "s/^$1=//p" <<< "$ENV2"; }
 
@@ -150,10 +151,10 @@ cp "$PROJ/$WT_DIR_NAME/transcript.jsonl" "$PROJ3/$WT_DIR_NAME/"
 cp "$PROJ/$ARC_DIR_NAME/arc.jsonl"       "$PROJ3/-wrong-arc-dir/"
 cp "$PROJ/$SESS_DIR_NAME/session.jsonl"  "$PROJ3/$SESS_DIR_NAME/"
 
+tl_config SPIRA_TOKEN_PROJECTS="$PROJ3"
 ENV3="$(env -i PATH="$PATH" HOME="$TMP" \
-    SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_REPO_MAP="$TMP/no-map" \
-    SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ3" \
-    SPIRA_TOKEN_WINDOW_H=87600 SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_TOML="$SPIRA_TOML" \
     tokens.sh env 2>/dev/null)"
 field3() { sed -n "s/^$1=//p" <<< "$ENV3"; }
 

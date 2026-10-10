@@ -1,8 +1,18 @@
 //! Single-threaded event loop over virtual time. Every decision between actor runs
 //! (tie order, run durations, jitter) comes from one seeded PRNG.
 
+pub mod actors;
+pub mod fit;
+pub mod units;
+
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
+
+pub fn actor_command(prog: &str, now: u64) -> std::process::Command {
+    let mut cmd = std::process::Command::new(prog);
+    cmd.envs(spira_config::vtime::actor_env(now));
+    cmd
+}
 
 pub struct Rng(u64);
 
@@ -17,6 +27,18 @@ impl Rng {
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
+    }
+
+    /// Uniform in `[0, 1)`.
+    pub fn unit(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// Standard normal (Box-Muller; always consumes two draws).
+    pub fn normal(&mut self) -> f64 {
+        let u1 = 1.0 - self.unit();
+        let u2 = self.unit();
+        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
     }
 
     /// Uniform in `lo..=hi`.
@@ -133,6 +155,10 @@ impl Sim {
 
     pub fn schedule_step(&mut self, at: u64, scenario: &str) {
         self.schedule(at, EventKind::Step(scenario.to_string()));
+    }
+
+    pub fn next_time(&self) -> Option<u64> {
+        self.queue.peek().map(|Reverse(q)| q.time)
     }
 
     /// Runs the next event; false when the queue is empty. Virtual time jumps
@@ -312,5 +338,36 @@ mod tests {
         assert!(sim.step());
         assert_eq!(sim.now, u64::MAX / 2);
         assert!(!sim.step());
+    }
+}
+
+#[cfg(test)]
+mod vtime_tests {
+    use super::*;
+
+    const VIRTUAL: u64 = 1_800_000_000;
+
+    #[test]
+    fn a_commit_made_in_an_actor_run_carries_the_virtual_date() {
+        let dir = testkit::TempDir::new("sim-vtime-commit");
+        let git = |args: &[&str]| {
+            let out = actor_command("git", VIRTUAL)
+                .args(["-C", dir.to_str().unwrap()])
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "x"]);
+        assert_eq!(git(&["log", "-1", "--format=%at %ct"]), format!("{VIRTUAL} {VIRTUAL}"));
+    }
+
+    #[test]
+    fn actor_env_sets_spira_now() {
+        let env = spira_config::vtime::actor_env(VIRTUAL);
+        assert!(env.contains(&("SPIRA_NOW", VIRTUAL.to_string())));
     }
 }

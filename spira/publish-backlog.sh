@@ -85,7 +85,7 @@ _pb_backlog() {
     ref_remote "$base" "$repo" >/dev/null 2>&1 && return 1
     read -r remote branch < <(spira_publish_forge "$name" 2>/dev/null) || return 1
     [ -n "$remote" ] && [ -n "$branch" ] || return 1
-    git -C "$repo" fetch -q "$remote" "$branch" 2>/dev/null || return 1
+    timeout 5 git -C "$repo" fetch -q "$remote" "$branch" 2>/dev/null || return 1
     forge_sha="$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null)" || return 1
     head_sha="$(git -C "$repo" rev-parse -q --verify "$base" 2>/dev/null)" || return 1
     count="$(git -C "$repo" rev-list --count "$forge_sha..$head_sha" 2>/dev/null)"

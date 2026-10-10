@@ -35,10 +35,11 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 SPIRA_HOME="$TMP/spira"
 mkdir -p "$SPIRA_HOME/chamber"
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+[ -d "$HERE/conf.d" ] && cp -R "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
-export SPIRA_DB="$TMP/no-such.db"
-export SPIRA_REPO_MAP="$TMP/repo-map"; printf '' > "$SPIRA_REPO_MAP"
+SPIRA_DB="$TMP/no-such.db"; tl_config SPIRA_DB="$SPIRA_DB"
+SPIRA_REPO_MAP="$TMP/repo-map"; printf '' > "$SPIRA_REPO_MAP"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
 # GUARD ON THE HARNESS: if lib.sh fails to source, every assertion below is meaningless.
 # shellcheck disable=SC1090
@@ -57,8 +58,8 @@ printf 'v1\n' > "$REPO/f"
 git -C "$REPO" add f
 git -C "$REPO" commit -q -m "initial"
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
 REMOTE_TRACKING_SHA="$(git -C "$REPO" rev-parse refs/remotes/origin/main)"

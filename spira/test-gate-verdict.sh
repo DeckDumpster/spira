@@ -26,7 +26,7 @@
 #
 # defect: sp-0v8 sp-p4rl
 # tier: T1
-# covers: spira/gate.sh spira/conf.sh UC-gate-verdict-13
+# covers: spira/gate.sh spira/conf.sh UC-gate-verdict-13 UC-gate-verdict-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -104,7 +104,7 @@ want "and the reuse is metered like any other run" "rc=0 cached" "$(cat "$GATELO
 git -C "$REPO" checkout -q main
 printf 'moved\n' > "$REPO/other.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "someone else landed"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" checkout -q --detach origin/main
 rm -f "$TRIP"           # the trial must run, and pass
 out="$(rungate)"; rc=$?

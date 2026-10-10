@@ -132,6 +132,7 @@ pub fn parse_conf(stdout: &str) -> Result<Conf, String> {
 }
 
 pub fn run_conf_seam(lib_dir: &Path) -> Result<Conf, String> {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     let mut child = Command::new("bash")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -181,6 +182,7 @@ impl Intake for Real {
                 f.suite
             ));
         };
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         let mut child = Command::new("bash")
             .arg(incident)
             .arg("file")
@@ -223,7 +225,7 @@ impl Mail for Real {
         let Some(mail) = self.mail.as_ref() else {
             return false;
         };
-        let mut c = Command::new("bash");
+        let mut c = spira_config::bounded::bounded("bash");
         c.arg(mail)
             .args(["send", "operator", "--from", from, "--subject", subject]);
         if let Some(b) = bead {
@@ -248,6 +250,7 @@ impl HostCheck for Real {
     fn count(&self, flag: &str) -> Option<String> {
         // host-check.sh on the launcher's PATH (sp-gypjk); absent or not executable is None.
         let script = crate::util::which_in(&self.path, "host-check.sh")?;
+        // batch-job: child is spawned or exec-replaced, not awaited under a deadline
         let mut child = Command::new("bash")
             .arg(&script)
             .arg(flag)
@@ -273,7 +276,7 @@ impl HostCheck for Real {
 impl Queue for Real {
     fn submit(&self, branch: &str) -> bool {
         // The release's `queue`, by name on the launcher's PATH (sp-gypjk).
-        let mut c = Command::new("queue");
+        let mut c = spira_config::bounded::bounded("queue");
         let err = std::io::stderr();
         c.arg("submit")
             .arg(branch)
@@ -570,8 +573,9 @@ mod tests {
         sh(&r, &["add", "-A"]);
         sh(&r, &["commit", "-q", "-m", "base"]);
         fs::write(r.join("dirty.txt"), "untracked").unwrap();
-        let s = Settings::load(&crate::settings::Source { env: &|_: &str| None, config: None }, &r);
-        let real = Real::new(&s, &|_: &str| None);
+        // A literal, not `Settings::load` + `Real::new`: this test only exercises the git
+        // plumbing methods, none of which read any `Real` field.
+        let real = Real { suite_dir: r.to_path_buf(), incident: None, mail: None, path: String::new() };
         let base = real.commit_of(&r, "main").unwrap();
         assert!(real.tree_has(&r, &base, "spira/test-a.sh"));
         assert!(!real.tree_has(&r, &base, "spira/test-z.sh"));
@@ -602,9 +606,10 @@ mod tests {
     fn host_check_reads_one_number_and_renders_absence_as_none() {
         let d = tmp("hc");
         fs::create_dir_all(d.join("spira")).unwrap();
-        let s = Settings::load(&crate::settings::Source { env: &|_: &str| None, config: None }, &d);
         let on_path = d.join("spira").display().to_string();
-        let real = Real::new(&s, &|k: &str| (k == "PATH").then(|| on_path.clone()));
+        // A literal: `count` only reads `path`, which `Real::new` would derive from PATH the
+        // same way this builds it directly.
+        let real = Real { suite_dir: d.join("spira"), incident: None, mail: None, path: on_path };
         assert_eq!(real.count("--count-undeclared"), None, "absent script");
         let hc = d.join("spira/host-check.sh");
         // Written by testkit (no ETXTBSY race, testkit/DESIGN.md), then made NOT executable for

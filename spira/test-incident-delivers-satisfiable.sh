@@ -31,6 +31,9 @@ STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/mail"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so this stub home needs the registry too.
+ln -s "$HERE/conf.d" "$TMP/home/conf.d"
 
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 # sp-jgjvh: incident beads are work beads, so incident's dedup reads each one's state from
@@ -41,14 +44,24 @@ lc_mirror_bd "$TMP/lc"
 
 file_one() {  # file_one <ref> [VAR=val ...]
     local ref="$1"; shift
+    tl_config SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_BD="$STUB_BD"
+    # Any caller override: a registered key (e.g. SPIRA_INCIDENT_PRIORITY) goes to tl_config
+    # too; anything else (the non-registered SPIRA_INCIDENT_* seams) stays a plain env
+    # assignment for the env -i call below.
+    local extra_env=() kv k
+    for kv in "$@"; do
+        k="${kv%%=*}"
+        if [ -f "$HERE/conf.d/$k" ]; then tl_config "$kv"; else extra_env+=("$kv"); fi
+    done
     printf 'payload' | env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-        SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
-        SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
+        SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$TMP/home" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/delivers-test.lock" \
         SPIRA_INCIDENT_REPO= \
-        "$@" incident.sh file "delivers test" - >/dev/null 2>&1
+        "${extra_env[@]}" incident.sh file "delivers test" - >/dev/null 2>&1
 }
 bead_of() {
     python3 -c '

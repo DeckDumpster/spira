@@ -20,7 +20,7 @@
 #
 # defect: sp-onasx
 # tier: T1
-# covers: systemd/spira-cockpit.service cockpit-collect/src/supervisor.rs
+# covers: systemd/spira-cockpit.service cockpit-collect/src/supervisor.rs UC-cockpit-observability-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -61,7 +61,7 @@ echo "2. Pass log line names probe and elapsed seconds"
 mkdir -p "$TMP/run" "$TMP/bin" "$TMP/home"
 
 MOCK_COCK="$TMP/mock-cockpit.sh"
-printf '#!/usr/bin/env bash\ncase "$1" in quick) echo SP_MOCK=1 ;; esac\n' \
+printf '#!/usr/bin/env bash\ncase "$1" in quick) echo SP_MOCK=1 ;; slow) exec sleep 5 ;; esac\n' \
     > "$MOCK_COCK" && chmod +x "$MOCK_COCK"
 
 FRAG_DIR="$TMP/frags"
@@ -69,10 +69,10 @@ mkdir -p "$FRAG_DIR"
 printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$FRAG_DIR/testprobe.env"
 
 log_out="$TMP/probe.log"
+tl_config SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map"
 env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" \
     FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
     cockpit-collect _probe_body_test testprobe 30 quick 2>"$log_out" || true
 
@@ -87,6 +87,38 @@ else
     bad "pass log: format wrong" "$log_msg"
 fi
 
+
+echo
+echo "3. A probe that times out is recorded, counted, and cleared by the next success"
+
+run_probe() {   # run_probe <name> <timeout-s> <subcommand>
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
+        cockpit-collect _probe_body_test "$@" 2>&1 >/dev/null || true
+}
+run_merge() {
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        FRAG_DIR="$FRAG_DIR" cockpit-collect merge >/dev/null 2>&1
+}
+
+printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$FRAG_DIR/tprobe.env"
+log_msg="$(run_probe tprobe 1 slow)"
+want "timeout: the log names the probe and the timeout" "probe tprobe timeout after 1s" "$log_msg"
+want "timeout: the fragment says status=timeout"       "_PROBE_STATUS=timeout" "$(cat "$FRAG_DIR/tprobe.env")"
+want "timeout: the kill is counted"                    "_PROBE_KILLED=1"       "$(cat "$FRAG_DIR/tprobe.env")"
+is   "timeout: no temp file is left behind" "" "$(ls -A "$FRAG_DIR" | grep '^\.' || true)"
+run_merge
+want "timeout: the count is surfaced in the snapshot"  "SP_PROBE_KILLED_tprobe='1'" "$(cat "$TMP/cockpit.env" 2>/dev/null)"
+
+log_msg="$(run_probe tprobe 30 quick)"
+want   "success: the log says ok"                 "probe tprobe ok" "$log_msg"
+want   "success: the fragment is ok again"        "_PROBE_STATUS=ok" "$(cat "$FRAG_DIR/tprobe.env")"
+want   "success: the counter is reset"            "_PROBE_KILLED=0"  "$(cat "$FRAG_DIR/tprobe.env")"
+nowant "success: the timeout status is gone"      "_PROBE_STATUS=timeout" "$(cat "$FRAG_DIR/tprobe.env")"
 
 echo
 tl_summary

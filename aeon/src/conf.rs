@@ -115,15 +115,50 @@ impl Conf {
         let repos = spira_config::repos::Registry::new(map_text.as_deref(), &snap.vars, home);
         Conf { v: snap.vars.clone(), home: home.to_path_buf(), run, repos }
     }
+    /// A REGISTERED key's declared value — never a default (per Ryan 2026-10-05, round 2:
+    /// a missing key is an error, never a value — `Conf::i`'s old `unwrap_or(0)` silently
+    /// turned a missing `SPIRA_CAPACITY_PROBE_WINDOW` into 0 and broke a `left >
+    /// probe_window` check in production shape; that was a default in disguise). `Conf`
+    /// may only ever be built from a COMPLETE resolved config — production's
+    /// `merge_resolved_config` (every registered key, via `resolve_for_process`), tests'
+    /// `complete_vars()` — so a key truly ABSENT here is an invariant violation in how
+    /// this `Conf` was built, not a legitimate "unset", and panics naming it. A key
+    /// PRESENT with a declared empty string (a real, resolved "" — several registered
+    /// keys mean exactly that, e.g. SPIRA_SCOPE_LABEL's "no scope exclusion") is not
+    /// missing and passes straight through. A NON-registered key (SPIRA_TOML_FILE,
+    /// SPIRA_WORKFLOW_RUN_CONSIDERED, ...) must go through [`Conf::or`]/[`Conf::n`]
+    /// instead — those are the ones that may legitimately be absent.
     pub fn s(&self, k: &str) -> String {
-        self.v.get(k).cloned().unwrap_or_default()
+        match self.v.get(k) {
+            Some(v) => v.clone(),
+            None => panic!("Conf::s({k:?}): key is absent from a Conf that must be built from a complete config — this is an invariant violation, not a value"),
+        }
     }
+    /// A key that MAY legitimately be absent (never registered, or an ad hoc override) —
+    /// `d` on absence or on a declared-but-empty value alike, matching conf.sh's own
+    /// `${VAR:=d}` (unset or empty both take the default). Never use this for a
+    /// registered key just to dodge [`Conf::s`]'s panic — register the gap in the test
+    /// fixture instead.
     pub fn or(&self, k: &str, d: &str) -> String {
         get(&self.v, k).unwrap_or(d).to_string()
     }
+    /// [`Conf::or`]'s numeric twin, for a key that may legitimately be absent.
     pub fn n(&self, k: &str, d: i64) -> i64 {
         num(&self.v, k).unwrap_or(d)
     }
+    /// [`Conf::s`]'s numeric twin: a REGISTERED key's declared value, parsed — never a
+    /// default. Absent is the same invariant violation `Conf::s` panics on; present but
+    /// not a valid integer is a malformed config, also named and panicked on, never a
+    /// silent 0.
+    pub fn i(&self, k: &str) -> i64 {
+        match self.v.get(k) {
+            Some(v) => v.trim().parse().unwrap_or_else(|e| panic!("Conf::i({k:?}): {v:?} does not parse as an integer: {e}")),
+            None => panic!("Conf::i({k:?}): key is absent from a Conf that must be built from a complete config — this is an invariant violation, not a value"),
+        }
+    }
+    /// Whether a key that may legitimately be absent is explicitly set and non-empty —
+    /// "false" for absence is this accessor's actual job (an ad hoc override's own
+    /// presence check), not a disguised default.
     pub fn set_nonempty(&self, k: &str) -> bool {
         get(&self.v, k).is_some()
     }
@@ -133,8 +168,11 @@ impl Conf {
     pub fn ask_label(&self) -> String {
         self.s("SPIRA_ASK_LABEL")
     }
+    /// No Rust-side default: `spira/conf.d/SPIRA_SUBMITTED_LABEL` already defaults this
+    /// to "spira-submitted", supplied through `self.v` the same way every other
+    /// registered key is (per Ryan 2026-10-05: one source of config).
     pub fn submitted_label(&self) -> String {
-        self.or("SPIRA_SUBMITTED_LABEL", "spira-submitted")
+        self.s("SPIRA_SUBMITTED_LABEL")
     }
     pub fn overlay(&self) -> PathBuf {
         PathBuf::from(self.s("SPIRA_CHAMBER_OVERLAY"))
@@ -142,8 +180,12 @@ impl Conf {
     pub fn trace_mark(&self) -> String {
         self.or("SPIRA_TRACE_MARK", "=== spira attempt")
     }
+    /// No Rust-side default: SPIRA_AGENT is registered (its `spira/conf.d` entry is
+    /// PROCEDURAL — conf-gen.sh could not auto-extract conf.sh's own inline default — but
+    /// the resolved document still carries a real value, same as production's own
+    /// spira.toml).
     pub fn agent(&self) -> String {
-        self.or("SPIRA_AGENT", "claude")
+        self.s("SPIRA_AGENT")
     }
     pub fn ledger(&self) -> PathBuf {
         self.run.join("aeon-ledger.log")
@@ -172,23 +214,31 @@ impl Conf {
     /// SPIRA_CAPACITY_PROBE_WINDOW/_INTERVAL/_TIMEOUT: registered spira-config keys
     /// (`spira/conf.d/SPIRA_CAPACITY_PROBE_*`), so these DO come through `resolve()`.
     pub fn capacity_probe_window(&self) -> i64 {
-        self.n("SPIRA_CAPACITY_PROBE_WINDOW", 18_000)
+        self.i("SPIRA_CAPACITY_PROBE_WINDOW")
     }
     pub fn capacity_probe_interval(&self) -> i64 {
-        self.n("SPIRA_CAPACITY_PROBE_INTERVAL", 3600)
+        self.i("SPIRA_CAPACITY_PROBE_INTERVAL")
     }
     pub fn capacity_probe_timeout(&self) -> u64 {
-        self.n("SPIRA_CAPACITY_PROBE_TIMEOUT", 30).max(1) as u64
+        self.i("SPIRA_CAPACITY_PROBE_TIMEOUT").max(1) as u64
     }
     /// `capacity_probe`'s own default: no literal fallback — the builder persona's
     /// resolved model, so a model change never needs a second edit here.
     pub fn capacity_probe_model(&self) -> String {
-        let m = self.s("SPIRA_CAPACITY_PROBE_MODEL");
+        // `.or(_, "")`, not the strict `Conf::s`: this accessor's own contract is "unset
+        // (or empty) falls through to the persona's resolved model" — that fallthrough is
+        // this function's explicit business logic, not `Conf` silently defaulting, so an
+        // absent SPIRA_CAPACITY_PROBE_MODEL (a registered key, but one some test fixtures
+        // narrower than `complete_vars()` still omit on purpose, to exercise exactly this
+        // fallthrough) must not panic here. SPIRA_TOML_FILE is not registered at all.
+        let m = self.or("SPIRA_CAPACITY_PROBE_MODEL", "");
         if !m.is_empty() {
             return m;
         }
-        let toml = self.s("SPIRA_TOML_FILE");
-        persona_model("builder", (!toml.is_empty()).then(|| Path::new(&toml)))
+        persona_model("builder", &self.s("SPIRA_TOML")).unwrap_or_else(|e| {
+            eprintln!("aeon: FATAL: {e}");
+            std::process::exit(1)
+        })
     }
 }
 
@@ -203,15 +253,19 @@ pub fn merge_capacity_env(snap: &mut crate::seam::Snapshot, env: &BTreeMap<Strin
     }
 }
 
-/// `persona_model`: `persona.<name>.model` from the resolved spira.toml, default
-/// `claude-opus-5`.
-pub fn persona_model(name: &str, toml_file: Option<&Path>) -> String {
-    const DEF: &str = "claude-opus-5";
-    let Some(p) = toml_file.filter(|p| p.is_file()) else { return DEF.into() };
-    match spira_config::load(p) {
-        Ok(doc) => doc.persona.get(name).map(|p| p.model.clone()).filter(|m| !m.is_empty()).unwrap_or_else(|| DEF.into()),
-        Err(_) => DEF.into(),
+/// `persona.<name>.model`, from the one source of config: the spec `$SPIRA_TOML` names, layers
+/// and all (per Ryan 2026-10-05). Undeclared is a refusal naming the key — never a built-in
+/// model, which once launched every persona on `claude-opus-5` whatever its config said.
+pub fn persona_model(name: &str, spec: &str) -> Result<String, String> {
+    if spec.is_empty() {
+        return Err("SPIRA_TOML is not set — it names the one source of config".into());
     }
+    let doc = spira_config::load(Path::new(&spec))?;
+    doc.persona
+        .get(name)
+        .map(|p| p.model.clone())
+        .filter(|m| !m.is_empty())
+        .ok_or_else(|| format!("persona.{name}.model is not declared in {spec}"))
 }
 
 /// Where the harness's `spira/` directory is (DESIGN.md §2.1).
@@ -278,9 +332,21 @@ pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env:
     snap.vars.entry("SPIRA_HOME".into()).or_insert_with(|| home.to_string_lossy().into_owned());
     snap.vars.entry("SPIRA_REPO".into()).or_insert_with(|| repo.to_string_lossy().into_owned());
     snap.vars.entry("SPIRA_REPO_DERIVED".into()).or_insert_with(|| repo_derived.to_string_lossy().into_owned());
+    // Unconditional insert, not `.entry().or_insert()` (per Ryan 2026-10-05: one source of
+    // config). `resolved.values` is spira-config's own resolution of $SPIRA_TOML for every
+    // key spira/conf.d registers — today this never collides with anything the bash seam
+    // call above actually supplies (`seam::SNAPSHOT_VARS`, the live allow-list, carries no
+    // registered key since wave 4.8; every registered name moved to
+    // `RETIRED_SNAPSHOT_VARS`, resolved only here), but an `or_insert` left a stale or
+    // accidentally-reintroduced seam value free to outrank the resolved one if that ever
+    // changed. The registered keys this resolves are the ONE source; they win outright.
     let resolved = spira_config::resolve::resolve_for_process(home, &repo, env)?;
+    // The spec itself travels with the config it resolved (persona tables are read from it).
+    if let Some(t) = env.get("SPIRA_TOML") {
+        snap.vars.insert("SPIRA_TOML".into(), t.clone());
+    }
     for (k, v) in resolved.values {
-        snap.vars.entry(k).or_insert(v);
+        snap.vars.insert(k, v);
     }
     Ok(())
 }
@@ -325,12 +391,13 @@ mod tests {
         let dir = testkit::TempDir::new("aeon-conf-capacity-model");
         let toml = dir.join("spira.toml");
         std::fs::write(&toml, "[persona.builder]\nmodel = \"toml-override-model\"\n").unwrap();
-        let snap = crate::seam::Snapshot { vars: vars(&[("SPIRA_TOML_FILE", toml.to_str().unwrap())]), ..Default::default() };
+        // The builder's model comes from the spec SPIRA_TOML names (the one source).
+        let snap = crate::seam::Snapshot { vars: vars(&[("SPIRA_TOML", toml.to_str().unwrap())]), ..Default::default() };
         let conf = Conf::new(&snap, &dir);
         assert_eq!(conf.capacity_probe_model(), "toml-override-model");
 
         let snap2 = crate::seam::Snapshot {
-            vars: vars(&[("SPIRA_TOML_FILE", toml.to_str().unwrap()), ("SPIRA_CAPACITY_PROBE_MODEL", "operator-override")]),
+            vars: vars(&[("SPIRA_TOML", toml.to_str().unwrap()), ("SPIRA_CAPACITY_PROBE_MODEL", "operator-override")]),
             ..Default::default()
         };
         let conf2 = Conf::new(&snap2, &dir);
@@ -339,64 +406,66 @@ mod tests {
     }
 
     #[test]
-    fn persona_model_reads_the_toml_else_the_default() {
+    fn persona_model_reads_the_declared_model_and_refuses_an_undeclared_one() {
         let dir = testkit::TempDir::new("aeon-conf");
-        let toml = dir.join("spira.toml");
-        std::fs::write(&toml, "[persona.builder]\nmodel = \"claude-x\"\n").unwrap();
-        assert_eq!(persona_model("builder", Some(&toml)), "claude-x");
-        assert_eq!(persona_model("ops", Some(&toml)), "claude-opus-5");
-        let _ = std::fs::remove_dir_all(&dir);
+        let base = dir.join("base.toml");
+        let over = dir.join("over.toml");
+        std::fs::write(&base, "[persona.builder]\nmodel = \"claude-x\"\n").unwrap();
+        std::fs::write(&over, "[persona.builder]\nmodel = \"claude-y\"\n").unwrap();
+        let spec = format!("{}:{}", base.display(), over.display());
+        assert_eq!(persona_model("builder", &spec), Ok("claude-y".to_string()), "the layered spec, later layer wins");
+        let e = persona_model("ops", &spec).unwrap_err();
+        assert!(e.contains("persona.ops.model is not declared"), "{e}");
     }
 
     // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
-    // hazard): the one test below that resolves config takes this lock, and pins SPIRA_TOML
-    // to a nonexistent path — locate()'s own exclusive-pin rule — so it never depends on a
-    // real operator spira.toml on the machine running this suite.
+    // hazard): the tests below that resolve config take this lock. `resolve_for_process`
+    // now hard-refuses without a real `SPIRA_TOML` (per Ryan 2026-10-05: one source of
+    // config — "SPIRA_TOML is not set" is a refusal, not "no config, defaults only"), so
+    // each one hands `merge_resolved_config` an `env` map naming a real `fixture_toml`
+    // file rather than pinning the ambient `SPIRA_TOML` to a nonexistent path: that map is
+    // the `env` PARAMETER `resolve_for_process` actually reads, never the process's own
+    // environment.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn merge_resolved_config_inserts_home_repo_and_registry_keys_without_overriding_the_seam() {
         let _g = ENV_LOCK.lock().unwrap();
-        let saved = std::env::var("SPIRA_TOML").ok();
         let dir = testkit::TempDir::new("aeon-conf-merge");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_CI_PARK_MAX"),
-            "TYPE=u32\nGROUP=queue\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_CI_PARK_MAX:=9}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+        // The real, checked-in spira/conf.d (this crate's own repo layout: `aeon/` sits
+        // beside `spira/`) — SPIRA_CI_PARK_MAX is one of its real registered keys.
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_CI_PARK_MAX", "9")]);
+        let env = BTreeMap::from([("SPIRA_TOML".to_string(), toml.to_string_lossy().into_owned())]);
 
         let mut snap = crate::seam::Snapshot {
             vars: vars(&[("SPIRA_TRACE_MARK", "/seam/mark")]),
             ..Default::default()
         };
-        merge_resolved_config(&mut snap, &home, &BTreeMap::new()).unwrap();
-
-        match saved {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
+        merge_resolved_config(&mut snap, &home, &env).unwrap();
 
         assert_eq!(snap.vars.get("SPIRA_TRACE_MARK").map(String::as_str), Some("/seam/mark"), "the seam's own value must survive the merge");
         assert_eq!(snap.vars.get("SPIRA_HOME").map(String::as_str), Some(home.to_str().unwrap()));
         assert!(snap.vars.contains_key("SPIRA_REPO"));
         assert!(snap.vars.contains_key("SPIRA_REPO_DERIVED"));
-        assert_eq!(snap.vars.get("SPIRA_CI_PARK_MAX").map(String::as_str), Some("9"), "a registry key resolve() covers must reach snap.vars in-process");
+        assert_eq!(
+            snap.vars.get("SPIRA_CI_PARK_MAX").map(String::as_str),
+            Some("9"),
+            "a declared registry key value must reach snap.vars in-process"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// sp-1cdgq's own regression (SPIRA_SUMMON_JITTER unreachable because SNAPSHOT_VARS
     /// never carried it) is superseded by this bead, not re-broken: the name moved to
-    /// RETIRED_SNAPSHOT_VARS (seam.rs), resolved in-process here instead. Proves the same
-    /// guarantee their bash-seam test proved — an env override reaches `Conf` — through
-    /// the new path, plus the toml side their test could not reach at all.
+    /// RETIRED_SNAPSHOT_VARS (seam.rs), resolved in-process here instead. Proves a
+    /// synthetic, no-default registry entry (matching the real one's own shape) still
+    /// reaches `snap.vars` once it is DECLARED in `spira.toml` — "an env var can still
+    /// override" is no longer the thing to prove (per Ryan 2026-10-05: one source of
+    /// config; `resolve_for_process`'s only input is the file `$SPIRA_TOML` names).
     #[test]
-    fn merge_resolved_config_reaches_a_retired_registry_key_env_can_still_override() {
+    fn merge_resolved_config_reaches_a_retired_registry_key() {
         let _g = ENV_LOCK.lock().unwrap();
-        let saved_toml = std::env::var("SPIRA_TOML").ok();
-        let saved_jitter = std::env::var("SPIRA_SUMMON_JITTER").ok();
         let dir = testkit::TempDir::new("aeon-conf-jitter");
         let home = dir.join("spira");
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
@@ -405,25 +474,16 @@ mod tests {
             "TYPE=string\nGROUP=summon\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # no default, matches the real registry entry\nSPIRA_CONF_DEFAULT_EOF\n",
         )
         .unwrap();
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
-        std::env::set_var("SPIRA_SUMMON_JITTER", "0");
+        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_SUMMON_JITTER", "0")]);
+        let env = BTreeMap::from([("SPIRA_TOML".to_string(), toml.to_string_lossy().into_owned())]);
 
         let mut snap = crate::seam::Snapshot::default();
-        merge_resolved_config(&mut snap, &home, &BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())])).unwrap();
-
-        match saved_toml {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
-        match saved_jitter {
-            Some(v) => std::env::set_var("SPIRA_SUMMON_JITTER", v),
-            None => std::env::remove_var("SPIRA_SUMMON_JITTER"),
-        }
+        merge_resolved_config(&mut snap, &home, &env).unwrap();
 
         assert_eq!(
             snap.vars.get("SPIRA_SUMMON_JITTER").map(String::as_str),
             Some("0"),
-            "SPIRA_SUMMON_JITTER is set in the environment handed to merge_resolved_config but never reaches snap.vars"
+            "a declared SPIRA_SUMMON_JITTER never reached snap.vars"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -446,36 +506,24 @@ mod tests {
     #[test]
     fn summon_jitter_reaches_conf_through_the_real_registry() {
         let _g = ENV_LOCK.lock().unwrap();
-        let saved_toml = std::env::var("SPIRA_TOML").ok();
-        let saved_jitter = std::env::var("SPIRA_SUMMON_JITTER").ok();
         let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
         assert!(home.join("conf.d").is_dir(), "this crate's own ../spira/conf.d must exist for this test to mean anything");
 
         let dir = testkit::TempDir::new("aeon-conf-real-jitter");
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
-        std::env::set_var("SPIRA_SUMMON_JITTER", "0");
+        let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_SUMMON_JITTER", "0")]);
+        let env = BTreeMap::from([("SPIRA_TOML".to_string(), toml.to_string_lossy().into_owned())]);
 
         // No SPIRA_SUMMON_JITTER in snap.vars going in — matching production: wave 4.8
         // retired it from the bash seam's own SNAPSHOT_VARS allowlist, so only
         // merge_resolved_config can ever supply it now.
         let mut snap = crate::seam::Snapshot::default();
-        let env = BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())]);
         merge_resolved_config(&mut snap, &home, &env).unwrap();
         let conf = Conf::new(&snap, &home);
 
-        match saved_toml {
-            Some(v) => std::env::set_var("SPIRA_TOML", v),
-            None => std::env::remove_var("SPIRA_TOML"),
-        }
-        match saved_jitter {
-            Some(v) => std::env::set_var("SPIRA_SUMMON_JITTER", v),
-            None => std::env::remove_var("SPIRA_SUMMON_JITTER"),
-        }
-
         assert_eq!(
-            conf.n(spira_config::admission::JITTER_ENV, spira_config::admission::JITTER_DEFAULT as i64),
+            conf.i(spira_config::admission::JITTER_ENV),
             0,
-            "SPIRA_SUMMON_JITTER=0 in the environment did not reach Conf through the real spira/conf.d registry"
+            "a declared SPIRA_SUMMON_JITTER did not reach Conf through the real spira/conf.d registry"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

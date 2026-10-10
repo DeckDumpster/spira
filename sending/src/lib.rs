@@ -9,7 +9,9 @@ pub mod ports;
 pub mod reap;
 pub mod real;
 pub mod seam;
+pub mod stale;
 pub mod sweep;
+pub mod terminal;
 
 #[cfg(test)]
 mod tests;
@@ -38,6 +40,7 @@ pub fn parse(args: &[String]) -> Result<(Opts, Option<String>), String> {
         match a.as_str() {
             "--dry-run" => o.dry = true,
             "--no-fetch" => o.fetch = false,
+            "--all" => {}
             "--status-from" => status = Some(it.next().cloned().ok_or("--status-from needs a file")?),
             "--budget-secs" => {
                 let n = it.next().and_then(|n| n.parse::<u64>().ok()).ok_or("--budget-secs needs a whole number of seconds")?;

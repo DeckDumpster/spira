@@ -19,7 +19,8 @@ pub struct FrameInputs<'a> {
     pub hhmm: String,
     pub age_secs: Option<i64>,
     pub snap_stale_s: i64,
-    pub live_aeon_n: i64,
+    /// The WORKING rows `(bead, phase)`; None when the lifecycle store cannot answer.
+    pub working: Option<Vec<(String, String)>>,
     pub trace_lines: i64,
     pub halt: HaltState,
     pub drain: DrainState,
@@ -60,13 +61,15 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
             tok_win_spark: &inputs.tok_win_spark,
         },
     );
-    let now_v = now_section(&snap, cols, inputs.live_aeon_n, inputs.trace_lines);
+    let now_v = now_section(&snap, cols, inputs.working.as_deref(), inputs.trace_lines);
     let next_v = next_section(&snap, cols);
     let unlanded = queue_section(&snap, cols);
     let recent = recent_section(&snap, cols, inputs.snapshot_exists);
     let inflow = inflow_section(&snap, cols);
     let ci = ci_section(&snap, cols);
     let standing = standing_lines(&snap, cols);
+    let round = super::round::round_section(&snap, cols, inputs.now, rows);
+    let flow = flow_lines(&snap);
 
     let want = [
         now_v.len() as i64,
@@ -90,13 +93,15 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         Spec::new(want[5], want[5], true),
     ];
 
-    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + standing.len() as i64;
+    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + round.len() as i64 + flow.len() as i64 + standing.len() as i64;
     let give = share(rows, fixed, &specs);
 
     let mut out = Vec::new();
     out.extend(head);
     out.push(slots);
     out.extend(tokens);
+    out.extend(round);
+    out.extend(flow);
     out.extend(now_v.into_iter().take(give[0].max(0) as usize));
     out.extend(next_v.into_iter().take(give[1].max(0) as usize));
     out.extend(unlanded.into_iter().take(give[2].max(0) as usize));
@@ -134,7 +139,7 @@ mod tests {
             hhmm: "12:00".to_string(),
             age_secs: None,
             snap_stale_s: 60,
-            live_aeon_n: 0,
+            working: Some(Vec::new()),
             trace_lines: 2,
             halt: HaltState { stamp_exists: false, since: String::new(), why: String::new(), sentinel_active: Some(true) },
             drain: DrainState { stamp_mtime: None },

@@ -39,13 +39,11 @@ CTRL_FILE="$TMP/control"
 # ctrl.sh needs conf.sh. Run it with a minimal env pointing SPIRA_CTRL at our temp file
 # and SPIRA_CONF=/nonexistent so no real config is loaded.
 # SPIRA_SYSTEMCTL is set to the stub for divergence tests.
+tl_config SPIRA_RUN="$TMP/run" SPIRA_CTRL="$CTRL_FILE" SPIRA_INSTANCE=prod
 ctrl() {
-    env -i PATH="$PATH" HOME="$TMP/home" \
+    env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_CTRL="$CTRL_FILE" \
-        SPIRA_INSTANCE=prod \
         SPIRA_SYSTEMCTL="$TMP/sc" \
         ctrl "$@"
 }
@@ -75,6 +73,7 @@ case "\$verb" in
         done
         echo disabled; exit 1 ;;
     list-unit-files)
+        [ -f "$TMP/units" ] && cat "$TMP/units"
         for mu in \$masked_units; do
             printf '%s  masked  enabled\n' "\$mu"
         done ;;
@@ -86,6 +85,7 @@ SC
 write_sc "" ""   # initial stub: nothing is active, enabled, or masked
 
 mkdir -p "$TMP/run" "$TMP/home/.config/systemd/user"
+printf '%s  enabled  enabled\n' test-unit-prod.timer spira-groom-prod.timer > "$TMP/units"
 
 # ==========================================================================
 echo
@@ -111,6 +111,20 @@ out="$(ctrl suspend test-unit --reason "unit under test" --owner sp-x000 2>&1)";
 rc_is "suspend succeeds" 0 $rc
 want  "suspend output names the subject" "test-unit" "$out"
 want  "suspend output names the owner"   "sp-x000"   "$out"
+
+# a subject nothing consults is refused, not confirmed
+rm -f "$CTRL_FILE"
+out="$(ctrl suspend not-a-thing --reason "x" --owner sp-x000 2>&1)"; rc=$?
+rc_is "suspend of an unconsulted subject exits non-zero" 1 $rc
+want  "refusal names the subject" "nothing consults not-a-thing" "$out"
+rc_is "refused subject was not recorded" 1 "$(ctrl check not-a-thing; echo $?)"
+out="$(ctrl suspend slow-query --reason "x" --owner sp-x000 2>&1)"; rc=$?
+rc_is "suspend of a watchtower condition succeeds" 0 $rc
+ctrl resume slow-query >/dev/null
+ctrl suspend not-yet-installed --force --reason "x" --owner sp-x000 >/dev/null 2>&1; rc=$?
+rc_is "--force suspends a unit not installed yet" 0 $rc
+ctrl resume not-yet-installed >/dev/null
+ctrl suspend test-unit --reason "unit under test" --owner sp-x000 >/dev/null
 
 # check after suspend → exits 0
 ctrl check test-unit >/dev/null 2>&1; rc=$?

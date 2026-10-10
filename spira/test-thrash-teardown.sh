@@ -2,9 +2,9 @@
 # test-thrash-teardown.sh — G2: the thrash-requeue teardown branch in aeon.sh's cleanup(),
 #   driven through the real aeon.sh rather than asserted by line-order/awk greps.
 #
-# THE GAP THIS CLOSES (sp-eq8a4.2.2, G2). The heartbeat writes $BEAD_ID.thrash and kills the
+# THE GAP THIS CLOSES (sp-eq8a4.2.2, G2). The heartbeat records a thrash disposition on the bead's row and kills the
 # session when the deliverable has stalled (hb_tick's `thrash` verdict); cleanup() reads that
-# marker and requeues instead of charging an attempt, ON THE THEORY that the aeon was killed
+# disposition and requeues instead of charging an attempt, ON THE THEORY that the aeon was killed
 # for stalling, not judged on its work. Until now the only suite touching this branch grepped
 # aeon.sh's source for the shape of the code — never ran it. Two behaviours are asserted here:
 #
@@ -16,8 +16,8 @@
 #      charged: `bump_requeue <id> thrash-stale` (not subtracted), the note says "STICKING
 #      POINT" and "attempt IS charged", the ledger status is `requeue-thrash-charged`.
 #
-# The marker is planted by the claude shim exactly as the heartbeat subshell would leave it
-# behind after a kill -TERM -$$: this suite is about cleanup()'s read of that marker, not
+# The disposition is recorded by the claude shim exactly as the heartbeat would leave it
+# behind after a kill -TERM -$$: this suite is about cleanup()'s read of it, not
 # about the heartbeat's own trip condition (that is hb_tick's table, test-aeon-lease.sh) or
 # the streak arithmetic itself (thrash_streak_bump's cap/reset/poison-via-thrash cases are
 # the retired test-thrash-streak.sh's, called directly against a real bead with no aeon.sh run at all).
@@ -41,14 +41,18 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 # The summon jitter is a random sleep before the session starts; CASE 3 signals the group
 # once the shim is hung, so the race is removed by pinning it to 0, not waited out.
 export SPIRA_SUMMON_JITTER=0
+tl_config SPIRA_SUMMON_JITTER=0
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+# round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
+# fixture declares its own /fixture/userhome/.../chamber. Declare this suite's real one.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh,
 # test-aeon-elastic-concurrency.sh, ...): since wave 4.8 (sp-mz7dn), aeon resolves every
@@ -62,7 +66,13 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sour
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
+# round 2 fix: the complete fixture declares scope_label="spira" as its base value, so
+# builder.fayth's FAYTH_LABELS (resolved against the real config, not this shell's unset
+# $SPIRA_SCOPE_LABEL) would require a "spira" label the seeded beads never carry — nothing
+# would ever be ready. Declare the empty scope this suite has always meant.
+tl_config SPIRA_SCOPE_LABEL=""
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
@@ -73,6 +83,7 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+tl_config SPIRA_AGENT="$SPIRA_AGENT"
 # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
 aeon_fixture_agent "$BIN/claude"
 # The lifecycle machine (testlib lc_aeon_mirror): since sp-v62vn the aeon's ready set is
@@ -82,7 +93,7 @@ lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
 command -v aeon >/dev/null 2>&1 \
     || bail "aeon is not on PATH — refusing to run the real model"
 
-# Shim A (positive control): exits with the bead open and no marker — attempt IS charged.
+# Shim A (positive control): exits with the bead open and no disposition — attempt IS charged.
 # COMMITS (sp-1zxru): this row's whole point is a real charged attempt to contrast the
 # thrash-exempt cases below against — a session with no commit is a no-progress exit now
 # (its own suite, test-aeon-teardown-e2e.sh's "no commit, left open" row), not this one.
@@ -99,33 +110,33 @@ exit 0
 SHIM
 chmod +x "$BIN/claude-no-thrash"
 
-# Shim B: plants the .thrash marker exactly as the heartbeat would, then exits — simulating
+# Shim B: records the thrash disposition exactly as the heartbeat would, then exits — simulating
 # a session the heartbeat has already killed for the deliverable not moving.
-cat > "$BIN/claude-thrash" <<'SHIM'
-#!/usr/bin/env bash
+{ printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-if [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
-    printf 'stalled: no last action\n' > "$SPIRA_RUN/$BEAD_ID.thrash"
+if [ -n "${BEAD_ID:-}" ]; then
+    SPIRA_RUN="$RUN_DIR" "$TMP/lc/spira-lc" disposition "$BEAD_ID" thrash "stalled: no last action" heartbeat
 fi
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 0
 SHIM
+} > "$BIN/claude-thrash"
 chmod +x "$BIN/claude-thrash"
 
-# Shim C: plants the marker, then hangs — standing in for a session the real heartbeat
+# Shim C: records the disposition, then hangs — standing in for a session the real heartbeat
 # hasn't killed YET, so a real `kill -TERM` sent to the process group from outside (below)
 # reaches aeon.sh itself as a signal, not as cleanup() running off the natural EXIT path.
-cat > "$BIN/claude-thrash-hang" <<'SHIM'
-#!/usr/bin/env bash
+{ printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-if [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
-    printf 'stalled: no last action\n' > "$SPIRA_RUN/$BEAD_ID.thrash"
-    : > "$SPIRA_RUN/$BEAD_ID.hung"
+if [ -n "${BEAD_ID:-}" ]; then
+    SPIRA_RUN="$RUN_DIR" "$TMP/lc/spira-lc" disposition "$BEAD_ID" thrash "stalled: no last action" heartbeat
+    : > "$RUN_DIR/$BEAD_ID.hung"
 fi
 sleep 300
 SHIM
+} > "$BIN/claude-thrash-hang"
 chmod +x "$BIN/claude-thrash-hang"
 
 seed() {
@@ -139,6 +150,7 @@ run_aeon() {
     echo $?
 }
 bead_status() {
+    # batch-job: fixture bd call against the suite's throwaway store
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '
 import sys, json
@@ -147,6 +159,7 @@ d = d if isinstance(d, list) else [d]
 print(d[0].get("status", ""))' 2>/dev/null
 }
 bead_notes() {
+    # batch-job: fixture bd call against the suite's throwaway store
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c '
 import sys, json
@@ -161,10 +174,10 @@ fresh() { testdb_reset; }
 echo "test-thrash-teardown.sh"
 
 # ======================================================================================
-# POSITIVE CONTROL: without the .thrash marker, exit with the bead open IS charged.
+# POSITIVE CONTROL: without a thrash disposition, exit with the bead open IS charged.
 # ======================================================================================
 echo
-echo "positive control — no thrash marker — attempt IS charged"
+echo "positive control — no thrash disposition — attempt IS charged"
 
 ln -sf "$BIN/claude-no-thrash" "$BIN/claude"
 fresh; seed sp-tt-1
@@ -216,7 +229,7 @@ ln -sf "$BIN/claude-thrash-hang" "$BIN/claude"
 fresh; seed sp-tt-3
 rm -rf "$SPIRA_RUN/worktree"
 marker="$SPIRA_RUN/sp-tt-3.hung"
-rm -f "$marker" "$SPIRA_RUN/sp-tt-3.thrash"
+rm -f "$marker"
 setsid aeon --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
 aeon_pid=$!
 

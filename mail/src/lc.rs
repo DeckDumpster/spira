@@ -11,24 +11,20 @@
 //! another bead, a stale answer to an ask already lifted) has no ask hold to lift, and the
 //! machine says so with exit 3 (or 1, no row). Only "cannot tell" is worth a warning.
 
-use std::process::{Command, Stdio};
-
 /// `spira-lc <args>` → (exit code, combined output).
 pub trait Lc {
     fn call(&self, args: &[String]) -> (i32, String);
 }
 
-/// The live service, by bare name on the launcher's PATH (sp-gypjk), bounded at 5 s: a
-/// stalled machine must not hold an answer's delivery (`timeout`'s 124 reads as cannot-tell).
+/// The live service: `spira-lc` found without the caller's PATH, bounded at 5 s here so a
+/// stalled machine cannot hold an answer's delivery (124 reads as cannot-tell).
 pub struct LcCli;
 
 impl Lc for LcCli {
     fn call(&self, args: &[String]) -> (i32, String) {
-        let out = Command::new("timeout").args(["5", "spira-lc"]).args(args).stdin(Stdio::null()).output();
-        match out {
-            Ok(o) => (o.status.code().unwrap_or(2), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
-            Err(e) => (2, format!("running spira-lc: {e}")),
-        }
+        let mut c = std::process::Command::new(spira_config::lc_call::lc_bin());
+        c.args(args);
+        spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
     }
 }
 
@@ -44,6 +40,11 @@ pub fn lift_ask(lc: &dyn Lc, work_bead: &str, how: Lift, actor: &str) -> Option<
     if work_bead.is_empty() {
         return None;
     }
+    if let (0, state) = lc.call(&["state".into(), work_bead.into()]) {
+        if spira_config::lc_state::is_terminal(state.trim()) {
+            return None;
+        }
+    }
     let args: Vec<String> = match how {
         Lift::Reply { message_id } => vec!["reply".into(), work_bead.into(), message_id.into(), actor.into()],
         Lift::Withdraw => vec!["withdraw-ask".into(), work_bead.into(), actor.into()],
@@ -51,6 +52,30 @@ pub fn lift_ask(lc: &dyn Lc, work_bead: &str, how: Lift, actor: &str) -> Option<
     match lc.call(&args) {
         (0, _) | (1, _) | (3, _) => None,
         (code, out) => Some(format!("mail: the ask hold on {work_bead} was not lifted (spira-lc {} exit {code}): {}", args[0], out.trim())),
+    }
+}
+
+/// Record the operator's answer on the ask's own machine: who, his words, the channel. That
+/// close also lifts the `ask` hold on the work bead the ask names. `Some(warning)` only when
+/// the machine could not tell; exit 1 (a legacy ask bead, no ask row) and 3 (already closed)
+/// are quiet.
+pub fn answer_ask(lc: &dyn Lc, ask: &str, quote: &str, actor: &str, channel: &str, message_id: &str) -> Option<String> {
+    let args: Vec<String> = ["close-ask", ask, "--exit", "answered", "--quote", quote, "--actor", actor, "--channel", channel, "--message-id", message_id]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    match lc.call(&args) {
+        (0, _) | (1, _) | (3, _) => None,
+        (code, out) => Some(format!("mail: the answer to {ask} was not recorded on the ask machine (spira-lc close-ask exit {code}): {}", out.trim())),
+    }
+}
+
+/// A dismissal: the ask closes as DEFAULT_TAKEN, quoting the default that was executed.
+pub fn take_default(lc: &dyn Lc, ask: &str, default: &str, actor: &str) -> Option<String> {
+    let args: Vec<String> = ["close-ask", ask, "--exit", "default", "--quote", default, "--actor", actor].iter().map(|s| s.to_string()).collect();
+    match lc.call(&args) {
+        (0, _) | (1, _) | (3, _) => None,
+        (code, out) => Some(format!("mail: the dismissal of {ask} was not recorded on the ask machine (spira-lc close-ask exit {code}): {}", out.trim())),
     }
 }
 
@@ -70,15 +95,16 @@ pub mod fake {
     use super::Lc;
     use std::sync::Mutex;
 
-    /// Records every call; answers each with `code`.
+    /// Records every write; answers each with `code`, and a `state` read with `state`.
     pub struct FakeLc {
         pub code: i32,
+        pub state: String,
         calls: Mutex<Vec<Vec<String>>>,
     }
 
     impl FakeLc {
         pub fn new(code: i32) -> FakeLc {
-            FakeLc { code, calls: Mutex::new(Vec::new()) }
+            FakeLc { code, state: "READY".into(), calls: Mutex::new(Vec::new()) }
         }
         pub fn calls(&self) -> Vec<Vec<String>> {
             self.calls.lock().unwrap().clone()
@@ -87,6 +113,9 @@ pub mod fake {
 
     impl Lc for FakeLc {
         fn call(&self, args: &[String]) -> (i32, String) {
+            if args[0] == "state" {
+                return (0, self.state.clone());
+            }
             self.calls.lock().unwrap().push(args.to_vec());
             (self.code, String::new())
         }
@@ -106,6 +135,17 @@ mod tests {
     }
 
     #[test]
+    fn a_terminal_work_bead_is_never_written() {
+        for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
+            let mut lc = FakeLc::new(0);
+            lc.state = state.into();
+            assert_eq!(lift_ask(&lc, "sp-w1", Lift::Reply { message_id: "m-1@spira" }, "operator"), None);
+            assert_eq!(lift_ask(&lc, "sp-w1", Lift::Withdraw, "operator"), None);
+            assert!(lc.calls().is_empty(), "{state}: {:?}", lc.calls());
+        }
+    }
+
+    #[test]
     fn a_withdraw_is_withdraw_ask() {
         let lc = FakeLc::new(0);
         lift_ask(&lc, "sp-w1", Lift::Withdraw, "claude");
@@ -122,6 +162,18 @@ mod tests {
         let lc = FakeLc::new(0);
         assert_eq!(lift_ask(&lc, "", Lift::Withdraw, "a"), None);
         assert!(lc.calls().is_empty(), "no work bead, no call");
+    }
+
+    #[test]
+    fn an_answer_is_recorded_with_who_his_words_and_the_channel() {
+        let lc = FakeLc::new(0);
+        assert_eq!(answer_ask(&lc, "sp-a", "yes", "operator", "mail", "m-1@spira"), None);
+        assert_eq!(
+            lc.calls(),
+            vec![vec!["close-ask", "sp-a", "--exit", "answered", "--quote", "yes", "--actor", "operator", "--channel", "mail", "--message-id", "m-1@spira"]]
+        );
+        assert!(answer_ask(&FakeLc::new(2), "sp-a", "y", "o", "mail", "m").unwrap().contains("sp-a"));
+        assert_eq!(answer_ask(&FakeLc::new(1), "sp-a", "y", "o", "mail", "m"), None);
     }
 
     #[test]

@@ -9,11 +9,10 @@
 //! non-zero exit. A rule that cannot find anything to check refuses to report clean
 //! (law-absence-needs-a-positive-control) — that is an error, not a pass.
 
-use std::cell::OnceCell;
+use std::sync::OnceLock;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub mod lex;
 pub mod rules;
@@ -25,12 +24,12 @@ pub struct Entry {
     pub path: String,
     /// Tracked (in the index) rather than untracked-but-not-ignored.
     pub tracked: bool,
-    content: OnceCell<Option<Vec<u8>>>,
+    content: OnceLock<Option<Vec<u8>>>,
 }
 
 impl Entry {
     pub fn new(path: impl Into<String>, tracked: bool) -> Entry {
-        Entry { path: path.into(), tracked, content: OnceCell::new() }
+        Entry { path: path.into(), tracked, content: OnceLock::new() }
     }
 }
 
@@ -49,7 +48,7 @@ impl Tree {
     /// (untracked, not ignored). Fails when `root` is not a git work tree — a bad root is
     /// indistinguishable from a clean tree, so it is never read as one.
     pub fn from_git(root: &Path) -> Result<Tree, LintError> {
-        let ok = Command::new("git")
+        let ok = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(root)
             .args(["rev-parse", "--git-dir"])
@@ -63,7 +62,7 @@ impl Tree {
             )));
         }
         let list = |extra: &[&str]| -> Result<Vec<String>, LintError> {
-            let out = Command::new("git")
+            let out = spira_config::bounded::bounded("git")
                 .arg("-C")
                 .arg(root)
                 .args(["ls-files", "-z"])
@@ -112,7 +111,7 @@ impl Tree {
 
     /// `git -C <root> <args>`'s stdout, or its error.
     pub fn git(&self, args: &[&str]) -> Result<Vec<u8>, String> {
-        let out = Command::new("git")
+        let out = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(&self.root)
             .args(args)
@@ -179,6 +178,71 @@ impl Tree {
     }
 }
 
+/// Rules that already judge the branch against the base themselves; `--diff` leaves their
+/// findings whole.
+pub const BASE_RELATIVE: &[&str] = &["plan-matrix", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config"];
+
+/// What a branch changed relative to `git merge-base <base> HEAD`: per touched file, the
+/// new-side line ranges it adds or changes (`None` for a whole file: untracked, or binary).
+pub struct DiffScope {
+    files: std::collections::BTreeMap<String, Option<Vec<(usize, usize)>>>,
+}
+
+impl DiffScope {
+    pub fn from_tree(tree: &Tree) -> Result<DiffScope, LintError> {
+        let base = tree.base_commit()?;
+        let mb = tree
+            .git(&["merge-base", &base, "HEAD"])
+            .map(|o| String::from_utf8_lossy(&o).trim().to_string())
+            .map_err(|e| LintError::Refused(format!("--diff: {e}")))?;
+        let out = tree
+            .git(&["diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", &mb])
+            .map_err(|e| LintError::Refused(format!("--diff: {e}")))?;
+        let mut scope = DiffScope { files: Default::default() };
+        scope.parse(&String::from_utf8_lossy(&out));
+        for e in tree.entries.iter().filter(|e| !e.tracked) {
+            scope.files.insert(e.path.clone(), None);
+        }
+        Ok(scope)
+    }
+
+    fn parse(&mut self, diff: &str) {
+        let mut cur: Option<String> = None;
+        for l in diff.lines() {
+            if let Some(p) = l.strip_prefix("+++ ") {
+                cur = p.strip_prefix("b/").map(str::to_string);
+                if let Some(c) = &cur {
+                    self.files.entry(c.clone()).or_insert_with(|| Some(Vec::new()));
+                }
+            } else if l.starts_with("Binary files ") {
+                if let Some(p) = l.strip_suffix(" differ").and_then(|l| l.rsplit(" and b/").next()) {
+                    self.files.insert(p.to_string(), None);
+                }
+            } else if let (Some(h), Some(c)) = (l.strip_prefix("@@ "), cur.as_ref()) {
+                let plus = h.split(' ').find(|t| t.starts_with('+')).unwrap_or("+0");
+                let mut it = plus[1..].split(',');
+                let start: usize = it.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+                let len: usize = it.next().and_then(|n| n.parse().ok()).unwrap_or(1);
+                if len > 0 {
+                    if let Some(Some(r)) = self.files.get_mut(c) {
+                        r.push((start, start + len - 1));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether a finding is on code this branch adds or changes. A finding with no line is
+    /// whole-file: kept when the diff touches the file at all.
+    pub fn keeps(&self, f: &Finding) -> bool {
+        match (self.files.get(&f.path), f.line) {
+            (None, _) => false,
+            (Some(None), _) | (Some(Some(_)), None) => true,
+            (Some(Some(r)), Some(n)) => r.iter().any(|&(a, b)| a <= n && n <= b),
+        }
+    }
+}
+
 /// One thing a rule found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
@@ -222,8 +286,27 @@ impl fmt::Display for LintError {
     }
 }
 
-/// A fence. See DESIGN.md for each rule's intent, contract and allow-list schema.
-pub trait Rule {
+/// A rule's positive-control slot: set during [`Rule::check`], read after. A `Cell` that is
+/// `Sync`, so [`run`] can check rules on worker threads (each rule is checked by exactly one
+/// thread; the lock is never contended).
+#[derive(Debug, Default)]
+pub struct SyncCell<T: Copy>(std::sync::Mutex<T>);
+
+impl<T: Copy> SyncCell<T> {
+    pub fn new(v: T) -> Self {
+        SyncCell(std::sync::Mutex::new(v))
+    }
+    pub fn get(&self) -> T {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    pub fn set(&self, v: T) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = v;
+    }
+}
+
+/// A fence. See DESIGN.md for each rule's intent, contract and allow-list schema. `Send +
+/// Sync`: [`run`] checks independent rules concurrently over the one shared walk.
+pub trait Rule: Send + Sync {
     /// The rule's name: `--only <name>`, and the first field of every finding.
     fn name(&self) -> &'static str;
 
@@ -307,43 +390,9 @@ pub fn lines(content: &[u8]) -> Vec<&[u8]> {
     body.split(|b| *b == b'\n').collect()
 }
 
-/// Every rule, in the order they run.
+/// Every rule, in rule-file name order: each `rules/*.rs` exports `rules()` and build.rs collects them.
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
-    vec![
-        Box::new(rules::config_fence::ConfigFence),
-        Box::new(rules::config_literal_fallback::ConfigLiteralFallback),
-        Box::new(rules::payload_argv::PayloadArgv),
-        Box::new(rules::fence_scripts::FenceScripts),
-        Box::new(rules::testlib_migrated::TestlibMigrated),
-        Box::new(rules::script_exec::ScriptExec),
-        Box::new(rules::event_taxonomy::EventTaxonomy),
-        Box::new(rules::deps_lint::DepsLint),
-        Box::new(rules::covers_entries::CoversEntries),
-        Box::new(rules::gate_workflow::GateWorkflow),
-        Box::new(rules::conf_key_registry::ConfKeyRegistry),
-        Box::new(rules::lib_sh_shims::LibShShims),
-        Box::new(rules::tmp_leak::TmpLeak),
-        Box::new(rules::release_spawn_env::ReleaseSpawnEnv),
-        Box::new(rules::chmod_exec_leak::ChmodExecLeak),
-        Box::new(rules::env_set_var_leak::EnvSetVarLeak),
-        Box::new(rules::call_deadline::CallDeadline),
-        Box::new(rules::hash_iter_output::HashIterOutput),
-        Box::new(rules::plan_matrix::PlanMatrix::default()),
-        Box::new(rules::plan_lint::PlanLint::default()),
-        Box::new(rules::testdb_mode_lint::TestdbModeLint::default()),
-        Box::new(rules::bd_stdin_lint::BdStdinLint::default()),
-        Box::new(rules::incident_cause_lint::IncidentCauseLint::default()),
-        Box::new(rules::lockfile_lint::LockfileLint::default()),
-        Box::new(rules::tier_budget::Ledger::suites()),
-        Box::new(rules::tier_budget::Ledger::areas()),
-        Box::new(rules::tier_budget::Areas::default()),
-        Box::new(rules::inventory::Inventory),
-        Box::new(rules::literal_lint::LiteralLint),
-        Box::new(rules::script_callers::ScriptCallers::default()),
-        Box::new(rules::scratch_fence::ScratchFence),
-        Box::new(rules::wiki_add_fence::WikiAddFence),
-        Box::new(rules::tmux_scope_fence::TmuxScopeFence),
-    ]
+    include!(concat!(env!("OUT_DIR"), "/all_rules.rs"))
 }
 
 /// The outcome of one rule over the walk.
@@ -355,19 +404,54 @@ pub struct RuleResult {
     pub checked: Option<(usize, String)>,
 }
 
-/// Run `rules` over `tree`.
+/// Run `rules` over `tree`, results in `rules`' order. The rules are independent reads of
+/// one walk, and each is a CPU-bound scan of the tree, so they are checked on up to
+/// [`MAX_WORKERS`] threads: run serially, the gate's spira-lint step was the bulk of every
+/// gate's fences phase. Output order (and so every finding and positive-control line) is
+/// unchanged: it is decided here, by index, never by which thread finished first.
 pub fn run(tree: &Tree, rules: &[Box<dyn Rule>]) -> Vec<RuleResult> {
-    rules
-        .iter()
-        .map(|r| {
-            let outcome = r.check(tree).map(|mut v| {
-                v.sort_by(|a, b| (&a.path, a.line).cmp(&(&b.path, b.line)));
-                v
-            });
-            RuleResult { rule: r.name(), hint: r.hint(), outcome, checked: r.checked() }
-        })
-        .collect()
+    let one = |r: &dyn Rule| {
+        let outcome = r.check(tree).map(|mut v| {
+            v.sort_by(|a, b| (&a.path, a.line).cmp(&(&b.path, b.line)));
+            v
+        });
+        RuleResult { rule: r.name(), hint: r.hint(), outcome, checked: r.checked() }
+    };
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(MAX_WORKERS)
+        .min(rules.len());
+    if workers <= 1 {
+        return rules.iter().map(|r| one(r.as_ref())).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut slots: Vec<Option<RuleResult>> = (0..rules.len()).map(|_| None).collect();
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(r) = rules.get(i) else { break };
+                        done.push((i, one(r.as_ref())));
+                    }
+                    done
+                })
+            })
+            .collect();
+        for h in handles {
+            for (i, r) in h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)) {
+                slots[i] = Some(r);
+            }
+        }
+    });
+    slots.into_iter().map(|r| r.expect("every rule index is claimed by exactly one worker")).collect()
 }
+
+/// The most threads [`run`] checks rules on.
+pub const MAX_WORKERS: usize = 8;
 
 #[cfg(test)]
 pub(crate) mod testutil {
@@ -425,6 +509,72 @@ mod tests {
     use super::testutil::TempDir;
     use super::*;
 
+    /// A rule that sleeps, then reports one finding (or refuses) and a positive control.
+    struct Slow {
+        name: &'static str,
+        ms: u64,
+        refuse: bool,
+        checked: SyncCell<Option<usize>>,
+    }
+    impl Rule for Slow {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn applies_to(&self, _: &Entry) -> bool {
+            true
+        }
+        fn check(&self, _: &Tree) -> Result<Vec<Finding>, LintError> {
+            std::thread::sleep(std::time::Duration::from_millis(self.ms));
+            self.checked.set(Some(self.ms as usize));
+            if self.refuse {
+                return Err(LintError::EmptyScope);
+            }
+            Ok(vec![Finding { rule: self.name, path: "p".into(), line: None, message: "m".into() }])
+        }
+        fn checked(&self) -> Option<(usize, String)> {
+            self.checked.get().map(|n| (n, "ms".into()))
+        }
+    }
+
+    /// The rules run concurrently, but the results — every finding, refusal and positive
+    /// control the gate reads — come back in the rules' order, each with its own rule's
+    /// control, however the threads finish.
+    #[test]
+    fn run_checks_rules_concurrently_and_reports_in_rule_order() {
+        let names = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"];
+        let rules: Vec<Box<dyn Rule>> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                // The first rules are the slowest, so they finish last.
+                Box::new(Slow { name: n, ms: 20 * (names.len() - i) as u64, refuse: i == 3, checked: SyncCell::new(None) }) as Box<dyn Rule>
+            })
+            .collect();
+        let tree = Tree::from_paths(Path::new("/nowhere"), ["a"], Vec::<String>::new());
+        let t0 = std::time::Instant::now();
+        let got = run(&tree, &rules);
+        let serial: u64 = (1..=names.len() as u64).map(|k| 20 * k).sum();
+        assert_eq!(got.iter().map(|r| r.rule).collect::<Vec<_>>(), names);
+        for (i, r) in got.iter().enumerate() {
+            assert_eq!(r.checked, Some((20 * (names.len() - i), "ms".into())), "{}", r.rule);
+            assert_eq!(r.outcome.is_err(), i == 3, "{}", r.rule);
+        }
+        if std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) > 1 {
+            assert!(t0.elapsed() < std::time::Duration::from_millis(serial), "ran serially: {:?}", t0.elapsed());
+        }
+    }
+
+    #[test]
+    fn diff_scope_keeps_only_changed_lines_and_touched_files() {
+        let mut d = DiffScope { files: Default::default() };
+        d.parse("diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -3,0 +4,2 @@\n+a\n+b\n@@ -9 +11 @@\n-c\n+d\n@@ -20,2 +21,0 @@\n-e\n-f\ndiff --git a/y.rs b/y.rs\n--- a/y.rs\n+++ b/y.rs\n@@ -1 +1 @@\n-1\n+2\n");
+        let f = |path: &str, line| Finding { rule: "r", path: path.into(), line, message: String::new() };
+        assert!(d.keeps(&f("x.rs", Some(4))) && d.keeps(&f("x.rs", Some(5))) && d.keeps(&f("x.rs", Some(11))));
+        assert!(!d.keeps(&f("x.rs", Some(3))) && !d.keeps(&f("x.rs", Some(6))) && !d.keeps(&f("x.rs", Some(21))));
+        assert!(d.keeps(&f("x.rs", None)) && d.keeps(&f("y.rs", Some(1))));
+        assert!(!d.keeps(&f("z.rs", None)) && !d.keeps(&f("z.rs", Some(1))));
+    }
+
     #[test]
     fn pathspec_star_crosses_slashes() {
         assert!(pathspec_match("spira/*.sh", "spira/a.sh"));
@@ -457,7 +607,7 @@ mod tests {
     /// The tree-walking rules over one small fixture tree: one planted violation per rule is
     /// found, named by its rule, and nothing else is. The rules that hold named files to a
     /// contract (event-taxonomy, gate-workflow, conf-key-registry, lib-sh-shims), and
-    /// tmp-leak, config-literal-fallback chmod-exec-leak and env-set-var-leak, which read Rust, are
+    /// tmp-leak, config-literal-fallback chmod-exec-leak, env-set-var-leak and process-exit-in-library, which read Rust, are
     /// fixtured in their own modules.
     #[test]
     fn all_rules_over_a_fixture_tree() {
@@ -482,7 +632,7 @@ mod tests {
         t.write("spira-lint/testlib-migrated-allow", "");
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "release-spawn-env", "config-literal-fallback", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
+        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "gate-state-readers", "aeon-state-readers", "release-state-readers", "sift-state-readers", "testenv-result-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();
@@ -491,9 +641,7 @@ mod tests {
                 lines.push(f.to_string());
             }
         }
-        assert_eq!(
-            lines,
-            vec![
+        let mut want = vec![
                 "config-fence: spira/cfg.sh: name".to_string(),
                 "payload-argv-lint: spira/payload.sh:2: env: $X_JSON handed to python3".to_string(),
                 "fence-scripts: spira/new-fence.sh: a new bash fence/lint script — write it as a spira-lint rule instead".to_string(),
@@ -501,7 +649,9 @@ mod tests {
                 "script-exec: spira/noexec.sh: not executable — chmod +x it, or declare \"Sourced, never executed\" in its header".to_string(),
                 format!("deps-lint: spira/probe.sh:2: {prog}: command -v of a program spira/deps.toml does not declare"),
                 "covers-entries: spira/test-own.sh: # covers: token 'spira/gone.sh' matches no file in the tree".to_string(),
-            ]
-        );
+        ];
+        lines.sort();
+        want.sort();
+        assert_eq!(lines, want);
     }
 }

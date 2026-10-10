@@ -48,9 +48,11 @@ DB="$T/db"; mkdir -p "$DB"
 [ -d "$DB/.beads" ] || bail "scratch beads store did not initialise at $DB"
 
 RUN="$T/run"; mkdir -p "$RUN"
+tl_config SPIRA_DB="$DB" SPIRA_BD="$BD_BIN" SPIRA_RUN="$RUN"
 run_sop() {
     env -i PATH="$PATH" HOME="$HOME" \
-        SPIRA_DB="$DB" SPIRA_BD="$BD_BIN" SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$SOP" "$@" 2>&1
 }
 
@@ -138,10 +140,11 @@ git -C "$WIKI" config user.email t@t; git -C "$WIKI" config user.name t
 git -C "$WIKI" add -A; git -C "$WIKI" commit -qm init --allow-empty >/dev/null 2>&1
 touch "$WIKI/wiki/notes/.gitkeep"; git -C "$WIKI" add -A; git -C "$WIKI" commit -qm keep >/dev/null 2>&1
 git -C "$WIKI" worktree add "$T/wiki-wt" -b sop-test-wt -q
+tl_config SPIRA_WIKI="$WIKI"
 (
     cd "$T/wiki-wt"
-    env -i PATH="$PATH" HOME="$HOME" SPIRA_DB="$DB" SPIRA_BD="$BD_BIN" SPIRA_HOME="$HERE" \
-        SPIRA_RUN="$RUN" SPIRA_WIKI="$WIKI" "$SOP" synth
+    env -i PATH="$PATH" HOME="$HOME" SPIRA_HOME="$HERE" \
+        SPIRA_TOML="$SPIRA_TOML" "$SOP" synth
 ) >"$T/synth-out.log" 2>&1
 rc=$?
 is "synth exits 0 from inside the worktree" "0" "$rc"

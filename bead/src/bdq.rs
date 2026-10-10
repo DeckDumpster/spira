@@ -224,9 +224,78 @@ pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
     }
     destructive_match(&text).map(|phrase| {
         format!(
-            "spira: bead contains \"{phrase}\" — procedures that halt the harness require needs-ryan.\nAdd needs-ryan to --labels, or reword to remove the destructive step.\n", // literal-ok: fixture/fallback
+            "spira: bead contains \"{phrase}\" — procedures that halt the harness require needs-ryan.\nAdd needs-ryan to --labels with a question, Default: and Class: destructive in --description, or reword to remove the destructive step.\n", // literal-ok: fixture/fallback
         )
     })
+}
+
+/// A bead's state is its lifecycle row's (sp-6oimlm): bdq refuses every verb that writes bd's
+/// status — `close`, `reopen`, `defer`, `undefer`, and `update` with `--status`/`-s`/`--defer` —
+/// so the store can never move on its own and drift from the row. On 2026-10-07 33 beads sat
+/// deferred in bd while their rows read READY, and every aeon summoned onto one exited in seconds.
+/// The exit is the machine's own door; `SPIRA_BDQ_STATE_WRITE=<reason>` overrides, and the
+/// caller logs it.
+pub fn check_state_verb(args: &[String]) -> Option<&'static str> {
+    let verb = args.first().map(String::as_str)?;
+    let writes = match verb {
+        "close" | "reopen" | "defer" | "undefer" => true,
+        "update" => args.iter().skip(1).any(|a| {
+            matches!(a.as_str(), "--status" | "-s" | "--defer") || a.starts_with("--status=") || a.starts_with("--defer=")
+        }),
+        _ => false,
+    };
+    if !writes {
+        return None;
+    }
+    Some(match verb {
+        "close" => "spira-lc close <id> --reason-file - (or `work close-other` for a session)",
+        "reopen" | "undefer" => "spira-lc reopen <id> <cause> <actor> (or `work reopen <id> --evidence ...`)",
+        "defer" => "spira-lc hold <id> wait <reason> (a timed snooze is a wait hold on the row)",
+        _ => "the lifecycle machine's own verb (spira-lc close / reopen / hold); bd's status is not a bead's state",
+    })
+}
+
+/// `label add <ask>` and `update --add-label <ask>` skip the create-time shape check, so
+/// they are refused outright: an ask is created whole, never labelled on afterwards.
+pub fn check_ask_label_write(args: &[String], ask_label: &str) -> Option<String> {
+    if ask_label.is_empty() {
+        return None;
+    }
+    let writes = match args.first().map(String::as_str) {
+        Some("label") => args.get(1).map(String::as_str) == Some("add") && args.iter().skip(3).any(|a| a == ask_label),
+        Some("update") => args.windows(2).any(|w| matches!(w[0].as_str(), "--add-label" | "--set-labels") && w[1].split(',').any(|l| l == ask_label)),
+        _ => false,
+    };
+    if !writes {
+        return None;
+    }
+    Some(format!(
+        "spira: refusing to add {ask_label} to an existing bead — it is the operator's decision queue and an ask is created whole.\n\
+         Exit: post the decision with `work ask` (question, default, class), or label the bead overseer (and the no-loop label to stop dispatch) so the Concierge or Ops works it.\n" // literal-ok: fixture/fallback
+    ))
+}
+
+/// The ask label belongs on a decision: a question, a stated default and one of the three
+/// operator classes. Anything else is worked by the overseer/ops queue without it.
+pub fn check_ask_shape(args: &[String], ask_label: &str) -> Option<String> {
+    let (title, desc, labels) = destructive_fields(args);
+    if ask_label.is_empty() || !labels.split(',').any(|l| l == ask_label) {
+        return None;
+    }
+    let has_question = title.contains('?') || desc.contains("## Question");
+    let has_default = desc.lines().any(|l| l.trim_start().to_ascii_lowercase().starts_with("default:") && l.trim().len() > "default:".len());
+    let has_class = desc.lines().any(|l| {
+        let l = l.trim().to_ascii_lowercase();
+        l.strip_prefix("class:").is_some_and(|c| ["permissions", "policy", "destructive"].contains(&c.trim()))
+    });
+    if has_question && has_default && has_class {
+        return None;
+    }
+    Some(format!(
+        "spira: refusing label {ask_label} — it is the operator's decision queue and this bead states no complete decision (question: {has_question}, default: {has_default}, class: {has_class}).\n\
+         Exit: put a question (a '?' in the title or a '## Question' section), a 'Default: <what you would do>' line and a 'Class: permissions|policy|destructive' line in --description,\n\
+         or drop {ask_label} and label it overseer so the Concierge or Ops works it.\n"
+    ))
 }
 
 /// The schema-migrations-DELETE regex, shared the same way [`destructive_match`] is.
@@ -261,6 +330,33 @@ pub fn check_schema_delete(args: &[String]) -> Option<String> {
 /// fences above run.
 pub fn is_create(args: &[String]) -> bool {
     matches!(args.first().map(String::as_str), Some("create" | "create-form" | "q"))
+}
+
+/// Whether this call creates beads by any verb: `create` and its kin, `import`, and the
+/// `mol` verbs that spawn issues from a proto. Each must leave a lifecycle row per bead.
+pub fn creates_beads(args: &[String]) -> bool {
+    if args.iter().any(|a| a == "--dry-run") {
+        return false;
+    }
+    let verb = |i: usize| args.get(i).map(String::as_str);
+    match verb(0) {
+        Some("import") => true,
+        Some("mol") => match verb(1) {
+            Some("pour" | "bond") => true,
+            Some("wisp") => !matches!(verb(2), Some("list" | "gc")),
+            _ => false,
+        },
+        _ => is_create(args),
+    }
+}
+
+/// `import` and `mol` print ids only under `--json`, so a run that must read them gets it.
+pub fn id_bearing_args(args: &[String]) -> Vec<String> {
+    let mut a = args.to_vec();
+    if !is_create(args) && creates_beads(args) && !a.iter().any(|x| x == "--json") {
+        a.push("--json".to_string());
+    }
+    a
 }
 
 /// A bead created already closed (`--status closed`) is never claimed, so it needs no
@@ -362,8 +458,20 @@ pub fn retryable(args: &[String], stderr: &str) -> bool {
         return false;
     }
     let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
-    READ_VERBS.contains(&verb) || stderr.contains("failed to open database")
+    READ_VERBS.contains(&verb)
+        || stderr.contains("failed to open database")
+        || stderr.contains("failed to check if database")
 }
+
+/// A call that mutates the store: anything whose verb is not a read. These are the calls the
+/// writer cap serialises.
+pub fn is_write(args: &[String]) -> bool {
+    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
+    !verb.is_empty() && !READ_VERBS.contains(&verb)
+}
+
+/// Exit status `flock -E` reports when the writer slot was not won in time.
+pub const WRITER_LOCK_BUSY: i32 = 75;
 
 /// Sleep before attempt `try_n + 1`: base, then doubling.
 pub fn backoff_ms(base_ms: u64, try_n: u32) -> u64 {
@@ -397,6 +505,25 @@ mod tests {
     }
 
     // -- check_repo_label -------------------------------------------------------------------
+
+    #[test]
+    fn every_state_verb_is_refused_and_names_the_machines_door() {
+        for argv in [&["close", "sp-a", "--reason", "x"][..], &["reopen", "sp-a"], &["defer", "sp-a"], &["undefer", "sp-a"],
+            &["update", "sp-a", "--status", "open"], &["update", "sp-a", "-s", "closed"], &["update", "sp-a", "--status=open"],
+            &["update", "sp-a", "--defer", "2026-10-08"]] {
+            let exit = check_state_verb(&s(argv)).unwrap_or_else(|| panic!("{argv:?} was not refused"));
+            assert!(exit.contains("spira-lc") || exit.contains("lifecycle"), "{argv:?}: {exit}");
+        }
+        assert!(check_state_verb(&s(&["reopen", "sp-a"])).unwrap().contains("spira-lc reopen"));
+    }
+
+    #[test]
+    fn reads_notes_labels_and_creates_are_not_state_verbs() {
+        for argv in [&["show", "sp-a"][..], &["list", "--status", "open"], &["note", "sp-a", "--stdin"], &["label", "add", "sp-a", "x"],
+            &["update", "sp-a", "--add-label", "x"], &["update", "sp-a", "--assignee", ""], &["create", "t", "--labels", "spira"], &[]] {
+            assert_eq!(check_state_verb(&s(argv)), None, "{argv:?}");
+        }
+    }
 
     #[test]
     fn repo_label_allows_home_repo_and_known_repos() {
@@ -476,6 +603,29 @@ mod tests {
     // -- check_schema_delete -----------------------------------------------------------------
 
     #[test]
+    fn ask_label_cannot_be_added_to_an_existing_bead() {
+        let a = "needs-ryan"; // literal-ok: fixture/fallback
+        assert!(check_ask_label_write(&s(&["label", "add", "sp-1", a]), a).unwrap().contains("Exit:"));
+        assert!(check_ask_label_write(&s(&["update", "sp-1", "--add-label", a]), a).is_some());
+        assert!(check_ask_label_write(&s(&["update", "sp-1", "--add-label", "x,needs-ryan"]), a).is_some()); // literal-ok: fixture/fallback
+        assert_eq!(check_ask_label_write(&s(&["label", "add", "sp-1", "overseer"]), a), None);
+        assert_eq!(check_ask_label_write(&s(&["label", "remove", "sp-1", a]), a), None);
+        assert_eq!(check_ask_label_write(&s(&["update", "sp-1", "--remove-label", a]), a), None);
+        assert_eq!(check_ask_label_write(&s(&["label", "add", "sp-1", a]), ""), None);
+    }
+
+    #[test]
+    fn ask_shape_refuses_a_bare_alarm_and_accepts_a_decision() {
+        let alarm = s(&["create", "SLOW QUERY on dolt", "--labels", "needs-ryan,overseer"]); // literal-ok: fixture/fallback
+        assert!(check_ask_shape(&alarm, "needs-ryan").unwrap().contains("Exit:")); // literal-ok: fixture/fallback
+        let ok = s(&["create", "Grant the token?", "-l", "needs-ryan", "-d", "## Question\nq\nDefault: grant\nClass: permissions"]); // literal-ok: fixture/fallback
+        assert_eq!(check_ask_shape(&ok, "needs-ryan"), None); // literal-ok: fixture/fallback
+        let bad_class = s(&["create", "Pick one?", "-l", "needs-ryan", "-d", "Default: a\nClass: architecture"]); // literal-ok: fixture/fallback
+        assert!(check_ask_shape(&bad_class, "needs-ryan").is_some()); // literal-ok: fixture/fallback
+        assert_eq!(check_ask_shape(&s(&["create", "SLOW QUERY", "-l", "overseer"]), "needs-ryan"), None); // literal-ok: fixture/fallback
+    }
+
+    #[test]
     fn schema_delete_is_detected_regardless_of_case_or_spacing() {
         assert!(check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).is_some());
         assert!(check_schema_delete(&s(&["create", "clean", "-d", "please delete from schema_migrations now"]))
@@ -514,6 +664,37 @@ mod tests {
         assert!(is_create(&s(&["create-form"])));
         assert!(!is_create(&s(&["update", "sp-a"])));
         assert!(!is_create(&s(&[])));
+    }
+
+    #[test]
+    fn creates_beads_covers_import_and_mol_spawns() {
+        assert!(creates_beads(&s(&["create", "x"])));
+        assert!(creates_beads(&s(&["import", "f.jsonl"])));
+        assert!(creates_beads(&s(&["import", "-"])));
+        assert!(creates_beads(&s(&["mol", "pour", "p"])));
+        assert!(creates_beads(&s(&["mol", "wisp", "p"])));
+        assert!(creates_beads(&s(&["mol", "wisp", "create", "p"])));
+        assert!(creates_beads(&s(&["mol", "bond", "a", "b"])));
+        assert!(!creates_beads(&s(&["mol", "wisp", "list"])));
+        assert!(!creates_beads(&s(&["mol", "wisp", "gc"])));
+        assert!(!creates_beads(&s(&["mol", "show", "m"])));
+        assert!(!creates_beads(&s(&["import", "f", "--dry-run"])));
+        assert!(!creates_beads(&s(&["mol", "pour", "p", "--dry-run"])));
+        assert!(!creates_beads(&s(&["update", "sp-a"])));
+    }
+
+    #[test]
+    fn import_and_mol_are_not_create_fenced() {
+        assert!(!is_create(&s(&["import", "f"])));
+        assert!(!is_create(&s(&["mol", "pour", "p"])));
+    }
+
+    #[test]
+    fn id_bearing_args_adds_json_only_where_ids_are_otherwise_unprinted() {
+        assert_eq!(id_bearing_args(&s(&["import", "f"])), s(&["import", "f", "--json"]));
+        assert_eq!(id_bearing_args(&s(&["mol", "pour", "p"])), s(&["mol", "pour", "p", "--json"]));
+        assert_eq!(id_bearing_args(&s(&["import", "f", "--json"])), s(&["import", "f", "--json"]));
+        assert_eq!(id_bearing_args(&s(&["create", "t"])), s(&["create", "t"]));
     }
 
     // -- czar fence dispatch ------------------------------------------------------------------
@@ -593,6 +774,15 @@ mod tests {
     // -- should_retry -------------------------------------------------------------------------
 
     #[test]
+    fn is_write_is_every_verb_that_is_not_a_read() {
+        assert!(is_write(&s(&["close", "x"])));
+        assert!(is_write(&s(&["--json", "update", "x"])));
+        assert!(!is_write(&s(&["show", "x"])));
+        assert!(!is_write(&s(&["--json", "list"])));
+        assert!(!is_write(&[]));
+    }
+
+    #[test]
     fn should_retry_only_on_invalid_connection_within_budget() {
         assert!(should_retry(1, 1, 2, true));
         assert!(!should_retry(0, 1, 2, true), "success never retries");
@@ -607,6 +797,10 @@ mod tests {
         assert!(retryable(&a(&["--json", "count"]), "Error: invalid connection"));
         assert!(!retryable(&a(&["close", "x"]), "Error: invalid connection"));
         assert!(retryable(&a(&["close", "x"]), "failed to open database: invalid connection"));
+        assert!(retryable(
+            &a(&["note", "x"]),
+            "failed to check if database spira exists on server: invalid connection"
+        ));
         assert!(!retryable(&a(&["show", "x"]), "bead not found"));
     }
 

@@ -40,12 +40,12 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 WIKI_ORIGIN="$TMP/wiki.git"; git init -q --bare -b main "$WIKI_ORIGIN"
-WIKI="$TMP/wiki"; git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
+WIKI="$TMP/wiki"; timeout 5 git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
 git -C "$WIKI" config user.email t@t; git -C "$WIKI" config user.name t
 printf 'seed\n' > "$WIKI/wiki-seed.md"
 git -C "$WIKI" add wiki-seed.md
 git -C "$WIKI" commit -qm seed
-git -C "$WIKI" push -q origin main 2>/dev/null
+timeout 5 git -C "$WIKI" push -q origin main 2>/dev/null
 
 echo "test-wiki-commit-dir-sweep.sh"
 

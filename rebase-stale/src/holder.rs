@@ -31,58 +31,29 @@ fn live_pid(pidfile: &Path) -> Option<u32> {
     Path::new(&format!("/proc/{pid}")).is_dir().then_some(pid)
 }
 
-fn cmdline(pid: u32) -> String {
-    std::fs::read(format!("/proc/{pid}/cmdline"))
-        .map(|b| String::from_utf8_lossy(&b).replace('\0', " "))
-        .unwrap_or_default()
-}
-
-/// Whether a space-joined cmdline is an aeon: the Rust binary (argv[0] `aeon` or `…/aeon`)
-/// or the retired `aeon.sh` — the same rule as lib.sh aeon_alive and the sentinel/strand crates.
-pub fn is_aeon_cmdline(cmd: &str) -> bool {
-    let argv0 = cmd.split(' ').next().unwrap_or("");
-    cmd.contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
-}
-
-#[cfg(test)]
-mod aeon_cmdline_tests {
-    #[test]
-    fn the_binary_and_the_retired_script_are_both_aeons() {
-        assert!(super::is_aeon_cmdline("/r/current/bin/aeon --home /r/current/spira builder"));
-        assert!(super::is_aeon_cmdline("bash /h/spira/aeon.sh builder"));
-        assert!(!super::is_aeon_cmdline("sleep 30"));
-        assert!(!super::is_aeon_cmdline("/usr/bin/aeonic --x"));
-    }
-}
-
 /// Witnesses that somebody is working bead `id`; Some(why) when any says so.
 pub fn witness(run: &Path, id: &str, seam: &dyn Seam) -> Option<String> {
     // 1. an operator/tool hold (hold.sh): any live pid.
     if let Some(pid) = live_pid(&run.join(format!("hold-{id}.pid"))) {
         return Some(format!("hold-{id}.pid names live pid {pid}"));
     }
-    // 2. the bead's aeon: aeon-<fayth>-<id>.pid naming a live pid running the aeon — the
-    //    binary or the retired aeon.sh (argv checked, so a recycled pid is not mistaken).
+    // 2. the bead's aeon: aeon-<fayth>-<id>.pid whose identity lease is still running.
     if let Ok(rd) = std::fs::read_dir(run) {
         let suffix = format!("-{id}.pid");
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
-            if n.starts_with("aeon-") && n.ends_with(&suffix) {
-                if let Some(pid) = live_pid(&e.path()) {
-                    if is_aeon_cmdline(&cmdline(pid)) {
-                        return Some(format!("{n} names live aeon pid {pid}"));
-                    }
-                }
+            if n.starts_with("aeon-") && n.ends_with(&suffix) && sending::reap::aeon_alive(&e.path()) {
+                return Some(format!("{n} holds a running identity lease"));
             }
         }
     }
-    // 3/4. the lease: in_progress, or a database that cannot prove otherwise.
+    // 3/4. the lease: a WORKING row, or a machine that cannot prove otherwise.
     match seam.bead_status(id) {
         BeadStatus::Unreachable => {
-            Some("the bead database did not answer, so the status witness proves nothing".into())
+            Some("the lifecycle machine did not answer, so the claim witness proves nothing".into())
         }
-        BeadStatus::Known(s) if s == "in_progress" => {
-            Some("in_progress — the lease has not been released".into())
+        BeadStatus::Known(s) if spira_config::lc_state::is_working(&s) => {
+            Some("WORKING — the lease has not been released".into())
         }
         BeadStatus::Known(_) => None,
     }

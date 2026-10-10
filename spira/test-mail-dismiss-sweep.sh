@@ -33,15 +33,23 @@ testdb_require test-mail-dismiss-sweep
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up dismiss-sweep || { echo "test-mail-dismiss-sweep: could not build fixture database"; exit 1; }
+# A close goes through spira-lc (sp-3fue0j); this fixture has no lifecycle store, so it closes the store.
+lc_close_stub "$TMP/lc" "$SPIRA_BD" "$SPIRA_DB"
 
-export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_INDEX="$TMP/nonstandard-index-path/log"   # non-default: catches a hardcoded path
+SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL_INDEX="$TMP/nonstandard-index-path/log"   # non-default: catches a hardcoded path
 export SPIRA_CONF=""
-export SPIRA_ID_PREFIX="sp"
 export SPIRA_HOME="$TMP/home"
-export SPIRA_RUN="$TMP/run"
-export SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
+SPIRA_RUN="$TMP/run"
+SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
+# SPIRA_CONCIERGE_INBOX EXPLICITLY: mail_readers still names inbox-append.sh for the
+# concierge mailbox (SPIRA_MAIL_READERS="" does not appear to suppress it), and that script
+# resolves SPIRA_CONCIERGE_INBOX from config — the complete fixture's own value is a fixed,
+# unwritable "/fixture/userhome/..." path now, not derived from whatever SPIRA_RUN we declare.
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_INDEX="$SPIRA_MAIL_INDEX" SPIRA_ID_PREFIX="sp" \
+    SPIRA_RUN="$SPIRA_RUN" SPIRA_OPERATOR_ACTOR="$SPIRA_OPERATOR_ACTOR" SPIRA_MAIL_MUTE=0 \
+    SPIRA_MAIL_READERS="" SPIRA_CONCIERGE_INBOX="$TMP/concierge-inbox.log"
 # sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
 # resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
 # registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before
@@ -55,6 +63,7 @@ MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
 run() { "$MAIL" "$@"; }
 
 bead_status() {
+    # batch-job: fixture bd call against the suite's throwaway store
     "$SPIRA_BD" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -64,6 +73,7 @@ print(d[0].get("status") or "")' 2>/dev/null
 }
 
 bead_close_reason() {
+    # batch-job: fixture bd call against the suite's throwaway store
     "$SPIRA_BD" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -73,6 +83,7 @@ print(d[0].get("close_reason") or "")' 2>/dev/null
 }
 
 bead_notes() {
+    # batch-job: fixture bd call against the suite's throwaway store
     "$SPIRA_BD" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
@@ -108,9 +119,9 @@ newest_path() {   # newest_path <mailbox> -> full path of newest message in new/
 
 send_question() {   # send_question <subject> -> leaves message in operator/new for the caller
     local subject="$1"
-    SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+    SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" \
         run send operator --from "Builder <builder@spira>" --subject "$subject" \
-            --kind question --default "proceed with the default" \
+            --kind question --class policy --default "proceed with the default" \
             <<'BODY' >/dev/null 2>"$TMP/send.err"
 ## Question
 
@@ -119,6 +130,10 @@ Should I proceed?
 ## Default
 
 proceed with the default
+
+## Class basis
+
+needs a policy ruling
 BODY
 }
 
@@ -193,7 +208,7 @@ BEAD_B="$(xbead_of operator)"
 PATH_B="$(newest_path operator)"
 is "decision bead B open before reply" "open" "$(bead_status "$BEAD_B")"
 
-BEADS_ACTOR="$SPIRA_OPERATOR_ACTOR" "$SPIRA_BD" -C "$SPIRA_DB" note "$BEAD_B" "Go ahead." >/dev/null 2>&1
+BEADS_ACTOR="$SPIRA_OPERATOR_ACTOR" "$SPIRA_BD" -C "$SPIRA_DB" note "$BEAD_B" "Go ahead." >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 rm -f "$PATH_B"
 
 out="$(run sweep-dismissed operator 2>&1)"; rc=$?
@@ -226,7 +241,7 @@ echo
 echo "a notice with no bead is never indexed"
 
 before="$(index_lines)"
-SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" \
     run send operator --from "Gate <gate@spira>" --subject "FYI: nothing to see" \
         <<< "just an FYI" >/dev/null 2>&1
 after="$(index_lines)"

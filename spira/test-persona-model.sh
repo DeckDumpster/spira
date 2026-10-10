@@ -107,8 +107,24 @@ ok "spira-config is on PATH"
 echo
 echo "persona_model — the resolver's own fallback ladder:"
 # ==========================================================================
+# ONE SOURCE OF CONFIG (per Ryan 2026-10-05): spira-config now refuses outright unless
+# every [spira] key is declared ("spira.toml has no spira.<key> — every key is required").
+# A hand-written $TOML with only [persona.builder] is no longer a complete document on its
+# own, so it is layered on top of the complete fixture with every [persona.*] table
+# stripped out (PERSONA_FREE_BASE) — stripped so "no entry for this persona" still means
+# no entry, rather than picking up the complete fixture's own persona.groomer.model etc.
+PERSONA_FREE_BASE="$T/complete-no-persona.toml"
+awk '/^\[persona\./{exit} {print}' "$_TL_CONF_BASE" > "$PERSONA_FREE_BASE"
+
 TOML="$T/spira.toml"
-cat > "$TOML" <<'EOF'
+cat > "$TOML" <<EOF
+[spira]
+run = "$T/run"
+repo_map = "$T/repo-map"
+chamber = "$T/home/chamber"
+home_repo = "fixture"
+scope_label = ""
+
 [persona.builder]
 model = "toml-override-model"
 EOF
@@ -118,13 +134,16 @@ EOF
 # answer for the fixture (law-gates-run-only-in-a-clean-environment). SPIRA_TOML steers
 # spira_toml_file(); SPIRA_CHAMBER points at an empty directory so spira_toml_resolve's
 # fayth-auto-convert never fires and overwrites the fixture's own [persona.builder] entry.
+# NOTE: persona_model's own call (spira-config fayth) reads SPIRA_TOML only — the
+# SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_CHAMBER below no longer reach it at all (registered keys,
+# env no longer read), but are harmless: this call only asks for a resolved model string.
 FX_HOME="$T/fixture-home"; mkdir -p "$FX_HOME"
 mkdir -p "$T/empty-chamber"
 resolve() {  # resolve <fayth> [default] [toml]
     env -i PATH="$PATH" HOME="$FX_HOME" SPIRA_HOME="$HARNESS/spira" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$T/run-resolve" \
         SPIRA_REPO_MAP=/nonexistent SPIRA_CHAMBER="$T/empty-chamber" \
-        SPIRA_TOML="${3-$TOML}" \
+        SPIRA_TOML="$PERSONA_FREE_BASE:${3-$TOML}" \
         bash -c '. "$1"/lib.sh >/dev/null 2>&1; persona_model "$2" "${3-}"' \
         _ "$HARNESS/spira" "$1" "${2:-}"
 }
@@ -132,7 +151,11 @@ resolve() {  # resolve <fayth> [default] [toml]
 is "spira.toml entry wins"                 "toml-override-model" "$(resolve builder)"
 is "no entry for this persona -> built-in" "claude-opus-5"        "$(resolve groomer)"
 is "no entry, caller default -> caller's"  "caller-default"       "$(resolve groomer caller-default)"
-is "no spira.toml at all -> built-in"      "claude-opus-5"        "$(resolve builder '' /nonexistent/spira.toml)"
+# CASE DELETED (sp-v62vn follow-up): "no spira.toml at all -> built-in" tested
+# spira_toml_file()'s own graceful bash-level fallback (a missing file in $SPIRA_TOML quietly
+# treated as unset). persona_model's own call path (spira-config fayth, the Rust CLI) never
+# goes through that bash wrapper — given a missing file it refuses hard ("No such file or
+# directory"), so the graceful-fallback premise this case pinned no longer exists.
 
 # capacity_probe's own "defaults to persona.builder.model when unset" case moved with the
 # rest of family K into aeon::capacity/aeon::conf (wave 4.26); covered there by
@@ -148,10 +171,10 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
        GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$T/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$T/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$T/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # A FRESH $SPIRA_HOME so the real chamber's builder.fayth is never touched, and a fixture
 # builder.fayth still declares its OWN (now unused) FAYTH_MODEL — proving spira.toml wins
@@ -191,9 +214,12 @@ printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$T/repo-map"
 # FAYTH_LABELS to carry it, and its default derives from basename($SPIRA_REPO) — here a
 # scratch mktemp dir, not a real checkout — which the fixture fayth above has no reason to
 # know about. An empty key is the documented way an operator disables scope restriction.
-export SPIRA_HOME="$SH" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$T/repo-map" SPIRA_CONF=/nonexistent \
-       SPIRA_CHAMBER="$T/empty-chamber" SPIRA_TOML="$TOML" \
-       SPIRA_SCOPE_LABEL= T
+# SPIRA_RUN/SPIRA_REPO_MAP/SPIRA_CHAMBER/SPIRA_SCOPE_LABEL are registered now — env no
+# longer reaches the aeon binary at all; they are baked into $TOML's own [spira] table
+# above instead (run/repo_map/chamber/scope_label), which SPIRA_TOML (layered on the
+# persona-free complete base) is what aeon actually reads.
+export SPIRA_HOME="$SH" SPIRA_CONF=/nonexistent SPIRA_TOML="$PERSONA_FREE_BASE:$TOML" T
+SPIRA_RUN="$T/run"
 mkdir -p "$SPIRA_RUN"
 
 cat > "$BIN/claude" <<'SHIM'
@@ -207,6 +233,8 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 export SPIRA_AGENT="$BIN/claude"
+# Registered: aeon reads the agent from config, so the shim is declared in this suite's layer.
+spira-config set spira.agent "$BIN/claude" "$TOML" >/dev/null || { echo "cannot declare spira.agent" >&2; exit 1; }
 
 aeon() { command aeon --home "$SH" "$@" 2>/dev/null; }
 
@@ -228,17 +256,24 @@ testdb_up personamodel || { echo "test-persona-model: could not build fixture da
 # the bd fixture is told to the aeon in lifecycle terms, and the shim gets back the T it records into.
 lc_aeon_mirror "$T/lcm"; export PATH="$T/lcm:$PATH"
 aeon_fixture_agent "$BIN/claude" T
+# This suite's SPIRA_TOML is its OWN ($PERSONA_FREE_BASE:$TOML), not testlib's layers, so what
+# testdb_up and aeon_fixture_agent declared through tl_config never reaches aeon: declare them here.
+for _kv in "db=$SPIRA_DB" "bd=$SPIRA_BD" "agent=$SPIRA_AGENT"; do
+    spira-config set "spira.${_kv%%=*}" "${_kv#*=}" "$TOML" >/dev/null || { echo "cannot declare spira.${_kv%%=*}" >&2; exit 1; }
+done
 
+# batch-job: fixture bd call against the suite's throwaway store
 BID="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "persona-model bead launch" --type task \
     -l "test-persona-model-bead,repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID" ] || { printf 'test-persona-model: could not create bead\n' >&2; exit 1; }
 
 rm -f "$T/claude-argv"
 # The claim ranks by the fayth's own predicate (spira-claim fayth-ready reads
-# $SPIRA_CHAMBER/<fayth>.fayth), so this one call points SPIRA_CHAMBER at the fixture chamber;
+# $SPIRA_CHAMBER/<fayth>.fayth) — $TOML's own [spira].chamber ("$T/home/chamber" == "$SH/chamber")
+# already names the fixture chamber, a registered key an env prefix can no longer steer.
 # $TOML is touched first so it stays newer than the fayth and auto-convert leaves it alone.
 touch "$TOML"
-SPIRA_CHAMBER="$SH/chamber" aeon builder
+aeon builder
 want "bead-claim launch path's --model came from persona.builder.model" \
      "toml-override-model" "$(cat "$T/claude-argv" 2>/dev/null || true)"
 nowant "bead-claim launch path did not use the fayth's own FAYTH_MODEL" \

@@ -223,15 +223,28 @@ pub enum Probe {
     Table(String),
     /// `CREATE [UNIQUE] INDEX i ON t`: applied when `information_schema.statistics` lists it.
     Index { table: String, index: String },
+    /// `CREATE VIEW v`: applied when `information_schema.tables` lists it as a VIEW (the `views`
+    /// table needs SHOW VIEW, which the service user does not hold).
+    View(String),
+    /// `CREATE OR REPLACE VIEW v AS SELECT ... AS c FROM ...`: applied when `SHOW COLUMNS FROM v`
+    /// lists `c`, the last alias of its select list (information_schema.columns does not show
+    /// a view's columns to the service user).
+    ViewColumn { view: String, column: String },
     /// No read can tell (an UPDATE with no WHERE, an INSERT, ...): always pending, so a
     /// migration of that shape needs the admin on every activation — write it guarded.
     Unprobeable,
 }
 
-/// The byte offset of the first top-level ` WHERE ` keyword (outside quotes), if any.
+/// The byte offset of the first top-level ` WHERE ` keyword (outside quotes and parentheses), if any.
 fn where_at(sql: &str) -> Option<usize> {
+    keyword_at(sql, "WHERE")
+}
+
+/// The byte offset of the first top-level occurrence of `kw` (outside quotes and parentheses).
+fn keyword_at(sql: &str, kw: &str) -> Option<usize> {
     let b = sql.as_bytes();
     let mut quote: Option<u8> = None;
+    let mut depth = 0usize;
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
@@ -244,15 +257,55 @@ fn where_at(sql: &str) -> Option<usize> {
                 }
             }
             None if c == b'\'' || c == b'"' || c == b'`' => quote = Some(c),
+            None if c == b'(' => depth += 1,
+            None if c == b')' => depth = depth.saturating_sub(1),
             None => {
                 let before_ok = i > 0 && b[i - 1].is_ascii_whitespace();
-                let after_ok = b.get(i + 5).is_none_or(|n| n.is_ascii_whitespace() || *n == b'(');
-                if before_ok && after_ok && sql.get(i..i + 5).is_some_and(|w| w.eq_ignore_ascii_case("WHERE")) {
+                let after_ok = b.get(i + kw.len()).is_none_or(|n| n.is_ascii_whitespace() || *n == b'(');
+                if depth == 0 && before_ok && after_ok && sql.get(i..i + kw.len()).is_some_and(|w| w.eq_ignore_ascii_case(kw)) {
                     return Some(i);
                 }
             }
         }
         i += 1;
+    }
+    None
+}
+
+/// The identifier after the last top-level `AS` of the select list (before the first top-level
+/// `FROM`), skipping quotes and parenthesised subqueries.
+fn last_select_alias(sql: &str) -> Option<String> {
+    let (mut depth, mut quote, mut alias) = (0i32, None::<char>, None);
+    let mut word = String::new();
+    let mut prev = String::new();
+    for c in sql.chars().chain(std::iter::once(' ')) {
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        if c.is_ascii_alphanumeric() || c == '_' {
+            word.push(c);
+            continue;
+        }
+        if !word.is_empty() && depth == 0 {
+            if word.eq_ignore_ascii_case("FROM") {
+                return alias;
+            }
+            if prev.eq_ignore_ascii_case("AS") {
+                alias = Some(word.clone());
+            }
+        }
+        if !word.is_empty() {
+            prev = std::mem::take(&mut word);
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
     }
     None
 }
@@ -275,13 +328,23 @@ pub fn probe_for(st: &Stmt) -> Probe {
         Some(w) => Probe::NoRowMatches(format!("SELECT 1 FROM {table} {} LIMIT 1", sql[w..].trim())),
         None => Probe::Unprobeable,
     };
+    let joined = |table: &str| match (where_at(sql), keyword_at(sql, "SET")) {
+        (Some(w), Some(set)) if set < w => Probe::NoRowMatches(format!("SELECT 1 FROM {table} {} {} LIMIT 1", sql[sql.find(toks[2]).unwrap_or(0)..set].trim(), sql[w..].trim())),
+        _ => Probe::Unprobeable,
+    };
     match (up(0).as_str(), up(1).as_str()) {
         ("UPDATE", _) if up(2) == "SET" => plain_ident(toks[1]).map_or(Probe::Unprobeable, |t| guarded(&t)),
+        ("UPDATE", _) if up(2) == "JOIN" => plain_ident(toks[1]).map_or(Probe::Unprobeable, |t| joined(&t)),
         ("DELETE", "FROM") if toks.len() > 3 && up(3) == "WHERE" => plain_ident(toks[2]).map_or(Probe::Unprobeable, |t| guarded(&t)),
         ("CREATE", "TABLE") => {
             let at = if up(2) == "IF" && up(3) == "NOT" && up(4) == "EXISTS" { 5 } else { 2 };
             toks.get(at).map(|t| t.split('(').next().unwrap_or("")).and_then(plain_ident).map_or(Probe::Unprobeable, Probe::Table)
         }
+        ("CREATE", "OR") if up(2) == "REPLACE" && up(3) == "VIEW" => match (toks.get(4).and_then(|t| plain_ident(t)), last_select_alias(sql)) {
+            (Some(view), Some(column)) => Probe::ViewColumn { view, column },
+            _ => Probe::Unprobeable,
+        },
+        ("CREATE", "VIEW") => toks.get(2).and_then(|t| plain_ident(t)).map_or(Probe::Unprobeable, Probe::View),
         ("CREATE", "INDEX") | ("CREATE", "UNIQUE") => {
             let at = if up(1) == "UNIQUE" { 3 } else { 2 };
             if (up(1) == "UNIQUE" && up(2) != "INDEX") || up(at + 1) != "ON" {
@@ -314,11 +377,21 @@ pub fn is_applied(db: &dyn Sql, st: &Stmt) -> Result<bool, String> {
         }
         Probe::NoRowMatches(q) => Ok(db.rows(&q)?.is_empty()),
         Probe::Table(t) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&t)))?.is_empty()),
+        Probe::View(v) => Ok(!db.rows(&format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_type = 'VIEW' AND table_name = {}", quote(&v)))?.is_empty()),
+        Probe::ViewColumn { view, column } => Ok(any_cell_is(&db.rows(&format!("SHOW COLUMNS FROM {view}"))?, &column)),
         Probe::Index { table, index } => Ok(!db
             .rows(&format!("SELECT index_name FROM information_schema.statistics WHERE table_schema = 'spira_lifecycle' AND table_name = {} AND index_name = {}", quote(&table), quote(&index)))?
             .is_empty()),
         Probe::Unprobeable => Ok(false),
     }
+}
+
+/// How many rows a guarded UPDATE/DELETE is about to change; None for any other step.
+fn rows_touched(db: &dyn Sql, st: &Stmt) -> Option<u64> {
+    let Probe::NoRowMatches(q) = probe_for(st) else { return None };
+    let count = format!("SELECT COUNT(*) AS n FROM {}", q.strip_prefix("SELECT 1 FROM ")?.strip_suffix(" LIMIT 1")?);
+    let rows = db.rows(&count).ok()?;
+    rows.first()?.get("n").and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_u64()))
 }
 
 /// What the probe saw, for the report: the applied wording or the pending one.
@@ -327,6 +400,8 @@ fn what(st: &Stmt, applied: bool) -> String {
         Probe::Column { table, column } => (format!("{table}.{column} present"), format!("{table}.{column} absent")),
         Probe::NoRowMatches(_) => ("no row left for it to change".into(), "rows it still has to change".into()),
         Probe::Table(t) => (format!("table {t} present"), format!("table {t} absent")),
+        Probe::View(v) => (format!("view {v} present"), format!("view {v} absent")),
+        Probe::ViewColumn { view, column } => (format!("view {view}.{column} present"), format!("view {view}.{column} absent")),
         Probe::Index { table, index } => (format!("index {table}.{index} present"), format!("index {table}.{index} absent")),
         Probe::Unprobeable => (String::new(), "a statement no read can confirm".into()),
     };
@@ -358,6 +433,41 @@ pub fn service_may(grants: &str, privilege: &str, table: &str) -> bool {
     })
 }
 
+/// The `GRANT ... ON spira_lifecycle.<table> TO ...` statements of `grants` (single-line, no
+/// placeholders), each with its table and grantee user.
+pub fn table_grants(grants: &str) -> Vec<(String, String, String)> {
+    grants
+        .lines()
+        .filter_map(|line| {
+            let stmt = line.trim().trim_end_matches(';').trim();
+            let rest = stmt.strip_prefix("GRANT ")?;
+            let (_, rest) = rest.split_once(" ON ")?;
+            let (object, grantee) = rest.split_once(" TO ")?;
+            let table = object.trim().strip_prefix("spira_lifecycle.")?;
+            let user = grantee.trim().trim_start_matches('\'').split('\'').next()?;
+            Some((ident(table), user.to_string(), stmt.to_string()))
+        })
+        .collect()
+}
+
+/// Apply every grant in `grants` whose table and grantee exist, as `admin`; GRANT is idempotent.
+/// A table a pending migration has yet to create is skipped until it has run, and a grantee the
+/// server does not have (a world that never created the service users) has nothing to grant to.
+fn apply_grants(admin: &dyn Sql, grants: &str) -> Result<(), String> {
+    for (table, user, stmt) in table_grants(grants) {
+        let probe = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&table));
+        if admin.rows(&probe).map_err(|e| format!("cannot tell whether {table} exists: {e}"))?.is_empty() {
+            continue;
+        }
+        let who = format!("SELECT user FROM mysql.user WHERE user = {}", quote(&user));
+        if admin.rows(&who).map_err(|e| format!("cannot tell whether user {user} exists: {e}"))?.is_empty() {
+            continue;
+        }
+        admin.exec(&stmt).map_err(|e| format!("`{stmt}` failed: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Who applies a pending migration file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Applier {
@@ -379,7 +489,7 @@ pub fn service_can_apply(grants: &str, st: &Stmt) -> bool {
         return false;
     }
     let (privilege, table) = match up(0).as_str() {
-        "UPDATE" if up(2) == "SET" => ("UPDATE", toks.get(1)),
+        "UPDATE" if up(2) == "SET" || (up(2) == "JOIN" && keyword_at(sql, "SET").is_some_and(|set| where_at(sql).is_some_and(|w| set < w))) => ("UPDATE", toks.get(1)),
         "DELETE" if up(1) == "FROM" && up(3) == "WHERE" => ("DELETE", toks.get(2)),
         _ => return false,
     };
@@ -413,14 +523,23 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
         (2, format!("admin-migrate: {name} is pending ({}) and applying it needs a database admin — set {ADMIN_VARS} (no admin credential is configured{why})", what(st, false)))
     };
     let refused = |name: &str, e: &str| (2, format!("admin-migrate: {name}: pending, and applying it as the database admin failed: {e} — check {ADMIN_VARS}"));
-    let applied_as = |st: &Stmt, who: &str| match st {
+    let applied_as = |st: &Stmt, who: &str, touched: Option<u64>| match st {
         Stmt::AddColumn { table, column, .. } => format!("added {table}.{column}"),
-        _ => format!("applied as {who}"),
+        _ => match touched {
+            Some(n) => format!("applied as {who}, {n} row(s) touched"),
+            None => format!("applied as {who}"),
+        },
     };
     let mut wrote = false;
     // Once the admin has written, later steps are probed on the admin's session: a probe
     // may read what an earlier step added, which the service user's grants need not cover.
     let mut admin_wrote = false;
+    let grant_failed = |when: &str, e: &str| (2, format!("admin-migrate: grants.sql {when}: {e} — the release ships grants the server lacks; check {ADMIN_VARS}"));
+    if let Some(a) = admin {
+        if let Err(e) = apply_grants(a, grants) {
+            return grant_failed("before the migrations", &e);
+        }
+    }
     for (name, st) in steps {
         let prober: &dyn Sql = match admin {
             Some(a) if admin_wrote => a,
@@ -439,6 +558,7 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
             Stmt::AddColumn { sql, .. } | Stmt::Plain(sql) => sql,
             Stmt::UnguardedAlter(_) => unreachable!("plan refuses these"),
         };
+        let touched = rows_touched(prober, st);
         let mut service_refused = None;
         if applier_for(grants, steps, name) == Applier::Service {
             match service.exec(sql) {
@@ -450,7 +570,7 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
                         Err(e) => return (2, format!("admin-migrate: {name}: applied as the lifecycle service user, but cannot tell whether it took: {e}")),
                     }
                     wrote = true;
-                    report.push(format!("{name}: {}", applied_as(st, "the lifecycle service user")));
+                    report.push(format!("{name}: {}", applied_as(st, "the lifecycle service user", touched)));
                     continue;
                 }
                 Err(e) if is_privilege_error(&e) => service_refused = Some(e),
@@ -474,9 +594,12 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
             Ok(()) => {
                 wrote = true;
                 admin_wrote = true;
-                report.push(format!("{name}: {}", applied_as(st, "the database admin")));
+                report.push(format!("{name}: {}", applied_as(st, "the database admin", touched)));
             }
             Err(e) => return refused(name, &e),
+        }
+        if let Err(e) = apply_grants(admin, grants) {
+            return grant_failed(&format!("after {name}"), &e);
         }
     }
     if !wrote {
@@ -494,6 +617,27 @@ pub fn admin_from_env(get: impl Fn(&str) -> Option<String>) -> Result<Option<(St
     };
     let password = crate::db::password_from(get("SPIRA_LC_ADMIN_PASSWORD_FILE"), get("SPIRA_LC_ADMIN_PASSWORD"), |p| std::fs::read_to_string(p))?;
     Ok(Some((user, password)))
+}
+
+/// The admin credential spira-install provisioned: user `root`, the password in
+/// `spira_config::resolve::lc_admin_password_file`. `None` when install has not written one.
+pub fn provisioned_admin(env: &std::collections::BTreeMap<String, String>) -> Result<Option<(String, String)>, String> {
+    let Some(path) = spira_config::resolve::lc_admin_password_file(env) else {
+        return Ok(None);
+    };
+    let password = std::fs::read_to_string(&path).map_err(|e| format!("reading {path}: {e}"))?;
+    Ok(Some(("root".to_string(), password.trim().to_string())))
+}
+
+/// The database admin as a connection: the environment's `SPIRA_LC_ADMIN_*`, else what
+/// spira-install provisioned. `None` when neither names one.
+pub fn admin_conn(conn: &Conn) -> Result<Option<Conn>, String> {
+    let from_env = admin_from_env(|k| std::env::var(k).ok())?;
+    let admin = match from_env {
+        Some(a) => Some(a),
+        None => provisioned_admin(&std::env::vars().collect())?,
+    };
+    Ok(admin.map(|(user, password)| conn.as_user(user, password)))
 }
 
 pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
@@ -518,16 +662,33 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(s) => s,
         Err(e) => return (2, format!("admin-migrate: {e}")),
     };
-    let admin = match admin_from_env(|k| std::env::var(k).ok()) {
-        Ok(a) => a.map(|(user, password)| conn.as_user(user, password)),
+    let admin = match admin_conn(conn) {
+        Ok(a) => a,
         Err(e) => return (2, format!("admin-migrate: the admin password file (SPIRA_LC_ADMIN_PASSWORD_FILE): {e}")),
     };
-    migrate(&steps, conn, admin.as_ref().map(|a| a as &dyn Sql))
+    // spira-install runs this with the admin as the connection's own user; the service
+    // password file is not what that user authenticates with.
+    let probe = match &admin {
+        Some(a) if a.user == conn.user => a,
+        _ => conn,
+    };
+    migrate(&steps, probe, admin.as_ref().map(|a| a as &dyn Sql))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_provisioned_admin_is_root_with_the_password_file_and_absent_without_one() {
+        let d = testkit::TempDir::new("lc-admin-file");
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("XDG_CONFIG_HOME".to_string(), d.path().to_string_lossy().to_string());
+        assert_eq!(provisioned_admin(&env).unwrap(), None);
+        std::fs::create_dir_all(d.path().join("spira")).unwrap();
+        std::fs::write(d.path().join("spira/spira-lc-admin.credential"), "s3cret\n").unwrap();
+        assert_eq!(provisioned_admin(&env).unwrap(), Some(("root".into(), "s3cret".into())));
+    }
 
     #[test]
     fn files_apply_in_filename_order_whatever_order_they_are_named_in() {
@@ -557,7 +718,12 @@ mod tests {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
         let files = ordered_files(&[dir.to_string()]).unwrap();
         let texts: Vec<(String, String)> = files.iter().map(|f| (f.file_name().unwrap().to_string_lossy().to_string(), std::fs::read_to_string(f).unwrap())).collect();
-        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql"]);
+        let mut on_disk: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".sql")).collect();
+        on_disk.sort();
+        let planned: Vec<String> = texts.iter().map(|t| t.0.clone()).collect();
+        assert_eq!(planned, on_disk, "the plan is the directory, in name order");
+        let numbers: Vec<u32> = planned.iter().map(|n| n.split('-').next().unwrap().parse().expect("a migration name starts with its number")).collect();
+        assert_eq!(numbers, (1..=planned.len() as u32).collect::<Vec<_>>(), "migration numbers are unique and contiguous from 0001");
         let steps = plan(&texts).unwrap();
         let adds: Vec<(String, String)> = steps
             .iter()
@@ -566,9 +732,16 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(adds, [("bead".to_string(), "stack".to_string()), ("bead".into(), "stack_depth".into()), ("bead".into(), "since".into())]);
-        let plain = steps.iter().filter(|(_, s)| matches!(s, Stmt::Plain(_))).count();
-        assert_eq!(plain, 1, "0003's guarded UPDATE runs as written");
+        for want in [("bead", "stack"), ("bead", "stack_depth"), ("bead", "since"), ("bead", "persona"), ("bead", "title"), ("bead", "priority"), ("bead", "express"), ("batch", "pass"), ("batch", "phase"), ("bead", "aeon_phase"), ("bead", "disposition"), ("bead", "disposition_note"), ("bead", "ejected_red_tip"), ("batch", "progress")] {
+            assert!(adds.contains(&(want.0.to_string(), want.1.to_string())), "{want:?} is added");
+        }
+        let views: Vec<Probe> = steps.iter().map(|(_, s)| probe_for(s)).filter(|p| matches!(p, Probe::View(_))).collect();
+        for v in ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell_p95", "ops_dwell"] {
+            assert!(views.contains(&Probe::View(v.into())), "view {v} is probed, never always-pending");
+        }
+        assert!(steps.iter().any(|(_, s)| probe_for(s) == Probe::ViewColumn { view: "ops_live".into(), column: "blocker".into() }), "0011 replaces ops_live and is probed by its last alias");
+        assert!(steps.iter().any(|(_, s)| probe_for(s) == Probe::ViewColumn { view: "ops_edges".into(), column: "last_at".into() }), "0013 replaces ops_edges and is probed by its last alias");
+        assert!(steps.iter().all(|(_, s)| probe_for(s) != Probe::Unprobeable), "every shipped step can be probed read-only");
     }
 
     #[test]
@@ -609,6 +782,10 @@ mod tests {
     #[derive(Default)]
     struct State {
         columns: std::collections::BTreeSet<(String, String)>,
+        indexes: std::collections::BTreeSet<String>,
+        views: std::collections::BTreeSet<String>,
+        tables: std::collections::BTreeSet<String>,
+        users: std::collections::BTreeSet<String>,
         /// Terminal rows still carrying a holder (what 0003's guarded UPDATE corrects).
         stale_terminal_rows: bool,
         /// Every statement that changed something, as `<user>: <sql>`.
@@ -632,12 +809,34 @@ mod tests {
                 return Err(format!("Access denied for user '{}'", self.user));
             }
             let st = self.state.borrow();
+            if let Some(view) = sql.strip_prefix("SHOW COLUMNS FROM ") {
+                return Ok(st.columns.iter().filter(|(t, _)| t == view).map(|(_, c)| serde_json::json!({ "Field": c })).collect());
+            }
             if sql.contains("information_schema.columns") {
                 let table = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
                 return Ok(st.columns.iter().filter(|(t, _)| t == table).map(|(_, c)| serde_json::json!({ "COLUMN_NAME": c })).collect());
             }
-            if sql.starts_with("SELECT 1 FROM bead WHERE") {
+            if sql.contains("information_schema.statistics") {
+                let index = sql.split("index_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
+                return Ok(if st.indexes.contains(index) { vec![serde_json::json!({ "INDEX_NAME": index })] } else { vec![] });
+            }
+            if sql.contains("information_schema.tables") && !sql.contains("table_type") {
+                let table = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
+                return Ok(if st.tables.contains(table) { vec![serde_json::json!({ "TABLE_NAME": table })] } else { vec![] });
+            }
+            if sql.contains("table_type = 'VIEW'") {
+                let view = sql.split("table_name = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
+                return Ok(if st.views.contains(view) { vec![serde_json::json!({ "TABLE_NAME": view })] } else { vec![] });
+            }
+            if sql.contains("mysql.user") {
+                let user = sql.split("user = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
+                return Ok(if st.users.contains(user) { vec![serde_json::json!({ "User": user })] } else { vec![] });
+            }
+            if sql.starts_with("SELECT 1 FROM bead WHERE") || sql.starts_with("SELECT 1 FROM bead JOIN") {
                 return Ok(if st.stale_terminal_rows { vec![serde_json::json!({ "1": "1" })] } else { vec![] });
+            }
+            if sql.starts_with("SELECT 1 FROM event WHERE") {
+                return Ok(vec![]);
             }
             Err(format!("fake: unexpected read {sql}"))
         }
@@ -658,6 +857,21 @@ mod tests {
                         return Err("duplicate column".into());
                     }
                 }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE INDEX") => {
+                    st.indexes.insert(p.split_whitespace().nth(2).unwrap_or("").to_string());
+                }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE TABLE") => {
+                    st.tables.insert(p.split_whitespace().nth(5).unwrap_or("").to_string());
+                }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE OR REPLACE VIEW") => {
+                    if let Probe::ViewColumn { view, column } = probe_for(&Stmt::Plain(p.clone())) {
+                        st.columns.insert((view, column));
+                    }
+                }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("CREATE VIEW") => {
+                    st.views.insert(p.split_whitespace().nth(2).unwrap_or("").to_string());
+                }
+                Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("GRANT") => {}
                 _ => st.stale_terminal_rows = false,
             }
             st.writes.push(format!("{}: {sql}", self.user));
@@ -674,9 +888,30 @@ mod tests {
     /// A store with every shipped migration's effect already present (production today).
     fn migrated() -> Rc<RefCell<State>> {
         let mut st = State::default();
-        for c in ["id", "state", "holder", "stack", "stack_depth", "since"] {
+        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "sifted_tip"] {
             st.columns.insert(("bead".into(), c.into()));
         }
+        for c in ["batch_id", "state", "pass", "phase", "progress"] {
+            st.columns.insert(("batch".into(), c.into()));
+        }
+        for c in ["bead_id", "state", "ci"] {
+            st.columns.insert(("delivery".into(), c.into()));
+        }
+        for i in ["event_since_idx", "bead_state_since_idx", "batch_state_idx", "event_history_idx", "event_at_idx", "idx_batch_opened"] {
+            st.indexes.insert(i.into());
+        }
+        for v in ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell_p95", "ops_dwell"] {
+            st.views.insert(v.into());
+        }
+        st.tables.insert("bead_dep".into());
+        st.tables.insert("ask".into());
+        st.tables.insert("mending".into());
+        st.users.insert("spira_lc".into());
+        st.users.insert("spira_lc_ro".into());
+        st.indexes.insert("bead_dep_target_idx".into());
+        st.indexes.insert("ask_state_idx".into());
+        st.columns.insert(("ops_live".into(), "blocker".into()));
+        st.columns.insert(("ops_edges".into(), "last_at".into()));
         Rc::new(RefCell::new(st))
     }
 
@@ -687,6 +922,37 @@ mod tests {
 
     fn admin(state: &Rc<RefCell<State>>, refused: bool) -> FakeConn {
         FakeConn { user: "root", state: state.clone(), refused, can_ddl: true, can_dml: true, attempts: RefCell::default() }
+    }
+
+    #[test]
+    fn the_admin_applies_a_missing_grant_on_an_existing_table_and_skips_one_not_yet_created() {
+        let db = migrated();
+        let adm = admin(&db, false);
+        let grants = "GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc'@'%';\nGRANT SELECT ON spira_lifecycle.later TO 'spira_lc'@'%';\nCREATE USER x;\n";
+        apply_grants(&adm, grants).unwrap();
+        assert_eq!(adm.attempts.borrow().as_slice(), ["GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc'@'%'"]);
+        let svc = admin(&db, false);
+        let bad = FakeConn { can_ddl: false, ..svc };
+        let e = apply_grants(&bad, grants).unwrap_err();
+        assert!(e.contains("GRANT SELECT ON spira_lifecycle.bead_dep"), "{e}");
+    }
+
+    #[test]
+    fn a_grant_to_a_user_the_server_lacks_is_skipped() {
+        let db = migrated();
+        db.borrow_mut().users.clear();
+        let adm = admin(&db, false);
+        apply_grants(&adm, "GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc'@'%';\n").unwrap();
+        assert!(adm.attempts.borrow().is_empty());
+    }
+
+    #[test]
+    fn migrate_grants_before_probing_so_a_table_added_by_an_earlier_release_is_readable() {
+        let db = migrated();
+        let adm = admin(&db, false);
+        let (rc, out) = migrate(&real_steps(), &service(&db), Some(&adm));
+        assert_eq!(rc, 0, "{out}");
+        assert!(adm.attempts.borrow().iter().any(|s| s.contains("ON spira_lifecycle.bead_dep TO 'spira_lc'@'%'")), "{:?}", adm.attempts.borrow());
     }
 
     #[test]
@@ -766,7 +1032,7 @@ mod tests {
         let (rc, out) = migrate(&real_steps(), &service(&db), Some(&admin));
         assert_eq!(rc, 0, "{out}");
         assert!(out.contains("0002-since.sql: added bead.since"), "{out}");
-        let w = db.borrow().writes.clone();
+        let w: Vec<String> = db.borrow().writes.iter().filter(|w| !w.contains(": GRANT ")).cloned().collect();
         assert_eq!(w.len(), 2, "0002 and 0003 only, 0001 untouched: {w:?}");
         assert!(w[0].starts_with("root: ALTER"), "the DDL as the admin: {w:?}");
         assert!(w[1].starts_with("spira_lc: UPDATE"), "the guarded DML as the service user: {w:?}");
@@ -783,7 +1049,7 @@ mod tests {
         let (rc, out) = migrate(&real_steps(), &service(&db), Some(&admin));
         assert_eq!(rc, 2, "{out}");
         assert!(out.contains("SPIRA_LC_ADMIN_USER") && out.contains("SPIRA_LC_ADMIN_PASSWORD"), "{out}");
-        assert!(out.contains("0002-since.sql"), "{out}");
+        assert!(out.contains("grants.sql"), "{out}");
         assert!(db.borrow().writes.is_empty());
     }
 
@@ -808,8 +1074,17 @@ mod tests {
         }
         assert_eq!(probe_for(&Stmt::Plain("UPDATE t SET a = 1".into())), Probe::Unprobeable, "no WHERE: no read can tell");
         assert_eq!(probe_for(&Stmt::Plain("UPDATE t SET a = 'x where y' WHERE b = 1".into())), Probe::NoRowMatches("SELECT 1 FROM t WHERE b = 1 LIMIT 1".into()));
+        let j = Stmt::Plain("UPDATE bead JOIN (SELECT k, MAX(at) AS m FROM event WHERE x = 1 GROUP BY k) s ON s.k = bead.bead_id SET bead.since = s.m WHERE NOT (bead.since <=> s.m)".into());
+        assert_eq!(probe_for(&j), Probe::NoRowMatches("SELECT 1 FROM bead JOIN (SELECT k, MAX(at) AS m FROM event WHERE x = 1 GROUP BY k) s ON s.k = bead.bead_id WHERE NOT (bead.since <=> s.m) LIMIT 1".into()));
+        assert!(service_can_apply(GRANTS_SQL, &j), "a joined UPDATE on a table the service user writes is service DML");
+        assert!(!service_can_apply(GRANTS_SQL, &Stmt::Plain("UPDATE bead JOIN t ON 1 SET since = 1".into())), "no WHERE: refused");
         assert_eq!(probe_for(&Stmt::Plain("DELETE FROM t WHERE b = 1".into())), Probe::NoRowMatches("SELECT 1 FROM t WHERE b = 1 LIMIT 1".into()));
         assert_eq!(probe_for(&Stmt::Plain("CREATE TABLE IF NOT EXISTS t2 (a INT)".into())), Probe::Table("t2".into()));
+        assert_eq!(probe_for(&Stmt::Plain("CREATE VIEW v1 AS SELECT 1".into())), Probe::View("v1".into()));
+        assert_eq!(
+            probe_for(&Stmt::Plain("CREATE OR REPLACE VIEW v1 AS SELECT a AS x, (SELECT 1 FROM t) AS y FROM u JOIN (SELECT 2 AS z) q".into())),
+            Probe::ViewColumn { view: "v1".into(), column: "y".into() }
+        );
         assert_eq!(probe_for(&Stmt::Plain("CREATE UNIQUE INDEX i ON bead (state)".into())), Probe::Index { table: "bead".into(), index: "i".into() });
         assert_eq!(probe_for(&Stmt::Plain("INSERT INTO t VALUES (1)".into())), Probe::Unprobeable);
     }
@@ -846,6 +1121,7 @@ mod tests {
         assert_eq!(applier_for(GRANTS_SQL, &real, "0003-terminal-holder.sql"), Applier::Service);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0001-stack.sql"), Applier::Admin);
         assert_eq!(applier_for(GRANTS_SQL, &real, "0002-since.sql"), Applier::Admin);
+        assert_eq!(applier_for(GRANTS_SQL, &real, "0020-since-every-state.sql"), Applier::Service);
     }
 
     #[test]

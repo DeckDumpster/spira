@@ -19,7 +19,7 @@
 # SEEN TO FAIL against the lib.sh that preceded sp-m5iq3: case 1 returns 0 of 40 rows.
 
 # tier: T1
-# covers: spira/lib.sh
+# covers: spira/lib.sh UC-landing-merge-queue-31
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 

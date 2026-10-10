@@ -64,18 +64,23 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 # NON-DEFAULTS, all three. `notes` is not `docs/spikes` and `research` is not `spike`, so a
 # literal written into confine.sh or into lib.sh fails here rather than passing by luck.
-export SPIRA_SPIKE_LABEL=research
-export SPIRA_SPIKE_DIR=notes/spikes
-export SPIRA_SPIKE_PATHS="notes/spikes sources"
-export SPIRA_ASK_LABEL=needs-a-human
+SPIRA_SPIKE_LABEL=research
+SPIRA_SPIKE_DIR=notes/spikes
+SPIRA_SPIKE_PATHS="notes/spikes sources"
+SPIRA_ASK_LABEL=needs-a-human
+tl_config SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" \
+    SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS" SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
 
 # ======================================================================================
 echo
 echo "the partition is the spike's own:"
 # ======================================================================================
-export SPIRA_RUN="$TMP/run"
+SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH"
 mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/chamber"
+# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture chamber explicitly.
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 # `summon_fayth` is a `sentinel --summon` shim now (wave 4.27, family G, sp-gzmd2): a real
 # subprocess with SPIRA_HOME=$SPIRA_HOME, which needs a working lib.sh at its own context
 # probe — the same one-line symlink trick test-summon-fayth.sh's own `aeon --escape`
@@ -91,6 +96,9 @@ ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/aeon"
 chmod +x "$SPIRA_HOME/aeon"
 export PATH="$SPIRA_HOME:$PATH"   # summon_fayth launches the aeon on PATH; a stub here
+# Readiness is the lifecycle's (sp-860zj): the bd fixture is told to fayth_ready in lifecycle
+# terms — open is READY, the spira-poison label and the ask label are holds.
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 SUMMONED="$TMP/summoned.txt"
 export SPIRA_SUMMON="$TMP/summon.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\n' "$SUMMONED" > "$SPIRA_SUMMON"
@@ -232,8 +240,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$LREPO"
 git -C "$LREPO" commit -q --allow-empty -m base
 git -C "$LREPO" remote add origin "$REMOTE"
-git -C "$LREPO" push -q origin main
-git -C "$LREPO" fetch -q origin
+timeout 5 git -C "$LREPO" push -q origin main
+timeout 5 git -C "$LREPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/confine.sh" "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
@@ -245,16 +253,18 @@ lc_path_stub "$SH" "$TMP/lcfix"
 
 land() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$LREPO" \
-    SPIRA_HOME_REPO=home SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" \
-    SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO=home \
+        SPIRA_REPO_MAP="$SH/repo-map" SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" \
+        SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS"
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$LREPO" \
         landing-pass land 2>&1
 }
+# batch-job: fixture bd call against the suite's throwaway store
 status_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
+# batch-job: fixture bd call against the suite's throwaway store
 assignee_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -273,7 +283,7 @@ beads "$(bead sp-land-doc "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL,repo:home" ta
 land_branch sp-land-doc notes/spikes/answer.md
 out="$(land)"
 want "a confined spike branch lands" "landed spira/sp-land-doc" "$out"
-git -C "$LREPO" fetch -q origin
+timeout 5 git -C "$LREPO" fetch -q origin
 git -C "$LREPO" merge-base --is-ancestor spira/sp-land-doc origin/main \
     && ok "and its document really reached origin/main" \
     || bad "a confined spike lands" "not an ancestor of origin/main"
@@ -286,15 +296,15 @@ land_branch sp-land-poc notes/spikes/answer2.md src/experiment.rs
 # back in the graph wearing a name no aeon will ever claim past — visible, at P0, and dead.
 # Every reopen site goes through bead_reopen for that reason; a refusal is a reopen like any
 # other, and a new refusal path is exactly where the clearing gets left out.
-bd -C "$SPIRA_DB" update sp-land-poc --assignee aeon-dead >/dev/null 2>&1
+bd -C "$SPIRA_DB" update sp-land-poc --assignee aeon-dead >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 out="$(land)"
 want   "an unconfined spike branch is refused" "reopened sp-land-poc" "$out"
 nowant "and is not landed"                     "landed spira/sp-land-poc" "$out"
 is     "and the bead is genuinely reopened"    open "$(status_of sp-land-poc)"
 is     "and unassigned, so the next aeon can claim it" "" "$(assignee_of sp-land-poc)"
 want   "and the note carries the offending path" "src/experiment.rs" \
-       "$(bd -C "$SPIRA_DB" show sp-land-poc 2>/dev/null)"
-git -C "$LREPO" fetch -q origin
+       "$(bd -C "$SPIRA_DB" show sp-land-poc 2>/dev/null)" # batch-job: fixture bd call against the suite's throwaway store
+timeout 5 git -C "$LREPO" fetch -q origin
 git -C "$LREPO" merge-base --is-ancestor spira/sp-land-poc origin/main \
     && bad "the experiment stayed off main" "it was merged" \
     || ok "the experiment stayed off main"

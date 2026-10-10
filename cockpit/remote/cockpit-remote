@@ -134,17 +134,29 @@ cockpit_idx_for() {
 # list` prints), so `cockpit done` flips to brain while the session lives on, and the
 # next review — a fresh id — re-activates on its own with nothing to reset.
 
-# UUIDs of currently-live hunk sessions, one per line.
+# hunk is a review convenience, not the system: every call is capped to a share of one core
+# when systemd-run can scope it, and runs unfenced only where it cannot.
+HUNK_FENCE=()
+if [ -z "${COCKPIT_HUNK_NOFENCE:-}" ] && command -v systemd-run >/dev/null 2>&1; then
+  _fence=(systemd-run --user --scope --quiet -p "CPUQuota=${COCKPIT_HUNK_CPUQUOTA:-50%}")
+  "${_fence[@]}" true >/dev/null 2>&1 && HUNK_FENCE=("${_fence[@]}")
+  unset _fence
+fi
+
+# UUIDs of currently-live hunk sessions, one per line. Returns non-zero when hunk could not
+# answer (failure or timeout): an empty list on success means "no sessions", not "unknown".
 live_ids() {
-  "$HUNK" session list 2>/dev/null \
-    | grep -oiE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  local out
+  out=$(timeout "${COCKPIT_HUNK_TIMEOUT:-5}" "${HUNK_FENCE[@]}" "$HUNK" session list 2>/dev/null) || return 1
+  printf '%s\n' "$out" | grep -oiE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' || true
 }
 
+# 0 active, 1 idle, 2 unknown (hunk could not answer; nothing is changed).
 review_active() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
-  local live; live=$(live_ids)
+  local live; live=$(live_ids) || return 2
   if [ -z "$live" ]; then
-    [ -s "$DISMISS" ] && : >"$DISMISS"          # nothing live -> forget dismissals
+    [ -s "$DISMISS" ] && : >"$DISMISS"          # positively no sessions -> forget dismissals
     return 1
   fi
   # Self-clean: keep only dismissals whose session is still live.
@@ -161,7 +173,9 @@ review_active() {
   return 1
 }
 
-want_session() { review_active && echo hunk || echo brain; }
+want_session() {
+  review_active; case $? in 0) echo hunk;; 1) echo brain;; *) echo keep;; esac
+}
 
 # ---- build ------------------------------------------------------------------
 cockpit_healthy() {
@@ -205,6 +219,7 @@ build_cockpit() {
 # ---- view sync --------------------------------------------------------------
 select_want() {  # optional explicit target overrides state
   local want="${1:-$(want_session)}" idx
+  [ "$want" = keep ] && return 0
   idx=$(cockpit_idx_for "$(wid "$want:0")")
   [ -n "$idx" ] && tmux select-window -t "=$COCKPIT:$idx"
 }
@@ -241,7 +256,8 @@ watch_loop() {
       fi
     fi
     cur=$(want_session)
-    if [ "$cur" != "$last" ]; then
+    if [ "$cur" = keep ]; then :
+    elif [ "$cur" != "$last" ]; then
       # First pass only seeds `last` (attach already synced the view); flip on real
       # transitions thereafter.
       [ -n "$last" ] && select_want "$cur"
@@ -370,7 +386,7 @@ cmd_attach() {
 }
 
 cmd_status() {
-  printf 'review:   %s\n' "$(review_active && echo ACTIVE || echo idle)"
+  printf 'review:   %s\n' "$(review_active; case $? in 0) echo ACTIVE;; 1) echo idle;; *) echo unknown;; esac)"
   printf 'want:     %s\n' "$(want_session)"
   printf 'sessions: %s live, %s dismissed\n' \
     "$(live_ids | grep -c .)" "$([ -s "$DISMISS" ] && grep -c . "$DISMISS" || echo 0)"

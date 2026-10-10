@@ -4,6 +4,7 @@
 
 use crate::cmds::*;
 use crate::ports::{Gh, GhOut, Proc};
+use crate::time::epoch;
 use std::cell::RefCell;
 use std::path::Path;
 
@@ -113,6 +114,35 @@ fn check_status_provision_job_failure_overrides_red() {
 }
 
 #[test]
+fn check_status_red_with_only_a_non_suite_step_names_the_step_and_its_log_tail() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["run", "list", "--branch", "b", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        0,
+        r#"[{"databaseId":7,"status":"completed","conclusion":"failure"}]"#,
+    );
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/7/jobs"],
+        0,
+        r#"{"jobs":[{"id":99,"name":"build","conclusion":"success"},{"id":55,"name":"stage","conclusion":"failure","steps":[{"name":"Checkout","conclusion":"success"},{"name":"Stage the build as a release","conclusion":"failure"}]}]}"#,
+    );
+    let mut log = String::new();
+    for i in 0..30 {
+        log.push_str(&format!("2026-10-10T01:02:03.456Z line {i}\n"));
+    }
+    log.push_str("2026-10-10T01:02:04.000Z release: cannot create /x: Permission denied (os error 13)\n2026-10-10T01:02:04.100Z ##[error]Process completed with exit code 1.\n2026-10-10T01:02:05.000Z Post job cleanup.\n");
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/55/logs"], 0, &log);
+    let out = check_status(&gh, &NoProc, repo(), "b");
+    assert_eq!(out.lines[0], "red");
+    assert!(out.lines.contains(&"run-id: 7".to_string()), "{:?}", out.lines);
+    assert!(out.lines.contains(&"failed-step: stage / Stage the build as a release".to_string()), "{:?}", out.lines);
+    let tail: Vec<&String> = out.lines.iter().filter(|l| l.starts_with("step-log: ")).collect();
+    assert_eq!(tail.len(), 20);
+    assert_eq!(tail[18], "step-log: release: cannot create /x: Permission denied (os error 13)");
+    assert_eq!(tail[19], "step-log: ##[error]Process completed with exit code 1.");
+}
+
+#[test]
 fn check_status_suites_job_cancelled_is_harness_fault_not_a_verdict() {
     let gh = FakeGh::default();
     gh.on(
@@ -166,6 +196,27 @@ fn pr_state_maps_every_github_state_and_falls_closed_to_unknown() {
     assert_eq!(pr_state(&gh, repo(), "spira/sp-a").lines, vec!["merged"]);
     let gh2 = FakeGh::default();
     assert_eq!(pr_state(&gh2, repo(), "spira/sp-b").lines, vec!["unknown"]);
+}
+
+#[test]
+fn pr_red_names_the_failing_job_and_its_fail_lines_and_is_silent_otherwise() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["pr", "view", "spira/sp-a", "--json", "headRefOid,statusCheckRollup"],
+        0,
+        r#"{"headRefOid":"abc123","statusCheckRollup":[
+            {"name":"lint","conclusion":"SUCCESS","detailsUrl":"https://x/actions/runs/1/job/10"},
+            {"name":"suites","conclusion":"FAILURE","detailsUrl":"https://x/actions/runs/1/job/77"}]}"#,
+    );
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/77/logs"], 0, "2026-10-10T00:00:01.0Z ok 1 a\n2026-10-10T00:00:02.0Z not ok 2 b\n");
+    assert_eq!(
+        pr_red(&gh, repo(), "spira/sp-a").lines,
+        vec!["head abc123", "job suites", "fail-line: 2026-10-10T00:00:02.0Z not ok 2 b"]
+    );
+    let green = FakeGh::default();
+    green.on(&["pr", "view", "spira/sp-b", "--json", "headRefOid,statusCheckRollup"], 0, r#"{"headRefOid":"d","statusCheckRollup":[{"name":"x","conclusion":"SUCCESS"}]}"#);
+    assert!(pr_red(&green, repo(), "spira/sp-b").lines.is_empty());
+    assert!(pr_red(&FakeGh::default(), repo(), "spira/sp-c").lines.is_empty());
 }
 
 // ── runs-active: fail-closed '?', never 0 ───────────────────────────────────────────────
@@ -268,6 +319,30 @@ fn run_metadata_prints_started_at_then_both_last_activity_lines() {
     let la: Vec<&String> = out.lines.iter().filter(|l| l.starts_with("last-activity:")).collect();
     assert_eq!(la.len(), 2, "the run-level and jobs-level last-activity both print; a reader takes the last one: {out:?}", out = out.lines);
     assert!(out.lines[0].starts_with("started-at:"));
+}
+
+#[test]
+fn run_metadata_reads_declared_timeout_and_live_job_log_activity() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/9"],
+        0,
+        r#"{"run_started_at":"2026-09-29T00:00:00Z","updated_at":"2026-09-29T00:05:00Z","path":".github/workflows/gate.yml@refs/heads/b","head_sha":"abc"}"#,
+    );
+    gh.on(
+        &["api", "-H", "Accept: application/vnd.github.raw", "repos/{owner}/{repo}/contents/.github/workflows/gate.yml?ref=abc"],
+        0,
+        "jobs:\n  a:\n    timeout-minutes: 30\n  b:\n    timeout-minutes: 90 # long\n",
+    );
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/9/jobs"],
+        0,
+        r#"{"jobs":[{"id":5,"status":"in_progress","started_at":"2026-09-29T00:01:00Z","steps":[]}]}"#,
+    );
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/5/logs"], 0, "2026-09-29T00:02:00.1234567Z a\n2026-09-29T00:40:00.7654321Z b\n\n");
+    let out = run_metadata(&gh, repo(), "9").lines;
+    assert!(out.contains(&"timeout-sec: 5400".to_string()), "{out:?}");
+    assert_eq!(out.last().unwrap(), &format!("last-activity: {}", epoch("2026-09-29T00:40:00Z")), "{out:?}");
 }
 
 // ── batch-ci-status ───────────────────────────────────────────────────────────────────────

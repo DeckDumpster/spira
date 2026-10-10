@@ -66,14 +66,14 @@ behavior:
   dolt_transaction_commit: false
   event_scheduler: "OFF"
 YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 & # batch-job: long-lived fixture listener, killed by the suite teardown
 LC_SERVER_PID=$!
 _lc_stop() { [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; }
 trap '_lc_stop; rm -rf "$TMP"' EXIT INT TERM
 
 lc_up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
         lc_up=1
         break
     fi
@@ -84,6 +84,12 @@ done
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 LC_BIN="$(command -v spira-lc 2>/dev/null)"; [ -n "$LC_BIN" ] || { echo "spira-lc is not on PATH (the tree's build provides it)" >&2; exit 1; }
 
+# SPIRA_LC_PASSWORD_FILE/SPIRA_LC_SOCKET are registered keys; undeclared, they resolve to
+# the complete fixture's own dummy paths ("reading .../spira-lc.credential: No such file"),
+# not "unset" — this suite connects with direct TCP params below, so both must be declared
+# empty to mean exactly that, not left to the fixture's own (unreachable) defaults.
+tl_config SPIRA_LC_PASSWORD_FILE="" SPIRA_LC_SOCKET=""
+
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
 SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
 SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
@@ -91,13 +97,13 @@ SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
 lc_seed_bead() {   # lc_seed_bead <id> <state> <updated_at-epoch>
-    "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
+    timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
         --use-db spira_lifecycle sql -q \
         "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,$3)
          ON DUPLICATE KEY UPDATE state='$2', updated_at=$3" >/dev/null 2>&1
 }
 lc_drop_bead() {   # lc_drop_bead <id> -> no row at all (the "not BATCHED" case)
-    "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
+    timeout 5 "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
         --use-db spira_lifecycle sql -q \
         "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
 }
@@ -174,12 +180,15 @@ mkdir -p "$RUN/queue/alpha"
 # Run cockpit-collect probe unsent — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 unsent() {    # unsent <fixture-file>
+    # SPIRA_QUEUE_BATCH_WAIT: the complete fixture's own default is 31536000s (a year), not
+    # the 1800s this suite's BATCHED-too-long section assumes — declare the real value.
+    tl_config SPIRA_HOME_REPO=alpha SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t SPIRA_QUEUE_DIR="$RUN/queue" \
+        SPIRA_QUEUE_BATCH_WAIT=1800
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-        SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-        SPIRA_QUEUE_DIR="$RUN/queue" \
+        SPIRA_REPO="$ALPHA" \
         SPIRA_BDJSON_FIXTURE="$1" \
         "${LC_ENV[@]}" \
         cockpit-collect probe unsent 2>/dev/null

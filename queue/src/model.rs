@@ -110,10 +110,13 @@ impl EjectCause {
         }
     }
 
-    /// `--red` or a non-empty `--suites` (the suites the member is known to have reddened)
-    /// means a red test; anything else is a harness/rebase eject.
-    pub fn decide(red_flag: bool, suites: &str) -> EjectCause {
-        if red_flag || !suites.trim().is_empty() {
+    /// `--harness-fault` wins over everything: the round or the harness was at fault, so the
+    /// member is not charged even when it names the suites that went red. Otherwise `--red` or
+    /// a non-empty `--suites` means a red test; anything else is a harness/rebase eject.
+    pub fn decide(red_flag: bool, harness_fault: bool, suites: &str) -> EjectCause {
+        if harness_fault {
+            EjectCause::Eject
+        } else if red_flag || !suites.trim().is_empty() {
             EjectCause::EjectRed
         } else {
             EjectCause::Eject
@@ -155,6 +158,25 @@ pub struct LcBeadRow {
     pub tip: Option<String>,
     #[serde(default, deserialize_with = "opt_u64_any")]
     pub since: Option<u64>,
+    #[serde(default)]
+    pub blocked_by: Vec<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default, deserialize_with = "holds_any")]
+    pub holds: Vec<String>,
+}
+
+fn holds_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let strings = |a: Vec<serde_json::Value>| a.into_iter().map(|v| v.as_str().map(String::from).unwrap_or_else(|| v.to_string())).collect();
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Array(a) => strings(a),
+        serde_json::Value::String(t) => match serde_json::from_str::<Vec<serde_json::Value>>(&t) {
+            Ok(a) => strings(a),
+            Err(_) => vec![t],
+        },
+        serde_json::Value::Null => Vec::new(),
+        other => vec![other.to_string()],
+    })
 }
 
 fn opt_u64_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
@@ -197,9 +219,10 @@ mod tests {
 
     #[test]
     fn eject_cause_red_when_flagged_or_suites_named() {
-        assert_eq!(EjectCause::decide(false, ""), EjectCause::Eject);
-        assert_eq!(EjectCause::decide(true, ""), EjectCause::EjectRed);
-        assert_eq!(EjectCause::decide(false, "test-a.sh"), EjectCause::EjectRed);
+        assert_eq!(EjectCause::decide(false, false, ""), EjectCause::Eject);
+        assert_eq!(EjectCause::decide(true, false, ""), EjectCause::EjectRed);
+        assert_eq!(EjectCause::decide(false, false, "test-a.sh"), EjectCause::EjectRed);
+        assert_eq!(EjectCause::decide(true, true, "test-a.sh"), EjectCause::Eject);
         assert_eq!(EjectCause::EjectRed.as_str(), "eject-red");
     }
 }

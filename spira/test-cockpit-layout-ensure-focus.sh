@@ -18,7 +18,7 @@
 #
 # defect: sp-gyl8n
 # tier: T2
-# covers: cockpit/ops/src/layout.rs UC-cockpit-observability-43
+# covers: cockpit/ops/src/layout.rs UC-cockpit-observability-41 UC-cockpit-observability-43 UC-cockpit-observability-44 UC-cockpit-observability-45
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -34,6 +34,13 @@ _FAKE_RELEASE="$(mktemp -d)"
 mkdir -p "$_FAKE_RELEASE/bin"
 cp "$(command -v "$LAYOUT")" "$_FAKE_RELEASE/bin/layout"
 cp "$(command -v health)" "$_FAKE_RELEASE/bin/health"
+cp "$(command -v lc-view)" "$_FAKE_RELEASE/bin/lc-view"
+# cockpit-ops's self_source() (cockpit/ops/src/conf.rs) resolves its registry at
+# $SPIRA_RELEASE/spira/conf.d, never from a SPIRA_HOME env var — a fake release with no
+# spira/ at all made every `layout ensure` below fall back to built-in defaults rather
+# than this suite's own tl_config layer (one source of config, per Ryan 2026-10-05).
+mkdir -p "$_FAKE_RELEASE/spira"
+ln -s "$HERE/conf.d" "$_FAKE_RELEASE/spira/conf.d"
 
 command -v tmux >/dev/null 2>&1 || { echo "  SKIP  tmux is not on PATH"; exit 77; }
 
@@ -76,7 +83,7 @@ well_formed() {
     local sess="$sname:0"
     local health mail
     health=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}' \
-        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH health loop")
+        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH lc-view loop 10")
     mail=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess:0" -v -P -F '#{pane_id}' \
         "exec -a fakemail sleep 300")
     local sess_id
@@ -102,9 +109,9 @@ with_duplicate() {
     local sess="$sname:0"
     local h1 h2 sess_id
     h1=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}' \
-        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH health loop")
+        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH lc-view loop 10")
     h2=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}' \
-        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH health loop")
+        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH lc-view loop 10")
     sess_id=$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t "$sess" -F '#{pane_id}' | head -1)
 
     TMUX_TMPDIR="$TMUXDIR" tmux set-option -p -t "$h1" @cockpit health
@@ -116,11 +123,20 @@ with_duplicate() {
 call_repair() {   # call_repair <window> -> nothing; runs the real `ensure`, which calls
                   # repair_dashboards internally for this window.
     local window="$1"
+    # COCKPIT_MAIL/SPIRA_COCKPIT/SPIRA_RUN/SPIRA_INSTANCE/COCKPIT_CWD/COCKPIT_BOTTOM_PCT/
+    # COCKPIT_RIGHT_PCT are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+    # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config COCKPIT_MAIL="fakemail" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_RUN="$RUN" \
+        SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33
+    # SPIRA_HOME is threaded through too, for parity with every other suite's env -i call —
+    # cockpit-ops's self_source() does not actually read it (it derives its registry from
+    # SPIRA_RELEASE/spira instead, fixed up above), but nothing reads SPIRA_HOME from env
+    # any more regardless, so passing it costs nothing and keeps this call shaped like the
+    # others.
     TMUX_TMPDIR="$TMUXDIR" env -i SPIRA_RELEASE="$_FAKE_RELEASE" HOME="$TMP" \
         PATH="$_FAKE_RELEASE/bin:/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
-        COCKPIT_MAIL="fakemail" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$COCKPIT_DIR" \
-        SPIRA_RUN="$RUN" SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" \
-        COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$LAYOUT" ensure 2>/dev/null || true
 }
 
@@ -152,5 +168,57 @@ still_there="$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t w2:0 -F '#{pane_id}' | 
 is "the duplicate really was killed by repair_dashboards" "0" "$still_there"
 after2="$(active_of w2:0)"
 is "focus falls back to the session pane once its target is gone" "$sess_id2" "$after2"
+
+echo
+echo "a copy of the layout binary refuses ensure and names the installed one"
+ensure_stderr() {   # ensure_stderr <layout-binary> [KEY=value ...] -> that run's output
+    local bin="$1"; shift
+    tl_config COCKPIT_MAIL="fakemail" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_RUN="$RUN" \
+        SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 "$@"
+    TMUX_TMPDIR="$TMUXDIR" env -i SPIRA_RELEASE="$_FAKE_RELEASE" HOME="$TMP" \
+        PATH="$_FAKE_RELEASE/bin:/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_TOML="$SPIRA_TOML" \
+        "$bin" ensure 2>&1
+}
+mkdir -p "$TMP/copy"
+cp "$_FAKE_RELEASE/bin/layout" "$TMP/copy/layout"
+installed_err="$(ensure_stderr "$_FAKE_RELEASE/bin/layout")"
+nowant "positive control: the installed binary is not refused" "ensure refused" "$installed_err"
+copy_err="$(ensure_stderr "$TMP/copy/layout")"
+for hk in window-resized client-resized client-attached; do
+    want "ensure installs the $hk hook sizing the health pane to right_pct" \
+        "resize-pane -t $health -x 33%" \
+        "$(TMUX_TMPDIR="$TMUXDIR" tmux show-hooks -t w1 "$hk" | tr -d '"')"
+done
+want   "a copy refuses ensure"                        "ensure refused" "$copy_err"
+want   "and names the installed binary's path"        "/bin/layout ensure" "$copy_err"
+
+echo
+echo "mouse mode: left alone by off/no/0, and ensure still succeeds"
+mouse_now() { TMUX_TMPDIR="$TMUXDIR" tmux show-options -gv mouse 2>/dev/null; }
+for v in off no 0; do
+    TMUX_TMPDIR="$TMUXDIR" tmux set-option -g mouse off
+    ensure_stderr "$_FAKE_RELEASE/bin/layout" COCKPIT_MOUSE="$v" >/dev/null
+    is "COCKPIT_MOUSE=$v leaves mouse off" "off" "$(mouse_now)"
+done
+
+echo
+echo "pane identity: a tag on a pane that runs no dashboard is cleared, not obeyed"
+TMUX_TMPDIR="$TMUXDIR" tmux new-session -d -s w3 -x 214 -y 53
+TMUX_TMPDIR="$TMUXDIR" tmux set-option -t w3 window-size largest
+sess3="$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t w3:0 -F '#{pane_id}' | head -1)"
+imp="$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t w3:0 -h -P -F '#{pane_id}' "sh -c 'sleep 300; :' health.sh")"
+TMUX_TMPDIR="$TMUXDIR" tmux set-option -p -t "$imp" @cockpit health
+is "positive control: the impostor carries the health tag before ensure" "health" \
+    "$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -p -t "$imp" '#{@cockpit}')"
+imp_out="$(ensure_stderr "$_FAKE_RELEASE/bin/layout")"
+is   "ensure untagged the impostor" "" \
+    "$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -p -t "$imp" '#{@cockpit}')"
+want "and logged it" "runs no dashboard" "$imp_out"
+is   "ensure sets window-size latest, so the client in use gets a fitted layout" "latest" \
+    "$(TMUX_TMPDIR="$TMUXDIR" tmux show-options -t w3 -v window-size)"
+panes3="$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t w3:0 -F '#{pane_id}')"
+want "the session pane was not killed"  "$sess3" "$panes3"
+want "the impostor pane was not killed" "$imp"   "$panes3"
 
 tl_summary

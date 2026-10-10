@@ -14,7 +14,7 @@
 # repo whose base is `master`.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* landing-pass/src/* spira/lib.sh spira/testlib/lc-fixture.sh
+# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* landing-pass/src/* spira/lib.sh spira/testlib/lc-fixture.sh UC-landing-merge-queue-45
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -50,8 +50,8 @@ mkdir -p "$B_REPO/spira"
 : > "$B_REPO/spira/test-a.sh"
 git -C "$B_REPO" add -A && git -C "$B_REPO" commit -q -m base
 git -C "$B_REPO" remote add origin "$B_REMOTE"
-git -C "$B_REPO" push -q origin master
-git -C "$B_REPO" fetch -q origin
+timeout 5 git -C "$B_REPO" push -q origin master
+timeout 5 git -C "$B_REPO" fetch -q origin
 mkdir -p "$B_RUN/worktree" "$B_SH" "$B_QUEUEDIR/$B_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$B_SH/"
@@ -119,11 +119,12 @@ git -C "$B_RUN/worktree/sp-mbase" commit -q -m "sp-mbase: work"
 B_TIP="$(git -C "$B_REPO" rev-parse spira/sp-mbase)"
 git -C "$B_REPO" worktree remove -f "$B_RUN/worktree/sp-mbase"
 lcfix_seed sp-mbase CERTIFIED "$B_TIP"
+lcfix_sql -q "UPDATE bead SET sifted_tip='$B_TIP' WHERE bead_id='sp-mbase'" >/dev/null 2>&1
 
-out="$(SPIRA_HOME="$B_SH" SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$B_SH/repo-map" \
-    SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_FORGE="$B_SH/forge-fixture.sh" PATH="$B_SH:$PATH" \
+tl_config SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_REPO_MAP="$B_SH/repo-map" SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
+    SPIRA_FORGE="$B_SH/forge-fixture.sh"
+out="$(SPIRA_HOME="$B_SH" PATH="$B_SH:$PATH" \
         batcher cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
@@ -150,8 +151,8 @@ git init -q --bare -b master "$V_REMOTE"
 git init -q -b master "$V_REPO"
 git -C "$V_REPO" commit -q --allow-empty -m base
 git -C "$V_REPO" remote add origin "$V_REMOTE"
-git -C "$V_REPO" push -q origin master
-git -C "$V_REPO" fetch -q origin
+timeout 5 git -C "$V_REPO" push -q origin master
+timeout 5 git -C "$V_REPO" fetch -q origin
 mkdir -p "$V_RUN/worktree" "$V_SH" "$V_QUEUEDIR/$V_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$V_SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$V_SH/"
@@ -205,10 +206,10 @@ V_LC_VERSION="$(spira-lc show-batch vtest-1 2>/dev/null | python3 -c 'import jso
 { printf 'batch_id=vtest-1\n'; printf 'version=%s\n' "$V_LC_VERSION"; } >> "$V_QUEUEDIR/$V_REPONAME/open"
 printf 'green\nhead-sha: %s\n' "$V_BATCH_HEAD" > "$V_FORGE_STATUS_FILE"
 
-out="$(SPIRA_HOME="$V_SH" SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$V_SH/repo-map" \
-    SPIRA_QUEUE_DIR="$V_QUEUEDIR" SPIRA_QUEUE_CI_MAXSEC=3600 SPIRA_QUEUE_CI_IDLE_SEC=600 \
-    SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$V_SH/forge-fixture.sh" PATH="$V_SH:$PATH" \
+tl_config SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_REPO_MAP="$V_SH/repo-map" SPIRA_QUEUE_DIR="$V_QUEUEDIR" SPIRA_QUEUE_CI_MAXSEC=3600 \
+    SPIRA_QUEUE_CI_IDLE_SEC=600 SPIRA_QUEUE_INFRA_RETRIES=2 SPIRA_FORGE="$V_SH/forge-fixture.sh"
+out="$(SPIRA_HOME="$V_SH" PATH="$V_SH:$PATH" \
         queue verdict "$V_REPONAME" 2>&1)"
 
 is   "verdict: remote MASTER fast-forwards to the batch head" \
@@ -228,8 +229,8 @@ git init -q --bare -b master "$L_REMOTE"
 git init -q -b master "$L_REPO"
 git -C "$L_REPO" commit -q --allow-empty -m base
 git -C "$L_REPO" remote add origin "$L_REMOTE"
-git -C "$L_REPO" push -q origin master
-git -C "$L_REPO" fetch -q origin
+timeout 5 git -C "$L_REPO" push -q origin master
+timeout 5 git -C "$L_REPO" fetch -q origin
 mkdir -p "$L_RUN/worktree" "$L_SH"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$L_SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$L_SH/"
@@ -251,12 +252,16 @@ git -C "$L_RUN/worktree/sp-lbase" add -A
 git -C "$L_RUN/worktree/sp-lbase" commit -q -m "feat: sp-lbase — work"
 lc_bead SUBMITTED sp-lbase "$(git -C "$L_RUN/worktree/sp-lbase" rev-parse HEAD)" 0   # the hand-off is the lifecycle row (sp-mve9i)
 
-out="$(SPIRA_HOME="$L_SH" SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$L_REPO" \
-    SPIRA_REPO_MAP="$L_SH/repo-map-does-not-exist" PATH="$L_SH:$PATH" \
+# A real repo-map, not a nonexistent one: landing-pass now needs an explicit `base` to
+# resolve the ref branches land on (CHECK6) — there is no more derive-from-SPIRA_REPO-alone
+# fallback to fall back to (sfail round 3, pattern 7).
+printf '%s | %s | push | origin/master | | |\n' "$(basename "$L_REPO")" "$L_REPO" > "$L_SH/repo-map"
+tl_config SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$L_SH/repo-map"
+out="$(SPIRA_HOME="$L_SH" SPIRA_REPO="$L_REPO" PATH="$L_SH:$PATH" \
         landing-pass land 2>&1)"
 
 want "landing: reports landing the master-base branch" "landed spira/sp-lbase" "$out"
-git -C "$L_REPO" fetch -q origin
+timeout 5 git -C "$L_REPO" fetch -q origin
 if git -C "$L_REPO" merge-base --is-ancestor spira/sp-lbase origin/master 2>/dev/null; then
     ok "landing: the branch's own commit is an ancestor of origin/master"
 else

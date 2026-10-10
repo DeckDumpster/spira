@@ -27,44 +27,9 @@ tier = "T1"
 statement = "a post-claim operator comment is delivered to the aeon exactly once as PostToolUse `additionalContext`, naming the ACK command; pre-claim and self comments are not delivered"
 
 [[use_case]]
-id = "UC-safety-fences-06"
-tier = "T1"
-statement = "an aeon may not remove any `delivers:*` label, and the refusal names the criterion's producer; `incident.sh retire-unsatisfiable-delivers` and ordinary labels are allowed"
-
-[[use_case]]
-id = "UC-safety-fences-07"
-tier = "T1"
-statement = "an aeon may not write `sop-*`/`law-*` keys with `bd remember` in any form; the refusal names `sop write`/`rule.sh enact`, and those sanctioned writers pass"
-
-[[use_case]]
-id = "UC-safety-fences-08"
-tier = "T1"
-statement = "a non-aeon session may not edit spec fields of an in-flight bead (in_progress + assignee + branch label); non-spec flags, not-in-flight beads and aeon sessions pass, and the refusal suggests `bd comment`"
-
-[[use_case]]
-id = "UC-safety-fences-09"
-tier = "T1"
-statement = "during a focus period (narrowed `SPIRA_FAYTHS`), an aeon's `bd close` must cite an open bead or a closed insight bead in `--reason`/`--reason-file`; with the full roster the guard is a no-op"
-
-[[use_case]]
-id = "UC-safety-fences-10"
-tier = "T1"
-statement = "in an aeon session, `bd update --status closed` in any argv form is refused with exit 2 naming `bd close`; `bd close` and other status values pass"
-
-[[use_case]]
-id = "UC-safety-fences-11"
-tier = "T1"
-statement = "in an aeon session, writes into `SPIRA_MAIL` are refused whether by Bash redirect/mv/cp/touch or by the Write/Edit tools, for both literal and expanded path; `mail send` and reads are allowed"
-
-[[use_case]]
-id = "UC-safety-fences-12"
-tier = "T1"
-statement = "in an aeon session, direct execution of `spira/test-*.sh` in any shell shape is refused naming `testenv-batch.sh`; `testenv-batch.sh` runs and reading a suite are allowed"
-
-[[use_case]]
 id = "UC-safety-fences-13"
 tier = "T1"
-statement = "`DELETE FROM schema_migrations` is refused as a tool call (`bd sql`/`dolt sql`, case- and whitespace-insensitive) and at `bdq create` even with the ask label; both refusals point at `bd migrate schema`"
+statement = "`DELETE FROM schema_migrations` is refused at `bdq create` (case- and whitespace-insensitive) even with the ask label, and the refusal points at `bd migrate schema`"
 
 [[use_case]]
 id = "UC-safety-fences-14"

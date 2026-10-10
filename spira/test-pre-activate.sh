@@ -171,6 +171,60 @@ want "store: bd migrate status ok: reports ok" "ok   store" "$out"
 mkbd 1; run "$REL"
 is   "store: bd migrate status fails: exit 1" 1 "$rc"
 want "store: bd migrate status fails: FAILs"  "FAIL store" "$out"
+# A slow-but-passing bd outlives the old 5 s kill; a mismatch names itself; a silent bd is "store slow".
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+echo "✓ Version matches"
+sleep 7
+STUB
+chmod +x "$TMP/binstub/bd"
+SPIRA_STORE_CHECK_TIMEOUT=20 run "$REL"
+is   "store: passing lines then sleeping past 5 s: exit 0" 0 "$rc"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+echo "schema drift: column x missing"
+exit 1
+STUB
+run "$REL"
+want "store: mismatch reported as schema mismatch" "schema mismatch: schema drift: column x missing" "$out"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+sleep 30
+STUB
+SPIRA_STORE_CHECK_TIMEOUT=1 run "$REL"
+is   "store: bd never answers: exit 1" 1 "$rc"
+want "store: bd never answers: store slow" "store slow: no answer in 1 s" "$out"
+nowant "store: bd never answers: not a mismatch" "schema mismatch" "$out"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+echo "[mysql] packets.go:58 read tcp 127.0.0.1:1->127.0.0.1:3307: i/o timeout"
+echo x >> "$TMP/bd-calls"
+exit 1
+STUB
+chmod +x "$TMP/binstub/bd"
+rm -f "$TMP/bd-calls"; export TMP
+run "$REL"
+is   "store: dropped connection: exit 1" 1 "$rc"
+want "store: dropped connection: slow/unreachable" "store slow/unreachable: [mysql]" "$out"
+nowant "store: dropped connection: not a mismatch" "schema mismatch" "$out"
+is   "store: dropped connection: retried" 2 "$(wc -l < "$TMP/bd-calls")"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+echo "schema drift: column x missing"
+echo x >> "$TMP/bd-calls"
+exit 1
+STUB
+rm -f "$TMP/bd-calls"; run "$REL"
+is   "store: genuine mismatch: not retried" 1 "$(wc -l < "$TMP/bd-calls")"
+cat > "$TMP/binstub/bd" <<'STUB'
+#!/usr/bin/env bash
+if [ -e "$TMP/bd-once" ]; then echo "Version matches"; exit 0; fi
+touch "$TMP/bd-once"
+echo "dial tcp 127.0.0.1:3307: connection refused"
+exit 1
+STUB
+rm -f "$TMP/bd-once"; run "$REL"
+is   "store: errors once then succeeds: exit 0" 0 "$rc"
 mkbd 0
 
 # ── units: units-install --render must exit 0 with no placeholder left unfilled ─────────
@@ -221,7 +275,7 @@ want "one bad of five: units unaffected"        "ok   units" "$out"
 REL="$TMP/rel-lc-ok"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
 cat > "$REL/bin/spira-lc" <<EOF2
 #!/usr/bin/env bash
-echo "user=\$SPIRA_LC_USER pwfile=\${SPIRA_LC_PASSWORD_FILE-unset} admin=\${SPIRA_LC_ADMIN_USER-unset} \$*" > "$TMP/lc-argv"
+echo "user=\$SPIRA_LC_USER pwfile=\${SPIRA_LC_PASSWORD_FILE-unset} admin=\${SPIRA_LC_ADMIN_USER-unset} \$*" >> "$TMP/lc-argv"
 echo "admin-migrate: applied 0003-x.sql"
 exit 0
 EOF2
@@ -233,6 +287,8 @@ want "lifecycle: runs admin-migrate against the release's own migrations" "admin
 nowant "lifecycle: passes no retired --if-enforced (sp-v62vn)" "--if-enforced" "$(cat "$TMP/lc-argv")"
 # sp-p1z81: the service identity lc-serve uses, untouched — never swapped for a default root.
 want "lifecycle: as the service user, its credential file kept" "user=spira_lc pwfile=$TMP/svc.cred admin=unset admin-migrate" "$(cat "$TMP/lc-argv")"
+
+want "lifecycle: backfills the mirrored titles after the migrations" "backfill-titles" "$(cat "$TMP/lc-argv")"
 
 REL="$TMP/rel-lc-bad"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
 printf '#!/usr/bin/env bash\necho "admin-migrate: 0003-x.sql FAILED" >&2\nexit 2\n' > "$REL/bin/spira-lc"
@@ -289,8 +345,13 @@ YAML
     sed -e "s/@SPIRA_LC_PASSWORD@/$SVCPW/" -e "s/@SPIRA_LC_RO_PASSWORD@/ro-$SVCPW/" "$REPO/lifecycle/grants.sql" > "$TMP/grants.sql"
     lc_env() { env SPIRA_LC_SOCKET=/nonexistent/test-pre-activate SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle \
         XDG_CONFIG_HOME="$TMP/home/.config" "$@"; }
-    lc_env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_PASSWORD_FILE= "$LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/dolt/ddl.log" 2>&1 \
-        && lc_env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_PASSWORD_FILE= "$LC_BIN" admin-apply-ddl "$TMP/grants.sql" >>"$TMP/dolt/ddl.log" 2>&1 \
+    # SPIRA_LC_PASSWORD_FILE is declared config now (spira/conf.d), read only from $SPIRA_TOML
+    # (spira-lc/src/db.rs password_from), never this literal env assignment — the complete
+    # fixture's own declared path does not exist for this suite's throwaway server. Empty it
+    # via tl_config so SPIRA_LC_PASSWORD="" (root, no password yet) is actually used below.
+    tl_config SPIRA_LC_PASSWORD_FILE=""
+    lc_env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" "$LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/dolt/ddl.log" 2>&1 \
+        && lc_env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" "$LC_BIN" admin-apply-ddl "$TMP/grants.sql" >>"$TMP/dolt/ddl.log" 2>&1 \
         && dsql -u root -p "" sql -q "ALTER USER 'root'@'localhost' IDENTIFIED BY '$ROOTPW'" >>"$TMP/dolt/ddl.log" 2>&1 \
         || bail "lifecycle fixture did not build: $(cat "$TMP/dolt/ddl.log")"
     is "lifecycle (real store): positive control: root with an empty password is refused, as in production" 1 \
@@ -299,8 +360,19 @@ YAML
     REL="$TMP/rel-lc-real"; mkrel "$REL"; mkdir -p "$REL/lifecycle"
     ln -sf "$LC_BIN" "$REL/bin/spira-lc"
     cp -r "$REPO/lifecycle/migrations" "$REL/lifecycle/migrations"
-    run_lc() { out="$(lc_env SPIRA_LC_USER=spira_lc SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred" \
-        HOME="$TMP/home" SPIRA_REPO="$TMP/emptyrepo" SPIRA_TOML="$TMP/no-such.toml" PATH="$TMP/binstub:$PATH" \
+    # SPIRA_LC_PASSWORD_FILE is declared config (spira/conf.d), read only from $SPIRA_TOML by
+    # the admin-migrate subprocess pre-activate.sh's lifecycle check runs — a literal env
+    # assignment on this call does nothing now, and a bare nonexistent SPIRA_TOML (as this
+    # used to pin) fails the whole resolution, which silently falls to an empty password
+    # instead of refusing (Access denied for 'spira_lc', not CannotTell). Give it a real,
+    # complete config — the same base fixture testlib.sh layers — with just this suite's
+    # service credential declared on top.
+    cat > "$TMP/svc-override.toml" <<TOMLEOF
+[spira]
+lc_password_file = "$TMP/svc.cred"
+TOMLEOF
+    run_lc() { out="$(lc_env SPIRA_LC_USER=spira_lc \
+        HOME="$TMP/home" SPIRA_REPO="$TMP/emptyrepo" SPIRA_TOML="$_TL_CONF_BASE:$TMP/svc-override.toml" PATH="$TMP/binstub:$PATH" \
         pre-activate.sh "$1" 2>&1)"; rc=$?; }
 
     run_lc "$REL"

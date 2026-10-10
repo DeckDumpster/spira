@@ -39,6 +39,16 @@ derived from it.
   (law-absence-needs-a-positive-control) — every section function is unit tested against
   both a present and an absent/`?` reading.
 
+- ROUNDS section (`health/round.rs`): every live (non-terminal) batch from the collector's `round`
+  probe, which reads `spira-lc list --batches` and the bead rows for the pool — no `bd`, no logs.
+  Keys are `SP_ROUNDS_N` and `SP_ROUNDS<i>_{NAME,PHASE,OPENED,N,MEMBER<j>,EJECT_N,EJECT<j>}`; at
+  most four are listed, the rest counted. Each round is one collapsed row (name, phase, member
+  count, ejection count); the round certifying on the VM expands to its members and ejections
+  when the pane has room. Landed and abandoned rounds leave the section. Wall time is computed at
+  render from `SP_ROUNDS<i>_OPENED` against `SP_ROUND_CAP` (`SPIRA_ROUND_CERTIFY_WALL_SECS`):
+  amber past 80%, red past the cap. With no live batch: last verdict and the SUBMITTED +
+  CERTIFIED unheld pool. Under 60 columns, one line per round.
+
 ### 2.2 `layout up|down|status|ensure [--window <target>]`
 
 - `up`: create-or-repair the dashboard in `<target>` (default: the window this process is

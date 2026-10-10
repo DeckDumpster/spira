@@ -43,7 +43,8 @@ cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 git init -q -b main "$REPO"
-git -C "$REPO" commit -q --allow-empty -m base
+mkdir -p "$REPO/spira"; printf '#!/bin/bash\n' > "$REPO/spira/test-x.sh"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m base
 git -C "$REPO" branch spira/sp-wsx main
 
 # The repo's own gate command: never runs a real suite, only reports what it was handed —
@@ -66,17 +67,17 @@ printf 'fixq | %s | queue | main |  | %s\n' "$REPO" "$SH/gate-stub.sh" > "$RMAP"
 
 submit() {
     : > "$GATELOG"
+    # SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_QUEUE_DIR/
+    # SPIRA_CERTIFY_SUITES are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+    # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent SPIRA_HOME_REPO=fixq \
+        SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$RUN/queue" SPIRA_CERTIFY_SUITES=off
     env -i $(lcfix_env) SPIRA_RELEASE="$SPIRA_RELEASE" PATH="$SH:$BIN_DIR:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
         SPIRA_REPO="$REPO" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_DB=/nonexistent \
-        SPIRA_HOME_REPO=fixq \
-        SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_QUEUE_DIR="$RUN/queue" \
-        SPIRA_CERTIFY_SUITES=off \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$SH" queue submit spira/sp-wsx 2>&1
 }
 
@@ -94,6 +95,10 @@ echo
 echo "B. THE DEFECT, seen to fail: a bead withdrawn with suites=test-x.sh must re-certify with test-x.sh forced:"
 rm -f "$RUN/ejected/sp-wsx" "$RUN/queue/sp-wsx"; lcfix_seed sp-wsx WORKING
 (
+    # SPIRA_RUN/SPIRA_DB/SPIRA_BD are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+    # CONFIG): declare via tl_config too, not just the export below, since lib.sh's own
+    # config resolution no longer reads them from the environment.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent SPIRA_BD=/nonexistent
     export SPIRA_RUN="$RUN" SPIRA_CONF=/nonexistent SPIRA_DB=/nonexistent SPIRA_BD=/nonexistent
     # shellcheck disable=SC1090
     . "$SH/lib.sh"

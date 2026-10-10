@@ -30,7 +30,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
 . "$HERE/testlib.sh"
 
-export SPIRA_ASK_LABEL=needs-attention   # non-default (law-gates-run-in-a-clean-environment)
+SPIRA_ASK_LABEL=needs-attention   # non-default (law-gates-run-in-a-clean-environment)
+tl_config SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
 export SPIRA_CONF=/nonexistent
 
 echo "test-verify-asks.sh"
@@ -45,7 +46,9 @@ verify() { bash "$COCKPIT/verify-asks.sh" "$@"; }
 # T1 — sweep classification against a stub bd (no testdb, no real bead store).
 # ==========================================================================
 FAKE_DB="$TMP/fakedb"; mkdir -p "$FAKE_DB/.beads"
-export COCKPIT_DB="$FAKE_DB"
+# COCKPIT_DB is registered — db.sh (sourced by verify-asks.sh, a fresh subprocess each
+# `verify` call) resolves it fresh from SPIRA_TOML, never from inherited env.
+tl_config COCKPIT_DB="$FAKE_DB"
 ROWS_FILE="$TMP/rows.json"
 CLOSED_LOG="$TMP/closed.log"
 export SPIRA_TESTBD_ROWS="$ROWS_FILE" SPIRA_TESTBD_CLOSED="$CLOSED_LOG"
@@ -56,7 +59,7 @@ cat > "$STUB_BD" <<'STUBEOF'
 # A stub standing in for bd against a fixture, not a fixture MODELLING bd: it answers exactly
 # the two calls verify-asks.sh makes (list, close) and nothing else.
 args=("$@")
-[ "${args[0]:-}" = "-C" ] && args=("${args[@]:2}")
+[ "${args[0]:-}" = "content" ] && args=("${args[@]:1}")
 case "${args[0]:-}" in
     list)  cat "$SPIRA_TESTBD_ROWS" ;;
     close) printf '%s\n' "${args[*]}" >> "$SPIRA_TESTBD_CLOSED"; exit 0 ;;
@@ -64,7 +67,7 @@ case "${args[0]:-}" in
 esac
 STUBEOF
 chmod +x "$STUB_BD"
-export BD_BIN="$STUB_BD"
+export SPIRA_LC_BIN="$STUB_BD"
 
 row() {   # row <id> <status> <issue_type> <extra-labels-csv-or-""> <description>
     local id="$1" status="$2" itype="$3" extra="$4" desc="$5" labels="\"$ASK\",\"overseer\""
@@ -177,7 +180,8 @@ echo "G-04: a hanging VERIFY is killed by the timeout, not waited out"
 
 printf '[%s]' "$(row sp-vhang open decision "" "hangs\\n\\nVERIFY: sleep 5")" > "$ROWS_FILE"
 : > "$CLOSED_LOG"
-out="$(SPIRA_VERIFY_TIMEOUT=1 verify --apply 2>&1)"
+tl_config SPIRA_VERIFY_TIMEOUT=1
+out="$(verify --apply 2>&1)"
 want "a hanging VERIFY is reported as still open, not satisfied" "still open" "$out"
 nowant "SEEN RED control: a hung check is never SATISFIED" "SATISFIED" "$out"
 is "the stub's close was never called for a killed VERIFY" "" "$(cat "$CLOSED_LOG")"
@@ -197,15 +201,17 @@ echo "G-04: an unreachable database prints 'checked nothing' and exits 0 — pin
 echo "      CURRENT behaviour; whether fail-open here is intended is escalated, not decided"
 
 NO_BEADS_DIR="$TMP/no-beads-dir"; mkdir -p "$NO_BEADS_DIR"
-out="$(COCKPIT_DB="$NO_BEADS_DIR" verify --apply 2>&1)"; rc=$?
+tl_config COCKPIT_DB="$NO_BEADS_DIR"
+out="$(verify --apply 2>&1)"; rc=$?
 want "a missing .beads dir prints 'checked nothing'" "checked nothing" "$out"
 is "verify-asks.sh exits 0 even though it read nothing (missing .beads)" "0" "$rc"
 
 # THE OTHER HALF: .beads exists (cockpit_db succeeds) but the engine itself refuses to answer
 # — cockpit_beads() is what returns 1 here, a different branch of the same fail-open exit.
+tl_config COCKPIT_DB="$FAKE_DB"
 DEAD_BD="$TMP/dead-bd"
 printf '#!/usr/bin/env bash\nexit 1\n' > "$DEAD_BD"; chmod +x "$DEAD_BD"
-out="$(BD_BIN="$DEAD_BD" verify --apply 2>&1)"; rc=$?
+out="$(SPIRA_LC_BIN="$DEAD_BD" verify --apply 2>&1)"; rc=$?
 want "an unreachable engine also prints 'checked nothing'" "checked nothing" "$out"
 is "verify-asks.sh exits 0 even though the engine refused (unreachable)" "0" "$rc"
 
@@ -216,15 +222,17 @@ is "verify-asks.sh exits 0 even though the engine refused (unreachable)" "0" "$r
 echo
 echo "one real close: a passing VERIFY closes a bead in a real bd"
 
-unset BD_BIN COCKPIT_DB
+unset SPIRA_LC_BIN COCKPIT_DB
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-verify-asks
 testdb_up verifyasks || { echo "testdb_up failed"; exit 1; }
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-export COCKPIT_DB="$SPIRA_DB"
+tl_config COCKPIT_DB="$SPIRA_DB" SPIRA_DB="$SPIRA_DB"
+lc_socket_mirror "$TMP/lcsock"
 
 bd_show_status() {
+    # batch-job: fixture bd call against the suite's throwaway store
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
         | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r[0].get("status","?") if isinstance(r,list) else r.get("status","?"))'
 }

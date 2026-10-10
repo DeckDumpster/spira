@@ -108,6 +108,14 @@ pub struct Partition<'a> {
     pub labels: Vec<String>,
     /// Claimable beads under the partition's own predicate (`bd ready`).
     pub ready: HashSet<String>,
+    /// Beads whose lifecycle row is WORKING: a builder holds them.
+    pub working: HashSet<String>,
+    /// Beads whose lifecycle row holds an ask / poison — the hold, never a label standing in
+    /// for it (sp-psztcc).
+    pub held_ask: HashSet<String>,
+    pub held_poison: HashSet<String>,
+    /// Live bead → the prerequisites its lifecycle row's stack names.
+    pub stacked_on: HashMap<String, Vec<String>>,
     pub vocab: &'a Vocab,
     pub facts: &'a Facts,
 }
@@ -118,16 +126,16 @@ impl<'a> Partition<'a> {
     }
     /// moving(b): the pipeline is carrying it (DESIGN.md §4).
     fn moving(&self, b: &Bead) -> bool {
-        b.status == Status::InProgress
+        self.working.contains(&b.id)
             || b.has(&self.vocab.submitted)
             || b.has(&self.vocab.queue_wait)
             || self.ready.contains(&b.id)
     }
     fn parked(&self, b: &Bead) -> bool {
-        b.has(&self.vocab.ask) || b.status == Status::Deferred
+        self.held_ask.contains(&b.id) || b.status == Status::Deferred
     }
     fn poisoned(&self, b: &Bead) -> bool {
-        b.has(&self.vocab.poison)
+        self.held_poison.contains(&b.id)
     }
     fn delegated(&self, b: &Bead) -> bool {
         b.has(&self.vocab.open_children)
@@ -177,6 +185,7 @@ impl<'a> Partition<'a> {
             self.epic(e, &mut memo, &mut rows);
         }
         self.cycles(&members, &mut rows);
+        self.stack_deadlocks(&members, &mut rows);
         rows
     }
 
@@ -184,7 +193,7 @@ impl<'a> Partition<'a> {
     // blocks target anywhere in the store is non-closed (R9).
     fn deferred(&self, members: &[&Bead], rows: &mut Vec<Row>) {
         for b in members {
-            if b.status != Status::Deferred || b.has(&self.vocab.ask) {
+            if b.status != Status::Deferred || self.held_ask.contains(&b.id) {
                 continue;
             }
             let live_blocker =
@@ -209,15 +218,8 @@ impl<'a> Partition<'a> {
                 "deferred-unescalated",
                 &b.id,
                 Disposition::Escalate,
-                format!(
-                    "deferred but not labelled {}: {}",
-                    self.vocab.ask,
-                    b.title.as_deref().unwrap_or("")
-                ),
-                format!(
-                    "bd update {} --status open, or label it {} with the decision",
-                    b.id, self.vocab.ask
-                ),
+                format!("deferred with no ask held: {}", b.title.as_deref().unwrap_or("")),
+                format!("undefer {} so it is queued, or hold it with the decision: spira-lc hold {} ask \"<the question>\"", b.id, b.id),
             ));
         }
     }
@@ -477,6 +479,24 @@ impl<'a> Partition<'a> {
         }
     }
 
+    // -- a delegated parent whose open child is stacked on it: each waits on the other.
+    fn stack_deadlocks(&self, members: &[&Bead], rows: &mut Vec<Row>) {
+        for p in members.iter().filter(|b| self.delegated(b)) {
+            for c in self.store.children(&p.id) {
+                if c.is_closed() || !self.stacked_on.get(&c.id).is_some_and(|s| s.contains(&p.id)) {
+                    continue;
+                }
+                rows.push(Row::new(
+                    "stack-deadlock",
+                    &p.id,
+                    Disposition::Escalate,
+                    format!("{} is stacked on {}, which is labeled {} and waits on its children: neither can be claimed", c.id, p.id, self.vocab.open_children),
+                    format!("remove the {} label from {}: it has work of its own", self.vocab.open_children, p.id),
+                ));
+            }
+        }
+    }
+
     // -- cycles: Tarjan over the partition's open sub-graph.
     fn cycles(&self, members: &[&Bead], rows: &mut Vec<Row>) {
         let ids: Vec<&str> = members.iter().map(|b| b.id.as_str()).collect();
@@ -592,11 +612,21 @@ mod tests {
         Store::new(parse_beads(&serde_json::Value::Array(v).to_string()).unwrap())
     }
     fn run_with(s: &Store, ready: &[&str], facts: &Facts) -> Vec<Row> {
+        run_working(s, ready, &[], facts)
+    }
+    fn run_working(s: &Store, ready: &[&str], working: &[&str], facts: &Facts) -> Vec<Row> {
+        run_stacked(s, ready, working, &HashMap::new(), facts)
+    }
+    fn run_stacked(s: &Store, ready: &[&str], working: &[&str], stacked_on: &HashMap<String, Vec<String>>, facts: &Facts) -> Vec<Row> {
         let vocab = Vocab { ask: ASK.into(), ..Vocab::default() };
         let p = Partition {
             store: s,
             labels: PLAN.iter().map(|s| s.to_string()).collect(),
             ready: ready.iter().map(|s| s.to_string()).collect(),
+            working: working.iter().map(|s| s.to_string()).collect(),
+            held_ask: s.beads.iter().filter(|b| b.has(ASK)).map(|b| b.id.clone()).collect(),
+            held_poison: s.beads.iter().filter(|b| b.has("spira-poison")).map(|b| b.id.clone()).collect(),
+            stacked_on: stacked_on.clone(),
             vocab: &vocab,
             facts,
         };
@@ -612,6 +642,21 @@ mod tests {
     }
 
     // ---- the bead's own four, plus empty ----
+
+    #[test]
+    fn a_labeled_parent_and_a_child_stacked_on_it_is_a_deadlock() {
+        let pl = plan_with(&["spira-open-children"]);
+        let s = store(vec![
+            bead("p", "open", &pl, None, &[]),
+            bead("k", "open", &PLAN, Some("p"), &[]),
+        ]);
+        let f = Facts { live: 1, ..Facts::default() };
+        let stacked: HashMap<String, Vec<String>> = [("k".to_string(), vec!["p".to_string()])].into();
+        let found = kinds(&run_stacked(&s, &[], &[], &stacked, &f));
+        assert!(found.contains(&("stack-deadlock".into(), "p".into())), "{found:?}");
+        let found = kinds(&run_stacked(&s, &[], &[], &HashMap::new(), &f));
+        assert!(!found.iter().any(|(k, _)| k == "stack-deadlock"), "positive control: no stack, no row");
+    }
 
     #[test]
     fn closed_blocker_is_not_reported() {
@@ -638,13 +683,14 @@ mod tests {
     }
 
     #[test]
-    fn in_progress_dependent_is_not_reported() {
+    fn working_dependent_is_not_reported() {
         let s = store(vec![
             epic("E", PLAN),
-            bead("c", "in_progress", PLAN, Some("E"), &["x"]),
+            bead("c", "open", PLAN, Some("E"), &["x"]),
             bead("x", "open", &["spira", "incident"], None, &[]),
         ]);
-        assert!(run(&s, &[]).is_empty());
+        assert!(run_working(&s, &[], &["c"], &Facts { live: 1, ..Facts::default() }).is_empty());
+        assert!(!run(&s, &[]).is_empty(), "bd status in_progress alone no longer means moving");
     }
 
     #[test]
@@ -718,10 +764,10 @@ mod tests {
         let s = store(vec![
             epic("sp-msk4h", PLAN),
             bead("sp-7tw9h", "closed", &plan_with(&["spira-submitted"]), Some("sp-msk4h"), &[]),
-            bead("sp-o3o6z", "in_progress", PLAN, Some("sp-msk4h"), &["sp-7tw9h"]),
+            bead("sp-o3o6z", "open", PLAN, Some("sp-msk4h"), &["sp-7tw9h"]),
             bead("sp-o4wu7", "open", PLAN, Some("sp-msk4h"), &["sp-7tw9h", "sp-o3o6z"]),
         ]);
-        assert!(run(&s, &[]).is_empty());
+        assert!(run_working(&s, &[], &["sp-o3o6z"], &Facts { live: 1, ..Facts::default() }).is_empty());
     }
 
     #[test]
@@ -813,9 +859,9 @@ mod tests {
         let s = store(vec![
             epic("E", PLAN),
             bead("c", "open", PLAN, Some("E"), &["x"]),
-            bead("x", "in_progress", &["spira", "incident"], None, &[]),
+            bead("x", "open", &["spira", "incident"], None, &[]),
         ]);
-        assert!(run(&s, &[]).is_empty());
+        assert!(run_working(&s, &[], &["x"], &Facts { live: 1, ..Facts::default() }).is_empty());
     }
 
     #[test]
@@ -869,7 +915,7 @@ mod tests {
         let s = store(vec![bead("d", "deferred", PLAN, None, &["x"]), bead("x", "closed", &[], None, &[])]);
         let rows = run(&s, &[]);
         assert_eq!(kinds(&rows), vec![("deferred-unescalated".into(), "d".into())]);
-        assert_eq!(rows[0].detail, "deferred but not labelled operator-ask: title of d");
+        assert_eq!(rows[0].detail, "deferred with no ask held: title of d");
     }
 
     #[test]

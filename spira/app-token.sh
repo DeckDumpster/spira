@@ -44,7 +44,7 @@ _pay="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$_iat" "$_exp" "$_app_id" | _b6
 _sig="$(printf '%s' "${_hdr}.${_pay}" | openssl dgst -sha256 -sign "$_key_file" -binary | _b64url)"
 _jwt="${_hdr}.${_pay}.${_sig}"
 
-curl -sf --max-time 30 \
+curl -sf --max-time 5 \
     -X POST \
     -H "Authorization: Bearer $_jwt" \
     -H "Accept: application/vnd.github.v3+json" \

@@ -7,4 +7,3 @@
 #
 # Custom assertion helpers beyond ok/bad/want/is (is1/absent/present) that testlib.sh cannot
 # yet express: sp-u1b.
-spira/test-install-refusal.sh

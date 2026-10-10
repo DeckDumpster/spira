@@ -11,6 +11,8 @@ mod lc;
 mod queue;
 mod ratelim;
 mod reachable;
+mod round;
+mod tsd;
 mod unsent;
 
 use crate::io;
@@ -34,6 +36,95 @@ fn push(out: &mut Kv, k: &str, v: impl Into<String>) {
     out.push((k.to_string(), v.into()));
 }
 
+/// Every registered config key this probe library reads, resolved ONCE through
+/// `spira_config::process::cfg`/`cfg_parse` (the one door, per Ryan 2026-10-05: one source of
+/// config) and passed down to every `*_keys` function that needs a value — never read a
+/// second time via `std::env::var`. Built by [`Cfg::load`], called once per `once`/`probe`
+/// invocation (`main::cmd_once`/`cmd_probe`), after `io::bootstrap_config` (which still
+/// exports resolved config into this process's own environment, but only so the frozen
+/// `lib.sh` bridge's children see it — never as a second path back into this crate's own
+/// Rust logic). `Default` exists for tests only: every field defaults to empty/zero, never a
+/// value a test should mistake for a resolved one — a test sets exactly the field(s) its
+/// assertion is about.
+#[derive(Default)]
+pub struct Cfg {
+    pub instance: String,
+    pub trace_lines: i64,
+    pub max_live_aeons: i64,
+    pub lanes_max_live: String,
+    pub scope_label: String,
+    pub czar_label: String,
+    pub wiki: String,
+    pub mail: String,
+    pub queue_dir: String,
+    pub queue_batch_max: i64,
+    pub queue_batch_wait: i64,
+    pub cert_window_mins: i64,
+    pub prod: String,
+    pub ci_label: String,
+    pub queue_wait_label: String,
+    /// `0` is a declared, deliberate value ("set it to 0 to disable the deadline" — conf.d's
+    /// own doc), not an absence — `awaiting_ci_section` (core_detail.rs) checks for it
+    /// explicitly rather than treating every elapsed second as overdue.
+    pub ci_park_max: i64,
+    pub ctrl: String,
+    pub repo_map: String,
+    pub round_cap_secs: i64,
+}
+
+impl Cfg {
+    pub fn load() -> Result<Cfg, String> {
+        use spira_config::process::{cfg, cfg_parse};
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let home = io::home_dir();
+        Ok(Cfg {
+            instance: spira_config::resolve::resolve_instance(&env, &home)?,
+            trace_lines: cfg_parse::<i64>("COCKPIT_TRACE_LINES")?,
+            max_live_aeons: cfg_parse::<i64>("SPIRA_MAX_LIVE_AEONS")?,
+            lanes_max_live: cfg("SPIRA_LANES_MAX_LIVE")?,
+            scope_label: cfg("SPIRA_SCOPE_LABEL")?,
+            czar_label: cfg("SPIRA_CZAR_LABEL")?,
+            wiki: cfg("SPIRA_WIKI")?,
+            mail: cfg("SPIRA_MAIL")?,
+            queue_dir: cfg("SPIRA_QUEUE_DIR")?,
+            queue_batch_max: cfg_parse::<i64>("SPIRA_QUEUE_BATCH_MAX")?,
+            queue_batch_wait: cfg_parse::<i64>("SPIRA_QUEUE_BATCH_WAIT")?,
+            cert_window_mins: cert_window_mins(&cfg("SPIRA_CERT_WINDOW_MINS")?)?,
+            prod: cfg("SPIRA_PROD")?,
+            ci_label: cfg("SPIRA_CI_LABEL")?,
+            queue_wait_label: cfg("SPIRA_QUEUE_WAIT_LABEL")?,
+            ci_park_max: cfg_parse::<i64>("SPIRA_CI_PARK_MAX")?,
+            ctrl: cfg("SPIRA_CTRL")?,
+            repo_map: cfg("SPIRA_REPO_MAP")?,
+            round_cap_secs: cfg_parse::<i64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
+        })
+    }
+}
+
+const CERT_WINDOW_MINS_DEFAULT: i64 = 90;
+
+/// An empty value is "unset": one key read by a single probe must not fail the load for all.
+fn cert_window_mins(raw: &str) -> Result<i64, String> {
+    let v = raw.trim();
+    if v.is_empty() {
+        return Ok(CERT_WINDOW_MINS_DEFAULT);
+    }
+    v.parse::<i64>().map_err(|e| format!("SPIRA_CERT_WINDOW_MINS = {raw:?} does not parse: {e}"))
+}
+
+#[cfg(test)]
+mod cert_window_tests {
+    use super::*;
+
+    #[test]
+    fn empty_is_the_default_and_a_value_is_parsed() {
+        assert_eq!(cert_window_mins("").unwrap(), 90);
+        assert_eq!(cert_window_mins("  ").unwrap(), 90);
+        assert_eq!(cert_window_mins("45").unwrap(), 45);
+        assert!(cert_window_mins("abc").is_err());
+    }
+}
+
 /// Render a [`Kv`] as the raw `KEY=value` lines a probe subcommand prints on stdout —
 /// exactly what `cockpit.sh <subcommand>` echoed, unquoted (the supervisor's fragment/merge
 /// layer is the only place that quotes).
@@ -50,27 +141,29 @@ pub fn render(kv: &Kv) -> String {
 
 /// `probe()`: the full backward-compatible serial pass `cockpit.sh once`/`loop` ran, in the
 /// bash's own order. SP_AT first (`now_keys` emits it as its first line), SP_PASS_SECS last.
-pub fn full_pass() -> Kv {
+pub fn full_pass(cfg: &Cfg) -> Kv {
     let start = io::now();
     let mut out = Kv::new();
-    out.extend(now_keys());
-    out.extend(core_detail::core_detail_keys());
+    out.extend(now_keys(cfg));
+    out.extend(core_detail::core_detail_keys(cfg));
     out.extend(core_counts_keys());
-    out.extend(slots_keys());
+    out.extend(slots_keys(cfg));
     out.extend(admission::admission_keys());
-    out.extend(unsent::unsent_keys());
-    out.extend(queue::queue_keys());
-    out.extend(reachable::reachable_keys());
-    out.extend(sphere_keys());
-    out.extend(repo_label_keys());
+    out.extend(tsd::tsd_keys());
+    out.extend(unsent::unsent_keys(cfg));
+    out.extend(queue::queue_keys(cfg));
+    out.extend(round::round_keys(cfg.round_cap_secs));
+    out.extend(reachable::reachable_keys(cfg));
+    out.extend(sphere_keys(cfg));
+    out.extend(repo_label_keys(cfg));
     out.extend(strand_keys());
     out.extend(dup_refs_keys());
     out.extend(livelock_keys());
     out.extend(sop_keys());
     out.extend(ratelim::ratelim_keys());
-    out.extend(statute_keys());
+    out.extend(statute_keys(cfg));
     out.extend(drift_keys());
-    out.extend(czar_triggers_keys());
+    out.extend(czar_triggers_keys(cfg));
     out.push(("SP_PASS_SECS".to_string(), (io::now() - start).to_string()));
     out
 }
@@ -84,31 +177,33 @@ pub fn dedup_first_wins(kv: Kv) -> Kv {
 }
 
 /// Dispatch by the same subcommand names `spira/cockpit.sh`'s case statement used.
-pub fn run(subcommand: &str) -> Option<Kv> {
+pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
     match subcommand {
-        "now" => Some(now_keys()),
+        "now" => Some(now_keys(cfg)),
         "core" => {
-            let mut kv = core_detail::core_detail_keys();
+            let mut kv = core_detail::core_detail_keys(cfg);
             kv.extend(core_counts_keys());
             Some(kv)
         }
-        "core_detail" => Some(core_detail::core_detail_keys()),
-        "slots" => Some(slots_keys()),
+        "core_detail" => Some(core_detail::core_detail_keys(cfg)),
+        "slots" => Some(slots_keys(cfg)),
         "admission" => Some(admission::admission_keys()),
-        "unsent" => Some(unsent::unsent_keys()),
-        "queue" => Some(queue::queue_keys()),
-        "reachable" => Some(reachable::reachable_keys()),
-        "sphere" => Some(sphere_keys()),
-        "repo_labels" => Some(repo_label_keys()),
+        "tsd" => Some(tsd::tsd_keys()),
+        "unsent" => Some(unsent::unsent_keys(cfg)),
+        "queue" => Some(queue::queue_keys(cfg)),
+        "round" => Some(round::round_keys(cfg.round_cap_secs)),
+        "reachable" => Some(reachable::reachable_keys(cfg)),
+        "sphere" => Some(sphere_keys(cfg)),
+        "repo_labels" => Some(repo_label_keys(cfg)),
         "livelock" => Some(livelock_keys()),
         "dup_refs" => Some(dup_refs_keys()),
         "strands" => Some(strand_keys()),
         "ratelim" => Some(ratelim::ratelim_keys()),
         "sops" => Some(sop_keys()),
-        "statute" => Some(statute_keys()),
+        "statute" => Some(statute_keys(cfg)),
         "drift" => Some(drift_keys()),
-        "mail" => Some(mail_keys()),
-        "czar_triggers" => Some(czar_triggers_keys()),
+        "mail" => Some(mail_keys(cfg)),
+        "czar_triggers" => Some(czar_triggers_keys(cfg)),
         "sending" => Some(sending_keys()),
         _ => None,
     }
@@ -118,7 +213,7 @@ pub fn run(subcommand: &str) -> Option<Kv> {
 // now_keys — fast tier: /proc and the filesystem only, no bd/git.
 // ---------------------------------------------------------------------------------------
 
-pub fn now_keys() -> Kv {
+pub fn now_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let start = io::now();
     push(&mut out, "SP_AT", start.to_string());
@@ -153,10 +248,10 @@ pub fn now_keys() -> Kv {
             let pid = io::read_trim(&pf).and_then(|s| s.trim().parse::<i64>().ok());
             let secs = pid.and_then(io::proc_etimes).unwrap_or(0);
 
-            let meta = io::bdjson(&["show", bead]);
+            let meta = io::contentjson(&["show", bead]);
             let (pri, title, repo_name) = parse_show_meta(meta, bead);
 
-            let partition = io::bdq(&["state", bead, "fayth"])
+            let partition = io::content(&["state", bead, "fayth"])
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "?".to_string());
@@ -205,7 +300,7 @@ pub fn now_keys() -> Kv {
                     push(&mut out, &format!("SP_AEON{i}_{k}"), v.to_string());
                 }
             }
-            let tl: i64 = std::env::var("SPIRA_COCKPIT_TRACE_LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+            let tl: i64 = cfg.trace_lines;
             if tl > 0 {
                 let tail = aeon::trace::trace_tail(&log_path, &mark, tl as usize);
                 let lines: Vec<&str> = tail.lines().map(sanitize_line).collect();
@@ -221,9 +316,9 @@ pub fn now_keys() -> Kv {
     }
     push(&mut out, "SP_AEON_N", i.to_string());
 
-    push(&mut out, "SP_SENTINEL_TIMER", unit_active_key("sentinel", "timer"));
+    push(&mut out, "SP_SENTINEL_TIMER", unit_active_key("sentinel", "timer", &cfg.instance));
     push(&mut out, "SP_SENTINEL_AGE", age_of(&run.join("sentinel.log")));
-    push(&mut out, "SP_OPS_TIMER", unit_active_key("ops", "timer"));
+    push(&mut out, "SP_OPS_TIMER", unit_active_key("ops", "timer", &cfg.instance));
 
     let mut ops_age = age_of(&run.join("ops.log"));
     if let Ok(entries) = std::fs::read_dir(&run) {
@@ -238,7 +333,7 @@ pub fn now_keys() -> Kv {
     }
     push(&mut out, "SP_OPS_AGE", ops_age);
 
-    push(&mut out, "SP_AURON_TIMER", unit_active_key("auron", "timer"));
+    push(&mut out, "SP_AURON_TIMER", unit_active_key("auron", "timer", &cfg.instance));
     push(&mut out, "SP_AURON_AGE", age_of(&run.join("auron.status")));
     let auron_status = run.join("auron.status");
     if auron_status.is_file() {
@@ -255,6 +350,8 @@ pub fn now_keys() -> Kv {
     let rs_alert = rs_out.lines().find(|l| l.starts_with("ALERT ")).unwrap_or("");
     push(&mut out, "SP_HOTFIX_LINE", rs_line);
     push(&mut out, "SP_HOTFIX_ALERT", rs_alert);
+
+    push(&mut out, "SP_LC_STALE_S", lc::stale_age().to_string());
 
     let (ov_n, ov_failed, ov_list) = overrides_summary();
     push(&mut out, "SP_OVERRIDES_N", ov_n.to_string());
@@ -409,13 +506,13 @@ fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)>, usize, u
 
 /// `spira_unit` (wave 4.10, sp-wqj3o: family C7's home is `spira_config::unit`, read
 /// in-process here instead of shelling into lib.sh via `io::lib_call` — the one bash bridge
-/// this bead names explicitly). `SPIRA_INSTANCE`/`SPIRA_SYSTEMCTL` are read straight from
-/// the environment, the same per-copy-fact reading every other direct env reader in this
-/// crate already does (see `capacity_pause_file`, above).
-fn unit_active_key(fayth: &str, kind: &str) -> String {
-    let instance = std::env::var("SPIRA_INSTANCE").unwrap_or_default();
+/// this bead names explicitly). `instance` is the caller's resolved `SPIRA_INSTANCE`
+/// (`Cfg::load`); `SPIRA_SYSTEMCTL` is not a registered config key, so it is still read
+/// straight from the environment, the same per-copy-fact reading `capacity_pause_file`
+/// (above) does for its own non-registered key.
+fn unit_active_key(fayth: &str, kind: &str, instance: &str) -> String {
     let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string());
-    let unit = spira_config::unit::resolve_unit(fayth, kind, &instance, &systemctl);
+    let unit = spira_config::unit::resolve_unit(fayth, kind, instance, &systemctl);
     match io::unit_active(&unit) {
         Some(true) => "1".to_string(),
         Some(false) => "0".to_string(),
@@ -438,7 +535,7 @@ fn aeon_alive(pidfile: &Path) -> bool {
 
 /// `show <bead>` -> (priority, sanitized title, repo name), `?`/empty on any failure.
 fn parse_show_meta(raw: Option<String>, _bead: &str) -> (String, String, String) {
-    let Some(rows) = io::bd_rows(raw) else {
+    let Some(rows) = io::json_rows(raw) else {
         return ("?".to_string(), "?".to_string(), "?".to_string());
     };
     let Some(row) = rows.first() else {
@@ -492,7 +589,7 @@ pub fn core_counts_keys() -> Kv {
     let ask_label = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     // Asks are not work beads: bd status is their only state (spira_config::nonwork).
     let [flag, open] = nonwork::status_args(Kind::Ask, Which::Open);
-    let rows = io::bd_rows(io::bdjson(&["list", &flag, &open, "--limit", "0", "--label", &ask_label]));
+    let rows = io::json_rows(io::contentjson(&["list", &flag, &open, "--limit", "0", "--label", &ask_label]));
     match rows {
         None => push(&mut out, "SP_WAITING", "?"),
         Some(rows) => push(&mut out, "SP_WAITING", rows.len().to_string()),
@@ -504,24 +601,17 @@ pub fn core_counts_keys() -> Kv {
 // slots_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn slots_keys() -> Kv {
+pub fn slots_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let home = io::home_dir();
     let live = io::lib_call(&home, "aeons_live_total", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LIVE", live.clone());
 
-    // SPIRA_MAX_AEONS is never set into this process's own environment (io::NEVER_EXPORTED)
-    // — read io::max_aeons() instead of std::env::var directly.
     let pool: i64 = io::max_aeons().parse().ok().unwrap_or(0);
-    let lane_fayths = io::lib_call(&home, "spira_lane_fayths", &[]).unwrap_or_default();
-    let mut lt = 0i64;
-    for f in lane_fayths.split_whitespace() {
-        let ln: i64 = io::lib_call(&home, "fayth_get", &[f, "FAYTH_MAX_CONCURRENT", "1"])
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(1);
-        lt += ln;
-    }
-    let ceiling = std::env::var("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(pool + lt);
+    // SPIRA_MAX_LIVE_AEONS now carries a real, always-declared value (the config file); the
+    // pool+lanes computation this ceiling used to fall back to when the key resolved empty
+    // is gone with that default.
+    let ceiling = cfg.max_live_aeons;
     push(&mut out, "SP_SLOTS_CEILING", ceiling.to_string());
 
     // A failed live read must never resolve to a reassuring free count.
@@ -531,7 +621,7 @@ pub fn slots_keys() -> Kv {
     };
     push(&mut out, "SP_SLOTS_FREE", free);
     push(&mut out, "SP_SLOTS_POOL", pool.to_string());
-    push(&mut out, "SP_SLOTS_LANES_CAP", std::env::var("SPIRA_LANES_MAX_LIVE").unwrap_or_default());
+    push(&mut out, "SP_SLOTS_LANES_CAP", cfg.lanes_max_live.clone());
 
     let lanes_live = io::lib_call(&home, "aeons_live_lanes", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LANES_LIVE", lanes_live);
@@ -562,19 +652,24 @@ pub fn slots_keys() -> Kv {
 // sphere_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn sphere_keys() -> Kv {
+pub fn sphere_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     // A work bead's state is the lifecycle row's (design §3.4); `None` renders `?`.
     let lc_rows = lc::state_index();
     match &lc_rows {
-        None => push(&mut out, "SP_POISON", "?"),
-        Some(lc) => push(&mut out, "SP_POISON", poison_count(lc).to_string()),
+        None => {
+            push(&mut out, "SP_POISON", "?");
+            push(&mut out, "SP_HOLD_ASK", "?");
+        }
+        Some(lc) => {
+            push(&mut out, "SP_POISON", poison_count(lc).to_string());
+            push(&mut out, "SP_HOLD_ASK", ask_hold_count(lc).to_string());
+        }
     }
 
-    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
-    let rows = io::bd_rows(io::bdjson(&["list", "--limit", "0", "--label", &label]));
+    let rows = io::json_rows(io::contentjson(&["list", "--limit", "0", "--label", &label]));
     match rows.zip(lc_rows.as_ref()) {
         None => {
             push(&mut out, "SP_OPEN", "?");
@@ -598,7 +693,7 @@ pub fn sphere_keys() -> Kv {
                     }
                 })
                 .collect();
-            let (open_n, inprog_n, needsop_n) = sphere_counts(&work, lc, &ask);
+            let (open_n, inprog_n, needsop_n) = sphere_counts(&work, lc);
             push(&mut out, "SP_OPEN", open_n.to_string());
             push(&mut out, "SP_INPROG", inprog_n.to_string());
             push(&mut out, "SP_NEEDSOP", needsop_n.to_string());
@@ -611,10 +706,9 @@ pub fn sphere_keys() -> Kv {
 // repo_label_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn repo_label_keys() -> Kv {
+pub fn repo_label_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let map_path = std::env::var("SPIRA_REPO_MAP").unwrap_or_default();
-    let Ok(map_content) = std::fs::read_to_string(&map_path) else {
+    let Ok(map_content) = std::fs::read_to_string(&cfg.repo_map) else {
         push(&mut out, "SP_REPO_UNMAPPED", "?");
         push(&mut out, "SP_REPO_ABSENT", "?");
         return out;
@@ -627,7 +721,7 @@ pub fn repo_label_keys() -> Kv {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let rows = io::bd_rows(io::bdjson(&["list", "--limit", "0"]));
+    let rows = io::json_rows(io::contentjson(&["list", "--limit", "0"]));
     match rows {
         None => {
             push(&mut out, "SP_REPO_UNMAPPED", "?");
@@ -658,15 +752,7 @@ pub fn repo_label_keys() -> Kv {
 
 pub fn dup_refs_keys() -> Kv {
     let mut out = Kv::new();
-    let lookback: i64 = std::env::var("SPIRA_INCIDENT_DEDUP_LOOKBACK").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
-    let since = io::run_tool("date", &["-u", "-d", &format!("-{lookback} days"), "+%Y-%m-%d"], None).map(|s| s.trim().to_string());
-    let Some(since) = since else {
-        push(&mut out, "SP_DUP_REFS", "?");
-        push(&mut out, "SP_DUP_BEADS", "?");
-        push(&mut out, "SP_DUP_N", "0");
-        return out;
-    };
-    let rows = io::bd_rows(io::bdjson(&["list", "--all", "--limit", "0", "--label", "spira,incident"]));
+    let rows = io::json_rows(io::contentjson(&["list", "--all", "--limit", "0", "--label", "spira,incident"]));
     // An incident bead is a work bead (sp-jgjvh): whether it is over is its lifecycle row's.
     let Some((rows, lc)) = rows.zip(lc::state_index()) else {
         push(&mut out, "SP_DUP_REFS", "?");
@@ -674,7 +760,7 @@ pub fn dup_refs_keys() -> Kv {
         push(&mut out, "SP_DUP_N", "0");
         return out;
     };
-    let by_ref = incidents_by_ref(&rows, &lc, &since);
+    let by_ref = incidents_by_ref(&rows, &lc);
     let mut dup: Vec<(String, Vec<String>)> = by_ref.into_iter().filter(|(_, ids)| ids.len() > 1).collect();
     push(&mut out, "SP_DUP_REFS", dup.len().to_string());
     push(&mut out, "SP_DUP_BEADS", dup.iter().map(|(_, ids)| ids.len() - 1).sum::<usize>().to_string());
@@ -700,14 +786,17 @@ pub fn dup_refs_keys() -> Kv {
 /// process-equivalent pass (DESIGN.md: data fetching goes through `io` each time), and
 /// `groomer`/`maechen-trigger` resolve their own copy the same independent way.
 fn strand_cfg() -> strand::config::Config {
-    strand::config::Config::resolve(&strand::config::Live::load())
+    strand::config::Config::resolve(&strand::config::Live::load()).unwrap_or_else(|e| {
+        eprintln!("cockpit-collect: {e}");
+        std::process::exit(1)
+    })
 }
 
 pub fn livelock_keys() -> Kv {
     let mut out = Kv::new();
     let cfg = strand_cfg();
     let ll_out = strand::detectors::detect_livelocked(&cfg);
-    if ll_out.is_empty() && io::bdjson(&["list", "--limit", "1"]).is_none() {
+    if ll_out.is_empty() && io::contentjson(&["list", "--limit", "1"]).is_none() {
         push(&mut out, "SP_LIVELOCKED", "?");
         push(&mut out, "SP_LIVELOCK_N", "?");
     } else {
@@ -735,7 +824,7 @@ pub fn livelock_keys() -> Kv {
     // `[ "$_n" -ge 20 ] && true`, which never breaks — so every matching row is emitted.
     let ic_out = strand::detectors::detect_invalid_closed(&cfg);
     // An empty detector answer is only "none" when the store answers at all.
-    if ic_out.is_empty() && io::bdjson(&["list", "--all", "--limit", "1"]).is_none() {
+    if ic_out.is_empty() && io::contentjson(&["list", "--all", "--limit", "1"]).is_none() {
         push(&mut out, "SP_INVALID_CLOSED", "?");
         push(&mut out, "SP_INVCLSD_N", "?");
         push(&mut out, "SP_UNFILED_FOLLOW", "?");
@@ -831,10 +920,10 @@ const CZAR_CLASSES: &[(&str, &str)] = &[
     ("incident:queue-loop-stalled", "STALL"),
 ];
 
-pub fn czar_triggers_keys() -> Kv {
+pub fn czar_triggers_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let label = std::env::var("SPIRA_CZAR_LABEL").unwrap_or_else(|_| "czar-trigger".to_string());
-    let raw = io::bdjson(&["list", "--label", &label, "--all", "--limit", "0", "--brief"]);
+    let label = cfg.czar_label.as_str();
+    let raw = io::contentjson(&["list", "--label", label, "--all", "--limit", "0", "--brief"]);
     let rows = match &raw {
         Some(s) if !s.trim().is_empty() => serde_json::from_str::<Value>(s.trim()).ok().map(|v| match v {
             Value::Array(a) => a,
@@ -911,7 +1000,7 @@ const SOP_LEDGER_REL: &str = "sop/applied.jsonl";
 pub fn sop_keys() -> Kv {
     let mut out = Kv::new();
     let ledger = std::env::var("SPIRA_SOP_LEDGER").unwrap_or_else(|_| io::run_dir().join(SOP_LEDGER_REL).to_string_lossy().into_owned());
-    let raw = io::bdjson(&["memories"]);
+    let raw = io::contentjson(&["memories"]);
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
         push(&mut out, "SP_SOP_NEVER_FIRED", "?");
         push(&mut out, "SP_SOP_RECURRED", "?");
@@ -985,16 +1074,16 @@ pub fn sop_keys() -> Kv {
 // statute_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn statute_keys() -> Kv {
+pub fn statute_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    let wiki = std::env::var("SPIRA_WIKI").unwrap_or_default();
+    let wiki = &cfg.wiki;
     if wiki.is_empty() {
         push(&mut out, "SP_STATUTE_DB_N", "?");
         push(&mut out, "SP_STATUTE_PAGE_N", "?");
         push(&mut out, "SP_STATUTE_SKEW", "?");
         return out;
     }
-    let db_n: Option<usize> = io::bdjson(&["memories"]).filter(|s| !s.trim().is_empty()).and_then(|s| {
+    let db_n: Option<usize> = io::contentjson(&["memories"]).filter(|s| !s.trim().is_empty()).and_then(|s| {
         serde_json::from_str::<Value>(s.trim()).ok()
     }).and_then(|v| v.as_object().map(|m| m.iter().filter(|(k, v)| v.is_string() && k.starts_with("law-")).count()));
 
@@ -1037,6 +1126,7 @@ pub fn drift_keys() -> Kv {
     let drift_sh = io::home_dir().join("drift.sh");
     let repo = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty());
     let run_one = |args: &[&str]| {
+        // batch-job: runs a gate, build or forge script that takes as long as its work
         std::process::Command::new("bash")
             .envs(spira_config::release_env::child_path_env_for_process())
             .arg(&drift_sh)
@@ -1064,11 +1154,11 @@ pub fn drift_keys() -> Kv {
 // mail_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn mail_keys() -> Kv {
+pub fn mail_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let now = io::now();
-    let mail_base = std::env::var("SPIRA_MAIL").unwrap_or_default();
-    let dir = Path::new(&mail_base).join("concierge");
+    let mail_base = &cfg.mail;
+    let dir = Path::new(mail_base).join("concierge");
     let new_dir = dir.join("new");
     if mail_base.is_empty() || !new_dir.is_dir() {
         push(&mut out, "SP_MAIL_UNREAD", "?");
@@ -1157,35 +1247,27 @@ pub fn sending_keys() -> Kv {
     }
 }
 
-/// SP_DUP_*: incident bead ids grouped by `external_ref`, over the incidents that still
-/// count — read from each bead's lifecycle row, never bd status (sp-jgjvh). Unfinished or
-/// in delivery (not terminal) counts; a terminal one counts only while its `closed_at`
-/// (bd content) falls inside the dedup lookback (`since`, `YYYY-MM-DD`); a bead with no
-/// lifecycle row is not live work and is not counted. A `duplicate-of:` bead is already
-/// accounted for.
-pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>, since: &str) -> HashMap<String, Vec<String>> {
-    let mut by_ref: HashMap<String, Vec<String>> = HashMap::new();
+/// SP_DUP_*: incident bead ids grouped by `external_ref`, over the incidents still live —
+/// read from each bead's lifecycle row, never bd status. A terminal bead is a predecessor
+/// of a recurrence, never surplus; a bead with no lifecycle row is not live work; a
+/// `duplicate-of:` bead is already accounted for.
+pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut grouped: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
     for i in rows {
         let ref_ = i.get("external_ref").and_then(Value::as_str).unwrap_or("");
         if ref_.is_empty() {
             continue;
         }
-        let labels: Vec<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        if labels.iter().any(|l| l.starts_with("duplicate-of:")) {
+        let duplicate = i.get("labels").and_then(Value::as_array).is_some_and(|a| a.iter().filter_map(Value::as_str).any(|l| l.starts_with("duplicate-of:")));
+        if duplicate {
             continue;
         }
         let id = i.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-        let Some(row) = lc.get(&id) else { continue };
-        if row.terminal() {
-            let closed_at = i.get("closed_at").and_then(Value::as_str).unwrap_or("");
-            let closed_date = closed_at.get(..10).unwrap_or("");
-            if closed_date < since {
-                continue;
-            }
+        if lc.get(&id).is_some_and(|r| !r.terminal()) {
+            grouped.entry(ref_.to_string()).or_default().push(id);
         }
-        by_ref.entry(ref_.to_string()).or_default().push(id);
     }
-    by_ref
+    grouped
 }
 
 /// SP_POISON: work beads the machine holds for poison, not yet over (the `spira-poison`
@@ -1194,12 +1276,18 @@ pub fn poison_count(lc: &HashMap<String, lc::Row>) -> usize {
     lc.values().filter(|r| r.held("poison") && !r.terminal()).count()
 }
 
+/// SP_HOLD_ASK: work beads held on an ask the operator has yet to answer, not yet over.
+/// Its own figure: wait, operator and poison holds are not decisions awaiting the operator.
+pub fn ask_hold_count(lc: &HashMap<String, lc::Row>) -> usize {
+    lc.values().filter(|r| r.held("ask") && !r.terminal()).count()
+}
+
 /// SP_OPEN / SP_INPROG / SP_NEEDSOP over the plan's work items: a work bead's state is its
 /// lifecycle row's — open is "not over" (not terminal), in progress is WORKING. An epic has
 /// no lifecycle row: it is a coordination bead, whose bd status is its only state
 /// (spira_config::nonwork). Any other item with no row is not counted: the machine cannot
 /// tell its state, and a rowless bead can never be claimed (CHECK-ROWLESS reports it).
-pub fn sphere_counts(work: &[&Value], lc: &HashMap<String, lc::Row>, ask: &str) -> (usize, usize, usize) {
+pub fn sphere_counts(work: &[&Value], lc: &HashMap<String, lc::Row>) -> (usize, usize, usize) {
     let has = |i: &Value, lab: &str| {
         i.get("labels")
             .and_then(Value::as_array)
@@ -1219,7 +1307,8 @@ pub fn sphere_counts(work: &[&Value], lc: &HashMap<String, lc::Row>, ask: &str) 
         };
         open_n += usize::from(open);
         inprog_n += usize::from(working);
-        needsop_n += usize::from(open && has(i, ask));
+        // Needs the operator = the row's ask hold (sp-psztcc), not the label.
+        needsop_n += usize::from(open && lc.get(id).is_some_and(|r| r.held("ask")));
     }
     (open_n, inprog_n, needsop_n)
 }
@@ -1255,8 +1344,8 @@ mod tests {
             .collect()
     }
 
-    /// sp-jgjvh: duplicate incident refs are counted from the lifecycle row: live and in
-    /// delivery count, terminal counts only inside the lookback, rowless never.
+    /// Duplicate incident refs are counted from the lifecycle row: only non-terminal rows
+    /// count; terminal, rowless and duplicate-of: never do.
     #[test]
     fn dup_refs_count_by_lifecycle_state_not_bd_status() {
         let rows: Vec<Value> = serde_json::from_str(
@@ -1269,9 +1358,23 @@ mod tests {
         )
         .unwrap();
         let lc = lcmap(&[("a", "WORKING", &[]), ("b", "SUBMITTED", &[]), ("c", "LANDED", &[]), ("d", "DONE", &[]), ("f", "READY", &[])]);
-        let mut got = incidents_by_ref(&rows, &lc, "2026-09-28").remove("r1").unwrap();
+        let mut got = incidents_by_ref(&rows, &lc).remove("r1").unwrap();
         got.sort();
-        assert_eq!(got, vec!["a", "b", "d"]);
+        assert_eq!(got, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn a_terminal_predecessor_and_a_recurrence_is_not_surplus_but_two_live_rows_are() {
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[{"id":"p","status":"open","external_ref":"r"},{"id":"q","status":"open","external_ref":"r"}]"#,
+        )
+        .unwrap();
+        for dead in ["DONE", "DROPPED", "SUPERSEDED"] {
+            let got = incidents_by_ref(&rows, &lcmap(&[("p", dead, &[]), ("q", "READY", &[])]));
+            assert_eq!(got["r"].len(), 1, "{dead}");
+        }
+        let got = incidents_by_ref(&rows, &lcmap(&[("p", "READY", &[]), ("q", "READY", &[])]));
+        assert_eq!(got["r"].len(), 2);
     }
 
     /// sp-mve9i: the counts follow the lifecycle row, whatever bd's status says.
@@ -1286,17 +1389,30 @@ mod tests {
         )
         .unwrap();
         let work: Vec<&Value> = rows.iter().collect();
-        let lc = lcmap(&[("a", "REWORK", &[]), ("b", "LANDED", &[]), ("c", "SUBMITTED", &[])]);
-        // a: open (REWORK) and needs-op; b: over; c: open, not WORKING; d: rowless, not
-        // counted; e: an epic, open by bd.
-        assert_eq!(sphere_counts(&work, &lc, "ask"), (3, 0, 1));
+        let lc = lcmap(&[("a", "REWORK", &[]), ("b", "LANDED", &[]), ("c", "SUBMITTED", &["ask"])]);
+        // a: open (REWORK), and its ask LABEL is not a hold (sp-psztcc); b: over; c: open, not
+        // WORKING, needs-op by its ask hold; d: rowless, not counted; e: an epic, open by bd.
+        assert_eq!(sphere_counts(&work, &lc), (3, 0, 1));
         let lc = lcmap(&[("d", "WORKING", &[])]);
-        assert_eq!(sphere_counts(&work, &lc, "ask"), (2, 1, 0));
+        assert_eq!(sphere_counts(&work, &lc), (2, 1, 0));
     }
 
     #[test]
     fn poison_counts_live_poison_holds() {
         let lc = lcmap(&[("a", "REWORK", &["poison"]), ("b", "LANDED", &["poison"]), ("c", "READY", &["wait"])]);
+        assert_eq!(poison_count(&lc), 1);
+    }
+
+    #[test]
+    fn ask_holds_are_counted_apart_from_other_hold_kinds() {
+        let lc = lcmap(&[
+            ("a", "REWORK", &["ask"]),
+            ("b", "LANDED", &["ask"]),
+            ("c", "READY", &["wait"]),
+            ("d", "READY", &["poison"]),
+            ("e", "READY", &["operator"]),
+        ]);
+        assert_eq!(ask_hold_count(&lc), 1);
         assert_eq!(poison_count(&lc), 1);
     }
 
@@ -1313,7 +1429,7 @@ mod tests {
     fn sphere_reports_zero_not_question_mark_on_empty() {
         // sphere_keys hits bd for real; this only checks the pure classification helper
         // it shares with the other probes stays honest about refusal vs empty.
-        assert_eq!(io::bd_rows(Some("[]".to_string())), Some(vec![]));
+        assert_eq!(io::json_rows(Some("[]".to_string())), Some(vec![]));
     }
 
     #[test]
@@ -1345,6 +1461,57 @@ mod tests {
         let pf = dir.join("x.pid");
         std::fs::write(&pf, "999999999").unwrap();
         assert!(!aeon_alive(&pf), "a pid that does not exist is never alive");
+    }
+
+    fn strand_kv(json: &str) -> impl Fn(&str) -> Option<String> {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
+        let path = testkit::TempDir::new("cc-strand-case");
+        let _env = crate::test_support::set_run(path.path());
+        std::fs::write(path.path().join("strands.json"), json).unwrap();
+        let kv = strand_keys();
+        move |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone())
+    }
+
+    #[test]
+    fn strand_keys_counts_two_ghosts_as_two_and_reports_no_other_class() {
+        let get = strand_kv(r#"{"spira,plan:ghost:sp-a":{},"spira,plan:ghost:sp-b":{}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("2".into()));
+        assert_eq!(get("SP_STRAND_OTHER"), Some("none".into()));
+    }
+
+    #[test]
+    fn strand_keys_an_empty_epic_is_its_own_class_not_a_ghost() {
+        let get = strand_kv(r#"{"spira,plan:empty:sp-jj88":{"first":1788811865,"acted":0,"escalated":1788812834}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("0".into()));
+        assert_eq!(get("SP_STRAND_OTHER"), Some("empty=1".into()));
+        assert_eq!(get("SP_STRANDS"), Some("1".into()));
+    }
+
+    #[test]
+    fn strand_keys_itemises_every_other_class_and_keeps_ghost_apart() {
+        let get = strand_kv(r#"{"p:ghost:sp-a":{},"p:empty:sp-b":{},"p:empty:sp-c":{},"p:stuck:sp-d":{}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("1".into()));
+        assert_eq!(get("SP_STRAND_OTHER"), Some("empty=2,stuck=1".into()));
+    }
+
+    #[test]
+    fn strand_keys_splits_from_the_right_so_a_partition_may_hold_a_colon() {
+        let get = strand_kv(r#"{"spira:plan,extra:ghost:sp-a":{}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("1".into()));
+    }
+
+    #[test]
+    fn strand_keys_an_unclassifiable_key_makes_ghost_unknown_and_is_itself_reported() {
+        let get = strand_kv(r#"{"bogus":{},"p:ghost:sp-a":{}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("?".into()));
+        assert_eq!(get("SP_STRAND_OTHER"), Some("unclassified=1".into()));
+        assert_eq!(get("SP_STRANDS"), Some("2".into()));
+    }
+
+    #[test]
+    fn strand_keys_an_unparsable_ledger_is_unread_not_empty() {
+        let get = strand_kv("not json at all");
+        assert_eq!(get("SP_STRAND_GHOST"), Some("?".into()));
     }
 
     #[test]

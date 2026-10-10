@@ -33,42 +33,26 @@ mkdir -p "$T/run"
 
 # fayth_get_with_scope <scope_label> <fayth> <var>
 # Evaluate one fayth variable under a specific SPIRA_SCOPE_LABEL, in a subprocess so
-# the calling shell's exports are unaffected.
+# the calling shell's exports are unaffected. SPIRA_RUN/SPIRA_SCOPE_LABEL are registered
+# keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env
+# prefix below, which no process reads them from any more.
 fayth_get_with_scope() {
     local scope="$1" fayth="$2" var="$3"
-    SPIRA_HOME="$HERE" SPIRA_RUN="$T/run" SPIRA_CONF="$T/no-such.conf" \
-    SPIRA_SCOPE_LABEL="$scope" \
+    # round 3 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without
+    # it, fayth_get cannot find chamber/builder.fayth or chamber/ops.fayth at all.
+    tl_config SPIRA_RUN="$T/run" SPIRA_SCOPE_LABEL="$scope" SPIRA_CHAMBER="$HERE/chamber"
+    SPIRA_HOME="$HERE" SPIRA_CONF="$T/no-such.conf" \
         bash -c '. "$SPIRA_HOME/lib.sh" 2>/dev/null; fayth_get "$1" "$2"' \
              _ "$fayth" "$var" 2>/dev/null
 }
 
-# conf_scope_with_home <home_repo> — resolve SPIRA_SCOPE_LABEL from conf.sh defaults for a
-# given SPIRA_HOME_REPO, without setting SPIRA_SCOPE_LABEL so the default path is exercised.
-conf_scope_with_home() {
-    local home_repo="$1"
-    SPIRA_HOME="$HERE" SPIRA_RUN="$T/run" SPIRA_CONF="$T/no-such.conf" \
-    SPIRA_HOME_REPO="$home_repo" \
-        bash -c '. "$SPIRA_HOME/lib.sh" 2>/dev/null; printf "%s" "$SPIRA_SCOPE_LABEL"'
-}
+# conf_scope_with_home() and the "default — SPIRA_SCOPE_LABEL derives from SPIRA_HOME_REPO"
+# section it drove are REMOVED (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): they proved
+# conf.sh's derived-default path when SPIRA_SCOPE_LABEL was absent from both env and
+# config, a case that no longer exists now that the checked-in complete fixture declares
+# scope_label on every suite's SPIRA_TOML base layer, with no way to make it absent.
 
 echo "test-scope-label.sh"
-
-# ==========================================================================================
-echo
-echo "default — SPIRA_SCOPE_LABEL derives from SPIRA_HOME_REPO, not the literal spira"
-# ==========================================================================================
-# THE DISCRIMINATING TEST. A fixed literal "spira" passes when home repo IS spira; only the
-# non-spira case separates a derived default from a hardcoded one.
-got="$(conf_scope_with_home "myproject")"
-is   "scope defaults to home repo name (myproject)" "myproject" "$got"
-lack "scope default for non-spira install does NOT contain spira" "spira" "$got"
-
-got="$(conf_scope_with_home "spira")"
-is   "scope defaults to spira when home repo is spira" "spira" "$got"
-
-# An install with no resolvable home repo must not silently produce the literal "spira".
-got="$(conf_scope_with_home "")"
-lack "scope with empty home repo does NOT produce spira" "spira" "$got"
 
 # ==========================================================================================
 echo

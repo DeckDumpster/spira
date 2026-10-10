@@ -12,7 +12,7 @@
 # trusting the passing case (law-a-regression-test-must-be-seen-to-fail).
 #
 # tier: T2
-# covers: landing-pass/* spira/lib.sh
+# covers: landing-pass/* spira/lib.sh UC-landing-merge-queue-24
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -34,12 +34,22 @@ SPIRA_REPO_MAP="$TMP/repo-map"
 # Minimal conf seam: SPIRA_CONF points nowhere so lib.sh uses defaults.
 # SPIRA_REPO_MAP is passed explicitly; before the file exists repo_names() returns nothing.
 run_halt() {
+    # SPIRA_RUN/SPIRA_PROD/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE
+    # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+    # SPIRA_QUEUE_DIR is ALSO registered, and the complete fixture declares it as a literal
+    # default (/fixture/userhome/spira/run/queue) rather than deriving it from SPIRA_RUN
+    # (landing-pass/src/real.rs: `path_opt("queue_dir").unwrap_or_else(|| run.join("queue"))`
+    # only falls back when the key is unset). Undeclared, halt read the open-batch record
+    # from that /fixture path instead of $QUEUE_DIR below, found nothing, and treated every
+    # queue branch as orphaned — the open one included. $QUEUE_DIR is empty on the earlier
+    # calls above (before it is assigned below); tl_config writing "" is harmless, since an
+    # empty value resolves the same as unset and this key is re-declared on every call.
+    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$HERE" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+        SPIRA_QUEUE_DIR="${QUEUE_DIR:-}"
     env -i PATH="$PATH" HOME="$HOME" \
-        SPIRA_RUN="$SPIRA_RUN" \
         SPIRA_HOME="$HERE" \
-        SPIRA_PROD="$HERE" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+        SPIRA_TOML="$SPIRA_TOML" \
         landing-pass halt "$@" 2>&1
 }
 
@@ -191,7 +201,7 @@ echo "halt tears down a real container recorded in the registry (gap G9)"
 # conf.sh (sourced by landing.sh) unconditionally overwrites PATH with a fixed
 # tail after it — SPIRA_PATH is the one seam it prepends first, and is the mechanism every
 # other suite in this tree already injects a mock command through
-# (test-bd-resolve.sh, test-cadence.sh, and others). A first attempt at this
+# (test-cadence.sh and others). A first attempt at this
 # case that prepended $PATH directly built a stub that was never reachable —
 # conf.sh's own PATH= line discarded it before landing.sh's halt code ever ran.
 BIN_DIR="$TMP/bin"; mkdir -p "$BIN_DIR"
@@ -220,13 +230,14 @@ printf 'pid=%s\nstarted=%s\nrepo=spira\nbranch=spira/sp-cont\nphase=gate\n' \
     "$CONT_PID" "$(date +%s)" > "$LAND_RUN"
 printf '%s\n' "$CONT_NAME" > "$LAND_CONTAINERS"
 
+# SPIRA_RUN/SPIRA_PROD/SPIRA_PATH/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05,
+# ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$PROD_DIR" SPIRA_PATH="$BIN_DIR" \
+    SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 out="$(env -i PATH="$PROD_DIR:$BIN_DIR:$PATH" HOME="$HOME" \
-    SPIRA_RUN="$SPIRA_RUN" \
     SPIRA_HOME="$HERE" \
-    SPIRA_PROD="$PROD_DIR" \
-    SPIRA_PATH="$BIN_DIR" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+    SPIRA_TOML="$SPIRA_TOML" \
     landing-pass halt --reason "container teardown test" 2>&1)"; rc=$?
 kill "$CONT_PID" 2>/dev/null || true
 
@@ -275,14 +286,16 @@ printf '%s\n' "$FAKE_CNAME" > "$LAND_CONTAINERS"
 # (`export PATH="${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:..."`), so a plain
 # PATH prefix set here is discarded the moment landing.sh sources it — the stub
 # must go in the one seam conf.sh actually reads.
-out="$(env -i PATH="$STUBDIR:$PATH" SPIRA_PATH="$STUBDIR" HOME="$HOME" \
-    SPIRA_RUN="$SPIRA_RUN" \
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05,
+# ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
+tl_config SPIRA_PATH="$STUBDIR" SPIRA_RUN="$SPIRA_RUN" SPIRA_PROD="$HERE" \
+    SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
+out="$(env -i PATH="$STUBDIR:$PATH" HOME="$HOME" \
     SPIRA_HOME="$HERE" \
-    SPIRA_PROD="$HERE" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
     PODMAN_LOG="$PODMAN_LOG" \
     FAKE_CNAME="$FAKE_CNAME" \
+    SPIRA_TOML="$SPIRA_TOML" \
     landing-pass halt 2>&1)"
 kill "$VOL_PID" 2>/dev/null || true
 

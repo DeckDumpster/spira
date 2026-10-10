@@ -51,38 +51,43 @@ testdb_up aeonwikidirty || { echo "test-aeon-wiki-dirty: could not build fixture
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 HARNESS_ORIGIN="$TMP/harness.git"; git init -q --bare -b main "$HARNESS_ORIGIN"
-HARNESS="$TMP/harness"; git clone -q "$HARNESS_ORIGIN" "$HARNESS" 2>/dev/null
+HARNESS="$TMP/harness"; timeout 5 git clone -q "$HARNESS_ORIGIN" "$HARNESS" 2>/dev/null
 git -C "$HARNESS" config user.email t@t; git -C "$HARNESS" config user.name t
 printf 'harness script v1\n' > "$HARNESS/seed.sh"
 git -C "$HARNESS" add seed.sh
 git -C "$HARNESS" commit -qm "seed harness"
-git -C "$HARNESS" push -q origin main 2>/dev/null
+timeout 5 git -C "$HARNESS" push -q origin main 2>/dev/null
 export SPIRA_REPO="$HARNESS"
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed
-git -C "$REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 WIKI_ORIGIN="$TMP/wiki.git"; git init -q --bare -b main "$WIKI_ORIGIN"
-WIKI="$TMP/wiki"; git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
+WIKI="$TMP/wiki"; timeout 5 git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
 git -C "$WIKI" config user.email t@t; git -C "$WIKI" config user.name t
 mkdir -p "$WIKI/wiki/notes"
 printf 'wiki seed\n' > "$WIKI/wiki/seed.md"
 printf '# tasks\n' > "$WIKI/wiki/tasks.md"
 git -C "$WIKI" add wiki/seed.md wiki/tasks.md
 git -C "$WIKI" commit -qm "seed wiki"
-git -C "$WIKI" push -q origin main 2>/dev/null
-export SPIRA_WIKI="$WIKI"
+timeout 5 git -C "$WIKI" push -q origin main 2>/dev/null
+tl_config SPIRA_WIKI="$WIKI"
 
 export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/wiki-commit.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_REPO_MAP="$TMP/repo-map"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
@@ -93,7 +98,9 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS WIKI ORIGIN REPO
+BIN="$TMP/bin"; mkdir -p "$BIN"
+tl_config SPIRA_AGENT="$BIN/claude"
+export TMP HARNESS WIKI ORIGIN REPO
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
 # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
@@ -118,7 +125,7 @@ chmod +x "$BIN/claude"
 _lbl="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:fixture"
 
 testdb_reset
-b1="$(bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+b1="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "bead created" "(bead-create failed)"; }
 rm -rf "$SPIRA_RUN/worktree"
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true

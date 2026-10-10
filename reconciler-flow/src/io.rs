@@ -7,16 +7,15 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
-use std::io::Write as _;
 
 /// One duckdb -json -c invocation, parsed. Empty stdout (a `SELECT` with no matching rows in
 /// an old duckdb, or a query that legitimately returns nothing) is `Ok(vec![])`, not an
 /// error — the caller decides whether "no rows" is itself a gap.
 pub fn duckdb_json(bin: &str, sql: &str) -> Result<Vec<Value>, String> {
-    let out = Command::new(bin)
+    let out = spira_config::bounded::bounded(bin)
         .args(["-json", "-c", sql])
         .stdin(Stdio::null())
         .output()
@@ -53,7 +52,7 @@ fn u64_field(row: &Value, key: &str) -> u64 {
 /// `scope_label` when the harness serves more than one repository, same convention
 /// czar-pass uses for its own detectors; bd supplies only which beads the scope holds.
 pub fn backlog_count(bd_bin: &str, spira_db: &str, scope_label: &str) -> Result<u64, String> {
-    let mut cmd = Command::new(bd_bin);
+    let mut cmd = spira_config::bounded::bounded(bd_bin);
     cmd.arg("-C").arg(spira_db).args([
         "list", "--all",
         "--exclude-type", "epic,event", "--brief", "--json", "--limit", "0",
@@ -261,7 +260,7 @@ pub fn append_backlog_sample(tsd_bin: &str, root: &Path, count: u64) {
     if tsd_bin.is_empty() {
         return;
     }
-    let _ = Command::new(tsd_bin)
+    let _ = spira_config::bounded::bounded(tsd_bin)
         .args(["--family", "backlog", "--root"])
         .arg(root)
         .args(["--field", &format!("count={count}")])
@@ -429,34 +428,6 @@ fn read_flow_floors(desired_dir: &Path) -> Option<(Option<f64>, Option<u64>)> {
         .and_then(|v| v.as_integer())
         .map(|i| i as u64);
     Some((velocity_floor, dwell_limit))
-}
-
-/// Sends one message to the Concierge mailbox — the alert path a flow gap has no
-/// deterministic remedy to try instead of (per the design). Deduplication across passes is
-/// explicitly a separate bead's mandate (sp-fufyb); this sends once per pass a gap is
-/// confirmed (`is_gap`), relying on mail's own settle/tidy handling in the meantime.
-pub fn mail_concierge(mail_sh: &str, subject: &str, body: &str) -> Result<(), String> {
-    // `mail` is a compiled binary now (sp-ooh1k), invoked directly by name — never `bash
-    // <path>`, which only ever worked while this was a shell script.
-    let mut child = Command::new(mail_sh)
-        .args(["send", "concierge", "--from", "Reconciler <reconciler@spira>", "--subject", subject, "--kind", "note"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("{mail_sh}: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(body.as_bytes());
-    }
-    let out = child.wait_with_output().map_err(|e| format!("{mail_sh}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "{mail_sh} send concierge: exit {}: {}",
-            out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -61,8 +61,13 @@ fn build_bin(package: &str, bin: &str) -> PathBuf {
     panic!("{bin}'s binary artifact did not appear in cargo's own build output");
 }
 
-/// `(release_root, run_dir, legacy_conf_path)`.
-fn build_fixture_release(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
+/// `(release_root, run_dir, legacy_conf_path, spira_toml_path)`. `inbox-triage` now reads
+/// `SPIRA_CONCIERGE_INBOX`/`SPIRA_CONCIERGE_INBOX_DEDUP` through
+/// `spira_config::process::cfg` (per Ryan 2026-10-05: one source of config) — a plain
+/// `$SPIRA_TOML` file parse, not the legacy `spira.conf`/`conf.sh` seam — so the fixture
+/// needs a real config file declaring every registered key, with `SPIRA_CONCIERGE_INBOX`
+/// pinned at the path this test watches for.
+fn build_fixture_release(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let workspace = workspace_root();
     let release_root = tmp.join("release");
     std::fs::create_dir_all(release_root.join("bin")).unwrap();
@@ -83,18 +88,34 @@ fn build_fixture_release(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    (release_root, run_dir, conf)
+    let inbox_log = run_dir.join("watchd/concierge-inbox.log");
+    let toml = spira_config::process::fixture_toml(
+        tmp,
+        &[
+            ("SPIRA_ID_PREFIX", "sp"),
+            ("SPIRA_RUN", &run_dir.display().to_string()),
+            ("SPIRA_DB", &db_dir.display().to_string()),
+            ("SPIRA_CONCIERGE_INBOX", &inbox_log.display().to_string()),
+        ],
+    );
+    (release_root, run_dir, conf, toml)
 }
 
-/// `env -i HOME=<home> PATH=/usr/bin:/bin SPIRA_CONF=<conf> <exe>` — the exact bare-shell
-/// repro this bead names, carrying NONE of this test process's own PATH, cargo env, or
-/// release env.
-fn run_under_bare_shell(exe: &Path, home: &Path, conf: &Path) -> Child {
+/// `env -i HOME=<home> PATH=/usr/bin:/bin SPIRA_HOME=<release>/spira SPIRA_CONF=<conf>
+/// SPIRA_TOML=<toml> <exe>` — the exact bare-shell repro this bead names, carrying NONE of
+/// this test process's own PATH, cargo env, or release env. `SPIRA_HOME` has to be
+/// explicit now: `spira_config::resolve::locate_home` no longer walks up from the
+/// executable looking for a `spira/` sibling (it is SPIRA_HOME, else `$SPIRA_RELEASE/
+/// spira`, else refuse) — `exe`'s own release root supplies it.
+fn run_under_bare_shell(exe: &Path, home: &Path, conf: &Path, toml: &Path) -> Child {
+    let spira_home = exe.parent().and_then(|bin| bin.parent()).expect("exe has a release root").join("spira");
     Command::new("env")
         .arg("-i")
         .arg(format!("HOME={}", home.display()))
         .arg("PATH=/usr/bin:/bin")
+        .arg(format!("SPIRA_HOME={}", spira_home.display()))
         .arg(format!("SPIRA_CONF={}", conf.display()))
+        .arg(format!("SPIRA_TOML={}", toml.display()))
         .arg(exe)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -108,14 +129,16 @@ fn gets_past_conf_sh_under_a_bare_shell_with_no_launcher_path() {
     let tmp = testkit::TempDir::new("inbox-triage-release-path");
     let home = tmp.join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let (release_root, run_dir, conf) = build_fixture_release(&tmp);
+    let (release_root, run_dir, conf, toml) = build_fixture_release(&tmp);
     let exe = release_root.join("bin/inbox-triage");
 
-    let mut child = run_under_bare_shell(&exe, &home, &conf);
-    // conf.sh's own default: SPIRA_CONCIERGE_INBOX := $SPIRA_RUN/watchd/concierge-inbox.log
-    // (spira/conf.d/SPIRA_CONCIERGE_INBOX) — inbox-triage creates this file (and its parent
-    // dir) the moment load_config() succeeds, right before it starts tailing it forever. Its
-    // existence is this test's "got past conf.sh" signal.
+    let mut child = run_under_bare_shell(&exe, &home, &conf, &toml);
+    // `SPIRA_CONCIERGE_INBOX`, pinned explicitly in the fixture toml above (its own
+    // declared default — spira/conf.d/SPIRA_CONCIERGE_INBOX — is `$SPIRA_RUN/watchd/
+    // concierge-inbox.log`, which `fixture_toml` cannot re-derive from our `SPIRA_RUN`
+    // override, since the complete fixture bakes concrete literals). inbox-triage creates
+    // this file (and its parent dir) the moment `load_config()` succeeds, right before it
+    // starts tailing it forever — its existence is this test's "config resolved" signal.
     let inbox_log = run_dir.join("watchd/concierge-inbox.log");
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut exited = None;

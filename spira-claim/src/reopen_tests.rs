@@ -17,8 +17,7 @@ fn deliberate_causes_list() {
 
 #[derive(Default)]
 struct Fake {
-    bd_reopen_fails: bool,
-    release_fails: bool,
+    reopen_fails: bool,
     note_fails: bool,
     calls: RefCell<Vec<String>>,
 }
@@ -36,21 +35,10 @@ impl World for Fake {
     fn write_ejected(&mut self, id: &str, suites: &str) {
         self.log(format!("write_ejected {id} {suites}"));
     }
-    fn bd_reopen(&mut self, id: &str) -> Result<(), String> {
-        self.log(format!("bd_reopen {id}"));
-        if self.bd_reopen_fails {
-            Err("bd refused".into())
-        } else {
-            Ok(())
-        }
-    }
-    fn remove_submitted_label(&mut self, id: &str, label: &str) {
-        self.log(format!("remove_submitted_label {id} {label}"));
-    }
-    fn release_claim(&mut self, id: &str) -> Result<(), String> {
-        self.log(format!("release_claim {id}"));
-        if self.release_fails {
-            Err("assign refused".into())
+    fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String> {
+        self.log(format!("lc_reopen {id} {cause}"));
+        if self.reopen_fails {
+            Err("machine refused".into())
         } else {
             Ok(())
         }
@@ -69,7 +57,7 @@ impl World for Fake {
 }
 
 fn opts(id: &str, cause: &str) -> Opts {
-    Opts { id: id.into(), cause: cause.into(), note: String::new(), suites: String::new(), submitted_label: "spira-submitted".into() }
+    Opts { id: id.into(), cause: cause.into(), note: String::new(), suites: String::new() }
 }
 
 #[test]
@@ -80,9 +68,7 @@ fn happy_path_every_step_in_order() {
     assert_eq!(
         *w.calls.borrow(),
         vec![
-            "bd_reopen sp-a",
-            "remove_submitted_label sp-a spira-submitted",
-            "release_claim sp-a",
+            "lc_reopen sp-a gate-red",
             "write_reopen_event sp-a gate-red",
         ]
     );
@@ -105,17 +91,18 @@ fn no_suites_means_no_sidecar_write() {
 }
 
 #[test]
-fn work_close_converted_is_exempt_keeps_label() {
+fn work_close_converted_is_exempt_leaves_the_row_alone() {
     let mut w = Fake::default();
-    run(&opts("sp-a", "work-close-converted"), &mut w);
-    assert!(!w.calls.borrow().iter().any(|c| c.starts_with("remove_submitted_label")), "the label survives the conversion");
+    assert_eq!(run(&opts("sp-a", "work-close-converted"), &mut w), 0);
+    assert!(!w.calls.borrow().iter().any(|c| c.starts_with("lc_reopen")), "the conversion carries the CERTIFIED row forward");
+    assert!(w.has("write_reopen_event sp-a work-close-converted"));
 }
 
 #[test]
 fn eject_is_deliberate_but_not_exempt() {
     let mut w = Fake::default();
     run(&opts("sp-a", "eject"), &mut w);
-    assert!(w.has("remove_submitted_label sp-a spira-submitted"), "the label is stripped");
+    assert!(w.has("lc_reopen sp-a eject"), "the row is withdrawn through the machine");
 }
 
 #[test]
@@ -132,14 +119,8 @@ fn note_only_called_when_non_empty() {
 }
 
 #[test]
-fn bd_reopen_failure_sets_rc_1() {
-    let mut w = Fake { bd_reopen_fails: true, ..Default::default() };
-    assert_eq!(run(&opts("sp-a", "gate-red"), &mut w), 1);
-}
-
-#[test]
-fn release_claim_failure_sets_rc_1() {
-    let mut w = Fake { release_fails: true, ..Default::default() };
+fn lc_reopen_failure_sets_rc_1() {
+    let mut w = Fake { reopen_fails: true, ..Default::default() };
     assert_eq!(run(&opts("sp-a", "gate-red"), &mut w), 1);
 }
 
@@ -168,7 +149,7 @@ fn write_reopen_event_failure_can_never_set_rc_nonzero() {
 
 #[test]
 fn every_failure_together_is_still_just_rc_1() {
-    let mut w = Fake { bd_reopen_fails: true, release_fails: true, note_fails: true, ..Default::default() };
+    let mut w = Fake { reopen_fails: true, note_fails: true, ..Default::default() };
     let mut o = opts("sp-a", "gate-red");
     o.note = "x".into();
     assert_eq!(run(&o, &mut w), 1);
@@ -192,11 +173,16 @@ fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
 const RECORD: &str = r#"{ printf 'ARGV'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\nSTDIN '; cat; printf '\n'; } >> @LOG@"#;
 
 fn live(tag: &str, bd_body: &str) -> (Live, testkit::TempDir) {
+    live_lc(tag, bd_body, 0)
+}
+
+fn live_lc(tag: &str, bd_body: &str, lc_exit: i32) -> (Live, testkit::TempDir) {
     let dir = testkit::TempDir::new(&format!("spira-claim-reopen-{tag}"));
     std::fs::create_dir_all(dir.join("run")).unwrap();
     let bd = script(&dir, "bd", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
+    let lc = script(&dir, "lc", &format!("{}\nexit {lc_exit}", RECORD.replace("@LOG@", &dir.join("lc.log").to_string_lossy())));
     let l = Live {
-        store: Store { bd, db: Some("/fake/db".into()), lc: "true".into(), timeout: Duration::from_secs(10) },
+        store: Store { bd, db: Some("/fake/db".into()), lc, timeout: Duration::from_secs(10) },
         run_dir: dir.join("run"),
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
@@ -213,7 +199,6 @@ fn live_reopen_writes_sidecar_reopens_strips_label_releases_notes() {
         cause: "batch-eject".into(),
         note: "a human-readable note".into(),
         suites: "test-x.sh".into(),
-        submitted_label: "spira-submitted".into(),
     };
     assert_eq!(run(&o, &mut w), 0);
 
@@ -225,25 +210,38 @@ fn live_reopen_writes_sidecar_reopens_strips_label_releases_notes() {
 
     let bd_log = std::fs::read_to_string(dir.join("bd.log")).unwrap();
     let bd_argv: Vec<&str> = bd_log.lines().filter(|l| l.starts_with("ARGV")).collect();
-    // Exact order: reopen, strip the submitted label, release the claim, write the reopen
-    // event (its own `sql` call — counters.rs's own tests already cover that INSERT byte
-    // for byte, so only its presence and position are pinned here), then the note last.
-    // sp-mve9i: no bd status write — the bead's state is the machine's.
-    assert_eq!(bd_argv.len(), 5, "{bd_log}");
-    assert!(!bd_log.contains("[--status]"), "{bd_log}");
-    assert_eq!(bd_argv[0], "ARGV [-C] [/fake/db] [reopen] [sp-a]");
-    assert_eq!(bd_argv[1], "ARGV [-C] [/fake/db] [label] [remove] [sp-a] [spira-submitted]");
-    assert_eq!(bd_argv[2], "ARGV [-C] [/fake/db] [assign] [sp-a] []");
-    assert!(bd_argv[3].starts_with("ARGV [-C] [/fake/db] [sql] [INSERT INTO events"), "{}", bd_argv[3]);
-    assert!(bd_argv[3].contains("'sp-a', 'reopen', 'harness', 'batch-eject'"), "{}", bd_argv[3]);
-    assert_eq!(bd_argv[4], "ARGV [-C] [/fake/db] [note] [sp-a] [--stdin]");
+    // The reopen is the machine's alone: no bd reopen, no label edit, no bd assign (the bead's
+    // state and its holder are the lifecycle row's), and the reopen cause is a lifecycle fact.
+    // bd sees only the note.
+    let lc_log = std::fs::read_to_string(dir.join("lc.log")).unwrap();
+    let lc_argv: Vec<&str> = lc_log.lines().filter(|l| l.starts_with("ARGV")).collect();
+    assert_eq!(lc_argv.len(), 2, "{lc_log}");
+    assert_eq!(lc_argv[0], "ARGV [reopen] [sp-a] [batch-eject] [harness]", "{lc_log}");
+    assert!(lc_argv[1].starts_with("ARGV [fact] [sp-a] [--kind] [reopen] [--actor] [harness] [--cause] [batch-eject]"), "{lc_log}");
+    let bd_argv: Vec<&str> = bd_log.lines().filter(|l| l.starts_with("ARGV")).collect();
+    assert_eq!(bd_argv.len(), 1, "{bd_log}");
+    for gone in ["[reopen]", "[assign]", "[label]", "[--status]", "INSERT INTO events"] {
+        assert!(!bd_log.contains(gone), "bd was handed {gone}: {bd_log}");
+    }
+    assert_eq!(bd_argv[0], "ARGV [-C] [/fake/db] [note] [sp-a] [--stdin]");
     assert!(bd_log.contains("STDIN a human-readable note"), "{bd_log}");
 }
 
 #[test]
 fn live_without_suites_writes_no_sidecar() {
     let (mut w, dir) = live("noop", RECORD);
-    let o = Opts { id: "sp-b".into(), cause: "gate-red".into(), note: String::new(), suites: String::new(), submitted_label: "spira-submitted".into() };
+    let o = Opts { id: "sp-b".into(), cause: "gate-red".into(), note: String::new(), suites: String::new() };
     assert_eq!(run(&o, &mut w), 0);
     assert!(!dir.join("run/ejected/sp-b").exists());
+}
+
+#[test]
+fn live_a_bead_with_no_row_reopens_and_a_refused_row_fails() {
+    let o = |id: &str| Opts { id: id.into(), cause: "gate-red".into(), note: String::new(), suites: String::new() };
+    let (mut none, _d) = live_lc("norow", RECORD, 1);
+    assert_eq!(run(&o("sp-a"), &mut none), 0, "no row: nothing to diverge");
+    let (mut terminal, _d2) = live_lc("terminal", RECORD, 3);
+    assert_eq!(run(&o("sp-a"), &mut terminal), 1, "a terminal row is refused");
+    let (mut down, _d3) = live_lc("down", RECORD, 2);
+    assert_eq!(run(&o("sp-a"), &mut down), 1, "an unreachable machine is a failure");
 }

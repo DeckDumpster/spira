@@ -5,20 +5,20 @@
 //! so every call here mirrors the bash's own repo/ref resolution through the `lib.sh` bridge
 //! rather than re-deriving it.
 
-use super::{push, Kv};
+use super::{push, Cfg, Kv};
 use crate::io;
 use crate::quoting::{parse_iso8601, rel_age, sanitize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-pub fn unsent_keys() -> Kv {
+pub fn unsent_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
-    branch_backlog_section(&mut out);
+    branch_backlog_section(&mut out, cfg);
     yield_section(&mut out);
     suite_times_section(&mut out);
-    landing_funnel_section(&mut out, &io::run_dir());
-    acceptance_section(&mut out);
+    landing_funnel_section(&mut out, &io::run_dir(), cfg);
+    acceptance_section(&mut out, cfg);
     gate_section(&mut out, &io::run_dir());
     out
 }
@@ -29,8 +29,7 @@ pub fn unsent_keys() -> Kv {
 // batched-too-long/closed-stranded — and the oldest unsent branch's age.
 // ---------------------------------------------------------------------------------------
 
-fn branch_backlog_section(out: &mut Kv) {
-    let run = io::run_dir();
+fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
     let now = io::now();
 
     let mut fail = false;
@@ -55,13 +54,13 @@ fn branch_backlog_section(out: &mut Kv) {
     let mut awaiting_round = 0usize;
 
     let reg = io::repo_registry();
-    let qdir = std::env::var("SPIRA_QUEUE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| run.join("queue"));
+    let qdir = std::path::PathBuf::from(&cfg.queue_dir);
     let in_delivery: std::collections::HashMap<String, super::lc::LcRow> =
         super::lc::list(Some("IN_DELIVERY")).unwrap_or_default().into_iter().map(|r| (r.id.clone(), r)).collect();
     // A branch's bead state is its lifecycle row's (design §3.4, sp-mve9i): one read for
     // every branch instead of a bd show per branch.
     let lc_index = super::lc::state_index();
-    let batch_wait: i64 = std::env::var("SPIRA_QUEUE_BATCH_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(1800);
+    let batch_wait: i64 = cfg.queue_batch_wait;
 
     for rname in reg.all() {
         let Some(rp) = reg.root(&rname) else { continue };
@@ -298,7 +297,7 @@ fn status_of_row(row: Option<&super::lc::Row>) -> Option<BeadStatus> {
     Some(if row.past_builder() { BeadStatus::Closed { submitted: !row.terminal() } } else { BeadStatus::Open })
 }
 
-/// `BD_TIMEOUT=2 bdjson show <id>` — deliberately short: this runs once per rowless branch
+/// `BD_TIMEOUT=2 contentjson show <id>` — deliberately short: this runs once per rowless branch
 /// across every repository on the 600s tier, and a hung `bd` must not stall the whole probe.
 fn bead_exists(id: &str) -> BeadStatus {
     match bead_exists_at(id, "2") {
@@ -314,12 +313,12 @@ fn bead_exists(id: &str) -> BeadStatus {
 fn bead_exists_at(id: &str, timeout: &str) -> BeadStatus {
     let prev = std::env::var("BD_TIMEOUT").ok();
     std::env::set_var("BD_TIMEOUT", timeout);
-    let raw = io::bdjson(&["show", id]);
+    let raw = io::contentjson(&["show", id]);
     match prev {
         Some(p) => std::env::set_var("BD_TIMEOUT", p),
         None => std::env::remove_var("BD_TIMEOUT"),
     }
-    match io::bd_rows(raw) {
+    match io::json_rows(raw) {
         None => BeadStatus::ProbeFailed,
         Some(rows) => match rows.first().and_then(|r| r.get("id")).and_then(Value::as_str) {
             Some(_) => BeadStatus::Closed { submitted: false },
@@ -385,20 +384,20 @@ fn value_to_plain(v: &Value) -> String {
 // it (a body mention does not count) — `law-aeon-commits-name-their-bead`.
 // ---------------------------------------------------------------------------------------
 
-fn landing_funnel_section(out: &mut Kv, run: &Path) {
-    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
+    let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let home_repo = io::repo_registry().home_repo().to_string();
     // Every plan bead's content; which of them the builder finished is the lifecycle row's
     // to say (design §3.4, sp-mve9i), not bd's `closed`.
-    let raw = io::bdq(&["list", "--all", "--limit", "0", "--label", &label, "--json"]);
+    let raw = io::content(&["list", "--all", "--limit", "0", "--label", &label, "--json"]);
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
         for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
             push(out, k, "?");
         }
         return;
     };
-    let Some(rows) = io::bd_rows(Some(raw)) else {
+    let Some(rows) = io::json_rows(Some(raw)) else {
         for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
             push(out, k, "?");
         }
@@ -450,6 +449,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let repos: HashSet<&str> = closed_pairs.iter().map(|r| r.repo.as_str()).collect();
     let mut subjects: Vec<String> = Vec::new();
     let mut branches: Vec<String> = Vec::new();
+    let mut cherry_refs: std::collections::HashMap<String, (std::path::PathBuf, String)> = std::collections::HashMap::new();
     let reg = io::repo_registry();
     for r in repos {
         let Some(rp) = reg.root(r) else { continue };
@@ -460,6 +460,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
         // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
         // spira_landrefs/ref_remote lib.sh seam.
         let Some((base, local)) = spira_config::repos::landrefs(&reg, &rp) else { continue };
+        cherry_refs.insert(r.to_string(), (rp_path.to_path_buf(), local.clone().unwrap_or_else(|| base.clone())));
         let refs = match local {
             Some(l) => format!("{base} {l}"),
             None => base.clone(),
@@ -486,7 +487,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let subject_lines: Vec<&str> = subjects.iter().flat_map(|s| s.lines()).collect();
     let branch_lines: Vec<&str> = branches.iter().flat_map(|s| s.lines()).collect();
 
-    let cert_win: i64 = std::env::var("SPIRA_CERT_WINDOW_MINS").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
+    let cert_win: i64 = cfg.cert_window_mins;
 
     let mut landed_set: HashSet<&str> = HashSet::new();
     for r in &closed_pairs {
@@ -507,13 +508,18 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
         if landed_set.contains(r.id.as_str()) {
             continue;
         }
-        let has_br = branch_lines.iter().any(|b| b.trim_end().ends_with(&format!("/{}", r.id)));
-        if !has_br {
+        let Some(br) = branch_lines.iter().find(|b| b.trim_end().ends_with(&format!("/{}", r.id))) else {
             continue;
-        }
+        };
         if !awaits_certification(lc_index.get(r.id.as_str())) {
             continue;
         }
+        if let Some((rp, land_ref)) = cherry_refs.get(&r.repo) {
+            if branch_has_no_own_commit(rp, land_ref, br.trim()) {
+                continue;
+            }
+        }
+        let queued = gate_queued(run, &r.id);
         anomaly += 1;
         let ts = parse_iso8601(&r.closed_at);
         if let Some(ts) = ts {
@@ -522,7 +528,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
             }
         }
         let age_mins = ts.map(|t| (now - t) / 60).unwrap_or(9_999_999);
-        if age_mins > cert_win {
+        if !queued && age_mins > cert_win {
             stranded += 1;
         } else {
             awaiting += 1;
@@ -536,18 +542,43 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     push(out, "SP_FUNNEL_DONE_AGE", done_oldest.map(|d| rel_age(now - d)).unwrap_or_default());
 }
 
+/// `git cherry` prints `+` for each commit not on the land ref; none means the branch never
+/// made a commit of its own. A failed cherry is not evidence of anything.
+fn branch_has_no_own_commit(repo: &Path, land_ref: &str, branch: &str) -> bool {
+    io::git(repo, &["cherry", land_ref, branch]).map(|o| !o.lines().any(|l| l.starts_with('+'))).unwrap_or(false)
+}
+
+/// Whether the gate-worker holds a job for this bead's branch, in the inbox or claimed by any slot.
+fn gate_queued(run: &Path, id: &str) -> bool {
+    let root = run.join("gate-worker");
+    let want = format!("spira/{id}");
+    let mut dirs = vec![root.join("inbox"), root.join("claimed")];
+    if let Ok(rd) = std::fs::read_dir(root.join("claimed")) {
+        dirs.extend(rd.flatten().filter(|e| e.path().is_dir()).map(|e| e.path()));
+    }
+    dirs.iter().any(|d| {
+        std::fs::read_dir(d).into_iter().flatten().flatten().any(|e| {
+            std::fs::read_to_string(e.path())
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                .map(|j| j.get("branch").and_then(Value::as_str) == Some(want.as_str()) || j.get("bead").and_then(Value::as_str) == Some(id))
+                .unwrap_or(false)
+        })
+    })
+}
+
 // ---------------------------------------------------------------------------------------
 // ACCEPTANCE: did the last release actually install on a clean machine, from the
 // `refs/notes/acceptance` note on the newest release tag that carries one.
 // ---------------------------------------------------------------------------------------
 
-fn acceptance_section(out: &mut Kv) {
+fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
     let mut verdict = "?".to_string();
     let mut tag = "-".to_string();
     let mut at = "?".to_string();
     let mut since = "?".to_string();
 
-    let prod = std::env::var("SPIRA_PROD").unwrap_or_default();
+    let prod = &cfg.prod;
     if !prod.is_empty() {
         let acc_repo = prod.trim_end_matches("/spira").to_string();
         let acc_repo_path = Path::new(&acc_repo);
@@ -727,16 +758,55 @@ mod tests {
 
     #[test]
     fn missing_run_dir_renders_unsent_zero_not_refusal() {
-        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         // With no repos configured, spira_repos resolves to nothing and the branch scan
         // loop never runs; SP_UNSENT must still read 0, not ?, matching "an empty readable
         // store yields a numeric 0" (UC-cockpit-observability-08).
         let run = testkit::TempDir::new("cc-unsent-empty");
-        let _env = crate::test_support::set_run(run.path());
-        std::env::set_var("SPIRA_REPO_MAP", run.path().join("no-map"));
+        let no_map = run.path().join("no-map");
+        let _env = crate::test_support::set_run_with(run.path(), &[("SPIRA_REPO_MAP", no_map.to_str())]);
         let mut out = Kv::new();
-        branch_backlog_section(&mut out);
+        branch_backlog_section(&mut out, &Cfg::default());
         let get = |k: &str| out.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
         assert_eq!(get("SP_UNSENT"), Some("0".to_string()));
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let st = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(st.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn own_commit_branch_is_not_exempt_and_empty_branch_is_() {
+        let d = testkit::TempDir::new("cc-unsent-cherry");
+        let p = d.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(p, &["branch", "spira/sp-empty"]);
+        git(p, &["checkout", "-q", "-b", "spira/sp-own"]);
+        git(p, &["commit", "-q", "--allow-empty", "-m", "sp-own: work"]);
+        assert!(branch_has_no_own_commit(p, "main", "spira/sp-empty"));
+        assert!(!branch_has_no_own_commit(p, "main", "spira/sp-own"));
+        assert!(!branch_has_no_own_commit(p, "main", "spira/sp-missing"));
+    }
+
+    #[test]
+    fn gate_queue_matches_inbox_and_claimed_slots_by_branch() {
+        let d = testkit::TempDir::new("cc-unsent-queue");
+        let gw = d.path().join("gate-worker");
+        std::fs::create_dir_all(gw.join("inbox")).unwrap();
+        std::fs::create_dir_all(gw.join("claimed/2")).unwrap();
+        std::fs::write(gw.join("inbox/a.json"), r#"{"branch":"spira/sp-in","bead":"sp-in"}"#).unwrap();
+        std::fs::write(gw.join("claimed/2/b.json"), r#"{"branch":"spira/sp-cl","bead":"sp-cl"}"#).unwrap();
+        assert!(gate_queued(d.path(), "sp-in"));
+        assert!(gate_queued(d.path(), "sp-cl"));
+        assert!(!gate_queued(d.path(), "sp-old"));
     }
 }

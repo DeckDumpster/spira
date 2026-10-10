@@ -22,6 +22,10 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
+# round 4 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without it,
+# bead.sh file --for builder cannot find chamber/builder.fayth ("no such persona: builder").
+tl_config SPIRA_CHAMBER="$HERE/chamber"
+
 . "$HERE/conf.sh"
 export PATH="$(dirname "$DOLT_BIN"):$PATH"
 
@@ -53,6 +57,16 @@ testdb_up "test-work-container"
 # A real mailbox root and kind set, never the operator's real maildir.
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_MAIL_KINDS="$TMP/kinds"
+export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+# round 5 fix (pattern 7): SPIRA_RUN was never declared — mail's repeat-guard state file
+# resolved to the complete fixture's placeholder /fixture/userhome/spira/run, which this
+# process cannot create ("blocked"/"superseded-by" are the first cases to need it).
+# SPIRA_MAIL_MUTE: the complete fixture declares it true (pattern 2); muted delivery lands
+# in cur/<id>:2,S pre-marked read (mail/src/maildir.rs mail_deliver), not new/ — this suite's
+# "an ask landed in the operator's mailbox" checks literally count new/, so it needs its own
+# unmuted declaration or every ask silently "delivers" into cur and the count never moves.
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" SPIRA_RUN="$SPIRA_RUN" \
+    SPIRA_MAIL_MUTE=0
 mkdir -p "$SPIRA_MAIL_KINDS"
 cp -r "$HERE/mail/kinds/." "$SPIRA_MAIL_KINDS/"
 
@@ -63,6 +77,7 @@ cat > "$TMP/repo-map" <<MAP
 testrepo | $TMP | push | origin/main | | |
 MAP
 export SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
 mkdir -p "$TMP/data"
 cat > "$TMP/server.yaml" <<YAML
@@ -78,19 +93,19 @@ behavior:
   event_scheduler: "OFF"
 YAML
 
-"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 &
+"$DOLT_BIN" sql-server --config "$TMP/server.yaml" > "$TMP/server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
 SERVER_PID=$!
 
 up=0
 for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+    if "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then # batch-job: fixture dolt call against the suite's private store
         up=1; break
     fi
     sleep 0.2
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; }
+root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture dolt call against the suite's private store
 
 # Same pin as test-lifecycle-container.sh: this suite runs inside testenv-batch.sh's own
 # podman exec, which sets its own CARGO_TARGET_DIR.
@@ -104,6 +119,11 @@ export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
+# round 3 fix (pattern 7): SPIRA_LC_PASSWORD_FILE is a registered key; undeclared, it
+# resolves to the complete fixture's placeholder /fixture/userhome/.../spira-lc.credential,
+# which does not exist. Declare this suite's own (empty-password) credential file.
+: > "$TMP/lc-credential"
+tl_config SPIRA_LC_PASSWORD_FILE="$TMP/lc-credential"
 
 "$LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
@@ -118,6 +138,7 @@ seed_bead() {   # seed_bead <bead-id>
 }
 
 SOCK="$TMP/spira-lc.sock"
+tl_config SPIRA_LC_SOCKET="$SOCK"
 SPIRA_LC_SOCKET="$SOCK" "$LC_BIN" serve "$SOCK" >"$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
 for _ in $(seq 1 50); do
@@ -126,6 +147,7 @@ for _ in $(seq 1 50); do
 done
 [ -S "$SOCK" ] || bail "spira-lc serve never created its socket: $(cat "$TMP/serve.log")"
 export SPIRA_LC_SOCKET="$SOCK"
+tl_config SPIRA_LC_SOCKET="$SOCK"
 
 # ── one real bd bead, filed through bead.sh's own contract, and its lifecycle twin ───
 BID="$(bead.sh file "aeon semantic layer container-tier fixture" --for builder --repo testrepo)"
@@ -146,7 +168,7 @@ want "show: bd's own title is in it" "aeon semantic layer container-tier fixture
 before_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='$BID'" -r json 2>&1)"
 out="$(work_as "$BID" note "left by the container-tier suite" 2>&1)"; rc=$?
 is "note: exits 0" "0" "$rc"
-note_text="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$BID" 2>&1)"
+note_text="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$BID" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 want "note: text landed on the bd bead" "left by the container-tier suite" "$note_text"
 after_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='$BID'" -r json 2>&1)"
 is "note: emits no lifecycle event (bd, non-lifecycle, per design §3.5)" "$before_events" "$after_events"
@@ -183,13 +205,13 @@ seed_bead "$STK"
 root_sql --use-db spira_lifecycle sql -q \
     "UPDATE bead SET state='WORKING', holder='aeon-stacked', version=1, stack=JSON_OBJECT('$PREREQ','oldtip') WHERE bead_id='$STK'" >/dev/null 2>&1
 
-before_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)"
+before_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 out="$("$LC_BIN" event bead "$STK" --expect WORKING --version 1 --actor test --kind "{\"BaseWithdrawn\":{\"prereq\":\"$PREREQ\",\"tip\":\"oldtip\"}}" 2>&1)"; rc=$?
 is "base_withdrawn on a WORKING dependent: applied (exit 0)" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, reason FROM bead WHERE bead_id='$STK'" -r json 2>&1)"
 want "base_withdrawn: the dependent stays WORKING, not sent to REWORK" "\"state\":\"WORKING\"" "$row"
 want "base_withdrawn: the reason names the withdrawn prerequisite and tip" "base_withdrawn: $PREREQ oldtip" "$row"
-after_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)"
+after_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 [ "$after_note" != "$before_note" ] && ok "base_withdrawn: the WORKING holder is told (a note landed on the bead)" \
     || bad "base_withdrawn: the WORKING holder is told (a note landed on the bead)" "bd show did not change"
 want "base_withdrawn: the note names the holder" "aeon-stacked" "$after_note"
@@ -215,16 +237,38 @@ row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, reason FROM bead 
 want "done: state is DONE" "\"state\":\"DONE\"" "$row"
 want "done: reason carries the delivers evidence" "a document at wiki/x" "$row"
 
+# ── groomer done: Done only on a bead carrying the groom-trigger marker ──────────────
+groom_as() { SPIRA_WORK_BEAD_ID="$1" SPIRA_FAYTH="groomer" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "${@:2}"; }
+GWORK="$(bead.sh file "groomer claimed a work bead" --for builder --repo testrepo)"
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GWORK" "${SPIRA_GROOMER_LABEL:-groom}" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
+seed_bead "$GWORK"
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-groomer', version=1 WHERE bead_id='$GWORK'" >/dev/null 2>&1
+out="$(groom_as "$GWORK" done --delivers "note:groom.log" 2>&1)"; rc=$?
+is "groomer done on an unmarked work bead: refused (exit 3)" "3" "$rc"
+row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$GWORK'" -r json 2>&1)"
+want "groomer done on an unmarked work bead: READY again" "\"state\":\"READY\"" "$row"
+nowant "groomer done on an unmarked work bead: never DONE" "\"state\":\"DONE\"" "$row"
+want "groomer done on an unmarked work bead: the refusal says why" "not a groom trigger" "$out"
+
+GTRIG="$(bead.sh file "groomer trigger fixture" --for builder --repo testrepo)"
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GTRIG" groom-trigger >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
+seed_bead "$GTRIG"
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-groomer', version=1 WHERE bead_id='$GTRIG'" >/dev/null 2>&1
+out="$(groom_as "$GTRIG" done --delivers "note:groom.log" 2>&1)"; rc=$?
+is "POSITIVE CONTROL: groomer done on a marked trigger: exits 0" "0" "$rc"
+row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$GTRIG'" -r json 2>&1)"
+want "POSITIVE CONTROL: groomer done on a marked trigger: DONE" "\"state\":\"DONE\"" "$row"
+
 # ── blocked: a hold, plus an ask filed for the operator ──────────────────────────────
 BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo testrepo)"
 seed_bead "$BLID"
-before_unread="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l)"
+before_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/dev/null | grep -c .)"
 out="$(work_as "$BLID" blocked "which persona owns this?" --default "builder" 2>&1)"; rc=$?
 [ "$rc" = 0 ] || echo "# $out" >&2
 is "blocked: exits 0" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT holds FROM bead WHERE bead_id='$BLID'" -r json 2>&1)"
 want "blocked: an ask hold is recorded" "ask" "$row"
-after_unread="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l)"
+after_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/dev/null | grep -c .)"
 [ "$after_unread" -gt "$before_unread" ] && ok "blocked: an ask landed in the operator's mailbox" \
     || bad "blocked: an ask landed in the operator's mailbox" "count did not increase ($before_unread -> $after_unread)"
 
@@ -233,9 +277,19 @@ out="$(work_as "$BID" file-followup "a followup filed by the container-tier suit
 is "file-followup: exits 0" "0" "$rc"
 new_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
 [ -n "$new_id" ] || bail "file-followup produced no new bead id"
-child_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$new_id" --json 2>&1)"
+child_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$new_id" --json 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 want "file-followup: the new bead's parent is the bound bead, not asked for" "\"parent\": \"$BID\"" "$child_json"
 nowant "file-followup: did not inherit the bound bead's branch label" "branch:" "$child_json"
+
+# ── file-followup --after-landing: unparented, blocked on the bound bead ─────────────
+out="$(work_as "$BID" file-followup "a followup that needs the parent landed" --after-landing 2>&1)"; rc=$?
+is "after-landing: exits 0" "0" "$rc"
+al_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
+[ -n "$al_id" ] || bail "after-landing produced no new bead id"
+al_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$al_id" --json 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
+nowant "after-landing: not a child of the bound bead" "\"parent\": \"$BID\"" "$al_json"
+want   "after-landing: blocked on the bound bead" "\"id\": \"$BID\"" "$al_json"
+want   "after-landing: the edge is a blocking one" "\"dependency_type\": \"blocks\"" "$al_json"
 
 # ── split: same mechanism, its own bead ───────────────────────────────────────────────
 out="$(work_as "$BID" split "a split piece filed by the container-tier suite" 2>&1)"; rc=$?
@@ -247,7 +301,7 @@ seed_bead "$SBID"
 out="$(work_as "$SBID" superseded-by "$BID" 2>&1)"; rc=$?
 is "superseded-by: exits 0" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, holds, reason FROM bead WHERE bead_id='$SBID'" -r json 2>&1)"
-want   "superseded-by: an operator hold is recorded, not SUPERSEDED" "operator" "$row"
+want   "superseded-by: a manual hold is recorded, not SUPERSEDED" "manual" "$row"
 nowant "superseded-by: the bead itself is not moved to SUPERSEDED"   "\"state\":\"SUPERSEDED\"" "$row"
 want   "superseded-by: the request names the proposed successor"    "$BID" "$row"
 

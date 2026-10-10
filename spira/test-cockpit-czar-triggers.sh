@@ -30,10 +30,12 @@ BASE_PATH="$PATH"
 # Run just the czar_triggers probe against a given mock bd binary.
 run_czar() {
     local bd_path="$1"
+    # SPIRA_RUN/SPIRA_DB/SPIRA_BD are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+    # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_BD="$bd_path"
     env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_BD="$bd_path" \
+        SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect probe czar_triggers 2>/dev/null
 }
 

@@ -4,10 +4,9 @@
 //! requeue event, the TSD dual-write) are not re-derived here. Tests use a recording fake.
 
 use serde::{Deserialize, Serialize};
-use std::cell::OnceCell;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoInfo {
@@ -17,8 +16,9 @@ pub struct RepoInfo {
     pub landref: String,
 }
 
-/// The status witness's answer. `Unreachable` is distinct from any status: an unproven
-/// database reads as "somebody may be home" (law-absence-needs-a-positive-control).
+/// The lifecycle witness's answer: the bead's row state ("" for a rowless bead). `Unreachable`
+/// is distinct from any state: a machine that cannot answer reads as "somebody may be home"
+/// (law-a-control-that-cannot-check-must-refuse).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BeadStatus {
     Known(String),
@@ -43,30 +43,29 @@ pub enum Gate {
     Green,
     Red,
     NoVerdict,
+    BaseRed,
 }
 
 const GATE_NO_VERDICT: i32 = 75;
+const GATE_BASE_RED: i32 = 76;
 
 pub struct LibSeam {
     pub home: PathBuf,
-    pub db: Option<PathBuf>,
-    pub bd: String,
+    /// The lifecycle machine's binary: the one place a bead's state is asked.
+    pub lc_bin: String,
     /// The queue binary: `queue`, by name on the launcher's PATH (sp-gypjk).
     pub queue_bin: PathBuf,
     /// `$SPIRA_RUN`, passed explicitly rather than left to this process's own ambient environment.
     pub run: PathBuf,
-    db_ok: OnceCell<bool>,
 }
 
 impl LibSeam {
-    pub fn new(home: PathBuf, db: Option<PathBuf>, bd: String, run: PathBuf) -> LibSeam {
+    pub fn new(home: PathBuf, lc_bin: String, run: PathBuf) -> LibSeam {
         LibSeam {
             home,
-            db,
-            bd,
+            lc_bin,
             queue_bin: PathBuf::from("queue"),
             run,
-            db_ok: OnceCell::new(),
         }
     }
 
@@ -77,7 +76,7 @@ impl LibSeam {
         } else {
             r#". "$0" >/dev/null 2>&1 || exit 97; "$@""#
         };
-        let mut c = Command::new("bash");
+        let mut c = spira_config::bounded::bounded("bash");
         c.arg("-c")
             .arg(script)
             .arg(self.home.join("lib.sh"))
@@ -106,55 +105,6 @@ impl LibSeam {
             ));
         }
         Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
-    }
-
-    /// THE POSITIVE CONTROL: the store answered with at least one bead. Any row proves the
-    /// store can say "in_progress"; no particular row is needed (a control keyed on one
-    /// configured bead that never existed read "the bead database did not answer" on every
-    /// live-worktree check, 2026-09-29 walkthrough).
-    fn bd_answers(&self) -> bool {
-        let Some(db) = self.db.as_ref() else { return false };
-        let Ok(o) = Command::new(&self.bd)
-            .arg("-C")
-            .arg(db)
-            .args(["list", "--limit", "1", "--json"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-        else {
-            return false;
-        };
-        o.status.success()
-            && matches!(serde_json::from_slice::<serde_json::Value>(&o.stdout),
-                        Ok(serde_json::Value::Array(a)) if !a.is_empty())
-    }
-
-    fn bd_show_status(&self, id: &str) -> Option<String> {
-        let db = self.db.as_ref()?;
-        let o = Command::new(&self.bd)
-            .arg("-C")
-            .arg(db)
-            .args(["show", id, "--json"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if !o.status.success() {
-            return None;
-        }
-        let v: serde_json::Value = serde_json::from_slice(&o.stdout).ok()?;
-        let first = match v {
-            serde_json::Value::Array(mut a) if !a.is_empty() => a.swap_remove(0),
-            serde_json::Value::Object(_) => v,
-            _ => return None,
-        };
-        Some(
-            first
-                .get("status")
-                .and_then(|s| s.as_str())
-                .unwrap_or("")
-                .to_string(),
-        )
     }
 }
 
@@ -190,15 +140,10 @@ impl Seam for LibSeam {
     }
 
     fn bead_status(&self, id: &str) -> BeadStatus {
-        let reachable = *self
-            .db_ok
-            .get_or_init(|| self.bd_answers());
-        if !reachable {
-            return BeadStatus::Unreachable;
+        match spira_config::lc_state::row_with(&self.lc_bin, id) {
+            Err(_) => BeadStatus::Unreachable,
+            Ok(row) => BeadStatus::Known(row.map(|r| r.state).unwrap_or_default()),
         }
-        // The database answered the positive control; a bead it cannot show is "unknown",
-        // which is not in_progress — spira_bead_status's own reading.
-        BeadStatus::Known(self.bd_show_status(id).unwrap_or_default())
     }
 
     fn reopen(&self, id: &str, cause: &str, note: &str) {
@@ -215,7 +160,7 @@ impl Seam for LibSeam {
 
     fn submit(&self, branch: &str, repo_name: &str) -> (Gate, String) {
         // stdout and stderr combined into one capture, as queue.sh's `2>&1` did.
-        let o = Command::new("bash")
+        let o = spira_config::bounded::bounded("bash")
             .arg("-c")
             .arg(r#"exec "$0" submit "$1" "$2" 2>&1"#)
             .arg(&self.queue_bin)
@@ -228,6 +173,7 @@ impl Seam for LibSeam {
                 let gate = match o.status.code() {
                     Some(0) => Gate::Green,
                     Some(GATE_NO_VERDICT) => Gate::NoVerdict,
+                    Some(GATE_BASE_RED) => Gate::BaseRed,
                     _ => Gate::Red,
                 };
                 (gate, String::from_utf8_lossy(&o.stdout).into_owned())
@@ -241,31 +187,28 @@ impl Seam for LibSeam {
 mod probe_tests {
     use super::*;
 
-    /// A stub bd: `list` answers with `list_json`; `show sp-held` is in_progress; any other
-    /// `show` fails, as bd does for an unknown id.
-    fn stub(name: &str, list_json: &str) -> (testkit::TempDir, LibSeam) {
+    fn stub(name: &str, body: &str) -> (testkit::TempDir, LibSeam) {
         let d = testkit::TempDir::new(&format!("rs-probe-{name}"));
-        let bd = d.join("bd");
-        testkit::write_exe(
-            &bd,
-            &format!(
-                "#!/bin/sh\ncase \"$3\" in\n list) printf '%s' '{list_json}' ;;\n show) [ \"$4\" = sp-held ] && printf '[{{\"id\":\"sp-held\",\"status\":\"in_progress\"}}]' && exit 0; exit 1 ;;\nesac\n"
-            ),
-        );
-        let seam = LibSeam::new(d.to_path_buf(), Some(d.to_path_buf()), bd.to_string_lossy().into(), d.to_path_buf());
+        let lc = d.join("spira-lc");
+        testkit::write_exe(&lc, &format!("#!/bin/sh\n{body}\n"));
+        let seam = LibSeam::new(d.to_path_buf(), lc.to_string_lossy().into(), d.to_path_buf());
         (d, seam)
     }
 
     #[test]
-    fn any_listed_bead_makes_the_store_reachable() {
-        let (d, seam) = stub("any", r#"[{"id":"sp-any"}]"#);
-        assert_eq!(seam.bead_status("sp-held"), BeadStatus::Known("in_progress".into()));
+    fn a_working_row_is_known_and_a_rowless_bead_is_known_empty() {
+        let (d, seam) = stub(
+            "row",
+            r#"[ "$2" = sp-held ] && { echo '{"bead":{"bead_id":"sp-held","state":"WORKING"}}'; exit 0; }; exit 1"#,
+        );
+        assert_eq!(seam.bead_status("sp-held"), BeadStatus::Known("WORKING".into()));
+        assert_eq!(seam.bead_status("sp-none"), BeadStatus::Known(String::new()));
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
-    fn a_store_that_lists_nothing_is_unreachable() {
-        let (d, seam) = stub("empty", "[]");
+    fn a_machine_that_cannot_answer_is_unreachable() {
+        let (d, seam) = stub("down", "echo broken >&2; exit 2");
         assert_eq!(seam.bead_status("sp-held"), BeadStatus::Unreachable);
         let _ = std::fs::remove_dir_all(&d);
     }

@@ -88,7 +88,7 @@ _batch_glob="${SPIRA_BATCH_HOME_GLOB:-/tmp/spira-batch-*}"
 if [ -n "${SPIRA_PODMAN_PS_FILE:-}" ] && [ -f "${SPIRA_PODMAN_PS_FILE}" ]; then
     _live_containers="$(cat "${SPIRA_PODMAN_PS_FILE}" 2>/dev/null || true)"
 else
-    _live_containers="$(podman ps --format '{{.Names}}' 2>/dev/null || true)"
+    _live_containers="$(timeout 5 podman ps --format '{{.Names}}' 2>/dev/null || true)"
 fi
 for _bh in $_batch_glob; do
     case "$_bh" in *.owner) continue ;; esac

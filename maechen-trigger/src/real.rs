@@ -4,8 +4,7 @@ use crate::lanes::LaneLabels;
 use crate::ports::World;
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::Stdio;
 
 pub struct Real {
     pub home: PathBuf,
@@ -28,7 +27,10 @@ impl Real {
     /// the detectors moved there (wave 4.29, sp-8ofmt) and are reached in-process instead
     /// of through the `lib.sh` seam.
     fn strand_cfg(&self) -> &strand::config::Config {
-        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
+        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()).unwrap_or_else(|e| {
+            eprintln!("maechen-trigger: {e}");
+            std::process::exit(1)
+        }))
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -78,30 +80,27 @@ impl World for Real {
     }
 
     fn now(&self) -> i64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+        spira_config::vtime::now_epoch() as i64
     }
 
-    fn open_trigger_count(&self, labels: &str) -> u64 {
+    fn open_trigger_count(&self, labels: &str) -> Result<u64, String> {
         // bd says which beads carry the labels; whether each is still open is the lifecycle
         // machine's answer (sp-mve9i), never bd's status.
-        let out = Command::new(&self.bd)
+        let out = spira_config::bounded::bounded(&self.bd)
             .arg("-C")
             .arg(&self.db)
             .args(["list", "--all", "--label", labels, "--json"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
-            .output();
-        let ids = match out {
-            Ok(o) if o.status.success() => json_ids(&String::from_utf8_lossy(&o.stdout)),
-            _ => return 0,
-        };
-        match spira_config::lc_state::list() {
-            Ok(rows) => unfinished_count(&ids, &spira_config::lc_state::index(rows)),
-            Err(e) => {
-                eprintln!("maechen-trigger: lifecycle state unreadable ({e}); counting no open trigger");
-                0
-            }
+            .output()
+            .map_err(|e| format!("cannot run bd list: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("bd list exited {}", out.status));
         }
+        let ids = json_ids(&String::from_utf8_lossy(&out.stdout))
+            .ok_or_else(|| "bd list output is not a JSON array".to_string())?;
+        let rows = spira_config::lc_state::list().map_err(|e| format!("lifecycle state unreadable ({e})"))?;
+        Ok(unfinished_count(&ids, &spira_config::lc_state::index(rows)))
     }
 
     fn lane_admitted(&self, lane: &str) -> bool {
@@ -132,7 +131,7 @@ impl World for Real {
     }
 
     fn git_log_subjects(&self, repo_path: &Path, since_ts: i64, base_ref: &str) -> String {
-        Command::new("git")
+        spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(repo_path)
             .arg("log")
@@ -151,7 +150,7 @@ impl World for Real {
     }
 
     fn create_bead(&self, title: &str, labels: &str, description: &str) -> Result<(), String> {
-        let mut child = Command::new(&self.bd)
+        let mut child = spira_config::bounded::bounded(&self.bd)
             .arg("-C")
             .arg(&self.db)
             .arg("create")
@@ -193,26 +192,27 @@ impl World for Real {
     }
 }
 
-/// The ids in `bd list --json`'s array; none for anything that fails to parse.
-fn json_ids(input: &str) -> Vec<String> {
+/// The ids in `bd list --json`'s array; `None` for anything that is not an array.
+fn json_ids(input: &str) -> Option<Vec<String>> {
     match serde_json::from_str::<serde_json::Value>(input) {
-        Ok(serde_json::Value::Array(a)) => a.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect(),
-        _ => Vec::new(),
+        Ok(serde_json::Value::Array(a)) => Some(a.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect()),
+        _ => None,
     }
 }
 
 /// `spira_open_trigger_count`'s own counter: the trigger beads still open — their lifecycle
 /// row READY, WORKING or REWORK (what bd's `open,in_progress` meant). A bead with no row can
-/// never be worked, so it is not open.
+/// never be worked, and a poisoned one is not claimable again: neither is open, or one dead
+/// trigger would suppress every later one.
 fn unfinished_count(ids: &[String], lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> u64 {
-    ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder())).count() as u64
+    ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder() && !r.held("poison"))).count() as u64
 }
 
 fn humantime_utc_now() -> String {
     // Matches the bash's `date -u +%Y-%m-%dT%H:%M:%SZ`. No chrono dependency: shell to
     // `date`, exactly as every other already-rewritten crate's log stamp does when it needs
     // one (czar-pass, reconciler) — a fixed-format UTC stamp is not worth a crate.
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .arg("-u")
         .arg("+%Y-%m-%dT%H:%M:%SZ")
         .output()
@@ -230,12 +230,15 @@ mod tests {
     /// hand-off; bd's status is not read.
     #[test]
     fn an_open_trigger_is_one_the_machine_has_not_seen_handed_on() {
-        let ids = json_ids(r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c"},{"id":"d"},{"id":"e"}]"#);
+        let ids = json_ids(r#"[{"id":"a","status":"closed"},{"id":"b","status":"open"},{"id":"c"},{"id":"d"},{"id":"e"}]"#).unwrap();
         let lc = [("a", "READY"), ("b", "SUBMITTED"), ("c", "WORKING"), ("d", "DONE")]
             .iter()
             .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
             .collect();
         assert_eq!(unfinished_count(&ids, &lc), 2);
-        assert!(json_ids("not json").is_empty());
+        let mut lc: std::collections::HashMap<String, Row> = lc;
+        lc.get_mut("a").unwrap().holds = vec!["poison".to_string()];
+        assert_eq!(unfinished_count(&ids, &lc), 1, "a poisoned trigger is dead and must not suppress the next");
+        assert!(json_ids("not json").is_none());
     }
 }

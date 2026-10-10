@@ -108,19 +108,22 @@ impl Conf {
     /// `Err` matches `layout.sh`'s own refusal: `SPIRA_RELEASE` unset is a launcher defect,
     /// not a fallback case — every pane's PATH is built from it.
     pub fn from_env() -> Result<Conf, String> {
+        use spira_config::process::{cfg, cfg_parse};
         let spira_release = env_nonempty("SPIRA_RELEASE").ok_or_else(|| {
             "cockpit: SPIRA_RELEASE is not set — the launcher sets it to the release the \
              running system executes, and every pane's PATH is built from it"
                 .to_string()
         })?;
 
-        let mut cock = env_nonempty("SPIRA_COCKPIT")
+        let mut cock = cfg("SPIRA_COCKPIT")
+            .ok()
+            .filter(|s| !s.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/nonexistent-cockpit"));
         // Split-checkout mode: the renderer must come from the same release the collector
         // reads, unless SPIRA_DEV_RENDERER=1 opts back in to this checkout's health binary.
         if env_nonempty("SPIRA_DEV_RENDERER").is_none() {
-            if let Some(prod) = env_nonempty("SPIRA_PROD") {
+            if let Some(prod) = cfg("SPIRA_PROD").ok().filter(|s| !s.is_empty()) {
                 let prod_cock = PathBuf::from(&prod).join("cockpit");
                 if prod_cock.is_dir() {
                     cock = prod_cock;
@@ -128,19 +131,19 @@ impl Conf {
             }
         }
 
-        let run = env_nonempty("SPIRA_RUN")
+        let run = cfg("SPIRA_RUN")?;
+        let run = Some(run)
+            .filter(|s| !s.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp/spira-run"));
+            .ok_or_else(|| "cockpit: SPIRA_RUN is unset or empty — refusing to guess a runtime directory".to_string())?;
         fs::create_dir_all(&run)
             .map_err(|_| format!("cockpit: runtime directory {} is not writable", run.display()))?;
 
-        let cwd = env_nonempty("COCKPIT_CWD").unwrap_or_default();
-        let right_pct = env_nonempty("COCKPIT_RIGHT_PCT")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(33);
-        let bottom_pct = env_nonempty("COCKPIT_BOTTOM_PCT")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(28);
+        let cwd = cfg("COCKPIT_CWD").unwrap_or_default();
+        // COCKPIT_RIGHT_PCT/COCKPIT_BOTTOM_PCT each carry a fixed toml-level default (33/28);
+        // a value that fails to parse is a bad config document, not a case to paper over.
+        let right_pct: u32 = cfg_parse("COCKPIT_RIGHT_PCT")?;
+        let bottom_pct: u32 = cfg_parse("COCKPIT_BOTTOM_PCT")?;
 
         // The mail pane exists only when its client does: a pane whose program is missing
         // dies at once, and `ensure` would respawn it every minute.
@@ -149,7 +152,7 @@ impl Conf {
         // this key belongs; a second, hardcoded default here would silently override an
         // operator's deliberate "no mail pane" (COCKPIT_MAIL set empty) the moment conf.sh
         // agreed with bash and left it that way.
-        let mail_cmd = env_nonempty("COCKPIT_MAIL");
+        let mail_cmd = cfg("COCKPIT_MAIL").ok().filter(|s| !s.is_empty());
         let mail_cmd = mail_cmd.filter(|cmd| {
             let exe = cmd.split_whitespace().next().unwrap_or("");
             on_path(exe)
@@ -158,17 +161,14 @@ impl Conf {
         let heal_cooldown_secs = env_nonempty("COCKPIT_HEAL_COOLDOWN")
             .and_then(|s| s.parse().ok())
             .unwrap_or(60);
-        let idle_secs = env_nonempty("COCKPIT_CLIENT_IDLE_SECS")
+        let idle_secs = cfg("COCKPIT_CLIENT_IDLE_SECS")
+            .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(21600);
-        let mouse_on = !matches!(
-            env_nonempty("COCKPIT_MOUSE").as_deref(),
-            Some("off") | Some("no") | Some("0")
-        );
-        let clipboard_on = !matches!(
-            env_nonempty("COCKPIT_CLIPBOARD").as_deref(),
-            Some("off") | Some("no") | Some("0")
-        );
+        // Both carry a fixed toml-level default ("on"); any other value, resolved or not, is
+        // read literally rather than coerced to a Rust-side on/off default.
+        let mouse_on = !matches!(cfg("COCKPIT_MOUSE")?.as_str(), "off" | "no" | "0");
+        let clipboard_on = !matches!(cfg("COCKPIT_CLIPBOARD")?.as_str(), "off" | "no" | "0");
         let spira_repo = env_nonempty("SPIRA_REPO").unwrap_or_default();
         let spira_conf = env_nonempty("SPIRA_CONF");
 
@@ -204,8 +204,11 @@ impl Conf {
         p
     }
 
+    /// The ops pane is the lifecycle lens (`lc-view`, sp-lpw5ol), which replaced `health`:
+    /// it reads state only from the lifecycle machine and publishes the phone page's snapshot.
+    /// Interactive since sp-5j35g5: it reads keys and clicks, and sizes itself to the pane.
     pub fn health_cmd(&self) -> String {
-        format!("{}health loop", self.rel_prefix())
+        format!("{}lc-view tui 15", self.rel_prefix())
     }
 
     pub fn down_marker(&self) -> PathBuf {
@@ -229,6 +232,7 @@ impl Conf {
 /// `script` is argv[1] when `exe` is a shell running a script.
 pub fn classify_argv(exe: &str, script: &str, mail_exe: Option<&str>) -> Option<Role> {
     if exe.ends_with("/health") || exe == "health" || script.ends_with("/health.sh") || script.ends_with("/health")
+        || exe.ends_with("/lc-view") || exe == "lc-view"
     {
         return Some(Role::Health);
     }
@@ -315,6 +319,9 @@ mod tests {
     #[test]
     fn classify_argv_matches_health_by_script_suffix_never_substring() {
         assert_eq!(classify_argv("bash", "/opt/spira/cockpit/health.sh", None), Some(Role::Health));
+        // The lifecycle lens is the ops pane now (sp-lpw5ol).
+        assert_eq!(classify_argv("/opt/bin/lc-view", "loop", None), Some(Role::Health));
+        assert_eq!(classify_argv("lc-view", "", None), Some(Role::Health));
         // A system prompt that merely mentions the path as argv text (not argv[0]/[1] of a
         // shell) must not classify — callers only ever pass exe/script, not the whole line,
         // which is what makes this safe: "argv position, never substring".
@@ -590,6 +597,26 @@ impl Layout {
             .map(str::to_string)
     }
 
+    fn health_width(&self, target: &str) -> String {
+        const MIN_COLS: u32 = 45;
+        let width = self
+            .tmux
+            .run(&["display-message", "-p", "-t", target, "#{window_width}"])
+            .and_then(|w| w.trim().parse::<u32>().ok());
+        match width {
+            Some(w) if w * self.conf.right_pct / 100 < MIN_COLS => MIN_COLS.min(w / 2).to_string(),
+            _ => format!("{}%", self.conf.right_pct),
+        }
+    }
+
+    fn install_resize_hooks(&self, window: &str) {
+        let Some(h) = self.tagged(window, Role::Health) else { return };
+        let cmd = format!("resize-pane -t {h} -x {}%", self.conf.right_pct);
+        for hook in ["window-resized", "client-resized", "client-attached"] {
+            self.tmux.run_ok(&["set-hook", "-t", session_of(window), hook, &cmd]);
+        }
+    }
+
     fn split_health(&self, target: &str) -> Option<String> {
         self.tmux.run(&[
             "split-window",
@@ -600,7 +627,7 @@ impl Layout {
             "-h",
             "-f",
             "-l",
-            &format!("{}%", self.conf.right_pct),
+            &self.health_width(target),
             "-t",
             target,
             "-c",
@@ -696,7 +723,8 @@ impl Layout {
         self.tmux
             .run_ok(&["set-option", "-w", "-t", window, "@cockpit_up", "1"]);
         self.tmux
-            .run_ok(&["set-option", "-t", session_of(window), "window-size", "largest"]);
+            .run_ok(&["set-option", "-t", session_of(window), "window-size", "latest"]);
+        self.install_resize_hooks(window);
         self.apply_mouse_mode();
         self.apply_clipboard_mode();
         self.tmux.run_ok(&["select-pane", "-t", &sess]);
@@ -833,7 +861,7 @@ impl Layout {
 
         let windows = self.cockpit_windows();
         for w in &windows {
-            self.tmux.run_ok(&["set-option", "-t", session_of(w), "window-size", "largest"]);
+            self.tmux.run_ok(&["set-option", "-t", session_of(w), "window-size", "latest"]);
         }
 
         if windows.is_empty() {
@@ -846,6 +874,7 @@ impl Layout {
                 // invoked that way, never by a path constructed by hand) — `rebuild` lives
                 // in `$SPIRA_RELEASE/bin`, not under `$SPIRA_COCKPIT`, which is where the
                 // bash scripts it replaces used to live.
+                // batch-job: this runs whatever its caller names, as long as that takes
                 match std::process::Command::new("rebuild").output() {
                     Ok(out) if out.status.success() => {
                         let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -868,6 +897,7 @@ impl Layout {
             if self.session_pane(w).is_some() {
                 self.repair_dashboards(w);
                 self.restart_if_stale(w, Role::Health);
+                self.install_resize_hooks(w);
                 continue;
             }
             if !self.heal_ready() {
@@ -1060,8 +1090,13 @@ fn chrono_like_timestamp() -> String {
     // `date '+%Y-%m-%dT%H:%M:%S'` in the box's configured TZ (SPIRA_TZ, else TZ). Formatted
     // by hand rather than pulling in a datetime crate for one log line; `date` is always on
     // PATH in this harness's environment and the exact format matches the bash original's.
-    let tz = std::env::var("SPIRA_TZ").or_else(|_| std::env::var("TZ")).ok();
-    let mut cmd = std::process::Command::new("date");
+    // SPIRA_TZ's own toml default is empty ("Empty means the host's own") — a sentinel,
+    // not an absent value, so this falls through to the OS's own TZ, never a Spira default.
+    let tz = spira_config::process::cfg("SPIRA_TZ")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("TZ").ok());
+    let mut cmd = spira_config::bounded::bounded("date");
     cmd.arg("+%Y-%m-%dT%H:%M:%S");
     if let Some(tz) = tz {
         cmd.env("TZ", tz);

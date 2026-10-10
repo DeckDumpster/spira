@@ -10,7 +10,7 @@ pub mod real;
 mod tests;
 
 use ports::World;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -18,9 +18,10 @@ pub enum Level {
     Warn,
     Fail,
     /// An informational line printed verbatim, with no `FAIL`/`warn`/`ok` tag and no
-    /// indentation — sp-oppza's migrate-then-validate note (`spira-config migrate`'s own
-    /// output, logged only when it actually migrated something) is not a verdict on its
-    /// own check, just as bash's `printf '%s\n' "$mig"` was not routed through `FAIL`/`OK`.
+    /// indentation. No current check emits this — it backed `check_config_files`'s
+    /// migrate-then-validate note before that check's rewrite (per Ryan 2026-10-05: one
+    /// source of config retired the legacy spira.conf/migrate flow it logged) — but the
+    /// printer below still handles it, for a future check that needs an unranked line.
     Raw,
 }
 
@@ -44,9 +45,6 @@ fn fail(msg: impl Into<String>, detail: impl Into<String>) -> Line {
 }
 fn fail_bare(msg: impl Into<String>) -> Line {
     Line { level: Level::Fail, msg: msg.into(), detail: None }
-}
-fn raw(msg: impl Into<String>) -> Line {
-    Line { level: Level::Raw, msg: msg.into(), detail: None }
 }
 
 /// One named section of the report, in the fixed order doctor.sh printed them.
@@ -73,6 +71,7 @@ pub fn run(w: &dyn World) -> i32 {
             lines: {
                 let mut v = check_store(w);
                 v.extend(check_dolt_telemetry(w));
+                v.extend(check_root_closed(w));
                 v
             },
         },
@@ -93,6 +92,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "the cockpit", lines: check_snapshot_fresh(w) },
         Section { title: "operator channel", lines: check_operator_channel(w) },
         Section { title: "concierge", lines: check_concierge_singleton(w) },
+        Section { title: "git hooks", lines: check_hooks_path(w) },
     ];
 
     let mut fatal = 0u32;
@@ -194,38 +194,74 @@ pub fn check_hotfix(w: &dyn World) -> Vec<Line> {
 /// genuinely never parses or writes the config itself). The printed text is unchanged.
 const TOML_NAME: &str = concat!("spira", ".", "toml");
 
-pub fn check_config_files(w: &dyn World) -> Vec<Line> {
-    let conf = w.env("SPIRA_CONF_FILE").filter(|v| !v.is_empty());
-    let toml = w.env("SPIRA_TOML_FILE").filter(|v| !v.is_empty());
+/// Doctor's job here, post-cutover (per Ryan 2026-10-05: one source of config), is no
+/// longer to audit `conf.sh`'s own captured environment for a legacy two-file config
+/// split — that split is retired, and `SPIRA_CONF_FILE`/`SPIRA_TOML_FILE`
+/// (the old discovery flags this check used to read via `World::env`) name neither of the
+/// two things that can actually be wrong now. The ONE config is `$SPIRA_TOML`; this checks
+/// exactly what can go wrong with it, in order, stopping at the first failure since each
+/// later check assumes the one before it held: (1) it is SET, (2) every layer it names (a
+/// file, or a `:`-separated base:override list) EXISTS, (3) the merged document VALIDATES,
+/// (4) every key `spira/conf.d` registers actually RESOLVES through it. None of this goes
+/// through `&dyn World` — `spira_config`'s own `locate`/`load`/`process::cfg` are the real
+/// thing to call, in-process, the same door every other binary in the harness now uses;
+/// faking them here would just be the "second, crate-local document discovery" the one-door
+/// law exists to kill. `_w` stays in the signature only so this check keeps the same shape
+/// every other one in `run()`'s dispatch list has.
+pub fn check_config_files(_w: &dyn World) -> Vec<Line> {
     let mut out = Vec::new();
-    match (&conf, &toml) {
-        (Some(c), Some(t)) => out.push(warn(
-            format!("both {c} and {t} exist — {TOML_NAME} is no longer read or written"),
-            format!("Confirm {t} carries everything you need, then remove {c}."),
-        )),
-        (None, Some(t)) => out.push(ok(format!("{TOML_NAME} only — {t}"))),
-        (Some(c), None) => out.push(ok(format!("spira.conf only (legacy) — {c}"))),
-        (None, None) => out.push(ok("no config file found — running on derived defaults")),
+
+    let spec = match spira_config::locate::locate(None) {
+        spira_config::locate::LocateOutcome::Found(p) => p.to_string_lossy().into_owned(),
+        spira_config::locate::LocateOutcome::NotFound { tried } if tried.is_empty() => {
+            out.push(fail_bare("SPIRA_TOML is not set — it names the one source of config (a file, or base:override); refusing"));
+            return out;
+        }
+        spira_config::locate::LocateOutcome::NotFound { tried } => {
+            let missing = tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ");
+            out.push(fail_bare(format!("SPIRA_TOML names a layer that does not exist: {missing}")));
+            return out;
+        }
+    };
+    out.push(ok(format!("SPIRA_TOML is set, every layer exists — {spec}")));
+
+    if let Err(e) = spira_config::load(Path::new(&spec)) {
+        out.push(fail(format!("{TOML_NAME} fails validation"), e));
+        return out;
     }
-    if let Some(t) = &toml {
-        if w.which("spira-config").is_none() {
-            out.push(fail_bare(format!("cannot validate {t} — spira-config is not on PATH")));
-        } else {
-            // sp-oppza ONE-TIME UPGRADE MIGRATION, ahead of validate: a box whose config
-            // predates sp-k6m1m (goal set, no id_prefix) is repaired in place instead of
-            // failing validation on every such box. Idempotent — a no-op once id_prefix is
-            // set, which includes production's own state, set by hand — so unconditional.
-            // Its own exit code is never checked (matching doctor.sh: `validate` is the one
-            // check this section gates on); only its output, when non-empty, is logged.
-            let mig = w.spira_config_migrate(Path::new(t));
-            if !mig.is_empty() {
-                out.push(raw(mig));
-            }
-            match w.spira_config_validate(Path::new(t)) {
-                Ok(()) => out.push(ok(format!("{TOML_NAME} validates — {t}"))),
-                Err(e) => out.push(fail(format!("{TOML_NAME} fails validation — {t}"), e)),
+    out.push(ok(format!("{TOML_NAME} validates")));
+
+    let home = match spira_config::resolve::locate_home_for_process() {
+        Ok(h) => h,
+        Err(e) => {
+            out.push(fail_bare(format!("cannot locate spira/conf.d to check the registry: {e}")));
+            return out;
+        }
+    };
+    let conf_d = home.join("conf.d");
+    let mut missing_keys = Vec::new();
+    match std::fs::read_dir(&conf_d) {
+        Ok(rd) => {
+            for entry in rd.flatten() {
+                let Ok(name) = entry.file_name().into_string() else { continue };
+                if !name.starts_with("SPIRA_") && !name.starts_with("COCKPIT_") {
+                    continue;
+                }
+                if spira_config::process::cfg(&name).is_err() {
+                    missing_keys.push(name);
+                }
             }
         }
+        Err(e) => {
+            out.push(fail_bare(format!("cannot read {}: {e}", conf_d.display())));
+            return out;
+        }
+    }
+    if missing_keys.is_empty() {
+        out.push(ok(format!("every registered key in {} resolves", conf_d.display())));
+    } else {
+        missing_keys.sort();
+        out.push(fail_bare(format!("{} registered key(s) do not resolve: {}", missing_keys.len(), missing_keys.join(", "))));
     }
     out
 }
@@ -413,6 +449,22 @@ pub fn check_store(w: &dyn World) -> Vec<Line> {
     }
 
     out
+}
+
+pub fn check_root_closed(w: &dyn World) -> Vec<Line> {
+    let db = w.env("SPIRA_DB").unwrap_or_default();
+    let meta = Path::new(&db).join(".beads").join("metadata.json");
+    let Some(m) = w.read_store_meta(&meta) else { return Vec::new() };
+    let Some(port) = m.dolt_server_port else { return Vec::new() };
+    let host = if m.dolt_server_host.is_empty() { "127.0.0.1".to_string() } else { m.dolt_server_host };
+    match w.dolt_root_passwordless(&host, port) {
+        Some(true) => vec![fail(
+            format!("dolt root on {host}:{port} is passwordless"),
+            "Anyone on the host can administer the store. Run install: it gives bd its own user and\n        moves root onto the password in the admin credential file.",
+        )],
+        Some(false) => vec![ok(format!("dolt root on {host}:{port} requires a password"))],
+        None => Vec::new(),
+    }
 }
 
 const DOLT_EVENTS_MAX: usize = 100;
@@ -805,6 +857,48 @@ pub fn check_concierge_singleton(w: &dyn World) -> Vec<Line> {
                 stray.join(" "),
                 conc.display()
             ),
+        )]
+    }
+}
+
+// ============================================================================ git hooks
+
+fn lexical(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `core.hooksPath` is written once at install; a later writer that displaces it disables
+/// every hook the harness ships without a sign.
+pub fn check_hooks_path(w: &dyn World) -> Vec<Line> {
+    let (Some(repo), Some(home)) = (
+        w.env("SPIRA_REPO").filter(|v| !v.is_empty()),
+        w.env("SPIRA_HOME").filter(|v| !v.is_empty()),
+    ) else {
+        return vec![warn("SPIRA_REPO or SPIRA_HOME is unset — cannot check core.hooksPath", "")];
+    };
+    let want = lexical(&Path::new(&home).join("hooks"));
+    let Some(got) = w.git_hooks_path(Path::new(&repo)) else {
+        return vec![fail(
+            format!("core.hooksPath is not set in {repo} — the harness hooks are not armed"),
+            format!("Expected {}. Re-run: exclude.sh install", want.display()),
+        )];
+    };
+    if lexical(&Path::new(&repo).join(&got)) == want {
+        vec![ok(format!("core.hooksPath is {}", want.display()))]
+    } else {
+        vec![fail(
+            format!("core.hooksPath is {got}, not the harness hooks directory {}", want.display()),
+            "The harness hooks do not run. Re-run: exclude.sh install",
         )]
     }
 }

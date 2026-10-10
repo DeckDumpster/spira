@@ -1,6 +1,5 @@
 use std::io::Write as _;
 use std::path::Path;
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 use crate::policy::{self, Verb};
@@ -9,8 +8,15 @@ const RATE_LIMIT_WINDOW_S: u64 = 60;
 const RATE_LIMIT_MAX: u64 = 10;
 
 pub fn run() -> Result<(), String> {
-    let run_dir = std::env::var("SPIRA_RUN")
-        .map_err(|_| "broker execute: SPIRA_RUN is not set".to_string())?;
+    // Top-level config reads for this process: SPIRA_RUN, SPIRA_BD, SPIRA_DB are all
+    // registered keys (spira/conf.d) — resolved once here and threaded down as
+    // parameters so the rest of this module stays pure/testable.
+    let run_dir = spira_config::process::cfg("SPIRA_RUN")
+        .map_err(|e| format!("broker execute: {e}"))?;
+    let bd = spira_config::process::cfg("SPIRA_BD")
+        .map_err(|e| format!("broker execute: {e}"))?;
+    let db = spira_config::process::cfg("SPIRA_DB")
+        .map_err(|e| format!("broker execute: {e}"))?;
 
     let broker_dir = Path::new(&run_dir).join("broker");
     let inbox   = broker_dir.join("inbox");
@@ -23,6 +29,8 @@ pub fn run() -> Result<(), String> {
             .map_err(|e| format!("broker execute: cannot create dir {}: {e}", d.display()))?;
     }
 
+    // SPIRA_HOME is not a registered config key (spira/conf.d has no entry) — left on
+    // the process environment.
     let spira_home = std::env::var("SPIRA_HOME").unwrap_or_default();
 
     let entries = std::fs::read_dir(&inbox)
@@ -78,7 +86,7 @@ pub fn run() -> Result<(), String> {
 
         if let (Some(bead), false) = (intent["bead"].as_str(), intent["bead"].is_null()) {
             if !bead.is_empty() {
-                post_bead_note(bead, &record);
+                post_bead_note(&bd, &db, bead, &record);
             }
         }
     }
@@ -120,10 +128,14 @@ fn process_intent(
 
     // 3. Repo must be in the repo-map; get local path.
     let repo_path = match repo_map_lookup(repo) {
-        Some(p) => p,
-        None => return (
+        Ok(Some(p)) => p,
+        Ok(None) => return (
             "REFUSED".to_string(),
             format!("repo '{}' is not in the repo-map", repo),
+        ),
+        Err(e) => return (
+            "REFUSED".to_string(),
+            format!("repo-map lookup failed: {}", e),
         ),
     };
 
@@ -178,13 +190,13 @@ fn process_intent(
     }
 }
 
-fn repo_map_lookup(repo: &str) -> Option<String> {
+fn repo_map_lookup(repo: &str) -> Result<Option<String>, String> {
     crate::repo_map::lookup(repo)
 }
 
 fn czar_fence_check(_spira_home: &str, class: &str) -> Result<bool, String> {
     // czar-fence.sh by name on the launcher's PATH (sp-gypjk).
-    let status = Command::new("czar-fence.sh")
+    let status = spira_config::bounded::bounded("czar-fence.sh")
         .arg(class)
         .status()
         .map_err(|e| format!("cannot run czar-fence.sh: {e}"))?;
@@ -193,7 +205,7 @@ fn czar_fence_check(_spira_home: &str, class: &str) -> Result<bool, String> {
 
 fn check_batch_pr(repo_path: &str, number: &str) -> Result<bool, String> {
     let gh = gh_bin();
-    let output = Command::new(&gh)
+    let output = spira_config::bounded::bounded(&gh)
         .args(["pr", "view", number, "--json", "headRefName", "-q", ".headRefName"])
         .current_dir(repo_path)
         .output()
@@ -221,9 +233,9 @@ fn build_gh_args(verb: &Verb, number: &str, reason: &str) -> Vec<String> {
 
 fn gh_exec(verb: &Verb, repo_path: &str, number: &str, reason: &str) -> Result<String, String> {
     let gh = gh_bin();
-    let mut cmd = Command::new(&gh);
+    let mut cmd = spira_config::bounded::bounded(&gh);
     cmd.current_dir(repo_path);
-    cmd.envs(crate::token::gh_env());
+    cmd.envs(crate::token::gh_env()?);
     cmd.args(build_gh_args(verb, number, reason));
 
     let output = cmd.output()
@@ -236,6 +248,8 @@ fn gh_exec(verb: &Verb, repo_path: &str, number: &str, reason: &str) -> Result<S
     }
 }
 
+// SPIRA_BROKER_GH is not a registered config key (spira/conf.d has no entry) — a
+// test-only override of the gh binary, left on the process environment.
 fn gh_bin() -> String {
     std::env::var("SPIRA_BROKER_GH")
         .ok()
@@ -272,19 +286,14 @@ fn append_audit(audit: &Path, record: &Value) {
     let _ = f.write_all(line.as_bytes());
 }
 
-fn post_bead_note(bead: &str, record: &Value) {
-    let bd = std::env::var("SPIRA_BD")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "bd".to_string());
-    let db = std::env::var("SPIRA_DB").unwrap_or_default();
+fn post_bead_note(bd: &str, db: &str, bead: &str, record: &Value) {
     let outcome = record["outcome"].as_str().unwrap_or("?");
     let detail  = record["detail"].as_str().unwrap_or("");
     let verb    = record["verb"].as_str().unwrap_or("?");
     let msg = format!("broker {}: {} — {}", outcome, verb, detail);
 
-    let mut cmd = Command::new(&bd);
-    if !db.is_empty() { cmd.args(["-C", &db]); }
+    let mut cmd = spira_config::bounded::bounded(bd);
+    if !db.is_empty() { cmd.args(["-C", db]); }
     cmd.args(["note", bead, &msg]);
     let _ = cmd.status();
 }

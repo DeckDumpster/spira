@@ -80,44 +80,51 @@ fn main() {
 
     let seam = BashSeam { lib: home.join("lib.sh"), env: &seam_env };
 
-    // Wave 4.8 ("retire conf re-import seams in Rust"): `_auron_snapshot` used to be
-    // `env -0` alone, which misses every SPIRA_* key conf.sh/lib.sh set but did not
-    // export — SPIRA_REPO chief among them, so `repo` below was ALWAYS "" and the
-    // mirror_path default silently became the filesystem-root-relative
-    // "/raw/spira-beads/spira.jsonl" instead of "<repo>/raw/spira-beads/spira.jsonl"
-    // (wave4-decomposition.md row (b): "unverified; check" — confirmed live on this box,
-    // no SPIRA_AURON_MIRROR override in force). SPIRA_AURON_RESTARTS/_WINDOW are conf
-    // keys too, but were read from the raw environment below (bypassing `snap`
-    // entirely), so a toml override of either was silently ignored — the same row's
-    // other named hazard. `_auron_snapshot`/`seam::snapshot` had exactly this one
-    // caller, so it is retired outright rather than ported: `derive_home_repo` plus
-    // `resolve_for_process`, in-process, replace both the seam call and the bug.
+    // `SPIRA_REPO` (the home repo path), derived in-process the same way `cfg()` itself
+    // derives it internally — not a config-key read, so it stays this direct call.
     let repo_path = spira_config::resolve::derive_home_repo(&home, &original);
-    let resolved = match spira_config::resolve::resolve_for_process(&home, &repo_path, &original) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("auron: could not resolve config: {e}");
-            std::process::exit(1);
-        }
-    };
-    let rget = |k: &str, d: &str| {
-        let v = resolved.get(k);
-        if v.is_empty() { d.to_string() } else { v.to_string() }
-    };
-    let rnum = |k: &str, d: i64| resolved.get(k).trim().parse().unwrap_or(d);
+
+    // Every key below (SPIRA_RUN/SPIRA_DB/SPIRA_EXPORTER/SPIRA_INSTANCE/SPIRA_TZ/
+    // SPIRA_AURON_RESTARTS/SPIRA_AURON_RESTART_WINDOW) is registered in `spira/conf.d` —
+    // the one source of config (per Ryan 2026-10-05), through
+    // `spira_config::process::cfg`/`cfg_parse`. No Rust-side literal default stands in for
+    // an unresolved value; a key that fails to resolve exits named, exactly as the
+    // config-resolution failure just above already does.
+    macro_rules! cfg_or_die {
+        ($key:expr) => {
+            match spira_config::process::cfg($key) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("auron: {e}");
+                    std::process::exit(1);
+                }
+            }
+        };
+    }
+    macro_rules! cfg_num_or_die {
+        ($key:expr) => {
+            match spira_config::process::cfg_parse($key) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("auron: {e}");
+                    std::process::exit(1);
+                }
+            }
+        };
+    }
 
     let now = util::now_epoch();
     let sink = StdSink;
 
-    // ---- config, exactly auron.sh's own env reads (SPIRA_AURON_* from the raw
-    // environment — auron-specific, no conf.sh key; everything else resolved in-process) ---
-    let run_dir = PathBuf::from(rget("SPIRA_RUN", "/run/spira"));
-    let db = rget("SPIRA_DB", "");
+    // ---- config: registered keys through `cfg`/`cfg_parse`; SPIRA_AURON_* (besides the
+    // two above) carries no conf.sh key, so it stays an ad hoc raw-environment read -----
+    let run_dir = PathBuf::from(cfg_or_die!("SPIRA_RUN"));
+    let db = cfg_or_die!("SPIRA_DB");
     let repo = repo_path.to_string_lossy().into_owned();
-    let exporter = rget("SPIRA_EXPORTER", "");
+    let exporter = cfg_or_die!("SPIRA_EXPORTER");
     let systemctl_bin = env_or(&original, "SPIRA_SYSTEMCTL", "systemctl");
-    let instance = rget("SPIRA_INSTANCE", "");
-    let tz = rget("SPIRA_TZ", "UTC");
+    let instance = cfg_or_die!("SPIRA_INSTANCE");
+    let tz = cfg_or_die!("SPIRA_TZ");
 
     let state_path = run_dir.join("auron.state");
     let status_path = run_dir.join("auron.status");
@@ -129,8 +136,8 @@ fn main() {
     let confirm = env_n(&original, "SPIRA_AURON_CONFIRM", 2);
     let clear_n = env_n(&original, "SPIRA_AURON_CLEAR", 2);
     let refresh = env_n(&original, "SPIRA_AURON_REFRESH", 3600);
-    let restarts_threshold = rnum("SPIRA_AURON_RESTARTS", 5);
-    let restart_window = rnum("SPIRA_AURON_RESTART_WINDOW", 3600);
+    let restarts_threshold: i64 = cfg_num_or_die!("SPIRA_AURON_RESTARTS");
+    let restart_window: i64 = cfg_num_or_die!("SPIRA_AURON_RESTART_WINDOW");
     let drain_ttl = env_n(&original, "SPIRA_DRAIN_TTL", 1800);
     let thresholds = Thresholds {
         pass_stale: env_n(&original, "SPIRA_AURON_PASS_STALE", 600),

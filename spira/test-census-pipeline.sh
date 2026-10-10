@@ -6,10 +6,14 @@
 #
 # WHAT THIS TESTS
 # ---------------
-# The four python files under census/ (extracted from census.sh's former heredocs) on
+# The python files under census/ (extracted from census.sh's former heredocs) on
 # canned stdin/argv, with no database:
-#   count.py          — event rows -> ranked "<beads> <events> <class>" lines
-#   merge.py           — all-time + since-watermark count files -> ranked merged lines
+#   cluster.py          — raw event rows -> ranked "<causal> <victims> <detections> <class>"
+#                          lines, clustering same-class events less than the gap apart
+#                          into one causal event (sp-jcd0e, Concierge decision sp-h2hpl/
+#                          sp-yojbh)
+#   cluster_merge.py     — all-time + since-watermark cluster.py files -> ranked merged
+#                          lines
 #   covers.py           — open-remedy bead JSON -> covered classes (with fold-map)
 #   covers_closed.py   — closed-remedy bead JSON -> "<bead-id> <class>" within the window
 #
@@ -19,7 +23,7 @@
 # which UC-ops-detection-remediation-12 covers with 3 real rows in test-census.sh.
 #
 # tier: T1
-# covers: spira/census/count.py spira/census/merge.py spira/census/covers.py spira/census/covers_closed.py census/src/* UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
+# covers: spira/census/cluster.py spira/census/cluster_merge.py spira/census/covers.py spira/census/covers_closed.py census/src/* spira/chamber/maechen.md UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -33,107 +37,183 @@ echo "test-census-pipeline.sh"
 
 # ==============================================================================
 echo
-echo "count.py — cause-suffix mapping per event_type (UC-11)"
+echo "cluster.py — cause-suffix mapping per event_type, one event per class (UC-11)"
 # ==============================================================================
-count_of() { python3 "$CENSUS_DIR/count.py" <<<"$1"; }
+# Input rows are now raw (event_type, new_value, issue_id, unix-ts) — cluster.py, not the
+# SQL, does the aggregating. One row per class here just proves the class-name mapping
+# survived the move; clustering itself is exercised further down.
+cluster_of() { python3 "$CENSUS_DIR/cluster.py" <<<"$1"; }
 
-want "requeued+cause -> sp-requeue-<cause>" "2 3 sp-requeue-prod-dirty" \
-    "$(count_of 'requeued | prod-dirty | 2 | 3')"
-want "recurred+cause -> sp-recur-<cause>" "1 1 sp-recur-suite-red" \
-    "$(count_of 'recurred | suite-red | 1 | 1')"
-want "reclaimed+no cause -> bare sp-reclaim" "1 2 sp-reclaim" \
-    "$(count_of 'reclaimed |  | 1 | 2')"
+want "requeued+cause -> sp-requeue-<cause>" "1 1 1 sp-requeue-prod-dirty" \
+    "$(cluster_of 'requeued | prod-dirty | bead1 | 1000')"
+want "recurred+cause -> sp-recur-<cause>" "1 1 1 sp-recur-suite-red" \
+    "$(cluster_of 'recurred | suite-red | bead1 | 1000')"
+want "reclaimed+no cause -> bare sp-reclaim" "1 1 1 sp-reclaim" \
+    "$(cluster_of 'reclaimed |  | bead1 | 1000')"
 lack "bare sp-reclaim has no trailing dash-suffix" "sp-reclaim-" \
-    "$(count_of 'reclaimed |  | 1 | 2')"
-want "reclaimed+cause -> sp-reclaim-<cause>" "1 3 sp-reclaim-timeout" \
-    "$(count_of 'reclaimed | timeout | 1 | 3')"
-want "lapsed+cause -> sp-lapsed-<cause>" "1 1 sp-lapsed-cause-x" \
-    "$(count_of 'lapsed | cause-x | 1 | 1')"
-want "reopen (already SQL-folded) + cause -> sp-reopen-<cause>" "1 1 sp-reopen-rebase-conflict" \
-    "$(count_of 'reopen | rebase-conflict | 1 | 1')"
+    "$(cluster_of 'reclaimed |  | bead1 | 1000')"
+want "reclaimed+cause -> sp-reclaim-<cause>" "1 1 1 sp-reclaim-timeout" \
+    "$(cluster_of 'reclaimed | timeout | bead1 | 1000')"
+want "lapsed+cause -> sp-lapsed-<cause>" "1 1 1 sp-lapsed-cause-x" \
+    "$(cluster_of 'lapsed | cause-x | bead1 | 1000')"
+want "reopen (already SQL-folded) + cause -> sp-reopen-<cause>" "1 1 1 sp-reopen-rebase-conflict" \
+    "$(cluster_of 'reopen | rebase-conflict | bead1 | 1000')"
+want "empty cause -> sp-reopen-unrecorded, not a bare class" "1 1 1 sp-reopen-unrecorded" \
+    "$(cluster_of 'reopened |  | bead1 | 1000')"
 want "unknown event_type is silently ignored (positive control: known type is not)" \
-    "" "$(count_of 'mystery | x | 5 | 5')"
-want "zero-bead row is skipped" "" "$(count_of 'recurred | x | 0 | 0')"
+    "" "$(cluster_of 'mystery | x | bead1 | 1000')"
+is "malformed row (wrong column count) is skipped, not fatal" "" \
+    "$(cluster_of 'recurred | x | bead1')"
 
 # ==============================================================================
 echo
-echo "count.py — NULL cause does not column-shift (D3: db-i0jd)"
-# ==============================================================================
-# Regression: stripping empty fields BY VALUE (not by position) turns a 4-column row
-# ("reopened", "", 2, 8) into 3 columns; the 3-column branch then reads the event count
-# (8) as the bead count, reporting "8 sp-reopen" instead of "2 sp-reopen".
-nullcause_out="$(count_of 'reopened |  | 2 | 8')"
-want "empty cause -> sp-reopen-unrecorded, not a bare class" "2 8 sp-reopen-unrecorded" "$nullcause_out"
-lack "distinct-bead count is not misread as event count" "8 8 sp-reopen" "$nullcause_out"
-
-# ==============================================================================
-echo
-echo "count.py — no double-count across a requeue+reopen pair"
+echo "cluster.py — no double-count across a requeue+reopen pair"
 # ==============================================================================
 # The requeue/reopen fold (sp-requeue-merge-conflict -> sp-reopen-rebase-conflict) happens
-# in the SQL (lib.sh:_census_events_sql), never in count.py: count.py sees only whatever
-# rows the query emits. This proves count.py keeps each row's class independent — if the
-# SQL fold ever regressed and re-emitted the raw pair, count.py would report two classes,
-# each with its own bead, rather than silently merging or losing one.
-pair_out="$(printf 'requeued | merge-conflict | 1 | 1\nreopen | rebase-conflict | 1 | 1\n' \
-    | python3 "$CENSUS_DIR/count.py")"
-want "raw pair: requeue class present" "1 1 sp-requeue-merge-conflict" "$pair_out"
+# in the SQL (lib.sh:_census_events_sql / _census_event_rows_sql), never in cluster.py:
+# cluster.py sees only whatever rows the query emits. This proves cluster.py keeps each
+# row's class independent — if the SQL fold ever regressed and re-emitted the raw pair,
+# cluster.py would report two classes rather than silently merging or losing one.
+pair_out="$(printf 'requeued | merge-conflict | bead1 | 1000\nreopen | rebase-conflict | bead2 | 1000\n' \
+    | python3 "$CENSUS_DIR/cluster.py")"
+want "raw pair: requeue class present" "1 1 1 sp-requeue-merge-conflict" "$pair_out"
 want "raw pair: reopen class present, not merged into the requeue line" \
-    "1 1 sp-reopen-rebase-conflict" "$pair_out"
+    "1 1 1 sp-reopen-rebase-conflict" "$pair_out"
 is "raw pair: exactly two class lines (no cross-class bleed)" "2" "$(printf '%s\n' "$pair_out" | grep -c .)"
 
-# Two distinct causes for the same event_type do not bleed into one another's counts.
-two_cause_out="$(printf 'reopened |  | 2 | 8\nreopened | gate-red | 1 | 1\n' \
-    | python3 "$CENSUS_DIR/count.py")"
-want "distinct-cause reopen: unrecorded class correct" "2 8 sp-reopen-unrecorded" "$two_cause_out"
-want "distinct-cause reopen: named class correct"      "1 1 sp-reopen-gate-red"   "$two_cause_out"
+# ==============================================================================
+echo
+echo "cluster.py — clustering: same-class events inside the gap are one causal event (sp-jcd0e)"
+# ==============================================================================
+# Pinned to a NON-DEFAULT gap (100s, not the 300s default) so the assertion exercises the
+# configured value rather than a literal that would pass even if the env var were ignored.
+cluster_gap() { SPIRA_CENSUS_CLUSTER_GAP_S=100 python3 "$CENSUS_DIR/cluster.py" <<<"$1"; }
+
+# Three events of one class: bead1@1000, bead2@1050 (50s later, inside the 100s gap — same
+# causal event), bead3@1200 (150s after bead2, at/beyond the gap — a new causal event).
+tight_out="$(cluster_gap "$(printf 'recurred | tight | bead1 | 1000\nrecurred | tight | bead2 | 1050\nrecurred | tight | bead3 | 1200\n')")"
+want "burst across the gap: two causal events, three victims, three detections" \
+    "2 3 3 sp-recur-tight" "$tight_out"
+
+# A gap of exactly the threshold is NOT "less than" it, so it still splits.
+exact_out="$(cluster_gap "$(printf 'recurred | exact | bead1 | 1000\nrecurred | exact | bead2 | 1100\n')")"
+want "gap exactly at the threshold splits into two causal events" \
+    "2 2 2 sp-recur-exact" "$exact_out"
+
+# A gap one second under the threshold merges.
+under_out="$(cluster_gap "$(printf 'recurred | under | bead1 | 1000\nrecurred | under | bead2 | 1099\n')")"
+want "gap one second under the threshold merges into one causal event" \
+    "1 2 2 sp-recur-under" "$under_out"
+
+# Input order does not matter: cluster.py sorts by timestamp before clustering.
+unordered_out="$(cluster_gap "$(printf 'recurred | tight | bead3 | 1200\nrecurred | tight | bead1 | 1000\nrecurred | tight | bead2 | 1050\n')")"
+want "unordered input clusters identically to sorted input" \
+    "2 3 3 sp-recur-tight" "$unordered_out"
 
 # ==============================================================================
 echo
-echo "count.py — ranking: distinct beads first, event count as tie-break"
+echo "cluster.py — the ask's own positive control: three timelines, ranked by causal event (sp-jcd0e/sp-yojbh)"
 # ==============================================================================
-rank_out="$(printf 'recurred | one-bead | 1 | 9\nrecurred | three-beads | 3 | 3\nrecurred | two-beads | 2 | 2\n' \
-    | python3 "$CENSUS_DIR/count.py")"
-first_cls="$(printf '%s\n' "$rank_out" | head -1 | awk '{print $3}')"
-is "3-bead class ranks first despite fewer events than the 1-bead class" \
-    "sp-recur-three-beads" "$first_cls"
+# The exact fixture from the Concierge decision (sp-h2hpl, ratified sp-yojbh): three
+# classes tied at 5 victims each, distinguishable only once the causal-event count is
+# read. Default gap (SPIRA_CENSUS_CLUSTER_GAP_S unset -> 300s = 5 minutes).
+#
+#   sp-reopen-eject:    5 events, gaps of 5/67/30/40 min (all >= 5 min) -> 5 causal events
+#   sp-requeue-sweepy:  6 events, gaps of 0.1/0.1/0.1/210.2/0.1 min     -> 2 causal events
+#   sp-reclaim:         5 events, gaps of 3.6/3.3/3.4/3.6 min (all < 5) -> 1 causal event
+_min() { awk -v m="$1" 'BEGIN{printf "%d", m*60}'; }
+_BASE=2000000000
+
+_eject_t0=$_BASE
+_eject_t1=$((_eject_t0 + $(_min 5)))
+_eject_t2=$((_eject_t1 + $(_min 67)))
+_eject_t3=$((_eject_t2 + $(_min 30)))
+_eject_t4=$((_eject_t3 + $(_min 40)))
+_eject_rows="$(printf 'reopen | eject | e0 | %d\nreopen | eject | e1 | %d\nreopen | eject | e2 | %d\nreopen | eject | e3 | %d\nreopen | eject | e4 | %d\n' \
+    "$_eject_t0" "$_eject_t1" "$_eject_t2" "$_eject_t3" "$_eject_t4")"
+
+_sweep_t0=$_BASE
+_sweep_t1=$((_sweep_t0 + $(_min 0.1)))
+_sweep_t2=$((_sweep_t1 + $(_min 0.1)))
+_sweep_t3=$((_sweep_t2 + $(_min 0.1)))
+_sweep_t4=$((_sweep_t3 + $(_min 210.2)))
+_sweep_t5=$((_sweep_t4 + $(_min 0.1)))
+# s4 reuses s0's bead (a bead the second sweep re-detected) so the class lands on 5
+# distinct victims across 6 events, matching the ask's own measurement exactly.
+_sweep_rows="$(printf 'requeued | sweepy | s0 | %d\nrequeued | sweepy | s1 | %d\nrequeued | sweepy | s2 | %d\nrequeued | sweepy | s3 | %d\nrequeued | sweepy | s0 | %d\nrequeued | sweepy | s5 | %d\n' \
+    "$_sweep_t0" "$_sweep_t1" "$_sweep_t2" "$_sweep_t3" "$_sweep_t4" "$_sweep_t5")"
+
+_ghost_t0=$_BASE
+_ghost_t1=$((_ghost_t0 + $(_min 3.6)))
+_ghost_t2=$((_ghost_t1 + $(_min 3.3)))
+_ghost_t3=$((_ghost_t2 + $(_min 3.4)))
+_ghost_t4=$((_ghost_t3 + $(_min 3.6)))
+_ghost_rows="$(printf 'reclaimed |  | g0 | %d\nreclaimed |  | g1 | %d\nreclaimed |  | g2 | %d\nreclaimed |  | g3 | %d\nreclaimed |  | g4 | %d\n' \
+    "$_ghost_t0" "$_ghost_t1" "$_ghost_t2" "$_ghost_t3" "$_ghost_t4")"
+
+three_timelines_out="$(printf '%s\n%s\n%s\n' "$_eject_rows" "$_sweep_rows" "$_ghost_rows" | python3 "$CENSUS_DIR/cluster.py")"
+want "eject: 5 independent events -> ranks 1st with 5 causal events" \
+    "5 5 5 sp-reopen-eject" "$three_timelines_out"
+want "sweepy: one burst + one late straggler -> 2 causal events, 5 victims" \
+    "2 5 6 sp-requeue-sweepy" "$three_timelines_out"
+want "ghost: one tight sweep -> 1 causal event, 5 victims" \
+    "1 5 5 sp-reclaim" "$three_timelines_out"
+ranked_classes="$(printf '%s\n' "$three_timelines_out" | awk '{print $4}')"
+is "ranked strictly by causal event count: eject(5) > sweepy(2) > ghost(1), NOT by the tied victim count (5 each)" \
+    "$(printf 'sp-reopen-eject\nsp-requeue-sweepy\nsp-reclaim\n')" "$ranked_classes"
 
 # ==============================================================================
 echo
-echo "count.py — header/separator lines and the empty store"
+echo "cluster.py — ranking: causal events decide rank, victims are secondary (never the rank)"
 # ==============================================================================
-sql_shape="$(printf '+------+\n| event_type | new_value | n_beads | n_events |\n+------+\n| recurred | shape-test | 1 | 1 |\n+------+\n')"
+# classA: 3 well-separated events (3 causal events), 3 victims.
+# classB: one 3-event burst (1 causal event), 5 victims — MORE victims than classA.
+# If victims still decided the rank, classB (5) would outrank classA (3). The ratified
+# rule requires the opposite.
+rank_rows="$(printf 'recurred | few-victims-many-events | va | 1000\nrecurred | few-victims-many-events | vb | 2000\nrecurred | few-victims-many-events | vc | 3000\nrecurred | many-victims-one-sweep | wa | 1000\nrecurred | many-victims-one-sweep | wb | 1010\nrecurred | many-victims-one-sweep | wc | 1020\nrecurred | many-victims-one-sweep | wd | 1030\nrecurred | many-victims-one-sweep | we | 1040\n')"
+rank_out="$(printf '%s' "$rank_rows" | python3 "$CENSUS_DIR/cluster.py")"
+first_cls="$(printf '%s\n' "$rank_out" | head -1 | awk '{print $4}')"
+is "3-causal-event class ranks first despite fewer victims than the 1-event burst" \
+    "sp-recur-few-victims-many-events" "$first_cls"
+want "the burst's larger victim count is visible but did not win the rank" \
+    "1 5 5 sp-recur-many-victims-one-sweep" "$rank_out"
+
+# ==============================================================================
+echo
+echo "cluster.py — header/separator lines and the empty store"
+# ==============================================================================
+sql_shape="$(printf '+------+\n| event_type | new_value | issue_id | ts |\n+------+\n| recurred | shape-test | bead1 | 1000 |\n+------+\n')"
 want "realistic bd-sql framing: header/separator ignored, data row counted" \
-    "1 1 sp-recur-shape-test" "$(python3 "$CENSUS_DIR/count.py" <<<"$sql_shape")"
-is "empty store: no input produces no output" "" "$(printf '' | python3 "$CENSUS_DIR/count.py")"
+    "1 1 1 sp-recur-shape-test" "$(python3 "$CENSUS_DIR/cluster.py" <<<"$sql_shape")"
+is "empty store: no input produces no output" "" "$(printf '' | python3 "$CENSUS_DIR/cluster.py")"
 
 # ==============================================================================
 echo
-echo "merge.py — since-watermark ranking, with all-time carried alongside (UC-13)"
+echo "cluster_merge.py — since-watermark ranking, with all-time carried alongside (UC-13)"
 # ==============================================================================
-printf '2 5 sp-recur-old-class\n1 1 sp-recur-new-class\n' > "$T/all_time.txt"
-printf '0 0 sp-recur-old-class\n1 1 sp-recur-new-class\n' > "$T/since_wm.txt"
-merge_out="$(python3 "$CENSUS_DIR/merge.py" "$T/all_time.txt" "$T/since_wm.txt")"
+printf '2 4 5 sp-recur-old-class\n1 1 1 sp-recur-new-class\n' > "$T/all_time.txt"
+printf '0 0 0 sp-recur-old-class\n1 1 1 sp-recur-new-class\n' > "$T/since_wm.txt"
+merge_out="$(python3 "$CENSUS_DIR/cluster_merge.py" "$T/all_time.txt" "$T/since_wm.txt")"
 first_merge="$(printf '%s\n' "$merge_out" | head -1 | awk '{print $2}')"
 is "live-since class ranks first despite a smaller all-time count" "sp-recur-new-class" "$first_merge"
 want "stale class shows 0 since, all-time preserved" \
-    "0 sp-recur-old-class (0 detections, 2 all-time)" "$merge_out"
+    "0 sp-recur-old-class (0 victims, 0 detections, 2 all-time)" "$merge_out"
 want "live class shows since count with all-time alongside" \
-    "1 sp-recur-new-class (1 detections, 1 all-time)" "$merge_out"
+    "1 sp-recur-new-class (1 victims, 1 detections, 1 all-time)" "$merge_out"
 
 # A class present only since the watermark (no all-time row — cannot happen from one
-# query, but merge.py must not crash reading two independently-produced files).
+# query, but cluster_merge.py must not crash reading two independently-produced files).
 printf '' > "$T/all_time_empty.txt"
-printf '1 1 sp-recur-fresh\n' > "$T/since_only.txt"
+printf '1 1 1 sp-recur-fresh\n' > "$T/since_only.txt"
 want "since-only class: all-time reads as 0, not a crash" \
-    "1 sp-recur-fresh (1 detections, 0 all-time)" \
-    "$(python3 "$CENSUS_DIR/merge.py" "$T/all_time_empty.txt" "$T/since_only.txt")"
+    "1 sp-recur-fresh (1 victims, 1 detections, 0 all-time)" \
+    "$(python3 "$CENSUS_DIR/cluster_merge.py" "$T/all_time_empty.txt" "$T/since_only.txt")"
 
 # Malformed line ignored rather than raising.
-printf 'garbage line with no count\n1 1 sp-recur-ok\n' > "$T/malformed.txt"
+printf 'garbage line with no count\n1 1 1 sp-recur-ok\n' > "$T/malformed.txt"
 printf '' > "$T/empty2.txt"
-want "malformed all-time line is skipped, not fatal" "0 sp-recur-ok (0 detections, 1 all-time)" \
-    "$(python3 "$CENSUS_DIR/merge.py" "$T/malformed.txt" "$T/empty2.txt")"
+want "malformed all-time line is skipped, not fatal" "0 sp-recur-ok (0 victims, 0 detections, 1 all-time)" \
+    "$(python3 "$CENSUS_DIR/cluster_merge.py" "$T/malformed.txt" "$T/empty2.txt")"
 
 # ==============================================================================
 echo
@@ -178,7 +258,7 @@ STUB
 chmod +x "$FAKE_BD"
 
 CENSUS_SQL_FILE="$T/sql_one_class.txt"
-printf 'recurred | fallback-test | 1 | 1\n' > "$CENSUS_SQL_FILE"
+printf 'recurred | fallback-test | fallback-bead | 1000\n' > "$CENSUS_SQL_FILE"
 
 # The skew guard now compares the substrate's UTC_TIMESTAMP() against the HOST's own
 # UTC clock (sp-9b8py), not against the substrate's NOW(). census.sh reads that clock as
@@ -235,6 +315,8 @@ rows += [{"bead_id": i, "state": state(i, "SUBMITTED")} for i in ids(closed_f)]
 print(json.dumps(rows))
 PY
     ;;
+    facts-query) exit 0 ;;
+    facts) echo '[]' ;;
     *) exit 2 ;;
 esac
 STUB
@@ -242,21 +324,19 @@ chmod +x "$T/spira-lc-stub"
 
 run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
     local rundir="$1"; shift
+    tl_config SPIRA_BD="$FAKE_BD" SPIRA_DB="$T/fixture.db" \
+        SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
+        SPIRA_RUN="$rundir" SPIRA_REPO_MAP="$T/no-repo-map" \
+        SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}"
     env SPIRA_NOW="$CENSUS_FIXED_HOST_EPOCH" \
         SPIRA_LC_BIN="$T/spira-lc-stub" \
-        SPIRA_BD="$FAKE_BD" \
-        SPIRA_DB="$T/fixture.db" \
-        SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
         SPIRA_CONF="$T/no-conf" \
         SPIRA_HOME="$HERE" \
-        SPIRA_RUN="$rundir" \
         SPIRA_REPO="${CENSUS_REPO:-$T/norepo}" \
-        SPIRA_REPO_MAP="$T/no-repo-map" \
         CENSUS_SQL_FILE="$CENSUS_SQL_FILE" \
         CENSUS_SQL_RC="${CENSUS_SQL_RC:-0}" \
         CENSUS_SKEW_FILE="$CENSUS_SKEW_FILE" \
         CENSUS_SKEW_RC="${CENSUS_SKEW_RC:-0}" \
-        SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}" \
         CENSUS_LIST_ARGS_FILE="${CENSUS_LIST_ARGS_FILE:-}" \
         CENSUS_OPEN_JSON="${CENSUS_OPEN_JSON:-}" \
         CENSUS_CLOSED_JSON="${CENSUS_CLOSED_JSON:-}" \
@@ -264,20 +344,20 @@ run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
 }
 
 nowm_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/nowm.stderr")"
-want "no watermark file: falls back to all-time output" "1 sp-recur-fallback-test (1 detections)" "$nowm_out"
+want "no watermark file: falls back to all-time output" "1 sp-recur-fallback-test (1 victims, 1 detections)" "$nowm_out"
 want "no watermark file: stderr says so" "no watermark file" "$(cat "$T/nowm.stderr")"
 
 RUN_BAD_WM="$T/run-bad-wm"; mkdir -p "$RUN_BAD_WM"
 printf 'not-a-number' > "$RUN_BAD_WM/maechen.watermark"
 badwm_out="$(run_census_fake "$RUN_BAD_WM" 2>"$T/badwm.stderr")"
-want "unreadable watermark: falls back to all-time output" "1 sp-recur-fallback-test (1 detections)" "$badwm_out"
+want "unreadable watermark: falls back to all-time output" "1 sp-recur-fallback-test (1 victims, 1 detections)" "$badwm_out"
 want "unreadable watermark: stderr says so" "unreadable" "$(cat "$T/badwm.stderr")"
 
 RUN_WM="$T/run-wm"; mkdir -p "$RUN_WM"
 printf '1000000000\n' > "$RUN_WM/maechen.watermark"
 wm_out="$(run_census_fake "$RUN_WM" 2>"$T/wm.stderr")"
-want "valid watermark: since-watermark format used (merge.py path)" \
-    "sp-recur-fallback-test (1 detections, 1 all-time)" "$wm_out"
+want "valid watermark: since-watermark format used (cluster_merge.py path)" \
+    "sp-recur-fallback-test (1 victims, 1 detections, 1 all-time)" "$wm_out"
 lack "valid watermark: no fallback stderr note" "falling back" "$(cat "$T/wm.stderr")"
 
 CENSUS_SQL_RC=1
@@ -296,7 +376,7 @@ echo "census.sh — clock skew guard: refuse a windowed ranking over a skewed cl
 # the guard can say yes before trusting it to say no.
 insync_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/insync.stderr")"; insync_rc=$?
 is "clock in sync: exits zero" "0" "$insync_rc"
-want "clock in sync: ranking still produced" "1 sp-recur-fallback-test (1 detections)" "$insync_out"
+want "clock in sync: ranking still produced" "1 sp-recur-fallback-test (1 victims, 1 detections)" "$insync_out"
 lack "clock in sync: no skew refusal on stderr" "clock skew" "$(cat "$T/insync.stderr")"
 
 # UNFIXED SIGNATURE: skew far outside tolerance, rc=0 from the skew query, ranking would
@@ -325,7 +405,7 @@ SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S=30000
 tolerant_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/tolerant.stderr")"; tolerant_rc=$?
 SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S=120
 is "widened tolerance: same skew now passes" "0" "$tolerant_rc"
-want "widened tolerance: ranking produced" "1 sp-recur-fallback-test (1 detections)" "$tolerant_out"
+want "widened tolerance: ranking produced" "1 sp-recur-fallback-test (1 victims, 1 detections)" "$tolerant_out"
 
 # ------------------------------------------------------------------------------
 # REGRESSION (sp-9b8py): the guard used to measure the substrate's NOW() against its own
@@ -346,7 +426,7 @@ pdt_insync_out="$(TZ=America/Los_Angeles run_census_fake "$RUN_NO_WM" 2>"$T/pdt_
 pdt_insync_rc=$?
 is "PDT box, substrate clock in sync with true UTC: exits zero" "0" "$pdt_insync_rc"
 want "PDT box, substrate clock in sync with true UTC: ranking produced" \
-    "1 sp-recur-fallback-test (1 detections)" "$pdt_insync_out"
+    "1 sp-recur-fallback-test (1 victims, 1 detections)" "$pdt_insync_out"
 lack "PDT box, substrate clock in sync with true UTC: no refusal on stderr" \
     "clock skew" "$(cat "$T/pdt_insync.stderr")"
 
@@ -516,9 +596,11 @@ fi
 exit 0
 END
 chmod +x "$_fake_dir/bd"
+printf '#!/bin/sh\n[ "$1" = facts ] && echo "[]"\nexit 0\n' > "$_fake_dir/spira-lc"; chmod +x "$_fake_dir/spira-lc"
 
 _retry_rc=0
-CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir" \
+tl_config SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir"
+SPIRA_LC_BIN="$_fake_dir/spira-lc" CENSUS_RETRY_DELAY_S=0 \
     census_events_run_sql >/dev/null 2>/dev/null || _retry_rc=$?
 is "retry: succeeds after 2 failures" "0" "$_retry_rc"
 is "retry: exactly 3 bd calls made" "3" "$(cat "$_calls_file")"
@@ -532,10 +614,34 @@ chmod +x "$_fake_dir/bd_fail"
 
 _fail_err=""
 _fail_rc=0
-_fail_err="$(CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir" \
+tl_config SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir"
+_fail_err="$(SPIRA_LC_BIN="$_fake_dir/spira-lc" CENSUS_RETRY_DELAY_S=0 \
     census_events_run_sql 2>&1 >/dev/null)" || _fail_rc=$?
 is    "all-fail: returns non-zero" "1" "$_fail_rc"
 want  "all-fail: driver error in final message" "i/o timeout" "$_fail_err"
+
+# ==============================================================================
+echo
+echo "census_event_rows_run_sql — shares the retry path with census_events_run_sql (sp-jcd0e)"
+# ==============================================================================
+# The raw-rows runner must retry exactly as the aggregated one does.
+printf '0' > "$_calls_file"
+_retry_rc=0
+tl_config SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir"
+SPIRA_LC_BIN="$_fake_dir/spira-lc" CENSUS_RETRY_DELAY_S=0 \
+    census_event_rows_run_sql >/dev/null 2>/dev/null || _retry_rc=$?
+is "raw-rows retry: succeeds after 2 failures" "0" "$_retry_rc"
+is "raw-rows retry: exactly 3 bd calls made" "3" "$(cat "$_calls_file")"
+
+_fail_err=""
+_fail_rc=0
+tl_config SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir"
+_fail_err="$(SPIRA_LC_BIN="$_fake_dir/spira-lc" CENSUS_RETRY_DELAY_S=0 \
+    census_event_rows_run_sql 2>&1 >/dev/null)" || _fail_rc=$?
+is    "raw-rows all-fail: returns non-zero" "1" "$_fail_rc"
+want  "raw-rows all-fail: driver error in final message" "i/o timeout" "$_fail_err"
+want  "raw-rows all-fail: error names the raw-rows caller, not the aggregated one" \
+    "census_event_rows_run_sql" "$_fail_err"
 
 rm -rf "$_fake_dir"
 

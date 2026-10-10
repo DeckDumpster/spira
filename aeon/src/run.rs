@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::bd::{self, BeadRow};
+use crate::checkpoint;
 use crate::brief::{self, FixtureInfo, Tokens};
 use crate::claim::{self, Selection, Selector};
 use crate::conf::{self, Conf, Fayth, SystemPrompt};
@@ -37,6 +38,9 @@ pub enum Abort {
     Exit(i32),
     /// TERM/INT, or the heartbeat's own trip: rc 128+sig.
     Signal(i32),
+    /// The harness cannot start the session (config it needs is absent): the work is not at
+    /// fault, so the teardown records a harness red and charges no attempt.
+    Harness(String),
 }
 
 pub struct Deps<'a> {
@@ -56,6 +60,8 @@ pub struct Deps<'a> {
 #[derive(Debug, Default)]
 pub struct State {
     pub aeon: String,
+    /// The claim holder: `aeon-<name>@<pid>.<starttime>`, one per process (spira_config::session).
+    pub holder: String,
     pub bead: String,
     pub claimed: Option<BeadRow>,
     pub repo_name: String,
@@ -73,6 +79,9 @@ pub struct State {
     pub fixture: Option<FixtureInfo>,
     pub fixture_lib: Option<PathBuf>,
     pub session_started: bool,
+    pub harness_red: Option<String>,
+    /// The claude session id this run launched or resumed (empty before launch).
+    pub session_id: String,
     pub session_rc: i32,
     /// The verdict's `committed`; false until the verdict block ran.
     pub committed: bool,
@@ -98,6 +107,9 @@ pub struct State {
     /// Empty for a claim that is not stacked on anything.
     pub stack: std::collections::BTreeMap<String, String>,
 }
+
+/// `spira-lc phase`'s exit for a move the machine refused (not WORKING, not the holder, not forward).
+pub const PHASE_REFUSED: i32 = 3;
 
 pub struct Run<'a> {
     pub d: Deps<'a>,
@@ -160,8 +172,33 @@ impl<'a> Run<'a> {
         self.sdo("release_own_claim", &s(&[&self.s.bead]));
     }
 
+    /// Record this run's next phase on the bead's lifecycle row. Best-effort: a refusal (the
+    /// row already left WORKING, or the machine is unreachable) never ends the run.
+    pub fn phase(&self, name: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["phase", &self.s.bead, &self.s.holder, name]), None, None);
+        if o.code != 0 && o.code != crate::run::PHASE_REFUSED {
+            self.log(&format!("{}: lifecycle phase {name} not recorded (rc={}): {}", self.s.bead, o.code, o.first_err_line()));
+        }
+    }
+
     pub fn bead_reopen(&self, cause: &str, note: &str) -> i32 {
         self.sdo("bead_reopen", &s(&[&self.s.bead, cause, note]))
+    }
+
+    /// The digest of the bead's latest `fast-tier-red` fact; empty when it has none.
+    pub fn last_fast_tier_red(&self) -> String {
+        let o = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &self.s.bead, "--kinds", crate::fast_tier::KIND]), None, None);
+        if !o.success() {
+            return String::new();
+        }
+        checkpoint::parse_facts(&o.stdout).into_iter().rev().find(|f| f.kind == crate::fast_tier::KIND).map(|f| f.cause).unwrap_or_default()
+    }
+
+    pub fn record_fact(&self, kind: &str, cause: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["fact", &self.s.bead, "--kind", kind, "--actor", &self.s.aeon, "--cause", cause]), None, None);
+        if !o.success() {
+            self.log(&format!("{}: {} could not record {kind} fact (rc={})", self.f(), self.s.bead, o.code));
+        }
     }
 
     pub fn bump_requeue(&self, cause: &str) {
@@ -198,7 +235,7 @@ impl<'a> Run<'a> {
         if id.is_empty() {
             return;
         }
-        let threshold = self.conf.n("SPIRA_RAPID_RECUR_THRESHOLD", 3).max(0) as usize;
+        let threshold = self.conf.i("SPIRA_RAPID_RECUR_THRESHOLD").max(0) as usize;
         if threshold == 0 {
             return;
         }
@@ -210,12 +247,11 @@ impl<'a> Run<'a> {
         if count < threshold as i64 {
             return;
         }
-        let ask = self.conf.ask_label();
-        if self.d.bd.bd(&s(&["label", "list", &id])).text().contains(&ask) {
+        // Already parked is the row's ask hold, never a label (sp-psztcc).
+        if self.lc_bead(&id).is_some_and(|r| r.held("ask")) {
             return;
         }
         self.log(&format!("{}: {id} RAPID-RECUR: {count} consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry", self.f()));
-        let _ = self.d.bd.bd(&s(&["label", "add", &id, &ask]));
         let _ = self.d.bd.bd(&s(&["label", "add", &id, "overseer"]));
         // spira-lc's caller verb, as in verdict.rs's eviction-race escalation.
         let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "ask", &format!("rapid-recur: {count} consecutive sub-10s aeon summons"), self.f()]), None, None);
@@ -223,7 +259,7 @@ impl<'a> Run<'a> {
             self.d.bd,
             &id,
             &format!(
-                "RAPID-RECUR: {count} consecutive sub-10s aeon runs on {id}. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with {ask} and overseer instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger."
+                "RAPID-RECUR: {count} consecutive sub-10s aeon runs on {id}. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with an ask hold (and the overseer label) instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger."
             ),
         );
         self.sdo(
@@ -258,14 +294,16 @@ impl<'a> Run<'a> {
         // call, so there is no cross-crate reason left to round-trip through lib.sh.
         let name = crate::naming::aeon_name_take(self.run_dir(), self.f());
         let actor = format!("aeon-{name}");
+        let holder = spira_config::session::own_holder(&actor);
         let env = self.d.env;
         env.set("SPIRA_AEON", &name);
-        env.set("BEADS_ACTOR", &actor);
+        env.set("BEADS_ACTOR", &holder);
         env.set("GIT_AUTHOR_NAME", &actor);
         env.set("GIT_AUTHOR_EMAIL", &format!("{actor}@spira.local"));
         env.set("GIT_COMMITTER_NAME", &actor);
         env.set("GIT_COMMITTER_EMAIL", &format!("{actor}@spira.local"));
         self.s.aeon = name;
+        self.s.holder = holder;
     }
 
     // ==== the whole run ================================================================
@@ -298,6 +336,11 @@ impl<'a> Run<'a> {
                     self.die_line(&m);
                     1
                 }
+                Err(Abort::Harness(m)) => {
+                    self.die_line(&m);
+                    self.s.harness_red = Some(m);
+                    1
+                }
                 Err(Abort::Exit(n)) => n,
                 Err(Abort::Signal(sig)) => 128 + sig,
             };
@@ -312,10 +355,13 @@ impl<'a> Run<'a> {
         let mut limit = self.fayth.max_concurrent as i64;
         let mut pool = String::new();
         if self.fayth.elastic {
-            if let Some(max) = self.conf.v.get("SPIRA_MAX_AEONS").and_then(|m| m.trim().parse::<i64>().ok()) {
-                limit = max;
-                pool = (if max > have { max - have } else { 0 }).to_string();
-            }
+            // SPIRA_MAX_AEONS is registered (a real spira/conf.d default, 4) — reached
+            // through `Conf::i`, never `self.conf.v` directly: that raw map read used to
+            // let an absent/unparseable value silently skip this whole branch instead of
+            // naming the key (per Ryan 2026-10-05, round 2: a missing key is an error).
+            let max = self.conf.i("SPIRA_MAX_AEONS");
+            limit = max;
+            pool = (if max > have { max - have } else { 0 }).to_string();
         }
         let free = self.sv("fayth_free", &s(&[self.f(), &pool, &own])).text();
         if free.trim().parse::<i64>().ok() == Some(0) {
@@ -392,17 +438,36 @@ impl<'a> Run<'a> {
         0
     }
 
+    /// A WORKING bead this name holds under another session that is still running: claiming
+    /// a second would silently double-hold. A dead session's row is the reaper's, not a refusal.
+    fn double_hold(&self, mine: &str) -> Option<String> {
+        let o = self.d.exec.exec("spira-lc", &s(&["list-all"]), None, None);
+        if o.code != 0 {
+            return None;
+        }
+        o.stdout.lines().find_map(|l| {
+            let mut f = l.split('\t');
+            let (id, state, holder) = (f.next()?, f.next()?, f.next()?);
+            let live = !spira_config::session::session_gone(holder, &spira_config::admission::RealProcs);
+            (state == "WORKING" && live && spira_config::session::same_name_other_session(holder, mine)).then(|| id.to_string())
+        })
+    }
+
     /// The lifecycle claim: a Claim event per ranked candidate, carrying its stack proposal,
     /// until one applies. bd is read afterwards for the bead's content only. Ok(None): idle.
     fn lc_claim(&mut self, ids: &[String], resumable: &[String], tier: Option<&str>, who: &str) -> Result<Option<claim::Claimed>, i32> {
-        let holder = format!("aeon-{}", self.s.aeon);
+        let holder = self.s.holder.clone();
+        if let Some(held) = self.double_hold(&holder) {
+            self.log(&format!("{who}: refusing to claim — {held} is already WORKING under another live session of {}", self.s.aeon));
+            return Err(1);
+        }
         let until = (self.now() + self.fayth.lease_seconds()).to_string();
         let mut stacks = std::collections::BTreeMap::new();
         let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
             let p = self.stack_proposal(id, who);
             let rc = self.sdo(
                 "lc_claim_bead",
-                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string()]),
+                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.fayth.name]),
             );
             stacks.insert(id.to_string(), p.stack);
             rc
@@ -444,8 +509,8 @@ impl<'a> Run<'a> {
 
     fn claim(&mut self) -> Result<(), i32> {
         self.take_name();
-        let tries = self.conf.n("SPIRA_CLAIM_RETRIES", 3).max(1) as u32;
-        let delay = Duration::from_secs(self.conf.n("SPIRA_CLAIM_RETRY_DELAY_S", 1).max(0) as u64);
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
         let ready = match self.ready_set(tries, delay) {
             Ok(j) => j,
             Err(e) => {
@@ -556,8 +621,10 @@ impl<'a> Run<'a> {
                     Err(conflict) => {
                         self.release();
                         let note = conflict.note();
+                        self.bump_requeue("stack-conflict");
                         for prereq in [&conflict.a, &conflict.b] {
-                            if self.s.stack.contains_key(prereq) {
+                            if let Some(tip) = self.s.stack.get(prereq) {
+                                spira_config::stack_conflict::record(&self.run_dir(), prereq, tip);
                                 bd::note(
                                     self.d.bd,
                                     prereq,
@@ -596,6 +663,7 @@ impl<'a> Run<'a> {
         let pidfile = self.run_dir().join(format!("aeon-{}-{}.pid", self.f(), c.id));
         let logf = self.run_dir().join(format!("{}.log", c.id));
         let _ = std::fs::write(&pidfile, format!("{}\n", self.pid));
+        strand::probe::write_lease(&pidfile, self.now() + self.fayth.lease_seconds());
         let _ = std::fs::write(pidfile.with_extension("name"), &self.s.aeon);
         let mark = ledger::trace_mark_line(&logf, &self.s.aeon, &self.conf.trace_mark(), self.now());
         append(&logf, &format!("{mark}\n"));
@@ -604,7 +672,7 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// Other live aeons' pidfile names; a pidfile whose pid is gone is removed.
+    /// Other live aeons' pidfile names; a pidfile whose lease has run out is removed.
     fn live_peers(&self) -> String {
         let mut names = Vec::new();
         let Ok(rd) = std::fs::read_dir(self.run_dir()) else { return String::new() };
@@ -617,9 +685,9 @@ impl<'a> Run<'a> {
             .collect();
         files.sort();
         for pf in files {
-            let pid = std::fs::read_to_string(&pf).map(|s| s.trim().to_string()).unwrap_or_default();
-            if !util::pid_alive(&pid) {
+            if !strand::probe::aeon_alive(&pf) {
                 let _ = std::fs::remove_file(&pf);
+                let _ = std::fs::remove_file(strand::probe::lease_file(&pf));
                 continue;
             }
             names.push(pf.file_stem().and_then(|n| n.to_str()).unwrap_or("").to_string());
@@ -652,6 +720,7 @@ impl<'a> Run<'a> {
         self.d.env.set("SPIRA_MAIL", &mail);
         self.d.env.set("SPIRA_MAIL_FROM", &self.fayth.mail_from());
         self.start_heartbeat(sc);
+        self.phase("building");
         self.check_stop()?;
 
         // ---- the base: a freshly fetched remote-tracking ref, never guessed ----
@@ -797,6 +866,7 @@ impl<'a> Run<'a> {
         self.s.session_start_tip = if start_tip.success() { start_tip.text().trim().to_string() } else { "?".into() };
 
         // ---- work ----
+        self.phase("session");
         self.session(&work)?;
         self.wiki_commit();
         self.verdict();
@@ -874,9 +944,10 @@ impl<'a> Run<'a> {
         // The bead, bounded; then who else holds the files it names.
         let shown = self.d.bd.bd(&s(&["show", &bead]));
         let body = util::strip_bd_hints(&shown.stdout).trim_end_matches('\n').to_string();
-        let keep = self.conf.n("SPIRA_BRIEF_KEEP_RECURRENCES", 5).max(0) as usize;
-        let max = self.conf.n("SPIRA_BRIEF_NOTES_MAX_CHARS", 8000).max(0) as usize;
+        let keep = self.conf.i("SPIRA_BRIEF_KEEP_RECURRENCES").max(0) as usize;
+        let max = self.conf.i("SPIRA_BRIEF_NOTES_MAX_CHARS").max(0) as usize;
         let mut body = brief::bound_bead_notes(&format!("{body}\n"), keep, max).trim_end_matches('\n').to_string();
+        let red = self.last_fast_tier_red();
         let tracked = if self.s.repo.join(".git").exists() {
             let o = self.d.git.git(&self.s.repo, &["ls-files"]);
             if o.success() { o.stdout } else { String::new() }
@@ -893,6 +964,8 @@ impl<'a> Run<'a> {
                 body = format!("{body}\n\n{hb}");
             }
         }
+
+        body = format!("{}{body}", brief::fast_tier_red_brief(&red));
 
         // A thrashed bead leads with its sticking point, while the tip has not moved.
         let mut banner = None;
@@ -966,7 +1039,7 @@ impl<'a> Run<'a> {
     /// not — names no memory: the brief would be silently thinned.
     pub fn statutes(&self) -> Result<String, String> {
         let cache = self.conf.s("SPIRA_MEMORIES_CACHE");
-        let age = self.conf.n("SPIRA_MEMORIES_CACHE_AGE", 300);
+        let age = self.conf.i("SPIRA_MEMORIES_CACHE_AGE");
         let mut json = String::new();
         if !cache.is_empty() && Path::new(&cache).is_file() {
             let m = session::mtime(Path::new(&cache));
@@ -975,7 +1048,8 @@ impl<'a> Run<'a> {
             }
         }
         if json.trim().is_empty() {
-            let cmd = self.conf.s("SPIRA_MEMORIES_CMD");
+            // Not a registered config key — `Conf::or`, not the strict `Conf::s`.
+            let cmd = self.conf.or("SPIRA_MEMORIES_CMD", "");
             json = if !cmd.is_empty() {
                 self.d.exec.exec("bash", &s(&["-c", &cmd]), None, None).stdout
             } else {
@@ -999,20 +1073,19 @@ impl<'a> Run<'a> {
     }
 
     /// `aeon_claude_argv <flag> <file>`.
-    pub fn claude_argv(&self, sys_file: &Path) -> Vec<String> {
+    pub fn claude_argv(&self, sys_file: &Path) -> Result<Vec<String>, String> {
         let flag = match self.fayth.system_prompt {
             SystemPrompt::Replace => "--system-prompt-file",
             SystemPrompt::Append => "--append-system-prompt-file",
         };
-        let toml = self.conf.s("SPIRA_TOML_FILE");
-        let model = conf::persona_model(self.f(), (!toml.is_empty()).then(|| Path::new(&toml)));
+        let model = conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML"))?;
         let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
         a.extend(s(&["--model", &model, "--allowedTools", &self.fayth.tools, "--dangerously-skip-permissions"]));
         if self.fayth.project_instructions == "none" {
             a.extend(s(&["--setting-sources", "user"]));
         }
         a.extend(s(&["--settings", &aeon_settings(self.home())]));
-        a
+        Ok(a)
     }
 
     fn agent_bin(&self) -> String {
@@ -1086,7 +1159,7 @@ impl<'a> Run<'a> {
             Err(e) => self.log(&format!("{}: {e} — this session's builds are UNCACHED", self.f())),
         }
         // THE SUMMON JITTER (sp-f4ig1 §3.4): aeons a pass summoned together start apart.
-        let max = self.conf.n(spira_config::admission::JITTER_ENV, spira_config::admission::JITTER_DEFAULT as i64).max(0) as u64;
+        let max = self.conf.i(spira_config::admission::JITTER_ENV).max(0) as u64;
         let seed = ((std::process::id() as u64) << 32)
             ^ std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos() as u64).unwrap_or(0);
         let j = spira_config::admission::jitter(max, seed);
@@ -1100,7 +1173,8 @@ impl<'a> Run<'a> {
         }
         let sys_file = self.run_dir().join(format!("{bead}.system.md"));
         let task_file = self.run_dir().join(format!("{bead}.task.md"));
-        let argv = self.claude_argv(&sys_file);
+        let mut argv = self.claude_argv(&sys_file).map_err(Abort::Harness)?;
+        argv.extend(self.checkpoint_args(work, &task_file));
         self.s.session_started = true;
         let agent = self.agent_bin();
         let child = env.child();
@@ -1118,13 +1192,78 @@ impl<'a> Run<'a> {
             };
             (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
         };
-        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.fayth.timeout_seconds };
+        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.fayth.timeout_seconds, halted: Some(self.run_dir().join("world.halted")) };
         let rc = self.d.launcher.run(&spec, &self.stop);
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
         self.check_stop()?;
         self.s.session_rc = rc;
         self.log(&format!("{}: {bead} session exited rc={rc}", self.f()));
         Ok(())
+    }
+
+    /// The session-id arguments for this launch. A checkpoint left by a world stop is
+    /// resumed (the task file becomes the message that the world was down); one that cannot
+    /// be resumed falls back to a cold claim of the kept branch, and the bead note says why.
+    fn checkpoint_args(&mut self, work: &Path, task_file: &Path) -> Vec<String> {
+        let bead = self.s.bead.clone();
+        let who = self.s.aeon.clone();
+        let facts = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &bead, "--kinds", &format!("{},{}", checkpoint::SESSION, checkpoint::CHECKPOINTED)]), None, None);
+        let facts = if facts.success() { checkpoint::parse_facts(&facts.stdout) } else { Vec::new() };
+        let persona = checkpoint::persona_hash(&std::fs::read(self.home().join("chamber").join(format!("{}.md", self.f()))).unwrap_or_default());
+        let cfg = checkpoint::config_dir(&self.d.env.child());
+        let plan = checkpoint::plan(&facts, self.f(), &persona, work.is_dir(), |id| checkpoint::transcript_exists(&cfg, id));
+        let (id, args) = match plan {
+            checkpoint::Plan::Resume { session, stopped_at } => {
+                let msg = checkpoint::resume_message(stopped_at, self.now(), &self.s.branch);
+                let _ = std::fs::write(task_file, msg);
+                self.log(&format!("{}: {bead} resumes session {} after a world stop", self.f(), session.id));
+                let args = s(&["--resume", &session.id]);
+                (session.id, args)
+            }
+            plan => {
+                if let checkpoint::Plan::Cold { reason } = plan {
+                    self.log(&format!("{}: {bead} checkpoint not resumable — claiming cold: {reason}", self.f()));
+                    self.note(&format!("Checkpoint not resumed: {reason}. This aeon claimed the kept branch cold, from the bead and its notes, with no attempt charged for the stop."));
+                }
+                let id = checkpoint::new_session_id();
+                let args = s(&["--session-id", &id]);
+                (id, args)
+            }
+        };
+        let fact = checkpoint::SessionFact { id: id.clone(), fayth: self.f().to_string(), persona, worktree: work.display().to_string() };
+        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", &bead, "--kind", checkpoint::SESSION, "--actor", &who, "--cause", &fact.cause()]), None, None);
+        if !wrote.success() {
+            self.log(&format!("{}: {bead} could not record session {id} (rc={}): a stop will not be checkpointed", self.f(), wrote.code));
+            self.s.session_id.clear();
+        } else {
+            self.s.session_id = id;
+        }
+        args
+    }
+
+    /// A slain session whose world is halted is held, not abandoned: the bead leaves WORKING
+    /// but stays unclaimable until `world start` lifts the checkpoint hold. False when the
+    /// session was never recorded or the hold was refused (the plain release then stands).
+    pub(crate) fn checkpoint_across_stop(&self) -> bool {
+        let id = &self.s.bead;
+        if self.s.session_id.is_empty() || !self.run_dir().join("world.halted").is_file() {
+            return false;
+        }
+        let now = self.now();
+        let reason = spira_config::lc_state::checkpoint_reason(now + checkpoint::HOLD_SECS);
+        let held = self.d.exec.exec("spira-lc", &s(&["hold", id, "wait", &reason, "aeon"]), None, None);
+        if !held.success() {
+            self.log(&format!("{}: {id} checkpoint hold refused (rc={}): {}", self.f(), held.code, held.stdout.trim()));
+            return false;
+        }
+        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", id, "--kind", checkpoint::CHECKPOINTED, "--actor", &self.s.aeon, "--cause", &now.to_string()]), None, None);
+        if !wrote.success() {
+            let _ = self.d.exec.exec("spira-lc", &s(&["unhold", id, "wait", "aeon"]), None, None);
+            self.log(&format!("{}: {id} checkpoint fact refused (rc={}): hold withdrawn", self.f(), wrote.code));
+            return false;
+        }
+        self.note(&format!("Checkpointed across a world stop: session {} is kept with branch {} and its worktree; `world start` lifts the hold and the next claim resumes it. No attempt charged.", self.s.session_id, self.s.branch));
+        true
     }
 
     fn start_heartbeat<'s>(&self, sc: &'s std::thread::Scope<'s, '_>)
@@ -1137,7 +1276,7 @@ impl<'a> Run<'a> {
             run: self.conf.run.clone(),
             lease_s: self.fayth.lease_seconds(),
             every: Duration::from_secs(self.fayth.heartbeat_seconds.max(1)),
-            wall_min: self.conf.n("SPIRA_THRASH_MINUTES", 20),
+            wall_min: self.conf.i("SPIRA_THRASH_MINUTES"),
         };
         let beat = RealBeat {
             logf: self.s.logf.clone().unwrap_or_default(),
@@ -1150,7 +1289,7 @@ impl<'a> Run<'a> {
             git: self.d.git,
             bd: self.d.bd,
             exec: self.d.exec,
-            holder: format!("aeon-{}", self.s.aeon),
+            holder: self.s.holder.clone(),
             renew_rc: std::sync::Mutex::new(0),
             sink: self.d.sink,
             clock: self.d.clock,
@@ -1229,6 +1368,12 @@ impl Beat for RealBeat<'_> {
             *last = o.code;
         }
         true
+    }
+    fn disposition(&self, status: &str, note: &str) {
+        let o = self.exec.exec("spira-lc", &s(&["disposition", &self.bead, status, note, &self.holder]), None, None);
+        if o.code != 0 {
+            self.log(&format!("{}: lifecycle disposition {status} refused (rc={}): {}", self.bead, o.code, o.first_err_line()));
+        }
     }
     fn log(&self, msg: &str) {
         self.sink.out(&util::log_line((self.clock)(), msg));

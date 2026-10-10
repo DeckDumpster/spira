@@ -22,10 +22,23 @@ isz() { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0 got $2"; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_KINDS="$TMP/kinds"
+SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL_KINDS="$TMP/kinds"
+SPIRA_ID_PREFIX="sp"
+mkdir -p "$TMP/watchd"
+# SPIRA_MAIL_MUTE=0 up front: the complete fixture's own declared default is true (every
+# key needs SOME value), which would silently mute every "lands in new/" assertion in this
+# suite, not just the mail-mute section below that tests muting on purpose.
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# the write fails outright with no such directory (sfail round 3, pattern 7).
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_MAIL_MUTE=0 \
+    SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" \
+    SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_BD="${SPIRA_BD:-bd}" \
+    SPIRA_OPERATOR_ACTOR=ryan \
+    SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""       # prevent reading a real spira.conf
-export SPIRA_ID_PREFIX="sp"
 
 cp -r "$HERE/mail/kinds/." "$TMP/kinds/"
 
@@ -157,6 +170,9 @@ mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierg
 # never pins, SPIRA_LOOM_BUDGET_MS included) — law-a-binary-resolves-the-config-it-reads;
 # a fixture SPIRA_HOME that runs a binary needs conf.d, the same way $HERE already is one.
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 
 send_plain() {   # send_plain <mailbox> <from> <subject> -> bare Message-ID on stdout
     local mailbox="$1" from="$2" subject="$3" newest
@@ -221,22 +237,21 @@ is "no-reply message routes to concierge" \
 echo
 echo "repeat guard — normalisation (T1: same subject through mail's own hasher)"
 
-export SPIRA_RUN="$TMP/run"
-export SPIRA_MAIL_REPEAT_WINDOW=3600
+tl_config SPIRA_RUN="$TMP/run" SPIRA_MAIL_REPEAT_WINDOW=3600
 
-qbody() { printf '## Question\n%s\n\n## Default\n%s\n\nDetailed context goes here.\n' "$1" "$2"; }
+qbody() { printf '## Question\n%s\n\n## Default\n%s\n\n## Class basis\nneeds a policy ruling\n\nDetailed context goes here.\n' "$1" "$2"; }
 
 SUBJ_A="Spira bead sp-abc — requeued 5 times, never landed — harness cannot land it"
 SUBJ_A2="Spira bead sp-abc — requeued 6 times, never landed — harness cannot land it"
 SUBJ_B="Spira bead sp-xyz — poisoned after 3 attempts — change the approach or drop it?"
 
 qbody "$SUBJ_A" "close or fix" | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "$SUBJ_A" --kind question --default "close or fix" >/dev/null 2>&1
+    --subject "$SUBJ_A" --kind question --class policy --default "close or fix" >/dev/null 2>&1
 rc_first=$?
 is "first send to operator exits 0" 0 "$rc_first"
 
 out="$(qbody "$SUBJ_A2" "close or fix" | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "$SUBJ_A2" --kind question --default "close or fix" 2>&1)"
+    --subject "$SUBJ_A2" --kind question --class policy --default "close or fix" 2>&1)"
 rc_second=$?
 [ "$rc_second" != 0 ] && ok "second send with same normalised subject is refused" \
     || bad "second send with same normalised subject is refused" "exit 0"
@@ -254,7 +269,7 @@ echo
 echo "repeat guard — negative control: different subject gets through"
 
 out="$(qbody "$SUBJ_B" "close or relabel" | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "$SUBJ_B" --kind question --default "close or relabel" 2>&1)"
+    --subject "$SUBJ_B" --kind question --class policy --default "close or relabel" 2>&1)"
 is "different subject (different bead, different verb) gets through" 0 "$?"
 nowant "different subject carries no repeat-refused message" "repeat refused" "$out"
 
@@ -264,7 +279,7 @@ echo "repeat guard — override bypasses the guard, recorded on the message"
 out="$(qbody "$SUBJ_A2" "close or fix" \
     | SPIRA_MAIL_REPEAT_CONSIDERED="testing override" mail send operator \
         --from "Sentinel <sentinel@spira>" --subject "$SUBJ_A2" \
-        --kind question --default "close or fix" 2>&1)"
+        --kind question --class policy --default "close or fix" 2>&1)"
 is "SPIRA_MAIL_REPEAT_CONSIDERED lets the repeat through" 0 "$?"
 msg_file="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
 msg_content="$(cat "$SPIRA_MAIL/operator/new/$msg_file" 2>/dev/null)"
@@ -275,15 +290,15 @@ echo
 echo "repeat guard — a lint-refused send writes no stamp; the corrected resend delivers"
 
 SUBJ_LINT="Lint failure test subject for repeat guard"
-out_lint1="$(printf '## Question\n\n## Default\n%s\n' "close" \
+out_lint1="$(printf '## Question\n\n## Class basis\nx\n\n## Default\n%s\n' "close" \
     | run send operator --from "Sentinel <sentinel@spira>" \
-        --subject "$SUBJ_LINT" --kind question --default "close" 2>&1)"
+        --subject "$SUBJ_LINT" --kind question --class policy --default "close" 2>&1)"
 [ "$?" != 0 ] && ok "lint-refused send exits non-zero" || bad "lint-refused send exits non-zero" "exit 0"
 want "refusal message mentions lint" "lint" "$out_lint1"
 
 out_lint2="$(qbody "$SUBJ_LINT" "close" \
     | run send operator --from "Sentinel <sentinel@spira>" \
-        --subject "$SUBJ_LINT" --kind question --default "close" 2>&1)"
+        --subject "$SUBJ_LINT" --kind question --class policy --default "close" 2>&1)"
 is "corrected resend after lint failure is delivered" 0 "$?"
 nowant "corrected resend is not refused as repeat" "repeat refused" "$out_lint2"
 
@@ -331,11 +346,11 @@ qbody "$CONC_SUBJ" "pick one" > "$TMP/race-body"
 race_a_rc_file="$TMP/race-a-rc"
 race_b_rc_file="$TMP/race-b-rc"
 ( run send operator --from "Sentinel <sentinel@spira>" --subject "$CONC_SUBJ" \
-    --kind question --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
+    --kind question --class policy --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
   echo $? > "$race_a_rc_file" ) &
 pid_a=$!
 ( run send operator --from "Sentinel <sentinel@spira>" --subject "$CONC_SUBJ" \
-    --kind question --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
+    --kind question --class policy --default "pick one" < "$TMP/race-body" >/dev/null 2>&1
   echo $? > "$race_b_rc_file" ) &
 pid_b=$!
 
@@ -389,7 +404,8 @@ mkfifo "$FIFO"
 holder_pid=$!
 
 start_ts="$(date +%s)"
-out="$(SPIRA_LOOM_BUDGET_MS=200 run send "$DEADLINE_BOX" --from "A <a@a>" --subject "Never closes" < "$FIFO" 2>&1)"
+tl_config SPIRA_LOOM_BUDGET_MS=200
+out="$(run send "$DEADLINE_BOX" --from "A <a@a>" --subject "Never closes" < "$FIFO" 2>&1)"
 rc=$?
 elapsed=$(( $(date +%s) - start_ts ))
 
@@ -407,6 +423,9 @@ else
 fi
 no_msg="$(ls "$SPIRA_MAIL/$DEADLINE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
 is "no message was delivered from the timed-out send" "0" "${no_msg:-0}"
+# Restore the fixture's own budget — tl_config persists for the rest of the suite,
+# unlike the old per-call env prefix, which reverted on its own after this one call.
+tl_config SPIRA_LOOM_BUDGET_MS=1500
 
 # ==========================================================================
 # MAIL-MUTE (sp-9hwim, design runtime-is-a-release #5): SPIRA_MAIL_MUTE replaces the
@@ -422,6 +441,7 @@ mkdir -p "$SPIRA_MAIL/$MUTE_BOX/new" "$SPIRA_MAIL/$MUTE_BOX/cur" "$SPIRA_MAIL/$M
 
 echo
 echo "unmuted (default): send lands in new/"
+# SPIRA_MAIL_MUTE=0 was already declared at the top of this suite (see the comment there).
 echo "body" | run send "$MUTE_BOX" --from "A <a@a>" --subject "Unmuted" >/dev/null 2>&1
 is "SPIRA_MAIL_MUTE unset: message lands in new/" "1" \
     "$(ls "$SPIRA_MAIL/$MUTE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
@@ -431,7 +451,8 @@ is "SPIRA_MAIL_MUTE unset: nothing lands in cur/" "0" \
 echo
 echo "muted: send is recorded in cur/, already Seen, never wakes new/"
 before_new="$(ls "$SPIRA_MAIL/$MUTE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
-echo "body" | SPIRA_MAIL_MUTE=1 run send "$MUTE_BOX" --from "A <a@a>" --subject "Muted" >/dev/null 2>&1
+tl_config SPIRA_MAIL_MUTE=1
+echo "body" | run send "$MUTE_BOX" --from "A <a@a>" --subject "Muted" >/dev/null 2>&1
 is "SPIRA_MAIL_MUTE=1: new/ does not grow" "$before_new" \
     "$(ls "$SPIRA_MAIL/$MUTE_BOX/new" 2>/dev/null | wc -l | tr -d ' ')"
 muted_file="$(ls "$SPIRA_MAIL/$MUTE_BOX/cur" 2>/dev/null | grep ':2,S$' | head -1)"
@@ -446,11 +467,15 @@ mkdir -p "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierge/cur" "$SPIRA_MAIL/co
 conc_new_before="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
 conc_cur_before="$(ls "$SPIRA_MAIL/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
 printf 'From: Someone <s@s>\nSubject: raw muted\n\nbody\n' \
-    | SPIRA_MAIL_MUTE=1 run sendmail >/dev/null 2>&1
+    | run sendmail >/dev/null 2>&1
 is "SPIRA_MAIL_MUTE=1 sendmail: new/ does not grow" "$conc_new_before" \
     "$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
 is "SPIRA_MAIL_MUTE=1 sendmail: recorded in cur/ instead" "$((conc_cur_before + 1))" \
     "$(ls "$SPIRA_MAIL/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
+
+# tl_config persists for the rest of the suite — MUTE=1 set above for the mute section would
+# otherwise silently discard every "lands in new/" assertion below into cur/ instead.
+tl_config SPIRA_MAIL_MUTE=0
 
 echo
 echo "escalation class: an aeon's operator ask must declare one (law-escalate-decisions-not-problems)"
@@ -479,6 +504,20 @@ out="$(cls_send "Grant the aeon a deploy credential" --class permissions)"; rc=$
 is "permissions ask exits 0" 0 "$rc"
 is "permissions ask reaches the operator" "$((op_before + 1))" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
 is "permissions ask is not routed to the concierge" "$((conc_before + 3))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+
+echo
+echo "escalation class binds a sender holding no bead (watchers, sentinel, mail ask path)"
+op_before="$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
+conc_before="$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+nb_send() { printf '%s\n' "$CLS_STDIN" | ( unset BEAD_ID; run send operator --from "Sentinel <sentinel@spira>" \
+    --subject "$1" --kind question --default "the crate" "${@:2}" 2>&1 ); }
+CLS_STDIN="$CLS_BODY"
+out="$(nb_send "Which verb layout should the watcher take" --class architecture)"
+want "no-bead sender, out-of-class ask: told it was routed to the concierge" "routed to the concierge" "$out"
+is "no-bead sender, out-of-class ask: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
+is "no-bead sender, out-of-class ask: concierge got it" "$((conc_before + 1))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+out="$(nb_send "Grant the watcher a deploy credential" --class permissions)"
+is "no-bead sender, in-class ask reaches the operator" "$((op_before + 1))" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
 
 echo
 tl_summary

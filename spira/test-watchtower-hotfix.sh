@@ -69,12 +69,18 @@ chmod +x "$INC_MOCK"
 # wt_file: runs watchtower for real (writes the prompt file and drives escalations),
 # with $RELEASE_MOCK standing in for `release` and $INC_MOCK capturing incident.sh calls.
 wt_file() {
+    # SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+    # via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$TMP/run"
+    # round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches); without
+    # it, watchtower has no <home>/conf.d to resolve its config schema at all.
     env -i PATH="$TMP:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$INC_MOCK" \
         SPIRA_TEST_CAPTURE="$TMP/captured.txt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_TOML="$SPIRA_TOML" \
         watchtower 2>/dev/null
 }
 # `release` must resolve by bare name (the box's own convention, sp-gypjk): symlink it
@@ -92,14 +98,14 @@ fresh
 mock_release "$(printf 'current abc\nRUNNING UNLANDED %s: emergency fix (since 2026-09-30T00:00:00Z)\nALERT hotfix %s standing 5h >= threshold 4h' "$SHA" "$SHA")"
 wt_file
 out="$(captured)"
-want "past threshold: an escalation is filed"        "ARGS: file"                   "$out"
+want "past threshold: an alarm is sent"        "ARGS: alarm"                   "$out"
 want "past threshold: titled HOTFIX"                  "HOTFIX: RUNNING UNLANDED"     "$out"
 want "past threshold: deduped by the standing sha"    "REF: incident:hotfix-$SHA"    "$out"
 want "past threshold: cause names hotfix-standing"    "CAUSE: hotfix-standing"       "$out"
 want "past threshold: body carries the RUNNING UNLANDED line" "RUNNING UNLANDED $SHA" "$out"
 want "past threshold: body carries the ALERT line"    "ALERT hotfix $SHA"            "$out"
-n_filed="$(printf '%s\n' "$out" | grep -c '^ARGS: file')"
-is "past threshold: exactly one escalation, not a duplicate" 1 "$n_filed"
+n_filed="$(printf '%s\n' "$out" | grep -c '^ARGS: alarm')"
+is "past threshold: exactly one alarm, not a duplicate" 1 "$n_filed"
 
 # ======================================================================================
 echo
@@ -108,7 +114,7 @@ echo "a hotfix under threshold — RUNNING UNLANDED with no ALERT — files noth
 fresh
 mock_release "$(printf 'current abc\nRUNNING UNLANDED %s: emergency fix (since 2026-09-30T00:00:00Z)' "$SHA")"
 wt_file
-nowant "under threshold: no escalation filed" "ARGS: file" "$(captured)"
+nowant "under threshold: no alarm sent" "ARGS: alarm" "$(captured)"
 
 # ======================================================================================
 echo
@@ -117,7 +123,7 @@ echo "no hotfix standing files nothing:"
 fresh
 mock_release "current abc"
 wt_file
-nowant "no hotfix: no escalation filed" "ARGS: file" "$(captured)"
+nowant "no hotfix: no alarm sent" "ARGS: alarm" "$(captured)"
 
 # ======================================================================================
 echo

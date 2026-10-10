@@ -60,8 +60,8 @@ printf 'seed\n' > "$FAKE_REPO/f"
 git -C "$FAKE_REPO" add f
 git -C "$FAKE_REPO" commit -qm "seed" 2>/dev/null
 git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"
-git -C "$FAKE_REPO" push -q origin main 2>/dev/null
-git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
+timeout 5 git -C "$FAKE_REPO" push -q origin main 2>/dev/null
+timeout 5 git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
 git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 # The templates substitute @SPIRA_REPO@ in ExecStart lines; the ExecStart check requires
 # those targets to be executable. Symlink the two scripts that templates use this way.
@@ -136,19 +136,21 @@ chmod +x "$MOCK_BIN/spira-supervise"
 # ---------------------------------------------------------------------------
 inst() {
     > "$MOCK_LOG"
+    # SPIRA_MAIL: the fixture's own default (/fixture/userhome/...) isn't writable here —
+    # units-install's normal (non --render) path now ensures every reader mailbox before
+    # the aeon guard even runs (sp-xp0u2), so a non-writable mail root turned every
+    # scenario's output into a "mail: ensure: Permission denied" message instead of this
+    # suite's own aeon-guard/drain output (one source of config, per Ryan 2026-10-05).
+    tl_config "SPIRA_PATH=$MOCK_BIN" "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
+        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_PROD=$PROD" "SPIRA_COCKPIT=$REAL_COCKPIT" "SPIRA_MAIL=$TMP/mail"
     env -i \
         "PATH=$MOCK_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= \
-        SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_TOML=$SPIRA_TOML" \
         "SPIRA_HOME=$HERE" \
-        "SPIRA_PROD=$PROD" \
         "SPIRA_REPO=$FAKE_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
         "MOCK_LOG=$MOCK_LOG" \
         "MOCK_AEONS=${MOCK_AEONS:-}" \
         "MOCK_IS_ACTIVE=${MOCK_IS_ACTIVE:-active}" \

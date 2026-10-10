@@ -183,9 +183,14 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("suites: cannot find the harness (spira/testenv/Containerfile) above the testenv binary; set SPIRA_TESTENV_HARNESS");
         return cmd::FAIL;
     };
-    let config = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());
-    let src = crate::settings::Source { env: &env, config: config.as_ref() };
-    let s = ports::Settings::load(&src, &harness.root);
+    let src = crate::settings::Source { env: &env };
+    let s = match ports::Settings::load(&src, &harness.root) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("suites: {e}");
+            return cmd::FAIL;
+        }
+    };
     let r = real::Real::new(&s, &env);
     let read_input = |p: &str| real::read_input(p);
     let w = World {

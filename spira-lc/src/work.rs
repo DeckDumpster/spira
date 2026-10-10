@@ -27,7 +27,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         return refusal;
     }
     match verb.as_str() {
-        "show" => cmd_show(bead_id),
+        "show" => cmd_show(bead_id, conn),
         "note" => cmd_note(bead_id, rest),
         "submit" => cmd_submit(bead_id, rest, conn),
         "done" => cmd_done(bead_id, rest, conn),
@@ -48,11 +48,40 @@ fn require_actor(args: &[String]) -> Result<String, (i32, String)> {
     flag(args, "--actor").ok_or((CANNOT_TELL, "work: --actor is required".to_string()))
 }
 
-fn cmd_show(bead_id: &str) -> (i32, String) {
-    match crate::bd::show(bead_id) {
-        Ok(text) => (0, text),
-        Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
+fn cmd_show(bead_id: &str, conn: &Conn) -> (i32, String) {
+    let text = match crate::bd::show(bead_id) {
+        Ok(text) => text,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    match crate::cmd_show(&[bead_id.to_string()], conn) {
+        (0, row) => (0, with_lifecycle(&text, &row)),
+        (1, _) => (0, format!("{text}\nLIFECYCLE: no row\n")),
+        (_, e) => (CANNOT_TELL, e),
     }
+}
+
+/// bd's `show` text with its status word replaced by the lifecycle state, then the row itself:
+/// a session reads the machine's state, never bd's status, as where the bead stands.
+fn with_lifecycle(bd_text: &str, show_json: &str) -> String {
+    let row: serde_json::Value = serde_json::from_str(show_json).unwrap_or_default();
+    let bead = &row["bead"];
+    let state = bead["state"].as_str().unwrap_or("?");
+    let mut lines: Vec<String> = bd_text.lines().map(str::to_string).collect();
+    if let Some(head) = lines.first_mut() {
+        if let (Some(dot), true) = (head.rfind(" · "), head.ends_with(']')) {
+            head.replace_range(dot + " · ".len().., &format!("{state}]"));
+        }
+    }
+    let field = |k: &str| bead[k].as_str().filter(|v| !v.is_empty()).map(|v| format!("  {k}: {v}\n")).unwrap_or_default();
+    format!(
+        "{}\n\nLIFECYCLE: {state}\n{}{}{}{}{}",
+        lines.join("\n"),
+        field("holds"),
+        field("reason"),
+        field("holder"),
+        field("tip"),
+        row["delivery"]["state"].as_str().map(|d| format!("  delivery: {d}\n")).unwrap_or_default(),
+    )
 }
 
 fn cmd_note(bead_id: &str, args: &[String]) -> (i32, String) {
@@ -107,7 +136,29 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             );
         }
     }
+    if row.ejected_red_tip.as_deref() == Some(tip.as_str()) {
+        return (
+            REFUSED,
+            format!(
+                "refused: {tip} is the tip a round ejected {bead_id} for as red{} — change the tree (fix the named reds, rebase) and commit again before resubmitting",
+                ejected_reasons(conn, bead_id, &tip).map(|r| format!(": {r}")).unwrap_or_default()
+            ),
+        );
+    }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip })
+}
+
+fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
+    let sql = format!(
+        "SELECT JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Eject.reason')) AS reason FROM event e \
+         JOIN batch_member m ON m.batch_id = e.lc_key \
+         WHERE e.machine = 'batch' AND e.event = 'Eject' AND m.bead_id = '{b}' AND m.tip = '{t}' \
+           AND JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Eject.bead_id')) = '{b}' ORDER BY e.seq DESC LIMIT 1",
+        b = rows::escape(bead_id),
+        t = rows::escape(tip)
+    );
+    let found = conn.query(&sql).ok()?;
+    found.first()?.get("reason")?.as_str().map(str::to_string)
 }
 
 fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
@@ -118,7 +169,38 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(delivers) = flag(args, "--delivers") else {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
     };
+    if actor == "groomer" {
+        match rows::fetch_bead(conn, bead_id) {
+            Ok(Some(row)) if row.state == bead::BeadState::Done => return (0, format!("{bead_id} is already DONE; nothing to do")),
+            Ok(_) => {}
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        }
+        match crate::bd::labels(bead_id) {
+            Ok(labels) if labels.iter().any(|l| l == GROOM_TRIGGER_MARKER) => {}
+            Ok(_) => return release_untriggered_groom(bead_id, &actor, conn),
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+        }
+    }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Done { delivers })
+}
+
+/// The label groom-trigger.sh stamps on the beads it files; the groom label alone also
+/// selects work beads, which a groom pass must never close.
+const GROOM_TRIGGER_MARKER: &str = "groom-trigger";
+
+fn release_untriggered_groom(bead_id: &str, actor: &str, conn: &Conn) -> (i32, String) {
+    let (code, out) = apply_bead_event(conn, bead_id, actor, BeadEventKind::Release);
+    if code != 0 {
+        return (code, out);
+    }
+    let why = "claimed by the groom predicate but is not a groom trigger; relabel for its builder";
+    let _ = crate::bd::note(bead_id, why);
+    let subject = format!("{bead_id} was claimed by the groomer but is not a groom trigger");
+    let body = format!("## Question\n{bead_id} carries the groom label without the {GROOM_TRIGGER_MARKER} marker, so the groomer released it instead of closing it. Which builder persona should it be relabelled for?\n\n## Default\nrelabel {bead_id} for its builder\n");
+    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), &subject, "relabel for its builder", bead_id, &body) {
+        Ok(_) => (REFUSED, format!("refused: work done: {why}; released, ask filed")),
+        Err(e) => (REFUSED, format!("refused: work done: {why}; released, but filing the ask failed: {e}")),
+    }
 }
 
 fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
@@ -132,22 +214,17 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(default) = flag(args, "--default") else {
         return (CANNOT_TELL, "work blocked: --default <default> is required".into());
     };
-    let (code, out) = apply_bead_event(
-        conn,
-        bead_id,
-        &actor,
-        BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) },
-    );
-    if code != 0 {
-        return (code, out);
-    }
     // mail's own "question" kind requires a filled "## Question" and "## Default"
     // section in the body (every "## " heading in its template is a required section,
     // not just the X-Spira-Default header) — a bare question string is refused.
     let body = format!("## Question\n{question}\n\n## Default\n{default}\n");
-    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), question, &default, bead_id, &body) {
-        Ok(_) => (0, format!("hold applied; ask filed for {bead_id}")),
-        Err(e) => (CANNOT_TELL, format!("hold applied, but filing the ask failed: {e}")),
+    if let Err(e) = crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), question, &default, bead_id, &body) {
+        return (REFUSED, format!("refused: work blocked: the question could not be delivered, so no hold was applied: {e}"));
+    }
+    let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) };
+    match apply_bead_event(conn, bead_id, &actor, hold) {
+        (0, _) => (0, format!("ask filed; hold applied for {bead_id}")),
+        (code, e) => (code, format!("the question WAS delivered (do not ask again), but the ask hold on {bead_id} was not applied: {e}")),
     }
 }
 
@@ -163,8 +240,16 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
         Ok(None) => return (CANNOT_TELL, format!("work {verb}: {bead_id} carries no repo: label")),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    match crate::bd::file_child(title, &persona, &repo, bead_id) {
+    // A child of a bead that carries spira-open-children cannot land after it, so a
+    // follow-up that needs this bead landed first is filed unparented and blocked on it.
+    let after_landing = args.iter().any(|a| a == "--after-landing");
+    let parent = if after_landing { None } else { Some(bead_id) };
+    match crate::bd::file_child(title, &persona, &repo, parent) {
         Ok(new_id) => match crate::cutover::cmd_create_bead(&[new_id.clone()], conn) {
+            (0, _) if after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
+                Ok(()) => (0, new_id),
+                Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be made to wait on {bead_id} (do not file it again; add the dependency): {e}")),
+            },
             (0, _) => (0, new_id),
             (_, e) => (
                 CANNOT_TELL,
@@ -191,7 +276,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
         conn,
         bead_id,
         &actor,
-        BeadEventKind::Hold { kind: HoldKind::Operator, cause: HoldCause::SupersedeRequest, detail: Some(successor.clone()) },
+        BeadEventKind::Hold { kind: HoldKind::Manual, cause: HoldCause::SupersedeRequest, detail: Some(successor.clone()) },
     );
     if code != 0 {
         return (code, out);
@@ -219,13 +304,14 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
 //
 // Who may run what is ONE table, [`ALLOW`]. The caller's persona is the `--actor` the `work`
 // client appends from its own environment (`SPIRA_FAYTH`, else `SPIRA_WORK_ACTOR`); the
-// client refuses a user-typed `--actor`, so the trailing one is the environment's.
+// client refuses a user-typed `--actor`; serve binds it to the peer's uid ([`bind_peer`]) for
+// every uid listed in `<socket>.personas`, since the environment is the caller's to set.
 
 /// Every verb that is not bound to the summoned bead. The bound verbs above act on the
 /// bead the client is bound to; these name their target (or none) themselves.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand", "fence",
+    "sop", "census", "queue", "landing-pass", "strand", "fence", "sending",
 ];
 
 const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by"];
@@ -241,6 +327,7 @@ const TOOLS: &[(&str, &str)] = &[
     ("queue", "queue"),
     ("landing-pass", "landing-pass"),
     ("strand", "strand"),
+    ("sending", "sending"),
 ];
 
 /// A tool call's wall: a groomer sweep or a queue step reads the whole graph, so this is the
@@ -290,6 +377,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("groom unwanted", &["groomer"]),
     ("incident list", &["ops", "czar"]),
     ("incident file", &["ops", "czar"]),
+    ("incident collapse", &["ops", "czar"]),
     ("sop match", &["ops"]),
     ("sop show", &["ops"]),
     ("sop list", &["ops"]),
@@ -305,6 +393,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("strand report", &["czar", "groomer"]),
     ("strand detect-livelocked", &["groomer"]),
     ("fence", &["czar"]),
+    ("sending --dry-run", &["ops", "czar"]),
 ];
 
 /// A request's own arguments with the client's reserved trailer split off: `... [--stdin
@@ -330,6 +419,45 @@ pub fn split_reserved(rest: &[String]) -> Call {
     }
     let actors = rest.iter().filter(|a| *a == "--actor").count();
     Call { args, stdin, actor, actors }
+}
+
+/// `<uid> <persona>` lines (`#` comments): the personas whose own OS account is the identity.
+pub fn parse_persona_uids(text: &str) -> Vec<(u32, String)> {
+    text.lines()
+        .filter_map(|l| {
+            let l = l.split('#').next().unwrap_or("").trim();
+            let mut it = l.split_whitespace();
+            let (uid, persona) = (it.next()?.parse().ok()?, it.next()?.to_string());
+            it.next().is_none().then_some((uid, persona))
+        })
+        .collect()
+}
+
+/// Binds a `work` request's persona to the connecting process's uid. A uid in `map` IS its
+/// persona: a different `--actor` is refused, never overridden, and an absent one is filled
+/// in. A uid not in `map` keeps the client-sent `--actor` (nothing else identifies it).
+pub fn bind_peer(argv: &[String], peer_uid: Option<u32>, map: &[(u32, String)]) -> Result<Vec<String>, (i32, String)> {
+    if argv.first().map(String::as_str) != Some("work") || map.is_empty() {
+        return Ok(argv.to_vec());
+    }
+    let Some(uid) = peer_uid else {
+        return Err((REFUSED, "refused: the caller's uid could not be read from the socket, and personas are bound to uids here".into()));
+    };
+    let Some((_, persona)) = map.iter().find(|(u, _)| *u == uid) else {
+        return Ok(argv.to_vec());
+    };
+    let sent = argv.iter().filter(|a| *a == "--actor").count();
+    let mut out = argv.to_vec();
+    match sent {
+        0 => out.extend(["--actor".to_string(), persona.clone()]),
+        1 if out.len() >= 2 && out[out.len() - 2] == "--actor" => {
+            if out[out.len() - 1] != *persona {
+                return Err((REFUSED, format!("refused: uid {uid} is persona {persona}, not {}", out[out.len() - 1])));
+            }
+        }
+        _ => return Err((REFUSED, "refused: work: --actor is the client's trailer alone, never the caller's".into())),
+    }
+    Ok(out)
 }
 
 /// The operation key [`ALLOW`] is read with.
@@ -375,6 +503,9 @@ fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     Bd { args: Vec<String>, stdin: Option<String> },
+    /// `work list`: the lifecycle rows in these states (every non-terminal state when empty,
+    /// every state with `all`), joined to bd's content rows filtered by `bd_args`.
+    LcList { states: Vec<String>, all: bool, bd_args: Vec<String>, json: bool, limit: Option<usize> },
     Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
     CreateRow,
     /// `Hold { Ask, OperatorQuestion }` on `bead`: the bead waits on the operator's answer
@@ -399,7 +530,7 @@ fn usage(verb: &str, msg: &str) -> (i32, String) {
     (CANNOT_TELL, format!("work {verb}: {msg}"))
 }
 
-fn is_bead_id(x: &str) -> bool {
+pub(crate) fn is_bead_id(x: &str) -> bool {
     x.len() > 3 && x[..3].eq_ignore_ascii_case("sp-") && x[3..].chars().all(|c| c.is_ascii_alphanumeric() || c == '.')
 }
 
@@ -469,24 +600,35 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             Ok(vec![bd([vec![s("show"), id], flatten(&f)].concat())])
         }
         "list" => {
-            let f = parse_flags(verb, a, 0, &["--status", "--label", "--title-contains", "--limit"], &["--json", "--all"])?;
-            if let Some(st) = get(&f, "--status") {
-                if st.is_empty() || !st.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c == ',') {
-                    return Err(usage(verb, &format!("--status {st:?} is not a status list")));
+            if a.iter().any(|x| x == "--status") {
+                return Err(usage(verb, "--status is bd's status; a bead's state is the lifecycle's — use --state <STATE[,STATE]>"));
+            }
+            let f = parse_flags(verb, a, 0, &["--state", "--label", "--title-contains", "--limit"], &["--json", "--all"])?;
+            let mut states = Vec::new();
+            for st in get(&f, "--state").into_iter().flat_map(|v| v.split(',')) {
+                let up = st.to_ascii_uppercase();
+                if bead::BeadState::from_str(&up).is_none() {
+                    return Err(usage(verb, &format!("--state {st:?} is not a lifecycle state")));
+                }
+                states.push(up);
+            }
+            let limit = match get(&f, "--limit") {
+                Some(n) => Some(n.parse::<usize>().map_err(|_| usage(verb, &format!("--limit {n:?} is not a number")))?),
+                None => None,
+            };
+            let mut bd_args = Vec::new();
+            for k in ["--label", "--title-contains"] {
+                if let Some(v) = get(&f, k) {
+                    bd_args.extend([s(k), v.to_string()]);
                 }
             }
-            if let Some(n) = get(&f, "--limit") {
-                if n.parse::<u32>().is_err() {
-                    return Err(usage(verb, &format!("--limit {n:?} is not a number")));
-                }
-            }
-            Ok(vec![bd([vec![s("list")], flatten(&f)].concat())])
+            Ok(vec![Step::LcList { states, all: f.iter().any(|(k, _)| k == "--all"), bd_args, json: f.iter().any(|(k, _)| k == "--json"), limit }])
         }
         "search" => {
             let Some(q) = a.first().filter(|q| !q.is_empty() && !q.starts_with('-')) else {
                 return Err(usage(verb, "missing <query>"));
             };
-            let f = parse_flags(verb, a, 1, &["--status", "--limit"], &["--json"])?;
+            let f = parse_flags(verb, a, 1, &["--limit"], &["--json"])?;
             Ok(vec![bd([vec![s("search"), q.clone()], flatten(&f)].concat())])
         }
         "note-on" => {
@@ -541,7 +683,10 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             let Some(ev) = get(&f, "--evidence").filter(|e| !e.trim().is_empty()) else {
                 return Err(usage(verb, "--evidence <text> is required: a reopen with no evidence hands the next session nothing"));
             };
-            Ok(vec![bd(vec![s("reopen"), id, s("--reason"), format!("reopened by {actor}: {ev}")])])
+            Ok(vec![
+                Step::Tool { program: "spira-lc", args: vec![s("reopen"), id.clone(), s("operator-reopen"), actor.to_string()], stdin: None },
+                Step::Bd { args: vec![s("note"), id, s("--stdin")], stdin: Some(format!("reopened by {actor}: {ev}")) },
+            ])
         }
         "close-other" => {
             let id = bead_arg(verb, a, 0, "<bead-id>")?;
@@ -584,12 +729,13 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             Ok(steps)
         }
         "ask" => {
-            let f = parse_flags(verb, a, 0, &["--subject", "--kind", "--default", "--class", "--bead", "--body-file"], &[])?;
+            let f = parse_flags(verb, a, 0, &["--subject", "--kind", "--default", "--class", "--bead", "--body-file"], &["--dry-run"])?;
+            let dry_run = f.iter().any(|(k, _)| k == "--dry-run");
             let (Some(subject), Some(kind), Some(default)) = (get(&f, "--subject"), get(&f, "--kind"), get(&f, "--default")) else {
                 return Err(usage(verb, "--subject, --kind and --default are all required (an ask without a default is incomplete)"));
             };
-            if !["question", "fyi"].contains(&kind) {
-                return Err(usage(verb, &format!("--kind {kind:?} (want question or fyi)")));
+            if !MAIL_KINDS.contains(&kind) {
+                return Err(usage(verb, &format!("--kind {kind:?} (want one of {})", MAIL_KINDS.join(", "))));
             }
             let cited = match get(&f, "--bead") {
                 Some(b) if is_bead_id(b) => Some(b.to_string()),
@@ -626,6 +772,10 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             if let Some(b) = cited {
                 args.extend([s("--bead"), b]);
             }
+            if dry_run {
+                args.push(s("--dry-run"));
+                return Ok(vec![Step::Ask { args, stdin: body, classify_as }]);
+            }
             let mut steps = vec![Step::Ask { args, stdin: body, classify_as }];
             // A bound session's question about its OWN bead is a wait on the operator: that
             // bead is held once the question is delivered (the mail goes first, so a hold
@@ -642,6 +792,9 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             };
             if tool == "census" && !(a.is_empty() || a == &[s("--with-suppressed")]) {
                 return Err(usage(tool, "takes only --with-suppressed"));
+            }
+            if tool == "sending" && !matches!(a.iter().map(String::as_str).collect::<Vec<_>>().as_slice(), ["--dry-run"] | ["--dry-run", "--no-fetch"]) {
+                return Err(usage(tool, "takes only --dry-run [--no-fetch]"));
             }
             if tool == "groom" && a.first().map(String::as_str) == Some("split-piece") {
                 split_piece_args(&a[1..])?;
@@ -673,7 +826,9 @@ fn cmd_fence(rest: &[String]) -> (i32, String) {
         return usage("fence", "want <class>");
     };
     let var = format!("SPIRA_CZAR_STAGE_{}", class.to_ascii_uppercase().replace('-', "_"));
-    let stage = spira_config::resolve::key_for_process(&var).ok();
+    // One source of config (per Ryan 2026-10-05): the declared config-file value, never this
+    // process's own environment.
+    let stage = spira_config::process::cfg(&var).ok();
     fence_answer(class, stage.as_deref())
 }
 
@@ -704,8 +859,86 @@ fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
     Ok(())
 }
 
+/// The kinds mail has a template for; a test holds this equal to `spira/mail/kinds`.
+/// `work list`: lifecycle state decides which beads, bd supplies what they say. A state filter
+/// is the machine's; `--label`/`--title-contains` narrow by content through bd, and the two are
+/// intersected here so neither side's idea of "open" is consulted.
+fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[String], json: bool, limit: Option<usize>) -> (i32, String) {
+    let (rc, rows) = crate::cmd_list(&[], conn);
+    if rc != 0 {
+        return (rc, rows);
+    }
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&rows).unwrap_or_default();
+    let keep = |st: &str| if !states.is_empty() { states.iter().any(|x| x == st) } else { all || !bead::BeadState::from_str(st).is_some_and(|b| b.is_terminal()) };
+    let by_id: std::collections::HashMap<String, serde_json::Value> =
+        rows.into_iter().filter(|r| keep(r["state"].as_str().unwrap_or(""))).filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r))).collect();
+    let mut args = vec![s("list"), s("--status"), s("all"), s("--limit"), s("0"), s("--json")];
+    args.extend(bd_args.iter().cloned());
+    let content = match crate::bd::run_stdin(&args, None) {
+        Ok(t) => t,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    let content: Vec<serde_json::Value> = serde_json::from_str(content.trim()).unwrap_or_default();
+    let mut out = Vec::new();
+    for mut c in content {
+        let Some(lc) = c["id"].as_str().and_then(|id| by_id.get(id)).cloned() else { continue };
+        c["lifecycle_state"] = lc["state"].clone();
+        c["lifecycle_holds"] = lc["holds"].clone();
+        out.push(c);
+    }
+    out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    if let Some(n) = limit {
+        out.truncate(n);
+    }
+    if json {
+        return (0, serde_json::to_string_pretty(&out).unwrap_or_default());
+    }
+    let lines: Vec<String> =
+        out.iter().map(|c| format!("{} {} {}", c["id"].as_str().unwrap_or("?"), c["lifecycle_state"].as_str().unwrap_or("?"), c["title"].as_str().unwrap_or(""))).collect();
+    (0, lines.join("\n"))
+}
+
+const MAIL_KINDS: &[&str] = &["alert", "decision", "event", "note", "question", "suit"];
+
+/// An ask citing a bead no lifecycle row names is refused by name, never delivered.
+fn uncited_bead(args: &[String], conn: &Conn) -> Option<(i32, String)> {
+    if args.iter().any(|a| a == "--dry-run") {
+        return None;
+    }
+    let at = args.iter().position(|a| a == "--bead")?;
+    let bead = args.get(at + 1)?;
+    match rows::fetch_bead(conn, bead) {
+        Ok(Some(_)) => None,
+        Ok(None) => Some((REFUSED, format!("refused: work ask --bead {bead}: no such bead; nothing was sent"))),
+        Err(e) => Some((CANNOT_TELL, format!("cannot tell: whether {bead} exists ({e:?}); nothing was sent"))),
+    }
+}
+
+/// A `.live` marker in the archivist's state dir is written for the length of a sweep of a
+/// session still being written to; a marker left by a crashed sweep refuses too, which is
+/// the safe direction.
+fn live_session_refusal(verb: &str, call: &Call, arc: &std::path::Path) -> Option<(i32, String)> {
+    if verb != "file" || call.actor.as_deref() != Some("archivist") || !call.args.iter().any(|x| x == "--for") {
+        return None;
+    }
+    let live = std::fs::read_dir(arc).ok()?.flatten().any(|e| e.file_name().to_string_lossy().ends_with(".live"));
+    live.then(|| {
+        (
+            REFUSED,
+            "refused: work file --for: the session being swept is still live and will file its own work (law-archivist-does-not-file-live-work); \
+             note the nearest bead with `work note-on`, or send `work ask`"
+                .to_string(),
+        )
+    })
+}
+
 fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, String) {
     let call = split_reserved(rest);
+    if let Ok(run) = spira_config::process::cfg("SPIRA_RUN") {
+        if let Some(refusal) = live_session_refusal(verb, &call, &std::path::Path::new(&run).join("archivist")) {
+            return refusal;
+        }
+    }
     let steps = match plan(verb, bound, &call) {
         Ok(p) => p,
         Err(e) => return e,
@@ -718,14 +951,18 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 Ok(t) => (0, t),
                 Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
             },
+            Step::LcList { states, all, bd_args, json, limit } => list_with_content(conn, &states, all, &bd_args, json, limit),
             Step::Tool { program, args, stdin } => {
                 // mail, by name; SPIRA_MAIL_SH is the harness-wide binary-override seam.
                 let prog = if program == "mail" { std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail")) } else { s(program) };
                 crate::bd::tool(&prog, &args, stdin.as_deref(), actor, TOOL_SECS)
             }
             Step::Ask { args, stdin, classify_as } => {
+                if let Some(refusal) = uncited_bead(&args, conn) {
+                    return (refusal.0, out + &refusal.1);
+                }
                 let prog = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail"));
-                crate::bd::tool_env(&prog, &args, Some(&stdin), actor, TOOL_SECS, &[("BEAD_ID", &classify_as)])
+                crate::bd::tool_env_noisy(&prog, &args, Some(&stdin), actor, TOOL_SECS, &[("BEAD_ID", &classify_as)])
             }
             Step::AskHold { bead, question } => {
                 let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question) };
@@ -758,10 +995,38 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_line_of_prose_or_a_truncated_prefix_is_not_a_bead_id() {
+        for bad in ["SPIRA_BEAD_LANE_OVERRIDE=1", "bead:", "override:", "sp-", "sp", "", "sp-a b", "sp-x/y", "x-abc"] {
+            assert!(!is_bead_id(bad), "{bad:?}");
+        }
+        for ok in ["sp-b411iv", "sp-b411iv.1"] {
+            assert!(is_bead_id(ok), "{ok}");
+        }
+    }
+
     use super::*;
 
     fn v(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn a_uid_bound_to_a_persona_cannot_present_as_another() {
+        let map = parse_persona_uids("# aeons\n1001 builder\n1002 czar  # the czar\nbad line here\n");
+        assert_eq!(map, vec![(1001, "builder".to_string()), (1002, "czar".to_string())]);
+        let forged = v(&["work", "sp-1", "queue", "eject", "sp-2", "--actor", "czar"]);
+        let (code, msg) = bind_peer(&forged, Some(1001), &map).unwrap_err();
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("builder"), "{msg}");
+        assert_eq!(bind_peer(&forged, Some(1002), &map).unwrap(), forged);
+        assert_eq!(bind_peer(&v(&["work", "sp-1", "show"]), Some(1001), &map).unwrap(), v(&["work", "sp-1", "show", "--actor", "builder"]));
+        assert!(bind_peer(&v(&["work", "sp-1", "show", "--actor", "czar", "--actor", "builder"]), Some(1001), &map).is_err());
+        assert!(bind_peer(&forged, None, &map).is_err());
+        assert_eq!(bind_peer(&forged, Some(5), &map).unwrap(), forged);
+        assert_eq!(bind_peer(&forged, Some(1001), &[]).unwrap(), forged);
+        let other = v(&["show", "sp-1"]);
+        assert_eq!(bind_peer(&other, Some(1001), &map).unwrap(), other);
     }
 
     fn call(xs: &[&str], actor: &str) -> Call {
@@ -806,6 +1071,18 @@ mod tests {
     }
 
     #[test]
+    fn sending_is_a_read_only_dry_run_for_ops_alone() {
+        let ok = |xs: &[&str], who: &str| plan("sending", "-", &call(xs, who));
+        assert_eq!(ok(&["--dry-run"], "ops").unwrap(), vec![tool("sending", &["--dry-run"])]);
+        assert!(ok(&["--dry-run", "--no-fetch"], "ops").is_ok());
+        for bad in [&["--all"][..], &[][..], &["sp-x1"][..], &["--dry-run", "--all"][..], &["reap-stale"][..]] {
+            assert!(ok(bad, "ops").is_err(), "{bad:?}");
+        }
+        assert_eq!(gate("sending", &v(&["--dry-run", "--actor", "builder"])).unwrap_err().0, REFUSED);
+        assert!(gate("sending", &v(&["--dry-run", "--actor", "ops"])).is_ok());
+    }
+
+    #[test]
     fn a_gated_verb_without_a_persona_is_refused() {
         assert_eq!(gate("note-on", &v(&["sp-x1", "hi"])).unwrap_err().0, REFUSED);
     }
@@ -839,14 +1116,32 @@ mod tests {
     }
 
     #[test]
-    fn list_forwards_only_its_own_filters() {
+    fn list_filters_by_lifecycle_state_and_content() {
         assert_eq!(
-            plan("list", "-", &call(&["--status", "open", "--label", "plan", "--json"], "warden")).unwrap(),
-            vec![Step::Bd { args: v(&["list", "--status", "open", "--label", "plan", "--json"]), stdin: None }]
+            plan("list", "-", &call(&["--state", "ready,rework", "--label", "plan", "--json"], "warden")).unwrap(),
+            vec![Step::LcList { states: v(&["READY", "REWORK"]), all: false, bd_args: v(&["--label", "plan"]), json: true, limit: None }]
         );
         assert!(plan("list", "-", &call(&["--db", "/x"], "warden")).is_err());
-        assert!(plan("list", "-", &call(&["--status", "open; rm"], "warden")).is_err());
+        assert!(plan("list", "-", &call(&["--state", "closed"], "warden")).is_err(), "a bd status word is not a lifecycle state");
         assert!(plan("list", "-", &call(&["--limit", "many"], "warden")).is_err());
+    }
+
+    #[test]
+    fn list_refuses_bds_status_and_names_the_lifecycle_flag() {
+        let e = plan("list", "-", &call(&["--status", "open"], "warden")).unwrap_err();
+        assert!(e.1.contains("--state"), "{}", e.1);
+    }
+
+    #[test]
+    fn show_replaces_bds_status_word_with_the_lifecycle_state() {
+        let bd = "○ sp-1 · title   [P2 · OPEN]\nOwner: x\n";
+        let row = r#"{"bead":{"state":"SUBMITTED","holds":"[\"wait\"]","reason":"snooze-until:9","holder":null},"delivery":null}"#;
+        let out = with_lifecycle(bd, row);
+        assert!(out.starts_with("○ sp-1 · title   [P2 · SUBMITTED]\n"), "{out}");
+        assert!(!out.contains("OPEN"), "{out}");
+        assert!(out.contains("LIFECYCLE: SUBMITTED\n  holds:"), "{out}");
+        assert!(out.contains("  reason: snooze-until:9\n"), "{out}");
+        assert!(!out.contains("holder"), "{out}");
     }
 
     #[test]
@@ -894,7 +1189,10 @@ mod tests {
         assert!(plan("reopen", "-", &call(&["sp-a1"], "czar")).is_err());
         assert_eq!(
             plan("reopen", "-", &call(&["sp-a1", "--evidence", "red on main"], "czar")).unwrap(),
-            vec![Step::Bd { args: v(&["reopen", "sp-a1", "--reason", "reopened by czar: red on main"]), stdin: None }]
+            vec![
+                Step::Tool { program: "spira-lc", args: v(&["reopen", "sp-a1", "operator-reopen", "czar"]), stdin: None },
+                Step::Bd { args: v(&["note", "sp-a1", "--stdin"]), stdin: Some("reopened by czar: red on main".into()) },
+            ]
         );
         assert!(plan("close-other", "-", &call(&["sp-a1"], "czar")).is_err());
         assert_eq!(
@@ -918,12 +1216,36 @@ mod tests {
     }
 
     #[test]
+    fn the_archivist_files_no_work_bead_while_a_swept_session_is_live() {
+        let dir = testkit::TempDir::new("lc-live");
+        let work = call(&["t", "--for", "builder", "--repo", "spira"], "archivist");
+        let record = call(&["t", "--kind", "insight", "--repo", "spira"], "archivist");
+        let other = call(&["t", "--for", "builder", "--repo", "spira"], "ops");
+        assert!(live_session_refusal("file", &work, &dir).is_none(), "no live marker: no refusal");
+        std::fs::write(dir.join("sess-1.live"), "").unwrap();
+        let (code, msg) = live_session_refusal("file", &work, &dir).expect("a live sweep must refuse a work bead");
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("work note-on") && msg.contains("work ask"), "names its exit: {msg}");
+        assert!(live_session_refusal("file", &record, &dir).is_none(), "a record is not work");
+        assert!(live_session_refusal("file", &other, &dir).is_none(), "only the archivist is bound");
+        assert!(live_session_refusal("note-on", &work, &dir).is_none());
+    }
+
+    #[test]
     fn file_refuses_a_bad_shape() {
         assert!(plan("file", "-", &call(&["t"], "ops")).is_err(), "neither --for nor --kind");
         assert!(plan("file", "-", &call(&["t", "--for", "builder", "--kind", "insight", "--repo", "r"], "ops")).is_err());
         assert!(plan("file", "-", &call(&["t", "--for", "builder"], "ops")).is_err(), "no repo");
         assert!(plan("file", "-", &call(&["t", "--for", "builder", "--repo", "r", "--body-file", "/etc/passwd"], "ops")).is_err());
         assert!(plan("file", "-", &call(&["t", "--for", "builder", "--repo", "r", "-l", "x"], "ops")).is_err());
+    }
+
+    #[test]
+    fn a_dry_run_ask_forwards_the_flag_and_places_no_hold() {
+        let p = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--dry-run"], "builder")).unwrap();
+        assert_eq!(p.len(), 1, "no AskHold: {p:?}");
+        let Step::Ask { args, .. } = &p[0] else { panic!() };
+        assert!(args.contains(&s("--dry-run")), "{args:?}");
     }
 
     #[test]
@@ -935,7 +1257,7 @@ mod tests {
         assert!(stdin.contains("## Question\nClose sp-a1?") && stdin.contains("## Default\nyes"));
         assert_eq!(classify_as, "sp-me1");
         assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "question"], "ops")).is_err(), "no default");
-        assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "note", "--default", "d"], "ops")).is_err());
+        assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "bogus", "--default", "d"], "ops")).is_err());
         assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "fyi", "--default", "d", "--from", "Ryan"], "ops")).is_err(), "the sender is the broker's");
         assert_eq!(display_name("batcher"), "Judge");
     }
@@ -955,7 +1277,7 @@ mod tests {
         // fyi, nor for an unbound caller (nothing of its own to wait on).
         let other = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--bead", "sp-other"], "groomer")).unwrap();
         assert!(!other.iter().any(|x| matches!(x, Step::AskHold { .. })), "{other:?}");
-        let fyi = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "fyi", "--default", "d"], "builder")).unwrap();
+        let fyi = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "note", "--default", "d"], "builder")).unwrap();
         assert!(!fyi.iter().any(|x| matches!(x, Step::AskHold { .. })), "{fyi:?}");
         let unbound = plan("ask", "-", &call(&["--subject", "q", "--kind", "question", "--default", "d"], "archivist")).unwrap();
         assert!(!unbound.iter().any(|x| matches!(x, Step::AskHold { .. })), "{unbound:?}");
@@ -983,6 +1305,18 @@ mod tests {
         assert!(args.windows(2).any(|w| w == v(&["--class", "policy"])), "{args:?}");
     }
 
+    #[test]
+    fn ask_kinds_are_the_kinds_mail_can_deliver() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds");
+        let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path().file_stem().unwrap().to_string_lossy().into_owned())
+            .collect();
+        on_disk.sort();
+        assert_eq!(on_disk, MAIL_KINDS);
+        assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "fyi", "--default", "d"], "ops")).is_err(), "fyi has no template");
+    }
+
     // ---- tools ----
 
     #[test]
@@ -993,6 +1327,16 @@ mod tests {
         assert_eq!(plan("queue", "-", &call(&["eject", "sp-a1", "--red"], "czar")).unwrap(), vec![tool("queue", &["eject", "sp-a1", "--red"])]);
         assert_eq!(plan("strand", "-", &call(&["detect-livelocked"], "groomer")).unwrap(), vec![tool("strand", &["detect-livelocked"])]);
         assert_eq!(plan("sop", "-", &call(&["show", "x"], "ops")).unwrap(), vec![tool("sop", &["show", "x"])]);
+    }
+
+    #[test]
+    fn ops_may_collapse_a_duplicate_incident_and_a_builder_may_not() {
+        assert!(permitted(&op_key("incident", &v(&["collapse", "sp-a1", "--of", "sp-b2"])), Some("ops")).is_ok());
+        assert!(permitted("incident collapse", Some("builder")).is_err());
+        assert_eq!(
+            plan("incident", "-", &call(&["collapse", "sp-a1", "--of", "sp-b2"], "ops")).unwrap(),
+            vec![Step::Tool { program: "incident.sh", args: v(&["collapse", "sp-a1", "--of", "sp-b2"]), stdin: None }]
+        );
     }
 
     #[test]

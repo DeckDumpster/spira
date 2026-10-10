@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=lifecycle
+DOC=Seconds between lc-serve's checks of its in-memory live bead rows against Dolt.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # lc-serve answers live reads from memory; this is how often it hashes those rows against
+    # Dolt's, reloading and raising an incident on a mismatch. At least 1.
+    : "${SPIRA_LC_LIVE_CHECK_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

@@ -3,8 +3,9 @@
 //   bd-meter --install <home>     make a suite HOME and link bd / bd-embedded to this binary
 //   bd … | bd-embedded …          (as a link) run the real one, log its wall to $SPIRA_BD_LOG
 
+use std::process::Command;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 use std::time::Instant;
 use testenv::bdmeter;
 
@@ -44,6 +45,7 @@ fn main() -> ExitCode {
         return ExitCode::from(127);
     };
     let t = Instant::now();
+    // batch-job: this runs whatever its caller names, as long as that takes
     let rc = match Command::new(&real).args(&args).status() {
         Ok(st) => bdmeter::shell_status(st),
         Err(e) => {

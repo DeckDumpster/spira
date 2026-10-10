@@ -32,12 +32,24 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-export SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL="$TMP/mail"
+SPIRA_ID_PREFIX="sp"
+SPIRA_ASK_LABEL=asks-test    # non-default: catches hardcoded literals
+SPIRA_MAIL_TIDY_FRESH=3600   # non-default: 1h window
+SPIRA_DB="$TMP/db"
+mkdir -p "$TMP/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — mail appends every send/tidy there,
+# and the write fails outright with no such directory (sfail round 3, pattern 7).
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" \
+    SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL" SPIRA_MAIL_TIDY_FRESH="$SPIRA_MAIL_TIDY_FRESH" \
+    SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" SPIRA_MAIL_MUTE=0 \
+    SPIRA_RUN="$TMP/run" SPIRA_BD="${SPIRA_BD:-bd}" SPIRA_OPERATOR_ACTOR=ryan \
+    SPIRA_DB="$SPIRA_DB" SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=/nonexistent
-export SPIRA_ID_PREFIX="sp"
-export SPIRA_ASK_LABEL=asks-test    # non-default: catches hardcoded literals
-export SPIRA_MAIL_TIDY_FRESH=3600   # non-default: 1h window
-export SPIRA_DB="$TMP/db"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.
+export SPIRA_HOME="$HERE"
 
 MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
 OLD_AGE=7200    # older than SPIRA_MAIL_TIDY_FRESH
@@ -66,7 +78,8 @@ else
 fi
 STUB
 chmod +x "$STUB_BD"
-export SPIRA_BD="$STUB_BD"
+SPIRA_BD="$STUB_BD"
+tl_config SPIRA_BD="$SPIRA_BD"
 
 run_tidy() { "$MAIL" tidy operator "$@"; }
 
@@ -75,7 +88,7 @@ send_msg() {   # send_msg <mailbox> <subject> <bead-id|-> [--urgent]
     local extra=()
     [ "$bid" != "-" ] && extra+=(--bead "$bid")
     [ "${1:-}" = "--urgent" ] && extra+=(--urgent)
-    echo "body" | SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="fixture" \
+    echo "body" | SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="fixture" SPIRA_MAIL_OPERATOR_CONSIDERED="fixture" \
         "$MAIL" send "$mbox" \
             --from "Bot <bot@spira>" \
             --subject "$subj" \
@@ -237,16 +250,17 @@ echo "=== Fresh install: a mailbox install created but no mail ever reached ==="
 # `mail ensure operator`; tidy's own refusal of a mailbox that does not exist stays (a
 # misconfigured SPIRA_MAIL must not tidy silently).
 FRESH="$TMP/fresh-mail"
-out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
+tl_config SPIRA_MAIL="$FRESH" SPIRA_MAIL_INDEX="$FRESH/index"
+out="$("$MAIL" tidy operator 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ok "positive control: tidy of a mailbox nothing created still refuses" \
                 || bad "positive control: tidy of a mailbox nothing created still refuses" "rc=0"
 want "positive control: and says why" "mailbox not found" "$out"
-SPIRA_MAIL="$FRESH" "$MAIL" ensure operator; rc=$?
+"$MAIL" ensure operator; rc=$?
 is "mail ensure operator exits 0" 0 "$rc"
 [ -d "$FRESH/operator/new" ] && [ -d "$FRESH/operator/cur" ] && [ -d "$FRESH/operator/tmp" ] \
     && ok  "ensure creates the operator maildir (new, cur, tmp)" \
     || bad "ensure creates the operator maildir (new, cur, tmp)" "$(ls -R "$FRESH" 2>&1 | head -5)"
-out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
+out="$("$MAIL" tidy operator 2>&1)"; rc=$?
 is     "tidy of the ensured, empty mailbox exits 0" 0 "$rc"
 nowant "and does not report it missing" "mailbox not found" "$out"
 want   "install ensures the operator mailbox" 'tool_status("mail", &["ensure", "operator"])' "$(cat "$HERE/../install/src/bin/install.rs")"

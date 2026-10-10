@@ -7,7 +7,7 @@
 // reconciler-flow --pass
 //
 // A flow gap has no deterministic remedy (per the design): every gap this pass confirms goes
-// straight to the Concierge alert path (reconciler_flow::io::mail_concierge), not to
+// straight to the Concierge alert path (reconciler_engine::mail::note_concierge), not to
 // incident.sh. Hysteresis (grace period, unobservable-is-never-satisfied) is the same engine
 // czar-pass's structural invariants use (reconciler-engine, sp-pu7v6) — this binary owns its
 // own state file so a slow 30-minute pass never contends with czar-pass's 30-second one.
@@ -16,10 +16,10 @@ use std::env;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::ExitCode;
 
 use reconciler_engine::alert::{compose_alert, should_alert};
+use reconciler_engine::{clock, mail, paths};
 use reconciler_engine::core::{step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_alerted, load_state, save_alerted, save_state, AlertedSinceMap, StateMap};
 
@@ -31,7 +31,7 @@ use reconciler_flow::core::{
 };
 use reconciler_flow::io::{
     append_backlog_sample, backlog_baseline, backlog_count, dwell_metrics,
-    dwell_regression_metrics, flow_floors, mail_concierge, rework_metrics, round_health_metrics,
+    dwell_regression_metrics, flow_floors, rework_metrics, round_health_metrics,
     sentinel_pass_wall_seconds, slots_samples, velocity_metrics, waiting_to_land,
 };
 
@@ -63,12 +63,14 @@ struct Config {
     alerted_path: PathBuf,
     status_log: PathBuf,
     tsd_bin: String,
+    export_bin: String,
     duckdb_bin: String,
     bd_bin: String,
     spira_db: String,
     scope_label: String,
     desired_dir: PathBuf,
-    mail_sh: String,
+    mail_bin: String,
+    date_bin: String,
     window_hours: f64,
     baseline_hours: f64,
     grace_secs: u64,
@@ -79,113 +81,63 @@ struct Config {
     now_iso: String,
 }
 
-/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — same
-/// fallback `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own
-/// `harness_home` already use. `resolve_for_process` needs a REAL `home/conf.d` to
-/// resolve almost every key (`SPIRA_RUN` included — sp-ivfu3) — an empty `home` makes it
-/// refuse outright ("no config registry at conf.d"), exactly what a bare shell with no
-/// `$SPIRA_HOME` exported would otherwise hit.
-fn harness_home() -> PathBuf {
-    if let Ok(h) = env::var("SPIRA_HOME") {
-        if !h.is_empty() {
-            return PathBuf::from(h);
-        }
+/// Every program the pass runs, by name on the launcher's PATH; a test injects its own.
+struct Seams {
+    tsd: String,
+    duckdb: String,
+    export: String,
+    mail: String,
+    date: String,
+}
+
+impl Seams {
+    fn production() -> Seams {
+        Seams { tsd: "tsd-write".into(), duckdb: "duckdb".into(), export: "tsd-lifecycle-export".into(), mail: "mail".into(), date: "date".into() }
     }
-    let Ok(exe) = env::current_exe() else { return PathBuf::new() };
-    let exe = exe.canonicalize().unwrap_or(exe);
-    exe.ancestors()
-        .skip(1)
-        .take(4)
-        .map(|a| a.join("spira"))
-        .find(|p| p.join("lib.sh").is_file())
-        .unwrap_or_default()
 }
 
 impl Config {
-    fn from_env() -> Result<Config, String> {
-        // sp-ivfu3: `spira.run`, resolved in-process through `spira_config` — never the
-        // literal `/tmp/spira` a bare shell used to get whenever `$SPIRA_RUN` itself was
-        // unset (law-a-binary-resolves-the-config-it-reads). REFUSES, named, rather than
-        // guessing, when `spira_config` itself cannot resolve.
-        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-        let spira_run = spira_config::resolve::resolve_run_dir(&env_map, &harness_home())?;
+    fn from_process(seams: Seams) -> Result<Config, String> {
+        use spira_config::process::{cfg, cfg_parse};
+        let spira_run = spira_config::resolve::run_dir_for_process()?;
         Ok(Config {
             lock_path: spira_run.join("reconciler-flow.lock"),
-            state_path: env::var("SPIRA_RECONCILER_FLOW_STATE")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("reconciler-flow-state.json")),
-            alerted_path: env::var("SPIRA_RECONCILER_FLOW_ALERTED")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("reconciler-flow-alerted.json")),
-            // Under run/tsd/ (design reconciler-time-series-2026-09-27 §2), same move and
-            // same env var as reconciler/src/main.rs — one family, two writers.
-            status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| spira_run.join("tsd").join("reconciler-status.jsonl")),
-            tsd_bin: "tsd-write".to_string(), // by name, on the launcher's PATH (sp-gypjk)
-            duckdb_bin: env::var("SPIRA_DUCKDB_BIN").unwrap_or_else(|_| "duckdb".to_string()),
-            bd_bin: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string()),
-            spira_db: env::var("SPIRA_DB").unwrap_or_default(),
-            scope_label: env::var("SPIRA_SCOPE_LABEL").unwrap_or_default(),
-            desired_dir: env::var("SPIRA_DESIRED_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-                let config_home = env::var("XDG_CONFIG_HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"));
-                config_home.join("spira").join("desired")
-            }),
-            mail_sh: env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string()),
-            window_hours: env::var("SPIRA_FLOW_WINDOW_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5),
-            baseline_hours: env::var("SPIRA_FLOW_BASELINE_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(24.0),
-            grace_secs: env::var("SPIRA_FLOW_GRACE_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(1800),
+            state_path: paths::flow_state(&spira_run),
+            alerted_path: paths::flow_alerted(&spira_run),
+            status_log: paths::status_log(&spira_run),
+            tsd_bin: seams.tsd,
+            duckdb_bin: seams.duckdb,
+            export_bin: seams.export,
+            bd_bin: cfg("SPIRA_BD")?,
+            spira_db: cfg("SPIRA_DB")?,
+            scope_label: cfg("SPIRA_SCOPE_LABEL")?,
+            desired_dir: PathBuf::from(cfg("SPIRA_DESIRED_DIR")?),
+            mail_bin: seams.mail,
+            window_hours: cfg_parse::<f64>("SPIRA_FLOW_WINDOW_HOURS")?,
+            baseline_hours: cfg_parse::<f64>("SPIRA_FLOW_BASELINE_HOURS")?,
+            grace_secs: cfg_parse::<u64>("SPIRA_FLOW_GRACE_SECS")?,
             // Deliberately its own knob, not derived from grace_secs: a flow gap's 30-minute
             // grace is tuned for real slowdowns, but a blind detector (the query layer
             // itself unreachable) is a different failure and must always cross 1h before it
             // alerts — tuning the gap window faster must never speed this one up too.
-            unobservable_grace_secs: env::var("SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(3600),
+            unobservable_grace_secs: cfg_parse::<u64>("SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS")?,
             // The design's own rework window (6h), distinct from the 30-minute flow window
             // the other new invariants share — a ratio over 30 minutes of landings is too
             // thin a sample to mean anything.
-            rework_window_hours: env::var("SPIRA_FLOW_REWORK_WINDOW_HOURS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(6.0),
+            rework_window_hours: cfg_parse::<f64>("SPIRA_FLOW_REWORK_WINDOW_HOURS")?,
             // Must match systemd/spira-sentinel.timer's OnUnitActiveSec — two independent
             // literals of the same fact is exactly how they drift.
-            sentinel_timer_secs: env::var("SPIRA_FLOW_SENTINEL_PERIOD_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(120),
-            now_secs: unix_now(),
-            now_iso: compute_now_iso(),
+            sentinel_timer_secs: cfg_parse::<u64>("SPIRA_FLOW_SENTINEL_PERIOD_SECS")?,
+            now_secs: clock::now_secs(&seams.date),
+            now_iso: clock::now_iso(&seams.date),
+            date_bin: seams.date,
             spira_run,
         })
     }
 }
 
-/// Epoch seconds; `SPIRA_NOW` overrides, the same clock seam bead, strand, watchd and
-/// cockpit-collect honour, so a suite advances past a grace period instead of sleeping.
-fn unix_now() -> u64 {
-    if let Some(n) = env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()) {
-        return n;
-    }
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
-fn compute_now_iso() -> String {
-    Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
-}
-
-fn log_print(msg: &str) {
-    println!("{} spira: {}", compute_now_iso(), msg);
+fn log_print(cfg: &Config, msg: &str) {
+    println!("{} spira: {}", clock::now_iso(&cfg.date_bin), msg);
 }
 
 fn unobservable(reason: String) -> RawStatus {
@@ -206,11 +158,21 @@ fn evaluate(cfg: &Config, state: &mut StateMap, key: &str, raw: RawStatus) -> Ve
     verdict
 }
 
+/// An invariant read from `bead-stage` is only as fresh as the last export: when the exporter
+/// failed, the file is stale and a verdict from it would be a guess.
+fn fresh(export: &Result<(), String>, raw: RawStatus) -> RawStatus {
+    match export {
+        Ok(()) => raw,
+        Err(e) => unobservable(format!("bead-stage export failed: {e}")),
+    }
+}
+
 fn status_word(v: &Verdict) -> &'static str {
     match &v.status {
         RawStatus::Satisfied => "satisfied",
         RawStatus::Gap { .. } => "gap",
         RawStatus::Unobservable { .. } => "unobservable",
+        RawStatus::Deliberate { .. } => "deliberate",
     }
 }
 
@@ -234,18 +196,37 @@ fn maybe_alert(cfg: &Config, alerted: &mut AlertedSinceMap, key: &str, verdict: 
     let subject = format!("RECONCILER: flow gap — {key}");
     let evidence = compose_alert(key, cfg.now_secs, verdict, None);
     let body = format!("{evidence}\nThis has no deterministic remedy — it needs judgement, not a retry.\n");
-    if let Err(e) = mail_concierge(&cfg.mail_sh, &subject, &body) {
+    if let Err(e) = mail::note_concierge(&cfg.mail_bin, &subject, &body) {
         eprintln!("reconciler-flow: {key}: concierge alert failed: {e}");
     } else {
-        log_print(&format!("reconciler-flow: {key} → gap, alerted concierge"));
+        log_print(&cfg, &format!("reconciler-flow: {key} → gap, alerted concierge"));
     }
 }
 
+/// Brings `bead-stage` up to date before anything reads it: nothing else schedules the
+/// exporter, so a pass that did not run it would evaluate whatever the file last held.
+fn run_export(cfg: &Config) -> Result<(), String> {
+    let out = spira_config::bounded::bounded(&cfg.export_bin)
+        .arg("lifecycle")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("{}: {e}", cfg.export_bin))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} lifecycle: exit {}: {}",
+        cfg.export_bin,
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stderr).trim()
+    ))
+}
+
 fn run_pass() -> Result<(), String> {
-    let cfg = Config::from_env()?;
+    let cfg = Config::from_process(Seams::production())?;
 
     if cfg.spira_run.join("world.halted").exists() {
-        log_print("reconciler-flow: skipped — world is halted");
+        log_print(&cfg, "reconciler-flow: skipped — world is halted");
         return Ok(());
     }
 
@@ -262,13 +243,18 @@ fn run_pass() -> Result<(), String> {
         .open(&cfg.lock_path)
         .map_err(|e| format!("open lock {}: {e}", cfg.lock_path.display()))?;
     if unsafe { flock(lock_file.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
-        log_print("reconciler-flow: already running — skip");
+        log_print(&cfg, "reconciler-flow: already running — skip");
         return Ok(());
     }
 
     let mut state = load_state(&cfg.state_path);
     let mut alerted = load_alerted(&cfg.alerted_path);
     let (velocity_floor, dwell_limit) = flow_floors(&cfg.desired_dir);
+
+    let export = run_export(&cfg);
+    if let Err(e) = &export {
+        eprintln!("reconciler-flow: {e}");
+    }
 
     // ── backlog trend ────────────────────────────────────────────────────────────────────
     let baseline = backlog_baseline(&cfg.duckdb_bin, &cfg.spira_run, cfg.baseline_hours);
@@ -280,7 +266,7 @@ fn run_pass() -> Result<(), String> {
     };
     let v = evaluate(&cfg, &mut state, "flow:backlog", backlog_raw);
     maybe_alert(&cfg, &mut alerted, "flow:backlog", &v);
-    log_print(&format!("reconciler-flow: flow:backlog → {}", status_word(&v)));
+    log_print(&cfg, &format!("reconciler-flow: flow:backlog → {}", status_word(&v)));
     if let Ok(cur) = current {
         append_backlog_sample(&cfg.tsd_bin, &cfg.spira_run, cur);
     }
@@ -296,9 +282,9 @@ fn run_pass() -> Result<(), String> {
         (Err(e), _) => unobservable(e.clone()),
         (_, Err(e)) => unobservable(e.clone()),
     };
-    let v = evaluate(&cfg, &mut state, "flow:velocity:queue", velocity_raw_status);
+    let v = evaluate(&cfg, &mut state, "flow:velocity:queue", fresh(&export, velocity_raw_status));
     maybe_alert(&cfg, &mut alerted, "flow:velocity:queue", &v);
-    log_print(&format!("reconciler-flow: flow:velocity:queue → {}", status_word(&v)));
+    log_print(&cfg, &format!("reconciler-flow: flow:velocity:queue → {}", status_word(&v)));
 
     // ── stage dwell ("review") ───────────────────────────────────────────────────────────
     let dwell = dwell_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.window_hours, cfg.baseline_hours);
@@ -310,9 +296,9 @@ fn run_pass() -> Result<(), String> {
         ),
         Err(e) => unobservable(e),
     };
-    let v = evaluate(&cfg, &mut state, "flow:dwell:review", dwell_raw_status);
+    let v = evaluate(&cfg, &mut state, "flow:dwell:review", fresh(&export, dwell_raw_status));
     maybe_alert(&cfg, &mut alerted, "flow:dwell:review", &v);
-    log_print(&format!("reconciler-flow: flow:dwell:review → {}", status_word(&v)));
+    log_print(&cfg, &format!("reconciler-flow: flow:dwell:review → {}", status_word(&v)));
 
     // ── round health (flip rate) ─────────────────────────────────────────────────────────
     let round_health = round_health_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.window_hours, cfg.baseline_hours);
@@ -323,9 +309,9 @@ fn run_pass() -> Result<(), String> {
         }
         Err(e) => unobservable(e),
     };
-    let v = evaluate(&cfg, &mut state, "flow:round-health", round_health_raw_status);
+    let v = evaluate(&cfg, &mut state, "flow:round-health", fresh(&export, round_health_raw_status));
     maybe_alert(&cfg, &mut alerted, "flow:round-health", &v);
-    log_print(&format!("reconciler-flow: flow:round-health → {}", status_word(&v)));
+    log_print(&cfg, &format!("reconciler-flow: flow:round-health → {}", status_word(&v)));
 
     // ── idle capacity ────────────────────────────────────────────────────────────────────
     let idle_raw_status = match slots_samples(&cfg.duckdb_bin, &cfg.spira_run) {
@@ -334,7 +320,7 @@ fn run_pass() -> Result<(), String> {
     };
     let v = evaluate(&cfg, &mut state, "flow:idle-capacity", idle_raw_status);
     maybe_alert(&cfg, &mut alerted, "flow:idle-capacity", &v);
-    log_print(&format!("reconciler-flow: flow:idle-capacity → {}", status_word(&v)));
+    log_print(&cfg, &format!("reconciler-flow: flow:idle-capacity → {}", status_word(&v)));
 
     // ── sentinel overrun ─────────────────────────────────────────────────────────────────
     let sentinel_raw_status = match sentinel_pass_wall_seconds(&cfg.duckdb_bin, &cfg.spira_run) {
@@ -343,7 +329,7 @@ fn run_pass() -> Result<(), String> {
     };
     let v = evaluate(&cfg, &mut state, "flow:sentinel-overrun", sentinel_raw_status);
     maybe_alert(&cfg, &mut alerted, "flow:sentinel-overrun", &v);
-    log_print(&format!("reconciler-flow: flow:sentinel-overrun → {}", status_word(&v)));
+    log_print(&cfg, &format!("reconciler-flow: flow:sentinel-overrun → {}", status_word(&v)));
 
     // ── rework ───────────────────────────────────────────────────────────────────────────
     // Report-only until 24h of bead-stage history exist (design: "the rework alert starts at
@@ -352,22 +338,22 @@ fn run_pass() -> Result<(), String> {
     // history counts as enough" answer.
     match rework_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.rework_window_hours) {
         Ok((reopens, landed, history_hours)) => {
-            let raw = rework_raw(&ReworkObserved { reopens, landed });
+            let raw = fresh(&export, rework_raw(&ReworkObserved { reopens, landed }));
             let v = evaluate(&cfg, &mut state, "flow:rework", raw);
             if history_hours >= cfg.baseline_hours {
                 maybe_alert(&cfg, &mut alerted, "flow:rework", &v);
             } else {
-                log_print(&format!(
+                log_print(&cfg, &format!(
                     "reconciler-flow: flow:rework → report-only, {history_hours:.1}h of {:.0}h warm-up",
                     cfg.baseline_hours
                 ));
             }
-            log_print(&format!("reconciler-flow: flow:rework → {}", status_word(&v)));
+            log_print(&cfg, &format!("reconciler-flow: flow:rework → {}", status_word(&v)));
         }
         Err(e) => {
             let v = evaluate(&cfg, &mut state, "flow:rework", unobservable(e));
             maybe_alert(&cfg, &mut alerted, "flow:rework", &v);
-            log_print(&format!("reconciler-flow: flow:rework → {}", status_word(&v)));
+            log_print(&cfg, &format!("reconciler-flow: flow:rework → {}", status_word(&v)));
         }
     }
 
@@ -390,9 +376,9 @@ fn run_pass() -> Result<(), String> {
                         baseline_n: 0,
                     }),
                 };
-                let v = evaluate(&cfg, &mut state, &key, raw);
+                let v = evaluate(&cfg, &mut state, &key, fresh(&export, raw));
                 maybe_alert(&cfg, &mut alerted, &key, &v);
-                log_print(&format!("reconciler-flow: {key} → {}", status_word(&v)));
+                log_print(&cfg, &format!("reconciler-flow: {key} → {}", status_word(&v)));
             }
         }
         Err(e) => {
@@ -400,15 +386,15 @@ fn run_pass() -> Result<(), String> {
                 let key = format!("flow:dwell-regression:{}", state_name.to_ascii_lowercase());
                 let v = evaluate(&cfg, &mut state, &key, unobservable(e.clone()));
                 maybe_alert(&cfg, &mut alerted, &key, &v);
-                log_print(&format!("reconciler-flow: {key} → {}", status_word(&v)));
+                log_print(&cfg, &format!("reconciler-flow: {key} → {}", status_word(&v)));
             }
         }
     }
 
     let _ = save_state(&cfg.state_path, &state);
     let _ = save_alerted(&cfg.alerted_path, &alerted);
-    let elapsed = unix_now().saturating_sub(cfg.now_secs);
-    log_print(&format!("reconciler-flow: pass complete ({elapsed}s)"));
+    let elapsed = clock::now_secs(&cfg.date_bin).saturating_sub(cfg.now_secs);
+    log_print(&cfg, &format!("reconciler-flow: pass complete ({elapsed}s)"));
 
     drop(lock_file);
     Ok(())

@@ -15,7 +15,7 @@
 //! start instead, so a site near the top of a short file is not refused only for being
 //! near the top.
 
-use std::cell::Cell;
+use crate::SyncCell as Cell;
 
 use crate::{Entry, Finding, LintError, Rule, Tree};
 
@@ -183,4 +183,10 @@ mod tests {
         assert_eq!(r.check(&tree), Ok(vec![]));
         assert_eq!(r.checked(), Some((1, "files".to_string())));
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(IncidentCauseLint::default()),
+    ]
 }

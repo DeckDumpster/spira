@@ -48,15 +48,17 @@ pub struct Config {
     pub token: Option<String>,
 }
 
-/// Reads [`Config`] from `SCCACHE_DAV_ADDR` (required), `SCCACHE_DAV_ROOT` (required) and
+/// Reads [`Config`] from `SCCACHE_DAV_ADDR` (required; `auto:PORT` binds this host's address as
+/// the route resolves it now — see [`spec_drifted`]), `SCCACHE_DAV_ROOT` (required) and
 /// `SCCACHE_DAV_TOKEN` (optional). Fails closed: a missing required variable, or an address
 /// that starts with `0.0.0.0`, is an `Err` naming what is wrong rather than a silent default.
 pub fn config_from_env() -> Result<Config, String> {
-    let addr = std::env::var("SCCACHE_DAV_ADDR")
-        .map_err(|_| "SCCACHE_DAV_ADDR must be set (e.g. 192.168.1.56:9431)".to_string())?;
-    if addr.trim().is_empty() {
-        return Err("SCCACHE_DAV_ADDR must be set (e.g. 192.168.1.56:9431)".to_string());
+    let spec = std::env::var("SCCACHE_DAV_ADDR")
+        .map_err(|_| "SCCACHE_DAV_ADDR must be set (auto:PORT, or ip:port)".to_string())?;
+    if spec.trim().is_empty() {
+        return Err("SCCACHE_DAV_ADDR must be set (auto:PORT, or ip:port)".to_string());
     }
+    let addr = spira_config::hostaddr::resolve_hostport(&spec)?;
     if addr.starts_with("0.0.0.0") || addr.starts_with('*') {
         return Err(format!(
             "SCCACHE_DAV_ADDR={addr:?} — this store binds to the LAN address only, never a wildcard"
@@ -69,6 +71,32 @@ pub fn config_from_env() -> Result<Config, String> {
     }
     let token = std::env::var("SCCACHE_DAV_TOKEN").ok().filter(|t| !t.is_empty());
     Ok(Config { addr, root: PathBuf::from(root), token })
+}
+
+/// True when `spec` is `auto:…` and the address it resolves to is no longer `bound`: the
+/// lease moved, and the process must exit so its supervisor binds the new one.
+pub fn spec_drifted(spec: &str, bound: &str) -> bool {
+    spira_config::hostaddr::resolve_hostport(spec).map(|now| now != bound).unwrap_or(false)
+}
+
+/// The addresses to bind: the LAN one, plus `tailnet` (`SPIRA_SCCACHE_DAV_TAILNET_ADDR`) when
+/// set. A wildcard is refused for either; a tailnet address equal to the LAN one binds once.
+pub fn listen_addrs(lan: &str, tailnet: &str) -> Result<Vec<String>, String> {
+    let tailnet = tailnet.trim();
+    let mut out = vec![lan.to_string()];
+    if tailnet.is_empty() || tailnet == lan {
+        return Ok(out);
+    }
+    if tailnet.starts_with("0.0.0.0") || tailnet.starts_with('*') {
+        return Err(format!("SPIRA_SCCACHE_DAV_TAILNET_ADDR={tailnet:?} — never a wildcard"));
+    }
+    out.push(tailnet.to_string());
+    Ok(out)
+}
+
+/// `SPIRA_SCCACHE_DAV_TAILNET_ADDR`, through the one door onto config; empty means no tailnet listener.
+pub fn tailnet_addr_from_config() -> Result<String, String> {
+    spira_config::process::cfg("SPIRA_SCCACHE_DAV_TAILNET_ADDR")
 }
 
 pub struct AppState {
@@ -214,6 +242,9 @@ async fn get_file(fs_path: &Path, head_only: bool) -> Response {
                 .into_response();
         }
     };
+    if !head_only {
+        mark_read(fs_path);
+    }
     let len = data.len();
     let body = if head_only { Body::empty() } else { Body::from(data) };
     Response::builder()
@@ -222,6 +253,72 @@ async fn get_file(fs_path: &Path, head_only: bool) -> Response {
         .header(header::CONTENT_LENGTH, len)
         .body(body)
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// A hit refreshes the entry's mtime, which is the recency [`evict_to_cap`] orders by.
+fn mark_read(fs_path: &Path) {
+    if let Ok(f) = std::fs::File::open(fs_path) {
+        let _ = f.set_modified(SystemTime::now());
+    }
+}
+
+/// How often the store is swept against its cap.
+pub const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// An in-flight PUT's tmp file ([`write_atomic`]) is never evicted.
+fn is_inflight(p: &Path) -> bool {
+    p.extension().is_some_and(|e| e.to_string_lossy().starts_with("tmp-"))
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Evicted {
+    pub files: u64,
+    pub bytes: u64,
+    /// What the store held after the sweep.
+    pub remaining: u64,
+}
+
+/// Deletes the least recently used files under `root` until the store holds at most
+/// `cap_bytes`. Directories stay: sccache's MKCOL walk reuses them.
+pub fn evict_to_cap(root: &Path, cap_bytes: u64) -> Evicted {
+    let mut files: Vec<(SystemTime, u64, PathBuf)> = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            let Ok(m) = std::fs::symlink_metadata(&p) else { continue };
+            if m.is_dir() {
+                stack.push(p);
+            } else if m.is_file() && !is_inflight(&p) {
+                files.push((m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len(), p));
+            }
+        }
+    }
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    files.sort();
+    let mut out = Evicted::default();
+    for (_, len, p) in files {
+        if total <= cap_bytes {
+            break;
+        }
+        if std::fs::remove_file(&p).is_ok() {
+            total -= len;
+            out.files += 1;
+            out.bytes += len;
+        }
+    }
+    out.remaining = total;
+    out
+}
+
+/// `SPIRA_SCCACHE_DAV_MAX_GB`, through the one door onto config; no default here.
+pub fn cap_bytes_from_config() -> Result<u64, String> {
+    let gb = spira_config::process::cfg_parse::<u64>("SPIRA_SCCACHE_DAV_MAX_GB")?;
+    if gb == 0 {
+        return Err("SPIRA_SCCACHE_DAV_MAX_GB = 0 would empty the store on every sweep".to_string());
+    }
+    Ok(gb.saturating_mul(1 << 30))
 }
 
 /// Writes via a tmp file in the same directory, then renames over the target — so a reader

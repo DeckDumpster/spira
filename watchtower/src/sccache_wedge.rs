@@ -105,7 +105,7 @@ pub fn run(now: i64, proc_root: &Path, db: &str, home_repo: &str, incident_sh: &
         .priority(2)
         .reference("incident:sccache-wedge")
         .cause("sccache-wedge");
-    incident::file(incident_sh, &f);
+    incident::alarm(incident_sh, &f);
 }
 
 #[cfg(test)]

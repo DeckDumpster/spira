@@ -126,3 +126,9 @@ mod tests {
         );
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(FenceScripts),
+    ]
+}

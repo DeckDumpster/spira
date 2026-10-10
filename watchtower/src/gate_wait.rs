@@ -98,6 +98,40 @@ pub fn silence(gate_log_text: &str, submitted_beads: &[crate::lc::BeadRow], now:
     Some(Silence { submitted, last_gate: last_gate.map(str::to_string) })
 }
 
+pub struct Slow {
+    pub p90: i64,
+    pub rows: usize,
+}
+
+fn field_seconds(line: &str, key: &str) -> Option<i64> {
+    let rest = &line[line.find(key)? + key.len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// The gate's own wall (`ran=` less `waited=`) at the 90th percentile (nearest rank) over the
+/// window, when it exceeds `limit_s` across at least `min_rows` rows: the five-minute ceiling
+/// is a distribution, and a row-by-row alarm would page on the slow tail it already tolerates.
+pub fn slow(gate_log_text: &str, now: i64, window_s: i64, limit_s: i64, min_rows: usize) -> Option<Slow> {
+    let since = fmt_iso(now - window_s);
+    let mut walls: Vec<i64> = gate_log_text
+        .lines()
+        .filter(|l| {
+            l.split_whitespace()
+                .next()
+                .is_some_and(|ts| ts >= since.as_str() && is_iso_timestamp(ts))
+        })
+        .filter_map(|l| Some((field_seconds(l, " ran=")? - field_seconds(l, " waited=").unwrap_or(0)).max(0)))
+        .collect();
+    if walls.len() < min_rows.max(1) {
+        return None;
+    }
+    walls.sort_unstable();
+    let rank = (walls.len() * 9).div_ceil(10);
+    let p90 = walls[rank - 1];
+    (p90 > limit_s).then_some(Slow { p90, rows: walls.len() })
+}
+
 pub fn disp(oldest_wait: Option<i64>) -> String {
     match oldest_wait {
         Some(w) => format!("{w}s"),
@@ -118,6 +152,20 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_700_100_000;
+
+    #[test]
+    fn slow_pages_on_the_p90_of_ran_less_waited_and_not_on_a_lone_outlier() {
+        let t = fmt_iso(NOW - 10);
+        let row = |ran: i64, waited: i64| format!("{t} spira sp-a waited={waited}s ran={ran}s rc=0 pass\n");
+        let fast: String = (0..9).map(|_| row(100, 0)).collect();
+        let one_outlier = format!("{fast}{}", row(1660, 0));
+        assert!(slow(&one_outlier, NOW, 86400, 300, 10).is_none(), "p90 of nine fast and one slow is fast");
+        let mostly_slow: String = (0..8).map(|_| row(100, 0)).chain((0..2).map(|_| row(400, 0))).collect();
+        assert_eq!(slow(&mostly_slow, NOW, 86400, 300, 10).map(|s| (s.p90, s.rows)), Some((400, 10)));
+        let queued: String = (0..10).map(|_| row(900, 700)).collect();
+        assert!(slow(&queued, NOW, 86400, 300, 10).is_none(), "queue wait is not the gate's wall");
+        assert!(slow(&mostly_slow, NOW, 86400, 300, 11).is_none(), "too few rows to call a distribution");
+    }
 
     #[test]
     fn picks_the_longest_wait_inside_the_window() {

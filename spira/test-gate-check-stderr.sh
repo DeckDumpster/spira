@@ -15,7 +15,7 @@
 # a working fixture: zero stderr lines required.
 #
 # tier: T1
-# covers: spira/gate-check.sh
+# covers: spira/gate-check.sh UC-landing-merge-queue-52
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -42,9 +42,10 @@ cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 echo "positive control — broken environment produces stderr:"
 
 touch "$TMP/empty-map"
-absent_err="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" \
-    SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$TMP/empty-map" \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_BD="$TMP/no-such-binary" \
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$TMP/empty-map" \
+    SPIRA_BD="$TMP/no-such-binary"
+absent_err="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" \
+    SPIRA_CONF="$TMP/no.conf" \
     bash "$SH/gate-check.sh" 2>&1 >/dev/null || true)"
 
 if [ -n "$absent_err" ]; then
@@ -64,8 +65,9 @@ testdb_seed <<'JSONL'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira","plan"]}
 JSONL
 
-clean_err="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" \
-    SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$TMP/empty-map" \
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$TMP/empty-map" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+clean_err="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" \
     SPIRA_CONF="$TMP/no.conf" \
     bash "$SH/gate-check.sh" 2>&1 >/dev/null)"
 

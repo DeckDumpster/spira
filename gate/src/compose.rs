@@ -21,6 +21,9 @@ pub struct Member {
     pub dir: String,
     /// Names of the workspace members it depends on (normal, dev or build).
     pub deps: Vec<String>,
+    /// The subset of `deps` that goes into its binaries (normal or build, not dev): the
+    /// source closure of a gate tool (toolkey.rs).
+    pub build_deps: Vec<String>,
 }
 
 /// What one changed path is, for composition.
@@ -237,7 +240,7 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
         .and_then(|p| p.as_array())
         .ok_or("cargo metadata: no packages")?;
     // (name, absolute dir)
-    let mut raw: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut raw: Vec<(String, String, Vec<(String, bool)>)> = Vec::new();
     for p in pkgs {
         let id = p.get("id").and_then(|x| x.as_str()).unwrap_or("");
         if !members.contains(id) {
@@ -261,8 +264,11 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
             .and_then(|d| d.as_array())
             .into_iter()
             .flatten()
-            .filter_map(|d| d.get("path").and_then(|x| x.as_str()))
-            .map(|s| s.trim_end_matches('/').to_string())
+            .filter_map(|d| {
+                let path = d.get("path").and_then(|x| x.as_str())?;
+                let dev = d.get("kind").and_then(|k| k.as_str()) == Some("dev");
+                Some((path.trim_end_matches('/').to_string(), dev))
+            })
             .collect();
         if name.is_empty() {
             return Err("cargo metadata: a member with no name".into());
@@ -279,16 +285,21 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
     let mut out: Vec<Member> = raw
         .iter()
         .map(|(n, d, deps)| {
-            let mut deps: Vec<String> = deps
-                .iter()
-                .filter_map(|dd| by_dir.get(dd).cloned())
-                .collect();
-            deps.sort();
-            deps.dedup();
+            let names = |all: bool| -> Vec<String> {
+                let mut v: Vec<String> = deps
+                    .iter()
+                    .filter(|(_, dev)| all || !dev)
+                    .filter_map(|(dd, _)| by_dir.get(dd).cloned())
+                    .collect();
+                v.sort();
+                v.dedup();
+                v
+            };
             Member {
                 name: n.clone(),
                 dir: rel(d),
-                deps,
+                deps: names(true),
+                build_deps: names(false),
             }
         })
         .collect();
@@ -379,6 +390,78 @@ pub fn gate_string(comp: &Composition, gate: &str) -> (String, bool) {
         out = "true".into();
     }
     (out, dropped)
+}
+
+/// Top-level `&&` elements of a gate string, or `None` when any element is not a `gate.steps`
+/// step (a `bash` script, a quoted tool variable, a `{ }` group) or the string chains with
+/// anything but `&&`: such a string keeps its own short-circuit semantics.
+fn chain_steps(cmd: &str) -> Option<Vec<String>> {
+    let (mut steps, mut cur, mut depth) = (Vec::new(), String::new(), 0i32);
+    let c: Vec<char> = cmd.chars().collect();
+    let mut i = 0;
+    while i < c.len() {
+        match c[i] {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            '&' if depth == 0 && c.get(i + 1) == Some(&'&') => {
+                steps.push(std::mem::take(&mut cur));
+                i += 2;
+                continue;
+            }
+            '|' | ';' | '\n' if depth == 0 => return None,
+            _ => {}
+        }
+        cur.push(c[i]);
+        i += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+    steps.push(cur);
+    let steps: Vec<String> = steps.into_iter().map(|s| s.trim().to_string()).collect();
+    let ok = |s: &String| s.starts_with("bash ") || s.starts_with("\"$") || s.starts_with("{ ");
+    (steps.len() > 1 && steps.iter().all(ok)).then_some(steps)
+}
+
+/// The unit a step reports under: the fence it runs, or `suites` for the selector's group.
+fn step_label(step: &str) -> String {
+    if step.contains("SPIRA_TESTENV_BIN") || step.contains("SPIRA_SELECT_BIN") {
+        return "suites".into();
+    }
+    if step.contains("SPIRA_LINT_BIN") {
+        return crate::fence::LINT.into();
+    }
+    if step.contains("SPIRA_GUARD_BIN") {
+        return crate::fence::GUARD.into();
+    }
+    let stem = |w: &str| w.rsplit('/').next().unwrap_or(w).trim_end_matches(".sh").to_string();
+    match crate::parse::bash_paths(step).first() {
+        Some(p) => stem(p),
+        None => step
+            .split_whitespace()
+            .next()
+            .map(|w| w.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect())
+            .filter(|s: &String| !s.is_empty())
+            .unwrap_or_else(|| "step".into()),
+    }
+}
+
+/// THE VERDICT IS THE SET OF RESULTS, NOT THE FIRST FAILURE. A gate string that is a plain
+/// `&&` chain of steps runs every step and prints one `gate-step <ok|RED> rc=<n> :: <unit>`
+/// line for each; the exit is the first non-zero status, except that a step's 75 (it could
+/// not judge) wins, because a red elsewhere must never let an unjudged step read as passed.
+/// Any other string is returned unchanged.
+pub fn run_all(cmd: &str) -> String {
+    let Some(steps) = chain_steps(cmd) else { return cmd.to_string() };
+    let mut s = String::from("_g_rc=0; _g_hard=0\n");
+    for st in &steps {
+        let l = step_label(st);
+        s.push_str(&format!(
+            "( {st}\n); _g_r=$?; if [ \"$_g_r\" -eq 0 ]; then echo \"gate-step ok rc=0 :: {l}\"; else echo \"gate-step RED rc=$_g_r :: {l}\"; [ \"$_g_rc\" -eq 0 ] && _g_rc=$_g_r; [ \"$_g_r\" -eq 75 ] && _g_hard=75; fi\n"
+        ));
+    }
+    s.push_str("[ \"$_g_hard\" -ne 0 ] && exit \"$_g_hard\"; exit \"$_g_rc\"");
+    s
 }
 
 /// The unit phases' commands, in order: build (the `aeon` profile), then the tests.
@@ -500,6 +583,29 @@ pub fn drop_declared_skips(required: &[String], allowlist: &str) -> (Vec<String>
     required.iter().cloned().partition(|s| !declared.contains(s.as_str()))
 }
 
+/// Split `required` into the suites that fit `budget` seconds, by their recorded wall time
+/// (`secs`), and the ones deferred to the round with that time. A suite with no recorded time
+/// is kept: nothing says it is slow.
+pub fn defer_over_budget(
+    required: &[String],
+    secs: &HashMap<String, f64>,
+    budget: u64,
+) -> (Vec<String>, Vec<(String, u64)>) {
+    let mut left = budget as f64;
+    let (mut kept, mut deferred) = (Vec::new(), Vec::new());
+    for s in required {
+        match secs.get(s) {
+            Some(&t) if t > left => deferred.push((s.clone(), t.ceil() as u64)),
+            Some(&t) => {
+                left -= t;
+                kept.push(s.clone());
+            }
+            None => kept.push(s.clone()),
+        }
+    }
+    (kept, deferred)
+}
+
 /// The required suites that `out` does not show satisfied, in `required`'s order. A suite
 /// reported twice counts by its last report (the re-entry phase re-runs what the gate string
 /// deferred).
@@ -536,6 +642,43 @@ pub fn reentry_command(suites: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn run_all_runs_every_step_of_the_checked_in_chain_and_labels_each() {
+        let d = crate::def::parse(&std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate.steps")).unwrap()).unwrap();
+        let steps = chain_steps(&d.command()).expect("the checked-in chain is a plain && chain");
+        assert_eq!(steps.len(), d.steps.len());
+        let s = run_all(&d.command());
+        for l in ["spira-lint", "lifecycle-guard", "build-fence", "boundary", "suites"] {
+            assert!(s.contains(&format!(":: {l}\"")), "{l}: {s}");
+        }
+    }
+
+    #[test]
+    fn run_all_reports_every_unit_after_a_red_one() {
+        let s = run_all("bash a/f.sh && bash a/g.sh && bash a/h.sh");
+        let t = testkit::TempDir::new("gate-runall");
+        let dir = t.path().to_path_buf();
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+        std::fs::write(dir.join("a/f.sh"), "exit 0").unwrap();
+        std::fs::write(dir.join("a/g.sh"), "exit 3").unwrap();
+        std::fs::write(dir.join("a/h.sh"), "exit 0").unwrap();
+        let o = std::process::Command::new("bash").arg("-c").arg(&s).current_dir(&dir).output().unwrap();
+        let out = String::from_utf8_lossy(&o.stdout).into_owned();
+        assert_eq!(o.status.code(), Some(3), "{out}");
+        assert_eq!(
+            crate::parse::step_units(&out),
+            vec![("f".into(), false), ("g".into(), true), ("h".into(), false)]
+        );
+    }
+
+    #[test]
+    fn run_all_leaves_a_string_it_cannot_split_alone() {
+        for c in ["true", "bash a/b.sh || bash a/c.sh", "bash a/b.sh; bash a/c.sh", "echo x && echo y"] {
+            assert_eq!(run_all(c), c);
+        }
+    }
+
+    #[test]
     fn a_changed_suite_is_named_and_a_helper_is_not() {
         let c = |p: &str| Changed { path: p.into(), exec: false };
         let got = touched_suites(&[c("spira/test-b.sh"), c("spira/testlib/x.sh"), c("spira/test-a.sh"), c("spira/test-b.sh"), c("gate/src/a.rs")]);
@@ -549,6 +692,7 @@ mod tests {
             name: name.into(),
             dir: dir.into(),
             deps: deps.iter().map(|s| s.to_string()).collect(),
+            build_deps: deps.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -1001,6 +1145,19 @@ cargo: test tests::x ... ok";
             unproven("  test-a.sh ok 3s\n  test-a.sh RED rc=1", &req),
             req
         );
+    }
+
+    #[test]
+    fn a_named_suite_recorded_over_the_remaining_budget_is_deferred_with_its_time() {
+        let secs: HashMap<String, f64> =
+            [("test-a.sh", 100.0), ("test-b.sh", 120.0), ("test-c.sh", 30.0)]
+                .iter()
+                .map(|(k, v)| (k.to_string(), *v))
+                .collect();
+        let (kept, deferred) =
+            defer_over_budget(&v(&["test-a.sh", "test-b.sh", "test-c.sh", "test-new.sh"]), &secs, 190);
+        assert_eq!(kept, v(&["test-a.sh", "test-c.sh", "test-new.sh"]));
+        assert_eq!(deferred, vec![("test-b.sh".to_string(), 120)]);
     }
 
     #[test]

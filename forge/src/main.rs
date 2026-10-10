@@ -46,6 +46,7 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "pr-list-open" => pr_list_open(gh, repo),
         "pr-mergeability" => pr_mergeability(gh, repo, arg(args, 0)),
         "pr-state" => pr_state(gh, repo, arg(args, 0)),
+        "pr-red" => pr_red(gh, repo, arg(args, 0)),
         "pr-automerge" => pr_automerge(gh, repo, arg(args, 0)),
         "check-status" => check_status(gh, proc, repo, arg(args, 1)),
         "run-id" => run_id(gh, repo, arg(args, 0)),
@@ -55,7 +56,17 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "queued-since" => queued_since(gh, repo, arg(args, 0)),
         "runs-active" => runs_active(gh, repo),
         "stranded-runners" => {
-            let mut min_age = forge::real::env("SPIRA_STRANDED_RUNNER_MIN_AGE").and_then(|v| v.parse().ok()).unwrap_or(300u64);
+            // SPIRA_STRANDED_RUNNER_MIN_AGE is a registered config key (spira/conf.d) — the
+            // one source of config, through `spira_config::process::cfg_parse`, never a
+            // competing environment override or a crate-local default (per Ryan
+            // 2026-10-05).
+            let mut min_age: u64 = match spira_config::process::cfg_parse("SPIRA_STRANDED_RUNNER_MIN_AGE") {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("forge: {e}");
+                    return Out { code: 2, lines: vec![] };
+                }
+            };
             let mut it = args.iter();
             while let Some(a) = it.next() {
                 if a == "--min-age" {
@@ -76,7 +87,15 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "dispatch" => dispatch_cmd(gh, repo, arg(args, 0), arg(args, 1)),
         "fail-lines" => fail_lines(gh, proc, repo, arg(args, 0), arg(args, 1)),
         "branch-protect" => {
-            let app_id = forge::real::env("SPIRA_QUEUE_ACTIONS_APP_ID").unwrap_or_else(|| "15368".into());
+            // SPIRA_QUEUE_ACTIONS_APP_ID is a registered config key — the one source of
+            // config, never a crate-local literal default on top of it.
+            let app_id = match spira_config::process::cfg("SPIRA_QUEUE_ACTIONS_APP_ID") {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("forge: {e}");
+                    return Out { code: 2, lines: vec![] };
+                }
+            };
             branch_protect(gh, repo, arg(args, 0), &app_id)
         }
         "branch-protection-status" => branch_protection_status(gh, repo, arg(args, 0)),

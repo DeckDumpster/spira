@@ -13,8 +13,8 @@
 # that the certified-unbatched reopen actually lands (status, assignee, comment body) and
 # that abandon's return-to-CERTIFIED path makes NO bd call at all.
 #
-# tier: T3
-# covers: queue/src/* forge/src/* spira/conf.sh
+# tier: T2
+# covers: queue/src/* forge/src/* spira/conf.sh UC-landing-merge-queue-29
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -85,22 +85,22 @@ RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
 run() {
+    # SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_QUEUE_DIR/
+    # SPIRA_FORGE are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+    # via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="${SPIRA_DB:-/nonexistent}" SPIRA_BD="$SH/bd-stub.sh" \
+        SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
+        SPIRA_FORGE="$SH/forge-fake.sh"
     env -i ${LCENV:-$(lcfix_env)} PATH="$SH:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_DB="${SPIRA_DB:-/nonexistent}" \
-        SPIRA_BD="$SH/bd-stub.sh" \
         BD_LOG="$BD_LOG" \
-        SPIRA_HOME_REPO="$REPONAME" \
-        SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_QUEUE_DIR="$QUEUEDIR" \
-        SPIRA_FORGE="$SH/forge-fake.sh" \
         FORGE_LOG="$FORGE_LOG" \
         RUNS_FILE="$RUNS_FILE" \
         CANCEL_FAIL="$CANCEL_FAIL" \
         BEADS_ACTOR="aeon-abandontest" \
         SPIRA_EVENT_COOLDOWN=0 \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 
@@ -200,7 +200,8 @@ out="$(run eject sp-ej-cert --reason 'holding for a fix')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 for certified, unbatched bead" || bad "exit 0" "rc=$rc out=$out"
 want "reports the certified-unbatched case" "certified, not yet batched" "$out"
 is   "the withdrawn bead is returned to REWORK on spira-lc" "REWORK" "$(lcfix_state sp-ej-cert)"
-want "bd reopen called" "reopen sp-ej-cert" "$(cat "$BD_LOG")"
+# The reopen door (sp-swh8b8) moves the row, then reopens the store: bd sees an update, never a raw reopen.
+want "the store is reopened after the row" "update sp-ej-cert --status open" "$(cat "$BD_LOG")"
 
 echo
 echo "eject: --suites reaches the bead's comment, and the bead is returned to REWORK:"
@@ -209,7 +210,7 @@ lcfix_seed sp-ej-suites CERTIFIED "$TIP03"
 out="$(run eject sp-ej-suites --reason 'suite reds' --suites 'test-x.sh,test-y.sh')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with --suites" || bad "exit 0 with --suites" "rc=$rc out=$out"
 is   "REWORK on spira-lc with --suites" "REWORK" "$(lcfix_state sp-ej-suites)"
-want "the reopen is recorded as a judged eject" "eject-red" "$(cat "$BD_LOG")"
+want "the reopen is recorded as a judged eject" "eject-red" "$(lcfix_fact_causes sp-ej-suites reopen)"
 want "the comment names the suites recertification must force" \
     "Recertification will force these suites regardless of SPIRA_CERTIFY_SUITES: test-x.sh,test-y.sh" "$(cat "$BD_LOG")"
 
@@ -482,11 +483,16 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 
 real_run() {
-    env -i $(lcfix_env) PATH="$SH:$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
+    # SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_HOME_REPO/SPIRA_REPO_MAP/SPIRA_QUEUE_DIR/
+    # SPIRA_FORGE are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+    # via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD:-bd}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
-        SPIRA_FORGE="$SH/forge-fake.sh" FORGE_LOG="$FORGE_LOG" \
+        SPIRA_FORGE="$SH/forge-fake.sh"
+    env -i $(lcfix_env) PATH="$SH:$PATH" HOME="$TMP" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" \
+        FORGE_LOG="$FORGE_LOG" \
+        SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 
@@ -508,8 +514,8 @@ is "real bd: the ejected bead is REWORK on spira-lc" "REWORK" "$(lcfix_state sp-
 
 bead_st="$(field sp-ej01 status)"
 [ "$bead_st" = "closed" ] && ok "real bd: bd status is left unmoved by eject" || bad "real bd: bd status unmoved" "status=$bead_st"
-assignee="$(field sp-ej01 assignee)"
-[ -z "$assignee" ] && ok "real bd: assignee cleared" || bad "real bd: assignee cleared" "got $assignee"
+# (No assignee check: a batch eject hands the bead back on its lifecycle row; bd's assignee is
+# content no claim reads, and no reopen path writes it any more — sp-swh8b8.)
 comment_out="$(B comments sp-ej01 2>/dev/null || true)"
 [ -n "$comment_out" ] && ok "real bd: comment posted to bead" || bad "real bd: comment posted" "no output from bd comments"
 

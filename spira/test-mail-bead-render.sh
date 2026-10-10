@@ -37,13 +37,30 @@ testdb_require test-mail-bead-render
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up mail-bead-render || { echo "test-mail-bead-render: could not build fixture database"; exit 1; }
+lc_close_stub "$TMP/lc" "${SPIRA_BD:-}" "${SPIRA_DB:-}"
 
-export SPIRA_MAIL="$TMP/mail"
-export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+SPIRA_MAIL="$TMP/mail"
+SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+SPIRA_ID_PREFIX="sp"
+SPIRA_RUN="$TMP/run"
+mkdir -p "$TMP/watchd"
+# SPIRA_CONCIERGE_INBOX undeclared resolves to the complete fixture's
+# /fixture/userhome/spira/run/watchd/concierge-inbox.log — mail appends every send there, and
+# the write fails outright with no such directory (sfail round 3, pattern 7).
+# SPIRA_MAIL_MUTE=0: the complete fixture's own declared default is true, which silently
+# writes every "rendered block leads the body" message straight to cur/ flagged Seen instead
+# of new/ — body_of() only ever looks in new/, so every render assertion read as empty even
+# though the block was rendered correctly (verified by hand: the muted file in cur/ carries
+# the full "sp-titl01: ... / Status: open / Priority: P3" block).
+tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
+    SPIRA_ID_PREFIX="$SPIRA_ID_PREFIX" SPIRA_RUN="$SPIRA_RUN" \
+    SPIRA_MAIL_INDEX="$SPIRA_MAIL/index" SPIRA_MAIL_MUTE=0 \
+    SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""
-export SPIRA_ID_PREFIX="sp"
-export SPIRA_RUN="$TMP/run"
-export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
+export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite" SPIRA_MAIL_OPERATOR_CONSIDERED="test-suite"
+# SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
+# <home>/conf.d (sfail round 2, pattern 1); $HERE already carries the real one.
+export SPIRA_HOME="$HERE"
 
 run() { mail "$@"; }
 
@@ -123,9 +140,9 @@ printf '{"id":"%s","title":"%s","status":"closed","issue_type":"bug","priority":
 
 _subj="Close GitHub issue github:example/repo#1 for bead $REG_ID"
 _dflt="post a comment explaining the resolution and close the issue"
-out="$(printf '## Question\n%s\n\n## Default\n%s\n' "$_subj" "$_dflt" \
+out="$(printf '## Question\n%s\n\n## Default\n%s\n\n## Class basis\nneeds a policy ruling\n' "$_subj" "$_dflt" \
     | run send operator --from "Landing gate <gate@spira>" --subject "$_subj" \
-        --kind question --default "$_dflt" --bead "$REG_ID" 2>&1)"; rc=$?
+        --kind question --class policy --default "$_dflt" --bead "$REG_ID" 2>&1)"; rc=$?
 wantrc "regression: send succeeds" 0 "$rc"
 body4="$(body_of operator)"
 want "regression: rendered block carries the bead's real title" "$REG_TITLE"    "$body4"
@@ -143,9 +160,9 @@ printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","priority"
     "$OTHER_ID" "$OTHER_TITLE" \
     | testdb_seed || { echo "test-mail-bead-render: stranger seed failed"; exit 1; }
 _subj="Fix found on $OTHER_ID: $KNOWN_ID rebase loop x3"
-out="$(printf '## Question\n%s\n\n## Default\nsplit it\n' "$_subj" \
+out="$(printf '## Question\n%s\n\n## Default\nsplit it\n\n## Class basis\nneeds a policy ruling\n' "$_subj" \
     | run send operator --from "Landing gate <gate@spira>" --subject "$_subj" \
-        --kind question --default "split it" --bead "$KNOWN_ID" 2>&1)"; rc=$?
+        --kind question --class policy --default "split it" --bead "$KNOWN_ID" 2>&1)"; rc=$?
 wantrc "stranger-title: send succeeds" 0 "$rc"
 body5="$(body_of operator)"
 want   "stranger-title: subject bead's block renders" "$KNOWN_ID: $KNOWN_TITLE" "$body5"

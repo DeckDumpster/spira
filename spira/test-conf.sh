@@ -27,7 +27,7 @@
 #
 # defect: sp-gsmx.2, sp-0v26
 # tier: T1
-# covers: spira/conf.sh
+# covers: spira/conf.sh UC-config-store-preflight-01 UC-config-store-preflight-03 UC-config-store-preflight-04 UC-config-store-preflight-09 UC-config-store-preflight-10
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -40,19 +40,45 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 HARNESS="$TMP/harness"
 mkdir -p "$HARNESS/spira"
 ln -s "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so this fixture needs one too (sfail round 3, pattern 1).
+ln -s "$HERE/conf.d" "$HARNESS/spira/conf.d"
 printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 
-# The "config file" block below exercises conf.sh's auto-convert-from-spira.conf path,
-# which calls spira-config by name on this suite's PATH (sp-gypjk).
+# THE ONE SOURCE OF CONFIG applies to conf.sh too: every registered key below is now read
+# only from SPIRA_TOML, never the environment, and there is no legacy spira.conf tier left
+# to auto-convert (spira-config::locate drops it entirely — "no legacy spira.conf, no
+# shipped example"). SPIRA_WATCHERS is registered and fixed for the whole suite, so it is
+# declared once into the suite's own override file (the second SPIRA_TOML layer testlib.sh
+# already set up).
+tl_config SPIRA_WATCHERS="$HARNESS/spira/watchers"
 
-# Load conf.sh in a subprocess and print the value of the requested key.
+# Load conf.sh in a subprocess and print the value of the requested key. "$@" simulates an
+# override: a registered SPIRA_* name is written into a fresh, call-scoped toml layer (the
+# same KEY -> spira.key convention tl_config uses) so conf.sh sees it through SPIRA_TOML;
+# a non-registered identity var (SPIRA_REPO) or a plain env var (XDG_DATA_HOME) still rides
+# the env -i prefix, since neither is a registered config key.
 conf_val() {
     local key="$1"; shift
-    env -i "$@" PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+    local override="$TMP/conf_val-override.toml"
+    printf '[spira]\n' > "$override"
+    local -a env_extra=()
+    local kv k v d
+    for kv in "$@"; do
+        k="${kv%%=*}"; v="${kv#*=}"
+        case "$k" in
+            SPIRA_REPO|XDG_DATA_HOME)
+                env_extra+=("$kv") ;;
+            *)
+                d="spira.$(printf '%s' "${k#SPIRA_}" | tr '[:upper:]' '[:lower:]')"
+                spira-config set "$d" "$v" "$override" >/dev/null ;;
+        esac
+    done
+    env -i SPIRA_TOML="$SPIRA_TOML:$override" "${env_extra[@]}" PATH="$PATH" HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HARNESS/spira" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${${key}:-}\"" 2>/dev/null
+    rm -f "$override"
 }
 
 # ==========================================================================
@@ -64,215 +90,18 @@ isne "SPIRA_PROD default is non-empty" "" "$prod_default"
 
 # ==========================================================================
 echo
-echo "env wins — SPIRA_PROD set in environment overrides the default:"
+echo "a declared SPIRA_PROD is what conf.sh exports:"
 # ==========================================================================
 custom_prod="$TMP/my-own-prod/spira"
 got="$(conf_val SPIRA_PROD SPIRA_PROD="$custom_prod")"
-is "env-set SPIRA_PROD wins" "$custom_prod" "$got"
+is "the declared SPIRA_PROD is exported" "$custom_prod" "$got"
 
 # ==========================================================================
-echo
-echo "default is derived — changing SPIRA_WORKSPACES changes the default:"
-# ==========================================================================
-ws_a="$TMP/workspace-a"
-ws_b="$TMP/workspace-b"
-prod_a="$(conf_val SPIRA_PROD SPIRA_WORKSPACES="$ws_a")"
-prod_b="$(conf_val SPIRA_PROD SPIRA_WORKSPACES="$ws_b")"
-isne "default changes with SPIRA_WORKSPACES" "$prod_a" "$prod_b"
-want "default includes SPIRA_WORKSPACES path" "$ws_a" "$prod_a"
-want "default includes SPIRA_WORKSPACES path" "$ws_b" "$prod_b"
-
-# ==========================================================================
-echo
-echo "config file — SPIRA_PROD from spira.conf wins over derived default:"
-# ==========================================================================
-CONF_FILE="$TMP/spira.conf"
-conf_prod="$TMP/conf-chosen/spira"
-printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\n' "$conf_prod" > "$CONF_FILE"
-got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" \
-    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
-is "config-file SPIRA_PROD wins over derived default" "$conf_prod" "$got"
-
-# env still overrides the config file
-override="$TMP/env-overrides/spira"
-got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" SPIRA_PROD="$override" \
-    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
-is "env wins over config file" "$override" "$got"
-
-# ==========================================================================
-echo
-echo "SPIRA_INSTANCE — defaults to 'prod' when unset, qualifies SPIRA_DB and SPIRA_RUN:"
-# ==========================================================================
-# Positive control: conf.sh must set SPIRA_INSTANCE at all.
-inst_default="$(conf_val SPIRA_INSTANCE)"
-is "SPIRA_INSTANCE default is 'prod'" "prod" "$inst_default"
-
-# An explicit instance name wins.
-inst_got="$(conf_val SPIRA_INSTANCE SPIRA_INSTANCE=test)"
-is "env-set SPIRA_INSTANCE wins" "test" "$inst_got"
-
-# For prod (unset), SPIRA_DB must contain 'spira' WITHOUT a dash-qualified suffix,
-# so that every existing box keeps the path it already has.
-db_prod="$(conf_val SPIRA_DB)"
-nowant "prod SPIRA_DB has no instance suffix" "-prod" "$db_prod"
-want   "prod SPIRA_DB contains 'spira'"       "spira" "$db_prod"
-
-# For a named non-prod instance, SPIRA_DB must be distinct from the prod path.
-db_test="$(conf_val SPIRA_DB SPIRA_INSTANCE=test)"
-isne "test SPIRA_DB differs from prod SPIRA_DB" "$db_prod" "$db_test"
-want "test SPIRA_DB is instance-qualified"       "spira-test" "$db_test"
-
-# For prod (unset), SPIRA_RUN must not carry an instance suffix.
-run_prod="$(conf_val SPIRA_RUN)"
-nowant "prod SPIRA_RUN has no instance suffix" "-prod" "$run_prod"
-
-# For a named non-prod instance, SPIRA_RUN must be distinct.
-run_test="$(conf_val SPIRA_RUN SPIRA_INSTANCE=test)"
-isne "test SPIRA_RUN differs from prod SPIRA_RUN" "$run_prod" "$run_test"
-want "test SPIRA_RUN is instance-qualified"        "spira-test" "$run_test"
-
-# SPIRA_INSTANCE is exported so child processes see it without re-sourcing conf.sh.
-exported="$(env -i PATH="$PATH" HOME="$TMP/home" \
-    SPIRA_CONF=/nonexistent \
-    SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-    bash -c ". '$HARNESS/spira/conf.sh'; env | grep '^SPIRA_INSTANCE='" 2>/dev/null)"
-want "SPIRA_INSTANCE is exported" "SPIRA_INSTANCE=" "$exported"
-
-# ==========================================================================
-echo
-echo "SPIRA_RUN never defaults inside SPIRA_REPO, writable or not (sp-9hwim, design"
-echo "runtime-is-a-release #5 — nothing reads or writes the checkout at runtime):"
-# ==========================================================================
-# A writable SPIRA_REPO must NOT produce a path inside it. This used to fall back to
-# "$SPIRA_REPO/.runtime/spira"; that branch is gone, so a writable checkout gets the same
-# XDG default an unwritable one always got. The checkout has no working tree at all once
-# the running system cuts over to spira-releases/<sha>, so a default that could still land
-# there would resolve to a path that does not exist.
-WRITABLE_REPO="$TMP/writable-repo"
-mkdir -p "$WRITABLE_REPO"
-run_writable="$(conf_val SPIRA_RUN SPIRA_REPO="$WRITABLE_REPO" XDG_DATA_HOME="$TMP/xdg-data")"
-nowant "writable SPIRA_REPO: SPIRA_RUN is NOT inside the repo" "$WRITABLE_REPO" "$run_writable"
-want   "writable SPIRA_REPO: SPIRA_RUN still uses XDG fallback" "$TMP/xdg-data" "$run_writable"
-
-# An unwritable SPIRA_REPO gets the identical XDG default — same code path, no branch.
-READONLY_REPO="$TMP/readonly-repo"
-mkdir -p "$READONLY_REPO"
-chmod a-w "$READONLY_REPO"
-run_readonly="$(conf_val SPIRA_RUN SPIRA_REPO="$READONLY_REPO" XDG_DATA_HOME="$TMP/xdg-data")"
-chmod u+w "$READONLY_REPO"
-nowant "read-only SPIRA_REPO: SPIRA_RUN not inside repo" "$READONLY_REPO" "$run_readonly"
-want   "read-only SPIRA_REPO: SPIRA_RUN uses XDG fallback" "$TMP/xdg-data" "$run_readonly"
-is     "writable and read-only SPIRA_REPO produce the identical SPIRA_RUN default" \
-       "$run_readonly" "$run_writable"
-
-# ==========================================================================
-echo
-echo "root workspace — SPIRA_REPO at filesystem root produces no double slashes:"
-# ==========================================================================
-# When the repo is bind-mounted at /workspace, dirname gives "/" and a naive
-# "$SPIRA_WORKSPACES/foo" yields "//foo". Verify both derivation sites clean.
-# Positive control: with a normal path, the derivation must produce something.
-testdb_normal="$(conf_val SPIRA_TESTDB_DATA SPIRA_WORKSPACES="$TMP/workspaces")"
-want "SPIRA_TESTDB_DATA is set with normal SPIRA_WORKSPACES" "$TMP/workspaces" "$testdb_normal"
-
-testdb_root="$(conf_val SPIRA_TESTDB_DATA SPIRA_REPO=/workspace)"
-nowant "SPIRA_TESTDB_DATA has no double slash when SPIRA_REPO=/workspace" "//" "$testdb_root"
-want   "SPIRA_TESTDB_DATA starts with /beads-test when SPIRA_REPO=/workspace" "/beads-test" "$testdb_root"
-
-prod_root="$(conf_val SPIRA_PROD SPIRA_REPO=/workspace)"
-nowant "SPIRA_PROD has no double slash when SPIRA_REPO=/workspace" "//" "$prod_root"
-want   "SPIRA_PROD is non-empty when SPIRA_REPO=/workspace" "/" "$prod_root"
-
-# ==========================================================================
-echo
-echo "artifact deployment — SPIRA_WORKSPACES is grandparent of SPIRA_REPO, not parent:"
-# ==========================================================================
-# In artifact mode SPIRA_REPO is a release dir inside spira-releases; the correct
-# workspaces directory is two levels up, not one. Without the fix, SPIRA_WORKSPACES
-# would be the releases directory, causing SPIRA_RELEASES to double.
-# Positive control: with old (one-level) derivation, SPIRA_WORKSPACES would include
-# "spira-releases" in the path; the fix must not.
-ART_RELEASES="$TMP/art-releases"
-ART_RELEASE="$ART_RELEASES/spira-20260912T120000Z"
-mkdir -p "$ART_RELEASE"
-ws_art="$(conf_val SPIRA_WORKSPACES SPIRA_REPO="$ART_RELEASE")"
-is    "artifact: SPIRA_WORKSPACES is workspaces grandparent" "$TMP" "$ws_art"
-nowant "artifact: SPIRA_WORKSPACES excludes releases subdir"  "art-releases" "$ws_art"
-
-# ==========================================================================
-echo
-echo "SPIRA_HOME_REPO from worktree — resolves to main repo name, not worktree name:"
-# ==========================================================================
-# Positive control first: with a plain checkout the name is the repo's basename.
-# The regression: from a worktree whose directory name differs from the main repo,
-# the old code (basename "$SPIRA_REPO") returned the worktree directory name instead.
-WTEST_MAIN="$TMP/wtest-main-repo"
-git init -q "$WTEST_MAIN"
-git -C "$WTEST_MAIN" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-WTEST_WT="$TMP/wtest-worktree-xyzzy"   # name that must NOT appear as SPIRA_HOME_REPO
-git -C "$WTEST_MAIN" worktree add -q "$WTEST_WT" -b wt-branch
-mkdir -p "$WTEST_WT/spira"
-ln -sf "$HERE/conf.sh" "$WTEST_WT/spira/conf.sh"
-wt_got="$(env -i PATH="$PATH" HOME="$TMP/home" \
-    SPIRA_CONF=/nonexistent \
-    SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-    bash -c ". '$WTEST_WT/spira/conf.sh'; printf '%s' \"\${SPIRA_HOME_REPO:-}\"" 2>/dev/null)"
-is    "worktree: SPIRA_HOME_REPO equals main repo name" "wtest-main-repo" "$wt_got"
-isne  "worktree: SPIRA_HOME_REPO is not the worktree dir name" "wtest-worktree-xyzzy" "$wt_got"
-
-# ==========================================================================
-echo
-echo "installed release — SPIRA_HOME_REPO comes from MANIFEST's stamp, not the release dir name:"
-# ==========================================================================
-# An installed release is an unpacked tarball named spira-<timestamp>, which changes on
-# every upgrade (law-scope-is-a-runtime-key). basename(SPIRA_REPO) must never be used
-# here — that was sp-j4vi0: every upgrade made every existing bead unclaimable.
-RELEASE_DIR="$TMP/spira-20990101T000000Z"
-mkdir -p "$RELEASE_DIR"
-
-# T1: with the stamp, SPIRA_HOME_REPO resolves to the stamped identity.
-printf 'commit 0000000000000000000000000000000000000000\ntimestamp 20990101T000000Z\nrepo spira\n' \
-    > "$RELEASE_DIR/MANIFEST"
-release_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$RELEASE_DIR")"
-is   "stamped release: SPIRA_HOME_REPO resolves to the stamp (spira)" "spira" "$release_got"
-isne "stamped release: SPIRA_HOME_REPO is not the release dir name" "spira-20990101T000000Z" "$release_got"
-
-# Without the stamp, conf.sh refuses to fall back to the directory name.
-rm -f "$RELEASE_DIR/MANIFEST"
-unstamped_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$RELEASE_DIR")"
-isne "unstamped release: SPIRA_HOME_REPO is not the release dir name" "spira-20990101T000000Z" "$unstamped_got"
-is   "unstamped release: SPIRA_HOME_REPO is refused (empty), not guessed" "" "$unstamped_got"
-
-# A MANIFEST present but without a `repo` line is the same as no stamp at all.
-printf 'commit 0000000000000000000000000000000000000000\ntimestamp 20990101T000000Z\n' \
-    > "$RELEASE_DIR/MANIFEST"
-norepo_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$RELEASE_DIR")"
-isne "MANIFEST without repo line: SPIRA_HOME_REPO is not the release dir name" "spira-20990101T000000Z" "$norepo_got"
-is   "MANIFEST without repo line: SPIRA_HOME_REPO is refused (empty)" "" "$norepo_got"
-
-# ==========================================================================
-echo
-echo "installed release — SPIRA_RELEASE_REPO comes from MANIFEST's release-repo when unset:"
-# ==========================================================================
-# A release install is never sourceless: the tarball records the forge it was published from,
-# and skew.sh's release-currency check reads SPIRA_RELEASE_REPO (exit 3 without one).
-printf 'commit 0000000000000000000000000000000000000000\ntimestamp 20990101T000000Z\nrepo spira\nrelease-repo owner/publisher\n' \
-    > "$RELEASE_DIR/MANIFEST"
-is "stamped release: SPIRA_RELEASE_REPO is the MANIFEST's release-repo" "owner/publisher" \
-   "$(conf_val SPIRA_RELEASE_REPO SPIRA_REPO="$RELEASE_DIR")"
-is "an explicit SPIRA_RELEASE_REPO still wins" "/srv/releases" \
-   "$(conf_val SPIRA_RELEASE_REPO SPIRA_REPO="$RELEASE_DIR" SPIRA_RELEASE_REPO=/srv/releases)"
-is "and so does SPIRA_GH_INTAKE_REPO, as before" "owner/intake" \
-   "$(conf_val SPIRA_RELEASE_REPO SPIRA_REPO="$RELEASE_DIR" SPIRA_GH_INTAKE_REPO=owner/intake)"
-rm -f "$RELEASE_DIR/MANIFEST"
-
-# Only a release-named directory is refused. A non-git tree with any other name (a test
-# fixture, a scratch copy) keeps its directory name, as before sp-j4vi0; refusing there
-# emptied the scope label for every suite that builds one (Concierge round 24).
-SCRATCH_DIR="$TMP/scratch-fixture-repo"; mkdir -p "$SCRATCH_DIR"
-scratch_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$SCRATCH_DIR")"
-is   "non-release non-git dir: SPIRA_HOME_REPO keeps its directory name" "scratch-fixture-repo" "$scratch_got"
-
+# DELETED (per Ryan 2026-10-05, one source of config): the sections that asserted conf.sh
+# DERIVES a value — a default SPIRA_WORKSPACES, instance-qualified SPIRA_DB/SPIRA_RUN, the
+# XDG fallback for SPIRA_RUN, SPIRA_TESTDB_DATA from the workspaces root, SPIRA_HOME_REPO
+# from a worktree/MANIFEST/directory name, SPIRA_RELEASE_REPO/SPIRA_GH_INTAKE_REPO from a
+# MANIFEST. Every one of those keys is now declared; nothing derives it.
 # ==========================================================================
 echo
 # HOOK CONTEXT — git's GIT_DIR in the environment does not move SPIRA_REPO. Every git hook
@@ -284,8 +113,217 @@ GH="$TMP/git-harness"
 mkdir -p "$GH/spira"
 ln -s "$HERE/conf.sh" "$GH/spira/conf.sh"
 git -C "$GH" init -q
-hook_repo="$(env -i PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent GIT_DIR="$GH/.git" \
+hook_repo="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent GIT_DIR="$GH/.git" \
     bash -c ". '$GH/spira/conf.sh' >/dev/null 2>&1; printf '%s' \"\$SPIRA_REPO\"" 2>/dev/null)"
 is "SPIRA_REPO is the checkout's top even with GIT_DIR exported" "$(cd "$GH" && pwd -P)" "$hook_repo"
+# G8: spira_require names each missing program and fails; a present one passes.
+req_present="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent \
+    bash -c ". '$HARNESS/spira/conf.sh' >/dev/null 2>&1; spira_require bash; echo rc=\$?" 2>&1)"
+want "spira_require: a present program returns 0" "rc=0" "$req_present"
+req_absent="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent \
+    bash -c ". '$HARNESS/spira/conf.sh' >/dev/null 2>&1; spira_require no-such-prog-g8; echo rc=\$?" 2>&1)"
+want "spira_require: a missing program is named" "no-such-prog-g8" "$req_absent"
+nowant "spira_require: a missing program does not return 0" "rc=0" "$req_absent"
+
+# ==========================================================================
+# STORE BINDING AND SCHEMA GUARD (merged from test-bd-resolve.sh and test-bd-lock-retry.sh)
+# ==========================================================================
+TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")" || skip "spira-config is not on PATH"
+
+# A fake database: just needs .beads to exist so the schema check fires.
+FAKEDB="$TMP/fakedb"
+mkdir -p "$FAKEDB/.beads"
+
+# Two directories, each containing a file named 'bd', so PATH resolution finds the right one.
+mkdir -p "$TMP/bin-good" "$TMP/bin-bad"
+
+# bin-good/bd: migrate schema exits 0 (matching database cursor at v61).
+cat > "$TMP/bin-good/bd" << 'GOOD'
+#!/usr/bin/env bash
+# Accept and discard -C <path> prefix before subcommand.
+while [ "${1:-}" = "-C" ]; do shift 2; done
+case "${1:-}" in
+    migrate) printf '\xe2\x9c\x93 Schema already at v61\n'; exit 0 ;;
+    version) printf 'bd version 1.1.0-dev-test\n' ;;
+    *)       exit 0 ;;
+esac
+GOOD
+chmod +x "$TMP/bin-good/bd"
+
+# bin-bad/bd: migrate schema exits 1 with the schema mismatch message on stderr.
+cat > "$TMP/bin-bad/bd" << 'BAD'
+#!/usr/bin/env bash
+while [ "${1:-}" = "-C" ]; do shift 2; done
+case "${1:-}" in
+    migrate) printf 'database is at v61, binary knows up to v53\n' >&2; exit 1 ;;
+    version) printf 'bd version 1.2.2-test\n' ;;
+    *)       exit 0 ;;
+esac
+BAD
+chmod +x "$TMP/bin-bad/bd"
+
+BD_GOOD="$TMP/bin-good/bd"
+BD_BAD="$TMP/bin-bad/bd"
+
+# Source conf.sh in a subprocess; $SPIRA_DB has no .beads, so schema check is skipped.
+# Returns the value of SPIRA_BD; extra SPIRA_* key=val pairs can be appended — declared via
+# tl_config (the one source of config) rather than passed through env -i, which strips them.
+bd_conf_val() {
+    local spira_path="${1:-}"; shift || true
+    tl_config SPIRA_DB="$TMP/empty-db" SPIRA_PATH="$spira_path" SPIRA_WATCHERS="$HARNESS/spira/watchers"
+    [ $# -gt 0 ] && tl_config "$@"
+    env -i PATH="$TOOLS:/usr/bin:/bin" \
+        HOME="$TMP/home" \
+        SPIRA_HOME="$HARNESS/spira" \
+        SPIRA_REPO="$HARNESS" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
+        bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_BD:-}\"" 2>/dev/null
+}
+
+# Source conf.sh with the fake database (schema check fires); returns exit code.
+bd_conf_with_db() {
+    local spira_path="${1:-}"; shift || true
+    tl_config SPIRA_DB="$FAKEDB" SPIRA_PATH="$spira_path" SPIRA_WATCHERS="$HARNESS/spira/watchers"
+    [ $# -gt 0 ] && tl_config "$@"
+    env -i PATH="$TOOLS:/usr/bin:/bin" \
+        HOME="$TMP/home" \
+        SPIRA_HOME="$HARNESS/spira" \
+        SPIRA_REPO="$HARNESS" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_TOML="$SPIRA_TOML" \
+        bash -c ". '$HARNESS/spira/conf.sh'" 2>/dev/null
+}
+
+# ==========================================================================
+echo
+echo "POSITIVE CONTROL — conf.sh exits on schema mismatch (the bug it prevents):"
+# ==========================================================================
+# bin-bad is first on PATH; no SPIRA_BD set. conf.sh resolves to bin-bad/bd, runs migrate
+# schema against FAKEDB, sees a mismatch exit code, and refuses. This is the shape of the
+# 2026-09-08 incident: an unconfigured caller picked the wrong bd from PATH and every bdq
+# call silently read an error message as data.
+bd_conf_with_db "$TMP/bin-bad" ; rc=$?
+if [ "$rc" -ne 0 ]; then
+    ok "schema mismatch causes conf.sh to refuse (exit $rc)"
+else
+    bad "schema mismatch causes conf.sh to refuse" "conf.sh exited 0 — exit-on-mismatch block is absent"
+fi
+
+# With the matching bd configured explicitly, conf.sh succeeds even though bin-bad is on PATH.
+if bd_conf_with_db "$TMP/bin-bad" SPIRA_BD="$BD_GOOD"; then
+    ok "with matching SPIRA_BD set, conf.sh succeeds despite mismatched binary on PATH"
+else
+    bad "with matching SPIRA_BD set, conf.sh succeeds" "conf.sh exited non-zero unexpectedly"
+fi
+
+# PATH-resolution-when-nothing-sets-SPIRA_BD is deleted: the complete fixture declares
+# every key (per Ryan 2026-10-05, "nothing has a default"), so SPIRA_BD is never unset —
+# there is no PATH-derived fallback left to assert.
+
+# ==========================================================================
+echo
+echo "env wins — SPIRA_BD set in environment is preserved by conf.sh:"
+# ==========================================================================
+# bin-bad is first on PATH; env explicitly pins bin-good. conf.sh must keep bin-good.
+got="$(bd_conf_val "$TMP/bin-bad" SPIRA_BD="$BD_GOOD")"
+is "env-set SPIRA_BD survives unchanged (env wins over PATH-first)" "$BD_GOOD" "$got"
+
+# The legacy spira.conf-file precedence tests are deleted: the one source of config is the
+# spira.toml layers $SPIRA_TOML names (per Ryan 2026-10-05) — a standalone spira.conf file
+# read independently of that layering is not a config source any more.
+
+# ==========================================================================
+echo
+echo "SPIRA_BD is exported — child processes inherit it:"
+# ==========================================================================
+tl_config SPIRA_DB="$TMP/empty-db" SPIRA_PATH="$TMP/bin-good" SPIRA_WATCHERS="$HARNESS/spira/watchers"
+exported="$(env -i PATH="$TOOLS:/usr/bin:/bin" \
+    HOME="$TMP/home" \
+    SPIRA_HOME="$HARNESS/spira" \
+    SPIRA_REPO="$HARNESS" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_TOML="$SPIRA_TOML" \
+    bash -c ". '$HARNESS/spira/conf.sh'; env | grep '^SPIRA_BD='" 2>/dev/null)"
+want "SPIRA_BD appears in the exported environment" "SPIRA_BD=" "$exported"
+
+# ==========================================================================
+
+# A test database that triggers the migration guard (.beads must exist).
+LOCKDB="$TMP/lockdb"
+mkdir -p "$LOCKDB/.beads"
+
+# SPIRA_WATCHERS/SPIRA_BD/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
+# CONFIG): declare them via tl_config rather than through source_conf's env -i, which no
+# process reads them from any more.
+tl_config SPIRA_WATCHERS="$HARNESS/spira/watchers" SPIRA_BD="$TMP/lockbin/bd" SPIRA_DB="$LOCKDB"
+
+LOCK_MSG='Error: failed to open database: embeddeddolt: init schema: embeddeddolt: open db: failed to load database "db": the database is locked by another dolt process'
+
+make_lock_bd() {
+    mkdir -p "$TMP/lockbin"
+    printf '#!/usr/bin/env bash\nprintf '"'"'%s\n'"'"' "%s" >&2\nexit 1\n' \
+        "$LOCK_MSG" > "$TMP/lockbin/bd"
+    chmod +x "$TMP/lockbin/bd"
+}
+
+make_mismatch_bd() {
+    mkdir -p "$TMP/lockbin"
+    cat > "$TMP/lockbin/bd" <<'STUB'
+#!/usr/bin/env bash
+printf 'database is at v61\nbinary knows up to v53\n' >&2
+exit 1
+STUB
+    chmod +x "$TMP/lockbin/bd"
+}
+
+# Source conf.sh in an isolated environment and capture combined output + exit status.
+# Extra KEY=VAL args are forwarded to env -i.
+lock_source_conf() {
+    local out rc=0
+    out=$(env -i \
+        PATH="$PATH" \
+        HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$HARNESS/spira" \
+        SPIRA_TOML="$SPIRA_TOML" \
+        "$@" \
+        bash -c ". '$HARNESS/spira/conf.sh'; printf 'REACHED-PAST-GUARD\n'" 2>&1) || rc=$?
+    printf '%s' "$out"
+    return "$rc"
+}
+
+# ==========================================================================
+echo
+echo "positive control — schema mismatch aborts, REACHED-PAST-GUARD absent:"
+# ==========================================================================
+# Prove the harness can detect an abort before trusting the lock-contention result.
+make_mismatch_bd
+ctrl_out="$(lock_source_conf 2>&1 || true)"
+nowant "positive control: REACHED-PAST-GUARD absent"  "REACHED-PAST-GUARD" "$ctrl_out"
+want   "positive control: schema mismatch message"    "schema mismatch"    "$ctrl_out"
+
+# ==========================================================================
+echo
+echo "lock contention — refuses immediately; REACHED-PAST-GUARD absent:"
+# ==========================================================================
+# A locked store means embedded mode. conf.sh must refuse, not retry or continue.
+make_lock_bd
+lock_out="$(lock_source_conf 2>&1 || true)"
+nowant "lock: REACHED-PAST-GUARD absent (conf.sh refuses)"  "REACHED-PAST-GUARD"  "$lock_out"
+want   "lock: message names embedded mode"                  "embedded"            "$lock_out"
+want   "lock: message names dolt_mode"                      "dolt_mode"           "$lock_out"
+want   "lock: message directs user to doctor"                "doctor"             "$lock_out"
+
+# ==========================================================================
+echo
+echo "SPIRA_DOCTOR=1 — lock contention continues past guard:"
+# ==========================================================================
+# doctor sets SPIRA_DOCTOR=1 so conf.sh does not exit before doctor can
+# collect all FAILs and report them together.
+make_lock_bd
+doctor_out="$(lock_source_conf SPIRA_DOCTOR=1 2>&1)"
+want "doctor mode: REACHED-PAST-GUARD present" "REACHED-PAST-GUARD" "$doctor_out"
+
 
 tl_summary

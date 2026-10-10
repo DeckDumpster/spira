@@ -81,26 +81,58 @@ pub enum ReturnClass {
     RebaseReturn,
     /// The harness returned it without judging it (law-attempts-count-the-harness).
     HarnessReturn,
-    /// The work was judged and found wanting — or the cause is unknown.
+    /// The work was judged and found wanting: the cause is on the code-fault allow-list.
     Judged,
+    /// A cause no one has promoted to the allow-list: never charged, so a new harness
+    /// fault cannot poison a correct bead. Surfaced by `audit` for promotion.
+    Unlisted,
 }
+
+/// Causes that charge outright: a red verdict on the bead's own tip, a fast-tier red, an
+/// owned queue ejection, a failed unit run, and a builder resubmit that still conflicts.
+const CODE_FAULT_CAUSES: &[&str] = &[
+    "batch-eject",
+    "queue-eject-local",
+    "fast-tier-red",
+    "resubmit-conflict",
+    "unit-fail",
+    "unit-red",
+];
 
 /// The legacy exemption set `_attempts_sql_query` subtracted: `thrash` and `unjudged-*`.
 pub fn is_legacy_exempt(cause: &str) -> bool {
     cause == "thrash" || cause.starts_with("unjudged")
 }
 
-/// Classify a cause string. Order matters: explicit table first, then patterns, then the
-/// default (Judged — an unknown cause is more likely a new failure than a new exemption).
+/// The cause the landing pass records for a gate run that reached no verdict.
+pub const NO_VERDICT_CAUSE: &str = "gate-no-verdict";
+
+pub fn is_no_verdict(cause: &str) -> bool {
+    let c = cause.trim();
+    c == NO_VERDICT_CAUSE || c.starts_with("gate-no-verdict:")
+}
+
+/// The cause recorded when the gate exits base-red (rc 76): the base itself fails, so the
+/// gate judged nothing about the bead and the attempt is never charged.
+pub const BASE_RED_CAUSE: &str = "gate-base-red";
+
+pub fn is_base_red(cause: &str) -> bool {
+    let c = cause.trim();
+    c == BASE_RED_CAUSE || c.starts_with("gate-base-red:")
+}
+
+/// Classify a cause string. Order matters: harness and rebase tables first, then the
+/// code-fault allow-list; any other cause is `Unlisted` and uncharged.
 pub fn classify(cause: &str) -> ReturnClass {
     let c = cause.trim();
+    if is_no_verdict(c) || is_base_red(c) {
+        return ReturnClass::HarnessReturn;
+    }
     match c {
         "work-close-converted" | "recurrence" | "closed-while-live" | "alert-recur" => {
             return ReturnClass::NotAReturn
         }
-        // A batch gate failure attributed to this bead (landing.sh CHECK 6): judged.
-        "batch-eject" => return ReturnClass::Judged,
-        "eject" | "queue-eject" | "ejected" | "eviction-race" | "slain" | "closed-never-landed-batch-ready" => {
+        "eject" | "queue-eject" | "queue-eject-collateral" | "ejected" | "eviction-race" | "slain" | "fast-tier-harness" | "closed-never-landed-batch-ready" => {
             return ReturnClass::HarnessReturn
         }
         _ => {}
@@ -108,16 +140,19 @@ pub fn classify(cause: &str) -> ReturnClass {
     if is_legacy_exempt(c) {
         return ReturnClass::HarnessReturn;
     }
-    let lc = c.to_ascii_lowercase();
-    // gate-red, cert-gate-red, rebase-gate-red, stale-red, eject-red, confine-fail… — by
-    // TOKEN, so "delivered" or "cleared" never reads as a red.
-    if lc.split(|ch: char| !ch.is_ascii_alphanumeric()).any(|t| t == "red" || t.starts_with("fail")) {
+    if CODE_FAULT_CAUSES.contains(&c) {
         return ReturnClass::Judged;
     }
-    if lc.contains("conflict") || lc.starts_with("rebase") || lc.contains("stale") || lc.starts_with("base_withdrawn") {
+    let lc = c.to_ascii_lowercase();
+    // gate-red, cert-gate-red, rebase-gate-red, stale-red, eject-red… — by TOKEN, so
+    // "delivered" or "cleared" never reads as a red.
+    if lc.split(|ch: char| !ch.is_ascii_alphanumeric()).any(|t| t == "red") {
+        return ReturnClass::Judged;
+    }
+    if lc.contains("conflict") || lc.starts_with("rebase") || lc.starts_with("no-rebase") || lc.contains("stale") || lc.starts_with("base_withdrawn") {
         return ReturnClass::RebaseReturn;
     }
-    ReturnClass::Judged
+    ReturnClass::Unlisted
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -193,6 +228,10 @@ pub fn epoch_s(ts: &str) -> Option<i64> {
 /// that reopen (bead_reopen writes both, bd's first).
 pub const PAIR_WINDOW_S: i64 = 120;
 
+/// A second claim this close behind an open one is one claim episode seen twice (a claim
+/// race), not a session that ended without a close.
+pub const DOUBLE_CLAIM_WINDOW_S: i64 = 10;
+
 /// Order one bead's rows deterministically: timestamp, then kind precedence, then input order.
 fn ordered(rows: &[EventRow]) -> Vec<(String, EventKind)> {
     let mut v: Vec<(String, u8, usize, EventKind)> = rows
@@ -219,9 +258,18 @@ pub fn fold(bead: &str, rows: &[EventRow]) -> Ledger {
     let mut attempt_log: Vec<Attempt> = Vec::new();
     let mut open: Option<String> = None;
     let mut credits: u32 = 0;
+    // A no-verdict run exempts the open attempt; the close that later ends the same
+    // session must not then forgive an earlier, real failure.
+    let mut spent_by_no_verdict = false;
     for (t, k) in evs.iter().filter(|(t, _)| floor.as_ref().map_or(true, |f| t > f)) {
         match k {
             EventKind::Claim => {
+                if let (Some(at), Some(now)) = (open.as_deref().and_then(epoch_s), epoch_s(t)) {
+                    if now - at <= DOUBLE_CLAIM_WINDOW_S {
+                        continue;
+                    }
+                }
+                spent_by_no_verdict = false;
                 if let Some(at) = open.take() {
                     attempt_log.push(Attempt {
                         claimed_at: at,
@@ -232,6 +280,7 @@ pub fn fold(bead: &str, rows: &[EventRow]) -> Ledger {
             }
             EventKind::Close => match open.take() {
                 Some(at) => attempt_log.push(Attempt { claimed_at: at, outcome: AttemptOutcome::Succeeded }),
+                None if spent_by_no_verdict => spent_by_no_verdict = false,
                 None => credits += 1,
             },
             EventKind::Requeued(c) if is_legacy_exempt(c) => match open.take() {
@@ -239,10 +288,11 @@ pub fn fold(bead: &str, rows: &[EventRow]) -> Ledger {
                 None => credits += 1,
             },
             EventKind::Requeued(c) | EventKind::Reopen(c)
-                if matches!(classify(c), ReturnClass::RebaseReturn | ReturnClass::HarnessReturn) =>
+                if matches!(classify(c), ReturnClass::RebaseReturn | ReturnClass::HarnessReturn | ReturnClass::Unlisted) =>
             {
                 if let Some(at) = open.take() {
                     attempt_log.push(Attempt { claimed_at: at, outcome: AttemptOutcome::Exempt(c.clone()) });
+                    spent_by_no_verdict = is_no_verdict(c) || is_base_red(c);
                 }
             }
             _ => {}
@@ -352,6 +402,100 @@ mod tests {
         let closes = after.iter().filter(|r| r.event_type == "closed").count() as i64;
         let exempt = after.iter().filter(|r| r.event_type == "requeued" && is_legacy_exempt(&v(r))).count() as i64;
         (claims - closes - exempt).max(0) as u32
+    }
+
+    fn at(kind: &str, ts: &str) -> EventRow {
+        EventRow::new(B, kind, "", &format!("2026-09-28T10:{ts}Z"))
+    }
+
+    #[test]
+    fn a_stack_conflict_refusal_is_not_an_attempt() {
+        assert_eq!(classify("stack-conflict"), ReturnClass::RebaseReturn);
+        let r = [
+            EventRow::new(B, "claimed", "", "2026-09-01T00:00:00Z"),
+            EventRow::new(B, "requeued", "stack-conflict", "2026-09-01T00:00:02Z"),
+            EventRow::new(B, "claimed", "", "2026-09-01T00:01:00Z"),
+            EventRow::new(B, "requeued", "stack-conflict", "2026-09-01T00:01:02Z"),
+        ];
+        assert_eq!(fold(B, &r).attempts, 0);
+    }
+
+    #[test]
+    fn a_no_rebase_after_a_clean_submit_is_not_an_attempt() {
+        assert_eq!(classify("no-rebase"), ReturnClass::RebaseReturn);
+        let r = rows(&[
+            ("claimed", ""),
+            ("closed", "OUTCOME: submitted"),
+            ("requeued", "no-rebase"),
+            ("claimed", ""),
+            ("requeued", "no-rebase"),
+            ("claimed", ""),
+            ("requeued", "no-rebase"),
+            ("claimed", ""),
+            ("requeued", "no-rebase"),
+        ]);
+        let l = fold(B, &r);
+        assert_eq!((l.attempts, l.requeues), (0, 0), "{l:#?}");
+        let red = rows(&[("claimed", ""), ("requeued", "cert-gate-red")]);
+        assert_eq!(fold(B, &red).attempts, 1, "planted control: a real red is still charged");
+    }
+
+    #[test]
+    fn a_double_claim_a_second_apart_is_one_attempt() {
+        let r = vec![at("claimed", "00:00"), at("claimed", "00:01")];
+        assert_eq!(fold(B, &r).attempts, 1);
+    }
+
+    #[test]
+    fn three_claims_released_without_submit_are_three_attempts() {
+        let r = vec![at("claimed", "00:00"), at("claimed", "10:00"), at("claimed", "20:00")];
+        assert_eq!(fold(B, &r).attempts, 3);
+    }
+
+    #[test]
+    fn the_old_count_charged_a_double_claim_twice() {
+        // Planted control: counting every claim row, as the fold used to, reaches 3 here.
+        let r = vec![at("claimed", "00:00"), at("claimed", "00:01"), at("claimed", "10:00"), at("claimed", "20:00")];
+        let old = r.iter().filter(|x| EventKind::of(x) == Some(EventKind::Claim)).count();
+        assert_eq!(old, 4);
+        assert_eq!(fold(B, &r).attempts, 3);
+        let two = vec![at("claimed", "00:00"), at("claimed", "00:01"), at("claimed", "10:00")];
+        assert_eq!(two.len(), 3, "old count: poisoned at 3");
+        assert_eq!(fold(B, &two).attempts, 2, "new count: not poisoned");
+    }
+
+    #[test]
+    fn a_collateral_ejection_is_free_and_an_owners_is_charged() {
+        let free = fold(B, &rows(&[("claimed", ""), ("reopen", "queue-eject-collateral")]));
+        assert_eq!((free.attempts, free.requeues), (0, 0));
+        let owned = fold(B, &rows(&[("claimed", ""), ("reopen", "queue-eject-local")]));
+        assert_eq!((owned.attempts, owned.requeues), (1, 1));
+    }
+
+    #[test]
+    fn the_counts_are_the_same_whichever_log_a_row_lives_in() {
+        let all = rows(&[
+            ("claimed", ""),
+            ("requeued", "gate-red"),
+            ("claimed", ""),
+            ("closed", ""),
+            ("claimed", ""),
+            ("poison.cleared", "operator"),
+            ("claimed", ""),
+            ("reopen", "batch-eject"),
+        ]);
+        let want = fold(B, &all);
+        // The harness-written kinds moved to the lifecycle log; bd keeps what it writes itself.
+        let (facts, bd): (Vec<_>, Vec<_>) = all
+            .iter()
+            .cloned()
+            .partition(|r| matches!(r.event_type.as_str(), "requeued" | "reopen" | "poison.cleared"));
+        let mut union = bd;
+        union.extend(facts);
+        let got = fold(B, &union);
+        assert_eq!((got.attempts, got.requeues, got.reclaims, got.floor), (want.attempts, want.requeues, want.reclaims, want.floor));
+        assert_eq!(got.attempt_log, want.attempt_log);
+        assert_eq!(got.returns, want.returns);
     }
 
     #[test]
@@ -472,6 +616,87 @@ mod tests {
     }
 
     #[test]
+    fn a_fast_tier_tool_failure_is_the_harnesss_and_a_fast_tier_red_is_judged() {
+        assert_eq!(classify("fast-tier-harness"), ReturnClass::HarnessReturn);
+        assert_eq!(classify("fast-tier-red"), ReturnClass::Judged);
+    }
+
+    #[test]
+    fn three_no_verdict_runs_charge_nothing() {
+        let nv = NO_VERDICT_CAUSE;
+        let r = rows(&[
+            ("claimed", ""),
+            ("requeued", nv),
+            ("claimed", ""),
+            ("requeued", nv),
+            ("claimed", ""),
+            ("requeued", nv),
+        ]);
+        let l = fold(B, &r);
+        assert_eq!(l.attempts, 0, "{l:#?}");
+        assert_eq!(l.requeues, 0);
+        let one_session = rows(&[("claimed", ""), ("requeued", nv), ("requeued", nv), ("requeued", nv)]);
+        assert_eq!(fold(B, &one_session).attempts, 0);
+    }
+
+    #[test]
+    fn three_base_red_gate_exits_charge_nothing() {
+        let br = BASE_RED_CAUSE;
+        for cause in [br.to_string(), format!("{br}:base-red")] {
+            let r = rows(&[
+                ("claimed", ""),
+                ("reopen", &cause),
+                ("claimed", ""),
+                ("requeued", &cause),
+                ("claimed", ""),
+                ("reopen", &cause),
+            ]);
+            let l = fold(B, &r);
+            assert_eq!(l.attempts, 0, "{l:#?}");
+            assert_eq!(l.requeues, 0, "{l:#?}");
+        }
+        assert_eq!(classify("gate-base-red"), ReturnClass::HarnessReturn);
+        assert_eq!(classify("gate-red"), ReturnClass::Judged);
+    }
+
+    #[test]
+    fn a_base_red_run_then_its_close_forgives_nothing_earlier() {
+        let r = rows(&[("claimed", ""), ("claimed", ""), ("requeued", BASE_RED_CAUSE), ("closed", "")]);
+        assert_eq!(fold(B, &r).attempts, 1);
+    }
+
+    #[test]
+    fn three_branch_red_runs_still_charge() {
+        let r = rows(&[
+            ("claimed", ""),
+            ("reopen", "cert-gate-red"),
+            ("claimed", ""),
+            ("reopen", "cert-gate-red"),
+            ("claimed", ""),
+            ("reopen", "cert-gate-red"),
+        ]);
+        assert_eq!(fold(B, &r).attempts, 3);
+    }
+
+    #[test]
+    fn a_no_verdict_run_then_its_close_forgives_nothing_earlier() {
+        let r = rows(&[
+            ("claimed", ""),
+            ("claimed", ""),
+            ("requeued", NO_VERDICT_CAUSE),
+            ("closed", ""),
+        ]);
+        assert_eq!(fold(B, &r).attempts, 1);
+    }
+
+    #[test]
+    fn no_verdict_causes_are_harness_returns() {
+        assert_eq!(classify("gate-no-verdict"), ReturnClass::HarnessReturn);
+        assert_eq!(classify("gate-no-verdict:died"), ReturnClass::HarnessReturn);
+        assert_eq!(classify("gate-red"), ReturnClass::Judged);
+    }
+
+    #[test]
     fn judged_reopen_does_not_forgive() {
         let r = rows(&[("claimed", ""), ("reopen", "gate-red"), ("claimed", ""), ("reopen", "gate-red")]);
         assert_eq!(fold(B, &r).attempts, 2);
@@ -486,7 +711,7 @@ mod tests {
             ("closed", ""),
             ("requeued", "thrash"),
             ("requeued", "unjudged-killed"),
-            ("requeued", "sop-silent"),
+            ("requeued", "unjudged-sop-silent"),
             ("poison.cleared", "x"),
         ];
         // All sequences up to length 6 over the alphabet (7^6 ≈ 117k, fast).
@@ -567,7 +792,7 @@ mod tests {
             ("claimed", ""),
             ("closed", ""),
             ("reopened", ""),
-            ("reopen", "closed-without-commit"),
+            ("reopen", "unit-fail"),
         ]);
         assert_eq!(fold(B, &r).requeues, 3);
     }
@@ -646,6 +871,18 @@ mod tests {
     }
 
     #[test]
+    fn an_unlisted_cause_charges_nothing_and_each_code_fault_cause_charges() {
+        for cause in ["sccache-connection-reset", "sift-bounced-deadlocked-parent", "some-future-cause"] {
+            let l = fold(B, &rows(&[("claimed", ""), ("reopen", cause), ("claimed", ""), ("requeued", cause), ("claimed", ""), ("reopen", cause)]));
+            assert_eq!((l.attempts, l.requeues), (0, 0), "{cause}");
+        }
+        for cause in ["gate-red", "cert-gate-red", "fast-tier-red", "unit-fail", "resubmit-conflict", "queue-eject-local", "batch-eject"] {
+            let l = fold(B, &rows(&[("claimed", ""), ("reopen", cause), ("claimed", ""), ("reopen", cause)]));
+            assert_eq!((l.attempts, l.requeues), (2, 2), "{cause}");
+        }
+    }
+
+    #[test]
     fn classification_table() {
         use ReturnClass::*;
         for (c, want) in [
@@ -660,6 +897,8 @@ mod tests {
             ("base_withdrawn: sp-a abc123", RebaseReturn),
             ("eject", HarnessReturn),
             ("queue-eject", HarnessReturn),
+            ("queue-eject-collateral", HarnessReturn),
+            ("queue-eject-local", Judged),
             ("ejected", HarnessReturn),
             ("eviction-race", HarnessReturn),
             ("slain", HarnessReturn),
@@ -672,13 +911,20 @@ mod tests {
             ("rebase-gate-red", Judged),
             ("stale-red", Judged),
             ("eject-red", Judged),
-            ("confine-fail", Judged),
-            ("closed-without-commit", Judged),
-            ("delivers-mismatch", Judged),
-            ("prod-dirty", Judged),
-            ("no-sop", Judged),
-            ("something-new", Judged),
-            ("", Judged),
+            ("confine-fail", Unlisted),
+            ("closed-without-commit", Unlisted),
+            ("delivers-mismatch", Unlisted),
+            ("prod-dirty", Unlisted),
+            ("no-sop", Unlisted),
+            ("something-new", Unlisted),
+            ("fast-tier-red", Judged),
+            ("unit-fail", Judged),
+            ("resubmit-conflict", Judged),
+            ("sccache-connection-reset", Unlisted),
+            ("sift-bounced-deadlocked-parent", Unlisted),
+            ("build-fence-shared-target", Unlisted),
+            ("lint-shared-target", Unlisted),
+            ("", Unlisted),
         ] {
             assert_eq!(classify(c), want, "cause {c:?}");
         }

@@ -61,14 +61,20 @@ trap 'fix_store; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 # against the working store, then trusted — without being re-verified — by the calls made
 # after the store is broken. That is the actual shape of the scar: the box had already
 # passed its schema check once, then the server under it died.
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_BD="$(command -v bd-embedded)"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+SPIRA_BD="$(command -v bd-embedded)"
 [ -n "$SPIRA_BD" ] || bail "bd-embedded not on PATH"
+# SPIRA_DB is registered too: rule.sh/concierge.sh source conf.sh, whose own
+# `resolve --sh-all` re-exports every registered key from SPIRA_TOML — overwriting the
+# plain env SPIRA_DB below with the complete fixture's bogus default unless declared the
+# same way (sfail round 3, pattern 3/7).
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$DB"
 
+# batch-job: fixture bd call against the suite's throwaway store
 bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1 \
     || bail "could not seed the fixture"
 
-run_rule() { SPIRA_DB="$DB" SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" bash "$RULE_SH" "$@" 2>&1; }
+run_rule() { SPIRA_DB="$DB" bash "$RULE_SH" "$@" 2>&1; }
 
 echo "=== rule.sh: against the reachable store (also primes the schema-stamp cache) ==="
 
@@ -121,6 +127,9 @@ echo
 echo "=== concierge.sh: the statute book rendering empty vs. the store being unreachable ==="
 
 FX="$TMP/fx"; mkdir -p "$FX/chamber"
+# SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
+# <home>/conf.d directly, so this fixture home needs one too (sfail round 2, pattern 1).
+ln -s "$HERE/conf.d" "$FX/conf.d"
 cp "$HERE/chamber/concierge.md" "$FX/chamber/fx.md"
 ln -sf "$(command -v mail)" "$FX/mail"   # the real compiled binary, found on the suite's own PATH (mail is gone, sp-ooh1k)
 ln -sf "$HERE/bead.sh" "$FX/bead.sh"
@@ -129,8 +138,20 @@ FAYTH_NAME=fx
 EOF
 
 run_concierge_brief() {
-    SPIRA_DB="$DB" SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" \
-        SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx SPIRA_MEMORIES_CACHE="" \
+    # The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
+    # SPIRA_HOME any more (sfail round 2, pattern 6) — without this fx.fayth is never found.
+    # SPIRA_DB via tl_config too (same pattern 3/7 as rule.sh above): concierge.sh sources
+    # conf.sh, whose resolve --sh-all would otherwise overwrite the plain env value below.
+    # SPIRA_STATUTE_CORE / SPIRA_STATUTE_CORE_LOCAL (one source of config, per Ryan
+    # 2026-10-05): the complete fixture declares real slugs for both (e.g.
+    # law-absence-needs-a-positive-control) so every registered key is non-empty. This
+    # fixture's bd store only ever holds law-dbdown-seed, so concierge.sh's brief found
+    # every core slug missing — "demoted to the index" — and refused with rc=1 even against
+    # the reachable, non-empty-store positive control. Nothing derives these empty any more,
+    # so this suite must say so itself, matching the pre-migration behaviour of an unset env.
+    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber" SPIRA_DB="$DB" \
+        SPIRA_STATUTE_CORE="" SPIRA_STATUTE_CORE_LOCAL=""
+    SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx \
         bash "$CONCIERGE_SH" brief 2>&1
 }
 
@@ -139,7 +160,7 @@ out_brief_up=$(run_concierge_brief); rc_brief_up=$?
 is "concierge brief against a reachable, non-empty store exits 0" "0" "$rc_brief_up"
 
 # NEGATIVE CONTROL A: reachable store, genuinely no law- memories left.
-bd -C "$DB" forget law-dbdown-seed >/dev/null 2>&1
+bd -C "$DB" forget law-dbdown-seed >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 out_brief_empty=$(run_concierge_brief); rc_brief_empty=$?
 if [ "$rc_brief_empty" -ne 0 ]; then ok "concierge brief against a genuinely empty store exits non-zero"
 else bad "concierge brief against a genuinely empty store exits non-zero" "got rc=0"; fi
@@ -147,7 +168,7 @@ want   "and says the statute book rendered empty"        "rendered empty" "$out_
 nowant "and does NOT claim the database is unreachable"  "cannot reach"   "$out_brief_empty"
 
 # NEGATIVE CONTROL B: same store, now unreachable — the case this bead is about.
-bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1
+bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 break_store
 out_brief_down=$(run_concierge_brief); rc_brief_down=$?
 if [ "$rc_brief_down" -ne 0 ]; then ok "concierge brief against an unreachable store exits non-zero"

@@ -106,6 +106,10 @@ fn cmd_sql(w: &dyn census::ports::World, args: &[String]) -> i32 {
             println!("{}", census::sql::events_sql(since_formatted(1).as_deref(), &w.deliberate_cause_names()));
             0
         }
+        Some("event-rows") => {
+            println!("{}", census::sql::event_rows_sql(since_formatted(1).as_deref(), &w.deliberate_cause_names(), &[]));
+            0
+        }
         Some("handwritten") => {
             println!("{}", census::sql::handwritten_sql());
             0
@@ -129,6 +133,16 @@ fn cmd_sql(w: &dyn census::ports::World, args: &[String]) -> i32 {
         // parsing matches `events`'s own above, but here it's the `World` impl's job to
         // format it (it owns the retry loop too).
         Some("run-events") => match w.census_events_run_sql(epoch(1, args)) {
+            Ok(out) => {
+                println!("{out}");
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        },
+        Some("run-event-rows") => match w.census_event_rows_run_sql(epoch(1, args)) {
             Ok(out) => {
                 println!("{out}");
                 0

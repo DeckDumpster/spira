@@ -8,15 +8,18 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use crate::alarm::MailAlarm;
-use crate::config::{Config, EnvThenToml, PveEnv};
-use crate::pool::{Attempt, Deps, Pool, Spawner};
+use crate::config::{Config, PveEnv};
+use crate::ec2::{AwsCli, Ec2, Ec2Config};
+use crate::pool::{Attempt, Deps, Pool, Spawner, SpillPlan};
+use crate::route::Routed;
+use crate::spill::Rule;
 use crate::procs::{block_termination_signals, command};
 use crate::provider::Timing;
 use crate::pve::{HttpTransport, Pve};
-use crate::run::{parse_run_args, run, GitHost, RunEnv, SshRemote};
+use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]|status|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -24,24 +27,56 @@ fn secs_env(key: &str, default: u64) -> Duration {
 
 /// One attempt's worth of provider, built from config and pve.env read NOW (G7).
 pub fn real_attempt() -> Result<Attempt, String> {
-    let cfg = Config::load(&EnvThenToml::load())?;
+    let cfg = Config::load()?;
     let pubkey = std::fs::read_to_string(&cfg.host_pubkey)
         .map_err(|_| format!("round-vm: SPIRA_ROUND_VM_HOST_PUBKEY not readable: {}", cfg.host_pubkey.display()))?;
     let env = PveEnv::load(&cfg.pve_env_path, &|k| std::env::var(k).ok())?;
     let transport = HttpTransport::new(&env)?;
+    let local = Pve {
+        t: transport,
+        env,
+        task_timeout: secs_env("PVE_TASK_TIMEOUT", 300),
+        exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30),
+        poll: Duration::from_secs(1),
+    };
+    let (ec2, spill) = spill_wiring(&cfg);
     Ok(Attempt {
-        provider: Box::new(Pve {
-            t: transport,
-            env,
-            task_timeout: secs_env("PVE_TASK_TIMEOUT", 300),
-            exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30),
-            poll: Duration::from_secs(1),
-        }),
+        provider: Box::new(Routed { local: Box::new(local), ec2 }),
+        spill,
         iface: cfg.net_iface.clone(),
         ssh_user: cfg.ssh_user.clone(),
         pubkey,
         timing: Timing { boot_tries: cfg.boot_tries, poll: cfg.boot_poll, gone_tries: 30 },
     })
+}
+
+/// The EC2 provider and the spill rule, when `SPIRA_ROUND_VM_SPILL=ec2`. A provider that
+/// cannot start says what is missing and the pool stays local: a half-configured spill must
+/// not take the local rounds down with it.
+fn spill_wiring(cfg: &Config) -> (Option<std::sync::Arc<dyn crate::provider::Provider>>, Option<SpillPlan>) {
+    if crate::config::str_env_opt("SPIRA_ROUND_VM_SPILL").as_deref() != Some("ec2") {
+        return (None, None);
+    }
+    let ec2cfg = Ec2Config::from_lookup(&|k| std::env::var(k).ok());
+    let api = AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2"));
+    let ec2: std::sync::Arc<dyn crate::provider::Provider> = match Ec2::new(api, &ec2cfg) {
+        Ok(p) => std::sync::Arc::new(p),
+        Err(e) => {
+            eprintln!("{e}; rounds stay local");
+            return (None, None);
+        }
+    };
+    let num = |k: &str, d: u64| crate::config::str_env_opt(k).and_then(|v| v.parse().ok()).unwrap_or(d);
+    let plan = SpillPlan {
+        ec2: ec2.clone(),
+        rule: Rule {
+            wait: Duration::from_secs(num("SPIRA_ROUND_VM_SPILL_WAIT_SECS", 30)),
+            io_full_avg60: crate::config::str_env_opt("SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60").and_then(|v| v.parse().ok()).unwrap_or(30.0),
+        },
+        pressure: Box::new(|| crate::spill::read_io_full_avg60(crate::spill::PSI_IO)),
+        timing: Timing { boot_tries: num("SPIRA_ROUND_VM_EC2_BOOT_TRIES", 150) as u32, poll: cfg.boot_poll, gone_tries: 60 },
+    };
+    (Some(ec2), Some(plan))
 }
 
 /// Starts `round-vm _provision-bg` in its own process group (so a `timeout` killing the
@@ -107,12 +142,16 @@ pub fn main_with(args: Vec<String>) -> i32 {
     };
     let rest = rest.to_vec();
     match verb.as_str() {
-        "acquire" | "release" | "run" | "status" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
+        "acquire" | "release" | "run" | "status" | "warm" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
         other => {
             eprintln!("round-vm: unknown verb: {other}");
             eprintln!("{USAGE}");
             return 1;
         }
+    }
+    if verb == "status" && !matches!(rest.as_slice(), [] | [_]) || verb == "status" && rest.first().is_some_and(|a| a != "--json") {
+        eprintln!("round-vm status: usage: round-vm status [--json]");
+        return 2;
     }
     if verb == "release" && rest.is_empty() {
         eprintln!("round-vm release: usage: round-vm release <handle>");
@@ -140,7 +179,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
     } else {
         None
     };
-    let cfg = match Config::load(&EnvThenToml::load()) {
+    let cfg = match Config::load() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("{e}");
@@ -168,14 +207,24 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
-        "release" => match pool.release(&rest[0], &factory) {
+        "release" => match pool.release(&rest[0], ProcId::current(), &factory) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("{e}");
                 1
             }
         },
-        "status" => match pool.status() {
+        "warm" => match pool.ensure_spare(&spawner) {
+            Ok(started) => {
+                println!("{}", if started { "spare: provisioning" } else { "spare: not needed" });
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        },
+        "status" => match if rest.is_empty() { pool.status() } else { pool.status_json().map(|j| format!("{j}\n")) } {
             Ok(s) => {
                 print!("{s}");
                 0
@@ -207,7 +256,16 @@ pub fn main_with(args: Vec<String>) -> i32 {
         "run" => {
             let me = ProcId::current();
             let sig_pool = pool_for(&cfg);
+            let sig_remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
+            let sig_results = run_args.as_ref().and_then(|a| a.results_dir.clone()).unwrap_or_else(|| cfg.run_dir.join("batch-results"));
+            let sig_run_dir = cfg.run_dir.clone();
+            let sig_scratch = cfg.state_dir.join(format!(".salvage.{}", me.pid));
             block_termination_signals(move |sig| {
+                for vm in sig_pool.leased_to(me) {
+                    let n = salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6));
+                    eprintln!("round-vm run: signal {sig}: salvaged {n} suite result(s) from {} before release", vm.handle);
+                }
+                crate::progress::mark_killed(&sig_run_dir);
                 eprintln!("round-vm run: signal {sig}: releasing this run's VM");
                 sig_pool.release_owned_by(me, &real_attempt);
                 std::process::exit(128 + sig);
@@ -215,7 +273,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
             let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default() };
             let remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
             let Some(a) = run_args.as_ref() else { return 2 };
-            let env = RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote };
+            let env = RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote, record: &crate::run::QueueRecorder };
             let code = no_panic(|| run(&env, a));
             if code == PANIC_EXIT {
                 // G2: a panic mid-run must not leave this run's VM leased to a dying process.
@@ -241,6 +299,10 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
         return 2;
     }
     if std::fs::File::open(&cfg.host_key).is_err() {
+        if refresh {
+            eprintln!("round-vm refresh: SPIRA_ROUND_VM_HOST_KEY not readable ({}) — this box runs no round VMs; nothing to refresh", cfg.host_key.display());
+            return 0;
+        }
         eprintln!("round-vm template: SPIRA_ROUND_VM_HOST_KEY not readable: {}", cfg.host_key.display());
         return 2;
     }
@@ -281,6 +343,29 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
         }
         eprintln!("round-vm refresh: the template does not hold localhost/spira-testenv:{tag} — rebuilding it");
     }
+    let me = ProcId::current();
+    if refresh {
+        match pool.begin_refresh(me) {
+            Ok(Ok(())) => {}
+            Ok(Err(why)) => {
+                eprintln!("round-vm refresh: skipped — {why}; the next run retries");
+                return 0;
+            }
+            Err(e) => {
+                eprintln!("round-vm refresh: cannot claim the pool: {e}");
+                return 1;
+            }
+        }
+    }
+    let code = build_template(cfg, a, refresh, pool, &commit);
+    if refresh {
+        pool.end_refresh(me);
+    }
+    code
+}
+
+fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool: &Pool, commit: &str) -> i32 {
+    use crate::template::{repoint, Record};
     let attempt = match real_attempt() {
         Ok(at) => at,
         Err(e) => {
@@ -301,7 +386,7 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
         &spec,
         cfg.ssh_tries,
         &a.tree_dir,
-        &commit,
+        commit,
         None, // the hypervisor assigns the id (/cluster/nextid)
         cfg.host_addr.as_deref().unwrap_or(""),
         a.toolchain.as_deref().unwrap_or(""),
@@ -336,7 +421,7 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
             0
         }
         Err(e) => {
-            eprintln!("round-vm template: {e}");
+            eprintln!("round-vm {}: template build failed (exit 1): {e}", if refresh { "refresh" } else { "template" });
             1
         }
     }
@@ -367,5 +452,48 @@ mod tests {
         assert_eq!(main_with(s(&["template"])), 2);
         assert_eq!(main_with(s(&["template", "/t", "--vmid", "x"])), 2);
         assert_eq!(main_with(s(&["refresh"])), 2);
+    }
+
+    #[test]
+    fn refresh_without_a_host_key_is_a_clean_skip_but_template_still_refuses() {
+        use crate::config::Fields;
+        let tmp = crate::testutil::TempDir::new();
+        let tree = tmp.path().join("tree");
+        std::fs::create_dir_all(&tree).unwrap();
+        assert!(crate::run::git(&["-C", &tree.to_string_lossy(), "init", "-q"]).is_ok());
+        let cfg = Config::build(Fields {
+            run: tmp.path().to_string_lossy().into(),
+            spira_home: None,
+            pve_env: "/nonexistent/pve.env".into(),
+            ssh_user: "root".into(),
+            ssh_port: 22,
+            state_dir: tmp.path().join("state").to_string_lossy().into(),
+            host_key: tmp.path().join("no_such_key").to_string_lossy().into(),
+            host_pubkey: "/nonexistent/key.pub".into(),
+            host_addr: None,
+            cache_home: None,
+            testenv_registry: None,
+            vcpus: 1,
+            maxpar: 1,
+            max_retries: 0,
+            retry_interval_secs: 1,
+            mirror_port: 1,
+            setup_alarm_secs: 1,
+            acquire_deadline_secs: 1,
+            mailbox: "operator".into(),
+            net_iface: "lo".into(),
+            boot_tries: 1,
+            boot_poll_secs: 1,
+            ssh_tries: 1,
+            stream_every_secs: 1,
+            attr_linger_secs: 1,
+            cap_secs: 1,
+            vm_budget_secs: 300,
+            build_budget_secs: 600,
+        });
+        let a = crate::template::TemplateArgs { tree_dir: tree, rev: None, toolchain: None };
+        let pool = pool_for(&cfg);
+        assert_eq!(template(&cfg, &a, true, &pool), 0);
+        assert_eq!(template(&cfg, &a, false, &pool), 2);
     }
 }

@@ -42,13 +42,16 @@ SYSTEMD_DIR="$FIXTURE/systemd"
 COCKPIT_DIR="$FIXTURE/cockpit"
 mkdir -p "$SPIRA_DIR" "$COCKPIT_DIR" "$SYSTEMD_DIR"
 
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.yaml; do
+for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.socket "$HERE/../systemd/"*.yaml; do
     [ -e "$f" ] || continue
     ln -s "$f" "$SYSTEMD_DIR/$(basename "$f")" 2>/dev/null || true
 done
 ln -s "$HERE/conf.sh"         "$SPIRA_DIR/conf.sh"
 ln -s "$HERE/lib.sh"          "$SPIRA_DIR/lib.sh"
 ln -s "$HERE/suite-covers.sh" "$SPIRA_DIR/suite-covers.sh"
+# locate_home no longer searches: SPIRA_HOME IS the home, and every binary reads
+# <home>/conf.d for the registry.
+ln -s "$HERE/conf.d"          "$SPIRA_DIR/conf.d"
 
 # ctrl: report every unit as suspended, so phase 4's ExecStart-is-executable check
 # (which the built Rust/Python binaries this fixture never builds would otherwise fail)
@@ -226,23 +229,22 @@ mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN" "$FAKE_DB"
 
 # Pre-seed FAKE_UNITDIR so phase 4's --diff / write step has something to
 # compare and does not report every unit as a fresh change on every run.
+# Constant across every env -i invocation below, including run_install()'s.
+tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
+    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+    SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" \
+    SPIRA_BD="$MOCK_BIN/bd"
 _rendered="$(env -i \
     "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
     "HOME=$FAKE_HOME" \
     SPIRA_CONF=/nonexistent \
-    "SPIRA_PATH=$MOCK_BIN" \
-    "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-    "SPIRA_RUN=$FAKE_RUN" \
     "SPIRA_HOME=$SPIRA_DIR" \
-    "SPIRA_PROD=$SPIRA_DIR" \
     "SPIRA_REPO=$SPIRA_DIR" \
-    "SPIRA_COCKPIT=$COCKPIT_DIR" \
     "MOCK_LOG=$MOCK_LOG" \
     SPIRA_INSTALL_FORCE=1 \
     SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
     SPIRA_INSTALL_AERC_CONSIDERED=1 \
-    "SPIRA_BD=$MOCK_BIN/bd" \
+    SPIRA_TOML="$SPIRA_TOML" \
     units-install prod --render 2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
@@ -262,26 +264,22 @@ run_install() {   # run_install <SPIRA_REPO> -- extra env assignments...
     local repo="$1"; shift
     [ "${1:-}" = "--" ] && shift
     > "$MOCK_LOG"
+    tl_config SPIRA_DB="$FAKE_DB"
+    # Any extra SPIRA_* overrides a caller passes are registered keys — declared via
+    # tl_config rather than forwarded through env -i, which strips them.
+    [ $# -gt 0 ] && tl_config "$@"
     env -i \
         "PATH=$MOCK_BIN:$SPIRA_DIR:$PATH" \
         "HOME=$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$SPIRA_DIR/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$FAKE_RUN" \
         "SPIRA_HOME=$SPIRA_DIR" \
-        "SPIRA_PROD=$SPIRA_DIR" \
-        "SPIRA_DB=$FAKE_DB" \
         "SPIRA_REPO=$repo" \
-        "SPIRA_COCKPIT=$COCKPIT_DIR" \
         "MOCK_LOG=$MOCK_LOG" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
         SPIRA_INSTALL_AERC_CONSIDERED=1 \
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
-        "SPIRA_BD=$MOCK_BIN/bd" \
-        "$@" \
+        SPIRA_TOML="$SPIRA_TOML" \
         spira-install prod --no-session-hook 2>&1
 }
 

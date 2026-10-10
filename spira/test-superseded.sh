@@ -18,7 +18,7 @@
 #
 # defect: sp-amac
 # tier: T2
-# covers: landing-pass/* sending/src/* spira/lib.sh
+# covers: landing-pass/* sending/src/* spira/lib.sh UC-landing-merge-queue-21
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -38,8 +38,8 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" push -q origin main
+timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 lc_path_stub "$SH" "$TMP/lcfix"
 
@@ -54,25 +54,23 @@ stub confine.sh 'exit 0'
 stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
 stub gh 'exit 1'
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { bd -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
 
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO="$REPONAME" \
+    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
 landing() {
     rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
         landing-pass land 2>&1
 }
 
 sending() {
-    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-        command sending 2>&1
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
+        command sending --all 2>&1
 }
 
 seed() {
@@ -117,8 +115,8 @@ advance_base() {         # advance_base <file> <content> — push a commit to or
     printf '%s\n' "$c" > "$REPO/$f"
     git -C "$REPO" add -A
     git -C "$REPO" commit -q -m "base: $f"
-    git -C "$REPO" push -q origin main
-    git -C "$REPO" fetch -q origin
+    timeout 5 git -C "$REPO" push -q origin main
+    timeout 5 git -C "$REPO" fetch -q origin
 }
 
 echo "test-superseded.sh"
@@ -161,7 +159,7 @@ drop_branch sp-pln
 # sp-sup's branch is still there after landing (landing skipped it; nothing landed it).
 # Sending should reap it because it is superseded, even though spira-lc content-landed is false.
 # --------------------------------------------------------------------------------------
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 out="$(sending)"
 echo "$out" | head -20 >&2
 
@@ -199,7 +197,7 @@ git -C "$RUN/worktree/sp-unique" commit -q -m "feat: sp-unique — add file not 
 # with conflicting content — so merge-tree will exit 0 for this branch).
 printf '{"id":"sp-unique","title":"sp-unique","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unique","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-unique","depends_on_id":"sp-succ","type":"supersedes"}]}\n' \
     | testdb_seed
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 out="$(sending)"
 echo "$out" | head -20 >&2
 
@@ -239,9 +237,8 @@ drop_branch sp-kept
 seed
 superseded_branch sp-drysup conflict.txt "dry run test"
 advance_base conflict.txt "base content for dry run"
-git -C "$REPO" fetch -q origin
-out="$(SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
+timeout 5 git -C "$REPO" fetch -q origin
+out="$(SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
     command sending --dry-run 2>&1)"
 want "dry-run names the superseded branch" "WOULD  sp-drysup" "$out"
 want "and mentions the reason"             "superseded" "$out"
@@ -259,7 +256,7 @@ drop_branch sp-drysup
 # entered when spira-lc content-landed returns 0).
 # --------------------------------------------------------------------------------------
 seed
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 # Build a superseded branch with one commit, then fast-forward the base past it so
 # the branch tip becomes an ancestor of origin/main (ahead=0, --is-ancestor).
 git -C "$REPO" worktree add -q -b "spira/sp-anc" "$RUN/worktree/sp-anc" main
@@ -269,9 +266,9 @@ git -C "$RUN/worktree/sp-anc" commit -q -m "feat: sp-anc"
 printf '{"id":"sp-anc","title":"sp-anc","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-anc","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-anc","depends_on_id":"sp-succ","type":"supersedes"}]}' \
     | testdb_seed
 # Fast-forward origin/main past sp-anc by pushing sp-anc's commit there, then adding more.
-git -C "$REPO" push -q origin "spira/sp-anc:main"
+timeout 5 git -C "$REPO" push -q origin "spira/sp-anc:main"
 advance_base anc2.txt "extra commit past sp-anc"
-git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" fetch -q origin
 # Now: spira/sp-anc tip is an ancestor of origin/main, ahead=0, --is-ancestor true.
 _anc_ahead="$(git -C "$REPO" rev-list --count "origin/main..spira/sp-anc" 2>/dev/null)"
 if [ "${_anc_ahead:-?}" = 0 ]; then

@@ -35,7 +35,7 @@ pub fn ready_raw_args(no_loop_label: &str) -> Vec<String> {
 pub fn lifecycle_ready_ids(lc: &HashMap<String, LifecycleRow>) -> Vec<String> {
     let mut ids: Vec<String> = lc
         .values()
-        .filter(|r| matches!(r.state, BeadState::Ready | BeadState::Rework) && r.holds.iter().all(|h| *h == HoldKind::Wait))
+        .filter(|r| matches!(r.state, BeadState::Ready | BeadState::Rework) && r.snoozed_until.is_none() && r.holds.iter().all(|h| *h == HoldKind::Wait))
         .map(|r| r.bead_id.clone())
         .collect();
     ids.sort();
@@ -69,10 +69,10 @@ pub fn ready_args(scope_label: &str, no_loop_label: &str) -> Vec<String> {
     v
 }
 
-/// `ready_shared_exclude`'s three labels (lib.sh:652), folded into [`fayth_exclude`] — its
+/// `ready_shared_exclude`'s labels (lib.sh:652) — never the submitted label: lifecycle state decides SUBMITTED, a stale bd label must not, folded into [`fayth_exclude`] — its
 /// only caller — rather than kept as a separately shimmed function (zero other callers).
-pub fn shared_exclude3(queue_wait: &str, submitted: &str, open_children: &str) -> String {
-    [queue_wait, submitted, open_children].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(",")
+pub fn shared_exclude(queue_wait: &str, open_children: &str) -> String {
+    [queue_wait, open_children].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(",")
 }
 
 /// `fayth_exclude <fayth> [own]` (lib.sh:666): the persona's own exclusions, the shared
@@ -145,10 +145,7 @@ fn bucket_match(labels: &[&str], inc: &[String], exc: &[String], shared: &[&str]
 }
 
 /// `bulk_ready_by_fayth`'s bucketing (one ready-set fetch, counted per fayth), in the input
-/// `parts` order. `queue_wait`/`submitted` are `ready-bucket.py`'s own two-label shared
-/// exclusion — deliberately NOT `shared_exclude3`'s three (the python's own comment calls
-/// out "shared QUEUE_WAIT/SUBMITTED exclusion"; `SPIRA_OPEN_CHILDREN_LABEL` is not one of
-/// them, and this port keeps that exactly).
+/// `parts` order. `queue_wait` is the shared exclusion; open-children is deliberately not.
 /// RFC3339 `YYYY-MM-DDTHH:MM:SS[.f][Z|±hh:mm]` to epoch seconds; None if unparseable.
 fn rfc3339_epoch(s: &str) -> Option<i64> {
     let b = s.as_bytes();
@@ -177,8 +174,8 @@ fn is_deferred(row: &ReadyRow, now: i64) -> bool {
     row.defer_until.as_deref().and_then(rfc3339_epoch).is_some_and(|t| t > now)
 }
 
-pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str, submitted: &str) -> Vec<(String, u64)> {
-    let shared: Vec<&str> = [queue_wait, submitted].into_iter().filter(|s| !s.is_empty()).collect();
+pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str) -> Vec<(String, u64)> {
+    let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
     let mut counts: Vec<(String, u64)> = parts.iter().map(|p| (p.name.clone(), 0)).collect();
     let now = now_epoch();
     for row in rows {
@@ -201,8 +198,8 @@ pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str, submitte
 
 /// One fayth's own rows by [`bucket`]'s predicate: what `fayth-ready` counts is exactly
 /// what `fayth-ready --json` hands an aeon to claim from.
-pub fn partition<'a>(rows: &'a [ReadyRow], part: &FaythPart, queue_wait: &str, submitted: &str) -> Vec<&'a ReadyRow> {
-    let shared: Vec<&str> = [queue_wait, submitted].into_iter().filter(|s| !s.is_empty()).collect();
+pub fn partition<'a>(rows: &'a [ReadyRow], part: &FaythPart, queue_wait: &str) -> Vec<&'a ReadyRow> {
+    let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
     let now = now_epoch();
     rows.iter()
         .filter(|row| !is_deferred(row, now))
@@ -225,13 +222,25 @@ pub fn matching<'a>(rows: &'a [ReadyRow], inc: &[String], exc: &[String]) -> Vec
     rows.iter().filter(|r| !is_deferred(r, now) && labels_match(r, inc, exc)).collect()
 }
 
-fn now_epoch() -> i64 {
+pub(crate) fn now_epoch() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lc_row(id: &str, state: BeadState) -> (String, LifecycleRow) {
+        (id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds: Default::default(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false })
+    }
+
+    /// NEXT's ready set takes no bd status: a LANDED bead is out however bd's row reads,
+    /// and a READY bead is in however bd's row reads (the function has no bd input).
+    #[test]
+    fn the_ready_set_is_lifecycle_state_alone() {
+        let lc: HashMap<_, _> = [lc_row("sp-landed", BeadState::Landed), lc_row("sp-ready", BeadState::Ready), lc_row("sp-rework", BeadState::Rework)].into();
+        assert_eq!(lifecycle_ready_ids(&lc), vec!["sp-ready".to_string(), "sp-rework".to_string()]);
+    }
 
     #[test]
     fn ready_args_appends_label_then_exclude_label_in_order() {
@@ -259,9 +268,9 @@ mod tests {
     }
 
     #[test]
-    fn shared_exclude3_drops_empty_labels() {
-        assert_eq!(shared_exclude3("spira-queue-waiting", "", "spira-open-children"), "spira-queue-waiting,spira-open-children");
-        assert_eq!(shared_exclude3("", "", ""), "");
+    fn shared_exclude_drops_empty_labels() {
+        assert_eq!(shared_exclude("spira-queue-waiting", "spira-open-children"), "spira-queue-waiting,spira-open-children");
+        assert_eq!(shared_exclude("", ""), "");
     }
 
     fn row(id: &str, labels: &[&str]) -> ReadyRow {
@@ -281,15 +290,31 @@ mod tests {
             row("d", &["spira", "plan", "fayth:ops"]), // preference names ops only
         ];
         let parts = vec![part("builder", &["spira", "plan"], &[]), part("ops", &["spira", "ops-trigger"], &[])];
-        let counts = bucket(&rows, &parts, "spira-queue-waiting", "spira-submitted");
+        let counts = bucket(&rows, &parts, "spira-queue-waiting");
         assert_eq!(counts, vec![("builder".to_string(), 1), ("ops".to_string(), 1)]);
+    }
+
+    #[test]
+    fn a_stale_submitted_label_does_not_hide_a_lifecycle_ready_bead() {
+        let rows = vec![row("a", &["spira", "plan", "spira-submitted"])];
+        let parts = vec![part("builder", &["spira", "plan"], &[])];
+        assert_eq!(bucket(&rows, &parts, "q"), vec![("builder".to_string(), 1)]);
+        assert_eq!(partition(&rows, &parts[0], "q").len(), 1);
+        assert_eq!(shared_exclude("q", "oc"), "q,oc");
+    }
+
+    #[test]
+    fn a_base_red_incident_without_plan_is_in_no_builder_bucket() {
+        let rows = vec![row("sp-incident", &["spira", "repo:spira"])];
+        let parts = vec![part("builder", &["spira", "plan"], &[])];
+        assert_eq!(bucket(&rows, &parts, ""), vec![("builder".to_string(), 0)]);
     }
 
     #[test]
     fn bucket_counts_an_unlabeled_bead_in_exactly_one_bucket() {
         let rows = vec![row("a", &[])];
         let parts = vec![part("builder", &[], &[]), part("ops", &[], &[])];
-        let counts = bucket(&rows, &parts, "q", "s");
+        let counts = bucket(&rows, &parts, "q");
         assert_eq!(counts.iter().map(|c| c.1).sum::<u64>(), 1);
     }
 
@@ -299,7 +324,7 @@ mod tests {
         // against fayth_exclude's OR-matched exclude-label this module's doc calls out.
         let rows = vec![row("a", &["spira", "plan", "fayth:builder", "fayth:ops"])];
         let parts = vec![part("builder", &["spira", "plan"], &[]), part("ops", &["spira", "plan"], &[])];
-        let counts = bucket(&rows, &parts, "", "");
+        let counts = bucket(&rows, &parts, "");
         assert_eq!(counts, vec![("builder".to_string(), 1), ("ops".to_string(), 1)]);
     }
 
@@ -307,7 +332,7 @@ mod tests {
     fn bucket_excludes_a_bead_with_no_matching_preference() {
         let rows = vec![row("a", &["spira", "plan", "fayth:qa"])];
         let parts = vec![part("builder", &["spira", "plan"], &[])];
-        assert_eq!(bucket(&rows, &parts, "", ""), vec![("builder".to_string(), 0)]);
+        assert_eq!(bucket(&rows, &parts, ""), vec![("builder".to_string(), 0)]);
     }
 
     #[test]
@@ -317,7 +342,7 @@ mod tests {
         let mut past = row("b", &["spira", "plan"]);
         past.defer_until = Some("2000-01-01T00:00:00-07:00".into());
         let parts = vec![part("builder", &["spira", "plan"], &[])];
-        assert_eq!(bucket(&[held, past], &parts, "", ""), vec![("builder".to_string(), 1)]);
+        assert_eq!(bucket(&[held, past], &parts, ""), vec![("builder".to_string(), 1)]);
         assert_eq!(rfc3339_epoch("1970-01-02T00:00:00Z"), Some(86400));
     }
 }

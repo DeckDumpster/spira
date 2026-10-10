@@ -116,10 +116,20 @@ id = "UC-cockpit-observability-22"
 tier = "T1"
 statement = "the pane fills exactly its height: NOW served first, NEXT/RECENT capped at 5, slack to INFLOW, CI keeps its row, no row exceeds 70/96 columns, labels align at column 9"
 
+[use_case.uncovered]
+reason = "pane height sharing is unit-tested in cockpit/ops health::share and health::frame (render_marks_drop_count_on_the_header_when_pane_is_too_short, first_served_sections_fill_to_max_before_others_reach_base); the golden-frame bash suite for the 70/96-column and column-9 rules is gone and nothing asserts them end to end"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+
 [[use_case]]
 id = "UC-cockpit-observability-23"
 tier = "T1"
 statement = "NOW rows come from `trace_stats`/`trace_tail`: turns are distinct message ids, ctx is the last usage, only the current attempt counts, MODEL mismatch with `FAYTH_MODEL` shows a warning, an unreadable trace gives `?` and an empty trace gives `-`, live-aeon count comes from pidfiles and /proc"
+
+[use_case.uncovered]
+reason = "NOW-row derivation is unit-tested in aeon::trace (trace_stats_* cases) and health::sections now_section tests; the Rust seam is not drivable from bash and the MODEL-mismatch warning and pidfile live-count have no test"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
 
 [[use_case]]
 id = "UC-cockpit-observability-24"
@@ -171,6 +181,11 @@ id = "UC-cockpit-observability-30"
 tier = "T2"
 statement = "panel write paths (close, comment, archive, enact, premise-reject) call `bd`/`rule.sh` with the right arguments and actor, and surface failure"
 
+[use_case.uncovered]
+reason = "close, comment and enact are verified against a fake bd by cockpit/panel model.rs unit tests; archive and premise-reject have no argv-recording test and the Rust seam is not drivable from bash"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+
 [[use_case]]
 id = "UC-cockpit-observability-31"
 tier = "T1"
@@ -196,10 +211,10 @@ id = "UC-cockpit-observability-33"
 tier = "T1"
 statement = "Loom `model.js` derives components/depth/width, excludes closed/provenance/dangling edges and collapses duplicates, honours configured labels, groups by repo and epic, uses a 14-day arrivals flow, and parses real bd JSON; the shipped page carries no embedded payload"
 
-[[use_case]]
-id = "UC-cockpit-observability-34"
-tier = "T1"
-statement = "Loom self-maintenance: `layout.sh` rebuilds when the source is newer than the binary or the binary is missing, and restarts a stale service only when the binary is executable"
+[use_case.uncovered]
+reason = "loom's old list view retired (sp-5disbg): model.js, its node suite test-loom-page.sh and the embedded page are gone; the stuck page renders server-side from the lifecycle read model, covered by loom/tests/endpoint.rs"
+date = "2026-10-09"
+bead = "sp-5disbg"
 
 [[use_case]]
 id = "UC-cockpit-observability-35"
@@ -254,12 +269,12 @@ statement = "`ensure` detaches ghost clients idle longer than `COCKPIT_CLIENT_ID
 [[use_case]]
 id = "UC-cockpit-observability-44"
 tier = "T1"
-statement = "the health pane command carries `SPIRA_CONF`; in split-checkout mode it runs the `SPIRA_PROD` renderer unless `SPIRA_DEV_RENDERER=1`; mouse mode defaults on, can be switched off with off/no/0, and never fails the caller"
+statement = "the health pane command carries `SPIRA_CONF`; mouse mode defaults on, can be switched off with off/no/0, and never fails the caller"
 
 [[use_case]]
 id = "UC-cockpit-observability-45"
 tier = "T1"
-statement = "a copy of `layout.sh` refuses `ensure` and names the installed path; the collector watchdog restarts an instance-qualified collector that started before `cockpit.sh` was last promoted"
+statement = "a copy of the `layout` binary refuses `ensure` and names the installed path"
 
 [[use_case]]
 id = "UC-cockpit-observability-46"
@@ -281,7 +296,23 @@ id = "UC-cockpit-observability-49"
 tier = "T1"
 statement = "the collector loop exits 1 and logs the count after `SPIRA_COCKPIT_MERGE_FAIL_MAX` consecutive merge failures"
 
+[use_case.uncovered]
+reason = "the merge-failure exit is the supervisor run loop, verified by cockpit-collect supervisor::tests::run_loop_exits_one_after_consecutive_merge_failures; a bash test would need a service-supervised collector loop"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+
 [[use_case]]
 id = "UC-cockpit-observability-50"
 tier = "T1"
 statement = "`ready.sh` loom grace pass: a loom that refuses the first probe and opens its port later is retried until it answers (pass, not FAIL); a loom that never answers is FAIL bounded by `SPIRA_LOOM_READY_GRACE`, not the default"
+
+[use_case.uncovered]
+reason = "the loom grace loop is a real HTTP probe against a localhost port, and the earlier suite for it flaked and was deleted; no deterministic seam exists short of a timed listener"
+date = "2026-10-08"
+bead = "sp-94lbj.2"
+
+[[use_case]]
+id = "UC-cockpit-observability-51"
+tier = "T2"
+statement = "The ops pane's start command, run as the cockpit starts it, renders once with real values — no '?' placeholders and no STOPPED banner."
+launcher = { site = "cockpit/ops/src/layout.rs", needle = "lc-view tui" }

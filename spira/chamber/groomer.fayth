@@ -13,7 +13,7 @@ FAYTH_DESC="Groomer — the reconciler: splits unsplittable beads, merges duplic
 # rather than on every sentinel pass. The label key is SPIRA_GROOMER_LABEL so an operator
 # can rename it without touching the fayth file.
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_GROOMER_LABEL"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
 # THE GROOMER NEVER COMMITS. FAYTH_TOOLS below has no Edit or Write, so every close this
 # persona makes is graph-only by construction — true of a groom-trigger.sh bead (which
@@ -62,7 +62,7 @@ FAYTH_LANE=groomer
 
 # LEASE AND HEARTBEAT. A groom pass reads the graph breadth-first and then acts on its
 # findings — it is bursty in a different way than a builder, but its wall is naturally the
-# time it takes to read all open beads plus one bd call per finding. Ten minutes covers a
+# time it takes to read all open beads plus one read per finding. Ten minutes covers a
 # graph with hundreds of beads; the heartbeat is short so a killed pass is reclaimable fast.
 FAYTH_LEASE_MINUTES=10
 FAYTH_HEARTBEAT_SECONDS=30

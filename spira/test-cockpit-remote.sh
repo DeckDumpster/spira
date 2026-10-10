@@ -124,13 +124,14 @@ if [ -f "$REBUILD_SRC" ]; then
     else
         bad "rebuild reads COCKPIT_SESSIONS" "variable not found in rebuild.rs"
     fi
-    # The env var must be read as a FALLBACK (std::env::var(...).unwrap_or_else(default)),
-    # not shadowed by an unconditional literal — the same "overridable, not hardcoded"
-    # property the bash original's `${COCKPIT_SESSIONS:-brain hunk chat}` had.
-    if grep -A3 'COCKPIT_SESSIONS' "$REBUILD_SRC" | grep -q 'unwrap_or_else'; then
+    # The list is DECLARED config (spira.cockpit_sessions), read through spira-config with
+    # no Rust-side literal or fallback (per Ryan 2026-10-05: one source of config).
+    if grep -q 'need("COCKPIT_SESSIONS")' "$REBUILD_SRC" \
+        && grep -A1 'let need = ' "$REBUILD_SRC" | grep -q 'spira_config::process::cfg(key)' \
+        && ! grep -A3 'COCKPIT_SESSIONS' "$REBUILD_SRC" | grep -qE 'unwrap_or(_else|_default)?\('; then
         ok "rebuild does not hardcode the session list"
     else
-        bad "rebuild does not hardcode the session list" "no unwrap_or_else fallback found after the COCKPIT_SESSIONS read"
+        bad "rebuild does not hardcode the session list" "the COCKPIT_SESSIONS read is not cfg() without a fallback"
     fi
 else
     bad "rebuild.rs exists" "not found at $REBUILD_SRC"
@@ -162,7 +163,7 @@ else
         ok "the fixture holds the lock (positive control)"
     fi
 
-    out="$(TMPDIR="$LOCKD" timeout 10 bash "$CR" watch 2>&1)"; rc=$?
+    out="$(TMPDIR="$LOCKD" timeout 5 bash "$CR" watch 2>&1)"; rc=$?
     if [ "$rc" = 0 ]; then
         bad "a copy that loses the lock exits non-zero" "exited 0 — systemd records Result=success and the loop looks healthy"
     else
@@ -186,7 +187,7 @@ else
         for _ in 1 2 3 4 5 6 7 8 9 10; do [ -e "$LOCKD/held" ] && break; sleep 0.2; done
     }
     _fake_holder
-    out="$(PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" timeout 10 bash "$CR" watch 2>&1)"; rc=$?
+    out="$(PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" timeout 5 bash "$CR" watch 2>&1)"; rc=$?
     is "a live holder with a client attached satisfies the unit (exit 0)" "0" "$rc"
     want "and the holder is named" "pid $_holder" "$out"
     is "and the holder is left alone" "0" "$(kill -0 "$_holder" 2>/dev/null; echo $?)"
@@ -212,6 +213,37 @@ else
     want "and says why" "no client attached" "$out"
     rm -rf "$LOCKD"
 fi
+
+echo
+echo "a failed hunk session list changes nothing; an empty answer forgets dismissals"
+HD="$(mktemp -d)"
+ID=11111111-2222-3333-4444-555555555555
+printf '%s\n' '#!/bin/sh' 'case "$(cat "$0.mode")" in fail) exit 3;; empty) exit 0;; *) echo "'$ID' R1 design";; esac' >"$HD/hunk"
+chmod +x "$HD/hunk"
+_want() { env -i PATH="$PATH" HOME="$HD" HUNK="$HD/hunk" COCKPIT_STATE="$HD/state" COCKPIT_SESSION=nosuch-$$ bash "${1:-$CR}" status 2>&1 | sed -n 's/^want: *//p'; }
+mkdir "$HD/state"; printf '%s\n' "$ID" >"$HD/state/dismissed"
+
+echo live >"$HD/hunk.mode"
+is "a dismissed live session does not want hunk" "brain" "$(_want)"
+echo fail >"$HD/hunk.mode"
+is "a failed list says keep, not brain or hunk" "keep" "$(_want)"
+is "a failed list leaves the dismissal in place" "$ID" "$(cat "$HD/state/dismissed")"
+echo live >"$HD/hunk.mode"
+is "the session is still dismissed after the failed read" "brain" "$(_want)"
+
+# Control: the pre-fix code, on the same stub, wipes the dismissal and flips to hunk.
+git -C "$(dirname "$HERE")" show 9f6f7e976:cockpit/remote/cockpit-remote >"$HD/old-remote" 2>/dev/null
+if [ -s "$HD/old-remote" ]; then
+    echo fail >"$HD/hunk.mode"; _want "$HD/old-remote" >/dev/null
+    echo live >"$HD/hunk.mode"
+    is "positive control: the old code flips to hunk after a failed read" "hunk" "$(_want "$HD/old-remote")"
+    printf '%s\n' "$ID" >"$HD/state/dismissed"
+fi
+
+echo empty >"$HD/hunk.mode"
+is "an empty successful list reads idle" "brain" "$(_want)"
+is "and forgets the dismissal" "0" "$(grep -c . "$HD/state/dismissed")"
+rm -rf "$HD"
 
 echo
 tl_summary

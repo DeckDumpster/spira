@@ -68,6 +68,25 @@ pub fn suspend(data: &mut CtrlData, subject: &str, reason: &str, owner: &str, wh
     ops.insert("suspend".to_string(), fields);
 }
 
+/// True for a plain `YYYY-MM-DD` date.
+pub fn is_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b.iter().enumerate().all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() })
+}
+
+/// Declares when a suspension is due for review: a `YYYY-MM-DD` date. The suspension must
+/// exist; returns false otherwise.
+pub fn set_until(data: &mut CtrlData, subject: &str, until: &str) -> bool {
+    match data.get_mut(subject).and_then(|o| o.get_mut("suspend")) {
+        Some(f) => {
+            f.insert("until".to_string(), until.to_string());
+            true
+        }
+        None => false,
+    }
+}
+
 /// resume <subject> -> true if a suspension was removed. Drops the subject entirely when
 /// it carries no other ops, matching `do_resume`'s python (`del data[subject]` when empty).
 pub fn resume(data: &mut CtrlData, subject: &str) -> bool {
@@ -86,6 +105,12 @@ pub fn resume(data: &mut CtrlData, subject: &str) -> bool {
 /// reason <subject> -> the suspension reason, if suspended.
 pub fn reason<'a>(data: &'a CtrlData, subject: &str) -> Option<&'a str> {
     data.get(subject)?.get("suspend")?.get("reason").map(String::as_str)
+}
+
+/// The suspension's owner (a bead id) and its optional `until` date.
+pub fn declared<'a>(data: &'a CtrlData, subject: &str) -> Option<(&'a str, Option<&'a str>)> {
+    let f = data.get(subject)?.get("suspend")?;
+    Some((f.get("owner").map(String::as_str).unwrap_or(""), f.get("until").map(String::as_str)))
 }
 
 /// is_suspended <subject> -> true if a "suspend" op is recorded.
@@ -143,6 +168,54 @@ pub fn unit_forms(subject: &str, inst: &str) -> [String; 4] {
     ]
 }
 
+/// The standing-condition names watchtower consults [`is_suspended`] for before it files:
+/// each is the `cause` its findings carry (the probe name for the conditions framework).
+pub const WATCHTOWER_CONDITIONS: &[&str] = &[
+    "batched-stranded",
+    "batched-too-long",
+    "closed-stranded",
+    "czar-not-cleared",
+    "czar-unclaimed",
+    "dedup-meter",
+    "deploy-fault",
+    "disabled-timer",
+    "dolt-client-drop",
+    "failed-unit",
+    "failing-units",
+    "gate-silent",
+    "gate-slow",
+    "hotfix-standing",
+    "idle-while-ready",
+    "oldest-unsent",
+    "pr-stall-auto-merge-off",
+    "pr-stall-checks-red",
+    "pressure",
+    "queue-lock-holders",
+    "release-currency",
+    "release-skew",
+    "release-store",
+    "rowless-beads",
+    "sccache-wedge",
+    "slow-query",
+    "throttle-engaged",
+    "throttle-lifted",
+    "throttle-stall",
+    "unadopted-refs",
+];
+
+/// A subject is consultable when something reads it: a watchtower condition, or a subject
+/// one of `unit_files` (systemd unit-file names) resolves to.
+pub fn is_consultable(subject: &str, unit_files: &[String], inst: &str) -> bool {
+    WATCHTOWER_CONDITIONS.contains(&subject)
+        || unit_files.iter().any(|u| subject_of_masked_unit(u, inst) == subject)
+}
+
+/// True when the control plane declines `unit` (a `.service`/`.timer` file name): its
+/// subject is the unit name minus extension and instance suffix.
+pub fn unit_suspended(data: &CtrlData, unit: &str, inst: &str) -> bool {
+    is_suspended(data, &subject_of_masked_unit(unit, inst))
+}
+
 /// A masked unit file's subject: strip the extension, then the instance suffix if the base
 /// carries it — matching `do_divergence`'s direction-2 derivation
 /// (`base="${unit_name%.*}"`, `subject="${base%-${inst}}"`).
@@ -164,6 +237,33 @@ mod tests {
         assert!(resume(&mut d, "spira-groom"));
         assert!(!is_suspended(&d, "spira-groom"));
         assert!(d.is_empty(), "the subject is dropped once it carries no ops");
+    }
+
+    #[test]
+    fn unit_suspended_resolves_instance_and_extension() {
+        let mut d = CtrlData::new();
+        suspend(&mut d, "spira-groom", "r", "o", "w", "b");
+        assert!(unit_suspended(&d, "spira-groom-prod.timer", "prod"));
+        assert!(unit_suspended(&d, "spira-groom-prod.service", "prod"));
+        assert!(!unit_suspended(&d, "spira-other-prod.service", "prod"));
+    }
+
+    #[test]
+    fn consultable_is_a_condition_or_a_unit_subject() {
+        let units = vec!["spira-groom-prod.timer".to_string()];
+        assert!(is_consultable("slow-query", &units, "prod"));
+        assert!(is_consultable("spira-groom", &units, "prod"));
+        assert!(!is_consultable("nonsense", &units, "prod"));
+    }
+
+    #[test]
+    fn until_is_declared_on_an_existing_suspension_only() {
+        let mut d = CtrlData::new();
+        assert!(!set_until(&mut d, "a", "2026-10-09"));
+        suspend(&mut d, "a", "r", "sp-1", "w", "b");
+        assert!(set_until(&mut d, "a", "2026-10-09"));
+        assert_eq!(declared(&d, "a"), Some(("sp-1", Some("2026-10-09"))));
+        assert!(is_date("2026-10-09") && !is_date("tomorrow") && !is_date("2026-1-9"));
     }
 
     #[test]

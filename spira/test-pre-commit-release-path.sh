@@ -84,4 +84,11 @@ env -i HOME="$TMP" PATH="/usr/bin:/bin:$GIT_BIN:$REL/bin" git -C "$TMP/wt" commi
 is "a worktree commit under the restricted PATH passes both hooks" 0 "$rc"
 want "pre-commit-guard.sh beside the hooks ran" "pre-commit-guard.sh" "$(cat "$LOG")"
 
+# A quiet commit is refused aloud: the reason reaches the committer under -q.
+printf '#!/usr/bin/env bash\necho "REFUSED-REASON-MARKER" >&2\nexit 1\n' > "$REL/spira/pre-commit-guard.sh"
+printf 'x\n' > "$TMP/wt/e.txt"; git -C "$TMP/wt" add e.txt
+env -i HOME="$TMP" PATH="/usr/bin:/bin:$GIT_BIN:$REL/bin" git -C "$TMP/wt" commit -q -m e >"$TMP/out" 2>&1; rc=$?
+is   "a refusing hook refuses a git commit -q" 1 "$rc"
+want "and git commit -q still prints the reason" "REFUSED-REASON-MARKER" "$(cat "$TMP/out")"
+
 tl_summary

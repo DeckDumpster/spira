@@ -22,6 +22,7 @@ pub fn classify(code: Option<i32>, out: &str) -> Probe {
 }
 
 fn drift(drift_sh: &str, args: &[&str]) -> Probe {
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     match Command::new("bash").envs(spira_config::release_env::child_path_env_for_process()).arg(drift_sh).args(args).output() {
         Ok(o) => classify(o.status.code(), &String::from_utf8_lossy(&o.stdout)),
         Err(_) => Probe::Unreadable,
@@ -55,7 +56,7 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
                     .reference(format!("incident:{cause}"))
                     .cause(cause);
                 f.sin_exempt = false;
-                incident::file(incident_sh, &f);
+                incident::alarm(incident_sh, &f);
                 log(&format!("watchtower: drift-check filed {cause} escalation"));
             }
             Probe::Unreadable => log(&format!("watchtower: drift-check: {what} check could not run")),

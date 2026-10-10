@@ -35,10 +35,22 @@ pub fn load(watchers: &Path, overlay_dir: &Path, resolver: &dyn Resolver) -> Res
     let mut rows = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut faults = Vec::new();
-    for file in &files {
+    let harness = std::fs::read_to_string(watchers).unwrap_or_default();
+    manifest::parse_file(&watchers.display().to_string(), &harness, resolver, &mut rows, &mut seen, &mut faults);
+    let shipped: std::collections::HashSet<String> = seen.clone();
+    let mut overlay_seen = std::collections::HashSet::new();
+    for file in &files[1..] {
         let text = std::fs::read_to_string(file).unwrap_or_default();
         let label = file.display().to_string();
-        manifest::parse_file(&label, &text, resolver, &mut rows, &mut seen, &mut faults);
+        let mut mine = Vec::new();
+        manifest::parse_file(&label, &text, resolver, &mut mine, &mut overlay_seen, &mut faults);
+        for row in mine {
+            if shipped.contains(&row.name) {
+                eprintln!("watchd: {label}: '{}' is now shipped by the harness manifest; the manifest's row stands and this one is ignored — remove it from the overlay", row.name);
+            } else {
+                rows.push(row);
+            }
+        }
     }
     if !faults.is_empty() {
         return Err(RowsError::Malformed(faults));
@@ -88,11 +100,23 @@ mod tests {
     }
 
     #[test]
-    fn a_duplicate_name_between_the_harness_file_and_an_overlay_file_is_a_fault() {
+    fn an_overlay_row_the_harness_manifest_now_ships_is_skipped_and_the_manifest_row_stands() {
         let d = TempDir::new("watchd-rows");
         std::fs::write(d.join("watchers"), "pool|daemon|pool.sh\n").unwrap();
         std::fs::create_dir(d.join("overlay")).unwrap();
-        std::fs::write(d.join("overlay/x.watchers"), "pool|daemon|other.sh\n").unwrap();
+        std::fs::write(d.join("overlay/x.watchers"), "pool|daemon|other.sh\nmine|daemon|mine.sh\n").unwrap();
+        let rows = load(&d.join("watchers"), &d.join("overlay"), &resolver()).ok().unwrap();
+        let names: Vec<(&str, &str)> = rows.iter().map(|r| (r.name.as_str(), r.target.as_str())).collect();
+        assert_eq!(names, vec![("pool", "pool.sh"), ("mine", "mine.sh")]);
+    }
+
+    #[test]
+    fn a_duplicate_name_between_two_overlay_files_is_still_a_fault() {
+        let d = TempDir::new("watchd-rows");
+        std::fs::write(d.join("watchers"), "pool|daemon|pool.sh\n").unwrap();
+        std::fs::create_dir(d.join("overlay")).unwrap();
+        std::fs::write(d.join("overlay/a.watchers"), "mine|daemon|a.sh\n").unwrap();
+        std::fs::write(d.join("overlay/b.watchers"), "mine|daemon|b.sh\n").unwrap();
         let r = load(&d.join("watchers"), &d.join("overlay"), &resolver());
         assert!(matches!(r, Err(RowsError::Malformed(_))));
     }

@@ -29,8 +29,7 @@ the bead store, the lifecycle machine, git and a handful of files under `$SPIRA_
 5. **Runs the model session** under a liveness lease (trace growth renews it) and a
    deliverable-progress wall (thrash), streaming its trace to `$SPIRA_RUN/<bead>.log`.
 6. **Judges the outcome** — closed is not landed: the verdict fences (commit naming the
-   bead, delivers evidence, own-worktree dirty, SOP closing rule, close
-   reason, groom escalations, workflow run, rebase currency), then the teardown disposition,
+   bead, own-worktree dirty, close reason, groom escalations), then the teardown disposition,
    which charges an attempt **only** for a named failure of the work (default-deny).
 7. **Accounts** — ledger lines `born`/`awake`/`done` that the cockpit, watchtower and the
    measure scripts parse; event rows (`requeued`, `lapsed`, `reopen`) that `spira-claim`
@@ -153,9 +152,6 @@ After each `done` line: `_tsd_aeon_session` (native since sp-27d3d — wave 4.34
 | `$SPIRA_RUN/sweep-<fayth>-<pid>.log`, `.system.md`, `.task.md` | w | sweep trace and prompt |
 | `$SPIRA_RUN/<bead>.system.md`, `<bead>.task.md` | w | the split prompt |
 | `$SPIRA_RUN/aeon/<bead>.lease` | w/rm | lease deadline epoch, written beside + renamed; removed at teardown |
-| `$SPIRA_RUN/<bead>.lapsed` | w/r/rm | `<quiet_s>\t<last>` written by the heartbeat, consumed by teardown |
-| `$SPIRA_RUN/<bead>.thrash` | w/r/rm | last action, written by the heartbeat, consumed by teardown |
-| `$SPIRA_RUN/<bead>.slain` | r | written by slay.sh |
 | `$SPIRA_RUN/worktree/<bead>` | w | the worktree (the sanctioned root) |
 | `$SPIRA_RUN/aeon-empty-gh/` | w | empty `GH_CONFIG_DIR` for the session |
 | `$SPIRA_MAIL/aeon-<bead>/{new,cur,tmp}` | w/rm | per-claim mailbox |
@@ -362,19 +358,32 @@ Every `FAYTH_HEARTBEAT_SECONDS` (default 30): trace mtime changed → renew (dea
 lease); else now ≥ deadline → **lapse**; else fuse (`aeon_fuse_minutes`, integer) ≥ wall
 (`SPIRA_THRASH_MINUTES`, 20) **and** session minutes ≥ wall → **thrash**; else ok. Then
 `spira-lc renew <id> <holder> <deadline>` renews the lifecycle row's lease (sp-2jf0a); a
-refusal is logged once per change and never ends the heartbeat. Lapse writes `.lapsed`, thrash writes `.thrash`, then the session's process
+refusal is logged once per change and never ends the heartbeat. Lapse records a `lapsed` disposition (`<quiet_s>\t<last>`) and thrash a `thrash` one (the last action) on the bead's row with `spira-lc disposition`, then the session's process
 group is sent TERM and the aeon goes straight to teardown with rc 143 (the bash killed its
 own process group, so its trap ran with 143 and skipped the verdict block — same outcome).
+
+### 4.2a Phase and disposition on the row
+
+The WORKING row carries the run's place and how it was cut short, both cleared when the row
+leaves WORKING and fresh at the next claim. `Phase` is the holder's, forward-only:
+claimed (the claim itself), `building` (worktree, brief, fixture), `session`, `teardown`.
+The aeon records the last three with `spira-lc phase <bead> <holder> <phase>`. The model's
+`work submit` leaves WORKING before the aeon's fast tier runs, so there is no fast-tier or
+submitting phase to record: a row in SUBMITTED carries no phase, and `teardown` lands only
+for a run still WORKING. `Disposition{status}` is `lapsed`, `thrash` or `slain` with the cutter's words;
+a stronger status replaces a weaker, never the reverse. The pane reads both from
+`spira-lc list --state WORKING`; nothing reads a marker, pidfile or `/proc` for them
+(lint rule `aeon-state-readers`).
 
 ### 4.3 Disposition (`aeon_disposition`, first match wins)
 
 | # | input | status | charge | requeue cause | note |
 |---|---|---|---|---|---|
 | 1 | capacity_reset_at found | capacity | free | unjudged-capacity | capacity |
-| 2 | `.slain` | slain | free | unjudged-slain | slain |
-| 3 | `.thrash`, streak ≥ cap | requeue-thrash-charged | charge | thrash-stale | thrash-charged |
-| 3' | `.thrash` | requeue-thrash | free | thrash | thrash |
-| 4 | `.lapsed` | lapsed | charge | - | lapsed |
+| 2 | row disposition `slain` (slay) | slain | free | unjudged-slain | slain |
+| 3 | row disposition `thrash`, streak ≥ cap | requeue-thrash-charged | charge | thrash-stale | thrash-charged |
+| 3' | row disposition `thrash` | requeue-thrash | free | thrash | thrash |
+| 4 | row disposition `lapsed` | lapsed | charge | - | lapsed |
 | 5 | gate still running | gate-unfinished | free | unjudged-gate-unfinished | gate-unfinished |
 | 6 | open ask blocker | decision-blocked | free | unjudged-decision-blocked | decision-blocked |
 | 7 | session rc 124, nothing committed | timeout | free | unjudged-timeout | timeout |
@@ -389,6 +398,315 @@ own process group, so its trap ran with 143 and skipped the verdict block — sa
 Inputs are gathered lazily in the same order (a later marker is not consumed when an
 earlier row matched). The side effects per note key (release, `bump_requeue`, notes,
 `bump_lapsed`, `write_lapse_record`, `capacity_pause_set`) and every note text are aeon.sh's.
+
+### 4.4 Closed-bead branch — retired (sp-v62vn)
+
+Every session runs restricted and hands its bead on only through the work verbs, which the
+disposition (§4.3) reads as `submitted`; teardown has no "the model closed the bead" branch,
+no closed operator-wait marker and no submitted conversion (§4.5 retired with it). After the
+disposition: pidfile removal, mailbox removal, `done` line, exit.
+
+### 4.6 Verdict block (after the session, in order)
+
+wiki commit → status/superseded from the lifecycle row → `verdict_committed` → own-worktree
+dirty, close-reason and groom-escalation guards, each judging the `submitted` hand-on
+(`decide::builder_submitted`; reopen prod-dirty, `SPIRA_ALLOW_PROD_DIRTY`,
+`SPIRA_CLOSE_REASON_OVERRIDE`). A session never closes its bead, so there is no close
+verdict, description-change, workflow-run or closed-behind-base fence here.
+
+## 5. The lib.sh seam
+
+One helper, `LibSeam`, runs `bash -c <FIXED>` where `FIXED` is a compile-time constant
+(`src/seam.rs`). **All data is on stdin**, NUL-framed:
+
+```
+<lib.sh path>\0<fayth file path or empty>\0<function>\0<arg1>\0<arg2>\0...
+```
+
+The fixed script reads the records, sources `lib.sh` (and thus `conf.sh`) and the fayth file
+(then folds `SPIRA_REQUIRE_LABEL` exactly as aeon.sh did), refuses any function not on its
+allowlist (exit 97), and calls it. stdout is the answer, the exit code is the function's.
+The environment is the aeon's own (identity exports like `BEADS_ACTOR` included — they
+are how lib.sh names the actor, as in aeon.sh). Nothing is passed in argv or as an ad hoc
+env var.
+
+Wrappers defined inside `FIXED` (because the answer is a global the plain function sets, or
+because several reads belong to one call):
+
+| wrapper | returns |
+|---|---|
+| `_aeon_snapshot` | `env -0`, then `\0\0`, then `NAME\0VALUE\0` for the fixed var list, then `READY_ARGS` NUL-joined, then `CLAIM_EXCLUDE` |
+| `_aeon_capacity_paused` | rc of `capacity_paused`; stdout `SPIRA_CAPACITY_LEFT` |
+| `_aeon_rebase` | rc of `rebase_branch`; stdout `REBASE_CONFLICTS` |
+| `_aeon_thrash_meta <id>` | `bead_metadata` thrash_streak, thrash_tip, thrash_last on 3 lines |
+
+`_aeon_repo_info <name>...` (`name\troot\tlandref` per resolvable repo, for resumability)
+and `_aeon_base <repo>` (landref/`ref_branch`/`ref_remote` on three lines) are retired
+(sp-o88bx, "wave 4.12"): family W now resolves in-process through `spira_config::repos` —
+`claim::Selector::resumable` and `run::Run::work`'s own base block, respectively — never
+reaching this seam at all.
+
+Allowlisted lib.sh functions (the complete list — every other lib.sh behaviour aeon.sh used
+is reimplemented in Rust, §6):
+
+| function | used for |
+|---|---|
+| `aeon_count`, `fayth_free` | capacity (systemd unit list / pidfiles) |
+| `spira_event` | `aeon.claimed` |
+| `release_own_claim` | every release: `spira-lc unclaim` (lifecycle Release + bd `unclaim --if-assignee`, sp-hyo5e) |
+| `lc_claim_bead`, `lc_bead_verified` | lifecycle machine |
+| `park_unmapped` | unmapped repo |
+| `spira_prune_worktrees` | prune-with-repair before cutting a worktree |
+| `bead_reopen` | every reopen (landstate WITHDRAWN, label removal, release, cause row, note) |
+| `bump_requeue`, `bump_lapsed`, `write_lapse_record`, `thrash_streak_bump`, `requeues_of` | event rows / thrash metadata / the display count on a requeue note |
+| `capacity_reset_at`, `capacity_pause_set` | the account's capacity window |
+| `bead_is_work_type`, `bead_cited_commit_on_base`, `other_beads_on_conflicts`, `spira_destroy_branch` | helpers shared with landing |
+
+`session_outcome`, `session_yield_headless`, `open_ask_blocker`, `verdict_committed`,
+`close_verdict`, `delivers_verdict` and `rapid_recur_check`/`rapid_recur_streak` were the
+last aeon-only lib.sh functions this seam reached — ported natively into `aeon::decide`,
+`aeon::verdict` and `aeon::run::Run::rapid_recur_check` at sp-8kqww (wave 4.33) and deleted
+from lib.sh (zero callers left once aeon stopped shelling out for them).
+
+`trace_last`, `aeon_fuse_minutes`, `aeon_lease_minutes`, `trace_stats`, `trace_tail`,
+`wiki_write_paths`, `wiki_commit_paths`, `groom_claims_verified`, `bead_named_paths` and
+`_tsd_aeon_session` were the trace/heartbeat family (P), the live pair of the brief/memories
+family (Q) and the aeon half of the tsd producers (AC) — ported into `aeon::trace` at
+sp-27d3d (wave 4.34) and deleted from lib.sh. cockpit-collect and sentinel, which read the
+same trace through `trace_stats`/`trace_tail`/`aeon_fuse_minutes`/`aeon_lease_minutes`,
+now depend on this crate and call `aeon::trace` in-process instead of `io::lib_call` or a
+bash seam. `aeon_fuse_minutes`'s one remaining external read — the base ref, family W — was
+`spira_landref` through this seam when sp-27d3d landed; sp-o88bx ("wave 4.12"), concurrent
+with it, retired that seam call too: `RealBeat::fuse` now resolves it through
+`spira_config::repos::landref` directly and hands the result to `aeon_fuse_minutes` as
+before, an already-resolved `Option<i64>` commit timestamp.
+
+Cost: ~0.2 s per call (sourcing lib.sh). A claim run makes ~15-25 calls; the heartbeat makes
+none for its base ref now (resolved in-process).
+
+Other subprocess seams are the scripts aeon.sh already called (§2.7), invoked the same way.
+
+## 6. Reimplemented in Rust (was lib.sh or inline)
+
+`log`/`die`; `bdq`/`bdjson`/`json_only`/`claim_retry` (for the aeon's own bd calls — the czar
+fence and create-time checks do not apply to any call the aeon makes itself); `aeon_own_unit`;
+`fayth_fenced`; `fayth_lease_seconds`; `world_stop_decide`; `hb_tick`; `aeon_disposition`;
+`outcome_charges`; `sop_rule_verdict`; `bead_has_label`;
+`session_result_fields`; `attempt_trace`; `spira_trace_mark`; `worktree_evict_foreign`;
+`worktree_move_aside`; `render_memories`; `system_prompt_split`; `aeon_settings`;
+`aeon_claude_argv` (`persona_model` through the spira-config library on conf.sh's resolved
+`SPIRA_TOML_FILE`); `render_resume_brief`; `render_slain_brief`; `render_deadline_brief`;
+`render_holds_brief`; `bound_bead_notes`; the band/rank python (now `spira-claim`); the
+chamber overlay; placeholder substitution; `aeon_name_take`/`aeon_named` (`aeon/src/naming.rs`,
+wave 4.23 sp-0ffox — this crate was `aeon_name_take`'s only caller, so it dropped off the
+seam entirely rather than keeping a lib.sh shim; `aeon_named` keeps an `aeon aeon-named
+<pidfile>` subcommand for cockpit-collect, the one caller left outside this crate).
+
+`lifecycle_enforce` is retired (sp-v62vn): the lifecycle machine is the only mode. A
+`SPIRA_LIFECYCLE_ENFORCE` in the unit's environment that says off is refused at start-up,
+naming the exit; `spira.lifecycle_enforce = false` is refused by `spira-config` itself.
+
+## 7. Tests
+
+`cargo test -p aeon` — 135 lib tests + 2 bin tests (sp-8kqww, wave 4.33; count drifts as
+functions keep moving over from lib.sh — read it off the actual run, not this number).
+Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
+(temp repositories) wherever the assertion is about git's own behaviour.
+
+| module | contract it pins |
+|---|---|
+| `ledger` | every ledger format byte for byte, cockpit-metrics' regex over it, dry run writes nothing, trim 20,000→5,000, session fields (sum vs last, half-even rounding, `?` never 0), `attempt_trace` segments across a 64 KiB chunk, trace-mark numbering |
+| `decide` | the disposition table row by row and its precedence, hb_tick (test-aeon-lease/test-thrash rows), world-stop, SOP verdict; `open_ask_blocker`, `session_outcome`, `session_yield_headless` and `rapid_recur_streak` phrasing/fixture tables (sp-8kqww, wave 4.33 — ported from the bash suites they retired) |
+| `verdict` | `verdict_committed` (branch then landrefs fallback), `delivers_verdict` (beads/note/report/applied.jsonl/check/action), `close_verdict` precedence (sp-8kqww, wave 4.33) |
+| `brief` | FINISH/FOLLOWUP/NO_BD are the `work` verbs; LANDING/PARK per mode; FIXTURE truthful; resume/slain/deadline/holds renderers; notes bounding (`bead_body_is_bounded`); overlays whole/section/append/absent/blocks; literal, ordered substitution; thrash banner lands in task.md; system/task split; memories tiering and budget |
+| `claim` | ready set on stdin and nothing in argv; lookup/rank failure is claim-error; resumable tier; lost race falls through; claim_retry |
+| `worktree` | fresh cut + resume; mislabeled branch reset (sp-om71s case 1); own branch at a previous path moved aside (case 2); test-aeon-worktree-evict-foreign.sh row for row, including the refused move |
+| `session` | lease lapse and thrash trip the stop and write their markers; the trip signals the session's group, never the aeon's; timeout is 124 |
+| `seam` | NUL framing; the fixed script sources lib.sh and the fayth, folds SPIRA_REQUIRE_LABEL, refuses a function off the allowlist; snapshot parsing |
+| `conf` | fayth defaults, the fence, persona_model |
+| `run::tests` / `tests` | whole runs: fence, capacity, halted/draining/paused order, dry run, claim-error, idle, hold race, the machine's claim restricts the model, refused lifecycle claim, world-stop fence, unmapped repo (+ world restarted), happy path to submitted (ledger, brief, argv, env scrub), unlanded exit code, slain (verdict skipped, rc 143), pre-session death, rebase-conflict requeue, sweep |
+| `main` | argv grammar |
+
+The seam's fixed script was also exercised against this branch's real `lib.sh` with an
+isolated HOME/config (read-only for the harness): `_aeon_snapshot` returns the builder's
+predicate, READY_ARGS and CLAIM_EXCLUDE; an off-list function is refused with 97.
+
+The bash suites that drive `aeon.sh` end to end are retired or repointed in the cutover
+(§9); the lib.sh functions they cover stay tested by their own suites.
+
+## 8. Behaviour deliberately changed (and kept)
+
+Changed:
+
+1. **Placeholder substitution is literal.** aeon.sh used `sed s|{{X}}|$VAL|g` (a value
+   containing `&`, `\` or `|` was mangled or broke the whole `sed`, leaving an empty
+   prompt) and bash `${P/{{X}}/$VAL}` (bash ≥5.2 `patsub_replacement`: an `&` in a bead
+   body was replaced by `{{BEAD}}`). Rust replaces the literal text. The multi-line
+   tokens (`{{BEAD}}`, `{{PARK}}`, `{{FIXTURE}}`, `{{DEADLINE}}`, `{{FINISH}}`) still
+   replace the **first** occurrence only, as before; single-line tokens replace all.
+2. **A world stopped for a bead is restarted if the aeon exits before its teardown is
+   armed** (the unmapped-repo exit came after `world.sh stop` and before the trap, so the
+   world stayed halted).
+3. **Process model.** The model session runs in its own process group; lease lapse and
+   thrash signal that group instead of the aeon's own (`kill -TERM -$$`). The aeon then
+   tears down exactly as the bash trap did (rc 143, verdict block skipped).
+4. **`bash -e` after the session is not reproduced.** aeon.sh ran the verdict block under
+   `set -e`, so any incidental non-zero command there aborted the remaining fences and
+   jumped to teardown. Each fence here runs to its decision.
+5. **The resumability tier** comes from `spira-claim select --top-tier` (the same lines the
+   python produced; verified byte-identical by spira-claim's §6).
+6. **The eviction-race prior count** comes from `spira-claim requeues --json` (reopen rows
+   with cause `eviction-race`) instead of a hand-built `SELECT COUNT(*) … requeued …`
+   interpolating the bead id. bead_reopen writes one such row per eviction-race reopen, so
+   the count is the same; on "cannot tell" it is 0, as before. (Retired with the
+   eviction-race block, sp-mve9i — see "The eviction-race block, deleted".)
+7. **`aeon_alive`/install detect the binary** (cutover), since a Rust process's cmdline
+   does not contain `aeon.sh`. Until cutover item 5 lands, lib.sh reads every binary
+   aeon as dead (aeon_name_take would reuse names; pidfile-mode aeon_count would undercount),
+   so items 1-5 land together.
+8. **`lifecycle_enforce = true` in spira.toml now takes effect** (the key is since retired, sp-v62vn). conf.sh exports the toml
+   bool as the string `true` and aeon.sh tested `= 1`, so the key could only ever be
+   switched on from the environment or spira.conf's `1`. The Rust reads the typed key
+   (and accepts `1`/`true` from the environment).
+9. **The early-exit disposition branches remove the pidfile, its `.name` and the mailbox**
+   (capacity, slain, thrash, lapsed, gate-unfinished, decision-blocked, timeout, requeue,
+   operator-wait, submitted, yield-headless, pre-session). aeon.sh `exit`ed inside the case,
+   above the removal, leaving them for other scans to reap by pid liveness.
+10. **TERM delivered to the aeon's pid alone is forwarded to the session's group.** bash
+    deferred its trap until the model exited (slay.sh's fallback `kill -TERM <pid>` left the
+    session running until it ended on its own). `systemctl stop` (the whole cgroup) is
+    unchanged.
+11. **Resumability skips a candidate whose repository has no resolvable land ref** (bash
+    counted `git rev-list ..<branch>`, i.e. against HEAD of the shared checkout).
+12. **A missing `spira-claim` is a claim-error** (`awake <f> claim-error spira-claim not
+    found`, exit 1) — the ranker is required, not optional.
+13. **`spira/work-env.sh` is retired, not called.** (sp-zpaq0, rewrite wave 5.) Its only
+    caller was aeon.sh/aeon itself (work/DESIGN.md §2); the allow-listed restricted
+    environment it built with `env -i` is now built in-process (`restrict.rs`) and applied
+    directly to the model's `SessionSpec`, rather than spawned as a wrapper around the
+    agent binary. The acceptance property is unchanged ("in the provided aeon environment,
+    `command -v bd` fails and no credential is readable") and is now a `cargo test -p aeon`
+    fact (`restrict.rs`'s own tests) instead of a bash integration fixture's.
+14. **`spira/escape.sh` is retired into this binary as `aeon --escape <fayth> [--dry-run]`.**
+    (sp-zpaq0.) `world_gate`, `capacity_paused`, `fayth_ready` and `summon_argv` are still
+    reached through the lib.sh seam (§5) — they carry real side effects (a capacity probe
+    can clear the pause file; an expired drain is lifted and logged) that a Rust
+    reimplementation would have to duplicate exactly or drift from; `escape.rs` is the
+    decision (`decide`, pure, unit-tested) and the `systemd-run` argv/spawn (`run`).
+
+Kept, although they look wrong (flagged for the operator):
+
+- **The workflow-run fence is inert in production.** aeon.sh passes `SPIRA_DB="$DB"` under
+  `set -u`, and nothing sets `DB`, so the command substitution dies and the fence reads
+  "OK" on every close. Rust runs the fence only when `DB` is set in the environment —
+  exactly when bash would have. Activating it is a policy change (it reopens on a GitHub
+  API failure), not a port decision.
+- **Sweep mode is fenced** (the fence precedes the sweep branch although its comment says
+  it should not).
+- **`{{BEAD}}` etc. replace only the first occurrence** (concierge.md has three `{{BEAD}}`,
+  but the concierge is not summoned through the aeon).
+- **The six session briefs are appended to task.md with no separator** (DIRTY, RESUME,
+  SLAIN, ALREADY_DONE, CLOSE, REBASE: `printf '%s'` each), so `## If you find the work is
+  already done` follows the template's last line directly.
+- **Setup still races the lease**: the heartbeat starts before the worktree, the rebase and
+  the fixture, so a setup quieter than the lease lapses it, as before.
+
+## 9. Cutover
+
+> **Historical record.** Its `SPIRA_AEON_BIN` / `SPIRA_CLAIM_BIN` / `spira_bin` rows were later
+> superseded by sp-gypjk: `aeon` and `spira-claim` are invoked by bare name on the launcher's
+> PATH, and no binary resolver remains.
+
+**Not performed** (operator's directive). Line numbers against this branch's base
+(`7ce25b21b`). `$SPIRA_AEON_BIN` is resolved in conf.sh like `SPIRA_LC_BIN`.
+
+1. **spira/conf.sh after line 2310** (`export SPIRA_LC_BIN`), add:
+   ```bash
+   if [ -z "${SPIRA_CLAIM_BIN:-}" ]; then
+       SPIRA_CLAIM_BIN="$(command -v spira-claim 2>/dev/null)" || SPIRA_CLAIM_BIN="$(spira_bin spira-claim 2>/dev/null)"
+   fi
+   export SPIRA_CLAIM_BIN
+   if [ -z "${SPIRA_AEON_BIN:-}" ]; then
+       SPIRA_AEON_BIN="$(spira_bin aeon 2>/dev/null)" || SPIRA_AEON_BIN=""
+   fi
+   export SPIRA_AEON_BIN
+   ```
+   (spira-claim's own cutover item 1 adds the first half; apply once.)
+2. **spira/lib.sh:2724-2730** (`summon_fayth`). Insert before line 2725
+   (`local _sargv; mapfile -t _sargv …`):
+   `    [ -x "${SPIRA_AEON_BIN:-}" ] || { log "CHECK7 $f: aeon binary not built (SPIRA_AEON_BIN) — not summoning"; return 1; }`
+   and at line 2730
+   current: `        "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null`
+   replace: `        "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$f" 2>/dev/null`
+3. **spira/escape.sh:52-56**. Insert before line 52 (`log "escape.sh $FAYTH: $r ready …`):
+   `[ -x "${SPIRA_AEON_BIN:-}" ] || die "escape.sh $FAYTH: aeon binary not built (SPIRA_AEON_BIN)"`
+   and at line 56
+   current: `    "$SPIRA_HOME/aeon.sh" "$FAYTH" ${DRY_FLAG} 2>/dev/null`
+   replace: `    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$FAYTH" ${DRY_FLAG} 2>/dev/null`
+4. **systemd/spira-ops.service:46**
+   current: `ExecStart=/bin/bash -c 'exec @SPIRA_PROD@/aeon.sh ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt'`
+   replace: `ExecStart=/bin/bash -c 'exec @SPIRA_REPO@/bin/aeon --home @SPIRA_PROD@ ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt'`
+   (the binary path convention of `spira-lc.service:18`, `@SPIRA_REPO@/bin/…`.)
+5. **spira/lib.sh:822** (`aeon_alive`)
+   current: `    grep -qF 'aeon.sh' <<< "$cmd" || return 1`
+   replace: `    grep -qE '(^|/)aeon( |$)|aeon\.sh' <<< "$cmd" || return 1`
+6. **install.sh:246** (`_conflict_aeon`) — a binary aeon's cmdline is
+   `<repo>/bin/aeon\0--home\0<home>\0<fayth>`; match its path as the second pattern:
+   current: `    match="$(printf '%s\n' "$home/aeon.sh" \`
+   replace: `    match="$(printf '%s\n' "$home/aeon.sh" "$(dirname "$home")/bin/aeon" \`
+7. **spira/timeout-lint.sh:41** — drop `"$HERE/aeon.sh"` from the default list (the lint
+   checks bash `timeout` wrapping; the Rust binary bounds every bd call itself).
+8. **spira/config-fence-allow:26** — remove `spira/aeon.sh`.
+9. **spira/full-aeon-fixture.sh:61-62** replace the `grep -q 'SPIRA_AGENT' "$HERE/aeon.sh"`
+   guard with `[ -x "$SPIRA_AEON_BIN" ] || { …refusing… }` and **:80**
+   `"$HERE/aeon.sh" "${1:-builder}"` → `"$SPIRA_AEON_BIN" --home "$HERE" "${1:-builder}"`.
+10. **Build/release**: add `aeon` to whatever copies built binaries into
+    `$SPIRA_ARTIFACTS`/`bin/` (the same list `spira-lc`, `work` and `spira-claim` are on).
+11. **Delete `spira/aeon.sh`** once 1-10 have landed and one production aeon has run
+    through the binary (a `done` line with `status=` from `aeon`, visible in the ledger).
+12. **Suites.** Each of these executes `aeon.sh`; repoint the invocation to
+    `"$SPIRA_AEON_BIN" --home "$SPIRA_HOME"` (or `$HERE`) and drop its
+    `grep -q 'SPIRA_AGENT' aeon.sh` guard (the binary honours `SPIRA_AGENT` the same way):
+    `test-aeon-elastic-concurrency.sh:68,79` (and drop the `fayth_free` grep at :52),
+    `test-aeon-chamber-overlay.sh:54`, `test-aeon-eviction-race.sh:135`,
+    `test-aeon-gate-close-silent.sh:184`, `test-aeon-gate-unfinished-attempts.sh:90`,
+    `test-aeon-prod-dirty.sh:92`, `test-aeon-resume-collision.sh:47`,
+    `test-aeon-resume.sh:148`, `test-aeon-prompt-layers.sh:112`,
+    `test-aeon-lifecycle-cutover.sh:206`, `test-aeon-slain-attempts.sh:83`,
+    `test-aeon-wiki-dirty.sh:120`,
+    `test-aeon-worktree-collision.sh:57`, `test-aeon-world-stop.sh:94`,
+    `test-aeon-teardown-e2e.sh:515`, `test-aeon-sweep.sh:52`, `test-cross-repo.sh:141`,
+    `test-epic-claim-order.sh:261`, `test-groom-escalation-check.sh:101`,
+    `test-holds.sh:210`, `test-lifecycle-enforce-gate.sh:93`, `test-mail-aeon.sh:151`,
+    `test-ops-closing.sh:82`, `test-persona-model.sh:183,233`, `test-spike.sh:77`,
+    `test-submitted-lands.sh:105`, `test-thrash-teardown.sh:110,192`, `test-timeout.sh:188`,
+    `test-world-drain-deadline.sh:89,119`. Those that `cp "$HERE/aeon.sh" "$SPIRA_HOME/"`
+    stop copying it (the binary takes `--home`).
+13. **Structural greps that read aeon.sh's source** — retire the assertion; the property is
+    a `cargo test -p aeon` case now:
+    `test-brief-notes.sh:170-174` (T6 BEAD_BODY through bound_bead_notes → `brief::tests::bead_body_is_bounded`),
+    `test-census-events.sh:410-432` (sp-ytw2h cause pairs: repoint its scan to `aeon/src/*.rs`,
+    where the causes are `const` strings in `verdict.rs`),
+    `test-thrash-teardown.sh:220-225` (process-group kill → `heartbeat::tests::trip_signals_session_group`),
+    `test-attempts.sh:197`, `test-event-taxonomy.sh:55`, `test-world.sh:249`, and the
+    `grep`-for-shape guards in the suites of item 12 (same rows as their exec line, per
+    the list in the commit that added this file).
+14. **Stay as they are** (they test lib.sh functions, which stay): `test-aeon-disposition.sh`,
+    `test-aeon-lease.sh`, `test-aeon-world-stop.sh` (lib half), `test-aeon-worktree-evict-foreign.sh`,
+    `test-aeon-base-ref-qualify.sh`, `test-aeon-launch-grammar.sh`,
+    `test-aeon-settings-guard-allowlist.sh`, `test-aeon-dirty-commit.sh`,
+    `test-aeon-wiki-concurrent.sh`. When lib.sh's aeon-only functions (`aeon_disposition`,
+    `world_stop_decide`, `hb_tick`, `hb_wait_outcome`, `sop_rule_verdict`,
+    `render_*_brief`, `bound_bead_notes`, `system_prompt_split`, `aeon_claude_argv`,
+    `aeon_settings`) lose their last caller, retire them with these suites.
+
+## The eviction-race block, deleted (sp-mve9i)
+
+The verdict fence used to reopen a bead closed in bd while its lifecycle row carried a live
+batch eviction, with an idempotence sidecar and an escalation cap. The aeon reads its bead's
+state from the lifecycle row (sp-mve9i) and a restricted session never closes anything, so the
+block is deleted. test-aeon-eviction-race.sh stays as the proof that an evicted bead's bd close
+is not read as a close. The `eviction-race` cause still folds in spira-claim's events and census.
 
 ### 4.4 Closed-bead branch — retired (sp-v62vn)
 

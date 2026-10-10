@@ -138,6 +138,21 @@ pub trait World {
     /// other entry of `dir`'s parent. Err(why) when any step fails; nothing half-installed
     /// is left at `dir`.
     fn install_tools(&self, tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String>;
+    /// Install tools from a shared store entry (toolkey.rs): as [`World::install_tools`], with
+    /// `<src>/<pkg>` for the binaries, and the entry marked recently used.
+    fn install_tools_from(&self, src: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String>;
+    /// Every source path the last build of `pkgs` in `tree` read, as cargo recorded them:
+    /// the prerequisites of `target/aeon/<pkg>.d` and every `rerun-if-changed` of the
+    /// profile's build scripts. Err when a dep-info file is missing or unreadable.
+    fn tool_inputs(&self, tree: &Path, pkgs: &[String]) -> Result<Vec<String>, String>;
+    /// The entries of the shared tools `store` whose names start with `<base>-`, most
+    /// recently used first.
+    fn tool_entries(&self, store: &Path, base: &str) -> Vec<PathBuf>;
+    /// Publish the installed tools in `from` to `<store>/<name>` atomically (a temporary
+    /// directory renamed into place, its `INPUTS` = `inputs` and `KEY` = `name` written
+    /// first), then keep only the `keep` most recently used entries. Ok when the entry is
+    /// there afterwards (another trial may have published it first).
+    fn publish_tools(&self, from: &Path, pkgs: &[String], store: &Path, name: &str, inputs: &str, keep: usize) -> Result<(), String>;
     /// The compiler wrapper the trial's builds run through (sp-z61hj): sccache resolved on
     /// `path`, or the refusal (spira_config::build::wrapper). `setting` is SPIRA_BUILD_CACHE.
     fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String>;
@@ -162,12 +177,19 @@ pub trait World {
         cmd: &str,
     ) -> (i32, String);
 
+    // ---- the gate machine (machine.rs)
+    /// Persist the run's record. Err is a refusal: a gate that cannot record its moves judges nothing.
+    fn machine_save(&self, run: &Path, r: &crate::machine::Run) -> Result<(), String>;
+    /// `gate cancel` left a request for `id`.
+    fn machine_cancelled(&self, run: &Path, id: &str) -> bool;
+    fn machine_clear_cancel(&self, run: &Path, id: &str);
+
     // ---- time and signals
     fn now(&self) -> u64;
     fn utc(&self) -> String;
     fn sleep_ms(&self, ms: u64);
     fn pid(&self) -> u32;
-    /// A TERM/INT/HUP arrived.
+    /// A TERM/INT/HUP arrived, or `gate cancel` was requested for the run being recorded.
     fn signalled(&self) -> bool;
     fn eprint(&self, s: &str);
 }

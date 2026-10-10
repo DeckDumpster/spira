@@ -405,7 +405,7 @@ impl<'a> Sentinel<'a> {
     /// shared, fail-closed evaluator `spira-claim`'s own `fayth-ready`/`bulk-ready-by-
     /// fayth` now go through, so this read-only express-lane check can never disagree
     /// with the pool's own.
-    fn express_ready_in_task_pool(&self, task_fayths: &[String], express_label: &str) -> bool {
+    fn express_ready_in_task_pool(&self, task_fayths: &[String]) -> bool {
         let home = &self.cfg.home;
         let bin = self.cfg.claim_bin.clone();
         for f in task_fayths {
@@ -423,10 +423,9 @@ impl<'a> Sentinel<'a> {
                 .h
                 .run(Spec::args_owned(bin.clone(), vec!["fayth-exclude".into(), f.clone(), predicate.exclude_labels]));
             let exclude = ex.stdout.trim().to_string();
-            let combined = format!("{},{express_label}", predicate.labels);
             let rc = self
                 .h
-                .run(Spec::args_owned(bin.clone(), vec!["ready-count".into(), combined, exclude]));
+                .run(Spec::args_owned(bin.clone(), vec!["ready-count".into(), predicate.labels, exclude, "--express".into()]));
             let n: i64 = rc.stdout.trim().parse().unwrap_or(0);
             if n > 0 {
                 return true;
@@ -480,7 +479,11 @@ impl<'a> Sentinel<'a> {
         let path = self.current_path();
         let summon_bin = pass::on_path(&self.cfg.summon, &path);
         let sentinel_bin = pass::on_path("sentinel", &path);
-        format!("--property=ExecStopPost={summon_bin} --user --collect --quiet {sentinel_bin} --summon-only")
+        let release = self.current_release();
+        let toml = self.cfg.raw("SPIRA_TOML");
+        format!(
+            "--property=ExecStopPost={summon_bin} --user --collect --quiet --setenv=SPIRA_RELEASE={release} --setenv=SPIRA_TOML={toml} --setenv=PATH={path} {sentinel_bin} --summon-only"
+        )
     }
 
     /// summon_argv <fayth> -> the systemd-run property/setenv flags shared by every summon
@@ -490,10 +493,15 @@ impl<'a> Sentinel<'a> {
         let release = self.current_release();
         vec![
             format!("--property=TimeoutStartSec={timeout}"),
+            "--property=IOSchedulingClass=idle".to_string(),
+            "--property=IOWeight=10".to_string(),
             self.summon_refill_argv(),
             format!("--setenv=SPIRA_RELEASE={release}"),
             format!("--setenv=PATH={release}/bin:{release}/spira:/usr/local/bin:/usr/bin:/bin"),
             format!("--setenv=HOME={}", self.cfg.raw("HOME")),
+            // The one source of config the aeon resolves from: the spec this sentinel runs
+            // under (an aeon without it refuses at its first seam — r-cutover-28's restart).
+            format!("--setenv=SPIRA_TOML={}", self.cfg.raw("SPIRA_TOML")),
         ]
     }
 
@@ -513,7 +521,7 @@ impl<'a> Sentinel<'a> {
     /// slot reservations, this persona's own readiness and concurrency cap, then the
     /// summon itself. **Safety-critical** (wave4-decomposition.md (c)8) — every refusal
     /// keeps its own log line, because the pass's stdout IS the sentinel log.
-    pub fn summon_fayth(&self, f: &str, pool: Option<i64>, require_label: &str, reuse_ready: Option<i64>) -> Attempt {
+    pub fn summon_fayth(&self, f: &str, pool: Option<i64>, require_express: bool, reuse_ready: Option<i64>) -> Attempt {
         if !self.world_gate(f, "CHECK7") || !self.skew_gate(&format!("CHECK7 {f}")) {
             return Attempt { summoned: false, ready: reuse_ready };
         }
@@ -616,11 +624,7 @@ impl<'a> Sentinel<'a> {
             self.log(&format!("CHECK7 {f}: {ready} ready, at concurrency cap"));
             return Attempt { summoned: false, ready: Some(ready) };
         }
-        let restricted = if require_label.is_empty() {
-            String::new()
-        } else {
-            format!(", restricted to '{require_label}'")
-        };
+        let restricted = if require_express { ", restricted to express" } else { "" };
         self.log(&format!("CHECK7 {f}: {ready} ready, {free} free — summoning{restricted}"));
         // systemd-run is handed the PATH-resolved aeon: a transient unit has no launcher PATH.
         let Some(aeon_bin) = which("aeon", self.cfg.raw("PATH")) else {
@@ -634,8 +638,8 @@ impl<'a> Sentinel<'a> {
             format!("--unit=spira-aeon-{f}-{}", self.h.now()),
         ];
         args.extend(self.summon_argv(f));
-        if !require_label.is_empty() {
-            args.push(format!("--setenv=SPIRA_REQUIRE_LABEL={require_label}"));
+        if require_express {
+            args.push("--setenv=SPIRA_REQUIRE_EXPRESS=1".into());
         }
         args.push(aeon_bin);
         args.push("--home".into());
@@ -658,8 +662,8 @@ impl<'a> Sentinel<'a> {
     /// caller that still sources lib.sh directly. The fourth, `reuse-ready`, argument is
     /// dropped: its only caller was `_ck7_summon_body`'s own fill loop, fully ported below,
     /// and no external caller ever passed it (grepped the whole tree).
-    pub fn summon_cmd(&self, f: &str, pool: Option<i64>, require_label: &str) -> i32 {
-        i32::from(!self.summon_fayth(f, pool, require_label, None).summoned)
+    pub fn summon_cmd(&self, f: &str, pool: Option<i64>, require_express: bool) -> i32 {
+        i32::from(!self.summon_fayth(f, pool, require_express, None).summoned)
     }
 
     /// _ck7_summon_body -> CHECK 7's lane-then-pool summon loop, unlocked (lib.sh:1314).
@@ -685,8 +689,9 @@ impl<'a> Sentinel<'a> {
             pool = Some(p);
         }
         if !lane_fayths.is_empty() {
-            let declared = self.ctx.get("SPIRA_LANES").filter(|s| !s.is_empty()).unwrap_or("none");
-            self.log(&format!("CHECK7 lanes ({declared} declared): {}", lane_fayths.join(" ")));
+            // SPIRA_LANES always resolves now (spira/conf.d/SPIRA_LANES declares the
+            // default) — no more Context-side "none" fallback for an unset key.
+            self.log(&format!("CHECK7 lanes ({} declared): {}", self.cfg.lanes_declared, lane_fayths.join(" ")));
         }
         let last = std::fs::read_to_string(&self.cfg.lane_round_robin).unwrap_or_default();
         let rotated_lanes = lane_rotate(last.trim(), &lane_fayths);
@@ -697,7 +702,7 @@ impl<'a> Sentinel<'a> {
                 self.log(&format!("CHECK7 {f}: not evaluated (pass budget exhausted)"));
                 continue;
             }
-            if self.summon_fayth(f, None, "", None).summoned {
+            if self.summon_fayth(f, None, false, None).summoned {
                 self.act(&format!("summoned a {f} lane aeon"));
                 let _ = std::fs::write(&self.cfg.lane_round_robin, f);
             }
@@ -710,18 +715,18 @@ impl<'a> Sentinel<'a> {
         // sets the pool to EXACTLY 1 (`check7_pool_decision`) and restricts the summon to
         // the express label — every OTHER gate in `summon_fayth` (world halted/draining,
         // account capacity, the fleet ceiling) still runs on that one slot unchanged.
-        let mut express_label = String::new();
+        let mut require_express = false;
         if ck7_throttled(self.cfg.throttle_stamp.is_file(), &self.cfg.queue_throttle_override) {
-            let express_ready = self.express_ready_in_task_pool(&task_fayths, &self.cfg.express_label);
+            let express_ready = self.express_ready_in_task_pool(&task_fayths);
             pool = Some(check7_pool_decision(true, pool.unwrap_or(0), express_ready));
             let head = std::fs::read_to_string(&self.cfg.throttle_stamp)
                 .ok()
                 .and_then(|s| s.lines().next().map(str::to_string))
                 .unwrap_or_default();
             if express_ready {
-                express_label = self.cfg.express_label.clone();
+                require_express = true;
                 self.log(&format!(
-                    "CHECK7 pool: throttle active — express bead ready, granting pool={} (restricted to '{express_label}')",
+                    "CHECK7 pool: throttle active — express bead ready, granting pool={} (restricted to express)",
                     pool.unwrap_or(0)
                 ));
             } else {
@@ -739,7 +744,7 @@ impl<'a> Sentinel<'a> {
             let mut fill: i64 = 0;
             let mut reuse: Option<i64> = None;
             loop {
-                let attempt = self.summon_fayth(f, pool, &express_label, reuse);
+                let attempt = self.summon_fayth(f, pool, require_express, reuse);
                 reuse = attempt.ready;
                 if !attempt.summoned {
                     break;

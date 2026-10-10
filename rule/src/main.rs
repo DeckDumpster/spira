@@ -10,22 +10,31 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rule::{
-    list_body, parse_enact_args, slugify, word_count, word_limit_refusal, write_succeeded_line,
+    list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
     CommitOutcome, EnactError, USAGE,
 };
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let mut home = ".".to_string();
+    let mut home: Option<String> = None;
     let mut rest: Vec<String> = Vec::new();
     let mut it = argv.into_iter();
     while let Some(a) = it.next() {
         if a == "--home" {
-            home = it.next().unwrap_or_else(|| ".".to_string());
+            home = it.next();
         } else {
             rest.push(a);
         }
     }
+
+    let home = home.unwrap_or_else(|| {
+        spira_config::resolve::locate_home_for_process()
+            .map(|h| h.to_string_lossy().into_owned())
+            .unwrap_or_else(|e| {
+                eprintln!("rule: {e} — pass --home");
+                std::process::exit(1)
+            })
+    });
 
     let mut args = rest.into_iter();
     let cmd = args.next().unwrap_or_default();
@@ -37,9 +46,21 @@ fn main() {
     // `render_memories`/`system_prompt_split` shim doors: pure string transforms, or a read
     // the `SPIRA_MEMORIES_CMD` test seam bypasses `bd` for entirely, so they must not share
     // this gate — concierge.sh is their one production caller and always has a real `$SPIRA_DB`,
-    // but test-render-memories.sh's seam cases deliberately never set one.
+    // but test-render-memories.sh's seam cases deliberately never set one. SPIRA_DB is a
+    // registered config key (spira/conf.d) — resolved only for the commands that need it, via
+    // the one source of config, never a process-environment read.
     let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "list" | "show");
-    let db = std::env::var("SPIRA_DB").unwrap_or_default();
+    let db = if needs_db {
+        match spira_config::process::cfg("SPIRA_DB") {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("rule: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        String::new()
+    };
     if needs_db && !Path::new(&format!("{db}/.beads")).is_dir() {
         eprintln!("rule: {db} has no .beads — refusing to guess a database");
         std::process::exit(1);
@@ -63,7 +84,7 @@ fn main() {
 /// `bd -C <db> <args...>` — never `$SPIRA_BD` (DESIGN.md "Decisions": `rule.sh` didn't
 /// either). Returns (exit code, stdout, stderr).
 fn run_bd(db: &str, args: &[&str]) -> (i32, String, String) {
-    let out = Command::new("bd").arg("-C").arg(db).args(args).output();
+    let out = spira_config::bounded::bounded("bd").arg("-C").arg(db).args(args).output();
     match out {
         Ok(o) => (
             o.status.code().unwrap_or(1),
@@ -88,64 +109,77 @@ fn memories_json(db: &str) -> Result<BTreeMap<String, serde_json::Value>, String
     Ok(serde_json::from_str(&stdout).unwrap_or_default())
 }
 
-/// `SPIRA_MEMORIES_CACHE`, resolved in-process via `spira_config::resolve::resolve_for_process`
-/// (wave 4.9, sp-k80sa). `rule.sh` used to `export` this across the `exec` boundary because
-/// its derived default (`$SPIRA_RUN/memories-cache.json`) is deliberately not in
-/// `spira_config::resolve::EXPORT_KEYS` — the same "read in-process, never exported to a
-/// child" category `SPIRA_REPO_MAP`/`SPIRA_FAYTHS` carry — so a caller that no longer
-/// re-exports it must resolve it itself instead.
-fn memories_cache_path(home: &str) -> Option<String> {
-    resolved_key(home, "SPIRA_MEMORIES_CACHE")
+/// `SPIRA_MEMORIES_CACHE`, a registered config key (spira/conf.d) — the one source of config,
+/// resolved once per process (wave 4.9, sp-k80sa). `rule.sh` used to `export` this across the
+/// `exec` boundary because its derived default (`$SPIRA_RUN/memories-cache.json`) is
+/// deliberately not in `spira_config::resolve::EXPORT_KEYS` — the same "read in-process,
+/// never exported to a child" category `SPIRA_REPO_MAP`/`SPIRA_FAYTHS` carry — so a caller
+/// that no longer re-exports it must resolve it itself instead.
+fn memories_cache_path() -> Option<String> {
+    spira_config::process::cfg("SPIRA_MEMORIES_CACHE").ok().filter(|p| !p.is_empty())
 }
 
-fn resolved_key(home: &str, key: &str) -> Option<String> {
-    let home_path = std::path::Path::new(home);
-    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let repo = spira_config::resolve::derive_home_repo(home_path, &env);
-    spira_config::resolve::resolve_for_process(home_path, &repo, &env)
-        .ok()
-        .and_then(|r| r.values.get(key).cloned())
-        .filter(|p| !p.is_empty())
-}
-
-fn rm_memories_cache(home: &str) {
-    if let Some(p) = memories_cache_path(home) {
+fn rm_memories_cache() {
+    if let Some(p) = memories_cache_path() {
         let _ = std::fs::remove_file(p);
     }
 }
 
-/// The wiki regeneration hook: `$SPIRA_WIKI_HOOK`, else `<home>/law-synth.sh`. Prints its
-/// own refusal (to stderr) and returns false when the hook is missing or not executable —
-/// SYNTHESIS IS REQUIRED, NOT OPTIONAL (DESIGN.md), exactly as `rule.sh`'s own `synth()`.
 const SYNTH_HOOK_NAME: &str = "law-synth.sh";
 
-fn synth(home: &str) -> bool {
-    let hook = std::env::var("SPIRA_WIKI_HOOK")
+/// The wiki regeneration hook: `$SPIRA_WIKI_HOOK`, else `<home>/law-synth.sh`. Refuses a hook
+/// that is relative (it would resolve against the caller's cwd) or not an executable file.
+/// Checked BEFORE any write so a statute is never in force without its page.
+fn resolve_hook(home: &str) -> Result<String, String> {
+    // Empty SPIRA_WIKI_HOOK is the registered meaning "no override" (spira/conf.d).
+    let hook = spira_config::process::cfg("SPIRA_WIKI_HOOK")
         .ok()
         .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| std::path::Path::new(home).join(SYNTH_HOOK_NAME).to_string_lossy().into_owned());
+        .unwrap_or_else(|| Path::new(home).join(SYNTH_HOOK_NAME).to_string_lossy().into_owned());
+    if !Path::new(&hook).is_absolute() {
+        return Err(format!("hook '{hook}' is not an absolute path"));
+    }
     let executable = std::fs::metadata(&hook)
         .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         .unwrap_or(false);
     if !executable {
-        eprintln!("rule: hook '{hook}' is not executable — statute NOT regenerated in wiki.");
-        return false;
+        return Err(format!("hook '{hook}' is not executable"));
     }
-    Command::new(&hook)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    Ok(hook)
+}
+
+fn refuse_hook(e: &str) -> i32 {
+    eprintln!("rule: {e} — wiki page NOT regenerated; nothing written, the statute book is unchanged.");
+    1
+}
+
+fn synth(hook: &str) -> bool {
+    // batch-job: this runs whatever its caller names, as long as that takes
+    Command::new(hook).status().map(|s| s.success()).unwrap_or(false)
+}
+
+/// Puts the book back as it was before a write whose page could not be regenerated:
+/// the prior text, or no key at all.
+fn rollback(db: &str, key: &str, prior: Option<&str>) -> bool {
+    let (code, _, _) = match prior {
+        Some(text) => run_bd(db, &["remember", "--key", key, text]),
+        None => run_bd(db, &["forget", key]),
+    };
+    rm_memories_cache();
+    code == 0
 }
 
 /// Commits the `SPIRA_STATUTE_PAGE` page through `<home>/wiki-commit.sh`, immediately after
 /// `synth()` regenerates it, named only under `law: <verb> <key>` (sp-4fl2e). Best-effort:
 /// no `$SPIRA_WIKI` checkout, or nothing to stage, are not failures.
 fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
-    let wiki = match std::env::var("SPIRA_WIKI") {
+    // SPIRA_WIKI/SPIRA_STATUTE_PAGE are registered config keys (spira/conf.d) — the one
+    // source of config; no second, process-environment read behind it.
+    let wiki = match spira_config::process::cfg("SPIRA_WIKI") {
         Ok(w) if !w.is_empty() && Path::new(&w).join(".git").is_dir() => w,
         _ => return CommitOutcome::Skipped,
     };
-    let page = match std::env::var("SPIRA_STATUTE_PAGE").ok().filter(|p| !p.is_empty()).or_else(|| resolved_key(home, "SPIRA_STATUTE_PAGE")) {
+    let page = match spira_config::process::cfg("SPIRA_STATUTE_PAGE").ok().filter(|p| !p.is_empty()) {
         Some(p) => p,
         None => {
             eprintln!("rule: SPIRA_STATUTE_PAGE is not resolvable from spira_config — wiki page NOT committed.");
@@ -153,6 +187,7 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
         }
     };
     let script = format!("{home}/wiki-commit.sh");
+    // batch-job: runs a gate, build or forge script that takes as long as its work
     let mut child = match Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
         .arg(&script)
         .arg(&wiki)
@@ -174,18 +209,18 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
     }
 }
 
-/// The two-message tail every `enact`/`retire` call prints after a successful write: the
-/// synth+commit outcome, on success, or the "database write succeeded, wiki page did NOT
-/// regenerate" refusal (exit 1) when the hook itself failed or was refused.
+/// The tail of every `enact`/`retire`: regenerate the page and commit it. A failed
+/// regeneration rolls the book back to `prior`, so the write and the page succeed or fail as one.
 fn finish_write(
+    db: &str,
     home: &str,
+    hook: &str,
     verb: &str,
     key: &str,
+    prior: Option<&str>,
     live_line: &str,
-    write_action: &str,
-    write_succeeded_line: &str,
 ) -> i32 {
-    if synth(home) {
+    if synth(hook) {
         println!();
         println!("{live_line}");
         let outcome = commit_common_law(home, verb, key);
@@ -195,12 +230,12 @@ fn finish_write(
             _ => println!("{msg}"),
         }
         0
+    } else if rollback(db, key, prior) {
+        eprintln!("rule: hook '{hook}' failed — wiki page NOT regenerated; {verb} of {key} rolled back, nothing written.");
+        1
     } else {
-        eprintln!();
-        eprintln!("{write_succeeded_line}");
-        eprintln!(
-            "The wiki page was NOT regenerated. Fix the hook and re-run rule.sh {write_action}."
-        );
+        eprintln!("rule: hook '{hook}' failed AND the rollback of {key} failed.");
+        eprintln!("The book and the wiki page now disagree. Re-run rule.sh {verb} {key} once the hook works.");
         1
     }
 }
@@ -239,26 +274,39 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         println!("---");
     }
 
+    let hook = match resolve_hook(home) {
+        Ok(h) => h,
+        Err(e) => return refuse_hook(&e),
+    };
+
     if dry_run {
         println!("DRY RUN: would enact {key} ({words} words). Nothing written.");
         return 0;
     }
 
+    let prior = match memories_json(db) {
+        Ok(m) => m.get(&key).and_then(|v| v.as_str()).map(str::to_string),
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
     let (code, _, stderr) = run_bd(db, &["remember", "--key", &key, &text]);
     if code != 0 {
         eprintln!("rule: failed to write {key} to the statute book at {db}: {stderr}");
         return 1;
     }
-    rm_memories_cache(home);
+    rm_memories_cache();
     println!("enacted {key} ({words} words)");
 
     finish_write(
+        db,
         home,
+        &hook,
         "enact",
         &key,
+        prior.as_deref(),
         "Statute is live in every agent session at its next summon.",
-        "enact",
-        write_succeeded_line("enact"),
     )
 }
 
@@ -281,21 +329,28 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
 
+    let hook = match resolve_hook(home) {
+        Ok(h) => h,
+        Err(e) => return refuse_hook(&e),
+    };
+    let prior = memories.get(&key).and_then(|v| v.as_str()).map(str::to_string);
+
     let (code, _, stderr) = run_bd(db, &["forget", &key]);
     if code != 0 {
         eprintln!("rule: failed to forget {key}: {stderr}");
         return 1;
     }
     println!("forgot {key}");
-    rm_memories_cache(home);
+    rm_memories_cache();
 
     finish_write(
+        db,
         home,
+        &hook,
         "retire",
         &key,
+        prior.as_deref(),
         "Retired. Do not leave a retired statute standing with a correction attached —\nthat is the same defect as a correction banner on a stale page.",
-        "retire",
-        write_succeeded_line("retire"),
     )
 }
 
@@ -355,20 +410,30 @@ fn cmd_render_memories(home: &str, rest: &[String]) -> i32 {
             Err(_) => return 0,
         },
     };
+    // SPIRA_STATUTE_CORE is a registered config key (spira/conf.d) — the one source of
+    // config; a resolution failure refuses rather than silently rendering with no core set.
     let core_csv = match rest.get(2).map(String::as_str) {
         Some(s) if !s.is_empty() => s.to_string(),
-        _ => std::env::var("SPIRA_STATUTE_CORE").unwrap_or_default(),
+        _ => match spira_config::process::cfg("SPIRA_STATUTE_CORE") {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("rule: {e}");
+                return 1;
+            }
+        },
     };
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let harness = match spira_config::resolve::resolve_key(&env, std::path::Path::new(home), "SPIRA_REPO") {
-        Ok(h) => h,
+    // SPIRA_REPO is this copy's checkout — an identity fact, never a config key (resolve()
+    // deliberately never returns it): the same derivation every crate uses for it.
+    let harness = spira_config::resolve::derive_home_repo(std::path::Path::new(home), &env).to_string_lossy().into_owned();
+
+    let mem_json = match memories_json_cached() {
+        Ok(j) => j,
         Err(e) => {
             eprintln!("rule: {e}");
             return 1;
         }
     };
-
-    let mem_json = memories_json_cached(home);
     println!("{}", rule::memories::render(&mem_json, &prefixes, budget, &core_csv, &harness));
     0
 }
@@ -384,9 +449,11 @@ fn epoch_secs(t: SystemTime) -> i64 {
 /// `now - mtime < age`) short-circuits the fetch entirely; anything else — missing, stale,
 /// or present but empty once read — falls through to [`fetch_memories_json`], and a
 /// non-empty result only is written back.
-fn memories_json_cached(home: &str) -> String {
-    let cache = memories_cache_path(home);
-    let age: i64 = std::env::var("SPIRA_MEMORIES_CACHE_AGE").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
+fn memories_json_cached() -> Result<String, String> {
+    let cache = memories_cache_path();
+    // SPIRA_MEMORIES_CACHE_AGE is a registered config key (spira/conf.d) — the one source of
+    // config; no crate-local default on it.
+    let age: i64 = spira_config::process::cfg_parse("SPIRA_MEMORIES_CACHE_AGE")?;
 
     let mut mem_json = String::new();
     if let Some(path) = cache.as_deref() {
@@ -408,7 +475,7 @@ fn memories_json_cached(home: &str) -> String {
             }
         }
     }
-    mem_json
+    Ok(mem_json)
 }
 
 /// `SPIRA_MEMORIES_CMD` stands in for the live read in every test but one — set, it runs
@@ -417,6 +484,7 @@ fn memories_json_cached(home: &str) -> String {
 fn fetch_memories_json() -> String {
     if let Ok(cmd) = std::env::var("SPIRA_MEMORIES_CMD") {
         if !cmd.is_empty() {
+            // batch-job: runs a gate, build or forge script that takes as long as its work
             return Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
                 .arg("-c")
                 .arg(&cmd)
@@ -428,7 +496,7 @@ fn fetch_memories_json() -> String {
                 .unwrap_or_default();
         }
     }
-    Command::new("bdq")
+    spira_config::bounded::bounded("bdq")
         .args(["memories", "--json"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())

@@ -21,68 +21,37 @@ use crate::store::{self, Store};
 use crate::unpoison::bounded_cause;
 
 // =========================================================================================
-// write-event: lib.sh's `_bump_write_event_try`, the one INSERT every `bump_requeue`/
-// `bump_lapsed`/`bump_poison_cleared` shim (and the bare helper itself, for census's own
-// `recurred`/`reclaimed` test fixtures) now reaches through.
+// write-event: lib.sh's `_bump_write_event_try`, the one write every `bump_requeue`/
+// `bump_lapsed`/`bump_poison_cleared` shim reaches through. The fact lands in the lifecycle
+// event log (`spira-lc fact`), never in bd's events table.
 // =========================================================================================
 
-/// A random v4-shaped id, read from the kernel rather than shelling to `python3 -c
-/// 'import uuid...'` as the bash helper did — the exact bytes never mattered, only that
-/// two concurrent writers cannot collide (same source `unpoison::Live::uuid4` uses).
-fn uuid4() -> Result<String, String> {
-    let u = std::fs::read_to_string("/proc/sys/kernel/random/uuid").map_err(|e| format!("uuid: {e}"))?;
-    let u = u.trim().to_string();
-    if u.len() == 36 && u.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        Ok(u)
-    } else {
-        Err("uuid: unexpected shape".into())
-    }
+/// The `spira-lc` argv that appends one fact. Actor and cause are bounded the way the bd
+/// INSERT bounded them, so a hostile cause cannot reshape the argv or the stored record.
+pub fn fact_args(actor: &str, id: &str, etype: &str, cause: &str) -> Vec<String> {
+    ["fact", id, "--kind", etype, "--actor", &bounded_cause(actor), "--cause", &bounded_cause(cause)]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
-/// The literal INSERT, pulled out of [`write_event`] so the shape is testable without a
-/// live store.
-fn insert_sql(uuid: &str, id: &str, etype: &str, actor: &str, cause: &str) -> String {
-    format!(
-        "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ({}, {}, {}, {}, {}, UTC_TIMESTAMP())",
-        store::sql_quote(uuid),
-        store::sql_quote(id),
-        store::sql_quote(etype),
-        store::sql_quote(&bounded_cause(actor)),
-        store::sql_quote(&bounded_cause(cause)),
-    )
-}
-
-/// One `events` row. Callers (the lib.sh shims) enforce `_bump_write_event_try`'s own
-/// no-op early return on an empty `id`/`etype` before ever reaching this — this function
-/// always writes.
+/// One fact. Callers (the lib.sh shims) enforce `_bump_write_event_try`'s own no-op early
+/// return on an empty `id`/`etype` before ever reaching this — this function always writes.
 pub fn write_event(store: &Store, actor: &str, id: &str, etype: &str, cause: &str) -> Result<(), String> {
-    let uuid = uuid4()?;
-    let q = insert_sql(&uuid, id, etype, actor, cause);
-    store::run(store.bd_cmd(&["sql", &q]), store.timeout).map(|_| ())
+    let args = fact_args(actor, id, etype, cause);
+    store::run(store.lc_cmd(&args), store.timeout).map(|_| ())
 }
 
 // =========================================================================================
-// count-events: `_counter_events_query`'s own raw `COUNT(*)` — generic over event_type,
-// no exemption, no floor. Doctor's events-substrate probe writes a reserved
-// `__doctor_probe__` event and reads this count straight back; `requeues_of` used to
-// read it too, before this bead moved it onto the floored, exemption-aware
-// `events::fold` count instead (DESIGN.md §6's already-sanctioned fix).
+// count-events: a raw count of one fact kind for one bead — no exemption, no floor. Doctor's
+// events-substrate probe writes a reserved `__doctor_probe__` fact and reads this count
+// straight back.
 // =========================================================================================
-
-fn count_sql(id: &str, etype: &str) -> String {
-    format!("SELECT COUNT(*) FROM events WHERE issue_id={} AND event_type={}", store::sql_quote(id), store::sql_quote(etype))
-}
-
-/// `bd sql`'s own tabular output, third line, spaces stripped — the same extraction
-/// `_counter_events_query`/`attempts_of` used against `bd sql`'s plain (non-`--json`)
-/// table rendering.
-fn parse_scalar_count(out: &str) -> Option<u64> {
-    out.lines().nth(2)?.replace(' ', "").parse().ok()
-}
 
 pub fn count_events(store: &Store, id: &str, etype: &str) -> Result<u64, String> {
-    let out = store::run(store.bd_cmd(&["sql", &count_sql(id, etype)]), store.timeout)?;
-    parse_scalar_count(&out).ok_or_else(|| format!("not a count: {out:?}"))
+    let args = ["facts".to_string(), "--ids".into(), id.to_string(), "--kinds".into(), etype.to_string()];
+    let out = store::run(store.lc_cmd(&args), store.timeout)?;
+    Ok(crate::events::parse_rows(&out)?.len() as u64)
 }
 
 // =========================================================================================
@@ -99,7 +68,7 @@ pub fn lapse_record_content(bead: &str, quiet: &str, last: &str, tip: &str) -> S
 /// lapse, never on a hot path, and must match the format `watchtower`'s reader already
 /// expects from the real writer (test-watchtower.sh's gap G8, test-watchtower-lapse.sh).
 fn utc_stamp() -> String {
-    std::process::Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "+%Y%m%dT%H%M%SZ"])
         .output()
         .ok()

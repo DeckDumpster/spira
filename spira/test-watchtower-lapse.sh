@@ -47,11 +47,15 @@ chmod +x "$MOCK_SUITES"
 # Run watchtower --show in a clean, minimal environment.
 # SPIRA_LAPSED_DIR lets tests override the directory without touching SPIRA_RUN.
 wt() {  # wt [VAR=val ...] -> the snapshot
+    # SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+    # via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$TMP/run"
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_LAPSED_DIR="${SPIRA_LAPSED_DIR_OVERRIDE:-$TMP/run/lapsed}" \
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@" watchtower --show 2>/dev/null
 }
 
@@ -60,13 +64,17 @@ wt() {  # wt [VAR=val ...] -> the snapshot
 wt_file() {  # wt_file [VAR=val ...] -> $TMP/ops-prompt written
     local mock="$TMP/mock-inc.sh"
     printf '#!/usr/bin/env bash\ncat > /dev/null\n' > "$mock"; chmod +x "$mock"
+    # SPIRA_RUN is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare
+    # via tl_config and thread SPIRA_TOML through env -i, which clears it.
+    tl_config SPIRA_RUN="$TMP/run"
     env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
         SPIRA_LAPSED_DIR="${SPIRA_LAPSED_DIR_OVERRIDE:-$TMP/run/lapsed}" \
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_TOML="$SPIRA_TOML" \
         "$@" watchtower 2>/dev/null
 }
 
@@ -102,7 +110,12 @@ eval "$(sed -n '/^write_lapse_record() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
     || bad "lib.sh's write_lapse_record could be lifted out and run" "no such function — the record format has moved"
 
 if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
-    SPIRA_RUN="$TMP/run" write_lapse_record sp-g8real 600 "writing output file" abc1234 >/dev/null
+    # write_lapse_record shells out to the compiled spira-claim binary (lib.sh is a thin
+    # wrapper now), which reads SPIRA_RUN only through the one source of config — a plain
+    # env prefix no longer reaches it. Declare the override (SPIRA_TOML is already exported
+    # by testlib.sh for this in-process call, no env -i needed) before calling it.
+    tl_config SPIRA_RUN="$TMP/run"
+    write_lapse_record sp-g8real 600 "writing output file" abc1234 >/dev/null
     n_written="$(ls "$TMP/run/lapsed" 2>/dev/null | wc -l | tr -d ' ')"
     is "the real writer produced one record" 1 "$n_written"
 

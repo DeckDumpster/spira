@@ -111,16 +111,12 @@ chmod +x "$SH"/*.sh 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN/worktree" "$RUN/queue"
 
 queue_cmd() {
+    tl_config SPIRA_HOME_REPO=scratch-queue SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
+        SPIRA_QUEUE_DIR="$RUN/queue" SPIRA_REPO_MAP="$MAP" \
+        SPIRA_FORGE="$SH/forge-missing.sh" SPIRA_RELEASES="$TMP/releases"
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$SH" \
-    SPIRA_HOME_REPO="scratch-queue" \
     SPIRA_REPO="$ACC_HOME/scratch-queue" \
-    SPIRA_RUN="$RUN" \
-    SPIRA_MAIL="$RUN/mail" \
-    SPIRA_QUEUE_DIR="$RUN/queue" \
-    SPIRA_REPO_MAP="$MAP" \
-    SPIRA_FORGE="$SH/forge-missing.sh" \
-    SPIRA_RELEASES="$TMP/releases" \
         command queue "$@" 2>&1
 }
 

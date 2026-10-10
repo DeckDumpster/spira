@@ -54,8 +54,9 @@ gap()  { printf 'runner-deps: MISSING %s\n' "$1" >&2; rc=1; }
 # pasta; the package that carries it is passt. slirp4netns stays for older podman,
 # which defaults the other way. Installing both costs a few hundred kilobytes and
 # removes a whole class of run lost to a distro's choice of default.
-PKGS=(podman uidmap fuse-overlayfs slirp4netns passt catatonit
-      git curl ca-certificates python3 jq build-essential pkg-config)
+PKGS=(
+      ca-certificates podman uidmap fuse-overlayfs slirp4netns passt catatonit
+      git curl python3 jq build-essential pkg-config)
 
 if [ "$CHECK_ONLY" -eq 0 ]; then
     _missing=()
@@ -176,12 +177,12 @@ fi
 # it. A check that finds nothing wrong must first prove it could have: if podman
 # cannot actually start a container here, the gaps above were the wrong gaps.
 if command -v podman >/dev/null 2>&1; then
-    if ! podman info >/dev/null 2>&1; then
+    if ! timeout 5 podman info >/dev/null 2>&1; then
         gap "podman info fails — the runtime is installed but cannot start"
-    elif [ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" != "true" ]; then
+    elif [ "$(timeout 5 podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" != "true" ]; then
         gap "podman is not running rootless"
     else
-        note "podman rootless ok ($(podman --version 2>/dev/null))"
+        note "podman rootless ok ($(timeout 5 podman --version 2>/dev/null))"
     fi
 fi
 

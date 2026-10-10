@@ -7,6 +7,7 @@
 //! brief asks for); where this port intentionally differs, the difference is named inline.
 
 use serde_json::Value;
+use std::path::Path;
 
 /// lib.sh `spira_is_generated_file`: a path substring match against a space-separated
 /// pattern list (`SPIRA_REBASE_GENERATED_FILES`).
@@ -153,6 +154,20 @@ pub fn budget_deferred_mail(branch: &str, repo_name: &str, n: u32) -> (String, S
     (subj, body)
 }
 
+pub fn repo_unreadable_subject(repo: &str) -> String {
+    format!("{repo} not a git checkout")
+}
+
+/// Kind `alert`, no `--default`: the only repository the pass walks cannot be walked.
+pub fn repo_unreadable_mail(repo: &str, path: &Path) -> (String, String) {
+    let subj = format!("{} — the landing pass sees no branches", repo_unreadable_subject(repo));
+    let body = format!(
+        "## Alert\n{subj}\n\nThe landing pass resolved {repo} to {}, which is not a git checkout, and it is the only repository the pass walks. Nothing can land until the repository map or SPIRA_REPO points at the real checkout.\n",
+        path.display()
+    );
+    (subj, body)
+}
+
 /// lib.sh `spira_ask_refresh_loop`'s dedupe subject.
 pub fn refresh_loop_subject(id: &str) -> String {
     format!("{id} refresh cap")
@@ -201,7 +216,7 @@ pub fn machinery_mail(id: &str, branch: &str, repo_name: &str, outcome: &str, re
 /// Reasons whose cause is the host, not the branch: every branch fails the same way, so the
 /// streak is counted and asked once per (repo, reason).
 pub fn is_host_wide_reason(reason: &str) -> bool {
-    matches!(reason, "harness-fault" | "budget" | "admission-timeout" | "scratch-short") || reason.starts_with("deadline-")
+    matches!(reason, "harness-fault" | "budget" | "admission-timeout" | "scratch-short" | "build-cache-fault") || reason.starts_with("deadline-")
 }
 
 /// lib.sh `spira_ask_machinery_class`'s dedupe subject.

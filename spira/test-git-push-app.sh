@@ -62,13 +62,12 @@ chmod +x "$BIN/curl"
 
 printf 'fake-key-content\n' > "$TMP/fake-key.pem"
 
+tl_config SPIRA_GH_APP_ID=12345 SPIRA_GH_APP_INSTALLATION_ID=67890 SPIRA_GH_APP_KEY="$TMP/fake-key.pem"
 out="$(env -i \
     HOME="$TMP" \
     PATH="$BIN:$TOOLS:/usr/bin:/bin" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_GH_APP_ID=12345 \
-    SPIRA_GH_APP_INSTALLATION_ID=67890 \
-    SPIRA_GH_APP_KEY="$TMP/fake-key.pem" \
     bash "$CRED_HELPER" get 2>/dev/null)"
 want "protocol=https in output"            "protocol=https"            "$out"
 want "host=github.com in output"           "host=github.com"           "$out"
@@ -82,9 +81,11 @@ echo "3. CREDENTIAL HELPER — exits non-zero without credentials"
 # This proves the check is real: if SPIRA_GH_APP_ID is absent the helper
 # must fail rather than silently emitting a blank or recycled credential.
 rc_nc=0
+tl_config SPIRA_GH_APP_ID="" SPIRA_GH_APP_INSTALLATION_ID="" SPIRA_GH_APP_KEY=""
 out_nc="$(env -i \
     HOME="$TMP" \
     PATH="$BIN:$TOOLS:/usr/bin:/bin" \
+    SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF=/nonexistent \
     bash "$CRED_HELPER" get 2>&1)" || rc_nc=$?
 wantrc "no credentials → non-zero exit" 1 "$rc_nc"
@@ -96,7 +97,7 @@ echo "4. CREDENTIAL HELPER — store and erase are no-ops (exit 0, no output)"
 # =========================================================================
 for action in store erase; do
     rc_noop=0
-    out_noop="$(env -i HOME="$TMP" PATH="$BIN:$TOOLS:/usr/bin:/bin" SPIRA_CONF=/nonexistent \
+    out_noop="$(env -i HOME="$TMP" PATH="$BIN:$TOOLS:/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent \
         bash "$CRED_HELPER" "$action" 2>&1)" || rc_noop=$?
     wantrc "$action exits 0" 0 "$rc_noop"
     is     "$action emits nothing" "" "$out_noop"
@@ -117,19 +118,19 @@ EOF
 chmod +x "$BIN/git"
 
 rm -f "$TMP/git-args"
+tl_config SPIRA_RUN="$TMP/run" SPIRA_GH_APP_ID=99999 SPIRA_GH_APP_INSTALLATION_ID=11111
+# queue-helpers git-push resolves SPIRA_GH_APP_* through spira_config from $SPIRA_TOML.
 (
     export PATH="$BIN:$PATH"
-    export SPIRA_HOME="$HERE/.."
+    export SPIRA_HOME="$HERE"
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
-    export SPIRA_RUN="$TMP/run"
-    export SPIRA_GH_APP_ID=99999
-    export SPIRA_GH_APP_INSTALLATION_ID=11111
     # shellcheck disable=SC1090
     . "$LIB" 2>/dev/null || true
     rm -f "$TMP/git-args"
     spira_git_push "$TMP/fake-repo" -q origin main
-) 2>/dev/null || true
+) 2>"$TMP/push-err" || true
+cat "$TMP/push-err" | sed 's/^/# stderr: /'
 
 args_with="$(cat "$TMP/git-args" 2>/dev/null)"
 want "credential.helper flag present"     "credential.helper"              "$args_with"
@@ -142,14 +143,12 @@ echo
 echo "6. spira_git_push — plain git push when App creds are not configured"
 # =========================================================================
 rm -f "$TMP/git-args"
+tl_config SPIRA_RUN="$TMP/run" SPIRA_GH_APP_ID="" SPIRA_GH_APP_INSTALLATION_ID=""
 (
     export PATH="$BIN:$PATH"
-    export SPIRA_HOME="$HERE/.."
+    export SPIRA_HOME="$HERE"
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
-    export SPIRA_RUN="$TMP/run"
-    unset SPIRA_GH_APP_ID           2>/dev/null || true
-    unset SPIRA_GH_APP_INSTALLATION_ID 2>/dev/null || true
     # shellcheck disable=SC1090
     . "$LIB" 2>/dev/null || true
     rm -f "$TMP/git-args"

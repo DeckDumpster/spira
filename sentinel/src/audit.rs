@@ -95,7 +95,7 @@ impl<'a> Sentinel<'a> {
             .ctx
             .repos
             .iter()
-            .filter(|r| !r.queued && r.root.is_some() && r.base().is_some())
+            .filter(|r| !r.forge_queued && r.root.is_some() && r.base().is_some())
             .collect();
         let skip = match std::fs::read_to_string(&stamp_p) {
             Ok(stamp) => sending_skip(&stamp, &swept, &self.ctx.repos, &|r| self.landref_sha(r)),
@@ -276,14 +276,14 @@ mod tests {
             name: n.into(),
             root: Some(format!("/r/{n}")),
             landrefs: vec!["origin/main".into()],
-            queued: q,
+            forge_queued: q,
         }
     }
 
     #[test]
     fn sending_skip_needs_every_swept_repo_unchanged() {
         let all = vec![repo("a", false), repo("b", false), repo("q", true)];
-        let swept: Vec<&Repo> = all.iter().filter(|r| !r.queued).collect();
+        let swept: Vec<&Repo> = all.iter().filter(|r| !r.forge_queued).collect();
         let cur = |r: &Repo| Some(format!("sha-{}", r.name));
         assert!(sending_skip("a=sha-a\nb=sha-b\n", &swept, &all, &cur));
         assert!(

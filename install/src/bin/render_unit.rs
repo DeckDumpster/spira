@@ -6,7 +6,7 @@
 //!
 //! usage: render-unit <template> --home H --repo R --run RUN --db DB --cockpit C
 //!            --dolt-data D --testdb-data T --dolt DOLT --prod P --instance I
-//!            --testdb-port PORT --snap-stale-s S [--watcher-name W] [--path-tail TAIL] [--lc-password-file F]
+//!            --testdb-port PORT --snap-stale-s S [--watcher-name W] [--path-tail TAIL] [--lc-password-file F] [--toml SPEC]
 
 use install::values::{render_file, HostValues};
 use std::path::PathBuf;
@@ -42,6 +42,7 @@ fn main() -> ExitCode {
             "--watcher-name" => watcher = if val.is_empty() { None } else { Some(val) },
             "--path-tail" => host.path_tail = val,
             "--lc-password-file" => host.lc_password_file = val,
+            "--toml" => host.toml = val,
             _ => {
                 eprintln!("render-unit: unknown flag: {key}");
                 return ExitCode::from(2);

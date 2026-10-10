@@ -44,14 +44,14 @@ TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up dispatch_open_children || { echo "test-dispatch-open-children: could not build fixture database"; exit 1; }
 
 RUN="$TMP/run"; mkdir -p "$RUN"
-export SPIRA_RUN="$RUN"
+tl_config SPIRA_RUN="$RUN"
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$TMP/no.conf"   # no host config leaking into the suite
 log() { :; }                        # suppress log noise
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
-B() { bd -C "$SPIRA_DB" "$@"; }
+B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 labels_of() {
     B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys

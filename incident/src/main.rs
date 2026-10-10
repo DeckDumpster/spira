@@ -3,8 +3,11 @@
 //!
 //!   incident systemd <unit>           file an incident for a failed systemd user unit
 //!   incident file <title> [-|<file>]  file one from an arbitrary payload
+//!   incident alarm <title> [-|<file>]  note a detector's condition in the Concierge inbox, no bead
 //!   incident drain                    file everything the spool is holding
 //!   incident list                     open incidents
+//!   incident settle                   close incidents whose fixes landed and whose detector is quiet
+//!   incident collapse <dup> --of <keep>  mark <dup> a duplicate of <keep> and label it for the meter
 //!
 //! `backfill-ref-labels`, `retire-unsatisfiable-delivers` and `repair-mismatch-delivers`
 //! are retired (DESIGN.md §Decisions): one-time migrations with no live caller, already
@@ -58,9 +61,22 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
     })
 }
 
+/// Registered config keys (`spira/conf.d`) this crate's generic `env()` seam also serves —
+/// $SPIRA_TOML only, through `spira_config::process::cfg`, never the raw environment, never
+/// a fallback (per Ryan 2026-10-05: one source of config). Every other name `env()` is
+/// called with is NOT in `spira/conf.d` (an ad hoc override with no registry entry, same as
+/// it has always been for the bash function) and keeps the old env/registry/default chain.
+const REGISTERED: &[&str] =
+    &["SPIRA_RUN", "SPIRA_INCIDENT_LABEL", "SPIRA_DB", "SPIRA_WATCHER_INTERVAL_S", "SPIRA_INCIDENT_PRIORITY", "SPIRA_HOME_REPO", "SPIRA_ASK_LABEL", "SPIRA_REPO_MAP", "SPIRA_BD", "SPIRA_CONCIERGE_INBOX"];
+
 /// The environment, then `spira_config::resolve()`'s in-process answer — never the
 /// reverse, so an explicit env override still wins exactly as it did before this bead.
+/// EXCEPT for a registered key (see [`REGISTERED`]), which this never reads from the
+/// environment at all.
 fn env(name: &str) -> Option<String> {
+    if REGISTERED.contains(&name) {
+        return spira_config::process::cfg(name).ok();
+    }
     raw_env(name).or_else(|| {
         let v = resolved_config().get(name);
         (!v.is_empty()).then(|| v.to_string())
@@ -72,7 +88,7 @@ fn env_or(name: &str, default: &str) -> String {
 }
 
 fn hostname() -> String {
-    std::process::Command::new("hostname")
+    spira_config::bounded::bounded("hostname")
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -114,6 +130,7 @@ struct Env {
     home_repo: String,
     known_repos: Vec<String>,
     ask_label: String,
+    express: bool,
     unit: String,
     path: String,
     lock_path: std::path::PathBuf,
@@ -133,7 +150,7 @@ impl Env {
             dedup_lookback_days: env("SPIRA_INCIDENT_DEDUP_LOOKBACK").and_then(|v| v.parse().ok()).unwrap_or(7),
             watcher_interval_s: env("SPIRA_WATCHER_INTERVAL_S").and_then(|v| v.parse().ok()).unwrap_or(1800),
             cause: decide::sanitize_cause(&env_or("SPIRA_INCIDENT_CAUSE", "unrecorded")),
-            labels: env("SPIRA_INCIDENT_LABELS").unwrap_or_else(|| format!("spira,{incident_label}")),
+            labels: decide::incident_labels(env("SPIRA_INCIDENT_LABELS").as_deref(), env("SPIRA_SCOPE_LABEL").as_deref(), &incident_label),
             repo: env("SPIRA_INCIDENT_REPO"),
             kind: env_or("SPIRA_INCIDENT_TYPE", "bug"),
             // conf.sh:1717 `: "${SPIRA_INCIDENT_PRIORITY:=3}"` — the bash never carried its
@@ -147,12 +164,17 @@ impl Env {
             home_repo: env_or("SPIRA_HOME_REPO", "spira"),
             known_repos: repo_names(),
             ask_label: env_or("SPIRA_ASK_LABEL", "needs-ryan"), // literal-ok: Rust fallback mirroring lib.sh's own default when SPIRA_ASK_LABEL is unset
+            express: env("SPIRA_INCIDENT_EXPRESS").as_deref() == Some("1"),
             unit: env_or("SPIRA_INCIDENT_UNIT", &unit_from_cgroup()),
             path: env_or("SPIRA_INCIDENT_PATH", "?"),
             lock_path: std::path::PathBuf::from(env_or("SPIRA_INCIDENT_LOCK", &format!("{spira_run}/incident.lock"))),
             lock_wait_s: env("SPIRA_INCIDENT_LOCK_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30),
             spira_run,
         }
+    }
+
+    fn spira_run_path(&self, name: &str) -> std::path::PathBuf {
+        std::path::Path::new(&self.spira_run).join(name)
     }
 
     fn provenance(&self) -> String {
@@ -177,6 +199,7 @@ impl Env {
             home_repo: &self.home_repo,
             known_repos: &self.known_repos,
             ask_label: &self.ask_label,
+            express: self.express,
             provenance,
         }
     }
@@ -218,7 +241,7 @@ fn ilog(env: &Env, msg: &str) {
 }
 
 fn now_epoch() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    spira_config::vtime::now_epoch() as i64
 }
 
 /// `date -u +%Y-%m-%dT%H:%M:%SZ` — the `ilog` timestamp.
@@ -314,7 +337,7 @@ fn require_db(env: &Env) -> ExitCode {
 fn cmd_systemd(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, unit: &str) -> ExitCode {
     let reference = format!("incident:{unit}");
     let when = now_iso();
-    let systemctl = std::process::Command::new("systemctl")
+    let systemctl = spira_config::bounded::bounded("systemctl")
         .args([
             "--user", "show", unit, "-p", "Result", "-p", "ExecMainStatus", "-p", "ExecMainCode", "-p", "NRestarts", "-p", "ActiveState",
             "-p", "SubState", "-p", "InvocationID", "-p", "ExecMainStartTimestamp",
@@ -324,7 +347,7 @@ fn cmd_systemd(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, u
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_else(|| "(systemctl unavailable)\n".to_string());
-    let journal = std::process::Command::new("journalctl")
+    let journal = spira_config::bounded::bounded("journalctl")
         .args(["--user", "-u", unit, "-n", "40", "--no-pager"])
         .output()
         .ok()
@@ -396,6 +419,36 @@ fn cmd_file(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, titl
     }
 }
 
+fn cmd_alarm(env: &Env, title: &str) -> ExitCode {
+    let reference = env.repo_override_ref().unwrap_or_else(|| format!("incident:{title}"));
+    let Some(inbox) = self::env("SPIRA_CONCIERGE_INBOX") else {
+        eprintln!("incident: SPIRA_CONCIERGE_INBOX is not declared — refusing");
+        return ExitCode::FAILURE;
+    };
+    let state_path = env.spira_run_path("incident-alarms.tsv");
+    let noted = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
+        let state = std::fs::read_to_string(&state_path).unwrap_or_default();
+        let (due, next) = incident::alarm::decide(&state, &reference, now_epoch());
+        if !due {
+            return true;
+        }
+        if let Some(parent) = std::path::Path::new(&inbox).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let line = format!("{} {}\n", now_iso(), incident::alarm::line(title, &reference));
+        let wrote = std::fs::OpenOptions::new().create(true).append(true).open(&inbox).and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(line.as_bytes())
+        });
+        wrote.is_ok() && std::fs::write(&state_path, next).is_ok()
+    });
+    if noted == Some(true) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
 fn cmd_drain(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock) -> ExitCode {
     let mut n = 0;
     let mut stuck = 0;
@@ -427,7 +480,15 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
     // bd as content, the unfinished ones (READY/WORKING/REWORK) are kept, and bd renders
     // those by id. Filters the same four leading-character classes the bash's
     // `grep -vE '^💡|^warning|^  Fix|^  Or'` drops (bd's own tip/warning chrome).
-    let bd_bin = std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into());
+    // SPIRA_BD is a registered key (spira/conf.d) — the one source of config (per Ryan
+    // 2026-10-05), through `spira_config::process::cfg`, never a literal default.
+    let bd_bin = match spira_config::process::cfg("SPIRA_BD") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("incident: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let lc = match spira_config::lc_state::list().map(spira_config::lc_state::index) {
         Ok(m) => m,
         Err(e) => {
@@ -481,6 +542,35 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Close the incidents whose fixes have landed and whose detector is quiet; leave the rest.
+/// Exit 1 only when the candidates could not be read — a skipped incident is not a failure.
+fn cmd_settle(env: &Env, bd: &RealBd) -> ExitCode {
+    let home = spira_home_dir();
+    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let settler = incident::settle_real::RealSettler {
+        bd,
+        db: env.db.clone().unwrap_or_default(),
+        incident_label: env_or("SPIRA_INCIDENT_LABEL", "incident"),
+        home_repo: env.home_repo.clone(),
+        registry: spira_config::repos::Registry::from_env(env_map, &home),
+        release_sha: raw_env("SPIRA_RELEASE").and_then(|r| incident::settle_real::release_sha_of(&r)),
+    };
+    match incident::settle::settle(&settler) {
+        Ok(outcomes) => {
+            for o in &outcomes {
+                ilog(env, &format!("settle: {o:?}"));
+            }
+            let closed = outcomes.iter().filter(|o| matches!(o, incident::settle::Outcome::Closed { .. })).count();
+            println!("settled {closed} of {}", outcomes.len());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("incident settle: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 impl Env {
     fn repo_override_ref(&self) -> Option<String> {
         env("SPIRA_INCIDENT_REF")
@@ -503,7 +593,21 @@ fn main() -> ExitCode {
         // bash's per-subcommand behaviour; every other subcommand refuses up front.
     }
 
-    let bd = RealBd::from_env();
+    if args.first().map(String::as_str) == Some("alarm") {
+        let Some(title) = args.get(1) else {
+            eprintln!("usage: incident alarm <title> [-|<file>]");
+            return ExitCode::from(2);
+        };
+        return cmd_alarm(&env_cfg, title);
+    }
+
+    let bd = match RealBd::from_env() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("incident: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let mailer = RealMailer;
     let clock = RealClock;
     let provenance = env_cfg.provenance();
@@ -538,8 +642,33 @@ fn main() -> ExitCode {
             cmd_drain(&env_cfg, &bd, &mailer, &clock)
         }
         Some("list") => cmd_list(&env_cfg, &bd),
+        Some("settle") => {
+            if env_cfg.db.is_none() {
+                return require_db(&env_cfg);
+            }
+            cmd_settle(&env_cfg, &bd)
+        }
+        Some("collapse") => {
+            let (Some(dup), Some("--of"), Some(keep), None) = (args.get(1), args.get(2).map(String::as_str), args.get(3), args.get(4)) else {
+                eprintln!("usage: incident collapse <dup> --of <keep>");
+                return ExitCode::from(2);
+            };
+            let Some(db) = env_cfg.db.as_deref() else {
+                return require_db(&env_cfg);
+            };
+            match run::collapse(&bd, db, dup, keep) {
+                Ok(()) => {
+                    println!("collapsed {dup} into {keep}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("incident collapse: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         _ => {
-            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    file everything the spool is holding\n  incident list                     open incidents");
+            eprintln!("incident.sh — turn a production event into a bead Ops can claim\n\n  incident systemd <unit>           file an incident for a failed systemd user unit\n  incident file <title> [-|<file>]  file one from an arbitrary payload\n  incident drain                    file everything the spool is holding\n  incident list                     open incidents\n  incident settle                   close incidents whose fix landed and detector is quiet\n  incident collapse <dup> --of <keep>  mark a duplicate incident");
             ExitCode::from(1)
         }
     }
@@ -549,30 +678,32 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
-    /// Wave 4.8: `env`/`env_or` now fall back to `spira_config::resolve()` between the raw
-    /// environment and the caller's own default. This is the ONLY test in this binary
-    /// that calls `env`/`resolved_config` — the `OnceLock` inside `resolved_config`
-    /// computes once per process and never resets. SPIRA_HOME points at a throwaway
-    /// fixture with its own `conf.d` (never the real box's).
+    /// A NON-registered name still falls back to `spira_config::resolve()` between the raw
+    /// environment and the caller's own default — unchanged by the `SPIRA_WATCHER_INTERVAL_S`
+    /// migration below, since `SPIRA_NO_SUCH_KEY_AT_ALL_EVER` is not in `spira/conf.d`.
     #[test]
-    fn env_falls_back_to_the_registry_then_the_callers_default() {
-        let dir = testkit::TempDir::new("incident-env");
-        let home = dir.join("spira");
-        std::fs::create_dir_all(home.join("conf.d")).unwrap();
-        std::fs::write(
-            home.join("conf.d/SPIRA_WATCHER_INTERVAL_S"),
-            "TYPE=u32\nGROUP=watcher\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_WATCHER_INTERVAL_S:=1800}\"\nSPIRA_CONF_DEFAULT_EOF\n",
-        )
-        .unwrap();
-        std::env::set_var("SPIRA_HOME", &home);
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
-        std::env::remove_var("SPIRA_WATCHER_INTERVAL_S");
-
-        assert_eq!(env("SPIRA_WATCHER_INTERVAL_S"), Some("1800".to_string()), "a registry default must reach env() without an env override");
+    fn a_non_registered_name_still_falls_back_through_the_registry() {
         assert_eq!(env("SPIRA_NO_SUCH_KEY_AT_ALL_EVER"), None);
+    }
 
-        std::env::set_var("SPIRA_WATCHER_INTERVAL_S", "99");
-        assert_eq!(env("SPIRA_WATCHER_INTERVAL_S"), Some("99".to_string()), "an explicit env override still wins over the registry");
-        let _ = std::fs::remove_dir_all(&dir);
+    /// `SPIRA_WATCHER_INTERVAL_S` IS registered — per Ryan 2026-10-05 (one source of
+    /// config), `env()` must read it only through `spira_config::process::cfg`, from
+    /// `$SPIRA_TOML`, never from a competing environment override. This is the ONLY test in
+    /// this binary that drives a registered key through `env()`: `cfg`'s resolution is a
+    /// process-global `OnceLock`, computed once and never reset.
+    #[test]
+    fn a_registered_key_never_reads_an_environment_override() {
+        let dir = testkit::TempDir::new("incident-env");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_WATCHER_INTERVAL_S", "1800")]);
+        // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
+        // lives), never unset: `cfg()` cannot resolve at all without it.
+        let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let _g = testkit::env(&[
+            ("SPIRA_HOME", real_home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+            ("SPIRA_WATCHER_INTERVAL_S", Some("99")),
+        ]);
+
+        assert_eq!(env("SPIRA_WATCHER_INTERVAL_S"), Some("1800".to_string()), "the declared value, never the environment override");
     }
 }

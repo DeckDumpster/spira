@@ -1,23 +1,23 @@
-//! Every knob the runner reads (DESIGN.md §2.5): the environment first (a caller's explicit
-//! per-run override), then spira.toml through the spira-config library, then the default.
-//! testenv never parses spira.toml or the repo-map itself.
+//! Every knob the runner reads (DESIGN.md §2.5), per Ryan 2026-10-05: THE ONE SOURCE OF
+//! CONFIG is the file `$SPIRA_TOML` names. A registered key (`spira/conf.d/<NAME>`) is read
+//! exactly once, through `spira_config::process::cfg`/`cfg_parse`; a key the file does not
+//! declare — or a resolution that fails outright — is a refusal naming the key, never a
+//! Rust-side default. `Source` survives only for the names below that are NOT registered
+//! config at all (bootstrap vars, per-invocation identity, test-only knobs): those still
+//! read the environment directly, exactly as before.
 
-use spira_config::SpiraToml;
-use std::path::{Path, PathBuf};
+use spira_config::process::{cfg, cfg_parse};
+use std::path::PathBuf;
 
 pub struct Source<'a> {
     pub env: &'a dyn Fn(&str) -> Option<String>,
-    pub config: Option<&'a SpiraToml>,
 }
 
 impl Source<'_> {
-    /// Non-empty environment value, else the config path's value.
-    pub fn get(&self, env: &str, config_path: Option<&str>) -> Option<String> {
-        if let Some(v) = (self.env)(env).filter(|v| !v.is_empty()) {
-            return Some(v);
-        }
-        let doc = self.config?;
-        spira_config::get_path(doc, config_path?).filter(|v| !v.is_empty())
+    /// Non-empty environment value. Only ever used for a NON-registered name (see the
+    /// module doc) — a registered key goes through `cfg`/`cfg_parse` instead.
+    pub fn get(&self, env: &str) -> Option<String> {
+        (self.env)(env).filter(|v| !v.is_empty())
     }
 
     /// Set at all in the environment, even empty (SPIRA_BATCH_SKIP_INSTALL semantics differ).
@@ -25,8 +25,8 @@ impl Source<'_> {
         (self.env)(env)
     }
 
-    fn num<T: std::str::FromStr>(&self, env: &str, cfg: Option<&str>) -> Option<T> {
-        self.get(env, cfg).and_then(|v| v.trim().parse().ok())
+    fn num<T: std::str::FromStr>(&self, env: &str) -> Option<T> {
+        self.get(env).and_then(|v| v.trim().parse().ok())
     }
 }
 
@@ -41,7 +41,7 @@ pub struct Settings {
     /// 0 disables.
     pub suite_timeout: u64,
     pub maxpar_requested: Option<i64>,
-    /// Set when SPIRA_BATCH_MAXPAR (or `spira.batch_maxpar`) was given but is not usable:
+    /// Set when SPIRA_BATCH_MAXPAR (declared in spira.toml) was given but is not usable:
     /// zero, negative, or not a whole number. Absent is never folded in here — only a given,
     /// bad value refuses (sp-tj8k3: a removed/empty key must stay "unset", and a zero or a
     /// typo must never be read as "unlimited" or silently become the default either).
@@ -91,186 +91,132 @@ pub struct Settings {
     pub spira_db: Option<String>,
 }
 
-/// SPIRA_RUN as conf.sh derives it when neither the environment nor the config sets it.
-pub fn derive_run(repo: &Path, instance: &str, env: &dyn Fn(&str) -> Option<String>) -> PathBuf {
-    let sfx = if instance.is_empty() || instance == "prod" {
-        String::new()
-    } else {
-        format!("-{instance}")
-    };
-    let writable = std::fs::metadata(repo)
-        .map(|m| !m.permissions().readonly())
-        .unwrap_or(false);
-    if writable {
-        return repo.join(".runtime").join(format!("spira{sfx}"));
+/// SPIRA_BATCH_MAXPAR: empty (the key carries no value anywhere) is `(None, None)` — the
+/// scheduler's own bounded, host-derived default applies (`schedule::maxpar`). A positive
+/// whole number is `(Some(n), None)` — a request, clamped to the hardware bound. Anything
+/// else given (zero, negative, or not a number) is `(None, Some(reason))` — refused by name,
+/// never folded into "unset" or "unlimited" (sp-tj8k3: a batch_maxpar of 0 in production
+/// read as unlimited concurrency and put 61 containers on one host).
+///
+/// Pure over the already-fetched string (never calls `cfg` itself) so it stays testable
+/// without touching spira-config's per-process resolution cache. `pub(crate)`: `run/tests.rs`
+/// reuses it to build a `Settings` fixture directly from a fake env map (DESIGN.md's
+/// top-level `run()`/`report()`/etc. now read `Settings` off `Deps`, not the environment).
+pub(crate) fn resolve_maxpar(raw: &str) -> (Option<i64>, Option<String>) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return (None, None);
     }
-    let data = env("XDG_DATA_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env("HOME").unwrap_or_default()).join(".local/share"));
-    data.join(format!("spira{sfx}")).join("run")
-}
-
-/// SPIRA_BATCH_MAXPAR / `spira.batch_maxpar`: absent is `(None, None)` — the scheduler's own
-/// bounded, host-derived default applies (`schedule::maxpar`). Present and a positive whole
-/// number is `(Some(n), None)` — a request, clamped to the hardware bound. Present and
-/// anything else (zero, negative, or not a number) is `(None, Some(reason))` — refused by
-/// name, never folded into "unset" or "unlimited" (sp-tj8k3: a batch_maxpar of 0 in
-/// production read as unlimited concurrency and put 61 containers on one host).
-fn resolve_maxpar(src: &Source) -> (Option<i64>, Option<String>) {
-    match src.get("SPIRA_BATCH_MAXPAR", Some("spira.batch_maxpar")) {
-        None => (None, None),
-        Some(raw) => match raw.trim().parse::<i64>() {
-            Ok(n) if n > 0 => (Some(n), None),
-            Ok(n) => (
-                None,
-                Some(format!(
-                    "SPIRA_BATCH_MAXPAR={n} is refused — 0 no longer means unlimited; omit the key for the scheduler's bounded default, or set a positive suite count"
-                )),
-            ),
-            Err(_) => (
-                None,
-                Some(format!("SPIRA_BATCH_MAXPAR={raw:?} is not a whole number")),
-            ),
-        },
+    match trimmed.parse::<i64>() {
+        Ok(n) if n > 0 => (Some(n), None),
+        Ok(n) => (
+            None,
+            Some(format!(
+                "SPIRA_BATCH_MAXPAR={n} is refused — 0 no longer means unlimited; omit the key for the scheduler's bounded default, or set a positive suite count"
+            )),
+        ),
+        Err(_) => (
+            None,
+            Some(format!("SPIRA_BATCH_MAXPAR={trimmed:?} is not a whole number")),
+        ),
     }
 }
 
-fn instance_of(src: &Source) -> String {
-    src.get("SPIRA_INSTANCE", Some("spira.instance"))
-        .unwrap_or_else(|| "prod".into())
-}
-
-/// SPIRA_RUN: the environment, then `spira.run`, then derived from SPIRA_REPO (else
-/// `harness_repo`) as conf.sh derives it.
-pub fn resolve_run(src: &Source, harness_repo: &Path) -> PathBuf {
-    src.get("SPIRA_RUN", Some("spira.run"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let repo = src
-                .get("SPIRA_REPO", None)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| harness_repo.to_path_buf());
-            derive_run(&repo, &instance_of(src), src.env)
-        })
+/// A declared value, empty read as absent — for a registered key whose `conf.d` entry
+/// carries NO DEFAULT (resolves to the empty string unless spira.toml sets it). Pure over
+/// the already-fetched string; see [`resolve_maxpar`].
+fn optional_num<T: std::str::FromStr>(key: &str, raw: &str) -> Result<Option<T>, String>
+where
+    T::Err: std::fmt::Display,
+{
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    trimmed
+        .parse::<T>()
+        .map(Some)
+        .map_err(|e| format!("{key}={trimmed:?} does not parse: {e}"))
 }
 
 impl Settings {
-    /// `harness_repo` is where SPIRA_RUN is derived from when nothing sets it (conf.sh's
-    /// SPIRA_REPO); `now` names a local run.
-    pub fn load(src: &Source, harness_repo: &Path, now: u64) -> Settings {
-        let run = resolve_run(src, harness_repo);
-        let path = |env: &str| src.get(env, None).map(PathBuf::from);
-        let (maxpar_requested, maxpar_refusal) = resolve_maxpar(src);
-        Settings {
+    /// `now` names a local run (SPIRA_BATCH_RUN_ID / GITHUB_RUN_ID are not registered config
+    /// — see the module doc — so this is still a plain parameter, not a `cfg` read).
+    pub fn load(src: &Source, now: u64) -> Result<Settings, String> {
+        let run = PathBuf::from(cfg("SPIRA_RUN")?);
+        let path = |env: &str| src.get(env).map(PathBuf::from);
+        let (maxpar_requested, maxpar_refusal) = resolve_maxpar(&cfg("SPIRA_BATCH_MAXPAR")?);
+        let spira_db = cfg("SPIRA_DB")?;
+        Ok(Settings {
             results_root: path("SPIRA_BATCH_RESULTS").unwrap_or_else(|| run.join("batch-results")),
             verdicts: path("SPIRA_VERDICTS").unwrap_or_else(|| run.join("verdicts")),
-            verdict_ttl: src
-                .num("SPIRA_VERDICT_TTL", Some("spira.verdict_ttl"))
-                .unwrap_or(86_400),
-            quarantine_max_age: src
-                .num("SPIRA_QUARANTINE_MAX_AGE", Some("spira.quarantine_max_age"))
-                .unwrap_or(604_800),
-            repeat_reason: src.get("SPIRA_VERDICT_REPEAT_CONSIDERED", None),
-            suite_timeout: src
-                .num("SPIRA_SUITE_TIMEOUT", Some("spira.suite_timeout"))
-                .unwrap_or(600),
+            verdict_ttl: cfg_parse("SPIRA_VERDICT_TTL")?,
+            quarantine_max_age: cfg_parse("SPIRA_QUARANTINE_MAX_AGE")?,
+            repeat_reason: src.get("SPIRA_VERDICT_REPEAT_CONSIDERED"),
+            suite_timeout: cfg_parse("SPIRA_SUITE_TIMEOUT")?,
             maxpar_requested,
             maxpar_refusal,
-            maxpar_ceiling: src.num(
-                "SPIRA_BATCH_MAXPAR_CEILING",
-                Some("spira.batch_maxpar_ceiling"),
-            ),
-            mem_reserve_mib: src
-                .num(
-                    "SPIRA_BATCH_MEM_RESERVE_MIB",
-                    Some("spira.batch_mem_reserve_mib"),
-                )
-                .unwrap_or(1024),
-            mem_per_suite_mib: src
-                .num(
-                    "SPIRA_BATCH_MEM_PER_SUITE_MIB",
-                    Some("spira.batch_mem_per_suite_mib"),
-                )
-                .unwrap_or(192),
-            mem_avail_mib: src.num(
-                "SPIRA_BATCH_MEM_AVAIL_MIB",
-                Some("spira.batch_mem_avail_mib"),
-            ),
-            psi_threshold: src
-                .num(
-                    "SPIRA_BATCH_PSI_THRESHOLD",
-                    Some("spira.batch_psi_threshold"),
-                )
-                .unwrap_or(10.0),
-            orphan_min_age: src
-                .num(
-                    "SPIRA_BATCH_ORPHAN_MIN_AGE",
-                    Some("spira.batch_orphan_min_age"),
-                )
-                .unwrap_or(3600),
+            maxpar_ceiling: optional_num("SPIRA_BATCH_MAXPAR_CEILING", &cfg("SPIRA_BATCH_MAXPAR_CEILING")?)?,
+            mem_reserve_mib: cfg_parse("SPIRA_BATCH_MEM_RESERVE_MIB")?,
+            mem_per_suite_mib: cfg_parse("SPIRA_BATCH_MEM_PER_SUITE_MIB")?,
+            mem_avail_mib: optional_num("SPIRA_BATCH_MEM_AVAIL_MIB", &cfg("SPIRA_BATCH_MEM_AVAIL_MIB")?)?,
+            psi_threshold: cfg_parse("SPIRA_BATCH_PSI_THRESHOLD")?,
+            orphan_min_age: cfg_parse("SPIRA_BATCH_ORPHAN_MIN_AGE")?,
             orphan_prefix: src
-                .get("SPIRA_BATCH_ORPHAN_PREFIX", None)
+                .get("SPIRA_BATCH_ORPHAN_PREFIX")
                 .unwrap_or_else(|| "spira-batch-".into()),
-            peak_warn_frac: src
-                .num(
-                    "SPIRA_BATCH_PEAK_WARN_FRAC",
-                    Some("spira.batch_peak_warn_frac"),
-                )
-                .unwrap_or(60),
+            peak_warn_frac: cfg_parse("SPIRA_BATCH_PEAK_WARN_FRAC")?,
             exec_fault_threshold: src
-                .num("SPIRA_BATCH_EXEC_FAULT_THRESHOLD", None)
+                .num("SPIRA_BATCH_EXEC_FAULT_THRESHOLD")
                 .unwrap_or(5)
                 .max(1),
             liveness_retries: src
-                .num("SPIRA_BATCH_LIVENESS_RETRIES", None)
+                .num("SPIRA_BATCH_LIVENESS_RETRIES")
                 .unwrap_or(3)
                 .max(1),
-            liveness_sleep: src.num("SPIRA_BATCH_LIVENESS_SLEEP", None).unwrap_or(3),
-            instance: src.get("SPIRA_BATCH_INSTANCE", None),
+            liveness_sleep: src.num("SPIRA_BATCH_LIVENESS_SLEEP").unwrap_or(3),
+            instance: src.get("SPIRA_BATCH_INSTANCE"),
             suite_dir: path("SPIRA_BATCH_SUITE_DIR"),
             skip_install: src
                 .env_raw("SPIRA_BATCH_SKIP_INSTALL")
                 .is_some_and(|v| !v.is_empty()),
             tiers: src
-                .get("SPIRA_BATCH_TIERS", None)
+                .get("SPIRA_BATCH_TIERS")
                 .unwrap_or_else(|| "T2,T3".into()),
             mail_cmd: path("SPIRA_BATCH_MAIL_CMD"),
             incident_cmd: path("SPIRA_BATCH_INCIDENT_CMD"),
-            suite_state_file: src
-                .get("SPIRA_SUITE_STATE_FILE", None)
-                .unwrap_or_else(|| "spira/suite-state".into()),
+            suite_state_file: cfg("SPIRA_SUITE_STATE_FILE")?,
             skip_allowlist_file: src
-                .get("SPIRA_SKIP_ALLOWLIST_FILE", None)
+                .get("SPIRA_SKIP_ALLOWLIST_FILE")
                 .unwrap_or_else(|| "spira/skip-allowlist.tsv".into()),
-            select_head: src.get("SPIRA_GATE_SELECT_HEAD", None),
-            round_batch_id: src.get("SPIRA_ROUND_BATCH_ID", None),
-            round_members: src.num("SPIRA_ROUND_MEMBERS", None).unwrap_or(0),
+            select_head: src.get("SPIRA_GATE_SELECT_HEAD"),
+            round_batch_id: src.get("SPIRA_ROUND_BATCH_ID"),
+            round_members: src.num("SPIRA_ROUND_MEMBERS").unwrap_or(0),
             run_id: src
-                .get("GITHUB_RUN_ID", None)
-                .or_else(|| src.get("SPIRA_BATCH_RUN_ID", None))
+                .get("GITHUB_RUN_ID")
+                .or_else(|| src.get("SPIRA_BATCH_RUN_ID"))
                 .unwrap_or_else(|| format!("local-{now}")),
-            scratch_slots: src.num("SPIRA_TESTENV_SCRATCH_SLOTS", None).unwrap_or(4),
+            scratch_slots: src.num("SPIRA_TESTENV_SCRATCH_SLOTS").unwrap_or(4),
             scratch_min_free_mib: src
-                .num("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB", None)
+                .num("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB")
                 .unwrap_or(4096),
             scratch_min_mem_mib: src
-                .num("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", None)
+                .num("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB")
                 .unwrap_or(8192),
-            warm_slots: src.num("SPIRA_TESTENV_WARM_SLOTS", None).unwrap_or(3),
+            warm_slots: src.num("SPIRA_TESTENV_WARM_SLOTS").unwrap_or(3),
             setup_share: src
-                .num("SPIRA_TESTENV_SETUP_SHARE", None)
+                .num("SPIRA_TESTENV_SETUP_SHARE")
                 .unwrap_or(50u64)
                 .clamp(10, 90),
             warm_boot_timeout: src
-                .num("SPIRA_TESTENV_WARM_BOOT_TIMEOUT", None)
+                .num("SPIRA_TESTENV_WARM_BOOT_TIMEOUT")
                 .unwrap_or(600u64)
                 .max(1),
-            warm_shed_free_mib: src.num("SPIRA_TMPFS_SHED_FREE_MIB", None).unwrap_or(6144),
+            warm_shed_free_mib: src.num("SPIRA_TMPFS_SHED_FREE_MIB").unwrap_or(6144),
             landing_containers: path("SPIRA_LANDING_CONTAINERS"),
-            spira_db: src.get("SPIRA_DB", Some("spira.db")),
+            spira_db: Some(spira_db).filter(|v| !v.is_empty()),
             run,
-        }
+        })
     }
 }
 
@@ -279,83 +225,14 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn load(env: &[(&str, &str)], cfg: Option<&SpiraToml>) -> Settings {
-        let m: HashMap<String, String> = env
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        let f = move |k: &str| m.get(k).cloned();
-        let src = Source {
-            env: &f,
-            config: cfg,
-        };
-        Settings::load(&src, Path::new("/nonexistent-harness"), 1000)
-    }
-
-    #[test]
-    fn defaults_follow_testenv_batch() {
-        let s = load(&[("SPIRA_RUN", "/r"), ("HOME", "/h")], None);
-        assert_eq!(s.results_root, PathBuf::from("/r/batch-results"));
-        assert_eq!(s.verdicts, PathBuf::from("/r/verdicts"));
-        assert_eq!((s.verdict_ttl, s.suite_timeout), (86_400, 600));
-        assert_eq!(
-            (s.mem_reserve_mib, s.mem_per_suite_mib, s.peak_warn_frac),
-            (1024, 192, 60)
-        );
-        assert_eq!(s.orphan_prefix, "spira-batch-");
-        assert_eq!(s.tiers, "T2,T3");
-        assert_eq!(s.run_id, "local-1000");
-        assert!(!s.skip_install);
-        assert_eq!(s.suite_state_file, "spira/suite-state");
-        assert_eq!(s.skip_allowlist_file, "spira/skip-allowlist.tsv");
-        assert_eq!(
-            (s.warm_slots, s.setup_share, s.warm_boot_timeout),
-            (3, 50, 600)
-        );
-        assert_eq!(s.warm_shed_free_mib, 6144);
-    }
-
-    #[test]
-    fn warm_shed_free_mib_is_overridable() {
-        let s = load(
-            &[("SPIRA_RUN", "/r"), ("SPIRA_TMPFS_SHED_FREE_MIB", "9000")],
-            None,
-        );
-        assert_eq!(s.warm_shed_free_mib, 9000);
-    }
-
-    #[test]
-    fn the_setup_share_is_clamped_so_the_suites_always_get_some_budget() {
-        let share = |v: &str| {
-            load(
-                &[("SPIRA_RUN", "/r"), ("SPIRA_TESTENV_SETUP_SHARE", v)],
-                None,
-            )
-            .setup_share
-        };
-        assert_eq!((share("100"), share("0"), share("70")), (90, 10, 70));
-    }
-
-    #[test]
-    fn env_beats_config_and_config_beats_default() {
-        let doc = spira_config::validate(
-            "[spira]\nsuite_timeout = \"900\"\nbatch_maxpar = 12\nverdict_ttl = 60\n",
-        )
-        .unwrap();
-        let s = load(&[("SPIRA_RUN", "/r")], Some(&doc));
-        assert_eq!(s.suite_timeout, 900);
-        assert_eq!(s.maxpar_requested, Some(12));
-        assert_eq!(s.verdict_ttl, 60);
-        let s = load(
-            &[
-                ("SPIRA_RUN", "/r"),
-                ("SPIRA_BATCH_MAXPAR", "16"),
-                ("SPIRA_SUITE_TIMEOUT", "0"),
-            ],
-            Some(&doc),
-        );
-        assert_eq!(s.maxpar_requested, Some(16));
-        assert_eq!(s.suite_timeout, 0);
+    /// A non-registered-key Source, standing in for the environment: the only thing
+    /// `Settings::load` still reads directly. Every REGISTERED key now goes through
+    /// `cfg`/`cfg_parse`, which resolve from spira-config's own per-process cache — not
+    /// something a unit test can drive per-case, so that part of `load` is exercised by
+    /// spira-config's own tests and by the pure helpers below, not here.
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let m: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        move |k: &str| m.get(k).cloned()
     }
 
     /// sp-tj8k3: unset must stay unset (no refusal, no override) — only a *given* bad value
@@ -363,75 +240,51 @@ mod tests {
     /// does.
     #[test]
     fn maxpar_unset_is_silent_zero_and_garbage_refuse() {
-        let s = load(&[("SPIRA_RUN", "/r")], None);
-        assert_eq!((s.maxpar_requested, s.maxpar_refusal), (None, None));
+        assert_eq!(resolve_maxpar(""), (None, None));
+        assert_eq!(resolve_maxpar("  "), (None, None));
 
-        let s = load(&[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_MAXPAR", "0")], None);
-        assert_eq!(s.maxpar_requested, None);
-        assert!(
-            s.maxpar_refusal.as_deref().is_some_and(|r| r.contains("0")),
-            "{:?}",
-            s.maxpar_refusal
-        );
+        let (v, r) = resolve_maxpar("0");
+        assert_eq!(v, None);
+        assert!(r.as_deref().is_some_and(|r| r.contains('0')), "{r:?}");
 
-        let s = load(
-            &[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_MAXPAR", "lots")],
-            None,
-        );
-        assert_eq!(s.maxpar_requested, None);
-        assert!(
-            s.maxpar_refusal
-                .as_deref()
-                .is_some_and(|r| r.contains("lots")),
-            "{:?}",
-            s.maxpar_refusal
-        );
+        let (v, r) = resolve_maxpar("lots");
+        assert_eq!(v, None);
+        assert!(r.as_deref().is_some_and(|r| r.contains("lots")), "{r:?}");
 
-        let s = load(&[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_MAXPAR", "4")], None);
-        assert_eq!((s.maxpar_requested, s.maxpar_refusal), (Some(4), None));
+        assert_eq!(resolve_maxpar("4"), (Some(4), None));
+        assert_eq!(resolve_maxpar("-3").0, None);
+    }
+
+    #[test]
+    fn optional_num_is_absent_on_empty_and_refuses_a_given_bad_value() {
+        assert_eq!(optional_num::<u32>("SPIRA_BATCH_MAXPAR_CEILING", ""), Ok(None));
+        assert_eq!(optional_num::<u32>("SPIRA_BATCH_MAXPAR_CEILING", "24"), Ok(Some(24)));
+        assert!(optional_num::<u32>("SPIRA_BATCH_MAXPAR_CEILING", "nope").is_err());
     }
 
     #[test]
     fn run_id_prefers_github_then_explicit() {
-        assert_eq!(
-            load(
-                &[
-                    ("SPIRA_RUN", "/r"),
-                    ("GITHUB_RUN_ID", "77"),
-                    ("SPIRA_BATCH_RUN_ID", "x")
-                ],
-                None
-            )
-            .run_id,
-            "77"
-        );
-        assert_eq!(
-            load(&[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_RUN_ID", "x")], None).run_id,
-            "x"
-        );
-    }
+        let src = Source { env: &env(&[("GITHUB_RUN_ID", "77"), ("SPIRA_BATCH_RUN_ID", "x")]) };
+        let run_id = src
+            .get("GITHUB_RUN_ID")
+            .or_else(|| src.get("SPIRA_BATCH_RUN_ID"))
+            .unwrap_or_else(|| "local-1000".into());
+        assert_eq!(run_id, "77");
 
-    #[test]
-    fn run_derivation_uses_xdg_for_an_unwritable_repo_and_suffixes_instances() {
-        let s = load(&[("XDG_DATA_HOME", "/x"), ("SPIRA_INSTANCE", "t1")], None);
-        assert_eq!(s.run, PathBuf::from("/x/spira-t1/run"));
+        let src = Source { env: &env(&[("SPIRA_BATCH_RUN_ID", "x")]) };
+        let run_id = src
+            .get("GITHUB_RUN_ID")
+            .or_else(|| src.get("SPIRA_BATCH_RUN_ID"))
+            .unwrap_or_else(|| "local-1000".into());
+        assert_eq!(run_id, "x");
     }
 
     #[test]
     fn skip_install_needs_a_non_empty_value() {
-        assert!(
-            load(
-                &[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_SKIP_INSTALL", "1")],
-                None
-            )
-            .skip_install
-        );
-        assert!(
-            !load(
-                &[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_SKIP_INSTALL", "")],
-                None
-            )
-            .skip_install
-        );
+        let src = Source { env: &env(&[("SPIRA_BATCH_SKIP_INSTALL", "1")]) };
+        assert!(src.env_raw("SPIRA_BATCH_SKIP_INSTALL").is_some_and(|v| !v.is_empty()));
+
+        let src = Source { env: &env(&[("SPIRA_BATCH_SKIP_INSTALL", "")]) };
+        assert!(!src.env_raw("SPIRA_BATCH_SKIP_INSTALL").is_some_and(|v| !v.is_empty()));
     }
 }

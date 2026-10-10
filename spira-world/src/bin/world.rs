@@ -74,8 +74,23 @@ fn drain_stamp_or_die() -> PathBuf {
     spira_world::drain_stamp().unwrap_or_else(|e| die(&e))
 }
 
+/// `SPIRA_CTRL`'s declared value — the operational control plane file's path. The declared
+/// default is itself `$SPIRA_RUN/control` (`spira/conf.d/SPIRA_CTRL`), so this is never a
+/// second, Rust-side fallback onto `run_or_die().join("control")` (per Ryan 2026-10-05: one
+/// source of config).
+fn ctrl_path_or_die() -> PathBuf {
+    spira_config::process::cfg("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|e| die(&e))
+}
+
+/// `SPIRA_PROD`'s declared value, resolved once here and handed to [`spira_prod_or_home`] —
+/// never read from the environment inside that pure function.
+fn resolved_prod(home: &std::path::Path) -> PathBuf {
+    let prod = spira_config::process::cfg("SPIRA_PROD").unwrap_or_else(|e| die(&e));
+    spira_prod_or_home(home, &prod)
+}
+
 fn now_iso() -> String {
-    Command::new("date")
+    spira_config::bounded::bounded("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
         .ok()
@@ -217,6 +232,14 @@ fn aeon_pidfiles() -> Vec<PathBuf> {
     v
 }
 
+fn aeon_lease_running(pf: &std::path::Path) -> bool {
+    sending::reap::aeon_alive(pf)
+}
+
+fn live_aeon_pidfiles() -> Vec<PathBuf> {
+    aeon_pidfiles().into_iter().filter(|p| aeon_lease_running(p)).collect()
+}
+
 /// `aeon-<fayth>-<bead>.pid` -> `<bead>` (drop the `aeon-` prefix, then everything up to
 /// and including the first remaining `-`), matching world.sh's own
 /// `bead="${bead#aeon-}"; bead="${bead#*-}"`.
@@ -229,17 +252,59 @@ fn bead_of_pidfile(path: &std::path::Path) -> String {
     }
 }
 
+fn mail_root_or_die() -> PathBuf {
+    spira_config::process::cfg("SPIRA_MAIL").map(PathBuf::from).unwrap_or_else(|e| die(&e))
+}
+
+fn live_beads() -> Vec<String> {
+    let mut v = Vec::new();
+    for pf in aeon_pidfiles() {
+        let bead = bead_of_pidfile(&pf);
+        if !bead.is_empty() && aeon_lease_running(&pf) {
+            v.push(bead);
+        }
+    }
+    v
+}
+
+fn deadline_utc(secs_from_now: u64) -> String {
+    spira_config::bounded::bounded("date")
+        .args(["-u", "-d", &format!("+{secs_from_now} seconds"), "+%H:%M:%SZ"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+fn notify_aeons(notifier: &mut spira_world::notice::Notifier, what: &str, elapsed: u64, limit: u64, live: &[String]) {
+    let mail = mail_root_or_die();
+    notifier.tick(elapsed, limit, live, |bead, stage, remaining| {
+        let body = spira_world::notice::message(stage, what, remaining, &deadline_utc(remaining));
+        if spira_world::notice::send(&mail, bead, &body) {
+            println!("  noticed {bead}: {remaining}s remain");
+        }
+    });
+}
+
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}";
+
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
     let planes = selected_planes(args, &[Plane::Work]);
     let halts_work = planes.contains(&Plane::Work);
     let mut round_drain = false;
+    let mut grace: u64 = 0;
+    // batch-job: the drain waits for in-flight round work to finish
     let mut round_drain_timeout = std::time::Duration::from_secs(1800);
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--why" => {
                 why = args.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+            }
+            "--grace" => {
+                grace = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
                 i += 2;
             }
             "--round-drain" => {
@@ -252,7 +317,12 @@ fn cmd_stop(args: &[String]) -> i32 {
                 }
                 i += 2;
             }
-            _ => i += 1,
+            "--work" | "--observability" | "--maintenance" | "--all" | "--hard" => i += 1,
+            other => {
+                eprintln!("spira: stop: unrecognised argument {other:?} — a reason is given as --why \"...\", never positionally; nothing was stopped");
+                eprintln!("{USAGE}");
+                return 64;
+            }
         }
     }
 
@@ -266,6 +336,7 @@ fn cmd_stop(args: &[String]) -> i32 {
             eprintln!("spira: --round-drain given — waiting up to {}s for it to clear before halting", round_drain_timeout.as_secs());
             let cleared = spira_world::round::wait_for_clear(
                 round_drain_timeout,
+                // batch-job: poll interval of the round drain wait
                 std::time::Duration::from_secs(10),
                 |d| std::thread::sleep(d),
                 std::time::Instant::now,
@@ -291,6 +362,33 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
         return 1;
     }
+    // Stamp before stopping anything: an aeon exiting under the slay summons its successor
+    // from ExecStopPost, and only a stamp already in place gates that.
+    let run = run_or_die();
+    let _ = std::fs::create_dir_all(&run);
+    for plane in &planes {
+        let _ = std::fs::write(plane_stamp(*plane), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
+    }
+
+    if halts_work && grace > 0 {
+        let mut notifier = spira_world::notice::Notifier::default();
+        let mut elapsed = 0;
+        loop {
+            let live = live_beads();
+            if live.is_empty() {
+                break;
+            }
+            notify_aeons(&mut notifier, "stopping", elapsed, grace, &live);
+            if elapsed >= grace {
+                println!("spira: grace of {grace}s elapsed — slaying what remains");
+                break;
+            }
+            let step = (grace - elapsed).min(10);
+            std::thread::sleep(std::time::Duration::from_secs(step));
+            elapsed += step;
+        }
+    }
+
     for t in &timers {
         let TimerSlot::Resolved(t) = t else { continue };
         if !planes.contains(&sysctl::plane_of(t)) {
@@ -334,7 +432,7 @@ fn cmd_stop(args: &[String]) -> i32 {
         let mut n = 0u32;
         for pf in aeon_pidfiles() {
             let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-            if pid.is_empty() || !std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
+            if !aeon_lease_running(&pf) {
                 let _ = std::fs::remove_file(&pf);
                 continue;
             }
@@ -356,39 +454,9 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
 
         let mut stray = 0u32;
-        let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-        let prod = spira_prod_or_home(&home);
-        let aeon_paths: Vec<String> = vec![
-            home.join("aeon.sh").to_string_lossy().into_owned(),
-            prod.join("aeon.sh").to_string_lossy().into_owned(),
-        ];
-        let aeon_path_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
-        let live = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_path_refs, |pid| {
-            let out = sysctl::run(&["status", pid]);
-            out.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("").to_string()
-        });
-        for a in live {
-            let mut bead_for_pid = String::new();
-            for pf in aeon_pidfiles() {
-                let pp = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-                if pp == a.pid {
-                    bead_for_pid = bead_of_pidfile(&pf);
-                    break;
-                }
-            }
-            if !bead_for_pid.is_empty() {
-                println!(
-                    "  WARNING: {bead_for_pid} (pid {}) — named by a pidfile but slay did not stop it; run: slay.sh --bead {bead_for_pid}",
-                    a.pid
-                );
-            } else {
-                println!(
-                    "  WARNING: pid {} ({}) — no pidfile names it; could not resolve to a bead — inspect /proc/{}/cmdline before killing",
-                    a.pid,
-                    if a.unit.is_empty() { "-" } else { &a.unit },
-                    a.pid
-                );
-            }
+        for pf in live_aeon_pidfiles() {
+            let bead = bead_of_pidfile(&pf);
+            println!("  WARNING: {bead} — its identity lease is still running; slay did not stop it; run: slay.sh --bead {bead}");
             stray += 1;
         }
         let units = sysctl::live_aeon_units();
@@ -403,12 +471,6 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
     }
 
-    let run = run_or_die();
-    let _ = std::fs::create_dir_all(&run);
-    for plane in &planes {
-        let _ = std::fs::write(plane_stamp(*plane), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
-    }
-
     if svc_failed {
         eprintln!("spira: stop INCOMPLETE — work service(s) could not be stopped (see warnings above)");
         return 1;
@@ -421,9 +483,7 @@ fn cmd_stop(args: &[String]) -> i32 {
 fn cmd_start(args: &[String]) -> i32 {
     let planes = selected_planes(args, &[Plane::Work, Plane::Observability]);
     println!("spira: starting {}", plane_names(&planes));
-    let ctrl_path = env::var_os("SPIRA_CTRL")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| run_or_die().join("control"));
+    let ctrl_path = ctrl_path_or_die();
     let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
     let suspended = spira_ctrl::load_suspended(&ctrl_data);
     let instance = instance_or_die();
@@ -530,6 +590,15 @@ fn cmd_start(args: &[String]) -> i32 {
         }
     }
 
+    if planes.contains(&Plane::Work) {
+        let (lifted, failed) = spira_world::checkpoint::lift_all();
+        for b in &lifted {
+            println!("  resumable {b} (checkpoint lifted)");
+        }
+        for b in &failed {
+            eprintln!("  WARNING: checkpoint hold on {b} not lifted — `spira-lc unhold {b} wait` (it expires on its own)");
+        }
+    }
     for plane in &planes {
         let _ = std::fs::remove_file(plane_stamp(*plane));
     }
@@ -582,27 +651,22 @@ fn cmd_drain(args: &[String]) -> i32 {
     );
     println!("spira: draining — no new aeons; loop, landing and reaping continue");
 
-    let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-    let prod = spira_prod_or_home(&home);
-    let aeon_paths: Vec<String> = vec![
-        home.join("aeon.sh").to_string_lossy().into_owned(),
-        prod.join("aeon.sh").to_string_lossy().into_owned(),
-    ];
-    let aeon_path_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
-
+    let limit = if dslay { dtimeout } else { dfor };
+    let mut notifier = spira_world::notice::Notifier::default();
     let mut waited: u64 = 0;
     loop {
-        let procs = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_path_refs, |_| String::new()).len() as u64;
+        let procs = live_aeon_pidfiles().len() as u64;
         let n = procs.max(sysctl::live_aeon_units().len() as u64);
         if n == 0 {
             break;
         }
+        notify_aeons(&mut notifier, "draining", waited, limit, &live_beads());
         if waited >= dtimeout {
             if dslay {
                 eprintln!("spira: drain deadline reached — slaying {n} aeon(s)");
                 for pf in aeon_pidfiles() {
                     let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-                    if pid.is_empty() || !std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
+                    if !aeon_lease_running(&pf) {
                         let _ = std::fs::remove_file(&pf);
                         continue;
                     }
@@ -669,7 +733,7 @@ fn cmd_status() -> i32 {
         }
     } else {
         println!("spira: not halted by world.sh");
-        let ctrl_path = env::var_os("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|| run_or_die().join("control"));
+        let ctrl_path = ctrl_path_or_die();
         let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
         let suspended = spira_ctrl::load_suspended(&ctrl_data);
         let mut degraded = Vec::new();
@@ -733,18 +797,13 @@ fn cmd_status() -> i32 {
     }
 
     let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-    let prod = spira_prod_or_home(&home);
-    let worker_paths = spira_world::live_worker_paths(&home);
+    let prod = resolved_prod(&home);
+    let worker_paths = spira_world::live_worker_paths(&home, &prod);
     let worker_refs: Vec<&str> = worker_paths.iter().map(String::as_str).collect();
     let wcount = spira_world::proc::live_workers(std::path::Path::new("/proc"), &worker_refs).len();
     println!("  {:<26} {}", "live workers (/proc)", wcount);
 
-    let aeon_paths: Vec<String> = vec![
-        home.join("aeon.sh").to_string_lossy().into_owned(),
-        prod.join("aeon.sh").to_string_lossy().into_owned(),
-    ];
-    let aeon_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
-    let a = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_refs, |_| String::new()).len();
+    let a = live_aeon_pidfiles().len();
     let a = a.max(sysctl::live_aeon_units().len());
     println!("  live aeons: {a}");
 
@@ -779,7 +838,7 @@ fn main() {
             0
         }
         _ => {
-            eprintln!("usage: world.sh {{stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] | drain [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}}");
+            eprintln!("{USAGE}");
             64
         }
     };
