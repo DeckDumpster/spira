@@ -118,6 +118,41 @@ pub fn pr_state(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
     ok(vec![word.to_string()])
 }
 
+// ── pr-red ───────────────────────────────────────────────────────────────────────────────
+
+const PR_RED_BAD: [&str; 5] = ["FAILURE", "CANCELLED", "TIMED_OUT", "STALE", "ACTION_REQUIRED"];
+const PR_RED_MAX_LINES: usize = 20;
+
+/// A PR whose required check is red: `head <sha>`, then per failing job `job <name>` and the
+/// `fail-line: <text>` lines of its log. Silent when nothing is red or it cannot be read —
+/// never a guess at red.
+pub fn pr_red(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
+    let r = gh.call(Some(repo), &["pr", "view", selector, "--json", "headRefOid,statusCheckRollup"]);
+    let Some(v) = parse(&r.stdout) else { return ok(vec![]) };
+    let Some(checks) = v.get("statusCheckRollup").and_then(Value::as_array) else { return ok(vec![]) };
+    let mut lines = Vec::new();
+    for c in checks {
+        let concl = jstr(c, "conclusion").unwrap_or_default();
+        if !PR_RED_BAD.contains(&concl.as_str()) {
+            continue;
+        }
+        if lines.is_empty() {
+            lines.push(format!("head {}", jstr(&v, "headRefOid").unwrap_or_default()));
+        }
+        lines.push(format!("job {}", jstr(c, "name").unwrap_or_default()));
+        let job_id = jstr(c, "detailsUrl")
+            .and_then(|u| u.rsplit_once("/job/").map(|(_, id)| id.chars().take_while(char::is_ascii_digit).collect::<String>()))
+            .filter(|id| !id.is_empty());
+        if let Some(id) = job_id {
+            let log = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")]);
+            for l in log.text().lines().filter(|l| l.contains("FAIL") || l.contains("not ok")).take(PR_RED_MAX_LINES) {
+                lines.push(format!("fail-line: {}", l.trim()));
+            }
+        }
+    }
+    ok(lines)
+}
+
 // ── pr-automerge (new) ───────────────────────────────────────────────────────────────────
 
 /// Arms squash auto-merge — `land_pr`'s `ghq pr merge --auto --squash` (DESIGN.md §6).

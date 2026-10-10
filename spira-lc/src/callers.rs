@@ -636,6 +636,7 @@ fn reopen_returned_reason(cause: &str) -> ReturnedReason {
     match cause {
         "eject" | "batch-eject" => ReturnedReason::BatchEjected,
         "base-withdrawn" => ReturnedReason::BaseWithdrawn,
+        "pr-checks-red" => ReturnedReason::PrChangesRequested,
         _ => ReturnedReason::PushRejected,
     }
 }

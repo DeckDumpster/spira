@@ -168,6 +168,27 @@ fn pr_state_maps_every_github_state_and_falls_closed_to_unknown() {
     assert_eq!(pr_state(&gh2, repo(), "spira/sp-b").lines, vec!["unknown"]);
 }
 
+#[test]
+fn pr_red_names_the_failing_job_and_its_fail_lines_and_is_silent_otherwise() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["pr", "view", "spira/sp-a", "--json", "headRefOid,statusCheckRollup"],
+        0,
+        r#"{"headRefOid":"abc123","statusCheckRollup":[
+            {"name":"lint","conclusion":"SUCCESS","detailsUrl":"https://x/actions/runs/1/job/10"},
+            {"name":"suites","conclusion":"FAILURE","detailsUrl":"https://x/actions/runs/1/job/77"}]}"#,
+    );
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/77/logs"], 0, "2026-10-10T00:00:01.0Z ok 1 a\n2026-10-10T00:00:02.0Z not ok 2 b\n");
+    assert_eq!(
+        pr_red(&gh, repo(), "spira/sp-a").lines,
+        vec!["head abc123", "job suites", "fail-line: 2026-10-10T00:00:02.0Z not ok 2 b"]
+    );
+    let green = FakeGh::default();
+    green.on(&["pr", "view", "spira/sp-b", "--json", "headRefOid,statusCheckRollup"], 0, r#"{"headRefOid":"d","statusCheckRollup":[{"name":"x","conclusion":"SUCCESS"}]}"#);
+    assert!(pr_red(&green, repo(), "spira/sp-b").lines.is_empty());
+    assert!(pr_red(&FakeGh::default(), repo(), "spira/sp-c").lines.is_empty());
+}
+
 // ── runs-active: fail-closed '?', never 0 ───────────────────────────────────────────────
 
 #[test]

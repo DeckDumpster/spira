@@ -46,6 +46,7 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "pr-list-open" => pr_list_open(gh, repo),
         "pr-mergeability" => pr_mergeability(gh, repo, arg(args, 0)),
         "pr-state" => pr_state(gh, repo, arg(args, 0)),
+        "pr-red" => pr_red(gh, repo, arg(args, 0)),
         "pr-automerge" => pr_automerge(gh, repo, arg(args, 0)),
         "check-status" => check_status(gh, proc, repo, arg(args, 1)),
         "run-id" => run_id(gh, repo, arg(args, 0)),
