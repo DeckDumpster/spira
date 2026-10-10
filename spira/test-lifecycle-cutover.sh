@@ -884,7 +884,8 @@ want "without a seen file the breach is still reported" "MEND-WATCH OVERDUE" "$(
 mend_bead() {   # mend_bead <suite> <bead>
     root_sql --use-db spira_lifecycle sql -q "INSERT INTO mending (batch_id, pass, suite, state, failed_at, version) VALUES ('batch-mend', 2, '$1', 'WAITING', UNIX_TIMESTAMP(), 0)" >/dev/null
     lc mending pickup batch-mend --pass 2 --suite "$1" --deadline-secs 600 --actor mender >/dev/null
-    lc mending event batch-mend --pass 2 --suite "$1" --actor mender --kind "{\"Mended\":{\"at\":0,\"bead\":\"$2\"}}" >/dev/null
+    lc mending event batch-mend --pass 2 --suite "$1" --actor mender --kind "{\"Attribute\":{\"bead\":\"$2\"}}" >/dev/null
+    lc mending event batch-mend --pass 2 --suite "$1" --actor mender --kind '{"Mended":{"at":0}}' >/dev/null
 }
 mend_bead m1.sh sp-twice; mend_bead m2.sh sp-twice; mend_bead m3.sh sp-loop; mend_bead m4.sh sp-loop; mend_bead m5.sh sp-loop
 out="$(lc mend-watch)"

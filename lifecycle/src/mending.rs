@@ -99,12 +99,9 @@ pub enum MendingEventKind {
     TriageEnded { at: i64 },
     /// Replaces the diagnosis written so far. Moves no state and no deadline.
     Diagnosis { text: String },
-    /// `bead` is the member whose branch carries the fix; the mend cap is counted by it.
-    Mended {
-        at: i64,
-        #[serde(default)]
-        bead: Option<String>,
-    },
+    /// Names the member whose branch carries the fix; the daily mend count reads it. Moves no state.
+    Attribute { bead: String },
+    Mended { at: i64 },
     Environment { at: i64 },
     Flaky { at: i64 },
     Unsure { at: i64 },
@@ -168,7 +165,8 @@ pub fn apply(row: &MendingRow, ev: &MendingEvent) -> Outcome<MendingRow> {
             new.diagnosis = Some(text.clone());
             Outcome::applied(new)
         }
-        (MendingState::Mending, MendingEventKind::Mended { at, .. }) => settle(new, MendingState::Mended, *at),
+        (MendingState::Mending, MendingEventKind::Attribute { .. }) => Outcome::applied(new),
+        (MendingState::Mending, MendingEventKind::Mended { at }) => settle(new, MendingState::Mended, *at),
         (MendingState::Mending, MendingEventKind::Environment { at }) => settle(new, MendingState::Environment, *at),
         (MendingState::Mending, MendingEventKind::Flaky { at }) => settle(new, MendingState::Flaky, *at),
         (MendingState::Mending, MendingEventKind::Unsure { at }) => settle(new, MendingState::Unsure, *at),
@@ -315,7 +313,7 @@ mod tests {
     #[test]
     fn every_outcome_settles_a_row_before_its_deadline() {
         let outcomes = [
-            (MendingEventKind::Mended { at: 1299, bead: None }, MendingState::Mended),
+            (MendingEventKind::Mended { at: 1299 }, MendingState::Mended),
             (MendingEventKind::Environment { at: 1299 }, MendingState::Environment),
             (MendingEventKind::Flaky { at: 1299 }, MendingState::Flaky),
             (MendingEventKind::Unsure { at: 1299 }, MendingState::Unsure),
@@ -331,7 +329,7 @@ mod tests {
     #[test]
     fn an_outcome_at_or_past_the_deadline_is_refused() {
         for kind in [
-            MendingEventKind::Mended { at: 1300, bead: None },
+            MendingEventKind::Mended { at: 1300 },
             MendingEventKind::Environment { at: 1300 },
             MendingEventKind::Flaky { at: 1300 },
             MendingEventKind::Unsure { at: 1300 },
@@ -356,7 +354,7 @@ mod tests {
     fn a_waiting_row_never_expires_and_has_no_outcome() {
         let r = MendingRow::failed("b1", 1, "s");
         assert!(!r.overdue(i64::MAX));
-        for kind in [MendingEventKind::Expire { at: i64::MAX }, MendingEventKind::Mended { at: 1, bead: None }, MendingEventKind::Diagnosis { text: "x".into() }] {
+        for kind in [MendingEventKind::Expire { at: i64::MAX }, MendingEventKind::Mended { at: 1 }, MendingEventKind::Diagnosis { text: "x".into() }] {
             assert!(matches!(refusal(&r, kind), Refusal::IllegalTransition { .. }));
         }
     }

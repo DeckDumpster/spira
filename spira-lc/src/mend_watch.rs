@@ -47,8 +47,11 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
     let now = now_epoch();
     let overdue = conn.query(&format!("SELECT batch_id, pass, suite, deadline FROM mending WHERE state = 'MENDING' AND deadline <= {now} ORDER BY deadline"));
     let mends = conn.query(&format!(
-        "SELECT JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.Mended.bead')) AS bead, COUNT(*) AS n FROM event \
-         WHERE machine = 'mending' AND event = 'Mended' AND applied = 1 AND at >= {} GROUP BY bead",
+        "SELECT a.bead AS bead, COUNT(*) AS n FROM \
+         (SELECT DISTINCT e.lc_key, JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Attribute.bead')) AS bead FROM event e \
+          JOIN mending m ON CONCAT(m.batch_id, '#', m.pass, '#', m.suite) = e.lc_key \
+          WHERE e.machine = 'mending' AND e.event = 'Attribute' AND e.applied = 1 AND m.state = 'MENDED' AND m.failed_at >= {}) a \
+         GROUP BY a.bead",
         now - DAY_S
     ));
     let (overdue, mends) = match (overdue, mends) {
