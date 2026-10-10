@@ -13,7 +13,7 @@ fn main() {
     let conf_d = manifest.join("../spira/conf.d");
     let conf_toml_d = manifest.join("../spira/conf.toml.d");
     let history = manifest.join("schema/spira-key-history.txt");
-    for p in [&conf_d, &conf_toml_d, &history, &manifest.join("codegen.rs")] {
+    for p in [&conf_d, &conf_toml_d, &history, &manifest.join("codegen.rs"), &manifest.join("build.rs")] {
         println!("cargo:rerun-if-changed={}", p.display());
     }
 
