@@ -534,11 +534,12 @@ impl<'a> Pass<'a> {
                         "Reopened by sentinel: branch {br} failed {name}'s certification gate. The branch carries {n} commit(s) from the previous session — the next aeon should resume from the existing work, not restart.\n{scope_part}\n\n{}",
                         tail_lines(&g.out, 20)
                     );
+                    let cause = crate::model::red_cause("cert-gate-red", &reason);
                     if !closed {
-                        self.record_rework(id, "cert-gate-red", &note);
+                        self.record_rework(id, &cause, &note);
                         return Flow::Next;
                     }
-                    self.lib.reopen(id, "cert-gate-red", &note);
+                    self.lib.reopen(id, &cause, &note);
                     self.out.progress(&format!("reopened {id} — failed the certification gate"));
                     self.lib.event(
                         "bead.reopened",

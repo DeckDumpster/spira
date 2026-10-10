@@ -110,11 +110,12 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
                     "Reopened by sentinel: branch {br} failed {name}'s landing gate. The branch carries {n} commit(s) from the previous session — the next aeon should resume from the existing work, not restart.\n\n{}",
                     tail_lines(&g.out, 20)
                 );
+                let cause = crate::model::red_cause("gate-red", &reason);
                 if !st_closed {
-                    p.record_rework(id, "gate-red", &note);
+                    p.record_rework(id, &cause, &note);
                     return Flow::Next;
                 }
-                p.lib.reopen(id, "gate-red", &note);
+                p.lib.reopen(id, &cause, &note);
                 p.out.progress(&format!("reopened {id} — failed the gate"));
                 p.lib.event("bead.reopened", id, &format!("reopened {id} — {br} failed {name}'s landing gate"), &tail_lines(&g.out, 3));
                 w.unjudge(br);
