@@ -24,7 +24,7 @@ printf '%s\n' "$*" >> "$BD_LOG_PATH"
 [ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
     list) printf '%s\n' "${BD_LIST_OUTPUT:-[]}" ;;
-    create) [ -n "${BD_CREATE_FAIL:-}" ] && exit 1 ;;
+    create) [ -n "${BD_CREATE_FAIL:-}" ] && exit 1; echo sp-new1 ;;
 esac
 exit 0
 STUB
@@ -68,6 +68,16 @@ out="$(run_trigger)"; rc=$?
 is "files, exits 0" 0 "$rc"
 want "bd create called" "create" "$(cat "$LOG")"
 want "carries warden label" "warden-sweep" "$(cat "$LOG")"
+want "sweep has a READY lifecycle row at birth" "create-bead sp-new1" "$(cat "$LC_FIX/creates.log")"
+is "row is READY" 1 "$([ -f "$LC_FIX/bead/READY/sp-new1" ] && echo 1 || echo 0)"
+rm -f "$LC_FIX/bead/READY/sp-new1"
+
+echo; echo "FILING: a failed row creation is an error naming the bead"
+: > "$LOG"; touch "$LC_FIX/refuse-create"
+out="$(run_trigger)"; rc=$?
+is "row failure exits 1" 1 "$rc"
+want "names the unclaimable bead" "sp-new1" "$out"
+rm -f "$LC_FIX/refuse-create"
 
 echo; echo "DEDUP: an open sweep suppresses filing (positive control: filing happened above)"
 : > "$LOG"

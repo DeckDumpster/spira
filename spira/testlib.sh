@@ -391,6 +391,8 @@ case "$1" in
         if [ "$2" = "--delivery" ]; then join "$LC_FIX/delivery/${4:-}"/*; elif [ -n "${3:-}" ]; then join "$LC_FIX/bead/$3"/*; else join "$LC_FIX/bead"/*/*; fi ;;
     show) [ -f "$LC_FIX/show/$2" ] && cat "$LC_FIX/show/$2" || exit 1 ;;
     event) printf '%s\n' "$*" >> "$LC_FIX/events.log"; [ -f "$LC_FIX/refuse" ] && exit 3; exit 0 ;;
+    create-bead) printf '%s\n' "$*" >> "$LC_FIX/creates.log"; [ -f "$LC_FIX/refuse-create" ] && exit 2
+        mkdir -p "$LC_FIX/bead/READY"; printf '{"bead_id":"%s","state":"READY","holds":[]}' "$2" > "$LC_FIX/bead/READY/$2"; exit 0 ;;
     content)
         shift; bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
         exec "${bd:-bd}" ${db:+-C "$db"} "$@" ;;
