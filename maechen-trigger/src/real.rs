@@ -202,9 +202,10 @@ fn json_ids(input: &str) -> Option<Vec<String>> {
 
 /// `spira_open_trigger_count`'s own counter: the trigger beads still open — their lifecycle
 /// row READY, WORKING or REWORK (what bd's `open,in_progress` meant). A bead with no row can
-/// never be worked, so it is not open.
+/// never be worked, and a poisoned one is not claimable again: neither is open, or one dead
+/// trigger would suppress every later one.
 fn unfinished_count(ids: &[String], lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> u64 {
-    ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder())).count() as u64
+    ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.past_builder() && !r.held("poison"))).count() as u64
 }
 
 fn humantime_utc_now() -> String {
@@ -235,6 +236,9 @@ mod tests {
             .map(|(i, st)| (i.to_string(), Row { bead_id: i.to_string(), state: st.to_string(), ..Default::default() }))
             .collect();
         assert_eq!(unfinished_count(&ids, &lc), 2);
+        let mut lc: std::collections::HashMap<String, Row> = lc;
+        lc.get_mut("a").unwrap().holds = vec!["poison".to_string()];
+        assert_eq!(unfinished_count(&ids, &lc), 1, "a poisoned trigger is dead and must not suppress the next");
         assert!(json_ids("not json").is_none());
     }
 }

@@ -84,7 +84,16 @@ impl Run<'_> {
         let (sys, task) = brief::split(&statutes, &prompt);
         let _ = std::fs::write(&sys_file, sys);
         let _ = std::fs::write(&task_file, task);
-        let argv = self.claude_argv(&sys_file);
+        let argv = match self.claude_argv(&sys_file) {
+            Ok(a) => a,
+            Err(m) => {
+                self.die_line(&m);
+                let _ = std::fs::remove_file(&pidfile);
+                let _ = std::fs::remove_file(pidfile.with_extension("name"));
+                self.ledger.done(self.now(), &f, "sweep", 1, "harness-red", &ledger::session_result_fields(Some(&logf), &self.conf.trace_mark()));
+                return 1;
+            }
+        };
         let spec = SessionSpec {
             prog: self.conf.agent(),
             args: argv,

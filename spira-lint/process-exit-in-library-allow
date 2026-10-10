@@ -5,7 +5,6 @@
 # ever added for a NEW exit.
 aeon/src/conf.rs
 aeon/src/main.rs
-aeon/src/run.rs
 archivist/src/main.rs
 bead/src/main.rs
 beads-store/src/main.rs

@@ -84,6 +84,15 @@ is "landed sweep: files, exits 0" 0 "$rc"
 want "landed sweep: a new sweep is filed" "create" "$(cat "$LOG")"
 rm -f "$LC_FIX"/bead/*/sp-x "$LC_FIX/show/sp-x"
 
+echo; echo "DEDUP: a poisoned sweep is dead and no longer suppresses filing"
+: > "$LOG"
+lc_bead READY sp-x deadbeef 0
+printf '{"bead_id":"sp-x","state":"READY","holds":["poison"]}' > "$LC_FIX/bead/READY/sp-x"
+out="$(BD_LIST_OUTPUT='[{"id":"sp-x"}]' run_trigger)"; rc=$?
+is "poisoned sweep: files, exits 0" 0 "$rc"
+want "poisoned sweep: a fresh sweep is filed" "create" "$(cat "$LOG")"
+rm -f "$LC_FIX"/bead/*/sp-x "$LC_FIX/show/sp-x"
+
 echo; echo "FAILURE: a create that fails exits 1"
 out="$(BD_CREATE_FAIL=1 run_trigger)"; rc=$?
 is "create failure exits 1" 1 "$rc"

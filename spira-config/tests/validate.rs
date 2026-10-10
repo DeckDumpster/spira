@@ -406,13 +406,23 @@ fn the_cli_accepts_a_key_a_newer_release_wrote_with_a_warning() {
     assert!(!out.status.success(), "a malformed known value must still refuse");
 }
 
+const MODELS: &str = "[persona.ops]\nmodel = \"claude-x\"\n[persona.warden]\nmodel = \"claude-x\"\n";
+
+#[test]
+fn strict_validation_refuses_a_rostered_persona_with_no_declared_model() {
+    let roster = "[spira]\nid_prefix = \"sp\"\nfayths = [\"ops\", \"warden\"]\n[persona.ops]\nmodel = \"claude-x\"\n";
+    let err = spira_config::validate_strict(roster).unwrap_err();
+    assert!(err.contains("persona.warden.model"), "{err}");
+    spira_config::validate_strict(&format!("{roster}[persona.warden]\nmodel = \"claude-x\"\n")).expect("every rostered persona declares a model");
+}
+
 #[test]
 fn strict_validation_refuses_a_declared_lane_the_roster_omits() {
     let base = "[spira]\nid_prefix = \"sp\"\nlanes = \"ops warden\"\n";
     let omits = format!("{base}fayths = [\"ops\", \"builder\"]\n");
     let err = spira_config::validate_strict(&omits).unwrap_err();
     assert!(err.contains("spira.lanes") && err.contains("spira.fayths") && err.contains("warden"), "{err}");
-    let covers = format!("{base}fayths = [\"ops\", \"warden\"]\n");
+    let covers = format!("{base}fayths = [\"ops\", \"warden\"]\n{MODELS}");
     spira_config::validate_strict(&covers).expect("a roster naming every lane passes");
     spira_config::validate_strict(base).expect("no explicit roster means every chamber fayth");
 }
@@ -422,6 +432,6 @@ fn strict_validation_refuses_a_timer_partition_label_whose_persona_is_unrostered
     let omits = "[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nfayths = [\"ops\"]\n";
     let err = spira_config::validate_strict(omits).unwrap_err();
     assert!(err.contains("spira.warden_label") && err.contains("spira.fayths"), "{err}");
-    let ok = "[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nfayths = [\"ops\", \"warden\"]\n";
-    spira_config::validate_strict(ok).expect("rostered");
+    let ok = format!("[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nfayths = [\"ops\", \"warden\"]\n{MODELS}");
+    spira_config::validate_strict(&ok).expect("rostered");
 }

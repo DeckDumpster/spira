@@ -1273,6 +1273,37 @@ fn an_ops_lane_aeons_no_progress_exit_is_held_too() {
 }
 
 #[test]
+fn a_silent_session_exit_is_a_harness_red_and_charges_no_attempt() {
+    let f = fx("silent-exit");
+    seed(&f, "sp-q");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 1);
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    assert_eq!(o.code, 1, "{}", o.log);
+    let l = ledger_lines(&o);
+    assert!(l[2].starts_with("done builder sp-q rc=1"), "a done line is written: {l:?}");
+    let w = o.w.lock().unwrap();
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Harness red (session exit rc=1, no transcript)")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-q", "unjudged-refused"]), "exempt cause, not an attempt: {:?}", w.seam_calls);
+}
+
+#[test]
+fn a_persona_with_no_declared_model_is_a_harness_red_with_a_done_line_not_a_silent_exit() {
+    let f = fx("no-model");
+    std::fs::write(f.home.join("chamber/ghost.md"), std::fs::read_to_string(f.home.join("chamber/builder.md")).unwrap()).unwrap();
+    std::fs::write(f.home.join("chamber/ghost.fayth"), "").unwrap();
+    seed(&f, "sp-g");
+    let o = go_as("ghost", &f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
+    assert_eq!(o.code, 1, "{}", o.log);
+    assert!(o.log.contains("persona.ghost.model is not declared"), "{}", o.log);
+    let l = ledger_lines(&o);
+    assert!(l[2].starts_with("done ghost sp-g rc=1 status=harness-red"), "{l:?}");
+    let w = o.w.lock().unwrap();
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Harness red (rc=1)") && n.contains("NO attempt was charged")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-g", "unjudged-harness-red"]), "{:?}", w.seam_calls);
+    assert!(o.seen.is_empty(), "no session was launched");
+}
+
+#[test]
 fn a_worktree_failure_is_a_pre_session_death() {
     let f = fx("presession");
     seed(&f, "sp-d");
