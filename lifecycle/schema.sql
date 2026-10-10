@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS batch (
     -- The round's pass number and, while CI_RUNNING, its phase (build|suites); migrations/0014-batch-pass.sql for an existing database.
     pass      BIGINT NOT NULL DEFAULT 0,
     phase     VARCHAR(8) NULL,
-    -- The running pass's live counts as JSON; migrations/0020-batch-progress.sql for an existing database.
+    -- The running pass's live counts as JSON; migrations/0021-batch-progress.sql for an existing database.
     progress  TEXT NULL,
     version   BIGINT NOT NULL,
     opened_at BIGINT NOT NULL
