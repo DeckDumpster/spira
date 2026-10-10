@@ -299,7 +299,8 @@ pub fn run(
                 exit: Exit::Conflict,
                 stdout: None,
                 stderr: Some(format!(
-                    "rebase-stale: {br} has a real conflict — returned to an aeon"
+                    "rebase-stale: {br} has a real conflict — returned to an aeon; files: {}",
+                    if files.is_empty() { "unknown" } else { &files }
                 )),
             };
         }

@@ -39,6 +39,8 @@ pub enum Cmd {
     ToForge { repo: Option<String> },
     ToLocal { repo: Option<String> },
     RollbackLocal { repo: Option<String> },
+    /// `rebase-waiting [<repo>]`: rebase every waiting bead onto the landing ref.
+    RebaseWaiting { repo: Option<String> },
     Round(Round),
     Help,
 }
@@ -65,7 +67,7 @@ pub enum Round {
     Discard { repo: Option<String>, reason: Text },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -366,6 +368,7 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
         "to-local" => Ok(Cmd::ToLocal { repo: repo_only("to-local", args)? }),
         // rollback-local took `${1:-home}` and nothing else.
         "rollback-local" => Ok(Cmd::RollbackLocal { repo: pos(0) }),
+        "rebase-waiting" => Ok(Cmd::RebaseWaiting { repo: pos(0) }),
         "round" => parse_round(args).map(Cmd::Round),
         _ => Err(Usage(USAGE.into())),
     }

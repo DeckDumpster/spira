@@ -12,6 +12,7 @@ use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
 use crate::testutil::tmpdir;
 
+mod rebase;
 mod round;
 mod verdict;
 
@@ -307,6 +308,8 @@ struct FScripts {
     /// `round-vm` is preempted while it runs: the marker the verb leaves is there when it returns.
     preempted_during_vm: Cell<bool>,
     restart_fails: Cell<bool>,
+    /// What `rebase-stale <id>` answers, by bead (absent = exit 0, nothing printed).
+    rebase: RefCell<BTreeMap<String, RunOut>>,
     survives_term: Cell<bool>,
 }
 
@@ -343,6 +346,18 @@ impl Scripts for FScripts {
     fn pass_restart(&self, batch: &str, repo: &str) -> bool {
         self.calls.borrow_mut().push(format!("restart {batch} {repo}"));
         !self.restart_fails.get()
+    }
+    fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
+        ids.iter()
+            .map(|id| {
+                self.calls.borrow_mut().push(format!("rebase-stale {id} {repo}"));
+                (id.clone(), self.rebase.borrow().get(id).cloned().unwrap_or_default())
+            })
+            .collect()
+    }
+    fn rebase_waiting_start(&self, repo: &str) -> bool {
+        self.calls.borrow_mut().push(format!("rebase-waiting-start {repo}"));
+        true
     }
     fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
         self.calls.borrow_mut().push(format!("round-vm {} base={base} round={}/{} wall={wall_secs}", tree.display(), round.0, round.1));
@@ -787,7 +802,7 @@ impl T {
     }
     /// A spira-lc bead row entered at `since`.
     fn lc_row(&self, id: &str, state: &str, tip: &str, since: u64) {
-        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new() };
+        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }
     fn open_record(&self, text: &str) {
@@ -1448,6 +1463,7 @@ fn land_local_accepts_a_round_green_for_the_head_tree() {
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     assert!(t.err().contains(&format!("tree {T1} certified by round GREEN")), "{}", t.err());
+    assert!(t.scripts.calls.borrow().contains(&"rebase-waiting-start spira".to_string()), "a landing starts the rebase of the waiting queue: {:?}", t.scripts.calls.borrow());
 }
 
 #[test]

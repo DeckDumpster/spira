@@ -229,6 +229,10 @@ pub trait Scripts {
     fn pass_alive(&self, pid: u32) -> bool;
     /// Start `queue round certify <batch> <repo>` detached, so the next pass outlives the caller.
     fn pass_restart(&self, batch: &str, repo: &str) -> bool;
+    /// `rebase-stale <id> <repo>` for every id, bounded-parallel: (id, result) in input order.
+    fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)>;
+    /// Start `queue rebase-waiting <repo>` detached, so the landing never waits on it.
+    fn rebase_waiting_start(&self, repo: &str) -> bool;
 }
 
 /// A finished child: its exit status (127 when it could not run), stdout and stderr.
