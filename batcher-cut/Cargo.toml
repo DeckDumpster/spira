@@ -16,6 +16,7 @@ suite-select = { path = "../suite-select" }
 gate = { path = "../gate" }
 lifecycle = { path = "../lifecycle" }
 tsd = { path = "../tsd" }
+migration-numbers = { path = "../migration-numbers" }
 serde_json = "1"
 
 
