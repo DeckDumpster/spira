@@ -119,6 +119,7 @@ git -C "$B_RUN/worktree/sp-mbase" commit -q -m "sp-mbase: work"
 B_TIP="$(git -C "$B_REPO" rev-parse spira/sp-mbase)"
 git -C "$B_REPO" worktree remove -f "$B_RUN/worktree/sp-mbase"
 lcfix_seed sp-mbase CERTIFIED "$B_TIP"
+lcfix_sql -q "UPDATE bead SET sifted_tip='$B_TIP' WHERE bead_id='sp-mbase'" >/dev/null 2>&1
 
 tl_config SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$B_SH/repo-map" SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \

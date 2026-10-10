@@ -1,0 +1,15 @@
+[Unit]
+Description=Spira sift — a pass starts every minute; a pass still running is not restarted
+
+[Timer]
+OnBootSec=150s
+OnActiveSec=150s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=spira-sift.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work

@@ -57,6 +57,8 @@ struct Opts {
 fn usage() -> ExitCode {
     eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     eprintln!("       batcher rounds [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
+    eprintln!("       batcher sift <repo> [--run DIR] [--db DIR] [--home DIR]");
+    eprintln!("       batcher sifts [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
     ExitCode::from(2)
 }
@@ -224,7 +226,7 @@ fn cut(o: &Opts) -> Result<(), String> {
         println!("batcher {}: feature round {root} ({} members)", repo.name, pool.len());
     }
     let open = io::read_open_batch(&env_, &repo.name)?;
-    let pool = screen::screened(&env_, &repo, pool, open.as_ref());
+    let pool = screen::cut_pool(pool, &io::sifted_tips(&env_)?);
 
     if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
         return Ok(());
@@ -1106,6 +1108,43 @@ fn rounds(o: &Opts) -> Result<(), String> {
     }
 }
 
+fn sift_one(o: &Opts) -> Result<(), String> {
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    if o.repo.is_empty() {
+        return Err("repo name required".into());
+    }
+    let env_ = env_for(o, home, run)?;
+    let repo = find_repo(&env_, &o.repo)?;
+    let open = io::read_open_batch(&env_, &repo.name)?;
+    let out = screen::sift_repo(&env_, &repo, open.as_ref())?;
+    println!("batcher {}: sift: {} sifted, {} sent back, {} superseded, {} held", repo.name, out.sifted.len(), out.sent_back.len(), out.superseded.len(), out.capped.len() + out.held.len());
+    Ok(())
+}
+
+fn sifts(o: &Opts) -> Result<(), String> {
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    let env_ = env_for(o, home, run)?;
+    let reg = io::registry(&env_);
+    let mut failed = Vec::new();
+    for name in reg.all() {
+        if !matches!(reg.land(&name).as_str(), "queue" | "queue.local") {
+            continue;
+        }
+        let one = Opts { cmd: "sift".into(), repo: name.clone(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
+        if let Err(e) = sift_one(&one) {
+            eprintln!("batcher sifts: {name}: {e}");
+            failed.push(name);
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("sift failed for: {}", failed.join(", ")))
+    }
+}
+
 fn judgement_ci(o: &Opts) -> Result<(), String> {
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
@@ -1139,6 +1178,8 @@ fn main() -> ExitCode {
         "cut" => cut(&o),
         "rounds" => rounds(&o),
         "judgement-ci" => judgement_ci(&o),
+        "sift" => sift_one(&o),
+        "sifts" => sifts(&o),
         _ => return usage(),
     };
     match r {

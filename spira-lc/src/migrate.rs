@@ -888,7 +888,7 @@ mod tests {
     /// A store with every shipped migration's effect already present (production today).
     fn migrated() -> Rc<RefCell<State>> {
         let mut st = State::default();
-        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip"] {
+        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "sifted_tip"] {
             st.columns.insert(("bead".into(), c.into()));
         }
         for c in ["batch_id", "state", "pass", "phase"] {

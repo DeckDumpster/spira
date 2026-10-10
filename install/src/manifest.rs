@@ -256,6 +256,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-landing-pass.timer", true));
     m.units.push(t("spira-rounds.service", false));
     m.units.push(t("spira-rounds.timer", true));
+    m.units.push(t("spira-sift.service", false));
+    m.units.push(t("spira-sift.timer", true));
 
     m.units.push(t("spira-gate-worker.service", false));
     m.units.push(t("spira-gate-worker.timer", true));

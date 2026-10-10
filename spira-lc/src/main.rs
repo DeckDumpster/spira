@@ -340,7 +340,7 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
         return (0, serde_json::to_string_pretty(&serde_json::json!({ "bead": bead, "delivery": delivery })).unwrap());
     }
     let bead_rows = match conn.query(&format!(
-        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, express, aeon_phase, disposition, disposition_note, ejected_red_tip, updated_at FROM bead WHERE bead_id = '{}'",
+        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, updated_at FROM bead WHERE bead_id = '{}'",
         rows::escape(bead_id)
     )) {
         Ok(r) => r,
@@ -424,7 +424,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, blockers.blocked_by FROM bead \
+        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, blockers.blocked_by FROM bead \
          LEFT JOIN {} ON blockers.waiting = bead.bead_id{where_clause} ORDER BY bead_id",
         blockers_join()
     );

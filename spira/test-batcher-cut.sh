@@ -270,7 +270,8 @@ certified_rows() {
         [ "$st" = CERTIFIED ] || continue
         grep -qx "$(basename "$f")" "${SPIRA_RUN:-/nonexistent}/lc-taken" 2>/dev/null && continue
         ex=0; [ -f "${SPIRA_RUN:-/nonexistent}/lc-express/$(basename "$f")" ] && ex=1
-        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s,"express":"%s"}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}" "$ex"; sep=','
+        sf="$tip"; [ -f "${SPIRA_RUN:-/nonexistent}/lc-unsifted/$(basename "$f")" ] && sf=""
+        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s,"express":"%s","sifted_tip":"%s"}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}" "$ex" "$sf"; sep=','
     done
     printf ']\n'
 }
@@ -339,7 +340,7 @@ cut_repo() {
     STUB_EXIT4="${STUB_EXIT4:-}" \
     SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-$TMP/lc-default.log}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
-        batcher cut "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
+        batcher "${BATCHER_VERB:-cut}" "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
 B() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" "$@"; }
@@ -386,7 +387,7 @@ certify() {   # certify <id> <tip-sha> [epoch]
 
 lc_certify() {   # lc_certify <id> <tip-sha> [epoch] — a CERTIFIED row on the real machine
     lcfix_seed "$1" CERTIFIED "$2"
-    lcfix_sql -q "UPDATE bead SET updated_at=${3:-$(date +%s)} WHERE bead_id='$1'" >/dev/null 2>&1
+    lcfix_sql -q "UPDATE bead SET updated_at=${3:-$(date +%s)}, sifted_tip='$2' WHERE bead_id='$1'" >/dev/null 2>&1
 }
 
 echo "test-batcher-cut.sh ($CUT_PART)"
@@ -564,7 +565,7 @@ timeout 5 git -C "$REPO" push -q origin main
 timeout 5 git -C "$REPO" fetch -q origin
 rm -f "$QUEUEDIR/$REPONAME/base-moved"
 
-out_c="$(STUB_RED_SUITES="" cut_repo)"
+out_c="$(BATCHER_VERB=sift STUB_RED_SUITES="" cut_repo; STUB_RED_SUITES="" cut_repo)"
 is   "C: sp-cccc3 is reopened"   "open" "$(status_of sp-cccc3)"
 is   "C: the pre-round screen sent sp-cccc3 to REWORK (no-rebase)" "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-cccc3")"
 want "C: the screen says so" "SIFT sent sp-cccc3 to REWORK" "$out_c"
@@ -1122,6 +1123,33 @@ is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || e
 is     "N: sp-ciiii stub row stays REWORK — untouched, not re-ejected" \
        "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-ciiii")"
 is     "N: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
+
+# =============================================================================
+# CASE O — sift screens ahead of rounds, never inside the cut (sp-9sbdvw): a cut takes a bead only
+# when the lifecycle row carries a pass at its current tip, and performs no screen work itself.
+# =============================================================================
+echo
+echo "O. a cut reads sift verdicts and screens nothing:"
+rm -f "$(open_batch_file)" "$LCSTUB/sp-ciiii"
+plant sp-coooo express
+git -C "$REPO" worktree add -q -b spira/sp-coooo "$RUN/worktree/sp-coooo" main
+printf 'o\n' > "$RUN/worktree/sp-coooo/o.txt"
+git -C "$RUN/worktree/sp-coooo" add -A
+git -C "$RUN/worktree/sp-coooo" commit -q -m "sp-coooo: work"
+tip_o="$(git -C "$REPO" rev-parse spira/sp-coooo)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-coooo"
+certify sp-coooo "$tip_o"
+mkdir -p "$RUN/lc-unsifted"; : > "$RUN/lc-unsifted/sp-coooo"
+rm -rf "$RUN/sift"
+
+prcreate_before_o="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_o="$(STUB_RED_SUITES="" cut_repo)"
+nowant "O: an unscreened bead is not cut" "PR " "$out_o"
+is     "O: forge pr-create not called" "$prcreate_before_o" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "O: the cut did no screen work" "0" "$([ -e "$RUN/sift" ] && echo 1 || echo 0)"
+rm -f "$RUN/lc-unsifted/sp-coooo"
+out_o="$(STUB_RED_SUITES="" cut_repo)"
+want   "O: the same bead, once it has a pass at its tip, is cut" "PR " "$out_o"
 
 fi
 
