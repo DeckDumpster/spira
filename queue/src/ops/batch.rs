@@ -161,6 +161,18 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     for m in &survivors {
         w.out(format!("queue.sh eject: {} returned to CERTIFIED", m.id));
     }
+    // The PR is closed and no rebuilt one is opened: the batch row must not outlive it, or its
+    // members stay IN_DELIVERY behind a PR that is gone.
+    if !batch_id.is_empty() && !survivors.is_empty() {
+        let r = bounded_text(&format!("{id} ejected; the batch PR is closed and not rebuilt"));
+        match lc_cas(w, &batch_id, |s, v| w.lc.abandon_batch(&batch_id, s, v, "queue.sh", &r)) {
+            Ok(()) => w.out(format!("queue.sh eject: {batch_id} abandoned on spira-lc (survivors back to CERTIFIED)")),
+            Err((rc, out)) => {
+                failed = true;
+                w.err(format!("queue.sh eject: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}"));
+            }
+        }
+    }
     if !pr.is_empty() && idents(w, "eject", &[("pr", &pr)]).is_ok() {
         w.forge.pr_close(&c.s.forge, &path, &pr);
     }
@@ -388,6 +400,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     for (id, tip) in cands {
         match w.lc.bead_row(&id) {
             None => skips.push(format!("{id}: no lifecycle row (spira-lc could not say) — not admitted")),
+            Some(r) if r.state == "CERTIFIED" && !r.holds.is_empty() => skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(","))),
             Some(r) if r.state == "CERTIFIED" => admitted.push((id, tip)),
             Some(r) => skips.push(format!("{id}: lifecycle state={} (no longer CERTIFIED) — not admitted", r.state)),
         }
