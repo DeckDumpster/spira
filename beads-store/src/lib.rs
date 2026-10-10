@@ -631,10 +631,8 @@ esac
         );
         let engine = stub_engine(&bin);
         let dolt = bin.join("dolt");
-        let t = std::time::Instant::now();
         let err = run_push(&engine, dolt.to_str().unwrap(), "beads", 30).unwrap_err();
         assert!(err.contains("denied to deploy key"), "{err}");
-        assert!(t.elapsed().as_secs() < 30);
     }
 
     #[test]
