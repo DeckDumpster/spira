@@ -203,12 +203,16 @@ fn spira_above(exe: &Path) -> Option<PathBuf> {
 /// fallback stays as a second line of defense for a minimal env that sets neither.
 pub fn watch_names() -> Result<Vec<String>, String> {
     let watchers = nonempty_env("SPIRA_WATCHERS").or_else(|| nonempty_env("SPIRA_HOME").map(|h| format!("{h}/watchers")));
-    let mut cmd = spira_config::bounded::bounded("watchd");
-    cmd.arg("units");
+    // batch-job: watchd shells into conf.sh, which outlasts a 5s call deadline on a loaded host
+    let mut cmd = std::process::Command::new("timeout");
+    cmd.args(["120", "watchd", "units"]);
     if let Some(w) = watchers {
         cmd.env("SPIRA_WATCHERS", w);
     }
     let out = cmd.output().map_err(|e| format!("cannot run watchd: {e}"))?;
+    if out.status.code() == Some(124) {
+        return Err("watchd units timed out — the host is too loaded to read the watcher manifest; not a manifest fault".to_string());
+    }
     if !out.status.success() {
         let why = String::from_utf8_lossy(&out.stderr);
         return Err(format!("the watcher manifest is malformed: {}", why.trim()));
