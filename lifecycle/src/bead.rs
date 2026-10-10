@@ -947,6 +947,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 if *stack_depth > *stack_max_depth {
                     return depth_exceeded(row, *stack_depth, *stack_max_depth);
                 }
+                if !stack.is_empty() && *stack == row.stack && row.reason.as_deref().is_some_and(|r| GateRedReason::from_str(r).is_some()) {
+                    return Outcome::refuse(row.clone(), Refusal::StackUnchanged { prereqs: stack.keys().cloned().collect() });
+                }
                 let mut new = row.clone();
                 new.state = BeadState::Working;
                 new.holder = Some(holder.clone());
@@ -1966,6 +1969,58 @@ mod tests {
         assert!(out.applied);
         assert_eq!(out.row.stack, stack);
         assert_eq!(out.row.stack_depth, 1);
+    }
+
+    fn stack_of(tip: &str) -> Stack {
+        let mut stack = Stack::new();
+        stack.insert("sp-a".into(), tip.into());
+        stack
+    }
+
+    fn stacked_red_row() -> BeadRow {
+        let claimed = apply(&row(BeadState::Ready), &claim_ev(BeadState::Ready, 0, stack_of("tip-a"), 1, 4)).row;
+        let submitted = apply(&claimed, &ev(BeadState::Working, claimed.version, BeadEventKind::Submit { tip: "t1".into() })).row;
+        let red = apply(&submitted, &ev(BeadState::Submitted, submitted.version, BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::SuitesFailed }));
+        assert!(red.applied);
+        red.row
+    }
+
+    #[test]
+    fn a_stacked_claim_after_gate_red_is_refused_while_the_base_is_unchanged() {
+        let r = stacked_red_row();
+        assert_eq!(r.state, BeadState::Rework);
+        let out = apply(&r, &claim_ev(BeadState::Rework, r.version, stack_of("tip-a"), 1, 4));
+        assert!(!out.applied);
+        assert_eq!(out.row, r);
+        assert!(matches!(out.refusal, Some(Refusal::StackUnchanged { ref prereqs }) if prereqs == &["sp-a".to_string()]));
+    }
+
+    #[test]
+    fn a_stacked_claim_after_gate_red_is_allowed_once_the_base_moves() {
+        let r = stacked_red_row();
+        assert!(apply(&r, &claim_ev(BeadState::Rework, r.version, stack_of("tip-b"), 1, 4)).applied);
+        assert!(apply(&r, &claim_ev(BeadState::Rework, r.version, Stack::new(), 0, 4)).applied);
+    }
+
+    #[test]
+    fn an_unstacked_or_non_gate_red_rework_claim_is_unaffected() {
+        let mut r = stacked_red_row();
+        r.stack = Stack::new();
+        assert!(apply(&r, &claim_ev(BeadState::Rework, r.version, Stack::new(), 0, 4)).applied);
+        let mut r = stacked_red_row();
+        r.reason = Some("base_withdrawn: sp-a tip-a".into());
+        assert!(apply(&r, &claim_ev(BeadState::Rework, r.version, stack_of("tip-a"), 1, 4)).applied);
+    }
+
+    #[test]
+    fn of_two_racing_claims_exactly_one_holds() {
+        let r = row(BeadState::Ready);
+        let first = apply(&r, &claim_ev(BeadState::Ready, r.version, Stack::new(), 0, 4));
+        assert!(first.applied);
+        let second = apply(&first.row, &claim_ev(BeadState::Ready, r.version, Stack::new(), 0, 4));
+        assert!(!second.applied);
+        assert!(matches!(second.refusal, Some(Refusal::ExpectMismatch { .. } | Refusal::StaleVersion { .. })));
+        assert_eq!(second.row.holder, first.row.holder);
     }
 
     #[test]
