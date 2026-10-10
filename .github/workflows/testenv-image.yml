@@ -95,4 +95,8 @@ jobs:
           fi
 
           printf 'publish: %s is not published yet — building\n' "$ref"
+          # testenv reads the registry from config, and the checked-in fixture leaves it empty:
+          # layer a one-key override on it rather than editing the fixture (sp-zdyyg1).
+          printf '[spira]\ntestenv_registry = "%s"\n' "$SPIRA_TESTENV_REGISTRY" > "$RUNNER_TEMP/ci-registry.toml"
+          export SPIRA_TOML="$SPIRA_TOML:$RUNNER_TEMP/ci-registry.toml"
           target/release/testenv container publish

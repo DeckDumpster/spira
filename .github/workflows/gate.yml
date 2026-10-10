@@ -479,7 +479,12 @@ jobs:
           # testenv refuses with no SPIRA_TOML, and a hosted runner has no box config; the
           # checkout's complete fixture satisfies it (as gate.yml's cut job does, sp-2adk7.3).
           SPIRA_TOML: ${{ github.workspace }}/spira-config/tests/fixtures/complete.toml
-        run: testenv container publish
+        run: |
+          # testenv reads the registry from config, and the checked-in fixture leaves it empty:
+          # layer a one-key override on it rather than editing the fixture (sp-zdyyg1).
+          printf '[spira]\ntestenv_registry = "%s"\n' "$SPIRA_TESTENV_REGISTRY" > "$RUNNER_TEMP/ci-registry.toml"
+          export SPIRA_TOML="$SPIRA_TOML:$RUNNER_TEMP/ci-registry.toml"
+          testenv container publish
 
       - name: Lints
         # Cheap, pure Rust (spira-lint, downloaded above with the other release
