@@ -394,6 +394,9 @@ impl Tools for FakeTools {
         self.forge_calls.borrow_mut().push("pr-list-open".into());
         self.forge_pr_list_open.borrow().clone()
     }
+    fn forge_pr_mergeability(&self, _: &Path, _: &str) -> Option<String> {
+        None
+    }
     fn forge_pr_red(&self, _: &Path, _: &str) -> Option<crate::ports::PrRed> {
         None
     }
@@ -1585,6 +1588,9 @@ impl Tools for Injecting<'_> {
     }
     fn forge_pr_list_open(&self, r: &Path) -> Vec<(u64, String)> {
         self.t.forge_pr_list_open(r)
+    }
+    fn forge_pr_mergeability(&self, r: &Path, s: &str) -> Option<String> {
+        self.t.forge_pr_mergeability(r, s)
     }
     fn forge_pr_red(&self, r: &Path, s: &str) -> Option<crate::ports::PrRed> {
         self.t.forge_pr_red(r, s)

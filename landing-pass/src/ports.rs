@@ -149,6 +149,9 @@ pub trait Tools {
     fn forge_pr_create(&self, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<u64>;
     /// `forge pr-list-open <repo>` → `(number, headRefName)` per open PR.
     fn forge_pr_list_open(&self, repo: &Path) -> Vec<(u64, String)>;
+    /// `forge pr-mergeability <repo> <selector>` → `DIRTY`/`CLEAN`/`UNKNOWN`; None only when
+    /// the program could not be run.
+    fn forge_pr_mergeability(&self, repo: &Path, selector: &str) -> Option<String>;
     /// `forge pr-red <repo> <selector>` → the PR's red required check, or None when it is
     /// not red or cannot be read.
     fn forge_pr_red(&self, repo: &Path, selector: &str) -> Option<PrRed>;

@@ -51,6 +51,10 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
             refresh = 1;
             (c.log)(&format!("{id}: {br} is behind {baseref} — rebasing its pull request onto it"));
         }
+        Some("open") if c.tools.forge_pr_mergeability(repo, br).as_deref() == Some("DIRTY") => {
+            refresh = 1;
+            (c.log)(&format!("{id}: {br}'s pull request conflicts with {baseref} and runs no checks — rebasing it onto the base"));
+        }
         Some("open") => {
             if let Some(red) = c.tools.forge_pr_red(repo, br) {
                 if c.git.rev_parse(repo, br).as_deref() == Some(red.head.as_str()) {
@@ -266,8 +270,8 @@ mod tests {
         fn requeues_of(&self, _: &str) -> u32 {
             self.requeues.get()
         }
-        fn conflict_note(&self, _a: &[&str]) -> String {
-            "note".into()
+        fn conflict_note(&self, a: &[&str]) -> String {
+            format!("note conflicts: {}", a[4])
         }
         fn other_beads(&self, _: &Path, _: &str, _: &str, _: &str) -> String {
             String::new()
@@ -409,6 +413,7 @@ mod tests {
         confine: Cell<i32>,
         pr_state: RefCell<Option<String>>,
         pr_red: RefCell<Option<PrRed>>,
+        pr_mergeability: RefCell<Option<String>>,
         pr_create_n: Cell<Option<u64>>,
         pr_list_open: RefCell<Vec<(u64, String)>>,
         automerge_ok: Cell<bool>,
@@ -456,6 +461,10 @@ mod tests {
         fn forge_pr_list_open(&self, _: &Path) -> Vec<(u64, String)> {
             self.forge_calls.borrow_mut().push("pr-list-open".into());
             self.pr_list_open.borrow().clone()
+        }
+        fn forge_pr_mergeability(&self, _: &Path, selector: &str) -> Option<String> {
+            self.forge_calls.borrow_mut().push(format!("pr-mergeability {selector}"));
+            self.pr_mergeability.borrow().clone()
         }
         fn forge_pr_red(&self, _: &Path, selector: &str) -> Option<PrRed> {
             self.forge_calls.borrow_mut().push(format!("pr-red {selector}"));
@@ -572,6 +581,21 @@ mod tests {
 
     fn red_at(head: &str) -> PrRed {
         PrRed { head: head.into(), jobs: vec!["suites".into()], fail_lines: vec!["not ok 2 - thing".into()] }
+    }
+
+    #[test]
+    fn a_dirty_pr_is_rebased_and_a_conflict_returns_the_bead_to_rework_with_the_files() {
+        let f = Fixture::new();
+        *f.tools.pr_state.borrow_mut() = Some("open".into());
+        *f.tools.pr_mergeability.borrow_mut() = Some("DIRTY".into());
+        f.git.ancestors.borrow_mut().push(("refs/remotes/origin/main".into(), "spira/sp-a".into()));
+        f.git.tips.borrow_mut().insert("spira/sp-a".into(), "t1".into());
+        *f.lib.rebase.borrow_mut() = Some(Rebase { ok: false, failure: "conflict".into(), conflicts: "a.rs b.rs".into(), refused_reason: String::new() });
+        let rc = f.run("spira/sp-a", "sp-a", "t1");
+        assert_eq!(rc, 3);
+        assert!(f.lib.has("reopen sp-a rebase-conflict"));
+        assert!(f.lib.notes.borrow()[0].contains("a.rs b.rs"), "{:?}", f.lib.notes.borrow());
+        assert!(!f.tools.forge_calls.borrow().iter().any(|c| c.starts_with("pr-red")), "a PR with no checks has no red to read");
     }
 
     #[test]

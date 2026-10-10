@@ -1190,6 +1190,12 @@ impl Tools for RealTools {
             })
             .collect()
     }
+    fn forge_pr_mergeability(&self, repo: &Path, selector: &str) -> Option<String> {
+        let mut c = command("forge");
+        c.arg("pr-mergeability").arg(repo).arg(selector).stdin(Stdio::null());
+        let (rc, so, _) = run_capture(c);
+        if rc == 0 { Some(String::from_utf8_lossy(&so).trim().to_string()) } else { None }
+    }
     fn forge_pr_red(&self, repo: &Path, selector: &str) -> Option<crate::ports::PrRed> {
         let mut c = command("forge");
         c.arg("pr-red").arg(repo).arg(selector).stdin(Stdio::null());
