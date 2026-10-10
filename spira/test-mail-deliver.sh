@@ -271,15 +271,9 @@ echo
 echo "3d. active AND watching its registered mailbox -> healthy, no escalation:"
 reset_run
 backdate "$MD_UF"
-inotifywait -m -q -e close_write -e moved_to "$CONCIERGE_NEW" >/dev/null 2>&1 &
-WATCH_PID=$!
-tries=0
-while ! pgrep -f "inotifywait -m -q -e close_write -e moved_to $CONCIERGE_NEW\$" >/dev/null 2>&1 \
-      && [ "$tries" -lt 50 ]; do
-    sleep 0.1; tries=$((tries+1))
-done
+printf '%s\n' "$(( $(date +%s) + 60 ))" > "$RUN/mail-deliver-concierge.lease"
 run_notify ACTIVE_STATE=active SPIRA_MAIL_READERS="concierge=echo wake" || true
-kill "$WATCH_PID" 2>/dev/null; wait "$WATCH_PID" 2>/dev/null || true
+rm -f "$RUN/mail-deliver-concierge.lease"
 is "no escalation when watching every registered mailbox" "0" "$(asks)"
 is "unhealthy file is cleared once healthy" "1" "$([ -f "$MD_UF" ] && echo 0 || echo 1)"
 
@@ -471,5 +465,21 @@ wait "$DROP_PID" 2>/dev/null
 is "8c: a mid-window event cuts the wait short, not the full reply window" "1" \
     "$([ "$elapsed" -ge 2 ] && [ "$elapsed" -le 4 ] && echo 1 || echo 0)"
 is "8c: well under the 10s liveness bound end to end" "1" "$([ "$elapsed" -le 10 ] && echo 1 || echo 0)"
+
+echo
+echo "9. WATCH LEASE — health is the lease, never a process scan:"
+LRUN="$TMP/lease-run"; mkdir -p "$LRUN"
+tl_config SPIRA_RUN="$LRUN"
+lease_health() {
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_MAIL_READERS="leasebox=echo wake" bash "$HERE/spira-mail-deliver.sh" health >/dev/null 2>&1
+    echo $?
+}
+is "9a: no lease -> not watching" "1" "$(lease_health)"
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
+    bash -c '. "$1"; _renew_watch_lease leasebox' _ "$HERE/spira-mail-deliver.sh"
+is "9b: a renewed lease -> watching" "0" "$(lease_health)"
+printf '%s\n' "$(( $(date +%s) - 5 ))" > "$LRUN/mail-deliver-leasebox.lease"
+is "9c: an expired lease -> not watching" "1" "$(lease_health)"
 
 tl_summary
