@@ -103,6 +103,7 @@ git -C "$REPO" worktree add -q "$WT_CHILD" spira/sp-parent
 bash -c 'exec -a aeon.sh sleep 60' &
 AEON_PID=$!
 echo "$AEON_PID" > "$SPIRA_RUN/aeon-testfayth-sp-child.pid"
+echo "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-testfayth-sp-child.lease"
 # Positive control: the pidfile really is alive before we rely on it.
 is "planted aeon pid is alive" "0" "$([ -d "/proc/$AEON_PID" ]; echo $?)"
 
