@@ -102,6 +102,15 @@ pub trait Lib {
     fn force_push(&self, repo: &Path, remote: &str, branch: &str) -> Result<(), String>;
 }
 
+/// A pull request's red required check: the head it was red at, the failing job and the
+/// failing lines of its log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrRed {
+    pub head: String,
+    pub jobs: Vec<String>,
+    pub fail_lines: Vec<String>,
+}
+
 /// The harness programs the pass runs as subprocesses (DESIGN.md §2.5).
 pub trait Tools {
     /// gate.sh <branch> <repo> with SPIRA_GATE_LOCK_WAIT / SPIRA_GATE_BEAD → (status, transcript).
@@ -140,6 +149,9 @@ pub trait Tools {
     fn forge_pr_create(&self, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<u64>;
     /// `forge pr-list-open <repo>` → `(number, headRefName)` per open PR.
     fn forge_pr_list_open(&self, repo: &Path) -> Vec<(u64, String)>;
+    /// `forge pr-red <repo> <selector>` → the PR's red required check, or None when it is
+    /// not red or cannot be read.
+    fn forge_pr_red(&self, repo: &Path, selector: &str) -> Option<PrRed>;
     /// `forge pr-automerge <repo> <selector>` → armed?
     fn forge_pr_automerge(&self, repo: &Path, selector: &str) -> bool;
 }
@@ -153,4 +165,21 @@ pub trait Procs {
 pub trait Clock {
     fn now(&self) -> u64;
     fn sleep(&self, secs: u64);
+}
+
+impl PrRed {
+    /// Parse `forge pr-red` output; empty output is not red.
+    pub fn parse(out: &str) -> Option<PrRed> {
+        let mut red = PrRed { head: String::new(), jobs: Vec::new(), fail_lines: Vec::new() };
+        for l in out.lines() {
+            if let Some(h) = l.strip_prefix("head ") {
+                red.head = h.trim().to_string();
+            } else if let Some(j) = l.strip_prefix("job ") {
+                red.jobs.push(j.trim().to_string());
+            } else if let Some(f) = l.strip_prefix("fail-line: ") {
+                red.fail_lines.push(f.to_string());
+            }
+        }
+        (!red.head.is_empty() && !red.jobs.is_empty()).then_some(red)
+    }
 }

@@ -1190,6 +1190,15 @@ impl Tools for RealTools {
             })
             .collect()
     }
+    fn forge_pr_red(&self, repo: &Path, selector: &str) -> Option<crate::ports::PrRed> {
+        let mut c = command("forge");
+        c.arg("pr-red").arg(repo).arg(selector).stdin(Stdio::null());
+        let (rc, so, _) = run_capture(c);
+        if rc != 0 {
+            return None;
+        }
+        crate::ports::PrRed::parse(&String::from_utf8_lossy(&so))
+    }
     fn forge_pr_automerge(&self, repo: &Path, selector: &str) -> bool {
         let mut c = command("forge");
         c.arg("pr-automerge").arg(repo).arg(selector).stdin(Stdio::null());
