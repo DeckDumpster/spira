@@ -216,19 +216,20 @@ is "...then the cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-ex Cut from
 is "...to BATCHED in the new batch" "batch-ex" "$(member_field sp-lc-ex delivery batch_id)"
 is "...at version 6" "6" "$(member_field sp-lc-ex delivery version)"
 
+CONT_RUN="$TMP/continuity-run"; mkdir -p "$CONT_RUN"
+cont() { SPIRA_TOML="$(tl_layer SPIRA_RUN="$CONT_RUN")" spira-lc event-continuity; }
 # ── event continuity: red first on a planted break, then on the real log ────────────────
-lc event-continuity >/dev/null
+cont >/dev/null
 wantrc "the log the cascades above wrote is continuous" 0 $?
 root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-brk','A','X','X','Y',1,'{}','t',1),('bead','sp-lc-brk','B','Q','Q','R',1,'{}','t',2),('bead','sp-lc-brk','C','Q','Q','S',1,'{}','t',3)" >/dev/null
-out="$(lc event-continuity)"
+out="$(cont)"
 wantrc "a planted break is reported" 3 $?
 want "...naming the key" '"key":"sp-lc-brk"' "$out"
 is "...once, the first break only" "1" "$(printf '%s\n' "$out" | grep -c sp-lc-brk)"
 root_sql --use-db spira_lifecycle sql -q "DELETE FROM event WHERE lc_key = 'sp-lc-brk'" >/dev/null
 
 # ── a baseline turns history into a success: only a break past it is red ────────────────
-CONT_RUN="$TMP/continuity-run"; mkdir -p "$CONT_RUN"
-cont() { SPIRA_TOML="$(tl_layer SPIRA_RUN="$CONT_RUN")" spira-lc event-continuity; }
+rm -f "$CONT_RUN/event-continuity.baseline"
 root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-old','A','X','X','Y',1,'{}','t',1),('bead','sp-lc-old','B','Q','Q','R',1,'{}','t',2)" >/dev/null
 out="$(cont)"; rc=$?
 wantrc "first run over old breaks exits 0" 0 $rc
@@ -244,13 +245,13 @@ root_sql --use-db spira_lifecycle sql -q "DELETE FROM event WHERE lc_key IN ('sp
 
 # ── migration 0013 corrects the hard-coded Deliver/Cut states from their predecessors ───
 root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-mig','Submit','WORKING','WORKING','SUBMITTED',1,'{}','t',1),('bead','sp-lc-mig','Deliver','CERTIFIED','CERTIFIED','IN_DELIVERY',1,'{}','t',2),('delivery','sp-lc-mig','Cut','QUEUED','QUEUED','BATCHED',1,'{}','t',3)" >/dev/null
-lc event-continuity >/dev/null
+cont >/dev/null
 wantrc "POSITIVE CONTROL: the old hard-coded states are seen as breaks" 3 $?
 root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0019-event-continuity.sql" >/dev/null 2>&1
 wantrc "migration 0013 applies" 0 $?
 is "the Deliver now says what the bead was" "SUBMITTED" "$(ev_field bead sp-lc-mig Deliver from_state)"
 is "the Cut of a row with no predecessor says NONE" "NONE" "$(ev_field delivery sp-lc-mig Cut from_state)"
-lc event-continuity >/dev/null
+cont >/dev/null
 wantrc "...and the log is continuous again" 0 $?
 root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0019-event-continuity.sql" >/dev/null 2>&1
 wantrc "migration 0013 is idempotent" 0 $?
