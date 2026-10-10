@@ -13,3 +13,11 @@ grep -q "^testenv_registry = \"ghcr.io/$owner\"\$" "$layered" || {
   printf 'ci-config: the fixture has no empty testenv_registry to layer over\n' >&2
   exit 1
 }
+
+rundir="${RUNNER_TEMP}/spira-run"
+sed -i "s|^run = \"/fixture/userhome/spira/run\"\$|run = \"$rundir\"|" "$layered"
+grep -q "^run = \"$rundir\"\$" "$layered" || {
+  printf 'ci-config: the fixture has no fixture-path run to layer over\n' >&2
+  exit 1
+}
+mkdir -p "$rundir"
