@@ -76,6 +76,7 @@ unset _a
 [ -n "$_un_instance" ] && export SPIRA_INSTANCE="$_un_instance"
 unset _un_instance
 
+export SPIRA_ADOPT_CONFIGURE_DEFAULT=1
 . "$HERE/conf.sh"
 
 SPIRA_LOGINCTL="${SPIRA_LOGINCTL:-loginctl}"

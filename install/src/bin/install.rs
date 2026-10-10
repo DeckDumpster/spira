@@ -586,7 +586,30 @@ fn refuse_instance(c: &install::guards::Conflict) -> ExitCode {
     ExitCode::from(2)
 }
 
+/// A fresh host exports neither `SPIRA_TOML` nor `SPIRA_RELEASES`: the config is where
+/// `configure` wrote it, and the release is the one this binary was run from.
+fn resolve_own_config_and_release() {
+    spira_config::locate::adopt_configure_default();
+    let Some(root) = spira_config::release_env::own_release_root_for_process() else { return };
+    let path = std::env::var("PATH").unwrap_or_default();
+    let bin = root.join("bin");
+    if !path.split(':').any(|p| Path::new(p) == bin) {
+        for (k, v) in spira_config::release_env::child_path_env(Some(&root), Some(&path)) {
+            if k != spira_config::RELEASE_ENV || nonempty_env(&k).is_none() {
+                std::env::set_var(k, v);
+            }
+        }
+    }
+    if nonempty_env("SPIRA_RELEASES").is_none() {
+        let canon = |p: &Path| std::fs::canonicalize(p).ok();
+        if let Some(parent) = root.parent().filter(|par| canon(&par.join("current")).is_some_and(|c| Some(c) == canon(&root))) {
+            std::env::set_var("SPIRA_RELEASES", parent);
+        }
+    }
+}
+
 fn main() -> ExitCode {
+    resolve_own_config_and_release();
     let opts = match parse_args() {
         Ok(o) => o,
         Err(e) => {
