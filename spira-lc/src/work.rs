@@ -187,22 +187,17 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(default) = flag(args, "--default") else {
         return (CANNOT_TELL, "work blocked: --default <default> is required".into());
     };
-    let (code, out) = apply_bead_event(
-        conn,
-        bead_id,
-        &actor,
-        BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) },
-    );
-    if code != 0 {
-        return (code, out);
-    }
     // mail's own "question" kind requires a filled "## Question" and "## Default"
     // section in the body (every "## " heading in its template is a required section,
     // not just the X-Spira-Default header) — a bare question string is refused.
     let body = format!("## Question\n{question}\n\n## Default\n{default}\n");
-    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), question, &default, bead_id, &body) {
-        Ok(_) => (0, format!("hold applied; ask filed for {bead_id}")),
-        Err(e) => (CANNOT_TELL, format!("hold applied, but filing the ask failed: {e}")),
+    if let Err(e) = crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), question, &default, bead_id, &body) {
+        return (REFUSED, format!("refused: work blocked: the question could not be delivered, so no hold was applied: {e}"));
+    }
+    let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) };
+    match apply_bead_event(conn, bead_id, &actor, hold) {
+        (0, _) => (0, format!("ask filed; hold applied for {bead_id}")),
+        (code, e) => (code, format!("the question WAS delivered (do not ask again), but the ask hold on {bead_id} was not applied: {e}")),
     }
 }
 

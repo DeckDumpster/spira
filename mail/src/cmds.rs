@@ -285,7 +285,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
     msg.push_str(&final_body);
     msg.push('\n');
 
-    let delivered = bead::retry_until_deadline(|| deliver(&dir, &msgid, &msg, env.mute));
+    let delivered = bead::retry_until_deadline(|| deliver(&dir, &msgid, &msg, env.mute && work_bead.is_empty()));
     let delivered_path = match delivered {
         Ok(p) => p,
         Err(e) => {
@@ -839,5 +839,18 @@ mod probe_tests {
         assert!(err.contains("disk full") && err.contains("sp-new1 closed"), "{err}");
         assert!(closed(&bd));
         assert_eq!(mailbox_entries(t.path()), 0);
+    }
+
+    #[test]
+    fn a_muted_work_ask_still_lands_unseen_in_new() {
+        let t = testkit::TempDir::new("mail-ask-muted-work");
+        let mut e = env(t.path());
+        e.mute = true;
+        let ask = SendArgs { bead: "sp-work9", ..args("Which way?", false) };
+        let body = "## Class basis\nit is policy\n";
+        let out = send(&FakeBd::new(vec![]), &e, &ask, body.into()).unwrap();
+        assert!(out.delivered_path.to_string_lossy().contains("/new/"), "{:?}", out.delivered_path);
+        let plain = send(&FakeBd::new(vec![]), &e, &args("Plain?", false), body.into()).unwrap();
+        assert!(plain.delivered_path.to_string_lossy().contains("/cur/"), "{:?}", plain.delivered_path);
     }
 }

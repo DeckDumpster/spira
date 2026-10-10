@@ -110,9 +110,14 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
         }
         "reply" => {
             if !need(2) {
-                return usage("reply <bead-id> <message-id> [actor]");
+                return usage("reply <bead-id> <message-id|seq:<hold event seq>> [actor]");
             }
             let message_id = a(1);
+            if let Some(seq) = message_id.strip_prefix("seq:") {
+                if !hold_event_exists(m, &a(0), seq) {
+                    return Answer { code: REFUSED, stderr: format!("lc: {} has no Hold event with seq {seq} — nothing sent\n", a(0)), ..Default::default() };
+                }
+            }
             with_row(m, &a(0), &actor_or(args.get(2), "sentinel"), |_| Ok(BeadEventKind::Reply { message_id: message_id.clone() }))
         }
         "withdraw-ask" => {
@@ -233,6 +238,15 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
         "renew" => renew(m, args),
         other => usage(&format!("unknown caller verb {other:?}")),
     }
+}
+
+fn hold_event_exists(m: &mut dyn Machine, id: &str, seq: &str) -> bool {
+    let (rc, out) = m.call(&["history".into(), id.into(), "--machine".into(), "bead".into()]);
+    if rc != 0 {
+        return false;
+    }
+    let v: Value = serde_json::from_str(out.trim()).unwrap_or(Value::Null);
+    v.as_array().is_some_and(|rows| rows.iter().any(|r| s(r, "seq") == seq && s(r, "event") == "Hold"))
 }
 
 fn usage(what: &str) -> Answer {

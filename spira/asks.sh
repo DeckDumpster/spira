@@ -35,6 +35,20 @@ _as_mark_delivered() {
     wc -l < "$LOG_FILE" > "${LOG_FILE%.log}.cursor"
 }
 
+_as_hold_line() {
+    local id="$1" f q="" d="" m="" seq
+    f="$(grep -lsx "X-Spira-Work-Bead: $id" "$SPIRA_MAIL"/*/new/* "$SPIRA_MAIL"/*/cur/* 2>/dev/null | tail -1)"
+    if [ -n "$f" ]; then
+        q="$(sed -n 's/^Subject: //p;/^$/q' "$f" | head -1)"
+        d="$(sed -n 's/^X-Spira-Default: //p;/^$/q' "$f" | head -1)"
+        m="$(sed -n 's/^Message-ID: //p;/^$/q' "$f" | head -1)"
+        printf 'NEW ASK HOLD %s: %s | default: %s | message-id: %s' "$id" "$q" "$d" "$m"
+        return 0
+    fi
+    seq="$(timeout 5 spira-lc history "$id" --machine bead 2>/dev/null | jq -r '[.[] | select(.event == "Hold")] | last | .seq // empty' 2>/dev/null)"
+    printf 'NEW ASK HOLD %s: NO MAIL for the question; answer with spira-lc reply %s seq:%s' "$id" "$id" "${seq:-?}"
+}
+
 _as_tick() {
     local id title json
     json="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --label "$SPIRA_ASK_LABEL" --status open --limit 0 --json 2>/dev/null)" || return 0
@@ -50,7 +64,7 @@ _as_tick() {
         [ -n "$id" ] || continue
         [ -n "${_as_seen[$id]:-}" ] && continue
         _as_seen[$id]=1
-        [ "$_as_seeded" -eq 1 ] && _as_say "NEW ASK HOLD $id (spira-lc show $id names why)"
+        [ "$_as_seeded" -eq 1 ] && _as_say "$(_as_hold_line "$id")"
     done < <(timeout 5 spira-lc list-held ask 2>/dev/null)
     _as_seeded=1
 }
