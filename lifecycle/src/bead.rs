@@ -310,8 +310,8 @@ pub struct BeadEvent {
     pub version: Version,
     pub kind: BeadEventKind,
     pub actor: String,
-    /// Caller's clock, epoch seconds; the machine does no I/O. Recorded as `since` on entry
-    /// to LANDED or CERTIFIED.
+    /// Caller's clock, epoch seconds; the machine does no I/O. Recorded as `since` on every
+    /// change of state; a move within a state leaves it alone.
     #[serde(default)]
     pub at: Option<i64>,
 }
@@ -401,7 +401,7 @@ fn base_withdrawn_applies(row: &BeadRow, prereq: &str, tip: &str) -> bool {
 /// calls "a test that fails when a state or event variant is added without an entry."
 pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
     let mut out = apply_transition(row, ev);
-    let entered = out.row.state != row.state && matches!(out.row.state, BeadState::Landed | BeadState::Certified);
+    let entered = out.row.state != row.state;
     if out.applied && entered {
         out.row.since = ev.at;
     }
@@ -1227,7 +1227,7 @@ mod tests {
     }
 
     #[test]
-    fn since_is_stamped_on_entry_to_landed_and_certified_only() {
+    fn since_is_stamped_on_every_state_change_and_not_on_a_move_within_a_state() {
         let mut r = row(BeadState::InDelivery);
         r.tip = Some("t".into());
         r.gate_key = Some("k".into());
@@ -1246,7 +1246,14 @@ mod tests {
         let mut e = ev(BeadState::InDelivery, r.version, BeadEventKind::Requeued { tip: "other".into() });
         e.at = Some(99);
         let out = apply(&r, &e);
-        assert_eq!((out.row.state, out.row.since), (BeadState::Submitted, None));
+        assert_eq!((out.row.state, out.row.since), (BeadState::Submitted, Some(99)));
+
+        let mut r = row(BeadState::Working);
+        r.since = Some(5);
+        let mut e = ev(BeadState::Working, r.version, BeadEventKind::Renew { lease_until: 2 });
+        e.at = Some(123);
+        let out = apply(&r, &e);
+        assert_eq!((out.row.state, out.row.since), (BeadState::Working, Some(5)));
     }
 
     #[test]

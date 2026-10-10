@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-lc-list-timing.sh — `spira-lc list` and `list --state READY` are served by the since covering index
+# test-lc-list-timing.sh — `spira-lc list` and `list --state READY` are read from the stored since column
 # on a store of production size (12,000 beads, 100,000 events), against a real Dolt.
 #
 # host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh.
@@ -90,8 +90,8 @@ row_json() {    # row_json <bead-id>
 BEADS=12000
 EVENTS=100000
 {
-    echo "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES"
-    awk -v n=$BEADS 'BEGIN{for(i=0;i<n;i++) printf "%s('"'"'sp-%06d'"'"','"'"'%s'"'"','"'"'[]'"'"',1,1)", (i?",":""), i, (i%12?"LANDED":"READY")}'
+    echo "INSERT INTO bead (bead_id, state, holds, version, updated_at, since) VALUES"
+    awk -v n=$BEADS 'BEGIN{for(i=0;i<n;i++) printf "%s('"'"'sp-%06d'"'"','"'"'%s'"'"','"'"'[]'"'"',1,1,7)", (i?",":""), i, (i%12?"LANDED":"READY")}'
     echo ";"
     awk -v n=$EVENTS -v b=$BEADS 'BEGIN{srand(7); for(c=0;c<n;c+=5000){ printf "INSERT INTO event (machine,lc_key,event,expect,from_state,to_state,applied,evidence,actor,at) VALUES"; for(i=0;i<5000;i++) printf "%s('"'"'bead'"'"','"'"'sp-%06d'"'"','"'"'e'"'"','"'"'X'"'"','"'"'A'"'"','"'"'%s'"'"',%d,'"'"'{}'"'"','"'"'a'"'"',%d)", (i?",":""), int(rand()*b), (rand()<.5?"LANDED":"READY"), (rand()<.9), c+i; print ";"}}'
 } > "$TMP/seed.sql"
@@ -99,10 +99,6 @@ timeout 120 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u roo
 wantrc "production-size store seeds" 0 $?
 is "the fixture holds the beads" "$BEADS" "$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM bead" -r csv 2>/dev/null | tail -1)"
 is "the fixture holds the events" "$EVENTS" "$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event" -r csv 2>/dev/null | tail -1)"
-
-# A wall-clock budget flips under shared load; the cost is asserted on the plan instead.
-plan="$(root_sql --use-db spira_lifecycle sql -r csv -q "EXPLAIN FORMAT=TREE SELECT e.lc_key, e.to_state, MAX(e.at) AS since FROM event e JOIN bead b ON b.bead_id = e.lc_key AND b.state = e.to_state WHERE e.machine = 'bead' AND e.applied = 1 GROUP BY e.lc_key, e.to_state" 2>&1; echo "rc=$?")"
-case "$plan" in *"MergeJoin"*"index: [event.machine,event.applied,event.lc_key,event.to_state,event.at]"*) ok "the since join is a merge join over the event_since_idx columns" ;; *) bad "the since join is a merge join over the event_since_idx columns: $(printf %s "$plan" | tr "\n" " ")" ;; esac
 
 for args in "list" "list --state READY"; do
     out="$(spira-lc $args 2>"$TMP/err")"
@@ -114,9 +110,9 @@ for args in "list" "list --state READY"; do
     esac
 done
 
-# since is populated on a bead that has an applied event into its current state
-since_ok="$(spira-lc list --state READY | python3 -c 'import json,sys; print(sum(1 for b in json.load(sys.stdin) if b.get("since") is not None) > 0)')"
-is "since is filled from the event log" True "$since_ok"
+# list reads since from the bead row
+since_ok="$(spira-lc list --state READY | python3 -c 'import json,sys; r=json.load(sys.stdin); print(len(r) > 0 and all(str(b.get("since")) == "7" for b in r))')"
+is "list reports the since stored on the row" True "$since_ok"
 
 spira-lc list --state READY --hold poison >/dev/null 2>&1
 wantrc "list with both filters is valid SQL" 0 $?

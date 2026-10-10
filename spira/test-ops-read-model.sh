@@ -301,4 +301,24 @@ is "the graph has the gate edge" True "$(gedge SUBMITTED GatePass CERTIFIED)"
 is "the graph carries the legal exit from CERTIFIED to REWORK on a red gate" True "$(gedge CERTIFIED GateRed REWORK)"
 is "the graph has no exit from a terminal state" 0 "$(python3 -I -c 'import json,sys; print(sum(x["from"] in ("LANDED","DROPPED","SUPERSEDED","DONE") for x in json.loads(sys.argv[1])))' "$graph")"
 
+lcfix_sql -q "INSERT INTO bead (bead_id,state,holds,version,since,updated_at) VALUES ('sp-s1','SUBMITTED','[]',1,999,5),('sp-s2','WORKING','[]',1,NULL,6),('sp-s3','OPEN','[]',1,NULL,7);
+INSERT INTO event (machine,lc_key,event,expect,from_state,to_state,applied,refusal,evidence,actor,at) VALUES
+('bead','sp-s1','Claim','READY','READY','WORKING',1,NULL,'{}','fixture',100),
+('bead','sp-s1','Submit','WORKING','WORKING','SUBMITTED',1,NULL,'{}','fixture',200),
+('bead','sp-s1','Renew','SUBMITTED','SUBMITTED','SUBMITTED',1,NULL,'{}','fixture',300),
+('bead','sp-s2','Claim','READY','READY','WORKING',1,NULL,'{}','fixture',400),
+('bead','sp-s2','Submit','WORKING','WORKING','SUBMITTED',0,'Illegal','{}','fixture',500);" >/dev/null 2>&1 || bail "could not seed the since backfill"
+since_of() { lcfix_sql -r csv -q "SELECT since FROM bead WHERE bead_id = '$1'" | sed -n 2p; }
+is "positive control: a stale since is not the entry time before the backfill" 999 "$(since_of sp-s1)"
+since_ev=$(lcfix_sql -r csv -q "SELECT MAX(e.at) FROM event e JOIN bead b ON b.bead_id = e.lc_key AND b.state = e.to_state WHERE e.machine = 'bead' AND e.applied = 1 AND e.from_state <> e.to_state AND e.lc_key = 'sp-s1'" | sed -n 2p)
+is "the join's answer for the moved bead is its SUBMITTED event" 200 "$since_ev"
+out="$(spira-lc admin-migrate "$LC_DIR/migrations" 2>&1)" || bail "admin-migrate failed: $out"
+is "the backfill puts a bead at the time of its last change of state, not of a same-state event" 200 "$(since_of sp-s1)"
+is "the backfill ignores a refused event" 400 "$(since_of sp-s2)"
+is "a bead with no state change falls back to its updated_at" 7 "$(since_of sp-s3)"
+is "no bead is left without a since" 0 "$(lcfix_sql -r csv -q "SELECT COUNT(*) FROM bead WHERE since IS NULL" | sed -n 2p)"
+again="$(spira-lc admin-migrate "$LC_DIR/migrations" 2>&1)"
+want "the backfill is applied once" "already applied" "$again"
+is "list reports since from the column" 200 "$(spira-lc list --ids sp-s1 | python3 -I -c 'import json,sys; print(json.load(sys.stdin)[0]["since"])')"
+
 tl_summary
