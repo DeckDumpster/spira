@@ -74,6 +74,11 @@ _cleanup() {
 }
 trap _cleanup EXIT INT TERM
 
+# Pull once, up front, with a budget a cold pull fits: every podman run below has 5 s, which on
+# a fresh CI runner the pull alone exceeds (publish PRs #524-#526 were red here, sp-ku7vb8). An
+# unreachable registry cannot check anything, so it refuses as a skip rather than reding.
+podman image exists "$IMG" 2>/dev/null || timeout 180 podman pull -q "$IMG" >/dev/null 2>&1 || skip "cannot pull $IMG (registry unreachable from this host)" # batch-job: container fixture image pull; a cold pull exceeds 5 s
+
 # Positive control: prove podman itself can start this image before trusting any
 # assertion below that depends on it (same control test-testenv.sh runs).
 PC_NAME="batch-owner-pc-$$"
