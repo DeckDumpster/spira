@@ -430,6 +430,15 @@ release's launcher environment cannot be written) or a unit test of the `accepta
 module (the override key against `SPIRA_CONF_KEYS`, the whole run against a fake host).
 `acceptance-agent.sh` stays bash; `test-acceptance-agent.sh` drives it for real.
 
+## Rule `workflow-config`
+
+A step in `.github/workflows/*.yml` that runs a release binary (`target/release/<bin>`,
+`$RUNNER_TEMP/build/<bin>`, or a workspace binary by name once a step has put the staged
+release on PATH) must have `SPIRA_TOML` in its own `env:`, its job's, the workflow's, or
+written to `GITHUB_ENV` by an earlier step of the same job. `spira/ci-config.sh` writes the file a step names in its own env; it exports nothing job-wide. A
+hosted runner has no box config. Comment lines are not invocations; a `PATH` addition is not
+one either. No allow list.
+
 ## Rule `gate-workflow`
 
 Ported from `spira/test-gate-workflow.sh`, whose header gives the six properties and why each
