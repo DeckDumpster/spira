@@ -2255,6 +2255,13 @@ mod tests {
     }
 
     #[test]
+    fn only_phases_a_working_row_can_still_reach_exist() {
+        assert_eq!(AeonPhase::ALL.map(AeonPhase::as_str), ["claimed", "building", "session", "teardown"]);
+        assert_eq!(AeonPhase::from_str("fast_tier"), None);
+        assert_eq!(AeonPhase::from_str("submitting"), None);
+    }
+
+    #[test]
     fn a_phase_may_skip_ahead() {
         let r = claimed("aeon-a");
         let out = apply(&r, &phase_ev("aeon-a", &r, AeonPhase::Teardown));
