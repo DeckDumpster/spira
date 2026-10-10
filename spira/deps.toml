@@ -731,3 +731,10 @@ purpose = "runs the landing gate at low CPU priority"
 version_min = ""
 version_probe = "nice --version"
 absent = "the gate runs at normal CPU priority"
+
+[[dep]]
+name = "refusal-watch"
+tier = "release"
+purpose = "Spira's refusal-watch binary, from the release's bin/ — files one bead per refused-transition class over baseline"
+version_min = ""
+version_probe = "readlink -f \"$(command -v refusal-watch)\""

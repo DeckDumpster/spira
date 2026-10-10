@@ -1046,6 +1046,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "refusal-watch"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

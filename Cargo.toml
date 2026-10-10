@@ -73,6 +73,7 @@ members = [
     "spira/sim",
     "reclaim",
     "sift",
+    "refusal-watch",
 ]
 resolver = "2"
 
