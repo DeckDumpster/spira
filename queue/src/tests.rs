@@ -422,6 +422,9 @@ struct FLc {
     rows: RefCell<Result<Vec<LcBeadRow>, String>>,
     certify_refused: Cell<bool>,
     land_refused: Cell<Option<&'static str>>,
+    promote_refused: Cell<Option<&'static str>>,
+    /// Per-batch answers to `show-batch`, ahead of `batch_view`.
+    batch_states: RefCell<BTreeMap<String, (String, String)>>,
     eject_refused: Cell<bool>,
     /// Every bead event is refused with this text (a locked lifecycle store).
     event_refused: Cell<Option<&'static str>>,
@@ -438,7 +441,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -459,6 +462,9 @@ impl Lc for FLc {
     }
     fn batch_state(&self, id: &str) -> Option<(String, String)> {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
+        if let Some(s) = self.batch_states.borrow().get(id) {
+            return Some(s.clone());
+        }
         match &*self.batch_view.borrow() {
             Some((s, v, _, _)) => Some((s.clone(), v.to_string())),
             None => Some(("CI_RUNNING".into(), "4".into())),
@@ -477,6 +483,17 @@ impl Lc for FLc {
     fn cut(&self, id: &str, _: &str, _: &str, _: &str, members: &str, _: &str) -> Result<String, (i32, String)> {
         self.calls.borrow_mut().push(format!("cut {id} {members}"));
         Ok("1".into())
+    }
+    fn stage(&self, id: &str, _: &str, head: &str, base: &str, members: &str, parent: &str, _: &str) -> Result<String, (i32, String)> {
+        self.calls.borrow_mut().push(format!("stage {id} {head} {base} {members} behind {parent}"));
+        Ok("0".into())
+    }
+    fn promote(&self, id: &str, head: &str, base: &str, _: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!("promote {id} {head} {base}"));
+        match self.promote_refused.get() {
+            Some(why) => Err((3, why.into())),
+            None => Ok(()),
+        }
     }
     fn abandon_batch(&self, id: &str, s: &str, v: &str, _: &str, r: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("abandon-batch {id} {s} {v} {r}"));

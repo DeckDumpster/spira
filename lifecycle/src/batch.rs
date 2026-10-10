@@ -8,6 +8,8 @@ use crate::{Outcome, Refusal, Version};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BatchState {
+    /// Assembled behind a running round and not yet cut: its members are untouched.
+    Staged,
     Open,
     CiRunning,
     Green,
@@ -16,15 +18,17 @@ pub enum BatchState {
     Landed,
     Settled,
     Abandoned,
+    Discarded,
 }
 
 impl BatchState {
     pub fn is_terminal(self) -> bool {
-        matches!(self, BatchState::Landed | BatchState::Settled | BatchState::Abandoned)
+        matches!(self, BatchState::Landed | BatchState::Settled | BatchState::Abandoned | BatchState::Discarded)
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
+            BatchState::Staged => "STAGED",
             BatchState::Open => "OPEN",
             BatchState::CiRunning => "CI_RUNNING",
             BatchState::Green => "GREEN",
@@ -33,12 +37,14 @@ impl BatchState {
             BatchState::Landed => "LANDED",
             BatchState::Settled => "SETTLED",
             BatchState::Abandoned => "ABANDONED",
+            BatchState::Discarded => "DISCARDED",
         }
     }
 
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
+            "STAGED" => BatchState::Staged,
             "OPEN" => BatchState::Open,
             "CI_RUNNING" => BatchState::CiRunning,
             "GREEN" => BatchState::Green,
@@ -47,6 +53,7 @@ impl BatchState {
             "LANDED" => BatchState::Landed,
             "SETTLED" => BatchState::Settled,
             "ABANDONED" => BatchState::Abandoned,
+            "DISCARDED" => BatchState::Discarded,
             _ => return None,
         })
     }
@@ -112,6 +119,16 @@ impl BatchRow {
     }
 }
 
+impl BatchRow {
+    /// A round assembled behind `parent`, the round whose pass is still running.
+    pub fn staged(batch_id: impl Into<String>, repo: impl Into<String>, head: impl Into<String>, base: impl Into<String>, parent: impl Into<String>) -> Self {
+        let mut row = BatchRow::cut(batch_id, repo, head, base);
+        row.state = BatchState::Staged;
+        row.parent = Some(parent.into());
+        row
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BatchEventKind {
     /// Valid only while OPEN. Membership itself lives in the `batch_member` table; this
@@ -149,6 +166,11 @@ pub enum BatchEventKind {
     /// that never happened (design: the event log is the record of what happened).
     /// Per-member bookkeeping; does not itself move the batch.
     Eject { bead_id: String, reason: String },
+    /// STAGED -> OPEN at the head and base the staged members were re-merged onto.
+    Promote { head: String, base: String },
+    /// STAGED -> DISCARDED: the round it waited behind went red or was abandoned, or its
+    /// members no longer merge. Nothing was delivered, so nothing is returned.
+    Discard { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -194,6 +216,9 @@ pub fn apply(row: &BatchRow, ev: &BatchEvent) -> Outcome<BatchRow> {
             if row.state.is_terminal() {
                 return terminal(row);
             }
+            if row.state == BatchState::Staged {
+                return illegal(row, &ev.kind);
+            }
             let mut new = row.clone();
             new.state = BatchState::Abandoned;
             new.phase = None;
@@ -218,7 +243,9 @@ pub fn apply(row: &BatchRow, ev: &BatchEvent) -> Outcome<BatchRow> {
         | BatchEventKind::FastForward { .. }
         | BatchEventKind::Attributed { .. }
         | BatchEventKind::Settle
-        | BatchEventKind::Eject { .. } => primary_transition(row, &ev.kind),
+        | BatchEventKind::Eject { .. }
+        | BatchEventKind::Promote { .. }
+        | BatchEventKind::Discard { .. } => primary_transition(row, &ev.kind),
     }
 }
 
@@ -263,7 +290,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             }
             PassStarted { n, head } => started(n, Some(head)),
             Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. } | SuitesStarted { .. }
-            | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } => illegal(row, kind),
+            | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Promote { .. } | Discard { .. } => illegal(row, kind),
         },
 
         BatchState::CiRunning => match kind {
@@ -277,7 +304,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             PassRed { n, .. } | PassIncomplete { n, .. } | PassPreempted { n, .. } if *n == row.pass => Outcome::applied(moved(BatchState::Attributing, None)),
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
             | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle
-            | Abandon { .. } => illegal(row, kind),
+            | Abandon { .. } | Promote { .. } | Discard { .. } => illegal(row, kind),
         },
 
         BatchState::Green => match kind {
@@ -289,7 +316,8 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             BaseMoved => Outcome::applied(moved(BatchState::Rebuilding, None)),
             Eject { .. } => Outcome::applied(moved(BatchState::Open, None)),
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
-            | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. } => {
+            | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. }
+            | Promote { .. } | Discard { .. } => {
                 illegal(row, kind)
             }
         },
@@ -303,7 +331,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             PassStarted { n, head } => started(n, Some(head)),
             MemberAdded { .. } | CiStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassPreempted { .. }
             | PassRebuilt { .. } | Green | Red | BaseMoved | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. }
-            | Eject { .. } => illegal(row, kind),
+            | Eject { .. } | Promote { .. } | Discard { .. } => illegal(row, kind),
         },
 
         BatchState::Attributing => match kind {
@@ -315,13 +343,30 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 Outcome::applied(new)
             }
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
-            | PassIncomplete { .. } | PassPreempted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. } => illegal(row, kind),
+            | PassIncomplete { .. } | PassPreempted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. } | Promote { .. } | Discard { .. } => illegal(row, kind),
         },
 
-        BatchState::Landed | BatchState::Settled | BatchState::Abandoned => match kind {
+        BatchState::Staged => match kind {
+            Promote { head, base } => {
+                let mut new = moved(BatchState::Open, None);
+                new.head = Some(head.clone());
+                new.base = Some(base.clone());
+                Outcome::applied(new)
+            }
+            Discard { reason } => {
+                let mut new = moved(BatchState::Discarded, None);
+                new.reason = Some(reason.clone());
+                Outcome::applied(new)
+            }
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
             | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. }
-            | Settle | Abandon { .. } | Eject { .. } => terminal(row),
+            | Settle | Abandon { .. } | Eject { .. } => illegal(row, kind),
+        },
+
+        BatchState::Landed | BatchState::Settled | BatchState::Abandoned | BatchState::Discarded => match kind {
+            MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
+            | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. }
+            | Settle | Abandon { .. } | Eject { .. } | Promote { .. } | Discard { .. } => terminal(row),
         },
     }
 }
@@ -330,7 +375,8 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
 mod tests {
     use super::*;
 
-    const ALL_STATES: [BatchState; 8] = [
+    const ALL_STATES: [BatchState; 10] = [
+        BatchState::Staged,
         BatchState::Open,
         BatchState::CiRunning,
         BatchState::Green,
@@ -339,6 +385,7 @@ mod tests {
         BatchState::Landed,
         BatchState::Settled,
         BatchState::Abandoned,
+        BatchState::Discarded,
     ];
 
     fn kinds() -> Vec<BatchEventKind> {
@@ -361,6 +408,8 @@ mod tests {
             BatchEventKind::Settle,
             BatchEventKind::Abandon { reason: "r".into() },
             BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "manual".into() },
+            BatchEventKind::Promote { head: "h3".into(), base: "b3".into() },
+            BatchEventKind::Discard { reason: "n red".into() },
         ]
     }
 
@@ -391,7 +440,7 @@ mod tests {
 
     #[test]
     fn terminal_states_absorb_everything_but_abandon_is_also_refused() {
-        for &state in &[BatchState::Landed, BatchState::Settled, BatchState::Abandoned] {
+        for &state in &[BatchState::Landed, BatchState::Settled, BatchState::Abandoned, BatchState::Discarded] {
             for kind in kinds() {
                 let r = row(state);
                 let out = apply(&r, &ev(state, 0, kind));
@@ -588,5 +637,51 @@ mod tests {
         r.pass = 1;
         let r = step(&r, BatchEventKind::PassStarted { n: 2, head: "h2".into() });
         assert_eq!((r.state, r.pass), (BatchState::CiRunning, 2));
+    }
+
+    fn staged() -> BatchRow {
+        BatchRow::staged("r2", "spira", "staged-head", "n-head", "r1")
+    }
+
+    #[test]
+    fn a_staged_round_promotes_to_open_at_the_head_it_was_rebuilt_to() {
+        let r = staged();
+        assert_eq!((r.state, r.parent.as_deref()), (BatchState::Staged, Some("r1")));
+        let r = step(&r, BatchEventKind::Promote { head: "new-head".into(), base: "landed".into() });
+        assert_eq!((r.state, r.head.as_deref(), r.base.as_deref(), r.pass), (BatchState::Open, Some("new-head"), Some("landed"), 0));
+        step(&r, BatchEventKind::PassStarted { n: 1, head: "new-head".into() });
+    }
+
+    #[test]
+    fn a_staged_round_is_discarded_with_its_reason_and_then_absorbs_everything() {
+        let r = step(&staged(), BatchEventKind::Discard { reason: "r1 red".into() });
+        assert_eq!((r.state, r.reason.as_deref()), (BatchState::Discarded, Some("r1 red")));
+        for kind in kinds() {
+            assert!(!apply(&r, &ev(r.state, r.version, kind)).applied);
+        }
+    }
+
+    #[test]
+    fn a_staged_round_has_no_pass_and_is_not_abandoned() {
+        let r = staged();
+        for kind in [
+            BatchEventKind::PassStarted { n: 1, head: "h".into() },
+            BatchEventKind::CiStarted { run: "x".into() },
+            BatchEventKind::Abandon { reason: "r".into() },
+            BatchEventKind::Eject { bead_id: "sp-1".into(), reason: "m".into() },
+            BatchEventKind::MemberAdded { bead_id: "sp-1".into(), tip: "t".into() },
+        ] {
+            assert_eq!(refused(&r, kind), "STAGED");
+        }
+    }
+
+    #[test]
+    fn only_a_staged_round_promotes_or_is_discarded() {
+        for &state in &[BatchState::Open, BatchState::CiRunning, BatchState::Green, BatchState::Attributing, BatchState::Rebuilding] {
+            let r = row(state);
+            for kind in [BatchEventKind::Promote { head: "h".into(), base: "b".into() }, BatchEventKind::Discard { reason: "r".into() }] {
+                assert!(!apply(&r, &ev(state, 0, kind)).applied, "{state:?}");
+            }
+        }
     }
 }

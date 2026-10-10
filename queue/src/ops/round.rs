@@ -8,6 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::batch::lc_return;
+use super::stage;
 use super::land::land_local_with;
 use super::{actor, czar_ok, idents, landing_log, lc_cas, lock_held_by_caller, read_text, repo_path, require_lc, resolve, take_lock, Ctx, World, FAIL, OK, USAGE};
 use crate::cli::{Round, Text};
@@ -27,9 +28,9 @@ pub const PREEMPTED: i32 = 5;
 
 const PREEMPT_POLLS: u32 = 120;
 
-const RECORD: &str = "round";
-const BUILD_RED: &str = "workspace-build";
-const LC_ACTOR: &str = "queue.sh";
+pub(super) const RECORD: &str = "round";
+pub(super) const BUILD_RED: &str = "workspace-build";
+pub(super) const LC_ACTOR: &str = "queue.sh";
 const PASSING: [&str; 2] = ["ok", "skip"];
 pub const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
 
@@ -47,6 +48,10 @@ pub fn run(w: &World, r: &Round) -> i32 {
         Round::PassVerdict { batch, repo, verdict, red_suites, suites_s, build_s, reason } => {
             pass_verdict(w, batch, repo.as_deref(), verdict, red_suites, Timings { suites_s: *suites_s, build_s: *build_s }, reason)
         }
+        Round::Stage { repo, members, name, worktree } => stage::stage(w, repo.as_deref(), members, name.as_deref(), worktree.as_deref()),
+        Round::StageTest { repo } => stage::stage_test(w, repo.as_deref()),
+        Round::Promote { repo } => stage::promote(w, repo.as_deref()),
+        Round::Discard { repo, reason } => stage::discard(w, repo.as_deref(), reason),
     }
 }
 
@@ -176,7 +181,7 @@ fn pass_timings(results: &Path, wall_s: u64) -> Timings {
     Timings { build_s, suites_s: wall_s.saturating_sub(build_s) }
 }
 
-fn local_ctx(w: &World, label: &str, repo: Option<&str>) -> Result<(Ctx, PathBuf), i32> {
+pub(super) fn local_ctx(w: &World, label: &str, repo: Option<&str>) -> Result<(Ctx, PathBuf), i32> {
     if !czar_ok(w) {
         return Err(FAIL);
     }
@@ -192,7 +197,7 @@ fn local_ctx(w: &World, label: &str, repo: Option<&str>) -> Result<(Ctx, PathBuf
     Ok((c, path))
 }
 
-fn lock(w: &World, label: &str, c: &Ctx) -> Result<Option<Guard>, i32> {
+pub(super) fn lock(w: &World, label: &str, c: &Ctx) -> Result<Option<Guard>, i32> {
     if lock_held_by_caller(w) {
         Ok(None)
     } else {
@@ -221,21 +226,21 @@ fn save(w: &World, label: &str, c: &Ctx, kv: &Kv) -> Result<(), i32> {
     })
 }
 
-fn set(kv: &mut Kv, k: &str, v: &str) {
+pub(super) fn set(kv: &mut Kv, k: &str, v: &str) {
     kv.remove(k);
     kv.push(k, v);
 }
 
-fn set_phase(w: &World, kv: &mut Kv, phase: &str) {
+pub(super) fn set_phase(w: &World, kv: &mut Kv, phase: &str) {
     set(kv, "phase", phase);
     set(kv, "phase_at", &w.clock.now().to_string());
 }
 
-fn rounds_dir(c: &Ctx) -> PathBuf {
+pub(super) fn rounds_dir(c: &Ctx) -> PathBuf {
     c.s.run.join("rounds")
 }
 
-fn handle_of(c: &Ctx, batch: &str) -> PathBuf {
+pub(super) fn handle_of(c: &Ctx, batch: &str) -> PathBuf {
     rounds_dir(c).join(format!("{batch}.pass"))
 }
 
@@ -243,13 +248,13 @@ fn preempt_marker(c: &Ctx, batch: &str) -> PathBuf {
     rounds_dir(c).join(format!("{batch}.preempt"))
 }
 
-fn mark_running(c: &Ctx, batch: &str) {
+pub(super) fn mark_running(c: &Ctx, batch: &str) {
     let dir = rounds_dir(c);
     let _ = fs::create_dir_all(&dir);
     let _ = fs::write(dir.join(format!("{batch}.running")), "");
 }
 
-fn finish(c: &Ctx, batch: &str, line: &str) {
+pub(super) fn finish(c: &Ctx, batch: &str, line: &str) {
     use std::io::Write;
     let dir = rounds_dir(c);
     let _ = fs::create_dir_all(&dir);
@@ -259,7 +264,7 @@ fn finish(c: &Ctx, batch: &str, line: &str) {
     let _ = fs::remove_file(dir.join(format!("{batch}.running")));
 }
 
-fn csv(ms: &[Member]) -> String {
+pub(super) fn csv(ms: &[Member]) -> String {
     ms.iter().map(Member::render).collect::<Vec<_>>().join(",")
 }
 
@@ -269,7 +274,7 @@ fn worktree_of(kv: &Kv) -> PathBuf {
 
 /// The round's tree rebuilt from `base_sha` with `members` merged in order, in `wt`. A
 /// member that no longer merges leaves `wt` as it was (at `fallback`) and is the Err.
-fn assemble(w: &World, c: &Ctx, path: &Path, wt: &Path, base_sha: &str, members: &[Member], fallback: &str) -> Result<String, String> {
+pub(super) fn assemble(w: &World, c: &Ctx, path: &Path, wt: &Path, base_sha: &str, members: &[Member], fallback: &str) -> Result<String, String> {
     w.git.worktree_prune(path);
     w.git.worktree_remove(path, wt);
     if let Some(p) = wt.parent() {
@@ -292,7 +297,7 @@ fn assemble(w: &World, c: &Ctx, path: &Path, wt: &Path, base_sha: &str, members:
 /// A member that no longer merges onto the base goes back to REWORK on its own tip, so a
 /// builder claims it to rebase; left as it was, every later round would skip it again. The
 /// claim is made only after reading the row back in REWORK.
-fn return_to_rework(w: &World, m: &Member) -> Result<(), String> {
+pub(super) fn return_to_rework(w: &World, m: &Member) -> Result<(), String> {
     let Some((state, version)) = w.lc.bead_state(&m.id) else { return Err("no lifecycle row — not returned to rework".into()) };
     let kind = format!("{{\"GateRed\":{{\"tip\":\"{}\",\"reason\":\"no-rebase\"}}}}", m.tip);
     if let Err((rc, e)) = w.lc.bead_event(&m.id, &state, version.trim(), LC_ACTOR, &kind) {
@@ -365,6 +370,10 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
         w.err(format!("queue.sh {label}: cannot resolve {base}"));
         return FAIL;
     };
+    if let Ok(Some(orphan)) = records::read_kv(&c.queue_file(stage::STAGED)) {
+        let parent = orphan.get("parent").unwrap_or("?").to_string();
+        stage::discard_behind(w, &c, &path, &parent, "round open cut a round of its own: the round it followed is gone");
+    }
 
     let mut skips: Vec<String> = Vec::new();
     let mut admitted: Vec<Member> = Vec::new();
@@ -488,6 +497,11 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     }
     w.out(format!("wall_secs={}", since("opened")));
     w.out(format!("phase_secs={}", since("phase_at")));
+    if let Ok(Some(st)) = records::read_kv(&c.queue_file(stage::STAGED)) {
+        for (k, v) in [("staged_batch", "batch_id"), ("staged_phase", "phase"), ("staged_head", "head"), ("staged_members", "members")] {
+            w.out(format!("{k}={}", st.get(v).unwrap_or("")));
+        }
+    }
     OK
 }
 
@@ -529,12 +543,12 @@ pub(crate) fn unjudgeable(wt: &Path, found: &[(String, String)]) -> Option<Strin
     }
 }
 
-fn tail(text: &str, n: usize) -> String {
+pub(super) fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
-fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> i32 {
+pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> i32 {
     let label = "round certify";
     let Ok((c, path)) = local_ctx(w, label, repo) else { return FAIL };
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
@@ -644,6 +658,7 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
             return FAIL;
         }
         mark_running(&c, batch);
+        stage::discard_behind(w, &c, &path, batch, &format!("round {batch} went red: {}", reds.join(",")));
         w.out(format!("queue.sh {label}: round {batch} is RED at {head}: {}", reds.join(",")));
         w.out(format!("red={}", reds.join(",")));
         return FAIL;
@@ -792,6 +807,7 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         let _ = fs::remove_file(c.queue_file(RECORD));
         w.git.worktree_remove(&path, &wt);
         finish(&c, batch, &format!("emptied: {id} ejected, no member remains"));
+        stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was emptied"));
         w.out(format!("queue.sh {label}: ejected {id}; the round {batch} has no member left and is closed"));
         if !unreturned.is_empty() {
             w.err(format!("queue.sh {label}: {} left round {batch} but did not return to REWORK: {} — see above", id, unreturned.join(" ")));
@@ -1053,6 +1069,7 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
     let _ = fs::remove_file(c.queue_file(RECORD));
     w.git.worktree_remove(&path, &worktree_of(&kv));
     finish(&c, batch, &format!("abandoned: {}", one_line(&reason)));
+    stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was abandoned: {}", one_line(&reason)));
     landing_log(&c.s.run, &format!("QUEUE ROUND-ABANDON {} repo={} batch={batch} reason={}", w.clock.now(), c.r.name, one_line(&reason)));
     w.out(format!("queue.sh {label}: round {batch} abandoned for {}", c.r.name));
     OK

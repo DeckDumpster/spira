@@ -674,4 +674,30 @@ passes_json="$(lc list --batches)"
 pfield() { printf '%s' "$passes_json" | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["batch_id"]=="batch-cap"][0]; print(eval(sys.argv[1]))' "$1"; }
 is "a pass killed at the cap is incomplete, in ATTRIBUTING, neither red nor green" "incomplete ATTRIBUTING" "$(pfield 'b["last_pass"]["verdict"] + " " + b["state"]')"
 
+# ── a round staged behind a running one: members untouched until promoted ───────────────
+certify sp-lc-g1 tipG1
+certify sp-lc-g2 tipG2
+out="$(lc stage batch-staged --repo spira --head headG --base baseG --members "sp-lc-g1:tipG1,sp-lc-g2:tipG2" --actor test --parent batch-running)"
+wantrc "stage writes the staged round" 0 $?
+is "a staged round is STAGED, behind its parent" "STAGED batch-running" "$(batch_field batch-staged state) $(batch_field batch-staged parent)"
+is "staging delivers no member" "CERTIFIED CERTIFIED" "$(member_field sp-lc-g1 bead state) $(member_field sp-lc-g2 bead state)"
+out="$(lc stage batch-staged-stale --repo spira --head h --base b --members "sp-lc-g1:tip-does-not-match" --actor test --parent batch-running)"
+wantrc "PLANTED VIOLATION: stage refuses a member whose tip does not match" 3 $?
+is "the refused stage wrote no row" "" "$(batch_field batch-staged-stale state)"
+out="$(lc promote batch-staged --head headG2 --base baseG2 --actor test)"
+wantrc "promote cuts the staged round" 0 $?
+is "a promoted round is OPEN at the rebuilt head and base" "OPEN headG2 baseG2" "$(batch_field batch-staged state) $(batch_field batch-staged head) $(batch_field batch-staged base)"
+is "promotion delivers every member" "IN_DELIVERY IN_DELIVERY" "$(member_field sp-lc-g1 bead state) $(member_field sp-lc-g2 bead state)"
+is "promotion batches each member's delivery onto the round" "BATCHED" "$(member_field sp-lc-g2 delivery state)"
+out="$(lc promote batch-staged --head h --base b --actor test)"
+wantrc "PLANTED VIOLATION: a round already OPEN is not promoted again" 3 $?
+
+certify sp-lc-g3 tipG3
+lc stage batch-staged-dead --repo spira --head headD --base baseD --members "sp-lc-g3:tipG3" --actor test --parent batch-running >/dev/null
+lc event batch batch-staged-dead --expect STAGED --version 0 --actor test --kind '{"Discard":{"reason":"parent red"}}' >/dev/null
+is "a discarded stage is DISCARDED with its reason" "DISCARDED parent red" "$(batch_field batch-staged-dead state) $(batch_field batch-staged-dead reason)"
+is "discarding returns nothing: the member is still CERTIFIED" "CERTIFIED" "$(member_field sp-lc-g3 bead state)"
+out="$(lc promote batch-staged-dead --head h --base b --actor test)"
+wantrc "PLANTED VIOLATION: a discarded stage is not promoted" 3 $?
+
 tl_summary

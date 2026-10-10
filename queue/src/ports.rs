@@ -264,6 +264,11 @@ pub trait Lc {
     fn create_bead(&self, id: &str);
     /// `cut` → Ok(version) or Err((rc, output)).
     fn cut(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)>;
+    /// `stage` → the batch row written STAGED behind `parent`; no member moves. Ok(version).
+    #[allow(clippy::too_many_arguments)]
+    fn stage(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, parent: &str, actor: &str) -> Result<String, (i32, String)>;
+    /// `promote` → STAGED to OPEN at `head`/`base`, every member delivered, in one transaction.
+    fn promote(&self, batch_id: &str, head: &str, base: &str, actor: &str) -> Result<(), (i32, String)>;
     fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
     fn eject_member(&self, batch_id: &str, bead: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
     /// `event batch <id> --expect S --version V --actor A --kind K` (one CAS'd event).

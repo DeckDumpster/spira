@@ -626,3 +626,200 @@ fn a_preempted_certify_leaves_the_record_to_the_verb() {
     assert_eq!(kv_of(&t, "round")["phase"], "certifying");
     assert!(!t.lc.has("PassIncomplete") && !t.lc.has("PassRed"), "{:?}", t.lc.calls.borrow());
 }
+
+const T_STAGED: &str = "4444444444444444444444444444444444444444";
+const T_MOVED: &str = "5555555555555555555555555555555555555555";
+
+fn vm_runs(t: &T) -> usize {
+    t.scripts.calls.borrow().iter().filter(|c| c.starts_with("round-vm ")).count()
+}
+
+/// A round `r1` (sp-a) open and certified GREEN, with sp-b staged behind it and tested.
+fn staged_behind_green() -> (T, String, String) {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let n = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &n]), 0, "{}", t.err());
+    t.io.out.borrow_mut().clear();
+    t.git.ancestor("ta", "merged-ta");
+    t.git.ancestor("merged-ta", "merged-tb");
+    t.git.trees.borrow_mut().insert("merged-tb".into(), T_STAGED.into());
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb", "--name", "spira-staged"]), 0, "{}", t.err());
+    (t, n, "spira-staged".into())
+}
+
+#[test]
+fn a_staged_round_is_merged_onto_the_open_rounds_head_and_moves_no_bead() {
+    let (t, n, s) = staged_behind_green();
+    assert!(t.lc.has(&format!("stage {s} merged-tb merged-ta sp-b:tb behind {n}")), "{:?}", t.lc.calls.borrow());
+    assert!(t.git.calls.borrow().iter().any(|c| c == "merge tb spira: land sp-b"), "the merge is open's: land_subject, member tip");
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.contains("gate") && c.contains("spira/round-staged/spira-staged") && c.contains("off")), "the fences run on the staged head: {:?}", t.scripts.calls.borrow());
+    assert!(!t.lc.has("cut ") || t.lc.calls.borrow().iter().filter(|c| c.starts_with("cut ")).count() == 1, "only the open round was cut");
+    assert!(!t.lc.has("event bead sp-b"), "a staged member is not delivered");
+    let rec = kv_of(&t, "round-staged");
+    assert_eq!((rec["parent"].as_str(), rec["head"].as_str(), rec["base"].as_str(), rec["phase"].as_str()), (n.as_str(), "merged-tb", "merged-ta", "staged"));
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-c"]), 1, "one staged round at a time");
+    assert!(t.err().contains("already waiting"), "{}", t.err());
+    let _ = t.run(&["round", "status"]);
+    assert!(t.out().contains(&format!("staged_batch={s}")), "{}", t.out());
+}
+
+#[test]
+fn stage_refuses_without_an_open_round_and_skips_the_open_rounds_own_members() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb"]), 1);
+    assert!(t.err().contains("nothing to stage behind"), "{}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-a:ta"]), 1);
+    assert!(t.out().contains("sp-a: already a member of"), "{}", t.out());
+    assert!(!t.qfile("round-staged").exists());
+}
+
+#[test]
+fn fences_red_on_the_staged_head_stage_nothing() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    t.scripts.gate_rc.set(1);
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb"]), 1);
+    assert!(t.err().contains("fences are red"), "{}", t.err());
+    assert!(!t.qfile("round-staged").exists() && !t.lc.has("stage "), "a red fence leaves no staged round");
+}
+
+#[test]
+fn the_staged_round_is_tested_only_once_the_round_ahead_is_green() {
+    let t = round_world();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "stage-test"]), 1);
+    assert!(t.err().contains("not green"), "{}", t.err());
+    assert_eq!(vm_runs(&t), 0);
+}
+
+#[test]
+fn promotion_on_an_identical_tree_reuses_the_staged_pass() {
+    let (t, n, s) = staged_behind_green();
+    assert_eq!(t.run(&["round", "stage-test"]), 0, "{}", t.err());
+    assert_eq!(vm_runs(&t), 2, "the open round's pass and the staged round's pass");
+    let rec = kv_of(&t, "round-staged");
+    assert_eq!((rec["phase"].as_str(), rec["tested_tree"].as_str()), ("green", T_STAGED));
+
+    assert_eq!(t.run(&["round", "land", &n]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert(n.clone(), ("LANDED".into(), "9".into()));
+    t.io.out.borrow_mut().clear();
+    assert_eq!(t.run(&["round", "promote"]), 0, "{}", t.err());
+    assert!(t.lc.has(&format!("promote {s} merged-tb merged-ta")), "base is the landed head: {:?}", t.lc.calls.borrow());
+    assert_eq!(vm_runs(&t), 2, "promotion ran no pass of its own");
+    assert!(t.out().contains("attested=1"), "{}", t.out());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.contains(&format!("event batch {s}")) && c.contains("PassGreen")), "the tested pass is recorded on the promoted round: {:?}", t.lc.calls.borrow());
+    assert!(gate::cert::path(&t.s().run.join("verdicts"), "spira", T_STAGED).is_some_and(|p| p.exists()), "the tested tree is certified");
+    let rec = kv_of(&t, "round");
+    assert_eq!((rec["batch_id"].as_str(), rec["phase"].as_str(), rec["members"].as_str()), (s.as_str(), "green", "sp-b:tb"));
+    assert!(!t.qfile("round-staged").exists());
+    assert_eq!(t.run(&["round", "land", &s]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
+}
+
+#[test]
+fn promotion_onto_a_moved_base_gets_a_fresh_pass() {
+    let (t, n, s) = staged_behind_green();
+    assert_eq!(t.run(&["round", "stage-test"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "land", &n]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert(n.clone(), ("LANDED".into(), "9".into()));
+    t.git.set("refs/heads/local/main", "moved");
+    t.git.trees.borrow_mut().insert("merged-tb".into(), T_MOVED.into());
+    let merges = t.git.calls.borrow().iter().filter(|c| c.starts_with("merge ")).count();
+    t.io.out.borrow_mut().clear();
+    assert_eq!(t.run(&["round", "promote"]), 0, "{}", t.err());
+    assert!(t.git.calls.borrow().iter().filter(|c| c.starts_with("merge ")).count() > merges, "the members are merged again onto the moved base");
+    assert!(t.lc.has(&format!("promote {s} merged-tb moved")), "{:?}", t.lc.calls.borrow());
+    assert!(t.out().contains("attested=0"), "{}", t.out());
+    assert!(!t.lc.calls.borrow().iter().any(|c| c.contains(&format!("event batch {s}")) && c.contains("PassGreen")), "no pass is recorded without a run");
+    assert_eq!(kv_of(&t, "round")["phase"], "opened", "the promoted round waits for its own pass");
+    assert!(!gate::cert::path(&t.s().run.join("verdicts"), "spira", T_MOVED).is_some_and(|p| p.exists()));
+}
+
+#[test]
+fn a_staged_round_whose_pass_was_red_is_not_attested() {
+    let (t, n, s) = staged_behind_green();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-b.sh".into(), "red 1 2 fp p e 1".into())];
+    assert_eq!(t.run(&["round", "stage-test"]), 1);
+    assert_eq!(kv_of(&t, "round-staged")["phase"], "red");
+    assert_eq!(t.run(&["round", "land", &n]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert(n, ("LANDED".into(), "9".into()));
+    assert_eq!(t.run(&["round", "promote"]), 0, "{}", t.err());
+    assert!(t.out().contains("attested=0") && t.lc.has(&format!("promote {s} ")), "{}", t.out());
+}
+
+#[test]
+fn a_red_round_discards_the_stage_behind_it() {
+    let t = round_world();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "red 1 2 fp p e 1".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let n = batch_of(&t);
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb", "--name", "spira-staged"]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert("spira-staged".into(), ("STAGED".into(), "0".into()));
+    t.git.set("HEAD", "merged-ta");
+    assert_eq!(t.run(&["round", "certify", &n]), 1);
+    assert!(t.lc.has("event batch spira-staged STAGED 0 {\"Discard\":{\"reason\":\"round spira-20260929T010203Z went red: test-a.sh\"}}"), "{:?}", t.lc.calls.borrow());
+    assert!(!t.qfile("round-staged").exists(), "the staged record is gone");
+    assert!(t.landing_log().contains("QUEUE ROUND-DISCARD") && t.landing_log().contains("batch=spira-staged"));
+    assert!(!t.lc.has("event bead sp-b"), "discarding returns no member: none was delivered");
+}
+
+#[test]
+fn an_abandoned_round_discards_the_stage_behind_it() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let n = batch_of(&t);
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb", "--name", "spira-staged"]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert("spira-staged".into(), ("STAGED".into(), "0".into()));
+    assert_eq!(t.run(&["round", "abandon", &n, "--reason", "gave up"]), 0, "{}", t.err());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.starts_with("event batch spira-staged STAGED 0") && c.contains("Discard") && c.contains("gave up")), "{:?}", t.lc.calls.borrow());
+    assert!(!t.qfile("round-staged").exists());
+}
+
+#[test]
+fn promote_discards_when_the_round_it_followed_did_not_land() {
+    let (t, n, s) = staged_behind_green();
+    t.lc.batch_states.borrow_mut().insert(s.clone(), ("STAGED".into(), "0".into()));
+    let _ = fs::remove_file(t.qfile("round"));
+    t.lc.batch_states.borrow_mut().insert(n, ("ABANDONED".into(), "5".into()));
+    assert_eq!(t.run(&["round", "promote"]), 1);
+    assert!(t.err().contains("is ABANDONED, not LANDED") && t.err().contains("discarded"), "{}", t.err());
+    assert!(!t.lc.has("promote ") && !t.qfile("round-staged").exists());
+}
+
+#[test]
+fn promote_waits_while_the_round_ahead_is_still_open() {
+    let (t, _, _) = staged_behind_green();
+    assert_eq!(t.run(&["round", "promote"]), 1);
+    assert!(t.err().contains("still open"), "{}", t.err());
+    assert!(t.qfile("round-staged").exists() && !t.lc.has("promote "), "the stage is kept");
+}
+
+#[test]
+fn promote_discards_when_a_staged_member_moved() {
+    let (t, n, s) = staged_behind_green();
+    t.lc.batch_states.borrow_mut().insert(s, ("STAGED".into(), "0".into()));
+    assert_eq!(t.run(&["round", "land", &n]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert(n, ("LANDED".into(), "9".into()));
+    for r in t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().filter(|r| r.bead_id == "sp-b") {
+        r.tip = Some("tb2".into());
+    }
+    assert_eq!(t.run(&["round", "promote"]), 1);
+    assert!(t.err().contains("no longer admissible"), "{}", t.err());
+    assert!(!t.qfile("round-staged").exists() && !t.lc.has("promote "));
+}
+
+#[test]
+fn round_open_discards_a_stage_whose_round_is_gone() {
+    let (t, n, s) = staged_behind_green();
+    t.lc.batch_states.borrow_mut().insert(s.clone(), ("STAGED".into(), "0".into()));
+    assert_eq!(t.run(&["round", "land", &n]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-c:tc"]), 0, "{}", t.err());
+    assert!(!t.qfile("round-staged").exists());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.starts_with(&format!("event batch {s} STAGED 0")) && c.contains("Discard")), "{:?}", t.lc.calls.borrow());
+}

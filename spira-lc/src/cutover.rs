@@ -144,6 +144,126 @@ pub fn cmd_show_batch(args: &[String], conn: &Conn) -> (i32, String) {
 
 /// `cut <batch-id> --repo R --head H --base B --members "id:tip,id:tip" --actor A [--parent P]`
 ///
+/// `stage <batch-id> --repo R --head H --base B --members "id:tip,..." --actor A --parent P`
+///
+/// A round assembled behind the still-running round `P`: the batch row is written STAGED with
+/// its `batch_member` rows and nothing else. No member is delivered, so a staged round that is
+/// discarded returns nothing; `promote` is what cuts it.
+pub fn cmd_stage(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(batch_id) = args.first() else {
+        return (CANNOT_TELL, "stage: missing <batch-id>".into());
+    };
+    let (Some(repo), Some(head), Some(base), Some(members_s), Some(_actor), Some(parent)) =
+        (flag(args, "--repo"), flag(args, "--head"), flag(args, "--base"), flag(args, "--members"), flag(args, "--actor"), flag(args, "--parent"))
+    else {
+        return (CANNOT_TELL, "stage: --repo, --head, --base, --members, --actor and --parent are all required".into());
+    };
+    let Some(members) = parse_members(&members_s) else {
+        return (CANNOT_TELL, "stage: --members must be \"id:tip,id:tip,...\"".into());
+    };
+    if members.is_empty() {
+        return (CANNOT_TELL, "stage: --members must name at least one bead".into());
+    }
+    if let Err(early) = fetch_certified_members(conn, &members, true) {
+        return early;
+    }
+    let at = crate::db::now_epoch();
+    let mut preamble = format!(
+        "INSERT INTO batch (batch_id, repo, state, parent, head, base, run, version, opened_at)\n\
+         VALUES ({batch_id}, {repo}, 'STAGED', {parent}, {head}, {base}, NULL, 0, {at});\n",
+        batch_id = q(batch_id),
+        repo = q(&repo),
+        parent = q(&parent),
+        head = q(&head),
+        base = q(&base),
+    );
+    for (id, tip) in &members {
+        preamble.push_str(&format!(
+            "INSERT INTO batch_member (batch_id, bead_id, tip) VALUES ({}, {}, {});\n",
+            q(batch_id),
+            q(id),
+            q(tip),
+        ));
+    }
+    match conn.cascade(&preamble, &[]) {
+        Ok(_) => (0, serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i, _)| i).collect::<Vec<_>>()}).to_string()),
+        Err(e) => cannot_tell(e),
+    }
+}
+
+/// `promote <batch-id> --head H --base B --actor A`
+///
+/// STAGED -> OPEN at the head and base the members were re-merged onto, and in the same
+/// transaction the cascade `cut` performs for every staged member. Every member must still be
+/// SUBMITTED or CERTIFIED at its staged tip; one that moved refuses the whole promotion,
+/// before anything is written.
+pub fn cmd_promote(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(batch_id) = args.first() else {
+        return (CANNOT_TELL, "promote: missing <batch-id>".into());
+    };
+    let (Some(head), Some(base), Some(actor)) = (flag(args, "--head"), flag(args, "--base"), flag(args, "--actor")) else {
+        return (CANNOT_TELL, "promote: --head, --base and --actor are all required".into());
+    };
+    let batch_row = match rows::fetch_batch(conn, batch_id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return (CANNOT_TELL, format!("promote: no batch row for {batch_id}")),
+        Err(e) => return cannot_tell(e),
+    };
+    if batch_row.state != batch::BatchState::Staged {
+        return (REFUSED, format!("refused: {batch_id} is {} not STAGED", batch_row.state.as_str()));
+    }
+    let members = match fetch_members(conn, batch_id) {
+        Ok(m) => m,
+        Err(e) => return cannot_tell(e),
+    };
+    let bead_rows = match fetch_certified_members(conn, &members, true) {
+        Ok(r) => r,
+        Err(early) => return early,
+    };
+    let at = crate::db::now_epoch();
+    let promote_ev = batch::BatchEvent {
+        expect: batch::BatchState::Staged,
+        version: batch_row.version,
+        kind: batch::BatchEventKind::Promote { head, base },
+        actor: actor.clone(),
+    };
+    let outcome = batch::apply(&batch_row, &promote_ev);
+    if !outcome.applied {
+        return (REFUSED, format!("refused: {:?}", outcome.refusal));
+    }
+    let mut steps = vec![CascadeStep {
+        table: "batch",
+        key_column: "batch_id",
+        key: batch_id.clone(),
+        old_version: batch_row.version,
+        set_clause: rows::batch_set_clause(&outcome.row),
+        applied_to_state: outcome.row.state.as_str().to_string(),
+        event: EventRecord {
+            machine: "batch".into(),
+            key: batch_id.clone(),
+            event: "Promote".into(),
+            expect: "STAGED".into(),
+            from_state: "STAGED".into(),
+            refusal: None,
+            evidence: serde_json::to_value(&promote_ev.kind).unwrap_or_default(),
+            actor: actor.clone(),
+            at,
+        },
+    }];
+    let mut preamble = String::new();
+    match member_added_steps(batch_id, outcome.row, &members, &bead_rows, &actor, at, &mut preamble, "promote") {
+        Ok(more) => steps.extend(more),
+        Err(early) => return early,
+    }
+    match conn.cascade(&preamble, &steps) {
+        Ok(applied) => {
+            let summary = serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i, _)| i).collect::<Vec<_>>(), "applied": applied});
+            (if applied.iter().all(|a| *a) { 0 } else { REFUSED }, summary.to_string())
+        }
+        Err(e) => cannot_tell(e),
+    }
+}
+
 /// Every named member must currently be CERTIFIED at exactly the given tip — checked before
 /// anything is written, so a stale caller refuses cleanly instead of cutting a batch with
 /// the wrong content. On success, in one transaction: the batch row is created (OPEN), one
