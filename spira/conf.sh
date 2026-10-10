@@ -257,6 +257,9 @@ SPIRA_TOML_FILE="$(spira_toml_file)"
 # names as real ones). A caller that does NOT guard the `.`/`source` with `||` still sees
 # this non-zero and, immediately after, every derived key unset — not a quieter failure,
 # a differently-shaped one: this shell never holds a PARTIALLY resolved value either way.
+if ! command -v spira-config >/dev/null 2>&1 && [ -x "$_spira_conf_real_dir/../bin/spira-config" ]; then
+    PATH="$(cd "$_spira_conf_real_dir/../bin" && pwd -P):$PATH"
+fi
 if ! command -v spira-config >/dev/null 2>&1; then
     printf 'spira: spira-config not found on PATH — SPIRA_RELEASE is unset, or the launcher PATH omits the release, so configuration cannot be resolved from this box'"'"'s own tools\n' >&2
     return 1
