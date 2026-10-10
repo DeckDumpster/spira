@@ -292,19 +292,22 @@ pub fn retry_until_deadline<T>(mut f: impl FnMut() -> Result<T, String>) -> Resu
 }
 
 /// Closes a tracking bead that could not be completed, so no ask is left that cannot be
-/// answered; falls back to a direct `bd close` when the lifecycle close cannot run (a rowless
-/// bead). Returns what happened, for the caller's error.
+/// answered; retries the lifecycle close within the deadline. Returns what happened, for the caller's error.
 pub fn abandon_bead(bd: &dyn Bd, id: &str, why: &str) -> String {
     let reason = format!("ask abandoned by mail send: {why}");
-    let first = bd.close(id, &reason);
-    if first.code == 0 {
-        return format!("{id} closed");
-    }
-    let second = bd.run(&a(&["close", id, "--reason", &reason]), None);
-    if second.code == 0 {
-        format!("{id} closed")
-    } else {
-        format!("{id} could NOT be closed: {}", bd_failure_detail(&second))
+    let mut last = String::new();
+    let closed = retry_until_deadline(|| {
+        let out = bd.close(id, &reason);
+        if out.code == 0 {
+            Ok(())
+        } else {
+            last = bd_failure_detail(&out);
+            Err(last.clone())
+        }
+    });
+    match closed {
+        Ok(()) => format!("{id} closed"),
+        Err(_) => format!("{id} could NOT be closed: {last}"),
     }
 }
 
