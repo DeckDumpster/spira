@@ -624,6 +624,7 @@ impl<'a> Run<'a> {
         let pidfile = self.run_dir().join(format!("aeon-{}-{}.pid", self.f(), c.id));
         let logf = self.run_dir().join(format!("{}.log", c.id));
         let _ = std::fs::write(&pidfile, format!("{}\n", self.pid));
+        strand::probe::write_lease(&pidfile, self.now() + self.fayth.lease_seconds());
         let _ = std::fs::write(pidfile.with_extension("name"), &self.s.aeon);
         let mark = ledger::trace_mark_line(&logf, &self.s.aeon, &self.conf.trace_mark(), self.now());
         append(&logf, &format!("{mark}\n"));
@@ -632,7 +633,7 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// Other live aeons' pidfile names; a pidfile whose pid is gone is removed.
+    /// Other live aeons' pidfile names; a pidfile whose lease has run out is removed.
     fn live_peers(&self) -> String {
         let mut names = Vec::new();
         let Ok(rd) = std::fs::read_dir(self.run_dir()) else { return String::new() };
@@ -645,9 +646,9 @@ impl<'a> Run<'a> {
             .collect();
         files.sort();
         for pf in files {
-            let pid = std::fs::read_to_string(&pf).map(|s| s.trim().to_string()).unwrap_or_default();
-            if !util::pid_alive(&pid) {
+            if !strand::probe::aeon_alive(&pf) {
                 let _ = std::fs::remove_file(&pf);
+                let _ = std::fs::remove_file(strand::probe::lease_file(&pf));
                 continue;
             }
             names.push(pf.file_stem().and_then(|n| n.to_str()).unwrap_or("").to_string());

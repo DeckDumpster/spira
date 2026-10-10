@@ -111,7 +111,7 @@ is "positive control: no unit at all -> aeon_count returns 0" "0" "$(aeon_count 
 # pidfile yet (it writes one only after claiming a bead) — the fast path must still see
 # this aeon as live, or a second summon lands on a slot that is not actually free.
 printf 'spira-aeon-builder-1700000000.service\n' > "$MOCK_UNITS_FILE"
-rm -f "$SPIRA_RUN"/aeon-builder-*.pid
+rm -f "$SPIRA_RUN"/aeon-builder-*.pid "$SPIRA_RUN"/aeon-builder-*.lease
 is "the pidfile gap: a live unit with NO pidfile still counts as 1" "1" "$(aeon_count builder)"
 
 # PRECISION: a unit for a DIFFERENT fayth does not count toward this one.
@@ -183,6 +183,7 @@ _wait_execed_as() {   # _wait_execed_as <pid> <needle> -> 0 once /proc/<pid>/cmd
 }
 _wait_execed_as "$FAKE_AEON_PID" "aeon.sh" || bail "fixture never exec'd into aeon.sh"
 printf '%s' "$FAKE_AEON_PID" > "$SPIRA_RUN/aeon-builder-sp-fallback.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-builder-sp-fallback.lease"
 is "fallback: a live pidfile still counts (no real systemd needed)" "1" "$(aeon_count builder)"
 kill "$FAKE_AEON_PID" 2>/dev/null; wait "$FAKE_AEON_PID" 2>/dev/null
 rm -f "$SPIRA_RUN"/aeon-builder-*.pid

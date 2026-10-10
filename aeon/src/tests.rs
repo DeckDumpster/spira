@@ -843,7 +843,9 @@ fn world_stop_bead_with_live_peers_is_released() {
     seed(&f, "sp-w");
     f.w.lock().unwrap().labels.get_mut("sp-w").unwrap().insert("world-stop".into()); // literal-ok: test fixture
     std::fs::write(f.run.join("aeon-builder-sp-other.pid"), format!("{}\n", std::process::id())).unwrap();
+    strand::probe::write_lease(&f.run.join("aeon-builder-sp-other.pid"), i64::MAX);
     std::fs::write(f.run.join("aeon-builder-sp-dead.pid"), "999999999\n").unwrap();
+    strand::probe::write_lease(&f.run.join("aeon-builder-sp-dead.pid"), 1);
     let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 0);
     assert!(ledger_lines(&o)[2].contains("status=world-stop-fence")); // literal-ok: asserts the ledger status name

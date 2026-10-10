@@ -83,6 +83,20 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
 /// bash seam round trip at all — `merge_resolved_config` already runs entirely in-process
 /// (`spira_config::resolve::resolve_for_process`); the bash seam exists only to source a
 /// fayth file and lib.sh's own derived values, neither of which this subcommand needs.
+fn run_stop(args: &[String]) -> i32 {
+    let original: BTreeMap<String, String> = std::env::vars().collect();
+    let exe = std::env::current_exe().ok();
+    let Some(home) = conf::resolve_home(None, &original, exe.as_deref()) else {
+        fatal("cannot find the harness's spira/ directory (set SPIRA_HOME)")
+    };
+    let mut snap = seam::Snapshot::default();
+    if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
+        fatal(&format!("config resolution: {e}"));
+    }
+    let conf = Conf::new(&snap, &home);
+    aeon::stop::run(&conf.run, args, util::now_epoch())
+}
+
 fn run_capacity(args: &[String]) -> i32 {
     let original: BTreeMap<String, String> = std::env::vars().collect();
     // The lifecycle machine is the only mode (sp-v62vn): a retired switch saying off is
@@ -146,6 +160,9 @@ fn main() {
     }
     if args.first().map(String::as_str) == Some("fast-tier") {
         std::process::exit(run_fast_tier(&args[1..]));
+    }
+    if args.first().map(String::as_str) == Some("stop") {
+        std::process::exit(run_stop(&args[1..]));
     }
     if args.first().map(String::as_str) == Some("capacity") {
         std::process::exit(run_capacity(&args[1..]));

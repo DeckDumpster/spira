@@ -199,22 +199,21 @@ pub fn roster(cfg: &Config, want: Option<&str>) -> Result<Vec<PartitionSpec>, St
 // Liveness and the fleet
 // ------------------------------------------------------------------------------------------
 
-fn pid_in(path: &Path) -> Option<u32> {
-    fs::read_to_string(path).ok()?.trim().parse().ok()
+pub use sending::reap::{lease_file, lease_live};
+
+/// Write an identity lease: the deadline, in epoch seconds, before which the aeon is alive.
+pub fn write_lease(pidfile: &Path, deadline: i64) {
+    let f = lease_file(pidfile);
+    let tmp = f.with_extension("lease.tmp");
+    if fs::write(&tmp, deadline.to_string()).is_ok() {
+        let _ = fs::rename(&tmp, &f);
+    }
 }
 
-/// A recorded pid that is still an aeon: alive AND its argv is the aeon runner — aeon.sh, or
-/// the Rust binary whose argv[0] is `…/aeon` (a recycled pid must not resurrect a dead
-/// aeon's claim).
+/// An aeon is alive while its identity lease is ahead of the clock — the one liveness signal.
+/// The pidfile names the identity; the pid and `/proc` are never consulted.
 pub fn aeon_alive(pf: &Path) -> bool {
-    let Some(pid) = pid_in(pf) else { return false };
-    let Ok(cmd) = fs::read(format!("/proc/{pid}/cmdline")) else { return false };
-    is_aeon_cmdline(&cmd)
-}
-
-pub fn is_aeon_cmdline(c: &[u8]) -> bool {
-    let argv0 = String::from_utf8_lossy(c.split(|b| *b == 0).next().unwrap_or(&[])).into_owned();
-    String::from_utf8_lossy(c).contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
+    sending::reap::aeon_alive(pf)
 }
 
 fn pidfiles(run: &Path, prefix: &str, suffix: &str) -> Vec<PathBuf> {
@@ -432,15 +431,11 @@ pub fn harness_state(cfg: &Config, now: i64) -> (String, i64) {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn aeon_cmdline_matches_the_script_and_the_binary_only() {
-        assert!(super::is_aeon_cmdline(b"bash\0/h/spira/aeon.sh\0builder\0"));
-        assert!(super::is_aeon_cmdline(b"/r/current/bin/aeon\0--home\0/r/current/spira\0builder\0"));
-        assert!(!super::is_aeon_cmdline(b"/usr/bin/sleep\0aeon\0"));
-        assert!(!super::is_aeon_cmdline(b"/r/bin/aeonic\0"));
-    }
-
     use super::*;
+
+    fn now_secs() -> i64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
+    }
 
     // ---- holder_alive: delegates to sending::reap (wave 4.23, sp-0ffox) -------------------
 
@@ -450,11 +445,16 @@ mod tests {
         std::fs::write(run.join("hold-sp-h1.pid"), std::process::id().to_string()).unwrap();
         assert!(holder_alive(&run, "sp-h1"));
         assert!(!holder_alive(&run, "sp-h2"), "nothing holds sp-h2");
-        // A live pid whose argv is not an aeon must not resurrect a recycled pid's claim —
-        // the same guarantee sending::reap's own suite proves; this just confirms the
-        // delegation reaches it rather than a local reimplementation.
+        // Liveness is the lease: a live pid with no lease is not an aeon, and a lease in the
+        // past is not one either.
         std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
-        assert!(!holder_alive(&run, "sp-a1"));
+        assert!(!holder_alive(&run, "sp-a1"), "a pid alone does not hold a claim");
+        std::fs::write(run.join("aeon-builder-sp-a1.lease"), "1").unwrap();
+        assert!(!holder_alive(&run, "sp-a1"), "an expired lease does not hold a claim");
+        std::fs::write(run.join("aeon-builder-sp-a1.lease"), (now_secs() + 60).to_string()).unwrap();
+        assert!(holder_alive(&run, "sp-a1"), "a running lease does");
+        std::fs::write(run.join("aeon-builder-sp-a1.pid"), "999999999").unwrap();
+        assert!(holder_alive(&run, "sp-a1"), "the pid is never probed");
     }
 
     // ---- aeon_count / aeons_live_lanes / fayth_free (wave 4.23, sp-0ffox) ------------------

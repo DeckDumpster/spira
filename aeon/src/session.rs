@@ -164,6 +164,10 @@ pub trait Beat: Send + Sync {
     fn log(&self, msg: &str);
 }
 
+/// An identity lease outlives a missed beat or two, and no more: a dead aeon's name and
+/// capacity slot free within this window.
+const IDENTITY_TTL_FLOOR: i64 = 90;
+
 pub struct Heartbeat {
     pub bead: String,
     pub fayth: String,
@@ -176,6 +180,16 @@ pub struct Heartbeat {
 impl Heartbeat {
     fn lease_file(&self) -> PathBuf {
         self.run.join("aeon").join(format!("{}.lease", self.bead))
+    }
+
+    fn identity_pidfile(&self) -> PathBuf {
+        self.run.join(format!("aeon-{}-{}.pid", self.fayth, self.bead))
+    }
+
+    fn renew_identity(&self, now: i64) {
+        if self.identity_pidfile().is_file() {
+            strand::probe::write_lease(&self.identity_pidfile(), now + IDENTITY_TTL_FLOOR.max(3 * self.every.as_secs() as i64));
+        }
     }
 
     fn write_lease(&self, deadline: i64) {
@@ -192,6 +206,7 @@ impl Heartbeat {
         let session_start = b.now();
         let mut deadline = session_start + self.lease_s;
         self.write_lease(deadline);
+        self.renew_identity(session_start);
         loop {
             let t = Instant::now();
             while t.elapsed() < self.every {
@@ -206,6 +221,13 @@ impl Heartbeat {
             let cur = b.trace_mtime();
             let now = b.now();
             let fuse = b.fuse();
+            self.renew_identity(now);
+            if crate::stop::requested(&self.run, &self.bead) {
+                crate::stop::clear(&self.run, &self.bead);
+                b.log(&format!("{}: {} stop requested — stopping the session", self.fayth, self.bead));
+                stop.trip(libc::SIGTERM);
+                return None;
+            }
             match hb_tick(prev, cur, now, deadline, if fuse.is_empty() { "?" } else { &fuse }, self.wall_min, session_start) {
                 HbTick::Renew => {
                     prev = cur;
@@ -346,6 +368,32 @@ mod tests {
         assert!(r.windows(2).all(|w| w[1] > w[0]), "every renewal advances: {r:?}");
         assert!(*r.last().unwrap() - r[0] > 120 * 5, "the session outlived several leases: {r:?}");
         assert!(r.iter().all(|&u| u % 60 == 0 && u >= 120 + 60), "each deadline is that beat's now + lease: {r:?}");
+    }
+
+    #[test]
+    fn a_stop_request_trips_the_session_and_is_consumed() {
+        let d = tmp("stopreq");
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 10_000 };
+        std::fs::create_dir_all(d.join("aeon")).unwrap();
+        std::fs::write(crate::stop::request_file(&d, "sp-a"), "why\n").unwrap();
+        let b = FakeBeat { mtimes: Mutex::new((1..=10).collect()), fuse: "?".into(), ..Default::default() };
+        let stop = Stop::default();
+        assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), None);
+        assert_eq!(stop.signalled(), Some(libc::SIGTERM));
+        assert!(!crate::stop::requested(&d, "sp-a"), "the request is consumed");
+        assert!(b.logs.lock().unwrap()[0].contains("stop requested"));
+    }
+
+    #[test]
+    fn every_beat_renews_the_identity_lease_to_a_short_window() {
+        let d = tmp("idlease");
+        let pf = d.join("aeon-builder-sp-a.pid");
+        std::fs::write(&pf, "1\n").unwrap();
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 6000, every: Duration::from_millis(1), wall_min: 10_000 };
+        let b = FakeBeat { mtimes: Mutex::new((1..=10).collect()), fuse: "?".into(), stop_after: 3, ..Default::default() };
+        assert_eq!(hb.run(&b, &Stop::default(), &AtomicBool::new(false)), None);
+        let deadline: i64 = std::fs::read_to_string(strand::probe::lease_file(&pf)).unwrap().trim().parse().unwrap();
+        assert!(deadline <= 60 * 4 + IDENTITY_TTL_FLOOR, "the identity lease is the short liveness window, not the session lease: {deadline}");
     }
 
     #[test]
