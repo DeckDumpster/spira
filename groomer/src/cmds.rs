@@ -382,8 +382,8 @@ mod cmds_tests {
         for state in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
             let bd = FakeBd::new();
             bd.set_lifecycle("sp-1", state);
-            close(&bd, "sp-1", "premise gone").unwrap();
-            supersede(&bd, "sp-1", "sp-2").unwrap();
+            close(&bd, "held-gate", "sp-1", "premise gone").unwrap();
+            supersede(&bd, "held-gate", "sp-1", "sp-2").unwrap();
             triage_poison(&bd, &seam, "sp-1", "drop", "work fault").unwrap();
             assert!(!bd.log().iter().any(|c| c.starts_with("close") || c.starts_with("supersede")), "{state}: {:?}", bd.log());
         }
