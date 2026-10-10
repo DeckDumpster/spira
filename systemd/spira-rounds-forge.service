@@ -1,5 +1,5 @@
 [Unit]
-Description=Spira rounds — cut, certify and land a round for every queue.local repo on the harness's own round path
+Description=Spira forge rounds — settle and open the merge-queue batch of every queue.forge repo, beside the local rounds
 Documentation=file://@SPIRA_PROD_ROOT@/batcher-cut/DESIGN.md
 After=default.target
 
@@ -12,10 +12,10 @@ Environment=SPIRA_HOME=@SPIRA_HOME@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
-ExecStart=@SPIRA_PROD_ROOT@/bin/batcher rounds-local
-TimeoutStartSec=7200
-StandardOutput=append:@SPIRA_RUN@/rounds.log
-StandardError=append:@SPIRA_RUN@/rounds.log
+ExecStart=@SPIRA_PROD_ROOT@/bin/batcher rounds-forge
+TimeoutStartSec=3600
+StandardOutput=append:@SPIRA_RUN@/rounds-forge.log
+StandardError=append:@SPIRA_RUN@/rounds-forge.log
 
 [X-Spira]
 Plane=work
