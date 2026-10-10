@@ -354,6 +354,8 @@ pub fn run_mode<'a>(
     extra: &[(&str, &str)],
     repos: Option<&[&str]>,
 ) -> i32 {
+    let chamber = w.home.join("chamber");
+    let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", chamber.to_str())]);
     let h: &'a Host<'a> = Box::leak(Box::new(Host::new(r, clock, sink)));
     let s = Sentinel::new(
         h,
