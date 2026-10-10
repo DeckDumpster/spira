@@ -2,6 +2,8 @@
 # tier: T2
 # requires: testenv
 # covers: spira/sim/src/world.rs spira/sim/src/main.rs
+# lane: sim
+# pids: 400
 #
 # test-sim-world-prebuilt.sh — `sim world up` inside testenv runs a prebuilt release
 # (SPIRA_SIM_RELEASE) and never builds one (sp-o4s4t4).
