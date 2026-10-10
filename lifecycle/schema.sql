@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS mending (
 );
 
 -- One row per member tip a mender produced for a failure; the per-bead mend cap and the
--- branch's current tip are read from it (migrations/0021-mend.sql for an existing database).
+-- branch's current tip are read from it (migrations/0023-mend.sql for an existing database).
 CREATE TABLE IF NOT EXISTS mend (
     seq        BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     batch_id   VARCHAR(40) NOT NULL,
