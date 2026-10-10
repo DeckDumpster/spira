@@ -125,7 +125,12 @@ pub fn cmd_show_batch(args: &[String], conn: &Conn) -> (i32, String) {
         // string elsewhere in this CLI (and the value a caller must feed back into
         // `--expect`) is `.as_str()`'s upper-snake form ("OPEN"). Two spellings of the same
         // state would make a caller's own string compare silently always fail.
-        Ok(Some(row)) => (
+        Ok(Some(row)) => {
+            let progress = match conn.query(&format!("SELECT progress FROM batch WHERE batch_id = {}", q(batch_id))) {
+                Ok(r) => r.first().and_then(|r| r.get("progress")).and_then(|p| p.as_str()).and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok()),
+                Err(e) => return cannot_tell(e),
+            };
+            (
             0,
             serde_json::json!({
                 "batch_id": row.batch_id,
@@ -138,11 +143,32 @@ pub fn cmd_show_batch(args: &[String], conn: &Conn) -> (i32, String) {
                 "reason": row.reason,
                 "pass": row.pass,
                 "phase": row.phase.map(|p| p.as_str()),
+                "progress": progress,
                 "version": row.version,
             })
             .to_string(),
-        ),
+            )
+        }
         Ok(None) => (1, "{}".to_string()),
+        Err(e) => cannot_tell(e),
+    }
+}
+
+/// `batch-progress <batch-id>`, a JSON object on stdin: records the running pass's live counts on
+/// the batch row. It is a reading of the pass, not a transition — no event, no version bump.
+pub fn cmd_batch_progress(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(batch_id) = args.first() else {
+        return (CANNOT_TELL, "batch-progress: missing <batch-id>".into());
+    };
+    let mut body = String::new();
+    if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut body) {
+        return (CANNOT_TELL, format!("batch-progress: stdin: {e}"));
+    }
+    if !serde_json::from_str::<serde_json::Value>(&body).is_ok_and(|v| v.is_object()) {
+        return (CANNOT_TELL, "batch-progress: stdin must be one JSON object".into());
+    }
+    match conn.run_plain(&format!("UPDATE batch SET progress = {} WHERE batch_id = {}", q(body.trim()), q(batch_id))) {
+        Ok(()) => (0, String::new()),
         Err(e) => cannot_tell(e),
     }
 }

@@ -828,12 +828,28 @@ pub struct RunEnv<'a> {
 pub trait Recorder: Sync {
     fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
     fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
+    fn progress(&self, batch: &str, body: &str) -> Result<(), String>;
 }
 
 /// `queue round suites-started`: the lifecycle machine's own verb, so a refusal names the phase.
 pub struct QueueRecorder;
 
 impl Recorder for QueueRecorder {
+    fn progress(&self, batch: &str, body: &str) -> Result<(), String> {
+        use std::io::Write;
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", "30", "spira-lc", "batch-progress", batch]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| format!("cannot run spira-lc: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(body.as_bytes());
+        }
+        let out = child.wait_with_output().map_err(|e| format!("spira-lc batch-progress: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("spira-lc batch-progress refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
     fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
         let mut cmd = command("timeout");
         cmd.args(["-k", "5", "60", "queue", "round", "pass-start", batch]).args(repo).stdin(Stdio::null());
@@ -855,10 +871,19 @@ impl Recorder for QueueRecorder {
     }
 }
 
+/// The pass's live counts onto its batch row; telemetry, so a refusal is logged and never fails the pass.
+fn publish_progress(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress) {
+    let (Some(batch), Some(body)) = (args.round_batch.as_deref(), progress.take_publish()) else { return };
+    if let Err(e) = env.record.progress(batch, &body) {
+        eprintln!("round-vm run: {e}");
+    }
+}
+
 /// The suites boundary, written the first time the pass is seen past its build. A refused write is
 /// kept so the pass ends a fault: a pass the batch row cannot follow is not one to certify.
 fn record_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, refused: &mut Option<String>) {
     let Some(batch) = args.round_batch.as_deref() else { return };
+    publish_progress(env, args, progress);
     if progress.take_suites_began() {
         if let Err(e) = env.record.suites_started(batch, args.round_repo.as_deref()) {
             eprintln!("round-vm run: {e}");
@@ -1142,6 +1167,7 @@ fn on_vm_run(
         let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
         let code = settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code);
         progress.finish(&results_dir, code);
+        publish_progress(env, args, &mut progress);
         return code;
     };
 
@@ -1200,6 +1226,7 @@ fn on_vm_run(
             }
         };
         progress.finish(&results_dir, code);
+        publish_progress(env, args, &mut progress);
         if let Err(e) = server.spool.corpus_done(code) {
             eprintln!("round-vm run: {e}");
         }
@@ -1995,6 +2022,7 @@ mod tests {
     #[derive(Default)]
     struct FakeRecorder {
         calls: Mutex<Vec<String>>,
+        bodies: Mutex<Vec<(String, String)>>,
         refuse: bool,
     }
 
@@ -2007,6 +2035,10 @@ mod tests {
             self.calls.lock().unwrap().push(format!("{batch} {}", repo.unwrap_or("-")));
             if self.refuse { Err("the batch is ATTRIBUTING, not CI_RUNNING".into()) } else { Ok(()) }
         }
+        fn progress(&self, batch: &str, body: &str) -> Result<(), String> {
+            self.bodies.lock().unwrap().push((batch.to_string(), body.to_string()));
+            Ok(())
+        }
     }
 
     #[test]
@@ -2016,6 +2048,10 @@ mod tests {
         let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), round_repo: Some("sp".into()), ..tree(&fx) };
         assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
         assert_eq!(*rec.calls.lock().unwrap(), vec!["start r-9".to_string(), "r-9 sp".to_string()]);
+        let bodies = rec.bodies.lock().unwrap();
+        let (batch, last) = bodies.last().expect("the pass publishes its counts onto the batch row");
+        let v: Value = serde_json::from_str(last).unwrap();
+        assert_eq!((batch.as_str(), v["total"].as_u64(), v["phase"].as_str()), ("r-9", Some(2), Some("done")));
     }
 
     #[test]
@@ -2024,7 +2060,7 @@ mod tests {
         let rec = FakeRecorder::default();
         let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh".into()), ..tree(&fx) };
         assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
-        assert!(rec.calls.lock().unwrap().is_empty());
+        assert!(rec.calls.lock().unwrap().is_empty() && rec.bodies.lock().unwrap().is_empty());
     }
 
     #[test]

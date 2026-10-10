@@ -236,6 +236,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // The cutover round's own verbs (sp-o7nbr): batch creation and the cross-machine
         // cascades a batch's own transition emits to its members (cutover.rs's own doc).
         Some("show-batch") => cutover::cmd_show_batch(&args[1..], conn),
+        Some("batch-progress") => cutover::cmd_batch_progress(&args[1..], conn),
         Some("create-bead") => cutover::cmd_create_bead(&args[1..], conn),
         // The ask machine (ask.rs): an escalation is its own lifecycle, never a bead row.
         Some("create-ask") => ask::cmd_create_ask(&args[1..], conn),
@@ -282,7 +283,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | live-check | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | ops-snapshot | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | event-continuity | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | batch-progress <batch-id> (JSON on stdin) | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | live-check | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | ops-snapshot | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | event-continuity | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
         ),
     }
 }
@@ -453,7 +454,7 @@ fn cmd_list_batches(conn: &Conn) -> (i32, String) {
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let run = || -> Result<Vec<Value>, String> {
         let mut batches = q(format!(
-            "SELECT batch_id, repo, state, parent, reason, pass, phase, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
+            "SELECT batch_id, repo, state, parent, reason, pass, phase, progress, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
         ))?;
         let ids: Vec<String> = batches
             .iter()
@@ -478,6 +479,8 @@ fn cmd_list_batches(conn: &Conn) -> (i32, String) {
         for b in batches.iter_mut() {
             let id = b.get("batch_id").cloned().unwrap_or(Value::Null);
             let obj = b.as_object_mut().expect("a batch row is an object");
+            let progress = obj.get("progress").and_then(Value::as_str).and_then(|t| serde_json::from_str::<Value>(t).ok()).unwrap_or(Value::Null);
+            obj.insert("progress".into(), progress);
             obj.insert("members".into(), Value::Array(of(&members, &id)));
             obj.insert("ejected".into(), Value::Array(of(&ejected, &id)));
             let (history, since) = passes::fold(&of(&events, &id));
