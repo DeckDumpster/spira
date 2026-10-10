@@ -11,6 +11,8 @@ pub struct VmInfo {
     pub status: String,
     pub lock: Option<String>,
     pub registered: bool,
+    /// A Proxmox template: never a runner, so never "provisioning".
+    pub template: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,7 +22,9 @@ pub enum Yield {
 }
 
 fn is_ci(vm: &VmInfo) -> bool {
-    CI_PREFIXES.iter().any(|p| vm.name.starts_with(p))
+    // A template (ci-runner-template-resealed) is stopped and unregistered forever; counting it
+    // held every cold provision for the full MAX_WAIT_SECS (r-auto-110, 2026-10-10).
+    !vm.template && CI_PREFIXES.iter().any(|p| vm.name.starts_with(p))
 }
 
 /// A CI VM is provisioning if it is locked (clone in progress) or not yet
@@ -64,8 +68,16 @@ pub fn wait_for_ci(
 mod tests {
     use super::*;
     fn vm(n: &str, s: &str, l: Option<&str>, r: bool) -> VmInfo {
-        VmInfo { name: n.into(), status: s.into(), lock: l.map(String::from), registered: r }
+        VmInfo { name: n.into(), status: s.into(), lock: l.map(String::from), registered: r, template: false }
     }
+    #[test]
+    fn a_ci_named_template_never_holds_a_provision() {
+        let t = VmInfo { name: "ci-runner-template-resealed".into(), status: "stopped".into(), lock: None, registered: false, template: true };
+        assert_eq!(decide(&[t.clone()], 0), Yield::Proceed);
+        let live = VmInfo { template: false, ..t };
+        assert_eq!(decide(&[live], 0), Yield::Hold, "positive control: a stopped, unregistered ci VM still holds");
+    }
+
     #[test]
     fn sweep_only_proceeds() {
         assert_eq!(decide(&[vm("round-102", "running", None, false)], 0), Yield::Proceed);
