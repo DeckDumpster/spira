@@ -161,7 +161,7 @@ _sc="$(command -v spira-config 2>/dev/null || true)"
 [ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
 timeout 5 podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 \
     && timeout 5 podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
-iszero "the tree's spira-config is staged in the container's release bin/" "$?"
+iszero "the tree's spira-config is staged in the container's release bin/" "$_rc"
 
 # ===========================================================================
 echo
@@ -209,9 +209,11 @@ iszero "the tree's spira-install is staged in the container" "$?"
 _doc="$(command -v doctor 2>/dev/null || true)"
 [ -n "$_doc" ] || bail "doctor is not on PATH (the tree's build provides it)"
 # batch-job: staging the installer and doctor into the fake release bin/ install resolves its own release from
-podman cp "$_si" "$CNAME:/tmp/spira-prod/bin/spira-install" >&2 && podman cp "$_doc" "$CNAME:/tmp/spira-prod/bin/doctor" >&2 \
-    && podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-install /tmp/spira-prod/bin/doctor >&2
-iszero "the tree's spira-install and doctor are staged in the container's release bin/" "$?"
+podman cp "$_si" "$CNAME:/tmp/spira-prod/bin/spira-install" >&2 && podman cp "$_doc" "$CNAME:/tmp/spira-prod/bin/doctor" >&2
+_rc=$?
+# batch-job: marking the staged release binaries executable
+[ "$_rc" -eq 0 ] && { podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-install /tmp/spira-prod/bin/doctor >&2; _rc=$?; }
+iszero "the tree's spira-install and doctor are staged in the container's release bin/" "$_rc"
 
 _sc="$(command -v spira-config 2>/dev/null || true)"
 [ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
