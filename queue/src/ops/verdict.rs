@@ -195,18 +195,27 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     // one-off range, not a round, and the batcher's own attribution (attrib.rs, sp-hvtgs)
     // has no seam for that shape. The fix-forward bead still files either way; it just
     // names red suites and members instead of a local reproduction.
+    let fail_lines = if suites.is_empty() {
+        String::new()
+    } else {
+        w.forge.run_id(&c.s.forge, path, &field("branch")).map(|run| w.forge.fail_lines(&c.s.forge, path, &run, &suites.replace(',', " "))).unwrap_or_default()
+    };
+    let fail_lines = fail_lines.trim_end().to_string();
     w.forge.pr_close(&c.s.forge, path, &pr);
 
     let mut body = format!("Publish PR {pr} red for {name} ({}).\n\n", if run_url.is_empty() { "run link unavailable" } else { &run_url });
     body.push_str(&format!("Published range: {}..{}\n", short(&forge_sha), short(&head)));
     body.push_str(&format!("Red suites: {}\n\n", if suites.is_empty() { "<none named>" } else { &suites }));
+    if !fail_lines.is_empty() {
+        body.push_str(&format!("Failing lines:\n{fail_lines}\n\n"));
+    }
     body.push_str(&format!("Members in this publish: {}\n\n", if member_ids.is_empty() { "<none>" } else { &member_ids }));
     body.push_str("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened.");
     let title = if suites.is_empty() { format!("publish PR {pr} red for {name}") } else { format!("publish PR {pr} red for {name}: {suites}") };
     let actor = w.var("SPIRA_QUEUE_ACTOR").unwrap_or_else(|| "queue.sh".into());
     let prior = records::read_kv(&c.queue_file("publish-red")).ok().flatten().filter(|k| !suites.is_empty() && k.get("suites") == Some(suites.as_str()));
     let amended = prior.as_ref().and_then(|k| k.get("fix_forward")).filter(|id| id.starts_with(|ch: char| ch.is_ascii_alphanumeric()) && !id.starts_with('<')).map(str::to_string).filter(|id| {
-        w.lib.amend_bug(&actor, id, &format!("Publish PR {pr} red again for the same suites ({suites}); {}. Range {}..{}; members: {}.", if run_url.is_empty() { "run link unavailable" } else { &run_url }, short(&forge_sha), short(&head), if member_ids.is_empty() { "<none>" } else { &member_ids }))
+        w.lib.amend_bug(&actor, id, &format!("Publish PR {pr} red again for the same suites ({suites}); {}. Range {}..{}; members: {}.{}", if run_url.is_empty() { "run link unavailable" } else { &run_url }, short(&forge_sha), short(&head), if member_ids.is_empty() { "<none>" } else { &member_ids }, if fail_lines.is_empty() { String::new() } else { format!("\nFailing lines:\n{fail_lines}") }))
     });
     let fid = amended.clone().or_else(|| w.lib.create_bug(&actor, &title, &c.s.verdict.incident_priority, &format!("spira,plan,repo:{name}"), &body));
     let fid_s = fid.clone().unwrap_or_else(|| "<create-failed>".into());

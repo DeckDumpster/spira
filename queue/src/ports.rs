@@ -258,6 +258,8 @@ pub trait Forge {
     fn run_id(&self, forge: &Path, repo: &Path, branch: &str) -> Option<String>;
     /// `run-metadata <repo> <run>` → its stdout (empty when it failed).
     fn run_metadata(&self, forge: &Path, repo: &Path, run: &str) -> String;
+    /// `fail-lines <repo> <run> <suites>` → `fail-line: <suite>: <text>` lines (empty when it failed).
+    fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String;
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str);
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str);
 }

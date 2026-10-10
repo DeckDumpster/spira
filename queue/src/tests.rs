@@ -399,6 +399,8 @@ struct FForge {
     pr_state: RefCell<Option<String>>,
     run: RefCell<Option<String>>,
     meta: RefCell<String>,
+    /// What `fail-lines` answers.
+    fails: RefCell<String>,
 }
 
 impl Forge for FForge {
@@ -436,6 +438,10 @@ impl Forge for FForge {
     fn run_metadata(&self, _: &Path, _: &Path, run: &str) -> String {
         self.calls.borrow_mut().push(format!("run-metadata {run}"));
         self.meta.borrow().clone()
+    }
+    fn fail_lines(&self, _: &Path, _: &Path, run: &str, suites: &str) -> String {
+        self.calls.borrow_mut().push(format!("fail-lines {run} {suites}"));
+        self.fails.borrow().clone()
     }
     fn run_cancel(&self, _: &Path, _: &Path, run: &str) {
         self.calls.borrow_mut().push(format!("run-cancel {run}"));
