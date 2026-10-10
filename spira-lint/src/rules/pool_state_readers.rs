@@ -109,3 +109,9 @@ mod tests {
         assert!(run(&t, &["spira/y.sh"]).is_err());
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(PoolStateReaders::default()),
+    ]
+}

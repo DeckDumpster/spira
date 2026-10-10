@@ -198,3 +198,9 @@ mod tests {
         assert!(matches!(run(&t, &[MANIFEST, "spira/y.sh"]), Err(LintError::BadAllow { .. })));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(DepsLint),
+    ]
+}

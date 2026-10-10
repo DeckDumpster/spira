@@ -134,3 +134,9 @@ mod tests {
         assert!(!is_offender("helper.sh"));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ScratchFence),
+    ]
+}

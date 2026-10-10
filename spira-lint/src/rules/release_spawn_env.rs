@@ -136,3 +136,9 @@ mod tests {
         assert!(got[0].contains("lists b/src/main.rs"));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ReleaseSpawnEnv),
+    ]
+}

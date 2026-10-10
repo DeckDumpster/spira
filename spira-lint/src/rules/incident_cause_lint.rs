@@ -184,3 +184,9 @@ mod tests {
         assert_eq!(r.checked(), Some((1, "files".to_string())));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(IncidentCauseLint::default()),
+    ]
+}

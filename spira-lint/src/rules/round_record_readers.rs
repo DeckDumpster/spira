@@ -107,3 +107,9 @@ mod tests {
         assert!(run(&t, &["queue/src/r.rs"]).is_err());
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(RoundRecordReaders::default()),
+    ]
+}
