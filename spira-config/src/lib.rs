@@ -546,6 +546,8 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "lifecycle_enforce", bead: "sp-v62vn" },
     // Express is lifecycle state (`spira-lc list --express`); no consumer reads a bd label.
     RetiredKey { key: "express_label", bead: "sp-38yq9j" },
+    // Rework is never deferred behind another bead's branch: rounds merge and rebase, Sift screens.
+    RetiredKey { key: "overlap_defer_label", bead: "sp-dzwj7w" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
