@@ -772,7 +772,8 @@ except Exception: print("")' 2>/dev/null
 # `event bead <id> ... --actor A --kind K`: Claim applies only to a READY/REWORK row (else
 # exit 3, refused — a bead another aeon holds is never taken over) and records the holder
 # (and appends "<id> <actor>" to $SPIRA_RUN/lc-claims.log, so a suite can ask who claimed);
-# Release/HolderDead drop that claim; Submit writes lc-row SUBMITTED; any other kind (Renew,
+# Release/HolderDead drop that claim; `phase` is accepted, `disposition <id> <status> <note>`
+# is recorded in $SPIRA_RUN/lc-disposition/<id> and shown on the WORKING row until the next Claim; Submit writes lc-row SUBMITTED; any other kind (Renew,
 # Hold, ...) applies without changing the row. Every other verb goes to the real spira-lc
 # further down PATH, exactly as before the stub.
 lc_aeon_mirror() {
@@ -781,6 +782,8 @@ lc_aeon_mirror() {
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
+    phase) exit 0 ;;
+    disposition) mkdir -p "${SPIRA_RUN:?}/lc-disposition"; printf '%s\t%s\n' "${3:-}" "${4:-}" > "$SPIRA_RUN/lc-disposition/${2:?}"; exit 0 ;;
     express) mkdir -p "${SPIRA_RUN:?}/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; exit 0 ;;
     unexpress) rm -f "${SPIRA_RUN:?}/lc-express/${2:?}"; exit 0 ;;
     hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"
@@ -835,6 +838,9 @@ def row(b):
         r["state"], r["holder"] = "WORKING", (b.get("assignee") or None)
     if r["state"] == "SUBMITTED" and not r["tip"]:
         r["tip"] = "fixturetip"
+    disp = read(os.path.join(run, "lc-disposition", i))
+    if disp and r["state"] == "WORKING":
+        r["disposition"], _, r["disposition_note"] = disp.partition("\t")
     return r
 rows = {b["id"]: row(b) for b in beads
         if isinstance(b, dict) and b.get("id") and b.get("issue_type") not in ("epic", "event")}
@@ -886,6 +892,8 @@ elif verb == "event":
         os.makedirs(claims, exist_ok=True)
         open(os.path.join(claims, i), "w").write(actor)
         open(os.path.join(run, "lc-claims.log"), "a").write("%s %s\n" % (i, actor))
+        if os.path.exists(os.path.join(run, "lc-disposition", i)):
+            os.remove(os.path.join(run, "lc-disposition", i))
         pinned = os.path.join(run, "lc-row", i)
         if os.path.exists(pinned):
             os.remove(pinned)
