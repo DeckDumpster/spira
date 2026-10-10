@@ -386,3 +386,4 @@ read_watch_interval
 read_watch_remind
 lc_timeout
 red_tracker_label
+sccache_dav_tailnet_addr

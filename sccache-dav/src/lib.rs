@@ -79,6 +79,26 @@ pub fn spec_drifted(spec: &str, bound: &str) -> bool {
     spira_config::hostaddr::resolve_hostport(spec).map(|now| now != bound).unwrap_or(false)
 }
 
+/// The addresses to bind: the LAN one, plus `tailnet` (`SPIRA_SCCACHE_DAV_TAILNET_ADDR`) when
+/// set. A wildcard is refused for either; a tailnet address equal to the LAN one binds once.
+pub fn listen_addrs(lan: &str, tailnet: &str) -> Result<Vec<String>, String> {
+    let tailnet = tailnet.trim();
+    let mut out = vec![lan.to_string()];
+    if tailnet.is_empty() || tailnet == lan {
+        return Ok(out);
+    }
+    if tailnet.starts_with("0.0.0.0") || tailnet.starts_with('*') {
+        return Err(format!("SPIRA_SCCACHE_DAV_TAILNET_ADDR={tailnet:?} — never a wildcard"));
+    }
+    out.push(tailnet.to_string());
+    Ok(out)
+}
+
+/// `SPIRA_SCCACHE_DAV_TAILNET_ADDR`, through the one door onto config; empty means no tailnet listener.
+pub fn tailnet_addr_from_config() -> Result<String, String> {
+    spira_config::process::cfg("SPIRA_SCCACHE_DAV_TAILNET_ADDR")
+}
+
 pub struct AppState {
     pub root: PathBuf,
     pub token: Option<String>,

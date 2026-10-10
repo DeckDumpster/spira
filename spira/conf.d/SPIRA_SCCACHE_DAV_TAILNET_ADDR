@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=sccache
+DOC=This host's tailnet address (ip:port) the shared compilation cache also listens on, for spill runners that join the tailnet; empty means LAN only
+SCHEMA=This host's tailnet address (`ip:port`, never a wildcard) that sccache-dav binds in addition to SPIRA_SCCACHE_DAV_ADDR, and the address spilled jobs on the tailnet name as their cache endpoint. No default: empty means the store listens on the LAN address only.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets
+    # it; empty means sccache-dav binds only SPIRA_SCCACHE_DAV_ADDR. The address is
+    # operator inventory (law-harness-ships-mechanism-not-inventory).
+SPIRA_CONF_DEFAULT_EOF

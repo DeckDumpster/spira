@@ -294,6 +294,7 @@ round_vm_vcpus = "16"
 run = "/fixture/userhome/spira/run"
 sccache_dav_addr = "auto:9431"
 sccache_dav_max_gb = 40
+sccache_dav_tailnet_addr = ""
 scope_label = "spira"
 self_test = ""
 self_window = "60"
