@@ -550,6 +550,23 @@ fn a_publish_red_bead_carries_the_failing_suite_lines() {
 }
 
 #[test]
+fn a_publish_red_from_a_non_suite_step_carries_the_step_and_log_tail_and_files_once_per_run() {
+    let t = T::new(LandMode::QueueLocal);
+    let red = "red\nrun-id: 38071344778\nfailed-step: stage / Stage the build as a release\nstep-log: release: cannot create /x: Permission denied (os error 13)\nstep-log: ##[error]Process completed with exit code 1.\n";
+    publish_record(&t);
+    t.forge.status.borrow_mut().push(Some(red.into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    let bug = t.lib.calls.borrow().iter().find(|c| c.starts_with("create_bug")).cloned().unwrap();
+    assert!(bug.contains("Failed steps:\n- stage / Stage the build as a release\n"), "{bug}");
+    assert!(bug.contains("Log tail of the failed step:\nrelease: cannot create /x: Permission denied (os error 13)\n##[error]Process completed with exit code 1."), "{bug}");
+    publish_record(&t);
+    t.forge.status.borrow_mut().push(Some(red.into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(t.lib.calls.borrow().iter().filter(|c| c.starts_with("create_bug")).count(), 1);
+    assert!(t.out().contains("run 38071344778 already has tracker sp-fix1"), "{}", t.out());
+}
+
+#[test]
 fn a_publish_red_bead_carries_the_red_tracker_label_only_when_one_is_configured() {
     for (label, want) in [("tracker-x", true), ("", false)] {
         let mut t = T::new(LandMode::QueueLocal);

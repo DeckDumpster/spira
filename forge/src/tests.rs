@@ -113,6 +113,35 @@ fn check_status_provision_job_failure_overrides_red() {
 }
 
 #[test]
+fn check_status_red_with_only_a_non_suite_step_names_the_step_and_its_log_tail() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["run", "list", "--branch", "b", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        0,
+        r#"[{"databaseId":7,"status":"completed","conclusion":"failure"}]"#,
+    );
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/7/jobs"],
+        0,
+        r#"{"jobs":[{"id":99,"name":"build","conclusion":"success"},{"id":55,"name":"stage","conclusion":"failure","steps":[{"name":"Checkout","conclusion":"success"},{"name":"Stage the build as a release","conclusion":"failure"}]}]}"#,
+    );
+    let mut log = String::new();
+    for i in 0..30 {
+        log.push_str(&format!("2026-10-10T01:02:03.456Z line {i}\n"));
+    }
+    log.push_str("2026-10-10T01:02:04.000Z release: cannot create /x: Permission denied (os error 13)\n2026-10-10T01:02:04.100Z ##[error]Process completed with exit code 1.\n2026-10-10T01:02:05.000Z Post job cleanup.\n");
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/55/logs"], 0, &log);
+    let out = check_status(&gh, &NoProc, repo(), "b");
+    assert_eq!(out.lines[0], "red");
+    assert!(out.lines.contains(&"run-id: 7".to_string()), "{:?}", out.lines);
+    assert!(out.lines.contains(&"failed-step: stage / Stage the build as a release".to_string()), "{:?}", out.lines);
+    let tail: Vec<&String> = out.lines.iter().filter(|l| l.starts_with("step-log: ")).collect();
+    assert_eq!(tail.len(), 20);
+    assert_eq!(tail[18], "step-log: release: cannot create /x: Permission denied (os error 13)");
+    assert_eq!(tail[19], "step-log: ##[error]Process completed with exit code 1.");
+}
+
+#[test]
 fn check_status_suites_job_cancelled_is_harness_fault_not_a_verdict() {
     let gh = FakeGh::default();
     gh.on(
