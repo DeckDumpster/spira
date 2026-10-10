@@ -159,9 +159,8 @@ iszero "stubs created inside container" "$?"
 # carries none (testenv/Containerfile removes it), and conf.sh fails closed without it.
 _sc="$(command -v spira-config 2>/dev/null || true)"
 [ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
-# batch-job: copying the staged spira-config into the rehearsal container and marking it executable
-podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 \
-    && podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
+timeout 5 podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 \
+    && timeout 5 podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
 iszero "the tree's spira-config is staged in the container's release bin/" "$?"
 
 # ===========================================================================
