@@ -436,7 +436,7 @@ pub fn parse_iso(s: &str) -> Option<u64> {
     let (date, time) = s.split_once('T')?;
     let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
     let (y, m, day) = (d.next()??, d.next()??, d.next()??);
-    let mut t = time.split(|c| c == ':').map(|p| p.get(..2).and_then(|x| x.parse::<i64>().ok()));
+    let mut t = time.split(':').map(|p| p.get(..2).and_then(|x| x.parse::<i64>().ok()));
     let (hh, mm, ss) = (t.next()??, t.next()??, t.next()??);
     let (y2, m2) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
     let era = y2.div_euclid(400);
