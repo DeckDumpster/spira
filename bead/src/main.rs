@@ -143,7 +143,7 @@ fn is_incident(home: &str, id: &str) -> bool {
 /// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
-fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Option<(&str, i64)>, express: bool) -> i32 {
+fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>) -> i32 {
     if incident.is_none() && mirror.is_none() && !express {
         return bdq_status(home, args);
     }
@@ -160,10 +160,18 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
         eprintln!("bead: file: created, but could not read its id to mirror its title or mark it express; `spira-lc backfill-titles` fills the title, `bead.sh amend <id> --express` marks it");
         return 0;
     };
-    if let Some((title, priority)) = mirror {
-        mirror_to_lifecycle(&new_id, Some(title), priority);
-    }
     let mut rc = 0;
+    if let Some((title, priority)) = mirror {
+        match submitted_tip {
+            Some(tip) => {
+                if let Err(e) = create_submitted_row(&new_id, title, priority, tip) {
+                    eprintln!("bead: file: {new_id} filed but its lifecycle row was not created SUBMITTED: {e}; it is not claimable until one exists: spira-lc create-bead {new_id} --submitted-tip {tip}");
+                    rc = 1;
+                }
+            }
+            None => mirror_to_lifecycle(&new_id, Some(title), priority),
+        }
+    }
     if express {
         if let Err(e) = spira_config::lifecycle_row::set_express(&new_id, true) {
             eprintln!("bead: file: {new_id} filed but not marked express: {e}; mark it: bead.sh amend {new_id} --express");
@@ -201,6 +209,22 @@ fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64) {
         .spawn();
     if spawned.is_err() {
         eprintln!("bead: {id} filed, but its title and priority were not mirrored to the lifecycle store; `spira-lc backfill-titles` fills them");
+    }
+}
+
+/// Synchronous, unlike the mirror: the row must exist SUBMITTED before this call returns.
+fn create_submitted_row(id: &str, title: &str, priority: i64, tip: &str) -> Result<(), String> {
+    let bin = spira_config::lifecycle_row::lc_bin();
+    let out = Command::new("timeout")
+        .args(["15", &bin, "create-bead", id, "--priority", &priority.to_string(), "--title", title, "--submitted-tip", tip])
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {bin}: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!("{bin} create-bead exited {}: {}{}", out.status.code().map_or("signal".into(), |c| c.to_string()), String::from_utf8_lossy(&out.stdout).trim(), String::from_utf8_lossy(&out.stderr).trim()))
     }
 }
 
@@ -368,6 +392,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut kind: Option<String> = None;
     let mut express = false;
     let mut submitted = false;
+    let mut tip: Option<String> = None;
     let mut json = false;
     let mut parent: Option<String> = None;
 
@@ -400,6 +425,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             }
             "--express" => express = true,
             "--submitted" => submitted = true,
+            "--tip" => {
+                i += 1;
+                tip = args.get(i).cloned();
+            }
             "--json" => json = true,
             other => {
                 eprintln!("bead: unknown option: {other}");
@@ -449,6 +478,15 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
 
     if submitted && kind != "work" {
         eprintln!("bead: --submitted applies only to work beads");
+        return 2;
+    }
+
+    if submitted && tip.as_deref().is_none_or(str::is_empty) {
+        eprintln!("bead: --submitted requires --tip <sha>: the lifecycle row is created SUBMITTED at that tip, so no claimable READY window exists");
+        return 2;
+    }
+    if tip.is_some() && !submitted {
+        eprintln!("bead: --tip applies only with --submitted");
         return 2;
     }
 
@@ -521,7 +559,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("--no-inherit-labels".into());
         }
         let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
-        bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)), express)
+        bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref())
     } else {
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
@@ -563,7 +601,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_create(home, &bd_args, incident_parent.as_deref(), None, express)
+        bdq_create(home, &bd_args, incident_parent.as_deref(), None, express, None)
     }
 }
 
