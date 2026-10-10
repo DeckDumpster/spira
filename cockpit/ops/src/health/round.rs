@@ -80,6 +80,11 @@ fn open_rows(snap: &Snapshot, cols: i64, now: i64, phone: bool, rows: i64) -> Ve
         let n = snap.q(&format!("{k}_N"));
         let ejected = rows_of(snap, &format!("{k}_EJECT"));
         let label = if i == 0 { format!("{DIM}ROUNDS{RST}") } else { "      ".to_string() };
+        let parent = snap.get(&format!("{k}_PARENT")).filter(|s| !s.is_empty());
+        let (indent, behind) = match parent {
+            Some(p) => ("  ", format!("  {DIM}behind {p} \u{b7} fenced{RST}")),
+            None => ("", String::new()),
+        };
         let wall = match (phase == "certifying", num(snap, &format!("{k}_OPENED"))) {
             (false, _) => String::new(),
             (true, Some(opened)) => {
@@ -91,22 +96,22 @@ fn open_rows(snap: &Snapshot, cols: i64, now: i64, phone: bool, rows: i64) -> Ve
         let step = if phase == "certifying" { step_cell(snap, &k, now) } else { String::new() };
         if phone {
             let out_n = if ejected.is_empty() { String::new() } else { format!(" {WARN}-{}{RST}", ejected.len()) };
-            out.push(format!(" {label} {B}{name}{RST} {phase}{}{}{step} {n}m{out_n}", wall.trim_end(), RST));
+            out.push(format!(" {label} {indent}{B}{name}{RST} {phase}{}{}{step} {n}m{out_n}", wall.trim_end(), RST));
             continue;
         }
-        let open = on_vm == Some(i) && room;
+        let open = (on_vm == Some(i) || parent.is_some()) && room;
         let mark = if open { "\u{25be}" } else { "\u{25b8}" };
-        out.push(format!(" {label}  {mark} {B}{name}{RST}  {ACC}{phase}{RST}{wall}{step}  {n} member(s){}", if ejected.is_empty() { String::new() } else { format!("  {WARN}-{}{RST}", ejected.len()) }));
+        out.push(format!(" {label}  {indent}{mark} {B}{name}{RST}  {ACC}{phase}{RST}{behind}{wall}{step}  {n} member(s){}", if ejected.is_empty() { String::new() } else { format!("  {WARN}-{}{RST}", ejected.len()) }));
         if !open {
             continue;
         }
         for raw in rows_of(snap, &format!("{k}_MEMBER")) {
             let (id, state) = pair(&raw);
-            out.push(format!("          {id}  {DIM}{}{RST}", fit(state, cols - 20)));
+            out.push(format!("          {indent}{id}  {DIM}{}{RST}", fit(state, cols - 20)));
         }
         for raw in &ejected {
             let (id, why) = pair(raw);
-            out.push(format!("          {WARN}ejected{RST} {id}  {DIM}{}{RST}", fit(why, cols - 28)));
+            out.push(format!("          {indent}{WARN}ejected{RST} {id}  {DIM}{}{RST}", fit(why, cols - 28)));
         }
     }
     if count > shown {
@@ -197,6 +202,21 @@ mod tests {
         assert!(strip(&out[0]).contains("ROUNDS") && strip(&out[0]).contains("r-11  staged"), "{text}");
         assert!(text.contains("r-10  certifying"), "{text}");
         assert_eq!(text.matches("sp-a  in").count(), 1, "{text}");
+    }
+
+    #[test]
+    fn a_staged_round_is_drawn_indented_under_its_parent_and_expands_to_its_members() {
+        let snap = format!(
+            "SP_ROUND_STATE='open'\nSP_ROUND_CAP='900'\nSP_ROUNDS_N='2'\n{}{}SP_ROUNDS1_PARENT='r-10'\n",
+            round(0, "r-10", "certifying"),
+            round(1, "r-12", "staged")
+        );
+        let out: Vec<String> = render(&snap, 100, 1100).iter().map(|l| strip(l)).collect();
+        let parent = out.iter().position(|l| l.contains("\u{25be} r-10")).expect("parent row");
+        let child = out.iter().position(|l| l.contains("r-12  staged  behind r-10 \u{b7} fenced")).expect("child row");
+        assert!(child > parent && out[child].find("r-12").unwrap() > out[parent].find("r-10").unwrap(), "{out:#?}");
+        assert!(out[child + 1].contains("sp-a  in") && out[child + 1].find("sp-a").unwrap() > out[parent + 1].find("sp-a").unwrap(), "{out:#?}");
+        assert!(out[child].contains("2 member(s)"), "{out:#?}");
     }
 
     #[test]

@@ -128,6 +128,7 @@ fn gather_state_machine(s: &mut Snapshot) {
                     last_at: num(&b["last_at"]).or_else(|| num(&b["opened_at"])).unwrap_or(0),
                     members: b["members"].as_array().map(|arr| arr.iter().map(|x| text(&x["bead_id"])).collect()).unwrap_or_default(),
                     opened_at: num(&b["opened_at"]).unwrap_or(0),
+                    parent: text(&b["parent"]),
                     eject_at: Vec::new(),
                     ejected: b["ejected"]
                         .as_array()

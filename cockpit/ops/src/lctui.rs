@@ -224,14 +224,22 @@ pub fn tree(v: &View) -> Vec<Node> {
     out.push(match &v.round {
         None => Node::new("round", format!("{B}ROUND{R}  {D}none open{R}")),
         Some(r) => {
-            let mut kids: Vec<Node> = r
-                .members
-                .iter()
-                .map(|m| {
-                    let ej = if m.ejects > 0 { format!("{YEL}ejected {}× before{R} ", m.ejects) } else { String::new() };
-                    Node::new(format!("round/{}", m.id), format!("{:<14} {} {ej}{}", m.id, m.prio, m.title))
-                })
-                .collect();
+            let member_nodes = |round: &crate::lcview::RoundView, key: &str| -> Vec<Node> {
+                round
+                    .members
+                    .iter()
+                    .map(|m| {
+                        let ej = if m.ejects > 0 { format!("{YEL}ejected {}× before{R} ", m.ejects) } else { String::new() };
+                        Node::new(format!("{key}/{}", m.id), format!("{:<14} {} {ej}{}", m.id, m.prio, m.title))
+                    })
+                    .collect()
+            };
+            let mut kids = member_nodes(r, "round");
+            for c in &r.staged {
+                let key = format!("round/staged/{}", c.name);
+                let head = format!("{B}{}{R} · {} behind {} · fenced · {} member(s)", c.name, c.state, r.name, c.members.len());
+                kids.push(Node::new(key.clone(), head).kids(member_nodes(c, &key)));
+            }
             if !r.ejected.is_empty() {
                 kids.push(Node::new("round/ejected", format!("{D}ejected this round: {}{R}", r.ejected.join(" "))));
             }
@@ -927,6 +935,7 @@ mod tests {
                 passes: 2,
                 ejected: vec!["sp-x".into()],
                 members: (0..4).map(|k| RoundMember { id: format!("sp-m{k}"), prio: "P1".into(), title: "member".into(), ejects: k }).collect(),
+                staged: Vec::new(),
             }),
             now_items: (0..3).map(|k| item(&format!("sp-w{k}"))).collect(),
             machine: vec![
@@ -1089,6 +1098,22 @@ mod tests {
         let at = t.iter().position(|l| l.contains("DRIFT")).expect("a drift line");
         assert!(at < t.iter().position(|l| l.contains("ROUND")).unwrap(), "the alarm sits above ROUND: {t:#?}");
         assert!(has(&t, "sp-landed1"));
+    }
+
+    #[test]
+    fn a_staged_round_is_a_child_row_under_the_open_round_and_expands_to_its_members() {
+        let mut v = busy_view();
+        let mut staged = v.round.clone().unwrap();
+        staged.name = "r-stage-1".into();
+        staged.state = "STAGED".into();
+        staged.members = (0..2).map(|k| RoundMember { id: format!("sp-s{k}"), prio: "P1".into(), title: "staged member".into(), ejects: 0 }).collect();
+        v.round.as_mut().unwrap().staged = vec![staged];
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        let at = |s: &str| t.iter().position(|l| l.contains(s)).unwrap_or_else(|| panic!("{s}: {t:#?}"));
+        let (parent, child, member) = (at("r-auto-96"), at("r-stage-1 · STAGED behind r-auto-96 · fenced · 2 member(s)"), at("sp-s0"));
+        assert!(parent < at("sp-m0") && at("sp-m3") < child && child < member, "{t:#?}");
+        let indent = |i: usize| t[i].len() - t[i].trim_start().len();
+        assert!(indent(member) > indent(child), "members sit under the child: {t:#?}");
     }
 
     #[test]
