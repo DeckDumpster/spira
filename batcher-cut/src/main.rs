@@ -23,6 +23,7 @@
 //! reproduction.
 
 mod drive;
+#[allow(dead_code)]
 mod endpass;
 mod flip;
 mod io;
