@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::round::{assemble, certify, csv, finish, local_ctx, lock, mark_running, rounds_dir, set, set_phase, suite_statuses, tail, unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, RECORD};
+use super::round::{assemble, certify, csv, finish, handle_of, local_ctx, lock, mark_running, rounds_dir, set, set_phase, suite_statuses, tail, unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, RECORD};
 use super::{actor, idents, landing_log, lc_cas, read_text, require_lc, Ctx, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::ident::bounded_text;
@@ -232,7 +232,9 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
     };
     let results = results_dir(&c, &batch);
     let _ = fs::remove_dir_all(&results);
-    let out = w.scripts.round_vm(&wt, &results, &base, c.s.round_wall_secs);
+    let _ = fs::create_dir_all(rounds_dir(&c));
+    let out = w.scripts.round_vm(&wt, &results, &base, (&batch, &c.r.name), c.s.round_wall_secs, &handle_of(&c, &batch));
+    let _ = fs::remove_file(handle_of(&c, &batch));
     let mut found = Vec::new();
     suite_statuses(&results, &mut found, 0);
     let mut reds: Vec<String> = Vec::new();

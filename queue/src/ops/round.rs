@@ -240,7 +240,7 @@ pub(super) fn rounds_dir(c: &Ctx) -> PathBuf {
     c.s.run.join("rounds")
 }
 
-fn handle_of(c: &Ctx, batch: &str) -> PathBuf {
+pub(super) fn handle_of(c: &Ctx, batch: &str) -> PathBuf {
     rounds_dir(c).join(format!("{batch}.pass"))
 }
 
