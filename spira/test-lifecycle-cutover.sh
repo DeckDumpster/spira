@@ -408,7 +408,7 @@ wantrc "settle applies even though the caller's own --requeue still names the st
 
 is "batch settles" "SETTLED" "$(batch_field batch-stacked-red state)"
 is "ejected prerequisite A needs rework" "REWORK" "$(member_field sp-f-a bead state)"
-is "A's reason names the direct eject" "batch-ejected" "$(member_field sp-f-a bead reason)"
+is "A's reason names the direct red eject" "batch-ejected-red" "$(member_field sp-f-a bead reason)"
 is "SEEN RED FIRST: B follows A into REWORK rather than the caller's own --requeue leaving it CERTIFIED" \
     "REWORK" "$(member_field sp-f-b bead state)"
 is "B's reason names base-withdrawn — collateral, not itself accused" "base-withdrawn" "$(member_field sp-f-b bead reason)"
