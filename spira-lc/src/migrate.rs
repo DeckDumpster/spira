@@ -237,6 +237,11 @@ pub enum Probe {
 
 /// The byte offset of the first top-level ` WHERE ` keyword (outside quotes and parentheses), if any.
 fn where_at(sql: &str) -> Option<usize> {
+    keyword_at(sql, "WHERE")
+}
+
+/// The byte offset of the first top-level occurrence of `kw` (outside quotes and parentheses).
+fn keyword_at(sql: &str, kw: &str) -> Option<usize> {
     let b = sql.as_bytes();
     let mut quote: Option<u8> = None;
     let mut depth = 0usize;
@@ -256,8 +261,8 @@ fn where_at(sql: &str) -> Option<usize> {
             None if c == b')' => depth = depth.saturating_sub(1),
             None => {
                 let before_ok = i > 0 && b[i - 1].is_ascii_whitespace();
-                let after_ok = b.get(i + 5).is_none_or(|n| n.is_ascii_whitespace() || *n == b'(');
-                if depth == 0 && before_ok && after_ok && sql.get(i..i + 5).is_some_and(|w| w.eq_ignore_ascii_case("WHERE")) {
+                let after_ok = b.get(i + kw.len()).is_none_or(|n| n.is_ascii_whitespace() || *n == b'(');
+                if depth == 0 && before_ok && after_ok && sql.get(i..i + kw.len()).is_some_and(|w| w.eq_ignore_ascii_case(kw)) {
                     return Some(i);
                 }
             }
@@ -323,8 +328,13 @@ pub fn probe_for(st: &Stmt) -> Probe {
         Some(w) => Probe::NoRowMatches(format!("SELECT 1 FROM {table} {} LIMIT 1", sql[w..].trim())),
         None => Probe::Unprobeable,
     };
+    let joined = |table: &str| match (where_at(sql), keyword_at(sql, "SET")) {
+        (Some(w), Some(set)) if set < w => Probe::NoRowMatches(format!("SELECT 1 FROM {table} {} {} LIMIT 1", sql[sql.find(toks[2]).unwrap_or(0)..set].trim(), sql[w..].trim())),
+        _ => Probe::Unprobeable,
+    };
     match (up(0).as_str(), up(1).as_str()) {
         ("UPDATE", _) if up(2) == "SET" => plain_ident(toks[1]).map_or(Probe::Unprobeable, |t| guarded(&t)),
+        ("UPDATE", _) if up(2) == "JOIN" => plain_ident(toks[1]).map_or(Probe::Unprobeable, |t| joined(&t)),
         ("DELETE", "FROM") if toks.len() > 3 && up(3) == "WHERE" => plain_ident(toks[2]).map_or(Probe::Unprobeable, |t| guarded(&t)),
         ("CREATE", "TABLE") => {
             let at = if up(2) == "IF" && up(3) == "NOT" && up(4) == "EXISTS" { 5 } else { 2 };
@@ -479,7 +489,7 @@ pub fn service_can_apply(grants: &str, st: &Stmt) -> bool {
         return false;
     }
     let (privilege, table) = match up(0).as_str() {
-        "UPDATE" if up(2) == "SET" => ("UPDATE", toks.get(1)),
+        "UPDATE" if up(2) == "SET" || (up(2) == "JOIN" && keyword_at(sql, "SET").is_some_and(|set| where_at(sql).is_some_and(|w| set < w))) => ("UPDATE", toks.get(1)),
         "DELETE" if up(1) == "FROM" && up(3) == "WHERE" => ("DELETE", toks.get(2)),
         _ => return false,
     };
@@ -822,7 +832,7 @@ mod tests {
                 let user = sql.split("user = '").nth(1).and_then(|r| r.split('\'').next()).unwrap_or("");
                 return Ok(if st.users.contains(user) { vec![serde_json::json!({ "User": user })] } else { vec![] });
             }
-            if sql.starts_with("SELECT 1 FROM bead WHERE") {
+            if sql.starts_with("SELECT 1 FROM bead WHERE") || sql.starts_with("SELECT 1 FROM bead JOIN") {
                 return Ok(if st.stale_terminal_rows { vec![serde_json::json!({ "1": "1" })] } else { vec![] });
             }
             if sql.starts_with("SELECT 1 FROM event WHERE") {
@@ -1060,6 +1070,10 @@ mod tests {
         }
         assert_eq!(probe_for(&Stmt::Plain("UPDATE t SET a = 1".into())), Probe::Unprobeable, "no WHERE: no read can tell");
         assert_eq!(probe_for(&Stmt::Plain("UPDATE t SET a = 'x where y' WHERE b = 1".into())), Probe::NoRowMatches("SELECT 1 FROM t WHERE b = 1 LIMIT 1".into()));
+        let j = Stmt::Plain("UPDATE bead JOIN (SELECT k, MAX(at) AS m FROM event WHERE x = 1 GROUP BY k) s ON s.k = bead.bead_id SET bead.since = s.m WHERE NOT (bead.since <=> s.m)".into());
+        assert_eq!(probe_for(&j), Probe::NoRowMatches("SELECT 1 FROM bead JOIN (SELECT k, MAX(at) AS m FROM event WHERE x = 1 GROUP BY k) s ON s.k = bead.bead_id WHERE NOT (bead.since <=> s.m) LIMIT 1".into()));
+        assert!(service_can_apply(GRANTS_SQL, &j), "a joined UPDATE on a table the service user writes is service DML");
+        assert!(!service_can_apply(GRANTS_SQL, &Stmt::Plain("UPDATE bead JOIN t ON 1 SET since = 1".into())), "no WHERE: refused");
         assert_eq!(probe_for(&Stmt::Plain("DELETE FROM t WHERE b = 1".into())), Probe::NoRowMatches("SELECT 1 FROM t WHERE b = 1 LIMIT 1".into()));
         assert_eq!(probe_for(&Stmt::Plain("CREATE TABLE IF NOT EXISTS t2 (a INT)".into())), Probe::Table("t2".into()));
         assert_eq!(probe_for(&Stmt::Plain("CREATE VIEW v1 AS SELECT 1".into())), Probe::View("v1".into()));
