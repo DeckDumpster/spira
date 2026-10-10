@@ -120,7 +120,7 @@ pub fn classify(cause: &str) -> ReturnClass {
         }
         // A batch gate failure attributed to this bead (landing.sh CHECK 6): judged.
         "batch-eject" => return ReturnClass::Judged,
-        "eject" | "queue-eject" | "queue-eject-collateral" | "ejected" | "eviction-race" | "slain" | "closed-never-landed-batch-ready" => {
+        "eject" | "queue-eject" | "queue-eject-collateral" | "ejected" | "eviction-race" | "slain" | "fast-tier-harness" | "closed-never-landed-batch-ready" => {
             return ReturnClass::HarnessReturn
         }
         _ => {}
@@ -566,6 +566,12 @@ mod tests {
             ("reopen", "rebase-conflict"),
         ]);
         assert_eq!(fold(B, &r).attempts, 2);
+    }
+
+    #[test]
+    fn a_fast_tier_tool_failure_is_the_harnesss_and_a_fast_tier_red_is_judged() {
+        assert_eq!(classify("fast-tier-harness"), ReturnClass::HarnessReturn);
+        assert_eq!(classify("fast-tier-red"), ReturnClass::Judged);
     }
 
     #[test]

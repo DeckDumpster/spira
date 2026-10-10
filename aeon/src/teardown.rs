@@ -50,16 +50,21 @@ impl Run<'_> {
 
     /// The in-session fast tier (`fast_tier::red`); a tool that is absent (127) is skipped,
     /// never a red.
-    fn fast_tier_red(&self) -> Option<String> {
+    fn fast_tier_red(&self) -> Option<crate::fast_tier::Red> {
         let work = self.s.work.as_deref()?;
         crate::fast_tier::red(self.d.git, self.d.exec, &self.s.repo, work, &self.s.branch, &self.s.base_fq, false)
     }
 
     /// Refuses the handoff when the fast tier is red: the bead goes back to the graph with the
     /// failure text instead of waiting a certification cycle to learn it.
-    fn refuse_handoff(&self, red: &str) {
+    fn refuse_handoff(&self, red: &crate::fast_tier::Red) {
         let br = &self.s.branch;
-        let digest = crate::fast_tier::digest(red);
+        let digest = crate::fast_tier::digest(&red.text);
+        if red.harness {
+            self.bead_reopen("fast-tier-harness", &format!("Reopened by aeon.sh: the in-session fast tier could not run on {br} (a tool failed, not the work) and the handoff was refused. No attempt charged.\n\n{digest}"));
+            self.log(&format!("{}: {} REOPENED — fast tier harness failure, no attempt charged", self.f(), self.s.bead));
+            return;
+        }
         self.record_fact(crate::fast_tier::KIND, &digest);
         self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{digest}"));
         self.log(&format!("{}: {} REOPENED — fast tier red, handoff refused", self.f(), self.s.bead));
