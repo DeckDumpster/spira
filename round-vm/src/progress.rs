@@ -11,6 +11,15 @@ use serde_json::{json, Value};
 use crate::spool::write_atomic;
 
 pub const FILE: &str = "round-progress.json";
+pub const UNIT_FILE: &str = "unit-progress";
+
+/// The VM's `unit-progress` line, `k M [red binaries...]`.
+fn unit_of(results_dir: &Path) -> Option<(usize, usize, Vec<String>)> {
+    let t = fs::read_to_string(results_dir.join(UNIT_FILE)).ok()?;
+    let mut w = t.split_whitespace();
+    let (k, m) = (w.next()?.parse().ok()?, w.next()?.parse().ok()?);
+    Some((k, m, w.map(str::to_string).collect()))
+}
 
 pub fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -44,6 +53,10 @@ fn result_names(dir: &Path) -> Vec<(String, String)> {
     v
 }
 
+fn total_done(fresh: &[(String, String)], total: usize) -> bool {
+    total > 0 && fresh.len() >= total
+}
+
 impl Progress {
     /// Results already in `results_dir` belong to an earlier pass and are not counted.
     pub fn start(run_dir: &Path, results_dir: &Path, round: &str, pass: &str, total: usize, cap: u64) -> Progress {
@@ -70,6 +83,11 @@ impl Progress {
         if phase != "build" && self.suites_started.is_none() {
             self.suites_started = Some(now_secs());
         }
+        let unit = unit_of(results_dir);
+        let phase = match &unit {
+            Some((k, m, _)) if phase == "suites" && k < m && total_done(&fresh, self.total) => "unit",
+            _ => phase,
+        };
         let red: Vec<&str> = fresh.iter().filter(|(_, v)| v == "red").map(|(n, _)| n.as_str()).collect();
         let mut body = json!({
             "round": self.round,
@@ -79,6 +97,7 @@ impl Progress {
             "done": fresh.len(),
             "total": self.total,
             "red": red,
+            "unit": unit.map(|(k, m, r)| json!({"done": k, "total": m, "red": r})),
             "build_started": self.build_started,
             "suites_started": self.suites_started,
             "cap": self.cap,
@@ -162,6 +181,15 @@ mod tests {
         p.update(&res);
         let v = read(&run);
         assert_eq!((v["done"].as_u64(), v["red"].clone()), (Some(2), json!(["test-b.sh"])), "the earlier pass's red is not this pass's");
+
+        fs::write(res.join(UNIT_FILE), "1 4 alpha\n").unwrap();
+        fs::write(res.join("test-c.sh.result"), "ok 1 3 - p e 0\n").unwrap();
+        let mut p3 = Progress::start(&run, &res, "r1", "p1", 3, 777);
+        p3.baseline.clear();
+        p3.update(&res);
+        let v = read(&run);
+        assert_eq!(v["phase"], "unit", "suites all in, unit binaries still running");
+        assert_eq!((v["unit"]["done"].as_u64(), v["unit"]["total"].as_u64(), v["unit"]["red"].clone()), (Some(1), Some(4), json!(["alpha"])));
 
         p.finish(&res, 1);
         let v = read(&run);

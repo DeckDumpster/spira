@@ -198,6 +198,34 @@ if ! cargo build -q --profile release --workspace --config profile.release.incre
     exit 4
 fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
+# THE UNIT-TEST BINARIES COMPILE HERE, in the build phase and outside the suite clock; the unit
+# run below is the same command, which then compiles nothing. A scrubbed environment: the
+# launcher's SPIRA_RELEASE/SPIRA_REPO/PATH leak into tests that resolve configuration.
+unit_cargo() {
+    env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
+        SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
+        GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
+        cargo test --profile release --workspace --config profile.release.incremental=false "$@"
+}
+t_ut=$(date +%s)
+if ! unit_cargo --no-run > ~/round-unit-build.log 2>&1; then
+    echo "round-vm: the round's unit-test build failed:" >&2
+    tail -60 ~/round-unit-build.log >&2
+    exit 4
+fi
+unit_total=$(grep -c '^ *Executable ' ~/round-unit-build.log)
+echo "round-vm: built ${unit_total} unit-test binaries in $(( $(date +%s) - t_ut ))s" >&2
+# One line per unit-test binary as it finishes, from cargo's own "Running" and "test result:"
+# lines on stdin: UNIT-TEST <binary> ok|FAILED (k/M). The totals are the --no-run listing's.
+unit_stream() {
+    awk -v total="$1" -v prog="$2" '
+        /^ *Running / { name = $0; if (match(name, /\(.*\)/)) { name = substr(name, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", name); sub(/-[0-9a-f]+$/, "", name) } else { sub(/^ *Running /, "", name) } next }
+        /^ *Doc-tests / { name = "doc-tests " $2; next }
+        /^test result: / { k++; st = ($3 == "ok.") ? "ok" : "FAILED"; if (st == "FAILED") reds = reds " " name
+            printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", name, st, k, total > "/dev/stderr"; fflush("/dev/stderr")
+            printf "%d %d%s\n", k, total, reds > prog; close(prog) }'
+}
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
 # declared over it. Nothing here is searched for or defaulted.
 mkdir -p "$HOME/round-work/.runtime/spira"
@@ -313,16 +341,14 @@ if [ -n "$lint" ]; then
     fence_run boundary bash spira/boundary.sh check
 fi
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
-# They run beside the suites, on the build above; a red here makes the round red.
-# A SCRUBBED ENVIRONMENT: the launcher's SPIRA_RELEASE/SPIRA_REPO/PATH exported above leak
-# into tests that resolve configuration (4 reds on 2026-10-05); the tests get HOME, cargo's own
-# PATH, the build cache and a git identity (a round VM's root has none), nothing else.
-env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
-    CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
-    SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
-    GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-    cargo test -q --profile release --workspace --no-fail-fast --config profile.release.incremental=false > ~/round-unit-tests.log 2>&1 &
+# They run beside the suites, on the binaries built above; a red here makes the round red.
+unit_progress="$HOME/round-work/.runtime/spira/batch-results/unit-progress"
+mkdir -p "$(dirname "$unit_progress")"
+: > ~/round-unit-tests.log
+unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
+tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_total" "$unit_progress" &
+stream_pid=$!
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round
@@ -330,7 +356,9 @@ else
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" round
 fi
 rc=$?
+if kill -0 "$unit_pid" 2>/dev/null; then echo "round-vm: UNIT-TESTS: waiting (suites done, unit job still running)" >&2; fi
 wait "$unit_pid"; unit_rc=$?
+wait "$stream_pid"
 if [ "$lint_rc" -ne 0 ]; then
     rdir="$HOME/round-work/.runtime/spira/batch-results"
     leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
@@ -354,7 +382,7 @@ fi
 if [ "$unit_rc" -eq 0 ]; then
     echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
 else
-    echo "round-vm: UNIT-TESTS: FAIL (cargo test rc=$unit_rc):" >&2
+    echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
     grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
     [ "$rc" -eq 0 ] && rc=1
 fi
@@ -1338,6 +1366,40 @@ mod tests {
         let c = REMOTE_SCRIPT.find("if [ -n \"$fence_fail\" ]; then\n    rdir=").unwrap();
         let d = c + REMOTE_SCRIPT[c..].find("\nfi\n").unwrap() + 4;
         REMOTE_SCRIPT[c..d].to_string()
+    }
+
+    fn unit_stream_fn() -> String {
+        let a = REMOTE_SCRIPT.find("unit_stream() {").unwrap();
+        let b = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
+        REMOTE_SCRIPT[a..b].to_string()
+    }
+
+    #[test]
+    fn the_unit_test_binaries_compile_in_the_build_phase_and_the_run_is_the_same_command() {
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let no_run = REMOTE_SCRIPT.find("unit_cargo --no-run").unwrap();
+        let suites = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        let run = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast").unwrap();
+        assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
+        let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
+        let body = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
+        assert!(body.contains("cargo test --profile release --workspace --config profile.release.incremental=false"), "{body}");
+        assert_eq!(REMOTE_SCRIPT.matches("cargo test").count(), 1, "one definition of the unit command, shared by compile and run");
+    }
+
+    #[test]
+    fn a_cargo_log_streams_one_line_per_binary_in_order_and_a_red_when_it_fails() {
+        let d = TempDir::new();
+        let log = "   Running unittests src/lib.rs (target/release/deps/alpha-0123abcd)\nrunning 1 test\ntest result: ok. 1 passed; 0 failed\n\
+                   \x20    Running tests/it.rs (target/release/deps/it-feedbeef)\ntest result: FAILED. 0 passed; 1 failed\n\
+                   \x20  Doc-tests beta\ntest result: ok. 0 passed; 0 failed\n";
+        fs::write(d.path().join("cargo.log"), log).unwrap();
+        let script = format!("{}\nunit_stream 3 ~/prog < cargo.log", unit_stream_fn());
+        let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).env_clear().env("HOME", d.path()).env("PATH", "/usr/bin:/bin").output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(lines, ["round-vm: UNIT-TEST alpha ok (1/3)", "round-vm: UNIT-TEST it FAILED (2/3)", "round-vm: UNIT-TEST doc-tests beta ok (3/3)"], "{err}");
+        assert_eq!(fs::read_to_string(d.path().join("prog")).unwrap().trim(), "3 3 it");
     }
 
     fn lint_segments() -> (String, String) {
