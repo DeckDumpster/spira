@@ -181,6 +181,18 @@ impl Conn {
         }
     }
 
+    /// Append many already-built event INSERTs in one transaction over this one connection:
+    /// a machine's fine-grained transitions in a pass cost one commit, not one per transition.
+    /// Empty input writes nothing.
+    pub fn append_events(&self, insert_sqls: &[String]) -> Result<usize, DbError> {
+        let Some(script) = batch_script(insert_sqls) else { return Ok(0) };
+        match self.run_script(&script) {
+            Ok(_) => Ok(insert_sqls.len()),
+            Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a plain INSERT batch lost a race — unexpected".into())),
+            Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
+        }
+    }
+
     /// Insert one event row in its own transaction. Used both for logical refusals (no row
     /// mutation attempted at all) and for the fallback recording of a race lost at COMMIT.
     pub fn insert_refusal_event(&self, ev: &EventRecord) -> Result<(), DbError> {
@@ -462,6 +474,19 @@ pub struct EventRecord {
     pub at: i64,
 }
 
+fn batch_script(insert_sqls: &[String]) -> Option<String> {
+    if insert_sqls.is_empty() {
+        return None;
+    }
+    let mut script = String::from("START TRANSACTION;\n");
+    for sql in insert_sqls {
+        script.push_str(sql.trim_end_matches(|c: char| c == ';' || c.is_whitespace()));
+        script.push_str(";\n");
+    }
+    script.push_str("COMMIT;\n");
+    Some(script)
+}
+
 fn sql_str(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
 }
@@ -527,5 +552,23 @@ mod io_timeout_tests {
         assert!(ADMIN_IO_TIMEOUT <= std::time::Duration::from_secs(120), "bounded");
         assert_eq!(io_timeout_for("facts-query"), FACTS_QUERY_IO_TIMEOUT);
         assert_eq!(io_timeout_for("facts"), QUERY_DEADLINE);
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::batch_script;
+
+    #[test]
+    fn n_inserts_share_one_transaction() {
+        let s = batch_script(&["INSERT INTO event VALUES (1);".to_string(), "INSERT INTO event VALUES (2)".to_string()]).unwrap();
+        assert_eq!(s, "START TRANSACTION;\nINSERT INTO event VALUES (1);\nINSERT INTO event VALUES (2);\nCOMMIT;\n");
+        assert_eq!(s.matches("START TRANSACTION").count(), 1);
+        assert_eq!(s.matches("COMMIT").count(), 1);
+    }
+
+    #[test]
+    fn an_empty_batch_writes_nothing() {
+        assert_eq!(batch_script(&[]), None);
     }
 }
