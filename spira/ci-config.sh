@@ -21,3 +21,11 @@ grep -q "^run = \"$rundir\"\$" "$layered" || {
   exit 1
 }
 mkdir -p "$rundir"
+
+if [ -n "${GITHUB_BASE_REF:-}" ]; then
+  sed -i "s|^base = \"local/main\"\$|base = \"origin/$GITHUB_BASE_REF\"|" "$layered"
+  grep -q "^base = \"origin/$GITHUB_BASE_REF\"\$" "$layered" || {
+    printf 'ci-config: the fixture has no local/main base to layer over\n' >&2
+    exit 1
+  }
+fi
