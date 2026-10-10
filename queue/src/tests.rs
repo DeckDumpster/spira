@@ -425,6 +425,7 @@ struct FLc {
     promote_refused: Cell<Option<&'static str>>,
     /// Per-batch answers to `show-batch`, ahead of `batch_view`.
     batch_states: RefCell<BTreeMap<String, (String, String)>>,
+    down_for: Cell<u32>,
     eject_refused: Cell<bool>,
     /// Every bead event is refused with this text (a locked lifecycle store).
     event_refused: Cell<Option<&'static str>>,
@@ -441,7 +442,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), down_for: Cell::new(0), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -464,6 +465,10 @@ impl Lc for FLc {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
         if let Some(s) = self.batch_states.borrow().get(id) {
             return Some(s.clone());
+        }
+        if self.down_for.get() > 0 {
+            self.down_for.set(self.down_for.get() - 1);
+            return None;
         }
         match &*self.batch_view.borrow() {
             Some((s, v, _, _)) => Some((s.clone(), v.to_string())),

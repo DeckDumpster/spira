@@ -94,6 +94,36 @@ fn land_with_the_batch_record_refused_prints_the_reason_and_exits_nonzero() {
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"), "the release is live regardless");
 }
 
+fn certified_round() -> (T, String) {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    (t, batch)
+}
+
+#[test]
+fn land_rides_out_a_store_restart_after_activation_and_records_the_batch() {
+    let (t, batch) = certified_round();
+    t.lc.down_for.set(5);
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert!(t.lc.has(&format!("land {batch} 4 merged-tb")), "{:?}", t.lc.calls.borrow());
+    assert!(!t.err().contains("ALARM"), "{}", t.err());
+}
+
+#[test]
+fn land_with_the_store_down_past_the_deadline_exits_nonzero_naming_the_batch() {
+    let (t, batch) = certified_round();
+    t.lc.down_for.set(10_000);
+    assert_eq!(t.run(&["round", "land", &batch]), 1, "{}", t.err());
+    let e = t.err();
+    assert!(e.contains(&batch) && e.contains("ALARM"), "{e}");
+    assert!(!t.lc.has("land "), "{:?}", t.lc.calls.borrow());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"), "the release is live regardless");
+}
+
 #[test]
 fn eject_then_land_rebuilds_the_head_without_the_member() {
     let t = round_world();
