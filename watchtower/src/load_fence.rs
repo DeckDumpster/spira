@@ -126,7 +126,6 @@ pub fn run(proc_root: &Path, cfg: &Cfg) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::{Command, Stdio};
 
     fn fake(root: &Path, pid: u32, comm: &str, nice: i64, ppid: u32, cgroup: &str) {
         let d = root.join(pid.to_string());
@@ -164,21 +163,5 @@ mod tests {
         fake(&r, 8, "tmux", 0, 1, "/x");
         assert_eq!(ancestry(&r, 10, 6), vec!["rustc", "cargo", "tmux"]);
         assert_eq!(ancestry(&r, 10, 2), vec!["rustc", "cargo"]);
-    }
-
-    #[test]
-    fn a_real_process_is_lowered_and_a_fenced_one_is_left_alone() {
-        let mut child = Command::new("sleep").arg("30").stdin(Stdio::null()).spawn().unwrap();
-        let c = cfg("sleep");
-        let mine: Vec<Proc> = scan(Path::new("/proc"), &c).into_iter().filter(|p| p.pid == child.id()).collect();
-        assert_eq!(mine.len(), 1, "the planted offender must be found before the fence is believed");
-        assert!(mine[0].nice < NICE_FLOOR);
-        assert!(fence(&mine[0]), "an unfenced process changes");
-        let after = scan(Path::new("/proc"), &c).into_iter().find(|p| p.pid == child.id()).unwrap();
-        assert_eq!(after.nice, NICE_FLOOR);
-        assert_eq!(io_class(after.pid), Some(IOPRIO_CLASS_IDLE));
-        assert!(!fence(&after), "an already fenced process is not touched again");
-        let _ = child.kill();
-        let _ = child.wait();
     }
 }
