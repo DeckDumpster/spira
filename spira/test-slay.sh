@@ -257,7 +257,7 @@ is  "the lifecycle row is released instead — WORKING to READY" READY "$(lc_sta
 is  "bead is unassigned"       ""   "$(assignee_of sp-s1)"
 is  "worktree is gone"         no   "$([ -d "$SPIRA_RUN/worktree/sp-s1" ] && echo yes || echo no)"
 is  "branch is gone"           1    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s1 2>/dev/null; echo $?)"
-is  "marker is cleaned up"     no   "$([ -f "$SPIRA_RUN/sp-s1.slain" ] && echo yes || echo no)"
+is  "no marker file is left"   no   "$([ -f "$SPIRA_RUN/sp-s1.slain" ] && echo yes || echo no)"
 want "reports slain"            "slain: sp-s1" "$out"
 teardown sp-s1
 

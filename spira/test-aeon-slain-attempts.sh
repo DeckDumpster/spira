@@ -71,11 +71,12 @@ command -v aeon >/dev/null 2>&1 \
 
 # The shim runs a turn and ends without closing the bead — same as any other session left
 # with an open bead, so the only thing distinguishing this run from a genuine failure is the
-# .slain marker planted below, standing in for an operator's slay.sh mid-session.
+# slain disposition recorded on the row, standing in for an operator's slay.sh mid-session.
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+[ -n "${BEAD_ID:-}" ] && spira-lc disposition "$BEAD_ID" slain "slain by operator" slay
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 0
 SHIM
@@ -87,9 +88,6 @@ seed() {
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
-# The .slain marker as slay.sh writes it (date TAB reason) — cleanup() checks only that the
-# file exists, so pre-planting it stands in for an operator slaying this session mid-run.
-plant_slain_marker() { printf '%s\tslain by operator\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/$1.slain"; }
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; PATH="$SPIRA_HOME:$PATH" aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1; }
 bead_status() {
     BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
@@ -102,7 +100,6 @@ print(d[0].get("status", ""))' 2>/dev/null
 num() { local v="$1"; printf '%d' "${v:-0}"; }
 
 seed sp-sla-1
-plant_slain_marker sp-sla-1
 run_aeon
 
 is   "SEEN RED: bead is released, not left claimed" "open" "$(bead_status sp-sla-1)"
