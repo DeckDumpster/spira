@@ -203,18 +203,14 @@ bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an integer, 0 on anything unparseable
 
 # --------------------------------------------------------------------------------------
-# Liveness. NEVER pgrep -f: the pattern is a substring of any command line that mentions
-# it, including the caller's own, so a `pgrep -f 'aeon.sh builder'` inside a script named
-# in that pattern reports itself alive. pgrep may nominate; /proc decides, on the actual
-# argv of the recorded pid.
+# Liveness is the lease and nothing else: an aeon is alive while the deadline in its
+# identity's `.lease` file is ahead of the clock, renewed every heartbeat and removed at
+# teardown. No pidfile pid is probed, no /proc cmdline read, and never pgrep -f (the pattern
+# is a substring of any command line that mentions it, the caller's own included).
 #
 # aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes are SHIMS onto `strand aeon-alive
-# / aeon-count / aeons-live-total / aeons-live-lanes` (wave 4.23, sp-0ffox: lib.sh family E
-# -> strand, the owning crate; collapses the bead/cockpit-collect copies of aeon_alive onto
-# this same implementation). The logic — including the exclude-unit threading through
-# aeon_count and the FAYTH_NAME resolution in aeons_live_lanes — lives in
-# strand/src/probe.rs now; this file keeps the names so bash sourcers (hold.sh)
-# need no change.
+# / aeon-count / aeons-live-total / aeons-live-lanes`; the logic lives in
+# strand/src/probe.rs, and this file keeps the names so bash sourcers (hold.sh) need no change.
 #
 # aeons_live_lanes ALONE threads SPIRA_HOME/SPIRA_FAYTHS through explicitly: conf.sh
 # deliberately never exports either (a fact about this one copy of the harness, not
@@ -222,7 +218,7 @@ json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an i
 # and silently count zero lane aeons forever, the exact shape of sp-nki5w's scar. The other
 # three need only SPIRA_RUN/SPIRA_SUMMON/SPIRA_SYSTEMCTL, all already exported.
 # --------------------------------------------------------------------------------------
-aeon_alive() {           # aeon_alive <pidfile> -> 0 if the recorded pid is a live aeon
+aeon_alive() {           # aeon_alive <pidfile> -> 0 if the identity's lease is still running
     strand aeon-alive "$1"
 }
 
