@@ -1,5 +1,5 @@
 # Keys this release adds to the one source (release/src/config_delta.rs, sp-pr6jn6), applied at activation.
-removed = ["spira.express_label"]
+removed = ["spira.express_label", "spira.overlap_defer_label"]
 [added]
 "spira.gate_deadline" = 300
 "spira.scratch_max_age_hours" = 24
