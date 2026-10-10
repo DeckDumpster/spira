@@ -863,6 +863,11 @@ impl<'w, W: World> Trial<'w, W> {
                 "gate: {name}'s build ran out of scratch space mid-trial — the host's room, not a fault in {br}.\n{}",
                 parse::tail_bytes(&out, 4000)));
         }
+        if parse::cache_transport_failure(&out) {
+            return v(NOVERDICT, "build-cache-fault", format!(
+                "gate: {name}'s build lost its compiler cache (sccache transport error) — the host's cache server, not a fault in {br}.\n{}",
+                parse::tail_bytes(&out, 4000)));
+        }
         if let Some(d) = parse::harness_fault_detail(&out) {
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s batch reported a harness fault — container died mid-batch ({d}).\ngate: command: {cmd}\n{out}"));
@@ -1143,6 +1148,11 @@ impl<'w, W: World> Trial<'w, W> {
         if spira_config::scratch::is_exhaustion(&base_out) {
             return v(NOVERDICT, "scratch-short", format!(
                 "gate: {name}'s base trial ran out of scratch space — the host's room; it judged neither {base} nor {br}.\n{}",
+                parse::tail_bytes(&base_out, 4000)));
+        }
+        if parse::cache_transport_failure(&base_out) {
+            return v(NOVERDICT, "build-cache-fault", format!(
+                "gate: {name}'s base trial lost its compiler cache (sccache transport error); it judged neither {base} nor {br}.\n{}",
                 parse::tail_bytes(&base_out, 4000)));
         }
         let spaced = |v: &[String]| v.join(" ");

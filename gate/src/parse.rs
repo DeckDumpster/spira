@@ -222,6 +222,16 @@ pub fn red_units(out: &str) -> Vec<String> {
     units
 }
 
+/// A build whose compiler-cache server dropped the connection: the cache's fault, never a
+/// red on either side of the base comparison.
+pub fn cache_transport_failure(out: &str) -> bool {
+    let lower = out.to_lowercase();
+    lower.contains("sccache: error")
+        && ["connection reset", "connection refused", "failed to execute compile"]
+            .iter()
+            .any(|m| lower.contains(m))
+}
+
 /// Whose fault a failed branch trial is (`gate_attribute`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attribution {
@@ -325,6 +335,14 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_cache_transport_error_is_found_and_a_compile_error_is_not() {
+        let wedged = "error: could not compile `x`\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)\n";
+        assert!(cache_transport_failure(wedged));
+        assert!(!cache_transport_failure("error[E0308]: mismatched types\n --> src/lib.rs:1:1\n"));
+        assert!(!cache_transport_failure("test result: FAILED. Connection reset by peer in a test\n"));
+    }
 
     #[test]
     fn failed_tests_reads_cargo_failure_lines_only() {

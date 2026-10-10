@@ -3266,6 +3266,21 @@ fn a_build_that_hits_enospc_is_no_verdict_never_red() {
     assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
 }
 
+/// A build that loses its sccache server is infrastructure, whatever the base re-run says;
+/// a real compile error without transport errors stays the branch's red.
+#[test]
+fn a_build_that_loses_sccache_is_no_verdict_but_a_compile_error_is_red() {
+    let wedged = "test-a.sh RED\nsccache: error: failed to execute compile\ncaused by: Connection reset by peer (os error 104)";
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, wedged.into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=build-cache-fault"), "{}", f.verdict_line());
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED\nerror[E0308]: mismatched types".into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+}
+
 /// The tools phase and the unit phases are one-shot builds: no incremental cache, by a
 /// command-line switch (a CARGO_INCREMENTAL variable would split the cache).
 #[test]
