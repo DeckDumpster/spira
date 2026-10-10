@@ -56,7 +56,7 @@ struct Opts {
 
 fn usage() -> ExitCode {
     eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
-    eprintln!("       batcher rounds [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
+    eprintln!("       batcher rounds|rounds-local|rounds-forge [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     eprintln!("       batcher sift <repo> [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher sifts [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
@@ -1078,33 +1078,91 @@ fn open_prepared(env_: &Env, repo: &Repo, pool: &[Member]) -> Result<bool, Strin
 /// `id=<bead-id>` on success so the caller can record it without scraping human-facing text
 /// (law-never-derive-an-id-from-output); prints nothing to stdout on failure, the error goes
 /// to stderr, and the exit code alone tells queue verdict whether to log it as unfiled.
-/// One cut for every registered repo that lands through the queue: what the supervised
-/// `spira-rounds` timer runs. A repo whose cut fails does not stop the others, and the run
-/// still exits non-zero so the unit shows failed.
-fn rounds(o: &Opts) -> Result<(), String> {
-    if cfg("SPIRA_BATCHER_ENABLE")?.trim() == "0" {
-        println!("batcher rounds: SPIRA_BATCHER_ENABLE=0 — the operator cuts rounds; nothing to do");
-        return Ok(());
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pass {
+    Local,
+    Forge,
+    All,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Step {
+    Verdict,
+    Cut,
+}
+
+/// What one pass does for `land`: a queue.forge repo settles its open batch and then cuts (which
+/// opens the next one); a queue.local repo only cuts. A repo is never given the other mode's
+/// steps, and a repo outside the pass's mode gets none.
+fn plan(land: &str, pass: Pass) -> Vec<Step> {
+    match (land, pass) {
+        ("queue.local", Pass::Local | Pass::All) => vec![Step::Cut],
+        ("queue", Pass::Forge | Pass::All) => vec![Step::Verdict, Step::Cut],
+        _ => vec![],
+    }
+}
+
+fn drive_pass(
+    repos: &[(String, String)],
+    pass: Pass,
+    local_enabled: bool,
+    mut run: impl FnMut(&str, &Step) -> Result<(), String>,
+) -> Vec<String> {
+    let mut failed = Vec::new();
+    for (name, land) in repos {
+        if land == "queue.local" && !local_enabled {
+            continue;
+        }
+        for step in plan(land, pass) {
+            if let Err(e) = run(name, &step) {
+                eprintln!("batcher rounds: {name}: {e}");
+                if !failed.contains(name) {
+                    failed.push(name.clone());
+                }
+            }
+        }
+    }
+    failed
+}
+
+fn settle_batch(env_: &Env, name: &str) -> Result<(), String> {
+    // batch-job: the verdict waits on CI and a red batch's replay; it ends when the batch settles
+    let st = std::process::Command::new(&env_.queue_bin).args(["verdict", name]).status().map_err(|e| format!("queue verdict: {e}"))?;
+    if st.success() {
+        Ok(())
+    } else {
+        Err(format!("queue verdict exited {}", st.code().map_or("by signal".to_string(), |c| c.to_string())))
+    }
+}
+
+/// One scheduler pass over the repo map. `Pass::Local` is the harness's VM rounds, run one repo
+/// at a time; `Pass::Forge` settles and opens queue.forge batches. They run as separate units so
+/// a long VM round never delays a forge batch. `SPIRA_BATCHER_ENABLE=0` holds only the local
+/// rounds: the operator cuts those by hand, and a forge batch is not theirs.
+fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
+    let local_enabled = cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0";
+    if !local_enabled {
+        println!("batcher rounds: SPIRA_BATCHER_ENABLE=0 — the operator cuts local rounds");
+        if pass == Pass::Local {
+            return Ok(());
+        }
     }
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     let env_ = env_for(o, home, run)?;
     let reg = io::registry(&env_);
-    let mut failed = Vec::new();
-    for name in reg.all() {
-        if !matches!(reg.land(&name).as_str(), "queue" | "queue.local") {
-            continue;
+    let repos: Vec<(String, String)> = reg.all().into_iter().map(|n| { let l = reg.land(&n); (n, l) }).collect();
+    let failed = drive_pass(&repos, pass, local_enabled, |name, step| match step {
+        Step::Verdict => settle_batch(&env_, name),
+        Step::Cut => {
+            let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
+            cut(&one)
         }
-        let one = Opts { cmd: "cut".into(), repo: name.clone(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
-        if let Err(e) = cut(&one) {
-            eprintln!("batcher rounds: {name}: {e}");
-            failed.push(name);
-        }
-    }
+    });
     if failed.is_empty() {
         Ok(())
     } else {
-        Err(format!("cut failed for: {}", failed.join(", ")))
+        Err(format!("failed for: {}", failed.join(", ")))
     }
 }
 
@@ -1176,7 +1234,9 @@ fn main() -> ExitCode {
     };
     let r = match o.cmd.as_str() {
         "cut" => cut(&o),
-        "rounds" => rounds(&o),
+        "rounds" => rounds(&o, Pass::All),
+        "rounds-local" => rounds(&o, Pass::Local),
+        "rounds-forge" => rounds(&o, Pass::Forge),
         "judgement-ci" => judgement_ci(&o),
         "sift" => sift_one(&o),
         "sifts" => sifts(&o),
@@ -1194,6 +1254,50 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pass_drives_each_repo_by_its_own_land_mode_and_never_mixes() {
+        let repos: Vec<(String, String)> = [("spira", "queue.local"), ("deck", "queue"), ("poke", "queue"), ("other", "push")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        let run = |pass, enabled| {
+            let mut seen = Vec::new();
+            let failed = drive_pass(&repos, pass, enabled, |n, s| {
+                seen.push(format!("{n}:{}", if *s == Step::Verdict { "verdict" } else { "cut" }));
+                Ok(())
+            });
+            assert!(failed.is_empty());
+            seen
+        };
+        assert_eq!(run(Pass::Forge, true), ["deck:verdict", "deck:cut", "poke:verdict", "poke:cut"]);
+        assert_eq!(run(Pass::Local, true), ["spira:cut"]);
+        assert_eq!(run(Pass::All, true), ["spira:cut", "deck:verdict", "deck:cut", "poke:verdict", "poke:cut"]);
+    }
+
+    #[test]
+    fn the_local_switch_holds_local_rounds_and_not_forge_batches() {
+        let repos = vec![("spira".to_string(), "queue.local".to_string()), ("deck".to_string(), "queue".to_string())];
+        let mut seen = Vec::new();
+        drive_pass(&repos, Pass::All, false, |n, _| {
+            seen.push(n.to_string());
+            Ok(())
+        });
+        assert_eq!(seen, ["deck", "deck"]);
+    }
+
+    #[test]
+    fn one_repos_failure_does_not_stop_the_others_and_a_failed_verdict_still_cuts() {
+        let repos = vec![("deck".to_string(), "queue".to_string()), ("poke".to_string(), "queue".to_string())];
+        let mut seen = Vec::new();
+        let failed = drive_pass(&repos, Pass::Forge, true, |n, s| {
+            seen.push(format!("{n}:{}", if *s == Step::Verdict { "verdict" } else { "cut" }));
+            if n == "deck" { Err("boom".into()) } else { Ok(()) }
+        });
+        assert_eq!(seen, ["deck:verdict", "deck:cut", "poke:verdict", "poke:cut"]);
+        assert_eq!(failed, ["deck"]);
+    }
+
 
     // THE ONE DOOR (per Ryan 2026-10-05: one source of config): env_for() reads every
     // registered key through `spira_config::process::cfg`/`cfg_parse`, never its own

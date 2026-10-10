@@ -1,0 +1,15 @@
+[Unit]
+Description=Spira forge rounds — a pass starts every 30 seconds; a pass still running is not restarted
+
+[Timer]
+OnBootSec=120s
+OnActiveSec=120s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=spira-rounds-forge.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work

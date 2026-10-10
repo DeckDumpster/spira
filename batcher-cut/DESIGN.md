@@ -176,3 +176,11 @@ When the open round certifies, `queue round stage-test` runs beside `round land`
 land, `round promote` cuts the stage. An attested promotion lands on the staged pass; an
 unattested one gets its own pass (`follow_promoted`). Every staged-round verb that fails is
 logged and the cut goes on as if nothing had been staged. One stage per cut.
+
+## Rounds by land mode (sp-4wdogg)
+
+`batcher rounds-local` (spira-rounds) cuts queue.local repos one at a time, so one VM round runs
+at a time. `batcher rounds-forge` (spira-rounds-forge) runs `queue verdict <repo>` then `cut` for
+each queue.forge repo, which settles the open batch and opens the next. They are separate units
+so a VM round never delays a forge batch; a repo only ever gets its own mode's steps.
+`SPIRA_BATCHER_ENABLE=0` holds local rounds only. `batcher rounds` runs both, in order.
