@@ -134,11 +134,33 @@ impl Engine {
 
     /// One SQL statement, run through the real engine. Returns stdout (CSV) on success.
     pub fn sql(&self, dolt_bin: &str, query: &str) -> Result<String, String> {
-        let out = self
-            .command(dolt_bin)
+        self.sql_within(dolt_bin, query, None)
+    }
+
+    /// As `sql`, killed after `deadline_secs` so a stuck remote cannot hold the caller.
+    pub fn sql_within(
+        &self,
+        dolt_bin: &str,
+        query: &str,
+        deadline_secs: Option<u64>,
+    ) -> Result<String, String> {
+        let mut cmd = match deadline_secs {
+            Some(secs) => {
+                let mut c = Command::new("timeout");
+                c.args(["-k", "5", &secs.to_string(), dolt_bin]);
+                let inner = self.command(dolt_bin);
+                c.args(inner.get_args());
+                c
+            }
+            None => self.command(dolt_bin),
+        };
+        let out = cmd
             .args(["sql", "-q", query, "-r", "csv"])
             .output()
             .map_err(|e| format!("spawning {dolt_bin}: {e}"))?;
+        if deadline_secs.is_some() && out.status.code() == Some(124) {
+            return Err(format!("timed out after {}s", deadline_secs.unwrap_or(0)));
+        }
         if !out.status.success() {
             let combined = format!(
                 "{}{}",
@@ -234,7 +256,12 @@ fn last_cell(csv: &str) -> Option<String> {
 /// Push the active branch to `remote` and prove it by the remote's own head: the push,
 /// the tracking-ref refresh and both head reads all go through `engine`, so the store that
 /// was pushed is the store that is verified. Returns the head both sides now share.
-pub fn run_push(engine: &Engine, dolt_bin: &str, remote: &str) -> Result<String, String> {
+pub fn run_push(
+    engine: &Engine,
+    dolt_bin: &str,
+    remote: &str,
+    deadline_secs: u64,
+) -> Result<String, String> {
     let r = sql_quote(remote);
     let branch = engine
         .sql(dolt_bin, "select active_branch() as b;")
@@ -262,8 +289,12 @@ pub fn run_push(engine: &Engine, dolt_bin: &str, remote: &str) -> Result<String,
         )
     })?;
     engine
-        .sql(dolt_bin, &format!("CALL DOLT_PUSH('{r}', '{b}');"))
-        .map_err(|e| format!("push failed: {e}"))?;
+        .sql_within(
+            dolt_bin,
+            &format!("CALL DOLT_PUSH('{r}', '{b}');"),
+            Some(deadline_secs),
+        )
+        .map_err(|e| format!("push to {remote} failed: {e}"))?;
     engine
         .sql(dolt_bin, &format!("CALL DOLT_FETCH('{r}');"))
         .map_err(|e| format!("pushed, but could not refresh the remote tracking ref: {e}"))?;
@@ -292,7 +323,7 @@ pub fn run_push(engine: &Engine, dolt_bin: &str, remote: &str) -> Result<String,
         Ok(remote_head)
     } else {
         Err(format!(
-            "push reported complete but the remote did not reach the pushed commit: pushed {pushed}, remote {remote_head} (engine: {})",
+            "push reported complete but ref {tracking} did not reach the pushed commit: pushed {pushed}, {tracking} at {remote_head} (engine: {})",
             engine.label()
         ))
     }
@@ -535,7 +566,7 @@ esac
         let engine = stub_engine(&bin);
         let dolt = bin.join("dolt");
         assert_eq!(
-            run_push(&engine, dolt.to_str().unwrap(), "beads").unwrap(),
+            run_push(&engine, dolt.to_str().unwrap(), "beads", 30).unwrap(),
             "h1"
         );
     }
@@ -557,7 +588,7 @@ esac
         );
         let engine = stub_engine(&bin);
         let dolt = bin.join("dolt");
-        let err = run_push(&engine, dolt.to_str().unwrap(), "beads").unwrap_err();
+        let err = run_push(&engine, dolt.to_str().unwrap(), "beads", 30).unwrap_err();
         assert!(err.contains("did not reach"), "{err}");
     }
 
@@ -579,8 +610,48 @@ esac
         let engine = stub_engine(&bin);
         let dolt = bin.join("dolt");
         assert_eq!(
-            run_push(&engine, dolt.to_str().unwrap(), "beads").unwrap(),
+            run_push(&engine, dolt.to_str().unwrap(), "beads", 30).unwrap(),
             "newer"
         );
+    }
+
+    #[test]
+    fn run_push_surfaces_the_remotes_own_refusal() {
+        let bin = TempDir::new("bs-bin");
+        write_dolt_stub(
+            &bin,
+            r#"#!/usr/bin/env bash
+case "$*" in
+  *active_branch*) echo b; echo main ;;
+  *DOLT_PUSH*) echo "remote: denied to deploy key" >&2; exit 1 ;;
+  *dolt_log*) echo commit_hash; echo h1 ;;
+  *) echo ok ;;
+esac
+"#,
+        );
+        let engine = stub_engine(&bin);
+        let dolt = bin.join("dolt");
+        let err = run_push(&engine, dolt.to_str().unwrap(), "beads", 30).unwrap_err();
+        assert!(err.contains("denied to deploy key"), "{err}");
+    }
+
+    #[test]
+    fn run_push_gives_up_at_its_deadline_and_says_so() {
+        let bin = TempDir::new("bs-bin");
+        write_dolt_stub(
+            &bin,
+            r#"#!/usr/bin/env bash
+case "$*" in
+  *active_branch*) echo b; echo main ;;
+  *DOLT_PUSH*) exec sleep 30 ;;
+  *dolt_log*) echo commit_hash; echo h1 ;;
+  *) echo ok ;;
+esac
+"#,
+        );
+        let engine = stub_engine(&bin);
+        let dolt = bin.join("dolt");
+        let err = run_push(&engine, dolt.to_str().unwrap(), "beads", 1).unwrap_err();
+        assert!(err.contains("timed out after 1s"), "{err}");
     }
 }
