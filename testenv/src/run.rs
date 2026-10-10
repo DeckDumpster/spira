@@ -8,6 +8,7 @@ use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
 use crate::cli::{Invocation, RunArgs, SuitesArg};
 use crate::fixture::{Fixtures, Session, SetupFault, WORKSPACE};
+use crate::phase::{RunEvent, RunLog};
 use crate::prebuilt::{self, Prebuilt};
 use crate::record::{suite_line, Mode, Producer, ResultRecord, Status};
 use crate::runtime::{cancelled, ContainerRuntime, RC_DEADLINE};
@@ -84,6 +85,15 @@ impl Finish {
             selected_none: true,
             deferred: None,
             skipped: 0,
+        }
+    }
+
+    /// The verdict word and, for a fault, its reason: what the run's event record keeps.
+    pub fn verdict_parts(&self) -> (String, String) {
+        match self.rc {
+            0 => ("GREEN".into(), "-".into()),
+            1 => ("RED".into(), "-".into()),
+            _ => ("FAULT".into(), self.reason.unwrap_or("harness").into()),
         }
     }
 
@@ -562,6 +572,7 @@ fn write_meta(results: &Path, name: &str, pairs: &[(&str, String)]) {
 struct Phases {
     last: Instant,
     done: Vec<(&'static str, f64)>,
+    log: Option<RunLog>,
 }
 
 impl Phases {
@@ -569,6 +580,20 @@ impl Phases {
         Phases {
             last: start,
             done: Vec::new(),
+            log: None,
+        }
+    }
+    /// Starts the run's event record and replays the phases closed before it had a place.
+    fn attach(&mut self, results: &Path) {
+        let log = RunLog::begin(results);
+        for (n, _) in &self.done {
+            note(log.record(RunEvent::Phase { name: (*n).into() }, now_epoch()));
+        }
+        self.log = Some(log);
+    }
+    fn record(&self, name: &str) {
+        if let Some(l) = &self.log {
+            note(l.record(RunEvent::Phase { name: name.into() }, now_epoch()));
         }
     }
     /// Close the phase that ran since the previous mark.
@@ -577,6 +602,7 @@ impl Phases {
         self.done
             .push((name, now.saturating_duration_since(self.last).as_secs_f64()));
         self.last = now;
+        self.record(name);
     }
     /// Close the time since the previous mark as `parts` measured elsewhere (inside the
     /// setup exec): every part but the first as given, the first gets the remainder (the
@@ -588,6 +614,7 @@ impl Phases {
         let first = (total - rest).max(0.0);
         for (i, (n, s)) in parts.iter().enumerate() {
             self.done.push((n, if i == 0 { first } else { *s }));
+            self.record(n);
         }
         let carry = std::time::Duration::from_secs_f64(carry.clamp(0.0, total));
         self.last = now.checked_sub(carry).unwrap_or(now);
@@ -628,7 +655,24 @@ impl Drop for RefillOnDrop<'_> {
     }
 }
 
+fn note(r: Result<(), String>) {
+    if let Err(e) = r {
+        stderr(&format!("batch: run event not recorded: {e}"));
+    }
+}
+
+/// Runs, then records the verdict in the run's event file once one was started.
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
+    let results = std::cell::RefCell::new(None);
+    let fin = run_recorded(args, deps, &results);
+    if let Some(dir) = results.into_inner() {
+        let (word, reason) = fin.verdict_parts();
+        note(RunLog::in_dir(&dir).record(RunEvent::Verdict { word, reason }, now_epoch()));
+    }
+    fin
+}
+
+fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option<PathBuf>>) -> Finish {
     let s = deps.settings.clone();
     // sp-tj8k3: a given-but-bad SPIRA_BATCH_MAXPAR (zero, negative, not a number) refuses by
     // name before any work starts — it is never silently folded into "unset" (the
@@ -1000,6 +1044,8 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         stderr(&format!("batch: cannot create {}: {e}", results.display()));
         return Finish::fault(2, "results-dir", 0);
     }
+    ph.attach(&results);
+    *started.borrow_mut() = Some(results.clone());
 
     // ---- lifecycle state (from the revision, never the installed harness) -----------
     let states = SuiteStates::parse(

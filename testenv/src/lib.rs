@@ -8,6 +8,7 @@ pub mod cli;
 pub mod container;
 pub mod fixture;
 pub mod landed;
+pub mod phase;
 pub mod plan;
 pub mod prebuilt;
 pub mod reap;

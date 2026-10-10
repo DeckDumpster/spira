@@ -3,6 +3,7 @@
 //! red suite (container death, exec storm, lost `--user` account). DESIGN.md §4.3. With
 //! `BatchCfg::deadline`, a hard cut of the whole suite phase (DESIGN.md D7).
 
+use crate::phase::{RunEvent, RunLog};
 use crate::fixture::{is_user_account_fault, Fixtures, Liveness, Session};
 use crate::record::{self, Mode, Producer, ResultRecord, Status};
 use crate::runtime::cancelled;
@@ -137,6 +138,14 @@ pub fn write_suite(results: &Path, suite: &str, rec: &ResultRecord, output: &str
         &results.join(format!("{suite}.result")),
         &format!("{rec}\n"),
     );
+    record_suite(results, suite, rec);
+}
+
+fn record_suite(results: &Path, suite: &str, rec: &ResultRecord) {
+    let event = RunEvent::Suite { name: suite.into(), status: rec.status.as_str().into() };
+    if let Err(e) = RunLog::in_dir(results).record(event, now_epoch()) {
+        eprintln!("batch: run event not recorded: {e}");
+    }
 }
 
 /// Pre-empted suites (disabled, skip-req) get a record and an empty `.out`.
@@ -146,6 +155,7 @@ pub fn write_preempted(results: &Path, suite: &str, rec: &ResultRecord) {
         &results.join(format!("{suite}.result")),
         &format!("{rec}\n"),
     );
+    record_suite(results, suite, rec);
 }
 
 fn detail_lines(rec: &ResultRecord, output: &str) -> Vec<String> {

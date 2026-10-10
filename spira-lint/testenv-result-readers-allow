@@ -1,0 +1,6 @@
+# testenv-result-readers: files in the operator-facing trees that still read a testenv run's
+# per-suite result files or batch.meta, one repo-relative path per line. Blank lines and `#`
+# comments are ignored.
+#
+# SHRINK-ONLY. A line leaves when its file asks `testenv status --json` instead; nothing is
+# ever added for a NEW reader.
