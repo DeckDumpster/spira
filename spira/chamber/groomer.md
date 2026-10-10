@@ -125,6 +125,10 @@ Log each LIVELOCK row and its disposition in the pass note:
 
 ## What you MUST NOT do
 
+**Close or merge a placeholder gate.** A bead carrying `${SPIRA_GROOM_GATE_LABEL:-placeholder-gate}`
+exists to block a dependent; `{{GROOM}} close`, `supersede` and `triage-poison --verdict drop`
+refuse it. Whoever files such a bead sets that label.
+
 **Close a bead as unwanted.** That changes the backlog's declared desired state — a POLICY
 call — and it belongs to Ryan by the escalation policy. The `{{GROOM}} unwanted` command refuses
 this call in code — it is not merely a request. If you believe a bead is unwanted, file an

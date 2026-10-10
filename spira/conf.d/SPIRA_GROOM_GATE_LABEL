@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=groom
+DOC=THE LABEL ON A BEAD WHOSE PURPOSE IS TO BLOCK A DEPENDENT. The groomer never closes or
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE LABEL ON A BEAD WHOSE PURPOSE IS TO BLOCK A DEPENDENT. The groomer never closes or
+    # supersedes a bead carrying it: it has no work of its own to land, so only the thing it
+    # gates can say when it is done.
+    : "${SPIRA_GROOM_GATE_LABEL:=placeholder-gate}"
+SPIRA_CONF_DEFAULT_EOF
