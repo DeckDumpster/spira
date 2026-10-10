@@ -502,10 +502,16 @@ impl<'a> Pass<'a> {
         if g.outcome != GateOutcome::Pass {
             let reason = g.reason_or("unspecified");
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
-            match g.outcome {
-                GateOutcome::Fail => drop(self.lc_certify(id, &tip, "red", &reason)),
-                GateOutcome::NoVerdict => drop(self.lc_certify(id, &tip, "infra", "")),
-                _ => {}
+            let moved = matches!(g.outcome, GateOutcome::Fail | GateOutcome::NoVerdict)
+                && self.git.rev_parse(&repo.path, br).unwrap_or_default() != tip;
+            if moved {
+                self.log(&format!("CHECK6 {id}: {br} moved during the gate — verdict on {tip} not recorded"));
+            } else {
+                match g.outcome {
+                    GateOutcome::Fail => drop(self.lc_certify(id, &tip, "red", &reason)),
+                    GateOutcome::NoVerdict => drop(self.lc_certify(id, &tip, "infra", "")),
+                    _ => {}
+                }
             }
             match g.outcome {
                 GateOutcome::BaseFail => {
