@@ -167,7 +167,7 @@ fi
 
 out="$(slay --bead sp-s1 2>&1)"
 rc=$?
-echo "# slay out: $out" >&2
+printf "# slay out: %s\n" "$out"
 is "slay exits 0 for landed branch"       0  "$rc"
 is "landed branch is gone after slay"     1  "$(branch_exists spira/sp-s1; echo $?)"
 is "landed branch is NOT parked"          1  "$(slain_ref_exists sp-s1; echo $?)"
