@@ -394,6 +394,18 @@ mod tests {
     }
 
     #[test]
+    fn a_stack_conflict_refusal_is_not_an_attempt() {
+        assert_eq!(classify("stack-conflict"), ReturnClass::RebaseReturn);
+        let r = [
+            EventRow::new(B, "claimed", "", "2026-09-01T00:00:00Z"),
+            EventRow::new(B, "requeued", "stack-conflict", "2026-09-01T00:00:02Z"),
+            EventRow::new(B, "claimed", "", "2026-09-01T00:01:00Z"),
+            EventRow::new(B, "requeued", "stack-conflict", "2026-09-01T00:01:02Z"),
+        ];
+        assert_eq!(fold(B, &r).attempts, 0);
+    }
+
+    #[test]
     fn a_double_claim_a_second_apart_is_one_attempt() {
         let r = vec![at("claimed", "00:00"), at("claimed", "00:01")];
         assert_eq!(fold(B, &r).attempts, 1);

@@ -470,7 +470,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
             None => st.lifecycle_of(&ids),
         };
-        let lc = match lc_rows {
+        let mut lc = match lc_rows {
             Ok(m) => m,
             Err(e) => {
                 return Outcome::cannot_tell(format!(
@@ -478,6 +478,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
                 ))
             }
         };
+        rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
         let wanted = rank::all_blockers(&rows);
         let recs = match a.get("--blocker-records") {
             Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),
@@ -566,7 +567,7 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome::cannot_tell(format!("{bead}: {e}")),
     };
     let wanted = rank::blockers(&cand);
-    let lc = {
+    let mut lc = {
         let lc_rows = match a.get("--lifecycle") {
             Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
             None => {
@@ -585,6 +586,7 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         None if wanted.is_empty() => Ok(Vec::new()),
         None => st.list_by_ids(&wanted),
     };
+    rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let bd = match recs {
         Ok(r) => rank::index_rows(r),
         Err(e) => return Outcome::cannot_tell(format!("{bead}: blocker records: {e}")),
@@ -835,6 +837,7 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     let bd = rank::index_rows(recs);
     let blocker_rows: Vec<String> = wanted.iter().filter(|b| !lc.contains_key(*b)).cloned().collect();
     lc.extend(st.lifecycle_of(&blocker_rows)?);
+    rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
     let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
     Ok(rows

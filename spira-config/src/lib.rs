@@ -45,6 +45,7 @@ pub mod resolve;
 pub mod room;
 pub mod scratch;
 pub mod session;
+pub mod stack_conflict;
 pub mod unit;
 pub mod vtime;
 pub mod writeback;

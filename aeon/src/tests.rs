@@ -832,7 +832,9 @@ fn a_stack_conflict_refuses_the_claim_and_notes_both_prerequisites() {
     assert!(ledger_lines(&o).last().unwrap().contains("status=stack-conflict"), "{:?}", ledger_lines(&o));
     let w = o.w.lock().unwrap();
     assert!(w.seam_calls.iter().any(|c| c.0 == "release_own_claim" && c.1[0] == "sp-c"), "the claim is handed back");
-    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen" || c.0 == "bump_requeue"), "the dependent stays held, not requeued as a fault");
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "the dependent stays held, not reopened as a fault");
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == ["sp-c", "stack-conflict"]), "the refused claim is recorded as an exempt return: {:?}", w.seam_calls);
+    assert!(spira_config::stack_conflict::holds(&f.run, "sp-a", &tip_a) && spira_config::stack_conflict::holds(&f.run, "sp-b-prereq", &tip_b), "both prerequisites are marked");
     let notes: Vec<&str> = w.notes.iter().filter(|(id, _)| id == "sp-a" || id == "sp-b-prereq").map(|(_, t)| t.as_str()).collect();
     assert_eq!(notes.len(), 2, "both prerequisites get a note: {:?}", w.notes);
     assert!(notes.iter().all(|n| n.contains("stack conflict: sp-a x sp-b-prereq")), "{notes:?}");
