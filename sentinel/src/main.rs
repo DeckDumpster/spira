@@ -31,6 +31,7 @@ mod host;
 mod lifecycle;
 mod model;
 mod open_children;
+mod red_trackers;
 mod pass;
 mod render;
 mod seams;

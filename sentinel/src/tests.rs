@@ -229,6 +229,7 @@ impl World {
             incident_label: get("SPIRA_INCIDENT_LABEL"),
             queue_wait: get("SPIRA_QUEUE_WAIT_LABEL"),
             open_children: get("SPIRA_OPEN_CHILDREN_LABEL"),
+            red_tracker: get("SPIRA_RED_TRACKER_LABEL"),
             submitted: get("SPIRA_SUBMITTED_LABEL"),
             work_types: get("SPIRA_WORK_CLOSE_TYPES").split_whitespace().map(str::to_string).collect(),
             reclaim_grace: get("SPIRA_RECLAIM_GRACE_SECS").parse().unwrap_or(10800),

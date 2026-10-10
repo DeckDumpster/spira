@@ -204,6 +204,7 @@ notify = ""
 notify_age = 1800
 no_loop_label = "no-loop"
 open_children_label = "spira-open-children"
+red_tracker_label = "spira-red-tracker"
 operated = "1"
 operator = "Ryan"
 operator_actor = "ryan"

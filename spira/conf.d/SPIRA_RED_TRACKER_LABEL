@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=queue
+DOC=LABEL THE PUBLISH-RED FILER PUTS ON A TRACKER BEAD. The sentinel closes a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # LABEL THE PUBLISH-RED FILER PUTS ON A TRACKER BEAD. The sentinel closes a labeled bead
+    # as no-code-change once every bead it depends on has landed; empty disables both the
+    # label and the close.
+    : "${SPIRA_RED_TRACKER_LABEL:=spira-red-tracker}"
+SPIRA_CONF_DEFAULT_EOF
