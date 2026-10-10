@@ -906,6 +906,7 @@ mod tests {
         st.tables.insert("bead_dep".into());
         st.tables.insert("ask".into());
         st.tables.insert("mending".into());
+        st.tables.insert("mend".into());
         st.users.insert("spira_lc".into());
         st.users.insert("spira_lc_ro".into());
         st.indexes.insert("bead_dep_target_idx".into());

@@ -13,6 +13,7 @@ gate = { path = "../gate" }
 release = { path = "../release" }
 landing-pass = { path = "../landing-pass" }
 migration-numbers = { path = "../migration-numbers" }
+lifecycle = { path = "../lifecycle" }
 
 [[bin]]
 name = "queue"

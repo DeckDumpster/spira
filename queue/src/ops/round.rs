@@ -46,6 +46,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
         Round::PassStart { batch, repo } => pass_start(w, batch, repo.as_deref()),
         Round::SuitesStarted { batch, repo } => suites_started_verb(w, batch, repo.as_deref()),
         Round::Failed { batch, repo, suite } => failed_verb(w, batch, repo.as_deref(), suite),
+        Round::Mend { outcome, batch, suite, repo, tips, checked, ask, reason } => super::mend::run(w, outcome, batch, suite, repo.as_deref(), tips, checked, ask.as_deref(), reason),
         Round::PassVerdict { batch, repo, verdict, red_suites, suites_s, build_s, reason } => {
             pass_verdict(w, batch, repo.as_deref(), verdict, red_suites, Timings { suites_s: *suites_s, build_s: *build_s }, reason)
         }
@@ -218,7 +219,7 @@ pub(super) fn lock(w: &World, label: &str, c: &Ctx) -> Result<Option<Guard>, i32
     }
 }
 
-fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
+pub(super) fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
     match records::read_kv(&c.queue_file(RECORD)) {
         Ok(Some(kv)) if kv.get("batch_id") == Some(batch) => Ok(kv),
         Ok(Some(kv)) => {

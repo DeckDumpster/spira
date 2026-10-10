@@ -3,7 +3,7 @@
 //! environment and the two output streams. `real.rs` implements them against the host;
 //! the unit tests implement them as fakes.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
@@ -119,6 +119,14 @@ pub trait Git {
     fn log_range(&self, repo: &Path, range: &str) -> Result<Vec<RangeCommit>, String>;
     /// `cat-file -e <sha>^{commit}`.
     fn commit_exists(&self, repo: &Path, sha: &str) -> bool;
+    /// `diff --numstat a b`: (path, added, deleted) per file; binary files count 0/0.
+    fn numstat(&self, repo: &Path, a: &str, b: &str) -> Result<Vec<(String, u32, u32)>, String>;
+    /// Whether `path` exists in the tree at `rev`.
+    fn path_exists(&self, repo: &Path, rev: &str, path: &str) -> bool;
+    /// `path` as it is in the tree at `rev`; None when absent.
+    fn file_at(&self, repo: &Path, rev: &str, path: &str) -> Option<String>;
+    /// `grep -l -F <needle>` at `rev`, limited to the files matching the glob pathspec.
+    fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Vec<String>;
     /// `branch [-f] <name> <sha>`.
     fn branch_set(&self, repo: &Path, name: &str, sha: &str, force: bool) -> bool;
     /// `branch -D <name>`.
@@ -298,6 +306,13 @@ pub trait Lc {
     fn express_ids(&self) -> Result<Vec<String>, String>;
     /// `show <bead>` → the bead row; None when it has no row or the machine cannot say.
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow>;
+    /// `mending event`: one mender outcome or diagnosis for a failure, stamped by the machine.
+    fn mending_event(&self, batch_id: &str, pass: u32, suite: &str, kind: &str, actor: &str) -> Result<(), (i32, String)>;
+    /// `mending mend`: take the mended tips (`bead:from:to,...`) if the machine's checks hold.
+    #[allow(clippy::too_many_arguments)]
+    fn mend(&self, batch_id: &str, pass: u32, suite: &str, members: &str, facts: &str, fences: &str, actor: &str) -> Result<(), (i32, String)>;
+    /// `mending tips`: each bead's latest mended tip, absent when it was never mended.
+    fn mend_tips(&self, beads: &[String]) -> Result<BTreeMap<String, String>, String>;
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.
     fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)>;
 }

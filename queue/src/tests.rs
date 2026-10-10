@@ -12,6 +12,7 @@ use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
 use crate::testutil::tmpdir;
 
+mod mend;
 mod rebase;
 mod round;
 mod verdict;
@@ -32,10 +33,22 @@ struct FGit {
     /// Tips whose rebase onto the round's head conflicts, with the paths it names.
     rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
     branches: RefCell<Vec<(String, String)>>,
+    /// `numstat` answers by (a, b); a pair not listed has no changes.
+    stats: RefCell<BTreeMap<(String, String), Vec<(String, u32, u32)>>>,
+    /// "rev:path" -> contents, for `path_exists` and `file_at`.
+    files: RefCell<BTreeMap<String, String>>,
+    /// needle -> suites that reference it.
+    greps: RefCell<BTreeMap<String, Vec<String>>>,
     calls: RefCell<Vec<String>>,
 }
 
 impl FGit {
+    fn stat(&self, a: &str, b: &str, files: &[(&str, u32, u32)]) {
+        self.stats.borrow_mut().insert((a.into(), b.into()), files.iter().map(|(p, x, y)| (p.to_string(), *x, *y)).collect());
+    }
+    fn file(&self, rev: &str, path: &str, text: &str) {
+        self.files.borrow_mut().insert(format!("{rev}:{path}"), text.into());
+    }
     fn set(&self, r: &str, sha: &str) {
         self.refs.borrow_mut().insert(r.into(), sha.into());
         self.commits.borrow_mut().insert(sha.into());
@@ -95,6 +108,18 @@ impl Git for FGit {
     }
     fn commit_exists(&self, _: &Path, sha: &str) -> bool {
         self.commits.borrow().contains(sha)
+    }
+    fn numstat(&self, _: &Path, a: &str, b: &str) -> Result<Vec<(String, u32, u32)>, String> {
+        Ok(self.stats.borrow().get(&(a.to_string(), b.to_string())).cloned().unwrap_or_default())
+    }
+    fn path_exists(&self, _: &Path, rev: &str, path: &str) -> bool {
+        self.files.borrow().contains_key(&format!("{rev}:{path}"))
+    }
+    fn file_at(&self, _: &Path, rev: &str, path: &str) -> Option<String> {
+        self.files.borrow().get(&format!("{rev}:{path}")).cloned()
+    }
+    fn grep_files(&self, _: &Path, _: &str, needle: &str, _: &str) -> Vec<String> {
+        self.greps.borrow().get(needle).cloned().unwrap_or_default()
     }
     fn branch_set(&self, _: &Path, name: &str, sha: &str, _force: bool) -> bool {
         self.set(&format!("refs/heads/{name}"), sha);
@@ -474,12 +499,16 @@ struct FLc {
     row_fails: Cell<bool>,
     /// When set, the batch answers (state, version, pass, phase) and follows the pass events it is sent.
     batch_view: RefCell<Option<(String, u64, u32, String)>>,
+    /// The latest mended tip per bead.
+    mend_tips: RefCell<BTreeMap<String, String>>,
+    /// The next `mending mend` is refused with this text.
+    mend_refused: RefCell<Option<String>>,
     calls: RefCell<Vec<String>>,
 }
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), down_for: Cell::new(0), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), down_for: Cell::new(0), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -605,6 +634,20 @@ impl Lc for FLc {
             return None;
         }
         self.rows.borrow().clone().ok()?.into_iter().find(|b| b.bead_id == bead)
+    }
+    fn mending_event(&self, id: &str, pass: u32, suite: &str, kind: &str, _: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!("mending-event {id} {pass} {suite} {kind}"));
+        Ok(())
+    }
+    fn mend(&self, id: &str, pass: u32, suite: &str, members: &str, facts: &str, fences: &str, _: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!("mend {id} {pass} {suite} {members} facts={facts} fences={fences}"));
+        match self.mend_refused.borrow().clone() {
+            Some(why) => Err((3, why)),
+            None => Ok(()),
+        }
+    }
+    fn mend_tips(&self, _: &[String]) -> Result<BTreeMap<String, String>, String> {
+        Ok(self.mend_tips.borrow().clone())
     }
     fn certify(&self, bead: &str, tip: &str, _: &str, _: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("certify {bead} {tip}"));

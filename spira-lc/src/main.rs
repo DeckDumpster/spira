@@ -748,6 +748,9 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::EjectedRedTip { .. } => "EjectedRedTip".to_string(),
         lifecycle::Refusal::StackUnchanged { .. } => "StackUnchanged".to_string(),
         lifecycle::Refusal::DeadlinePassed { .. } => "DeadlinePassed".to_string(),
+        lifecycle::Refusal::MendRefused { .. } => "MendRefused".to_string(),
+        lifecycle::Refusal::MendCap { .. } => "MendCap".to_string(),
+        lifecycle::Refusal::StaleTip { .. } => "StaleTip".to_string(),
     }
 }
 

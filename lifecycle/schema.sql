@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS ask (
 );
 CREATE INDEX IF NOT EXISTS ask_state_idx ON ask (state, opened_at);
 -- One row per suite that went red in a pass: the mender's pickup, deadline and outcome
--- (migrations/0020-mending.sql for an existing database).
+-- (migrations/0022-mending.sql for an existing database).
 CREATE TABLE IF NOT EXISTS mending (
     batch_id        VARCHAR(40) NOT NULL,
     pass            BIGINT NOT NULL,
@@ -123,6 +123,24 @@ CREATE TABLE IF NOT EXISTS mending (
     diagnosis       TEXT NULL,
     version         BIGINT NOT NULL,
     PRIMARY KEY (batch_id, pass, suite)
+);
+
+-- One row per member tip a mender produced for a failure; the per-bead mend cap and the
+-- branch's current tip are read from it (migrations/0021-mend.sql for an existing database).
+CREATE TABLE IF NOT EXISTS mend (
+    seq        BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    batch_id   VARCHAR(40) NOT NULL,
+    pass       BIGINT NOT NULL,
+    suite      VARCHAR(80) NOT NULL,
+    bead_id    VARCHAR(40) NOT NULL,
+    from_tip   VARCHAR(64) NOT NULL,
+    tip        VARCHAR(64) NOT NULL,
+    ask_id     VARCHAR(64) NULL,
+    checked    TEXT NULL,
+    diagnosis  TEXT NULL,
+    at         BIGINT NOT NULL,
+    UNIQUE KEY mend_failure_bead (batch_id, pass, suite, bead_id),
+    KEY mend_bead_idx (bead_id)
 );
 
 -- The truth. Append-only: grants.sql gives spira_lc INSERT and SELECT only, so not even
