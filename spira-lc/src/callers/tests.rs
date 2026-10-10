@@ -112,6 +112,20 @@ impl Machine for Fake {
                 }
                 (0, String::new())
             }
+            "history" => {
+                let rows: Vec<Value> = self
+                    .events
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| e.1 == args[1])
+                    .map(|(i, e)| {
+                        let kind: Value = serde_json::from_str(&e.5).unwrap();
+                        let name = kind.as_object().and_then(|o| o.keys().next().cloned()).unwrap_or_else(|| kind.as_str().unwrap_or("").to_string());
+                        json!({"seq": (i + 1).to_string(), "event": name})
+                    })
+                    .collect();
+                (0, Value::Array(rows).to_string())
+            }
             other => panic!("unexpected primitive {other}"),
         }
     }
@@ -245,6 +259,17 @@ fn writers_acting_on_a_state_that_moved_send_no_event() {
     f.bead("sp-r", BeadState::Ready);
     assert_eq!(go(&mut f, "reply", &["sp-r", "m-1@spira"]).code, REFUSED);
     assert!(f.events.is_empty(), "{:?}", f.events);
+}
+
+#[test]
+fn a_reply_by_hold_seq_lifts_an_ask_whose_mail_is_lost() {
+    let mut f = Fake::default();
+    f.bead("sp-q", BeadState::Working);
+    assert_eq!(go(&mut f, "hold", &["sp-q", "ask", "which way?", "aeon"]).code, APPLIED);
+    assert_eq!(go(&mut f, "reply", &["sp-q", "seq:9", "ops"]).code, REFUSED, "no such seq");
+    assert_eq!(go(&mut f, "holds", &["sp-q"]).stdout, "ask");
+    assert_eq!(go(&mut f, "reply", &["sp-q", "seq:1", "ops"]).code, APPLIED);
+    assert_eq!(go(&mut f, "holds", &["sp-q"]).stdout, "");
 }
 
 #[test]
