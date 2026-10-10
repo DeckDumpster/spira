@@ -96,7 +96,10 @@ impl Run<'_> {
         let id = self.s.bead.clone();
         let f = self.fayth.name.clone();
         self.stop_heartbeat();
-        self.phase("teardown");
+        let lc = self.lc_bead(&id);
+        if lc.as_ref().is_some_and(|r| r.working()) {
+            self.phase("teardown");
+        }
         self.fixture_drop();
         let _ = std::fs::remove_file(self.run_dir().join("aeon").join(format!("{id}.lease")));
         self.restore_world();
@@ -106,7 +109,6 @@ impl Run<'_> {
         // `st` is the ledger's word. A session hands its bead on only through the work verbs
         // (every session runs restricted since sp-v62vn), which the disposition reads as
         // `submitted` — there is no "the model closed the bead" branch here any more.
-        let lc = self.lc_bead(&id);
         let st = decide::ledger_word(lc.as_ref()).to_string();
         // Operator-wait is the lifecycle record's (sp-v62vn follow-up): the model asks
         // through `work ask`/`work blocked`, whose broker places an `ask` hold on this bead's
