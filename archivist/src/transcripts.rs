@@ -27,6 +27,11 @@ fn mtime_secs(p: &Path) -> Option<i64> {
     Some(t.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0))
 }
 
+/// Non-empty and written to within `idle_secs` of `now`.
+pub fn is_live(transcript: &Path, idle_secs: i64, now: i64) -> bool {
+    std::fs::metadata(transcript).map(|m| m.len() > 0).unwrap_or(false) && mtime_secs(transcript).is_some_and(|mt| now - mt <= idle_secs)
+}
+
 /// `<projects>/*/*.jsonl` that are non-empty, touched within `idle_secs`, and not under a
 /// project directory whose slug matches the runtime directory's own (configured or
 /// resolved path). Returns `(session-id, transcript-path)` sorted by path, matching the
@@ -49,12 +54,7 @@ pub fn live_transcripts(projects: &Path, run: &Path, idle_secs: i64, now: i64) -
         let mut files: Vec<PathBuf> = rd2.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| e == "jsonl").unwrap_or(false)).collect();
         files.sort();
         for f in files {
-            let Ok(meta) = std::fs::metadata(&f) else { continue };
-            if meta.len() == 0 {
-                continue;
-            }
-            let Some(mt) = mtime_secs(&f) else { continue };
-            if now - mt > idle_secs {
+            if !is_live(&f, idle_secs, now) {
                 continue;
             }
             let sid = f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -106,6 +106,20 @@ mod tests {
         std::fs::create_dir_all(&run).unwrap();
         let live = live_transcripts(&projects, &run, 999_999, 1_000_000);
         assert!(live.is_empty());
+    }
+
+    #[test]
+    fn is_live_needs_content_and_a_recent_write() {
+        let root = testkit::TempDir::new("archivist-live");
+        let f = root.join("s.jsonl");
+        std::fs::write(&f, "").unwrap();
+        let mt = mtime_secs(&f).unwrap();
+        assert!(!is_live(&f, 10, mt), "empty is not live");
+        std::fs::write(&f, "{}").unwrap();
+        let mt = mtime_secs(&f).unwrap();
+        assert!(is_live(&f, 10, mt + 5));
+        assert!(!is_live(&f, 10, mt + 1000));
+        assert!(!is_live(&root.join("absent.jsonl"), 10, mt));
     }
 
     #[test]

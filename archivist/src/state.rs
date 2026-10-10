@@ -89,6 +89,28 @@ pub fn read_state_key(dir: &Path, session: &str, key_name: &str) -> Option<Strin
     key(&text, key_name)
 }
 
+/// `<sid>.live` exists for as long as a sweep of a still-written session runs; the broker
+/// refuses the archivist a work bead while any exists.
+pub struct LiveMarker(std::path::PathBuf);
+
+impl LiveMarker {
+    pub fn path(dir: &Path, session: &str) -> std::path::PathBuf {
+        dir.join(format!("{session}.live"))
+    }
+
+    pub fn set(dir: &Path, session: &str) -> LiveMarker {
+        let p = Self::path(dir, session);
+        let _ = std::fs::write(&p, "");
+        LiveMarker(p)
+    }
+}
+
+impl Drop for LiveMarker {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Coerce a meter or cursor value to a non-negative integer. The established
 /// "unreadable" sentinel in this codebase is `-` or `?`; a caller's `unwrap_or(0)` does
 /// not catch either because both are non-empty strings that would otherwise reach
@@ -121,6 +143,15 @@ mod tests {
         assert_eq!(key(&text, "state"), Some("safe".to_string()));
         assert_eq!(key(&text, "at_turn"), Some("42".to_string()));
         assert_eq!(key(&text, "items_filed"), Some("3".to_string()));
+    }
+
+    #[test]
+    fn live_marker_exists_only_while_held() {
+        let dir = testkit::TempDir::new("archivist-state");
+        let m = LiveMarker::set(&dir, "sess-1");
+        assert!(LiveMarker::path(&dir, "sess-1").is_file());
+        drop(m);
+        assert!(!LiveMarker::path(&dir, "sess-1").exists());
     }
 
     #[test]
