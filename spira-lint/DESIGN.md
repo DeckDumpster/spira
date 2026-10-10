@@ -750,6 +750,24 @@ reader, `/proc`, `procfs::`, a `.pid` or `.lease` name, or `aeon-ledger`.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: aeon-state-readers
 checked <n> files`; its unit tests plant a read of each kind and require a finding for it.
 
+## Rule `release-state-readers`
+
+**Intent.** Operator-facing tooling reads what is in force through `release status --json`, never
+from the release history, hotfix or machine files under the run directory, nor from the releases
+directory's `current` link.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `spira-world/` and
+`watchtower/`.
+
+**Violation.** A live (non-comment) line naming `release/history`, `release/hotfix`,
+`release/machine`, `releases/current`, a `.join("history")`, `.join("hotfix")` or
+`.join("current")`, or `SPIRA_RELEASES`. Files that still read that way are listed in
+`spira-lint/release-state-readers-allow`, which only shrinks: a listed file with no match is a
+finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: release-state-readers checked
+<n> files`.
+
 ## Rule `incident-cause-lint`
 
 Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.

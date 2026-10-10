@@ -7,6 +7,7 @@ use release::config::{self, Config, Flags};
 use release::git::RealGit;
 use release::install::{self, InstallOpts, RealUnpack};
 use release::intake::{self, RealTemplates};
+use release::machine::{self, ReleaseState};
 use release::session_hook;
 use release::stage::{self, StageOpts};
 use release::systemctl::RealSystemctl;
@@ -22,7 +23,7 @@ const USAGE: &str = "usage:
   release activate <sha> [--hotfix <reason>] [--repo R] [--landed-ref REF] [--settle SECS] [--drain-wait SECS]
   release rollback [--repo R] [--settle SECS] [--drain-wait SECS]
   release prune [--keep N]
-  release status
+  release status [--json]
   release install-tarball <tarball> [--answers FILE] [--dry-run] [--settle SECS] [--skip-restart]
   release stage up [ROOT]
   release stage down <ROOT>
@@ -49,6 +50,7 @@ struct Args {
     deadline: Duration,
     skip_restart: bool,
     answers: Option<PathBuf>,
+    json: bool,
 }
 
 fn parse(argv: &[String]) -> Result<Args, String> {
@@ -69,6 +71,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         deadline: Duration::from_secs(120),
         skip_restart: false,
         answers: None,
+        json: false,
     };
     let mut it = argv.iter();
     while let Some(x) = it.next() {
@@ -87,6 +90,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--no-pre-activate" => a.pre_activate = false,
             "--dry-run" => a.dry_run = true,
             "--skip-restart" => a.skip_restart = true,
+            "--json" => a.json = true,
             "--answers" => a.answers = Some(val(x)?.into()),
             "--stage" => a.stage = Some(val(x)?),
             "--deadline" => a.deadline = Duration::from_secs(val(x)?.parse().map_err(|_| "--deadline needs whole seconds".to_string())?),
@@ -118,6 +122,15 @@ fn resolve_stage_opts(env: &config::Env, root: Option<PathBuf>) -> Result<StageO
     let bd_embedded = which("bd-embedded", env.get("PATH")).ok_or("bd-embedded not found; install: npm install -g @beads/bd")?;
     let testdb_baseline = if env.get("TESTDB_SHARED").map(String::as_str) == Some("1") { env.get("TESTDB_BASELINE").filter(|s| !s.is_empty()).map(PathBuf::from) } else { None };
     Ok(StageOpts { root, harness_spira, bd_embedded, testdb_baseline, scope_label: String::new() })
+}
+
+/// Records `sha` entering `to` on the release machine. A configuration with no run directory has
+/// nowhere to record, and is not an error for the build and verify steps that run without one.
+fn record(cfg: &Config, sha: &str, to: ReleaseState, why: &str) -> Result<(), String> {
+    match cfg.state_dir() {
+        Ok(state) => machine::enter(&state, sha, to, why),
+        Err(_) => Ok(()),
+    }
 }
 
 fn usage_err(m: String) -> (u8, String) {
@@ -484,6 +497,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             }
             let o = BuildOpts { repo: &r, commit: &rest[0], target_dir: a.target_dir.clone(), system_dirs: system_dirs(), bin_dir: a.bin_dir.clone() };
             let b = build::build(&cfg, &RealGit, &RealCargo, &o).map_err(fail)?;
+            record(&cfg, &b.sha, ReleaseState::Cut, "built").map_err(fail)?;
             println!("{}", b.sha);
         }
         "verify" => {
@@ -492,6 +506,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             if !p.is_empty() {
                 return Err((1, format!("release {} FAILS verify:\n  {}", rest[0], p.join("\n  "))));
             }
+            record(&cfg, &rest[0], ReleaseState::Accepted, "verified").map_err(fail)?;
             println!("release {} verifies", rest[0]);
         }
         "activate" | "rollback" => {
@@ -499,14 +514,22 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             let ctx = Ctx { cfg: &cfg, sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle, drain: a.drain };
             if cmd == "activate" {
                 want(1)?;
+                if activate::current(&cfg).as_deref() != Some(rest[0].as_str()) {
+                    record(&cfg, &rest[0], ReleaseState::Published, "activation started").map_err(fail)?;
+                }
                 let (s, p) = release::prune::activate_and_prune(&ctx, &rest[0], a.hotfix.as_deref()).map_err(fail)?;
+                record(&cfg, &rest[0], ReleaseState::Activated, "current switched").map_err(fail)?;
                 println!("release: {} active; {} unit file(s) rewritten, restarted [{}], deferred to next start [{}]; {} release(s) pruned", rest[0], s.rewritten.len(), s.restarted.join(" "), s.deferred.join(" "), p.removed.len());
                 if !p.failed.is_empty() {
                     eprintln!("release: WARN: prune could not remove: {}", p.failed.join("; "));
                 }
             } else {
                 want(0)?;
+                let from = activate::current(&cfg);
                 let sha = activate::rollback(&ctx).map_err(fail)?;
+                if let Some(from) = from {
+                    record(&cfg, &from, ReleaseState::RolledBack, &format!("rolled back to {sha}")).map_err(fail)?;
+                }
                 println!("release: rolled back to {sha}");
             }
         }
@@ -520,7 +543,12 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         }
         "status" => {
             want(0)?;
-            print!("{}", activate::status(&cfg).map_err(fail)?);
+            if a.json {
+                let state = cfg.state_dir().map_err(fail)?;
+                println!("{}", machine::status_all_json(&state, activate::current(&cfg).as_deref()).map_err(fail)?);
+            } else {
+                print!("{}", activate::status(&cfg).map_err(fail)?);
+            }
         }
         "install-tarball" => {
             want(1)?;

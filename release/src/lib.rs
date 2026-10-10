@@ -15,6 +15,7 @@ pub mod git;
 pub mod install;
 pub mod intake;
 pub mod lifecycle_store;
+pub mod machine;
 pub mod manifest;
 pub mod prune;
 pub mod repo;
