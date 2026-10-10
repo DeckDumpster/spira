@@ -785,6 +785,23 @@ shrinks: a listed file with no match is a finding.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: sift-state-readers checked
 <n> files`.
 
+## Rule `testenv-result-readers`
+
+**Intent.** Operator-facing tooling reads what a testenv run did through `testenv status --json
+<results-dir>`, never from the per-suite `.result` files or `batch.meta` under a results
+directory.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `spira-world/` and
+`watchtower/`.
+
+**Violation.** A live (non-comment) line naming `*.result`, a string ending `.result`, or
+`batch.meta`. Files that still read that way are listed in
+`spira-lint/testenv-result-readers-allow`, which only shrinks: a listed file with no match is a
+finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: testenv-result-readers
+checked <n> files`.
+
 ## Rule `incident-cause-lint`
 
 Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.

@@ -1127,6 +1127,16 @@ default conf.sh carries — conf.sh is no longer sourced:
   that cannot reach active inside a test fixture (named, non-fatal) from everything else
   (still fatal) — `install::install_units::split_not_active`, DESIGN.md "Decisions" there.
 
+## 13. The run as a state machine — `run.events`, `testenv status`
+
+A run records its phases, each suite's status and its verdict as events in `run.events` beside
+the results (`phase.rs`). The state is the last event: `started`, `setup(<phase>)`,
+`verdict(<word>)`. Each phase and suite is recorded once; nothing is accepted after a verdict;
+a refusal names the state and writes nothing. `testenv status [--json] <results-dir>` reads
+those events and nothing else. The `testenv-result-readers` lint keeps operator-facing tooling
+off the `.result` files and `batch.meta`. Moving the record into the lifecycle store waits on
+the write-path measurement.
+
 ## Build IO (sp-z61hj)
 
 Full contract: `spira-config/DESIGN-build-cache.md`. The builder (`src/build.rs`) compiles
