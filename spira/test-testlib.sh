@@ -218,4 +218,20 @@ want "case ids: the same string names the case in TAP and in JSONL" \
 _TL_PATH="$(PATH=/usr/bin:/bin bash -c ". '$TESTLIB' >/dev/null; printf '%s' \"\$PATH\"")"
 is "suite PATH: sourcing testlib.sh leaves the launcher's PATH untouched" "/usr/bin:/bin" "$_TL_PATH"
 
+# --- reserve_port: the port is held from allocation until the listener binds it ----
+_RP_OUT="$(bash -c ". '$TESTLIB' >/dev/null
+reserve_port P
+python3 - \"\$P\" <<'PY'
+import socket, sys
+p = int(sys.argv[1])
+def bind(reuseport):
+    s = socket.socket()
+    if reuseport: s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    try: s.bind(('127.0.0.1', p)); s.listen(1); return 'bound'
+    except OSError: return 'in-use'
+print('plain=' + bind(False), 'reuseport=' + bind(True))
+PY")"
+is "reserve_port: a plain bind of the reserved port is refused, a SO_REUSEPORT listener gets it" \
+    "plain=in-use reuseport=bound" "$_RP_OUT"
+
 tl_summary

@@ -46,7 +46,7 @@ stop_stub() { [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null || true; }
 start_stub() {
     mkdir -p "$TMP/stub"
     python3 -c '
-import http.server, os, sys
+import http.server, os, socket, sys
 
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -67,13 +67,17 @@ class H(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"{\"message\":\"Not Found\"}")
 
 port = int(sys.argv[1])
-srv = http.server.HTTPServer(("127.0.0.1", port), H)
+class S(http.server.HTTPServer):
+    def server_bind(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        super().server_bind()
+srv = S(("127.0.0.1", port), H)
 srv.serve_forever()
 ' "$1" &
     STUB_PID=$!
     sleep 0.3
 }
-STUB_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')"
+reserve_port STUB_PORT
 STUB_DIR="$TMP/stub"
 STUB_DIR="$STUB_DIR" start_stub "$STUB_PORT"
 GH_API="http://127.0.0.1:$STUB_PORT"

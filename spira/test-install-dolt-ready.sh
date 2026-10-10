@@ -154,6 +154,7 @@ import socket, sys, signal
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 s.bind(('127.0.0.1', int(sys.argv[1])))
 s.listen(10)
 while True:
@@ -167,7 +168,7 @@ FAKE_RUN="$TMP/run"
 FAKE_DB="$TMP/db"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN"
 
-_DOLT_PORT="$(python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); print(p)")"
+reserve_port _DOLT_PORT
 _DOLT_DATA="$TMP/dolt-data"
 mkdir -p "$_DOLT_DATA"
 cat > "$_DOLT_DATA/dolt-server.yaml" <<YAML

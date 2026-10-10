@@ -309,6 +309,26 @@ wantrc() {  # wantrc <name> <expected-rc> <actual-rc>
 # produced no "test ... ok|FAILED" line at all is either a compile error (rc != 0 — the
 # crate's one thing to report as failed) or a filter that matched zero tests (rc = 0 —
 # nothing to report a case for, same as cargo itself saying nothing failed).
+# reserve_port <var> — set <var> to a kernel-assigned port that stays reserved (bound,
+# not listening) by a holder process until the suite exits. A listener started on it
+# must set SO_REUSEPORT; nothing else can take the port in between.
+reserve_port() {
+    local _f; _f="$(mktemp)"
+    python3 -c '
+import os, socket, sys, time
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+s.bind(("127.0.0.1", 0))
+open(sys.argv[1], "w").write(str(s.getsockname()[1]))
+pp = os.getppid()
+while os.getppid() == pp: time.sleep(0.5)
+' "$_f" &
+    disown
+    local _i
+    for _i in $(seq 1 100); do [ -s "$_f" ] && break; sleep 0.05; done
+    printf -v "$1" '%s' "$(cat "$_f")"; rm -f "$_f"
+}
+
 # copy_conf_registry <dest-dir> — copy $HERE/conf.d/ and $HERE/conf-gen.sh into
 # <dest-dir> (created if needed). Every suite that `cp`'s $HERE/conf.sh into a fixture
 # needs this too (sp-g3uwp): conf.sh's own self-heal (_spira_conf_gen_ensure) resolves
