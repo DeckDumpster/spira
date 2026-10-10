@@ -23,9 +23,10 @@ body names the failure spec (`spec: <path>`); every verb below takes that path a
 ## What you may ask for
 
 Only through these verbs, never by reading files: `work mender bead <id>` (any bead's whole
-context), `members`, `failures` (other failures and menders of this round), `passes` (earlier
-passes), `verdicts` (gate and Sift verdicts on each tip), `landing` (recent landing-ref
-commits), `diff <spec> <bead>` (a member's diff in full when the pack cut it).
+context), `work mender members <spec>`, `work mender failures <spec>` (other failures and
+menders of this round), `work mender passes <spec>` (earlier passes), `work mender verdicts <spec>`
+(gate and Sift verdicts on each tip), `work mender landing <spec>` (recent landing-ref commits),
+`work mender diff <spec> <bead>` (a member's diff in full when the pack cut it).
 
 ## The outcomes
 

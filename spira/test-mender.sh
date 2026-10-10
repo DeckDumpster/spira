@@ -13,20 +13,20 @@ HARNESS="$(cd "$HERE/.." && pwd -P)"
 echo "test-mender.sh"
 FAYTH="$HERE/chamber/mender.fayth"
 BRIEF="$HERE/chamber/mender.md"
-fayth_var() { ( . "$FAYTH" 2>/dev/null; eval "printf '%s' \"\${$1:-}\"" ); }
+fayth_var() { ( set +u; . "$FAYTH" 2>/dev/null; eval "printf '%s' \"\${$1:-}\"" ); }
 
 echo; echo "LANE: its own, outside the builder pool"
 want "the fayth is a lane" "mender" "$(fayth_var FAYTH_LANE)"
 want "the lane is declared" "mender" "$(cat "$HERE/conf.d/SPIRA_LANES")"
 want "the ceiling is the config key, not a literal" "3" "$(SPIRA_MENDER_MAX=3 fayth_var FAYTH_MAX_CONCURRENT)"
-want "the ceiling defaults to eight" "8" "$(env -u SPIRA_MENDER_MAX bash -c '. "$0"; printf %s "$FAYTH_MAX_CONCURRENT"' "$FAYTH")"
+want "the ceiling defaults to eight" "8" "$(env -u SPIRA_MENDER_MAX bash -c 'set +u; . "$0"; printf %s "$FAYTH_MAX_CONCURRENT"' "$FAYTH")"
 want "Opus" "opus" "$(fayth_var FAYTH_MODEL)"
 for k in SPIRA_MENDER_MAX SPIRA_MENDER_DEADLINE_SECS SPIRA_MENDER_LABEL; do
     [ -f "$HERE/conf.d/$k" ] && ok "$k is a registered key" || bad "$k is a registered key" "no spira/conf.d/$k"
 done
 want "the deadline defaults to five minutes" "SPIRA_MENDER_DEADLINE_SECS:=300" "$(cat "$HERE/conf.d/SPIRA_MENDER_DEADLINE_SECS")"
-want "the session wall outlasts the deadline" "420" "$(env -u SPIRA_MENDER_DEADLINE_SECS bash -c '. "$0"; printf %s "$FAYTH_TIMEOUT_SECONDS"' "$FAYTH")"
-want "a pinned deadline moves the wall" "620" "$(SPIRA_MENDER_DEADLINE_SECS=500 bash -c '. "$0"; printf %s "$FAYTH_TIMEOUT_SECONDS"' "$FAYTH")"
+want "the session wall outlasts the deadline" "420" "$(env -u SPIRA_MENDER_DEADLINE_SECS bash -c 'set +u; . "$0"; printf %s "$FAYTH_TIMEOUT_SECONDS"' "$FAYTH")"
+want "a pinned deadline moves the wall" "620" "$(SPIRA_MENDER_DEADLINE_SECS=500 bash -c 'set +u; . "$0"; printf %s "$FAYTH_TIMEOUT_SECONDS"' "$FAYTH")"
 
 echo; echo "PARTITION: the summons label alone, never plan work"
 want "the predicate reads the mender label" 'SPIRA_MENDER_LABEL' "$(grep '^FAYTH_LABELS=' "$FAYTH")"
