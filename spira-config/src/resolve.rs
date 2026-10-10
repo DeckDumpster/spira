@@ -162,14 +162,13 @@ pub fn resolve_for_process(
     repo: &Path,
     env: &BTreeMap<String, String>,
 ) -> Result<Resolved, String> {
-    resolve_process(home, repo, env, resolve)
+    resolve_process(home, repo, env)
 }
 
 fn resolve_process(
     home: &Path,
     repo: &Path,
     env: &BTreeMap<String, String>,
-    run: fn(ResolveInput<'_>) -> Result<Resolved, ResolveError>,
 ) -> Result<Resolved, String> {
     // ONE SOURCE: the file $SPIRA_TOML names. Unset or missing is a refusal, never "no config".
     // From the env this call was HANDED, like every other input — never the process's own.
@@ -180,13 +179,14 @@ fn resolve_process(
     let toml_path = std::path::PathBuf::from(spec);
     let doc = Some(crate::load(&toml_path)?);
     let conf_d = default_conf_d(home);
-    run(ResolveInput {
+    let registry = registry::embedded().map_err(|e| e.to_string())?;
+    resolve_checked(ResolveInput {
         env,
         home,
         repo,
         toml: doc.as_ref(),
         conf_d: &conf_d,
-    })
+    }, &registry)
     .map_err(|e| e.to_string())
 }
 
@@ -552,7 +552,7 @@ thread_local! {
 /// config (`init`), never for reading one: a process reads only what the file declares.
 pub fn resolve_with_defaults(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
     GENERATING.set(true);
-    let r = resolve_unchecked(input);
+    let r = registry::load(input.conf_d).map_err(ResolveError::Registry).and_then(|reg| resolve_unchecked(input, &reg));
     GENERATING.set(false);
     r
 }
@@ -727,7 +727,12 @@ fn compute_home_repo_default(repo: &Path) -> String {
 
 /// `spira_conf_defaults` plus `spira_containment_check`, ported.
 pub fn resolve(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
-    let resolved = resolve_unchecked(input)?;
+    let registry = registry::load(input.conf_d).map_err(ResolveError::Registry)?;
+    resolve_checked(input, &registry)
+}
+
+fn resolve_checked(input: ResolveInput<'_>, registry: &BTreeMap<String, registry::RegistryKey>) -> Result<Resolved, ResolveError> {
+    let resolved = resolve_unchecked(input, registry)?;
     let repo_map_text = crate::containment::read_repo_map(Path::new(resolved.get("SPIRA_REPO_MAP")));
     crate::containment::check(
         resolved.get("SPIRA_INSTANCE"),
@@ -739,7 +744,7 @@ pub fn resolve(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
 }
 
 /// Every key, with no containment judgement; callers go through [`resolve`].
-fn resolve_unchecked(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
+fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, registry::RegistryKey>) -> Result<Resolved, ResolveError> {
     let env = input.env;
     let toml_map = input.toml.map(toml_key_map).unwrap_or_default();
     let home_str = input.home.to_string_lossy().to_string();
@@ -1013,8 +1018,7 @@ fn resolve_unchecked(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> 
 
     // The generic registry pass: every remaining `spira/conf.d/<KEY>` not already resolved
     // above, in topological order.
-    let registry = registry::load(input.conf_d).map_err(ResolveError::Registry)?;
-    let order = registry::topo_order(&registry).map_err(ResolveError::Registry)?;
+    let order = registry::topo_order(registry).map_err(ResolveError::Registry)?;
     for key in &order {
         if known.contains_key(key) {
             continue; // already hand-resolved above
@@ -1271,7 +1275,7 @@ mod tests {
         run_git(&repo, &["init", "-q"]);
         let toml = crate::fixture_toml_file(ws.path(), &BTreeMap::new());
         let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
-        let direct = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&BTreeMap::new())), conf_d: &home.join("conf.d") }).unwrap();
+        let direct = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&BTreeMap::new())), conf_d: &Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d") }).unwrap();
         let via_wrapper = resolve_for_process(&home, &repo, &e).unwrap();
         assert_eq!(direct, via_wrapper);
     }
