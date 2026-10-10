@@ -453,6 +453,8 @@ mod tests {
             stream_every_secs: 1,
             attr_linger_secs: 1,
             cap_secs: 1,
+            vm_budget_secs: 300,
+            build_budget_secs: 600,
         });
         let a = crate::template::TemplateArgs { tree_dir: tree, rev: None, toolchain: None };
         let pool = pool_for(&cfg);

@@ -58,6 +58,9 @@ pub struct Config {
     pub attr_linger: Duration,
     /// SPIRA_ROUND_CERTIFY_WALL_SECS: the cap the live progress file measures the suites' clock against.
     pub cap_secs: u64,
+    /// A progress phase with no change for this long reports itself stalled.
+    pub vm_budget_secs: u64,
+    pub build_budget_secs: u64,
 }
 
 /// Every value `Config::build` needs, already resolved by the caller — `cfg`/`cfg_parse` for
@@ -91,6 +94,8 @@ pub(crate) struct Fields {
     pub stream_every_secs: u64,
     pub attr_linger_secs: u64,
     pub cap_secs: u64,
+    pub vm_budget_secs: u64,
+    pub build_budget_secs: u64,
 }
 
 /// [`cfg`], refused with this binary's own "round-vm: " prefix (its existing error idiom —
@@ -196,6 +201,8 @@ impl Config {
             stream_every_secs: num_env("SPIRA_ROUND_VM_STREAM_SECS", 10)?,
             attr_linger_secs: num_env("SPIRA_ROUND_VM_ATTR_LINGER", 3600)?,
             cap_secs: must_cfg_parse("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
+            vm_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_VM_SECS", 300)?,
+            build_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_BUILD_SECS", 600)?,
         }))
     }
 
@@ -230,6 +237,8 @@ impl Config {
             stream_every: Duration::from_secs(f.stream_every_secs),
             attr_linger: Duration::from_secs(f.attr_linger_secs),
             cap_secs: f.cap_secs,
+            vm_budget_secs: f.vm_budget_secs,
+            build_budget_secs: f.build_budget_secs,
         }
     }
 }
@@ -355,6 +364,8 @@ mod tests {
             stream_every_secs: 10,
             attr_linger_secs: 3600,
             cap_secs: 900,
+            vm_budget_secs: 300,
+            build_budget_secs: 600,
         }
     }
 

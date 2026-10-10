@@ -2,7 +2,7 @@
 //! telemetry and binaries → manifest → install by tree sha → release.
 
 use std::collections::{BTreeSet, HashSet};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use std::fs;
@@ -208,12 +208,16 @@ unit_cargo() {
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
         cargo test --profile release --workspace --config profile.release.incremental=false "$@"
 }
+unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
+mkdir -p "$(dirname "$unit_build_mark")"
+echo building > "$unit_build_mark"
 t_ut=$(date +%s)
 if ! unit_cargo --no-run > ~/round-unit-build.log 2>&1; then
     echo "round-vm: the round's unit-test build failed:" >&2
     tail -60 ~/round-unit-build.log >&2
     exit 4
 fi
+echo built > "$unit_build_mark"
 unit_total=$(grep -c '^ *Executable ' ~/round-unit-build.log)
 echo "round-vm: built ${unit_total} unit-test binaries in $(( $(date +%s) - t_ut ))s" >&2
 # One line per unit-test binary as it finishes, from cargo's own "Running" and "test result:"
@@ -924,15 +928,47 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
             return 2;
         }
     }
-    let (vm, mode) = match env.pool.acquire(env.deps, Some(ProcId::current())) {
+    let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
+    let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
+    let budgets = crate::progress::Budgets { vm: cfg.vm_budget_secs, build: cfg.build_budget_secs };
+    let progress = Mutex::new(crate::progress::Progress::start(&cfg.run_dir, &results_dir, &commit_sha, &tree_sha, total, cfg.cap_secs, budgets));
+    let acquired = {
+        let leasing = AtomicBool::new(true);
+        std::thread::scope(|sc| {
+            sc.spawn(|| {
+                let mut beat = 0u32;
+                while leasing.load(Ordering::SeqCst) {
+                    beat += 1;
+                    if beat % 10 != 1 {
+                        std::thread::sleep(Duration::from_millis(50));
+                        continue;
+                    }
+                    let detail = pool_detail(&env.pool.state_file());
+                    let mut p = progress.lock().unwrap_or_else(|e| e.into_inner());
+                    match detail {
+                        Some(d) => p.detail(&results_dir, d),
+                        None => p.tick(&results_dir),
+                    }
+                    drop(p);
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            });
+            let got = env.pool.acquire(env.deps, Some(ProcId::current()));
+            leasing.store(false, Ordering::SeqCst);
+            got
+        })
+    };
+    let mut progress = progress.into_inner().unwrap_or_else(|e| e.into_inner());
+    let (vm, mode) = match acquired {
         Ok(v) => v,
         Err(e) => {
             eprintln!("round-vm run: acquire failed: {e}");
+            progress.finish(&results_dir, 2);
             return 2;
         }
     };
     eprintln!("round-vm run: {} {} {}", vm.handle, vm.addr, mode.as_str());
-    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image);
+    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, progress, results_dir);
     if let Err(e) = env.pool.release(&vm.handle, ProcId::current(), env.deps.factory) {
         eprintln!("round-vm run: warning: release of {} failed: {e}", vm.handle);
     }
@@ -976,27 +1012,57 @@ fn image_build_declared(env: &RunEnv, args: &RunArgs, commit: &str) -> bool {
     }
 }
 
-fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool) -> i32 {
+/// What the pool is doing for the lease, from its own state: the VM being provisioned, else the
+/// latest transition it recorded. `None` while the state file says nothing.
+fn pool_detail(state_file: &Path) -> Option<String> {
+    let s = crate::pool::read_state(state_file).ok()?;
+    if let Some(pr) = &s.provisioning {
+        return Some(match &pr.vmid {
+            Some(id) => format!("provisioning VM {id}"),
+            None => "provisioning a VM".to_string(),
+        });
+    }
+    let e = s.events.last()?;
+    Some(format!("VM {} {:?}: {}", e.vm, e.to, e.reason).to_lowercase())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool, progress: crate::progress::Progress, results_dir: PathBuf) -> i32 {
     let watch = crate::load::Watch::start(&vm.handle);
-    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image);
+    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image, progress, results_dir);
     watch.finish();
     rc
 }
 
 #[allow(clippy::too_many_arguments)]
-fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool) -> i32 {
+fn on_vm_run(
+    env: &RunEnv,
+    args: &RunArgs,
+    vm: &Vm,
+    mode: AcquireMode,
+    host_addr: &str,
+    commit_sha: &str,
+    tree_sha: &str,
+    build_image: bool,
+    mut progress: crate::progress::Progress,
+    results_dir: PathBuf,
+) -> i32 {
     let cfg = env.cfg;
     let maxpar = args.maxpar.unwrap_or(cfg.maxpar);
+    progress.detail(&results_dir, format!("adopting VM {} at {}", vm.handle, vm.addr));
     let reachable = (0..cfg.ssh_tries.max(1)).any(|i| {
         if i > 0 {
             std::thread::sleep(cfg.boot_poll);
+            progress.tick(&results_dir);
         }
         env.remote.reachable(&vm.addr)
     });
     if !reachable {
         eprintln!("round-vm run: VM {} at {} never became reachable over ssh", vm.handle, vm.addr);
+        progress.finish(&results_dir, 2);
         return 2;
     }
+    progress.enter(&results_dir, "build", Some(format!("VM {}", vm.handle)));
     let job = BatchJob {
         host_addr: host_addr.to_string(),
         mirror_port: cfg.mirror_port,
@@ -1010,10 +1076,7 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
         build_image,
     };
     let t0 = Instant::now();
-    let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
-    let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
-    let mut progress = crate::progress::Progress::start(&cfg.run_dir, &results_dir, commit_sha, tree_sha, total, cfg.cap_secs);
     let mut refused: Option<String> = None;
     let Some(spool_dir) = args.attr_spool.clone() else {
         let streamed = std::thread::scope(|sc| {
@@ -1044,6 +1107,9 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
                 return 2;
             }
         };
+        progress.update(&results_dir);
+        record_boundary(env, args, &mut progress, &mut refused);
+        progress.enter(&results_dir, "salvage", None);
         let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
         let code = settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code);
         progress.finish(&results_dir, code);
@@ -1089,6 +1155,9 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
                 (2, false)
             }
             Ok(Ok(rc)) => {
+                progress.update(&results_dir);
+                record_boundary(env, args, &mut progress, &mut refused);
+                progress.enter(&results_dir, "salvage", None);
                 let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs());
                 (settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code), true)
             }
@@ -1851,6 +1920,8 @@ mod tests {
             stream_every_secs: 10,
             attr_linger_secs: 3600,
             cap_secs: 1234,
+            vm_budget_secs: 300,
+            build_budget_secs: 600,
         });
         Fixture { d, fp: FakeProvider::new(), cfg }
     }
@@ -2218,6 +2289,11 @@ mod tests {
         assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("green")));
         assert_eq!((v["done"].as_u64(), v["total"].as_u64(), v["cap"].as_u64()), (Some(2), Some(2), Some(1234)));
         assert!(v["suites_started"].as_u64().is_some());
+        let seq: Vec<&str> = v["phases"].as_array().unwrap().iter().map(|e| e["phase"].as_str().unwrap()).collect();
+        assert_eq!(seq, ["vm", "build", "suites", "salvage", "done"], "a pass through the fake pool walks every phase in order");
+        let starts: Vec<u64> = v["phases"].as_array().unwrap().iter().map(|e| e["started"].as_u64().unwrap()).collect();
+        assert!(starts.windows(2).all(|w| w[0] <= w[1]), "{starts:?}");
+        assert_eq!(v["phase_started"], *starts.last().unwrap());
     }
 
     #[test]
