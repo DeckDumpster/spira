@@ -285,7 +285,7 @@ jobs:
     env:
       AGENT_TIMEOUT: 300
     steps:
-      - uses: DeckDumpster/ephemeral-ci/provision@v1
+      - uses: DeckDumpster/ephemeral-ci/provision@v2
         id: vm
         with:
           ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
@@ -760,7 +760,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: DeckDumpster/ephemeral-ci/teardown@v1
+      - uses: DeckDumpster/ephemeral-ci/teardown@v2
         # Skipped when provision never ran: no VM was created and no runner was
         # registered. The teardown action handles an empty vmid for the destroy
         # step, but with no label either there is nothing to deregister.
