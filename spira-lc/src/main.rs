@@ -119,6 +119,9 @@ fn main() {
     // The caller verbs (callers.rs; DESIGN.md §2).
     if let Some(verb) = args.first().filter(|v| callers::is_verb(v)) {
         let rest = &args[1..];
+        if verb == "drop" {
+            std::process::exit(emit(rest, callers::drop_cmd(rest, &mut Live { conn: None }, &mut bd::LiveBd)));
+        }
         let ans = callers::run(verb, rest, &mut Live { conn: None });
         std::process::exit(emit(rest, ans));
     }

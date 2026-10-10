@@ -568,10 +568,18 @@ struct FakeBd {
     reopened: Vec<String>,
     /// ask bead id -> the work beads its `work-bead:` labels name.
     asks: BTreeMap<String, Vec<String>>,
+    /// bead ids carrying an `external_ref`.
+    external: std::collections::BTreeSet<String>,
     down: bool,
 }
 
 impl Bd for FakeBd {
+    fn external(&mut self, id: &str) -> Result<bool, String> {
+        if self.down {
+            return Err("bd down".into());
+        }
+        Ok(self.external.contains(id))
+    }
     fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String> {
         if self.down {
             return Err("bd down".into());
@@ -1033,4 +1041,69 @@ fn reopen_names_an_eject_as_the_batchs_and_keeps_a_hold() {
     assert_eq!(reopen_cmd(&v(&["sp-e", "eject"]), &mut f, &mut FakeBd::default()).code, APPLIED);
     assert_eq!(reopen_kinds(&f).last().unwrap(), r#"{"Returned":{"reason":"batch-ejected"}}"#);
     assert!(f.beads["sp-e"].holds.contains(&HoldKind::Manual), "reopening is not an unhold");
+}
+
+// ---- external provenance ------------------------------------------------------------------
+
+fn external_world() -> (Fake, FakeBd) {
+    let mut f = Fake::default();
+    f.bead("sp-x", BeadState::Ready);
+    let mut b = FakeBd::default();
+    b.external.insert("sp-x".into());
+    (f, b)
+}
+
+#[test]
+fn closing_an_external_bead_with_no_named_outcome_is_refused() {
+    let (mut f, mut bd) = external_world();
+    let a = close(&v(&["sp-x", "--reason", "closed as residue"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, REFUSED, "{}", a.stderr);
+    assert!(a.stderr.contains("named outcome"), "{}", a.stderr);
+    assert_eq!(f.state("sp-x"), "READY");
+    assert!(bd.closed.is_empty() && f.events.is_empty(), "nothing written");
+}
+
+#[test]
+fn an_external_bead_closes_on_a_named_outcome_or_a_successor() {
+    let (mut f, mut bd) = external_world();
+    let a = close(&v(&["sp-x", "--reason", "duplicate-of sp-7"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-x"), "DROPPED");
+    let (mut f, mut bd) = external_world();
+    let a = close(&v(&["sp-x", "--reason", "fixed elsewhere", "--superseded-by", "sp-8"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-x"), "SUPERSEDED");
+}
+
+#[test]
+fn a_bead_with_no_external_origin_still_closes_bare() {
+    let mut f = Fake::default();
+    f.bead("sp-n", BeadState::Ready);
+    let mut bd = FakeBd::default();
+    assert_eq!(close(&v(&["sp-n", "--reason", "decided"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+}
+
+#[test]
+fn an_unreadable_origin_refuses_the_close() {
+    let (mut f, mut bd) = external_world();
+    bd.down = true;
+    assert_eq!(close(&v(&["sp-x", "--reason", "duplicate-of sp-7"]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL);
+}
+
+#[test]
+fn the_drop_verb_refuses_a_bare_drop_of_an_external_bead() {
+    let (mut f, mut bd) = external_world();
+    assert_eq!(drop_cmd(&v(&["sp-x", "operator decided", "slay"]), &mut f, &mut bd).code, REFUSED);
+    assert_eq!(f.state("sp-x"), "READY");
+    assert_eq!(drop_cmd(&v(&["sp-x", "won't-fix by ryan", "slay"]), &mut f, &mut bd).code, APPLIED);
+    assert_eq!(f.state("sp-x"), "DROPPED");
+}
+
+#[test]
+fn reconcile_closed_leaves_an_external_residue_ready() {
+    let (mut f, mut bd) = external_world();
+    bd.reasons.insert("sp-x".into(), "Answered: yes".into());
+    let a = reconcile_closed(&v(&["--apply"]), &mut f, &mut bd);
+    assert_eq!(a.code, REFUSED, "{}", a.stdout);
+    assert_eq!(f.state("sp-x"), "READY");
 }

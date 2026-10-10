@@ -688,6 +688,32 @@ pub trait Bd {
     fn reopen(&mut self, id: &str) -> Result<(), String>;
     /// The work beads an ask names on its `work-bead:<id>` labels; empty for any other bead.
     fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String>;
+    /// Whether the bead came from outside: its bd `external_ref` is set.
+    fn external(&mut self, id: &str) -> Result<bool, String>;
+}
+
+/// Why `kind` may not end the external bead `id`, as an answer; `None` when it may go ahead or
+/// the bead is not external. A bd that cannot say refuses too — an unreadable origin is not
+/// permission to drop.
+fn external_refusal(bd: &mut dyn Bd, id: &str, kind: &BeadEventKind, reason: &str, verb: &str) -> Option<Answer> {
+    match bd.external(id) {
+        Ok(false) => None,
+        Ok(true) => lifecycle::provenance::refuse_external(kind, reason)
+            .map(|why| Answer { code: REFUSED, stderr: format!("spira-lc {verb}: {id}: {why} — nothing closed\n"), ..Default::default() }),
+        Err(e) => Some(Answer { code: CANNOT_TELL, stderr: format!("spira-lc {verb}: {id}: its origin is unreadable — nothing closed: {}\n", e.trim()), ..Default::default() }),
+    }
+}
+
+/// `drop <bead-id> <reason> [actor]` — the operator's drop, which for an externally-originated
+/// bead must carry a named outcome in `<reason>` (see `provenance::parse_close_reason`).
+pub fn drop_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let kind = BeadEventKind::Drop { reason: DropReason::Unwanted };
+    if let (Some(id), Some(reason)) = (args.first().filter(|s| !s.is_empty()), args.get(1).filter(|s| !s.is_empty())) {
+        if let Some(a) = external_refusal(bd, id, &kind, reason, "drop") {
+            return a;
+        }
+    }
+    run("drop", args, m)
 }
 
 /// `reopen <id> [cause] [actor]` — the one door for handing a bead back (sp-swh8b8), the mirror of
@@ -772,6 +798,13 @@ pub fn reconcile_closed(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -
         let id = s(r, "bead_id");
         let Some(reason) = closed.get(&id) else { continue };
         let kind = terminal_event_for(reason);
+        if apply {
+            if let Some(a) = external_refusal(bd, &id, &kind, reason, "reconcile-closed") {
+                lines.push(format!("refused {id}: {}", a.stderr.trim()));
+                code = REFUSED;
+                continue;
+            }
+        }
         let to = if matches!(kind, BeadEventKind::Supersede { .. }) { "SUPERSEDED" } else { "DROPPED" };
         let why = reason.lines().next().unwrap_or("").trim();
         if !apply {
@@ -1040,6 +1073,13 @@ pub fn close(
                     };
                 }
             } else if !terminal {
+                let kind = match by.as_deref().filter(|b| !b.is_empty()) {
+                    Some(b) => BeadEventKind::Supersede { by: b.to_string() },
+                    None => terminal_event_for(&reason),
+                };
+                if let Some(a) = external_refusal(bd, &id, &kind, &reason, "close") {
+                    return a;
+                }
                 if holds_of(v.get("bead").and_then(|b| b.get("holds"))).iter().any(|h| h == "ask") {
                     let ev = serde_json::to_string(&BeadEventKind::AskWithdrawn).unwrap_or_default();
                     match event(m, "bead", &id, &state, &version, &actor, &ev).0 {
@@ -1050,10 +1090,6 @@ pub fn close(
                         rc => return Answer { code: rc, stderr: format!("spira-lc close: {id}: withdrawing its ask was refused — nothing closed\n"), ..Default::default() },
                     }
                 }
-                let kind = match by.as_deref().filter(|b| !b.is_empty()) {
-                    Some(b) => BeadEventKind::Supersede { by: b.to_string() },
-                    None => terminal_event_for(&reason),
-                };
                 let ev = serde_json::to_string(&kind).unwrap_or_default();
                 match event(m, "bead", &id, &state, &version, &actor, &ev) {
                     (APPLIED, _) => {}

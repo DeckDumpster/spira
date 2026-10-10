@@ -19,6 +19,7 @@
 //! built from a commit sha/subject (already public) or a fixed sentence.
 
 use crate::ports::{Bd, Gh, Git, LcBead, Lifecycle, Mail, Repo};
+use lifecycle::provenance::{self, ExternalOutcome, Trail, TrailRow};
 use spira_config::nonwork::Which;
 use std::path::{Path, PathBuf};
 
@@ -54,6 +55,18 @@ pub struct Deps<'a> {
 mod run_state {
     use std::fs;
     use std::path::Path;
+
+    /// `gh-reported/<id>`: the outcome comment was posted (the issue may still be open).
+    pub fn reported_exists(run: &Path, id: &str) -> bool {
+        run.join("gh-reported").join(id).exists()
+    }
+
+    pub fn reported_write(run: &Path, id: &str) {
+        let dir = run.join("gh-reported");
+        let _ = fs::create_dir_all(&dir);
+        let _ = fs::write(dir.join(id), b"");
+    }
+
 
     pub fn mark_exists(run: &Path, id: &str) -> bool {
         run.join("gh-closed").join(id).exists()
@@ -258,6 +271,136 @@ fn github_rows(v: &serde_json::Value) -> Vec<ClosedGhRow> {
 // Orchestration — one function per lib.sh function, same names in the doc comments.
 // ────────────────────────────────────────────────────────────────────────────────────────
 
+// ────────────────────────────────────────────────────────────────────────────────────────
+// Provenance: every external issue -> its bead -> the outcome that settles it
+// ────────────────────────────────────────────────────────────────────────────────────────
+
+/// The trail from `id` to what settles it, over the machine's rows and the store's close
+/// reasons.
+pub fn trail_of(d: &Deps, id: &str) -> Trail {
+    let lookup = |b: &str| -> Option<TrailRow> {
+        let lc = d.lc.bead(b).ok().flatten()?;
+        let close_reason = d.bd.show_json(b).and_then(|v| show_row(&v).and_then(|r| r.get("close_reason")).and_then(|x| x.as_str()).map(String::from));
+        Some(TrailRow { state: lc.state, reason: Some(lc.reason).filter(|r| !r.is_empty()), close_reason })
+    };
+    provenance::trace(id, &lookup)
+}
+
+/// The public comment for a settled outcome. A landing's comment is [`comment_body`], which
+/// carries the commit and its subject; this is every other outcome, built from the outcome's own
+/// evidence only (law-beads-is-never-public).
+pub fn outcome_comment(outcome: &ExternalOutcome, via: &[String], gh_repo: &str) -> String {
+    match outcome {
+        ExternalOutcome::Landed => "Fixed.".to_string(),
+        ExternalOutcome::DuplicateOf(id) => format!("Closed as a duplicate of {id}."),
+        ExternalOutcome::AlreadyFixedBy(c) => format!("Already fixed by {c}\n\nhttps://github.com/{gh_repo}/commit/{c}"),
+        ExternalOutcome::Moot(why) => format!("No longer applicable: {why}"),
+        ExternalOutcome::WontFix(who) => {
+            let chain = if via.len() > 1 { format!(" (via {})", via[1..].join(" → ")) } else { String::new() };
+            format!("Will not be fixed — decided by {who}{chain}.")
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProvVerdict {
+    Open,
+    Settled(String),
+    Broken(String),
+}
+
+/// One line of the provenance read.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ProvRow {
+    pub ext: String,
+    pub bead: String,
+    pub state: String,
+    pub verdict: ProvVerdict,
+}
+
+impl ProvRow {
+    pub fn is_broken(&self) -> bool {
+        matches!(self.verdict, ProvVerdict::Broken(_))
+    }
+
+    pub fn line(&self) -> String {
+        let (tag, detail) = match &self.verdict {
+            ProvVerdict::Open => ("open", String::new()),
+            ProvVerdict::Settled(s) => ("settled", s.clone()),
+            ProvVerdict::Broken(s) => ("BROKEN", s.clone()),
+        };
+        format!("{} {} {} {tag} {detail}", self.ext, self.bead, self.state).trim_end().to_string()
+    }
+}
+
+fn settled_text(d: &Deps, outcome: &ExternalOutcome, via: &[String]) -> Result<String, String> {
+    let chain = via.join(" -> ");
+    Ok(match outcome {
+        ExternalOutcome::Landed => {
+            let last = via.last().map(String::as_str).unwrap_or("");
+            let sha = d.lc.bead(last)?.map(|b| b.sha).unwrap_or_default();
+            if sha.is_empty() {
+                return Err(format!("{last} is LANDED with no commit on its row"));
+            }
+            format!("landed {} ({chain})", short8(&sha))
+        }
+        ExternalOutcome::DuplicateOf(x) => format!("duplicate-of {x} ({chain})"),
+        ExternalOutcome::AlreadyFixedBy(x) => format!("already-fixed-by {x} ({chain})"),
+        ExternalOutcome::Moot(x) => format!("moot: {x} ({chain})"),
+        ExternalOutcome::WontFix(x) => format!("wont-fix by {x} ({chain})"),
+    })
+}
+
+/// Every GitHub-originated bead, its state, and where its trail ends. A bead the machine has no
+/// row for is broken, not open: its origin has no recorded fate. A machine that cannot answer
+/// is an error, never a clean read.
+pub fn provenance_read(d: &Deps) -> Result<Vec<ProvRow>, String> {
+    let all = d.bd.list_all_json().ok_or("could not read the store")?;
+    let mut out = Vec::new();
+    for row in github_rows(&all) {
+        let state = match d.lc.bead(&row.id).map_err(|e| format!("lifecycle machine unreachable ({e})"))? {
+            Some(b) => b.state,
+            None => {
+                out.push(ProvRow { ext: row.ext, bead: row.id, state: "NONE".into(), verdict: ProvVerdict::Broken("no lifecycle row".into()) });
+                continue;
+            }
+        };
+        let verdict = match trail_of(d, &row.id) {
+            Trail::Pending(_) => ProvVerdict::Open,
+            Trail::Broken(why) => ProvVerdict::Broken(why),
+            Trail::Settled { outcome, via } => match settled_text(d, &outcome, &via) {
+                Ok(t) => ProvVerdict::Settled(t),
+                Err(why) => ProvVerdict::Broken(why),
+            },
+        };
+        out.push(ProvRow { ext: row.ext, bead: row.id, state, verdict });
+    }
+    Ok(out)
+}
+
+/// Posts the outcome of a settled, non-landing trail on the issue, and closes the issue when
+/// the outcome means the reporter's problem is gone. Once per bead: `gh-reported/<id>`.
+fn report_outcome(d: &Deps, ctx: &Ctx, id: &str, ext: &str, outcome: &ExternalOutcome, via: &[String]) -> Vec<String> {
+    let mut log = Vec::new();
+    if run_state::reported_exists(&ctx.run, id) {
+        return log;
+    }
+    let Some((gh_repo, issue_n)) = parse_gh_ref(ext) else { return log };
+    let body = outcome_comment(outcome, via, &gh_repo);
+    if !d.gh.issue_comment(&gh_repo, &issue_n, &body) {
+        log.push(format!("gh-closeout {id}: could not comment the outcome on {ext}"));
+        return log;
+    }
+    run_state::reported_write(&ctx.run, id);
+    if outcome.closes_issue() && d.gh.issue_close(&gh_repo, &issue_n) {
+        run_state::mark_write(&ctx.run, id);
+        log.push(format!("gh-closeout {id}: reported {outcome:?} and closed {ext}"));
+    } else {
+        log.push(format!("gh-closeout {id}: reported {outcome:?} on {ext}"));
+    }
+    log
+}
+
 /// lib.sh `gh_issue_closeout <bead-id> <landed-sha> <repo-path>`.
 pub fn gh_issue_closeout(d: &Deps, ctx: &Ctx, id: &str, sha: &str, repo_path: &Path) -> Vec<String> {
     let mut log = Vec::new();
@@ -409,6 +552,13 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
 
         if ls.as_ref().map(|b| b.state.as_str()) == Some("LANDED") {
             continue;
+        }
+
+        if let Trail::Settled { outcome, via } = trail_of(d, &row.id) {
+            if outcome != ExternalOutcome::Landed {
+                log.extend(report_outcome(d, ctx, &row.id, &row.ext, &outcome, &via));
+                continue;
+            }
         }
 
         if let Some(state) = ls.as_ref().map(|b| b.state.as_str()).filter(|s| matches!(*s, "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY")) {
@@ -707,11 +857,11 @@ mod tests {
     impl FakeLc {
         fn with(id: &str, state: &str, sha: &str) -> FakeLc {
             let mut lc = FakeLc::default();
-            lc.beads.insert(id.to_string(), LcBead { state: state.to_string(), sha: sha.to_string() });
+            lc.beads.insert(id.to_string(), LcBead { state: state.to_string(), sha: sha.to_string(), ..Default::default() });
             lc
         }
         fn and(mut self, id: &str, state: &str, sha: &str) -> FakeLc {
-            self.beads.insert(id.to_string(), LcBead { state: state.to_string(), sha: sha.to_string() });
+            self.beads.insert(id.to_string(), LcBead { state: state.to_string(), sha: sha.to_string(), ..Default::default() });
             self
         }
     }
@@ -1223,5 +1373,108 @@ mod tests {
         let (out, found, ..) = backfill(&d, &ctx(&run), true);
         assert_eq!(found, 1);
         assert!(out.iter().any(|l| l.contains("sp-b")) && !out.iter().any(|l| l.contains("sp-a")), "{out:?}");
+    }
+
+    // ── provenance ───────────────────────────────────────────────────────────────────────
+
+    fn with_reason(mut lc: FakeLc, id: &str, reason: &str) -> FakeLc {
+        lc.beads.get_mut(id).unwrap().reason = reason.to_string();
+        lc
+    }
+
+    fn dropped_world(close_reason: &str) -> (FakeBd, FakeGh, FakeGit, FakeRepo, FakeMail, FakeLc) {
+        let bd = FakeBd::default();
+        bd.show.borrow_mut().insert("sp-d".into(), serde_json::json!({"external_ref": "github:fixture/testrepo#40", "close_reason": close_reason}));
+        seed_closed_github(
+            &bd,
+            vec![serde_json::json!({"id":"sp-d","status":"closed","external_ref":"github:fixture/testrepo#40","labels":["repo:fixture"],"closed_at":"2000-01-01T00:00:00Z"})],
+        );
+        let gh = FakeGh::default();
+        gh.set_state("fixture/testrepo", "40", "OPEN");
+        let repo = FakeRepo::default();
+        repo.add("fixture", "/r", "origin/main");
+        let lc = with_reason(FakeLc::with("sp-d", "DROPPED", ""), "sp-d", "unwanted");
+        (bd, gh, FakeGit::default(), repo, FakeMail::default(), lc)
+    }
+
+    #[test]
+    fn the_landing_comment_carries_the_commit_it_links() {
+        let tmp = testkit::TempDir::new("gh-intake-prov-landing-comment");
+        let bd = FakeBd::default();
+        bd.show.borrow_mut().insert("sp-a".into(), serde_json::json!({"external_ref": "github:fixture/testrepo#7"}));
+        let gh = FakeGh::default();
+        gh.set_state("fixture/testrepo", "7", "OPEN");
+        let (git, repo, mail, lc) = (FakeGit::default(), FakeRepo::default(), FakeMail::default(), FakeLc::default());
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        gh_issue_closeout(&d, &ctx(&tmp.path().join("run")), "sp-a", "deadbeef0123", Path::new("/r"));
+        let body = gh.comments.borrow()[0].2.clone();
+        assert!(body.contains("deadbee") && body.contains("https://github.com/fixture/testrepo/commit/deadbeef0123"), "{body}");
+    }
+
+    #[test]
+    fn a_duplicate_close_is_reported_on_the_issue_but_does_not_close_it() {
+        let tmp = testkit::TempDir::new("gh-intake-prov-duplicate");
+        let run = tmp.path().join("run");
+        let (bd, gh, git, repo, mail, lc) = dropped_world("duplicate-of sp-9");
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let log = gh_unlanded_scan(&d, &ctx(&run), 2_000_000_000);
+        assert_eq!(gh.comments.borrow().len(), 1, "{log:?}");
+        assert!(gh.comments.borrow()[0].2.contains("duplicate of sp-9"));
+        assert!(gh.closes.borrow().is_empty(), "a duplicate does not close the reporter's issue");
+        assert!(mail.sent.borrow().is_empty(), "a named outcome needs no operator ask");
+        gh_unlanded_scan(&d, &ctx(&run), 2_000_000_100);
+        assert_eq!(gh.comments.borrow().len(), 1, "reported once");
+    }
+
+    #[test]
+    fn a_moot_close_is_reported_and_closes_the_issue() {
+        let tmp = testkit::TempDir::new("gh-intake-prov-moot");
+        let (bd, gh, git, repo, mail, lc) = dropped_world("moot: the importer was removed");
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        gh_unlanded_scan(&d, &ctx(&tmp.path().join("run")), 2_000_000_000);
+        assert!(gh.comments.borrow()[0].2.contains("the importer was removed"));
+        assert_eq!(gh.closes.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_drop_with_no_named_outcome_is_asked_about_not_reported() {
+        let tmp = testkit::TempDir::new("gh-intake-prov-bare");
+        let (bd, gh, git, repo, mail, lc) = dropped_world("residue");
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let log = gh_unlanded_scan(&d, &ctx(&tmp.path().join("run")), 2_000_000_000);
+        assert!(gh.comments.borrow().is_empty() && gh.closes.borrow().is_empty());
+        assert!(log.iter().any(|l| l.contains("asked operator")), "{log:?}");
+    }
+
+    #[test]
+    fn the_provenance_read_follows_a_supersede_chain_to_the_landing_commit() {
+        let bd = FakeBd::default();
+        seed_closed_github(
+            &bd,
+            vec![
+                serde_json::json!({"id":"sp-a","status":"closed","external_ref":"github:fixture/testrepo#1","labels":[]}),
+                serde_json::json!({"id":"sp-b","status":"closed","external_ref":"github:fixture/testrepo#2","labels":[]}),
+                serde_json::json!({"id":"sp-c","status":"closed","external_ref":"github:fixture/testrepo#3","labels":[]}),
+            ],
+        );
+        let lc = with_reason(FakeLc::with("sp-a", "SUPERSEDED", "").and("sp-x", "LANDED", "cafebabe1234").and("sp-b", "SUPERSEDED", "").and("sp-y", "DROPPED", ""), "sp-a", "sp-x");
+        let lc = with_reason(lc, "sp-b", "sp-y");
+        let (gh, git, repo, mail) = (FakeGh::default(), FakeGit::default(), FakeRepo::default(), FakeMail::default());
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let rows = provenance_read(&d).unwrap();
+        let by = |id: &str| rows.iter().find(|r| r.bead == id).unwrap();
+        assert!(matches!(&by("sp-a").verdict, ProvVerdict::Settled(t) if t.contains("cafebabe") && t.contains("sp-a -> sp-x")), "{:?}", by("sp-a"));
+        assert!(by("sp-b").is_broken(), "superseded by a bead that never landed");
+        assert!(by("sp-c").is_broken(), "no lifecycle row at all");
+    }
+
+    #[test]
+    fn the_provenance_read_refuses_when_the_machine_cannot_answer() {
+        let bd = FakeBd::default();
+        seed_closed_github(&bd, vec![serde_json::json!({"id":"sp-a","status":"closed","external_ref":"github:fixture/testrepo#1","labels":[]})]);
+        let lc = FakeLc { down: true, ..Default::default() };
+        let (gh, git, repo, mail) = (FakeGh::default(), FakeGit::default(), FakeRepo::default(), FakeMail::default());
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        assert!(provenance_read(&d).is_err());
     }
 }
