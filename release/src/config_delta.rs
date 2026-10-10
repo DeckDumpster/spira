@@ -231,6 +231,17 @@ pub fn staged_for_tree(spec: &str, tree: &Path) -> Result<Option<(PathBuf, Strin
     stage_tree_delta(&original, tree)
 }
 
+/// [`staged_for_tree`] for a commit not yet built: `build` runs the candidate's binaries
+/// against production config before any release directory exists to read the delta from.
+pub fn staged_for_commit(git: &dyn crate::git::Git, spec: &str, repo: &Path, commit: &str) -> Result<Option<(PathBuf, String)>, String> {
+    let (_, _, _, original) = read_layers(spec)?;
+    let sha = git.resolve(repo, commit)?;
+    let tree = scratch_dir()?;
+    let staged = git.archive(repo, &sha, &tree).and_then(|()| stage_tree_delta(&original, &tree));
+    let _ = fs::remove_dir_all(&tree);
+    staged
+}
+
 fn stage_tree_delta(original: &[Table], tree: &Path) -> Result<Option<(PathBuf, String)>, String> {
     let active = original.iter().rev().find_map(|t| get(t, "spira.releases").and_then(Value::as_str)).filter(|s| !s.is_empty()).map(|r| Path::new(r).join(crate::activate::CURRENT));
     let Some(delta) = complete(original, tree, active.as_deref(), load(tree)?)? else { return Ok(None) };
