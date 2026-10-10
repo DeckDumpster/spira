@@ -118,7 +118,7 @@ fn ci_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), 
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let sim = std::env::current_exe().map_err(|e| e.to_string())?;
     let workspace = workspace.canonicalize().map_err(|e| format!("{}: {e}", workspace.display()))?;
-    let j = Job { steps: &steps, skip: &skip, cx: Context { sha: &sha, workspace: &workspace }, scratch: &scratch, gh_dir: &gh_dir, release_bin: &release_bin, path: &path, env: &image_env };
+    let j = Job { steps: &steps, skip: &skip, cx: Context { sha: &sha, workspace: &workspace, temp: &scratch }, scratch: &scratch, gh_dir: &gh_dir, release_bin: &release_bin, path: &path, env: &image_env };
     let code = run_job(&j, &sim, |l| print!("{l}"))?;
     let _ = std::fs::remove_dir_all(&scratch);
     if code == 0 { Ok(()) } else { Err(format!("job {job} failed with exit {code}")) }

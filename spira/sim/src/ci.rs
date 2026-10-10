@@ -84,6 +84,7 @@ pub fn steps(yml: &str, job: &str) -> Result<Vec<Step>, String> {
 pub struct Context<'a> {
     pub sha: &'a str,
     pub workspace: &'a Path,
+    pub temp: &'a Path,
 }
 
 /// Replaces every `${{ ... }}` the runner knows; any other expression is refused rather than left
@@ -99,6 +100,7 @@ pub fn expand(text: &str, cx: &Context) -> Result<String, String> {
             "github.sha" => cx.sha.to_string(),
             "github.workspace" => cx.workspace.display().to_string(),
             "github.head_ref" => String::new(),
+            "runner.temp" => cx.temp.display().to_string(),
             "github.repository" => "sim/sim".to_string(),
             "steps.app-tok.outputs.token" | "secrets.GITHUB_TOKEN" => "sim-token".to_string(),
             other => return Err(format!("the sim runner does not know the expression ${{{{ {other} }}}}")),

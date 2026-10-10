@@ -76,7 +76,7 @@ fn jobs(text: &str) -> Vec<Job> {
                     step.title = t.trim_start_matches("name:").trim().to_string();
                 }
                 if indent(l) >= 8 && !t.starts_with('#') {
-                    step.run.push_str(l);
+                    step.run.push_str(t.strip_prefix("run:").map_or(l, |r| r.trim_start_matches(['|', '>', '-', ' '])));
                     step.run.push('\n');
                 }
             }
@@ -126,7 +126,7 @@ pub fn judge(path: &str, text: &str, bins: &BTreeSet<String>) -> Vec<Finding> {
                     message: format!("step {:?} runs a release binary with no {KEY} in its env, its job's, or GITHUB_ENV from an earlier step", s.title),
                 });
             }
-            if s.run.contains(KEY) && s.run.contains("GITHUB_ENV") || s.run.contains("ci-config.sh") {
+            if s.run.contains(KEY) && s.run.contains("GITHUB_ENV") {
                 written = true;
             }
             if job.stages_path && s.run.contains("PATH=") && (s.run.contains("GITHUB_ENV") || s.run.contains("GITHUB_PATH")) {
@@ -169,7 +169,7 @@ impl Rule for WorkflowConfig {
 
     fn hint(&self) -> &'static str {
         "A hosted runner has no box config. Run `bash spira/ci-config.sh \"$GITHUB_WORKSPACE\"` in the job \
-before the step (it writes SPIRA_TOML to GITHUB_ENV), or set SPIRA_TOML in the step's env."
+before the step and set SPIRA_TOML: ${{ runner.temp }}/ci-config.toml in the step's env."
     }
 }
 
@@ -206,6 +206,14 @@ mod tests {
             assert!(judge("w.yml", ok, &bins()).is_empty(), "{ok}");
         }
         assert_eq!(judge("w.yml", &later, &bins()).len(), 1, "config written after the step does not count");
+    }
+
+    #[test]
+    fn an_inline_run_is_judged_like_a_block() {
+        let wf = "jobs:\n  a:\n    steps:\n      - name: stage\n        run: printf 'PATH=%s\\n' \"$p\" >> \"$GITHUB_ENV\"\n      - name: pub\n        run: testenv container publish\n";
+        let got = judge("w.yml", wf, &bins());
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].message.contains("pub"));
     }
 
     #[test]
