@@ -696,3 +696,23 @@ opts out loudly. The target is passed as `--target-dir`, never `CARGO_TARGET_DIR
 hashes every `CARGO_*` variable, so an env target would give every release its own cache
 keys), and a caller's `CARGO_INCREMENTAL` is removed.
 
+
+## The release machine
+
+A release moves `cut` → `accepted` → `published` → `activated`, and `activated` → `rolled_back`
+when `release rollback` moves `current` off it; a rolled-back release may be published again. `build`
+records `cut`, `verify` records `accepted`, `activate` records `published` before it switches and
+`activated` after, and `rollback` records `rolled_back` on the release it left. Each move is an
+event with a reason in `$SPIRA_RUN/release/machine/<sha>.json`; an illegal move is refused naming the
+state, and a failed write fails the command. A release built before the record existed is backfilled
+through the earlier states, each event saying so.
+
+`release status --json` prints `current` and every recorded release, newest first, with its state,
+reason, age and events — the record read back and nothing else. The `release-state-readers` lint
+keeps operator tooling off the history, hotfix and machine files.
+
+The batch machine carries the matching states: `GREEN` → `LANDING` (the ref has not moved) →
+`DEPLOYING` (the ref moved, members marked) → `LANDED`, with `LandAborted` returning to `GREEN` and
+a deploy fault landing the batch with the fault in its reason. The landing callers still use the
+direct `GREEN` → `LANDED` move; they move over, and the machine moves into the lifecycle store, once the
+write path is measured to have room for it.

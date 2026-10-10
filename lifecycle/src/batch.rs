@@ -13,6 +13,10 @@ pub enum BatchState {
     Open,
     CiRunning,
     Green,
+    /// Green and being landed: the ref has not moved yet.
+    Landing,
+    /// The ref moved and the members are marked; the release is being published.
+    Deploying,
     Attributing,
     Rebuilding,
     Landed,
@@ -32,6 +36,8 @@ impl BatchState {
             BatchState::Open => "OPEN",
             BatchState::CiRunning => "CI_RUNNING",
             BatchState::Green => "GREEN",
+            BatchState::Landing => "LANDING",
+            BatchState::Deploying => "DEPLOYING",
             BatchState::Attributing => "ATTRIBUTING",
             BatchState::Rebuilding => "REBUILDING",
             BatchState::Landed => "LANDED",
@@ -48,6 +54,8 @@ impl BatchState {
             "OPEN" => BatchState::Open,
             "CI_RUNNING" => BatchState::CiRunning,
             "GREEN" => BatchState::Green,
+            "LANDING" => BatchState::Landing,
+            "DEPLOYING" => BatchState::Deploying,
             "ATTRIBUTING" => BatchState::Attributing,
             "REBUILDING" => BatchState::Rebuilding,
             "LANDED" => BatchState::Landed,
@@ -155,6 +163,14 @@ pub enum BatchEventKind {
     BaseMoved,
     Rebuilt,
     FastForward { sha: String },
+    /// GREEN -> LANDING: the landing took its lock and has not moved the ref.
+    LandStarted,
+    /// LANDING -> GREEN: the landing was refused before the ref moved.
+    LandAborted { reason: String },
+    /// DEPLOYING -> LANDED: the release is in force.
+    Deployed,
+    /// DEPLOYING -> LANDED: the landing stands and the release was not activated.
+    DeployFaulted { why: String },
     /// Valid only while ATTRIBUTING. Per-member bookkeeping; does not itself move the batch.
     Attributed { bead_id: String, outcome: String },
     Settle,
@@ -216,7 +232,7 @@ pub fn apply(row: &BatchRow, ev: &BatchEvent) -> Outcome<BatchRow> {
             if row.state.is_terminal() {
                 return terminal(row);
             }
-            if row.state == BatchState::Staged {
+            if matches!(row.state, BatchState::Staged | BatchState::Landing | BatchState::Deploying) {
                 return illegal(row, &ev.kind);
             }
             let mut new = row.clone();
@@ -241,6 +257,10 @@ pub fn apply(row: &BatchRow, ev: &BatchEvent) -> Outcome<BatchRow> {
         | BatchEventKind::BaseMoved
         | BatchEventKind::Rebuilt
         | BatchEventKind::FastForward { .. }
+        | BatchEventKind::LandStarted
+        | BatchEventKind::LandAborted { .. }
+        | BatchEventKind::Deployed
+        | BatchEventKind::DeployFaulted { .. }
         | BatchEventKind::Attributed { .. }
         | BatchEventKind::Settle
         | BatchEventKind::Eject { .. }
@@ -290,7 +310,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             }
             PassStarted { n, head } => started(n, Some(head)),
             Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. } | SuitesStarted { .. }
-            | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Promote { .. } | Discard { .. } => illegal(row, kind),
+            | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Promote { .. } | Discard { .. } | LandStarted | LandAborted { .. } | Deployed | DeployFaulted { .. } => illegal(row, kind),
         },
 
         BatchState::CiRunning => match kind {
@@ -304,7 +324,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             PassRed { n, .. } | PassIncomplete { n, .. } | PassPreempted { n, .. } if *n == row.pass => Outcome::applied(moved(BatchState::Attributing, None)),
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
             | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. } | Settle
-            | Abandon { .. } | Promote { .. } | Discard { .. } => illegal(row, kind),
+            | Abandon { .. } | Promote { .. } | Discard { .. } | LandStarted | LandAborted { .. } | Deployed | DeployFaulted { .. } => illegal(row, kind),
         },
 
         BatchState::Green => match kind {
@@ -313,13 +333,43 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 new.reason = Some(sha.clone());
                 Outcome::applied(new)
             }
+            LandStarted => Outcome::applied(moved(BatchState::Landing, None)),
             BaseMoved => Outcome::applied(moved(BatchState::Rebuilding, None)),
             Eject { .. } => Outcome::applied(moved(BatchState::Open, None)),
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
             | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | Rebuilt | Attributed { .. } | Settle | Abandon { .. }
-            | Promote { .. } | Discard { .. } => {
+            | Promote { .. } | Discard { .. } | LandAborted { .. } | Deployed | DeployFaulted { .. } => {
                 illegal(row, kind)
             }
+        },
+
+        BatchState::Landing => match kind {
+            FastForward { sha } => {
+                let mut new = moved(BatchState::Deploying, None);
+                new.reason = Some(sha.clone());
+                Outcome::applied(new)
+            }
+            LandAborted { reason } => {
+                let mut new = moved(BatchState::Green, None);
+                new.reason = Some(reason.clone());
+                Outcome::applied(new)
+            }
+            MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
+            | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | BaseMoved | Rebuilt | Attributed { .. } | Settle
+            | Abandon { .. } | Eject { .. } | Promote { .. } | Discard { .. } | LandStarted | Deployed | DeployFaulted { .. } => illegal(row, kind),
+        },
+
+        BatchState::Deploying => match kind {
+            Deployed => Outcome::applied(moved(BatchState::Landed, None)),
+            DeployFaulted { why } => {
+                let mut new = moved(BatchState::Landed, None);
+                let sha = row.reason.as_deref().unwrap_or_default();
+                new.reason = Some(format!("{sha} deploy-fault: {why}"));
+                Outcome::applied(new)
+            }
+            MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
+            | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. }
+            | Settle | Abandon { .. } | Eject { .. } | Promote { .. } | Discard { .. } | LandStarted | LandAborted { .. } => illegal(row, kind),
         },
 
         BatchState::Rebuilding => match kind {
@@ -331,7 +381,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             PassStarted { n, head } => started(n, Some(head)),
             MemberAdded { .. } | CiStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. } | PassIncomplete { .. } | PassPreempted { .. }
             | PassRebuilt { .. } | Green | Red | BaseMoved | FastForward { .. } | Attributed { .. } | Settle | Abandon { .. }
-            | Eject { .. } | Promote { .. } | Discard { .. } => illegal(row, kind),
+            | Eject { .. } | Promote { .. } | Discard { .. } | LandStarted | LandAborted { .. } | Deployed | DeployFaulted { .. } => illegal(row, kind),
         },
 
         BatchState::Attributing => match kind {
@@ -343,7 +393,7 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
                 Outcome::applied(new)
             }
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
-            | PassIncomplete { .. } | PassPreempted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. } | Promote { .. } | Discard { .. } => illegal(row, kind),
+            | PassIncomplete { .. } | PassPreempted { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Abandon { .. } | Promote { .. } | Discard { .. } | LandStarted | LandAborted { .. } | Deployed | DeployFaulted { .. } => illegal(row, kind),
         },
 
         BatchState::Staged => match kind {
@@ -360,13 +410,13 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
             }
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
             | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. }
-            | Settle | Abandon { .. } | Eject { .. } => illegal(row, kind),
+            | Settle | Abandon { .. } | Eject { .. } | LandStarted | LandAborted { .. } | Deployed | DeployFaulted { .. } => illegal(row, kind),
         },
 
         BatchState::Landed | BatchState::Settled | BatchState::Abandoned | BatchState::Discarded => match kind {
             MemberAdded { .. } | CiStarted { .. } | PassStarted { .. } | SuitesStarted { .. } | PassGreen { .. } | PassRed { .. }
             | PassIncomplete { .. } | PassPreempted { .. } | PassRebuilt { .. } | Green | Red | BaseMoved | Rebuilt | FastForward { .. } | Attributed { .. }
-            | Settle | Abandon { .. } | Eject { .. } | Promote { .. } | Discard { .. } => terminal(row),
+            | Settle | Abandon { .. } | Eject { .. } | Promote { .. } | Discard { .. } | LandStarted | LandAborted { .. } | Deployed | DeployFaulted { .. } => terminal(row),
         },
     }
 }
@@ -375,11 +425,13 @@ fn primary_transition(row: &BatchRow, kind: &BatchEventKind) -> Outcome<BatchRow
 mod tests {
     use super::*;
 
-    const ALL_STATES: [BatchState; 10] = [
+    const ALL_STATES: [BatchState; 12] = [
         BatchState::Staged,
         BatchState::Open,
         BatchState::CiRunning,
         BatchState::Green,
+        BatchState::Landing,
+        BatchState::Deploying,
         BatchState::Attributing,
         BatchState::Rebuilding,
         BatchState::Landed,
@@ -404,6 +456,10 @@ mod tests {
             BatchEventKind::BaseMoved,
             BatchEventKind::Rebuilt,
             BatchEventKind::FastForward { sha: "sha1".into() },
+            BatchEventKind::LandStarted,
+            BatchEventKind::LandAborted { reason: "base moved".into() },
+            BatchEventKind::Deployed,
+            BatchEventKind::DeployFaulted { why: "unit failed".into() },
             BatchEventKind::Attributed { bead_id: "sp-1".into(), outcome: "requeue".into() },
             BatchEventKind::Settle,
             BatchEventKind::Abandon { reason: "r".into() },
@@ -462,6 +518,57 @@ mod tests {
         let out = apply(&r, &ev(BatchState::Green, r.version, BatchEventKind::FastForward { sha: "sha1".into() }));
         assert!(out.applied);
         assert_eq!(out.row.state, BatchState::Landed);
+    }
+
+    fn rows_in(state: BatchState) -> BatchRow {
+        let mut r = row(state);
+        r.reason = Some("sha1".into());
+        r
+    }
+
+    #[test]
+    fn landing_and_deploying_apply_every_legal_move_and_refuse_the_rest_naming_the_state() {
+        use BatchEventKind::*;
+        let legal: [(BatchState, BatchEventKind, BatchState); 5] = [
+            (BatchState::Green, LandStarted, BatchState::Landing),
+            (BatchState::Landing, FastForward { sha: "sha1".into() }, BatchState::Deploying),
+            (BatchState::Landing, LandAborted { reason: "base moved".into() }, BatchState::Green),
+            (BatchState::Deploying, Deployed, BatchState::Landed),
+            (BatchState::Deploying, DeployFaulted { why: "unit failed".into() }, BatchState::Landed),
+        ];
+        for (from, kind, to) in &legal {
+            let r = rows_in(*from);
+            let out = apply(&r, &ev(*from, r.version, kind.clone()));
+            assert!(out.applied, "{from:?} {kind:?}: {:?}", out.refusal);
+            assert_eq!(out.row.state, *to);
+            assert_eq!(out.row.version, r.version + 1);
+        }
+        for from in [BatchState::Landing, BatchState::Deploying] {
+            for kind in kinds() {
+                if legal.iter().any(|(f, k, _)| *f == from && *k == kind) {
+                    continue;
+                }
+                let r = rows_in(from);
+                let out = apply(&r, &ev(from, r.version, kind.clone()));
+                assert!(!out.applied, "{from:?} must refuse {kind:?}");
+                match out.refusal {
+                    Some(Refusal::IllegalTransition { state, .. }) => assert!(state.contains(from.as_str()), "{state}"),
+                    other => panic!("{other:?}"),
+                }
+                assert_eq!(out.row, r);
+            }
+        }
+    }
+
+    #[test]
+    fn a_deploy_fault_lands_the_batch_and_keeps_the_sha_and_the_fault() {
+        let r = row(BatchState::Green);
+        let r = step(&r, BatchEventKind::LandStarted);
+        let r = step(&r, BatchEventKind::FastForward { sha: "sha1".into() });
+        assert_eq!(r.reason.as_deref(), Some("sha1"));
+        let r = step(&r, BatchEventKind::DeployFaulted { why: "unit failed".into() });
+        assert_eq!((r.state, r.reason.as_deref()), (BatchState::Landed, Some("sha1 deploy-fault: unit failed")));
+        assert!(BatchState::from_str("LANDING") == Some(BatchState::Landing) && BatchState::from_str("DEPLOYING") == Some(BatchState::Deploying));
     }
 
     #[test]

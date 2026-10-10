@@ -1,0 +1,9 @@
+# release-state-readers: files in the operator-facing trees that still read release state
+# from a file under the run directory or the releases `current` link, one repo-relative path
+# per line. Blank lines and `#` comments are ignored.
+#
+# SHRINK-ONLY. A line leaves when its file asks `release status --json` instead; nothing is
+# ever added for a NEW reader.
+watchtower/src/main.rs
+watchtower/src/probes.rs
+watchtower/src/release_skew.rs
