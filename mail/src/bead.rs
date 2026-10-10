@@ -37,6 +37,8 @@ pub trait Bd {
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut;
     /// Close `id` through the lifecycle machine (`spira-lc close`, sp-3fue0j) — never bd.
     fn close(&self, id: &str, reason: &str) -> BdOut;
+    /// Write the lifecycle row of the bead whose `bd create --silent` printed `created_stdout`.
+    fn ensure_row(&self, created_stdout: &str) -> Result<(), String>;
 }
 
 /// The real `bd` binary, `-C <db>` prefixed. Refuses (matching mail.sh's own
@@ -56,6 +58,9 @@ pub struct BdCli {
 }
 
 impl Bd for BdCli {
+    fn ensure_row(&self, created_stdout: &str) -> Result<(), String> {
+        spira_config::lifecycle_row::after_create("mail", created_stdout)
+    }
     fn close(&self, id: &str, reason: &str) -> BdOut {
         match spira_config::lifecycle_row::close(id, reason, "mail", None) {
             Ok(()) => BdOut::ok(""),
@@ -244,9 +249,9 @@ pub fn suit_reason(kind: &str, first_para: &str) -> String {
 /// as a `work-bead:<id>` label, so a path that answers or closes the ASK BEAD rather than
 /// replying to the mail — the cockpit pane's verdict, `resolve`, `verify-asks` — can still
 /// find the work bead whose `ask` hold the answer lifts (sp-v62vn follow-up).
-pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, body: &str, ask_label: &str, work_bead: &str) -> Option<String> {
+pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, body: &str, ask_label: &str, work_bead: &str) -> Result<Option<String>, String> {
     if !db_configured {
-        return None;
+        return Ok(None);
     }
     let mut labels = format!("{ask_label},overseer");
     if !work_bead.is_empty() {
@@ -254,13 +259,52 @@ pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, bod
     }
     let out = bd.run(&a(&["create", subject, "-l", &labels, "--type", "decision", "--body-file", "-", "--silent"]), Some(body));
     let id = out.stdout.trim();
-    if out.code == 0 && !id.is_empty() {
-        if let Err(e) = spira_config::lifecycle_row::after_create("mail", &out.stdout) {
-            eprintln!("mail: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
+    if out.code != 0 || id.is_empty() {
+        return Ok(None);
+    }
+    if let Err(e) = retry_until_deadline(|| bd.ensure_row(&out.stdout)) {
+        let closed = abandon_bead(bd, id, &format!("lifecycle row not written: {e}"));
+        return Err(format!("{id}: lifecycle row not written: {e}; {closed}"));
+    }
+    Ok(Some(id.to_string()))
+}
+
+#[cfg(not(test))]
+pub const RETRY_DEADLINE_MS: u64 = 5000;
+#[cfg(test)]
+pub const RETRY_DEADLINE_MS: u64 = 250;
+pub const RETRY_PAUSE_MS: u64 = 100;
+
+/// Runs `f` until it succeeds, at least twice and then until `RETRY_DEADLINE_MS` has passed.
+pub fn retry_until_deadline<T>(mut f: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    let start = std::time::Instant::now();
+    let mut attempt = 1;
+    loop {
+        match f() {
+            Ok(v) => return Ok(v),
+            Err(e) if attempt >= 2 && start.elapsed().as_millis() as u64 >= RETRY_DEADLINE_MS => return Err(e),
+            Err(_) => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(RETRY_PAUSE_MS));
+            }
         }
-        Some(id.to_string())
+    }
+}
+
+/// Closes a tracking bead that could not be completed, so no ask is left that cannot be
+/// answered; falls back to a direct `bd close` when the lifecycle close cannot run (a rowless
+/// bead). Returns what happened, for the caller's error.
+pub fn abandon_bead(bd: &dyn Bd, id: &str, why: &str) -> String {
+    let reason = format!("ask abandoned by mail send: {why}");
+    let first = bd.close(id, &reason);
+    if first.code == 0 {
+        return format!("{id} closed");
+    }
+    let second = bd.run(&a(&["close", id, "--reason", &reason]), None);
+    if second.code == 0 {
+        format!("{id} closed")
     } else {
-        None
+        format!("{id} could NOT be closed: {}", bd_failure_detail(&second))
     }
 }
 
@@ -456,11 +500,13 @@ pub mod fake {
     pub struct FakeBd {
         pub calls: RefCell<Vec<(Vec<String>, Option<String>)>>,
         pub responses: RefCell<Vec<BdOut>>,
+        pub row_failures: std::cell::Cell<u32>,
+        pub row_attempts: std::cell::Cell<u32>,
     }
 
     impl FakeBd {
         pub fn new(responses: Vec<BdOut>) -> FakeBd {
-            FakeBd { calls: RefCell::new(Vec::new()), responses: RefCell::new(responses) }
+            FakeBd { calls: RefCell::new(Vec::new()), responses: RefCell::new(responses), row_failures: std::cell::Cell::new(0), row_attempts: std::cell::Cell::new(0) }
         }
         pub fn calls(&self) -> Vec<(Vec<String>, Option<String>)> {
             self.calls.borrow().clone()
@@ -468,6 +514,16 @@ pub mod fake {
     }
 
     impl Bd for FakeBd {
+        fn ensure_row(&self, created_stdout: &str) -> Result<(), String> {
+            self.row_attempts.set(self.row_attempts.get() + 1);
+            let _ = created_stdout;
+            let left = self.row_failures.get();
+            if left > 0 {
+                self.row_failures.set(left - 1);
+                return Err("lc: injected failure".into());
+            }
+            Ok(())
+        }
         // Recorded as the argv the real close used to be, so the callers' tests read the same.
         fn close(&self, id: &str, reason: &str) -> BdOut {
             self.run(&[String::from("close"), id.to_string(), "--reason-file".into(), "-".into()], Some(reason))
@@ -546,13 +602,13 @@ mod tests {
     #[test]
     fn create_tracking_bead_returns_none_when_store_unconfigured() {
         let bd = FakeBd::new(vec![]);
-        assert_eq!(create_tracking_bead(&bd, false, "subj", "body", "needs-operator", ""), None); // literal-ok: test fixture
+        assert_eq!(create_tracking_bead(&bd, false, "subj", "body", "needs-operator", ""), Ok(None)); // literal-ok: test fixture
     }
 
     #[test]
     fn create_tracking_bead_returns_the_new_id() {
         let bd = FakeBd::new(vec![BdOut::ok("sp-newid1\n")]);
-        let id = create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "").unwrap(); // literal-ok: test fixture
+        let id = create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "").unwrap().unwrap(); // literal-ok: test fixture
         assert_eq!(id, "sp-newid1");
         let calls = bd.calls();
         assert_eq!(calls[0].1.as_deref(), Some("body"));
@@ -564,7 +620,7 @@ mod tests {
     #[test]
     fn a_tracking_bead_for_a_work_bead_carries_its_work_bead_label() {
         let bd = FakeBd::new(vec![BdOut::ok("sp-newid1\n")]);
-        create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "sp-work1").unwrap(); // literal-ok: test fixture
+        create_tracking_bead(&bd, true, "subj", "body", "needs-operator", "sp-work1").unwrap().unwrap(); // literal-ok: test fixture
         assert!(bd.calls()[0].0.contains(&"needs-operator,overseer,work-bead:sp-work1".to_string()), "{:?}", bd.calls()); // literal-ok: test fixture
     }
 
