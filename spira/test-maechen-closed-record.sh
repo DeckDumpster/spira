@@ -87,7 +87,7 @@ ALLW_SCOPE="sptest-cr-allow"
 
 # Constant across every env -i invocation in this suite; sections below re-declare only
 # what differs (SPIRA_SCOPE_LABEL, SPIRA_MAECHEN_LABEL, SPIRA_BD).
-tl_config SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SELFMAP" \
+tl_config SPIRA_RUN="$RUNDIR" SPIRA_REPO_MAP="$SELFMAP" \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike \
     SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 SPIRA_MAECHEN_LANDING_INTERVAL=999
@@ -101,6 +101,7 @@ echo "ALLOWLIST: INVALID-CLOSED id in allowlist → ALLOWED-IC, not counted"
 # Plant a closed bead whose close reason hits RED_FLAGS, then show it clears when
 # allowlisted. Uses testdb_seed to set close_reason directly (bd close stores it).
 testdb_up maechen_closed_record_allow || { bad "allowlist fixture: testdb_up failed" ""; }
+[ -n "${SPIRA_DB:-}" ] || { echo "test-maechen-closed-record: testdb_up left SPIRA_DB unset; the fixture store was not built" >&2; exit 1; }
 
 testdb_reset
 testdb_seed <<JSONL
