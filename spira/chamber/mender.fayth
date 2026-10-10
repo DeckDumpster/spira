@@ -11,7 +11,7 @@ FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_MENDER_LABEL"
 FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
 FAYTH_MEMORY_PREFIXES="law-"
-FAYTH_STATUTE_CORE="law-verify-the-discriminating-fact,law-a-failure-carries-its-own-explanation,law-never-read-a-cause-from-failure-path-output,law-escalate-decisions-not-problems,law-a-retry-must-change-an-input,law-tests-run-only-through-testenv"
+FAYTH_STATUTE_CORE="law-escalate-decisions-not-problems,law-tests-run-only-through-testenv"
 
 # SEED ONLY: the live value is persona.mender.model, resolved by lib.sh's persona_model. Opus: a wrong attribution ejects a member or ships a wrong fix.
 FAYTH_MODEL=claude-opus-5-5
