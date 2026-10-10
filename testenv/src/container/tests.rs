@@ -765,6 +765,27 @@ fn up_refuses_when_a_kernel_task_ceiling_is_below_the_pids_limit() {
 }
 
 #[test]
+fn up_gives_a_container_its_own_pids_limit_and_memory() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    let a = args(&["--name", "n1", "--pids-limit", "3333", "--memory", "7g"]);
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&a), 0);
+    let run = &f.calls_with("run")[0];
+    let at = |k: &str| run[run.iter().position(|a| a == k).expect(k) + 1].clone();
+    assert_eq!(at("--pids-limit"), "3333");
+    assert_eq!(at("--memory"), "7g");
+}
+
+#[test]
+fn up_refuses_a_non_numeric_pids_limit() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    assert_ne!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--pids-limit", "lots"])), 0);
+}
+
+#[test]
 fn cpu_cap_is_unset_unless_a_positive_number_is_configured() {
     assert_eq!(valid_cpus(""), None);
     assert_eq!(valid_cpus("0"), None);

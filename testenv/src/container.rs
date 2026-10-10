@@ -160,7 +160,7 @@ pub const HARNESS_MARKER: &str = "spira/testenv/Containerfile";
 
 pub const USAGE: &[&str] = &[
     "usage: testenv container up|down|exec|probe|tag|image|publish [OPTIONS]",
-    "  up      [--name NAME] [--checkout PATH] [--queue-timeout SECS]",
+    "  up      [--name NAME] [--checkout PATH] [--queue-timeout SECS] [--pids-limit N] [--memory SIZE]",
     "  down    [--name NAME] [--volumes] [--force-foreign]",
     "  exec    [--name NAME] [--user USER] CMD ARGS...",
     "  probe   [--name NAME]",
@@ -781,6 +781,8 @@ impl Driver<'_> {
         let mut checkout: Option<String> = None;
         let mut queue_bound = self.conf.queue_timeout;
         let mut build = true;
+        let mut pids_limit = self.conf.pids_limit;
+        let mut memory: Option<String> = None;
         let mut i = 0;
         while i < args.len() {
             if args[i] == "--no-build" {
@@ -796,6 +798,10 @@ impl Driver<'_> {
                         return 1;
                     }
                 },
+                ("--pids-limit", Some(v)) if v.parse::<u64>().is_ok_and(|n| n > 0) => {
+                    pids_limit = v.parse().unwrap_or(pids_limit)
+                }
+                ("--memory", Some(v)) if !v.is_empty() => memory = Some(v.clone()),
                 ("--name", Some(v)) => name = v.clone(),
                 ("--checkout", Some(v)) => checkout = Some(v.clone()),
                 (a, _) => {
@@ -841,10 +847,10 @@ impl Driver<'_> {
             self.err("testenv: cannot tell whether podman is rootless; refusing to start without network isolation");
             return 1;
         };
-        if let Some((key, ceiling)) = self.kernel_task_ceiling_below(self.conf.pids_limit) {
+        if let Some((key, ceiling)) = self.kernel_task_ceiling_below(pids_limit) {
             self.err(&format!(
-                "testenv: {key} is {ceiling}, below the configured SPIRA_TESTENV_PIDS_LIMIT {}; raising the container limit alone does nothing — raise {key} or lower the limit",
-                self.conf.pids_limit
+                "testenv: {key} is {ceiling}, below the container pids limit {}; raising the container limit alone does nothing — raise {key} or lower the limit",
+                pids_limit
             ));
             return 1;
         }
@@ -855,7 +861,7 @@ impl Driver<'_> {
             name.clone(),
             s("--systemd=true"),
             s("--pids-limit"),
-            self.conf.pids_limit.to_string(),
+            pids_limit.to_string(),
             s("--network"),
             s(network),
             s("--label"),
@@ -865,6 +871,7 @@ impl Driver<'_> {
         ]
         .into_iter()
         .chain(self.conf.cpus.iter().flat_map(|c| [s("--cpus"), c.clone()]))
+        .chain(memory.iter().flat_map(|m| [s("--memory"), m.clone()]))
         .chain(extra_mounts)
         .chain([
             s("--volume"),

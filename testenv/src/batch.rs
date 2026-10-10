@@ -20,6 +20,7 @@ pub fn now_epoch() -> u64 {
     spira_config::vtime::now_epoch()
 }
 
+#[derive(Clone)]
 pub struct BatchCfg {
     pub mode: Mode,
     pub producer: Producer,
@@ -65,6 +66,16 @@ pub struct BatchOutcome {
 }
 
 impl BatchOutcome {
+    /// Folds a concurrently-run lane's outcome into this one.
+    pub fn absorb(&mut self, other: BatchOutcome) {
+        self.records.extend(other.records);
+        self.container_dead = self.container_dead.take().or(other.container_dead);
+        self.exec_fault = self.exec_fault.take().or(other.exec_fault);
+        self.account_fault = self.account_fault.take().or(other.account_fault);
+        self.cancelled |= other.cancelled;
+        self.deadline_hit |= other.deadline_hit;
+    }
+
     pub fn blocking_reds(&self) -> Vec<String> {
         self.records
             .iter()
