@@ -707,7 +707,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        for want in [("bead", "stack"), ("bead", "stack_depth"), ("bead", "since"), ("bead", "persona"), ("bead", "title"), ("bead", "priority"), ("bead", "express"), ("batch", "pass"), ("batch", "phase"), ("bead", "aeon_phase"), ("bead", "disposition"), ("bead", "disposition_note")] {
+        for want in [("bead", "stack"), ("bead", "stack_depth"), ("bead", "since"), ("bead", "persona"), ("bead", "title"), ("bead", "priority"), ("bead", "express"), ("batch", "pass"), ("batch", "phase"), ("bead", "aeon_phase"), ("bead", "disposition"), ("bead", "disposition_note"), ("bead", "ejected_red_tip")] {
             assert!(adds.contains(&(want.0.to_string(), want.1.to_string())), "{want:?} is added");
         }
         let views: Vec<Probe> = steps.iter().map(|(_, s)| probe_for(s)).filter(|p| matches!(p, Probe::View(_))).collect();
@@ -863,7 +863,7 @@ mod tests {
     /// A store with every shipped migration's effect already present (production today).
     fn migrated() -> Rc<RefCell<State>> {
         let mut st = State::default();
-        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express", "aeon_phase", "disposition", "disposition_note"] {
+        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip"] {
             st.columns.insert(("bead".into(), c.into()));
         }
         for c in ["batch_id", "state", "pass", "phase"] {

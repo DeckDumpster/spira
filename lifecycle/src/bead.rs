@@ -195,6 +195,9 @@ pub struct BeadRow {
     pub disposition: Option<DispositionStatus>,
     #[serde(default)]
     pub disposition_note: Option<String>,
+    /// The tip a round last ejected as red for this bead; `submit` refuses it.
+    #[serde(default)]
+    pub ejected_red_tip: Option<String>,
 }
 
 impl BeadRow {
@@ -219,6 +222,7 @@ impl BeadRow {
             phase: None,
             disposition: None,
             disposition_note: None,
+            ejected_red_tip: None,
         }
     }
 }
@@ -672,6 +676,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 Outcome::applied(new)
             }
             Submit { tip } => {
+                if row.ejected_red_tip.as_deref() == Some(tip.as_str()) {
+                    return Outcome::refuse(row.clone(), Refusal::EjectedRedTip { tip: tip.clone() });
+                }
                 let mut new = row.clone();
                 new.state = BeadState::Submitted;
                 new.tip = Some(tip.clone());
@@ -866,6 +873,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 let mut new = row.clone();
                 new.state = BeadState::Rework;
                 new.reason = Some(reason.as_str().to_string());
+                if *reason == ReturnedReason::BatchEjectedRed {
+                    new.ejected_red_tip = row.tip.clone();
+                }
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -1725,13 +1735,42 @@ mod tests {
         GateRedReason::Timeout,
         GateRedReason::Confine,
     ];
-    const ALL_RETURNED_REASONS: [ReturnedReason; 5] = [
+    const ALL_RETURNED_REASONS: [ReturnedReason; 6] = [
         ReturnedReason::PrClosedUnmerged,
         ReturnedReason::PrChangesRequested,
         ReturnedReason::PushRejected,
         ReturnedReason::BatchEjected,
+        ReturnedReason::BatchEjectedRed,
         ReturnedReason::BaseWithdrawn,
     ];
+    #[test]
+    fn submit_at_a_tip_a_round_ejected_red_is_refused_and_a_new_tip_is_accepted() {
+        let mut r = row(BeadState::Working);
+        r.tip = Some("red1".into());
+        r.state = BeadState::InDelivery;
+        let ejected = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Returned { reason: ReturnedReason::BatchEjectedRed }));
+        assert_eq!((ejected.row.state, ejected.row.ejected_red_tip.as_deref()), (BeadState::Rework, Some("red1")));
+        let claimed = apply(&ejected.row, &ev(BeadState::Rework, ejected.row.version, BeadEventKind::Claim { holder: "h".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }));
+        assert_eq!(claimed.row.state, BeadState::Working);
+
+        let again = apply(&claimed.row, &ev(BeadState::Working, claimed.row.version, BeadEventKind::Submit { tip: "red1".into() }));
+        assert!(!again.applied);
+        assert_eq!(again.refusal, Some(Refusal::EjectedRedTip { tip: "red1".into() }));
+        assert_eq!(again.row, claimed.row, "a refusal leaves the row untouched");
+
+        let fresh = apply(&claimed.row, &ev(BeadState::Working, claimed.row.version, BeadEventKind::Submit { tip: "new2".into() }));
+        assert!(fresh.applied);
+        assert_eq!((fresh.row.state, fresh.row.tip.as_deref()), (BeadState::Submitted, Some("new2")));
+    }
+
+    #[test]
+    fn an_ejection_that_was_not_red_does_not_bar_the_tip() {
+        let mut r = row(BeadState::InDelivery);
+        r.tip = Some("t1".into());
+        let ejected = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Returned { reason: ReturnedReason::BatchEjected }));
+        assert_eq!(ejected.row.ejected_red_tip, None);
+    }
+
     const ALL_DROP_REASONS: [DropReason; 2] = [DropReason::ClosedNoBranch, DropReason::Unwanted];
     const ALL_HOLD_CAUSES: [HoldCause; 5] = [
         HoldCause::AttemptsExhausted,

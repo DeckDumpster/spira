@@ -60,7 +60,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
             older(&mut certify_ep, r.updated_at);
         }
         for r in &rework {
-            if matches!(r.reason.as_str(), "batch-ejected" | "base-withdrawn") {
+            if matches!(r.reason.as_str(), "batch-ejected" | "batch-ejected-red" | "base-withdrawn") {
                 ejected += 1;
                 continue;
             }

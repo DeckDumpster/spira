@@ -777,7 +777,7 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
         requeue_ids.into_iter().filter(|id| !cascade_ids.contains(id) && !eject_ids.contains(id)).collect();
 
     for id in &eject_ids {
-        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjected }, &actor, at) { return cannot_tell(e); }
+        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed }, &actor, at) { return cannot_tell(e); }
     }
     // A stacked dependent is collateral, not itself red: `base-withdrawn`, not
     // `batch-ejected`, so the reconciler's rework-by-cause query can tell them apart.
@@ -1457,6 +1457,7 @@ fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::AwaitingReply { .. } => "AwaitingReply".to_string(),
         lifecycle::Refusal::NotHolder { .. } => "NotHolder".to_string(),
         lifecycle::Refusal::ManualHoldReason { .. } => "ManualHoldReason".to_string(),
+        lifecycle::Refusal::EjectedRedTip { .. } => "EjectedRedTip".to_string(),
     }
 
 }

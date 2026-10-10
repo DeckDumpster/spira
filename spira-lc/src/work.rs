@@ -136,7 +136,29 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             );
         }
     }
+    if row.ejected_red_tip.as_deref() == Some(tip.as_str()) {
+        return (
+            REFUSED,
+            format!(
+                "refused: {tip} is the tip a round ejected {bead_id} for as red{} — change the tree (fix the named reds, rebase) and commit again before resubmitting",
+                ejected_reasons(conn, bead_id, &tip).map(|r| format!(": {r}")).unwrap_or_default()
+            ),
+        );
+    }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip })
+}
+
+fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
+    let sql = format!(
+        "SELECT JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Eject.reason')) AS reason FROM event e \
+         JOIN batch_member m ON m.batch_id = e.lc_key \
+         WHERE e.machine = 'batch' AND e.event = 'Eject' AND m.bead_id = '{b}' AND m.tip = '{t}' \
+           AND JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Eject.bead_id')) = '{b}' ORDER BY e.seq DESC LIMIT 1",
+        b = rows::escape(bead_id),
+        t = rows::escape(tip)
+    );
+    let found = conn.query(&sql).ok()?;
+    found.first()?.get("reason")?.as_str().map(str::to_string)
 }
 
 fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
