@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=ci
+DOC=Per-repository forge workflow names, space-separated name=Workflow pairs (repo-map names).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Per-repository forge workflow names: space-separated <repo-map name>=<Workflow>
+    # pairs, for a repository whose gate workflow is not SPIRA_FORGE_WORKFLOW.
+    : "${SPIRA_FORGE_WORKFLOWS:=}"
+SPIRA_CONF_DEFAULT_EOF

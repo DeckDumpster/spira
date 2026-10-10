@@ -167,9 +167,20 @@ pub fn pr_automerge(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
     }
 }
 
+/// The gate workflow for the repository named `name`: its `name=Workflow` pair in `table`,
+/// else `default`.
+pub fn workflow_for<'a>(default: &'a str, table: &'a str, name: Option<&str>) -> &'a str {
+    let Some(name) = name.filter(|n| !n.is_empty()) else { return default };
+    table
+        .split_whitespace()
+        .filter_map(|p| p.split_once('='))
+        .find(|(n, w)| *n == name && !w.is_empty())
+        .map_or(default, |(_, w)| w)
+}
+
 // ── check-status ─────────────────────────────────────────────────────────────────────────
 
-pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, branch: &str) -> Out {
+pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, branch: &str) -> Out {
     if branch.is_empty() {
         // Without a branch there is no way to tell two PRs sharing a head commit apart
         // (law-a-control-that-cannot-check-must-refuse): report pending, never a guess.
@@ -177,7 +188,7 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, branch: &str) -> 
     }
     let run_list = gh.call(
         Some(repo),
-        &["run", "list", "--branch", branch, "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        &["run", "list", "--branch", branch, "--workflow", workflow, "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
     );
     let rl = parse(&run_list.stdout).unwrap_or(Value::Array(vec![]));
     let first = first_elem(&rl);
@@ -440,11 +451,11 @@ pub fn run_id(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
 
 // ── runs-for-branch ──────────────────────────────────────────────────────────────────────
 
-pub fn runs_for_branch(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
+pub fn runs_for_branch(gh: &dyn Gh, repo: &Path, workflow: &str, branch: &str) -> Out {
     if branch.is_empty() {
         return ok(vec![]);
     }
-    let r = gh.call(Some(repo), &["run", "list", "--branch", branch, "--workflow", "Gate", "--json", "databaseId,status", "--limit", "20"]);
+    let r = gh.call(Some(repo), &["run", "list", "--branch", branch, "--workflow", workflow, "--json", "databaseId,status", "--limit", "20"]);
     let mut lines = Vec::new();
     if let Some(Value::Array(items)) = parse(&r.stdout) {
         for run in items {
@@ -461,8 +472,8 @@ pub fn runs_for_branch(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
 
 // ── runs-queue-branches ──────────────────────────────────────────────────────────────────
 
-pub fn runs_queue_branches(gh: &dyn Gh, repo: &Path) -> Out {
-    let r = gh.call(Some(repo), &["run", "list", "--workflow", "Gate", "--json", "databaseId,headBranch,status", "--limit", "100"]);
+pub fn runs_queue_branches(gh: &dyn Gh, repo: &Path, workflow: &str) -> Out {
+    let r = gh.call(Some(repo), &["run", "list", "--workflow", workflow, "--json", "databaseId,headBranch,status", "--limit", "100"]);
     let mut lines = Vec::new();
     if let Some(Value::Array(items)) = parse(&r.stdout) {
         for run in items {
@@ -480,10 +491,10 @@ pub fn runs_queue_branches(gh: &dyn Gh, repo: &Path) -> Out {
 
 // ── batch-ci-status ──────────────────────────────────────────────────────────────────────
 
-pub fn batch_ci_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, branch: &str) -> Out {
+pub fn batch_ci_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, branch: &str) -> Out {
     let run_list = gh.call(
         Some(repo),
-        &["run", "list", "--branch", branch, "--workflow", "Gate", "--json", "databaseId,conclusion,status,updatedAt,headSha,url", "--limit", "1"],
+        &["run", "list", "--branch", branch, "--workflow", workflow, "--json", "databaseId,conclusion,status,updatedAt,headSha,url", "--limit", "1"],
     );
     let rl = parse(&run_list.stdout).unwrap_or(Value::Array(vec![]));
     let Some(first) = first_elem(&rl) else { return ok(vec![]) };
@@ -831,12 +842,12 @@ pub fn pr_comment(gh: &dyn Gh, repo: &Path, pr_n: &str, body: &str) -> Out {
     ok(passthrough(&r))
 }
 
-pub fn dispatch(gh: &dyn Gh, repo: &Path, ref_: &str, suites: &str) -> Out {
+pub fn dispatch(gh: &dyn Gh, repo: &Path, workflow: &str, ref_: &str, suites: &str) -> Out {
     if ref_.is_empty() {
         eprintln!("forge: dispatch: ref required");
         return fail(vec![]);
     }
-    let r = gh.call(Some(repo), &["workflow", "run", "Gate", "--ref", ref_, "-f", &format!("suites={suites}")]);
+    let r = gh.call(Some(repo), &["workflow", "run", workflow, "--ref", ref_, "-f", &format!("suites={suites}")]);
     Out { code: r.code, lines: passthrough(&r) }
 }
 

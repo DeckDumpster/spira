@@ -55,7 +55,7 @@ fn repo() -> &'static Path {
 #[test]
 fn check_status_with_no_branch_is_pending_never_a_guess() {
     let gh = FakeGh::default();
-    let out = check_status(&gh, &NoProc, repo(), "");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "");
     assert_eq!(out.lines, vec!["pending"]);
     assert!(gh.calls.borrow().is_empty(), "must not even ask gh without a branch to scope the run");
 }
@@ -64,7 +64,7 @@ fn check_status_with_no_branch_is_pending_never_a_guess() {
 fn check_status_no_run_is_pending() {
     let gh = FakeGh::default();
     gh.on(&["run", "list", "--branch", "spira/sp-x", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"], 0, "[]");
-    let out = check_status(&gh, &NoProc, repo(), "spira/sp-x");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "spira/sp-x");
     assert_eq!(out.lines, vec!["pending"]);
 }
 
@@ -77,7 +77,7 @@ fn check_status_green_on_success() {
         r#"[{"databaseId":42,"status":"completed","conclusion":"success","headSha":"abc123","url":"https://x/42"}]"#,
     );
     gh.on(&["api", "repos/{owner}/{repo}/actions/runs/42/jobs"], 0, r#"{"jobs":[]}"#);
-    let out = check_status(&gh, &NoProc, repo(), "spira/sp-x");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "spira/sp-x");
     assert_eq!(out.lines[0], "green");
     assert!(out.lines.contains(&"head-sha: abc123".to_string()));
     assert!(out.lines.contains(&"run-url: https://x/42".to_string()));
@@ -92,7 +92,7 @@ fn check_status_cancelled_conclusion_is_harness_fault_not_red() {
         r#"[{"databaseId":1,"status":"completed","conclusion":"cancelled"}]"#,
     );
     gh.on(&["api", "repos/{owner}/{repo}/actions/runs/1/jobs"], 0, r#"{"jobs":[]}"#);
-    let out = check_status(&gh, &NoProc, repo(), "b");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "b");
     assert_eq!(out.lines[0], "harness_fault");
 }
 
@@ -109,7 +109,7 @@ fn check_status_provision_job_failure_overrides_red() {
         0,
         r#"{"jobs":[{"name":"provision","conclusion":"failure"},{"name":"suites","conclusion":"failure"}]}"#,
     );
-    let out = check_status(&gh, &NoProc, repo(), "b");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "b");
     assert_eq!(out.lines[0], "provision_fault");
 }
 
@@ -132,7 +132,7 @@ fn check_status_red_with_only_a_non_suite_step_names_the_step_and_its_log_tail()
     }
     log.push_str("2026-10-10T01:02:04.000Z release: cannot create /x: Permission denied (os error 13)\n2026-10-10T01:02:04.100Z ##[error]Process completed with exit code 1.\n2026-10-10T01:02:05.000Z Post job cleanup.\n");
     gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/55/logs"], 0, &log);
-    let out = check_status(&gh, &NoProc, repo(), "b");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "b");
     assert_eq!(out.lines[0], "red");
     assert!(out.lines.contains(&"run-id: 7".to_string()), "{:?}", out.lines);
     assert!(out.lines.contains(&"failed-step: stage / Stage the build as a release".to_string()), "{:?}", out.lines);
@@ -151,7 +151,7 @@ fn check_status_suites_job_cancelled_is_harness_fault_not_a_verdict() {
         r#"[{"databaseId":7,"status":"completed","conclusion":"failure"}]"#,
     );
     gh.on(&["api", "repos/{owner}/{repo}/actions/runs/7/jobs"], 0, r#"{"jobs":[{"name":"suites","conclusion":"cancelled"}]}"#);
-    let out = check_status(&gh, &NoProc, repo(), "b");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "b");
     assert_eq!(out.lines[0], "harness_fault");
 }
 
@@ -169,7 +169,7 @@ fn check_status_build_failure_extracts_deduped_capped_error_lines() {
                2026-09-29T00:00:02.000Z note: this is not an error line\n\
                2026-09-29T00:00:03.000Z error: could not compile `x`\n";
     gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/99/logs"], 0, log);
-    let out = check_status(&gh, &NoProc, repo(), "b");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "b");
     let errs: Vec<&String> = out.lines.iter().filter(|l| l.starts_with("build-error:")).collect();
     assert_eq!(errs.len(), 2, "the repeated E0433 line dedupes to one and the note line is excluded, got {errs:?}");
 }
@@ -351,7 +351,7 @@ fn run_metadata_reads_declared_timeout_and_live_job_log_activity() {
 fn batch_ci_status_no_run_prints_nothing() {
     let gh = FakeGh::default();
     gh.on(&["run", "list", "--branch", "b", "--workflow", "Gate", "--json", "databaseId,conclusion,status,updatedAt,headSha,url", "--limit", "1"], 0, "[]");
-    assert!(batch_ci_status(&gh, &NoProc, repo(), "b").lines.is_empty());
+    assert!(batch_ci_status(&gh, &NoProc, repo(), "Gate", "b").lines.is_empty());
 }
 
 #[test]
@@ -363,7 +363,7 @@ fn batch_ci_status_reports_queued_since_from_jobs() {
         r#"[{"databaseId":3}]"#,
     );
     gh.on(&["api", "repos/{owner}/{repo}/actions/runs/3/jobs"], 0, r#"{"jobs":[{"status":"queued","created_at":"2026-09-29T00:00:00Z"}]}"#);
-    let out = batch_ci_status(&gh, &NoProc, repo(), "b");
+    let out = batch_ci_status(&gh, &NoProc, repo(), "Gate", "b");
     assert!(out.lines.contains(&"run-id: 3".to_string()));
     assert!(out.lines.iter().any(|l| l.starts_with("queued-since:")));
 }
@@ -373,7 +373,7 @@ fn batch_ci_status_reports_queued_since_from_jobs() {
 #[test]
 fn dispatch_refuses_without_a_ref() {
     let gh = FakeGh::default();
-    let out = dispatch(&gh, repo(), "", "some-suite");
+    let out = dispatch(&gh, repo(), "Gate", "", "some-suite");
     assert_eq!(out.code, 1);
 }
 
@@ -455,4 +455,45 @@ fn stranded_is_silent_for_online_young_or_hosted_jobs() {
 #[test]
 fn stranded_unreadable_runs_is_silent_not_a_guess() {
     assert!(stranded_runners(&FakeGh::default(), repo(), NOW, 300).lines.is_empty());
+}
+
+// ── per-repo gate workflow ───────────────────────────────────────────────────────────────
+
+#[test]
+fn check_status_reads_the_named_workflow_so_a_ci_repo_goes_green() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["run", "list", "--branch", "b", "--workflow", "CI", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        0,
+        r#"[{"databaseId":7,"status":"completed","conclusion":"success"}]"#,
+    );
+    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/7/jobs"], 0, r#"{"jobs":[]}"#);
+    assert_eq!(check_status(&gh, &NoProc, repo(), "CI", "b").lines[0], "green");
+    assert_eq!(check_status(&gh, &NoProc, repo(), "Gate", "b").lines[0], "pending");
+}
+
+#[test]
+fn every_run_list_verb_filters_on_the_workflow_it_is_given() {
+    let gh = FakeGh::default();
+    runs_for_branch(&gh, repo(), "CI", "b");
+    runs_queue_branches(&gh, repo(), "CI");
+    batch_ci_status(&gh, &NoProc, repo(), "CI", "b");
+    dispatch(&gh, repo(), "CI", "main", "s");
+    let calls = gh.calls.borrow();
+    assert!(calls.len() >= 4);
+    for c in calls.iter() {
+        assert!(!c.iter().any(|a| a == "Gate"), "{c:?}");
+        assert!(c.iter().any(|a| a == "CI"), "{c:?}");
+    }
+}
+
+#[test]
+fn workflow_for_picks_the_repos_pair_else_the_default() {
+    let t = "deck=CI pokedumpster=CI2";
+    assert_eq!(workflow_for("Gate", t, Some("deck")), "CI");
+    assert_eq!(workflow_for("Gate", t, Some("pokedumpster")), "CI2");
+    assert_eq!(workflow_for("Gate", t, Some("deckdumpster")), "Gate");
+    assert_eq!(workflow_for("Gate", t, None), "Gate");
+    assert_eq!(workflow_for("Gate", "", Some("deck")), "Gate");
+    assert_eq!(workflow_for("Gate", "deck=", Some("deck")), "Gate");
 }

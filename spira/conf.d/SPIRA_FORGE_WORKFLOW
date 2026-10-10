@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=ci
+DOC=The forge workflow name that gates a branch, for every repository SPIRA_FORGE_WORKFLOWS does not name.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The forge workflow name that gates a branch, for every repository
+    # SPIRA_FORGE_WORKFLOWS does not name.
+    : "${SPIRA_FORGE_WORKFLOW:=Gate}"
+SPIRA_CONF_DEFAULT_EOF
