@@ -1,7 +1,7 @@
 epoch = 1800000000
 horizon = 1200000
 goal = "sp-rm01:LANDED"
-real_actors = ["sentinel-summon", "sentinel-landing"]
+real_actors = ["sentinel-summon", "sentinel-landing", "sift"]
 
 [[step]]
 at = 0
