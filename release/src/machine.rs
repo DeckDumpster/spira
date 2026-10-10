@@ -165,13 +165,30 @@ fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+/// Re-verifying or re-activating a release that already passed `to` (rollback re-enters an
+/// earlier release) confirms the record; it is not a move.
+fn already_passed(from: ReleaseState, to: ReleaseState) -> bool {
+    use ReleaseState::*;
+    let rank = |s| match s {
+        Cut => 0,
+        Accepted => 1,
+        Published => 2,
+        Activated | RolledBack => 3,
+    };
+    match to {
+        RolledBack => false,
+        Published if from == RolledBack => false,
+        _ => rank(to) < rank(from),
+    }
+}
+
 /// Records `sha` entering `to`. Being in `to` already is not a move. A release the machine
 /// never saw (built before it existed) is brought up to `to` through the states it must have
 /// passed, each event saying it was backfilled; a move that is illegal from the recorded state
 /// is refused and nothing is written.
 pub fn enter(state: &Path, sha: &str, to: ReleaseState, reason: &str) -> Result<(), String> {
     let mut r = load(state, sha)?.unwrap_or_else(|| Release::new(sha));
-    if r.state() == Some(to) {
+    if r.state() == Some(to) || r.state().is_some_and(|from| already_passed(from, to)) {
         return Ok(());
     }
     let now = now_secs();
@@ -272,6 +289,21 @@ mod tests {
         assert_eq!(load(t.path(), SHA).unwrap().unwrap().events.len(), 3, "a refusal writes nothing");
         enter(t.path(), SHA, Activated, "up").unwrap();
         enter(t.path(), SHA, RolledBack, "down").unwrap();
+        enter(t.path(), SHA, Published, "again").unwrap();
+    }
+
+    #[test]
+    fn rollback_reentering_a_passed_release_is_not_a_move() {
+        let t = testkit::TempDir::new("rel-reenter");
+        enter(t.path(), SHA, Activated, "up").unwrap();
+        let n = load(t.path(), SHA).unwrap().unwrap().events.len();
+        for to in [Cut, Accepted, Published] {
+            enter(t.path(), SHA, to, "again").unwrap();
+        }
+        assert_eq!(load(t.path(), SHA).unwrap().unwrap().events.len(), n);
+        enter(t.path(), SHA, RolledBack, "down").unwrap();
+        enter(t.path(), SHA, Accepted, "verified").unwrap();
+        assert_eq!(load(t.path(), SHA).unwrap().unwrap().state(), Some(RolledBack));
         enter(t.path(), SHA, Published, "again").unwrap();
     }
 
