@@ -148,6 +148,11 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
     };
     if actor == "groomer" {
+        match rows::fetch_bead(conn, bead_id) {
+            Ok(Some(row)) if row.state == bead::BeadState::Done => return (0, format!("{bead_id} is already DONE; nothing to do")),
+            Ok(_) => {}
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        }
         match crate::bd::labels(bead_id) {
             Ok(labels) if labels.iter().any(|l| l == GROOM_TRIGGER_MARKER) => {}
             Ok(_) => return release_untriggered_groom(bead_id, &actor, conn),
