@@ -216,7 +216,7 @@ fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64) {
 fn create_submitted_row(id: &str, title: &str, priority: i64, tip: &str) -> Result<(), String> {
     let bin = spira_config::lifecycle_row::lc_bin();
     let out = Command::new("timeout")
-        .args(["15", &bin, "create-bead", id, "--priority", &priority.to_string(), "--title", title, "--submitted-tip", tip])
+        .args(["5", &bin, "create-bead", id, "--priority", &priority.to_string(), "--title", title, "--submitted-tip", tip])
         .envs(spira_config::release_env::child_path_env_for_process())
         .stdin(Stdio::null())
         .output()
