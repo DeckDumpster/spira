@@ -235,10 +235,11 @@ pub enum Probe {
     Unprobeable,
 }
 
-/// The byte offset of the first top-level ` WHERE ` keyword (outside quotes), if any.
+/// The byte offset of the first top-level ` WHERE ` keyword (outside quotes and parentheses), if any.
 fn where_at(sql: &str) -> Option<usize> {
     let b = sql.as_bytes();
     let mut quote: Option<u8> = None;
+    let mut depth = 0usize;
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
@@ -251,10 +252,12 @@ fn where_at(sql: &str) -> Option<usize> {
                 }
             }
             None if c == b'\'' || c == b'"' || c == b'`' => quote = Some(c),
+            None if c == b'(' => depth += 1,
+            None if c == b')' => depth = depth.saturating_sub(1),
             None => {
                 let before_ok = i > 0 && b[i - 1].is_ascii_whitespace();
                 let after_ok = b.get(i + 5).is_none_or(|n| n.is_ascii_whitespace() || *n == b'(');
-                if before_ok && after_ok && sql.get(i..i + 5).is_some_and(|w| w.eq_ignore_ascii_case("WHERE")) {
+                if depth == 0 && before_ok && after_ok && sql.get(i..i + 5).is_some_and(|w| w.eq_ignore_ascii_case("WHERE")) {
                     return Some(i);
                 }
             }
@@ -371,6 +374,14 @@ pub fn is_applied(db: &dyn Sql, st: &Stmt) -> Result<bool, String> {
             .is_empty()),
         Probe::Unprobeable => Ok(false),
     }
+}
+
+/// How many rows a guarded UPDATE/DELETE is about to change; None for any other step.
+fn rows_touched(db: &dyn Sql, st: &Stmt) -> Option<u64> {
+    let Probe::NoRowMatches(q) = probe_for(st) else { return None };
+    let count = format!("SELECT COUNT(*) AS n FROM {}", q.strip_prefix("SELECT 1 FROM ")?.strip_suffix(" LIMIT 1")?);
+    let rows = db.rows(&count).ok()?;
+    rows.first()?.get("n").and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_u64()))
 }
 
 /// What the probe saw, for the report: the applied wording or the pending one.
@@ -502,9 +513,12 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
         (2, format!("admin-migrate: {name} is pending ({}) and applying it needs a database admin — set {ADMIN_VARS} (no admin credential is configured{why})", what(st, false)))
     };
     let refused = |name: &str, e: &str| (2, format!("admin-migrate: {name}: pending, and applying it as the database admin failed: {e} — check {ADMIN_VARS}"));
-    let applied_as = |st: &Stmt, who: &str| match st {
+    let applied_as = |st: &Stmt, who: &str, touched: Option<u64>| match st {
         Stmt::AddColumn { table, column, .. } => format!("added {table}.{column}"),
-        _ => format!("applied as {who}"),
+        _ => match touched {
+            Some(n) => format!("applied as {who}, {n} row(s) touched"),
+            None => format!("applied as {who}"),
+        },
     };
     let mut wrote = false;
     // Once the admin has written, later steps are probed on the admin's session: a probe
@@ -534,6 +548,7 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
             Stmt::AddColumn { sql, .. } | Stmt::Plain(sql) => sql,
             Stmt::UnguardedAlter(_) => unreachable!("plan refuses these"),
         };
+        let touched = rows_touched(prober, st);
         let mut service_refused = None;
         if applier_for(grants, steps, name) == Applier::Service {
             match service.exec(sql) {
@@ -545,7 +560,7 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
                         Err(e) => return (2, format!("admin-migrate: {name}: applied as the lifecycle service user, but cannot tell whether it took: {e}")),
                     }
                     wrote = true;
-                    report.push(format!("{name}: {}", applied_as(st, "the lifecycle service user")));
+                    report.push(format!("{name}: {}", applied_as(st, "the lifecycle service user", touched)));
                     continue;
                 }
                 Err(e) if is_privilege_error(&e) => service_refused = Some(e),
@@ -569,7 +584,7 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
             Ok(()) => {
                 wrote = true;
                 admin_wrote = true;
-                report.push(format!("{name}: {}", applied_as(st, "the database admin")));
+                report.push(format!("{name}: {}", applied_as(st, "the database admin", touched)));
             }
             Err(e) => return refused(name, &e),
         }

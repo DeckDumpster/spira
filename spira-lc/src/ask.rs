@@ -106,17 +106,7 @@ pub fn cmd_close_ask(args: &[String], conn: &Conn) -> (i32, String) {
     let outcome = ask::apply(&row, &ev);
     let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
     let name = evidence.as_object().and_then(|m| m.keys().next()).cloned().unwrap_or_default();
-    let rec = EventRecord {
-        machine: "ask".into(),
-        key: id.clone(),
-        event: name,
-        expect: row.state.as_str().into(),
-        from_state: row.state.as_str().into(),
-        refusal: outcome.refusal.as_ref().map(crate::refusal_name),
-        evidence,
-        actor: actor.clone(),
-        at: db::now_epoch(),
-    };
+    let rec = EventRecord::of_apply("ask", id, name, row.state.as_str(), row.state.as_str(), outcome.refusal.as_ref().map(crate::refusal_name), evidence, &actor, db::now_epoch());
     if !outcome.applied {
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return cannot(e);

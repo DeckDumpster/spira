@@ -142,6 +142,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-reap-terminal.timer", true));
     m.units.push(t("spira-sop-lint.service", false));
     m.units.push(t("spira-sop-lint.timer", true));
+    m.units.push(t("spira-event-continuity.service", false));
+    m.units.push(t("spira-event-continuity.timer", true));
     m.units.push(t("spira-escape-census.service", false));
     m.units.push(t("spira-escape-census.timer", true));
     m.units.push(t("spira-perf-watch.service", false));

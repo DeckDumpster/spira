@@ -162,3 +162,7 @@ perf-watch|log|@SPIRA_RUN@/perf-watch.log
 # the unread count and cursor kept here like any other row.
 concierge-inbox|log|@SPIRA_CONCIERGE_INBOX@
 gh-provenance|daemon|gh-intake provenance watch --interval 900|gh-intake provenance health
+
+# EVENT-CONTINUITY is the alarm for a break in the lifecycle event log: spira-event-continuity.timer
+# appends one JSON line per key whose first break it finds, and a clean log writes nothing.
+event-continuity|log|@SPIRA_RUN@/event-continuity.log
