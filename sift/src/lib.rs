@@ -4,6 +4,7 @@
 //! candidate the screen cannot judge records nothing and stays unscreened.
 
 mod git;
+pub mod machine;
 mod store;
 
 use std::collections::BTreeMap;
@@ -36,8 +37,9 @@ pub trait Store {
     fn get(&self, id: &str, tip: &str) -> Option<Verdict>;
     fn put(&self, v: &Verdict) -> Result<(), String>;
     fn send_backs(&self, id: &str) -> u32;
-    fn record_send_back(&self, id: &str) -> Result<u32, String>;
-    /// True the first time `(id, tip)` is reported as capped.
+    fn record_screened(&self, id: &str, tip: &str) -> Result<(), String>;
+    fn record_send_back(&self, id: &str, tip: &str, reason: &str) -> Result<u32, String>;
+    /// True the first time `(id, tip)` is reported as capped; records the `capped` event.
     fn first_cap_report(&self, id: &str, tip: &str) -> bool;
 }
 
@@ -184,6 +186,9 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
         }
         let findings = v.findings(&state_of);
         if findings.is_empty() {
+            if let Err(e) = store.record_screened(&c.id, &c.tip) {
+                out.errors.push(format!("sift: {} screened not recorded ({e})", c.id));
+            }
             out.pass.push(c.id.clone());
             match acts.pass(&c.id, &c.tip) {
                 Ok(()) => out.sifted.push(c.id.clone()),
@@ -211,7 +216,7 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
         match acts.gate_red(&c.id, &c.tip, findings[0].reason) {
             Ok(()) => {
                 out.sent_back.push(c.id.clone());
-                if let Err(e) = store.record_send_back(&c.id) {
+                if let Err(e) = store.record_send_back(&c.id, &c.tip, findings[0].reason) {
                     out.errors.push(format!("sift: {} send-back count not recorded ({e})", c.id));
                 }
                 acts.tell(&format!("SIFT sent {} to REWORK: {}", c.id, findings[0].text));

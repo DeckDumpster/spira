@@ -496,7 +496,7 @@ fn write_classified_delivery(conn: &Conn, id: &str, state: DeliveryState, repo_n
         DeliveryState::Exited => return Ok(()), // migration never produces an already-exited row
         // migration never produces a row past landed_local — publish facts are only ever
         // reached by a fresh event, not a legacy record this classifier reads.
-        DeliveryState::Published | DeliveryState::PublishRed => return Ok(()),
+        DeliveryState::Publishing | DeliveryState::Published | DeliveryState::PublishRed => return Ok(()),
     };
     let batch_id = if state == DeliveryState::Batched { Some(format!("legacy-{repo_name}")) } else { None };
     let insert_columns = "bead_id, mode, state, batch_id, pr, merge_sha, version";

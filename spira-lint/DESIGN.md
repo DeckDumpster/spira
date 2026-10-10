@@ -768,6 +768,23 @@ finding.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: release-state-readers checked
 <n> files`.
 
+## Rule `sift-state-readers`
+
+**Intent.** Operator-facing tooling reads what the pre-round screen decided through `sift status
+--json`, never from the events, send-back counts, capped markers or verdict cache under the run
+directory's `sift` directory.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `spira-world/` and
+`watchtower/`.
+
+**Violation.** A live (non-comment) line naming `sift/events`, `sift/send-backs`, `sift/capped`,
+`sift/verdicts`, `$SPIRA_RUN/sift`, `.join("sift")`, `.join("send-backs")` or `.join("verdicts")`.
+Files that still read that way are listed in `spira-lint/sift-state-readers-allow`, which only
+shrinks: a listed file with no match is a finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: sift-state-readers checked
+<n> files`.
+
 ## Rule `incident-cause-lint`
 
 Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.

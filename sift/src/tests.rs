@@ -57,7 +57,10 @@ impl Store for Mem {
     fn send_backs(&self, id: &str) -> u32 {
         self.counts.borrow().get(id).copied().unwrap_or(0)
     }
-    fn record_send_back(&self, id: &str) -> Result<u32, String> {
+    fn record_screened(&self, _: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn record_send_back(&self, id: &str, _: &str, _: &str) -> Result<u32, String> {
         let mut c = self.counts.borrow_mut();
         let n = c.entry(id.to_string()).or_insert(0);
         *n += 1;
@@ -337,4 +340,114 @@ fn a_pass_the_store_refuses_is_not_a_sifted_candidate() {
     let mut acts = Refusing(Rec::default());
     let o = screen(&fake(), &Mem::default(), &mut acts, &[c("a")], &[]);
     assert!(o.sifted.is_empty() && o.errors.iter().any(|e| e.contains("stays unscreened")));
+}
+
+mod machine_tests {
+    use crate::machine::{SiftEvent, SiftState, Sifted};
+    use crate::{FileStore, Store, SEND_BACK_CAP};
+    use testkit::TempDir;
+
+    fn screened() -> SiftEvent {
+        SiftEvent::Screened { tip: "t1".into() }
+    }
+    fn back(n: u32) -> SiftEvent {
+        SiftEvent::SentBack { n, tip: "t1".into(), reason: "no-rebase".into() }
+    }
+    fn capped() -> SiftEvent {
+        SiftEvent::Capped { tip: "t1".into() }
+    }
+
+    fn at(events: &[SiftEvent]) -> Sifted {
+        let mut s = Sifted::new("sp-a");
+        for (i, e) in events.iter().enumerate() {
+            s.record(e.clone(), i as u64 + 1).unwrap();
+        }
+        s
+    }
+
+    #[test]
+    fn every_legal_move_applies_and_is_recorded() {
+        let mut s = Sifted::new("sp-a");
+        assert_eq!(s.state(), None);
+        assert!(s.record(screened(), 1).unwrap());
+        assert_eq!(s.state(), Some(SiftState::Screened));
+        for n in 1..=SEND_BACK_CAP {
+            assert!(s.record(back(n), 10 + n as u64).unwrap());
+            assert_eq!(s.state(), Some(SiftState::SentBack(n)));
+        }
+        assert!(s.record(screened(), 20).unwrap(), "a fixed resubmit screens again");
+        assert_eq!(s.state(), Some(SiftState::Screened));
+        assert_eq!(s.send_backs(), SEND_BACK_CAP);
+        assert!(s.record(capped(), 21).unwrap());
+        assert_eq!(s.state(), Some(SiftState::Capped));
+        assert_eq!(s.events.len(), 1 + SEND_BACK_CAP as usize + 2);
+    }
+
+    #[test]
+    fn an_illegal_move_is_refused_naming_the_state_and_writes_nothing() {
+        let cases: Vec<(Vec<SiftEvent>, SiftEvent, &str)> = vec![
+            (vec![], back(2), "unrecorded"),
+            (vec![], capped(), "unrecorded"),
+            (vec![screened()], back(3), "screened"),
+            (vec![screened()], capped(), "screened"),
+            (vec![back(1)], back(1), "sent_back(1)"),
+            (vec![back(1)], capped(), "sent_back(1)"),
+            (vec![back(1), back(2), back(3)], back(4), "sent_back(3)"),
+            (vec![back(1), back(2), back(3), capped()], back(4), "capped"),
+        ];
+        for (history, event, state) in cases {
+            let mut s = at(&history);
+            let before = s.clone();
+            let e = s.record(event.clone(), 99).unwrap_err();
+            assert!(e.contains(state), "{event:?}: {e}");
+            assert_eq!(s, before);
+        }
+    }
+
+    #[test]
+    fn the_same_event_twice_is_not_a_move() {
+        let mut s = at(&[screened()]);
+        assert!(!s.record(screened(), 5).unwrap());
+        assert_eq!(s.events.len(), 1);
+    }
+
+    #[test]
+    fn the_read_returns_exactly_the_recorded_state() {
+        let s = at(&[screened(), back(1), back(2)]);
+        let v = s.status_json();
+        assert_eq!(v["state"], "sent_back(2)");
+        assert_eq!(v["send_backs"], 2);
+        assert_eq!(v["events"].as_array().unwrap().len(), 3);
+        assert_eq!(Sifted::from_json(&s.to_json().to_string()).unwrap(), s);
+        assert_eq!(Sifted::new("sp-b").status_json()["state"], "unrecorded");
+    }
+
+    #[test]
+    fn the_file_store_backs_the_screen_with_events_and_counts_from_them() {
+        let t = TempDir::new("sift-events");
+        let store = FileStore::new(t.path().to_path_buf());
+        assert_eq!(store.send_backs("sp-a"), 0);
+        store.record_screened("sp-a", "t1").unwrap();
+        assert_eq!(store.record_send_back("sp-a", "t1", "no-rebase").unwrap(), 1);
+        assert_eq!(store.record_send_back("sp-a", "t2", "no-rebase").unwrap(), 2);
+        assert_eq!(store.send_backs("sp-a"), 2);
+        assert_eq!(FileStore::new(t.path().to_path_buf()).load("sp-a").unwrap().state(), Some(SiftState::SentBack(2)));
+        assert!(!store.first_cap_report("sp-a", "t2"), "a bead short of the cap cannot be capped");
+        store.record_send_back("sp-a", "t3", "no-rebase").unwrap();
+        assert!(store.first_cap_report("sp-a", "t3"));
+        assert!(!store.first_cap_report("sp-a", "t3"), "the same tip is reported once");
+        assert!(store.first_cap_report("sp-a", "t4"), "a new tip is reported again");
+        assert_eq!(store.all().len(), 1);
+    }
+
+    #[test]
+    fn a_bead_counted_before_events_existed_keeps_its_count() {
+        let t = TempDir::new("sift-legacy");
+        std::fs::create_dir_all(t.path().join("send-backs")).unwrap();
+        std::fs::write(t.path().join("send-backs/sp-old"), "2").unwrap();
+        let store = FileStore::new(t.path().to_path_buf());
+        assert_eq!(store.send_backs("sp-old"), 2);
+        assert_eq!(store.record_send_back("sp-old", "t", "r").unwrap(), 3);
+        assert_eq!(store.load("sp-old").unwrap().events.len(), 3);
+    }
 }

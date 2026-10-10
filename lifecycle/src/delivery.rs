@@ -39,10 +39,13 @@ pub enum DeliveryState {
     PrOpen,
     Pushing,
     Exited,
-    /// Local mode only, reached from `Exited` — the publish queue carried this commit to the
-    /// forge and forge CI went green.
+    /// Local mode only, reached from `Exited`: the publish queue opened a PR for the commit and
+    /// forge CI is in flight. `ci` on the row is the sub-state.
+    Publishing,
+    /// Local mode only, reached from `Exited` or `Publishing` — the publish queue carried this
+    /// commit to the forge and forge CI went green.
     Published,
-    /// Local mode only, reached from `Exited` — the publish queue's forge CI came back red.
+    /// Local mode only, reached from `Exited` or `Publishing` — the publish queue's forge CI came back red.
     /// The bead is not reopened; a fix-forward bead carries the retry.
     PublishRed,
 }
@@ -59,6 +62,7 @@ impl DeliveryState {
             DeliveryState::PrOpen => "PR_OPEN",
             DeliveryState::Pushing => "PUSHING",
             DeliveryState::Exited => "EXITED",
+            DeliveryState::Publishing => "PUBLISHING",
             DeliveryState::Published => "PUBLISHED",
             DeliveryState::PublishRed => "PUBLISH_RED",
         }
@@ -72,10 +76,46 @@ impl DeliveryState {
             "PR_OPEN" => DeliveryState::PrOpen,
             "PUSHING" => DeliveryState::Pushing,
             "EXITED" => DeliveryState::Exited,
+            "PUBLISHING" => DeliveryState::Publishing,
             "PUBLISHED" => DeliveryState::Published,
             "PUBLISH_RED" => DeliveryState::PublishRed,
             _ => return None,
         })
+    }
+}
+
+/// The forge CI sub-state of a `Publishing` row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CiState {
+    Pending,
+    Running,
+    Green,
+    Red,
+}
+
+impl CiState {
+    pub const ALL: [CiState; 4] = [CiState::Pending, CiState::Running, CiState::Green, CiState::Red];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CiState::Pending => "pending",
+            CiState::Running => "running",
+            CiState::Green => "green",
+            CiState::Red => "red",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.as_str() == s)
+    }
+
+    /// CI moves forward only: pending -> running -> green | red, or straight to a verdict.
+    pub fn can_go(self, to: CiState) -> bool {
+        matches!(
+            (self, to),
+            (CiState::Pending, CiState::Running | CiState::Green | CiState::Red) | (CiState::Running, CiState::Green | CiState::Red)
+        )
     }
 }
 
@@ -119,6 +159,8 @@ pub struct DeliveryRow {
     pub pr: Option<u64>,
     pub merge_sha: Option<String>,
     pub exit: Option<Exit>,
+    /// Set exactly while the row is `Publishing`, and kept as the final CI verdict after.
+    pub ci: Option<CiState>,
     pub version: Version,
 }
 
@@ -132,6 +174,7 @@ impl DeliveryRow {
             pr: None,
             merge_sha: None,
             exit: None,
+            ci: None,
             version: 0,
         }
     }
@@ -145,6 +188,7 @@ impl DeliveryRow {
             pr: Some(pr),
             merge_sha: None,
             exit: None,
+            ci: None,
             version: 0,
         }
     }
@@ -158,6 +202,7 @@ impl DeliveryRow {
             pr: None,
             merge_sha: None,
             exit: None,
+            ci: None,
             version: 0,
         }
     }
@@ -174,6 +219,7 @@ impl DeliveryRow {
             pr: None,
             merge_sha: None,
             exit: None,
+            ci: None,
             version: 0,
         }
     }
@@ -186,10 +232,15 @@ pub enum DeliveryEventKind {
     Delivered { merge_sha: String, proof: String },
     Returned { reason: ReturnedReason },
     Requeued { tip: String },
-    /// local mode only, legal from `Exited`: the publish queue carried this commit's SHA to
-    /// the forge and forge CI went green. Never touches the bead row.
+    /// local mode only, legal from `Exited`: the publish queue opened `pr` for this commit
+    /// and forge CI is pending. Never touches the bead row.
+    PublishStarted { pr: u64 },
+    /// local mode only, legal from `Publishing`: forge CI moved to `ci`.
+    PublishCi { ci: CiState },
+    /// local mode only, legal from `Exited`, or from `Publishing` once CI is green: the publish
+    /// queue carried this commit's SHA to the forge. Never touches the bead row.
     Published { forge_sha: String },
-    /// local mode only, legal from `Exited`: the publish queue's forge CI came back red.
+    /// local mode only, legal from `Exited` or `Publishing`: the publish queue's forge CI came back red.
     /// `fix_forward` is the id of the new bead carrying the retry — evidence only, recorded
     /// on this event, never applied as a bead-machine event against either bead.
     PublishRed { fix_forward: String },
@@ -243,7 +294,7 @@ pub fn apply(row: &DeliveryRow, ev: &DeliveryEvent) -> Outcome<DeliveryRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Delivered { .. } | Returned { .. } | Requeued { .. } | Published { .. } | PublishRed { .. } => {
+            Delivered { .. } | Returned { .. } | Requeued { .. } | PublishStarted { .. } | PublishCi { .. } | Published { .. } | PublishRed { .. } => {
                 illegal(row, &ev.kind)
             }
         },
@@ -271,7 +322,7 @@ pub fn apply(row: &DeliveryRow, ev: &DeliveryEvent) -> Outcome<DeliveryRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Cut { .. } | Published { .. } | PublishRed { .. } => illegal(row, &ev.kind),
+            Cut { .. } | PublishStarted { .. } | PublishCi { .. } | Published { .. } | PublishRed { .. } => illegal(row, &ev.kind),
         },
 
         // pr mode is external custody: merged/closed are observed, and a requeue is accepted
@@ -299,7 +350,7 @@ pub fn apply(row: &DeliveryRow, ev: &DeliveryEvent) -> Outcome<DeliveryRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Requeued { .. } | Cut { .. } | Published { .. } | PublishRed { .. } => illegal(row, &ev.kind),
+            Requeued { .. } | Cut { .. } | PublishStarted { .. } | PublishCi { .. } | Published { .. } | PublishRed { .. } => illegal(row, &ev.kind),
         },
 
         DeliveryState::Pushing => match &ev.kind {
@@ -325,7 +376,7 @@ pub fn apply(row: &DeliveryRow, ev: &DeliveryEvent) -> Outcome<DeliveryRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Cut { .. } | Published { .. } | PublishRed { .. } => illegal(row, &ev.kind),
+            Cut { .. } | PublishStarted { .. } | PublishCi { .. } | Published { .. } | PublishRed { .. } => illegal(row, &ev.kind),
         },
 
         // The one exception to "Exited has no further transitions" (module doc): local mode's
@@ -333,6 +384,18 @@ pub fn apply(row: &DeliveryRow, ev: &DeliveryEvent) -> Outcome<DeliveryRow> {
         // them as illegal, not terminal — the row is not inherently closed to them, only this
         // row's own mode is wrong for them.
         DeliveryState::Exited => match &ev.kind {
+            PublishStarted { pr } => {
+                if row.mode != Mode::Local {
+                    return illegal(row, &ev.kind);
+                }
+                let mut new = row.clone();
+                new.state = DeliveryState::Publishing;
+                new.pr = Some(*pr);
+                new.ci = Some(CiState::Pending);
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            PublishCi { .. } => illegal(row, &ev.kind),
             Published { forge_sha } => {
                 if row.mode != Mode::Local {
                     return illegal(row, &ev.kind);
@@ -355,8 +418,34 @@ pub fn apply(row: &DeliveryRow, ev: &DeliveryEvent) -> Outcome<DeliveryRow> {
             Cut { .. } | Delivered { .. } | Returned { .. } | Requeued { .. } => terminal(row),
         },
 
+        DeliveryState::Publishing => match &ev.kind {
+            PublishCi { ci } => {
+                if !row.ci.is_some_and(|from| from.can_go(*ci)) {
+                    return illegal(row, &ev.kind);
+                }
+                let mut new = row.clone();
+                new.ci = Some(*ci);
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            Published { forge_sha } if row.ci == Some(CiState::Green) => {
+                let mut new = row.clone();
+                new.state = DeliveryState::Published;
+                new.merge_sha = Some(forge_sha.clone());
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            PublishRed { fix_forward: _ } => {
+                let mut new = row.clone();
+                new.state = DeliveryState::PublishRed;
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            Published { .. } | PublishStarted { .. } | Cut { .. } | Delivered { .. } | Returned { .. } | Requeued { .. } => illegal(row, &ev.kind),
+        },
+
         DeliveryState::Published | DeliveryState::PublishRed => match &ev.kind {
-            Cut { .. } | Delivered { .. } | Returned { .. } | Requeued { .. } | Published { .. } | PublishRed { .. } => {
+            Cut { .. } | Delivered { .. } | Returned { .. } | Requeued { .. } | PublishStarted { .. } | PublishCi { .. } | Published { .. } | PublishRed { .. } => {
                 terminal(row)
             }
         },
@@ -380,6 +469,8 @@ mod tests {
     /// local mode's own two, legal only from an `Exited` row whose `mode` is `Local`.
     fn publish_kinds() -> Vec<DeliveryEventKind> {
         vec![
+            DeliveryEventKind::PublishStarted { pr: 9 },
+            DeliveryEventKind::PublishCi { ci: CiState::Running },
             DeliveryEventKind::Published { forge_sha: "f1".into() },
             DeliveryEventKind::PublishRed { fix_forward: "sp-fix".into() },
         ]
@@ -403,6 +494,7 @@ mod tests {
             DeliveryState::PrOpen,
             DeliveryState::Pushing,
             DeliveryState::Exited,
+            DeliveryState::Publishing,
             DeliveryState::Published,
             DeliveryState::PublishRed,
         ] {
@@ -642,5 +734,116 @@ mod tests {
         assert!(p_out.applied);
         assert_eq!(p_out.row.state, DeliveryState::Published);
         assert_eq!(closed_bead.state, BeadState::Landed, "the bead row is untouched by the publish fact");
+    }
+
+    fn exited_local() -> DeliveryRow {
+        let mut r = DeliveryRow::start_local("sp-x");
+        r.state = DeliveryState::Exited;
+        r.exit = Some(Exit::Delivered);
+        r.merge_sha = Some("localsha1".into());
+        r
+    }
+
+    fn step(row: &DeliveryRow, kind: DeliveryEventKind) -> Outcome<DeliveryRow> {
+        apply(row, &ev(row.state, row.version, kind))
+    }
+
+    #[test]
+    fn publishing_records_the_pr_and_walks_ci_to_published() {
+        let started = step(&exited_local(), DeliveryEventKind::PublishStarted { pr: 9 });
+        assert!(started.applied);
+        assert_eq!(started.row.state, DeliveryState::Publishing);
+        assert_eq!(started.row.pr, Some(9));
+        assert_eq!(started.row.ci, Some(CiState::Pending));
+        assert!(!started.row.state.is_terminal());
+
+        let running = step(&started.row, DeliveryEventKind::PublishCi { ci: CiState::Running });
+        assert!(running.applied);
+        assert_eq!(running.row.ci, Some(CiState::Running));
+        assert_eq!(running.row.state, DeliveryState::Publishing);
+
+        let green = step(&running.row, DeliveryEventKind::PublishCi { ci: CiState::Green });
+        assert!(green.applied);
+        let done = step(&green.row, DeliveryEventKind::Published { forge_sha: "f1".into() });
+        assert!(done.applied);
+        assert_eq!(done.row.state, DeliveryState::Published);
+        assert_eq!(done.row.ci, Some(CiState::Green));
+        assert_eq!(done.row.merge_sha.as_deref(), Some("f1"));
+    }
+
+    #[test]
+    fn publishing_goes_red_from_any_ci_state() {
+        for ci in CiState::ALL {
+            let mut row = step(&exited_local(), DeliveryEventKind::PublishStarted { pr: 9 }).row;
+            row.ci = Some(ci);
+            let out = step(&row, DeliveryEventKind::PublishRed { fix_forward: "sp-fix".into() });
+            assert!(out.applied, "{ci:?}");
+            assert_eq!(out.row.state, DeliveryState::PublishRed);
+        }
+    }
+
+    #[test]
+    fn published_needs_green_ci_and_ci_only_moves_forward() {
+        let started = step(&exited_local(), DeliveryEventKind::PublishStarted { pr: 9 }).row;
+        for ci in [CiState::Pending, CiState::Running, CiState::Red] {
+            let mut row = started.clone();
+            row.ci = Some(ci);
+            let out = step(&row, DeliveryEventKind::Published { forge_sha: "f".into() });
+            assert!(!out.applied, "Published must be refused while ci is {ci:?}");
+            match out.refusal {
+                Some(Refusal::IllegalTransition { state, .. }) => assert_eq!(state, "PUBLISHING"),
+                other => panic!("{other:?}"),
+            }
+            assert_eq!(out.row, row);
+        }
+        for from in CiState::ALL {
+            for to in CiState::ALL {
+                let mut row = started.clone();
+                row.ci = Some(from);
+                let out = step(&row, DeliveryEventKind::PublishCi { ci: to });
+                assert_eq!(out.applied, from.can_go(to), "{from:?} -> {to:?}");
+                if out.applied {
+                    assert_eq!(out.row.ci, Some(to));
+                } else {
+                    assert_eq!(out.row, row);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn publish_started_is_local_only_and_only_from_exited() {
+        for mut row in [DeliveryRow::start_queue("sp-a"), DeliveryRow::start_pr("sp-b", 1), DeliveryRow::start_push("sp-c")] {
+            row.state = DeliveryState::Exited;
+            row.exit = Some(Exit::Delivered);
+            let out = step(&row, DeliveryEventKind::PublishStarted { pr: 9 });
+            assert!(!out.applied);
+            assert!(matches!(out.refusal, Some(Refusal::IllegalTransition { .. })));
+        }
+        let publishing = step(&exited_local(), DeliveryEventKind::PublishStarted { pr: 9 }).row;
+        let again = step(&publishing, DeliveryEventKind::PublishStarted { pr: 10 });
+        assert!(!again.applied);
+        assert_eq!(again.row, publishing);
+        let queued = DeliveryRow::start_local("sp-q");
+        assert!(!step(&queued, DeliveryEventKind::PublishStarted { pr: 9 }).applied);
+    }
+
+    #[test]
+    fn a_publishing_row_never_reopens_the_exit() {
+        let publishing = step(&exited_local(), DeliveryEventKind::PublishStarted { pr: 9 }).row;
+        for kind in core_kinds() {
+            let out = step(&publishing, kind);
+            assert!(!out.applied);
+            assert!(matches!(out.refusal, Some(Refusal::IllegalTransition { .. })));
+        }
+    }
+
+    #[test]
+    fn ci_names_round_trip() {
+        for ci in CiState::ALL {
+            assert_eq!(CiState::from_str(ci.as_str()), Some(ci));
+        }
+        assert_eq!(CiState::from_str("purple"), None);
+        assert_eq!(DeliveryState::from_str("PUBLISHING"), Some(DeliveryState::Publishing));
     }
 }

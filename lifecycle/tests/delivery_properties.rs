@@ -9,6 +9,8 @@ fn kind() -> impl Strategy<Value = DeliveryEventKind> {
         Just(DeliveryEventKind::Delivered { merge_sha: "s".into(), proof: "p".into() }),
         Just(DeliveryEventKind::Returned { reason: ReturnedReason::PushRejected }),
         Just(DeliveryEventKind::Requeued { tip: "t".into() }),
+        Just(DeliveryEventKind::PublishStarted { pr: 3 }),
+        Just(DeliveryEventKind::PublishCi { ci: lifecycle::delivery::CiState::Green }),
         Just(DeliveryEventKind::Published { forge_sha: "f".into() }),
         Just(DeliveryEventKind::PublishRed { fix_forward: "sp-fix".into() }),
     ]
@@ -116,11 +118,15 @@ proptest! {
     fn publish_facts_apply_only_to_an_exited_local_row((m, ks) in steps()) {
         for (before, _, _) in run(m, ks) {
             for k in [
+                DeliveryEventKind::PublishStarted { pr: 3 },
                 DeliveryEventKind::Published { forge_sha: "f".into() },
                 DeliveryEventKind::PublishRed { fix_forward: "sp-fix".into() },
             ] {
-                let out = apply(&before, &event_for(&before, k, "p"));
-                prop_assert_eq!(out.applied, before.state == DeliveryState::Exited && before.mode == Mode::Local);
+                let out = apply(&before, &event_for(&before, k.clone(), "p"));
+                let from_exited = before.state == DeliveryState::Exited && before.mode == Mode::Local;
+                let from_green_publishing = before.state == DeliveryState::Publishing
+                    && (matches!(k, DeliveryEventKind::PublishRed { .. }) || before.ci == Some(lifecycle::delivery::CiState::Green) && matches!(k, DeliveryEventKind::Published { .. }));
+                prop_assert_eq!(out.applied, from_exited || from_green_publishing, "{:?} {:?}", before, k);
             }
         }
     }

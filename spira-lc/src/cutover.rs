@@ -1302,6 +1302,8 @@ fn add_exit_steps(
         delivery::DeliveryEventKind::Requeued { tip } => bead::BeadEventKind::Requeued { tip: tip.clone() },
         delivery::DeliveryEventKind::Delivered { .. }
         | delivery::DeliveryEventKind::Cut { .. }
+        | delivery::DeliveryEventKind::PublishStarted { .. }
+        | delivery::DeliveryEventKind::PublishCi { .. }
         | delivery::DeliveryEventKind::Published { .. }
         | delivery::DeliveryEventKind::PublishRed { .. } => {
             return Ok(()); // not a settle/abandon exit shape — never reached by this module's callers

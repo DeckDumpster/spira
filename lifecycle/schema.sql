@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS delivery (
     batch_id  VARCHAR(64) NULL,
     pr        BIGINT NULL,
     merge_sha VARCHAR(64) NULL,
+    ci        VARCHAR(8) NULL,
     version   BIGINT NOT NULL,
     CONSTRAINT fk_delivery_bead FOREIGN KEY (bead_id) REFERENCES bead (bead_id)
 );
