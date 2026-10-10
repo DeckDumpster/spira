@@ -475,6 +475,16 @@ fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
 }
 
 #[test]
+fn certify_skips_an_infra_verdict_on_a_tip_the_row_has_left() {
+    let mut f = Fake::default();
+    f.bead("sp-st", BeadState::Submitted).tip = Some("new111".into());
+    let a = go(&mut f, "certify", &["sp-st", "old000", "infra", "-"]);
+    assert_eq!((a.code, a.cert_log.unwrap().0), (REFUSED, "skip".into()));
+    assert!(f.events.is_empty());
+    assert_eq!(go(&mut f, "certify", &["sp-st", "new111", "infra", "-"]).code, APPLIED);
+}
+
+#[test]
 fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
     for (raw, want) in [("branch-red", "suites-failed"), ("syntax", "syntax"), ("beads-data", "policy-violation"), ("foreign-harness", "policy-violation"), ("no-rebase", "no-rebase"), ("timeout", "timeout"), ("confine", "confine"), ("a-reason-never-heard-of", "suites-failed")] {
         let mut f = Fake::default();
