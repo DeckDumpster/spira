@@ -113,7 +113,10 @@ fi
 
 CARGO_BIN="${CARGO:-cargo}"
 command -v "$CARGO_BIN" >/dev/null 2>&1 || { printf 'build-fence: %s not found on PATH — refusing\n' "$CARGO_BIN" >&2; exit 2; }
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${SPIRA_FENCE_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/spira/fence-target}}"
+# The default is this worktree's own: one directory shared by every worktree let cargo reuse another
+# tree's lifecycle artifact (its freshness check is relative paths and mtimes), so the fence
+# compiled spira-lc against the wrong crate and false-redded sp-mbefnb.1, sp-9sbdvw and sp-g3w50i.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${SPIRA_FENCE_TARGET_DIR:-$PWD/target/fence-check}}"
 mkdir -p "$CARGO_TARGET_DIR" 2>/dev/null || { printf 'build-fence: cannot create target dir %s — refusing\n' "$CARGO_TARGET_DIR" >&2; exit 2; }
 
 out="$("$CARGO_BIN" check --workspace --locked 2>&1)"; rc=$?
