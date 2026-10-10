@@ -116,7 +116,7 @@ chmod +x "$BIN/claude-no-thrash"
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 if [ -n "${BEAD_ID:-}" ]; then
-    spira-lc disposition "$BEAD_ID" thrash "stalled: no last action" heartbeat
+    SPIRA_RUN="$RUN_DIR" "$TMP/lc/spira-lc" disposition "$BEAD_ID" thrash "stalled: no last action" heartbeat
 fi
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 0
@@ -131,7 +131,7 @@ chmod +x "$BIN/claude-thrash"
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 if [ -n "${BEAD_ID:-}" ]; then
-    spira-lc disposition "$BEAD_ID" thrash "stalled: no last action" heartbeat
+    SPIRA_RUN="$RUN_DIR" "$TMP/lc/spira-lc" disposition "$BEAD_ID" thrash "stalled: no last action" heartbeat
     : > "$RUN_DIR/$BEAD_ID.hung"
 fi
 sleep 300
