@@ -206,6 +206,12 @@ INSTALL_BIN="/tmp/spira-install"
 podman cp "$_si" "$CNAME:$INSTALL_BIN" >&2 && podman exec "$CNAME" chmod 0755 "$INSTALL_BIN" >&2
 iszero "the tree's spira-install is staged in the container" "$?"
 
+_sc="$(command -v spira-config 2>/dev/null || true)"
+[ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
+# batch-job: staging the tree's spira-config into the fake release bin/ conf.sh resolves through
+podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 && podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
+iszero "the tree's spira-config is staged in the container's release bin/" "$?"
+
 # Create the fake database marker. The .beads directory satisfies directory-existence
 # checks in ready.sh ("database absent — no .beads") and seed.sh without requiring
 # a real Dolt store or any bd migration state. The stub bd handles all list/memories
