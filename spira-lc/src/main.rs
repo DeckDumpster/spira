@@ -26,6 +26,7 @@ mod db;
 mod facts;
 mod git_evidence;
 mod legacy_files;
+mod live;
 mod migrate;
 mod ops;
 mod passes;
@@ -266,6 +267,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // The ops read model (lifecycle/migrations/0007): a view as JSON, and the one-time title backfill.
         Some("ops-view") => ops::cmd_ops_view(&args[1..], conn),
         Some("ops-refusals") => ops::cmd_ops_refusals(&args[1..], conn),
+        Some("live-check") => ops::cmd_live_check(conn),
         Some("dep-add") => deps::cmd_dep_add(&args[1..], conn),
         Some("dep-remove") => deps::cmd_dep_remove(&args[1..], conn),
         Some("backfill-deps") => deps::cmd_backfill_deps(&args[1..], conn),
@@ -279,7 +281,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | event-continuity | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | live-check | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | event-continuity | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
         ),
     }
 }
@@ -333,6 +335,9 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(bead_id) = args.first() else {
         return (CANNOT_TELL, "show: missing <bead-id>".into());
     };
+    if let Some((bead, delivery)) = conn.live().and_then(|l| l.show(bead_id)) {
+        return (0, serde_json::to_string_pretty(&serde_json::json!({ "bead": bead, "delivery": delivery })).unwrap());
+    }
     let bead_rows = match conn.query(&format!(
         "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, express, aeon_phase, disposition, disposition_note, ejected_red_tip, updated_at FROM bead WHERE bead_id = '{}'",
         rows::escape(bead_id)
@@ -381,6 +386,12 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let express = args.iter().any(|a| a == "--express");
     let live = args.iter().any(|a| a == "--live");
     let ids = flag(args, "--ids");
+    if live {
+        let f = live::filter_from_flags(state.as_deref(), ids.as_deref(), hold.as_deref(), express);
+        if let Some(beads) = conn.live().and_then(|l| l.list(&f)) {
+            return (0, serde_json::to_string(&Value::Array(beads)).unwrap());
+        }
+    }
     // --hold <kind>: beads currently carrying that hold (design §3.1: "Holds are a
     // dimension, not states"), e.g. every poison-held bead regardless of its underlying
     // state — the bulk query CHECK 4's stale-clear sweep needs instead of a per-bead
@@ -712,6 +723,28 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unreachable_conn_with_live(rows: Vec<Value>) -> Conn {
+        let mut conn = Conn::unreachable();
+        conn.enable_live();
+        conn.live.as_ref().unwrap().replace(vec![rows, vec![], vec![]]).unwrap();
+        conn
+    }
+
+    #[test]
+    fn live_reads_never_reach_dolt() {
+        let row = serde_json::json!({"bead_id": "sp-a", "state": "WORKING", "holds": "[]", "version": "2", "updated_at": "1", "since": "1", "express": "0"});
+        let conn = unreachable_conn_with_live(vec![row]);
+        let (code, out) = cmd_list(&["--live".to_string()], &conn);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("\"sp-a\"") && out.contains("\"blocked_by\":[]"), "{out}");
+        let (code, out) = cmd_show(&["sp-a".to_string()], &conn);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("\"delivery\": null"), "{out}");
+        assert_eq!(ops::cmd_ops_view(&["ops_live".to_string()], &conn).0, 0);
+        assert_eq!(cmd_list(&[], &conn).0, CANNOT_TELL, "a list without --live still reads Dolt");
+        assert_eq!(cmd_show(&["sp-missing".to_string()], &conn).0, CANNOT_TELL, "a bead memory does not hold is asked of Dolt");
+    }
 
     #[test]
     fn entered_at_reads_the_latest_applied_event_into_the_current_state() {

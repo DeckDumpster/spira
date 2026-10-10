@@ -103,7 +103,7 @@ pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     };
     let at = crate::db::now_epoch();
     let script = create_bead_script(id, at, flag(args, "--title").as_deref(), priority, flag(args, "--submitted-tip").as_deref());
-    match conn.run_plain(&script) {
+    match conn.run_plain_touching(&script, crate::live::Touch::Keys(vec![id.clone()])) {
         Ok(()) => (0, String::new()),
         Err(e) => cannot_tell(e),
     }

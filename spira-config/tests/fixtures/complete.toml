@@ -161,6 +161,7 @@ land_gate_reserve = "2700"
 land_maxsec = "5400"
 lanes = "ops groomer qa maechen czar warden"
 lanes_max_live = 2
+lc_live_check_secs = 60
 lc_password_file = "/fixture/userhome/.config/spira/spira-lc.credential"
 lc_socket = "/run/user/1000/spira-lc/sock"
 lc_testdb_data = "/fixture/userhome/spira/lc-test"

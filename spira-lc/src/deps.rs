@@ -34,7 +34,7 @@ pub fn cmd_dep_add(args: &[String], conn: &Conn) -> (i32, String) {
         Err(e) => return e,
     };
     let dep_type = flag(args, "--type").unwrap_or_else(|| "blocks".into());
-    match conn.run_plain(&edge_script(id, dep, &dep_type)) {
+    match conn.run_plain_touching(&edge_script(id, dep, &dep_type), crate::live::Touch::Keys(vec![id.to_string()])) {
         Ok(()) => (0, String::new()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
@@ -46,7 +46,7 @@ pub fn cmd_dep_remove(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(k) => k,
         Err(e) => return e,
     };
-    match conn.run_plain(&format!("DELETE FROM bead_dep WHERE bead_id = {} AND depends_on = {};\n", q(id), q(dep))) {
+    match conn.run_plain_touching(&format!("DELETE FROM bead_dep WHERE bead_id = {} AND depends_on = {};\n", q(id), q(dep)), crate::live::Touch::Keys(vec![id.to_string()])) {
         Ok(()) => (0, String::new()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
@@ -91,7 +91,7 @@ pub fn cmd_backfill_deps(args: &[String], conn: &Conn) -> (i32, String) {
         for (dep, kind) in &found {
             script.push_str(&edge_script(id, dep, kind));
         }
-        match conn.run_plain(&script) {
+        match conn.run_plain_touching(&script, crate::live::Touch::Keys(vec![id.clone()])) {
             Ok(()) => edges += found.len(),
             Err(_) => missed.push(id.clone()),
         }

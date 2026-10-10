@@ -39,6 +39,8 @@ pub struct Conn {
     /// The socket read/write limit for this connection: the query deadline, or
     /// [`ADMIN_IO_TIMEOUT`] for the admin batch verbs.
     pub io_timeout: std::time::Duration,
+    /// The live bead rows, present only in the serving process (see `live.rs`).
+    pub live: Option<crate::live::Live>,
 }
 
 /// A query's server-side deadline: a statement that has not answered in this long is
@@ -102,7 +104,7 @@ impl Conn {
         let password = password_from(password_file, std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: QUERY_DEADLINE })
+        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: QUERY_DEADLINE, live: None })
     }
 
     /// A second connection to the same server and database under other credentials — the
@@ -118,7 +120,63 @@ impl Conn {
             session: Mutex::new(None),
             read_session: Mutex::new(None),
             io_timeout: self.io_timeout,
+            live: None,
         }
+    }
+
+    /// A connection to a port nothing listens on: whatever answers through it was not read from Dolt.
+    #[cfg(test)]
+    pub fn unreachable() -> Conn {
+        Conn {
+            host: "127.0.0.1".into(),
+            port: 1,
+            user: String::new(),
+            password: String::new(),
+            database: String::new(),
+            session: Mutex::new(None),
+            read_session: Mutex::new(None),
+            io_timeout: std::time::Duration::from_millis(200),
+            live: None,
+        }
+    }
+
+    /// Turns on the in-memory live rows; call once, before the connection is shared.
+    pub fn enable_live(&mut self) {
+        self.live = Some(crate::live::Live::default());
+    }
+
+    /// The live rows, once loaded; `None` makes every caller read Dolt as before.
+    pub fn live(&self) -> Option<&crate::live::Live> {
+        self.live.as_ref().filter(|l| l.is_loaded())
+    }
+
+    /// (Re)loads the live rows from Dolt through the write session, so no write commits between
+    /// the read and the swap.
+    pub fn live_load(&self) -> Result<usize, String> {
+        let live = self.live.as_ref().ok_or("the live rows are not enabled")?;
+        self.with_write_wire(|wire| live.load(now_epoch(), |sql| wire.exec(sql).map_err(|_| ())))
+    }
+
+    /// Compares memory with Dolt through the write session (quiescent against writes) and
+    /// reloads on a mismatch; the caller raises the incident.
+    pub fn live_check(&self) -> Result<crate::live::Check, String> {
+        let live = self.live.as_ref().ok_or("the live rows are not enabled")?;
+        self.with_write_wire(|wire| live.check(now_epoch(), |sql| wire.exec(sql).map_err(|_| ())))
+    }
+
+    fn with_write_wire<T>(&self, f: impl FnOnce(&mut Wire) -> Result<T, String>) -> Result<T, String> {
+        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
+        let mut wire = match reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database))) {
+            Ok(w) => w,
+            Err(ScriptFailure::CannotTell(e)) => return Err(e),
+            Err(ScriptFailure::LostRace) => return Err("serialization conflict on connect".into()),
+        };
+        let out = f(&mut wire);
+        if out.is_ok() {
+            *guard = Some(wire);
+        }
+        out
     }
 
     fn connect(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
@@ -151,8 +209,18 @@ impl Conn {
         self.run_script_on(&self.session, script)
     }
 
-    /// Times only the statements: the wait for the session lock is queueing, not a slow query.
+    /// A write: once it commits, the live rows it touched are re-read from Dolt on the same
+    /// session, still holding it, so refreshes land in commit order.
+    fn run_write(&self, script: &str, touch: crate::live::Touch) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+        self.run_session(&self.session, script, Some(&touch))
+    }
+
     fn run_script_on(&self, session: &Mutex<Option<Wire>>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+        self.run_session(session, script, None)
+    }
+
+    /// Times only the statements: the wait for the session lock is queueing, not a slow query.
+    fn run_session(&self, session: &Mutex<Option<Wire>>, script: &str, touch: Option<&crate::live::Touch>) -> Result<Vec<Vec<Value>>, ScriptFailure> {
         let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
         let session_started = std::time::Instant::now();
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
@@ -161,9 +229,19 @@ impl Conn {
         match wire {
             Ok(mut wire) => {
                 let started = std::time::Instant::now();
-                let out = wire.exec(script);
+                let (out, keep) = match (touch, &self.live) {
+                    (Some(touch), Some(live)) => match live.write_through(touch, script, |sql| wire.exec(sql)) {
+                        Ok((sets, refreshed)) => (Ok(sets), refreshed),
+                        Err(e) => (Err(e), false),
+                    },
+                    _ => {
+                        let out = wire.exec(script);
+                        let keep = out.is_ok();
+                        (out, keep)
+                    }
+                };
                 crate::slow::record(started.elapsed(), script);
-                if out.is_ok() {
+                if keep {
                     *guard = Some(wire);
                 }
                 out
@@ -260,7 +338,7 @@ impl Conn {
             at = ev.at,
         );
 
-        match self.run_script(&script) {
+        match self.run_write(&script, touch_of(table, &[key])) {
             Ok(sets) => {
                 let rows = sets.last().cloned().unwrap_or_default();
                 let applied = rows.first().and_then(|r| r.get("applied")).and_then(|v| v.as_str()).map(|s| s != "0").unwrap_or(false);
@@ -317,7 +395,7 @@ impl Conn {
             at = ev.at,
         );
 
-        match self.run_script(&script) {
+        match self.run_write(&script, touch_of(table, &[ev.key.as_str()])) {
             Ok(sets) => {
                 let rows = sets.last().cloned().unwrap_or_default();
                 let applied = rows.first().and_then(|r| r.get("applied")).and_then(|v| v.as_str()).map(|s| s != "0").unwrap_or(false);
@@ -363,7 +441,12 @@ impl Conn {
     /// competes with another writer on the same key by construction (row creation, keyed by
     /// an id nothing else mints).
     pub fn run_plain(&self, script: &str) -> Result<(), DbError> {
-        match self.run_script(script) {
+        self.run_plain_touching(script, crate::live::Touch::All)
+    }
+
+    /// [`Self::run_plain`] for a script whose only effect on the live rows is on `keys`.
+    pub fn run_plain_touching(&self, script: &str, touch: crate::live::Touch) -> Result<(), DbError> {
+        match self.run_write(script, touch) {
             Ok(_) => Ok(()),
             Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("a plain insert unexpectedly lost a race".into())),
             Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
@@ -415,7 +498,13 @@ impl Conn {
         }
         script.push_str("COMMIT;\n");
 
-        match self.run_script(&script) {
+        let touch = if preamble.is_empty() {
+            let keys: Vec<&str> = steps.iter().filter(|st| is_live_table(st.table)).map(|st| st.key.as_str()).collect();
+            touch_of("bead", &keys)
+        } else {
+            crate::live::Touch::All
+        };
+        match self.run_write(&script, touch) {
             Ok(blocks) => {
                 Ok(steps
                     .iter()
@@ -556,6 +645,16 @@ impl EventRecord {
             at,
         }
     }
+}
+
+fn is_live_table(table: &str) -> bool {
+    matches!(table, "bead" | "delivery")
+}
+
+/// The live rows a write to `table` keyed `keys` changes: bead and delivery rows share the
+/// bead id as their key; any other table holds none of them.
+fn touch_of(table: &str, keys: &[&str]) -> crate::live::Touch {
+    crate::live::Touch::Keys(if is_live_table(table) { keys.iter().map(|k| k.to_string()).collect() } else { Vec::new() })
 }
 
 fn batch_script(insert_sqls: &[String]) -> Option<String> {

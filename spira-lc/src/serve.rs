@@ -35,8 +35,23 @@ pub fn run(args: &[String]) -> i32 {
         },
     };
 
+    let check_every = match spira_config::process::cfg_parse::<u64>("SPIRA_LC_LIVE_CHECK_SECS") {
+        Ok(n) if n >= 1 => Duration::from_secs(n),
+        Ok(_) => {
+            eprintln!("spira-lc serve: SPIRA_LC_LIVE_CHECK_SECS must be at least 1");
+            return 2;
+        }
+        Err(e) => {
+            eprintln!("spira-lc serve: {e}");
+            return 2;
+        }
+    };
+
     let conn = match Conn::from_env() {
-        Ok(c) => Arc::new(c),
+        Ok(mut c) => {
+            c.enable_live();
+            Arc::new(c)
+        }
         Err(e) => {
             eprintln!("spira-lc serve: cannot configure a connection: {e:?}");
             return 2;
@@ -62,7 +77,16 @@ pub fn run(args: &[String]) -> i32 {
     // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
     // socket; serving one connection at a time deadlocks on that. The session mutex still
     // serializes the queries themselves.
+    match conn.live_load() {
+        Ok(n) => eprintln!("spira-lc serve: {n} live rows in memory"),
+        Err(e) => eprintln!("spira-lc serve: live rows not loaded, reads go to Dolt until they are: {e}"),
+    }
     std::thread::scope(|scope| {
+        let checker = Arc::clone(&conn);
+        scope.spawn(move || loop {
+            std::thread::sleep(check_every);
+            live_tick(&checker);
+        });
         for conn_stream in listener.incoming() {
             match conn_stream {
                 Ok(stream) => {
@@ -74,6 +98,21 @@ pub fn run(args: &[String]) -> i32 {
         }
     });
     0
+}
+
+/// One pass of the timer: load the rows if they are not in memory, else check them against Dolt.
+fn live_tick(conn: &Conn) {
+    if conn.live.as_ref().is_some_and(|l| !l.is_loaded()) {
+        if let Err(e) = conn.live_load() {
+            eprintln!("spira-lc serve: live rows still not loaded: {e}");
+        }
+        return;
+    }
+    match crate::ops::run_live_check(conn, &crate::ops::raise_incident) {
+        Ok(c) if c.divergent.is_empty() => {}
+        Ok(c) => eprintln!("spira-lc serve: live rows diverged from Dolt and were reloaded: {}", c.divergent.join(", ")),
+        Err(e) => eprintln!("spira-lc serve: live check failed: {e}"),
+    }
 }
 
 /// The first descriptor systemd passes (fd 3) when it owns the listening socket, so a restart
