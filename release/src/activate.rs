@@ -319,7 +319,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
     for u in &out.restarted {
         eprintln!("release: restarting {u}");
         attempted.push(u.clone());
-        if let Err(e) = ctx.sc.restart(u) {
+        if let Err(e) = ctx.sc.reset_failed(u).and_then(|()| ctx.sc.restart(u)) {
             failed.push(format!("{u}: restart failed: {e}"));
             break;
         }
