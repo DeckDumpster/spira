@@ -135,6 +135,8 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      - name: Resolvable config for the release binaries
+        run: bash spira/ci-config.sh "$GITHUB_WORKSPACE"
       - name: Read pinned toolchain for the selector
         id: toolchain
         if: github.event_name == 'pull_request'
@@ -336,6 +338,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Resolvable config for the release binaries
+        run: bash spira/ci-config.sh "$GITHUB_WORKSPACE"
+
       - name: Download binaries
         # The build job compiled every crate and uploaded the binaries as an
         # artifact. They land OUTSIDE the checkout, in the runner's temp directory:
@@ -378,9 +383,6 @@ jobs:
         # production unit does with Environment=SPIRA_REPO.
         env:
           SPIRA_HOME: ${{ github.workspace }}/spira
-          # release build resolves config, and a hosted runner has no box config: the
-          # checkout's complete fixture satisfies it (as the cut job does, sp-2adk7.3).
-          SPIRA_TOML: ${{ github.workspace }}/spira-config/tests/fixtures/complete.toml
         run: |
           set -euo pipefail
           _releases="$HOME/.cache/spira-ci/releases"
@@ -395,7 +397,6 @@ jobs:
           }
           printf 'SPIRA_RELEASE=%s\n' "$_rel" >> "$GITHUB_ENV"
           printf 'SPIRA_REPO=%s\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          printf 'SPIRA_TOML=%s\n' "$SPIRA_TOML" >> "$GITHUB_ENV"
           printf 'PATH=%s\n' "$_path" >> "$GITHUB_ENV"
           printf 'stage: release %s staged at %s\n' "$_sha" "$_rel"
 
@@ -480,15 +481,7 @@ jobs:
         continue-on-error: true
         env:
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
-          # testenv refuses with no SPIRA_TOML, and a hosted runner has no box config; the
-          # checkout's complete fixture satisfies it (as gate.yml's cut job does, sp-2adk7.3).
-          SPIRA_TOML: ${{ github.workspace }}/spira-config/tests/fixtures/complete.toml
-        run: |
-          # testenv reads the registry from config, and the checked-in fixture leaves it empty:
-          # layer a one-key override on it rather than editing the fixture (sp-zdyyg1).
-          printf '[spira]\ntestenv_registry = "%s"\n' "$SPIRA_TESTENV_REGISTRY" > "$RUNNER_TEMP/ci-registry.toml"
-          export SPIRA_TOML="$SPIRA_TOML:$RUNNER_TEMP/ci-registry.toml"
-          testenv container publish
+        run: testenv container publish
 
       - name: Lints
         # Cheap, pure Rust (spira-lint, downloaded above with the other release
@@ -522,6 +515,7 @@ jobs:
           spira-lint --only incident-cause-lint
           spira-lint --only tmux-scope-fence
           spira-lint --only wiki-add-fence
+          spira-lint --only workflow-config
           bash spira/orphan-test.sh || [ $? -eq 77 ]
 
       - name: Suites
@@ -809,6 +803,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Resolvable config for the release binaries
+        run: bash spira/ci-config.sh "$GITHUB_WORKSPACE"
+
       - name: Assert gate check
         # Assert a green gate check on this SHA, and that it belongs to a queue
         # batch PR (spira/queue/*) or publish PR (spira/publish/*) whose OWN gate run tested a non-empty suite
@@ -918,9 +915,6 @@ jobs:
           GIT_AUTHOR_EMAIL: gate@spira.local
           GIT_COMMITTER_NAME: Spira Gate
           GIT_COMMITTER_EMAIL: gate@spira.local
-          # spira-config refuses with no SPIRA_TOML, and a hosted runner has no box config.
-          # The checkout's complete fixture satisfies lib.sh; cut reads no value from it.
-          SPIRA_TOML: ${{ github.workspace }}/spira-config/tests/fixtures/complete.toml
         # release.sh exits 0 WITHOUT tagging when no commits landed since the last
         # tag (the land ref did not move). That is the common case on a docs or
         # workflow commit that touches only the workflow itself, and it is success,

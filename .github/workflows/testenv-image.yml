@@ -55,6 +55,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolvable config for the release binaries
+        run: bash spira/ci-config.sh "$GITHUB_WORKSPACE"
+
       - name: Resolve the registry path
         id: reg
         run: |
@@ -76,9 +79,6 @@ jobs:
         env:
           SPIRA_HOME: ${{ github.workspace }}/spira
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
-          # testenv refuses with no SPIRA_TOML, and a hosted runner has no box config; the
-          # checkout's complete fixture satisfies it (as gate.yml's cut job does, sp-2adk7.3).
-          SPIRA_TOML: ${{ github.workspace }}/spira-config/tests/fixtures/complete.toml
         run: |
           set -uo pipefail
           tag="$(target/release/testenv container tag)" || {
@@ -95,8 +95,4 @@ jobs:
           fi
 
           printf 'publish: %s is not published yet — building\n' "$ref"
-          # testenv reads the registry from config, and the checked-in fixture leaves it empty:
-          # layer a one-key override on it rather than editing the fixture (sp-zdyyg1).
-          printf '[spira]\ntestenv_registry = "%s"\n' "$SPIRA_TESTENV_REGISTRY" > "$RUNNER_TEMP/ci-registry.toml"
-          export SPIRA_TOML="$SPIRA_TOML:$RUNNER_TEMP/ci-registry.toml"
           target/release/testenv container publish
