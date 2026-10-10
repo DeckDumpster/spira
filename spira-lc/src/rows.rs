@@ -104,7 +104,7 @@ pub fn bead_set_clause(row: &BeadRow) -> String {
 
 pub fn fetch_delivery(conn: &Conn, bead_id: &str) -> Result<Option<DeliveryRow>, DbError> {
     let rows = conn.query(&format!(
-        "SELECT bead_id, mode, state, batch_id, pr, merge_sha, version FROM delivery WHERE bead_id = '{}'",
+        "SELECT bead_id, mode, state, batch_id, pr, merge_sha, ci, version FROM delivery WHERE bead_id = '{}'",
         escape(bead_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
@@ -120,6 +120,7 @@ pub fn fetch_delivery(conn: &Conn, bead_id: &str) -> Result<Option<DeliveryRow>,
         pr: number(row, "pr").map(|n| n as u64),
         merge_sha: text(row, "merge_sha"),
         exit: None,
+        ci: text(row, "ci").and_then(|c| lifecycle::delivery::CiState::from_str(&c)),
         version: number(row, "version").unwrap_or(0) as u64,
     }))
 }
@@ -133,11 +134,12 @@ pub fn delivery_set_clause(row: &DeliveryRow) -> String {
     };
     let _ = exit_note; // the exit itself is recorded on the event, not on this cache row.
     format!(
-        "state = '{}', batch_id = {}, pr = {}, merge_sha = {}, version = {}",
+        "state = '{}', batch_id = {}, pr = {}, merge_sha = {}, ci = {}, version = {}",
         row.state.as_str(),
         opt_str(&row.batch_id),
         opt_num(row.pr.map(|n| n as i64)),
         opt_str(&row.merge_sha),
+        opt_str(&row.ci.map(|c| c.as_str().to_string())),
         row.version,
     )
 }

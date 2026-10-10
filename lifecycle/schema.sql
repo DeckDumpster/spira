@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS bead (
     disposition_note TEXT NULL,
     -- The tip a round last ejected as red; submit refuses it. migrations/0018-ejected-red-tip.sql for an existing database.
     ejected_red_tip VARCHAR(64) NULL,
-    -- The tip the pre-round screen last passed (Sifted event); migrations/0021-sifted-tip.sql for an existing database.
+    -- The tip the pre-round screen last passed (Sifted event); migrations/0023-sifted-tip.sql for an existing database.
     sifted_tip  VARCHAR(64) NULL,
     updated_at  BIGINT NOT NULL
 );
@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS delivery (
     batch_id  VARCHAR(64) NULL,
     pr        BIGINT NULL,
     merge_sha VARCHAR(64) NULL,
+    ci        VARCHAR(8) NULL,
     version   BIGINT NOT NULL,
     CONSTRAINT fk_delivery_bead FOREIGN KEY (bead_id) REFERENCES bead (bead_id)
 );

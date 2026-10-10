@@ -632,7 +632,7 @@ mod tests {
         t.write("spira-lint/testlib-migrated-allow", "");
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "gate-state-readers", "aeon-state-readers", "release-state-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config"];
+        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "gate-state-readers", "aeon-state-readers", "release-state-readers", "sift-state-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();

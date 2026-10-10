@@ -1,0 +1,6 @@
+# sift-state-readers: files in the operator-facing trees that still read the pre-round screen's
+# state from a file under the run directory, one repo-relative path per line. Blank lines and
+# `#` comments are ignored.
+#
+# SHRINK-ONLY. A line leaves when its file asks `sift status --json` instead; nothing is
+# ever added for a NEW reader.
