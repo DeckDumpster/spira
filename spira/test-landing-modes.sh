@@ -100,7 +100,7 @@ runpass() {  # runpass <land|pr>
 }
 
 remote_main() { timeout 5 git -C "$REMOTE" rev-parse main; }
-on_remote_main() { timeout 5 git -C "$REMOTE" log --format=%s main | grep -q "$1"; }
+on_remote_main() { [ "$(timeout 5 git -C "$REMOTE" log --format=%s main | grep -c -- "$1")" -gt 0 ]; }  # grep -c reads all input: grep -q under pipefail SIGPIPEs git log
 events() { cat "$RUN/events.log" 2>/dev/null; }
 
 echo "test-landing-modes.sh"
