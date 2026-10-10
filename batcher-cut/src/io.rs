@@ -690,6 +690,9 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
             .arg(tip),
     );
     if ok {
+        if let Err(e) = crate::renumber::after_merge(wt) {
+            eprintln!("batcher: renumbering migrations after merging {id}: {e}");
+        }
         MergeResult::Ok
     } else {
         let _ = run(Command::new("git").arg("-C").arg(wt).args(["merge", "--abort"]), "git merge --abort");
