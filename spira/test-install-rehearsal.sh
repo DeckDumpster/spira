@@ -82,7 +82,7 @@ ok "user systemd running (probe exits 0)"
 # not polluted.
 # ---------------------------------------------------------------------------
 SPIRA_RUN_CTR="/tmp/spira-reh"
-REH_CONFIG="/home/spirauser/.config/spira/rehearsal.toml"
+REH_CONFIG="/tmp/spira-rehearsal.toml"
 CEXEC=(timeout 5 podman exec --user spirauser
     -e XDG_RUNTIME_DIR=/run/user/1001
     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus"
