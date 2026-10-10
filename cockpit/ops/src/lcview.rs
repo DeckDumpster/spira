@@ -1075,147 +1075,45 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// The same `View` as a self-contained, phone-width HTML page. `stale` is the snapshot's age in
-/// seconds when it is old enough to distrust; the page says so rather than showing old numbers
-/// as live.
-pub fn render_html(v: &View, stale: Option<i64>, refresh_s: u64) -> String {
-    let mut h = String::new();
-    h.push_str(&format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>\
-<meta http-equiv=refresh content='{refresh_s}'><title>Spira lifecycle</title><style>{CSS}</style></head><body>"
-    ));
-    h.push_str(&format!(
-        "<header><b>LIFECYCLE</b> <span class=dim>{}</span> · release <b>{}</b> · <span class={}>{}</span> · aeons <b>{}/{}</b> · <a href=/stuck>where work is stuck →</a></header>",
-        esc(&v.clock),
-        esc(&v.release),
-        if v.world_running { "ok" } else { "bad" },
-        if v.world_running { "world RUNNING".to_string() } else { esc(&format!("world {}", v.world)) },
-        v.working,
-        v.ceiling
-    ));
-    if let Some(age_s) = stale {
-        h.push_str(&format!("<p class='banner bad'>Snapshot is {} old — the pane's collector is not running.</p>", age(age_s)));
-    }
-    for e in &v.errors {
-        h.push_str(&format!("<p class='banner bad'>source failed: {}</p>", esc(e)));
-    }
-    h.push_str("<section><h2>Flow</h2><div class=flow>");
-    for (i, (st, n)) in v.flow.iter().enumerate() {
-        let extra = if i == 0 && v.ready_held > 0 {
-            format!("<small class={}>{} held · {}%</small>", if v.held_pct >= 25 { "bad" } else { "warn" }, v.ready_held, v.held_pct)
-        } else {
-            String::new()
-        };
-        h.push_str(&format!("<div class=stage><span>{}</span><b>{n}</b>{extra}</div>", esc(st)));
-    }
-    h.push_str(&format!(
-        "</div><p class=dim><span class=warn>REWORK {}</span> · DROPPED {}/24h · SUPERSEDED {}/24h · LANDED {} all time</p></section>",
-        v.rework, v.dropped_24h, v.superseded_24h, v.landed_total
-    ));
-    if !v.holds.is_empty() {
-        h.push_str("<section><h2>Holds</h2><table>");
-        for g in &v.holds {
-            let tops = g.top.iter().map(|(n, r)| format!("{n}× {}", esc(r))).collect::<Vec<_>>().join("<br>");
-            h.push_str(&format!(
-                "<tr><td class={}>{}</td><td class=num>{}</td><td>{tops}</td></tr>",
-                if g.kind == "poison" { "bad" } else { "warn" },
-                esc(&g.kind),
-                g.count
-            ));
-        }
-        h.push_str("</table></section>");
-    }
-    if !v.drift.is_empty() {
-        h.push_str(&format!(
-            "<section class=bad><h2>Drift</h2><p>{} bead(s) READY/REWORK whose own commit is on {}: {}</p></section>",
-            v.drift.len(),
-            esc(&v.base),
-            esc(&v.drift.join(" "))
-        ));
-    }
-    let table = |title: &str, sub: &str, items: &[Item], cols: &dyn Fn(&Item) -> String| -> String {
-        let mut t = format!("<section><h2>{title} <small class=dim>{sub}</small></h2><table>");
-        if items.is_empty() {
-            t.push_str("<tr><td class=dim>nothing</td></tr>");
-        }
-        for i in items {
-            t.push_str(&cols(i));
-        }
-        t.push_str("</table></section>");
-        t
-    };
-    h.push_str(&table("Now", "working — holder · bead · lease", &v.now_items, &|i| {
-        format!(
-            "<tr><td class=who>{}<br><span class=dim>{}</span></td><td><b>{}</b>{} <span class=dim>{}</span><br>{}{}</td><td class=dim>{}<br>{}</td></tr>",
-            esc(&i.who),
-            esc(&i.persona),
-            esc(&i.id),
-            if i.rework { " <b class=warn>REWORK</b>" } else { "" },
-            esc(&i.prio),
-            esc(&i.title),
-            out_html(i),
-            esc(&i.age),
-            esc(&i.note)
-        )
-    }));
-    h.push_str("<section><h2>Pipeline <small class=dim>submitted waits on a gate · certified on a round</small></h2><table>");
-    if v.pipe.is_empty() {
-        h.push_str("<tr><td class=dim>nothing waiting</td></tr>");
-    }
-    for p in &v.pipe {
-        let ids = p.items.iter().map(|i| format!("{} <span class=dim>{}</span>", esc(&i.id), esc(&i.age))).collect::<Vec<_>>().join(" · ");
-        h.push_str(&format!("<tr><td>{}</td><td class=num>{}</td><td><span class=dim>oldest {}</span><br>{ids}</td></tr>", esc(&p.state), p.count, esc(&p.oldest)));
-    }
-    h.push_str("</table></section>");
-    h.push_str(&table("Rework", "sent back — why", &v.rework_items[..v.rework_items.len().min(10)], &|i| {
-        format!("<tr><td><b>{}</b> <span class=dim>{} · {}</span><br><span class=warn>{}</span></td></tr>", esc(&i.id), esc(&i.prio), esc(&i.age), esc(&i.note))
-    }));
-    h.push_str(&table(&format!("Next ({})", v.next_count), "ready, unheld, not on the base — by priority", &v.next, &|i| {
-        format!("<tr><td class=num>{}</td><td><b>{}</b><br>{}</td></tr>", esc(&i.prio), esc(&i.id), esc(&i.title))
-    }));
-    if !v.blocked.is_empty() {
-        h.push_str(&table(&format!("Blocked ({})", v.blocked.len()), "ready, waiting on an unmet dependency", &v.blocked, &|i| {
-            format!("<tr><td class=num>{}</td><td><b>{}</b><br>{}</td></tr>", esc(&i.prio), esc(&i.note), esc(&i.title))
-        }));
-    }
-    h.push_str(&table("Recent", "last transitions", &v.recent, &|i| {
-        let c = match i.state.as_str() {
-            "LANDED" => "ok",
-            "REWORK" | "DROPPED" => "warn",
-            _ => "",
-        };
-        format!("<tr><td class=dim>{}</td><td><b>{}</b> <span class={c}>{}</span><br>{}</td></tr>", esc(&i.age), esc(&i.id), esc(&i.state), esc(&i.title))
-    }));
-    h.push_str(&format!(
-        "<footer class=dim>source: spira-lc (state) · work list (titles) · {} commits (drift) — no bd · refreshes every {refresh_s}s</footer></body></html>",
-        esc(&v.base)
-    ));
-    h
+/// The phone page (`/lifecycle`): the pane's own tree, rendered by `lctui::render_page`, so the
+/// two cannot drift. Kept under this name because loom calls it.
+pub fn render_html(v: &View, stale: Option<i64>, poll_s: u64) -> String {
+    crate::lctui::render_page(v, stale, poll_s)
 }
-
-fn out_html(i: &Item) -> String {
-    if i.out.is_empty() {
-        return String::new();
-    }
-    let age = if i.out_age.is_empty() { String::new() } else { format!(" · {} ago", esc(&i.out_age)) };
-    let lines = i.out.iter().map(|l| esc(&cut(l, 140))).collect::<Vec<_>>().join("<br>");
-    format!("<div class='out {}'>{lines}<small>{age}</small></div>", esc(&i.out_level))
-}
-
-const CSS: &str = ":root{--bg:#fff;--fg:#111;--dim:#6b7280;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--line:#e5e7eb}\
-@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e5e7eb;--dim:#9ca3af;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--line:#1f2937}}\
-body{background:var(--bg);color:var(--fg);font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:12px 16px;max-width:900px}\
-header{font-size:15px;margin-bottom:8px}h2{font-size:14px;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.05em}\
-section{border-top:1px solid var(--line);padding-top:4px}table{width:100%;border-collapse:collapse}td{padding:4px 6px 4px 0;vertical-align:top;border-bottom:1px solid var(--line)}\
-.num{text-align:right;font-weight:bold;width:3em}.who{color:#0891b2;width:6em}.dim{color:var(--dim)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}\
-.out{margin-top:2px;font-size:12px;word-break:break-word}.out.none,.out.ok{color:var(--dim)}.out.warn{color:var(--warn)}.out.bad{color:var(--bad)}\
-.banner{padding:6px 8px;border:1px solid var(--bad);border-radius:4px}.flow{display:flex;flex-wrap:wrap;gap:6px}\
-.stage{border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:5.5em;display:flex;flex-direction:column}.stage span{font-size:11px;color:var(--dim)}.stage b{font-size:20px}\
-footer{margin-top:14px;font-size:12px}";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The page's visible text: tags dropped, entities decoded.
+    fn page_text(v: &View) -> String {
+        let h = render_html(v, None, 10);
+        let body = &h[h.find("<body>").unwrap_or(0)..h.find("<script>").unwrap_or(h.len())];
+        let mut out = String::new();
+        let mut tag = false;
+        for c in body.chars() {
+            match c {
+                '<' => tag = true,
+                '>' => tag = false,
+                _ if !tag => out.push(c),
+                _ => {}
+            }
+        }
+        out.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
+    }
+
+    /// The page draws every line of the pane's tree (the sync guarantee, per Ryan 2026-10-09).
+    fn assert_page_draws_the_tree(v: &View) {
+        let text = page_text(v);
+        fn walk(n: &[crate::lctui::Node], text: &str) {
+            for x in n {
+                let line = crate::lctui::strip_for_test(&x.line);
+                assert!(text.contains(line.trim_end()), "the page lacks the pane line {line:?}");
+                walk(&x.kids, text);
+            }
+        }
+        walk(&crate::lctui::tree(v), &text);
+    }
 
     fn row(id: &str, st: &str, since: i64) -> Row {
         Row { id: id.into(), state: st.into(), since, updated_at: since, ..Default::default() }
@@ -1399,14 +1297,11 @@ mod tests {
         s.on_base.insert("sp-x".into(), "c".into());
         let v = view(&s);
         let pane = plain(&render(&v, 120));
-        let page = render_html(&v, None, 10);
         for (st, n) in &v.flow {
             let line = v.machine.iter().find(|m| m.name == st.trim_end_matches("/24h")).map(|m| format!("{:<14}{:>4}", m.name, m.count));
             assert!(line.is_some_and(|l| pane.contains(&l)), "pane lacks {st} {n}");
-            assert!(page.contains(&format!("<span>{st}</span><b>{n}</b>")), "page lacks {st} {n}");
         }
-        assert!(pane.contains("DRIFT 1") && page.contains("1 bead(s) READY/REWORK"));
-        assert!(page.contains(&format!("Next ({})", v.next_count)));
+        assert_page_draws_the_tree(&v);
     }
 
     fn now_row(id: &str, persona: Option<&str>, rework: bool) -> Row {
@@ -1427,9 +1322,7 @@ mod tests {
         assert!(l[at("sp-rw")].contains("REWORK") && l[at("sp-rw") + 1].trim() == "ops", "{pane}");
         assert!(!l[at("sp-fresh")].contains("REWORK") && l[at("sp-fresh") + 1].trim() == "guardian", "{pane}");
         assert_eq!(l[at("sp-nul") + 1].trim(), "—", "a NULL persona is a dash, not omitted");
-        let page = render_html(&v, None, 10);
-        assert!(page.contains("<b class=warn>REWORK</b>") && page.contains("<span class=dim>ops</span>") && page.contains("<span class=dim>—</span>"));
-        assert_eq!(page.matches("REWORK</b>").count(), 1);
+        assert_page_draws_the_tree(&v);
         assert!(render(&v, 120).iter().any(|x| x.contains(&format!("{YEL}{B}REWORK{R}"))), "colour on the tag");
     }
 
@@ -1454,7 +1347,7 @@ mod tests {
         assert_eq!(v.next_count, 2);
         let pane = plain(&render(&v, 120));
         assert!(pane.contains("BLOCKED 1") && pane.contains("sp-hq1v76 <- sp-o4s4t4"), "{pane}");
-        assert!(render_html(&v, None, 10).contains("sp-hq1v76 &lt;- sp-o4s4t4"));
+        assert_page_draws_the_tree(&v);
     }
 
     fn log_line(kind: &str, body: &str) -> String {
@@ -1501,8 +1394,8 @@ mod tests {
         let pane = plain(&render(&v, 120));
         assert!(pane.contains("one\n      two 2m ago"), "{pane}");
         assert_eq!(v.now_items[0].out_level, "ok");
-        let page = render_html(&v, None, 10);
-        assert!(page.contains("class='out ok'>one<br>two<small> · 2m ago"), "{page}");
+        assert_page_draws_the_tree(&v);
+        assert!(page_text(&v).contains("two 2m ago"), "the tail and its age reach the page");
     }
 
     #[test]
@@ -1511,7 +1404,7 @@ mod tests {
             let v = view(&working(Some(Tail { lines: vec!["x".into()], mtime: 100_000 - age_s })));
             assert_eq!(v.now_items[0].out_level, level, "{age_s}s");
             assert!(render(&v, 120).iter().any(|l| l.starts_with(&format!("      {color}x"))), "{age_s}s");
-            assert!(render_html(&v, None, 10).contains(&format!("class='out {level}'")));
+            assert_page_draws_the_tree(&v);
         }
     }
 

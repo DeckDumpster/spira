@@ -677,6 +677,194 @@ pub fn layout(v: &View, ui: &Ui, w: usize, h: usize) -> Frame {
     }
 }
 
+// ───────────────────────────── the web page: the same tree, as HTML
+
+/// The `/lifecycle` page: the pane's own tree (`tree`) and banner, rendered as nested
+/// collapsible sections, so the web and the pane cannot drift apart. Every node is drawn, with
+/// its key as `data-key`. A section is open by default exactly where the pane's AUTO mode opens
+/// it, and the viewer's own open/close choices are remembered per browser. The page refreshes
+/// itself from `?fragment=1` every few seconds without losing them (per Ryan 2026-10-09: "a
+/// web-based version of the same information ... the two don't fall out of sync", with test
+/// progress and the interactive parts).
+pub fn render_page(v: &View, stale: Option<i64>, poll_s: u64) -> String {
+    format!(
+        "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>\
+<title>Spira lifecycle</title><style>{PAGE_CSS}</style></head><body>\
+<header id=banner>{}</header><nav><a href=/stuck>where work is stuck →</a> · <button id=reset type=button>reset open/closed</button></nav>\
+<main id=tree>{}</main><script>const POLL_MS={};{PAGE_JS}</script></body></html>",
+        banner_html(v, stale),
+        tree_html(v),
+        poll_s * 1000
+    )
+}
+
+/// The two live parts of the page, for its poll: `{"banner": html, "tree": html}`.
+pub fn render_fragment(v: &View, stale: Option<i64>) -> String {
+    serde_json::json!({ "banner": banner_html(v, stale), "tree": tree_html(v) }).to_string()
+}
+
+fn banner_html(v: &View, stale: Option<i64>) -> String {
+    let mut h: String = banner(v).iter().map(|l| format!("<div class=line>{}</div>", ansi_html(l))).collect();
+    if let Some(age_s) = stale {
+        h.push_str(&format!(
+            "<div class='line bad'>Snapshot is {} old — the pane's collector is not running.</div>",
+            crate::lcview::age(age_s)
+        ));
+    }
+    h
+}
+
+fn tree_html(v: &View) -> String {
+    let mut h = String::new();
+    for n in tree(v) {
+        node_html(&n, &mut h);
+    }
+    h
+}
+
+fn node_html(n: &Node, h: &mut String) {
+    let key = html_esc(&n.key);
+    if n.kids.is_empty() {
+        h.push_str(&format!("<div class=leaf data-key=\"{key}\">{}</div>", ansi_html(&n.line)));
+        return;
+    }
+    let head = match &n.open_line {
+        Some(o) => format!("<span class=closed-line>{}</span><span class=open-line>{}</span>", ansi_html(&n.line), ansi_html(o)),
+        None => ansi_html(&n.line),
+    };
+    h.push_str(&format!(
+        "<details data-key=\"{key}\"{}><summary>{head} <small class=count>({})</small></summary><div class=kids>",
+        if n.auto_open { " open" } else { "" },
+        n.kids.len()
+    ));
+    for k in &n.kids {
+        node_html(k, h);
+    }
+    h.push_str("</div></details>");
+}
+
+fn html_esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// A pane line as HTML: its ANSI styles become classes, the text is escaped, and every bead id
+/// links to its `/stuck/<id>` timeline.
+/// A pane line without its ANSI styles, for tests that compare the page to the pane.
+pub fn strip_for_test(s: &str) -> String {
+    let mut out = String::new();
+    let mut esc = false;
+    for c in s.chars() {
+        if esc {
+            if c.is_ascii_alphabetic() {
+                esc = false;
+            }
+        } else if c == '\x1b' {
+            esc = true;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+pub fn ansi_html(s: &str) -> String {
+    let mut out = String::new();
+    let mut open = 0usize;
+    let mut text = String::new();
+    let mut chars = s.chars().peekable();
+    let flush = |text: &mut String, out: &mut String| {
+        out.push_str(&link_ids(&html_esc(text)));
+        text.clear();
+    };
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            let mut code = String::new();
+            while let Some(&d) = chars.peek() {
+                chars.next();
+                if d == 'm' {
+                    break;
+                }
+                code.push(d);
+            }
+            flush(&mut text, &mut out);
+            let class = match code.as_str() {
+                "0" | "" => {
+                    out.push_str(&"</span>".repeat(open));
+                    open = 0;
+                    continue;
+                }
+                "1" => "b",
+                "2" => "d",
+                "7" => "rev",
+                "31" => "red",
+                "32" => "grn",
+                "33" => "yel",
+                "36" => "cyn",
+                _ => continue,
+            };
+            out.push_str(&format!("<span class={class}>"));
+            open += 1;
+        } else {
+            text.push(c);
+        }
+    }
+    flush(&mut text, &mut out);
+    out.push_str(&"</span>".repeat(open));
+    out
+}
+
+/// `sp-<id>` tokens in already-escaped text, as links to their timelines.
+fn link_ids(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < b.len() {
+        let boundary = i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'/' || b[i - 1] == b'-');
+        if boundary && s[i..].starts_with("sp-") {
+            let mut j = i + 3;
+            while j < b.len() && (b[j].is_ascii_lowercase() || b[j].is_ascii_digit() || b[j] == b'.') {
+                j += 1;
+            }
+            while j > i + 3 && b[j - 1] == b'.' {
+                j -= 1;
+            }
+            if j > i + 3 {
+                let id = &s[i..j];
+                out.push_str(&format!("<a href=/stuck/{id}>{id}</a>"));
+                i = j;
+                continue;
+            }
+        }
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+const PAGE_CSS: &str = ":root{--bg:#fff;--fg:#111;--dim:#6b7280;--grn:#15803d;--yel:#b45309;--red:#b91c1c;--cyn:#0e7490;--line:#e5e7eb}\
+@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e5e7eb;--dim:#9ca3af;--grn:#4ade80;--yel:#fbbf24;--red:#f87171;--cyn:#22d3ee;--line:#1f2937}}\
+body{background:var(--bg);color:var(--fg);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:0 16px 24px;max-width:1000px}\
+header{position:sticky;top:0;background:var(--bg);padding:8px 0 6px;border-bottom:1px solid var(--line);z-index:1}\
+nav{margin:6px 0 8px;font-size:12px}nav button{font:inherit;font-size:11px;background:none;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 6px}\
+.line,.leaf,summary{white-space:pre-wrap;word-break:break-word}summary{cursor:pointer;padding:2px 0}\
+.kids{padding-left:1.2em;border-left:1px solid var(--line);margin-left:.3em}.leaf{padding:1px 0}\
+.count{color:var(--dim)}details[open]>summary>.count{display:none}\
+details:not([open])>summary>.open-line{display:none}details[open]>summary>.closed-line{display:none}\
+a{color:inherit;text-decoration:underline dotted}.b{font-weight:bold}.d{color:var(--dim)}.red,.bad{color:var(--red)}.grn{color:var(--grn)}.yel{color:var(--yel)}.cyn{color:var(--cyn)}\
+.rev{background:var(--fg);color:var(--bg)}";
+
+const PAGE_JS: &str = "const K='lcview-open';\
+function load(){try{return JSON.parse(localStorage.getItem(K)||'{}')}catch(e){return {}}}\
+function save(m){try{localStorage.setItem(K,JSON.stringify(m))}catch(e){}}\
+function apply(){const m=load();document.querySelectorAll('details[data-key]').forEach(d=>{const k=d.dataset.key;if(k in m&&d.open!==m[k])d.open=m[k];});}\
+document.addEventListener('toggle',e=>{const d=e.target;if(!d.dataset||!d.dataset.key)return;const m=load();m[d.dataset.key]=d.open;save(m);},true);\
+document.getElementById('reset').onclick=()=>{save({});location.reload();};\
+async function tick(){try{const r=await fetch(location.pathname+'?fragment=1',{cache:'no-store'});if(r.ok){const j=await r.json();\
+document.getElementById('banner').innerHTML=j.banner;document.getElementById('tree').innerHTML=j.tree;apply();}}catch(e){}}\
+apply();setInterval(tick,POLL_MS);";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -949,6 +1137,47 @@ mod tests {
         assert_eq!(ui.modes.len(), 1);
         assert_eq!(ui.mode("now"), Mode::Collapsed);
         assert_eq!(parent_key("state/READY/TO0"), Some("state/READY"));
+    }
+
+    #[test]
+    fn the_page_draws_every_node_of_the_panes_tree_in_order() {
+        let v = busy_view();
+        let page = render_page(&v, None, 5);
+        let mut keys = Vec::new();
+        fn walk(n: &[Node], out: &mut Vec<String>) {
+            for x in n {
+                out.push(x.key.clone());
+                walk(&x.kids, out);
+            }
+        }
+        walk(&tree(&v), &mut keys);
+        assert!(keys.len() > 10, "a busy view has a real tree");
+        let mut at = 0;
+        for k in &keys {
+            let needle = format!("data-key=\"{}\"", html_esc(k));
+            let i = page[at..].find(&needle).unwrap_or_else(|| panic!("node {k} is missing from the page, or out of the pane's order"));
+            at += i + needle.len();
+        }
+        let frag = render_fragment(&v, None);
+        assert!(frag.contains("\"tree\"") && frag.contains("\"banner\""));
+    }
+
+    #[test]
+    fn a_page_line_keeps_the_panes_styles_and_links_bead_ids() {
+        let h = ansi_html(&format!("{RED}sp-ab1c red{R} and <x> sp-q2.3. not-sp-zz"));
+        assert!(h.contains("<span class=red><a href=/stuck/sp-ab1c>sp-ab1c</a> red</span>"), "{h}");
+        assert!(h.contains("&lt;x&gt;"), "text is escaped: {h}");
+        assert!(h.contains("<a href=/stuck/sp-q2.3>sp-q2.3</a>."), "a trailing dot is not part of the id: {h}");
+        assert!(!h.contains("/stuck/sp-zz"), "only a bead id at a word boundary is linked: {h}");
+    }
+
+    #[test]
+    fn an_open_section_shows_its_open_line_and_a_folded_one_its_summary() {
+        let n = Node::new("now/sp-w0", "head title").open_line("head").kids(vec![Node::new("now/sp-w0/title", "title")]);
+        let mut h = String::new();
+        node_html(&n, &mut h);
+        assert!(h.contains("<span class=closed-line>head title</span><span class=open-line>head</span>"), "{h}");
+        assert!(h.starts_with("<details data-key=\"now/sp-w0\" open>"), "AUTO-open nodes start open: {h}");
     }
 
     #[test]
