@@ -155,6 +155,14 @@ done
 " >&2
 iszero "stubs created inside container" "$?"
 
+# The tree's own spira-config, staged as the fake release's bin/spira-config: the image
+# carries none (testenv/Containerfile removes it), and conf.sh fails closed without it.
+_sc="$(command -v spira-config 2>/dev/null || true)"
+[ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
+timeout 5 podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 \
+    && timeout 5 podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
+iszero "the tree's spira-config is staged in the container's release bin/" "$?"
+
 # ===========================================================================
 echo
 echo "configure — non-interactive spira.conf bootstrap:"
@@ -171,6 +179,19 @@ echo "configure — non-interactive spira.conf bootstrap:"
     -e "CONFIGURE_DOLT_DATA=" \
     "$CNAME" bash /workspace/spira/configure.sh >&2
 iszero "configure.sh exits 0" "$?"
+
+# configure.sh and ready.sh run before install puts the release's bin/ on PATH: they must
+# find spira-config in their own release tree. PATH here holds no Spira directory at all.
+"${CEXEC[@]}" \
+    -e "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    -e "CONFIGURE_OUT=/tmp/spira-reh-nopath.conf" \
+    -e "CONFIGURE_PROD=/tmp/spira-prod/spira" \
+    -e "CONFIGURE_MAX_AEONS=1" \
+    -e "CONFIGURE_MAX_LIVE_AEONS=1" \
+    -e "CONFIGURE_LOOM_ADDR=127.0.0.1:7300" \
+    -e "CONFIGURE_DOLT_DATA=" \
+    "$CNAME" bash /tmp/spira-prod/spira/configure.sh >&2
+iszero "configure.sh exits 0 with a PATH lacking the release bin" "$?"
 
 # ===========================================================================
 echo

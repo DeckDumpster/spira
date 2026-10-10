@@ -49,6 +49,11 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
+# configure runs before install puts the release's bin/ on PATH: find spira-config in this tree's own release.
+if ! command -v spira-config >/dev/null 2>&1 && [ -x "$HERE/../bin/spira-config" ]; then
+    PATH="$(cd "$HERE/../bin" && pwd -P):$PATH"
+fi
+
 # ---------------------------------------------------------------------------
 # Argument parsing.  Every trap key tracks "was it given?" separately so that
 # an empty string is distinguishable from "not provided yet".
