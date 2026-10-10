@@ -323,6 +323,7 @@ open(sys.argv[1], "w").write(str(s.getsockname()[1]))
 pp = os.getppid()
 while os.getppid() == pp: time.sleep(0.5)
 ' "$_f" &
+    disown
     local _i
     for _i in $(seq 1 100); do [ -s "$_f" ] && break; sleep 0.05; done
     printf -v "$1" '%s' "$(cat "$_f")"; rm -f "$_f"
