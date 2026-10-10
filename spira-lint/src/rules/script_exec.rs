@@ -104,3 +104,9 @@ mod tests {
         assert_eq!(run(&t, &["spira/test-a.sh", "spira/sub/b.sh"]), Err(LintError::EmptyScope));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ScriptExec),
+    ]
+}

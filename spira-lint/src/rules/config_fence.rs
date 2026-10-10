@@ -350,3 +350,9 @@ mod tests {
         assert!(!scan("spira/chamber/a.md", b"run: printf x > \"$SPIRA_TOML\"\n").write);
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ConfigFence),
+    ]
+}

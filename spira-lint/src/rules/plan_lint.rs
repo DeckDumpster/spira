@@ -253,3 +253,9 @@ mod tests {
         assert_eq!(r.checked(), Some((1, "suites".to_string())));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(PlanLint::default()),
+    ]
+}

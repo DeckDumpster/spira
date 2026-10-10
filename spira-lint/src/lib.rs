@@ -390,52 +390,9 @@ pub fn lines(content: &[u8]) -> Vec<&[u8]> {
     body.split(|b| *b == b'\n').collect()
 }
 
-/// Every rule, in the order they run.
+/// Every rule, in rule-file name order: each `rules/*.rs` exports `rules()` and build.rs collects them.
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
-    vec![
-        Box::new(rules::config_fence::ConfigFence),
-        Box::new(rules::config_literal_fallback::ConfigLiteralFallback),
-        Box::new(rules::config_env_read::ConfigEnvRead),
-        Box::new(rules::payload_argv::PayloadArgv),
-        Box::new(rules::fence_scripts::FenceScripts),
-        Box::new(rules::testlib_migrated::TestlibMigrated),
-        Box::new(rules::script_exec::ScriptExec),
-        Box::new(rules::event_taxonomy::EventTaxonomy),
-        Box::new(rules::deps_lint::DepsLint),
-        Box::new(rules::covers_entries::CoversEntries),
-        Box::new(rules::gate_workflow::GateWorkflow),
-        Box::new(rules::conf_key_registry::ConfKeyRegistry),
-        Box::new(rules::lib_sh_shims::LibShShims),
-        Box::new(rules::tmp_leak::TmpLeak),
-        Box::new(rules::release_spawn_env::ReleaseSpawnEnv),
-        Box::new(rules::chmod_exec_leak::ChmodExecLeak),
-        Box::new(rules::env_set_var_leak::EnvSetVarLeak),
-        Box::new(rules::call_deadline::CallDeadline),
-        Box::new(rules::hash_iter_output::HashIterOutput),
-        Box::new(rules::process_exit_in_library::ProcessExitInLibrary),
-        Box::new(rules::plan_matrix::PlanMatrix::default()),
-        Box::new(rules::plan_lint::PlanLint::default()),
-        Box::new(rules::testdb_mode_lint::TestdbModeLint::default()),
-        Box::new(rules::bd_stdin_lint::BdStdinLint::default()),
-        Box::new(rules::cockpit_no_bd::CockpitNoBd::default()),
-        Box::new(rules::cockpit_no_round_files::CockpitNoRoundFiles::default()),
-        Box::new(rules::pool_state_readers::PoolStateReaders::default()),
-        Box::new(rules::round_record_readers::RoundRecordReaders::default()),
-        Box::new(rules::liveness_readers::LivenessReaders::default()),
-        Box::new(rules::incident_cause_lint::IncidentCauseLint::default()),
-        Box::new(rules::lockfile_lint::LockfileLint::default()),
-        Box::new(rules::config_delta::ConfigDelta::default()),
-        Box::new(rules::tier_budget::Ledger::suites()),
-        Box::new(rules::tier_budget::Ledger::areas()),
-        Box::new(rules::tier_budget::Areas::default()),
-        Box::new(rules::inventory::Inventory),
-        Box::new(rules::literal_lint::LiteralLint),
-        Box::new(rules::script_callers::ScriptCallers::default()),
-        Box::new(rules::scratch_fence::ScratchFence),
-        Box::new(rules::wiki_add_fence::WikiAddFence),
-        Box::new(rules::tmux_scope_fence::TmuxScopeFence),
-        Box::new(rules::wall_clock_budget::WallClockBudget),
-    ]
+    include!(concat!(env!("OUT_DIR"), "/all_rules.rs"))
 }
 
 /// The outcome of one rule over the walk.
@@ -675,7 +632,7 @@ mod tests {
         t.write("spira-lint/testlib-migrated-allow", "");
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
+        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();
@@ -684,9 +641,7 @@ mod tests {
                 lines.push(f.to_string());
             }
         }
-        assert_eq!(
-            lines,
-            vec![
+        let mut want = vec![
                 "config-fence: spira/cfg.sh: name".to_string(),
                 "payload-argv-lint: spira/payload.sh:2: env: $X_JSON handed to python3".to_string(),
                 "fence-scripts: spira/new-fence.sh: a new bash fence/lint script — write it as a spira-lint rule instead".to_string(),
@@ -694,7 +649,9 @@ mod tests {
                 "script-exec: spira/noexec.sh: not executable — chmod +x it, or declare \"Sourced, never executed\" in its header".to_string(),
                 format!("deps-lint: spira/probe.sh:2: {prog}: command -v of a program spira/deps.toml does not declare"),
                 "covers-entries: spira/test-own.sh: # covers: token 'spira/gone.sh' matches no file in the tree".to_string(),
-            ]
-        );
+        ];
+        lines.sort();
+        want.sort();
+        assert_eq!(lines, want);
     }
 }

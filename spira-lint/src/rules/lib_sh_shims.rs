@@ -458,3 +458,9 @@ mod tests {
         assert_eq!(run(&t, &["spira/sub/lib.sh", "spira/other.sh"]), Err(LintError::EmptyScope));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(LibShShims),
+    ]
+}

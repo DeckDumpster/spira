@@ -200,3 +200,9 @@ mod tests {
         assert!(run(&t, &["a/src/main.rs"]).is_err());
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ConfigEnvRead),
+    ]
+}

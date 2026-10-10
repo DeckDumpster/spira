@@ -319,3 +319,9 @@ report() {
         assert_eq!(PayloadArgv.check(&empty), Err(LintError::EmptyScope));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(PayloadArgv),
+    ]
+}
