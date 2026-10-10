@@ -87,6 +87,11 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let working = ids(&|r| r.working());
     let held_ask = ids(&|r| r.held("ask"));
     let held_poison = ids(&|r| r.held("poison"));
+    let stacked_on: std::collections::HashMap<String, Vec<String>> = lc_rows
+        .iter()
+        .filter(|r| !r.terminal() && !r.stack.is_empty())
+        .map(|r| (r.bead_id.clone(), r.stack.clone()))
+        .collect();
     let mut rows = Vec::new();
     let mut watching = Vec::new();
     for (labels, excl, fayths) in parts {
@@ -111,6 +116,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             working: working.clone(),
             held_ask: held_ask.clone(),
             held_poison: held_poison.clone(),
+            stacked_on: stacked_on.clone(),
             vocab: &cfg.vocab,
             facts: &facts,
         };

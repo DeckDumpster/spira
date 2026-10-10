@@ -56,6 +56,8 @@ pub struct Row {
     pub lease_until: Option<i64>,
     pub holds: Vec<String>,
     pub express: bool,
+    /// The prerequisite bead ids this bead's current work is stacked on.
+    pub stack: Vec<String>,
 }
 
 impl Row {
@@ -119,6 +121,18 @@ fn holds(v: Option<&Value>) -> Vec<String> {
     arr.into_iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
 }
 
+fn stack(v: Option<&Value>) -> Vec<String> {
+    let obj = match v {
+        Some(Value::String(s)) if !s.trim().is_empty() => serde_json::from_str::<Value>(s).ok(),
+        Some(o) => Some(o.clone()),
+        None => None,
+    };
+    match obj {
+        Some(Value::Object(m)) => m.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn row_of(r: &Value) -> Row {
     Row {
         bead_id: scalar(r.get("bead_id")).unwrap_or_default(),
@@ -127,6 +141,7 @@ fn row_of(r: &Value) -> Row {
         lease_until: scalar(r.get("lease_until")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
         holds: holds(r.get("holds")),
         express: matches!(scalar(r.get("express")).as_deref(), Some("1" | "true")),
+        stack: stack(r.get("stack")),
     }
 }
 

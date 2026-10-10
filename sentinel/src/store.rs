@@ -1,7 +1,7 @@
 //! The bead store: lib.sh `bdq`'s calling convention, and the pass's one snapshot with
 //! every set the checks derive from it (DESIGN.md §2.4, G1).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::cfg::{Cfg, Partition};
 use crate::host::{Host, Out, Spec};
@@ -151,6 +151,8 @@ pub struct Snapshot {
     /// view (design §3.4: bd holds content, spira-lc holds state). Empty when the machine
     /// could not be read — then no bead has a state, and nothing is decided from one.
     lc: HashMap<String, String>,
+    /// Beads with work of their own: a recorded tip, or a live bead whose stack names them.
+    own_work: HashSet<String>,
 }
 
 impl Snapshot {
@@ -171,6 +173,7 @@ impl Snapshot {
             ready_raw,
             index,
             lc: HashMap::new(),
+            own_work: HashSet::new(),
         }
     }
 
@@ -186,6 +189,20 @@ impl Snapshot {
             .iter()
             .map(|r| (r.bead_id.clone(), r.state.clone()))
             .collect();
+        self.own_work = rows
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|r| {
+                let own = r.tip.iter().cloned();
+                let prereqs = (!lc_state::is_terminal(&r.state)).then(|| r.stack.iter().cloned());
+                own.map(|_| r.bead_id.clone()).chain(prereqs.into_iter().flatten())
+            })
+            .collect();
+    }
+
+    /// The bead has a branch of its own or children stacked on it: not a coordination bead.
+    pub fn has_own_work(&self, id: &str) -> bool {
+        self.own_work.contains(id)
     }
 
     /// The bead's lifecycle state, or None when the machine has no row for it.
