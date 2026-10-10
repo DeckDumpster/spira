@@ -245,10 +245,10 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "fetch-depth is set", "fetch-depth", g);
     j.want(GATE, "tags are fetched", "fetch-tags", g);
     // 7. the runner is provisioned per run
-    j.want(GATE, "the VM is provisioned", "ephemeral-ci/provision@v1", g);
+    j.want(GATE, "the VM is provisioned", "ephemeral-ci/provision@v2", g);
     j.want(GATE, "the gate targets that VM", "needs.provision.outputs.label", g);
     // 8. the VM is destroyed whatever the outcome
-    j.want(GATE, "teardown runs", "ephemeral-ci/teardown@v1", g);
+    j.want(GATE, "teardown runs", "ephemeral-ci/teardown@v2", g);
     j.want(GATE, "teardown is unconditional", "always()", g);
     // 9. the gate confirms which machine it landed on
     j.want(GATE, "the runner identity is checked", "RUNNER_NAME", g);

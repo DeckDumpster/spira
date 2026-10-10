@@ -128,7 +128,7 @@ jobs:
     env:
       AGENT_TIMEOUT: 300
     steps:
-      - uses: DeckDumpster/ephemeral-ci/provision@v1
+      - uses: DeckDumpster/ephemeral-ci/provision@v2
         id: vm
         with:
           ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
@@ -379,7 +379,7 @@ jobs:
     if: always() && needs.guard.outputs.already-published != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: DeckDumpster/ephemeral-ci/teardown@v1
+      - uses: DeckDumpster/ephemeral-ci/teardown@v2
         with:
           vmid:  ${{ needs.provision.outputs.vmid }}
           label: ${{ needs.provision.outputs.label }}
