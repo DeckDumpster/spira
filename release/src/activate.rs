@@ -185,6 +185,9 @@ struct Change {
 pub struct Switched {
     pub rewritten: Vec<String>,
     pub restarted: Vec<String>,
+    /// Installed services found failed that this activation did not restart: reset and
+    /// started. One that fails again is reported, never a reason to roll back.
+    pub revived: Vec<String>,
     /// Services whose Exec lines changed but were not restarted (inactive, or a oneshot
     /// mid-run): they pick up the new file on their next start.
     pub deferred: Vec<String>,
@@ -344,8 +347,29 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
             failed.join("\n  ")
         ));
     }
+    revive_failed(ctx, &mut out);
+    for s in units::path_shadows(&cfg.unit_dir, &rel, &cfg.releases) {
+        eprintln!("release: WARN: {s}");
+    }
     drain(ctx, &draining);
     Ok(out)
+}
+
+fn revive_failed(ctx: &Ctx, out: &mut Switched) {
+    let failed = match ctx.sc.list_failed("spira-*.service") {
+        Ok(f) => f,
+        Err(e) => return eprintln!("release: WARN: cannot list failed units: {e}"),
+    };
+    for u in failed {
+        if out.restarted.contains(&u) || !ctx.cfg.unit_dir.join(&u).exists() {
+            continue;
+        }
+        eprintln!("release: {u} is failed; resetting and starting it under the new release");
+        match ctx.sc.reset_failed(&u).and_then(|()| ctx.sc.restart(&u)) {
+            Ok(()) => out.revived.push(u),
+            Err(e) => eprintln!("release: WARN: {u} is still failed: {e}"),
+        }
+    }
 }
 
 /// Wait for each running oneshot of a changed unit to exit, so its next start runs the new

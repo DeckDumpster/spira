@@ -332,6 +332,10 @@ impl Systemctl for FakeSystemctl {
         }
         Ok(())
     }
+    fn list_failed(&self, glob: &str) -> Result<Vec<String>, String> {
+        let (pre, suf) = glob.split_once('*').unwrap_or((glob, ""));
+        Ok(self.states.borrow().iter().filter(|(n, st)| st.active == "failed" && n.starts_with(pre) && n.ends_with(suf)).map(|(n, _)| n.clone()).collect())
+    }
     fn list_active(&self, glob: &str) -> Result<Vec<String>, String> {
         // The only glob shapes install-tarball ever passes: "<prefix>*<suffix>".
         let (pre, suf) = glob.split_once('*').unwrap_or((glob, ""));
@@ -876,6 +880,46 @@ fn activate_clears_a_start_limit_on_every_unit_it_restarts() {
     let s = activate::activate(&c, B, None).unwrap();
     assert!(!s.restarted.is_empty(), "control: something was restarted");
     assert_eq!(*sc.resets.borrow(), s.restarted);
+}
+
+#[test]
+fn activate_revives_an_installed_unit_found_failed_and_not_otherwise_restarted() {
+    let w = World::new();
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    w.install_units(A);
+    let failed = "spira-watch-pool-prod.service";
+    sc.states.borrow_mut().get_mut(failed).unwrap().active = "failed".into();
+    sc.resets.borrow_mut().clear();
+    let s = activate::activate(&c, B, None).unwrap();
+    assert!(s.revived.contains(&failed.to_string()) || s.restarted.contains(&failed.to_string()), "{s:?}");
+    assert!(sc.resets.borrow().contains(&failed.to_string()));
+    assert_eq!(sc.states.borrow()[failed].active, "active");
+}
+
+#[test]
+fn path_shadows_names_a_dropin_dir_that_carries_a_binary_the_release_ships() {
+    let w = World::new();
+    w.build(A).unwrap();
+    let rel = w.cfg.releases.join(A);
+    let shipped = std::fs::read_dir(rel.join("bin")).unwrap().flatten().next().expect("release ships a bin").file_name();
+    let shim = w.sb.p().join("shim-bin");
+    std::fs::create_dir_all(&shim).unwrap();
+    let ud = w.units();
+    let d = ud.join("spira-x-prod.service.d");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("50.conf"), format!("[Service]\nEnvironment=PATH={}:{}/current/bin\n", shim.display(), w.cfg.releases.display())).unwrap();
+    assert!(units::path_shadows(&ud, &rel, &w.cfg.releases).is_empty(), "control: empty shim dir shadows nothing");
+    let f = shim.join(&shipped);
+    std::fs::write(&f, "#!/bin/sh\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let got = units::path_shadows(&ud, &rel, &w.cfg.releases);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].starts_with("PATH-SHADOW"));
 }
 
 #[test]
