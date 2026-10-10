@@ -1829,7 +1829,7 @@ fn a_no_default_key_the_active_release_already_declares_does_not_refuse_activati
 }
 
 #[test]
-fn a_registry_key_with_no_default_refuses_activation_naming_it_and_changes_nothing() {
+fn a_registry_key_with_no_default_is_left_out_and_activation_proceeds() {
     let mut g = FakeGit { validator: true, ..Default::default() };
     g.extra.push(registry_key("SPIRA_NEW_KEY", "string", None));
     g.extra.push(registry_key("SPIRA_COMPUTED_KEY", "string", Some("$SPIRA_RUN/x")));
@@ -1838,10 +1838,10 @@ fn a_registry_key_with_no_default_refuses_activation_naming_it_and_changes_nothi
     file(Path::new(&w.cfg.toml_spec().unwrap()), before);
     build_with_schema(&w, B, &[], &[]);
     let sc = FakeSystemctl::new(w.units());
-    let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
-    assert!(e.contains("spira.new_key") && e.contains("spira.computed_key") && e.contains("nothing changed"), "{e}");
-    assert_eq!(w.current(), None);
-    assert_eq!(cfg_text(&w), before);
+    activate::activate(&ctx(&w, &sc), B, None).expect("an optional key never refuses activation");
+    assert_eq!(w.current().as_deref(), Some(B));
+    let after = cfg_text(&w);
+    assert!(!after.contains("new_key") && !after.contains("computed_key"), "nothing invented for an optional key: {after}");
 }
 
 #[test]

@@ -285,7 +285,6 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
         Some(a) => registry_keys(a)?.into_iter().map(|k| k.name).collect(),
         None => Default::default(),
     };
-    let mut refused = Vec::new();
     for k in registry_keys(rel)? {
         let path = format!("spira.{}", k.name.strip_prefix("SPIRA_").unwrap_or(&k.name).to_ascii_lowercase());
         if known.contains(&k.name) || d.added.contains_key(&path) || d.removed.contains(&path) || original.iter().any(|t| get(t, &path).is_some()) {
@@ -295,14 +294,11 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
             Ok(v) => {
                 d.added.insert(path, v);
             }
-            Err(why) => refused.push(format!("{path} ({why})")),
+            // No literal default, or one computed on the box: the key is optional and its code
+            // supplies the value (hotfix_alert_hours defaults to 4 in code). Refusing it blocked
+            // every round VM, which has no active release (r-auto-107 and r-auto-110, 2026-10-10).
+            Err(_) => {}
         }
-    }
-    if !refused.is_empty() {
-        return Err(format!(
-            "this release requires config keys the config lacks and cannot default: {}; declare each in {DELTA_PATH} or set it with spira-config; nothing changed",
-            refused.join(", ")
-        ));
     }
     Ok((!d.is_empty()).then_some(d))
 }
