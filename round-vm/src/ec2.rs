@@ -351,6 +351,7 @@ impl Ec2Api for AwsCli {
             ])?
             .trim()
             .to_string();
+        // batch-job: SSM diagnose command polled until its own deadline
         let deadline = std::time::Instant::now() + Duration::from_secs(120);
         loop {
             std::thread::sleep(Duration::from_secs(2));
