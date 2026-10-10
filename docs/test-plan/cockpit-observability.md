@@ -95,6 +95,8 @@
 > per-id assertion) was already fixed by sp-9ce60.6.
 
 > **2026-09-25: `test-snap-stale-threshold.sh` deleted** (law-a-test-that-flips-is-deleted): same tree green in round 6, red twice after. **2026-09-26 (sp-iuwwu): restored.** The flip's root cause was `run_watchtower()` reading the real `df`/`/proc/meminfo` instead of a stub, coupling the "fresh" assertion to the host's own disk usage; it now pins `SPIRA_PATH`/`SPIRA_MEMINFO_PATH` the same way `test-watchtower.sh` does. Coverage restored.
+> **2026-10-10 (sp-fdeq6z): `watchtower::load_fence::a_real_process_is_lowered_and_a_fenced_one_is_left_alone` deleted** (law-a-test-that-flips-is-deleted): it renices and ioprio-classes a spawned `sleep`, so its verdict depended on the niceness the gate runs under; red in the per-bead gate, green on a plain rerun of the same tree. Coverage left: `scan`/`ownerless` against a fake `/proc` and `ancestry`. Coverage lost: `fence()` renicing and idle-ioprio on a real process. A root-cause bead may re-add it with the child spawned at a known niceness (setpriority before fence).
+
 
 > **2026-09-25 (sp-s088v.7): the bdjson-fixture seam landed.** `spira/bdsim.py` answers
 > `list`/`show`/`memories` from a `SPIRA_BDJSON_FIXTURE` JSON file; `lib.sh`'s `bdq()` routes
