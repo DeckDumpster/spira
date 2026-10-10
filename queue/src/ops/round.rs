@@ -45,6 +45,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
         Round::Status { repo } => status(w, repo.as_deref()),
         Round::PassStart { batch, repo } => pass_start(w, batch, repo.as_deref()),
         Round::SuitesStarted { batch, repo } => suites_started_verb(w, batch, repo.as_deref()),
+        Round::Failed { batch, repo, suite } => failed_verb(w, batch, repo.as_deref(), suite),
         Round::PassVerdict { batch, repo, verdict, red_suites, suites_s, build_s, reason } => {
             pass_verdict(w, batch, repo.as_deref(), verdict, red_suites, Timings { suites_s: *suites_s, build_s: *build_s }, reason)
         }
@@ -141,6 +142,18 @@ fn pass_start(w: &World, batch: &str, repo: Option<&str>) -> i32 {
 
 fn suites_started_verb(w: &World, batch: &str, repo: Option<&str>) -> i32 {
     pass_verb(w, "round suites-started", batch, repo, |_, _| suites_started(w, batch, true))
+}
+
+/// A suite went red mid-pass. A result arriving proves the suites phase began, so the phase is
+/// advanced first; the event itself is always sent, so a pass already judged is refused by name.
+fn failed_verb(w: &World, batch: &str, repo: Option<&str>, suite: &str) -> i32 {
+    if idents(w, "round failed", &[("suite", suite)]).is_err() {
+        return FAIL;
+    }
+    pass_verb(w, "round failed", batch, repo, |_, _| {
+        suites_started(w, batch, false)?;
+        pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string()))
+    })
 }
 
 fn pass_verdict(w: &World, batch: &str, repo: Option<&str>, verdict: &str, red_suites: &str, t: Timings, reason: &Text) -> i32 {

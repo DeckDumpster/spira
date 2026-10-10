@@ -65,7 +65,7 @@ fn open_certify_land_is_one_round_the_whole_way() {
     assert!(status.contains("wall_secs=0"), "{status}");
 
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
-    assert!(t.scripts.calls.borrow().iter().any(|c| c.ends_with("wall=900")), "the corpus runs under the configured cap: {:?}", t.scripts.calls.borrow());
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.contains("wall=900") && c.contains(&format!("round={batch}/spira"))), "the corpus runs under the configured cap and reports each red to its round: {:?}", t.scripts.calls.borrow());
     assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 3 {{\"PassGreen\":{{\"n\":1,\"suites_s\":0,\"build_s\":0}}}}")), "{:?}", t.lc.calls.borrow());
     assert!(certified_tree_exists(&t), "the round GREEN certificate is on the head's tree");
     assert_eq!(round_phase(&t), "GREEN");
@@ -886,4 +886,27 @@ fn round_open_discards_a_stage_whose_round_is_gone() {
     assert_eq!(t.run(&["round", "open", "--members", "sp-c:tc"]), 0, "{}", t.err());
     assert!(!t.qfile("round-staged").exists());
     assert!(t.lc.calls.borrow().iter().any(|c| c.starts_with(&format!("event batch {s} STAGED 0")) && c.contains("Discard")), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn a_suite_going_red_mid_pass_is_a_failed_event_in_the_order_it_failed_and_the_pass_is_not_judged() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "test-b.sh"]), 0, "{}", t.err());
+    assert_eq!(
+        events_of(&t, &batch),
+        [
+            "{\"PassStarted\":{\"n\":1,\"head\":\"merged-tc\"}}",
+            "{\"SuitesStarted\":{\"n\":1}}",
+            "{\"Failed\":{\"suite\":\"test-z.sh\",\"n\":1}}",
+            "{\"Failed\":{\"suite\":\"test-b.sh\",\"n\":1}}",
+        ],
+        "the suites phase opens on the first result, and no verdict is sent"
+    );
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "bad suite"]), 1, "a suite name is an identifier");
 }

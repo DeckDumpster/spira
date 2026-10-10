@@ -794,4 +794,47 @@ is "leaving WORKING clears the phase and the disposition" "None None" "$(lc show
 lc disposition sp-lc-ph slain "late" slay >/dev/null 2>&1
 wantrc "a disposition outside WORKING is refused" 3 $?
 
+
+# ── mid-pass failures: each red suite is a Failed event and a MENDING row; the machine expires the row ──
+certify sp-lc-m-1 tipM1
+lc cut batch-mend --repo fixture-repo --head headM --base baseM --members "sp-lc-m-1:tipM1" --actor test >/dev/null
+pev batch-mend '{"PassStarted":{"n":1,"head":"headM"}}' >/dev/null
+out="$(pev batch-mend '{"Failed":{"suite":"test-early.sh","n":1}}' 2>&1)"
+wantrc "a failure reported before the suites phase is refused" 3 $?
+want "the refusal names the phase" "phase build" "$out"
+pev batch-mend '{"SuitesStarted":{"n":1}}' >/dev/null
+pev batch-mend '{"Failed":{"suite":"test-z.sh","n":1}}' >/dev/null
+wantrc "the first red suite is recorded" 0 $?
+pev batch-mend '{"Failed":{"suite":"test-b.sh","n":1}}' >/dev/null
+wantrc "the second red suite is recorded" 0 $?
+v="$(batch_field batch-mend version)"
+lc event batch batch-mend --expect CI_RUNNING --version "$v" --actor test --kind '{"Failed":{"suite":"test-b.sh","n":1}}' >/dev/null
+wantrc "a suite reported twice is already recorded, not an error" 0 $?
+is "a repeated failure appends no event" "$v" "$(batch_field batch-mend version)"
+is "the pass is neither stopped nor judged by its failures" "CI_RUNNING suites" "$(batch_field batch-mend state) $(batch_field batch-mend phase)"
+failed_order="$(lc history batch-mend --machine batch | python3 -c 'import json,sys; print(" ".join(json.loads(e["evidence"])["Failed"]["suite"] for e in json.load(sys.stdin) if e["event"]=="Failed" and e["applied"]=="1"))')"
+is "the Failed events are logged in the order the suites failed" "test-z.sh test-b.sh" "$failed_order"
+mrows() { lc mending list --batch batch-mend | python3 -c 'import json,sys; r={x["suite"]:x for x in json.load(sys.stdin)}; print(eval(sys.argv[1]))' "$1"; }
+is "each failure opens a WAITING row with no deadline yet" "WAITING None WAITING None" "$(mrows '" ".join(str(x) for x in [r["test-z.sh"]["state"], r["test-z.sh"]["deadline"], r["test-b.sh"]["state"], r["test-b.sh"]["deadline"]])')"
+before="$(date +%s)"
+lc mending pickup batch-mend --pass 1 --suite test-z.sh --deadline-secs 8 --actor mender-z >/dev/null
+wantrc "a mender picks up the first failure" 0 $?
+lc mending pickup batch-mend --pass 1 --suite test-b.sh --deadline-secs 600 --actor mender-b >/dev/null
+wantrc "a mender picks up the second failure" 0 $?
+after="$(date +%s)"
+is "a deadline is the pickup time plus the seconds given" "ok ok" "$(mrows '" ".join(str(x) for x in [("ok" if '"$before"'+8 <= r["test-z.sh"]["deadline"] <= '"$after"'+8 else r["test-z.sh"]), ("ok" if '"$before"'+600 <= r["test-b.sh"]["deadline"] <= '"$after"'+600 else r["test-b.sh"])])')"
+lc mending event batch-mend --pass 1 --suite test-z.sh --actor mender-z --kind '{"Diagnosis":{"text":"half a diagnosis"}}' >/dev/null
+wantrc "the mender writes a diagnosis" 0 $?
+lc mending event batch-mend --pass 1 --suite test-b.sh --actor mender-b --kind '{"Expire":{"at":0}}' >/dev/null 2>&1
+wantrc "a mender cannot expire a row itself" 3 $?
+lc mending event batch-mend --pass 1 --suite test-b.sh --actor mender-b --kind '{"Pickup":{"at":0,"deadline_s":99999}}' >/dev/null 2>&1
+wantrc "a mender cannot move its deadline by picking up again" 3 $?
+is "a sweep before the deadline changes nothing" "0" "$(lc mending sweep --actor test)"
+sleep 9
+is "a sweep after the deadline expires exactly the overdue row" "1" "$(lc mending sweep --actor test)"
+is "the overdue row is RETURNED with the diagnosis so far; the other still MENDING" "RETURNED half a diagnosis MENDING" "$(mrows '" ".join(str(x) for x in [r["test-z.sh"]["state"], r["test-z.sh"]["diagnosis"], r["test-b.sh"]["state"]])')"
+out="$(lc mending event batch-mend --pass 1 --suite test-z.sh --actor mender-z --kind '{"Mended":{"at":0}}' 2>&1)"
+wantrc "a late outcome is refused once the machine has returned the row" 3 $?
+is "the expiry never touched the pass" "CI_RUNNING suites" "$(batch_field batch-mend state) $(batch_field batch-mend phase)"
+is "the machine's expiry is on the log under its own actor" "test" "$(lc history 'batch-mend#1#test-z.sh' --machine mending | python3 -c 'import json,sys; print([e for e in json.load(sys.stdin) if e["event"]=="Expire" and e["applied"]=="1"][0]["actor"])')"
 tl_summary

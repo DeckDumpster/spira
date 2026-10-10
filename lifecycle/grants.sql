@@ -17,6 +17,7 @@ GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.delivery TO 'spira_lc'@'%';
 GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.batch TO 'spira_lc'@'%';
 GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.batch_member TO 'spira_lc'@'%';
 GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.ask TO 'spira_lc'@'%';
+GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.mending TO 'spira_lc'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON spira_lifecycle.bead_dep TO 'spira_lc'@'%';
 
 -- The load-bearing line: INSERT and SELECT only. No UPDATE, no DELETE — verified to hold
@@ -39,6 +40,7 @@ GRANT SELECT ON spira_lifecycle.delivery TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.batch TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.batch_member TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.ask TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.mending TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.bead_dep TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.`event` TO 'spira_lc_ro'@'%';
 
