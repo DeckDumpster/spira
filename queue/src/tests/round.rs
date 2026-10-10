@@ -267,6 +267,7 @@ fn open_rebases_a_member_that_conflicts_with_the_round_onto_its_head() {
     assert!(o.contains("members=sp-a:ta sp-b:tb sp-c:rebased-tc") && !o.contains("skip"), "{o}");
     assert!(t.git.calls.borrow().iter().any(|c| c == "rebase-onto tc merged-tb"), "{:?}", t.git.calls.borrow());
     assert!(t.lc.has("cut"), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.starts_with("cut ") && c.ends_with("sp-c:tc") && !c.contains("rebased")), "the cut names the certified tip, not the rebased sha: {:?}", t.lc.calls.borrow());
     assert!(!t.lc.has("event bead sp-c"), "a rebased member is not returned to rework");
 }
 
