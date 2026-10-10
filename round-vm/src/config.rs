@@ -131,6 +131,11 @@ fn num_env<T: std::str::FromStr>(key: &str, default: T) -> Result<T, String> {
     }
 }
 
+/// A string-valued knob with no default: None when unset or blank.
+pub fn str_env_opt(key: &str) -> Option<String> {
+    std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
 /// [`num_env`] for a string-valued knob.
 fn str_env(key: &str, default: &str) -> String {
     std::env::var(key).ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| default.to_string())
