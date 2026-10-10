@@ -55,6 +55,11 @@ testdb_reset
 
 export SPIRA_CONF="/nonexistent-$$.conf"
 
+mkdir -p "$TMP/chamber"
+printf 'FAYTH_LABELS=spira,plan\n' > "$TMP/chamber/builder.fayth"
+printf 'FAYTH_LABELS=spira,groom\n' > "$TMP/chamber/groomer.fayth"
+export SPIRA_CHAMBER="$TMP/chamber"
+
 seed() {
     printf '{"id":"%s","title":"%s","status":"open","issue_type":"task","labels":["plan","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$2" | testdb_seed
