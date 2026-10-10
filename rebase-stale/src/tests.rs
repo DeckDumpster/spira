@@ -464,12 +464,9 @@ fn a_gate_with_no_verdict_is_not_a_red() {
     assert!(seam.calls("reopen").is_empty(), "{:?}", seam.calls("reopen"));
 }
 
-/// `/proc/<pid>/cmdline`, NUL-joined argv rendered as spaces — for polling a just-spawned
-/// child past its own `exec()` (sp-os3of): empty once the pid is gone.
-fn cmdline_of(pid: u32) -> String {
-    std::fs::read(format!("/proc/{pid}/cmdline"))
-        .map(|b| String::from_utf8_lossy(&b).replace('\0', " "))
-        .unwrap_or_default()
+fn epoch_plus(secs: i64) -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    (now + secs).to_string()
 }
 
 fn assert_busy(fx: &Fx, seam: &Fake, id: &str, old: &str, want: &str) {
@@ -506,47 +503,22 @@ fn a_live_holder_blocks_hold_pidfile() {
 }
 
 #[test]
-fn a_live_holder_blocks_aeon_pidfile() {
+fn a_running_lease_blocks_the_aeon_pidfile() {
     let (fx, old) = live_holder_fixture("live-aeon", "sp-la");
-    // Kill-on-drop (sp-r70dc): a failed assertion between spawn and the explicit kill
-    // below used to leave this fixture running for its full 30s as an orphan.
-    let mut child = testkit::ChildGuard::spawn(
-        Command::new("bash").args(["-c", "exec -a aeon.sh-stub sleep 30"]),
-    );
-    // bash's own exec() is a second step after fork(), and /proc/<pid>/cmdline can still
-    // read as bash's (or briefly empty, mid-transition) the instant after spawn()
-    // returns — green in isolation, red under a loaded gate (sp-os3of, aeon/src/trace.rs
-    // had the same shape). Poll (bounded) until the exec has actually landed, rather than
-    // a fixed sleep that is merely usually enough.
-    //
-    // Checked by argv[0] alone, not "contains aeon.sh-stub": bash's OWN pre-exec cmdline
-    // is `bash -c "exec -a aeon.sh-stub sleep 30"`, which already contains the substring
-    // "aeon.sh-stub" in its `-c` argument — a naive `.contains(...)` poll would pass
-    // instantly, during the bash phase, defeating the wait entirely.
-    let mut tries = 0;
-    while cmdline_of(child.id()).split(' ').next() != Some("aeon.sh-stub") {
-        assert!(tries < 500, "the child never finished exec'ing into aeon.sh-stub");
-        tries += 1;
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    write(
-        &fx.run.join("aeon-builder-sp-la.pid"),
-        &format!("{}\n", child.id()),
-    );
-    assert_busy(&fx, &fx.seam(), "sp-la", &old, "live aeon pid");
-    child.kill();
+    write(&fx.run.join("aeon-builder-sp-la.pid"), "999999999\n");
+    write(&fx.run.join("aeon-builder-sp-la.lease"), &epoch_plus(600));
+    assert_busy(&fx, &fx.seam(), "sp-la", &old, "running identity lease");
 }
 
 #[test]
-fn a_dead_aeon_pidfile_is_not_a_holder() {
+fn an_aeon_pidfile_without_a_running_lease_is_not_a_holder() {
     let fx = Fx::new("dead-aeon");
     fx.branch("sp-da", true, |w| write(&w.join("x.txt"), "x\n"));
     fx.advance_main(|r| write(&r.join("m.txt"), "m\n"));
-    let mut child = Command::new("true").spawn().unwrap();
-    let pid = child.id();
-    child.wait().unwrap();
-    write(&fx.run.join("aeon-builder-sp-da.pid"), &format!("{pid}\n"));
-    assert_eq!(run(&fx, &fx.seam(), "sp-da").exit, Exit::Ok);
+    write(&fx.run.join("aeon-builder-sp-da.pid"), &format!("{}\n", std::process::id()));
+    assert_eq!(run(&fx, &fx.seam(), "sp-da").exit, Exit::Ok, "a live pid with no lease");
+    write(&fx.run.join("aeon-builder-sp-da.lease"), &epoch_plus(-5));
+    assert_eq!(run(&fx, &fx.seam(), "sp-da").exit, Exit::Ok, "an expired lease");
 }
 
 #[test]

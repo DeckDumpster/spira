@@ -5,10 +5,7 @@
 # SHRINK-ONLY. A line leaves when its file asks the lease instead; nothing is ever added for
 # a NEW reader.
 cockpit-collect/src/io.rs
-cockpit/ops/src/health_main.rs
 cockpit/ops/src/layout.rs
 cockpit/ops/src/procfs.rs
 cockpit/ops/src/rebuild.rs
-spira-world/src/bin/world.rs
-spira-world/src/fleet.rs
 spira-world/src/proc.rs

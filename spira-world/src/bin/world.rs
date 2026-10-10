@@ -232,6 +232,14 @@ fn aeon_pidfiles() -> Vec<PathBuf> {
     v
 }
 
+fn aeon_lease_running(pf: &std::path::Path) -> bool {
+    sending::reap::aeon_alive(pf)
+}
+
+fn live_aeon_pidfiles() -> Vec<PathBuf> {
+    aeon_pidfiles().into_iter().filter(|p| aeon_lease_running(p)).collect()
+}
+
 /// `aeon-<fayth>-<bead>.pid` -> `<bead>` (drop the `aeon-` prefix, then everything up to
 /// and including the first remaining `-`), matching world.sh's own
 /// `bead="${bead#aeon-}"; bead="${bead#*-}"`.
@@ -251,9 +259,8 @@ fn mail_root_or_die() -> PathBuf {
 fn live_beads() -> Vec<String> {
     let mut v = Vec::new();
     for pf in aeon_pidfiles() {
-        let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
         let bead = bead_of_pidfile(&pf);
-        if !pid.is_empty() && !bead.is_empty() && std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
+        if !bead.is_empty() && aeon_lease_running(&pf) {
             v.push(bead);
         }
     }
@@ -425,7 +432,7 @@ fn cmd_stop(args: &[String]) -> i32 {
         let mut n = 0u32;
         for pf in aeon_pidfiles() {
             let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-            if pid.is_empty() || !std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
+            if !aeon_lease_running(&pf) {
                 let _ = std::fs::remove_file(&pf);
                 continue;
             }
@@ -447,39 +454,9 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
 
         let mut stray = 0u32;
-        let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-        let prod = resolved_prod(&home);
-        let aeon_paths: Vec<String> = vec![
-            home.join("aeon.sh").to_string_lossy().into_owned(),
-            prod.join("aeon.sh").to_string_lossy().into_owned(),
-        ];
-        let aeon_path_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
-        let live = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_path_refs, |pid| {
-            let out = sysctl::run(&["status", pid]);
-            out.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("").to_string()
-        });
-        for a in live {
-            let mut bead_for_pid = String::new();
-            for pf in aeon_pidfiles() {
-                let pp = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-                if pp == a.pid {
-                    bead_for_pid = bead_of_pidfile(&pf);
-                    break;
-                }
-            }
-            if !bead_for_pid.is_empty() {
-                println!(
-                    "  WARNING: {bead_for_pid} (pid {}) — named by a pidfile but slay did not stop it; run: slay.sh --bead {bead_for_pid}",
-                    a.pid
-                );
-            } else {
-                println!(
-                    "  WARNING: pid {} ({}) — no pidfile names it; could not resolve to a bead — inspect /proc/{}/cmdline before killing",
-                    a.pid,
-                    if a.unit.is_empty() { "-" } else { &a.unit },
-                    a.pid
-                );
-            }
+        for pf in live_aeon_pidfiles() {
+            let bead = bead_of_pidfile(&pf);
+            println!("  WARNING: {bead} — its identity lease is still running; slay did not stop it; run: slay.sh --bead {bead}");
             stray += 1;
         }
         let units = sysctl::live_aeon_units();
@@ -674,19 +651,11 @@ fn cmd_drain(args: &[String]) -> i32 {
     );
     println!("spira: draining — no new aeons; loop, landing and reaping continue");
 
-    let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-    let prod = resolved_prod(&home);
-    let aeon_paths: Vec<String> = vec![
-        home.join("aeon.sh").to_string_lossy().into_owned(),
-        prod.join("aeon.sh").to_string_lossy().into_owned(),
-    ];
-    let aeon_path_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
-
     let limit = if dslay { dtimeout } else { dfor };
     let mut notifier = spira_world::notice::Notifier::default();
     let mut waited: u64 = 0;
     loop {
-        let procs = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_path_refs, |_| String::new()).len() as u64;
+        let procs = live_aeon_pidfiles().len() as u64;
         let n = procs.max(sysctl::live_aeon_units().len() as u64);
         if n == 0 {
             break;
@@ -697,7 +666,7 @@ fn cmd_drain(args: &[String]) -> i32 {
                 eprintln!("spira: drain deadline reached — slaying {n} aeon(s)");
                 for pf in aeon_pidfiles() {
                     let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-                    if pid.is_empty() || !std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
+                    if !aeon_lease_running(&pf) {
                         let _ = std::fs::remove_file(&pf);
                         continue;
                     }
@@ -834,12 +803,7 @@ fn cmd_status() -> i32 {
     let wcount = spira_world::proc::live_workers(std::path::Path::new("/proc"), &worker_refs).len();
     println!("  {:<26} {}", "live workers (/proc)", wcount);
 
-    let aeon_paths: Vec<String> = vec![
-        home.join("aeon.sh").to_string_lossy().into_owned(),
-        prod.join("aeon.sh").to_string_lossy().into_owned(),
-    ];
-    let aeon_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
-    let a = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_refs, |_| String::new()).len();
+    let a = live_aeon_pidfiles().len();
     let a = a.max(sysctl::live_aeon_units().len());
     println!("  live aeons: {a}");
 

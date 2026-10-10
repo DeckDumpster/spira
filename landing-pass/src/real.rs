@@ -1235,9 +1235,7 @@ impl Clock for RealClock {
 mod holder_alive_tests {
     use super::*;
 
-    // Wave 4.23 (sp-0ffox) retired this crate's own hold/aeon-argv checking — the
-    // aeon-cmdline positive/negative controls now live with the one implementation,
-    // sending::reap (see its own suite). This just confirms RealProcs reaches it.
+    // The liveness predicates live in sending::reap; this confirms RealProcs reaches them.
     #[test]
     fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
         let run = testkit::TempDir::new("landing-pass-holder-alive");
@@ -1248,11 +1246,14 @@ mod holder_alive_tests {
     }
 
     #[test]
-    fn holder_alive_requires_aeon_argv_for_an_aeon_pidfile() {
+    fn holder_alive_requires_a_running_lease_for_an_aeon_pidfile() {
         let run = testkit::TempDir::new("landing-pass-holder-alive-aeon");
         std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
         let procs = RealProcs { run: run.to_path_buf() };
-        assert!(!procs.holder_alive("sp-a1"), "a live pid that is not an aeon must not count");
+        assert!(!procs.holder_alive("sp-a1"), "a live pid with no lease must not count");
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        std::fs::write(run.join("aeon-builder-sp-a1.lease"), (now + 60).to_string()).unwrap();
+        assert!(procs.holder_alive("sp-a1"));
     }
 }
 

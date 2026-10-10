@@ -77,6 +77,7 @@ echo "a live aeon is mailed its deadline:"
 bash "$SH/aeon.sh" & WORKER_PID=$!
 sleep 0.3
 printf '%s\n' "$WORKER_PID" > "$RUN/aeon-valefor-sp-notice-test.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-valefor-sp-notice-test.lease"
 rm -f "$RUN/world.draining"
 drain --deadline 0
 is "exactly one notice delivered" 1 "$(count)"
@@ -86,6 +87,6 @@ want "offers submit" "work submit" "$msg"
 want "offers a checkpoint" "WIP checkpoint" "$msg"
 want "asks for a bead note" "work note" "$msg"
 
-rm -f "$RUN/aeon-valefor-sp-notice-test.pid"
+rm -f "$RUN/aeon-valefor-sp-notice-test.pid" "$RUN/aeon-valefor-sp-notice-test.lease"
 kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID=""
 tl_summary

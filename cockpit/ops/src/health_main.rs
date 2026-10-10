@@ -100,27 +100,18 @@ fn gather_drain(run: &str) -> DrainState {
     DrainState { stamp_mtime: mtime }
 }
 
-/// Aeons genuinely live right now, from `/proc` (cheap, exact — the snapshot can be up to
-/// 120s stale, so a short-lived aeon can start and finish inside one collector pass and read
-/// as absent for its whole life without this).
+/// Aeons genuinely live right now, by identity lease (the snapshot can be up to 120s stale,
+/// so a short-lived aeon can start and finish inside one collector pass and read as absent
+/// for its whole life without this).
 fn live_aeon_n(run: &str) -> i64 {
-    let mut n = 0i64;
     let Ok(rd) = std::fs::read_dir(run) else { return 0 };
-    for ent in rd.flatten() {
-        let name = ent.file_name();
-        let name = name.to_string_lossy();
-        if !(name.starts_with("aeon-") && name.ends_with(".pid")) {
-            continue;
-        }
-        let Ok(pid_s) = std::fs::read_to_string(ent.path()) else { continue };
-        let Ok(pid) = pid_s.trim().parse::<i32>() else { continue };
-        let Some(argv) = cockpit_ops::procfs::cmdline(pid) else { continue };
-        let joined = argv.join(" ");
-        if joined.contains("aeon.sh") || joined.split('/').next_back().map(|b| b == "aeon" || b.starts_with("aeon ")).unwrap_or(false) || joined.contains("/aeon ") || joined.ends_with("/aeon") {
-            n += 1;
-        }
-    }
-    n
+    rd.flatten()
+        .filter(|ent| {
+            let name = ent.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("aeon-") && name.ends_with(".pid") && sending::reap::aeon_alive(&ent.path())
+        })
+        .count() as i64
 }
 
 fn renderer_rev() -> String {

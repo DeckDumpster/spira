@@ -241,6 +241,7 @@ dependencies = [
  "bead",
  "libc",
  "regex",
+ "sending",
  "serde",
  "serde_json",
  "spira-config",
@@ -1243,6 +1244,7 @@ version = "1.0.0"
 dependencies = [
  "aeon",
  "libc",
+ "sending",
  "serde",
  "serde_json",
  "sha2",
@@ -1534,6 +1536,7 @@ dependencies = [
 name = "spira-world"
 version = "1.0.0"
 dependencies = [
+ "sending",
  "serde_json",
  "spira-config",
  "spira-ctrl",
