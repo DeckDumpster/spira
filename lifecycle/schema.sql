@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS batch_member (
     CONSTRAINT fk_member_bead FOREIGN KEY (bead_id) REFERENCES bead (bead_id)
 );
 
--- The ask machine's row (migrations/0016-ask.sql for an existing database): an escalation to
+-- The ask machine's row (migrations/0017-ask.sql for an existing database): an escalation to
 -- the operator is its own lifecycle, never a bead-machine row, so no claim or list over
 -- `bead` can ever return one. `work_bead` is the bead whose `ask` hold this ask lifts.
 CREATE TABLE IF NOT EXISTS ask (
