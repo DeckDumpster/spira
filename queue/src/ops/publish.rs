@@ -287,6 +287,10 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
     let kv = records::read_kv(&pfile).ok().flatten();
     let pr = kv.as_ref().map(|kv| observe(w, c, &path, kv));
     let action = decide(pr);
+    if action != Settle::Wait && round_pass_running(w, c) {
+        w.out(format!("{} publish-settle {name}: a round pass holds the hypervisor; deferring {action:?} to the next tick", w.clock.now()));
+        return OK;
+    }
     let now = w.clock.now();
     let pr_no = kv.as_ref().and_then(|k| k.get("pr")).unwrap_or("").to_string();
     w.out(format!("{now} publish-settle {name}: pr={} -> {action:?}", if pr_no.is_empty() { "none" } else { &pr_no }));
@@ -302,6 +306,14 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
             publish_with(w, Some(&name), true)
         }
     }
+}
+
+/// A publish PR's CI provisions VMs beside the round VM and starves its pass, so the cut waits.
+/// An unreadable round record or batch state counts as running: the cut is the cheap thing to delay.
+fn round_pass_running(w: &World, c: &Ctx) -> bool {
+    let Some(kv) = records::read_kv(&c.queue_file(crate::ops::round::RECORD)).ok().flatten() else { return false };
+    let Some(batch) = kv.get("batch_id") else { return false };
+    w.lc.batch_state(batch).map_or(true, |(s, _)| s == "CI_RUNNING")
 }
 
 fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {
