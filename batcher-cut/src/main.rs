@@ -23,6 +23,7 @@
 //! reproduction.
 
 mod drive;
+mod endpass;
 mod flip;
 mod io;
 mod order;
