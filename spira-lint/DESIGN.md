@@ -1270,3 +1270,21 @@ Python in a suite must parse on the round VM's older python3. **Flags**, per lin
 f-string's braces: a backslash, and a quote of the string's own kind (both 3.12-only, PEP 701).
 **Scope.** `spira/test-*.sh` and `spira/*.py`. No allow list: the tree is clean, so a new hit is
 always new. A line-local scan; a triple-quoted f-string spanning lines is judged per line.
+
+## Rule `fresh-host-entry`
+
+**Intent.** The scripts an operator runs on a host with nothing installed (`configure.sh`,
+`install.sh`, `ready.sh`, `uninstall.sh`, `owned.sh`, plus `conf.sh` as the sourced helper that
+sets PATH) have no exported config, no PATH to the release and no helper functions beyond what
+they source themselves. Each failure below is statically visible and used to surface only in
+the publish rehearsal.
+
+**Scope.** Exactly those paths under `spira/`; no allow file.
+
+**Violations**, each one finding with a line:
+
+| kind | what |
+|---|---|
+| bare binary | a command whose name is a release binary (a hyphenated crate, `[[bin]]` or `src/bin` name in the tree) on a line before the script puts its release `bin/` on PATH (a `PATH=…bin…` assignment) or sources `conf.sh`. A call inside a function body counts as ready when the file sets PATH up anywhere |
+| unsourced function | a command naming a function defined in some non-test shell file, but not in this file nor any file it sources (followed transitively, by basename, preferring the same directory) |
+| undefaulted read | `$SPIRA_TOML` / `$SPIRA_RELEASES` expanded without a non-empty default (`${VAR:-…}`) in an entry point |
