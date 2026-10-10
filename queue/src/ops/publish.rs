@@ -308,12 +308,26 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
     }
 }
 
+const LIVE_PHASES: [&str; 5] = ["vm", "build", "unit-build", "suites", "unit-tests"];
+const PROGRESS_FRESH_SECS: u64 = 600;
+
 /// A publish PR's CI provisions VMs beside the round VM and starves its pass, so the cut waits.
-/// An unreadable round record or batch state counts as running: the cut is the cheap thing to delay.
+/// A pass counts as running when its progress file is in a live phase and fresh, or its batch is
+/// CI_RUNNING; an unreadable round record or batch state counts as running.
 fn round_pass_running(w: &World, c: &Ctx) -> bool {
+    if progress_live(&c.s.run, w.clock.now()) {
+        return true;
+    }
     let Some(kv) = records::read_kv(&c.queue_file(crate::ops::round::RECORD)).ok().flatten() else { return false };
     let Some(batch) = kv.get("batch_id") else { return false };
     w.lc.batch_state(batch).map_or(true, |(s, _)| s == "CI_RUNNING")
+}
+
+fn progress_live(run: &std::path::Path, now: u64) -> bool {
+    let Some(v) = std::fs::read_to_string(run.join("round-progress.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { return false };
+    let live = v["phase"].as_str().is_some_and(|p| LIVE_PHASES.contains(&p));
+    let at = v["updated_at"].as_u64().unwrap_or(0);
+    live && now.saturating_sub(at) < PROGRESS_FRESH_SECS
 }
 
 fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {
