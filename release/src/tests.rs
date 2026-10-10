@@ -226,6 +226,7 @@ struct FakeSystemctl {
     unit_dir: PathBuf,
     states: RefCell<BTreeMap<String, UnitState>>,
     restarts: RefCell<Vec<String>>,
+    resets: RefCell<Vec<String>>,
     reloads: RefCell<usize>,
     poison: Option<String>,
     /// Unit names `list_active` must never return, mirroring a `systemd-run` transient
@@ -256,6 +257,7 @@ impl FakeSystemctl {
             unit_dir,
             states: RefCell::new(s),
             restarts: RefCell::new(vec![]),
+            resets: RefCell::new(vec![]),
             reloads: RefCell::new(0),
             poison: None,
             transient: BTreeSet::new(),
@@ -299,6 +301,10 @@ impl Systemctl for FakeSystemctl {
         let e = s.entry(unit.into()).or_default();
         e.active = "inactive".into();
         e.result = "success".into();
+        Ok(())
+    }
+    fn reset_failed(&self, unit: &str) -> Result<(), String> {
+        self.resets.borrow_mut().push(unit.into());
         Ok(())
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
@@ -855,6 +861,22 @@ fn every_shipped_service_renders_against_real_host_values() {
 }
 
 // ---------------------------------------------------------------- activate
+
+#[test]
+fn activate_clears_a_start_limit_on_every_unit_it_restarts() {
+    let w = World::new();
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    w.install_units(A);
+    sc.restarts.borrow_mut().clear();
+    sc.resets.borrow_mut().clear();
+    let s = activate::activate(&c, B, None).unwrap();
+    assert!(!s.restarted.is_empty(), "control: something was restarted");
+    assert_eq!(*sc.resets.borrow(), s.restarted);
+}
 
 #[test]
 fn activate_swaps_current_rewrites_units_and_restarts_only_changed_long_running_services() {
