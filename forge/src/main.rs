@@ -39,6 +39,14 @@ fn stdin_bytes() -> Vec<u8> {
 
 fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String]) -> Out {
     use forge::cmds::*;
+    let workflow = match workflow_of(repo) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("forge: {e}");
+            return Out { code: 2, lines: vec![] };
+        }
+    };
+    let workflow = workflow.as_str();
     match cmd {
         "pr-create" => pr_create(gh, repo, arg(args, 0), arg(args, 1), arg(args, 2), &stdin_bytes()),
         "pr-number" => pr_number(gh, repo, arg(args, 0)),
@@ -48,11 +56,11 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "pr-state" => pr_state(gh, repo, arg(args, 0)),
         "pr-red" => pr_red(gh, repo, arg(args, 0)),
         "pr-automerge" => pr_automerge(gh, repo, arg(args, 0)),
-        "check-status" => check_status(gh, proc, repo, arg(args, 1)),
+        "check-status" => check_status(gh, proc, repo, workflow, arg(args, 1)),
         "run-id" => run_id(gh, repo, arg(args, 0)),
-        "runs-for-branch" => runs_for_branch(gh, repo, arg(args, 0)),
-        "runs-queue-branches" => runs_queue_branches(gh, repo),
-        "batch-ci-status" => batch_ci_status(gh, proc, repo, arg(args, 0)),
+        "runs-for-branch" => runs_for_branch(gh, repo, workflow, arg(args, 0)),
+        "runs-queue-branches" => runs_queue_branches(gh, repo, workflow),
+        "batch-ci-status" => batch_ci_status(gh, proc, repo, workflow, arg(args, 0)),
         "queued-since" => queued_since(gh, repo, arg(args, 0)),
         "runs-active" => runs_active(gh, repo),
         "stranded-runners" => {
@@ -84,7 +92,7 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "workflow-rerun" => workflow_rerun(gh, repo, arg(args, 0)),
         "pr-close" => pr_close(gh, repo, arg(args, 0)),
         "pr-comment" => pr_comment(gh, repo, arg(args, 0), arg(args, 1)),
-        "dispatch" => dispatch_cmd(gh, repo, arg(args, 0), arg(args, 1)),
+        "dispatch" => dispatch_cmd(gh, repo, workflow, arg(args, 0), arg(args, 1)),
         "fail-lines" => fail_lines(gh, proc, repo, arg(args, 0), arg(args, 1)),
         "branch-protect" => {
             // SPIRA_QUEUE_ACTIONS_APP_ID is a registered config key — the one source of
@@ -108,6 +116,18 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
 
 // `dispatch` is also a module-level fn name above; the verb needs its own name to call
 // `cmds::dispatch` without shadowing.
-fn dispatch_cmd(gh: &dyn Gh, repo: &Path, ref_: &str, suites: &str) -> Out {
-    forge::cmds::dispatch(gh, repo, ref_, suites)
+fn dispatch_cmd(gh: &dyn Gh, repo: &Path, workflow: &str, ref_: &str, suites: &str) -> Out {
+    forge::cmds::dispatch(gh, repo, workflow, ref_, suites)
+}
+
+fn workflow_of(repo: &Path) -> Result<String, String> {
+    let default = spira_config::process::cfg("SPIRA_FORGE_WORKFLOW")?;
+    let table = spira_config::process::cfg("SPIRA_FORGE_WORKFLOWS")?;
+    if table.trim().is_empty() {
+        return Ok(default);
+    }
+    let home = spira_config::resolve::locate_home_for_process()?;
+    let env = std::env::vars().collect();
+    let name = spira_config::repos::Registry::from_env(env, &home).name_at(&repo.to_string_lossy());
+    Ok(forge::cmds::workflow_for(&default, &table, name.as_deref()).to_string())
 }
