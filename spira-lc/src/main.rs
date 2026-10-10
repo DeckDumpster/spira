@@ -350,6 +350,9 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     (0, serde_json::to_string_pretty(&out).unwrap())
 }
 
+const LIVE_WINDOW_SECS: i64 = 24 * 3600;
+const TERMINAL_STATES: &str = "'LANDED','SUPERSEDED','DROPPED','DONE'";
+
 pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     if args.iter().any(|a| a == "--delivery") {
         return cmd_list_delivery(args, conn);
@@ -383,6 +386,9 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         }
         if express {
             c.push(format!("{col}express = 1"));
+        }
+        if live {
+            c.push(format!("({col}state NOT IN ({TERMINAL_STATES}) OR {col}updated_at >= {})", db::now_epoch() - LIVE_WINDOW_SECS));
         }
         c.iter().map(|x| format!(" AND {x}")).collect()
     };
@@ -427,7 +433,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
             o.insert("since".into(), v);
         }
     }
-    (0, serde_json::to_string_pretty(&Value::Array(beads)).unwrap())
+    (0, serde_json::to_string(&Value::Array(beads)).unwrap())
 }
 
 /// Derived table of the latest applied event into each (key, state) of a machine. Joined,
