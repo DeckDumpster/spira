@@ -178,3 +178,8 @@ bead-sweep|daemon|@SPIRA_HOME@/bead-sweep.sh watch --interval 1800|@SPIRA_HOME@/
 # nothing while SPIRA_ROUND_VM_SPILL is unset.
 round-spill-key|daemon|@SPIRA_HOME@/round-spill-key.sh watch --interval 3600|@SPIRA_HOME@/round-spill-key.sh health
 pass-rate|daemon|@SPIRA_HOME@/pass-rate.sh watch --interval 900|@SPIRA_HOME@/pass-rate.sh health
+
+# MEND-WATCH is the alarm for the mender bounds: spira-mend-watch.timer appends one line per
+# breach — a MENDING row past its deadline, or a bead mended more than twice in a day — and a
+# quiet log means every mender is inside its bounds.
+mend-watch|log|@SPIRA_RUN@/mend-watch.log

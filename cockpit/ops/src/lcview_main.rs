@@ -3,7 +3,7 @@
 //! commits (drift, cached by sha), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{carry_forward, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveAeon, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{carry_forward, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveAeon, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -239,6 +239,18 @@ fn live_aeons() -> Option<Vec<LiveAeon>> {
     Some(out)
 }
 
+fn gather_menders(s: &mut Snapshot) {
+    match lc_json(&["mending", "list", "--live"]) {
+        Ok(rows) => {
+            s.menders = rows
+                .iter()
+                .map(|m| MenderRow { batch_id: text(&m["batch_id"]), pass: num(&m["pass"]).unwrap_or(0), suite: text(&m["suite"]), state: text(&m["state"]), deadline: num(&m["deadline"]) })
+                .collect()
+        }
+        Err(e) => s.errors.push(e),
+    }
+}
+
 fn gather() -> Snapshot {
     let started = std::time::Instant::now();
     let mut claimable: Vec<String> = Vec::new();
@@ -343,6 +355,7 @@ fn gather() -> Snapshot {
     // through spira-lc (cockpit-no-round-files), so the bar stays empty until they are.
     s.progress = None;
     s.ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
+    gather_menders(&mut s);
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s.failures = s.errors.len() as u64;
     s.gather_ms = started.elapsed().as_millis() as u64;

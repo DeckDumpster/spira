@@ -174,6 +174,16 @@ pub fn holder_pid(holder: &str) -> Option<i64> {
     holder.split_once('@')?.1.split('.').next()?.parse().ok()
 }
 
+/// One live row of `spira-lc mending list --live`; only a MENDING row has a deadline.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MenderRow {
+    pub batch_id: String,
+    pub pass: i64,
+    pub suite: String,
+    pub state: String,
+    pub deadline: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub now: i64,
@@ -223,6 +233,8 @@ pub struct Snapshot {
     pub dwell: Vec<DwellRow>,
     #[serde(default)]
     pub batches: Vec<BatchRow>,
+    #[serde(default)]
+    pub menders: Vec<MenderRow>,
 }
 
 /// A source that failed this pass keeps its last good read instead of drawing an empty
@@ -360,6 +372,15 @@ pub struct SmRefusal {
     pub what: String,
     pub n: i64,
     pub why: String,
+    pub red: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SmMender {
+    pub batch: String,
+    pub pass: i64,
+    pub suite: String,
+    pub detail: String,
     pub red: bool,
 }
 
@@ -569,6 +590,7 @@ pub struct View {
     pub now: i64,
     /// Questions waiting on the operator (needs-ryan), oldest first. Never counted as work.
     pub decide: Vec<Item>,
+    pub menders: Vec<SmMender>,
 }
 
 const CHAIN: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"];
@@ -782,6 +804,29 @@ fn repo_rounds(s: &Snapshot, round_view: &dyn Fn(&BatchRow) -> RoundView) -> Vec
     out
 }
 
+/// Each running mender with the time left to its deadline, soonest first. A MENDING row past
+/// its deadline is red: the machine should have returned it already.
+fn mender_block(s: &Snapshot) -> Vec<SmMender> {
+    let mut live: Vec<&MenderRow> = s.menders.iter().filter(|m| m.state == "MENDING").collect();
+    live.sort_by_key(|m| (m.deadline.unwrap_or(i64::MAX), m.batch_id.clone(), m.pass, m.suite.clone()));
+    let mut out: Vec<SmMender> = live
+        .iter()
+        .map(|m| {
+            let (detail, red) = match m.deadline {
+                Some(d) if d <= s.now => (format!("OVERDUE {}", age(s.now - d)), true),
+                Some(d) => (format!("deadline in {}", age(d - s.now)), false),
+                None => ("no deadline recorded".to_string(), true),
+            };
+            SmMender { batch: m.batch_id.clone(), pass: m.pass, suite: m.suite.clone(), detail, red }
+        })
+        .collect();
+    let waiting = s.menders.iter().filter(|m| m.state == "WAITING").count();
+    if waiting > 0 {
+        out.push(SmMender { batch: String::new(), pass: 0, suite: format!("{waiting} failure(s) waiting for a mender"), detail: String::new(), red: false });
+    }
+    out
+}
+
 /// Certification passes a round has taken, as the store knows them: the first, plus one per
 /// attribution (ejects within ten minutes of each other were decided from one red pass).
 pub fn passes(eject_at: &[i64]) -> usize {
@@ -954,6 +999,7 @@ pub fn view(s: &Snapshot) -> View {
             }
         }
     }
+    v.menders = mender_block(s);
 
     let mut by_kind: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for r in s.rows.iter().filter(|r| !r.holds.is_empty() && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED")) {
@@ -1154,6 +1200,16 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     out.push(format!("{B}BATCH{R}"));
     for b in &v.batch {
         out.push(format!("  {:<12}{B}{:>3}{R}{}{}", b.name, b.count, if b.detail.is_empty() { String::new() } else { format!("  {}", b.detail) }, dot(b.red)));
+    }
+    if !v.menders.is_empty() {
+        out.push(format!("{B}MENDERS{R}  {D}(running, under the pass){R}"));
+        for m in &v.menders {
+            if m.batch.is_empty() {
+                out.push(format!("  {D}{}{R}", m.suite));
+            } else {
+                out.push(format!("  {:<10} #{:<2} {:<28} {}{}", cut(&m.batch, 10), m.pass, cut(&m.suite, 28), m.detail, dot(m.red)));
+            }
+        }
     }
     if !v.holds.is_empty() {
         out.push(format!("{B}HOLDS{R}"));
@@ -1864,6 +1920,35 @@ BATCH
         assert!(!f.contains("FLOW"), "{f}");
         let after = |head: &str| f.lines().skip_while(|l| !l.starts_with(head)).skip(1).take_while(|l| l.starts_with("  ")).count();
         assert!(after("NEXT") <= 5 && after("RECENT") <= 5 && after("REWORK") <= 4, "{f}");
+    }
+
+    fn mender(batch: &str, suite: &str, state: &str, deadline: Option<i64>) -> MenderRow {
+        MenderRow { batch_id: batch.into(), pass: 1, suite: suite.into(), state: state.into(), deadline }
+    }
+
+    #[test]
+    fn each_running_mender_is_listed_under_the_pass_with_its_deadline() {
+        let mut s = snap(vec![]);
+        s.menders = vec![
+            mender("r-7", "test-b.sh", "MENDING", Some(100_000 + 240)),
+            mender("r-7", "test-a.sh", "MENDING", Some(100_000 + 80)),
+            mender("r-7", "test-w.sh", "WAITING", None),
+            mender("r-7", "test-done.sh", "MENDED", Some(99_000)),
+        ];
+        let f = squash(&plain(&render(&view(&s), 120)));
+        assert!(f.contains("MENDERS"), "{f}");
+        let a = f.find("r-7 #1 test-a.sh deadline in 80s").unwrap_or(usize::MAX);
+        let b = f.find("r-7 #1 test-b.sh deadline in 4m").unwrap_or(usize::MAX);
+        assert!(a < b, "soonest deadline first: {f}");
+        assert!(f.contains("1 failure(s) waiting for a mender") && !f.contains("test-done.sh") && !f.contains("●"), "{f}");
+    }
+
+    #[test]
+    fn a_mender_past_its_deadline_is_a_red_dot_and_no_menders_is_no_section() {
+        let mut s = snap(vec![]);
+        s.menders = vec![mender("r-7", "test-a.sh", "MENDING", Some(100_000 - 30))];
+        assert!(squash(&plain(&render(&view(&s), 120))).contains("test-a.sh OVERDUE 30s ●"));
+        assert!(!plain(&render(&view(&snap(vec![])), 120)).contains("MENDERS"));
     }
 
     #[test]
