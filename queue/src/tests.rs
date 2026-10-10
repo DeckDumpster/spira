@@ -2179,6 +2179,22 @@ fn settle_defers_the_cut_while_a_round_pass_runs_and_cuts_after_it() {
 }
 
 #[test]
+fn settle_defers_the_cut_while_round_progress_is_live_and_fresh() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    *t.forge.pr.borrow_mut() = Some("78".into());
+    fs::create_dir_all(t.dir.join("run")).unwrap();
+    let prog = t.dir.join("run/round-progress.json");
+    fs::write(&prog, "{\"phase\":\"suites\",\"updated_at\":900}\n").unwrap();
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.out().contains("a round pass holds the hypervisor"), "{}", t.out());
+    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "{:?}", t.forge.calls.borrow());
+    fs::write(&prog, "{\"phase\":\"suites\",\"updated_at\":100}\n").unwrap();
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "a stale file does not hold the cut: {:?}", t.forge.calls.borrow());
+}
+
+#[test]
 fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);

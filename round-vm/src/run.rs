@@ -826,6 +826,7 @@ pub struct RunEnv<'a> {
 
 /// Writes a pass boundary onto the round's batch row.
 pub trait Recorder: Sync {
+    fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
     fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
 }
 
@@ -833,6 +834,16 @@ pub trait Recorder: Sync {
 pub struct QueueRecorder;
 
 impl Recorder for QueueRecorder {
+    fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", "60", "queue", "round", "pass-start", batch]).args(repo).stdin(Stdio::null());
+        let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("queue round pass-start refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
     fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
         let mut cmd = command("timeout");
         cmd.args(["-k", "5", "60", "queue", "round", "suites-started", batch]).args(repo).stdin(Stdio::null());
@@ -932,6 +943,12 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
     let budgets = crate::progress::Budgets { vm: cfg.vm_budget_secs, build: cfg.build_budget_secs };
     let progress = Mutex::new(crate::progress::Progress::start(&cfg.run_dir, &results_dir, &commit_sha, &tree_sha, total, cfg.cap_secs, budgets));
+    if let Some(batch) = args.round_batch.as_deref() {
+        // A pass already recorded by certify is refused here; only an unrecorded start needs the write.
+        if let Err(e) = env.record.pass_started(batch, args.round_repo.as_deref()) {
+            eprintln!("round-vm run: {e}");
+        }
+    }
     let acquired = {
         let leasing = AtomicBool::new(true);
         std::thread::scope(|sc| {
@@ -1982,6 +1999,10 @@ mod tests {
     }
 
     impl Recorder for FakeRecorder {
+        fn pass_started(&self, batch: &str, _: Option<&str>) -> Result<(), String> {
+            self.calls.lock().unwrap().push(format!("start {batch}"));
+            Ok(())
+        }
         fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
             self.calls.lock().unwrap().push(format!("{batch} {}", repo.unwrap_or("-")));
             if self.refuse { Err("the batch is ATTRIBUTING, not CI_RUNNING".into()) } else { Ok(()) }
@@ -1994,7 +2015,7 @@ mod tests {
         let rec = FakeRecorder::default();
         let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), round_repo: Some("sp".into()), ..tree(&fx) };
         assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
-        assert_eq!(*rec.calls.lock().unwrap(), vec!["r-9 sp".to_string()]);
+        assert_eq!(*rec.calls.lock().unwrap(), vec!["start r-9".to_string(), "r-9 sp".to_string()]);
     }
 
     #[test]
