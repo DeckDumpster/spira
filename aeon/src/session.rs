@@ -161,6 +161,9 @@ pub trait Beat: Send + Sync {
     /// session runs: the lifecycle row's `spira-lc renew` (sp-2jf0a). False ends the
     /// heartbeat.
     fn renew(&self, lease_until: i64) -> bool;
+    /// Record how this session was cut short on the bead's lifecycle row (`spira-lc
+    /// disposition`); the teardown reads it from there.
+    fn disposition(&self, status: &str, note: &str);
     fn log(&self, msg: &str);
 }
 
@@ -223,7 +226,9 @@ impl Heartbeat {
             let fuse = b.fuse();
             self.renew_identity(now);
             if crate::stop::requested(&self.run, &self.bead) {
+                let why = crate::stop::reason(&self.run, &self.bead);
                 crate::stop::clear(&self.run, &self.bead);
+                b.disposition("slain", &why);
                 b.log(&format!("{}: {} stop requested — stopping the session", self.fayth, self.bead));
                 stop.trip(libc::SIGTERM);
                 return None;
@@ -238,7 +243,7 @@ impl Heartbeat {
                     let last = b.trace_last(200);
                     let quiet = now - cur;
                     let last = if last.is_empty() { "?".to_string() } else { last };
-                    let _ = std::fs::write(self.run.join(format!("{}.lapsed", self.bead)), format!("{quiet}\t{last}\n"));
+                    b.disposition("lapsed", &format!("{quiet}\t{last}"));
                     b.log(&format!("{}: {} lease lapsed (trace quiet {quiet}s, last: {last}) — killing", self.fayth, self.bead));
                     stop.trip(libc::SIGTERM);
                     return Some(HbTick::Lapse);
@@ -247,7 +252,7 @@ impl Heartbeat {
                     let dsess = (now - session_start) / 60;
                     let last = b.trace_last(300);
                     let last = if last.is_empty() { "no last action".to_string() } else { last };
-                    let _ = std::fs::write(self.run.join(format!("{}.thrash", self.bead)), format!("{last}\n"));
+                    b.disposition("thrash", &last);
                     b.log(&format!(
                         "{}: {} deliverable stalled {fuse}m session {dsess}m (wall {}m) — requeueing for thrash",
                         self.fayth, self.bead, self.wall_min
@@ -285,6 +290,8 @@ mod tests {
         renewals: Mutex<Vec<i64>>,
         /// End the heartbeat after this many renewals (0: never).
         stop_after: usize,
+        /// Every (status, note) the heartbeat recorded as the session's disposition.
+        dispositions: Mutex<Vec<(String, String)>>,
     }
     impl Beat for FakeBeat {
         fn now(&self) -> i64 {
@@ -312,6 +319,9 @@ mod tests {
             r.push(lease_until);
             self.stop_after == 0 || r.len() < self.stop_after
         }
+        fn disposition(&self, status: &str, note: &str) {
+            self.dispositions.lock().unwrap().push((status.into(), note.into()));
+        }
         fn log(&self, m: &str) {
             self.logs.lock().unwrap().push(m.into());
         }
@@ -321,7 +331,7 @@ mod tests {
         testkit::TempDir::new(&format!("aeon-hb-{n}"))
     }
 
-    // test-aeon-lease.sh: a silent trace lapses the lease, writes .lapsed, trips the stop.
+    // A silent trace lapses the lease, records a lapsed disposition, trips the stop.
     #[test]
     fn silent_trace_lapses_and_trips() {
         let d = tmp("lapse");
@@ -331,8 +341,11 @@ mod tests {
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
         assert_eq!(r, Some(HbTick::Lapse));
         assert_eq!(stop.signalled(), Some(15));
-        let lapsed = std::fs::read_to_string(d.join("sp-a.lapsed")).unwrap();
-        assert!(lapsed.contains("\t{\"type\":\"assistant\"}"));
+        let recorded = b.dispositions.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, "lapsed");
+        assert!(recorded[0].1.contains("\t{\"type\":\"assistant\"}"));
+        assert!(!d.join("sp-a.lapsed").exists(), "no marker file: the row carries the outcome");
         assert!(b.logs.lock().unwrap()[0].contains("sp-a lease lapsed (trace quiet"));
         assert!(d.join("aeon/sp-a.lease").is_file());
     }
@@ -346,7 +359,11 @@ mod tests {
         let stop = Stop::default();
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
         assert_eq!(r, Some(HbTick::Thrash));
-        assert!(std::fs::read_to_string(d.join("sp-a.thrash")).unwrap().starts_with("{\"type\""));
+        let recorded = b.dispositions.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, "thrash");
+        assert!(recorded[0].1.starts_with("{\"type\""));
+        assert!(!d.join("sp-a.thrash").exists(), "no marker file: the row carries the outcome");
         assert!(b.logs.lock().unwrap()[0].contains("deliverable stalled 30m session"));
         assert!(*b.beats.lock().unwrap() >= 1, "bd heartbeat ran on the renewing beats");
     }
@@ -382,6 +399,7 @@ mod tests {
         assert_eq!(stop.signalled(), Some(libc::SIGTERM));
         assert!(!crate::stop::requested(&d, "sp-a"), "the request is consumed");
         assert!(b.logs.lock().unwrap()[0].contains("stop requested"));
+        assert_eq!(b.dispositions.lock().unwrap().clone(), vec![("slain".to_string(), "why".to_string())]);
     }
 
     #[test]

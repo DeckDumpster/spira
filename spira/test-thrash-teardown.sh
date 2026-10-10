@@ -2,9 +2,9 @@
 # test-thrash-teardown.sh — G2: the thrash-requeue teardown branch in aeon.sh's cleanup(),
 #   driven through the real aeon.sh rather than asserted by line-order/awk greps.
 #
-# THE GAP THIS CLOSES (sp-eq8a4.2.2, G2). The heartbeat writes $BEAD_ID.thrash and kills the
+# THE GAP THIS CLOSES (sp-eq8a4.2.2, G2). The heartbeat records a thrash disposition on the bead's row and kills the
 # session when the deliverable has stalled (hb_tick's `thrash` verdict); cleanup() reads that
-# marker and requeues instead of charging an attempt, ON THE THEORY that the aeon was killed
+# disposition and requeues instead of charging an attempt, ON THE THEORY that the aeon was killed
 # for stalling, not judged on its work. Until now the only suite touching this branch grepped
 # aeon.sh's source for the shape of the code — never ran it. Two behaviours are asserted here:
 #
@@ -16,8 +16,8 @@
 #      charged: `bump_requeue <id> thrash-stale` (not subtracted), the note says "STICKING
 #      POINT" and "attempt IS charged", the ledger status is `requeue-thrash-charged`.
 #
-# The marker is planted by the claude shim exactly as the heartbeat subshell would leave it
-# behind after a kill -TERM -$$: this suite is about cleanup()'s read of that marker, not
+# The disposition is recorded by the claude shim exactly as the heartbeat would leave it
+# behind after a kill -TERM -$$: this suite is about cleanup()'s read of it, not
 # about the heartbeat's own trip condition (that is hb_tick's table, test-aeon-lease.sh) or
 # the streak arithmetic itself (thrash_streak_bump's cap/reset/poison-via-thrash cases are
 # the retired test-thrash-streak.sh's, called directly against a real bead with no aeon.sh run at all).
@@ -93,7 +93,7 @@ lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
 command -v aeon >/dev/null 2>&1 \
     || bail "aeon is not on PATH — refusing to run the real model"
 
-# Shim A (positive control): exits with the bead open and no marker — attempt IS charged.
+# Shim A (positive control): exits with the bead open and no disposition — attempt IS charged.
 # COMMITS (sp-1zxru): this row's whole point is a real charged attempt to contrast the
 # thrash-exempt cases below against — a session with no commit is a no-progress exit now
 # (its own suite, test-aeon-teardown-e2e.sh's "no commit, left open" row), not this one.
@@ -110,13 +110,13 @@ exit 0
 SHIM
 chmod +x "$BIN/claude-no-thrash"
 
-# Shim B: plants the .thrash marker exactly as the heartbeat would, then exits — simulating
+# Shim B: records the thrash disposition exactly as the heartbeat would, then exits — simulating
 # a session the heartbeat has already killed for the deliverable not moving.
 { printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 if [ -n "${BEAD_ID:-}" ]; then
-    printf 'stalled: no last action\n' > "$RUN_DIR/$BEAD_ID.thrash"
+    SPIRA_RUN="$RUN_DIR" "$TMP/lc/spira-lc" disposition "$BEAD_ID" thrash "stalled: no last action" heartbeat
 fi
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 0
@@ -124,14 +124,14 @@ SHIM
 } > "$BIN/claude-thrash"
 chmod +x "$BIN/claude-thrash"
 
-# Shim C: plants the marker, then hangs — standing in for a session the real heartbeat
+# Shim C: records the disposition, then hangs — standing in for a session the real heartbeat
 # hasn't killed YET, so a real `kill -TERM` sent to the process group from outside (below)
 # reaches aeon.sh itself as a signal, not as cleanup() running off the natural EXIT path.
 { printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 if [ -n "${BEAD_ID:-}" ]; then
-    printf 'stalled: no last action\n' > "$RUN_DIR/$BEAD_ID.thrash"
+    SPIRA_RUN="$RUN_DIR" "$TMP/lc/spira-lc" disposition "$BEAD_ID" thrash "stalled: no last action" heartbeat
     : > "$RUN_DIR/$BEAD_ID.hung"
 fi
 sleep 300
@@ -174,10 +174,10 @@ fresh() { testdb_reset; }
 echo "test-thrash-teardown.sh"
 
 # ======================================================================================
-# POSITIVE CONTROL: without the .thrash marker, exit with the bead open IS charged.
+# POSITIVE CONTROL: without a thrash disposition, exit with the bead open IS charged.
 # ======================================================================================
 echo
-echo "positive control — no thrash marker — attempt IS charged"
+echo "positive control — no thrash disposition — attempt IS charged"
 
 ln -sf "$BIN/claude-no-thrash" "$BIN/claude"
 fresh; seed sp-tt-1
@@ -229,7 +229,7 @@ ln -sf "$BIN/claude-thrash-hang" "$BIN/claude"
 fresh; seed sp-tt-3
 rm -rf "$SPIRA_RUN/worktree"
 marker="$SPIRA_RUN/sp-tt-3.hung"
-rm -f "$marker" "$SPIRA_RUN/sp-tt-3.thrash"
+rm -f "$marker"
 setsid aeon --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
 aeon_pid=$!
 

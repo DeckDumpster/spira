@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS bead (
     priority    TINYINT NULL,
     -- Ahead of the line (Express/Unexpress events); migrations/0010-express.sql for an existing database.
     express     BOOLEAN NOT NULL DEFAULT FALSE,
+    -- The holder's phase and how its session was cut short, set only while WORKING; migrations/0016-aeon-phase.sql for an existing database.
+    aeon_phase       VARCHAR(16) NULL,
+    disposition      VARCHAR(16) NULL,
+    disposition_note TEXT NULL,
     updated_at  BIGINT NOT NULL
 );
 

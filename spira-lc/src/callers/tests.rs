@@ -42,6 +42,9 @@ impl Fake {
             "bead_id": r.bead_id, "state": r.state.as_str(), "tip": opt(&r.tip), "gate_key": opt(&r.gate_key),
             "holder": opt(&r.holder), "lease_until": r.lease_until.map(|n| Value::String(n.to_string())).unwrap_or(Value::Null),
             "holds": serde_json::to_string(&holds).unwrap(), "reason": opt(&r.reason), "version": r.version.to_string(),
+            "aeon_phase": r.phase.map(|p| Value::String(p.as_str().into())).unwrap_or(Value::Null),
+            "disposition": r.disposition.map(|d| Value::String(d.as_str().into())).unwrap_or(Value::Null),
+            "disposition_note": opt(&r.disposition_note),
         })
     }
     fn state(&self, id: &str) -> &'static str {
@@ -1131,4 +1134,54 @@ fn reconcile_closed_leaves_an_external_residue_ready() {
     let a = reconcile_closed(&v(&["--apply"]), &mut f, &mut bd);
     assert_eq!(a.code, REFUSED, "{}", a.stdout);
     assert_eq!(f.state("sp-x"), "READY");
+}
+
+// ---- phase and disposition: the WORKING row's own record of its run ---------------------
+
+fn claim_for(f: &mut Fake, id: &str, holder: &str) {
+    f.bead(id, BeadState::Ready);
+    let ev = serde_json::to_string(&BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None }).unwrap();
+    let (rc, out) = f.call(&v(&["event", "bead", id, "--expect", "READY", "--version", "0", "--actor", holder, "--kind", &ev]));
+    assert_eq!(rc, 0, "{out}");
+}
+
+#[test]
+fn phase_walks_the_holder_forward_and_show_reads_back_exactly_what_was_recorded() {
+    let mut f = Fake::default();
+    claim_for(&mut f, "sp-p", "aeon-1");
+    for name in ["building", "session", "fast_tier", "submitting", "teardown"] {
+        let a = go(&mut f, "phase", &["sp-p", "aeon-1", name]);
+        assert_eq!(a.code, APPLIED, "{name}: {}", a.stderr);
+        let shown: Value = serde_json::from_str(&f.call(&v(&["show", "sp-p"])).1).unwrap();
+        assert_eq!(bead_field(&shown, "aeon_phase"), name);
+    }
+}
+
+#[test]
+fn a_backward_or_foreign_phase_is_refused_and_changes_nothing() {
+    let mut f = Fake::default();
+    claim_for(&mut f, "sp-p", "aeon-1");
+    assert_eq!(go(&mut f, "phase", &["sp-p", "aeon-1", "session"]).code, APPLIED);
+    let back = go(&mut f, "phase", &["sp-p", "aeon-1", "building"]);
+    assert_eq!(back.code, REFUSED);
+    assert!(back.stderr.contains("WORKING/session"), "{}", back.stderr);
+    assert_eq!(go(&mut f, "phase", &["sp-p", "aeon-2", "teardown"]).code, REFUSED);
+    assert_eq!(f.beads["sp-p"].phase, Some(AeonPhase::Session));
+    assert_eq!(go(&mut f, "phase", &["sp-p", "aeon-1", "nonsense"]).code, CANNOT_TELL);
+    assert_eq!(go(&mut f, "phase", &["sp-none", "aeon-1", "session"]).code, NO_ROW);
+}
+
+#[test]
+fn disposition_is_recorded_on_the_working_row_and_refused_elsewhere() {
+    let mut f = Fake::default();
+    claim_for(&mut f, "sp-d", "aeon-1");
+    let a = go(&mut f, "disposition", &["sp-d", "lapsed", "300\tlast words", "watchdog"]);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.beads["sp-d"].disposition, Some(DispositionStatus::Lapsed));
+    assert_eq!(f.beads["sp-d"].disposition_note.as_deref(), Some("300\tlast words"));
+    assert_eq!(go(&mut f, "disposition", &["sp-d", "slain", "operator"]).code, APPLIED);
+    assert_eq!(go(&mut f, "disposition", &["sp-d", "thrash", "x"]).code, REFUSED, "a weaker word never overwrites");
+    assert_eq!(f.beads["sp-d"].disposition, Some(DispositionStatus::Slain));
+    f.bead("sp-r", BeadState::Ready);
+    assert_eq!(go(&mut f, "disposition", &["sp-r", "slain", "x"]).code, REFUSED);
 }

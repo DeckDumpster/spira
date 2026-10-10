@@ -221,17 +221,17 @@ teardown() {
 }
 
 # ======================================================================================
-# STRUCTURAL: the slain marker is the first action.
+# STRUCTURAL: the slain disposition is the first action.
 #
-# The marker must be written before anything is stopped, because aeon.sh's exit path
-# reads it to decide whether to charge an attempt. If the kill arrives before the marker,
+# The disposition must be recorded on the row before anything is stopped, because the aeon's
+# exit path reads it to decide whether to charge an attempt. If the kill arrives first,
 # the exit path sees a normal 143 and charges — and three charges poison the bead.
 # ======================================================================================
 echo "structural:"
 
-first_action="$(sed -n '/^\s*\/\/ ---- 1\. the marker/,/^\s*\/\/ ---- 2/p' "$SLAY" \
+first_action="$(sed -n '/^\s*\/\/ ---- 1\. the disposition/,/^\s*\/\/ ---- 2/p' "$SLAY" \
                 | grep -vE '^\s*(//|$)' | head -1)"
-want "the marker is the first action" 'slain' "$first_action"
+want "the slain disposition is the first action" 'slain' "$first_action"
 
 # ======================================================================================
 # DEFAULT SLAY (reopen) — bead goes from in_progress to open, unassigned, work removed.
@@ -257,7 +257,7 @@ is  "the lifecycle row is released instead — WORKING to READY" READY "$(lc_sta
 is  "bead is unassigned"       ""   "$(assignee_of sp-s1)"
 is  "worktree is gone"         no   "$([ -d "$SPIRA_RUN/worktree/sp-s1" ] && echo yes || echo no)"
 is  "branch is gone"           1    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s1 2>/dev/null; echo $?)"
-is  "marker is cleaned up"     no   "$([ -f "$SPIRA_RUN/sp-s1.slain" ] && echo yes || echo no)"
+is  "no marker file is left"   no   "$([ -f "$SPIRA_RUN/sp-s1.slain" ] && echo yes || echo no)"
 want "reports slain"            "slain: sp-s1" "$out"
 teardown sp-s1
 

@@ -717,6 +717,24 @@ record, and never by matching `gate.sh` in a process listing.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: gate-state-readers checked
 <n> files`.
 
+## Rule `aeon-state-readers`
+
+**Intent.** An aeon's phase and how its session was cut short are fields of its WORKING row,
+read through spira-lc. Nothing writes or reads the retired `.lapsed`, `.thrash` and `.slain`
+marker files, and the operator-facing health and panel readers read no pidfile, lease file,
+ledger or `/proc` entry.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `watchtower/`, `aeon/`,
+`spira-world/` and `spira/*.sh` for the marker names; `cockpit/ops/src/health*` and
+`cockpit/panel/` for the pid, lease, ledger and `/proc` reads. Suites, `tests.rs`, `tests/` and
+everything after a `#[cfg(test)]` line are out of scope.
+
+**Violation.** A live line naming a marker file in a string (`<id>.slain`, `"…thrash"`), or in a
+reader, `/proc`, `procfs::`, a `.pid` or `.lease` name, or `aeon-ledger`.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: aeon-state-readers
+checked <n> files`; its unit tests plant a read of each kind and require a finding for it.
+
 ## Rule `incident-cause-lint`
 
 Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.

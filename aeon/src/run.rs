@@ -108,6 +108,9 @@ pub struct State {
     pub stack: std::collections::BTreeMap<String, String>,
 }
 
+/// `spira-lc phase`'s exit for a move the machine refused (not WORKING, not the holder, not forward).
+pub const PHASE_REFUSED: i32 = 3;
+
 pub struct Run<'a> {
     pub d: Deps<'a>,
     pub conf: Conf,
@@ -167,6 +170,15 @@ impl<'a> Run<'a> {
 
     pub fn release(&self) {
         self.sdo("release_own_claim", &s(&[&self.s.bead]));
+    }
+
+    /// Record this run's next phase on the bead's lifecycle row. Best-effort: a refusal (the
+    /// row already left WORKING, or the machine is unreachable) never ends the run.
+    pub fn phase(&self, name: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["phase", &self.s.bead, &self.s.holder, name]), None, None);
+        if o.code != 0 && o.code != crate::run::PHASE_REFUSED {
+            self.log(&format!("{}: lifecycle phase {name} not recorded (rc={}): {}", self.s.bead, o.code, o.first_err_line()));
+        }
     }
 
     pub fn bead_reopen(&self, cause: &str, note: &str) -> i32 {
@@ -706,6 +718,7 @@ impl<'a> Run<'a> {
         self.d.env.set("SPIRA_MAIL", &mail);
         self.d.env.set("SPIRA_MAIL_FROM", &self.fayth.mail_from());
         self.start_heartbeat(sc);
+        self.phase("building");
         self.check_stop()?;
 
         // ---- the base: a freshly fetched remote-tracking ref, never guessed ----
@@ -851,6 +864,7 @@ impl<'a> Run<'a> {
         self.s.session_start_tip = if start_tip.success() { start_tip.text().trim().to_string() } else { "?".into() };
 
         // ---- work ----
+        self.phase("session");
         self.session(&work)?;
         self.wiki_commit();
         self.verdict();
@@ -1352,6 +1366,12 @@ impl Beat for RealBeat<'_> {
             *last = o.code;
         }
         true
+    }
+    fn disposition(&self, status: &str, note: &str) {
+        let o = self.exec.exec("spira-lc", &s(&["disposition", &self.bead, status, note, &self.holder]), None, None);
+        if o.code != 0 {
+            self.log(&format!("{}: lifecycle disposition {status} refused (rc={}): {}", self.bead, o.code, o.first_err_line()));
+        }
     }
     fn log(&self, msg: &str) {
         self.sink.out(&util::log_line((self.clock)(), msg));

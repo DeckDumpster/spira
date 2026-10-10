@@ -51,6 +51,8 @@ struct World {
     lc: BTreeMap<String, String>,
     /// `spira-lc facts`' JSON answer.
     facts: String,
+    /// The disposition (status, note) the row carries per bead, as `spira-lc show` answers it.
+    disposition: BTreeMap<String, (String, String)>,
 }
 
 fn lc_state_of(w: &World, id: &str) -> String {
@@ -229,7 +231,8 @@ impl Exec for FakeExec {
             let w = self.0.lock().unwrap();
             // The row's holds are the same ones `spira-lc holds` answers (one kind a line).
             let holds: Vec<String> = w.holds.get(&args[1]).map(|h| h.lines().map(str::trim).filter(|h| !h.is_empty()).map(String::from).collect()).unwrap_or_default();
-            return Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": lc_state_of(&w, &args[1]), "holds": holds}, "delivery": null}).to_string());
+            let (disp, note) = w.disposition.get(&args[1]).cloned().unzip();
+            return Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": lc_state_of(&w, &args[1]), "holds": holds, "disposition": disp, "disposition_note": note}, "delivery": null}).to_string());
         }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && self.0.lock().unwrap().fail_content_on_base {
             return Out::fail(1, "spira-lc content-on-base: stub refusal");
@@ -1739,9 +1742,9 @@ fn a_session_slain_by_a_world_stop_is_checkpointed_without_charging_an_attempt()
     let f = fx("ck-stop");
     seed(&f, "sp-ck");
     let run = f.run.clone();
-    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, _, _| {
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, w, _| {
         std::fs::write(run.join("world.halted"), "stopped\n").unwrap();
-        std::fs::write(run.join("sp-ck.slain"), "now\tthe world was stopped\n").unwrap();
+        w.lock().unwrap().disposition.insert("sp-ck".into(), ("slain".into(), "the world was stopped".into()));
         143
     });
     let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
@@ -1760,13 +1763,69 @@ fn a_session_slain_by_a_world_stop_is_checkpointed_without_charging_an_attempt()
 fn a_slay_with_the_world_running_is_a_plain_release_not_a_checkpoint() {
     let f = fx("ck-slay-only");
     seed(&f, "sp-ck");
-    let run = f.run.clone();
-    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, _, _| {
-        std::fs::write(run.join("sp-ck.slain"), "now\tby hand\n").unwrap();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, w, _| {
+        w.lock().unwrap().disposition.insert("sp-ck".into(), ("slain".into(), "by hand".into()));
         143
     });
     let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
     let w = o.w.lock().unwrap();
     assert!(!w.exec_calls.iter().any(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold")), "{:?}", w.exec_calls);
     assert!(!session_facts(&w).iter().any(|x| x.contains("checkpointed")));
+}
+
+fn exec_verbs(w: &World, verb: &str) -> Vec<Vec<String>> {
+    w.exec_calls.iter().filter(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some(verb)).map(|c| c.1.clone()).collect()
+}
+
+#[test]
+fn a_run_records_its_phases_on_the_row_in_order_and_reads_no_marker_file() {
+    let f = fx("phases");
+    seed(&f, "sp-ph");
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), ends_clean());
+    let w = o.w.lock().unwrap();
+    let phases: Vec<String> = exec_verbs(&w, "phase").into_iter().map(|a| a[3].clone()).collect();
+    assert_eq!(phases, ["building", "session", "teardown"], "{}", o.log);
+    assert!(exec_verbs(&w, "phase").iter().all(|a| a[1] == "sp-ph" && a[2].starts_with("aeon-")), "{:?}", exec_verbs(&w, "phase"));
+}
+
+#[test]
+fn a_thrash_disposition_on_the_row_requeues_for_thrash_and_the_note_carries_its_words() {
+    let f = fx("thrash-row");
+    seed(&f, "sp-th");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, w, _| {
+        w.lock().unwrap().disposition.insert("sp-th".into(), ("thrash".into(), "stalled on the build".into()));
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-th", "thrash"]), "{:?}", w.seam_calls);
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Requeued (thrash)") && n.contains("stalled on the build")), "{:?}", w.notes);
+}
+
+#[test]
+fn a_lapsed_disposition_on_the_row_charges_and_the_note_carries_quiet_and_last() {
+    let f = fx("lapse-row");
+    seed(&f, "sp-lp");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, w, _| {
+        w.lock().unwrap().disposition.insert("sp-lp".into(), ("lapsed".into(), "321\tlast tool call".into()));
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Lease lapsed: the trace was silent for 321s") && n.contains("Last: last tool call")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_lapsed" && c.1 == vec!["sp-lp", "last tool call"]), "{:?}", w.seam_calls);
+}
+
+#[test]
+fn a_marker_file_is_no_longer_a_disposition() {
+    let f = fx("no-marker");
+    seed(&f, "sp-nm");
+    let run = f.run.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, _, _| {
+        std::fs::write(run.join("sp-nm.slain"), "now\tby hand\n").unwrap();
+        0
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-nm", "unjudged-slain"]), "{:?}", w.seam_calls);
 }
