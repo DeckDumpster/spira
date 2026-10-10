@@ -126,8 +126,8 @@ echo "CASE 2 — once the path's own aeon is gone, the same call proceeds"
 # ======================================================================================
 kill "$AEON_PID" 2>/dev/null
 wait "$AEON_PID" 2>/dev/null || true
-# holder_alive requires /proc/$pid to be gone, not just the process killed and unreaped.
-for _ in 1 2 3 4 5 6 7 8 9 10; do [ -d "/proc/$AEON_PID" ] || break; sleep 0.2; done
+# A dead aeon's lease stops being renewed and runs out; the fixture ends it outright.
+echo 1 > "$SPIRA_RUN/aeon-testfayth-sp-child.lease"
 
 rc2=0
 spira_destroy_worktree "sp-parent" "$WT_CHILD" "$REPO" "landed in main" 2>/dev/null || rc2=$?
