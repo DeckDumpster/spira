@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS bead (
     -- from migrations/0001-stack.sql instead of re-running this CREATE TABLE.
     stack       JSON NOT NULL DEFAULT (JSON_OBJECT()),
     stack_depth BIGINT NOT NULL DEFAULT 0,
-    -- Epoch seconds the row last entered LANDED or CERTIFIED; migrations/0002-since.sql for an existing database.
+    -- Epoch seconds the row last changed state; migrations/0002-since.sql for an existing database.
     since       BIGINT NULL,
     -- Mirrored from bd by bead.sh file/amend so the ops views never join to bd; migrations/0007.
     title       VARCHAR(512) NULL,
