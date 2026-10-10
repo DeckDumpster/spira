@@ -3,7 +3,7 @@
 //! commits (drift), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{carry_forward, holder_pid, own_ids, render, tail_lines, view, LiveAeon, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{carry_forward, holder_pid, own_ids, render, tail_lines, view, LiveAeon, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -129,6 +129,10 @@ fn gather_state_machine(s: &mut Snapshot) {
                     members: b["members"].as_array().map(|arr| arr.iter().map(|x| text(&x["bead_id"])).collect()).unwrap_or_default(),
                     opened_at: num(&b["opened_at"]).unwrap_or(0),
                     parent: text(&b["parent"]),
+                    repo: text(&b["repo"]),
+                    pr: num(&b["pr"]).unwrap_or(0),
+                    phase: text(&b["phase"]),
+                    progress: PassProgress::from_json(&b["progress"]),
                     eject_at: Vec::new(),
                     ejected: b["ejected"]
                         .as_array()
