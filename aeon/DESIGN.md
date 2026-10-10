@@ -366,11 +366,11 @@ own process group, so its trap ran with 143 and skipped the verdict block — sa
 
 The WORKING row carries the run's place and how it was cut short, both cleared when the row
 leaves WORKING and fresh at the next claim. `Phase` is the holder's, forward-only:
-claimed (the claim itself), `building` (worktree, brief, fixture), `session`, then
-`fast_tier`, `submitting`, `teardown`. The aeon records `building`, `session` and `teardown`
-with `spira-lc phase <bead> <holder> <phase>`; a bead the model submitted has already left
-WORKING, so the phases after `session` apply only to a run that is still WORKING at
-teardown. `Disposition{status}` is `lapsed`, `thrash` or `slain` with the cutter's words;
+claimed (the claim itself), `building` (worktree, brief, fixture), `session`, `teardown`.
+The aeon records the last three with `spira-lc phase <bead> <holder> <phase>`. The model's
+`work submit` leaves WORKING before the aeon's fast tier runs, so there is no fast-tier or
+submitting phase to record: a row in SUBMITTED carries no phase, and `teardown` lands only
+for a run still WORKING. `Disposition{status}` is `lapsed`, `thrash` or `slain` with the cutter's words;
 a stronger status replaces a weaker, never the reverse. The pane reads both from
 `spira-lc list --state WORKING`; nothing reads a marker, pidfile or `/proc` for them
 (lint rule `aeon-state-readers`).

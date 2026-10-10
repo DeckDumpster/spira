@@ -78,22 +78,17 @@ pub enum AeonPhase {
     Claimed,
     Building,
     Session,
-    FastTier,
-    Submitting,
     Teardown,
 }
 
 impl AeonPhase {
-    pub const ALL: [AeonPhase; 6] =
-        [AeonPhase::Claimed, AeonPhase::Building, AeonPhase::Session, AeonPhase::FastTier, AeonPhase::Submitting, AeonPhase::Teardown];
+    pub const ALL: [AeonPhase; 4] = [AeonPhase::Claimed, AeonPhase::Building, AeonPhase::Session, AeonPhase::Teardown];
 
     pub fn as_str(self) -> &'static str {
         match self {
             AeonPhase::Claimed => "claimed",
             AeonPhase::Building => "building",
             AeonPhase::Session => "session",
-            AeonPhase::FastTier => "fast_tier",
-            AeonPhase::Submitting => "submitting",
             AeonPhase::Teardown => "teardown",
         }
     }
@@ -2390,6 +2385,9 @@ mod tests {
             assert_eq!(DispositionStatus::from_str(d.as_str()), Some(d));
         }
         assert_eq!(AeonPhase::from_str("nope"), None);
+        for unreachable in ["fast_tier", "submitting"] {
+            assert_eq!(AeonPhase::from_str(unreachable), None, "the model's submit leaves WORKING first: {unreachable} cannot be recorded");
+        }
     }
 
     #[test]

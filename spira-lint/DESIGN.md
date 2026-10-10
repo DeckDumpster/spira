@@ -707,6 +707,7 @@ directory.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: pool-state-readers checked
 <n> files`.
 
+
 ## Rule `gate-state-readers`
 
 **Intent.** Operator-facing tooling reads a gate through `gate status <bead>` and stops one with
