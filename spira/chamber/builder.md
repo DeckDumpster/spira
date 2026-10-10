@@ -57,9 +57,10 @@ tests the committed branch, not your working tree.
 
 **A bead that touches install, configure, uninstall, ready or the owned manifest** gets one
 more run, because those paths are proven only by the bare-host suites, which a round's
-container skips and publish CI otherwise finds first. Commit, then from your worktree:
+container skips and publish CI otherwise finds first (test-install-rehearsal.sh is the usual
+one). Commit, then from your worktree:
 
-    bash spira/bare-local.sh . --suites test-install-rehearsal.sh
+    bash spira/bare-local.sh . --suites <suite>
 
 It stages your commit as a release and runs the suite the way publish CI does; it is the
 sanctioned way to run a bare-host suite, and a red there is yours to fix before you submit.
