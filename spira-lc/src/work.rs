@@ -147,7 +147,33 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(delivers) = flag(args, "--delivers") else {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
     };
+    if actor == "groomer" {
+        match crate::bd::labels(bead_id) {
+            Ok(labels) if labels.iter().any(|l| l == GROOM_TRIGGER_MARKER) => {}
+            Ok(_) => return release_untriggered_groom(bead_id, &actor, conn),
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+        }
+    }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Done { delivers })
+}
+
+/// The label groom-trigger.sh stamps on the beads it files; the groom label alone also
+/// selects work beads, which a groom pass must never close.
+const GROOM_TRIGGER_MARKER: &str = "groom-trigger";
+
+fn release_untriggered_groom(bead_id: &str, actor: &str, conn: &Conn) -> (i32, String) {
+    let (code, out) = apply_bead_event(conn, bead_id, actor, BeadEventKind::Release);
+    if code != 0 {
+        return (code, out);
+    }
+    let why = "claimed by the groom predicate but is not a groom trigger; relabel for its builder";
+    let _ = crate::bd::note(bead_id, why);
+    let subject = format!("{bead_id} was claimed by the groomer but is not a groom trigger");
+    let body = format!("## Question\n{bead_id} carries the groom label without the {GROOM_TRIGGER_MARKER} marker, so the groomer released it instead of closing it. Which builder persona should it be relabelled for?\n\n## Default\nrelabel {bead_id} for its builder\n");
+    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), &subject, "relabel for its builder", bead_id, &body) {
+        Ok(_) => (REFUSED, format!("refused: work done: {why}; released, ask filed")),
+        Err(e) => (REFUSED, format!("refused: work done: {why}; released, but filing the ask failed: {e}")),
+    }
 }
 
 fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {

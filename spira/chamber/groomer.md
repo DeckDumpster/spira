@@ -267,7 +267,9 @@ since this pass and short-circuit if the graph is settled:
 
     date +%s > "$SPIRA_RUN/groom.lastpass"
 
-Then finish the trigger bead:
+Then finish the trigger bead. `work done` is accepted only on a bead carrying the
+`groom-trigger` label; on any other bead the broker releases it, notes why and asks the
+Concierge, so a work bead you claimed by mistake is never closed as a pass:
 
     work done --delivers "note:$SPIRA_RUN/groom.log — Groom pass complete. Examined N beads. Actions: <list>."
 
