@@ -386,6 +386,11 @@ pub fn parse_run_metadata(meta: &str) -> (Option<u64>, Option<u64>) {
     (started, last)
 }
 
+/// The run's declared job timeout in seconds, which the stuck-run cap may never undercut.
+pub fn parse_declared_timeout(meta: &str) -> Option<u64> {
+    meta.lines().filter_map(|l| l.strip_prefix("timeout-sec: ")?.trim().parse().ok()).max()
+}
+
 struct Batch<'a> {
     name: &'a str,
     path: &'a Path,
@@ -447,10 +452,9 @@ fn pending(w: &World, c: &Ctx, b: &Batch) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     let now = w.clock.now();
     let run = w.forge.run_id(&c.s.forge, b.path, &b.branch);
-    let (started, last) = match &run {
-        Some(r) => parse_run_metadata(&w.forge.run_metadata(&c.s.forge, b.path, r)),
-        None => (None, None),
-    };
+    let meta = run.as_ref().map(|r| w.forge.run_metadata(&c.s.forge, b.path, r)).unwrap_or_default();
+    let (started, last) = parse_run_metadata(&meta);
+    let maxsec = c.s.verdict.ci_maxsec.max(parse_declared_timeout(&meta).unwrap_or(0));
     let run_age = match (started, &run) {
         (Some(s), _) => Some(now.saturating_sub(s)),
         (None, None) => Some(now.saturating_sub(b.kv.get("opened").and_then(|o| o.trim().parse().ok()).unwrap_or(0))),
@@ -458,7 +462,7 @@ fn pending(w: &World, c: &Ctx, b: &Batch) -> i32 {
     };
     let idle = last.map(|l| now.saturating_sub(l));
     let run_s = run.clone().unwrap_or_default();
-    match classify_pending(run_age, idle, c.s.verdict.ci_maxsec, c.s.verdict.ci_idle_sec) {
+    match classify_pending(run_age, idle, maxsec, c.s.verdict.ci_idle_sec) {
         Pending::WaitUnknown => w.out(format!("verdict {name}: PR {pr} pending (run {run_s} age unknown)")),
         Pending::WaitRunning => w.out(format!("verdict {name}: PR {pr} pending (run age {}s)", run_age.unwrap_or(0))),
         Pending::WaitProgressing => w.out(format!(

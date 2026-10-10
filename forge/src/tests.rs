@@ -4,6 +4,7 @@
 
 use crate::cmds::*;
 use crate::ports::{Gh, GhOut, Proc};
+use crate::time::epoch;
 use std::cell::RefCell;
 use std::path::Path;
 
@@ -318,6 +319,30 @@ fn run_metadata_prints_started_at_then_both_last_activity_lines() {
     let la: Vec<&String> = out.lines.iter().filter(|l| l.starts_with("last-activity:")).collect();
     assert_eq!(la.len(), 2, "the run-level and jobs-level last-activity both print; a reader takes the last one: {out:?}", out = out.lines);
     assert!(out.lines[0].starts_with("started-at:"));
+}
+
+#[test]
+fn run_metadata_reads_declared_timeout_and_live_job_log_activity() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/9"],
+        0,
+        r#"{"run_started_at":"2026-09-29T00:00:00Z","updated_at":"2026-09-29T00:05:00Z","path":".github/workflows/gate.yml@refs/heads/b","head_sha":"abc"}"#,
+    );
+    gh.on(
+        &["api", "-H", "Accept: application/vnd.github.raw", "repos/{owner}/{repo}/contents/.github/workflows/gate.yml?ref=abc"],
+        0,
+        "jobs:\n  a:\n    timeout-minutes: 30\n  b:\n    timeout-minutes: 90 # long\n",
+    );
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/9/jobs"],
+        0,
+        r#"{"jobs":[{"id":5,"status":"in_progress","started_at":"2026-09-29T00:01:00Z","steps":[]}]}"#,
+    );
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/5/logs"], 0, "2026-09-29T00:02:00.1234567Z a\n2026-09-29T00:40:00.7654321Z b\n\n");
+    let out = run_metadata(&gh, repo(), "9").lines;
+    assert!(out.contains(&"timeout-sec: 5400".to_string()), "{out:?}");
+    assert_eq!(out.last().unwrap(), &format!("last-activity: {}", epoch("2026-09-29T00:40:00Z")), "{out:?}");
 }
 
 // ── batch-ci-status ───────────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 //! crate's world of fakes.
 
 use super::*;
-use crate::ops::verdict::{classify_fault_rerun, classify_pending, normalize_status, parse_run_metadata, Pending};
+use crate::ops::verdict::{classify_fault_rerun, classify_pending, normalize_status, parse_declared_timeout, parse_run_metadata, Pending};
 
 fn has_call(v: &RefCell<Vec<String>>, prefix: &str) -> bool {
     v.borrow().iter().any(|c| c.starts_with(prefix))
@@ -27,6 +27,8 @@ fn classifiers_match_the_table() {
     assert_eq!(normalize_status("green"), "green");
     assert_eq!(parse_run_metadata("started-at: 100\nlast-activity: 150\nlast-activity: 140\nlast-activity: x\n"), (Some(100), Some(150)));
     assert_eq!(parse_run_metadata(""), (None, None));
+    assert_eq!(parse_declared_timeout("timeout-sec: 600\ntimeout-sec: 5400\ntimeout-sec: x\n"), Some(5400));
+    assert_eq!(parse_declared_timeout(""), None);
 }
 
 #[test]
@@ -257,6 +259,25 @@ fn pending_waits_while_the_run_is_young_or_progressing_and_cancels_a_stuck_one()
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     assert!(t.out().contains("verdict spira: PR 12 run 77 progressing (last activity 50s ago)"), "{}", t.out());
     assert!(!has_call(&t.forge.calls, "run-cancel"));
+    // past the global cap but inside the run's declared timeout: never cancelled, even idle
+    let mut t = T::new(LandMode::Queue);
+    batch(&t);
+    t.lib.s.verdict.ci_maxsec = 100;
+    t.lib.s.verdict.ci_idle_sec = 30;
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.meta.borrow_mut() = "started-at: 800\nlast-activity: 950\ntimeout-sec: 5400\n".into();
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert!(!has_call(&t.forge.calls, "run-cancel"));
+    assert!(t.out().contains("pending (run age 200s)"), "{}", t.out());
+    // past its declared timeout and idle: cancelled
+    let mut t = T::new(LandMode::Queue);
+    batch(&t);
+    t.lib.s.verdict.ci_maxsec = 100;
+    t.lib.s.verdict.ci_idle_sec = 30;
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.meta.borrow_mut() = "started-at: 800\nlast-activity: 950\ntimeout-sec: 150\n".into();
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert!(has_call(&t.forge.calls, "run-cancel 77"));
     // old and idle: cancelled, the record untouched for the next pass
     let mut t = T::new(LandMode::Queue);
     batch(&t);
