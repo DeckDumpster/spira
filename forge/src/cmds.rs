@@ -199,6 +199,7 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, branch: &str) -> 
 
     let mut jobs_json = String::new();
     let mut build_err_lines: Vec<String> = Vec::new();
+    let mut step_lines: Vec<String> = Vec::new();
     let mut run_attributable = false;
     if status == "green" || status == "red" {
         run_attributable = true;
@@ -217,6 +218,15 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, branch: &str) -> 
             if let Some(build_job_id) = jv.as_ref().and_then(|v| bad_job_id(v, "build")) {
                 let logs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{build_job_id}/logs")]);
                 build_err_lines = extract_build_errors(&logs.text());
+            }
+        }
+        if status == "red" {
+            if let Some(v) = &jv {
+                for (job_id, job, step) in failed_steps(v) {
+                    let logs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs")]);
+                    step_lines.push(format!("failed-step: {job} / {step}"));
+                    step_lines.extend(step_log_tail(&logs.text(), STEP_LOG_TAIL).into_iter().map(|l| format!("step-log: {l}")));
+                }
             }
         }
         if status == "red" {
@@ -246,6 +256,14 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, branch: &str) -> 
     }
     if run_attributable && !run_url.is_empty() {
         lines.push(format!("run-url: {run_url}"));
+    }
+    if run_attributable {
+        if let Some(rid) = &run_id {
+            lines.push(format!("run-id: {rid}"));
+        }
+    }
+    if status == "red" {
+        lines.extend(step_lines);
     }
     for l in &build_err_lines {
         if !l.is_empty() {
@@ -278,6 +296,40 @@ fn job_bad(v: &Value, name: &str) -> bool {
         }
     }
     false
+}
+
+const STEP_LOG_TAIL: usize = 20;
+const MAX_FAILED_JOBS: usize = 3;
+
+/// `(job id, job name, step name)` for the first failed step of each failed job.
+fn failed_steps(v: &Value) -> Vec<(String, String, String)> {
+    let Some(jobs) = v.get("jobs").and_then(Value::as_array) else { return Vec::new() };
+    let mut out = Vec::new();
+    for j in jobs {
+        if jstr(j, "conclusion").as_deref() != Some("failure") {
+            continue;
+        }
+        let (Some(id), Some(name)) = (j.get("id"), jstr(j, "name")) else { continue };
+        let step = j
+            .get("steps")
+            .and_then(Value::as_array)
+            .and_then(|ss| ss.iter().find(|s| jstr(s, "conclusion").as_deref() == Some("failure")))
+            .and_then(|s| jstr(s, "name"))
+            .unwrap_or_else(|| "<unknown step>".into());
+        out.push((id.to_string(), name, step));
+        if out.len() == MAX_FAILED_JOBS {
+            break;
+        }
+    }
+    out
+}
+
+/// The last `n` lines of a job log up to its final `##[error]` line (post-step cleanup after
+/// the failure is dropped), with GitHub's per-line timestamp stripped and blanks removed.
+fn step_log_tail(log: &str, n: usize) -> Vec<String> {
+    let lines: Vec<&str> = log.lines().map(|l| l.split_once(' ').filter(|(t, _)| t.ends_with('Z') && t.contains('T')).map_or(l, |(_, r)| r)).filter(|l| !l.trim().is_empty()).collect();
+    let end = lines.iter().rposition(|l| l.starts_with("##[error]")).map_or(lines.len(), |i| i + 1);
+    lines[end.saturating_sub(n)..end].iter().map(|l| l.to_string()).collect()
 }
 
 fn bad_job_id(v: &Value, name: &str) -> Option<String> {

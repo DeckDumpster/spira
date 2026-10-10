@@ -187,6 +187,9 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     let (pr, forge_sha, head) = (field("pr"), field("base"), field("head"));
     let suites = red_suites_csv(out);
     let run_url = tagged(out, "run-url: ").last().map(|s| s.to_string()).unwrap_or_default();
+    let run_id = tagged(out, "run-id: ").last().map(|s| s.trim().to_string()).filter(|s| !s.is_empty() && s.chars().all(|ch| ch.is_ascii_digit())).unwrap_or_default();
+    let failed_steps = tagged(out, "failed-step: ");
+    let step_log = tagged(out, "step-log: ");
     let ids: Vec<String> = kv.members().into_iter().map(|m| m.id).filter(|i| !i.is_empty()).collect();
     let member_ids = ids.join(",");
 
@@ -203,11 +206,31 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     let fail_lines = fail_lines.trim_end().to_string();
     w.forge.pr_close(&c.s.forge, path, &pr);
 
+    let filed_marker = c.queue_file(&format!("publish-red-run-{run_id}"));
+    if !run_id.is_empty() {
+        if let Ok(Some(prior)) = records::read_kv(&filed_marker) {
+            let _ = std::fs::remove_file(&pfile);
+            let _ = write_atomic(&c.queue_file("publish-red"), &format!("head={head}\nfix_forward={}\nsuites={suites}\n", prior.get("fix_forward").unwrap_or("<create-failed>")));
+            w.out(format!("verdict {name}: publish PR {pr} red — run {run_id} already has tracker {}; not filing another", prior.get("fix_forward").unwrap_or("?")));
+            return OK;
+        }
+    }
+
     let mut body = format!("Publish PR {pr} red for {name} ({}).\n\n", if run_url.is_empty() { "run link unavailable" } else { &run_url });
     body.push_str(&format!("Published range: {}..{}\n", short(&forge_sha), short(&head)));
     body.push_str(&format!("Red suites: {}\n\n", if suites.is_empty() { "<none named>" } else { &suites }));
     if !fail_lines.is_empty() {
         body.push_str(&format!("Failing lines:\n{fail_lines}\n\n"));
+    }
+    if !failed_steps.is_empty() {
+        body.push_str("Failed steps:\n");
+        for f in &failed_steps {
+            body.push_str(&format!("- {f}\n"));
+        }
+        if !step_log.is_empty() {
+            body.push_str(&format!("\nLog tail of the failed step:\n{}\n", step_log.join("\n")));
+        }
+        body.push('\n');
     }
     body.push_str(&format!("Members in this publish: {}\n\n", if member_ids.is_empty() { "<none>" } else { &member_ids }));
     body.push_str("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened.");
@@ -226,6 +249,9 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     let fid_s = fid.clone().unwrap_or_else(|| "<create-failed>".into());
 
     let _ = std::fs::remove_file(&pfile);
+    if !run_id.is_empty() && fid.is_some() {
+        let _ = write_atomic(&filed_marker, &format!("fix_forward={fid_s}\n"));
+    }
     // Read by `publish`: holds off the next publish of this same head.
     let _ = write_atomic(&c.queue_file("publish-red"), &format!("head={head}\nfix_forward={fid_s}\nsuites={suites}\n"));
     let suites_s = if suites.is_empty() { "none".to_string() } else { suites.clone() };
