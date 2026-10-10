@@ -300,7 +300,7 @@ fn lc_state(env: &[(String, String)], id: &str) -> Option<String> {
 pub fn canary_worker() -> Result<(), String> {
     let log = |s: &str| eprintln!("{} canary-worker: {s}", crate::fsutil::now_rfc3339());
     let bd = std::env::var("SPIRA_BD").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "bd".into());
-    let db = std::env::var("SPIRA_DB").unwrap_or_default();
+    let db = std::env::var("SPIRA_DB").ok().filter(|v| !v.is_empty());
     let holder = std::env::var("BEADS_ACTOR").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| CANARY_HOLDER.into());
     let lease_until = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + CANARY_LEASE_SECS;
     // batch-job: the stage's synthetic aeon claiming its bead, bounded by the canary's own --deadline.
@@ -351,8 +351,8 @@ pub fn canary_worker() -> Result<(), String> {
     log(&format!("committed and pushed {branch}"));
 
     let mut set_state = spira_config::bounded::bounded(&bd);
-    if !db.is_empty() {
-        set_state.arg("-C").arg(&db);
+    if let Some(db) = &db {
+        set_state.arg("-C").arg(db);
     }
     set_state.args(["set-state", &id, &format!("branch={branch}")]);
     let _ = set_state.output();

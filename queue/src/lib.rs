@@ -1,6 +1,7 @@
 //! queue — the merge queue's operator and landing tool. See DESIGN.md.
 
 pub mod cli;
+pub mod conf;
 pub mod ident;
 pub mod lock;
 pub mod model;
