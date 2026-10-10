@@ -9,6 +9,7 @@ use std::process::Command;
 pub const DIR: &str = "lifecycle/migrations";
 
 fn git(wt: &Path, args: &[&str]) -> Result<String, String> {
+    // batch-job: git history operation, as long as the repository is large
     let o = Command::new("git").arg("-C").arg(wt).args(args).output().map_err(|e| format!("git {args:?}: {e}"))?;
     if !o.status.success() {
         return Err(format!("git {args:?}: {}", String::from_utf8_lossy(&o.stderr).trim()));
