@@ -12,13 +12,30 @@ use crate::ports::{Exec, Git};
 pub fn steps(base_fq: &str, lint_from_tree: bool) -> Vec<(&'static str, Vec<String>)> {
     let base = format!("SPIRA_GATE_BASE={base_fq}");
     let lint: Vec<&str> = if lint_from_tree { vec!["cargo", "run", "--quiet", "-p", "spira-lint", "--"] } else { vec!["spira-lint"] };
-    let mut lint_args = vec![base.clone()];
+    let mut lint_args = git_env_unset();
+    lint_args.push(base.clone());
     lint_args.extend(lint.into_iter().map(String::from));
     lint_args.extend(["--diff".to_string(), base_fq.to_string()]);
     vec![
         ("env", lint_args),
-        ("env", vec![base, "bash".to_string(), "spira/build-fence.sh".to_string()]),
+        ("env", git_env_unset().into_iter().chain([base, "bash".to_string(), "spira/build-fence.sh".to_string()]).collect()),
     ]
+}
+
+/// Both steps resolve git from the work tree's cwd, as the build does, never from a git
+/// location the aeon's own environment carries.
+fn git_env_unset() -> Vec<String> {
+    ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX"].iter().flat_map(|k| ["-u".to_string(), k.to_string()]).collect()
+}
+
+/// spira-lint's exit when its own probe (git) failed, not when it found something.
+pub const LINT_PROBE_FAILED: i32 = 4;
+
+/// A fast-tier red. `harness` marks a tool failure that says nothing about the work.
+#[derive(Debug, PartialEq)]
+pub struct Red {
+    pub harness: bool,
+    pub text: String,
 }
 
 /// Whether the branch changes what spira-lint compiles in (the key registry), so the installed
@@ -33,19 +50,20 @@ fn changes_compiled_registry(git: &dyn Git, work: &Path, base_fq: &str) -> bool 
 /// The first red, with its text: a rebase conflict of `branch` against `base_fq`, then (where
 /// the tree carries the build fence) spira-lint and the fence. `strict` makes an absent tool
 /// (127) red; otherwise it is skipped.
-pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &str, base_fq: &str, strict: bool) -> Option<String> {
+pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &str, base_fq: &str, strict: bool) -> Option<Red> {
     let mt = git.git(repo, &["merge-tree", "--write-tree", base_fq, branch]);
     if mt.code == 1 {
-        return Some(format!("{branch} does not rebase onto {base_fq} cleanly:\n{}", mt.text()));
+        return Some(Red { harness: false, text: format!("{branch} does not rebase onto {base_fq} cleanly:\n{}", mt.text()) });
     }
     if !work.join("spira/build-fence.sh").is_file() {
-        return strict.then(|| format!("{} carries no spira/build-fence.sh — there is no fast tier to run", work.display()));
+        return strict.then(|| Red { harness: false, text: format!("{} carries no spira/build-fence.sh — there is no fast tier to run", work.display()) });
     }
     for (prog, args) in steps(base_fq, changes_compiled_registry(git, work, base_fq)) {
         let o = exec.exec(prog, &args, None, Some(work));
         if o.code != 0 && (o.code != 127 || strict) {
             let name = if args.iter().any(|a| a == "spira/build-fence.sh") { "spira/build-fence.sh" } else { "spira-lint" };
-            return Some(format!("{name} failed (rc={}):\n{}{}", o.code, o.stdout, o.stderr));
+            let harness = name == "spira-lint" && o.code == LINT_PROBE_FAILED;
+            return Some(Red { harness, text: format!("{name} failed (rc={}):\n{}{}", o.code, o.stdout, o.stderr) });
         }
     }
     None
@@ -124,16 +142,17 @@ mod tests {
         assert_eq!(steps.len(), 2);
         for (prog, args) in &steps {
             assert_eq!(*prog, "env");
-            assert_eq!(args[0], "SPIRA_GATE_BASE=refs/heads/local/main", "{args:?}");
+            assert!(args.contains(&"SPIRA_GATE_BASE=refs/heads/local/main".to_string()), "{args:?}");
+            assert!(args.windows(2).any(|w| w == ["-u", "GIT_DIR"]), "{args:?}");
         }
-        assert_eq!(steps[0].1[1..], ["spira-lint".to_string(), "--diff".to_string(), "refs/heads/local/main".to_string()]);
-        assert_eq!(steps[1].1[1..], ["bash".to_string(), "spira/build-fence.sh".to_string()]);
+        assert_eq!(steps[0].1[steps[0].1.len() - 3..], ["spira-lint".to_string(), "--diff".to_string(), "refs/heads/local/main".to_string()]);
+        assert_eq!(steps[1].1[steps[1].1.len() - 2..], ["bash".to_string(), "spira/build-fence.sh".to_string()]);
     }
 
     #[test]
     fn a_registry_changing_branch_lints_with_a_binary_built_from_its_tree() {
         let steps = steps("base", true);
-        assert_eq!(steps[0].1[1..], ["cargo", "run", "--quiet", "-p", "spira-lint", "--", "--diff", "base"].map(String::from));
+        assert_eq!(steps[0].1[steps[0].1.len() - 8..], ["cargo", "run", "--quiet", "-p", "spira-lint", "--", "--diff", "base"].map(String::from));
         let w = tree("registry", true);
         struct D;
         impl Git for D {
@@ -158,14 +177,25 @@ mod tests {
     fn a_failing_step_is_red_and_names_itself() {
         let w = tree("failing", true);
         let r = red(&G(0), &E(3, Mutex::new(vec![])), &w.join("."), &w.join("."), "b", "base", false).unwrap();
-        assert!(r.starts_with("spira-lint failed (rc=3)"), "{r}");
+        assert!(r.text.starts_with("spira-lint failed (rc=3)"), "{r:?}");
+        assert!(!r.harness);
+    }
+
+    #[test]
+    fn a_lint_probe_failure_is_harness_and_a_finding_is_not() {
+        let w = tree("probe", true);
+        let r = red(&G(0), &E(LINT_PROBE_FAILED, Mutex::new(vec![])), &w.join("."), &w.join("."), "b", "base", false).unwrap();
+        assert!(r.harness, "{r:?}");
+        assert!(r.text.contains("boom"), "stderr is recorded verbatim: {r:?}");
+        let r = red(&G(0), &E(1, Mutex::new(vec![])), &w.join("."), &w.join("."), "b", "base", false).unwrap();
+        assert!(!r.harness, "{r:?}");
     }
 
     #[test]
     fn a_rebase_conflict_is_red() {
         let w = tree("rebase", true);
         let r = red(&G(1), &E(0, Mutex::new(vec![])), &w.join("."), &w.join("."), "b", "base", false).unwrap();
-        assert!(r.contains("does not rebase onto base cleanly"), "{r}");
+        assert!(r.text.contains("does not rebase onto base cleanly"), "{r:?}");
     }
 
     #[test]
@@ -180,7 +210,7 @@ mod tests {
         let w = tree("nofence", false);
         let e = E(0, Mutex::new(vec![]));
         assert_eq!(red(&G(0), &e, &w.join("."), &w.join("."), "b", "base", false), None);
-        assert!(red(&G(0), &e, &w.join("."), &w.join("."), "b", "base", true).unwrap().contains("no fast tier"));
+        assert!(red(&G(0), &e, &w.join("."), &w.join("."), "b", "base", true).unwrap().text.contains("no fast tier"));
         assert!(e.1.lock().unwrap().is_empty());
     }
 

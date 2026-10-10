@@ -123,7 +123,7 @@ fn run_capacity(args: &[String]) -> i32 {
 
 /// `aeon fast-tier <repo> <work> <branch> <base>`: the handoff's fast tier (`fast_tier::red`)
 /// against a checkout, with an absent tool or a tree without the fence refused rather than
-/// skipped. Exit 0 green, 1 red (the text on stdout), 2 usage.
+/// skipped. Exit 0 green, 1 red (the text on stdout), 2 usage, 3 a tool failure that judges nothing.
 fn run_fast_tier(args: &[String]) -> i32 {
     let [repo, work, branch, base] = args else {
         eprintln!("usage: aeon fast-tier <repo> <work> <branch> <base>");
@@ -134,8 +134,8 @@ fn run_fast_tier(args: &[String]) -> i32 {
     let (git, exec) = (RealGit { env: &env }, RealExec { env: &env, timeout: None });
     match aeon::fast_tier::red(&git, &exec, Path::new(repo), Path::new(work), branch, base, true) {
         Some(red) => {
-            println!("{red}");
-            1
+            println!("{}", red.text);
+            if red.harness { 3 } else { 1 }
         }
         None => {
             println!("fast tier green: {branch} against {base}");

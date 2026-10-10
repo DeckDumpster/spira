@@ -1,7 +1,8 @@
 //! spira-lint [--root <dir>] [--only <rule>] [--base <rev>]
 //! spira-lint --only inventory --scan <file>
 //!
-//! Exit: 0 clean, 1 any finding, 2 usage, 3 a rule refused to report clean.
+//! Exit: 0 clean, 1 any finding, 2 usage, 3 a rule refused to report clean,
+//! 4 the tree could not be walked (git failed) — the tool failed, nothing was linted.
 //!
 //! `--diff <rev>` is `--base <rev>` plus a filter: a finding is reported only when it is on a
 //! line the working tree adds or changes relative to `git merge-base <rev> HEAD`, and a
@@ -106,7 +107,7 @@ fn main() -> ExitCode {
         Ok(t) => t.with_base(base),
         Err(e) => {
             eprintln!("spira-lint: {e}");
-            return ExitCode::from(3);
+            return ExitCode::from(4);
         }
     };
     if emit_allow {
