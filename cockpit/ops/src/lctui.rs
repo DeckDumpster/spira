@@ -221,7 +221,26 @@ pub fn tree(v: &View) -> Vec<Node> {
         );
     }
 
-    out.push(match &v.round {
+    if !v.rounds.is_empty() {
+        let kids: Vec<Node> = v
+            .rounds
+            .iter()
+            .map(|r| {
+                let key = format!("rounds/{}", r.batch);
+                if r.stale {
+                    return Node::new(key, format!("{YEL}{}{R}", r.line()));
+                }
+                let staged = r.round.staged.iter().map(|c| {
+                    let heads = c.members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(" ");
+                    Node::new(format!("{key}/staged/{}", c.name), format!("{B}{}{R} · {} · {} member(s) · head {heads}", c.name, c.state, c.members.len()))
+                });
+                Node::new(key.clone(), r.line()).kids(staged.collect())
+            })
+            .collect();
+        let live = v.rounds.iter().filter(|r| !r.stale).count();
+        out.push(Node::new("rounds", format!("{B}ROUNDS{R}  {B}{live}{R} live")).kids(kids));
+    }
+    let single = match &v.round {
         None => Node::new("round", format!("{B}ROUND{R}  {D}none open{R}")),
         Some(r) => {
             let member_nodes = |round: &crate::lcview::RoundView, key: &str| -> Vec<Node> {
@@ -252,7 +271,10 @@ pub fn tree(v: &View) -> Vec<Node> {
             )
             .kids(kids)
         }
-    });
+    };
+    if v.rounds.is_empty() {
+        out.push(single);
+    }
 
     let mut aeons: Vec<Node> = v
         .now_items
@@ -1098,6 +1120,21 @@ mod tests {
         let at = t.iter().position(|l| l.contains("DRIFT")).expect("a drift line");
         assert!(at < t.iter().position(|l| l.contains("ROUND")).unwrap(), "the alarm sits above ROUND: {t:#?}");
         assert!(has(&t, "sp-landed1"));
+    }
+
+    #[test]
+    fn the_lifecycle_page_draws_rounds_per_repo_with_staged_indented() {
+        let mut v = busy_view();
+        let r = |repo: &str, batch: &str, stale: bool| crate::lcview::RepoRound { repo: repo.into(), batch: batch.into(), kind: "VM round".into(), phase: "suites".into(), age: "5m".into(), stale, ..Default::default() };
+        let mut spira = r("spira", "r-auto-143", false);
+        spira.round.staged = vec![RoundView { name: "r-stage-8".into(), state: "STAGED".into(), ..Default::default() }];
+        v.rounds = vec![spira, r("deckdumpster", "deck-1", false), r("spira", "r-auto-62", true)];
+        let t = text(&layout(&v, &Ui::default(), 120, 200));
+        let at = |s: &str| t.iter().position(|l| l.contains(s)).unwrap_or_else(|| panic!("{s}: {t:#?}"));
+        let indent = |i: usize| t[i].len() - t[i].trim_start().len();
+        assert!(indent(at("r-stage-8")) > indent(at("r-auto-143")), "{t:#?}");
+        assert!(t[at("r-auto-62")].contains("STALE") && !has(&t, "none open"), "{t:#?}");
+        assert!(render_fragment(&v, None).contains("r-stage-8"));
     }
 
     #[test]

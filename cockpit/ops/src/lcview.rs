@@ -148,6 +148,15 @@ pub struct BatchRow {
     /// When each eject was recorded (open rounds only); ejects minutes apart are one attribution.
     #[serde(default)]
     pub eject_at: Vec<i64>,
+    #[serde(default)]
+    pub repo: String,
+    /// The forge PR number; 0 for a round run on the VM.
+    #[serde(default)]
+    pub pr: i64,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub progress: Option<PassProgress>,
 }
 
 /// One live aeon: its unit, main pid, when it started, and its phase from its process tree
@@ -370,6 +379,33 @@ pub struct RoundView {
     pub staged: Vec<RoundView>,
 }
 
+/// One repo's live round, with the rounds staged behind it.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RepoRound {
+    pub repo: String,
+    pub batch: String,
+    /// `VM round` or `forge batch PR #n`.
+    pub kind: String,
+    pub phase: String,
+    pub done: u32,
+    pub total: u32,
+    pub red: usize,
+    pub age: String,
+    /// An OPEN row with no live run and no PR for over an hour: drawn as STALE, not as a round.
+    pub stale: bool,
+    pub round: RoundView,
+}
+
+impl RepoRound {
+    pub fn line(&self) -> String {
+        let pass = if self.total > 0 { format!("{}/{} · {} red", self.done, self.total, self.red) } else { "—".to_string() };
+        if self.stale {
+            return format!("{} · {} · STALE · OPEN {} with no live run and no PR", self.repo, self.batch, self.age);
+        }
+        format!("{} · {} · {} · {} · {} · {}", self.repo, self.batch, self.kind, self.phase, pass, self.age)
+    }
+}
+
 /// A certification pass's live progress, from the progress file the cert path writes.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PassProgress {
@@ -467,6 +503,8 @@ pub struct View {
     pub refused: Vec<SmRefusal>,
     pub batch: Vec<SmBatch>,
     pub round: Option<RoundView>,
+    /// One live round per repo, then the STALE rows, each with its staged rounds.
+    pub rounds: Vec<RepoRound>,
     pub progress: Option<PassProgress>,
     pub now: i64,
     /// Questions waiting on the operator (needs-ryan), oldest first. Never counted as work.
@@ -646,6 +684,44 @@ fn batch_block(s: &Snapshot) -> Vec<SmBatch> {
     out
 }
 
+const STALE_OPEN_S: i64 = 3600;
+
+fn repo_rounds(s: &Snapshot, round_view: &dyn Fn(&BatchRow) -> RoundView) -> Vec<RepoRound> {
+    let mut live: BTreeMap<String, &BatchRow> = BTreeMap::new();
+    let mut stale: Vec<&BatchRow> = Vec::new();
+    for b in s.batches.iter().filter(|b| OPEN_BATCH.contains(&b.state.as_str())) {
+        let running = b.progress.as_ref().is_some_and(|p| p.running(s.now));
+        if b.state == "OPEN" && b.pr == 0 && !running && s.now - b.opened_at.max(b.last_at) > STALE_OPEN_S {
+            stale.push(b);
+            continue;
+        }
+        let slot = live.entry(b.repo.clone()).or_insert(b);
+        if b.opened_at > slot.opened_at {
+            *slot = b;
+        }
+    }
+    let mk = |b: &BatchRow, is_stale: bool| {
+        let mut round = round_view(b);
+        round.staged = s.batches.iter().filter(|c| c.state == "STAGED" && c.parent == b.id).map(round_view).collect();
+        let p = b.progress.as_ref();
+        RepoRound {
+            repo: b.repo.clone(),
+            batch: b.id.clone(),
+            kind: if b.pr > 0 { format!("forge batch PR #{}", b.pr) } else { "VM round".into() },
+            phase: if !b.phase.is_empty() { b.phase.clone() } else { p.map(|p| p.phase.clone()).unwrap_or_else(|| b.state.clone()) },
+            done: p.map_or(0, |p| p.done),
+            total: p.map_or(0, |p| p.total),
+            red: p.map_or(0, |p| p.red.len()),
+            age: age(s.now - if b.opened_at > 0 { b.opened_at } else { b.last_at }),
+            stale: is_stale,
+            round,
+        }
+    };
+    let mut out: Vec<RepoRound> = live.values().map(|b| mk(b, false)).collect();
+    out.extend(stale.into_iter().map(|b| mk(b, true)));
+    out
+}
+
 /// Certification passes a round has taken, as the store knows them: the first, plus one per
 /// attribution (ejects within ten minutes of each other were decided from one red pass).
 pub fn passes(eject_at: &[i64]) -> usize {
@@ -799,6 +875,7 @@ pub fn view(s: &Snapshot) -> View {
         r.staged = s.batches.iter().filter(|c| c.state == "STAGED" && c.parent == b.id).map(round_view).collect();
         r
     });
+    v.rounds = repo_rounds(s, &round_view);
     // round-vm's writer names the round by its head sha and the pass by a sha: one VM round
     // runs at a time, so a sha-named pass is the open round's current pass.
     if let (Some(p), Some(r)) = (v.progress.as_mut(), v.round.as_ref()) {
@@ -988,6 +1065,17 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     }
     for r in &v.refused {
         out.push(format!("  {:<24}{B}{:>4}{R}  {}{}", cut(&r.what, 24), r.n, cut(&r.why, dw), dot(r.red)));
+    }
+    out.push(String::new());
+    out.push(format!("{B}ROUNDS{R}"));
+    if v.rounds.is_empty() {
+        out.push(format!("  {D}none live{R}"));
+    }
+    for r in &v.rounds {
+        out.push(if r.stale { format!("  {YEL}{}{R}", cut(&r.line(), w - 4)) } else { format!("  {}", cut(&r.line(), w - 4)) });
+        for c in &r.round.staged {
+            out.push(format!("      {D}{} · {} · {} member(s) · head {}{R}", c.name, c.state, c.members.len(), c.members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(" ")));
+        }
     }
     out.push(String::new());
     out.push(format!("{B}BATCH{R}"));
@@ -1435,6 +1523,41 @@ mod tests {
         assert!(render_html(&view(&snap(vec![])), Some(600), 10).contains("Snapshot is 10m old"));
     }
 
+    fn rounds_snap() -> Snapshot {
+        let now = 100_000;
+        let b = |id: &str, repo: &str, state: &str, opened: i64, pr: i64| BatchRow { id: id.into(), repo: repo.into(), state: state.into(), pr, opened_at: now - opened, last_at: now - opened, members: vec![format!("sp-{id}")], ..Default::default() };
+        let mut vm = b("r-auto-143", "spira", "OPEN", 600, 0);
+        vm.phase = "suites".into();
+        vm.progress = Some(PassProgress { phase: "suites".into(), done: 10, total: 40, red: vec!["test-x.sh".into()], updated_at: now - 3, ..Default::default() });
+        let mut staged = b("r-stage-8", "spira", "STAGED", 300, 0);
+        staged.parent = "r-auto-143".into();
+        let mut s = snap(vec![]);
+        s.batches = vec![vm, staged, b("deckdumpster-1", "deckdumpster", "OPEN", 1200, 41), b("pokedumpster-1", "pokedumpster", "CI_RUNNING", 2400, 7), b("r-auto-62", "spira", "OPEN", 3 * 86_400, 0)];
+        s
+    }
+
+    #[test]
+    fn rounds_are_one_per_repo_with_staged_children_and_a_stale_open_row_marked() {
+        let v = view(&rounds_snap());
+        let live: Vec<_> = v.rounds.iter().filter(|r| !r.stale).collect();
+        assert_eq!(live.len(), 3, "{:?}", v.rounds.iter().map(|r| r.line()).collect::<Vec<_>>());
+        let spira = live.iter().find(|r| r.repo == "spira").unwrap();
+        assert_eq!((spira.batch.as_str(), spira.kind.as_str(), spira.done, spira.total, spira.red), ("r-auto-143", "VM round", 10, 40, 1));
+        assert_eq!(spira.round.staged.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["r-stage-8"]);
+        assert!(live.iter().any(|r| r.repo == "deckdumpster" && r.kind == "forge batch PR #41"));
+        assert!(live.iter().any(|r| r.repo == "pokedumpster" && r.kind == "forge batch PR #7"));
+        let stale: Vec<_> = v.rounds.iter().filter(|r| r.stale).collect();
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].batch, "r-auto-62");
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["rounds"].as_array().unwrap().len(), 4);
+        assert_eq!(json["rounds"].as_array().unwrap().iter().find(|r| r["batch"] == "r-auto-143").unwrap()["round"]["staged"][0]["name"], "r-stage-8");
+        let once = render(&v, 120).join("\n");
+        assert!(once.contains("ROUNDS") && once.contains("deckdumpster · deckdumpster-1 · forge batch PR #41") && once.contains("r-auto-62 · STALE"), "{once}");
+        let at = |n: &str| once.find(n).unwrap();
+        assert!(at("r-auto-143") < at("r-stage-8") && at("r-stage-8") < at("r-auto-62"), "{once}");
+    }
+
     #[test]
     fn the_snapshot_survives_a_round_trip_through_the_file_loom_reads() {
         let mut s = snap(vec![row("sp-a", "READY", 1)]);
@@ -1535,6 +1658,9 @@ terminal 24h    SUPERSEDED 0 · DROPPED 0 · DONE 0
 
 REFUSED (1h)
   none
+
+ROUNDS
+  none live
 
 BATCH
   OPEN          0
