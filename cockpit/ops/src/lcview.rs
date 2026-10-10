@@ -142,6 +142,8 @@ pub struct BatchRow {
     #[serde(default)]
     pub opened_at: i64,
     #[serde(default)]
+    pub parent: String,
+    #[serde(default)]
     pub ejected: Vec<String>,
     /// When each eject was recorded (open rounds only); ejects minutes apart are one attribution.
     #[serde(default)]
@@ -363,6 +365,9 @@ pub struct RoundView {
     pub passes: usize,
     pub ejected: Vec<String>,
     pub members: Vec<RoundMember>,
+    /// Rounds assembled behind this one (`STAGED`, parent = this round), drawn as its children.
+    #[serde(default)]
+    pub staged: Vec<RoundView>,
 }
 
 /// A certification pass's live progress, from the progress file the cert path writes.
@@ -771,11 +776,7 @@ pub fn view(s: &Snapshot) -> View {
     v.now = s.now;
     v.batch = batch_block(s);
     // The newest round, open or not: when none is running the pane says how the last one ended.
-    v.round = s
-        .batches
-        .iter()
-        .max_by_key(|b| b.opened_at.max(b.last_at))
-        .map(|b| {
+    let round_view = |b: &BatchRow| {
             let opened = if b.opened_at > 0 { b.opened_at } else { b.last_at };
             let ejects_of = |id: &str| s.batches.iter().filter(|o| o.ejected.iter().any(|e| e == id)).count();
             RoundView {
@@ -790,8 +791,14 @@ pub fn view(s: &Snapshot) -> View {
                     .filter(|m| !b.ejected.contains(m))
                     .map(|m| RoundMember { id: m.clone(), prio: prio(m), title: title(m), ejects: ejects_of(m) })
                     .collect(),
+                staged: Vec::new(),
             }
-        });
+        };
+    v.round = s.batches.iter().filter(|b| b.state != "STAGED").max_by_key(|b| b.opened_at.max(b.last_at)).map(|b| {
+        let mut r = round_view(b);
+        r.staged = s.batches.iter().filter(|c| c.state == "STAGED" && c.parent == b.id).map(round_view).collect();
+        r
+    });
     // round-vm's writer names the round by its head sha and the pass by a sha: one VM round
     // runs at a time, so a sha-named pass is the open round's current pass.
     if let (Some(p), Some(r)) = (v.progress.as_mut(), v.round.as_ref()) {

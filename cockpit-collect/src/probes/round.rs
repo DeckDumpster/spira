@@ -25,6 +25,7 @@ pub struct Batch {
     pub id: String,
     pub state: String,
     pub reason: String,
+    pub parent: String,
     pub opened_at: i64,
     pub last_at: Option<i64>,
     pub members: Vec<(String, String)>,
@@ -55,6 +56,7 @@ pub fn parse_batches(raw: &str) -> Option<Vec<Batch>> {
                 id: text(r, "batch_id"),
                 state: text(r, "state"),
                 reason: text(r, "reason"),
+                parent: text(r, "parent"),
                 opened_at: int(r.get("opened_at")).unwrap_or(0),
                 last_at: int(r.get("last_at")),
                 members: pairs(r, "members", "bead_id", "outcome"),
@@ -84,6 +86,16 @@ pub fn phase(state: &str) -> &'static str {
     }
 }
 
+fn children_after_parents(live: Vec<&Batch>) -> Vec<&Batch> {
+    let is_child = |b: &Batch| b.state == "STAGED" && live.iter().any(|p| p.id == b.parent);
+    let mut out = Vec::new();
+    for b in live.iter().filter(|b| !is_child(b)) {
+        out.push(*b);
+        out.extend(live.iter().filter(|c| is_child(c) && c.parent == b.id));
+    }
+    out
+}
+
 fn member_state(outcome: &str) -> &str {
     if outcome.is_empty() { "in" } else { outcome }
 }
@@ -96,7 +108,7 @@ pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs:
         push(&mut out, "SP_ROUND_STATE", "?");
         return out;
     };
-    let live: Vec<&Batch> = batches.iter().filter(|b| !terminal(&b.state)).collect();
+    let live = children_after_parents(batches.iter().filter(|b| !terminal(&b.state) && b.state != "DISCARDED").collect());
     if !live.is_empty() {
         push(&mut out, "SP_ROUND_STATE", "open");
         push(&mut out, "SP_ROUNDS_N", live.len().to_string());
@@ -104,6 +116,9 @@ pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs:
             let k = format!("SP_ROUNDS{r}");
             push(&mut out, &format!("{k}_NAME"), sanitize(&b.id));
             push(&mut out, &format!("{k}_PHASE"), phase(&b.state));
+            if b.state == "STAGED" && live.iter().any(|p| p.id == b.parent) {
+                push(&mut out, &format!("{k}_PARENT"), sanitize(&b.parent));
+            }
             push(&mut out, &format!("{k}_OPENED"), b.opened_at.to_string());
             let ejected: Vec<&str> = b.ejected.iter().map(|(id, _)| id.as_str()).collect();
             let members: Vec<_> = b.members.iter().filter(|(id, _)| !ejected.contains(&id.as_str())).collect();
@@ -173,6 +188,21 @@ mod tests {
         assert_eq!(get(&kv, "SP_ROUNDS0_MEMBER0"), Some("sp-z|skipped: unlanded dependency"));
         assert_eq!(get(&kv, "SP_ROUNDS1_NAME"), Some("r-10"));
         assert!(!kv.iter().any(|(_, v)| v == "r-9"));
+    }
+
+    #[test]
+    fn a_staged_round_follows_the_round_it_waits_behind_and_a_discarded_one_is_dropped() {
+        let raw = r#"[
+          {"batch_id":"r-12","state":"STAGED","parent":"r-10","opened_at":2000,"members":[{"bead_id":"sp-z","outcome":null}],"ejected":[]},
+          {"batch_id":"r-11","state":"OPEN","parent":null,"opened_at":1500,"members":[],"ejected":[]},
+          {"batch_id":"r-10","state":"CI_RUNNING","parent":null,"opened_at":1000,"members":[{"bead_id":"sp-y","outcome":null}],"ejected":[]},
+          {"batch_id":"r-9","state":"DISCARDED","parent":"r-10","opened_at":900,"members":[],"ejected":[]}]"#;
+        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900);
+        assert_eq!(get(&kv, "SP_ROUNDS_N"), Some("3"));
+        let names: Vec<_> = (0..3).map(|i| get(&kv, &format!("SP_ROUNDS{i}_NAME")).unwrap()).collect();
+        assert_eq!(names, ["r-11", "r-10", "r-12"]);
+        assert_eq!(get(&kv, "SP_ROUNDS2_PARENT"), Some("r-10"));
+        assert_eq!(get(&kv, "SP_ROUNDS1_PARENT"), None);
     }
 
     #[test]

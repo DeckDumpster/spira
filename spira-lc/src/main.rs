@@ -452,7 +452,7 @@ fn cmd_list_batches(conn: &Conn) -> (i32, String) {
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let run = || -> Result<Vec<Value>, String> {
         let mut batches = q(format!(
-            "SELECT batch_id, repo, state, reason, pass, phase, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
+            "SELECT batch_id, repo, state, parent, reason, pass, phase, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
         ))?;
         let ids: Vec<String> = batches
             .iter()
