@@ -8,7 +8,6 @@ pub struct GitProbe {
     pub repo: PathBuf,
     pub base_ref: String,
     pub work: PathBuf,
-    pub lint: bool,
     pub state: Box<dyn Fn(&str) -> Result<String, String>>,
 }
 
@@ -24,33 +23,6 @@ fn out(c: &mut Command, what: &str) -> Result<String, String> {
         return Err(format!("{what} exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("").trim()));
     }
     Ok(String::from_utf8_lossy(&o.stdout).into_owned())
-}
-
-fn checkout(repo: &Path, wt: &Path, commit: &str) -> Result<(), String> {
-    if wt.join(".git").exists() {
-        return out(git(wt).args(["checkout", "-q", "--detach", "--force", commit]), "git checkout").map(|_| ());
-    }
-    std::fs::create_dir_all(wt.parent().unwrap_or(wt)).map_err(|e| format!("{}: {e}", wt.display()))?;
-    out(git(repo).args(["worktree", "add", "-q", "--detach", "--force"]).arg(wt).arg(commit), "git worktree add").map(|_| ())
-}
-
-fn is_noise(l: &str) -> bool {
-    l.trim().is_empty() || l.starts_with("fence: ") || l.contains("clean —")
-}
-
-fn lint_lines(c: &mut Command, wt: &Path, what: &str) -> Result<Vec<String>, String> {
-    let o = c.output().map_err(|e| format!("{what}: {e}"))?;
-    let all = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
-    match o.status.code() {
-        Some(0) => Ok(Vec::new()),
-        Some(1) => Ok(all.lines().filter(|l| !is_noise(l)).map(|l| l.replace(&wt.display().to_string(), "<wt>")).collect()),
-        code => Err(format!("{what} exited {code:?}: {}", all.lines().last().unwrap_or("").trim())),
-    }
-}
-
-/// Findings in `merged` that `base` does not already carry.
-pub fn new_findings(merged: &[String], base: &[String]) -> Vec<String> {
-    merged.iter().filter(|l| !base.contains(l)).cloned().collect()
 }
 
 impl Probe for GitProbe {
@@ -103,29 +75,6 @@ impl Probe for GitProbe {
     fn state(&self, id: &str) -> Result<String, String> {
         (self.state)(id)
     }
-
-    fn lint(&self, merged: &str) -> Result<Vec<String>, String> {
-        if !self.lint {
-            return Ok(Vec::new());
-        }
-        let base = self.base()?;
-        let target = self.work.join("lint-target");
-        let (wt_m, wt_b) = (self.work.join("lint-merged"), self.work.join("lint-base"));
-        checkout(&self.repo, &wt_m, merged)?;
-        checkout(&self.repo, &wt_b, &base)?;
-        // batch-job: a cargo build of the tree under test runs as long as the build does
-        let mut build = Command::new("timeout");
-        build.arg("1800").args(["cargo", "build", "--release", "-p", "spira-lint"]).current_dir(&wt_m).env("CARGO_TARGET_DIR", &target);
-        out(&mut build, "cargo build -p spira-lint")?;
-        let bin = target.join("release/spira-lint");
-        let run = |wt: &Path| {
-            // batch-job: a lint walk of the tracked tree
-            let mut c = Command::new("timeout");
-            c.arg("600").arg(&bin).arg("--root").arg(wt).arg("--base").arg(&base).current_dir(wt).env("SPIRA_GATE_BASE", &base);
-            lint_lines(&mut c, wt, "spira-lint")
-        };
-        Ok(new_findings(&run(&wt_m)?, &run(&wt_b)?))
-    }
 }
 
 #[cfg(test)]
@@ -157,7 +106,7 @@ mod tests {
         let conflict = commit(&p, "f", "other\n", "sp-other: edits the same line");
         g(&p, &["checkout", "-q", "-b", "clean", "main"]);
         let clean = commit(&p, "g", "new\n", "spira: land sp-bead — adds g");
-        let probe = GitProbe { repo: p.clone(), base_ref: "main".into(), work: p.join(".sift"), lint: true, state: Box::new(|_| Ok("SUBMITTED".into())) };
+        let probe = GitProbe { repo: p.clone(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())) };
         (d, probe, [conflict, clean, "x".into()])
     }
 
@@ -178,19 +127,5 @@ mod tests {
         assert_eq!(probe.patch_id(&clean).unwrap(), probe.patch_id(&copy).unwrap());
         assert_eq!(probe.stacked_on("sp-me", &clean).unwrap(), ["sp-bead"]);
         assert!(probe.stacked_on("sp-bead", &clean).unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_probe_with_lint_off_builds_nothing_and_reports_nothing() {
-        let (d, mut probe, [_, clean, _]) = fixture();
-        probe.lint = false;
-        assert_eq!(probe.lint(&clean).unwrap(), Vec::<String>::new());
-        assert!(!d.path().join(".sift").exists());
-    }
-
-    #[test]
-    fn only_findings_absent_from_the_base_are_new() {
-        let m = vec!["a".to_string(), "b".to_string()];
-        assert_eq!(new_findings(&m, &["a".to_string()]), ["b"]);
     }
 }

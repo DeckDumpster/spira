@@ -29,9 +29,6 @@ pub trait Probe {
     fn patch_id(&self, tip: &str) -> Result<String, String>;
     fn stacked_on(&self, id: &str, tip: &str) -> Result<Vec<String>, String>;
     fn state(&self, id: &str) -> Result<String, String>;
-    /// Lint findings on `merged` that the base does not already have, from a spira-lint built
-    /// out of `merged`'s own tree.
-    fn lint(&self, merged: &str) -> Result<Vec<String>, String>;
 }
 
 pub trait Store {
@@ -58,7 +55,6 @@ pub struct Verdict {
     pub conflict: Option<Vec<String>>,
     pub patch_id: String,
     pub stacked: Vec<String>,
-    pub lint: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,10 +78,6 @@ impl Verdict {
                 });
             }
         }
-        if !self.lint.is_empty() {
-            let shown = self.lint.iter().take(4).cloned().collect::<Vec<_>>().join(" | ");
-            out.push(Finding { reason: "policy-violation", text: format!("spira-lint, built from this tree, is red on the merge and not on the base: {shown}") });
-        }
         out
     }
 }
@@ -104,19 +96,12 @@ fn verdict(probe: &dyn Probe, store: &dyn Store, c: &Candidate, base: &str) -> R
     if let Some(v) = store.get(&c.id, &c.tip).filter(|v| v.base == base) {
         return Ok(v);
     }
-    let mut v = Verdict { id: c.id.clone(), tip: c.tip.clone(), base: base.to_string(), conflict: None, patch_id: String::new(), stacked: Vec::new(), lint: Vec::new() };
-    let merged = match probe.merge(&c.tip)? {
-        Merge::Conflict(files) => {
-            v.conflict = Some(files);
-            None
-        }
-        Merge::Clean(commit) => Some(commit),
-    };
+    let mut v = Verdict { id: c.id.clone(), tip: c.tip.clone(), base: base.to_string(), conflict: None, patch_id: String::new(), stacked: Vec::new() };
+    if let Merge::Conflict(files) = probe.merge(&c.tip)? {
+        v.conflict = Some(files);
+    }
     v.patch_id = probe.patch_id(&c.tip)?;
     v.stacked = probe.stacked_on(&c.id, &c.tip)?;
-    if let Some(m) = merged {
-        v.lint = probe.lint(&m)?;
-    }
     store.put(&v)?;
     Ok(v)
 }
