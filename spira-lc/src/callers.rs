@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use lifecycle::bead::{BeadEventKind, BeadState, HoldKind};
+use lifecycle::bead::{AeonPhase, BeadEventKind, BeadState, DispositionStatus, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use serde_json::Value;
@@ -77,6 +77,8 @@ pub const VERBS: &[&str] = &[
     "certify",
     "resubmit",
     "renew",
+    "phase",
+    "disposition",
     "express",
     "unexpress",
 ];
@@ -236,6 +238,8 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             resubmit(m, &a(0), &a(1), &actor_or(args.get(2), "lifecycle-cert"))
         }
         "renew" => renew(m, args),
+        "phase" => phase(m, args),
+        "disposition" => disposition(m, args),
         other => usage(&format!("unknown caller verb {other:?}")),
     }
 }
@@ -628,6 +632,32 @@ fn renew(m: &mut dyn Machine, args: &[String]) -> Answer {
         (APPLIED, _) => Answer::code(APPLIED),
         (rc, out) => Answer { code: rc, stderr: format!("spira-lc renew: {id}: {}\n", out.trim()), ..Default::default() },
     }
+}
+
+/// `phase <bead-id> <holder> <claimed|building|session|fast_tier|submitting|teardown>` — the
+/// holder's move to its next phase. Exit: 0 applied · 1 no row · 2 cannot tell · 3 refused
+/// (not WORKING, not the holder, or not strictly forward — the refusal names the state).
+fn phase(m: &mut dyn Machine, args: &[String]) -> Answer {
+    let (Some(id), Some(holder), Some(name)) = (args.first(), args.get(1), args.get(2)) else {
+        return usage("phase <bead-id> <holder> <claimed|building|session|fast_tier|submitting|teardown>");
+    };
+    let Some(phase) = AeonPhase::from_str(name) else {
+        return usage(&format!("phase: unknown phase {name:?}; one of {}", AeonPhase::ALL.map(AeonPhase::as_str).join(" ")));
+    };
+    with_row(m, id, holder, |_| Ok(BeadEventKind::Phase { phase }))
+}
+
+/// `disposition <bead-id> <lapsed|thrash|slain> [note] [actor]` — record how the session was
+/// cut short on the WORKING row; the teardown reads it instead of a marker file.
+fn disposition(m: &mut dyn Machine, args: &[String]) -> Answer {
+    let (Some(id), Some(name)) = (args.first(), args.get(1)) else {
+        return usage("disposition <bead-id> <lapsed|thrash|slain> [note] [actor]");
+    };
+    let Some(status) = DispositionStatus::from_str(name) else {
+        return usage(&format!("disposition: unknown status {name:?}; one of {}", DispositionStatus::ALL.map(DispositionStatus::as_str).join(" ")));
+    };
+    let note = args.get(2).cloned().unwrap_or_default();
+    with_row(m, id, &actor_or(args.get(3), "aeon"), |_| Ok(BeadEventKind::Disposition { status, note: note.clone() }))
 }
 
 /// The ReturnedReason a reopen's free-text cause earns: an eject is the batch's own, anything
