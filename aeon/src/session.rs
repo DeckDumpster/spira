@@ -164,6 +164,10 @@ pub trait Beat: Send + Sync {
     fn log(&self, msg: &str);
 }
 
+/// An identity lease outlives a missed beat or two, and no more: a dead aeon's name and
+/// capacity slot free within this window.
+const IDENTITY_TTL_FLOOR: i64 = 90;
+
 pub struct Heartbeat {
     pub bead: String,
     pub fayth: String,
@@ -176,6 +180,16 @@ pub struct Heartbeat {
 impl Heartbeat {
     fn lease_file(&self) -> PathBuf {
         self.run.join("aeon").join(format!("{}.lease", self.bead))
+    }
+
+    fn identity_pidfile(&self) -> PathBuf {
+        self.run.join(format!("aeon-{}-{}.pid", self.fayth, self.bead))
+    }
+
+    fn renew_identity(&self, now: i64) {
+        if self.identity_pidfile().is_file() {
+            strand::probe::write_lease(&self.identity_pidfile(), now + IDENTITY_TTL_FLOOR.max(3 * self.every.as_secs() as i64));
+        }
     }
 
     fn write_lease(&self, deadline: i64) {
@@ -192,6 +206,7 @@ impl Heartbeat {
         let session_start = b.now();
         let mut deadline = session_start + self.lease_s;
         self.write_lease(deadline);
+        self.renew_identity(session_start);
         loop {
             let t = Instant::now();
             while t.elapsed() < self.every {
@@ -206,6 +221,7 @@ impl Heartbeat {
             let cur = b.trace_mtime();
             let now = b.now();
             let fuse = b.fuse();
+            self.renew_identity(now);
             match hb_tick(prev, cur, now, deadline, if fuse.is_empty() { "?" } else { &fuse }, self.wall_min, session_start) {
                 HbTick::Renew => {
                     prev = cur;

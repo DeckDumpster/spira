@@ -112,27 +112,26 @@ pub fn hold_alive(pf: &Path) -> bool {
     pid_alive(&pid)
 }
 
-/// The rule lib.sh `aeon_alive`, strand and landing-pass each check: a space-joined cmdline
-/// is an aeon when its argv[0] is `aeon`/`…/aeon` (the Rust binary) or it mentions the
-/// retired `aeon.sh`.
-fn is_aeon_cmdline(cmd: &str) -> bool {
-    let argv0 = cmd.split(' ').next().unwrap_or("");
-    cmd.contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
+/// The sibling lease of an aeon identity pidfile: the aeon writes a deadline (epoch seconds)
+/// at birth and renews it every beat, and removes it with the pidfile at teardown.
+pub fn lease_file(pidfile: &Path) -> PathBuf {
+    pidfile.with_extension("lease")
 }
 
-fn aeon_alive(pf: &Path) -> bool {
-    let Ok(pid) = std::fs::read_to_string(pf) else { return false };
-    let pid = pid.trim();
-    if !pid_alive(pid) {
-        return false;
-    }
-    let cmd = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-    is_aeon_cmdline(&String::from_utf8_lossy(&cmd).replace('\0', " "))
+/// Liveness is the lease and nothing else: the recorded deadline is still ahead of `now`. The
+/// pid is never probed and `/proc` never read, so a recycled pid cannot resurrect a dead aeon
+/// and a live one is not judged by what its argv looks like.
+pub fn lease_live(pidfile: &Path, now: i64) -> bool {
+    std::fs::read_to_string(lease_file(pidfile)).ok().and_then(|t| t.trim().parse::<i64>().ok()).is_some_and(|d| d > now)
+}
+
+pub fn aeon_alive(pf: &Path) -> bool {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    lease_live(pf, now)
 }
 
 /// lib.sh `holder_alive <id>`: a live process is working this bead — a hold pidfile (pid
-/// only, the holder can be anything) OR a live aeon pidfile (pid AND argv, so a recycled pid
-/// cannot resurrect a dead aeon's claim). Both satisfy the SAME predicate the reaper reads.
+/// only, the holder can be anything) OR an aeon whose lease is still running. Both satisfy the SAME predicate the reaper reads.
 pub fn holder_alive(run: &Path, id: &str) -> bool {
     if hold_alive(&run.join(format!("hold-{id}.pid"))) {
         return true;

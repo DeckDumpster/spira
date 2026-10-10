@@ -369,6 +369,7 @@ impl Run<'_> {
     fn remove_identity(&self) {
         if let Some(p) = &self.s.pidfile {
             let _ = std::fs::remove_file(p);
+            let _ = std::fs::remove_file(strand::probe::lease_file(p));
             let _ = std::fs::remove_file(p.with_extension("name"));
         }
         let mail = self.conf.s("SPIRA_MAIL");
