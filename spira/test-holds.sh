@@ -168,8 +168,8 @@ _t5_lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-pl
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-20T00:00:00Z"}
-{"id":"tst-holder","title":"holder bead","status":"open","issue_type":"task","labels":[$_t5_lbl],"updated_at":"2026-09-20T00:00:00Z"}
-{"id":"tst-claim","title":"claim bead","description":"a case in spira/batch.sh needs one more branch","status":"open","issue_type":"task","labels":[$_t5_lbl,"repo:fixture"],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"tst-holder","title":"holder bead","status":"open","issue_type":"task","priority":4,"labels":[$_t5_lbl],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"tst-claim","title":"claim bead","description":"a case in spira/batch.sh needs one more branch","status":"open","issue_type":"task","priority":0,"labels":[$_t5_lbl,"repo:fixture"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL
 
 rm -rf "$SPIRA_RUN/worktree"
