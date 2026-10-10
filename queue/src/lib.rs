@@ -46,6 +46,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::ToForge { repo } => transition::to_forge(w, repo.as_deref()),
         Cmd::ToLocal { repo } => transition::to_local(w, repo.as_deref()),
         Cmd::RollbackLocal { repo } => land::rollback_local(w, repo.as_deref()),
+        Cmd::RebaseWaiting { repo } => rebase::rebase_waiting(w, repo.as_deref()),
         Cmd::Round(r) => round::run(w, r),
     }
 }

@@ -641,6 +641,42 @@ impl Scripts for RealScripts {
         // SAFETY: signal 0 only checks existence.
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
+    fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
+        let width = ids.len().clamp(1, REBASE_WIDTH);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<std::sync::Mutex<Option<RunOut>>> = ids.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        std::thread::scope(|sc| {
+            for _ in 0..width {
+                sc.spawn(|| loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let Some(id) = ids.get(i) else { break };
+                    // batch-job: rebase-stale bounds itself by its own lock wait and gate
+                    let out = match Command::new("rebase-stale").arg(id).arg(repo).stdin(Stdio::null()).output() {
+                        Ok(o) => RunOut {
+                            rc: o.status.code().unwrap_or(127),
+                            out: String::from_utf8_lossy(&o.stdout).to_string(),
+                            err: String::from_utf8_lossy(&o.stderr).to_string(),
+                        },
+                        Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run rebase-stale: {e}") },
+                    };
+                    *slots[i].lock().unwrap_or_else(|p| p.into_inner()) = Some(out);
+                });
+            }
+        });
+        ids.iter().cloned().zip(slots.into_iter().map(|s| s.into_inner().unwrap_or_else(|p| p.into_inner()).unwrap_or_default())).collect()
+    }
+    fn rebase_waiting_start(&self, repo: &str) -> bool {
+        let Ok(exe) = std::env::current_exe() else { return false };
+        // batch-job: the rebase pass runs as long as its gates take, detached from the landing
+        Command::new(exe)
+            .args(["rebase-waiting", repo])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .is_ok()
+    }
     fn pass_restart(&self, batch: &str, repo: &str) -> bool {
         let Ok(exe) = std::env::current_exe() else { return false };
         // batch-job: the next pass runs as long as its round-vm wall allows, detached from this verb
@@ -656,6 +692,10 @@ impl Scripts for RealScripts {
 }
 
 // ---------------------------------------------------------------------------------- forge
+
+/// How many `rebase-stale` runs go at once; the engine's own per-repo lock serialises the
+/// rebase itself, so this bounds only the waiting.
+const REBASE_WIDTH: usize = 4;
 
 pub struct RealForge;
 
