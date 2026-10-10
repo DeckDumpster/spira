@@ -813,7 +813,7 @@ mod probe_tests {
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
         bd.row_failures.set(u32::MAX);
         let err = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap_err();
-        assert!(err.contains("lifecycle row") && err.contains("sp-new1 closed"), "{err}");
+        assert!(err.contains("ask row") && err.contains("sp-new1 closed"), "{err}");
         assert!(closed(&bd));
         assert_eq!(mailbox_entries(t.path()), 0);
     }
