@@ -739,6 +739,16 @@ fn fences_red_on_the_staged_head_stage_nothing() {
 }
 
 #[test]
+fn a_no_verdict_fence_is_infra_and_leaves_the_stage_retryable() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    t.scripts.gate_rc.set(75);
+    assert_eq!(t.run(&["round", "stage", "--members", "sp-b:tb"]), 75);
+    assert!(t.err().contains("infra, not red") && !t.err().contains("fences are red"), "{}", t.err());
+    assert!(!t.qfile("round-staged").exists() && !t.lc.has("stage "));
+}
+
+#[test]
 fn the_staged_round_is_tested_only_once_the_round_ahead_is_green() {
     let t = round_world();
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];

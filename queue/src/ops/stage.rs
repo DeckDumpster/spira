@@ -146,10 +146,12 @@ pub fn stage(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&st
     }
     let (rc, out) = w.scripts.gate(&branch, &repo_name, "", "off");
     if rc != 0 {
-        w.err(format!("queue.sh {label}: the fences are red on the staged head {head} — not staged\n{}", tail(&out, 20)));
+        let infra = super::simple::gate_outcome(rc) == "NO_VERDICT";
+        let what = if infra { "the fences could not run (infra, not red) on" } else { "the fences are red on" };
+        w.err(format!("queue.sh {label}: {what} the staged head {head} — not staged{}\n{}", if infra { "; retry" } else { "" }, tail(&out, 20)));
         w.git.worktree_remove(&path, &wt);
         w.git.branch_delete_sanctioned(&path, &branch);
-        return FAIL;
+        return if infra { rc } else { FAIL };
     }
 
     if let Err((rc, out)) = w.lc.stage(&batch, &repo_name, &head, &parent_head, &csv(&merged), &parent, LC_ACTOR) {
