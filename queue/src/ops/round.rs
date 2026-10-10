@@ -993,6 +993,28 @@ fn preempt(w: &World, batch: &str, repo: Option<&str>, eject_arg: &str, reason: 
     OK
 }
 
+/// Activation restarts the store's server; a refusal (rc 3) is final, anything else is retried
+/// until the store answers or the deadline passes.
+const RECORD_DEADLINE_SECS: u64 = 60;
+
+fn record_landing(w: &World, batch: &str, head: &str) -> Result<(), (i32, String)> {
+    let deadline = w.clock.now() + RECORD_DEADLINE_SECS;
+    loop {
+        match lc_cas(w, batch, |_, v| w.lc.land_batch(batch, v, LC_ACTOR, head)) {
+            Err((rc, out)) if rc != 3 => {
+                if w.clock.now() >= deadline {
+                    return Err((rc, out));
+                }
+                w.clock.sleep(1);
+                while w.lc.probe().is_err() && w.clock.now() < deadline {
+                    w.clock.sleep(1);
+                }
+            }
+            done => return done,
+        }
+    }
+}
+
 fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
     let label = "round land";
     let Ok((c, path)) = local_ctx(w, label, repo) else { return FAIL };
@@ -1016,7 +1038,7 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         return rc;
     }
 
-    let recorded = match lc_cas(w, batch, |_, v| w.lc.land_batch(batch, v, LC_ACTOR, &head)) {
+    let recorded = match record_landing(w, batch, &head) {
         Ok(()) => true,
         Err((rc, out)) => {
             let why = if out.trim().is_empty() { "spira-lc gave no reason on stderr or stdout" } else { out.trim() };
