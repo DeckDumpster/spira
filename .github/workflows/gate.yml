@@ -376,6 +376,8 @@ jobs:
         # `reason=base-ref` before testing anything (sp-6cbna's first proof run,
         # 36704154120). The launcher says which repository is under test, as a
         # production unit does with Environment=SPIRA_REPO.
+        env:
+          SPIRA_HOME: ${{ github.workspace }}/spira
         run: |
           set -euo pipefail
           _releases="$HOME/.cache/spira-ci/releases"
