@@ -231,8 +231,21 @@ fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
     };
     stack
         .as_object()
-        .map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .filter(|(k, _)| !prereq_is_finished(env, k))
+                .collect()
+        })
         .unwrap_or_default()
+}
+
+/// A prerequisite the machine records as LANDED, SUPERSEDED or DROPPED sequences nothing.
+/// An unreadable row is read as live: sequencing a member is the safe side.
+fn prereq_is_finished(env: &Env, id: &str) -> bool {
+    let Ok(out) = lcq(env, &["show", id]) else { return false };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) else { return false };
+    matches!(v.get("bead").and_then(|b| b.get("state")).and_then(|s| s.as_str()), Some("LANDED" | "SUPERSEDED" | "DROPPED"))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2416,6 +2429,19 @@ mod lifecycle_tests {
         let d = scratch("stack");
         let e = env(&d, Some(fake_lc(&d, r#"{"bead":{"stack":{"sp-z":"zzzz"}}}"#)));
         assert_eq!(read_stack(&e, "sp-a").get("sp-z").map(String::as_str), Some("zzzz"));
+    }
+
+    #[test]
+    fn a_landed_prerequisite_drops_out_of_the_stack_a_live_one_stays() {
+        let d = scratch("stack-landed");
+        let p = d.join("spira-lc");
+        testkit::write_exe(
+            &p,
+            "#!/bin/sh\ncase \"$2\" in\n sp-dep) printf '%s' '{\"bead\":{\"stack\":{\"sp-done\":\"t1\",\"sp-live\":\"t2\",\"sp-gone\":\"t3\"}}}';;\n sp-done) printf '%s' '{\"bead\":{\"state\":\"LANDED\"}}';;\n sp-gone) printf '%s' '{\"bead\":{\"state\":\"DROPPED\"}}';;\n *) printf '%s' '{\"bead\":{\"state\":\"CERTIFIED\"}}';;\nesac\n",
+        );
+        let e = env(&d, Some(p));
+        let stack = read_stack(&e, "sp-dep");
+        assert_eq!(stack.keys().map(String::as_str).collect::<Vec<_>>(), ["sp-live"]);
     }
 
     #[test]
