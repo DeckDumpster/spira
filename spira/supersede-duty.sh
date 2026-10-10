@@ -60,13 +60,18 @@ _sd_retry() {
     return 0
 }
 
+_sd_terminal() {
+    case "${1%%[!A-Z]*}" in
+        LANDED|SUPERSEDED|DROPPED|DONE) return 0 ;;
+    esac
+    return 1
+}
+
 _sd_adjudicate() {
     local id="$1" succ="$2" st own
     own="$(timeout 5 spira-lc state "$id" 2>/dev/null)"
     [ -n "$own" ] || return 0
-    case "$own" in
-        LANDED|SUPERSEDED|DROPPED|DONE) return 0 ;;
-    esac
+    _sd_terminal "$own" && return 0
     _sd_settled "$id.failed" || _sd_say "SUPERSEDE REQUEST $id: successor $succ"
     st="$(timeout 5 spira-lc state "$succ" 2>/dev/null)"
     if [ "$succ" = "$id" ] || [ -z "$st" ]; then
@@ -74,7 +79,10 @@ _sd_adjudicate() {
         _sd_note "$id" "supersede-request by $succ refused: ${st:-no lifecycle row for $succ}. Hold lifted; the bead proceeds."
         _sd_say "SUPERSEDE REQUEST $id: refused, successor $succ has no usable row; unheld"
     elif [ "$st" = LANDED ]; then
-        timeout 5 spira-lc supersede "$id" "$succ" "$ACTOR" || { _sd_retry "$id" "supersede failed"; return 0; }
+        if ! timeout 5 spira-lc supersede "$id" "$succ" "$ACTOR"; then
+            _sd_terminal "$(timeout 5 spira-lc state "$id" 2>/dev/null)" && return 0
+            _sd_retry "$id" "supersede failed"; return 0
+        fi
         timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" supersede "$id" --with "$succ" >/dev/null 2>&1 \
             || _sd_say "SUPERSEDE REQUEST $id: lifecycle row SUPERSEDED but bd supersede failed (not retried)"
         _sd_note "$id" "supersede-request confirmed: $succ is LANDED. Superseded by $succ."
