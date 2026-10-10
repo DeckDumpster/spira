@@ -38,6 +38,9 @@ pub enum Abort {
     Exit(i32),
     /// TERM/INT, or the heartbeat's own trip: rc 128+sig.
     Signal(i32),
+    /// The harness cannot start the session (config it needs is absent): the work is not at
+    /// fault, so the teardown records a harness red and charges no attempt.
+    Harness(String),
 }
 
 pub struct Deps<'a> {
@@ -76,6 +79,7 @@ pub struct State {
     pub fixture: Option<FixtureInfo>,
     pub fixture_lib: Option<PathBuf>,
     pub session_started: bool,
+    pub harness_red: Option<String>,
     /// The claude session id this run launched or resumed (empty before launch).
     pub session_id: String,
     pub session_rc: i32,
@@ -302,6 +306,11 @@ impl<'a> Run<'a> {
                 Ok(()) => 0,
                 Err(Abort::Die(m)) => {
                     self.die_line(&m);
+                    1
+                }
+                Err(Abort::Harness(m)) => {
+                    self.die_line(&m);
+                    self.s.harness_red = Some(m);
                     1
                 }
                 Err(Abort::Exit(n)) => n,
@@ -1028,22 +1037,19 @@ impl<'a> Run<'a> {
     }
 
     /// `aeon_claude_argv <flag> <file>`.
-    pub fn claude_argv(&self, sys_file: &Path) -> Vec<String> {
+    pub fn claude_argv(&self, sys_file: &Path) -> Result<Vec<String>, String> {
         let flag = match self.fayth.system_prompt {
             SystemPrompt::Replace => "--system-prompt-file",
             SystemPrompt::Append => "--append-system-prompt-file",
         };
-        let model = conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML")).unwrap_or_else(|e| {
-            eprintln!("aeon: FATAL: {e}");
-            std::process::exit(1)
-        });
+        let model = conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML"))?;
         let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
         a.extend(s(&["--model", &model, "--allowedTools", &self.fayth.tools, "--dangerously-skip-permissions"]));
         if self.fayth.project_instructions == "none" {
             a.extend(s(&["--setting-sources", "user"]));
         }
         a.extend(s(&["--settings", &aeon_settings(self.home())]));
-        a
+        Ok(a)
     }
 
     fn agent_bin(&self) -> String {
@@ -1131,7 +1137,7 @@ impl<'a> Run<'a> {
         }
         let sys_file = self.run_dir().join(format!("{bead}.system.md"));
         let task_file = self.run_dir().join(format!("{bead}.task.md"));
-        let mut argv = self.claude_argv(&sys_file);
+        let mut argv = self.claude_argv(&sys_file).map_err(Abort::Harness)?;
         argv.extend(self.checkpoint_args(work, &task_file));
         self.s.session_started = true;
         let agent = self.agent_bin();

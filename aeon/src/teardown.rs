@@ -92,7 +92,7 @@ impl Run<'_> {
         let asked = lc.as_ref().is_some_and(|r| r.held("ask"));
         let logf = self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
 
-        let mut i = DispositionIn { status: st.clone(), session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, ..Default::default() };
+        let mut i = DispositionIn { status: st.clone(), session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, harness_red: self.s.harness_red.is_some(), ..Default::default() };
         let (mut reset, mut thrash_note, mut thrash_tip, mut streak) = (String::new(), String::new(), String::new(), 0i64);
         let (mut lapsed_quiet, mut lapsed_last, mut gw) = (String::new(), String::new(), String::new());
         let mut unlanded_reason = String::new();
@@ -286,6 +286,17 @@ impl Run<'_> {
                 self.release();
                 return self.finish(rc, &status);
             }
+            NoteKey::HarnessRed => {
+                let why = self.s.harness_red.clone().unwrap_or_default();
+                if rc == 0 {
+                    rc = 1;
+                }
+                self.bump_requeue(&cause);
+                self.note(&format!("Harness red (rc={rc}): the aeon could not start its session — {why}. NO attempt was charged and nothing about the work is implied; this repeats until the harness config is fixed."));
+                self.log(&format!("{f}: {id} harness red (rc={rc}): {why} — no attempt charged"));
+                self.release();
+                return self.finish(rc, &status);
+            }
             NoteKey::PreSession => {
                 if rc == 0 {
                     rc = 1;
@@ -354,7 +365,8 @@ impl Run<'_> {
             NoteKey::NotJudged => {
                 let o = i.outcome.clone().unwrap_or_default();
                 self.bump_requeue(&cause);
-                self.note(&format!("Not judged ({o}): the worker did not survive to judge this bead, so NO attempt was charged and nothing about the work is implied. See {logf}."));
+                let red = if o == "refused" { format!("Harness red (session exit rc={}, no transcript). ", self.s.session_rc) } else { String::new() };
+                self.note(&format!("{red}Not judged ({o}): the worker did not survive to judge this bead, so NO attempt was charged and nothing about the work is implied. See {logf}."));
                 self.log(&format!("{f}: {id} never judged ({o}) — no attempt charged"));
                 self.release();
             }
