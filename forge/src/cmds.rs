@@ -718,12 +718,29 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
         if u > 0 {
             lines.push(format!("last-activity: {u}"));
         }
+        let wf = jstr(&v, "path").unwrap_or_default();
+        let sha = jstr(&v, "head_sha").unwrap_or_default();
+        let wf = wf.split('@').next().unwrap_or("");
+        if !wf.is_empty() && !sha.is_empty() {
+            let src = gh.call(Some(repo), &["api", "-H", "Accept: application/vnd.github.raw", &format!("repos/{{owner}}/{{repo}}/contents/{wf}?ref={sha}")]);
+            if src.code == 0 {
+                if let Some(m) = declared_timeout_minutes(&String::from_utf8_lossy(&src.stdout)) {
+                    lines.push(format!("timeout-sec: {}", m * 60));
+                }
+            }
+        }
     }
     let jobs_json = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs")]);
     if let Some(v) = parse(&jobs_json.stdout) {
         if let Some(jobs) = v.get("jobs").and_then(Value::as_array) {
             let mut latest = 0u64;
             for j in jobs {
+                if jstr(j, "completed_at").is_none() && jstr(j, "started_at").is_some() {
+                    if let Some(id) = j.get("id").and_then(Value::as_u64) {
+                        let log = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")]);
+                        latest = latest.max(last_log_stamp(&String::from_utf8_lossy(&log.stdout)));
+                    }
+                }
                 for f in ["started_at", "completed_at"] {
                     let e = epoch(&jstr(j, f).unwrap_or_default());
                     latest = latest.max(e);
@@ -743,6 +760,19 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
         }
     }
     ok(lines)
+}
+
+/// The largest `timeout-minutes:` a workflow file declares (the longest job bounds the run).
+fn declared_timeout_minutes(yaml: &str) -> Option<u64> {
+    yaml.lines()
+        .filter_map(|l| l.trim_start().strip_prefix("timeout-minutes:"))
+        .filter_map(|v| v.split('#').next().unwrap_or("").trim().parse::<u64>().ok())
+        .max()
+}
+
+/// Epoch of the last timestamped line of a job log (`2026-10-10T12:00:00.1234567Z msg`); 0 when none parses.
+fn last_log_stamp(log: &str) -> u64 {
+    log.lines().rev().find_map(|l| l.get(..19).map(epoch).filter(|e| *e > 0)).unwrap_or(0)
 }
 
 // ── run-cancel / workflow-rerun / pr-close / pr-comment / dispatch ─────────────────────────
