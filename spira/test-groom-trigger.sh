@@ -255,7 +255,7 @@ out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
     groom-trigger.sh 2>&1)"; rc=$?
 is     "empty scope exits 0"               0     "$rc"
-nowant "no leading comma in labels"        ",groom" "$(grep 'create' "$BD_LOG")"
+nowant "no leading comma in labels"        "--label ," "$(grep 'create' "$BD_LOG")"
 want   "groomer label present without scope" "groom" "$(cat "$BD_LOG")"
 
 # ==========================================================================================
