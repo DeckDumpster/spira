@@ -144,7 +144,7 @@ def hit(text, depth=0):
             while toks and (toks[0].startswith("-") or toks[0].isdigit() or "=" in toks[0]):
                 toks = toks[1:]
         if toks and is_script(toks[0]):
-            if allow and len(toks) > 1 and toks[1] == allow:
+            if allow and len(toks) > 1 and toks[1] in allow.split(","):
                 continue
             if deny is not None:
                 if len(toks) > 1 and toks[1] in deny:
@@ -179,11 +179,11 @@ fi
 
 if [ -z "$reason" ]; then
     # queue.sh is the queue binary now (queue/DESIGN.md §7.2 row 18), invoked by name:
-    # match either, bare or by path; `stats` stays the one allowed verb.
+    # match either, bare or by path; `stats` and `churn` are the read-only verbs.
     case "$cmd" in
         *queue*)
-            { [ "$(_exec_ctx "queue.sh" "$cmd" stats)" = "1" ] || [ "$(_exec_ctx "queue" "$cmd" stats)" = "1" ]; } && \
-                reason="aeons may not operate the queue (sp-kz8ob: queue stats is the only read-only subcommand; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+            { [ "$(_exec_ctx "queue.sh" "$cmd" stats,churn)" = "1" ] || [ "$(_exec_ctx "queue" "$cmd" stats,churn)" = "1" ]; } && \
+                reason="aeons may not operate the queue (sp-kz8ob: queue stats and queue churn are the only read-only subcommands; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
     esac
 fi
 

@@ -144,6 +144,37 @@ pub fn stats(w: &World) -> i32 {
     OK
 }
 
+/// `churn`: the mender's meter over a window (default 14 days) of the lifecycle's own rows.
+pub fn churn(w: &World, since: Option<&str>, until: Option<&str>, repo: Option<&str>) -> i32 {
+    use crate::churn;
+    let Ok(c) = resolve(w, "churn", repo) else { return FAIL };
+    let Ok(path) = repo_path(w, "churn", &c) else { return FAIL };
+    let now = w.clock.now() as i64;
+    let when = |flag: &str, v: &str| churn::parse_when(v, now).ok_or_else(|| w.err(format!("queue.sh churn: --{flag} {v:?}: not a duration (14d) or date (2026-09-26)")));
+    let Ok(from) = when("since", since.unwrap_or("14d")) else { return USAGE };
+    let to = match until {
+        None => now + 1,
+        Some(u) => match when("until", u) {
+            Ok(t) if !u.contains('T') && u.contains('-') => t + 86_400,
+            Ok(t) => t,
+            Err(()) => return USAGE,
+        },
+    };
+    let facts = match w.lc.churn_facts(from).and_then(|j| churn::parse_facts(&j)) {
+        Ok(f) => f,
+        Err(e) => {
+            w.err(format!("queue.sh churn: cannot tell: {e}"));
+            return FAIL;
+        }
+    };
+    let lines = |a: &str, b: &str| w.git.numstat(&path, a, b).ok().map(|f| f.iter().map(|(_, add, del)| u64::from(*add) + u64::from(*del)).sum());
+    let returned = churn::wasted(&churn::returns(&facts, from, to), &lines);
+    let rows = churn::failures(&facts, from, to, &lines);
+    let m = churn::measures(&facts, &rows, from, to, returned.identical);
+    w.io.out(&churn::render(&returned, &rows, &m));
+    OK
+}
+
 /// The batcher's cut (queue.sh _batch_cut). Used to run batch.sh's own pre-cut sweep first
 /// (orphan-run reaping, closed-red-live mail, DIRTY-PR abandon, stale-certification
 /// reconciliation, the queue-stuck alert) — dead weight since batcher-cut (sp-jzfog) took

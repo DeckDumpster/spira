@@ -159,6 +159,9 @@ want "UC-safety-fences-01/queue-flush-blocked" '"decision":"block"' "$out"
 out="$(fence_run "/opt/spira/bin/queue stats" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-01/queue-stats-allowed" '"decision":"block"' "$out"
 
+out="$(fence_run "/opt/spira/bin/queue churn --since 14d" SPIRA_AEON=test-aeon)"
+nowant "UC-safety-fences-01/queue-churn-allowed" '"decision":"block"' "$out"
+
 out="$(fence_run "queue verdict spira" SPIRA_AEON=test-aeon)"
 want "UC-safety-fences-01/queue-verdict-blocked" '"decision":"block"' "$out"
 
