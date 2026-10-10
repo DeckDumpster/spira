@@ -42,6 +42,7 @@ if [ -d "$target" ]; then
     tree="$(cd "$target" && pwd -P)"
 else
     repo="$(git -C "$HERE" rev-parse --show-toplevel)"
+    # batch-job: clones and checks out a whole tree
     git clone -q --shared "$repo" "$scratch/tree" && git -C "$scratch/tree" checkout -q "$target" \
         || { echo "bare-local: '$target' is neither a directory nor a ref of $repo" >&2; exit 2; }
     tree="$scratch/tree"
