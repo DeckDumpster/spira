@@ -227,6 +227,8 @@ pub struct LifecycleRow {
     pub tip: Option<String>,
     /// An unexpired `wait` snooze's end, resolved against the clock at parse time.
     pub snoozed_until: Option<i64>,
+    /// A dependent's stacked base failed to merge this row's tip; set by [`mark_stack_conflicts`].
+    pub stack_conflict: bool,
 }
 
 /// The beads whose lifecycle row carries Express (`spira-lc list`'s `express` column,
@@ -290,9 +292,15 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
             }
             _ => None,
         };
-        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until });
+        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until, stack_conflict: false });
     }
     Ok(out)
+}
+
+pub fn mark_stack_conflicts(lc: &mut HashMap<String, LifecycleRow>, run: &std::path::Path) {
+    for r in lc.values_mut() {
+        r.stack_conflict = r.tip.as_deref().is_some_and(|t| spira_config::stack_conflict::holds(run, &r.bead_id, t));
+    }
 }
 
 /// A blocker's bd record (bd list --id … --status all).
@@ -388,6 +396,7 @@ pub fn stack_plan(
                     && rec.is_some_and(|r| is_work(r) && r.label_value("repo:") == own_repo && own_repo.is_some());
                 match row.state {
                     BeadState::Landed | BeadState::Done => true,
+                    BeadState::Certified | BeadState::InDelivery if stackable && row.stack_conflict => false,
                     BeadState::Certified | BeadState::InDelivery if stackable => {
                         stacked_max = Some(stacked_max.unwrap_or(0).max(row.stack_depth));
                         if let Some(tip) = &row.tip {
@@ -573,7 +582,7 @@ mod tests {
     fn epic_started_rule() {
         let mut c = row("c", 1, None, "t");
         c.status = Some("in_progress".into());
-        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None })]);
+        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false })]);
         assert!(!epic_started(&[c.clone()], &HashMap::new()), "no row: nothing started, though bd says in_progress");
         assert!(!epic_started(&[c.clone()], &at(BeadState::Ready)));
         assert!(!epic_started(&[c.clone()], &at(BeadState::Rework)));
@@ -621,7 +630,7 @@ mod tests {
     // ---- machine mode ----
 
     fn lcrow(id: &str, st: BeadState, holds: &[HoldKind], depth: u32) -> (String, LifecycleRow) {
-        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None })
+        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None, stack_conflict: false })
     }
 
     fn blocked_on(id: &str, blocker: &str) -> ReadyRow {
@@ -682,6 +691,23 @@ mod tests {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::InDelivery, &[], 4)].into();
         let err = stack_plan(&blocked_on("B", "A"), &lc, &bd, 4).unwrap_err();
         assert_eq!(err, Verdict::TooDeep { depth: 5, max: 4 });
+    }
+
+    #[test]
+    fn a_dependent_of_a_conflicting_parent_is_blocked_until_the_parent_rebases() {
+        let tmp = testkit::TempDir::new("rank-sc");
+        let run = tmp.path().to_path_buf();
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let child = blocked_on("B", "A");
+        let mut lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
+        mark_stack_conflicts(&mut lc, &run);
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 1 }, "no marker: stacked as before");
+        spira_config::stack_conflict::record(&run, "A", "tip-A");
+        mark_stack_conflicts(&mut lc, &run);
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Blocked("A".into()));
+        lc.get_mut("A").unwrap().tip = Some("tip-A-rebased".into());
+        mark_stack_conflicts(&mut lc, &run);
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 1 }, "the parent's tip moved");
     }
 
     #[test]

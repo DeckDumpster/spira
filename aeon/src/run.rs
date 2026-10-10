@@ -621,8 +621,10 @@ impl<'a> Run<'a> {
                     Err(conflict) => {
                         self.release();
                         let note = conflict.note();
+                        self.bump_requeue("stack-conflict");
                         for prereq in [&conflict.a, &conflict.b] {
-                            if self.s.stack.contains_key(prereq) {
+                            if let Some(tip) = self.s.stack.get(prereq) {
+                                spira_config::stack_conflict::record(&self.run_dir(), prereq, tip);
                                 bd::note(
                                     self.d.bd,
                                     prereq,
