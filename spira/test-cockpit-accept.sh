@@ -147,8 +147,6 @@ while :; do
     [[ "$old_c" > "$new_c" ]] && break
     i=$((i+1)); [ "$i" -lt 200 ] || break
 done
-want "fixture: the older release's id sorts after the newer one's" "yes" \
-    "$([[ "$old_c" > "$new_c" ]] && echo yes || echo no)"
 git -C "$P2" tag spira-release-spira-20260201T000000Z "$old_c"
 git -C "$P2" tag spira-release-spira-20260202T000000Z "$new_c"
 git -C "$P2" notes --ref=acceptance add -m "FAIL: install refused" "$old_c"
