@@ -111,7 +111,7 @@ for args in "list" "list --state READY"; do
 done
 
 # list reads since from the bead row
-since_ok="$(spira-lc list --state READY | python3 -c 'import json,sys; r=json.load(sys.stdin); print(len(r) > 0 and all(b.get("since") == 7 for b in r))')"
+since_ok="$(spira-lc list --state READY | python3 -c 'import json,sys; r=json.load(sys.stdin); print(len(r) > 0 and all(str(b.get("since")) == "7" for b in r))')"
 is "list reports the since stored on the row" True "$since_ok"
 
 spira-lc list --state READY --hold poison >/dev/null 2>&1
