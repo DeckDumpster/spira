@@ -141,7 +141,7 @@ _n_exec="$(grep -c '^ExecStart=' <<< "$rendered")"
 is "positive control: the render holds at least 20 units' ExecStart= lines" "yes" \
     "$([ "${_n_exec:-0}" -ge 20 ] && echo yes || echo "no ($_n_exec)")"
 _io_fenced='spira-landing-pass-prod.service spira-sop-lint-prod.service beads-push.service'
-_quota_fenced='spira-verify-asks-prod.service spira-perf-watch-prod.service spira-perf-happy-path-prod.service'
+_quota_fenced='spira-verify-asks-prod.service spira-perf-watch-prod.service spira-perf-happy-path-prod.service spira-refusal-watch-prod.service'
 _fence_exempt="$_io_fenced $_quota_fenced"
 _fenced_out="$(awk -v ok="$_fence_exempt" -v re="$_fence_re" '
     /^===== /{n=split(ok,a," ");skip=0;for(i=1;i<=n;i++)if(index($0,"===== " a[i] " =====")==1)skip=1;next}
