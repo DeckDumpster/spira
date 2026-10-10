@@ -674,10 +674,6 @@ fn open_children_label(env: &Env) -> String {
     env.config.open_children_label.clone()
 }
 
-fn overlap_defer_label(env: &Env) -> String {
-    env.config.overlap_defer_label.clone()
-}
-
 /// `READY_ARGS`, resolved from this call's flags/config/environment.
 fn ready_args_for(a: &Args, env: &Env) -> Vec<String> {
     ready::ready_args(&scope_label(a, env), &no_loop_label(a, env))
@@ -776,7 +772,7 @@ fn roster(home: &std::path::Path, fayths: &str) -> Vec<String> {
 }
 
 fn fayth_exclude_str(env: &Env, home: &std::path::Path, me: &str, own: &str) -> String {
-    let shared = ready::shared_exclude(&queue_wait_label(env), &open_children_label(env), &overlap_defer_label(env));
+    let shared = ready::shared_exclude(&queue_wait_label(env), &open_children_label(env));
     ready::fayth_exclude(me, own, &roster(home, &env.config.fayths), &shared)
 }
 
@@ -805,7 +801,7 @@ fn cmd_shared_exclude(a: &Args, env: &Env) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
-    Outcome::ok(ready::shared_exclude(&queue_wait_label(env), &open_children_label(env), &overlap_defer_label(env)))
+    Outcome::ok(ready::shared_exclude(&queue_wait_label(env), &open_children_label(env)))
 }
 
 /// `SPIRA_READY_CACHE`'s own lookup (`awk -v f="$f" '$1==f{print $2} END{...}'`): the

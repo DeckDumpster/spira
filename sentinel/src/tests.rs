@@ -229,7 +229,6 @@ impl World {
             incident_label: get("SPIRA_INCIDENT_LABEL"),
             queue_wait: get("SPIRA_QUEUE_WAIT_LABEL"),
             open_children: get("SPIRA_OPEN_CHILDREN_LABEL"),
-            overlap_defer: get("SPIRA_OVERLAP_DEFER_LABEL"),
             submitted: get("SPIRA_SUBMITTED_LABEL"),
             work_types: get("SPIRA_WORK_CLOSE_TYPES").split_whitespace().map(str::to_string).collect(),
             reclaim_grace: get("SPIRA_RECLAIM_GRACE_SECS").parse().unwrap_or(10800),
@@ -2640,131 +2639,23 @@ fn on_check2d_an_unresolved_repo_map_hold_stands() {
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "event"), 0, "{}", sink.text());
 }
 
-// ---------------------------------------------------------------------------------------
-// CHECK 7e (file overlaps)
-
-const OVERLAP_LABEL: &str = "hold-back-fo";
-
-fn overlap_world(r: &FakeRunner, w: &World) {
+#[test]
+fn two_beads_touching_one_file_are_both_left_claimable() {
+    let (w, r, sink, clock) = setup("ov-gone");
     let repo_root = w.dir.join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).unwrap();
     let root = repo_root.to_string_lossy().into_owned();
     r.on(move |s| {
         (s.prog == "spira-config" && s.args == ["repo", "root", "spira"]).then(|| ok(&format!("{root}\n"))).flatten()
     });
-    const LIST: &str = concat!(r#"[
-      {"id":"sp-busy","status":"in_progress","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-early","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-late","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-alone","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-asked","status":"open","issue_type":"task","labels":["spira","repo:spira",
-"#,
-        r#""needs-operator""#, // literal-ok: test fixture
-        r#"]}
-    ]"#
-    );
+    const LIST: &str = r#"[
+      {"id":"sp-a","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
+      {"id":"sp-b","status":"open","issue_type":"task","labels":["spira","repo:spira"]}
+    ]"#;
     r.on(|s| (is_bd(s, "list") && s.args.iter().any(|a| a == "--exclude-type")).then(|| ok(LIST)).flatten());
     r.on(|s| (s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")).then(|| ok(&lc_mirror(LIST))).flatten());
-    r.on(|s| {
-        if s.prog != "git" {
-            return None;
-        }
-        let a = s.args.join(" ");
-        let branch_of = |ids: &[(&str, &str)]| ids.iter().find(|(id, _)| a.contains(&format!("spira/{id}"))).map(|(_, v)| v.to_string());
-        if a.contains(" diff ") {
-            return branch_of(&[
-                ("sp-early", "shared.txt\nonly-early.txt\n"),
-                ("sp-late", "shared.txt\n"),
-                ("sp-busy", "busy.txt\n"),
-                ("sp-alone", "other.txt\n"),
-                ("sp-asked", "shared.txt\n"),
-            ])
-            .and_then(|o| ok(&o));
-        }
-        if a.contains(" log ") {
-            return branch_of(&[("sp-early", "1000\n"), ("sp-late", "2000\n"), ("sp-busy", "3000\n"), ("sp-alone", "1500\n"), ("sp-asked", "2500\n")])
-                .and_then(|o| ok(&o));
-        }
-        None
-    });
-}
-
-fn overlap_run(w: &World, r: &FakeRunner, sink: &FakeSink, clock: &FakeClock, mode: Mode) {
-    run_mode(
-        w,
-        r,
-        sink,
-        clock,
-        mode,
-        &[("SPIRA_OVERLAP_DEFER_LABEL", OVERLAP_LABEL)],
-        Some(&["spira\t/src/spira\torigin/main\t0"]),
-    );
-}
-
-#[test]
-fn detect_overlaps_names_the_later_bead_and_stays_quiet_on_disjoint_and_asked_beads() {
-    let (w, r, sink, clock) = setup("ov-detect");
-    overlap_world(&r, &w);
-    overlap_run(&w, &r, &sink, &clock, Mode::DetectOverlaps);
-    assert!(sink.has("OVERLAP sp-late spira shared.txt sp-early"), "{}", sink.text());
-    assert!(!sink.has("OVERLAP sp-early"));
-    assert!(!sink.has("sp-alone"));
-    assert!(!sink.has("sp-asked"), "a bead a human already has is not given a serialisation verdict");
-    assert!(!sink.has("sp-busy"));
-}
-
-#[test]
-fn detect_overlaps_is_off_when_the_label_is_unset() {
-    let (w, r, sink, clock) = setup("ov-off");
-    overlap_world(&r, &w);
-    run_mode(&w, &r, &sink, &clock, Mode::DetectOverlaps, &[], Some(&["spira\t/src/spira\torigin/main\t0"]));
-    assert!(!sink.has("OVERLAP"));
-}
-
-#[test]
-fn a_claimed_holder_defers_the_unclaimed_bead_touching_its_file() {
-    let (w, r, sink, clock) = setup("ov-claimed");
-    overlap_world(&r, &w);
-    r.on(|s| {
-        let a = s.args.join(" ");
-        (s.prog == "git" && a.contains(" diff ") && a.contains("spira/sp-late")).then(|| ok("busy.txt\n")).flatten()
-    });
-    overlap_run(&w, &r, &sink, &clock, Mode::DetectOverlaps);
-    assert!(sink.has("OVERLAP sp-late spira busy.txt sp-busy"), "{}", sink.text());
-}
-
-#[test]
-fn audit_defers_the_later_bead_and_resumes_one_that_no_longer_overlaps() {
-    let (w, r, sink, clock) = setup("ov-audit");
-    overlap_world(&r, &w);
-    r.on(|s| {
-        (is_bd(s, "list") && s.args.iter().any(|a| a == "--label"))
-            .then(|| ok(r#"[{"id":"sp-alone","status":"open","issue_type":"task","labels":["spira",
-"hold-back-fo"]}]"#))
-            .flatten()
-    });
-    overlap_run(&w, &r, &sink, &clock, Mode::Audit);
-    assert!(sink.has("DEFERRED sp-late spira sp-early"), "{}", sink.text());
-    assert!(sink.has("RESUMED sp-alone"));
-    assert!(sink.has("ACT deferred 1 file-overlap bead(s)"));
-    let add = |id: &str| r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", id, OVERLAP_LABEL]).is_some();
-    assert!(add("sp-late"));
-    assert!(!add("sp-early"), "the holder is never deferred");
-    assert!(r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "remove", "sp-alone", OVERLAP_LABEL]).is_some());
-    // literal-ok: test fixture
-    assert!(r.find(|s| is_bd(s, "label") && s.args.iter().any(|a| a == "needs-operator") && s.args.iter().any(|a| a == "sp-late")).is_none());
-}
-
-#[test]
-fn audit_does_not_reapply_a_label_the_bead_already_carries() {
-    let (w, r, sink, clock) = setup("ov-idem");
-    overlap_world(&r, &w);
-    r.on(|s| {
-        (is_bd(s, "label") && s.args.get(3).map(String::as_str) == Some("list") && s.args.get(4).map(String::as_str) == Some("sp-late"))
-            .then(|| ok("hold-back-fo\n"))
-            .flatten()
-    });
-    overlap_run(&w, &r, &sink, &clock, Mode::Audit);
-    assert!(sink.has("DEFERRED sp-late"));
-    assert_eq!(r.count(|s| is_bd(s, "note") && s.args.iter().any(|a| a == "sp-late")), 0, "no repeat note");
+    r.on(|s| (s.prog == "git" && s.args.join(" ").contains(" diff ")).then(|| ok("shared.txt\n")).flatten());
+    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(&["spira\t/src/spira\torigin/main\t0"]));
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "{}", sink.text());
+    assert!(!sink.has("OVERLAP") && !sink.has("DEFERRED"), "{}", sink.text());
 }

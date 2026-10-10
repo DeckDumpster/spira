@@ -378,7 +378,7 @@ ready_count() {
 # `_spira_claim`: the exec-boundary shim for the rest of family F (epic_parent_lookup
 # through bulk_ready_by_fayth, plus ready_shared_exclude) — same pattern
 # `_spira_config_fayth`/`_spira_config_repo` use. `SPIRA_QUEUE_WAIT_LABEL`/
-# `SPIRA_OPEN_CHILDREN_LABEL`/`SPIRA_OVERLAP_DEFER_LABEL` are threaded explicitly because conf.sh never exports them
+# `SPIRA_OPEN_CHILDREN_LABEL` are threaded explicitly because conf.sh never exports them
 # (the exec-boundary trap); `SPIRA_NO_LOOP_LABEL` is exported but threaded anyway for
 # defence in depth. `SPIRA_SCOPE_LABEL` is threaded too: it is an unexported shell var for callers that source
 # conf without export (sp-jr2fm). `SPIRA_CLAIM_RETRIES`/`SPIRA_CLAIM_RETRY_DELAY_S`/
@@ -387,7 +387,7 @@ ready_count() {
 _spira_claim() {
     SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" \
     SPIRA_NO_LOOP_LABEL="${SPIRA_NO_LOOP_LABEL:-}" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
-    SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" SPIRA_OVERLAP_DEFER_LABEL="${SPIRA_OVERLAP_DEFER_LABEL:-}" \
+    SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" \
     SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         spira-claim "$@"
 }
@@ -1527,9 +1527,6 @@ detect_branch_collisions() {
 }
 park_branch_collisions() {   # park_branch_collisions <detect_branch_collisions output>
     sentinel --park-collisions <<< "$1"
-}
-detect_file_overlaps() {   # -> one OVERLAP line per open bead whose branch shares a file with an earlier one
-    sentinel --detect-overlaps
 }
 
 # detect_livelocked -> one LIVELOCK line per open bead that cannot make progress.
