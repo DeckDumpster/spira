@@ -372,43 +372,40 @@ pub fn rowless_beads(cfg: &RowlessCfg) -> Reading {
 pub const CONTENT_DRIFT_REFERENCE: &str = "incident:lifecycle-content-drift";
 
 pub struct ContentDriftCfg {
-    pub bd: String,
-    pub db: String,
     pub lc_bin: String,
     pub slack: usize,
     pub sustain_secs: i64,
 }
 
-pub fn content_drift_cond(open: usize, live: usize, slack: usize, sustain_secs: i64) -> Option<Cond> {
-    if open <= live + slack {
+pub fn content_drift_cond(drifted: usize, slack: usize, sustain_secs: i64) -> Option<Cond> {
+    if drifted <= slack {
         return None;
     }
     Some(Cond {
         key: "content-drift".into(),
         reference: CONTENT_DRIFT_REFERENCE.into(),
-        title: "LIFECYCLE: the content store holds far more open beads than the lifecycle has live".into(),
+        title: "LIFECYCLE: the content store holds open beads whose lifecycle row is terminal".into(),
         body: format!(
-            "The content store lists {open} open bead(s); the lifecycle has {live} live row(s) (allowed excess {slack}). Beads whose row is terminal were not closed in the store, so every reader of content status sees a backlog that is not there.\n\nRun `spira-lc reconcile-content` (dry run) and then `--apply`; find the terminal path that did not close its content bead.\n"
+            "`spira-lc reconcile-content` (dry run) would close {drifted} bead(s) the store still holds open though their lifecycle row is terminal (allowed excess {slack}). Every reader of content status sees a backlog that is not there.\n\nRun `spira-lc reconcile-content --apply`; find the terminal path that did not close its content bead.\n"
         ),
         priority: 1,
         sustain_secs,
     })
 }
 
+fn drifted_count(stdout: &[u8]) -> Option<usize> {
+    let text = String::from_utf8_lossy(stdout);
+    let last = text.lines().rev().find(|l| !l.trim().is_empty())?;
+    last.strip_prefix("reconcile-content: ")?.split_whitespace().next()?.parse().ok()
+}
+
 pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
-    let open = crate::deadline::output(
-        "content-open beads",
-        Command::new(&cfg.bd).args(["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", "epic,event", "--json", "--limit", "0", "--brief"]),
-    )
-    .ok()
-    .filter(|o| o.status.success())
-    .and_then(|o| ids_of(&o.stdout, "id"));
-    let live = crate::deadline::output("lifecycle live rows", Command::new(&cfg.lc_bin).args(["list", "--live"]))
+    let drifted = crate::deadline::output("content drift (reconcile-content dry run)", Command::new(&cfg.lc_bin).args(["reconcile-content"]))
         .ok()
         .filter(|o| o.status.success())
-        .and_then(|o| ids_of(&o.stdout, "bead_id"));
-    let (Some(open), Some(live)) = (open, live) else { return Reading::Unknown };
-    Reading::Standing(content_drift_cond(open.len(), live.len(), cfg.slack, cfg.sustain_secs).into_iter().collect())
+        .and_then(|o| drifted_count(&o.stdout));
+    let Some(drifted) = drifted else { return Reading::Unknown };
+    Reading::Standing(content_drift_cond(drifted, cfg.slack, cfg.sustain_secs).into_iter().collect())
 }
 
 #[cfg(test)]
@@ -465,11 +462,11 @@ mod tests {
     }
 
     #[test]
-    fn content_drift_stands_only_past_the_slack_and_reads_both_stores() {
-        assert!(content_drift_cond(30, 20, 10, 0).is_none(), "ten over is within the slack");
-        let c = content_drift_cond(31, 20, 10, 300).expect("eleven over stands");
+    fn content_drift_stands_only_past_the_slack_and_reads_the_dry_run_count() {
+        assert!(content_drift_cond(10, 10, 0).is_none(), "ten is within the slack");
+        let c = content_drift_cond(11, 10, 300).expect("eleven stands");
         assert_eq!(c.reference, CONTENT_DRIFT_REFERENCE);
-        assert!(c.body.contains("31 open") && c.body.contains("20 live"), "{}", c.body);
+        assert!(c.body.contains("11 bead(s)"), "{}", c.body);
 
         let t = testkit::TempDir::new("drift");
         let write = |name: &str, body: &str| {
@@ -477,20 +474,20 @@ mod tests {
             testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
             p.to_string_lossy().into_owned()
         };
-        let ids: Vec<String> = (0..5).map(|i| format!("{{\"id\":\"sp-{i}\"}}")).collect();
-        let bd = write("bd", &format!("echo '[{}]'", ids.join(",")));
-        let lc = write("lc", "echo '[{\"bead_id\":\"sp-0\"}]'");
-        let mut cfg = ContentDriftCfg { bd, db: "x".into(), lc_bin: lc, slack: 3, sustain_secs: 0 };
+        let lc = write("lc", "echo 'would close sp-1 (lifecycle DONE)'; echo 'reconcile-content: 5 would close (dry run; --apply to write)'");
+        let mut cfg = ContentDriftCfg { lc_bin: lc, slack: 3, sustain_secs: 0 };
         match content_drift(&cfg) {
-            Reading::Standing(v) => assert_eq!(v.len(), 1, "5 open vs 1 live is past a slack of 3"),
-            Reading::Unknown => panic!("both stores answered"),
+            Reading::Standing(v) => assert_eq!(v.len(), 1, "5 drifted is past a slack of 3"),
+            Reading::Unknown => panic!("the verb answered"),
         }
-        cfg.slack = 4;
+        cfg.slack = 5;
         match content_drift(&cfg) {
             Reading::Standing(v) => assert!(v.is_empty()),
-            Reading::Unknown => panic!("both stores answered"),
+            Reading::Unknown => panic!("the verb answered"),
         }
-        cfg.lc_bin = write("lc-down", "exit 1");
+        cfg.lc_bin = write("lc-down", "exit 2");
+        assert!(matches!(content_drift(&cfg), Reading::Unknown));
+        cfg.lc_bin = write("lc-garbled", "echo nonsense");
         assert!(matches!(content_drift(&cfg), Reading::Unknown));
     }
 
