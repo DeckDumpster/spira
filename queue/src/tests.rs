@@ -2164,6 +2164,21 @@ fn settle_opens_a_publish_when_none_is_open_and_skips_other_modes() {
 }
 
 #[test]
+fn settle_defers_the_cut_while_a_round_pass_runs_and_cuts_after_it() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    *t.forge.pr.borrow_mut() = Some("78".into());
+    fs::write(t.qfile("round"), "batch_id=b-1\n").unwrap();
+    t.lc.batch_states.borrow_mut().insert("b-1".into(), ("CI_RUNNING".into(), "4".into()));
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.out().contains("a round pass holds the hypervisor"), "{}", t.out());
+    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "{:?}", t.forge.calls.borrow());
+    t.lc.batch_states.borrow_mut().insert("b-1".into(), ("GREEN".into(), "5".into()));
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "{:?}", t.forge.calls.borrow());
+}
+
+#[test]
 fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);
