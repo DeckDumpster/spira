@@ -596,7 +596,28 @@ pub fn validate_strict(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
     require_id_prefix(&doc)?;
     let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     require_roster_covers_lanes(&root)?;
+    require_roster_declares_models(&root)?;
     Ok((doc, warnings))
+}
+
+/// A rostered persona with no `persona.<name>.model` is summoned and dies before its session
+/// starts: refused here, naming the key, rather than at every summon.
+fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
+    let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
+    let roster: Vec<&str> = match spira.get("fayths") {
+        Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
+        Some(toml::Value::String(s)) => s.split_whitespace().collect(),
+        _ => return Ok(()),
+    };
+    for p in roster {
+        let model = root.get("persona").and_then(|v| v.get(p)).and_then(|v| v.get("model")).and_then(|v| v.as_str());
+        if model.is_none_or(str::is_empty) {
+            return Err(format!(
+                "spira.fayths rosters {p:?} but persona.{p}.model is not declared — every summon of it would die before its session starts; run `spira-config set persona.{p}.model <model>`"
+            ));
+        }
+    }
+    Ok(())
 }
 
 const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "maechen", "czar", "warden"];
