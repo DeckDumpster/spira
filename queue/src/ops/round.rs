@@ -236,6 +236,17 @@ pub(super) fn set_phase(w: &World, kv: &mut Kv, phase: &str) {
     set(kv, "phase_at", &w.clock.now().to_string());
 }
 
+pub(super) fn phase_of(w: &World, batch: &str) -> String {
+    match w.lc.batch_state(batch) {
+        Some((s, _)) => match s.as_str() {
+            "OPEN" => "opened".into(),
+            "CI_RUNNING" => "certifying".into(),
+            other => other.to_lowercase(),
+        },
+        None => "?".into(),
+    }
+}
+
 pub(super) fn rounds_dir(c: &Ctx) -> PathBuf {
     c.s.run.join("rounds")
 }
@@ -358,7 +369,7 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
         w.err(format!(
             "queue.sh {label}: a round is already open for {repo_name} ({}, phase {}) — land or abandon it first",
             kv.get("batch_id").unwrap_or("?"),
-            kv.get("phase").unwrap_or("?")
+            phase_of(w, kv.get("batch_id").unwrap_or(""))
         ));
         return FAIL;
     }
@@ -465,7 +476,6 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
     kv.push("worktree", &wt.display().to_string());
     kv.push("actor", &actor(w));
     kv.push("opened", &now);
-    set_phase(w, &mut kv, "opened");
     if save(w, label, &c, &kv).is_err() {
         return FAIL;
     }
@@ -489,14 +499,14 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     };
     let since = |k: &str| kv.get(k).and_then(|v| v.parse::<u64>().ok()).map_or(0, |t| w.clock.now().saturating_sub(t));
     w.out("round=open");
-    for k in ["batch_id", "repo", "phase", "head", "base", "members"] {
+    w.out(format!("phase={}", phase_of(w, kv.get("batch_id").unwrap_or(""))));
+    for k in ["batch_id", "repo", "head", "base", "members"] {
         w.out(format!("{k}={}", kv.get(k).unwrap_or("")));
     }
     if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {
         w.out(format!("red={red}"));
     }
     w.out(format!("wall_secs={}", since("opened")));
-    w.out(format!("phase_secs={}", since("phase_at")));
     if let Ok(Some(st)) = records::read_kv(&c.queue_file(stage::STAGED)) {
         for (k, v) in [("staged_batch", "batch_id"), ("staged_phase", "phase"), ("staged_head", "head"), ("staged_members", "members")] {
             w.out(format!("{k}={}", st.get(v).unwrap_or("")));
@@ -581,7 +591,6 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
             return FAIL;
         }
         let _ = fs::remove_file(preempt_marker(&c, batch));
-        set_phase(w, &mut kv, "certifying");
         kv.remove("red");
         if save(w, label, &c, &kv).is_err() {
             return FAIL;
@@ -621,16 +630,8 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
             rc => Some(format!("round-vm exited {rc}")),
         };
         if let Some(why) = fault {
-            let recorded = pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false);
-            let _g = lock(w, label, &c);
-            if let Ok(mut kv) = load(w, label, &c, batch) {
-                set_phase(w, &mut kv, "fault");
-                let _ = save(w, label, &c, &kv);
-            }
+            warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false));
             w.err(format!("queue.sh {label}: {why}; the round is not judged\n{}", tail(&out.err, 20)));
-            if let Err((rc, e)) = recorded {
-                w.err(format!("queue.sh {label}: REFUSED — the incomplete pass of round {batch} was not recorded on spira-lc (rc={rc}): {e}"));
-            }
             return FAULT;
         }
         reds.extend(found.iter().filter(|(_, s)| BLOCKING.contains(&s.as_str())).map(|(n, _)| n.clone()));
@@ -640,7 +641,7 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
 
     let Ok(_g) = lock(w, label, &c) else { return FAIL };
     let Ok(mut kv) = load(w, label, &c, batch) else { return FAIL };
-    if kv.get("phase") != Some("certifying") || kv.get("head") != Some(head.as_str()) {
+    if phase_of(w, batch) != "certifying" || kv.get("head") != Some(head.as_str()) {
         w.err(format!("queue.sh {label}: the round {batch} changed while it was being certified — the result is discarded; certify again"));
         return FAIL;
     }
@@ -653,7 +654,6 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
             return FAULT;
         }
         set(&mut kv, "red", &reds.join(","));
-        set_phase(w, &mut kv, "red");
         if save(w, label, &c, &kv).is_err() {
             return FAIL;
         }
@@ -697,7 +697,6 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         // names it, so the gap is loud at the one place it matters.
         w.err(format!("queue.sh {label}: WARNING — round {batch} is green but its full-suite local pass for {head} was not recorded ({e}); publish will refuse this head until it is"));
     }
-    set_phase(w, &mut kv, "green");
     if save(w, label, &c, &kv).is_err() {
         return FAIL;
     }
@@ -823,7 +822,6 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
     kv.remove("red");
     let ejected = stacked.iter().fold(format!("{}{id} ", kv.get("ejected").unwrap_or("")), |acc, m| format!("{acc}{} ", m.id));
     set(&mut kv, "ejected", &ejected);
-    set_phase(w, &mut kv, "opened");
     if save(w, label, &c, &kv).is_err() {
         return FAIL;
     }
@@ -871,7 +869,7 @@ fn preempt(w: &World, batch: &str, repo: Option<&str>, eject_arg: &str, reason: 
     let (wt, head, tips) = {
         let Ok(_g) = lock(w, label, &c) else { return FAIL };
         let Ok(kv) = load(w, label, &c, batch) else { return FAIL };
-        let phase = kv.get("phase").unwrap_or("");
+        let phase = phase_of(w, batch);
         let members = kv.members();
         if let Some(missing) = ids.iter().find(|i| !members.iter().any(|m| &m.id == *i)) {
             let named: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
@@ -915,7 +913,7 @@ fn preempt(w: &World, batch: &str, repo: Option<&str>, eject_arg: &str, reason: 
     {
         let Ok(_g) = lock(w, label, &c) else { return FAIL };
         let Ok(mut kv) = load(w, label, &c, batch) else { return FAIL };
-        if kv.get("phase") != Some("certifying") || kv.get("head") != Some(head.as_str()) {
+        if phase_of(w, batch) != "certifying" || kv.get("head") != Some(head.as_str()) {
             w.err(format!("queue.sh {label}: the round {batch} changed while its pass was stopping — nothing ejected"));
             return FAIL;
         }
@@ -929,7 +927,6 @@ fn preempt(w: &World, batch: &str, repo: Option<&str>, eject_arg: &str, reason: 
             return FAIL;
         }
         set(&mut kv, "red", &reds.join(","));
-        set_phase(w, &mut kv, "preempted");
         if save(w, label, &c, &kv).is_err() {
             return FAIL;
         }
@@ -988,7 +985,7 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
     }
     let Ok(_g) = lock(w, label, &c) else { return FAIL };
     let Ok(kv) = load(w, label, &c, batch) else { return FAIL };
-    let phase = kv.get("phase").unwrap_or("");
+    let phase = phase_of(w, batch);
     if phase != "green" {
         w.err(format!("queue.sh {label}: round {batch} is {phase}, not green — certify it first"));
         return FAIL;

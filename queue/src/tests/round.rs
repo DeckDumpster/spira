@@ -25,6 +25,12 @@ fn kv_of(t: &T, name: &str) -> BTreeMap<String, String> {
     fs::read_to_string(t.qfile(name)).unwrap_or_default().lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
+fn round_phase(t: &T) -> String {
+    let rec = kv_of(t, "round");
+    assert!(!rec.contains_key("phase") && !rec.contains_key("phase_at"), "the round file carries no phase: {rec:?}");
+    t.lc.batch_state(&rec["batch_id"]).unwrap().0
+}
+
 fn marker(t: &T, batch: &str, ext: &str) -> PathBuf {
     t.s().run.join("rounds").join(format!("{batch}.{ext}"))
 }
@@ -49,7 +55,7 @@ fn open_certify_land_is_one_round_the_whole_way() {
     assert!(t.out().contains("head=merged-tb") && t.out().contains("members=sp-a:ta sp-b:tb"), "{}", t.out());
     assert!(t.lc.has(&format!("cut {batch} sp-a:ta,sp-b:tb")), "spira-lc cut records the batch and moves the members");
     let rec = kv_of(&t, "round");
-    assert_eq!((rec["phase"].as_str(), rec["head"].as_str(), rec["base"].as_str()), ("opened", "merged-tb", "b0"));
+    assert_eq!((round_phase(&t).as_str(), rec["head"].as_str(), rec["base"].as_str()), ("OPEN", "merged-tb", "b0"));
     assert!(marker(&t, &batch, "running").exists(), "round-duty sees a round in flight");
 
     let out = t.io.out.borrow().len();
@@ -60,9 +66,9 @@ fn open_certify_land_is_one_round_the_whole_way() {
 
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     assert!(t.scripts.calls.borrow().iter().any(|c| c.ends_with("wall=900")), "the corpus runs under the configured cap: {:?}", t.scripts.calls.borrow());
-    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 {{\"PassGreen\":{{\"n\":1,\"suites_s\":0,\"build_s\":0}}}}")), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 3 {{\"PassGreen\":{{\"n\":1,\"suites_s\":0,\"build_s\":0}}}}")), "{:?}", t.lc.calls.borrow());
     assert!(certified_tree_exists(&t), "the round GREEN certificate is on the head's tree");
-    assert_eq!(kv_of(&t, "round")["phase"], "green");
+    assert_eq!(round_phase(&t), "GREEN");
 
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
@@ -97,17 +103,17 @@ fn eject_then_land_rebuilds_the_head_without_the_member() {
 
     assert_eq!(t.run(&["round", "certify", &batch]), 1);
     assert!(t.out().contains("RED") && t.out().contains("red=test-b.sh"), "{}", t.out());
-    assert_eq!(kv_of(&t, "round")["phase"], "red");
+    assert_eq!(round_phase(&t), "ATTRIBUTING");
     assert!(!certified_tree_exists(&t), "a red round certifies nothing");
     assert_eq!(t.run(&["round", "land", &batch]), 1, "a red round does not land");
-    assert!(t.err().contains("is red, not green"), "{}", t.err());
+    assert!(t.err().contains("is attributing, not green"), "{}", t.err());
 
     assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_reopen sp-b eject-red test-b.sh"));
     assert!(t.lc.has("event bead sp-b IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}") || t.lc.has("event bead sp-b CERTIFIED 3 \"Deliver\""));
-    assert!(t.lc.has(&format!("eject-member {batch} sp-b CI_RUNNING 4 red on test-b.sh")));
+    assert!(t.lc.has(&format!("eject-member {batch} sp-b ATTRIBUTING 4 red on test-b.sh")));
     let rec = kv_of(&t, "round");
-    assert_eq!((rec["members"].as_str(), rec["head"].as_str(), rec["phase"].as_str()), ("sp-a:ta sp-c:tc", "merged-tc", "opened"));
+    assert_eq!((rec["members"].as_str(), rec["head"].as_str(), round_phase(&t).as_str()), ("sp-a:ta sp-c:tc", "merged-tc", "OPEN"));
     assert_eq!(rec["ejected"].trim(), "sp-b");
     assert!(t.git.calls.borrow().iter().filter(|c| c.starts_with("merge ")).count() >= 5, "the survivors are merged again onto the base");
 
@@ -116,7 +122,7 @@ fn eject_then_land_rebuilds_the_head_without_the_member() {
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tc"));
     assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"") && t.lc.has("event bead sp-c CERTIFIED 3 \"Deliver\""));
-    assert!(t.lc.has(&format!("land {batch} 4 merged-tc")));
+    assert!(t.lc.has(&format!("land {batch} 8 merged-tc")));
 }
 
 #[test]
@@ -159,7 +165,7 @@ fn ejecting_the_last_member_closes_the_round() {
     let batch = batch_of(&t);
     assert_eq!(t.run(&["round", "eject", &batch, "sp-a", "--reason", "harness"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_reopen sp-a eject "));
-    assert!(t.lc.has(&format!("abandon-batch {batch} CI_RUNNING 4 round emptied")));
+    assert!(t.lc.has(&format!("abandon-batch {batch} OPEN 1 round emptied")));
     assert!(!t.qfile("round").exists() && !marker(&t, &batch, "running").exists());
 }
 
@@ -179,7 +185,7 @@ fn abandon_returns_the_members_and_closes_the_round() {
     assert_eq!(batch_of(&t), "hand-1");
     assert_eq!(t.run(&["round", "abandon", "hand-1"]), 2, "a reason is required");
     assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
-    assert!(t.lc.has("abandon-batch hand-1 CI_RUNNING 4 base moved"));
+    assert!(t.lc.has("abandon-batch hand-1 OPEN 1 base moved"));
     assert!(!t.qfile("round").exists() && !marker(&t, "hand-1", "running").exists());
     assert!(fs::read_to_string(marker(&t, "hand-1", "result")).unwrap().starts_with("abandoned: base moved"));
     assert!(!t.lc.has("land "), "an abandoned round lands nothing");
@@ -337,7 +343,7 @@ fn certify_never_reads_a_harness_fault_as_green_or_red() {
     let batch = batch_of(&t);
 
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "no results at all is a fault");
-    assert!(t.err().contains("no verdicts") && kv_of(&t, "round")["phase"] == "fault", "{}", t.err());
+    assert!(t.err().contains("no verdicts") && round_phase(&t) == "ATTRIBUTING", "{}", t.err());
 
     *t.scripts.round_vm.borrow_mut() = RunOut { rc: 124, out: String::new(), err: "killed".into() };
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
@@ -365,7 +371,7 @@ fn certify_faults_on_an_unreadable_or_missing_suite_verdict() {
         *t.scripts.round_vm_results.borrow_mut() = results;
         assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
         assert!(t.err().contains(want) && t.err().contains("not judged"), "{}", t.err());
-        assert!(!certified_tree_exists(&t) && kv_of(&t, "round")["phase"] == "fault");
+        assert!(!certified_tree_exists(&t) && round_phase(&t) == "ATTRIBUTING");
     }
     *t.scripts.round_vm_results.borrow_mut() = vec![ok("test-a.sh"), ("test-b.sh".into(), "skip".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
@@ -551,9 +557,6 @@ fn preempt_world() -> (T, String) {
     fs::create_dir_all(&results).unwrap();
     fs::write(results.join("test-a.sh.result"), "ok\n").unwrap();
     fs::write(results.join("test-b.sh.result"), "red 1 2 fp p e 1\n").unwrap();
-    let mut rec = kv_of(&t, "round");
-    rec.insert("phase".into(), "certifying".into());
-    fs::write(t.qfile("round"), rec.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).unwrap();
     fs::write(marker(&t, &batch, "pass"), "777").unwrap();
     t.scripts.pass_alive.set(true);
     (t, batch)
@@ -571,7 +574,7 @@ fn preempting_a_running_pass_salvages_ejects_rebuilds_and_restarts() {
     assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 {{\"PassPreempted\":{{\"n\":1,\"done\":2,\"total\":3,\"red_suites\":[\"test-b.sh\"]}}}}")), "{:?}", t.lc.calls.borrow());
     assert!(t.lc.has(&format!("eject-member {batch} sp-b ")) && t.lib.has("bead_reopen sp-b eject-red test-b.sh"));
     let rec = kv_of(&t, "round");
-    assert_eq!((rec["members"].as_str(), rec["head"].as_str(), rec["phase"].as_str()), ("sp-a:ta sp-c:tc", "merged-tc", "opened"));
+    assert_eq!((rec["members"].as_str(), rec["head"].as_str(), round_phase(&t).as_str()), ("sp-a:ta sp-c:tc", "merged-tc", "OPEN"));
     assert!(t.out().contains("stopped at 2/3 suites") && t.out().contains("verified no ejected tip remains"), "{}", t.out());
     assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")), "{:?}", t.scripts.calls.borrow());
     assert!(!marker(&t, &batch, "preempt").exists(), "the marker is spent once the pass is recorded");
@@ -580,14 +583,11 @@ fn preempting_a_running_pass_salvages_ejects_rebuilds_and_restarts() {
 #[test]
 fn preempt_refuses_without_a_running_pass_and_names_the_phase() {
     let (t, batch) = preempt_world();
-    let mut rec = kv_of(&t, "round");
-    rec.insert("phase".into(), "red".into());
-    fs::write(t.qfile("round"), rec.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).unwrap();
+    *t.lc.batch_view.borrow_mut() = Some(("RED".into(), 4, 1, "suites".into()));
     assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "x"]), 1);
     assert!(t.err().contains(&format!("round {batch} is red, with no pass running")), "{}", t.err());
 
-    rec.insert("phase".into(), "certifying".into());
-    fs::write(t.qfile("round"), rec.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).unwrap();
+    *t.lc.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), 4, 1, "suites".into()));
     t.scripts.pass_alive.set(false);
     assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "x"]), 1);
     assert!(t.err().contains("is certifying, with no pass running"), "a recorded phase without a live handle is not a running pass: {}", t.err());
@@ -623,7 +623,7 @@ fn a_preempted_certify_leaves_the_record_to_the_verb() {
     t.scripts.preempted_during_vm.set(true);
     assert_eq!(t.run(&["round", "certify", &batch]), crate::ops::round::PREEMPTED, "{}", t.err());
     assert!(!marker(&t, &batch, "pass").exists(), "the handle goes with the run");
-    assert_eq!(kv_of(&t, "round")["phase"], "certifying");
+    assert!(!kv_of(&t, "round").contains_key("phase"));
     assert!(!t.lc.has("PassIncomplete") && !t.lc.has("PassRed"), "{:?}", t.lc.calls.borrow());
 }
 
@@ -642,6 +642,7 @@ fn staged_behind_green() -> (T, String, String) {
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
     let n = batch_of(&t);
     assert_eq!(t.run(&["round", "certify", &n]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert(n.clone(), ("GREEN".into(), "5".into()));
     t.io.out.borrow_mut().clear();
     t.git.ancestor("ta", "merged-ta");
     t.git.ancestor("merged-ta", "merged-tb");
@@ -708,6 +709,7 @@ fn promotion_on_an_identical_tree_reuses_the_staged_pass() {
 
     assert_eq!(t.run(&["round", "land", &n]), 0, "{}", t.err());
     t.lc.batch_states.borrow_mut().insert(n.clone(), ("LANDED".into(), "9".into()));
+    t.lc.batch_states.borrow_mut().insert(s.clone(), ("CI_RUNNING".into(), "2".into()));
     t.io.out.borrow_mut().clear();
     assert_eq!(t.run(&["round", "promote"]), 0, "{}", t.err());
     assert!(t.lc.has(&format!("promote {s} merged-tb merged-ta")), "base is the landed head: {:?}", t.lc.calls.borrow());
@@ -716,8 +718,10 @@ fn promotion_on_an_identical_tree_reuses_the_staged_pass() {
     assert!(t.lc.calls.borrow().iter().any(|c| c.contains(&format!("event batch {s}")) && c.contains("PassGreen")), "the tested pass is recorded on the promoted round: {:?}", t.lc.calls.borrow());
     assert!(gate::cert::path(&t.s().run.join("verdicts"), "spira", T_STAGED).is_some_and(|p| p.exists()), "the tested tree is certified");
     let rec = kv_of(&t, "round");
-    assert_eq!((rec["batch_id"].as_str(), rec["phase"].as_str(), rec["members"].as_str()), (s.as_str(), "green", "sp-b:tb"));
+    assert_eq!((rec["batch_id"].as_str(), rec["members"].as_str()), (s.as_str(), "sp-b:tb"));
+    assert!(!rec.contains_key("phase"));
     assert!(!t.qfile("round-staged").exists());
+    t.lc.batch_states.borrow_mut().insert(s.clone(), ("GREEN".into(), "3".into()));
     assert_eq!(t.run(&["round", "land", &s]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
 }
@@ -737,7 +741,7 @@ fn promotion_onto_a_moved_base_gets_a_fresh_pass() {
     assert!(t.lc.has(&format!("promote {s} merged-tb moved")), "{:?}", t.lc.calls.borrow());
     assert!(t.out().contains("attested=0"), "{}", t.out());
     assert!(!t.lc.calls.borrow().iter().any(|c| c.contains(&format!("event batch {s}")) && c.contains("PassGreen")), "no pass is recorded without a run");
-    assert_eq!(kv_of(&t, "round")["phase"], "opened", "the promoted round waits for its own pass");
+    assert!(!kv_of(&t, "round").contains_key("phase"));
     assert!(!gate::cert::path(&t.s().run.join("verdicts"), "spira", T_MOVED).is_some_and(|p| p.exists()));
 }
 

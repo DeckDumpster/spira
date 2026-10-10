@@ -420,6 +420,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::cockpit_no_bd::CockpitNoBd::default()),
         Box::new(rules::cockpit_no_round_files::CockpitNoRoundFiles::default()),
         Box::new(rules::pool_state_readers::PoolStateReaders::default()),
+        Box::new(rules::round_record_readers::RoundRecordReaders::default()),
         Box::new(rules::incident_cause_lint::IncidentCauseLint::default()),
         Box::new(rules::lockfile_lint::LockfileLint::default()),
         Box::new(rules::config_delta::ConfigDelta::default()),
