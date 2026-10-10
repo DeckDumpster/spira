@@ -62,11 +62,12 @@ pub struct VerdictSettings {
     pub lock_wait: u64,
     pub lock_starve_max: u64,
     pub incident_priority: String,
+    pub red_tracker_label: String,
 }
 
 impl Default for VerdictSettings {
     fn default() -> Self {
-        VerdictSettings { ci_maxsec: 3600, ci_idle_sec: 600, infra_retries: 2, lock_wait: 90, lock_starve_max: 5, incident_priority: "1".into() }
+        VerdictSettings { ci_maxsec: 3600, ci_idle_sec: 600, infra_retries: 2, lock_wait: 90, lock_starve_max: 5, incident_priority: "1".into(), red_tracker_label: String::new() }
     }
 }
 

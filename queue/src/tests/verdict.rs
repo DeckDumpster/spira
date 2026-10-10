@@ -550,6 +550,19 @@ fn a_publish_red_bead_carries_the_failing_suite_lines() {
 }
 
 #[test]
+fn a_publish_red_bead_carries_the_red_tracker_label_only_when_one_is_configured() {
+    for (label, want) in [("tracker-x", true), ("", false)] {
+        let mut t = T::new(LandMode::QueueLocal);
+        t.lib.s.verdict.red_tracker_label = label.into();
+        publish_record(&t);
+        t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+        let bug = t.lib.calls.borrow().iter().find(|c| c.starts_with("create_bug")).cloned().unwrap();
+        assert_eq!(bug.contains(",tracker-x"), want, "{bug}");
+    }
+}
+
+#[test]
 fn a_second_publish_red_with_the_same_failing_set_amends_the_first_with_its_lines() {
     let t = T::new(LandMode::QueueLocal);
     publish_record(&t);

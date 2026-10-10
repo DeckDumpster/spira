@@ -74,6 +74,7 @@ __kv infra_retries "${SPIRA_QUEUE_INFRA_RETRIES:-2}"
 __kv lock_wait "${SPIRA_QUEUE_LOCK_WAIT:-90}"
 __kv starve_max "${SPIRA_QUEUE_LOCK_STARVE_MAX:-5}"
 __kv incident_priority "${SPIRA_INCIDENT_PRIORITY:-1}"
+__kv red_tracker_label "${SPIRA_RED_TRACKER_LABEL:-}"
 exit 0
 "#;
 

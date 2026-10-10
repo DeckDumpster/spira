@@ -184,6 +184,8 @@ pub struct Declared {
     pub incident_label: String,
     pub queue_wait: String,
     pub open_children: String,
+    /// SPIRA_RED_TRACKER_LABEL; empty disables the tracker close.
+    pub red_tracker: String,
     pub submitted: String,
     pub work_types: Vec<String>,
     pub reclaim_grace: i64,
@@ -232,6 +234,7 @@ impl Declared {
             incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
             queue_wait: spira_config::process::cfg("SPIRA_QUEUE_WAIT_LABEL")?,
             open_children: spira_config::process::cfg("SPIRA_OPEN_CHILDREN_LABEL")?,
+            red_tracker: spira_config::process::cfg("SPIRA_RED_TRACKER_LABEL")?,
             submitted: spira_config::process::cfg("SPIRA_SUBMITTED_LABEL")?,
             work_types: spira_config::process::cfg("SPIRA_WORK_CLOSE_TYPES")?
                 .split_whitespace()
@@ -270,6 +273,7 @@ impl Declared {
             incident_label: "incident".into(),
             queue_wait: String::new(),
             open_children: String::new(),
+            red_tracker: String::new(),
             submitted: String::new(),
             work_types: vec!["task".into(), "bug".into(), "feature".into()],
             reclaim_grace: 10800,
@@ -306,6 +310,8 @@ pub struct Cfg {
     pub queue_wait: String,
     /// SPIRA_OPEN_CHILDREN_LABEL (conf.sh defaults it); empty disables CHECK 3c.
     pub open_children: String,
+    /// SPIRA_RED_TRACKER_LABEL; empty disables the tracker close.
+    pub red_tracker: String,
     pub submitted: String,
     pub work_types: Vec<String>,
     pub poison_at: u32,
@@ -458,6 +464,7 @@ impl Cfg {
             incident_label: d.incident_label,
             queue_wait: d.queue_wait,
             open_children: d.open_children,
+            red_tracker: d.red_tracker,
             submitted: d.submitted,
             work_types: d.work_types,
             poison_at: num("SPIRA_POISON_AT", 3).max(0) as u32,

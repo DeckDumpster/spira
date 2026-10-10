@@ -543,6 +543,7 @@ impl<'a> Sentinel<'a> {
         // candidate (sp-du8bv: that loop was 91% of every pass).
         self.phase("CHECK3c");
         self.mark_open_children(&snap, false);
+        self.close_landed_red_trackers(&snap, false);
         self.phase("CHECK7");
         self.ck7_summon_pass();
 
