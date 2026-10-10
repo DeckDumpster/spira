@@ -54,6 +54,9 @@ pub enum Refusal {
     /// `submit` at the tip a round already ejected as red for this bead: the same tree is
     /// red again, so only a changed tip can be submitted.
     EjectedRedTip { tip: String },
+    /// `claim` of a REWORK row after a red gate verdict, proposing the very stack the red
+    /// work was built on: only a moved prerequisite tip can change the outcome.
+    StackUnchanged { prereqs: Vec<String> },
 }
 
 /// The result of applying one event to one row. `row` is the new row when `applied` is

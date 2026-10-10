@@ -1396,6 +1396,7 @@ fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::NotHolder { .. } => "NotHolder".to_string(),
         lifecycle::Refusal::ManualHoldReason { .. } => "ManualHoldReason".to_string(),
         lifecycle::Refusal::EjectedRedTip { .. } => "EjectedRedTip".to_string(),
+        lifecycle::Refusal::StackUnchanged { .. } => "StackUnchanged".to_string(),
     }
 
 }
