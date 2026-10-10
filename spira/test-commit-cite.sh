@@ -77,6 +77,12 @@ want   "names the reason"                     "reason=phantom-bead-id" "$out"
 want   "names the phantom id"                 "sp-totallyfake999" "$out"
 nowant "never a silent PASS"                  "VERDICT=PASS" "$out"
 
+# A non-sp installation: a phantom id under its own prefix is refused, not invisible.
+commit_citing spira/sp-cc1x xx-totallyfake999
+out="$(rungate_real spira/sp-cc1x SPIRA_ID_PREFIX=xx)"; rc=$?
+is     "a phantom id under a non-sp prefix: exits FAIL"  1 "$rc"
+want   "names the phantom id"                            "xx-totallyfake999" "$out"
+
 # --------------------------------------------------------------------------------------
 # SEEN GREEN (positive control for the case above). The identical shape of commit, now
 # citing a bead that is real and OPEN, passes — the fence discriminates rather than

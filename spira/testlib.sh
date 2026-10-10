@@ -613,8 +613,11 @@ for b in beads:
     rows.append({"bead_id": b["id"], "state": state, "holds": holds,
                  "holder": (b.get("assignee") or None) if state == "WORKING" else None})
 if verb == "list":
-    want = sys.argv[3] if len(sys.argv) > 3 and sys.argv[2] == "--state" else None
-    print(json.dumps([r for r in rows if want is None or r["state"] == want]))
+    a = sys.argv[2:]
+    opt = {a[k]: a[k + 1] for k in range(len(a) - 1) if a[k] in ("--state", "--ids")}
+    states = opt["--state"].split(",") if "--state" in opt else None
+    ids = opt["--ids"].split(",") if "--ids" in opt else None
+    print(json.dumps([r for r in rows if (states is None or r["state"] in states) and (ids is None or r["bead_id"] in ids)]))
 elif verb == "show":
     hit = [r for r in rows if r["bead_id"] == (sys.argv[2] if len(sys.argv) > 2 else "")]
     if not hit:
@@ -806,8 +809,11 @@ def row(b):
 rows = {b["id"]: row(b) for b in beads
         if isinstance(b, dict) and b.get("id") and b.get("issue_type") not in ("epic", "event")}
 if verb == "list":
-    want = args[2] if len(args) > 2 and args[1] == "--state" else None
-    print(json.dumps([r for r in rows.values() if want is None or r["state"] == want]))
+    opt = {args[k]: args[k + 1] for k in range(1, len(args) - 1) if args[k] in ("--state", "--ids")}
+    states = opt["--state"].split(",") if "--state" in opt else None
+    ids = opt["--ids"].split(",") if "--ids" in opt else None
+    print(json.dumps([r for r in rows.values()
+                      if (states is None or r["state"] in states) and (ids is None or r["bead_id"] in ids)]))
 elif verb == "show":
     r = rows.get(args[1] if len(args) > 1 else "")
     if r is None:
@@ -947,8 +953,8 @@ while True:
     try:
         f = c.makefile("rw")
         code, out = answer(json.loads(f.readline() or "[]"))
-        f.write(json.dumps({"exit_code": code, "stdout": out}) + "\n")
-        f.flush()
+        body = out.encode()
+        c.sendall(json.dumps({"exit_code": code, "len": len(body)}).encode() + b"\n" + body)
     except Exception as e:
         print(e, file=sys.stderr)
     finally:

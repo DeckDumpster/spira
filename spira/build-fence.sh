@@ -37,9 +37,13 @@
 # `1 tree` for a verified-empty one — either way `n > 0`, so a genuine skip is never mistaken
 # for a silent fence (gate/src/fence.rs, DESIGN.md "Every fence proves it checked").
 #
-# It fails CLOSED: `make build` runs under whatever toolchain is already on PATH — the same
-# one the gate's own build job uses — and a non-zero exit is a RED certification naming the
-# command's own output, not a suite failure.
+# It runs `cargo check --workspace --locked` — no codegen, no link, yet it resolves the same
+# dependencies and lockfile a release build does; the round VM's release build is the real
+# proof. Check artifacts go to one shared warm target dir (CARGO_TARGET_DIR, else
+# SPIRA_FENCE_TARGET_DIR, else a cache dir), not each worktree's own.
+#
+# It fails CLOSED: cargo runs under the pinned toolchain, and a non-zero exit is a RED
+# certification naming the command's own output, not a suite failure.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$HERE/.." 2>/dev/null || { printf 'build-fence: cannot reach the tree holding %s\n' "$0" >&2; exit 1; }
@@ -107,12 +111,17 @@ if ! printf '%s\n' "$changed" | touches_build_surface; then
     exit 0
 fi
 
-out="$(make build 2>&1)"; rc=$?
+CARGO_BIN="${CARGO:-cargo}"
+command -v "$CARGO_BIN" >/dev/null 2>&1 || { printf 'build-fence: %s not found on PATH — refusing\n' "$CARGO_BIN" >&2; exit 2; }
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${SPIRA_FENCE_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/spira/fence-target}}"
+mkdir -p "$CARGO_TARGET_DIR" 2>/dev/null || { printf 'build-fence: cannot create target dir %s — refusing\n' "$CARGO_TARGET_DIR" >&2; exit 2; }
+
+out="$("$CARGO_BIN" check --workspace --locked 2>&1)"; rc=$?
 if [ "$rc" -ne 0 ]; then
-    printf 'build-fence: make build FAILED (rc=%s) — RED certification, not a suite failure\n' "$rc" >&2
+    printf 'build-fence: cargo check FAILED (rc=%s) — RED certification, not a suite failure\n' "$rc" >&2
     printf '%s\n' "$out" >&2
     exit 1
 fi
-printf 'build-fence: make build ok\n' >&2
+printf 'build-fence: cargo check ok\n' >&2
 printf 'fence: build-fence checked %d changed-files\n' "$n" >&2
 exit 0

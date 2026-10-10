@@ -126,7 +126,9 @@ version = "0.1.0"
 dependencies = [
  "batcher",
  "gate",
+ "lifecycle",
  "serde_json",
+ "sift",
  "spira-config",
  "suite-select",
  "testkit",
@@ -893,6 +895,7 @@ name = "queue"
 version = "1.0.0"
 dependencies = [
  "gate",
+ "landing-pass",
  "libc",
  "release",
  "serde",
@@ -1330,6 +1333,15 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "sift"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "testkit",
+]
 
 [[package]]
 name = "signal-hook"
@@ -1851,6 +1863,7 @@ dependencies = [
 name = "watchtower"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "spira-config",

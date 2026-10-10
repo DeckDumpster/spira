@@ -25,6 +25,7 @@ fn m(id: &str, rank: u8, express: bool, at: u64) -> Member {
         base_fix: false,
         certified_at: at,
         stack: BTreeMap::new(),
+        blocked_by: Vec::new(),
     }
 }
 
@@ -234,6 +235,47 @@ fn topo_order_sorts_a_stack_prerequisite_first_regardless_of_pool_order() {
     let pool = vec![c.clone(), a.clone(), b.clone()];
     let ordered = topo_order(&pool);
     assert_eq!(ordered.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a", "sp-b", "sp-c"]);
+}
+
+fn blocked(id: &str, by: &[&str]) -> Member {
+    Member { blocked_by: by.iter().map(|b| b.to_string()).collect(), ..m(id, 1, false, 0) }
+}
+
+#[test]
+fn a_member_whose_blocker_has_not_landed_is_not_cut_and_the_refusal_names_it() {
+    let (kept, refused) = refuse_blocked(vec![m("sp-a", 1, false, 0), blocked("sp-b", &["sp-eeg"])]);
+    assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
+    assert_eq!(refused.len(), 1);
+    assert!(refused[0].contains("sp-b") && refused[0].contains("sp-eeg"), "{refused:?}");
+}
+
+#[test]
+fn a_member_whose_blocker_is_in_the_same_round_is_cut_and_merges_after_it() {
+    let (kept, refused) = refuse_blocked(vec![blocked("sp-b", &["sp-a"]), m("sp-a", 3, false, 0)]);
+    assert!(refused.is_empty(), "{refused:?}");
+    let order: Vec<_> = topo_order(&kept).into_iter().map(|m| m.id).collect();
+    assert_eq!(order, vec!["sp-a", "sp-b"]);
+}
+
+#[test]
+fn a_member_whose_blocker_has_landed_is_cut() {
+    let (kept, refused) = refuse_blocked(vec![blocked("sp-b", &[])]);
+    assert_eq!((kept.len(), refused.len()), (1, 0));
+}
+
+#[test]
+fn a_blocker_that_is_itself_refused_refuses_its_dependent_too() {
+    let (kept, refused) = refuse_blocked(vec![blocked("sp-c", &["sp-b"]), blocked("sp-b", &["sp-eeg"])]);
+    assert!(kept.is_empty());
+    assert_eq!(refused.len(), 2, "{refused:?}");
+}
+
+#[test]
+fn a_feature_round_carries_the_in_pool_blocker_of_a_kept_member() {
+    let pool = vec![blocked("sp-f.2", &["sp-x"]), m("sp-f.1", 1, false, 0), m("sp-x", 1, false, 0), m("sp-y", 1, false, 0)];
+    let (round, _) = select_round(pool);
+    let ids: Vec<_> = round.iter().map(|m| m.id.as_str()).collect();
+    assert!(ids.contains(&"sp-x") && !ids.contains(&"sp-y"), "{ids:?}");
 }
 
 #[test]
@@ -506,8 +548,8 @@ fn bisect_split_divides_evenly_rounding_up_the_first_half() {
 #[test]
 fn pr_record_lists_full_titles_with_foreign_prefixes_dropped_and_express_first() {
     let members = vec![
-        Member { id: "sp-a".into(), tip: "ta".into(), title: "sp-a: a fairly long descriptive title that must not be cut".into(), priority: Some(2), express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new() },
-        Member { id: "sp-x".into(), tip: "tx".into(), title: "an express fix".into(), priority: Some(9), express: true, base_fix: false, certified_at: 0, stack: BTreeMap::new() },
+        Member { id: "sp-a".into(), tip: "ta".into(), title: "sp-a: a fairly long descriptive title that must not be cut".into(), priority: Some(2), express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() },
+        Member { id: "sp-x".into(), tip: "tx".into(), title: "an express fix".into(), priority: Some(9), express: true, base_fix: false, certified_at: 0, stack: BTreeMap::new(), blocked_by: Vec::new() },
     ];
     let pr = pr_record(&members);
     assert_eq!(pr.members, vec!["sp-a".to_string(), "sp-x".to_string()]);

@@ -278,6 +278,13 @@ mod tests {
     }
 
     #[test]
+    fn other_bead_ids_keeps_a_longer_id_distinct_from_its_prefix() {
+        let subjects = "sp-a9gk: fix\nsp-a9g: other";
+        assert_eq!(other_bead_ids(subjects, "sp-a9g"), "sp-a9gk");
+        assert_eq!(other_bead_ids(subjects, "sp-a9gk"), "sp-a9g");
+    }
+
+    #[test]
     fn other_beads_on_conflicts_is_empty_when_files_is_empty() {
         let dir = testkit::TempDir::new("land-verify-other-beads-empty");
         git_init(&dir);

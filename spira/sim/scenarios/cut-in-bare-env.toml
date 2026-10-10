@@ -1,0 +1,42 @@
+epoch = 1800000000
+horizon = 1200000
+goal = "sp-cu01:LANDED"
+goal_tag = "spira-release-"
+real_actors = ["sentinel-summon", "sentinel-landing"]
+
+[[step]]
+at = 0
+file = "sp-cu01"
+
+[[step]]
+at = 0
+claim = "sp-cu01"
+script = ["commit out/a.txt", "submit"]
+
+[[step]]
+at = 340000
+command = "sh spira/sim/scenarios/steps/cut.sh "
+
+[[step]]
+at = 420000
+command = "sh spira/sim/scenarios/steps/cut.sh "
+
+[[step]]
+at = 520000
+command = "sh spira/sim/scenarios/steps/cut.sh "
+
+[[step]]
+at = 640000
+command = "sh spira/sim/scenarios/steps/cut.sh "
+
+[[step]]
+at = 800000
+command = "sh spira/sim/scenarios/steps/cut.sh "
+
+[[step]]
+at = 1000000
+command = "sh spira/sim/scenarios/steps/cut.sh "
+
+[[invariant]]
+name = "cut_job_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"

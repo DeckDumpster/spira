@@ -65,11 +65,11 @@ fn the_shipped_happy_path_parses_and_uses_actors_the_shipped_file_declares() {
 }
 
 #[test]
-fn the_summon_claims_only_ready_beads_the_scenario_scripts_in_id_order() {
+fn the_summon_claims_only_ready_or_rework_beads_the_scenario_scripts_in_id_order() {
     let list = r#"[{"bead_id":"sp-b","state":"READY","version":"0"},{"bead_id":"sp-a","state":"READY","version":2},
         {"bead_id":"sp-c","state":"WORKING","version":"3"},{"bead_id":"sp-d","state":"READY","version":"0"}]"#;
     let scenario = "sp-b submit\nsp-a commit x\nsp-c submit\n";
-    assert_eq!(claimable(list, scenario).unwrap(), vec![("sp-a".to_string(), 2), ("sp-b".to_string(), 0)]);
+    assert_eq!(claimable(list, scenario).unwrap(), vec![("sp-a".to_string(), "READY".to_string(), 2), ("sp-b".to_string(), "READY".to_string(), 0)]);
     assert_eq!(claimable(list, "").unwrap(), vec![]);
     assert!(claimable("not json", scenario).is_err());
 }
@@ -108,4 +108,29 @@ fn a_bare_scenario_name_resolves_to_the_shipped_scenario_from_anywhere_in_the_ch
     assert!(shipped.ends_with("spira/sim/scenarios/happy-path.toml") && shipped.is_file(), "{shipped:?}");
     assert_eq!(scenario_path(&root, "./happy-path.toml"), Path::new("./happy-path.toml"));
     assert_eq!(scenario_path(&root, "no-such-scenario"), Path::new("no-such-scenario"));
+}
+
+#[test]
+fn a_returned_bead_is_claimed_again_from_rework() {
+    let list = r#"[{"bead_id":"sp-a","state":"REWORK","version":"4"},{"bead_id":"sp-b","state":"SUBMITTED","version":"1"}]"#;
+    assert_eq!(claimable(list, "sp-a drop x\nsp-b submit\n").unwrap(), vec![("sp-a".to_string(), "REWORK".to_string(), 4)]);
+}
+
+#[test]
+fn a_file_step_carries_its_priority_into_the_bead_and_no_other_step_may() {
+    assert!(shell("file = \"sp-a\"\npriority = 0").unwrap().contains("-t task -p 0 "));
+    assert!(shell("file = \"sp-a\"").unwrap().contains("-t task -p 2 "));
+    for bad in ["file = \"sp-a\"\npriority = 5", "command = \"true\"\npriority = 1"] {
+        assert!(shell(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_scenarios_own_sql_is_one_select_under_a_plain_name() {
+    let own = |kind: &str, name: &str, sql: &str| sc(&format!("[[{kind}]]\nname = \"{name}\"\nsql = \"{sql}\"\n")).map(|_| ());
+    assert!(own("invariant", "a_b1", "SELECT seq FROM events").is_ok());
+    assert!(own("expect", "a_b1", "select 1 from events").is_ok());
+    for (name, sql) in [("A", "SELECT 1"), ("", "SELECT 1"), ("x y", "SELECT 1"), ("x", "DROP TABLE events"), ("x", "SELECT 1; SELECT 2")] {
+        assert!(own("invariant", name, sql).is_err(), "{name} {sql}");
+    }
 }

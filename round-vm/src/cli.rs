@@ -209,12 +209,14 @@ pub fn main_with(args: Vec<String>) -> i32 {
             let sig_pool = pool_for(&cfg);
             let sig_remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
             let sig_results = run_args.as_ref().and_then(|a| a.results_dir.clone()).unwrap_or_else(|| cfg.run_dir.join("batch-results"));
+            let sig_run_dir = cfg.run_dir.clone();
             let sig_scratch = cfg.state_dir.join(format!(".salvage.{}", me.pid));
             block_termination_signals(move |sig| {
                 for vm in sig_pool.leased_to(me) {
                     let n = salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6));
                     eprintln!("round-vm run: signal {sig}: salvaged {n} suite result(s) from {} before release", vm.handle);
                 }
+                crate::progress::mark_killed(&sig_run_dir);
                 eprintln!("round-vm run: signal {sig}: releasing this run's VM");
                 sig_pool.release_owned_by(me, &real_attempt);
                 std::process::exit(128 + sig);
@@ -222,7 +224,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
             let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default() };
             let remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
             let Some(a) = run_args.as_ref() else { return 2 };
-            let env = RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote };
+            let env = RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote, record: &crate::run::QueueRecorder };
             let code = no_panic(|| run(&env, a));
             if code == PANIC_EXIT {
                 // G2: a panic mid-run must not leave this run's VM leased to a dying process.
@@ -436,6 +438,7 @@ mod tests {
             ssh_tries: 1,
             stream_every_secs: 1,
             attr_linger_secs: 1,
+            cap_secs: 1,
         });
         let a = crate::template::TemplateArgs { tree_dir: tree, rev: None, toolchain: None };
         let pool = pool_for(&cfg);

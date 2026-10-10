@@ -7,8 +7,9 @@
 # sim world: `sim run` of spira/sim/scenarios/happy-path.toml (file and claim steps, the real
 # actors' schedules, the stub agent, the stub gate and round VM, sim gh), then `sim replay`.
 #
-#   1. `sim run` exits 0, world up included, inside 60 s of wall time (the run is killed at that
-#      limit, so a slow run is a failed exit, not a measured number compared afterwards).
+#   1. `sim run` exits 0, world up included. It is killed at RUN_LIMIT, a hang guard sized for a
+#      loaded round VM, not a budget: at 60 s it went red under load in r-auto-93..97 while
+#      passing alone (law-no-wall-clock-budgets-in-the-corpus).
 #   2. The world ends with the bead LANDED on local/main, its publish PR merged and a release
 #      tag in the forge.
 #   3. `sim replay` of the same seed reports no divergence and leaves the events table
@@ -27,7 +28,7 @@ command -v testenv >/dev/null || bail "testenv is not on PATH"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 SEED=7
-RUN_LIMIT=60
+RUN_LIMIT=280
 SCENARIO="$HERE/sim/scenarios/happy-path.toml"
 
 REPO="$T/repo"
@@ -58,7 +59,7 @@ START=$SECONDS
 out="$(sim_in_repo "$RUN_LIMIT" run happy-path --seed "$SEED" --keep 2>&1)"; rc=$?
 echo "# sim run took $((SECONDS - START))s"
 W="$(ls -d "$T"/sim-run-*-"$SEED" 2>/dev/null | head -1)"
-wantrc "sim run happy-path exits 0 within ${RUN_LIMIT}s (124 is the limit)" 0 "$rc"
+wantrc "sim run happy-path exits 0 (killed at ${RUN_LIMIT}s if it hangs: rc 124)" 0 "$rc"
 [ "$rc" = 0 ] || RUN_OUT="$out"
 want "sim run prints the seed first" "sim seed: $SEED" "$out"
 

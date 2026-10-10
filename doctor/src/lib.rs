@@ -10,7 +10,7 @@ pub mod real;
 mod tests;
 
 use ports::World;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -92,6 +92,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "the cockpit", lines: check_snapshot_fresh(w) },
         Section { title: "operator channel", lines: check_operator_channel(w) },
         Section { title: "concierge", lines: check_concierge_singleton(w) },
+        Section { title: "git hooks", lines: check_hooks_path(w) },
     ];
 
     let mut fatal = 0u32;
@@ -856,6 +857,48 @@ pub fn check_concierge_singleton(w: &dyn World) -> Vec<Line> {
                 stray.join(" "),
                 conc.display()
             ),
+        )]
+    }
+}
+
+// ============================================================================ git hooks
+
+fn lexical(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `core.hooksPath` is written once at install; a later writer that displaces it disables
+/// every hook the harness ships without a sign.
+pub fn check_hooks_path(w: &dyn World) -> Vec<Line> {
+    let (Some(repo), Some(home)) = (
+        w.env("SPIRA_REPO").filter(|v| !v.is_empty()),
+        w.env("SPIRA_HOME").filter(|v| !v.is_empty()),
+    ) else {
+        return vec![warn("SPIRA_REPO or SPIRA_HOME is unset — cannot check core.hooksPath", "")];
+    };
+    let want = lexical(&Path::new(&home).join("hooks"));
+    let Some(got) = w.git_hooks_path(Path::new(&repo)) else {
+        return vec![fail(
+            format!("core.hooksPath is not set in {repo} — the harness hooks are not armed"),
+            format!("Expected {}. Re-run: exclude.sh install", want.display()),
+        )];
+    };
+    if lexical(&Path::new(&repo).join(&got)) == want {
+        vec![ok(format!("core.hooksPath is {}", want.display()))]
+    } else {
+        vec![fail(
+            format!("core.hooksPath is {got}, not the harness hooks directory {}", want.display()),
+            "The harness hooks do not run. Re-run: exclude.sh install",
         )]
     }
 }

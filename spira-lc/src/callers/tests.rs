@@ -72,9 +72,11 @@ impl Machine for Fake {
             "list" => {
                 let st = flag(args, "--state");
                 let hold = flag(args, "--hold");
+                let live = args.iter().any(|a| a == "--live");
                 let rows: Vec<Value> = self
                     .beads
                     .values()
+                    .filter(|r| !live || !r.state.is_terminal())
                     .filter(|r| st.as_deref().is_none_or(|s| r.state.as_str() == s))
                     .filter(|r| hold.as_deref().is_none_or(|h| r.holds.iter().any(|x| x.as_str() == h)))
                     .map(Self::row_json)
@@ -232,6 +234,30 @@ fn release_and_holder_dead_return_working_to_ready_and_refuse_elsewhere() {
 }
 
 #[test]
+fn writers_acting_on_a_state_that_moved_send_no_event() {
+    let mut f = Fake::default();
+    f.bead("sp-ready", BeadState::Ready);
+    let a = go(&mut f, "holder-dead", &["sp-ready"]);
+    assert_eq!(a.code, REFUSED);
+    assert!(a.stderr.contains("sp-ready is READY"), "{}", a.stderr);
+    f.bead("sp-deliv", BeadState::InDelivery);
+    assert_eq!(go(&mut f, "withdraw-ask", &["sp-deliv"]).code, REFUSED);
+    f.bead("sp-r", BeadState::Ready);
+    assert_eq!(go(&mut f, "reply", &["sp-r", "m-1@spira"]).code, REFUSED);
+    assert!(f.events.is_empty(), "{:?}", f.events);
+}
+
+#[test]
+fn certify_on_a_bead_sent_to_rework_sends_neither_submit_nor_verdict() {
+    let mut f = Fake::default();
+    f.bead("sp-rw", BeadState::Rework);
+    let a = go(&mut f, "certify", &["sp-rw", "fff666", "pass", "keyB", "gate"]);
+    assert_eq!(a.code, REFUSED);
+    assert_eq!(a.cert_log.map(|c| c.0), Some("skip".into()));
+    assert!(f.events.is_empty(), "{:?}", f.events);
+}
+
+#[test]
 fn drop_is_orthogonal_and_terminal() {
     let mut f = Fake::default();
     f.bead("sp-x", BeadState::Ready);
@@ -290,6 +316,16 @@ fn state_and_the_bulk_lists_keep_their_line_shapes() {
     assert_eq!(go(&mut f, "list-held", &["poison"]).stdout, "sp-1\nsp-2");
     assert_eq!(go(&mut f, "list-state", &["WORKING"]).stdout, "sp-1\t1700000000\tpoison,wait\nsp-3\t\t");
     assert_eq!(go(&mut f, "list-all", &[]).stdout, "sp-1\tWORKING\taeon-1\nsp-2\tREADY\t\nsp-3\tWORKING\t");
+}
+
+#[test]
+fn list_held_never_names_a_terminal_bead() {
+    let mut f = Fake::default();
+    f.bead("sp-live", BeadState::Ready).holds.insert(HoldKind::Manual);
+    for (id, st) in [("sp-l", BeadState::Landed), ("sp-s", BeadState::Superseded), ("sp-d", BeadState::Dropped), ("sp-n", BeadState::Done)] {
+        f.bead(id, st).holds.insert(HoldKind::Manual);
+    }
+    assert_eq!(go(&mut f, "list-held", &["manual"]).stdout, "sp-live");
 }
 
 // ---- delivery exits --------------------------------------------------------------------
@@ -441,6 +477,27 @@ fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
 }
 
 #[test]
+fn certify_records_a_red_verdict_for_a_bead_already_in_delivery_and_ignores_the_rest() {
+    let mut f = Fake::default();
+    f.bead("sp-d", BeadState::InDelivery).tip = Some("ddd".into());
+    let a = go(&mut f, "certify", &["sp-d", "ddd", "red", "branch-red"]);
+    assert_eq!(a.code, APPLIED, "{:?}", a.cert_log);
+    assert_eq!(f.events.last().unwrap().2, "IN_DELIVERY");
+    assert_eq!(f.state("sp-d"), "IN_DELIVERY");
+    assert_eq!(f.beads["sp-d"].reason.as_deref(), Some("gate-red: suites-failed"));
+
+    f.bead("sp-m", BeadState::InDelivery).tip = Some("new".into());
+    let a = go(&mut f, "certify", &["sp-m", "old", "red", "branch-red"]);
+    assert_eq!(a.code, REFUSED, "a red at a superseded tip is refused");
+    assert_eq!(f.beads["sp-m"].reason, None);
+
+    f.bead("sp-p", BeadState::InDelivery).tip = Some("ppp".into());
+    let n = f.events.len();
+    let a = go(&mut f, "certify", &["sp-p", "ppp", "pass", "k"]);
+    assert_eq!((a.code, f.events.len()), (REFUSED, n), "a pass in delivery changes nothing");
+}
+
+#[test]
 fn resubmit_records_a_moved_tip_with_no_verdict() {
     let mut f = Fake::default();
     let r = f.bead("sp-m", BeadState::Certified);
@@ -451,6 +508,15 @@ fn resubmit_records_a_moved_tip_with_no_verdict() {
     let a = go(&mut f, "resubmit", &["sp-m", "ddd"]);
     assert_eq!((a.code, a.cert_log.unwrap().0), (REFUSED, "skip".into()));
     assert_eq!(go(&mut f, "resubmit", &["sp-none", "ddd"]).code, CANNOT_TELL);
+}
+
+#[test]
+fn resubmit_on_a_rework_bead_names_its_refusal() {
+    let mut f = Fake::default();
+    f.bead("sp-rw", BeadState::Rework);
+    let a = go(&mut f, "resubmit", &["sp-rw", "ddd"]);
+    assert_eq!((a.code, f.state("sp-rw")), (REFUSED, "REWORK"));
+    assert!(a.stderr.contains("sp-rw is REWORK") && a.stderr.contains("spira-lc event"), "{}", a.stderr);
 }
 
 #[test]

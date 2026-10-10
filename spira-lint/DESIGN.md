@@ -675,6 +675,19 @@ through `spira-lc content`.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: cockpit-no-bd checked
 <n> files`.
 
+## Rule `cockpit-no-round-files`
+
+**Intent.** The pane and its collector read a round's pass (number, phase, reds) from the batch
+row, never from a progress or result file a second writer keeps.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/` and `cockpit-collect/`.
+
+**Violation.** A live line naming `round-progress`, `batch-results` or a `rounds/*.running` /
+`*.result` file.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: cockpit-no-round-files
+checked <n> files`.
+
 ## Rule `incident-cause-lint`
 
 Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.

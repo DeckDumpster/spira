@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>]";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -35,6 +35,9 @@ pub struct RunArgs {
     /// The landing ref the round is judged against: the VM runs `spira-lint --base` on it and
     /// attributes a hit to the member whose diff touches the file. Absent: no lint step.
     pub base: Option<String>,
+    /// The spira-lc batch this pass belongs to: the suites boundary is recorded on it live.
+    pub round_batch: Option<String>,
+    pub round_repo: Option<String>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -58,6 +61,8 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--results-dir" => r.results_dir = Some(PathBuf::from(val()?)),
             "--attr-spool" => r.attr_spool = Some(PathBuf::from(val()?)),
             "--base" => r.base = Some(val()?).filter(|v| !v.is_empty()),
+            "--round-batch" => r.round_batch = Some(val()?).filter(|v| !v.is_empty()),
+            "--round-repo" => r.round_repo = Some(val()?).filter(|v| !v.is_empty()),
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
     }
@@ -193,6 +198,34 @@ if ! cargo build -q --profile release --workspace --config profile.release.incre
     exit 4
 fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
+# THE UNIT-TEST BINARIES COMPILE HERE, in the build phase and outside the suite clock; the unit
+# run below is the same command, which then compiles nothing. A scrubbed environment: the
+# launcher's SPIRA_RELEASE/SPIRA_REPO/PATH leak into tests that resolve configuration.
+unit_cargo() {
+    env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+        CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
+        SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
+        GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
+        cargo test --profile release --workspace --config profile.release.incremental=false "$@"
+}
+t_ut=$(date +%s)
+if ! unit_cargo --no-run > ~/round-unit-build.log 2>&1; then
+    echo "round-vm: the round's unit-test build failed:" >&2
+    tail -60 ~/round-unit-build.log >&2
+    exit 4
+fi
+unit_total=$(grep -c '^ *Executable ' ~/round-unit-build.log)
+echo "round-vm: built ${unit_total} unit-test binaries in $(( $(date +%s) - t_ut ))s" >&2
+# One line per unit-test binary as it finishes, from cargo's own "Running" and "test result:"
+# lines on stdin: UNIT-TEST <binary> ok|FAILED (k/M). The totals are the --no-run listing's.
+unit_stream() {
+    awk -v total="$1" -v prog="$2" '
+        /^ *Running / { name = $0; if (match(name, /\(.*\)/)) { name = substr(name, RSTART + 1, RLENGTH - 2); sub(/.*\//, "", name); sub(/-[0-9a-f]+$/, "", name) } else { sub(/^ *Running /, "", name) } next }
+        /^ *Doc-tests / { name = "doc-tests " $2; next }
+        /^test result: / { k++; st = ($3 == "ok.") ? "ok" : "FAILED"; if (st == "FAILED") reds = reds " " name
+            printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", name, st, k, total > "/dev/stderr"; fflush("/dev/stderr")
+            printf "%d %d%s\n", k, total, reds > prog; close(prog) }'
+}
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
 # declared over it. Nothing here is searched for or defaulted.
 mkdir -p "$HOME/round-work/.runtime/spira"
@@ -308,16 +341,14 @@ if [ -n "$lint" ]; then
     fence_run boundary bash spira/boundary.sh check
 fi
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
-# They run beside the suites, on the build above; a red here makes the round red.
-# A SCRUBBED ENVIRONMENT: the launcher's SPIRA_RELEASE/SPIRA_REPO/PATH exported above leak
-# into tests that resolve configuration (4 reds on 2026-10-05); the tests get HOME, cargo's own
-# PATH, the build cache and a git identity (a round VM's root has none), nothing else.
-env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
-    CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
-    SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
-    GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-    cargo test -q --profile release --workspace --no-fail-fast --config profile.release.incremental=false > ~/round-unit-tests.log 2>&1 &
+# They run beside the suites, on the binaries built above; a red here makes the round red.
+unit_progress="$HOME/round-work/.runtime/spira/batch-results/unit-progress"
+mkdir -p "$(dirname "$unit_progress")"
+: > ~/round-unit-tests.log
+unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
+tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_total" "$unit_progress" &
+stream_pid=$!
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round
@@ -325,7 +356,9 @@ else
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" round
 fi
 rc=$?
+if kill -0 "$unit_pid" 2>/dev/null; then echo "round-vm: UNIT-TESTS: waiting (suites done, unit job still running)" >&2; fi
 wait "$unit_pid"; unit_rc=$?
+wait "$stream_pid"
 if [ "$lint_rc" -ne 0 ]; then
     rdir="$HOME/round-work/.runtime/spira/batch-results"
     leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
@@ -349,7 +382,7 @@ fi
 if [ "$unit_rc" -eq 0 ]; then
     echo "round-vm: UNIT-TESTS: PASS ($(grep -c '^test result: ok' ~/round-unit-tests.log) test binaries)" >&2
 else
-    echo "round-vm: UNIT-TESTS: FAIL (cargo test rc=$unit_rc):" >&2
+    echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
     grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
     [ "$rc" -eq 0 ] && rc=1
 fi
@@ -784,6 +817,53 @@ pub struct RunEnv<'a> {
     pub deps: &'a Deps<'a>,
     pub host: &'a dyn Host,
     pub remote: &'a dyn Remote,
+    pub record: &'a dyn Recorder,
+}
+
+/// Writes a pass boundary onto the round's batch row.
+pub trait Recorder: Sync {
+    fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
+}
+
+/// `queue round suites-started`: the lifecycle machine's own verb, so a refusal names the phase.
+pub struct QueueRecorder;
+
+impl Recorder for QueueRecorder {
+    fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", "60", "queue", "round", "suites-started", batch]).args(repo).stdin(Stdio::null());
+        let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("queue round suites-started refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+}
+
+/// The suites boundary, written the first time the pass is seen past its build. A refused write is
+/// kept so the pass ends a fault: a pass the batch row cannot follow is not one to certify.
+fn record_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, refused: &mut Option<String>) {
+    let Some(batch) = args.round_batch.as_deref() else { return };
+    if progress.take_suites_began() {
+        if let Err(e) = env.record.suites_started(batch, args.round_repo.as_deref()) {
+            eprintln!("round-vm run: {e}");
+            refused.get_or_insert(e);
+        }
+    }
+}
+
+/// A batch that finished between two polls is still recorded; a refused record turns a judged pass
+/// (green or red) into a fault.
+fn settle_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, results_dir: &Path, refused: &mut Option<String>, code: i32) -> i32 {
+    progress.update(results_dir);
+    record_boundary(env, args, progress, refused);
+    match refused {
+        Some(e) if code == 0 || code == 1 => {
+            eprintln!("round-vm run: the pass could not be recorded on its batch ({e}); it is not judged");
+            2
+        }
+        _ => code,
+    }
 }
 
 /// `round-vm run`. Returns the process exit code (DESIGN.md §2.2).
@@ -897,6 +977,14 @@ fn image_build_declared(env: &RunEnv, args: &RunArgs, commit: &str) -> bool {
 }
 
 fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool) -> i32 {
+    let watch = crate::load::Watch::start(&vm.handle);
+    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image);
+    watch.finish();
+    rc
+}
+
+#[allow(clippy::too_many_arguments)]
+fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool) -> i32 {
     let cfg = env.cfg;
     let maxpar = args.maxpar.unwrap_or(cfg.maxpar);
     let reachable = (0..cfg.ssh_tries.max(1)).any(|i| {
@@ -924,6 +1012,9 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
     let t0 = Instant::now();
     let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
+    let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
+    let mut progress = crate::progress::Progress::start(&cfg.run_dir, &results_dir, commit_sha, tree_sha, total, cfg.cap_secs);
+    let mut refused: Option<String> = None;
     let Some(spool_dir) = args.attr_spool.clone() else {
         let streamed = std::thread::scope(|sc| {
             let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
@@ -931,6 +1022,8 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
             while !batch.is_finished() {
                 if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
                     stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                    progress.update(&results_dir);
+                    record_boundary(env, args, &mut progress, &mut refused);
                     last = Some(Instant::now());
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -941,15 +1034,20 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         let remote_rc = match streamed {
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
+                progress.finish(&results_dir, 2);
                 return 2;
             }
             Ok(rc) => rc,
             Err(e) => {
                 eprintln!("round-vm run: {e}");
+                progress.finish(&results_dir, 2);
                 return 2;
             }
         };
-        return after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
+        let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
+        let code = settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code);
+        progress.finish(&results_dir, code);
+        return code;
     };
 
     // DESIGN.md §2.2a: stream results while the corpus runs; serve attribution reruns on this
@@ -977,6 +1075,8 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         while !batch.is_finished() {
             if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
                 stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                progress.update(&results_dir);
+                record_boundary(env, args, &mut progress, &mut refused);
                 last = Some(Instant::now());
             }
             server.serve(sc, false);
@@ -988,7 +1088,10 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 (2, false)
             }
-            Ok(Ok(rc)) => (after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs()), true),
+            Ok(Ok(rc)) => {
+                let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs());
+                (settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code), true)
+            }
             Ok(Err(e)) => {
                 eprintln!("round-vm run: {e}");
                 (2, false)
@@ -998,6 +1101,7 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
                 (2, false)
             }
         };
+        progress.finish(&results_dir, code);
         if let Err(e) = server.spool.corpus_done(code) {
             eprintln!("round-vm run: {e}");
         }
@@ -1262,6 +1366,40 @@ mod tests {
         let c = REMOTE_SCRIPT.find("if [ -n \"$fence_fail\" ]; then\n    rdir=").unwrap();
         let d = c + REMOTE_SCRIPT[c..].find("\nfi\n").unwrap() + 4;
         REMOTE_SCRIPT[c..d].to_string()
+    }
+
+    fn unit_stream_fn() -> String {
+        let a = REMOTE_SCRIPT.find("unit_stream() {").unwrap();
+        let b = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
+        REMOTE_SCRIPT[a..b].to_string()
+    }
+
+    #[test]
+    fn the_unit_test_binaries_compile_in_the_build_phase_and_the_run_is_the_same_command() {
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let no_run = REMOTE_SCRIPT.find("unit_cargo --no-run").unwrap();
+        let suites = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        let run = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast").unwrap();
+        assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
+        let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
+        let body = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
+        assert!(body.contains("cargo test --profile release --workspace --config profile.release.incremental=false"), "{body}");
+        assert_eq!(REMOTE_SCRIPT.matches("cargo test").count(), 1, "one definition of the unit command, shared by compile and run");
+    }
+
+    #[test]
+    fn a_cargo_log_streams_one_line_per_binary_in_order_and_a_red_when_it_fails() {
+        let d = TempDir::new();
+        let log = "   Running unittests src/lib.rs (target/release/deps/alpha-0123abcd)\nrunning 1 test\ntest result: ok. 1 passed; 0 failed\n\
+                   \x20    Running tests/it.rs (target/release/deps/it-feedbeef)\ntest result: FAILED. 0 passed; 1 failed\n\
+                   \x20  Doc-tests beta\ntest result: ok. 0 passed; 0 failed\n";
+        fs::write(d.path().join("cargo.log"), log).unwrap();
+        let script = format!("{}\nunit_stream 3 ~/prog < cargo.log", unit_stream_fn());
+        let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).env_clear().env("HOME", d.path()).env("PATH", "/usr/bin:/bin").output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(lines, ["round-vm: UNIT-TEST alpha ok (1/3)", "round-vm: UNIT-TEST it FAILED (2/3)", "round-vm: UNIT-TEST doc-tests beta ok (3/3)"], "{err}");
+        assert_eq!(fs::read_to_string(d.path().join("prog")).unwrap().trim(), "3 3 it");
     }
 
     fn lint_segments() -> (String, String) {
@@ -1712,6 +1850,7 @@ mod tests {
             ssh_tries: 2,
             stream_every_secs: 10,
             attr_linger_secs: 3600,
+            cap_secs: 1234,
         });
         Fixture { d, fp: FakeProvider::new(), cfg }
     }
@@ -1730,7 +1869,71 @@ mod tests {
         };
         let alarm = FakeAlarm::default();
         let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
-        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote }, a)
+        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: &FakeRecorder::default() }, a)
+    }
+
+    fn go_recorded(fx: &Fixture, remote: &FakeRemote, a: &RunArgs, rec: &FakeRecorder) -> i32 {
+        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
+        let fp = fx.fp.clone();
+        let f = move || {
+            Ok(Attempt {
+                provider: Box::new(fp.clone()),
+                iface: "ens18".into(),
+                ssh_user: "root".into(),
+                pubkey: "k".into(),
+                timing: Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 },
+            })
+        };
+        let alarm = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
+        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: rec }, a)
+    }
+
+    #[derive(Default)]
+    struct FakeRecorder {
+        calls: Mutex<Vec<String>>,
+        refuse: bool,
+    }
+
+    impl Recorder for FakeRecorder {
+        fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
+            self.calls.lock().unwrap().push(format!("{batch} {}", repo.unwrap_or("-")));
+            if self.refuse { Err("the batch is ATTRIBUTING, not CI_RUNNING".into()) } else { Ok(()) }
+        }
+    }
+
+    #[test]
+    fn a_pass_with_a_batch_records_its_suites_boundary_once() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), round_repo: Some("sp".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
+        assert_eq!(*rec.calls.lock().unwrap(), vec!["r-9 sp".to_string()]);
+    }
+
+    #[test]
+    fn a_pass_with_no_batch_records_nothing() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
+        assert!(rec.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_refused_record_makes_the_pass_a_fault_not_a_verdict() {
+        let fx = fixture();
+        let rec = FakeRecorder { refuse: true, ..Default::default() };
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 2);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!(v["verdict"].as_str(), Some("fault"));
+    }
+
+    #[test]
+    fn the_round_flags_are_parsed() {
+        let a = parse_run_args(&args(&["t", "--round-batch", "r-1", "--round-repo=sp"])).unwrap();
+        assert_eq!((a.round_batch.as_deref(), a.round_repo.as_deref()), (Some("r-1"), Some("sp")));
     }
 
     fn tree(fx: &Fixture) -> RunArgs {
@@ -2003,6 +2206,28 @@ mod tests {
         assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=0\n");
         assert!(fs::read_to_string(fx.d.path().join("results/test-b.sh.result")).is_ok(), "the corpus's results streamed in");
         assert!(fx.fp.live_vms().is_empty(), "released once the spool closed");
+    }
+
+    #[test]
+    fn a_run_publishes_its_progress_and_leaves_it_done_with_the_verdict() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), ..tree(&fx) };
+        assert_eq!(go(&fx, &remote, &a), 0);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("green")));
+        assert_eq!((v["done"].as_u64(), v["total"].as_u64(), v["cap"].as_u64()), (Some(2), Some(2), Some(1234)));
+        assert!(v["suites_started"].as_u64().is_some());
+    }
+
+    #[test]
+    fn a_run_whose_ssh_fails_is_left_done_with_a_fault() {
+        let fx = fixture();
+        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), ..tree(&fx) };
+        assert_eq!(go(&fx, &remote, &a), 2);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("fault")));
     }
 
     #[test]

@@ -186,6 +186,18 @@ mod tests {
     }
 
     #[test]
+    fn a_response_is_a_header_line_then_the_raw_bytes_once() {
+        use std::io::Read;
+        let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let body = "{\"q\": \"x\"}\nsecond line";
+        super::write_response(&a, 3, body).unwrap();
+        drop(a);
+        let mut got = String::new();
+        b.read_to_string(&mut got).unwrap();
+        assert_eq!(got, format!("{{\"exit_code\":3,\"len\":{}}}\n{body}", body.len()));
+    }
+
+    #[test]
     fn peer_uid_reads_the_connecting_process() {
         let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
         let me = std::fs::metadata("/proc/self").unwrap();
@@ -194,6 +206,8 @@ mod tests {
 }
 
 fn write_response(mut stream: &UnixStream, exit_code: i32, stdout: &str) -> std::io::Result<()> {
-    let resp = serde_json::json!({"exit_code": exit_code, "stdout": stdout});
-    writeln!(stream, "{}", resp)
+    let mut buf = Vec::with_capacity(stdout.len() + 48);
+    writeln!(buf, "{}", serde_json::json!({"exit_code": exit_code, "len": stdout.len()}))?;
+    buf.extend_from_slice(stdout.as_bytes());
+    stream.write_all(&buf)
 }

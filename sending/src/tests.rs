@@ -49,6 +49,8 @@ struct Fake {
     lc_landed: BTreeSet<String>,
     /// Beads whose lifecycle row is past the builder (SUBMITTED or later).
     lc_past: BTreeSet<String>,
+    /// Beads whose lifecycle row is terminal.
+    lc_terminal: BTreeSet<String>,
     base: Option<Base>,
     wts: PathBuf,
     destroy_fails: bool,
@@ -123,6 +125,9 @@ impl World for Fake {
     }
     fn lc_landed(&self, id: &str) -> bool {
         self.lc_landed.contains(id)
+    }
+    fn lc_terminal(&self, id: &str) -> bool {
+        self.lc_terminal.contains(id)
     }
     fn content_on_base(&self, id: &str, proof: &str) {
         self.call(format!("lc {id} {proof}"));
@@ -372,6 +377,15 @@ fn content_on_base_evidence_is_a_machine_event() {
     sweep(&f, opts(), &[repo(&fx)]);
     assert!(f.called(&format!("lc sp-cl1 merge-tree:{main}")), "{:?}", f.calls.borrow());
     assert!(!f.called("lc sp-cl0") && !f.called("label "));
+}
+
+#[test]
+fn a_terminal_bead_is_given_no_content_on_base_event() {
+    let (fx, mut f) = fixture();
+    f.lc_terminal.insert("sp-cl1".into());
+    sweep(&f, opts(), &[repo(&fx)]);
+    assert!(!f.called("lc sp-cl1"), "{:?}", f.calls.borrow());
+    assert!(f.called("close sp-cl1 "), "the branch is still sent");
 }
 
 #[test]

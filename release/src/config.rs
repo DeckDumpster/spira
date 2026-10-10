@@ -278,10 +278,15 @@ impl Config {
         }
     }
 
-    /// `DOLT` is not a registered config key — a `PATH` lookup, same as any other program
-    /// name a caller never configures.
+    /// `DOLT` is not a registered config key — a `PATH` lookup, then the install locations
+    /// a scrubbed `PATH` omits, so activation renders the same unit from any caller.
     fn which(&self, prog: &str) -> Option<String> {
-        let path = self.env("PATH")?;
-        path.split(':').filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join(prog)).find(|p| crate::fsutil::is_executable(p)).map(|p| p.display().to_string())
+        let mut dirs: Vec<PathBuf> = self.env("PATH").map(|p| p.split(':').filter(|d| !d.is_empty()).map(PathBuf::from).collect()).unwrap_or_default();
+        if let Some(h) = self.env("HOME") {
+            dirs.push(PathBuf::from(&h).join(".local/bin"));
+            dirs.push(PathBuf::from(&h).join("go/bin"));
+        }
+        dirs.extend(["/usr/local/bin", "/usr/bin", "/bin"].map(PathBuf::from));
+        dirs.iter().map(|d| d.join(prog)).find(|p| crate::fsutil::is_executable(p)).map(|p| p.display().to_string())
     }
 }

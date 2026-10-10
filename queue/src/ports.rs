@@ -214,10 +214,17 @@ pub trait Scripts {
     /// (`release verify`'s pre-activate store check reads it). Stdout and stderr are kept
     /// apart: `release build` answers the sha on stdout.
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut;
-    /// `round-vm run <tree> --results-dir <results> --base <base>` under `timeout <wall_secs>`: the full
+    /// `round-vm run <tree> --results-dir <results> --base <base> --round-batch <batch> --round-repo <repo>` under `timeout <wall_secs>`: the full
     /// corpus of `tree` on the round VM. Exit 0/1 ran (the results say which suites are red);
     /// 124/137 hit the wall; anything else is the harness's fault.
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut;
+    /// `handle` is where the run's pid is written while it runs: the one thing `round preempt`
+    /// addresses. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut;
+    /// SIGTERM to a run's pid: round-vm salvages the finished suites' results and releases the VM.
+    fn pass_terminate(&self, pid: u32);
+    fn pass_alive(&self, pid: u32) -> bool;
+    /// Start `queue round certify <batch> <repo>` detached, so the next pass outlives the caller.
+    fn pass_restart(&self, batch: &str, repo: &str) -> bool;
 }
 
 /// A finished child: its exit status (127 when it could not run), stdout and stderr.
@@ -252,6 +259,8 @@ pub trait Lc {
     fn available(&self) -> bool;
     /// `show-batch` → (state, version); None when the batch row does not exist.
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)>;
+    /// `show-batch` → (pass, phase); phase is empty outside a CI_RUNNING pass.
+    fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)>;
     fn create_bead(&self, id: &str);
     /// `cut` → Ok(version) or Err((rc, output)).
     fn cut(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)>;

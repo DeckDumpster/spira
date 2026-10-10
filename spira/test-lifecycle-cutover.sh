@@ -633,4 +633,45 @@ count_closed="$("$CLAIM_BIN" select --fayth test --blockers machine \
 wantrc "spira-claim select runs cleanly once the epic closes" 0 $?
 is "B is claimable once the epic closes — the hand-ordered epic edge, unchanged" "1" "$count_closed"
 
+# ── a round's passes: red pass 1 → eject → rebuild → green pass 2, and a pass killed at the cap ──
+certify sp-lc-p-1 tipP1
+certify sp-lc-p-2 tipP2
+lc cut batch-passes --repo fixture-repo --head headP0 --base baseP --members "sp-lc-p-1:tipP1,sp-lc-p-2:tipP2" --actor test >/dev/null
+pev() {   # pev <batch> <kind-json>: the event at the batch's current state and version
+    lc event batch "$1" --expect "$(batch_field "$1" state)" --version "$(batch_field "$1" version)" --actor test --kind "$2"
+}
+pev batch-passes '{"PassStarted":{"n":1,"head":"headP1"}}' >/dev/null
+is "PassStarted moves the round to CI_RUNNING, phase build" "CI_RUNNING build 1" "$(batch_field batch-passes state) $(batch_field batch-passes phase) $(batch_field batch-passes pass)"
+out="$(pev batch-passes '{"PassGreen":{"n":1,"suites_s":1,"build_s":1}}' 2>&1)"
+wantrc "a green before the suites started is refused" 3 $?
+want "the refusal names the round's phase" "phase build" "$out"
+pev batch-passes '{"SuitesStarted":{"n":1}}' >/dev/null
+is "SuitesStarted moves the phase to suites" "suites" "$(batch_field batch-passes phase)"
+pev batch-passes '{"PassRed":{"n":1,"red_suites":["test-x.sh"],"suites_s":90,"build_s":30}}' >/dev/null
+is "a red pass ends in ATTRIBUTING" "ATTRIBUTING" "$(batch_field batch-passes state)"
+_lc_eject_member batch-passes sp-lc-p-1 queue "red on test-x.sh" >/dev/null
+wantrc "a member is ejected from an ATTRIBUTING round" 0 $?
+pev batch-passes '{"PassRebuilt":{"head":"headP2"}}' >/dev/null
+is "a rebuilt round reopens for the next pass" "OPEN" "$(batch_field batch-passes state)"
+pev batch-passes '{"PassStarted":{"n":2,"head":"headP2"}}' >/dev/null
+pev batch-passes '{"SuitesStarted":{"n":2}}' >/dev/null
+passes_json="$(lc list --batches)"
+pfield() { printf '%s' "$passes_json" | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["batch_id"]=="batch-passes"][0]; print(eval(sys.argv[1]))' "$1"; }
+is "list --batches reports pass 2 in the suites phase" "2 suites" "$(pfield 'str(b["pass"]) + " " + b["phase"]')"
+is "list --batches reports pass 1's verdict, red suites and timings" "red ['test-x.sh'] 30 90" "$(pfield '" ".join(str(b["passes"][0][k]) for k in ("verdict", "red_suites", "build_s", "suites_s"))')"
+is "list --batches counts the eject against pass 1" "1 0" "$(pfield '" ".join(str(p["ejects"]) for p in b["passes"])')"
+is "pass 2 has no verdict yet" "None" "$(pfield 'b["last_pass"]["verdict"]')"
+nowant "phase_since is reported" "None" "$(pfield 'b["phase_since"]')"
+pev batch-passes '{"PassGreen":{"n":2,"suites_s":80,"build_s":20}}' >/dev/null
+is "the second pass reaches GREEN" "GREEN" "$(batch_field batch-passes state)"
+
+certify sp-lc-p-3 tipP3
+lc cut batch-cap --repo fixture-repo --head headC --base baseC --members "sp-lc-p-3:tipP3" --actor test >/dev/null
+pev batch-cap '{"PassStarted":{"n":1,"head":"headC"}}' >/dev/null
+pev batch-cap '{"SuitesStarted":{"n":1}}' >/dev/null
+pev batch-cap '{"PassIncomplete":{"n":1,"reason":"over the 900s cap"}}' >/dev/null
+passes_json="$(lc list --batches)"
+pfield() { printf '%s' "$passes_json" | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["batch_id"]=="batch-cap"][0]; print(eval(sys.argv[1]))' "$1"; }
+is "a pass killed at the cap is incomplete, in ATTRIBUTING, neither red nor green" "incomplete ATTRIBUTING" "$(pfield 'b["last_pass"]["verdict"] + " " + b["state"]')"
+
 tl_summary

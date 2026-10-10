@@ -291,6 +291,14 @@ struct FScripts {
     /// What `round-vm run` answers, and the `<suite>.result` files it leaves in --results-dir.
     round_vm: RefCell<RunOut>,
     round_vm_results: RefCell<Vec<(String, String)>>,
+    /// The `runner.meta` it leaves beside them (empty = none).
+    round_vm_meta: RefCell<String>,
+    /// A pass `round preempt` can address: its pid is alive until it is sent TERM.
+    pass_alive: Cell<bool>,
+    /// `round-vm` is preempted while it runs: the marker the verb leaves is there when it returns.
+    preempted_during_vm: Cell<bool>,
+    restart_fails: Cell<bool>,
+    survives_term: Cell<bool>,
 }
 
 impl Scripts for FScripts {
@@ -316,11 +324,29 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("czar {class}"));
         self.fence_ok.get()
     }
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64) -> RunOut {
-        self.calls.borrow_mut().push(format!("round-vm {} base={base} wall={wall_secs}", tree.display()));
+    fn pass_terminate(&self, pid: u32) {
+        self.calls.borrow_mut().push(format!("terminate {pid}"));
+        self.pass_alive.set(self.survives_term.get());
+    }
+    fn pass_alive(&self, _: u32) -> bool {
+        self.pass_alive.get()
+    }
+    fn pass_restart(&self, batch: &str, repo: &str) -> bool {
+        self.calls.borrow_mut().push(format!("restart {batch} {repo}"));
+        !self.restart_fails.get()
+    }
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
+        self.calls.borrow_mut().push(format!("round-vm {} base={base} round={}/{} wall={wall_secs}", tree.display(), round.0, round.1));
+        fs::write(handle, "777").unwrap();
+        if self.preempted_during_vm.get() {
+            fs::write(handle.with_extension("preempt"), "why").unwrap();
+        }
         fs::create_dir_all(results).unwrap();
         for (suite, status) in self.round_vm_results.borrow().iter() {
             fs::write(results.join(format!("{suite}.result")), format!("{status}\n")).unwrap();
+        }
+        if !self.round_vm_meta.borrow().is_empty() {
+            fs::write(results.join("runner.meta"), &*self.round_vm_meta.borrow()).unwrap();
         }
         self.round_vm.borrow().clone()
     }
@@ -399,16 +425,20 @@ struct FLc {
     eject_refused: Cell<bool>,
     /// Every bead event is refused with this text (a locked lifecycle store).
     event_refused: Cell<Option<&'static str>>,
+    /// A batch event whose kind names this is refused.
+    batch_event_refused: Cell<Option<&'static str>>,
     /// Bead events report success and change nothing.
     event_ignored: Cell<bool>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
     row_fails: Cell<bool>,
+    /// When set, the batch answers (state, version, pass, phase) and follows the pass events it is sent.
+    batch_view: RefCell<Option<(String, u64, u32, String)>>,
     calls: RefCell<Vec<String>>,
 }
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -429,7 +459,17 @@ impl Lc for FLc {
     }
     fn batch_state(&self, id: &str) -> Option<(String, String)> {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
-        Some(("CI_RUNNING".into(), "4".into()))
+        match &*self.batch_view.borrow() {
+            Some((s, v, _, _)) => Some((s.clone(), v.to_string())),
+            None => Some(("CI_RUNNING".into(), "4".into())),
+        }
+    }
+    fn batch_pass(&self, id: &str) -> Option<(u32, String)> {
+        self.calls.borrow_mut().push(format!("show-batch {id}"));
+        match &*self.batch_view.borrow() {
+            Some((_, _, n, p)) => Some((*n, p.clone())),
+            None => Some((1, "suites".into())),
+        }
     }
     fn create_bead(&self, id: &str) {
         self.calls.borrow_mut().push(format!("create-bead {id}"));
@@ -451,6 +491,21 @@ impl Lc for FLc {
     }
     fn batch_event(&self, id: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("event batch {id} {s} {v} {kind}"));
+        if self.batch_event_refused.get().is_some_and(|k| kind.contains(k)) {
+            return Err((1, "refused: IllegalTransition".into()));
+        }
+        if let Some(view) = self.batch_view.borrow_mut().as_mut() {
+            let n: u32 = kind.split("\"n\":").nth(1).and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next()).and_then(|d| d.parse().ok()).unwrap_or(view.2);
+            let (state, pass, phase) = match kind.trim_start_matches("{\"").split('"').next().unwrap_or("") {
+                "PassStarted" => ("CI_RUNNING", n, "build"),
+                "SuitesStarted" => ("CI_RUNNING", view.2, "suites"),
+                "PassGreen" => ("GREEN", view.2, ""),
+                "PassRed" | "PassIncomplete" | "PassPreempted" => ("ATTRIBUTING", view.2, ""),
+                "PassRebuilt" => ("OPEN", view.2, ""),
+                _ => (view.0.as_str(), view.2, view.3.as_str()),
+            };
+            *view = (state.to_string(), view.1 + 1, pass, phase.to_string());
+        }
         Ok(())
     }
     fn bead_state(&self, bead: &str) -> Option<(String, String)> {
@@ -702,7 +757,7 @@ impl T {
     }
     /// A spira-lc bead row entered at `since`.
     fn lc_row(&self, id: &str, state: &str, tip: &str, since: u64) {
-        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since) };
+        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new() };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }
     fn open_record(&self, text: &str) {

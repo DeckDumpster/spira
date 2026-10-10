@@ -110,7 +110,7 @@ duplication is exactly what let a timer added after a hand list was written esca
 
 ### `--pr-stall-check`
 - Reads: landstate records (`REBASED` rows with `pr-open:<repo>` reason); `gh pr view
-  --json mergeable,statusCheckRollup`; `gh repo view --json allowAutoMerge`.
+  --json mergeable,statusCheckRollup`; `gh api repos/{owner}/{repo}` (`.allow_auto_merge`; a failed or null read is unknown, never false).
 - Writes: an `incident.sh` bead (red-check / auto-merge-off), `rm` the landstate record
   (CONFLICTING), or `gh pr merge --auto --squash` (otherwise).
 - Env seams: `SPIRA_PR_STALL_MINS` (60), `SPIRA_GH` (gh), `GH_TIMEOUT` (120),

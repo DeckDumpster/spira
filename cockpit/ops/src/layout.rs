@@ -597,6 +597,26 @@ impl Layout {
             .map(str::to_string)
     }
 
+    fn health_width(&self, target: &str) -> String {
+        const MIN_COLS: u32 = 45;
+        let width = self
+            .tmux
+            .run(&["display-message", "-p", "-t", target, "#{window_width}"])
+            .and_then(|w| w.trim().parse::<u32>().ok());
+        match width {
+            Some(w) if w * self.conf.right_pct / 100 < MIN_COLS => MIN_COLS.min(w / 2).to_string(),
+            _ => format!("{}%", self.conf.right_pct),
+        }
+    }
+
+    fn install_resize_hooks(&self, window: &str) {
+        let Some(h) = self.tagged(window, Role::Health) else { return };
+        let cmd = format!("resize-pane -t {h} -x {}%", self.conf.right_pct);
+        for hook in ["window-resized", "client-resized", "client-attached"] {
+            self.tmux.run_ok(&["set-hook", "-t", session_of(window), hook, &cmd]);
+        }
+    }
+
     fn split_health(&self, target: &str) -> Option<String> {
         self.tmux.run(&[
             "split-window",
@@ -607,7 +627,7 @@ impl Layout {
             "-h",
             "-f",
             "-l",
-            &format!("{}%", self.conf.right_pct),
+            &self.health_width(target),
             "-t",
             target,
             "-c",
@@ -703,7 +723,8 @@ impl Layout {
         self.tmux
             .run_ok(&["set-option", "-w", "-t", window, "@cockpit_up", "1"]);
         self.tmux
-            .run_ok(&["set-option", "-t", session_of(window), "window-size", "largest"]);
+            .run_ok(&["set-option", "-t", session_of(window), "window-size", "latest"]);
+        self.install_resize_hooks(window);
         self.apply_mouse_mode();
         self.apply_clipboard_mode();
         self.tmux.run_ok(&["select-pane", "-t", &sess]);
@@ -840,7 +861,7 @@ impl Layout {
 
         let windows = self.cockpit_windows();
         for w in &windows {
-            self.tmux.run_ok(&["set-option", "-t", session_of(w), "window-size", "largest"]);
+            self.tmux.run_ok(&["set-option", "-t", session_of(w), "window-size", "latest"]);
         }
 
         if windows.is_empty() {
@@ -876,6 +897,7 @@ impl Layout {
             if self.session_pane(w).is_some() {
                 self.repair_dashboards(w);
                 self.restart_if_stale(w, Role::Health);
+                self.install_resize_hooks(w);
                 continue;
             }
             if !self.heal_ready() {

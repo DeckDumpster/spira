@@ -285,10 +285,10 @@ case "${1:-}" in
     list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: the stub's CERTIFIED rows
     # read_stack: a bead the machine holds, unstacked; its state and a version for the
     # batcher's own withdrawal (sp-mve9i: Deliver then Returned takes a member to REWORK).
-    show) st=; [ -f "${SPIRA_RUN:-/nonexistent}/lc-stub/${2:-}" ] && read -r st _ < "${SPIRA_RUN}/lc-stub/$2"
-          printf '{"bead":{"bead_id":"%s","state":"%s","version":1}}\n' "${2:-}" "$st"; exit 0 ;;
+    show) st=; tip=; [ -f "${SPIRA_RUN:-/nonexistent}/lc-stub/${2:-}" ] && read -r st tip _ < "${SPIRA_RUN}/lc-stub/$2"
+          printf '{"bead":{"bead_id":"%s","state":"%s","tip":"%s","version":1}}\n' "${2:-}" "$st" "$tip"; exit 0 ;;
     event) f="${SPIRA_RUN:-/nonexistent}/lc-stub/${3:-}"
-           case "$*" in *Returned*) [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; } ;; esac
+           case "$*" in *Returned*|*GateRed*) [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; } ;; esac
            exit 0 ;;
     # reopen (sp-swh8b8): the door moves the row, then reopens the store — open, unassigned,
     # no submitted label; here only the store half, the row being this fixture's file.
@@ -566,8 +566,8 @@ rm -f "$QUEUEDIR/$REPONAME/base-moved"
 
 out_c="$(STUB_RED_SUITES="" cut_repo)"
 is   "C: sp-cccc3 is reopened"   "open" "$(status_of sp-cccc3)"
-nowant "C: sp-cccc3 no longer submitted — reopened for rebase (sp-1346p)" "spira-submitted" "$(labels_of sp-cccc3)"
-is   "C: bump_requeue stamped merge-conflict" "1" "$(grep -c '^sp-cccc3 merge-conflict$' "$REQUEUE_SPY")"
+is   "C: the pre-round screen sent sp-cccc3 to REWORK (no-rebase)" "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-cccc3")"
+want "C: the screen says so" "SIFT sent sp-cccc3 to REWORK" "$out_c"
 nowant "C: no PR opened for the conflicting-only round" "PR " "$out_c"
 
 # =============================================================================

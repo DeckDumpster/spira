@@ -26,6 +26,7 @@ mod drive;
 mod flip;
 mod io;
 mod order;
+mod screen;
 mod vm;
 
 use std::collections::BTreeMap;
@@ -215,10 +216,15 @@ fn cut(o: &Opts) -> Result<(), String> {
     };
 
     let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(io::certified_pool(&env_, &repo)?));
+    let (pool, refused) = batcher::core::refuse_blocked(pool);
+    for r in &refused {
+        println!("batcher {}: {r}", repo.name);
+    }
     if let batcher::core::RoundKind::Feature(root) = &kind {
         println!("batcher {}: feature round {root} ({} members)", repo.name, pool.len());
     }
     let open = io::read_open_batch(&env_, &repo.name)?;
+    let pool = screen::screened(&env_, &repo, pool, open.as_ref());
 
     if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
         return Ok(());
@@ -290,6 +296,8 @@ struct StableRound {
     attribution_seconds: Option<u64>,
     /// Wall time from the first red to the round's decision — None for the same reason.
     regreen_seconds: Option<u64>,
+    /// The round staged behind this one while its suites ran, if the verb wrote one.
+    staged: Option<String>,
 }
 
 /// The effects of a round besides running suites (drive::RoundOps), on this box.
@@ -449,6 +457,10 @@ fn merge_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, mut members:
     Ok(members)
 }
 
+fn staged_worktree(env_: &Env, repo: &Repo) -> PathBuf {
+    env_.run.join("worktree").join(format!(".batcher-{}-staged", repo.name))
+}
+
 /// Enforces law-a-round-takes-certified-tips (amended 2026-09-27): a round that is red on its
 /// own corpus is never sent on. The corpus runs on the round VM with concurrent attribution
 /// (DESIGN.md §4): each red is attributed while the corpus still runs; every owner is ejected
@@ -456,8 +468,30 @@ fn merge_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, mut members:
 /// reds do not block (a base red is filed for Ops); an unattributed red or a workspace that
 /// does not build does. Returns `Ok(None)` for a blocked or emptied round — the caller opens
 /// no PR and changes no open-batch record, as if the round had never been cut.
-fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting: Vec<Member>, batch: Option<&str>) -> Result<Option<StableRound>, String> {
-    let members = merge_round(env_, repo, wt, start_sha, starting)?;
+fn stabilize_round(
+    env_: &Env,
+    repo: &Repo,
+    wt: &Path,
+    start_sha: &str,
+    starting: Vec<Member>,
+    batch: Option<&str>,
+    stage: &[Member],
+) -> Result<Option<StableRound>, String> {
+    let mut members = merge_round(env_, repo, wt, start_sha, starting)?;
+    if let Some(batch) = batch {
+        let held: Vec<(String, String)> = members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+        let marked = io::gate_red_marks(env_, &held);
+        if !marked.is_empty() {
+            for (id, mark) in &marked {
+                match io::round_eject_gate_red(env_, repo, batch, id, mark) {
+                    Ok(()) => println!("batcher {}: ejected {id} from round {batch} — its own gate was red at this tip ({mark})", repo.name),
+                    Err(e) => println!("batcher {}: could not eject gate-red {id} from round {batch}: {e}", repo.name),
+                }
+            }
+            members.retain(|m| !marked.iter().any(|(id, _)| *id == m.id));
+            members = merge_round(env_, repo, wt, start_sha, members)?;
+        }
+    }
     if members.is_empty() {
         println!("{}", skipped_event("round emptied rebuilding the tree").text);
         return Ok(None);
@@ -490,6 +524,16 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
     let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip))).collect();
 
     let mut runner = vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?;
+    let stage_bg = match batch {
+        Some(_) if !stage.is_empty() => match io::round_stage_spawn(env_, repo, &staged_worktree(env_, repo), stage) {
+            Ok(bg) => Some(bg),
+            Err(e) => {
+                println!("batcher {}: {e} — no round staged", repo.name);
+                None
+            }
+        },
+        _ => None,
+    };
     let mut ops = LiveOps {
         env: env_,
         repo,
@@ -511,6 +555,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         install_fault_outcome(repo, &mut ops, &round_members, &fault);
     }
     runner.close();
+    let staged = stage_bg.and_then(|bg| io::round_stage_done(repo, bg));
     match end? {
         drive::RoundEnd::Land { members, attribution_secs } => {
             let head = io::head_of(wt)?;
@@ -527,6 +572,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
                 green_branch,
                 attribution_seconds: attribution_secs,
                 regreen_seconds: ops.first_red.map(|f| now().saturating_sub(f)),
+                staged,
             }))
         }
         drive::RoundEnd::Blocked(why) => {
@@ -574,7 +620,16 @@ fn install_fault_outcome(repo: &Repo, ops: &mut LiveOps, members: &[Member], fau
 /// queue.local's terminal step: `terminal_ready` gates the round on the every-member-named,
 /// bins-present contract before anything changes, then the round's own `queue round certify`
 /// and `queue round land` do the rest. Never rebuilds binaries (law-deploy-the-tested-artifacts).
-fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_start: u64, stable: &StableRound, batch: &str) -> Result<(), String> {
+fn finish_local_round(
+    env_: &Env,
+    repo: &Repo,
+    wt: &Path,
+    base_sha: &str,
+    round_start: u64,
+    stable: &StableRound,
+    batch: &str,
+    attested: bool,
+) -> Result<Option<io::Promotion>, String> {
     let head = io::head_of(wt)?;
     let named = io::named_ids(repo, base_sha, &head, &stable.members);
     let bins_ok = io::bins_present(repo, wt, &head);
@@ -592,7 +647,7 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
                 ("base", base_sha.to_string()),
             ],
         );
-        Ok(())
+        Ok(None)
     };
 
     if let Err(refusal) = batcher::core::terminal_ready(&stable.members, &named, bins_ok) {
@@ -612,15 +667,35 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
 
     // The batcher's own full-corpus run on `stable.head` is the round's certification
     // (queue/DESIGN.md §8 D12); the verb refuses any head but the round worktree's own.
-    match io::round_certify(env_, repo, batch, &stable.head) {
-        Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
-        Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
+    if attested {
+        println!("batcher {}: the staged pass certified the round's tree (attested at {})", repo.name, stable.head);
+    } else {
+        match io::round_certify(env_, repo, batch, &stable.head) {
+            Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
+            Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
+        }
     }
+    let stage_test = stable.staged.as_ref().and_then(|_| match io::round_stage_test_spawn(env_, repo) {
+        Ok(bg) => Some(bg),
+        Err(e) => {
+            println!("batcher {}: {e}", repo.name);
+            None
+        }
+    });
 
     let certified: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     io::lc_certify_round(env_, &certified, batch);
 
-    let run = io::round_land(env_, repo, batch)?;
+    let run = io::round_land(env_, repo, batch);
+    let run = match run {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(bg) = stage_test {
+                io::round_stage_test_done(repo, bg);
+            }
+            return Err(e);
+        }
+    };
     let mut landed = run.outcome;
     let alarm = match landed {
         io::LandOutcome::Refused => Some(format!("refused: {}", run.refusal)),
@@ -643,6 +718,9 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
         }
     }
     if landed == io::LandOutcome::Refused {
+        if let Some(bg) = stage_test {
+            io::round_stage_test_done(repo, bg);
+        }
         io::round_abandon(env_, repo, batch, "queue round land refused — the round did not land");
         io::write_local_verdict(env_, &repo.name, "red", "queue round land refused — see its own stderr above");
         io::tsd_append_round(
@@ -654,7 +732,7 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
                 ("base", base_sha.to_string()),
             ],
         );
-        return Ok(());
+        return Ok(None);
     }
 
     io::write_local_verdict(env_, &repo.name, "green", "");
@@ -674,7 +752,10 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
         fields.push(("regreen_seconds", r.to_string()));
     }
     io::tsd_append_round(env_, &fields);
-    Ok(())
+
+    let Some(bg) = stage_test else { return Ok(None) };
+    io::round_stage_test_done(repo, bg);
+    Ok(io::round_promote(env_, repo))
 }
 
 fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
@@ -741,7 +822,9 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
         }
     };
 
-    let stable = match stabilize_round(env_, repo, &wt, &base_sha, combined.merged.clone(), batch.as_deref()) {
+    let merged_ids: Vec<&str> = combined.merged.iter().map(|m| m.id.as_str()).collect();
+    let stage_pool: Vec<Member> = sorted.iter().filter(|m| !merged_ids.contains(&m.id.as_str())).cloned().collect();
+    let stable = match stabilize_round(env_, repo, &wt, &base_sha, combined.merged.clone(), batch.as_deref(), &stage_pool) {
         Err(e) => {
             abandon(&e);
             return Err(e);
@@ -786,10 +869,62 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
     }
 
     if let Some(b) = batch.as_deref() {
-        return finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable, b);
+        let mut next = finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable, b, false)?;
+        while let Some(p) = next {
+            next = follow_promoted(env_, repo, pool, p)?;
+        }
+        return Ok(());
     }
     let batch_head = io::head_of(&wt)?;
     open_round_pr(env_, repo, &stable.members, &batch_head, round_start, stable.attribution_seconds, stable.regreen_seconds)
+}
+
+/// The staged round `promote` cut after the round before it landed. Attested, its tree is the
+/// one the staged pass judged and it lands on that; otherwise it gets its own pass here, as any
+/// opened round does. Either way it ends as the rounds before it did, and may promote nothing
+/// further: one stage is staged per cut.
+fn follow_promoted(env_: &Env, repo: &Repo, pool: &[Member], p: io::Promotion) -> Result<Option<io::Promotion>, String> {
+    let round_start = now();
+    let wt = staged_worktree(env_, repo);
+    let base_sha = io::resolve_base_sha(repo)?;
+    let abandon = |why: &str| io::round_abandon(env_, repo, &p.batch, why);
+    let mut members = Vec::new();
+    for (id, tip) in &p.members {
+        match pool.iter().find(|m| &m.id == id && &m.tip == tip) {
+            Some(m) => members.push(m.clone()),
+            None => {
+                let why = format!("promoted round {} holds {id}@{tip}, which is not in the certified pool at that tip", p.batch);
+                println!("batcher {}: {why}", repo.name);
+                abandon(&why);
+                return Ok(None);
+            }
+        }
+    }
+    let stable = if p.attested {
+        StableRound { members, head: p.head.clone(), green_branch: String::new(), attribution_seconds: None, regreen_seconds: None, staged: None }
+    } else {
+        match stabilize_round(env_, repo, &wt, &base_sha, members, Some(&p.batch), &[]) {
+            Err(e) => {
+                abandon(&e);
+                return Err(e);
+            }
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                abandon("the round was blocked before it could land");
+                io::write_local_verdict(env_, &repo.name, "red", "local corpus red — held before reaching CI");
+                return Ok(None);
+            }
+        }
+    };
+    let moved = io::moved_members(repo, &base_sha, &stable.members);
+    if !moved.is_empty() {
+        let msg = format!("batcher {}: refused to open — {} changed since the round was built (new patches); rebuild and retest", repo.name, moved.join(", "));
+        println!("{msg}");
+        abandon(&msg);
+        io::write_local_verdict(env_, &repo.name, "red", &msg);
+        return Ok(None);
+    }
+    finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable, &p.batch, p.attested)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -897,7 +1032,7 @@ fn prepare_round(env_: &Env, repo: &Repo, pool: &[Member], ob: &io::OpenBatch) -
         return Ok(());
     }
 
-    let stable = stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone(), None)?;
+    let stable = stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone(), None, &[])?;
     let green = stable.is_some();
     let (members, head) = match &stable {
         Some(s) => (s.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), io::head_of(&wt)?),
@@ -1060,7 +1195,7 @@ mod base_conflict_handling {
     use std::fs;
 
     fn member(id: &str, tip: &str) -> Member {
-        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: BTreeMap::new() }
+        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: BTreeMap::new(), blocked_by: Vec::new() }
     }
 
     #[test]

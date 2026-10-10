@@ -60,10 +60,20 @@ pub fn decide(red: bool, allow_auto_merge_false: bool, mergeable_conflicting: bo
     }
 }
 
+/// Anything but a literal `true`/`false` is unknown — a failed read or a null field must
+/// never be taken for `false`.
+fn parse_bool(text: &str) -> Option<bool> {
+    match text.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
 struct PrFacts {
     mergeable: String,
     concls: String,
-    allow_auto_merge: String,
+    allow_auto_merge: Option<bool>,
 }
 
 fn gh_pr_facts(cfg: &Cfg, repo_path: &str, bead_id: &str) -> PrFacts {
@@ -93,12 +103,12 @@ fn gh_pr_facts(cfg: &Cfg, repo_path: &str, bead_id: &str) -> PrFacts {
     let aam_out = Command::new("timeout")
         .arg(format!("{}", cfg.gh_timeout.as_secs()))
         .arg(&cfg.gh_bin)
-        .args(["repo", "view", "--json", "allowAutoMerge", "--jq", ".allowAutoMerge"])
+        .args(["api", "repos/{owner}/{repo}", "--jq", ".allow_auto_merge"])
         .current_dir(repo_path)
         .output();
     let allow_auto_merge = match aam_out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        _ => String::new(),
+        Ok(o) if o.status.success() => parse_bool(&String::from_utf8_lossy(&o.stdout)),
+        _ => None,
     };
     PrFacts {
         mergeable,
@@ -162,7 +172,13 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
         };
         let facts = gh_pr_facts(cfg, &repo_path, &s.id);
         let red = is_red(&facts.concls);
-        let aam_false = facts.allow_auto_merge == "false";
+        let aam_false = facts.allow_auto_merge == Some(false);
+        if facts.allow_auto_merge.is_none() {
+            log(&format!(
+                "watchtower: pr-stall-check: allow_auto_merge unknown for {} — read failed or field absent",
+                s.repo
+            ));
+        }
         let conflicting = facts.mergeable == "CONFLICTING";
         let age_mins = s.age_secs / 60;
 
@@ -259,7 +275,7 @@ mod tests {
         // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
         testkit::write_exe(
             &gh,
-            "#!/usr/bin/env bash\ncase \"$*\" in\n  *'--jq .allowAutoMerge'*) echo true ;;\n  *'pr view'*'--json mergeable,statusCheckRollup'*) printf 'CONFLICTING\\t\\n' ;;\nesac\n",
+            "#!/usr/bin/env bash\ncase \"$*\" in\n  *'api repos/'*) echo true ;;\n  *'pr view'*'--json mergeable,statusCheckRollup'*) printf 'CONFLICTING\\t\\n' ;;\nesac\n",
         );
         let cfg = Cfg {
             stall_secs: 3600,
@@ -269,6 +285,36 @@ mod tests {
         let facts = gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x");
         assert_eq!(facts.mergeable, "CONFLICTING");
         assert_eq!(facts.concls, "");
+    }
+
+    fn stub_cfg(d: &testkit::TempDir, body: &str) -> Cfg {
+        let gh = d.join("gh-stub.sh");
+        testkit::write_exe(&gh, body);
+        Cfg {
+            stall_secs: 3600,
+            gh_bin: gh.to_string_lossy().into_owned(),
+            gh_timeout: std::time::Duration::from_secs(5),
+        }
+    }
+
+    #[test]
+    fn auto_merge_read_is_false_via_rest_when_repo_view_lacks_the_field() {
+        let d = testkit::TempDir::new("wt-prstall-aam-false");
+        let cfg = stub_cfg(
+            &d,
+            "#!/usr/bin/env bash\ncase \"$*\" in\n  *'repo view'*) echo 'Unknown JSON field: \"allowAutoMerge\"' >&2; exit 1 ;;\n  *'api repos/'*) echo false ;;\nesac\n",
+        );
+        assert_eq!(gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x").allow_auto_merge, Some(false));
+    }
+
+    #[test]
+    fn auto_merge_read_failure_or_null_is_unknown_not_false() {
+        let d = testkit::TempDir::new("wt-prstall-aam-unknown");
+        let cfg = stub_cfg(&d, "#!/usr/bin/env bash\nexit 1\n");
+        assert_eq!(gh_pr_facts(&cfg, d.to_str().unwrap(), "sp-x").allow_auto_merge, None);
+        assert_eq!(parse_bool("null\n"), None);
+        assert_eq!(parse_bool(""), None);
+        assert_eq!(parse_bool("true\n"), Some(true));
     }
 
     #[test]

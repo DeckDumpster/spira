@@ -60,7 +60,7 @@ fn open_certify_land_is_one_round_the_whole_way() {
 
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     assert!(t.scripts.calls.borrow().iter().any(|c| c.ends_with("wall=900")), "the corpus runs under the configured cap: {:?}", t.scripts.calls.borrow());
-    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 \"Green\"")));
+    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 {{\"PassGreen\":{{\"n\":1,\"suites_s\":0,\"build_s\":0}}}}")), "{:?}", t.lc.calls.borrow());
     assert!(certified_tree_exists(&t), "the round GREEN certificate is on the head's tree");
     assert_eq!(kv_of(&t, "round")["phase"], "green");
 
@@ -215,6 +215,45 @@ fn open_skips_what_is_not_certified_or_does_not_merge() {
     assert!(t.err().contains("nothing admissible") && !t.lc.has("cut") && !t.qfile("round").exists());
 }
 
+fn block(t: &T, id: &str, by: &[&str]) {
+    for r in t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().filter(|r| r.bead_id == id) {
+        r.blocked_by = by.iter().map(|b| b.to_string()).collect();
+    }
+}
+
+#[test]
+fn open_refuses_a_member_whose_blocker_has_not_landed_and_names_it() {
+    let t = round_world();
+    block(&t, "sp-b", &["sp-eeg"]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let o = t.out();
+    assert!(o.contains("sp-b: blocked by sp-eeg") && o.contains("members=sp-a:ta") && !o.contains("sp-b:tb"), "{o}");
+}
+
+#[test]
+fn open_admits_a_member_whose_blocker_is_merged_ahead_of_it_in_the_round() {
+    let t = round_world();
+    block(&t, "sp-b", &["sp-a"]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert!(t.out().contains("members=sp-a:ta sp-b:tb"), "{}", t.out());
+}
+
+#[test]
+fn open_refuses_a_member_listed_ahead_of_its_blocker() {
+    let t = round_world();
+    block(&t, "sp-a", &["sp-b"]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert!(t.out().contains("sp-a: blocked by sp-b") && t.out().contains("members=sp-b:tb"), "{}", t.out());
+}
+
+#[test]
+fn open_admits_a_member_whose_blocker_has_landed() {
+    let t = round_world();
+    block(&t, "sp-b", &[]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert!(t.out().contains("members=sp-a:ta sp-b:tb"), "{}", t.out());
+}
+
 #[test]
 fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
     let t = round_world();
@@ -257,6 +296,30 @@ fn open_admits_a_submitted_member_its_full_suite_certifies() {
     assert!(t.lc.has("cut"), "the round is recorded as a batch");
 }
 
+fn file_gate_verdict(t: &T, id: &str, tip: &str, rc: i32) {
+    use landing_pass::gateq::{Done, GateQueue, Job};
+    let job = Job::new("spira", &format!("spira/{id}"), id, tip, false);
+    let run = landing_pass::model::GateRun::parse(rc, "gate: VERDICT=FAIL reason=branch-red suite=test-x.sh".into());
+    GateQueue::new(&t.s().run).complete(0, &Done { job, run, started_ms: 1, finished_ms: 2 }).unwrap();
+}
+
+#[test]
+fn open_skips_a_submitted_member_whose_gate_is_fail_at_its_current_tip_and_only_that() {
+    let t = round_world();
+    for id in ["sp-f", "sp-old", "sp-base", "sp-nov"] {
+        t.lc_row(id, "SUBMITTED", &format!("t{id}"), 100);
+    }
+    file_gate_verdict(&t, "sp-f", "tsp-f", 1);
+    file_gate_verdict(&t, "sp-old", "an-older-tip", 1);
+    file_gate_verdict(&t, "sp-base", "tsp-base", landing_pass::model::GATE_BASEFAIL);
+    file_gate_verdict(&t, "sp-nov", "tsp-nov", landing_pass::model::GATE_NOVERDICT);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-f,sp-old,sp-base,sp-nov"]), 0, "{}", t.err());
+    let o = t.out();
+    assert!(o.contains("sp-f: its gate is FAIL at tsp-f (branch-red)"), "{o}");
+    let members = o.lines().find_map(|l| l.strip_prefix("members=")).unwrap();
+    assert!(members.contains("sp-a:") && members.contains("sp-old:") && members.contains("sp-base:") && members.contains("sp-nov:") && !members.contains("sp-f:"), "{o}");
+}
+
 #[test]
 fn a_second_round_is_refused_until_the_first_is_closed() {
     let t = round_world();
@@ -280,7 +343,7 @@ fn certify_never_reads_a_harness_fault_as_green_or_red() {
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
     assert!(t.err().contains("exceeded the 900s wall"), "{}", t.err());
-    assert!(!certified_tree_exists(&t) && !t.lc.has("event batch spira-20260929T010203Z CI_RUNNING 4 \"Green\""));
+    assert!(!certified_tree_exists(&t) && !t.lc.has("event batch spira-20260929T010203Z CI_RUNNING 4 {\"PassGreen\""));
 }
 
 #[test]
@@ -368,4 +431,198 @@ fn eject_also_ejects_the_members_stacked_on_the_ejected_one() {
     assert_eq!((rec["members"].as_str(), rec["head"].as_str()), ("sp-c:tc", "merged-tc"));
     assert_eq!(rec["ejected"].trim(), "sp-a sp-b");
     assert!(!t.lib.has("bead_reopen sp-c eject "), "an independent member stays");
+}
+
+fn events_of(t: &T, batch: &str) -> Vec<String> {
+    let prefix = format!("event batch {batch} ");
+    t.lc.calls.borrow().iter().filter_map(|c| c.strip_prefix(&prefix)).map(|c| c.splitn(3, ' ').nth(2).unwrap_or("").to_string()).collect()
+}
+
+#[test]
+fn a_red_pass_the_batch_row_refuses_is_a_fault_not_a_local_red() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-b.sh".into(), "red 1 2 fp p e 1".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.lc.batch_event_refused.set(Some("PassRed"));
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    assert!(t.err().contains("REFUSED") && t.err().contains("IllegalTransition"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round")["phase"], "fault");
+}
+
+#[test]
+fn certify_hands_the_batch_and_repo_to_round_vm_to_record_its_boundaries() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("round-vm ") && c.contains(&format!("round={batch}/"))), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test]
+fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "red 1 2 fp p e 1".into())];
+    *t.scripts.round_vm_meta.borrow_mut() = "build_wall_s=30\n".into();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 1);
+    assert_eq!(
+        events_of(&t, &batch),
+        [
+            "{\"PassStarted\":{\"n\":1,\"head\":\"merged-tc\"}}",
+            "{\"SuitesStarted\":{\"n\":1}}",
+            "{\"PassRed\":{\"n\":1,\"red_suites\":[\"test-b.sh\"],\"suites_s\":0,\"build_s\":30}}",
+        ],
+        "pass 1 is started, enters its suites and ends red, naming the suite"
+    );
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]), 0, "{}", t.err());
+    assert!(events_of(&t, &batch).last().unwrap().starts_with("{\"PassRebuilt\":{\"head\":"), "{:?}", events_of(&t, &batch));
+
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into()), ("test-b.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let events = events_of(&t, &batch);
+    assert!(events.iter().any(|e| e.starts_with("{\"PassStarted\":") && e.contains("\"n\":2")), "{events:?}");
+    assert!(events.last().unwrap().starts_with("{\"PassGreen\":{\"n\":2"), "{events:?}");
+}
+
+#[test]
+fn a_pass_the_vm_could_not_finish_is_incomplete_not_red_or_green() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 124, out: String::new(), err: "killed".into() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    let events = events_of(&t, &batch);
+    assert!(events.last().unwrap().starts_with("{\"PassIncomplete\":{\"n\":1,\"reason\":\"round-vm exceeded the 900s wall"), "{events:?}");
+    assert!(!events.iter().any(|e| e.starts_with("{\"PassRed\"") || e.starts_with("{\"PassGreen\"")), "{events:?}");
+}
+
+#[test]
+fn the_pass_verbs_record_a_hand_driven_pass_like_the_batchers() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "pass-verdict", &batch, "--verdict", "red", "--red-suites", "test-x.sh", "--suites-s", "90", "--build-s", "30"]), 0, "{}", t.err());
+    assert_eq!(
+        events_of(&t, &batch),
+        [
+            "{\"PassStarted\":{\"n\":1,\"head\":\"merged-ta\"}}",
+            "{\"SuitesStarted\":{\"n\":1}}",
+            "{\"PassRed\":{\"n\":1,\"red_suites\":[\"test-x.sh\"],\"suites_s\":90,\"build_s\":30}}",
+        ]
+    );
+}
+
+#[test]
+fn a_pass_verb_out_of_phase_is_sent_so_the_machine_can_refuse_it_by_name() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "the fake machine does not refuse; the verb must still have sent the event");
+    assert_eq!(events_of(&t, &batch).iter().filter(|e| e.starts_with("{\"PassStarted\"")).count(), 2, "a strict verb never swallows a wrong-phase call");
+    assert_eq!(t.run(&["round", "pass-verdict", &batch, "--verdict", "incomplete"]), 2, "an incomplete pass names why");
+}
+
+fn preempt_world() -> (T, String) {
+    let t = round_world();
+    t.git.anc.borrow_mut().remove(&("tb".to_string(), "merged-tc".to_string()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.lc.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), 4, 1, "suites".into()));
+    let spira = t.s().run.join("worktree").join(".round-spira").join("spira");
+    fs::create_dir_all(&spira).unwrap();
+    for s in ["test-a.sh", "test-b.sh", "test-c.sh"] {
+        fs::write(spira.join(s), "").unwrap();
+    }
+    let results = marker(&t, &batch, "results");
+    fs::create_dir_all(&results).unwrap();
+    fs::write(results.join("test-a.sh.result"), "ok\n").unwrap();
+    fs::write(results.join("test-b.sh.result"), "red 1 2 fp p e 1\n").unwrap();
+    let mut rec = kv_of(&t, "round");
+    rec.insert("phase".into(), "certifying".into());
+    fs::write(t.qfile("round"), rec.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).unwrap();
+    fs::write(marker(&t, &batch, "pass"), "777").unwrap();
+    t.scripts.pass_alive.set(true);
+    (t, batch)
+}
+
+#[test]
+fn preempting_a_running_pass_salvages_ejects_rebuilds_and_restarts() {
+    let (t, batch) = preempt_world();
+    let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red on test-b.sh at 2/3", "--suites", "test-b.sh"]);
+    assert_eq!(rc, 0, "{}", t.err());
+    assert!(t.scripts.calls.borrow().iter().any(|c| c == "terminate 777"), "TERM to the run's handle, never a kill: {:?}", t.scripts.calls.borrow());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("round-vm")), "a pass is stopped, not re-run, by the verb");
+    let results = marker(&t, &batch, "results");
+    assert!(results.join("test-a.sh.result").exists() && results.join("test-b.sh.result").exists(), "the finished suites' results stay");
+    assert!(t.lc.has(&format!("event batch {batch} CI_RUNNING 4 {{\"PassPreempted\":{{\"n\":1,\"done\":2,\"total\":3,\"red_suites\":[\"test-b.sh\"]}}}}")), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.has(&format!("eject-member {batch} sp-b ")) && t.lib.has("bead_reopen sp-b eject-red test-b.sh"));
+    let rec = kv_of(&t, "round");
+    assert_eq!((rec["members"].as_str(), rec["head"].as_str(), rec["phase"].as_str()), ("sp-a:ta sp-c:tc", "merged-tc", "opened"));
+    assert!(t.out().contains("stopped at 2/3 suites") && t.out().contains("verified no ejected tip remains"), "{}", t.out());
+    assert!(t.scripts.calls.borrow().iter().any(|c| c == &format!("restart {batch} spira")), "{:?}", t.scripts.calls.borrow());
+    assert!(!marker(&t, &batch, "preempt").exists(), "the marker is spent once the pass is recorded");
+}
+
+#[test]
+fn preempt_refuses_without_a_running_pass_and_names_the_phase() {
+    let (t, batch) = preempt_world();
+    let mut rec = kv_of(&t, "round");
+    rec.insert("phase".into(), "red".into());
+    fs::write(t.qfile("round"), rec.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).unwrap();
+    assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "x"]), 1);
+    assert!(t.err().contains(&format!("round {batch} is red, with no pass running")), "{}", t.err());
+
+    rec.insert("phase".into(), "certifying".into());
+    fs::write(t.qfile("round"), rec.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).unwrap();
+    t.scripts.pass_alive.set(false);
+    assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "x"]), 1);
+    assert!(t.err().contains("is certifying, with no pass running"), "a recorded phase without a live handle is not a running pass: {}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("terminate") || c.starts_with("restart")));
+    assert!(!t.lc.has("PassPreempted") && !t.lib.has("bead_reopen"));
+}
+
+#[test]
+fn preempt_does_not_restart_while_an_ejected_tip_is_still_in_the_head() {
+    let (t, batch) = preempt_world();
+    t.git.ancestor("tb", "merged-tc");
+    assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red"]), 1);
+    assert!(t.err().contains("still holds the tip of sp-b") && t.err().contains("next pass was not started"), "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("restart")));
+}
+
+#[test]
+fn preempt_names_the_stuck_pass_when_it_will_not_stop() {
+    let (t, batch) = preempt_world();
+    t.scripts.pass_alive.set(true);
+    t.scripts.calls.borrow_mut().clear();
+    t.scripts.survives_term.set(true);
+    assert_eq!(t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red"]), 1);
+    assert!(t.err().contains("did not stop") && t.err().contains("not killed"), "{}", t.err());
+    assert!(!marker(&t, &batch, "preempt").exists() && !t.lc.has("PassPreempted") && !t.lib.has("bead_reopen"));
+}
+
+#[test]
+fn a_preempted_certify_leaves_the_record_to_the_verb() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.scripts.preempted_during_vm.set(true);
+    assert_eq!(t.run(&["round", "certify", &batch]), crate::ops::round::PREEMPTED, "{}", t.err());
+    assert!(!marker(&t, &batch, "pass").exists(), "the handle goes with the run");
+    assert_eq!(kv_of(&t, "round")["phase"], "certifying");
+    assert!(!t.lc.has("PassIncomplete") && !t.lc.has("PassRed"), "{:?}", t.lc.calls.borrow());
 }

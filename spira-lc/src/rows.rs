@@ -133,7 +133,7 @@ pub fn delivery_set_clause(row: &DeliveryRow) -> String {
 
 pub fn fetch_batch(conn: &Conn, batch_id: &str) -> Result<Option<BatchRow>, DbError> {
     let rows = conn.query(&format!(
-        "SELECT batch_id, repo, state, parent, head, base, run, reason, version FROM batch WHERE batch_id = '{}'",
+        "SELECT batch_id, repo, state, parent, head, base, run, reason, pass, phase, version FROM batch WHERE batch_id = '{}'",
         escape(batch_id)
     ))?;
     let Some(row) = rows.first() else { return Ok(None) };
@@ -148,19 +148,23 @@ pub fn fetch_batch(conn: &Conn, batch_id: &str) -> Result<Option<BatchRow>, DbEr
         base: text(row, "base"),
         run: text(row, "run"),
         reason: text(row, "reason"),
+        pass: number(row, "pass").unwrap_or(0) as u32,
+        phase: text(row, "phase").as_deref().and_then(lifecycle::batch::BatchPhase::from_str),
         version: number(row, "version").unwrap_or(0) as u64,
     }))
 }
 
 pub fn batch_set_clause(row: &BatchRow) -> String {
     format!(
-        "state = '{}', parent = {}, head = {}, base = {}, run = {}, reason = {}, version = {}",
+        "state = '{}', parent = {}, head = {}, base = {}, run = {}, reason = {}, pass = {}, phase = {}, version = {}",
         row.state.as_str(),
         opt_str(&row.parent),
         opt_str(&row.head),
         opt_str(&row.base),
         opt_str(&row.run),
         opt_str(&row.reason),
+        row.pass,
+        opt_str(&row.phase.map(|p| p.as_str().to_string())),
         row.version,
     )
 }

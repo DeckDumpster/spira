@@ -592,7 +592,44 @@ pub fn validate(text: &str) -> Result<SpiraToml, String> {
 pub fn validate_strict(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
     let (doc, warnings) = validate_with_warnings(text)?;
     require_id_prefix(&doc)?;
+    let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    require_roster_covers_lanes(&root)?;
     Ok((doc, warnings))
+}
+
+const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "maechen", "czar", "warden"];
+
+/// A declared lane, or a timer-filed partition label, whose persona is not in an explicit
+/// `spira.fayths` roster is work nothing can claim: refused, naming both keys.
+fn require_roster_covers_lanes(root: &toml::Value) -> Result<(), String> {
+    let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
+    let roster: Vec<&str> = match spira.get("fayths") {
+        Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
+        Some(toml::Value::String(s)) => s.split_whitespace().collect(),
+        _ => return Ok(()),
+    };
+    if roster.is_empty() {
+        return Ok(());
+    }
+    let lanes: Vec<&str> = match spira.get("lanes") {
+        Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
+        Some(toml::Value::String(s)) => s.split_whitespace().collect(),
+        _ => Vec::new(),
+    };
+    if let Some(l) = lanes.iter().find(|l| !roster.contains(l)) {
+        return Err(format!(
+            "spira.lanes declares {l:?} but spira.fayths does not roster it — nothing can claim that lane's beads; add {l:?} to spira.fayths or drop it from spira.lanes"
+        ));
+    }
+    for p in TIMER_PARTITION_PERSONAS {
+        let key = format!("{p}_label");
+        if spira.contains_key(&key) && !roster.contains(p) {
+            return Err(format!(
+                "spira.{key} is set but spira.fayths does not roster {p:?} — beads filed under that label can never be claimed; add {p:?} to spira.fayths"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Whether `p` can be a bead id prefix: non-empty ASCII letters, digits and `_` — never a

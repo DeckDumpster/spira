@@ -1618,6 +1618,10 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
     }
 
+    if let Some(line) = session.pids_peak_line() {
+        deps.log(&line);
+    }
+
     // ---- unreached: selected, no record, never overwriting a completed one ---------
     let mut records = outcome.records.clone();
     records.extend(preempted);

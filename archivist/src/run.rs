@@ -140,6 +140,7 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
     };
 
     let _ = state::write_state(arc, sid, State::Sweeping, at, 0);
+    let _live = transcripts::is_live(tp, cfg.idle, now_epoch()).then(|| state::LiveMarker::set(arc, sid));
 
     let lineage = lineage_brief(seam, sid, &tp.to_string_lossy());
     let wiki_text = match cfg.wiki.as_deref().filter(|w| !w.is_empty()) {

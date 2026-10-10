@@ -40,6 +40,29 @@ pub struct StepDef {
     pub claim: Option<String>,
     #[serde(default)]
     pub script: Vec<String>,
+    /// With `file`: the bead's priority (bd's `-p`); 2 when absent.
+    pub priority: Option<u8>,
+}
+
+/// A scenario's own SQL over the trace tables: an `invariant` is a query whose rows (each with a
+/// `seq`) are violations; an `expect` is a query that must return a row by the end of the run.
+#[derive(Debug, Deserialize)]
+pub struct SqlDef {
+    pub name: String,
+    pub sql: String,
+}
+
+impl SqlDef {
+    fn check(&self) -> Result<(), String> {
+        if self.name.is_empty() || !self.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+            return Err(format!("scenario: {:?} is not a view name (lowercase letters, digits, _)", self.name));
+        }
+        let q = self.sql.trim();
+        if !q.get(..6).is_some_and(|h| h.eq_ignore_ascii_case("select")) || q.contains(';') {
+            return Err(format!("scenario: {} must be one SELECT statement", self.name));
+        }
+        Ok(())
+    }
 }
 
 fn shell_quote(s: &str) -> String {
@@ -57,11 +80,14 @@ fn bead_id(s: &str) -> Result<&str, String> {
 impl StepDef {
     /// The shell command this step runs in the world.
     pub fn shell(&self) -> Result<String, String> {
+        if self.priority.is_some_and(|p| p > 4) || (self.priority.is_some() && self.file.is_none()) {
+            return Err(format!("scenario: step at {}: priority is 0-4 and belongs to a file step", self.at));
+        }
         match (&self.command, &self.file, &self.claim) {
             (Some(c), None, None) if self.script.is_empty() => Ok(c.clone()),
             (None, Some(b), None) if self.script.is_empty() => {
                 let b = bead_id(b)?;
-                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p 2 -l spira -l plan -l repo:{REPO} --silent >/dev/null && spira-lc create-bead {b}", shell_quote(&format!("sim {b}"))))
+                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{REPO} --silent >/dev/null && spira-lc create-bead {b}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2)))
             }
             (None, None, Some(b)) if !self.script.is_empty() => {
                 let b = bead_id(b)?;
@@ -80,6 +106,10 @@ pub struct Scenario {
     pub goal: Option<String>,
     /// With a goal: the run is done only once the bead is there and a tag with this prefix exists.
     pub goal_tag: Option<String>,
+    /// Virtual milliseconds the run keeps going after the goal is reached, so what follows it is
+    /// traced and held to the invariants too.
+    #[serde(default)]
+    pub settle: u64,
     #[serde(default, rename = "actor")]
     pub actors: Vec<ActorDef>,
     /// Actors taken by name from the tree's `sim/actors.toml`: cadence from its real timer
@@ -88,6 +118,10 @@ pub struct Scenario {
     pub real_actors: Vec<String>,
     #[serde(default, rename = "step")]
     pub steps: Vec<StepDef>,
+    #[serde(default, rename = "invariant")]
+    pub invariants: Vec<SqlDef>,
+    #[serde(default, rename = "expect")]
+    pub expects: Vec<SqlDef>,
     /// The tree under test `real_actors` resolve against: the world's `work` checkout.
     #[serde(skip)]
     pub tree: Option<PathBuf>,
@@ -118,6 +152,9 @@ pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
     }
     for st in &sc.steps {
         st.shell()?;
+    }
+    for d in sc.invariants.iter().chain(&sc.expects) {
+        d.check()?;
     }
     for a in &sc.actors {
         if a.duration_min > a.duration_max {
@@ -269,7 +306,9 @@ impl ProcessProbe {
             }
         }
         snap.tags = git(&["tag"])?.lines().map(str::to_string).collect();
-        for t in crate::gh::tag_names(&self.exec.world.join("gh"))? {
+        let origin = self.exec.world.join("origin.git");
+        let origin_tags = run(Command::new("git").arg("-C").arg(&origin).arg("tag"), COMMAND_DEADLINE)?;
+        for t in origin_tags.lines().map(str::to_string).chain(crate::gh::tag_names(&self.exec.world.join("gh"))?) {
             if !snap.tags.contains(&t) {
                 snap.tags.push(t);
             }
@@ -388,9 +427,13 @@ pub fn drive(
     let mut events: Vec<Value> = Vec::new();
     let mut open: BTreeMap<String, (u64, i32)> = BTreeMap::new();
     let mut reached = false;
+    let mut settle_until: Option<u64> = None;
     let mut budget = if let Stop::Events(n) = stop { Some(*n) } else { None };
     while let Some(next) = sim.next_time() {
         let live = events.len() >= resume.len();
+        if settle_until.is_some_and(|u| next > u) {
+            break;
+        }
         if live {
             if budget == Some(0) {
                 break;
@@ -440,9 +483,12 @@ pub fn drive(
         }
         if let Some((b, s)) = &goal {
             let tagged = tag_prefix.as_deref().is_none_or(|p| snap.tags.iter().any(|t| t.starts_with(p)));
-            if bead_in_state(&snap, b, s) && tagged {
+            if !reached && bead_in_state(&snap, b, s) && tagged {
                 reached = true;
-                break;
+                if sc.settle == 0 {
+                    break;
+                }
+                settle_until = Some(t.time + sc.settle);
             }
         }
     }

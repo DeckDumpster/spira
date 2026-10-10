@@ -51,10 +51,14 @@ pub enum Round {
     Eject { batch: String, id: String, repo: Option<String>, reason: Text, suites: String, red: bool, harness_fault: bool, rebuild: bool },
     Land { batch: String, repo: Option<String> },
     Abandon { batch: String, repo: Option<String>, reason: Text },
+    Preempt { batch: String, repo: Option<String>, eject: String, reason: Text, suites: String },
+    PassStart { batch: String, repo: Option<String> },
+    SuitesStarted { batch: String, repo: Option<String> },
+    PassVerdict { batch: String, repo: Option<String>, verdict: String, red_suites: String, suites_s: u64, build_s: u64, reason: Text },
     Status { repo: Option<String> },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round status [<repo>]";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>]";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -161,6 +165,8 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
     let (mut members, mut reason) = (Text::None, Text::None);
     let (mut name, mut worktree, mut attest) = (None, None, None);
     let (mut suites, mut red, mut harness_fault, mut rebuild) = (String::new(), false, false, true);
+    let mut eject = String::new();
+    let (mut verdict, mut red_suites, mut suites_s, mut build_s) = (String::new(), String::new(), None, None);
     let mut pos: Vec<String> = Vec::new();
     while let Some(t) = w.next() {
         match t {
@@ -170,6 +176,11 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             Tok::Opt("worktree", v) => worktree = Some(PathBuf::from(w.value(v))),
             Tok::Opt("attest", v) => attest = Some(w.value(v)),
             Tok::Opt("suites", v) => suites = w.value(v),
+            Tok::Opt("eject", v) => eject = w.value(v),
+            Tok::Opt("verdict", v) => verdict = w.value(v),
+            Tok::Opt("red-suites", v) => red_suites = w.value(v),
+            Tok::Opt("suites-s", v) => suites_s = Some(w.value(v)),
+            Tok::Opt("build-s", v) => build_s = Some(w.value(v)),
             Tok::Opt("red", None) => red = true,
             Tok::Opt("harness-fault", None) => harness_fault = true,
             Tok::Opt("no-rebuild", None) => rebuild = false,
@@ -190,6 +201,32 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
         "eject" => Ok(Round::Eject { batch: need("batch id", pos.next())?, id: need("bead id", pos.next())?, repo: pos.next(), reason, suites, red, harness_fault, rebuild }),
         "land" => Ok(Round::Land { batch: need("batch id", pos.next())?, repo: pos.next() }),
         "abandon" => Ok(Round::Abandon { batch: need("batch id", pos.next())?, repo: pos.next(), reason }),
+        "preempt" => {
+            if eject.split(',').all(str::is_empty) {
+                return Err(Usage("queue.sh round preempt: --eject <id>[,<id>...] is required".into()));
+            }
+            Ok(Round::Preempt { batch: need("batch id", pos.next())?, repo: pos.next(), eject, reason, suites })
+        }
+        "pass-start" => Ok(Round::PassStart { batch: need("batch id", pos.next())?, repo: pos.next() }),
+        "suites-started" => Ok(Round::SuitesStarted { batch: need("batch id", pos.next())?, repo: pos.next() }),
+        "pass-verdict" => {
+            if !["green", "red", "incomplete"].contains(&verdict.as_str()) {
+                return Err(Usage("queue.sh round pass-verdict: --verdict green|red|incomplete is required".into()));
+            }
+            let secs = |what: &str, v: Option<String>| match v {
+                None => Ok(0),
+                Some(s) => s.parse::<u64>().map_err(|_| Usage(format!("queue.sh round pass-verdict: {what} must be a whole number of seconds"))),
+            };
+            Ok(Round::PassVerdict {
+                batch: need("batch id", pos.next())?,
+                repo: pos.next(),
+                verdict,
+                red_suites,
+                suites_s: secs("--suites-s", suites_s)?,
+                build_s: secs("--build-s", build_s)?,
+                reason,
+            })
+        }
         "status" => Ok(Round::Status { repo: pos.next() }),
         _ => Err(Usage(USAGE.into())),
     }
@@ -364,6 +401,20 @@ mod tests {
         assert!(matches!(c, Cmd::Round(Round::Eject { ref batch, ref id, rebuild: false, ref suites, .. }) if batch == "b1" && id == "sp-a" && suites == "t.sh"));
         assert_eq!(p(&["round", "land", "b1"]), Ok(Cmd::Round(Round::Land { batch: "b1".into(), repo: None })));
         assert_eq!(p(&["round", "status"]), Ok(Cmd::Round(Round::Status { repo: None })));
+        assert_eq!(p(&["round", "pass-start", "b1"]), Ok(Cmd::Round(Round::PassStart { batch: "b1".into(), repo: None })));
+        assert_eq!(p(&["round", "suites-started", "b1", "spira"]), Ok(Cmd::Round(Round::SuitesStarted { batch: "b1".into(), repo: Some("spira".into()) })));
+        let c = p(&["round", "pass-verdict", "b1", "--verdict", "red", "--red-suites", "t.sh", "--suites-s", "90", "--build-s=30"]).unwrap();
+        assert!(matches!(c, Cmd::Round(Round::PassVerdict { ref verdict, ref red_suites, suites_s: 90, build_s: 30, .. }) if verdict == "red" && red_suites == "t.sh"));
+        assert!(p(&["round", "pass-verdict", "b1"]).is_err(), "a verdict is required");
+        assert!(p(&["round", "pass-verdict", "b1", "--verdict", "green", "--suites-s", "x"]).is_err());
+    }
+
+    #[test]
+    fn preempt_names_its_ejects_and_its_evidence() {
+        let c = p(&["round", "preempt", "b1", "spira", "--eject", "sp-a,sp-b", "--reason", "red", "--suites=test-x.sh"]).unwrap();
+        assert!(matches!(c, Cmd::Round(Round::Preempt { ref batch, ref repo, ref eject, ref suites, .. })
+            if batch == "b1" && repo.as_deref() == Some("spira") && eject == "sp-a,sp-b" && suites == "test-x.sh"));
+        assert_eq!(p(&["round", "preempt", "b1"]), Err(Usage("queue.sh round preempt: --eject <id>[,<id>...] is required".into())));
     }
 
     #[test]

@@ -250,8 +250,10 @@ fn holds_empty(r: &serde_json::Value) -> bool {
     }
 }
 
-fn read_pool(env: &Env) -> Result<Vec<(String, String, u64, bool)>, String> {
-    let mut pool: Vec<(String, String, u64, bool)> = Vec::new();
+type PoolRow = (String, String, u64, bool, Vec<String>);
+
+fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
+    let mut pool: Vec<PoolRow> = Vec::new();
     for state in ["CERTIFIED", "SUBMITTED"] {
         let out = lcq(env, &["list", "--state", state])?;
         let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
@@ -273,7 +275,12 @@ fn read_pool(env: &Env) -> Result<Vec<(String, String, u64, bool)>, String> {
                 Some(serde_json::Value::String(t)) => matches!(t.as_str(), "1" | "true"),
                 _ => false,
             };
-            Some((id, tip, epoch, express))
+            let blocked_by = r
+                .get("blocked_by")
+                .and_then(|b| b.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            Some((id, tip, epoch, express, blocked_by))
         }));
     }
     pool.sort();
@@ -336,8 +343,8 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let certified = read_pool(env)?;
     let branches = repo_branch_tips(repo)?;
-    let certified: Vec<_> = certified.into_iter().filter(|(id, tip, _, _)| tip_current(tip, id, &branches)).collect();
-    let ids: Vec<String> = certified.iter().map(|(id, _, _, _)| id.clone()).collect();
+    let certified: Vec<_> = certified.into_iter().filter(|(id, tip, ..)| tip_current(tip, id, &branches)).collect();
+    let ids: Vec<String> = certified.iter().map(|(id, ..)| id.clone()).collect();
     let v = bd_show(env, &ids)?;
     let items = match v {
         serde_json::Value::Array(a) => a,
@@ -356,12 +363,12 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     }
     let fixes = base_fix_ids(env, repo, &texts);
     let mut out = Vec::new();
-    for (id, tip, epoch, express) in certified {
+    for (id, tip, epoch, express, blocked_by) in certified {
         let Some((priority, title)) = by_id.get(&id) else { continue };
         let stack = read_stack(env, &id);
         let base_fix = fixes.contains(&id);
         let priority = if base_fix { Some(0) } else { *priority };
-        out.push(Member { id, tip, title: title.clone(), priority, express, base_fix, certified_at: epoch, stack });
+        out.push(Member { id, tip, title: title.clone(), priority, express, base_fix, certified_at: epoch, stack, blocked_by });
     }
     Ok(out)
 }
@@ -810,6 +817,40 @@ pub fn lc_withdraw(env: &Env, id: &str) {
     if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "IN_DELIVERY", "--version", &v, "--actor", "batcher", "--kind", "{\"Returned\":{\"reason\":\"batch-ejected\"}}"]) {
         fail(format!("Returned: {e}"));
     }
+}
+
+/// `id`'s state on the machine.
+pub fn lc_state(env: &Env, id: &str) -> Result<String, String> {
+    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?).map_err(|e| format!("show: unparsed reply: {e}"))?;
+    v.get("bead").and_then(|b| b.get("state")).and_then(|s| s.as_str()).map(str::to_string).ok_or_else(|| "show: no state".to_string())
+}
+
+/// Sends `id` back to REWORK with `GateRed(reason)` at `tip`, but only while it is still the
+/// SUBMITTED or CERTIFIED bead at that tip the screen judged.
+pub fn lc_gate_red(env: &Env, id: &str, tip: &str, reason: &str) -> Result<(), String> {
+    let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?).map_err(|e| format!("show: unparsed reply: {e}"))?;
+    let bead = v.get("bead").cloned().unwrap_or_default();
+    let state = bead.get("state").and_then(|s| s.as_str()).unwrap_or("");
+    let version = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).ok_or("show: no version")?;
+    if !matches!(state, "SUBMITTED" | "CERTIFIED") || bead.get("tip").and_then(|t| t.as_str()) != Some(tip) {
+        return Err(format!("{id} moved since screening (state {state})"));
+    }
+    let kind = serde_json::json!({"GateRed": {"tip": tip, "reason": reason}}).to_string();
+    lcq(env, &["event", "bead", id, "--expect", state, "--version", &version.to_string(), "--actor", "sift", "--kind", &kind]).map(|_| ())
+}
+
+pub fn lc_supersede(env: &Env, id: &str, keeper: &str) -> Result<(), String> {
+    let reason = format!("Sift: identical patch (patch-id) to {keeper}.");
+    let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
+    spira_config::lifecycle_row::close_with(&bin.to_string_lossy(), id, &reason, "sift", Some(keeper))
+}
+
+/// The evidence a send-back stands on, written on the bead before the GateRed.
+pub fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
+    // batch-job: bead.sh amend is a bead-store write that takes as long as the store does
+    let mut cmd = Command::new("bash");
+    cmd.arg(env.home.join("bead.sh")).args(["amend", id, "--note", text]).env("SPIRA_HOME", &env.home);
+    run(&mut cmd, "bead.sh amend").map(|_| ())
 }
 
 /// Suites present at `member_tip` but gone from `base_sha` — reported only for a member set
@@ -1445,19 +1486,49 @@ pub fn round_eject(env: &Env, repo: &Repo, batch: &str, id: &str, suites: &[Stri
         first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
     );
     let csv = if owner { suites.join(",") } else { String::new() };
+    round_eject_with(env, repo, batch, id, &reason, &csv)
+}
+
+/// Members of an open round whose lifecycle row carries a red gate verdict at the very tip the
+/// round holds, as `(id, the row's mark)`: the gate already judged this tree red, so the round's
+/// corpus need not rediscover it.
+pub fn gate_red_marks(env: &Env, members: &[(String, String)]) -> Vec<(String, String)> {
+    members
+        .iter()
+        .filter_map(|(id, tip)| {
+            let row = serde_json::from_str::<serde_json::Value>(&lcq(env, &["show", id]).ok()?).ok()?;
+            let bead = row.get("bead")?;
+            let field = |k: &str| bead.get(k).and_then(|v| v.as_str()).unwrap_or("");
+            let mark = field("reason").strip_prefix(lifecycle::bead::GATE_RED_MARK)?;
+            (field("state") == "IN_DELIVERY" && field("tip") == tip).then(|| (id.clone(), mark.to_string()))
+        })
+        .collect()
+}
+
+/// `queue round eject` for a member the gate had already marked red while it sat in the round.
+pub fn round_eject_gate_red(env: &Env, repo: &Repo, batch: &str, id: &str, mark: &str) -> Result<(), String> {
+    let reason = format!(
+        "Ejected from the round before its corpus ran: spira/{id}'s own gate went red at the tip the round holds ({mark}). The gate's whole output is kept under the gate-worker's output directory."
+    );
+    round_eject_with(env, repo, batch, id, &reason, "")
+}
+
+fn round_eject_with(env: &Env, repo: &Repo, batch: &str, id: &str, reason: &str, csv: &str) -> Result<(), String> {
     let mut args = vec!["eject", batch, id, &repo.name, "--reason-file", "-", "--no-rebuild"];
-    if owner {
-        args.extend(["--suites", &csv]);
+    if !csv.is_empty() {
+        args.extend(["--suites", csv]);
+    } else {
+        args.push("--red");
     }
     let attempts = env.land_lock_attempts.max(1);
-    let mut last = round_verb(env, &args, &reason)?;
+    let mut last = round_verb(env, &args, reason)?;
     for n in 1..attempts {
         if last.code == Some(0) || !last.err.contains(LOCK_BUSY) {
             break;
         }
         println!("batcher {}: queue round eject refused ({}) — retry {n}/{attempts}", repo.name, refusal_line(&last.err));
         std::thread::sleep(env.land_lock_wait);
-        last = round_verb(env, &args, &reason)?;
+        last = round_verb(env, &args, reason)?;
     }
     if last.code == Some(0) {
         Ok(())
@@ -1495,6 +1566,135 @@ pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str) {
         Ok(r) if r.code == Some(0) => {}
         Ok(r) => println!("batcher {}: could not abandon round {batch}: {}", repo.name, verb_failed("queue round abandon", &r)),
         Err(e) => println!("batcher {}: could not abandon round {batch}: {e}", repo.name),
+    }
+}
+
+/// A `queue round` verb running beside the caller, its output in files so a full pipe cannot
+/// stall it. The staged round's two long verbs run this way: `stage` while the open round's
+/// suites run, `stage-test` while it lands.
+pub struct BgVerb {
+    child: std::process::Child,
+    what: String,
+    out: PathBuf,
+    err: PathBuf,
+}
+
+fn round_verb_bg(env: &Env, args: &[&str], stdin: &str) -> Result<BgVerb, String> {
+    use std::io::Write;
+    let what = format!("queue round {}", args.first().copied().unwrap_or(""));
+    let stem = env.run.join(format!("round-bg-{}-{}", std::process::id(), args.first().copied().unwrap_or("verb")));
+    let (out, err) = (stem.with_extension("out"), stem.with_extension("err"));
+    let file = |p: &Path| fs::File::create(p).map_err(|e| format!("{what}: {}: {e}", p.display()));
+    // batch-job: this runs whatever its caller names, as long as that takes
+    let mut cmd = Command::new(&env.queue_bin);
+    cmd.arg("round").args(args);
+    cmd.env("SPIRA_QUEUE_LOCK_HELD", "1");
+    cmd.stdin(Stdio::piped()).stdout(file(&out)?).stderr(file(&err)?);
+    let mut child = cmd.spawn().map_err(|e| format!("{what}: {e}"))?;
+    if let Some(mut si) = child.stdin.take() {
+        si.write_all(stdin.as_bytes()).map_err(|e| format!("{what}: stdin: {e}"))?;
+    }
+    Ok(BgVerb { child, what, out, err })
+}
+
+impl BgVerb {
+    pub fn wait(mut self) -> Result<VerbRun, String> {
+        let status = self.child.wait().map_err(|e| format!("{}: {e}", self.what))?;
+        let read = |p: &Path| {
+            let t = fs::read_to_string(p).unwrap_or_default();
+            let _ = fs::remove_file(p);
+            t
+        };
+        let run = VerbRun { code: status.code(), out: read(&self.out), err: read(&self.err) };
+        if !run.out.is_empty() {
+            print!("{}", run.out);
+        }
+        if !run.err.is_empty() {
+            eprint!("{}", run.err);
+        }
+        Ok(run)
+    }
+}
+
+/// `queue round stage` for `members` behind the open round, in `wt`.
+pub fn round_stage_spawn(env: &Env, repo: &Repo, wt: &Path, members: &[Member]) -> Result<BgVerb, String> {
+    let text = members.iter().fold(String::new(), |mut acc, m| {
+        acc.push_str(&format!("{}:{}\n", m.id, m.tip));
+        acc
+    });
+    let wt_arg = wt.display().to_string();
+    round_verb_bg(env, &["stage", &repo.name, "--members-file", "-", "--worktree", &wt_arg], &text)
+}
+
+/// The staged round's batch id once the verb wrote the row; any other end is `None` and the
+/// open round goes on as if nothing had been staged.
+pub fn round_stage_done(repo: &Repo, bg: BgVerb) -> Option<String> {
+    match bg.wait() {
+        Ok(run) if run.code == Some(0) => verb_value(&run.out, "batch"),
+        Ok(run) => {
+            println!("batcher {}: {} — no round staged", repo.name, verb_failed("queue round stage", &run));
+            None
+        }
+        Err(e) => {
+            println!("batcher {}: {e} — no round staged", repo.name);
+            None
+        }
+    }
+}
+
+pub fn round_stage_test_spawn(env: &Env, repo: &Repo) -> Result<BgVerb, String> {
+    round_verb_bg(env, &["stage-test", &repo.name], "")
+}
+
+/// True when the staged round's own pass ended green.
+pub fn round_stage_test_done(repo: &Repo, bg: BgVerb) -> bool {
+    match bg.wait() {
+        Ok(run) if run.code == Some(0) => true,
+        Ok(run) => {
+            println!("batcher {}: {} — the staged round gets its own pass", repo.name, verb_failed("queue round stage-test", &run));
+            false
+        }
+        Err(e) => {
+            println!("batcher {}: {e}", repo.name);
+            false
+        }
+    }
+}
+
+/// What `queue round promote` cut: the round now OPEN, its head, its members, and whether the
+/// staged pass was attested as that round's certification.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Promotion {
+    pub batch: String,
+    pub head: String,
+    pub members: Vec<(String, String)>,
+    pub attested: bool,
+}
+
+pub fn parse_promotion(out: &str) -> Option<Promotion> {
+    let members = verb_value(out, "members")?
+        .split_whitespace()
+        .filter_map(|m| m.split_once(':').map(|(i, t)| (i.to_string(), t.to_string())))
+        .collect();
+    Some(Promotion { batch: verb_value(out, "batch")?, head: verb_value(out, "head")?, members, attested: verb_value(out, "attested").as_deref() == Some("1") })
+}
+
+/// `queue round promote`. A refusal is not an error: the verb has discarded the stage, or left
+/// it for `round discard`, and the next cut proceeds from the pool as ever.
+pub fn round_promote(env: &Env, repo: &Repo) -> Option<Promotion> {
+    match round_verb(env, &["promote", &repo.name], "") {
+        Ok(run) if run.code == Some(0) => parse_promotion(&run.out).or_else(|| {
+            println!("batcher {}: queue round promote named no round", repo.name);
+            None
+        }),
+        Ok(run) => {
+            println!("batcher {}: {}", repo.name, verb_failed("queue round promote", &run));
+            None
+        }
+        Err(e) => {
+            println!("batcher {}: {e}", repo.name);
+            None
+        }
     }
 }
 
@@ -1879,7 +2079,7 @@ case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; *) exit 1 ;; esac
         let tip = g(d, &["rev-parse", "HEAD"]);
         g(d, &["checkout", "-q", "main"]);
         let r = Repo { name: "r".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
-        let m = Member { id: "m1".into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default() };
+        let m = Member { id: "m1".into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: Vec::new() };
         (r, base, m)
     }
 
@@ -2181,7 +2381,7 @@ mod lifecycle_tests {
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
             read_pool(&e).unwrap(),
-            vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001, false), ("sp-b".into(), "bbbb".into(), 1790000002, true), ("sp-n".into(), "none".into(), 0, false)]
+            vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001, false, vec![]), ("sp-b".into(), "bbbb".into(), 1790000002, true, vec![]), ("sp-n".into(), "none".into(), 0, false, vec![])]
         );
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
         assert!(log.contains("list --state CERTIFIED") && log.contains("list --state SUBMITTED"), "{log}");
@@ -2196,7 +2396,7 @@ mod lifecycle_tests {
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
             read_pool(&e).unwrap(),
-            vec![("sp-j".to_string(), "jjjj".to_string(), 4, false), ("sp-s".into(), "ssss".into(), 3, false)]
+            vec![("sp-j".to_string(), "jjjj".to_string(), 4, false, vec![]), ("sp-s".into(), "ssss".into(), 3, false, vec![])]
         );
     }
 
@@ -2382,6 +2582,29 @@ mod lc_withdraw_tests {
         }
     }
 
+    /// A red gate verdict recorded on an IN_DELIVERY member at the tip the round holds names it
+    /// for eject; a moved tip, an unmarked row or another state does not.
+    #[test]
+    fn only_a_member_marked_red_at_the_round_tip_is_named_for_eject() {
+        for (state, reason, tip, named) in [
+            ("IN_DELIVERY", "gate-red: suites-failed", "aaaa", true),
+            ("IN_DELIVERY", "gate-red: suites-failed", "moved", false),
+            ("IN_DELIVERY", "delivered-from-submitted", "aaaa", false),
+            ("REWORK", "gate-red: suites-failed", "aaaa", false),
+        ] {
+            let d = testkit::TempDir::new("batcher-cut-gate-red");
+            let mut e = super::lifecycle_tests_env(&d);
+            let bin = d.join("spira-lc");
+            testkit::write_exe(
+                &bin,
+                &format!("#!/bin/sh\necho '{{\"bead\":{{\"state\":\"{state}\",\"tip\":\"{tip}\",\"reason\":\"{reason}\",\"version\":4}}}}'\n"),
+            );
+            e.lc_bin = Some(bin);
+            let got = gate_red_marks(&e, &[("sp-a".into(), "aaaa".into())]);
+            assert_eq!(got, if named { vec![("sp-a".to_string(), "suites-failed".to_string())] } else { vec![] }, "{state} {reason} {tip}");
+        }
+    }
+
     /// A member the machine no longer holds CERTIFIED (resubmitted since, or already
     /// returned) is left alone: nothing to withdraw.
     #[test]
@@ -2455,6 +2678,45 @@ mod land_exit_tests {
         Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: d.to_path_buf(), land: Land::Local }
     }
 
+    fn echo_queue(d: &Path, script: &str) -> Env {
+        let mut e = lifecycle_tests_env(d);
+        testkit::write_exe(&d.join("queue"), &format!("#!/bin/sh\n{script}\n"));
+        e.queue_bin = d.join("queue");
+        e
+    }
+
+    #[test]
+    fn a_promotion_names_its_round_head_members_and_whether_it_was_attested() {
+        let p = parse_promotion("batch=r2\nhead=abc\nmembers=sp-a:t1 sp-b:t2\nattested=1\n").unwrap();
+        assert_eq!(p, Promotion { batch: "r2".into(), head: "abc".into(), members: vec![("sp-a".into(), "t1".into()), ("sp-b".into(), "t2".into())], attested: true });
+        assert!(!parse_promotion("batch=r2\nhead=abc\nmembers=sp-a:t1\nattested=0\n").unwrap().attested);
+        assert_eq!(parse_promotion("batch=r2\nmembers=sp-a:t1\n"), None, "a promotion with no head names no tree to land");
+    }
+
+    #[test]
+    fn a_stage_runs_beside_the_caller_and_names_its_batch_only_on_success() {
+        let d = testkit::TempDir::new("batcher-cut-stage");
+        let e = echo_queue(&d, "cat >/dev/null; echo \"$@\" > '/dev/null'; echo batch=r2; echo not-this >&2");
+        let m = Member { id: "sp-a".into(), tip: "t1".into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: Vec::new() };
+        let bg = round_stage_spawn(&e, &repo_at(&d), &d.join("wt"), &[m.clone()]).unwrap();
+        assert_eq!(round_stage_done(&repo_at(&d), bg), Some("r2".into()));
+        let e = echo_queue(&d, "cat >/dev/null; echo batch=r2; exit 1");
+        let bg = round_stage_spawn(&e, &repo_at(&d), &d.join("wt"), &[m]).unwrap();
+        assert_eq!(round_stage_done(&repo_at(&d), bg), None, "a refused stage staged nothing");
+    }
+
+    #[test]
+    fn a_stage_test_is_green_only_on_exit_zero_and_a_refused_promote_is_none() {
+        let d = testkit::TempDir::new("batcher-cut-stage-test");
+        let e = echo_queue(&d, "exit 0");
+        assert!(round_stage_test_done(&repo_at(&d), round_stage_test_spawn(&e, &repo_at(&d)).unwrap()));
+        let e = echo_queue(&d, "exit 1");
+        assert!(!round_stage_test_done(&repo_at(&d), round_stage_test_spawn(&e, &repo_at(&d)).unwrap()));
+        assert_eq!(round_promote(&e, &repo_at(&d)), None);
+        let e = echo_queue(&d, "echo batch=r2; echo head=h; echo members=sp-a:t1; echo attested=0");
+        assert_eq!(round_promote(&e, &repo_at(&d)).map(|p| (p.batch, p.attested)), Some(("r2".into(), false)));
+    }
+
     #[test]
     fn a_held_lock_retries_then_lands() {
         let d = testkit::TempDir::new("batcher-cut-land-retry");
@@ -2508,7 +2770,7 @@ mod land_exit_tests {
     }
 
     fn member(id: &str) -> Member {
-        Member { id: id.into(), tip: "t".into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default() }
+        Member { id: id.into(), tip: "t".into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: Vec::new() }
     }
 
     #[test]
@@ -2585,7 +2847,7 @@ mod integration_tests {
     }
 
     fn member(id: &str) -> Member {
-        Member { id: id.into(), tip: String::new(), title: String::new(), priority: None, express: false, certified_at: 0, stack: BTreeMap::new(), base_fix: false }
+        Member { id: id.into(), tip: String::new(), title: String::new(), priority: None, express: false, certified_at: 0, stack: BTreeMap::new(), base_fix: false, blocked_by: Vec::new() }
     }
 
     // Two members that are each fine alone: the merged tree carries a stale matrix and a

@@ -1,12 +1,15 @@
 //! The only I/O: reading bd and spira-lc through their CLIs, and config through
 //! spira-config. Every read is bounded in time and in argv size. DESIGN.md §2 "Data in".
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::events::{self, EventRow};
-use crate::rank::{self, ReadyRow};
+use lifecycle::bead::BeadState;
+
+use crate::rank::{self, LifecycleRow, ReadyRow};
 
 /// Ids per `bd sql` events query and per `bd list --id` call: keeps the argv bounded.
 pub const EVENT_CHUNK: usize = 200;
@@ -161,10 +164,25 @@ impl Store {
         rank::parse_ready(&text)
     }
 
-    pub fn lifecycle_snapshot(&self) -> Result<String, String> {
+    /// The lifecycle rows in `states`. Never the whole store: it holds every bead ever.
+    pub fn lifecycle_in_states(&self, states: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {
+        self.lc_list(&["--state", &states.join(",")])
+    }
+
+    /// The lifecycle rows of exactly `ids`, one `spira-lc list --ids` per [`EVENT_CHUNK`].
+    pub fn lifecycle_of(&self, ids: &[String]) -> Result<HashMap<String, LifecycleRow>, String> {
+        let mut out = HashMap::new();
+        for chunk in ids.chunks(EVENT_CHUNK) {
+            out.extend(self.lc_list(&["--ids", &chunk.join(",")])?);
+        }
+        Ok(out)
+    }
+
+    fn lc_list(&self, filter: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {
         let mut c = Command::new(&self.lc);
-        c.arg("list");
-        run(c, self.timeout).map_err(|e| format!("spira-lc list: {e}"))
+        c.arg("list").args(filter);
+        let text = run(c, self.timeout).map_err(|e| format!("spira-lc list: {e}"))?;
+        crate::rank::parse_lifecycle(&text)
     }
 
     /// The machine's return-to-rework, through the one client of `spira-lc reopen`.
@@ -172,10 +190,15 @@ impl Store {
         spira_config::lifecycle_row::reopen_with(&self.lc, id, cause, actor)
     }
 
-    /// `spira-lc release <id> <actor>`: hand back a claim this caller holds. A row not WORKING
-    /// has no claim to hand back (the machine refuses it, exit 3); that is not a failure.
+    /// `spira-lc release <id> <actor>`: hand back a claim this caller holds. Only a WORKING
+    /// row has a claim to hand back; any other state is left unwritten, because the machine
+    /// would refuse the Release and record the refusal on the bead's timeline.
     pub fn release_claim(&self, id: &str, actor: &str) -> Result<(), String> {
-        self.lc_verb(&["release", id, actor], &[0, 1, 3])
+        let rows = self.lifecycle_of(&[id.to_string()])?;
+        if rows.get(id).is_some_and(|r| r.state == BeadState::Working) {
+            return self.lc_verb(&["release", id, actor], &[0, 1, 3]);
+        }
+        Ok(())
     }
 
     fn lc_verb(&self, args: &[&str], ok: &[i32]) -> Result<(), String> {

@@ -243,7 +243,6 @@ pub mod fake {
         }
 
         fn lifecycle_terminal(&self, id: &str) -> Result<bool, String> {
-            self.calls.borrow_mut().push(format!("lifecycle {id}"));
             self.states.borrow().get(id).map(|s| spira_config::lc_state::is_terminal(s)).ok_or_else(|| format!("no lifecycle row for {id}"))
         }
 

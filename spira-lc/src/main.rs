@@ -27,6 +27,7 @@ mod git_evidence;
 mod legacy_files;
 mod migrate;
 mod ops;
+mod passes;
 mod wire;
 mod repo_config;
 mod rows;
@@ -262,7 +263,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--state S] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
         ),
     }
 }
@@ -285,8 +286,31 @@ fn cmd_admin_apply_ddl(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+fn csv_literals(csv: &str) -> String {
+    let items: Vec<String> = csv.split(',').filter(|x| !x.is_empty()).map(|x| format!("'{}'", rows::escape(x))).collect();
+    if items.is_empty() { "NULL".to_string() } else { items.join(",") }
+}
+
 fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+}
+
+/// Derived table `blockers(waiting, blocked_by)`: per bead, the comma-joined ids of its
+/// blocks-type prerequisites that are still live (the same rule `ops_live` applies).
+fn blockers_join() -> String {
+    format!(
+        "(SELECT d.bead_id AS waiting, GROUP_CONCAT(d.depends_on ORDER BY d.depends_on SEPARATOR ',') AS blocked_by \
+         FROM bead_dep d JOIN bead p ON p.bead_id = d.depends_on WHERE d.dep_type = 'blocks' AND p.state IN ({}) GROUP BY d.bead_id) blockers",
+        deps::LIVE_STATES
+    )
+}
+
+/// Turns the joined `blocked_by` string into an array of ids (empty when nothing blocks).
+fn split_blocked_by(row: &mut Value) {
+    if let Some(o) = row.as_object_mut() {
+        let ids: Vec<Value> = o.get("blocked_by").and_then(Value::as_str).unwrap_or_default().split(',').filter(|x| !x.is_empty()).map(|x| Value::String(x.to_string())).collect();
+        o.insert("blocked_by".into(), Value::Array(ids));
+    }
 }
 
 pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
@@ -303,6 +327,16 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     if bead_rows.is_empty() {
         return (1, "{}".to_string());
     }
+    let mut bead_rows = bead_rows;
+    match conn.query(&format!("SELECT blockers.blocked_by FROM {} WHERE blockers.waiting = '{}'", blockers_join(), rows::escape(bead_id))) {
+        Ok(r) => {
+            if let Some(o) = bead_rows[0].as_object_mut() {
+                o.insert("blocked_by".into(), r.first().and_then(|x| x.get("blocked_by")).cloned().unwrap_or(Value::Null));
+            }
+            split_blocked_by(&mut bead_rows[0]);
+        }
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    }
     let delivery_rows = conn
         .query(&format!(
             "SELECT bead_id, mode, state, batch_id, pr, merge_sha, version FROM delivery WHERE bead_id = '{}'",
@@ -316,6 +350,9 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     (0, serde_json::to_string_pretty(&out).unwrap())
 }
 
+const LIVE_WINDOW_SECS: i64 = 24 * 3600;
+const TERMINAL_STATES: &str = "'LANDED','SUPERSEDED','DROPPED','DONE'";
+
 pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     if args.iter().any(|a| a == "--delivery") {
         return cmd_list_delivery(args, conn);
@@ -326,6 +363,8 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let state = flag(args, "--state");
     let hold = flag(args, "--hold");
     let express = args.iter().any(|a| a == "--express");
+    let live = args.iter().any(|a| a == "--live");
+    let ids = flag(args, "--ids");
     // --hold <kind>: beads currently carrying that hold (design §3.1: "Holds are a
     // dimension, not states"), e.g. every poison-held bead regardless of its underlying
     // state — the bulk query CHECK 4's stale-clear sweep needs instead of a per-bead
@@ -333,7 +372,14 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let filters = |col: &str| -> String {
         let mut c = Vec::new();
         if let Some(st) = &state {
-            c.push(format!("{col}state = '{}'", rows::escape(st)));
+            c.push(format!("{col}state IN ({})", csv_literals(st)));
+        }
+        if live {
+            let terminal: Vec<&str> = lifecycle::bead::BeadState::TERMINAL.iter().map(|s| s.as_str()).collect();
+            c.push(format!("{col}state NOT IN ({})", csv_literals(&terminal.join(","))));
+        }
+        if let Some(ids) = &ids {
+            c.push(format!("{col}bead_id IN ({})", csv_literals(ids)));
         }
         if let Some(kind) = &hold {
             c.push(format!("JSON_CONTAINS({col}holds, '\"{}\"')", rows::escape(kind)));
@@ -341,13 +387,18 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         if express {
             c.push(format!("{col}express = 1"));
         }
+        if live {
+            c.push(format!("({col}state NOT IN ({TERMINAL_STATES}) OR {col}updated_at >= {})", db::now_epoch() - LIVE_WINDOW_SECS));
+        }
         c.iter().map(|x| format!(" AND {x}")).collect()
     };
     let where_clause = filters("").replacen(" AND ", " WHERE ", 1);
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, express FROM bead{where_clause} ORDER BY bead_id"
+        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, express, blockers.blocked_by FROM bead \
+         LEFT JOIN {} ON blockers.waiting = bead.bead_id{where_clause} ORDER BY bead_id",
+        blockers_join()
     );
     let mut beads = match conn.query(&sql) {
         Ok(r) => r,
@@ -372,6 +423,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
     for b in beads.iter_mut() {
+        split_blocked_by(b);
         let key = (
             b.get("bead_id").and_then(Value::as_str).unwrap_or_default().to_string(),
             b.get("state").and_then(Value::as_str).unwrap_or_default().to_string(),
@@ -381,7 +433,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
             o.insert("since".into(), v);
         }
     }
-    (0, serde_json::to_string_pretty(&Value::Array(beads)).unwrap())
+    (0, serde_json::to_string(&Value::Array(beads)).unwrap())
 }
 
 /// Derived table of the latest applied event into each (key, state) of a machine. Joined,
@@ -399,7 +451,7 @@ fn cmd_list_batches(conn: &Conn) -> (i32, String) {
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let run = || -> Result<Vec<Value>, String> {
         let mut batches = q(format!(
-            "SELECT batch_id, repo, state, reason, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
+            "SELECT batch_id, repo, state, reason, pass, phase, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
         ))?;
         let ids: Vec<String> = batches
             .iter()
@@ -416,12 +468,21 @@ fn cmd_list_batches(conn: &Conn) -> (i32, String) {
              FROM event WHERE machine = 'batch' AND event = 'Eject' AND applied = 1 AND lc_key IN ({ids}) ORDER BY seq"
         ))?;
         let last = q(format!("SELECT lc_key AS batch_id, MAX(at) AS last_at FROM event WHERE machine = 'batch' AND applied = 1 AND lc_key IN ({ids}) GROUP BY lc_key"))?;
+        let events = q(format!(
+            "SELECT lc_key AS batch_id, event, evidence, at FROM event WHERE machine = 'batch' AND applied = 1 AND event IN ({}) AND lc_key IN ({ids}) ORDER BY seq",
+            passes::FETCHED
+        ))?;
         let of = |rows: &[Value], id: &Value| -> Vec<Value> { rows.iter().filter(|r| r.get("batch_id") == Some(id)).cloned().collect() };
         for b in batches.iter_mut() {
             let id = b.get("batch_id").cloned().unwrap_or(Value::Null);
             let obj = b.as_object_mut().expect("a batch row is an object");
             obj.insert("members".into(), Value::Array(of(&members, &id)));
             obj.insert("ejected".into(), Value::Array(of(&ejected, &id)));
+            let (history, since) = passes::fold(&of(&events, &id));
+            let opened = obj.get("opened_at").and_then(Value::as_i64);
+            obj.insert("phase_since".into(), since.or(opened).map_or(Value::Null, Value::from));
+            obj.insert("last_pass".into(), history.last().cloned().unwrap_or(Value::Null));
+            obj.insert("passes".into(), Value::Array(history));
             obj.insert("last_at".into(), of(&last, &id).first().and_then(|r| r.get("last_at")).cloned().unwrap_or(Value::Null));
         }
         Ok(batches)

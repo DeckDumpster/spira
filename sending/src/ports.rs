@@ -63,6 +63,9 @@ pub trait World {
     /// `spira-lc state <id>` reads LANDED: the lifecycle record says the bead landed. An
     /// unreadable record or a missing row is not LANDED (cannot prove it landed).
     fn lc_landed(&self, id: &str) -> bool;
+    /// The lifecycle row is terminal (LANDED, SUPERSEDED, DROPPED, DONE): it takes no further
+    /// event. An unreadable record or a missing row is not terminal.
+    fn lc_terminal(&self, id: &str) -> bool;
     /// `spira-lc content-on-base <id> <proof> sending`.
     fn content_on_base(&self, id: &str, proof: &str);
     /// The merged PR's head for `br`, if a PR for it is MERGED (`gh pr view`).
