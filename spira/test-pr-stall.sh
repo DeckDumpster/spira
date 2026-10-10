@@ -75,7 +75,7 @@ requeued() { grep -c "event delivery $1 --expect PR_OPEN --version 3 --actor har
 
 # ---- Stub: gh --------------------------------------------------------------------------
 # SPIRA_GH is set to a stub binary so no real GitHub calls happen.
-# GH_ALLOW_AUTO_MERGE controls what `gh repo view --json allowAutoMerge` returns.
+# GH_ALLOW_AUTO_MERGE controls what `gh api repos/{owner}/{repo} --jq .allow_auto_merge` returns.
 # GH_MERGEABLE / GH_CONCLUSIONS control the combined `pr view --json mergeable,
 # statusCheckRollup` jq output (mergeable, then a comma-joined conclusions list).
 # GH_PR_MERGE_LOG captures `gh pr merge` calls.
@@ -86,8 +86,8 @@ cat > "$GH_BIN" <<'GHEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${GH_LOG:-/dev/null}"
 case "$*" in
-    *"--jq .allowAutoMerge"*)
-        # Simulate `gh repo view --json allowAutoMerge --jq .allowAutoMerge` — output the raw
+    *"api repos/"*)
+        # Simulate `gh api repos/{owner}/{repo} --jq .allow_auto_merge` — output the raw
         # jq-extracted value, not the JSON object; that is what real gh outputs with --jq.
         printf '%s\n' "${GH_ALLOW_AUTO_MERGE:-true}"
         printf '%s\n' "${GH_ALLOW_AUTO_MERGE:-true}" > "${GH_AAM_OUT:-/dev/null}" ;;
