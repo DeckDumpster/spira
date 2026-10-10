@@ -65,14 +65,18 @@ pub fn is_row_key(x: &str) -> bool {
 /// engine rather than probed for by a second read inside the write. With a title or priority
 /// the duplicate instead updates just those mirrored columns — a value not given is kept — and
 /// never touches `version`, so a mirror write cannot lose a transition's CAS.
-fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i64>) -> String {
-    if title.is_none() && priority.is_none() {
+fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i64>, submitted_tip: Option<&str>) -> String {
+    if title.is_none() && priority.is_none() && submitted_tip.is_none() {
         return format!("INSERT IGNORE INTO bead (bead_id, state, holds, version, updated_at) VALUES ({}, 'READY', '[]', 0, {at});\n", q(id));
     }
     let title_sql = title.map_or("NULL".to_string(), |t| q(&t.chars().take(MIRROR_TITLE_CHARS).collect::<String>()));
     let priority_sql = priority.map_or("NULL".to_string(), |p| p.to_string());
+    let (state, tip_sql) = match submitted_tip {
+        Some(t) => ("SUBMITTED", q(t)),
+        None => ("READY", "NULL".to_string()),
+    };
     format!(
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at, title, priority) VALUES ({}, 'READY', '[]', 0, {at}, {title_sql}, {priority_sql}) \
+        "INSERT INTO bead (bead_id, state, tip, holds, version, updated_at, title, priority) VALUES ({}, '{state}', {tip_sql}, '[]', 0, {at}, {title_sql}, {priority_sql}) \
          ON DUPLICATE KEY UPDATE title = COALESCE(VALUES(title), title), priority = COALESCE(VALUES(priority), priority);\n",
         q(id)
     )
@@ -81,7 +85,8 @@ fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i
 /// `bead.title` is VARCHAR(512).
 const MIRROR_TITLE_CHARS: usize = 512;
 
-/// `create-bead <bead-id> [--title T] [--priority 0..4]`.
+/// `create-bead <bead-id> [--title T] [--priority 0..4] [--submitted-tip SHA]`. With a tip the
+/// row is born SUBMITTED at it, so no claimable READY window exists; an existing row is untouched.
 pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
@@ -97,7 +102,7 @@ pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
         },
     };
     let at = crate::db::now_epoch();
-    let script = create_bead_script(id, at, flag(args, "--title").as_deref(), priority);
+    let script = create_bead_script(id, at, flag(args, "--title").as_deref(), priority, flag(args, "--submitted-tip").as_deref());
     match conn.run_plain(&script) {
         Ok(()) => (0, String::new()),
         Err(e) => cannot_tell(e),
@@ -1205,7 +1210,7 @@ mod tests {
 
     #[test]
     fn create_bead_is_one_ignoring_insert() {
-        let s = create_bead_script("sp-a'b", 7, None, None);
+        let s = create_bead_script("sp-a'b", 7, None, None, None);
         assert!(s.starts_with("INSERT IGNORE INTO bead"), "{s}");
         assert!(!s.contains("NOT EXISTS"), "{s}");
         assert_eq!(s.matches(';').count(), 1);
@@ -1213,13 +1218,21 @@ mod tests {
 
     #[test]
     fn a_mirrored_create_updates_only_the_mirror_columns_and_never_the_version() {
-        let s = create_bead_script("sp-a", 7, Some("it's a title"), Some(1));
+        let s = create_bead_script("sp-a", 7, Some("it's a title"), Some(1), None);
         assert!(s.contains("it\\'s a title") && s.contains("ON DUPLICATE KEY UPDATE title = COALESCE"), "{s}");
         assert!(!s.contains("version ="), "{s}");
-        let only_priority = create_bead_script("sp-a", 7, None, Some(0));
-        assert!(only_priority.contains("VALUES ('sp-a', 'READY', '[]', 0, 7, NULL, 0)"), "{only_priority}");
-        let long = create_bead_script("sp-a", 7, Some(&"é".repeat(600)), None);
+        let only_priority = create_bead_script("sp-a", 7, None, Some(0), None);
+        assert!(only_priority.contains("VALUES ('sp-a', 'READY', NULL, '[]', 0, 7, NULL, 0)"), "{only_priority}");
+        let long = create_bead_script("sp-a", 7, Some(&"é".repeat(600)), None, None);
         assert_eq!(long.matches('é').count(), MIRROR_TITLE_CHARS, "cut at the column width by chars, not bytes");
+    }
+
+    #[test]
+    fn a_submitted_create_is_born_submitted_at_its_tip() {
+        let s = create_bead_script("sp-a", 7, Some("t"), Some(2), Some("abc123"));
+        assert!(s.contains("VALUES ('sp-a', 'SUBMITTED', 'abc123', '[]', 0, 7,"), "{s}");
+        assert!(!s.contains("'READY'"), "{s}");
+        assert!(!s.contains("state ="), "an existing row's state is never rewritten: {s}");
     }
 
     fn stacked(id: &str, prereq: &str, prereq_tip: &str) -> (String, bead::BeadRow) {
