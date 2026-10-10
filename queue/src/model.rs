@@ -162,6 +162,21 @@ pub struct LcBeadRow {
     pub blocked_by: Vec<String>,
     #[serde(default)]
     pub reason: Option<String>,
+    #[serde(default, deserialize_with = "holds_any")]
+    pub holds: Vec<String>,
+}
+
+fn holds_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let strings = |a: Vec<serde_json::Value>| a.into_iter().map(|v| v.as_str().map(String::from).unwrap_or_else(|| v.to_string())).collect();
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Array(a) => strings(a),
+        serde_json::Value::String(t) => match serde_json::from_str::<Vec<serde_json::Value>>(&t) {
+            Ok(a) => strings(a),
+            Err(_) => vec![t],
+        },
+        serde_json::Value::Null => Vec::new(),
+        other => vec![other.to_string()],
+    })
 }
 
 fn opt_u64_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {

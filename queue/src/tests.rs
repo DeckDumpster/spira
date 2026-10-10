@@ -821,7 +821,7 @@ impl T {
     }
     /// A spira-lc bead row entered at `since`.
     fn lc_row(&self, id: &str, state: &str, tip: &str, since: u64) {
-        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None };
+        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None, holds: Vec::new() };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }
     fn open_record(&self, text: &str) {
@@ -1229,6 +1229,27 @@ fn eject_with_a_batch_id_ejects_on_spira_lc_too() {
     t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
     assert_eq!(t.run(&["eject", "sp-a", "--reason", "multi\nline"]), 0);
     assert!(t.lc.calls.borrow().contains(&"eject-member spira-1 sp-a CI_RUNNING 4 multi line".to_string()));
+}
+
+#[test]
+fn eject_leaving_a_member_abandons_the_batch_row_so_the_survivor_is_not_stranded() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
+    assert_eq!(t.run(&["eject", "sp-a", "--reason", "bad"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    let e = calls.iter().position(|c| c.starts_with("eject-member spira-1 sp-a")).unwrap_or_else(|| panic!("{calls:?}"));
+    let a = calls.iter().position(|c| c.starts_with("abandon-batch spira-1")).unwrap_or_else(|| panic!("no abandon: {calls:?}"));
+    assert!(e < a);
+    assert!(t.forge.calls.borrow().contains(&"pr-close 12".to_string()));
+    assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn eject_of_the_last_member_does_not_abandon_the_batch_row() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
+    assert_eq!(t.run(&["eject", "sp-a"]), 0);
+    assert!(!t.lc.has("abandon-batch"));
 }
 
 #[test]
@@ -2286,6 +2307,27 @@ fn open_batch_admits_on_the_lifecycle_row_not_bd_status() {
     assert!(out.contains("skip — sp-r: lifecycle state=REWORK (no longer CERTIFIED) — not admitted"), "{out}");
     let rec = fs::read_to_string(t.qfile("open")).unwrap();
     assert!(rec.contains("members=sp-a:ta\n"), "{rec}");
+}
+
+#[test]
+fn open_batch_does_not_admit_a_held_bead() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into()), ("spira/sp-h".into(), "th".into())];
+    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
+    t.lc_row("sp-h", "CERTIFIED", "th", 2);
+    t.lc.rows.borrow_mut().as_mut().unwrap()[1].holds = vec!["manual".into()];
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
+    assert!(t.out().contains("skip — sp-h: held (manual) — not admitted"), "{}", t.out());
+    let rec = fs::read_to_string(t.qfile("open")).unwrap();
+    assert!(rec.contains("members=sp-a:ta\n"), "{rec}");
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-h".into(), "th".into())];
+    t.lc_row("sp-h", "CERTIFIED", "th", 2);
+    t.lc.rows.borrow_mut().as_mut().unwrap()[0].holds = vec!["manual".into()];
+    assert_eq!(t.run(&["open-batch", "--skip-pregate", "--members", "sp-h"]), 1);
+    assert!(!t.qfile("open").exists());
 }
 
 #[test]
