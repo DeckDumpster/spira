@@ -1,0 +1,25 @@
+[package]
+name = "perf-watch"
+version = "1.0.0"
+edition = "2021"
+description = "perf-watch — times the hot read paths end to end, outside the round, and alarms past a limit with the top callers."
+
+[lib]
+name = "perf_watch"
+path = "src/lib.rs"
+
+[[bin]]
+name = "perf-watch"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

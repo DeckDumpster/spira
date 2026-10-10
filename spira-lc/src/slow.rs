@@ -1,13 +1,59 @@
-//! Wall time of every Dolt query. One over the threshold appends a line to the slow-query
-//! log; watchtower's `--slow-query-check` turns the log into one incident per shape.
-//! Line: `<epoch>\t<verb>\t<millis>\t<shape>`.
+//! Wall time of every Dolt query and of every served request. One over the threshold appends a
+//! line to the slow-query log; watchtower's `--slow-query-check` turns the log into one
+//! incident per shape. Line: `<epoch>\t<verb>\t<caller>\t<millis>\t<shape>`; a whole request is
+//! the shape `REQUEST`. The caller is the peer's `/proc/<pid>/comm`, never its cmdline.
+//! `stats_json` is the per-verb and per-caller counter of what this process has served.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::io::Write;
+use std::sync::Mutex;
 use std::time::Duration;
 
 thread_local! {
     static VERB: RefCell<String> = const { RefCell::new(String::new()) };
+    static CALLER: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+#[derive(Default)]
+struct Counters {
+    verbs: BTreeMap<String, (u64, u64)>,
+    callers: BTreeMap<(String, String), u64>,
+}
+
+static COUNTERS: Mutex<Counters> = Mutex::new(Counters { verbs: BTreeMap::new(), callers: BTreeMap::new() });
+
+pub fn set_caller(caller: &str) {
+    CALLER.with(|c| *c.borrow_mut() = clean(caller));
+}
+
+fn clean(s: &str) -> String {
+    let s: String = s.chars().map(|c| if c.is_whitespace() || c.is_control() { '_' } else { c }).take(32).collect();
+    if s.is_empty() { "-".to_string() } else { s }
+}
+
+pub fn caller_of_pid(pid: i32) -> String {
+    std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| clean(c.trim())).unwrap_or_else(|_| "-".to_string())
+}
+
+pub fn request_done(verb: &str, caller: &str, took: Duration) {
+    let (verb, caller) = (clean(verb), clean(caller));
+    if let Ok(mut c) = COUNTERS.lock() {
+        let v = c.verbs.entry(verb.clone()).or_default();
+        v.0 += 1;
+        v.1 += took.as_millis() as u64;
+        *c.callers.entry((verb.clone(), caller.clone())).or_default() += 1;
+    }
+    append(took, &verb, &caller, "REQUEST");
+}
+
+pub fn stats_json() -> String {
+    let Ok(c) = COUNTERS.lock() else { return "{}".to_string() };
+    let verbs: serde_json::Map<String, serde_json::Value> =
+        c.verbs.iter().map(|(v, (n, ms))| (v.clone(), serde_json::json!({"count": n, "total_ms": ms}))).collect();
+    let callers: Vec<serde_json::Value> =
+        c.callers.iter().map(|((v, who), n)| serde_json::json!({"verb": v, "caller": who, "count": n})).collect();
+    serde_json::json!({"verbs": verbs, "callers": callers}).to_string()
 }
 
 pub fn set_verb(verb: &str) {
@@ -66,18 +112,24 @@ pub fn shape(sql: &str) -> String {
     folded.chars().take(300).collect()
 }
 
-pub fn line(epoch: i64, verb: &str, took: Duration, sql: &str) -> String {
-    format!("{epoch}\t{verb}\t{}\t{}\n", took.as_millis(), shape(sql))
+pub fn line(epoch: i64, verb: &str, caller: &str, took: Duration, sql: &str) -> String {
+    format!("{epoch}\t{verb}\t{caller}\t{}\t{}\n", took.as_millis(), shape(sql))
 }
 
 pub fn record(took: Duration, sql: &str) {
+    let verb = VERB.with(|v| v.borrow().clone());
+    let verb = if verb.is_empty() { "-".to_string() } else { verb };
+    let caller = CALLER.with(|c| c.borrow().clone());
+    let caller = if caller.is_empty() { "-".to_string() } else { caller };
+    append(took, &verb, &caller, sql);
+}
+
+fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
     if took < threshold() {
         return;
     }
     let Some(path) = log_path() else { return };
-    let verb = VERB.with(|v| v.borrow().clone());
-    let verb = if verb.is_empty() { "-".to_string() } else { verb };
-    let l = line(crate::db::now_epoch(), &verb, took, sql);
+    let l = line(crate::db::now_epoch(), verb, caller, took, sql);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = f.write_all(l.as_bytes());
     }
@@ -107,12 +159,34 @@ mod tests {
         let log = d.join("s.log");
         let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("1000"))]);
         set_verb("list");
+        set_caller("spira-lc");
         record(Duration::from_millis(500), "SELECT 1");
         assert!(!log.exists());
         record(Duration::from_millis(1500), "SELECT * FROM bead WHERE id = 'a'");
         let got = std::fs::read_to_string(&log).unwrap();
         assert_eq!(got.lines().count(), 1);
         let f: Vec<&str> = got.trim_end().split('\t').collect();
-        assert_eq!((f[1], f[2], f[3]), ("list", "1500", "SELECT * FROM bead WHERE id = ?"));
+        assert_eq!((f[1], f[2], f[3], f[4]), ("list", "spira-lc", "1500", "SELECT * FROM bead WHERE id = ?"));
+    }
+
+    #[test]
+    fn a_request_is_logged_whole_and_counted_per_verb_and_caller() {
+        let d = testkit::TempDir::new("slow-req");
+        let log = d.join("s.log");
+        let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("0"))]);
+        request_done("probe-verb", "probe\tcaller", Duration::from_millis(40));
+        request_done("probe-verb", "probe\tcaller", Duration::from_millis(60));
+        let got = std::fs::read_to_string(&log).unwrap();
+        assert!(got.lines().all(|l| l.split('\t').collect::<Vec<_>>()[1..] == ["probe-verb", "probe_caller", l.split('\t').nth(3).unwrap(), "REQUEST"][..]), "{got}");
+        let s: serde_json::Value = serde_json::from_str(&stats_json()).unwrap();
+        assert_eq!(s["verbs"]["probe-verb"], serde_json::json!({"count": 2, "total_ms": 100}));
+        assert!(s["callers"].as_array().unwrap().iter().any(|c| c["verb"] == "probe-verb" && c["caller"] == "probe_caller" && c["count"] == 2));
+    }
+
+    #[test]
+    fn a_caller_name_is_the_comm_of_the_pid_and_unknown_pids_are_dashes() {
+        let comm = std::fs::read_to_string("/proc/self/comm").unwrap();
+        assert_eq!(caller_of_pid(std::process::id() as i32), clean(comm.trim()));
+        assert_eq!(caller_of_pid(-1), "-");
     }
 }

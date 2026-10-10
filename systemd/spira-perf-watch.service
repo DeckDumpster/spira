@@ -1,0 +1,22 @@
+[Unit]
+Description=Spira perf-watch — time the hot read paths and alarm past the limit
+Documentation=file://@SPIRA_HOME@/perf-probes
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+CPUQuota=20%
+ExecStart=@SPIRA_PROD_ROOT@/bin/perf-watch --probes @SPIRA_HOME@/perf-probes --record @SPIRA_RUN@/perf-watch.last
+TimeoutStartSec=240
+StandardOutput=append:@SPIRA_RUN@/perf-watch.log
+StandardError=append:@SPIRA_RUN@/perf-watch.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=observability
