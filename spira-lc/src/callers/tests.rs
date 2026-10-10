@@ -660,6 +660,12 @@ impl Bd for FakeBd {
         }
         Ok(ids.iter().filter(|i| self.rows.contains_key(*i)).cloned().collect())
     }
+    fn open_among(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
+        if self.down {
+            return Err("bd down".into());
+        }
+        Ok(ids.iter().filter(|i| self.rows.contains_key(*i) && !self.closed.iter().any(|(c, _)| c == *i)).cloned().collect())
+    }
 }
 
 #[test]
@@ -840,6 +846,54 @@ fn reconcile_epics_moves_only_ready_epic_rows_to_open() {
     f.bead("sp-e2", BeadState::Ready);
     assert_eq!(reconcile_epics(&v(&["--apply"]), &mut f, &mut b).code, CANNOT_TELL);
     assert_eq!(reconcile_epics(&v(&["--bogus"]), &mut f, &mut b).code, 2);
+}
+
+// ---- reconcile-content ------------------------------------------------------------------
+
+#[test]
+fn reconcile_content_closes_the_store_bead_of_every_terminal_state_and_only_those() {
+    let mut f = Fake::default();
+    let mut b = FakeBd::default();
+    for (id, st) in [
+        ("sp-landed", BeadState::Landed),
+        ("sp-done", BeadState::Done),
+        ("sp-dropped", BeadState::Dropped),
+        ("sp-super", BeadState::Superseded),
+        ("sp-ready", BeadState::Ready),
+        ("sp-working", BeadState::Working),
+    ] {
+        f.bead(id, st);
+        b.rows.insert(id.into(), ("task".into(), None));
+    }
+
+    let dry = reconcile_content(&[], &mut f, &mut b);
+    assert_eq!(dry.code, APPLIED, "{}", dry.stderr);
+    assert!(dry.stdout.contains("would close sp-done (lifecycle DONE)") && dry.stdout.ends_with("4 would close (dry run; --apply to write)"), "{}", dry.stdout);
+    assert!(b.closed.is_empty() && f.events.is_empty(), "a dry run writes nothing");
+
+    let ans = reconcile_content(&v(&["--apply"]), &mut f, &mut b);
+    assert_eq!(ans.code, APPLIED, "{}", ans.stdout);
+    let mut got: Vec<&str> = b.closed.iter().map(|(i, _)| i.as_str()).collect();
+    got.sort();
+    assert_eq!(got, ["sp-done", "sp-dropped", "sp-landed", "sp-super"]);
+    for (id, reason) in &b.closed {
+        let state = f.state(id);
+        assert!(reason.contains(&format!("the lifecycle row is {state}")), "{id}: {reason}");
+    }
+    assert!(f.events.is_empty(), "the row is never written");
+    assert_eq!(reconcile_content(&v(&["--apply"]), &mut f, &mut b).stdout, "reconcile-content: 0 closed");
+}
+
+#[test]
+fn reconcile_content_cannot_tell_when_bd_is_down_and_rejects_unknown_flags() {
+    let mut f = Fake::default();
+    f.bead("sp-done", BeadState::Done);
+    let mut b = FakeBd::default();
+    b.rows.insert("sp-done".into(), ("task".into(), None));
+    b.down = true;
+    assert_eq!(reconcile_content(&v(&["--apply"]), &mut f, &mut b).code, CANNOT_TELL);
+    assert!(b.closed.is_empty());
+    assert_eq!(reconcile_content(&v(&["--bogus"]), &mut f, &mut b).code, 2);
 }
 
 // ---- drop-orphans (sp-b411iv) ------------------------------------------------------------

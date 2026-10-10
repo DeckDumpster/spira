@@ -737,6 +737,8 @@ pub trait Bd {
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String>;
     /// The subset of `ids` that bd has a bead for, in any status.
     fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String>;
+    /// The subset of `ids` whose bd status is not closed.
+    fn open_among(&mut self, ids: &[String]) -> Result<Vec<String>, String>;
     /// The store half of a reopen: bd status open, no assignee, no submitted label — so a bead
     /// the machine handed back reads open wherever bd is still read (sp-swh8b8). Idempotent.
     fn reopen(&mut self, id: &str) -> Result<(), String>;
@@ -928,6 +930,64 @@ pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) ->
         }
     }
     lines.push(format!("reconcile-epics: {done} {}", if apply { "moved" } else { "would move (dry run; --apply to write)" }));
+    Answer::out(code, lines.join("\n"))
+}
+
+/// `reconcile-content [--apply] [<id>...]` — close in the store every bead whose lifecycle row
+/// is terminal (LANDED, DONE, DROPPED, SUPERSEDED) and which bd still holds open, with a close
+/// reason citing the transition. The row is never written: it already says the bead is over,
+/// and the store is made to agree. Dry run unless `--apply`. Without ids, a bd that reports
+/// none of the terminal rows open is the normal steady state; a bd that cannot answer is not.
+///
+/// Exit: 0 done (or listed) · 2 cannot tell · 3 a store close failed.
+pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let apply = args.iter().any(|a| a == "--apply");
+    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
+        return usage(&format!("reconcile-content [--apply] [<bead-id>...] (unknown flag {bad})"));
+    }
+    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+    let cannot = |why: String| Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-content: {why}\n"), ..Default::default() };
+    let (rc, out) = m.call(&["list".into()]);
+    if rc != 0 {
+        return cannot(format!("lifecycle list failed: {}", out.trim()));
+    }
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
+        return cannot("lifecycle list is not a JSON array".into());
+    };
+    let terminal: BTreeMap<String, String> = rows
+        .iter()
+        .filter(|r| matches!(s(r, "state").as_str(), "LANDED" | "DONE" | "DROPPED" | "SUPERSEDED") && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id"))))
+        .map(|r| (s(r, "bead_id"), s(r, "state")))
+        .collect();
+    let ids: Vec<String> = terminal.keys().cloned().collect();
+    let mut open = Vec::new();
+    for chunk in ids.chunks(RECONCILE_CHUNK) {
+        match bd.open_among(chunk) {
+            Ok(v) => open.extend(v),
+            Err(e) => return cannot(format!("bd unreadable: {}", e.trim())),
+        }
+    }
+    let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
+    for id in open {
+        let state = &terminal[&id];
+        if !apply {
+            lines.push(format!("would close {id} (lifecycle {state})"));
+            done += 1;
+            continue;
+        }
+        let reason = format!("OUTCOME: {}\nClosed by reconcile-content: the lifecycle row is {state}, so the content bead ends with it.\n", state.to_lowercase());
+        match bd.close(&id, &reason) {
+            Ok(()) => {
+                lines.push(format!("closed {id} (lifecycle {state})"));
+                done += 1;
+            }
+            Err(e) => {
+                lines.push(format!("failed {id}: {}", e.trim()));
+                code = REFUSED;
+            }
+        }
+    }
+    lines.push(format!("reconcile-content: {done} {}", if apply { "closed" } else { "would close (dry run; --apply to write)" }));
     Answer::out(code, lines.join("\n"))
 }
 

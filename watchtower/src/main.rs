@@ -431,6 +431,14 @@ fn main() {
                 sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
             };
             conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg));
+            let drift_cfg = probes::ContentDriftCfg {
+                bd: "bd".to_string(),
+                db: db.clone(),
+                lc_bin: spira_config::lifecycle_row::lc_bin(),
+                slack: getenv_i64("SPIRA_CONTENT_DRIFT_SLACK", 10).max(0) as usize,
+                sustain_secs: getenv_i64("SPIRA_CONTENT_DRIFT_SUSTAIN_SECS", 1800),
+            };
+            conditions::reconcile(n, &ctx, "content-drift", probes::content_drift(&drift_cfg));
         }
         Some("--dolt-drop-check") => {
             if world_halted(&run) {

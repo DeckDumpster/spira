@@ -120,8 +120,17 @@ pub fn closed(bd_bin: &str, db: &str, ids: &[String]) -> Result<Vec<(String, Str
     Ok(rows.iter().filter(|r| field(r, "status") == "closed").map(|r| (field(r, "id"), field(r, "close_reason"))).filter(|(id, _)| !id.is_empty()).collect())
 }
 
+/// The subset of `ids` whose bd status is anything but closed.
+pub fn open_among(bd_bin: &str, db: &str, ids: &[String]) -> Result<Vec<String>, String> {
+    listed(bd_bin, db, ids, |r| r.get("status").and_then(|x| x.as_str()) != Some("closed"))
+}
+
 /// The subset of `ids` bd has a bead for, in any status.
 pub fn known(bd_bin: &str, db: &str, ids: &[String]) -> Result<Vec<String>, String> {
+    listed(bd_bin, db, ids, |_| true)
+}
+
+fn listed(bd_bin: &str, db: &str, ids: &[String], keep: impl Fn(&serde_json::Value) -> bool) -> Result<Vec<String>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -144,7 +153,7 @@ pub fn known(bd_bin: &str, db: &str, ids: &[String]) -> Result<Vec<String>, Stri
         serde_json::Value::Array(a) => a,
         o => vec![o],
     };
-    Ok(rows.iter().filter_map(|r| r.get("id").and_then(|x| x.as_str())).map(str::to_string).collect())
+    Ok(rows.iter().filter(|r| keep(r)).filter_map(|r| r.get("id").and_then(|x| x.as_str())).map(str::to_string).collect())
 }
 
 #[cfg(test)]

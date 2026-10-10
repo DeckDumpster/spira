@@ -1,0 +1,20 @@
+[Unit]
+Description=Spira reconcile-content — close the content bead of every terminal lifecycle row
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc reconcile-content --apply
+TimeoutStartSec=300
+StandardOutput=append:@SPIRA_RUN@/reconcile-content.log
+StandardError=append:@SPIRA_RUN@/reconcile-content.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=work

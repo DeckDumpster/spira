@@ -367,6 +367,50 @@ pub fn rowless_beads(cfg: &RowlessCfg) -> Reading {
     Reading::Standing(rowless_cond(&rowless(&open, &rows), cfg.cap, cfg.sustain_secs).into_iter().collect())
 }
 
+// ---- (f) content store open beads outrun the lifecycle's live rows ---------------------
+
+pub const CONTENT_DRIFT_REFERENCE: &str = "incident:lifecycle-content-drift";
+
+pub struct ContentDriftCfg {
+    pub bd: String,
+    pub db: String,
+    pub lc_bin: String,
+    pub slack: usize,
+    pub sustain_secs: i64,
+}
+
+pub fn content_drift_cond(open: usize, live: usize, slack: usize, sustain_secs: i64) -> Option<Cond> {
+    if open <= live + slack {
+        return None;
+    }
+    Some(Cond {
+        key: "content-drift".into(),
+        reference: CONTENT_DRIFT_REFERENCE.into(),
+        title: "LIFECYCLE: the content store holds far more open beads than the lifecycle has live".into(),
+        body: format!(
+            "The content store lists {open} open bead(s); the lifecycle has {live} live row(s) (allowed excess {slack}). Beads whose row is terminal were not closed in the store, so every reader of content status sees a backlog that is not there.\n\nRun `spira-lc reconcile-content` (dry run) and then `--apply`; find the terminal path that did not close its content bead.\n"
+        ),
+        priority: 1,
+        sustain_secs,
+    })
+}
+
+pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
+    let open = crate::deadline::output(
+        "content-open beads",
+        Command::new(&cfg.bd).args(["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", "epic,event", "--json", "--limit", "0", "--brief"]),
+    )
+    .ok()
+    .filter(|o| o.status.success())
+    .and_then(|o| ids_of(&o.stdout, "id"));
+    let live = crate::deadline::output("lifecycle live rows", Command::new(&cfg.lc_bin).args(["list", "--live"]))
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| ids_of(&o.stdout, "bead_id"));
+    let (Some(open), Some(live)) = (open, live) else { return Reading::Unknown };
+    Reading::Standing(content_drift_cond(open.len(), live.len(), cfg.slack, cfg.sustain_secs).into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +462,36 @@ mod tests {
         assert!(seen.contains("--exclude-type epic,event"), "epics are out of scope: {seen}");
         cfg.lc_bin = write("lc-down", "exit 1");
         assert!(matches!(rowless_beads(&cfg), Reading::Unknown), "an unanswering store neither files nor clears");
+    }
+
+    #[test]
+    fn content_drift_stands_only_past_the_slack_and_reads_both_stores() {
+        assert!(content_drift_cond(30, 20, 10, 0).is_none(), "ten over is within the slack");
+        let c = content_drift_cond(31, 20, 10, 300).expect("eleven over stands");
+        assert_eq!(c.reference, CONTENT_DRIFT_REFERENCE);
+        assert!(c.body.contains("31 open") && c.body.contains("20 live"), "{}", c.body);
+
+        let t = testkit::TempDir::new("drift");
+        let write = |name: &str, body: &str| {
+            let p = t.path().join(name);
+            testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
+            p.to_string_lossy().into_owned()
+        };
+        let ids: Vec<String> = (0..5).map(|i| format!("{{\"id\":\"sp-{i}\"}}")).collect();
+        let bd = write("bd", &format!("echo '[{}]'", ids.join(",")));
+        let lc = write("lc", "echo '[{\"bead_id\":\"sp-0\"}]'");
+        let mut cfg = ContentDriftCfg { bd, db: "x".into(), lc_bin: lc, slack: 3, sustain_secs: 0 };
+        match content_drift(&cfg) {
+            Reading::Standing(v) => assert_eq!(v.len(), 1, "5 open vs 1 live is past a slack of 3"),
+            Reading::Unknown => panic!("both stores answered"),
+        }
+        cfg.slack = 4;
+        match content_drift(&cfg) {
+            Reading::Standing(v) => assert!(v.is_empty()),
+            Reading::Unknown => panic!("both stores answered"),
+        }
+        cfg.lc_bin = write("lc-down", "exit 1");
+        assert!(matches!(content_drift(&cfg), Reading::Unknown));
     }
 
     #[test]
