@@ -77,6 +77,25 @@ fn names(wt: &Path, rev: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Why `names` do not form the contiguous run 0001.. with each number once, if they do not.
+pub fn numbering_fault(names: &[String]) -> Option<String> {
+    let mut nums: Vec<u32> = names.iter().filter_map(|n| number(n)).collect();
+    nums.sort();
+    if let Some(w) = nums.windows(2).find(|w| w[0] == w[1]) {
+        return Some(format!("migration number {:04} is used twice", w[0]));
+    }
+    let gap = nums.iter().enumerate().find(|(i, n)| **n != *i as u32 + 1)?;
+    Some(format!("migration numbers are not contiguous from 0001: {:04} is at position {}", gap.1, gap.0 + 1))
+}
+
+/// Refuses a tree at HEAD whose migrations collide or leave a gap.
+pub fn check(wt: &Path) -> Result<(), String> {
+    match numbering_fault(&names(wt, "HEAD")) {
+        Some(f) => Err(f),
+        None => Ok(()),
+    }
+}
+
 /// Renumbers colliding migrations introduced by the merge commit at HEAD. Returns the
 /// renames made; the merge commit is amended in place.
 pub fn after_merge(wt: &Path) -> Result<Vec<(String, String)>, String> {
@@ -119,6 +138,14 @@ mod tests {
     fn collision_takes_next_free_number() {
         let p = plan(&s(&["0015-a.sql", "0016-b.sql"]), &s(&["0016-c.sql", "0017-d.sql"]));
         assert_eq!(p, vec![("0016-c.sql".to_string(), "0018-c.sql".to_string())]);
+    }
+
+    #[test]
+    fn numbering_fault_names_duplicates_and_gaps() {
+        assert_eq!(numbering_fault(&s(&["0001-a.sql", "0002-b.sql"])), None);
+        assert!(numbering_fault(&s(&["0001-a.sql", "0002-b.sql", "0002-c.sql"])).unwrap().contains("twice"));
+        assert!(numbering_fault(&s(&["0001-a.sql", "0003-b.sql"])).unwrap().contains("contiguous"));
+        assert_eq!(numbering_fault(&[]), None);
     }
 
     #[test]
