@@ -732,7 +732,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        for want in [("bead", "stack"), ("bead", "stack_depth"), ("bead", "since"), ("bead", "persona"), ("bead", "title"), ("bead", "priority"), ("bead", "express"), ("batch", "pass"), ("batch", "phase"), ("bead", "aeon_phase"), ("bead", "disposition"), ("bead", "disposition_note"), ("bead", "ejected_red_tip")] {
+        for want in [("bead", "stack"), ("bead", "stack_depth"), ("bead", "since"), ("bead", "persona"), ("bead", "title"), ("bead", "priority"), ("bead", "express"), ("batch", "pass"), ("batch", "phase"), ("bead", "aeon_phase"), ("bead", "disposition"), ("bead", "disposition_note"), ("bead", "ejected_red_tip"), ("batch", "progress")] {
             assert!(adds.contains(&(want.0.to_string(), want.1.to_string())), "{want:?} is added");
         }
         let views: Vec<Probe> = steps.iter().map(|(_, s)| probe_for(s)).filter(|p| matches!(p, Probe::View(_))).collect();
@@ -891,7 +891,7 @@ mod tests {
         for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "sifted_tip"] {
             st.columns.insert(("bead".into(), c.into()));
         }
-        for c in ["batch_id", "state", "pass", "phase"] {
+        for c in ["batch_id", "state", "pass", "phase", "progress"] {
             st.columns.insert(("batch".into(), c.into()));
         }
         for i in ["event_since_idx", "bead_state_since_idx", "batch_state_idx", "event_history_idx", "event_at_idx", "idx_batch_opened"] {

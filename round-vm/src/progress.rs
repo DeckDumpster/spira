@@ -53,6 +53,7 @@ pub struct Progress {
     build_started: u64,
     suites_started: Option<u64>,
     suites_reported: bool,
+    unpublished: Option<String>,
     last: Option<Value>,
     base: &'static str,
     detail: Option<String>,
@@ -112,6 +113,7 @@ impl Progress {
             build_started: t0,
             suites_started: None,
             suites_reported: false,
+            unpublished: None,
             last: None,
             base: "vm",
             detail: Some("leasing a VM".into()),
@@ -202,6 +204,12 @@ impl Progress {
         if let Err(e) = write_atomic(&self.path, &format!("{body}\n")) {
             eprintln!("round-vm run: progress: {e}");
         }
+        self.unpublished = Some(body.to_string());
+    }
+
+    /// The newest body not yet handed out, for the batch row.
+    pub fn take_publish(&mut self) -> Option<String> {
+        self.unpublished.take()
     }
 
     /// True once, the first time the pass is seen past its build.
