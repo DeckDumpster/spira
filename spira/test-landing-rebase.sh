@@ -83,6 +83,7 @@ if [ -s "$c" ]; then
     while read -r id pid; do
         [ -n "$id" ] || continue
         printf "%s\\n" "$pid" > "$SPIRA_RUN/aeon-builder-$id.pid"
+        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-builder-$id.lease"
     done < "$c"
     : > "$c"
 fi
@@ -236,7 +237,7 @@ claim_during_gate sp-taken "$aeon_pid"
 out="$(landing)"
 claimed="$(cat "$RUN/aeon-builder-sp-taken.pid" 2>/dev/null)"
 kill "$aeon_pid" 2>/dev/null; wait "$aeon_pid" 2>/dev/null
-rm -f "$RUN/aeon-builder-sp-taken.pid"
+rm -f "$RUN/aeon-builder-sp-taken.pid" "$RUN/aeon-builder-sp-taken.lease"
 is     "the fixture did claim it mid-pass"      "$aeon_pid" "$claimed"
 want   "the pass says an aeon took it"          "an aeon took spira/sp-taken while this pass ran" "$out"
 is     "and its tip is exactly as the loop left it" \
@@ -250,9 +251,10 @@ drop_branch sp-taken; drop_branch sp-tlands
 seed; branch sp-loop-held loop-held.txt
 "$TMP/aeon.sh" >/dev/null 2>&1 & loop_held_pid=$!
 printf '%s\n' "$loop_held_pid" > "$RUN/aeon-builder-sp-loop-held.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-builder-sp-loop-held.lease"
 out="$(landing)"
 kill "$loop_held_pid" 2>/dev/null; wait "$loop_held_pid" 2>/dev/null
-rm -f "$RUN/aeon-builder-sp-loop-held.pid"
+rm -f "$RUN/aeon-builder-sp-loop-held.pid" "$RUN/aeon-builder-sp-loop-held.lease"
 want   "the loop defers when a live aeon holds the bead" \
        "a live aeon still holds spira/sp-loop-held — deferring the land" "$out"
 nowant "and the branch was not landed"                   "landed spira/sp-loop-held" "$out"
