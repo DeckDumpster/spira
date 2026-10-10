@@ -277,6 +277,8 @@ impl Lib for FLib {
 #[derive(Default)]
 struct FScripts {
     gate_rc: Cell<i32>,
+    /// Set once `release activate` ran; the store's fake reads it to begin its outage.
+    activated: std::rc::Rc<Cell<bool>>,
     /// `release <sub>` exit status by subcommand (absent = 0), and the stderr line it prints.
     release_rc: RefCell<BTreeMap<String, (i32, String)>>,
     /// What `release build` answers on stdout (absent = the commit it was asked for).
@@ -353,6 +355,9 @@ impl Scripts for FScripts {
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         self.release_calls.borrow_mut().push((bin.display().to_string(), args.join(" "), db.to_string()));
         self.calls.borrow_mut().push(format!("release {}", args[0]));
+        if args[0] == "activate" {
+            self.activated.set(true);
+        }
         let (rc, err) = self.release_rc.borrow().get(&args[0]).cloned().unwrap_or((0, String::new()));
         let out = if args[0] == "build" && rc == 0 { format!("{}\n", self.build_answers.borrow().clone().unwrap_or_else(|| args[1].clone())) } else { String::new() };
         RunOut { rc, out, err }
@@ -425,7 +430,9 @@ struct FLc {
     promote_refused: Cell<Option<&'static str>>,
     /// Per-batch answers to `show-batch`, ahead of `batch_view`.
     batch_states: RefCell<BTreeMap<String, (String, String)>>,
+    /// Reads of `show-batch` that fail once the release is activated (the store restarting).
     down_for: Cell<u32>,
+    activated: std::rc::Rc<Cell<bool>>,
     eject_refused: Cell<bool>,
     /// Every bead event is refused with this text (a locked lifecycle store).
     event_refused: Cell<Option<&'static str>>,
@@ -442,7 +449,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), down_for: Cell::new(0), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), down_for: Cell::new(0), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -466,7 +473,7 @@ impl Lc for FLc {
         if let Some(s) = self.batch_states.borrow().get(id) {
             return Some(s.clone());
         }
-        if self.down_for.get() > 0 {
+        if self.activated.get() && self.down_for.get() > 0 {
             self.down_for.set(self.down_for.get() - 1);
             return None;
         }
@@ -742,6 +749,7 @@ impl T {
         *forge.pr.borrow_mut() = Some("77".into());
         let lc = FLc::default();
         lc.available.set(true);
+        let lc = FLc { activated: scripts.activated.clone(), ..lc };
         T { _serial: serial, dir, git, bd: FBd::default(), lib, scripts, forge, lc, config: FConfig::default(), clock: FClock { now: Cell::new(1_000) }, env: FEnv::default(), io: Cap::default() }
     }
 

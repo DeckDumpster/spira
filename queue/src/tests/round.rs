@@ -95,12 +95,17 @@ fn land_with_the_batch_record_refused_prints_the_reason_and_exits_nonzero() {
 }
 
 fn certified_round() -> (T, String) {
-    let t = round_world();
+    let mut t = round_world();
+    t.lib.s.home_repo = "spira".into();
     *t.scripts.round_vm.borrow_mut() = RunOut::default();
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
     let batch = batch_of(&t);
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
+    fs::create_dir_all(wt.join("target/release")).unwrap();
+    testkit::write_exe(wt.join("target/release/release"), "#!/bin/sh\n");
+    release_in_force(&t);
     (t, batch)
 }
 
