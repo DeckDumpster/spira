@@ -199,7 +199,7 @@ pub fn roster(cfg: &Config, want: Option<&str>) -> Result<Vec<PartitionSpec>, St
 // Liveness and the fleet
 // ------------------------------------------------------------------------------------------
 
-pub use sending::reap::lease_file;
+pub use sending::reap::{lease_file, lease_live};
 
 /// Write an identity lease: the deadline, in epoch seconds, before which the aeon is alive.
 pub fn write_lease(pidfile: &Path, deadline: i64) {
