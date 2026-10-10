@@ -395,7 +395,6 @@ jobs:
           }
           printf 'SPIRA_RELEASE=%s\n' "$_rel" >> "$GITHUB_ENV"
           printf 'SPIRA_REPO=%s\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          printf 'SPIRA_TOML=%s\n' "$SPIRA_TOML" >> "$GITHUB_ENV"
           printf 'PATH=%s\n' "$_path" >> "$GITHUB_ENV"
           printf 'stage: release %s staged at %s\n' "$_sha" "$_rel"
 
