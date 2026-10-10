@@ -134,6 +134,11 @@ pub trait Git {
     /// conflict.
     fn merge_no_ff(&self, wt: &Path, message: &str, tip: &str, git_name: &str, git_email: &str) -> bool;
     fn merge_abort(&self, wt: &Path);
+    /// Replays `upstream..tip` onto `onto` in a throwaway worktree at `scratch`, leaving every
+    /// branch alone: Ok(the rebased tip), or Err(the conflicting paths; empty when the rebase
+    /// could not be attempted).
+    #[allow(clippy::too_many_arguments)]
+    fn rebase_onto(&self, repo: &Path, scratch: &Path, tip: &str, upstream: &str, onto: &str, git_name: &str, git_email: &str) -> Result<String, Vec<String>>;
     /// `status --porcelain` is empty.
     fn is_clean(&self, wt: &Path) -> bool;
 }

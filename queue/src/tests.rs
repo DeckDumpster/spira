@@ -28,6 +28,8 @@ struct FGit {
     current: RefCell<Option<String>>,
     fetch_ok: Cell<bool>,
     merge_fail: RefCell<BTreeSet<String>>,
+    /// Tips whose rebase onto the round's head conflicts, with the paths it names.
+    rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
     branches: RefCell<Vec<(String, String)>>,
     calls: RefCell<Vec<String>>,
 }
@@ -124,6 +126,13 @@ impl Git for FGit {
         true
     }
     fn merge_abort(&self, _: &Path) {}
+    fn rebase_onto(&self, _: &Path, _: &Path, tip: &str, _: &str, onto: &str, _: &str, _: &str) -> Result<String, Vec<String>> {
+        self.calls.borrow_mut().push(format!("rebase-onto {tip} {onto}"));
+        match self.rebase_fail.borrow().get(tip) {
+            Some(paths) => Err(paths.clone()),
+            None => Ok(format!("rebased-{tip}")),
+        }
+    }
     fn is_clean(&self, _: &Path) -> bool {
         true
     }

@@ -210,6 +210,7 @@ fn open_skips_what_is_not_certified_or_does_not_merge() {
     let t = round_world();
     t.lc_row("sp-d", "REWORK", "td", 100);
     t.git.merge_fail.borrow_mut().insert("tb".into());
+    t.git.rebase_fail.borrow_mut().insert("tb".into(), vec!["list.txt".into()]);
     assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b,sp-d,sp-zz"]), 0, "{}", t.err());
     let o = t.out();
     assert!(o.contains("sp-b: conflicts with the round") && o.contains("sp-d: lifecycle state=REWORK") && o.contains("sp-zz: no lifecycle row"), "{o}");
@@ -217,8 +218,21 @@ fn open_skips_what_is_not_certified_or_does_not_merge() {
 
     let t = round_world();
     t.git.merge_fail.borrow_mut().insert("ta".into());
+    t.git.rebase_fail.borrow_mut().insert("ta".into(), vec![]);
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 1);
     assert!(t.err().contains("nothing admissible") && !t.lc.has("cut") && !t.qfile("round").exists());
+}
+
+#[test]
+fn open_rebases_a_member_that_conflicts_with_the_round_onto_its_head() {
+    let t = round_world();
+    t.git.merge_fail.borrow_mut().insert("tc".into());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]), 0, "{}", t.err());
+    let o = t.out();
+    assert!(o.contains("members=sp-a:ta sp-b:tb sp-c:rebased-tc") && !o.contains("skip"), "{o}");
+    assert!(t.git.calls.borrow().iter().any(|c| c == "rebase-onto tc merged-tb"), "{:?}", t.git.calls.borrow());
+    assert!(t.lc.has("cut"), "{:?}", t.lc.calls.borrow());
+    assert!(!t.lc.has("event bead sp-c"), "a rebased member is not returned to rework");
 }
 
 fn block(t: &T, id: &str, by: &[&str]) {
@@ -266,9 +280,10 @@ fn open_returns_a_base_conflict_to_rework_and_keeps_a_round_conflict_queued() {
     t.git.merge_fail.borrow_mut().insert("tb".into());
     t.lib.conflict_with_base.borrow_mut().insert("tb".into());
     t.git.merge_fail.borrow_mut().insert("tc".into());
+    t.git.rebase_fail.borrow_mut().insert("tc".into(), vec!["c.txt".into(), "d.txt".into()]);
     assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]), 0, "{}", t.err());
     let o = t.out();
-    assert!(o.contains("sp-b: conflicts with base — returned to rework") && o.contains("sp-c: conflicts with the round\n"), "{o}");
+    assert!(o.contains("sp-b: conflicts with base — returned to rework") && o.contains("sp-c: conflicts with the round, and with a rebase onto its head — paths: c.txt d.txt\n"), "{o}");
     assert!(t.lc.has("event bead sp-b CERTIFIED 3 {\"GateRed\":{\"tip\":\"tb\",\"reason\":\"no-rebase\"}}"), "{:?}", t.lc.calls.borrow());
     assert!(!t.lc.has("event bead sp-c"), "{:?}", t.lc.calls.borrow());
     assert_eq!(t.lc.bead_state("sp-b").unwrap().0, "REWORK");

@@ -441,7 +441,23 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
                     }
                 });
             } else {
-                skips.push(format!("{}: conflicts with the round", m.id));
+                let onto = w.git.rev_parse(&wt, "HEAD").unwrap_or_else(|| base_sha.clone());
+                let scratch = wt.with_file_name(format!("{}.rebase", wt.file_name().and_then(|n| n.to_str()).unwrap_or("round")));
+                let upstream = w.git.merge_base(&path, &base_sha, &m.tip).unwrap_or_else(|| base_sha.clone());
+                match w.git.rebase_onto(&path, &scratch, &m.tip, &upstream, &onto, &c.s.git_name, &c.s.git_email) {
+                    Ok(rebased) if w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &rebased, &c.s.git_name, &c.s.git_email) => {
+                        merged.push(Member { id: m.id, tip: rebased })
+                    }
+                    Ok(_) => {
+                        w.git.merge_abort(&wt);
+                        skips.push(format!("{}: conflicts with the round, and its rebase onto the round's head does not merge", m.id));
+                    }
+                    Err(paths) => skips.push(format!(
+                        "{}: conflicts with the round, and with a rebase onto its head — paths: {}",
+                        m.id,
+                        if paths.is_empty() { "unknown".to_string() } else { paths.join(" ") }
+                    )),
+                }
             }
         }
     }
