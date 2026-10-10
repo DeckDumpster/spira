@@ -7,7 +7,22 @@ use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// One persona's claim predicate: the labels a bead must carry and the labels that exclude it.
+#[derive(Clone, Debug, Default)]
+pub struct PersonaPredicate {
+    pub persona: String,
+    pub labels: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+fn split_labels(s: &str) -> Vec<String> {
+    s.split(',').map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
 pub trait Seam {
+    /// Every persona's claim predicate, read from the chamber; personas with no partition
+    /// (and personas whose predicate refuses to resolve) are omitted.
+    fn persona_predicates(&self) -> Vec<PersonaPredicate>;
     /// `bump_poison_cleared <id> <cause>`.
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String>;
     /// `poison_asked_clear <id>`.
@@ -88,6 +103,18 @@ impl LibSeam {
 }
 
 impl Seam for LibSeam {
+    fn persona_predicates(&self) -> Vec<PersonaPredicate> {
+        let home = self.lib_sh.parent().map(Path::to_path_buf).unwrap_or_default();
+        spira_config::chamber::fayth_names(&home)
+            .into_iter()
+            .filter_map(|f| {
+                let p = spira_config::chamber::fayth_predicate(&home, &f).ok()?;
+                let labels = split_labels(&p.labels);
+                (!labels.is_empty()).then(|| PersonaPredicate { persona: f, labels, exclude: split_labels(&p.exclude_labels) })
+            })
+            .collect()
+    }
+
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String> {
         self.run(&["bump_poison_cleared", id, cause]).map(|_| ())
     }
@@ -165,6 +192,7 @@ pub mod fake {
         pub roots: RefCell<std::collections::BTreeMap<String, String>>,
         pub bases: RefCell<std::collections::BTreeMap<String, String>>,
         pub held_poison: RefCell<std::collections::BTreeSet<String>>,
+        pub predicates: RefCell<Vec<PersonaPredicate>>,
     }
 
     impl FakeSeam {
@@ -178,6 +206,10 @@ pub mod fake {
     }
 
     impl Seam for FakeSeam {
+        fn persona_predicates(&self) -> Vec<PersonaPredicate> {
+            self.predicates.borrow().clone()
+        }
+
         fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("bump_poison_cleared {id} {cause}"));
             Ok(())
