@@ -79,6 +79,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use spira_config::chamber;
+use spira_config::{edit_text, is_retired_path, remove_retired_text};
 use spira_config::locate::locate;
 use spira_config::repos::{Column, Registry};
 use spira_config::resolve::{resolve, ResolveError, ResolveInput, EXPORT_KEYS};
@@ -836,6 +837,12 @@ fn read_doc_or_default(file: &str) -> Result<SpiraToml, String> {
     }
 }
 
+fn read_text_and_doc(file: &str) -> Result<(String, SpiraToml), String> {
+    let text = if Path::new(file).exists() { fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))? } else { String::new() };
+    let doc = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    Ok((text, doc))
+}
+
 /// A `tests/fixtures/` file is an input: a writer pointed at one rewrites tracked content and
 /// leaves its `.bak.*` backup in the tree for every later scan to find.
 fn is_checked_in_fixture(path: &Path) -> bool {
@@ -847,18 +854,12 @@ fn is_checked_in_fixture(path: &Path) -> bool {
 /// contents, back up whatever `file` currently holds, then rename — in that order, so a
 /// crash at any point before the rename leaves `file` exactly as it was, and a doc that
 /// fails to round-trip through validation is never renamed into place at all.
-fn write_doc(file: &str, doc: &SpiraToml, verb: &str) -> ExitCode {
+fn write_doc(file: &str, text: &str, verb: &str) -> ExitCode {
     if is_checked_in_fixture(Path::new(file)) {
         eprintln!("spira-config {verb}: {file}: refusing to write a checked-in test fixture — layer an override file over it instead");
         return ExitCode::FAILURE;
     }
-    let out = match toml::to_string_pretty(doc) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("spira-config {verb}: {file}: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let out = text.to_string();
     let path = Path::new(file);
     let pending = match atomic_write_start(path, &out) {
         Ok(p) => p,
@@ -886,7 +887,7 @@ fn write_doc(file: &str, doc: &SpiraToml, verb: &str) -> ExitCode {
 
 /// `set <dotted.path> <value> <file>` — write one path's value into `file` in place.
 fn cmd_set(path: &str, value: &str, file: &str) -> ExitCode {
-    let doc = match read_doc_or_default(file) {
+    let (text, doc) = match read_text_and_doc(file) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("spira-config: {e}");
@@ -900,13 +901,19 @@ fn cmd_set(path: &str, value: &str, file: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    write_doc(file, &new_doc, "set")
+    match edit_text(&text, &doc, &new_doc) {
+        Ok(out) => write_doc(file, &out, "set"),
+        Err(e) => {
+            eprintln!("spira-config set: {file}: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// `unset <dotted.path> <file>` — remove one path's value from `file` in place, so the key
 /// stops appearing rather than being left behind as an empty string.
 fn cmd_unset(path: &str, file: &str) -> ExitCode {
-    let doc = match read_doc_or_default(file) {
+    let (text, doc) = match read_text_and_doc(file) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("spira-config: {e}");
@@ -920,7 +927,14 @@ fn cmd_unset(path: &str, file: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    write_doc(file, &new_doc, "unset")
+    let edited = if is_retired_path(path) { remove_retired_text(&text, path) } else { edit_text(&text, &doc, &new_doc) };
+    match edited {
+        Ok(out) => write_doc(file, &out, "unset"),
+        Err(e) => {
+            eprintln!("spira-config unset: {file}: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// `writeback <candidate>` (conf.sh's `spira_config_writeback`; wave 4.7, sp-ksrss) — reads
