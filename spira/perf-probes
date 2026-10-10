@@ -4,3 +4,4 @@ lc-show	spira-lc show sp-perf-probe
 lc-ops-view	spira-lc ops-view ops_live
 work-list	work list --json
 claim-check	spira-claim bulk-ready-by-fayth
+lc-ready	spira-lc list --state READY

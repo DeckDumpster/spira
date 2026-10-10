@@ -13,6 +13,7 @@ pub struct Probe {
 
 pub trait Clock {
     fn now_ms(&self) -> u64;
+    fn epoch_secs(&self) -> u64;
 }
 
 pub trait Runner {
@@ -92,6 +93,91 @@ pub fn pass(probes: &[Probe], limit_ms: u64, stats_argv: &[String], clock: &dyn 
     (timings, lines)
 }
 
+pub struct Settings {
+    pub budget_ms: u64,
+    pub interval_secs: u64,
+    pub remind_secs: u64,
+}
+
+/// What the health file says: when the last pass ran and when each standing alarm was last printed.
+#[derive(Default, PartialEq, Debug)]
+pub struct Health {
+    pub last_pass: Option<u64>,
+    pub alarms: BTreeMap<String, u64>,
+}
+
+impl Health {
+    pub fn parse(text: &str) -> Health {
+        let mut h = Health::default();
+        for l in text.lines() {
+            if let Some(n) = l.strip_prefix("pass ") {
+                h.last_pass = n.trim().parse().ok();
+            } else if let Some(r) = l.strip_prefix("alarm ") {
+                if let Some((n, key)) = r.split_once('\t') {
+                    if let Ok(n) = n.trim().parse() {
+                        h.alarms.insert(key.to_string(), n);
+                    }
+                }
+            }
+        }
+        h
+    }
+
+    pub fn render(&self) -> String {
+        let mut out = String::new();
+        if let Some(n) = self.last_pass {
+            out.push_str(&format!("pass {n}\n"));
+        }
+        for (k, n) in &self.alarms {
+            out.push_str(&format!("alarm {n}\t{k}\n"));
+        }
+        out
+    }
+}
+
+fn alarm_key(line: &str) -> String {
+    line.split_whitespace().take(3).collect::<Vec<_>>().join(" ").trim_end_matches(':').to_string()
+}
+
+pub struct Pass {
+    pub lines: Vec<String>,
+    pub timings: Vec<Timing>,
+    pub health: Health,
+}
+
+/// A pass younger than the interval is skipped (`None`). Otherwise the alarms to print — a
+/// standing one only once per remind interval — and the health to write back.
+pub fn run_pass(
+    cfg: &Settings,
+    probes: &[Probe],
+    stats_argv: &[String],
+    prior: &Health,
+    clock: &dyn Clock,
+    runner: &mut dyn Runner,
+) -> Option<Pass> {
+    let now = clock.epoch_secs();
+    if let Some(last) = prior.last_pass {
+        if now.saturating_sub(last) < cfg.interval_secs {
+            return None;
+        }
+    }
+    let (timings, all) = pass(probes, cfg.budget_ms, stats_argv, clock, runner);
+    let mut health = Health { last_pass: Some(now), alarms: BTreeMap::new() };
+    let mut lines = Vec::new();
+    for l in all {
+        let key = alarm_key(&l);
+        let printed = match prior.alarms.get(&key) {
+            Some(&at) if now.saturating_sub(at) < cfg.remind_secs => at,
+            _ => {
+                lines.push(l);
+                now
+            }
+        };
+        health.alarms.insert(key, printed);
+    }
+    Some(Pass { lines, timings, health })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,10 +185,14 @@ mod tests {
 
     struct Stub {
         now: Cell<u64>,
+        epoch: Cell<u64>,
     }
     impl Clock for Stub {
         fn now_ms(&self) -> u64 {
             self.now.get()
+        }
+        fn epoch_secs(&self) -> u64 {
+            self.epoch.get()
         }
     }
 
@@ -132,7 +222,7 @@ mod tests {
     const STATS: &str = r#"{"callers":[{"verb":"list","caller":"watcher","count":28},{"verb":"list","caller":"cockpit","count":5},{"verb":"show","caller":"watcher","count":2},{"verb":"event","caller":"sentinel","count":1}]}"#;
 
     fn run(costs: &[(&str, u64)], limit: u64) -> (Vec<String>, bool) {
-        let clock = Stub { now: Cell::new(0) };
+        let clock = Stub { now: Cell::new(0), epoch: Cell::new(0) };
         let mut r = Scripted { clock: &clock, costs: costs.iter().map(|(k, v)| (k.to_string(), *v)).collect(), stats: STATS.into(), asked_stats: false };
         let (_, lines) = pass(&parse_probes(PROBES).unwrap(), limit, &["stats".to_string()], &clock, &mut r);
         (lines, r.asked_stats)
@@ -163,5 +253,48 @@ mod tests {
     fn a_malformed_probe_file_is_refused() {
         assert!(parse_probes("no tab here").is_err());
         assert!(parse_probes("# only a comment\n").is_err());
+    }
+
+    fn stepped(epoch: u64, prior: &Health, cost: u64) -> Option<Pass> {
+        let clock = Stub { now: Cell::new(0), epoch: Cell::new(epoch) };
+        let mut r = Scripted { clock: &clock, costs: [("list", cost), ("show", 1), ("gone", 0)].iter().map(|(k, v)| (k.to_string(), *v)).collect(), stats: STATS.into(), asked_stats: false };
+        let cfg = Settings { budget_ms: 500, interval_secs: 60, remind_secs: 600 };
+        run_pass(&cfg, &parse_probes(PROBES).unwrap(), &["stats".to_string()], prior, &clock, &mut r)
+    }
+
+    #[test]
+    fn a_pass_younger_than_the_interval_does_not_probe() {
+        let h = Health { last_pass: Some(1000), alarms: BTreeMap::new() };
+        assert!(stepped(1059, &h, 900).is_none());
+        assert_eq!(stepped(1060, &h, 900).unwrap().health.last_pass, Some(1060));
+    }
+
+    #[test]
+    fn a_standing_alarm_repeats_only_after_the_remind_interval_and_a_new_one_is_immediate() {
+        let first = stepped(1000, &Health::default(), 900).unwrap();
+        assert_eq!(first.lines.len(), 1, "{:?}", first.lines);
+        let quiet = stepped(1100, &first.health, 900).unwrap();
+        assert!(quiet.lines.is_empty(), "{:?}", quiet.lines);
+        assert_eq!(quiet.health.alarms, first.health.alarms);
+        let again = stepped(1000 + 600, &first.health, 900).unwrap();
+        assert_eq!(again.lines.len(), 1);
+    }
+
+    #[test]
+    fn a_cleared_alarm_is_forgotten_so_its_return_prints_at_once() {
+        let first = stepped(1000, &Health::default(), 900).unwrap();
+        let cleared = stepped(1100, &first.health, 1).unwrap();
+        assert!(cleared.lines.is_empty(), "{:?}", cleared.lines);
+        assert!(cleared.health.alarms.is_empty());
+        assert!(!cleared.health.alarms.keys().any(|k| k.contains("SLOW")));
+        let back = stepped(1200, &cleared.health, 900).unwrap();
+        assert!(back.lines.iter().any(|l| l.contains("PERF SLOW list")), "{:?}", back.lines);
+    }
+
+    #[test]
+    fn health_round_trips_through_its_file() {
+        let first = stepped(1000, &Health::default(), 900).unwrap();
+        assert_eq!(Health::parse(&first.health.render()), first.health);
+        assert_eq!(Health::parse("garbage"), Health::default());
     }
 }

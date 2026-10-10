@@ -855,6 +855,7 @@ name = "perf-watch"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 

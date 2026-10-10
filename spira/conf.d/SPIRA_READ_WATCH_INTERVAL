@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=perf
+DOC=SECONDS BETWEEN perf-watch PROBE PASSES. A run younger than this since the last pass exits without probing.
+SCHEMA=Minimum seconds between perf-watch probe passes.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS BETWEEN perf-watch PROBE PASSES. A run younger than this since the last pass exits without probing.
+    : "${SPIRA_READ_WATCH_INTERVAL:=300}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,8 +1,9 @@
-//! `perf-watch --probes FILE [--limit-ms N] [--stats "CMD"] [--record FILE]`
-//! Alarm lines go to stdout; a quiet pass prints nothing.
+//! `perf-watch --probes FILE [--stats "CMD"] [--record FILE] [--health FILE]`
+//! Budget, interval and reminder come from config. Alarm lines go to stdout; a quiet pass
+//! prints nothing. `--health` is rewritten each pass that probes.
 
 use perf_watch::happy::{self, Sim};
-use perf_watch::{pass, parse_probes, Clock, Runner};
+use perf_watch::{parse_probes, run_pass, Clock, Health, Runner, Settings};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -12,6 +13,9 @@ struct Wall(Instant);
 impl Clock for Wall {
     fn now_ms(&self) -> u64 {
         self.0.elapsed().as_millis() as u64
+    }
+    fn epoch_secs(&self) -> u64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
     }
 }
 
@@ -54,18 +58,18 @@ fn main() {
     }
 }
 
-const USAGE: &str = "usage: perf-watch --probes FILE [--limit-ms N] [--stats \"CMD\"] [--record FILE]";
+const USAGE: &str = "usage: perf-watch --probes FILE [--stats \"CMD\"] [--record FILE] [--health FILE]";
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let (mut probes, mut limit, mut stats, mut record) = (None, 500u64, "spira-lc stats".to_string(), None);
+    let (mut probes, mut stats, mut record, mut health) = (None, "spira-lc stats".to_string(), None, None);
     while let Some(a) = args.next() {
         let v = args.next();
         match (a.as_str(), v) {
             ("--probes", Some(v)) => probes = Some(v),
-            ("--limit-ms", Some(v)) => limit = v.parse().map_err(|_| USAGE.to_string())?,
             ("--stats", Some(v)) => stats = v,
             ("--record", Some(v)) => record = Some(v),
+            ("--health", Some(v)) => health = Some(v),
             _ => return Err(USAGE.to_string()),
         }
     }
@@ -74,14 +78,23 @@ fn run() -> Result<(), String> {
         .map_err(|e| e.to_string())
         .and_then(|t| parse_probes(&t))
         .map_err(|e| format!("perf-watch: {file}: {e}"))?;
+    let cfg = Settings {
+        budget_ms: spira_config::process::cfg_parse("SPIRA_READ_WATCH_BUDGET_MS")?,
+        interval_secs: spira_config::process::cfg_parse("SPIRA_READ_WATCH_INTERVAL")?,
+        remind_secs: spira_config::process::cfg_parse("SPIRA_READ_WATCH_REMIND")?,
+    };
+    let prior = health.as_deref().and_then(|f| std::fs::read_to_string(f).ok()).map(|t| Health::parse(&t)).unwrap_or_default();
     let stats_argv: Vec<String> = stats.split_whitespace().map(String::from).collect();
-    let (timings, lines) = pass(&probes, limit, &stats_argv, &Wall(Instant::now()), &mut Spawn);
-    for l in &lines {
+    let Some(out) = run_pass(&cfg, &probes, &stats_argv, &prior, &Wall(Instant::now()), &mut Spawn) else { return Ok(()) };
+    for l in &out.lines {
         println!("{l}");
     }
     if let Some(r) = record {
-        let body: String = timings.iter().map(|t| format!("{}\t{}\n", t.name, t.millis)).collect();
+        let body: String = out.timings.iter().map(|t| format!("{}\t{}\n", t.name, t.millis)).collect();
         let _ = std::fs::write(r, body);
+    }
+    if let Some(h) = health {
+        std::fs::write(&h, out.health.render()).map_err(|e| format!("perf-watch: {h}: {e}"))?;
     }
     Ok(())
 }

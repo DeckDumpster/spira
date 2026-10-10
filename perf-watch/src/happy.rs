@@ -83,6 +83,9 @@ mod tests {
         fn now_ms(&self) -> u64 {
             self.0.get()
         }
+        fn epoch_secs(&self) -> u64 {
+            0
+        }
     }
 
     struct FakeSim<'a> {
