@@ -334,11 +334,9 @@ fn gather() -> Snapshot {
     }
     gather_state_machine(&mut s);
     s.claimable = claimable_ids();
-    s.progress = spira_config::process::cfg("SPIRA_RUN")
-        .ok()
-        .and_then(|run| std::fs::read(std::path::Path::new(run.trim()).join("round-progress.json")).ok())
-        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .and_then(|v| cockpit_ops::lcview::PassProgress::from_json(&v));
+    // The pass's live counts are not on the batch row yet, and the pane reads a pass only
+    // through spira-lc (cockpit-no-round-files), so the bar stays empty until they are.
+    s.progress = None;
     s.ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s
