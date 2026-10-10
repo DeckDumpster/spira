@@ -37,8 +37,8 @@ pub trait Bd {
     fn run(&self, args: &[String], stdin: Option<&str>) -> BdOut;
     /// Close `id` through the lifecycle machine (`spira-lc close`, sp-3fue0j) — never bd.
     fn close(&self, id: &str, reason: &str) -> BdOut;
-    /// Write the lifecycle row of the bead whose `bd create --silent` printed `created_stdout`.
-    fn ensure_row(&self, created_stdout: &str) -> Result<(), String>;
+    /// Open `id` on the ask machine (never the bead machine), linked to `work_bead` when non-empty.
+    fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String>;
 }
 
 /// The real `bd` binary, `-C <db>` prefixed. Refuses (matching mail.sh's own
@@ -58,8 +58,8 @@ pub struct BdCli {
 }
 
 impl Bd for BdCli {
-    fn ensure_row(&self, created_stdout: &str) -> Result<(), String> {
-        spira_config::lifecycle_row::after_create("mail", created_stdout)
+    fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String> {
+        spira_config::lifecycle_row::create_ask(id, work_bead)
     }
     fn close(&self, id: &str, reason: &str) -> BdOut {
         match spira_config::lifecycle_row::close(id, reason, "mail", None) {
@@ -241,7 +241,8 @@ pub fn suit_reason(kind: &str, first_para: &str) -> String {
     first_para.to_string()
 }
 
-/// Creates the tracking decision bead a question/decision send wires itself to. `None` if
+/// Creates the tracking decision bead a question/decision send wires itself to, and opens its
+/// row on the ask machine (never the bead machine: an ask is not claimable work). `None` if
 /// the store is unconfigured or the create failed (mail.sh: `dec_bead=""` either way — the
 /// send still succeeds, just without a tracking bead).
 ///
@@ -262,9 +263,9 @@ pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, bod
     if out.code != 0 || id.is_empty() {
         return Ok(None);
     }
-    if let Err(e) = retry_until_deadline(|| bd.ensure_row(&out.stdout)) {
-        let closed = abandon_bead(bd, id, &format!("lifecycle row not written: {e}"));
-        return Err(format!("{id}: lifecycle row not written: {e}; {closed}"));
+    if let Err(e) = retry_until_deadline(|| bd.ensure_ask(id, work_bead)) {
+        let closed = abandon_bead(bd, id, &format!("ask row not written: {e}"));
+        return Err(format!("{id}: ask row not written: {e}; {closed}"));
     }
     Ok(Some(id.to_string()))
 }
@@ -517,9 +518,8 @@ pub mod fake {
     }
 
     impl Bd for FakeBd {
-        fn ensure_row(&self, created_stdout: &str) -> Result<(), String> {
+        fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {
             self.row_attempts.set(self.row_attempts.get() + 1);
-            let _ = created_stdout;
             let left = self.row_failures.get();
             if left > 0 {
                 self.row_failures.set(left - 1);

@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 
+use lifecycle::ask::{AskRow, AskState};
 use lifecycle::batch::{BatchRow, BatchState};
 use lifecycle::bead::{BeadRow, BeadState, HoldKind};
 use lifecycle::delivery::{DeliveryRow, DeliveryState, Exit, Mode};
@@ -172,6 +173,37 @@ pub fn batch_set_clause(row: &BatchRow) -> String {
         row.pass,
         opt_str(&row.phase.map(|p| p.as_str().to_string())),
         row.version,
+    )
+}
+
+pub fn fetch_ask(conn: &Conn, ask_id: &str) -> Result<Option<AskRow>, DbError> {
+    let rows = conn.query(&format!(
+        "SELECT ask_id, state, work_bead, closed_by, quote, channel, version FROM ask WHERE ask_id = '{}'",
+        escape(ask_id)
+    ))?;
+    let Some(row) = rows.first() else { return Ok(None) };
+    let state = AskState::from_str(&text(row, "state").unwrap_or_default())
+        .ok_or_else(|| DbError::CannotTell(format!("bad state in ask row: {row}")))?;
+    Ok(Some(AskRow {
+        ask_id: ask_id.to_string(),
+        state,
+        work_bead: text(row, "work_bead"),
+        closed_by: text(row, "closed_by"),
+        quote: text(row, "quote"),
+        channel: text(row, "channel"),
+        version: number(row, "version").unwrap_or(0) as u64,
+    }))
+}
+
+pub fn ask_set_clause(row: &AskRow) -> String {
+    format!(
+        "state = '{}', closed_by = {}, quote = {}, channel = {}, version = {}, closed_at = {}",
+        row.state.as_str(),
+        opt_str(&row.closed_by),
+        opt_str(&row.quote),
+        opt_str(&row.channel),
+        row.version,
+        if row.state.is_terminal() { crate::db::now_epoch().to_string() } else { "NULL".to_string() },
     )
 }
 

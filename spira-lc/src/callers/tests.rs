@@ -23,6 +23,9 @@ struct Fake {
     calls: usize,
     /// Answer every call with this (a machine that cannot be reached).
     down: bool,
+    /// Ask rows on the ask machine, and the `close-ask` calls made against them.
+    ask_rows: Vec<String>,
+    ask_closes: Vec<Vec<String>>,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -128,6 +131,10 @@ impl Machine for Fake {
                     })
                     .collect();
                 (0, Value::Array(rows).to_string())
+            }
+            "close-ask" => {
+                self.ask_closes.push(args.to_vec());
+                if self.ask_rows.contains(&args[1]) { (0, String::new()) } else { (1, format!("close-ask: {} is no ask", args[1])) }
             }
             other => panic!("unexpected primitive {other}"),
         }
@@ -931,6 +938,17 @@ fn closing_an_ask_withdraws_the_hold_on_its_work_bead_and_moves_nothing_else() {
         assert_eq!(kinds, vec![r#""AskWithdrawn""#]);
         assert_eq!(bd.closed.len(), 1);
     }
+}
+
+#[test]
+fn closing_an_ask_with_no_bead_row_closes_its_ask_row_withdrawn_and_a_bead_with_a_row_does_not() {
+    let mut f = Fake { ask_rows: vec!["sp-ask".into()], ..Default::default() };
+    f.bead("sp-w", BeadState::Landed);
+    let mut bd = FakeBd::default();
+    assert_eq!(close(&v(&["sp-ask", "--reason", "moot", "--actor", "claude"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    assert_eq!(f.ask_closes, vec![v(&["close-ask", "sp-ask", "--exit", "withdrawn", "--quote", "moot", "--actor", "claude"])]);
+    assert_eq!(close(&v(&["sp-w", "--reason", "landed at abc"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    assert_eq!(f.ask_closes.len(), 1, "a bead with a row is no ask");
 }
 
 #[test]

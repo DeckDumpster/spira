@@ -12,6 +12,7 @@
 //! every request the socket receives, printing nothing of its own. One implementation, two
 //! callers, and the service path and the same-user fallback can never drift apart.
 
+mod ask;
 mod bd;
 mod bd_facts;
 mod callers;
@@ -82,6 +83,7 @@ fn main() {
         Some("reconcile-closed") => {
             std::process::exit(emit(&[], callers::reconcile_closed(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
         }
+        Some("migrate-asks") => std::process::exit(emit(&[], ask::migrate_asks(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
         Some("reconcile-epics") => {
             std::process::exit(emit(&[], callers::reconcile_epics(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
         }
@@ -234,6 +236,11 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // cascades a batch's own transition emits to its members (cutover.rs's own doc).
         Some("show-batch") => cutover::cmd_show_batch(&args[1..], conn),
         Some("create-bead") => cutover::cmd_create_bead(&args[1..], conn),
+        // The ask machine (ask.rs): an escalation is its own lifecycle, never a bead row.
+        Some("create-ask") => ask::cmd_create_ask(&args[1..], conn),
+        Some("show-ask") => ask::cmd_show_ask(&args[1..], conn),
+        Some("list-asks") => ask::cmd_list_asks(&args[1..], conn),
+        Some("close-ask") => ask::cmd_close_ask(&args[1..], conn),
         Some("cut") => cutover::cmd_cut(&args[1..], conn),
         // batcher-cut's own pipelining onto an already-OPEN batch (sp-o7nbr.4): the same
         // MemberAdded/Deliver/Cut cascade `cut` performs, minus the batch row's own INSERT.
@@ -271,7 +278,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
         ),
     }
 }
@@ -740,7 +747,7 @@ fn kind_name(evidence: &Value) -> String {
     }
 }
 
-fn refusal_name(r: &lifecycle::Refusal) -> String {
+pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
     match r {
         lifecycle::Refusal::ExpectMismatch { .. } => "ExpectMismatch".to_string(),
         lifecycle::Refusal::StaleVersion { .. } => "StaleVersion".to_string(),

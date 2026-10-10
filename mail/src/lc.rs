@@ -55,6 +55,30 @@ pub fn lift_ask(lc: &dyn Lc, work_bead: &str, how: Lift, actor: &str) -> Option<
     }
 }
 
+/// Record the operator's answer on the ask's own machine: who, his words, the channel. That
+/// close also lifts the `ask` hold on the work bead the ask names. `Some(warning)` only when
+/// the machine could not tell; exit 1 (a legacy ask bead, no ask row) and 3 (already closed)
+/// are quiet.
+pub fn answer_ask(lc: &dyn Lc, ask: &str, quote: &str, actor: &str, channel: &str, message_id: &str) -> Option<String> {
+    let args: Vec<String> = ["close-ask", ask, "--exit", "answered", "--quote", quote, "--actor", actor, "--channel", channel, "--message-id", message_id]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    match lc.call(&args) {
+        (0, _) | (1, _) | (3, _) => None,
+        (code, out) => Some(format!("mail: the answer to {ask} was not recorded on the ask machine (spira-lc close-ask exit {code}): {}", out.trim())),
+    }
+}
+
+/// A dismissal: the ask closes as DEFAULT_TAKEN, quoting the default that was executed.
+pub fn take_default(lc: &dyn Lc, ask: &str, default: &str, actor: &str) -> Option<String> {
+    let args: Vec<String> = ["close-ask", ask, "--exit", "default", "--quote", default, "--actor", actor].iter().map(|s| s.to_string()).collect();
+    match lc.call(&args) {
+        (0, _) | (1, _) | (3, _) => None,
+        (code, out) => Some(format!("mail: the dismissal of {ask} was not recorded on the ask machine (spira-lc close-ask exit {code}): {}", out.trim())),
+    }
+}
+
 /// The mailbox-style actor a reply's `From:` names (`Operator <operator@spira>` → `operator`).
 pub fn actor_of(from: &str, fallback: &str) -> String {
     let inner = from.rsplit_once('<').map(|(_, r)| r).unwrap_or(from);
@@ -138,6 +162,18 @@ mod tests {
         let lc = FakeLc::new(0);
         assert_eq!(lift_ask(&lc, "", Lift::Withdraw, "a"), None);
         assert!(lc.calls().is_empty(), "no work bead, no call");
+    }
+
+    #[test]
+    fn an_answer_is_recorded_with_who_his_words_and_the_channel() {
+        let lc = FakeLc::new(0);
+        assert_eq!(answer_ask(&lc, "sp-a", "yes", "operator", "mail", "m-1@spira"), None);
+        assert_eq!(
+            lc.calls(),
+            vec![vec!["close-ask", "sp-a", "--exit", "answered", "--quote", "yes", "--actor", "operator", "--channel", "mail", "--message-id", "m-1@spira"]]
+        );
+        assert!(answer_ask(&FakeLc::new(2), "sp-a", "y", "o", "mail", "m").unwrap().contains("sp-a"));
+        assert_eq!(answer_ask(&FakeLc::new(1), "sp-a", "y", "o", "mail", "m"), None);
     }
 
     #[test]

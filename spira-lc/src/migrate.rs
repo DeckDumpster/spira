@@ -876,9 +876,11 @@ mod tests {
             st.views.insert(v.into());
         }
         st.tables.insert("bead_dep".into());
+        st.tables.insert("ask".into());
         st.users.insert("spira_lc".into());
         st.users.insert("spira_lc_ro".into());
         st.indexes.insert("bead_dep_target_idx".into());
+        st.indexes.insert("ask_state_idx".into());
         st.columns.insert(("ops_live".into(), "blocker".into()));
         st.columns.insert(("ops_edges".into(), "last_at".into()));
         Rc::new(RefCell::new(st))

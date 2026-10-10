@@ -24,6 +24,12 @@ pub trait Closer {
     fn withdraw_ask(&self, work_bead: &str) -> (i32, String);
     /// Whether the bead has a lifecycle row (`spira-lc show` exit 0). `Err` is a cannot-tell.
     fn has_lifecycle_row(&self, id: &str) -> Result<bool, String>;
+    /// Whether `id` is an ask on the ask machine (`spira-lc show-ask` exit 0): the only
+    /// authority on ask-ness. `Err` is a cannot-tell.
+    fn is_ask(&self, id: &str) -> Result<bool, String>;
+    /// `spira-lc close-ask <id> --exit withdrawn --quote <reason>` → its exit code and output;
+    /// it also lifts the `ask` hold on the work bead the ask names.
+    fn withdraw_ask_row(&self, id: &str, reason: &str) -> (i32, String);
 }
 
 /// The work beads an ask names on its `work-bead:<id>` labels (written by `mail send` on
@@ -47,10 +53,14 @@ pub fn usage_error(id: &str, reason: &str) -> bool {
 pub const USAGE: &str = "usage: resolve <bead-id> \"<reason with evidence>\"   (or - to read stdin)";
 
 pub fn run(id: &str, reason: &str, db: &Path, closer: &dyn Closer) -> Outcome {
-    let is_ask = !work_beads(&closer.show_json(db, id)).is_empty();
+    let on_ask_machine = match closer.is_ask(id) {
+        Ok(a) => a,
+        Err(e) => return Outcome::Failed(format!("resolve: cannot tell whether {id} is an ask ({}); nothing was changed", e.trim())),
+    };
+    let legacy_ask = !on_ask_machine && !work_beads(&closer.show_json(db, id)).is_empty();
     match closer.has_lifecycle_row(id) {
         Ok(false) => {}
-        Ok(true) if is_ask => {}
+        Ok(true) if legacy_ask || on_ask_machine => {}
         Ok(true) => {
             return Outcome::Failed(format!(
                 "resolve: {id} is a work bead (it has a lifecycle row and is no ask); resolve closes an ask bead. \
@@ -72,6 +82,15 @@ To lift an ask hold on a work bead use `reply`; nothing was changed"
         // (no ask hold) are not failures; a cannot-tell fails the resolve: the ask is closed but the bead is still held.
         let mut msg = format!("resolved {id} ({db_name})");
         let mut unlifted = false;
+        if on_ask_machine {
+            return match closer.withdraw_ask_row(id, reason) {
+                (0, _) | (3, _) => Outcome::Closed(msg),
+                (code, out) => {
+                    msg.push_str(&format!("\nFAILED: the ask row of {id} was not closed (spira-lc close-ask exit {code}): {}", out.trim()));
+                    Outcome::Failed(msg)
+                }
+            };
+        }
         for w in work_beads(&closer.show_json(db, id)) {
             match closer.withdraw_ask(&w) {
                 (0, _) => msg.push_str(&format!("\nwithdrew the ask hold on {w}")),
@@ -121,6 +140,12 @@ mod tests {
         fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
             Ok(false)
         }
+        fn is_ask(&self, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        fn withdraw_ask_row(&self, _id: &str, _reason: &str) -> (i32, String) {
+            panic!("not an ask")
+        }
     }
 
     struct AskFake {
@@ -142,6 +167,12 @@ mod tests {
         fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
             Ok(false)
         }
+        fn is_ask(&self, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        fn withdraw_ask_row(&self, _id: &str, _reason: &str) -> (i32, String) {
+            panic!("a legacy ask is not on the ask machine")
+        }
     }
 
     struct WorkFake {
@@ -161,6 +192,12 @@ mod tests {
         fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
             Ok(true)
         }
+        fn is_ask(&self, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        fn withdraw_ask_row(&self, _id: &str, _reason: &str) -> (i32, String) {
+            panic!("refused before any write")
+        }
     }
 
     struct AskRowFake;
@@ -177,6 +214,55 @@ mod tests {
         fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
             Ok(true)
         }
+        fn is_ask(&self, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        fn withdraw_ask_row(&self, _id: &str, _reason: &str) -> (i32, String) {
+            panic!("a legacy ask is not on the ask machine")
+        }
+    }
+
+    /// An ask on the ask machine: no work-bead label, no bead row, and (sp-wry7rt) it is
+    /// still an ask — decided by the machine, not by a label.
+    struct MachineAsk {
+        code: i32,
+        closed: std::cell::RefCell<Vec<(String, String)>>,
+    }
+    impl Closer for MachineAsk {
+        fn close(&self, _db: &Path, _id: &str, _reason: &str) -> BdResult {
+            BdResult { success: true, combined: String::new() }
+        }
+        fn show_json(&self, _db: &Path, _id: &str) -> String {
+            r#"[{"id":"sp-ask1","labels":["overseer"]}]"#.into()
+        }
+        fn withdraw_ask(&self, _w: &str) -> (i32, String) {
+            panic!("the ask row names its work bead; close-ask lifts the hold")
+        }
+        fn has_lifecycle_row(&self, _id: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+        fn is_ask(&self, _id: &str) -> Result<bool, String> {
+            Ok(true)
+        }
+        fn withdraw_ask_row(&self, id: &str, reason: &str) -> (i32, String) {
+            self.closed.borrow_mut().push((id.to_string(), reason.to_string()));
+            (self.code, "cannot tell".into())
+        }
+    }
+
+    #[test]
+    fn an_ask_with_no_work_bead_label_resolves_cleanly_through_the_ask_machine() {
+        let c = MachineAsk { code: 0, closed: Default::default() };
+        let Outcome::Closed(s) = run("sp-ask1", "statute question answered in the pane", Path::new("/db"), &c) else { panic!() };
+        assert_eq!(s, "resolved sp-ask1 (db)");
+        assert_eq!(*c.closed.borrow(), vec![("sp-ask1".to_string(), "statute question answered in the pane".to_string())]);
+    }
+
+    #[test]
+    fn an_ask_row_left_open_fails_the_resolve_and_a_closed_one_is_quiet() {
+        let Outcome::Failed(s) = run("sp-ask1", "moot", Path::new("/db"), &MachineAsk { code: 2, closed: Default::default() }) else { panic!() };
+        assert!(s.contains("FAILED: the ask row of sp-ask1 was not closed"), "{s}");
+        assert!(matches!(run("sp-ask1", "moot", Path::new("/db"), &MachineAsk { code: 3, closed: Default::default() }), Outcome::Closed(_)));
     }
 
     #[test]

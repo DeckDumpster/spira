@@ -431,6 +431,7 @@ fi
 if [ "\$1" = show ] && [ -n "\${LC_STUB_ROW:-}" ]; then echo "{}"; exit 0; fi
 if [ "\$1" = show ] && [ -n "\${LC_STUB_NOROW:-}" ]; then exit 1; fi
 if [ "\$1" = create-bead ]; then exit 0; fi
+case "\$1" in create-ask) exit 0 ;; show-ask|close-ask) exit 1 ;; esac
 if [ "\$1" != close ]; then [ -n "$real" ] && exec "$real" "\$@"; exit 7; fi
 id="\$2"; shift 2; reason=""
 while [ \$# -gt 0 ]; do

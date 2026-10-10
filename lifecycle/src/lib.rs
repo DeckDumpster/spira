@@ -1,8 +1,9 @@
-//! lifecycle — the three pure transition machines (bead, delivery, batch) and the event
+//! lifecycle — the pure transition machines (bead, delivery, batch, ask) and the event
 //! log fold that replays them. Every function here is pure: no I/O, no clock, no git.
 //! A caller that needs the current time or a git fact computes it and passes it in as
 //! evidence on the event; nothing in this crate ever reaches out for one.
 
+pub mod ask;
 pub mod batch;
 pub mod bead;
 pub mod classify;
