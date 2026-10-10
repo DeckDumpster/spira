@@ -57,12 +57,18 @@ st dirty 0; st local_head aaaa; st remote_head aaaa; st probe ok; st commit_clea
 cat > "$BIN/dolt" <<'STUB'
 #!/usr/bin/env bash
 S="$(dirname "$0")/../state"
-q=""; for a in "$@"; do case "$a" in *dolt_status*|*dolt_log*|*active_branch*|*DOLT_COMMIT*) q="$a" ;; esac; done
+q=""; for a in "$@"; do case "$a" in *dolt_status*|*dolt_log*|*active_branch*|*DOLT_COMMIT*|*DOLT_PUSH*) q="$a" ;; esac; done
 [ "$(cat "${S}.probe")" = "broken" ] && { echo "dolt: cannot open database" >&2; exit 1; }
 case "$*" in
     *fetch*) exit 0 ;;
 esac
 case "$q" in
+    *DOLT_PUSH*)
+        case "$(cat "${S}.push" 2>/dev/null)" in
+            refuse) echo "remote: permission denied to deploy key" >&2; exit 1 ;;
+            hang)   exec sleep 60 ;;
+        esac
+        exit 0 ;;
     *active_branch*) printf 'b\nmain\n'; exit 0 ;;
     *dolt_status*)   printf 'n\n%s\n' "$(cat "${S}.dirty")"; exit 0 ;;
     *DOLT_COMMIT*)
@@ -92,17 +98,20 @@ chmod +x "$BIN/bd"
 
 TOOLS="$(command -v beads-store)" && TOOLS="$(dirname "$TOOLS")" || bail "beads-store is not on PATH"
 run_push() {
+    rm -f "$TMP/run/beads-push.failed-at"
     # env -i IS A LAUNCHER, SO IT SETS PATH (sp-gypjk): the bd stub first, then the directory
     # the suite's own beads-store resolves from (the tree's build — beads-push.sh's pre-push
     # commit calls it by name, sp-sghmt), then the system dirs.
     tl_config SPIRA_PATH="$BIN" SPIRA_BD="$BIN/bd" SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" \
         SPIRA_DOLT_DATA="$DD" SPIRA_REPO_MAP=/nonexistent SPIRA_INSTANCE=prod
     env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
+        BEADS_PUSH_DEADLINE_SECS="${BEADS_PUSH_DEADLINE_SECS:-}" \
         SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         bash "$REPO/beads-push.sh" 2>&1
 }
 
 run_push_nodata() {
+    rm -f "$TMP/run/beads-push.failed-at"
     # SPIRA_DOLT_DATA="" explicitly: the empty string is its own meaningful value here
     # (conf.d/SPIRA_DOLT_DATA: "no value for this run"), not an unset-falls-back-to-default.
     tl_config SPIRA_PATH="$BIN" SPIRA_BD="$BIN/bd" SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" \
@@ -170,6 +179,32 @@ out="$(run_push_nodata)"; rc=$?
 wantrc "unresolvable store exits non-zero" 1 "$rc"
 nowant "and never claims success"          "OK" "$out"
 want   "and says why"                      "cannot determine" "$out"
+
+# ===========================================================================
+echo
+echo "F. a refusing remote fails fast with its own error, and a failure parks the retry:"
+# ===========================================================================
+st push refuse; st local_head aaaa; st remote_head aaaa
+t0=$SECONDS
+out="$(run_push)"; rc=$?
+wantrc "a refused push exits non-zero"       1 "$rc"
+want   "and quotes the remote's own error"   "permission denied to deploy key" "$out"
+nowant "and never claims success"            "OK" "$out"
+is     "and returns inside 60 s"             "yes" "$([ $((SECONDS - t0)) -lt 60 ] && echo yes || echo no)"
+st push ok
+out="$(env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
+    SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
+    bash "$REPO/beads-push.sh" 2>&1)"; rc=$?
+wantrc "an immediate retry is parked, not repacked" 1 "$rc"
+want   "and says when it may run again"             "not repacking again" "$out"
+
+st push hang
+t0=$SECONDS
+out="$(BEADS_PUSH_DEADLINE_SECS=2 run_push)"; rc=$?
+wantrc "a hung push exits non-zero"      1 "$rc"
+want   "and says it timed out"           "timed out after 2s" "$out"
+is     "and stops at its deadline"       "yes" "$([ $((SECONDS - t0)) -lt 30 ] && echo yes || echo no)"
+st push ok
 
 echo
 tl_summary

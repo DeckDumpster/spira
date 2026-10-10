@@ -90,6 +90,10 @@ fn cmd_push(args: &[String]) {
         }
     };
     let dolt_bin = std::env::var("BEADS_STORE_DOLT_BIN").unwrap_or_else(|_| "dolt".to_string());
+    let deadline = std::env::var("BEADS_STORE_PUSH_DEADLINE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(600);
     let engine = match beads_store::resolve(&db, Some(&spira_dolt_data)) {
         Ok(e) => e,
         Err(e) => {
@@ -97,7 +101,7 @@ fn cmd_push(args: &[String]) {
             std::process::exit(2);
         }
     };
-    match beads_store::run_push(&engine, &dolt_bin, &remote) {
+    match beads_store::run_push(&engine, &dolt_bin, &remote, deadline) {
         Ok(head) => println!("{head}"),
         Err(e) => {
             eprintln!("{e}");
