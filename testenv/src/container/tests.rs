@@ -240,6 +240,7 @@ fn conf(root: &str) -> Conf {
         registry: String::new(),
         max_concurrent: 8,
         cpus: None,
+        pids_limit: 32768,
         queue_timeout: 900,
         queue_poll: 5,
         heartbeat: 60,
@@ -731,6 +732,39 @@ fn up_passes_the_configured_cpu_cap_to_podman_run() {
 }
 
 #[test]
+fn up_passes_the_configured_pids_limit_to_podman_run() {
+    let f = Fake::new();
+    booting(&f);
+    let c = Conf { pids_limit: 12345, ..conf("/h") };
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
+    let run = &f.calls_with("run")[0];
+    let i = run.iter().position(|a| a == "--pids-limit").expect("--pids-limit passed");
+    assert_eq!(run[i + 1], "12345");
+}
+
+#[test]
+fn up_refuses_when_a_kernel_task_ceiling_is_below_the_pids_limit() {
+    for (path, key) in [
+        ("/proc/sys/kernel/pid_max", "kernel.pid_max"),
+        ("/proc/sys/kernel/threads-max", "kernel.threads-max"),
+    ] {
+        let f = Fake::new();
+        booting(&f);
+        f.sysctls.borrow_mut().insert(path.into(), "30000\n".into());
+        let c = conf("/h");
+        assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 1, "{key}");
+        assert!(f.calls_with("run").is_empty(), "{key}: nothing started");
+        assert!(f.errs().contains(key) && f.errs().contains("30000"), "{key}: {}", f.errs());
+    }
+    let f = Fake::new();
+    booting(&f);
+    f.sysctls.borrow_mut().insert("/proc/sys/kernel/pid_max".into(), "4194304\n".into());
+    f.sysctls.borrow_mut().insert("/proc/sys/kernel/threads-max".into(), "32768".into());
+    let c = conf("/h");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
+}
+
+#[test]
 fn cpu_cap_is_unset_unless_a_positive_number_is_configured() {
     assert_eq!(valid_cpus(""), None);
     assert_eq!(valid_cpus("0"), None);
@@ -758,7 +792,7 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
             "n1",
             "--systemd=true",
             "--pids-limit",
-            "8192",
+            "32768",
             "--network",
             "pasta:-T,none,--no-map-gw",
             "--label",

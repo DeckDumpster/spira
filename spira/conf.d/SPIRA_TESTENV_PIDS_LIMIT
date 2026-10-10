@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=testenv
+DOC=Task (pid) limit of each testenv container, as `podman run --pids-limit`
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Task limit of each testenv container, passed to `podman run --pids-limit`. Threads count:
+    # a suite fan-out that exhausts it fails to spawn with EAGAIN, which reads as a suite defect.
+    # `testenv container up` refuses to start when the host's kernel.pid_max or
+    # kernel.threads-max is below it, since the raise would silently do nothing.
+    : "${SPIRA_TESTENV_PIDS_LIMIT:=32768}"
+SPIRA_CONF_DEFAULT_EOF
