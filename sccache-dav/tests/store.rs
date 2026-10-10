@@ -184,6 +184,17 @@ fn config_from_env_refuses_a_wildcard_bind_and_missing_vars() {
     assert!(cfg.token.is_none());
 }
 
+#[test]
+fn listen_addrs_maps_config_to_listeners() {
+    let lan = "192.168.1.56:9431";
+    assert_eq!(sccache_dav::listen_addrs(lan, "").unwrap(), [lan]);
+    assert_eq!(sccache_dav::listen_addrs(lan, "  ").unwrap(), [lan]);
+    assert_eq!(sccache_dav::listen_addrs(lan, lan).unwrap(), [lan]);
+    assert_eq!(sccache_dav::listen_addrs(lan, "100.64.0.9:9431").unwrap(), [lan, "100.64.0.9:9431"]);
+    assert!(sccache_dav::listen_addrs(lan, "0.0.0.0:9431").is_err());
+    assert!(sccache_dav::listen_addrs(lan, "*:9431").is_err());
+}
+
 fn put_aged(root: &std::path::Path, rel: &str, bytes: usize, age_secs: u64) {
     let p = root.join(rel);
     std::fs::create_dir_all(p.parent().unwrap()).unwrap();

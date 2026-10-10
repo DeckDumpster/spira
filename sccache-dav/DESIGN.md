@@ -71,6 +71,7 @@ request when `SCCACHE_DAV_TOKEN` is configured.
 | variable | meaning |
 |---|---|
 | `SCCACHE_DAV_ADDR` | `ip:port` to bind. Refused if it starts with `0.0.0.0` or `*` — this store binds the LAN address the round VMs and this host's builds already share, never a wildcard. |
+| `SPIRA_SCCACHE_DAV_TAILNET_ADDR` (spira.toml, read in-process) | optional second `ip:port` to bind, this host's tailnet address, for spill runners on the tailnet; the LAN listener stays. Same wildcard refusal; empty means LAN only. |
 | `SCCACHE_DAV_ROOT` | directory the cache entries live under; created if missing. |
 | `SCCACHE_DAV_TOKEN` | optional bearer token; unset means no auth (LAN-only is the only guard). |
 
