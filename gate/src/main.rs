@@ -41,6 +41,17 @@ fn main() {
         let rc = gate::wait::main(&argv[1..]);
         std::process::exit(rc);
     }
+    if matches!(argv.first().map(String::as_str), Some("status" | "cancel")) {
+        let run = match spira_config::process::cfg("SPIRA_RUN") {
+            Ok(r) => PathBuf::from(r),
+            Err(e) => {
+                eprintln!("gate {}: {e}", argv[0]);
+                std::process::exit(1);
+            }
+        };
+        let rc = if argv[0] == "status" { gate::machine::status_main(&run, &argv[1..]) } else { gate::machine::cancel_main(&run, &argv[1..]) };
+        std::process::exit(rc);
+    }
     let mut home = None;
     if argv.first().map(String::as_str) == Some("--home") {
         if argv.len() < 2 {

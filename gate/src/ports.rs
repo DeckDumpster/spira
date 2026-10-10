@@ -177,12 +177,19 @@ pub trait World {
         cmd: &str,
     ) -> (i32, String);
 
+    // ---- the gate machine (machine.rs)
+    /// Persist the run's record. Err is a refusal: a gate that cannot record its moves judges nothing.
+    fn machine_save(&self, run: &Path, r: &crate::machine::Run) -> Result<(), String>;
+    /// `gate cancel` left a request for `id`.
+    fn machine_cancelled(&self, run: &Path, id: &str) -> bool;
+    fn machine_clear_cancel(&self, run: &Path, id: &str);
+
     // ---- time and signals
     fn now(&self) -> u64;
     fn utc(&self) -> String;
     fn sleep_ms(&self, ms: u64);
     fn pid(&self) -> u32;
-    /// A TERM/INT/HUP arrived.
+    /// A TERM/INT/HUP arrived, or `gate cancel` was requested for the run being recorded.
     fn signalled(&self) -> bool;
     fn eprint(&self, s: &str);
 }
