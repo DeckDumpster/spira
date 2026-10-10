@@ -208,6 +208,11 @@ pub struct Snapshot {
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
     #[serde(default)]
+    pub gather_ms: u64,
+    /// Sources that failed, summed over the refreshes since the pane started.
+    #[serde(default)]
+    pub failures: u64,
+    #[serde(default)]
     pub graph: Vec<GraphEdge>,
     #[serde(default)]
     pub edges: Vec<EdgeRow>,
@@ -477,6 +482,8 @@ pub struct View {
     pub working: usize,
     pub ceiling: usize,
     pub errors: Vec<String>,
+    pub gather_ms: u64,
+    pub failures: u64,
     /// FLOW: (state, count) in pipeline order, LANDED as its 24 h count.
     pub flow: Vec<(String, usize)>,
     pub ready: usize,
@@ -802,6 +809,8 @@ pub fn view(s: &Snapshot) -> View {
         working: count("WORKING"),
         ceiling: s.ceiling,
         errors: s.errors.clone(),
+        gather_ms: s.gather_ms,
+        failures: s.failures,
         ready: ready.len(),
         ready_held,
         held_pct: ready_held * 100 / ready.len().max(1),
@@ -1027,12 +1036,14 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     let w = width.max(60);
     let mut out = Vec::new();
     out.push(format!(
-        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{}/{}{R}",
+        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{}/{}{R}  {D}refresh {}ms · failures {}{R}",
         v.clock,
         v.release,
         if v.world_running { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&v.world, 30)) },
         v.working,
-        v.ceiling
+        v.ceiling,
+        v.gather_ms,
+        v.failures
     ));
     for e in &v.errors {
         out.push(format!("{RED}  source failed: {}{R}", cut(e, w - 18)));

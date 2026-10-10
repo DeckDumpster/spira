@@ -177,12 +177,14 @@ fn dot(red: bool) -> String {
 
 fn banner(v: &View) -> Vec<String> {
     let mut out = vec![format!(
-        "{B}SPIRA{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{}/{}{R}",
+        "{B}SPIRA{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{}/{}{R}  {D}refresh {}ms · failures {}{R}",
         v.clock,
         v.release,
         if v.world_running { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&v.world, 24)) },
         v.working,
-        v.ceiling
+        v.ceiling,
+        v.gather_ms,
+        v.failures
     )];
     // The running pass, pinned under the banner so it is visible whatever is collapsed or
     // scrolled (per Ryan 2026-10-09); ROUND's pass subsection keeps the detail.

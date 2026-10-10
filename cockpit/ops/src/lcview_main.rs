@@ -1,6 +1,6 @@
 //! `lc-view tui|once|fit|loop [secs]` — the lifecycle-lens ops pane (sp-lpw5ol; interactive since sp-5j35g5). Gathers from the built
-//! tools only: `spira-lc list` (state), `work list --json` (titles, priority), the landing ref's
-//! commits (drift), `world status`, and the aeon ceiling from config. Never runs `bd`.
+//! tools only: `spira-lc list --live` (state, title, priority), the landing ref's
+//! commits (drift, cached by sha), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
 use cockpit_ops::lcview::{carry_forward, holder_pid, own_ids, render, tail_lines, view, LiveAeon, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
@@ -47,10 +47,6 @@ fn world_plane() -> Result<String, String> {
 
 fn num(v: &serde_json::Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-}
-
-fn truthy(v: &serde_json::Value) -> bool {
-    v.as_bool().unwrap_or_else(|| num(v).is_some_and(|n| n != 0))
 }
 
 fn read_tail(path: &std::path::Path) -> Option<Tail> {
@@ -158,47 +154,36 @@ fn gather_state_machine(s: &mut Snapshot) {
     }
 }
 
-/// A short-lived pane never spawns the claim tool: a cockpit started and torn down inside a suite
-/// would otherwise add its process fan-out to every suite sharing the container.
-const CLAIM_WARMUP_SECS: u64 = 120;
-const CLAIM_REFRESH_SECS: u64 = 300;
+fn base_commits() -> Result<(String, HashMap<String, String>), String> {
+    let (root, base) = (run("spira-config", &["repo", "root", "spira"])?, run("spira-config", &["repo", "base", "spira"])?);
+    let base = base.trim().to_string();
+    on_base_cached(root.trim(), &base).map(|m| (base, m))
+}
 
-/// The claim tool's own claimable ids, refreshed at most every `CLAIM_REFRESH_SECS` (it costs seconds):
-/// `bulk-ready-by-fayth` names the personas with anything ready, then `fayth-ready <p> --json`
-/// lists each one's rows. Interim until sp-cuyg5f gives the claim tool and this pane one read.
-fn claimable_ids() -> Option<Vec<String>> {
+/// Commits of the base are re-read only when the base ref moves: the log is keyed by the ref's sha.
+fn on_base_cached(root: &str, base: &str) -> Result<HashMap<String, String>, String> {
     use std::sync::Mutex;
-    static CACHE: Mutex<Option<(std::time::Instant, Vec<String>)>> = Mutex::new(None);
-    static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    if STARTED.get_or_init(std::time::Instant::now).elapsed() < Duration::from_secs(CLAIM_WARMUP_SECS) {
-        return None;
-    }
-    let last = CACHE.lock().ok().and_then(|c| c.clone());
-    if let Some((at, ids)) = &last {
-        if at.elapsed() < Duration::from_secs(CLAIM_REFRESH_SECS) {
-            return Some(ids.clone());
+    static CACHE: Mutex<Option<(String, HashMap<String, String>)>> = Mutex::new(None);
+    let refname = format!("refs/heads/{base}");
+    let sha = run("git", &["-C", root, "rev-parse", &refname])?.trim().to_string();
+    if let Some((at, m)) = CACHE.lock().ok().and_then(|c| c.clone()) {
+        if at == sha {
+            return Ok(m);
         }
     }
-    // A slow or failed answer keeps the last good one for ten minutes, never a guess.
-    let stale = || last.as_ref().filter(|(at, _)| at.elapsed() < Duration::from_secs(600)).map(|(_, ids)| ids.clone());
-    let Ok(counts) = run("spira-claim", &["bulk-ready-by-fayth"]) else { return stale() };
-    let mut ids = Vec::new();
-    for l in counts.lines() {
-        let mut f = l.split_whitespace();
-        let (Some(fayth), Some(n)) = (f.next(), f.next()) else { continue };
-        if n == "0" {
-            continue;
+    let log = run("git", &["-C", root, "log", "--format=%H %s", "-n", "4000", &sha])?;
+    let mut m = HashMap::new();
+    for l in log.lines() {
+        if let Some((h, subj)) = l.split_once(' ') {
+            for id in own_ids(subj) {
+                m.entry(id).or_insert_with(|| h.to_string());
+            }
         }
-        let Ok(rows) = run("spira-claim", &["fayth-ready", fayth, "--json"]) else { return stale() };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&rows) else { return stale() };
-        ids.extend(v.as_array().cloned().unwrap_or_default().iter().filter_map(|r| r["id"].as_str().map(String::from)));
     }
-    ids.sort();
-    ids.dedup();
     if let Ok(mut c) = CACHE.lock() {
-        *c = Some((std::time::Instant::now(), ids.clone()));
+        *c = Some((sha, m.clone()));
     }
-    Some(ids)
+    Ok(m)
 }
 
 /// The live aeons: every `spira-aeon-*` unit's main pid and start (one systemctl call), and its
@@ -230,6 +215,8 @@ fn live_aeons() -> Option<Vec<LiveAeon>> {
 }
 
 fn gather() -> Snapshot {
+    let started = std::time::Instant::now();
+    let mut claimable: Vec<String> = Vec::new();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let mut s = Snapshot { now, ..Default::default() };
     s.release = std::env::var("SPIRA_RELEASE")
@@ -238,18 +225,34 @@ fn gather() -> Snapshot {
         .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "?".into());
 
+    let world = std::thread::spawn(world_plane);
+    let git = std::thread::spawn(base_commits);
+    let live = std::thread::spawn(live_aeons);
+    let sm = std::thread::spawn(|| {
+        let mut t = Snapshot::default();
+        gather_state_machine(&mut t);
+        t
+    });
     // An aeon's phase is on its lifecycle row (sp-vknc2j.16); the pane never scans /proc.
-    let mut phases: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
-    match run("spira-lc", &["list"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("spira-lc list: {e}"))) {
-        Ok(v) => {
-            for r in v.as_array().cloned().unwrap_or_default() {
+    let mut phases: HashMap<i64, String> = HashMap::new();
+    match lc_json(&["list", "--live"]) {
+        Ok(rows) => {
+            for r in rows {
+                let id = text(&r["bead_id"]);
                 if let (Some(pid), Some(ph)) = (r["holder"].as_str().and_then(holder_pid), r["aeon_phase"].as_str()) {
                     phases.insert(pid, ph.to_string());
                 }
                 let holds: Vec<String> = r["holds"].as_str().and_then(|h| serde_json::from_str(h).ok()).unwrap_or_default();
+                let blocker = r["blocked_by"].as_array().and_then(|b| b.first()).and_then(|b| b.as_str()).map(String::from);
+                let state: String = text(&r["state"]);
+                if state == "READY" && holds.is_empty() && blocker.is_none() {
+                    claimable.push(id.clone());
+                }
+                s.meta.insert(id.clone(), Meta { title: text(&r["title"]), priority: num(&r["priority"]), ..Default::default() });
                 s.rows.push(Row {
-                    id: r["bead_id"].as_str().unwrap_or("").into(),
-                    state: r["state"].as_str().unwrap_or("").into(),
+                    id,
+                    rework: state == "REWORK",
+                    state,
                     holder: r["holder"].as_str().map(String::from),
                     holds,
                     reason: r["reason"].as_str().map(String::from),
@@ -257,59 +260,38 @@ fn gather() -> Snapshot {
                     since: num(&r["since"]).or_else(|| num(&r["updated_at"])).unwrap_or(0),
                     lease_until: num(&r["lease_until"]),
                     persona: r["persona"].as_str().map(String::from),
-                    rework: truthy(&r["rework"]),
-                    claimable: (!r["claimable"].is_null()).then(|| truthy(&r["claimable"])),
-                    blocker: r["blocker"].as_str().map(String::from),
+                    claimable: None,
+                    blocker,
                 });
             }
+            s.claimable = Some(claimable);
         }
         Err(e) => s.errors.push(e),
     }
-    match run("work", &["list", "--json"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("work list: {e}"))) {
-        Ok(v) => {
-            for b in v.as_array().cloned().unwrap_or_default() {
-                if let Some(id) = b["id"].as_str() {
-                    s.meta.insert(id.into(), Meta {
-                            title: b["title"].as_str().unwrap_or("").into(),
-                            priority: num(&b["priority"]),
-                            labels: b["labels"].as_array().map(|a| a.iter().filter_map(|l| l.as_str().map(String::from)).collect()).unwrap_or_default(),
-                            notes_tail: {
-                                let n = b["notes"].as_str().unwrap_or("");
-                                let cut = n.char_indices().rev().nth(4000).map(|(i, _)| i).unwrap_or(0);
-                                n[cut..].to_string()
-                            },
-                        });
+    match lc_json(&["list-asks"]) {
+        Ok(asks) => {
+            let label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
+            for a in asks {
+                let id = text(&a["ask_id"]);
+                if !label.is_empty() {
+                    s.meta.entry(id).or_default().labels.push(label.clone());
                 }
             }
         }
         Err(e) => s.errors.push(e),
     }
-    let (root, base) = (run("spira-config", &["repo", "root", "spira"]), run("spira-config", &["repo", "base", "spira"]));
-    match (root, base) {
-        (Ok(root), Ok(base)) => {
-            s.base = base.trim().into();
-            match run("git", &["-C", root.trim(), "log", "--format=%H %s", "-n", "4000", &format!("refs/heads/{}", s.base)]) {
-                Ok(log) => {
-                    let mut m = HashMap::new();
-                    for l in log.lines() {
-                        if let Some((h, subj)) = l.split_once(' ') {
-                            for id in own_ids(subj) {
-                                m.entry(id).or_insert_with(|| h.to_string());
-                            }
-                        }
-                    }
-                    s.on_base = m;
-                }
-                Err(e) => s.errors.push(e),
-            }
+    match git.join().unwrap_or_else(|_| Err("git: panicked".into())) {
+        Ok((base, m)) => {
+            s.base = base;
+            s.on_base = m;
         }
-        (Err(e), _) | (_, Err(e)) => s.errors.push(e),
+        Err(e) => s.errors.push(e),
     }
-    s.world = world_plane().unwrap_or_else(|e| {
+    s.world = world.join().unwrap_or_else(|_| Err("world status: panicked".into())).unwrap_or_else(|e| {
         s.errors.push(e);
         "?".into()
     });
-    s.live = live_aeons().map(|mut l| {
+    s.live = live.join().unwrap_or(None).map(|mut l| {
         for a in l.iter_mut() {
             a.phase = phases.get(&a.pid).cloned().unwrap_or_else(|| "working".into());
         }
@@ -323,13 +305,20 @@ fn gather() -> Snapshot {
             }
         }
     }
-    gather_state_machine(&mut s);
-    s.claimable = claimable_ids();
+    let sm = sm.join().unwrap_or_default();
+    s.graph = sm.graph;
+    s.edges = sm.edges;
+    s.dwell = sm.dwell;
+    s.batches = sm.batches;
+    s.eject_why = sm.eject_why;
+    s.errors.extend(sm.errors);
     // The pass's live counts are not on the batch row yet, and the pane reads a pass only
     // through spira-lc (cockpit-no-round-files), so the bar stays empty until they are.
     s.progress = None;
     s.ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+    s.failures = s.errors.len() as u64;
+    s.gather_ms = started.elapsed().as_millis() as u64;
     s
 }
 
@@ -386,6 +375,7 @@ fn interactive(secs: u64) -> std::io::Result<()> {
         let mut snap = gather();
         if let Some(l) = last.as_ref() {
             carry_forward(&mut snap, l);
+            snap.failures += l.failures;
         }
         last = Some(snap.clone());
         publish(&snap);
@@ -543,8 +533,11 @@ fn main() {
         }
         Some("loop") => {
             let secs: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(10);
+            let mut failures = 0;
             loop {
-                let snap = gather();
+                let mut snap = gather();
+                failures += snap.failures;
+                snap.failures = failures;
                 publish(&snap);
                 let frame = render(&view(&snap), width());
                 print!("\x1b[H\x1b[2J{}\n", frame.join("\n"));
@@ -561,5 +554,34 @@ fn main() {
             eprintln!("usage: lc-view tui [secs] | once | fit | loop [secs] (unknown: {other})");
             std::process::exit(2);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    fn removed_calls(src: &str) -> Vec<&'static str> {
+        let code: String = src.split("#[cfg(test)]").next().unwrap_or("").lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
+        let mut found = Vec::new();
+        if code.contains("run(\"work\"") {
+            found.push("work");
+        }
+        if code.contains("lc_json(&[\"list\"])") || code.contains("run(\"spira-lc\", &[\"list\"])") {
+            found.push("unfiltered spira-lc list");
+        }
+        if code.contains("spira-claim") {
+            found.push("spira-claim");
+        }
+        found
+    }
+
+    #[test]
+    fn the_matcher_sees_a_planted_offender() {
+        let planted = "fn g() { run(\"work\", &[\"list\"]); lc_json(&[\"list\"]); run(\"spira-claim\", &[]); }";
+        assert_eq!(removed_calls(planted), ["work", "unfiltered spira-lc list", "spira-claim"]);
+    }
+
+    #[test]
+    fn the_render_issues_none_of_the_removed_calls() {
+        assert!(removed_calls(include_str!("lcview_main.rs")).is_empty());
     }
 }

@@ -24,8 +24,8 @@ const LIVE: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "
 const BEAD_COLS: &str = "bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, updated_at, title, priority";
 const DELIVERY_COLS: &str = "bead_id, mode, state, batch_id, pr, merge_sha, version";
 
-const LIST_COLS: [&str; 18] =
-    ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip"];
+const LIST_COLS: [&str; 20] =
+    ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "title", "priority"];
 const SHOW_COLS: [&str; 18] =
     ["bead_id", "state", "tip", "gate_key", "holder", "persona", "lease_until", "holds", "reason", "version", "stack", "stack_depth", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "updated_at"];
 const OPS_LIVE_COLS: [&str; 11] = ["bead_id", "state", "holds", "holder", "persona", "rework", "lease_until", "since", "updated_at", "priority", "title"];
