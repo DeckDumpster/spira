@@ -37,6 +37,7 @@ testdb_require test-mail-bead-render
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up mail-bead-render || { echo "test-mail-bead-render: could not build fixture database"; exit 1; }
+lc_close_stub "$TMP/lc" "${SPIRA_BD:-}" "${SPIRA_DB:-}"
 
 SPIRA_MAIL="$TMP/mail"
 SPIRA_MAIL_KINDS="$HERE/mail/kinds"
