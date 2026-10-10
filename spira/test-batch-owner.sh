@@ -64,7 +64,7 @@ _mk_cargo_vols() {  # _mk_cargo_vols <cname> — the named pair `testenv contain
 
 _cleanup() {
     for _c in $_ALL_CNAMES; do
-        timeout 5 podman rm -f "$_c" >/dev/null 2>&1 || true
+        timeout 5 podman rm -f -t 0 "$_c" >/dev/null 2>&1 || true
     done
     for _v in $_ALL_VOLS; do
         timeout 5 podman volume rm "$_v" >/dev/null 2>&1 || true
@@ -87,7 +87,7 @@ if timeout 5 podman run -d --name "$PC_NAME" --rm "$IMG" bash -c 'exit 0' >/dev/
 else
     bad "positive control: podman can create a container" "podman run failed on $IMG"
 fi
-timeout 5 podman rm -f "$PC_NAME" >/dev/null 2>&1 || true
+timeout 5 podman rm -f -t 0 "$PC_NAME" >/dev/null 2>&1 || true
 
 # ===========================================================================
 echo
@@ -111,7 +111,7 @@ fi
                 || bad "A0: owner file survives" "file was removed"
 
 # A1: once the container is actually gone, release proceeds and removes the file.
-timeout 5 podman rm -f "$CN_A" >/dev/null 2>&1
+timeout 5 podman rm -f -t 0 "$CN_A" >/dev/null 2>&1
 _ALL_CNAMES="${_ALL_CNAMES/ $CN_A/}"
 if _batch_owner_release "$CN_A" "$OF_A"; then
     ok "A1: release proceeds once the container is confirmed gone"
@@ -205,7 +205,7 @@ fi
                      || bad "B0: live-owner file survives" "file was removed"
 # Remove the container itself (not just the file) so it cannot be picked up,
 # now ownerless, by the C tests below.
-timeout 5 podman rm -f "$CN_B_LIVE" >/dev/null 2>&1 || true
+timeout 5 podman rm -f -t 0 "$CN_B_LIVE" >/dev/null 2>&1 || true
 rm -f "$OF_B_LIVE"
 _ALL_CNAMES="${_ALL_CNAMES/ $CN_B_LIVE/}"
 
@@ -260,7 +260,7 @@ else
 fi
 [ -f "$OF_B_OUT" ] && ok "B3: out-of-prefix owner file survives" \
                     || bad "B3: out-of-prefix owner file survives" "file was removed"
-timeout 5 podman rm -f "$CN_B_OUT" >/dev/null 2>&1 || true
+timeout 5 podman rm -f -t 0 "$CN_B_OUT" >/dev/null 2>&1 || true
 rm -f "$OF_B_OUT"
 _ALL_CNAMES="${_ALL_CNAMES/ $CN_B_OUT/}"
 
@@ -323,7 +323,7 @@ else
         "container was removed — arm 2 did not defer to the owner file"
 fi
 rm -f "/tmp/${CN_C4}.owner"
-timeout 5 podman rm -f "$CN_C4" >/dev/null 2>&1 || true
+timeout 5 podman rm -f -t 0 "$CN_C4" >/dev/null 2>&1 || true
 _ALL_CNAMES="${_ALL_CNAMES/ $CN_C4/}"
 
 # C5 ACCEPTANCE: an unrelated ownerless spira-batch-* container outside PFX_C
@@ -335,7 +335,7 @@ else
     bad "C5: unrelated container outside the test prefix is untouched" \
         "container was removed — sweep escaped its name-prefix scope"
 fi
-timeout 5 podman rm -f "$CN_C5" >/dev/null 2>&1 || true
+timeout 5 podman rm -f -t 0 "$CN_C5" >/dev/null 2>&1 || true
 _ALL_CNAMES="${_ALL_CNAMES/ $CN_C5/}"
 
 # ===========================================================================
