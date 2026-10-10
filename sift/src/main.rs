@@ -28,7 +28,7 @@ fn run() -> Result<String, (u8, String)> {
         return Err((2, USAGE.into()));
     }
     args.remove(0);
-    let (mut json_out, mut run_dir, mut bead) = (false, std::env::var("SPIRA_RUN").ok().map(PathBuf::from), None);
+    let (mut json_out, mut run_dir, mut bead) = (false, spira_config::process::cfg("SPIRA_RUN").ok().filter(|v| !v.is_empty()).map(PathBuf::from), None);
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
