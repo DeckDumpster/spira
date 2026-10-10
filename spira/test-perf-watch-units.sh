@@ -20,6 +20,7 @@ want "ExecStart runs perf-watch on the probe file" "perf-watch --probes @SPIRA_H
 _quota_re='^CPUQuota=[0-9]+%$'
 is "positive control: the quota matcher finds a planted CPUQuota" "1" "$(printf 'CPUQuota=35%%\n' | grep -cE "$_quota_re")"
 is "it is CPU-fenced" "1" "$(grep -cE "$_quota_re" "$SVC" 2>/dev/null)"
+want "the health file is written beside the log" "--health @SPIRA_RUN@/perf-watch.health" "$(grep '^ExecStart=' "$SVC" 2>/dev/null)"
 want "alarms land in the watched log" "@SPIRA_RUN@/perf-watch.log" "$(grep '^StandardOutput=' "$SVC" 2>/dev/null)"
 
 echo "=== timer ==="
@@ -43,7 +44,8 @@ want "timer is enabled" "spira-perf-watch.timer" "$enable_block"
 echo "=== watcher row and probes ==="
 want "the watchers file has a log row for the service's log" "perf-watch|log|@SPIRA_RUN@/perf-watch.log" "$(grep '^perf-watch|' "$HERE/watchers")"
 probes="$(grep -v '^#' "$HERE/perf-probes" | grep .)"
-is "the probe file names five hot paths" "5" "$(printf '%s\n' "$probes" | wc -l | tr -d ' ')"
+is "the probe file names six hot paths" "6" "$(printf '%s\n' "$probes" | wc -l | tr -d ' ')"
+want "the READY listing is probed" "lc-ready" "$probes"
 bad_lines="$(printf '%s\n' "$probes" | grep -vP '^[a-z-]+\t\S+' )"
 is "every probe is <name><TAB><command>" "" "$bad_lines"
 

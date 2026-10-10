@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=perf
+DOC=SECONDS BEFORE perf-watch REPEATS AN ALARM THAT IS STILL STANDING. A new alarm is always printed at once.
+SCHEMA=Seconds before a still-standing perf-watch alarm is printed again.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS BEFORE perf-watch REPEATS AN ALARM THAT IS STILL STANDING. A new alarm is always printed at once.
+    : "${SPIRA_READ_WATCH_REMIND:=3600}"
+SPIRA_CONF_DEFAULT_EOF
