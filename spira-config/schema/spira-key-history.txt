@@ -180,6 +180,9 @@ mail_unread_age
 mail_wake_backoff
 max_aeons
 max_live_aeons
+mender_deadline_secs
+mender_label
+mender_max
 mirror
 no_loop_label
 notify

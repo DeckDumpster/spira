@@ -554,6 +554,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v spira-supervise)\""
 
 [[dep]]
+name = "mender"
+tier = "release"
+purpose = "Spira's mender binary, from the release's bin/ — the evidence pack, read verbs and outcomes a mender aeon reaches through `work mender`"
+version_min = ""
+version_probe = "readlink -f \"$(command -v mender)\""
+
+[[dep]]
 name = "strand"
 tier = "release"
 purpose = "Spira's strand binary, from the release's bin/"

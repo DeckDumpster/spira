@@ -1,0 +1,22 @@
+[package]
+name = "mender"
+version = "1.0.0"
+edition = "2021"
+description = "mender — what a mender aeon is given and how it answers: the evidence pack for one failing suite, the whole-bead context, the read verbs, and the triage outcomes recorded on the MENDING row."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+spira-config = { path = "../spira-config" }
+suite-select = { path = "../suite-select" }
+
+[lib]
+name = "mender"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mender"
+path = "src/main.rs"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

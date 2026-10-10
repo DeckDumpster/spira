@@ -40,6 +40,7 @@ members = [
     "sccache-dav",
     "spira-claim",
     "strand",
+    "mender",
     "testenv",
     "sentinel",
     "watchtower",

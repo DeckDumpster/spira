@@ -311,7 +311,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
 /// bead the client is bound to; these name their target (or none) themselves.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand", "fence", "sending",
+    "sop", "census", "queue", "landing-pass", "strand", "fence", "sending", "mender",
 ];
 
 const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by"];
@@ -328,6 +328,7 @@ const TOOLS: &[(&str, &str)] = &[
     ("landing-pass", "landing-pass"),
     ("strand", "strand"),
     ("sending", "sending"),
+    ("mender", "mender"),
 ];
 
 /// A tool call's wall: a groomer sweep or a queue step reads the whole graph, so this is the
@@ -394,6 +395,18 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("strand detect-livelocked", &["groomer"]),
     ("fence", &["czar"]),
     ("sending --dry-run", &["ops", "czar"]),
+    ("mender start", &["mender"]),
+    ("mender pack", &["mender"]),
+    ("mender diff", &["mender"]),
+    ("mender bead", &["mender"]),
+    ("mender members", &["mender"]),
+    ("mender failures", &["mender"]),
+    ("mender passes", &["mender"]),
+    ("mender verdicts", &["mender"]),
+    ("mender landing", &["mender"]),
+    ("mender triaged", &["mender"]),
+    ("mender diagnose", &["mender"]),
+    ("mender outcome", &["mender"]),
 ];
 
 /// A request's own arguments with the client's reserved trailer split off: `... [--stdin
@@ -1055,6 +1068,19 @@ mod tests {
         assert!(msg.contains("builder") && msg.contains("groom close"), "{msg}");
         assert_eq!(gate("note-on", &v(&["sp-x1", "hi", "--actor", "builder"])).unwrap_err().0, REFUSED);
         assert_eq!(gate("queue", &v(&["eject", "sp-x1", "--actor", "groomer"])).unwrap_err().0, REFUSED);
+    }
+
+    #[test]
+    fn only_the_mender_runs_the_mender_tool_and_it_forwards_verbatim() {
+        for sub in ["start", "pack", "diff", "bead", "members", "failures", "passes", "verdicts", "landing", "triaged", "diagnose", "outcome"] {
+            assert!(gate("mender", &v(&[sub, "/s", "--actor", "mender"])).is_ok(), "{sub}");
+            assert_eq!(gate("mender", &v(&[sub, "/s", "--actor", "builder"])).unwrap_err().0, REFUSED, "{sub}");
+        }
+        assert_eq!(gate("mender", &v(&["delete", "/s", "--actor", "mender"])).unwrap_err().0, REFUSED, "an operation the table does not name is refused");
+        assert_eq!(
+            plan("mender", "-", &call(&["outcome", "/s", "return", "--checks", "x"], "mender")).unwrap(),
+            vec![tool("mender", &["outcome", "/s", "return", "--checks", "x"])]
+        );
     }
 
     #[test]
