@@ -440,6 +440,7 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
         w.err(format!("queue.sh {label}: cannot create the round worktree {}", wt.display()));
         return FAIL;
     }
+    let certified: BTreeMap<String, String> = admitted.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     let mut merged: Vec<Member> = Vec::new();
     let mut unreturned = false;
     for m in admitted {
@@ -495,7 +496,8 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
     }
     let head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
     let batch = name.map(str::to_string).unwrap_or_else(|| format!("{repo_name}-{}", w.clock.stamp()));
-    if let Err((rc, out)) = w.lc.cut(&batch, &repo_name, &head, &base_sha, &csv(&merged), LC_ACTOR) {
+    let cut_members: Vec<Member> = merged.iter().map(|m| Member { id: m.id.clone(), tip: certified.get(&m.id).cloned().unwrap_or_else(|| m.tip.clone()) }).collect();
+    if let Err((rc, out)) = w.lc.cut(&batch, &repo_name, &head, &base_sha, &csv(&cut_members), LC_ACTOR) {
         w.err(format!("queue.sh {label}: spira-lc cut refused for {batch} (rc={rc}): {out}"));
         w.git.worktree_remove(&path, &wt);
         return FAIL;
