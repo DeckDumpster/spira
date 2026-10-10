@@ -552,6 +552,14 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
     if state != "SUBMITTED" && !in_round {
         return Answer::cert(REFUSED, "skip", format!("state={state} tip={tip} outcome={outcome} — not SUBMITTED"));
     }
+    if outcome == "infra" && state == "SUBMITTED" {
+        if let Some((_, _, row)) = state_version(m, id) {
+            let row_tip = bead_field(&row, "tip");
+            if row_tip != tip {
+                return Answer::cert(REFUSED, "skip", format!("infra tip={tip} — stale, row is at {row_tip}"));
+            }
+        }
+    }
     let kind = match outcome {
         "pass" => BeadEventKind::GatePass { tip: tip.into(), gate_key: detail.into() },
         "red" => BeadEventKind::GateRed { tip: tip.into(), reason: gate_red_reason(detail) },
