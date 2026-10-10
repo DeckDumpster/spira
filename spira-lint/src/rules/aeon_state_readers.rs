@@ -100,12 +100,6 @@ pid, lease or log file is a second record that disagrees with the row. Add the f
     }
 }
 
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(AeonStateReaders::default()),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
