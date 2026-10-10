@@ -25,6 +25,7 @@ pub mod payload_argv;
 pub mod plan_lint;
 pub mod process_exit_in_library;
 pub mod plan_matrix;
+pub mod pool_state_readers;
 pub mod release_spawn_env;
 pub mod script_callers;
 pub mod scratch_fence;

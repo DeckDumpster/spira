@@ -32,6 +32,8 @@ means the same thing.
 | `round-vm release <handle>` | nothing | 0 destroyed and verified gone; 1 failed; 2 usage |
 | `round-vm run <tree-dir> [--suites CSV; absent = whole corpus, longest recorded median first, unrecorded first with an alarm] [--maxpar N] [--toolchain V] [--results-dir D] [--base REF]` | the remote batch's own output | see 2.2 |
 | `round-vm status` | exactly three lines: `ready: <handle> <addr>\|none`, `provisioning: pid <pid>\|none`, `outage: <reason>\|none` | 0 |
+| `round-vm status --json` | the pool as recorded: `ready`, `provisioning`, `refreshing`, `outage`, `template`, `leases`, `doomed`, `vms` (state, since, age, reason) and the last 50 `events` | 0 |
+| `round-vm warm` | `spare: provisioning\|not needed` — starts the background provision when nothing is ready, in flight or refreshing | 0 |
 | `round-vm _provision-bg` | internal: the one background provision | 0 |
 | `round-vm template <tree-dir>` | `<new-template-vmid> <image-ref>` | 0 built, verified a template; 1 failed (the half-built VM destroyed, or named if it could not be); 2 usage/preflight |
 
@@ -341,6 +343,17 @@ pub struct Outage { pub reason: String, pub since: u64 }
 /// A process identity that survives pid reuse: pid plus its start time from /proc/<pid>/stat.
 pub struct ProcId { pub pid: u32, pub start: u64 }
 ```
+
+#### Pool events
+
+Each VM moves provisioning → ready → leased → released / doomed → destroyed (`machine.rs`);
+a provision that fails after its clone goes provisioning → doomed or destroyed. Every move is
+a `PoolEvent{vm, to, reason, at}` in `PoolState.events`, bounded by dropping destroyed VMs'
+history first. A move the table does not allow is refused, naming the VM's state, and writes
+nothing. A pool file from before events existed is given an `adopted` history on first read.
+`status --json` reads the events back; no operator-facing tool reads the files (lint rule
+`pool-state-readers`). Moving the events into the lifecycle store waits on the write-path
+measurement (item 9 of the state-machines design); the table and the reader are what move.
 
 ### 3.3 Provider seam
 

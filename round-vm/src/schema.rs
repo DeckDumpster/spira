@@ -64,6 +64,8 @@ pub struct PoolState {
     pub outage: Option<Outage>,
     #[serde(default)]
     pub refreshing: Option<ProcId>,
+    #[serde(default)]
+    pub events: Vec<crate::machine::PoolEvent>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -688,6 +688,20 @@ row, never from a progress or result file a second writer keeps.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: cockpit-no-round-files
 checked <n> files`.
 
+## Rule `pool-state-readers`
+
+**Intent.** Operator-facing tooling reads the round VM pool through `round-vm status --json`, which
+reports the pool's recorded events, never from `pool.json`, `template.json` or the round-vm state
+directory.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/` and `spira-world/`.
+
+**Violation.** A live (non-comment) line naming `pool.json`, `template.json`, `round-vm/state` or
+`round-vm.lock`.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: pool-state-readers checked
+<n> files`.
+
 ## Rule `incident-cause-lint`
 
 Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.

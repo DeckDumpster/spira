@@ -16,7 +16,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]|status|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -107,12 +107,16 @@ pub fn main_with(args: Vec<String>) -> i32 {
     };
     let rest = rest.to_vec();
     match verb.as_str() {
-        "acquire" | "release" | "run" | "status" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
+        "acquire" | "release" | "run" | "status" | "warm" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
         other => {
             eprintln!("round-vm: unknown verb: {other}");
             eprintln!("{USAGE}");
             return 1;
         }
+    }
+    if verb == "status" && !matches!(rest.as_slice(), [] | [_]) || verb == "status" && rest.first().is_some_and(|a| a != "--json") {
+        eprintln!("round-vm status: usage: round-vm status [--json]");
+        return 2;
     }
     if verb == "release" && rest.is_empty() {
         eprintln!("round-vm release: usage: round-vm release <handle>");
@@ -175,7 +179,17 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
-        "status" => match pool.status() {
+        "warm" => match pool.ensure_spare(&spawner) {
+            Ok(started) => {
+                println!("{}", if started { "spare: provisioning" } else { "spare: not needed" });
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        },
+        "status" => match if rest.is_empty() { pool.status() } else { pool.status_json().map(|j| format!("{j}\n")) } {
             Ok(s) => {
                 print!("{s}");
                 0
