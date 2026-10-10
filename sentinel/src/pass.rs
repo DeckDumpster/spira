@@ -753,7 +753,7 @@ pub fn grep_w(text: &str, word: &str) -> bool {
     false
 }
 
-/// The pidfile fallback of `aeon_count`: live pidfiles whose process is an aeon; dead ones
+/// The pidfile fallback of `aeon_count`: pidfiles whose identity lease is running; dead ones
 /// are removed, as aeon_count does.
 pub fn pid_count(run: &Path, fayth: &str) -> usize {
     let prefix = format!("aeon-{fayth}-");
@@ -766,28 +766,13 @@ pub fn pid_count(run: &Path, fayth: &str) -> usize {
         if !(name.starts_with(&prefix) && name.ends_with(".pid")) {
             continue;
         }
-        let alive = std::fs::read_to_string(e.path())
-            .ok()
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty())
-            .and_then(|p| std::fs::read(format!("/proc/{p}/cmdline")).ok())
-            .map(|c| is_aeon_cmdline(&c))
-            .unwrap_or(false);
-        if alive {
+        if sending::reap::aeon_alive(&e.path()) {
             n += 1;
         } else {
             let _ = std::fs::remove_file(e.path());
         }
     }
     n
-}
-
-/// An aeon's /proc cmdline: the bash runner (`… aeon.sh …`) or the Rust binary, whose argv[0]
-/// is `…/aeon` (lib.sh aeon_alive's rule after the cutover).
-pub fn is_aeon_cmdline(c: &[u8]) -> bool {
-    let argv0 = c.split(|b| *b == 0).next().unwrap_or(&[]);
-    let argv0 = String::from_utf8_lossy(argv0);
-    String::from_utf8_lossy(c).contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
 }
 
 /// All of stdin, for the standalone CLI modes whose shim passes along another function's
@@ -832,14 +817,6 @@ pub fn is_exec(p: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn aeon_cmdline_matches_the_script_and_the_binary_only() {
-        assert!(super::is_aeon_cmdline(b"bash\0/h/spira/aeon.sh\0builder\0"));
-        assert!(super::is_aeon_cmdline(b"/r/current/bin/aeon\0--home\0/r/current/spira\0builder\0"));
-        assert!(!super::is_aeon_cmdline(b"/usr/bin/sleep\0aeon\0"));
-        assert!(!super::is_aeon_cmdline(b"/r/bin/aeonic\0"));
-    }
-
     use super::*;
 
     #[test]
