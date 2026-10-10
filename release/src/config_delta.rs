@@ -18,6 +18,7 @@ use toml::Value;
 
 pub const DELTA_PATH: &str = "spira/config-delta.toml";
 const UNDO_DIR: &str = "config-undo";
+const REGISTRY_DIRS: [&str; 2] = ["spira/conf.d", "spira/conf.toml.d"];
 
 type Table = Map<String, Value>;
 
@@ -231,7 +232,7 @@ pub fn staged_for_tree(spec: &str, tree: &Path) -> Result<Option<(PathBuf, Strin
 }
 
 fn stage_tree_delta(original: &[Table], tree: &Path) -> Result<Option<(PathBuf, String)>, String> {
-    let Some(delta) = load(tree)? else { return Ok(None) };
+    let Some(delta) = complete(original, tree, load(tree)?)? else { return Ok(None) };
     let (_, post, _) = apply(original, &delta)?;
     let dir = scratch_dir()?;
     let mut staged = Vec::new();
@@ -258,6 +259,67 @@ pub fn scratch_dir() -> Result<PathBuf, String> {
     ));
     fs::create_dir_all(&d).map_err(|e| format!("cannot create {}: {e}", d.display()))?;
     Ok(d)
+}
+
+/// The release's delta plus the registry default of every key its registry declares that the
+/// layers lack and the delta does not mention, so a key added to the registry without a delta
+/// entry still reaches the config. A missing key whose default is absent or computed refuses,
+/// naming it. `None` when there is nothing to apply.
+pub fn complete(original: &[Table], rel: &Path, delta: Option<Delta>) -> Result<Option<Delta>, String> {
+    let mut d = delta.unwrap_or_default();
+    let mut keys = Vec::new();
+    for dir in REGISTRY_DIRS {
+        let dir = rel.join(dir);
+        if dir.is_dir() {
+            keys.extend(spira_config::registry::load(&dir)?.into_values());
+        }
+    }
+    let mut refused = Vec::new();
+    for k in keys {
+        let path = format!("spira.{}", k.name.strip_prefix("SPIRA_").unwrap_or(&k.name).to_ascii_lowercase());
+        if d.added.contains_key(&path) || d.removed.contains(&path) || original.iter().any(|t| get(t, &path).is_some()) {
+            continue;
+        }
+        match literal_default(&k) {
+            Ok(v) => {
+                d.added.insert(path, v);
+            }
+            Err(why) => refused.push(format!("{path} ({why})")),
+        }
+    }
+    if !refused.is_empty() {
+        return Err(format!(
+            "this release requires config keys the config lacks and cannot default: {}; declare each in {DELTA_PATH} or set it with spira-config; nothing changed",
+            refused.join(", ")
+        ));
+    }
+    Ok((!d.is_empty()).then_some(d))
+}
+
+/// [`complete`] against the layers `cfg` names; `delta` as it stands when no layer is named.
+pub fn complete_for(cfg: &Config, rel: &Path, delta: Option<Delta>) -> Result<Option<Delta>, String> {
+    match cfg.toml_spec() {
+        Some(spec) if REGISTRY_DIRS.iter().any(|d| rel.join(d).is_dir()) => complete(&read_layers(&spec)?.3, rel, delta),
+        _ => Ok(delta),
+    }
+}
+
+fn literal_default(k: &spira_config::registry::RegistryKey) -> Result<Value, String> {
+    let expr = k.default_expr().ok_or("the registry gives it no default")?.trim();
+    let bare = ["\"", "'"].iter().find_map(|q| expr.strip_prefix(q).and_then(|e| e.strip_suffix(q))).unwrap_or(expr);
+    if bare.contains(['$', '`', '\\']) {
+        return Err("its default is computed on the box".into());
+    }
+    match k.ty.as_str() {
+        "u32" | "u64" => bare.parse::<i64>().map(Value::Integer).map_err(|_| format!("default {bare:?} is not a number")),
+        "bool" => match bare {
+            "1" | "true" => Ok(Value::Boolean(true)),
+            "0" | "false" => Ok(Value::Boolean(false)),
+            o => Err(format!("default {o:?} is not a boolean")),
+        },
+        "list" => Ok(Value::Array(bare.split_whitespace().map(|w| Value::String(w.into())).collect())),
+        _ => Ok(Value::String(bare.into())),
+    }
 }
 
 pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta) -> Result<Txn, String> {

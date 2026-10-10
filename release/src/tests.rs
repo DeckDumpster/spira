@@ -1780,6 +1780,44 @@ fn config_delta_that_leaves_a_required_key_unset_refuses_naming_it_and_changes_n
     assert_eq!(cfg_text(&w), before);
 }
 
+fn registry_key(name: &str, ty: &str, default: Option<&str>) -> (String, String, bool) {
+    let stmt = default.map(|d| format!("    : \"${{{name}:={d}}}\"\n")).unwrap_or_else(|| "    # NO DEFAULT\n".into());
+    (format!("spira/conf.d/{name}"), format!("TYPE={ty}\nGROUP=test\nDOC=a key\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n{stmt}SPIRA_CONF_DEFAULT_EOF\n"), false)
+}
+
+#[test]
+fn a_registry_key_with_no_delta_entry_is_defaulted_into_the_config_at_activation() {
+    let mut g = delta_git("");
+    g.delta_for = None;
+    g.extra.push(registry_key("SPIRA_NEW_KEY", "u32", Some("32768")));
+    g.extra.push(registry_key("SPIRA_OLD_KEY", "u32", Some("5")));
+    let w = World::with_git(g);
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nold_key = 9\n");
+    build_with_schema(&w, B, &["new_key"], &[]);
+    assert!(!loads(&w, B), "control: the config as found does not load under the new release");
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = 32768") && cfg_text(&w).contains("old_key = 9"), "{}", cfg_text(&w));
+    assert!(loads(&w, B), "a unit that resolves config starts");
+    assert!(w.cfg.state_dir().unwrap().join("config-undo").join(B).exists(), "the defaulted key can be rolled back");
+}
+
+#[test]
+fn a_registry_key_with_no_default_refuses_activation_naming_it_and_changes_nothing() {
+    let mut g = FakeGit { validator: true, ..Default::default() };
+    g.extra.push(registry_key("SPIRA_NEW_KEY", "string", None));
+    g.extra.push(registry_key("SPIRA_COMPUTED_KEY", "string", Some("$SPIRA_RUN/x")));
+    let w = World::with_git(g);
+    let before = "[spira]\nid_prefix = \"sp\"\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert!(e.contains("spira.new_key") && e.contains("spira.computed_key") && e.contains("nothing changed"), "{e}");
+    assert_eq!(w.current(), None);
+    assert_eq!(cfg_text(&w), before);
+}
+
 #[test]
 fn a_failed_switch_puts_the_config_back() {
     let w = World::with_git(delta_git(DELTA_BOTH));

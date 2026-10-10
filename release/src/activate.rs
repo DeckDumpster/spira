@@ -493,7 +493,7 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     let standing = read_hotfix(&state)?;
     let after = hotfix_rule(ctx, standing, sha, hotfix_reason)?;
     let mut history = read_history(&state)?;
-    let delta = config_delta::load(&rel)?;
+    let delta = config_delta::complete_for(ctx.cfg, &rel, config_delta::load(&rel)?)?;
     let txn = delta.as_ref().map(|d| config_delta::prepare(ctx.cfg, &rel, d)).transpose()?;
     let (out, late) = switch_with_config(ctx, sha, txn.as_ref(), true)?;
     if let Some(t) = &txn {
