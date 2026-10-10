@@ -166,3 +166,13 @@ owners all ejected; survivors re-run only the red suites; nothing ejected when e
 flake or base red. The end-to-end proof (`e2e`, `#[ignore]`: `cargo test -p batcher-cut --bin batcher e2e --
 --ignored --nocapture`) runs a real fixture repo with three members, real git trees, the real
 `VmRunner` and spool, and a stub round-vm that runs tiny fixture suites locally.
+
+## Staged rounds
+
+A queue.local cut stages the next round while the open one's suites run. Once the VM
+runner is up, `queue round stage` assembles the rest of the pool behind the open round
+(`.batcher-<repo>-staged`) beside the suites; its end is awaited before the round is judged.
+When the open round certifies, `queue round stage-test` runs beside `round land`; after the
+land, `round promote` cuts the stage. An attested promotion lands on the staged pass; an
+unattested one gets its own pass (`follow_promoted`). Every staged-round verb that fails is
+logged and the cut goes on as if nothing had been staged. One stage per cut.
