@@ -1211,3 +1211,10 @@ finding.
 
 **Known limits.** Line-based: an assert split so the comparison sits in a different statement
 from the `assert` is missed.
+
+## Rule `py-fstring-compat`
+
+Python in a suite must parse on the round VM's older python3. **Flags**, per line, inside an
+f-string's braces: a backslash, and a quote of the string's own kind (both 3.12-only, PEP 701).
+**Scope.** `spira/test-*.sh` and `spira/*.py`. No allow list: the tree is clean, so a new hit is
+always new. A line-local scan; a triple-quoted f-string spanning lines is judged per line.
