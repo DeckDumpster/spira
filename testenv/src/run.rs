@@ -1665,13 +1665,8 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
         _ => batch::run(&session, &cfg, &hooks, &fixtures, &jobs),
     };
-    for (label, sess, limit) in [
-        ("main", Some(&session), schedule::PIDS_LIMIT),
-        ("sim", sim_session.as_ref(), schedule::SIM_PIDS_LIMIT),
-    ] {
-        if let Some(peak) = sess.and_then(|x| x.pids_peak()) {
-            deps.log(&format!("pids peak {peak} of {limit} in the {label} container"));
-        }
+    if let Some(line) = sim_session.as_ref().and_then(|x| x.pids_peak_line()) {
+        deps.log(&format!("sim container: {line}"));
     }
     let suites_wall = t_suites.elapsed().as_secs();
     ph.mark("suites");
