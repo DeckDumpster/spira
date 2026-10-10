@@ -5,6 +5,7 @@ pub mod batch;
 pub mod deploy;
 pub mod helpers;
 pub mod land;
+pub mod mend;
 pub mod publish;
 pub mod rebase;
 pub mod round;

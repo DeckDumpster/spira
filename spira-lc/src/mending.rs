@@ -3,7 +3,8 @@
 //! taken from the caller, so a mender cannot move its own deadline; `sweep` is how the
 //! machine applies `Expire` to an overdue row.
 
-use lifecycle::mending::{self, MendingEvent, MendingEventKind, MendingRow, MendingState};
+use lifecycle::mending::{self, MendFacts, MendingEvent, MendingEventKind, MendingRow, MendingState, MEND_CAP_PER_BEAD};
+use lifecycle::Refusal;
 use serde_json::Value;
 
 use crate::db::{CascadeStep, Conn, DbError, EventRecord};
@@ -94,7 +95,9 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("event") => event(&args[1..], conn),
         Some("sweep") => sweep(&args[1..], conn),
         Some("list") => list(&args[1..], conn),
-        _ => Err((CANNOT_TELL, "usage: spira-lc mending pickup <batch> --pass N --suite S --deadline-secs D --actor A | event <batch> --pass N --suite S --kind <json> --actor A | sweep --actor A | list [--batch B] [--live]".to_string())),
+        Some("mend") => mend(&args[1..], conn),
+        Some("tips") => tips(&args[1..], conn),
+        _ => Err((CANNOT_TELL, "usage: spira-lc mending pickup <batch> --pass N --suite S --deadline-secs D --actor A | event <batch> --pass N --suite S --kind <json> --actor A | mend <batch> --pass N --suite S --members bead:from:to,... --facts <json> --fences <json> --actor A | tips --beads a,b | sweep --actor A | list [--batch B] [--live]".to_string())),
     };
     match result {
         Ok(out) => (0, out),
@@ -138,6 +141,9 @@ fn event(args: &[String], conn: &Conn) -> Reply {
     let kind: MendingEventKind = serde_json::from_value(kind).map_err(|e| (CANNOT_TELL, format!("mending event: --kind did not parse: {e}")))?;
     if matches!(kind, MendingEventKind::Pickup { .. } | MendingEventKind::Expire { .. }) {
         return Err((REFUSED, "mending event: pickup and expire are the machine's own, not a mender's".into()));
+    }
+    if matches!(kind, MendingEventKind::Mended { .. }) {
+        return Err((REFUSED, "mending event: a mend goes through `mending mend`, which assesses the tip".into()));
     }
     apply(conn, &row, kind, &actor)
 }
@@ -207,4 +213,150 @@ fn list(args: &[String], conn: &Conn) -> Reply {
         })
         .collect::<Result<_, (i32, String)>>()?;
     Ok(Value::Array(out).to_string())
+}
+
+const MENDING_KEY: &str = "CONCAT(batch_id, '#', pass, '#', suite)";
+
+/// One member's branch moving from `from` to `to`.
+struct Move {
+    bead: String,
+    from: String,
+    to: String,
+}
+
+fn moves(spec: &str) -> Option<Vec<Move>> {
+    let v: Vec<Move> = spec
+        .split(',')
+        .filter(|m| !m.is_empty())
+        .map(|m| {
+            let mut p = m.split(':');
+            Some(Move { bead: p.next()?.to_string(), from: p.next()?.to_string(), to: p.next()?.to_string() })
+        })
+        .collect::<Option<_>>()?;
+    (!v.is_empty()).then_some(v)
+}
+
+fn mends_of(conn: &Conn, bead: &str) -> Result<Vec<Value>, DbError> {
+    conn.query(&format!("SELECT tip, diagnosis FROM mend WHERE bead_id = '{}' ORDER BY seq", escape(bead)))
+}
+
+/// The refusal is logged on the row's log; the row itself stays as it was.
+fn refuse_logged(conn: &Conn, row: &MendingRow, refusal: Refusal, actor: &str) -> (i32, String) {
+    let rec = EventRecord::of_apply(
+        "mending",
+        row.key(),
+        "Mended",
+        row.state.as_str(),
+        row.state.as_str(),
+        Some(crate::refusal_name(&refusal)),
+        Value::String(format!("{refusal:?}")),
+        actor,
+        crate::db::now_epoch(),
+    );
+    if let Err(e) = conn.insert_refusal_event(&rec) {
+        return cannot(e);
+    }
+    (REFUSED, format!("refused: {refusal:?}"))
+}
+
+/// A mend the machine will not take returns the failure's row with the reason as its diagnosis.
+fn return_with(conn: &Conn, row: &MendingRow, why: &str, actor: &str) -> Reply {
+    let diagnosis = match &row.diagnosis {
+        Some(d) => format!("{d}\n{why}"),
+        None => why.to_string(),
+    };
+    apply(conn, row, MendingEventKind::Return { at: crate::db::now_epoch(), diagnosis }, actor)
+}
+
+fn mend(args: &[String], conn: &Conn) -> Reply {
+    let row = target(args, conn)?;
+    let actor = flag(args, "--actor").ok_or((CANNOT_TELL, "mending: --actor is required".to_string()))?;
+    let members = flag(args, "--members").and_then(|m| moves(&m)).ok_or((CANNOT_TELL, "mending mend: --members bead:from:to,... is required".to_string()))?;
+    let facts: MendFacts = flag(args, "--facts")
+        .and_then(|f| serde_json::from_str(&f).ok())
+        .ok_or((CANNOT_TELL, "mending mend: --facts must be the mend's JSON facts".to_string()))?;
+    let fences: Vec<String> = flag(args, "--fences")
+        .and_then(|f| serde_json::from_str(&f).ok())
+        .ok_or((CANNOT_TELL, "mending mend: --fences must be a JSON list of fence paths".to_string()))?;
+    if row.state != MendingState::Mending {
+        return Err(refuse_logged(conn, &row, Refusal::IllegalTransition { state: row.state.as_str().into(), event: "Mended".into() }, &actor));
+    }
+    for m in &members {
+        let prior = mends_of(conn, &m.bead).map_err(cannot)?;
+        if prior.len() >= MEND_CAP_PER_BEAD {
+            let diagnoses: Vec<String> = prior.iter().filter_map(|p| cell(p, "diagnosis")).collect();
+            let why = format!("mend cap: {} was already mended {} times; diagnoses: {}", m.bead, prior.len(), diagnoses.join(" | "));
+            return_with(conn, &row, &why, &actor)?;
+            return Err((REFUSED, format!("refused: {:?}; the failure is returned", Refusal::MendCap { bead: m.bead.clone(), mends: prior.len() })));
+        }
+        if let Some(current) = prior.last().and_then(|p| cell(p, "tip")) {
+            if current != m.from {
+                let why = format!("fix no longer applies: {} moved to {current} under this mend, which was built on {}", m.bead, m.from);
+                return_with(conn, &row, &why, &actor)?;
+                return Err((REFUSED, format!("refused: {:?}; the failure is returned", Refusal::StaleTip { bead: m.bead.clone(), current, given: m.from.clone() })));
+            }
+        }
+    }
+    if let Some(ask) = facts.ask.as_deref().filter(|a| !a.is_empty()) {
+        if crate::rows::fetch_ask(conn, ask).map_err(cannot)?.is_none() {
+            return Err(refuse_logged(conn, &row, Refusal::MendRefused { reasons: vec![format!("ask {ask} does not exist")] }, &actor));
+        }
+    }
+    if let Err(refusal) = mending::assess(&facts, &fences) {
+        return Err(refuse_logged(conn, &row, refusal, &actor));
+    }
+    let at = crate::db::now_epoch();
+    let kind = MendingEventKind::Mended { at };
+    let ev = MendingEvent { expect: row.state, version: row.version, kind: kind.clone(), actor: actor.clone() };
+    let outcome = mending::apply(&row, &ev);
+    if !outcome.applied {
+        return Err(refuse_logged(conn, &row, outcome.refusal.unwrap_or(Refusal::IllegalTransition { state: row.state.as_str().into(), event: "Mended".into() }), &actor));
+    }
+    let evidence = serde_json::json!({"Mended": {"at": at, "members": members.iter().map(|m| format!("{}:{}:{}", m.bead, m.from, m.to)).collect::<Vec<_>>(), "ask": facts.ask, "checked": facts.checked}});
+    let rec = EventRecord::of_apply("mending", row.key(), "Mended", row.state.as_str(), outcome.row.state.as_str(), None, evidence, &actor, at);
+    let checked = facts.checked.join(",");
+    let inserts: String = members
+        .iter()
+        .map(|m| {
+            format!(
+                "INSERT INTO mend (batch_id, pass, suite, bead_id, from_tip, tip, ask_id, checked, diagnosis, at) \
+                 SELECT batch_id, pass, suite, '{bead}', '{from}', '{to}', {ask}, '{checked}', {diag}, {at} FROM mending \
+                 WHERE batch_id = '{b}' AND pass = {pass} AND suite = '{s}' AND version = {v};\n",
+                bead = escape(&m.bead),
+                from = escape(&m.from),
+                to = escape(&m.to),
+                ask = opt_str(&facts.ask),
+                checked = escape(&checked),
+                diag = opt_str(&row.diagnosis),
+                b = escape(&row.batch_id),
+                pass = row.pass,
+                s = escape(&row.suite),
+                v = row.version,
+            )
+        })
+        .collect();
+    let step = CascadeStep {
+        table: "mending",
+        key_column: MENDING_KEY,
+        key: row.key(),
+        old_version: row.version,
+        set_clause: set_clause(&outcome.row),
+        applied_to_state: outcome.row.state.as_str().to_string(),
+        event: rec,
+    };
+    match conn.cascade(&inserts, &[step]).map_err(cannot)?.first().copied().unwrap_or(false) {
+        true => Ok(outcome.row.state.as_str().to_string()),
+        false => Err((REFUSED, "refused: lost the race to another writer".into())),
+    }
+}
+
+/// Each bead's current mended tip, or null when it has none: what a second mender must build on.
+fn tips(args: &[String], conn: &Conn) -> Reply {
+    let beads = flag(args, "--beads").ok_or((CANNOT_TELL, "mending tips: --beads a,b is required".to_string()))?;
+    let mut out = serde_json::Map::new();
+    for bead in beads.split(',').filter(|b| !b.is_empty()) {
+        let tip = mends_of(conn, bead).map_err(cannot)?.last().and_then(|p| cell(p, "tip"));
+        out.insert(bead.to_string(), tip.map_or(Value::Null, Value::from));
+    }
+    Ok(Value::Object(out).to_string())
 }

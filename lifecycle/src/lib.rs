@@ -61,6 +61,13 @@ pub enum Refusal {
     /// A mender's outcome arrived at or after the MENDING row's deadline; the machine's own
     /// `Expire` is the only transition left.
     DeadlinePassed { deadline: i64, at: i64 },
+    /// A mended tip the machine will not take: a check missing, or an escalation with no ask.
+    MendRefused { reasons: Vec<String> },
+    /// A bead already mended `mends` times; a further failure returns it with one ask.
+    MendCap { bead: String, mends: usize },
+    /// A mend built on a tip that is not the branch's current one: the second writer on a
+    /// branch rebases onto the first's commit, or returns.
+    StaleTip { bead: String, current: String, given: String },
 }
 
 /// The result of applying one event to one row. `row` is the new row when `applied` is

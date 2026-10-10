@@ -2,7 +2,7 @@
 //! spira-lc, the config (spira-config library only), the clock, the environment, stdio.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
@@ -121,6 +121,33 @@ impl Git for RealGit {
     }
     fn commit_exists(&self, repo: &Path, sha: &str) -> bool {
         ok(git(repo).args(["cat-file", "-e", &format!("{sha}^{{commit}}")]).stderr(Stdio::null()))
+    }
+    fn numstat(&self, repo: &Path, a: &str, b: &str) -> Result<Vec<(String, u32, u32)>, String> {
+        let o = git(repo).args(["diff", "--numstat", "--no-renames", a, b]).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter_map(|l| {
+                let mut f = l.splitn(3, '\t');
+                let (add, del, path) = (f.next()?, f.next()?, f.next()?);
+                Some((path.to_string(), add.parse().unwrap_or(0), del.parse().unwrap_or(0)))
+            })
+            .collect())
+    }
+    fn path_exists(&self, repo: &Path, rev: &str, path: &str) -> bool {
+        ok(git(repo).args(["cat-file", "-e", &format!("{rev}:{path}")]).stderr(Stdio::null()))
+    }
+    fn file_at(&self, repo: &Path, rev: &str, path: &str) -> Option<String> {
+        stdout_of(git(repo).args(["show", &format!("{rev}:{path}")]))
+    }
+    fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Vec<String> {
+        stdout_of(git(repo).args(["grep", "-l", "-F", "-e", needle, rev, "--", &format!(":(glob){glob}")]))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.strip_prefix(&format!("{rev}:")).map(String::from))
+            .collect()
     }
     fn branch_set(&self, repo: &Path, name: &str, sha: &str, force: bool) -> bool {
         let mut c = git(repo);
@@ -938,6 +965,27 @@ impl Lc for RealLc {
         let out = self.stdout(&["show", bead]).ok()?;
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;
         serde_json::from_value(v.get("bead")?.clone()).ok()
+    }
+    fn mending_event(&self, batch_id: &str, pass: u32, suite: &str, kind: &str, actor: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["mending", "event", batch_id, "--pass", &pass.to_string(), "--suite", suite, "--kind", kind, "--actor", actor]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
+    fn mend(&self, batch_id: &str, pass: u32, suite: &str, members: &str, facts: &str, fences: &str, actor: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["mending", "mend", batch_id, "--pass", &pass.to_string(), "--suite", suite, "--members", members, "--facts", facts, "--fences", fences, "--actor", actor]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
+    fn mend_tips(&self, beads: &[String]) -> Result<BTreeMap<String, String>, String> {
+        let out = self.stdout(&["mending", "tips", "--beads", &beads.join(",")])?;
+        let v: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc mending tips: {e}"))?;
+        Ok(v.into_iter().filter_map(|(k, t)| t.as_str().map(|t| (k, t.to_string()))).collect())
     }
     fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["certify", bead, tip, "pass", detail, actor]);

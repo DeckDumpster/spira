@@ -1,0 +1,14 @@
+# Paths a mend may touch only with an ask attached. A trailing slash is a directory prefix,
+# a trailing star a name prefix, anything else one exact path.
+gate/
+gate-check/
+gate-run/
+gate-worker/
+gate.steps
+spira/gate*
+spira/inventory*
+spira/hooks/
+lifecycle-guard/
+suite-select/
+spira-lint/
+sift/

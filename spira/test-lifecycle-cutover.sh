@@ -42,7 +42,7 @@
 #
 # defect: sp-o7nbr
 # tier: T2
-# covers: lifecycle/* spira-lc/* spira-claim/* queue/src/*
+# covers: lifecycle/* spira-lc/* spira-claim/* queue/src/* spira/mend-fences
 # timeout: 360
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -836,5 +836,32 @@ is "the overdue row is RETURNED with the diagnosis so far; the other still MENDI
 out="$(lc mending event batch-mend --pass 1 --suite test-z.sh --actor mender-z --kind '{"Mended":{"at":0}}' 2>&1)"
 wantrc "a late outcome is refused once the machine has returned the row" 3 $?
 is "the expiry never touched the pass" "CI_RUNNING suites" "$(batch_field batch-mend state) $(batch_field batch-mend phase)"
+
+mfacts() { printf '{"changes":[{"path":"%s","added":1,"deleted":0}],"member_files":["%s"],"required_checks":[],"checked":[],"ask":null}' "$1" "$1"; }
+mendrow() { lc mending mend batch-mend --pass 1 --suite "$1" --members "sp-lc-m-1:$2:$3" --facts "$(mfacts "$4")" --fences '["gate/"]' --actor "mender-$1"; }
+mrow_state() { lc mending list --batch batch-mend | python3 -c 'import json,sys; r={x["suite"]:x for x in json.load(sys.stdin)}; print(" ".join(filter(None, [r[sys.argv[1]]["state"], r[sys.argv[1]]["diagnosis"]])))' "$1"; }
+mendrow test-b.sh tipM1 tipM2 gate/x.rs >/dev/null 2>&1
+wantrc "a fence edit without an ask is refused" 3 $?
+is "the refused mend leaves the row MENDING" "MENDING" "$(mrow_state test-b.sh | cut -d' ' -f1)"
+mendrow test-b.sh tipM1 tipM2 queue/src/a.rs >/dev/null
+wantrc "an in-diff source edit is mended" 0 $?
+is "the row is MENDED" "MENDED" "$(mrow_state test-b.sh | cut -d' ' -f1)"
+is "the mended tip is the branch's recorded tip" "tipM2" "$(lc mending tips --beads sp-lc-m-1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["sp-lc-m-1"])')"
+for s in test-c.sh test-d.sh test-e.sh; do
+    pev batch-mend "{\"Failed\":{\"suite\":\"$s\",\"n\":1}}" >/dev/null
+    lc mending pickup batch-mend --pass 1 --suite "$s" --deadline-secs 600 --actor "mender-$s" >/dev/null
+done
+out="$(mendrow test-c.sh tipM1 tipM9 queue/src/a.rs 2>&1)"
+wantrc "a mend built on a stale tip is refused" 3 $?
+want "the refusal names the stale tip" "StaleTip" "$out"
+want "the failure is returned: the fix no longer applies" "RETURNED fix no longer applies" "$(mrow_state test-c.sh)"
+mendrow test-d.sh tipM2 tipM3 queue/src/a.rs >/dev/null
+wantrc "the second mend of a bead is taken" 0 $?
+out="$(mendrow test-e.sh tipM3 tipM4 queue/src/a.rs 2>&1)"
+wantrc "a third mend of a bead is refused" 3 $?
+want "the refusal names the cap" "MendCap" "$out"
+want "the failure is returned with the cap in its diagnosis" "RETURNED mend cap" "$(mrow_state test-e.sh)"
+lc mending event batch-mend --pass 1 --suite test-b.sh --actor mender --kind '{"Mended":{"at":0}}' >/dev/null 2>&1
+wantrc "a bare Mended event cannot bypass the assessment" 3 $?
 is "the machine's expiry is on the log under its own actor" "test" "$(lc history 'batch-mend#1#test-z.sh' --machine mending | python3 -c 'import json,sys; print([e for e in json.load(sys.stdin) if e["event"]=="Expire" and e["applied"]=="1"][0]["actor"])')"
 tl_summary

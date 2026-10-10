@@ -179,6 +179,95 @@ pub fn apply(row: &MendingRow, ev: &MendingEvent) -> Outcome<MendingRow> {
     }
 }
 
+/// Mends one bead may carry in total; a further failure returns it instead.
+pub const MEND_CAP_PER_BEAD: usize = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FileChange {
+    pub path: String,
+    pub added: u32,
+    pub deleted: u32,
+}
+
+/// What a `mended` claims and the git facts around it, assembled by the caller from the
+/// members' branches; `assess` is the only judge of them.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct MendFacts {
+    /// Every file the mend changed, across all the mended members.
+    pub changes: Vec<FileChange>,
+    /// Every file in any member's own diff against the base.
+    pub member_files: Vec<String>,
+    /// `crate:<dir>` / `suite:<path>` the touched files require green.
+    pub required_checks: Vec<String>,
+    /// The checks the mender recorded green.
+    pub checked: Vec<String>,
+    pub ask: Option<String>,
+}
+
+fn is_fence(path: &str, fences: &[String]) -> bool {
+    fences.iter().any(|f| match f.strip_suffix('*') {
+        Some(prefix) => path.starts_with(prefix),
+        None => path.starts_with(f.as_str()) && (f.ends_with('/') || path == f),
+    })
+}
+
+fn is_test_path(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    path.starts_with("tests/") || path.contains("/tests/") || name.starts_with("test-") || name.ends_with("_test.rs")
+}
+
+/// The reasons a mend must carry an ask: gate or fence code, a test's expectation changed
+/// (an existing test file with lines removed), or a file outside every member's diff.
+pub fn escalations(facts: &MendFacts, fences: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for c in &facts.changes {
+        if is_fence(&c.path, fences) {
+            out.push(format!("{} is gate or fence code", c.path));
+        } else if is_test_path(&c.path) && c.deleted > 0 {
+            out.push(format!("{} changes a test's expectation ({} lines removed)", c.path, c.deleted));
+        }
+        if !facts.member_files.iter().any(|f| *f == c.path) {
+            out.push(format!("{} is outside every member's diff", c.path));
+        }
+    }
+    out
+}
+
+/// Checks required but not recorded green; an ask never waives these.
+pub fn missing_checks(facts: &MendFacts) -> Vec<String> {
+    facts.required_checks.iter().filter(|r| !facts.checked.contains(r)).map(|r| format!("no green check recorded for {r}")).collect()
+}
+
+pub fn assess(facts: &MendFacts, fences: &[String]) -> Result<(), Refusal> {
+    let mut reasons = missing_checks(facts);
+    if facts.ask.as_deref().is_none_or(str::is_empty) {
+        reasons.extend(escalations(facts, fences).into_iter().map(|r| format!("{r}: attach the ask that reports it")));
+    }
+    if reasons.is_empty() { Ok(()) } else { Err(Refusal::MendRefused { reasons }) }
+}
+
+/// Which checks a set of touched files requires. `crate_of` names the crate directory a file
+/// belongs to; `suites_of` the suites that reference a non-Rust file.
+pub fn required_checks(paths: &[String], crate_of: impl Fn(&str) -> Option<String>, suites_of: impl Fn(&str) -> Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in paths {
+        if let Some(c) = crate_of(p) {
+            out.push(format!("crate:{c}"));
+        }
+        let rust = p.ends_with(".rs") || p.ends_with("Cargo.toml") || p.ends_with("Cargo.lock");
+        if !rust {
+            out.extend(suites_of(p).into_iter().map(|s| format!("suite:{s}")));
+        }
+        let name = p.rsplit('/').next().unwrap_or(p);
+        if name.starts_with("test-") && name.ends_with(".sh") {
+            out.push(format!("suite:{p}"));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,5 +363,69 @@ mod tests {
         assert!(matches!(out.refusal, Some(Refusal::StaleVersion { .. })) && out.row == r);
         let out = apply(&r, &MendingEvent { expect: MendingState::Waiting, version: r.version, kind: MendingEventKind::Expire { at: 5000 }, actor: "t".into() });
         assert!(matches!(out.refusal, Some(Refusal::ExpectMismatch { .. })) && out.row == r);
+    }
+
+    fn ch(path: &str, added: u32, deleted: u32) -> FileChange {
+        FileChange { path: path.into(), added, deleted }
+    }
+
+    fn facts(changes: Vec<FileChange>) -> MendFacts {
+        MendFacts { member_files: changes.iter().map(|c| c.path.clone()).collect(), changes, ..Default::default() }
+    }
+
+    fn fences() -> Vec<String> {
+        vec!["gate/".into(), "spira/gate-suites".into(), "spira/inventory*".into()]
+    }
+
+    #[test]
+    fn a_fence_edit_without_an_ask_is_refused_and_with_one_taken() {
+        let mut f = facts(vec![ch("gate/src/lib.rs", 3, 1)]);
+        let Err(Refusal::MendRefused { reasons }) = assess(&f, &fences()) else { panic!("a fence edit passed without an ask") };
+        assert!(reasons[0].contains("gate or fence code"), "{reasons:?}");
+        f.ask = Some("ask-1".into());
+        assert_eq!(assess(&f, &fences()), Ok(()));
+    }
+
+    #[test]
+    fn a_trailing_star_fences_a_prefix_and_a_bare_entry_only_itself() {
+        assert!(is_fence("spira/inventory-deny", &fences()) && is_fence("spira/gate-suites", &fences()));
+        assert!(!is_fence("spira/gate-suites-extra", &fences()) && !is_fence("gates/x", &fences()));
+    }
+
+    #[test]
+    fn a_plain_in_diff_source_edit_needs_no_ask() {
+        assert_eq!(assess(&facts(vec![ch("queue/src/ops/round.rs", 5, 5)]), &fences()), Ok(()));
+    }
+
+    #[test]
+    fn a_changed_expectation_and_an_outside_edit_each_need_an_ask() {
+        assert_eq!(escalations(&facts(vec![ch("queue/src/tests/round.rs", 2, 2)]), &fences()).len(), 1);
+        assert!(escalations(&facts(vec![ch("spira/test-x.sh", 9, 0)]), &fences()).is_empty(), "adding to a test is not changing its expectation");
+        let mut f = facts(vec![ch("lib/other.rs", 1, 0)]);
+        f.member_files = vec!["lib/mine.rs".into()];
+        assert_eq!(escalations(&f, &fences()), vec!["lib/other.rs is outside every member's diff".to_string()]);
+    }
+
+    #[test]
+    fn a_tip_without_its_green_checks_is_refused_even_with_an_ask() {
+        let mut f = facts(vec![ch("queue/src/lib.rs", 1, 0)]);
+        f.required_checks = vec!["crate:queue".into(), "suite:spira/test-a.sh".into()];
+        f.checked = vec!["crate:queue".into()];
+        f.ask = Some("ask-1".into());
+        let Err(Refusal::MendRefused { reasons }) = assess(&f, &fences()) else { panic!("missing check accepted") };
+        assert_eq!(reasons, vec!["no green check recorded for suite:spira/test-a.sh".to_string()]);
+        f.checked.push("suite:spira/test-a.sh".into());
+        assert_eq!(assess(&f, &fences()), Ok(()));
+    }
+
+    #[test]
+    fn required_checks_name_crates_and_the_suites_that_reference_non_rust_files() {
+        let paths = vec!["queue/src/a.rs".to_string(), "spira/lib.sh".to_string(), "spira/test-b.sh".to_string()];
+        let got = required_checks(
+            &paths,
+            |p| p.strip_suffix("/src/a.rs").map(String::from),
+            |p| if p == "spira/lib.sh" { vec!["spira/test-a.sh".into()] } else { vec![] },
+        );
+        assert_eq!(got, vec!["crate:queue", "suite:spira/test-a.sh", "suite:spira/test-b.sh"]);
     }
 }

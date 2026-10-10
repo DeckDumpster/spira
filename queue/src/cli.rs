@@ -57,6 +57,8 @@ pub enum Round {
     PassStart { batch: String, repo: Option<String> },
     SuitesStarted { batch: String, repo: Option<String> },
     Failed { batch: String, repo: Option<String>, suite: String },
+    /// A mender's outcome for one failure (`mended|return|environment|flaky|unsure`), or `triage-ended`.
+    Mend { outcome: String, batch: String, suite: String, repo: Option<String>, tips: String, checked: String, ask: Option<String>, reason: Text },
     PassVerdict { batch: String, repo: Option<String>, verdict: String, red_suites: String, suites_s: u64, build_s: u64, reason: Text },
     Status { repo: Option<String> },
     /// Assemble the next round behind the open one and run the fences on it.
@@ -68,7 +70,7 @@ pub enum Round {
     Discard { repo: Option<String>, reason: Text },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] | queue.sh round return|environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -178,6 +180,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
     let mut eject = String::new();
     let (mut verdict, mut red_suites, mut suites_s, mut build_s) = (String::new(), String::new(), None, None);
     let mut suite = None;
+    let (mut tips, mut checked, mut ask) = (String::new(), String::new(), None);
     let mut pos: Vec<String> = Vec::new();
     while let Some(t) = w.next() {
         match t {
@@ -188,6 +191,9 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             Tok::Opt("attest", v) => attest = Some(w.value(v)),
             Tok::Opt("suites", v) => suites = w.value(v),
             Tok::Opt("suite", v) => suite = Some(w.value(v)),
+            Tok::Opt("tips", v) => tips = w.value(v),
+            Tok::Opt("checked", v) => checked = w.value(v),
+            Tok::Opt("ask", v) => ask = Some(w.value(v)),
             Tok::Opt("eject", v) => eject = w.value(v),
             Tok::Opt("verdict", v) => verdict = w.value(v),
             Tok::Opt("red-suites", v) => red_suites = w.value(v),
@@ -222,6 +228,16 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
         "pass-start" => Ok(Round::PassStart { batch: need("batch id", pos.next())?, repo: pos.next() }),
         "suites-started" => Ok(Round::SuitesStarted { batch: need("batch id", pos.next())?, repo: pos.next() }),
         "failed" => Ok(Round::Failed { batch: need("batch id", pos.next())?, repo: pos.next(), suite: need("--suite", suite)? }),
+        "mended" | "return" | "environment" | "flaky" | "unsure" | "triage-ended" => Ok(Round::Mend {
+            outcome: verb.clone(),
+            batch: need("batch id", pos.next())?,
+            suite: need("failure (the suite name)", pos.next())?,
+            repo: pos.next(),
+            tips,
+            checked,
+            ask,
+            reason,
+        }),
         "pass-verdict" => {
             if !["green", "red", "incomplete"].contains(&verdict.as_str()) {
                 return Err(Usage("queue.sh round pass-verdict: --verdict green|red|incomplete is required".into()));
@@ -422,6 +438,9 @@ mod tests {
         assert_eq!(c, Cmd::Round(Round::Open { repo: Some("spira".into()), members: Text::Arg("a:1,b".into()), name: Some("r1".into()), worktree: Some("/w".into()) }));
         let c = p(&["round", "eject", "b1", "sp-a", "--reason=r", "--no-rebuild", "--suites", "t.sh"]).unwrap();
         assert!(matches!(c, Cmd::Round(Round::Eject { ref batch, ref id, rebuild: false, ref suites, .. }) if batch == "b1" && id == "sp-a" && suites == "t.sh"));
+        let c = p(&["round", "mended", "b1", "test-x.sh", "spira", "--tips", "sp-a:t2", "--checked", "crate:queue", "--ask=a1"]).unwrap();
+        assert!(matches!(c, Cmd::Round(Round::Mend { ref outcome, ref suite, ref tips, ref ask, .. }) if outcome == "mended" && suite == "test-x.sh" && tips == "sp-a:t2" && ask.as_deref() == Some("a1")));
+        assert!(p(&["round", "flaky", "b1"]).is_err(), "an outcome names its failure");
         assert_eq!(p(&["round", "land", "b1"]), Ok(Cmd::Round(Round::Land { batch: "b1".into(), repo: None })));
         assert_eq!(p(&["round", "status"]), Ok(Cmd::Round(Round::Status { repo: None })));
         assert_eq!(p(&["round", "pass-start", "b1"]), Ok(Cmd::Round(Round::PassStart { batch: "b1".into(), repo: None })));
