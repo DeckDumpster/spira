@@ -69,6 +69,8 @@ struct FakeGit {
     unit_ensure: bool,
     /// A config delta that only the release built from this sha carries.
     delta_for: Option<(String, String)>,
+    /// Files only the release built from the given sha carries: `(sha, path, body)`.
+    extra_only: Vec<(String, String, String)>,
     ancestors: RefCell<BTreeSet<(String, String)>>,
 }
 
@@ -116,6 +118,11 @@ impl Git for FakeGit {
         if let Some((only, body)) = &self.delta_for {
             if only == sha {
                 file(&into.join("spira/config-delta.toml"), body);
+            }
+        }
+        for (only, p, body) in &self.extra_only {
+            if only == sha {
+                file(&into.join(p), body);
             }
         }
         for (p, body, x) in &self.extra {
@@ -1800,6 +1807,25 @@ fn a_registry_key_with_no_delta_entry_is_defaulted_into_the_config_at_activation
     assert!(cfg_text(&w).contains("new_key = 32768") && cfg_text(&w).contains("old_key = 9"), "{}", cfg_text(&w));
     assert!(loads(&w, B), "a unit that resolves config starts");
     assert!(w.cfg.state_dir().unwrap().join("config-undo").join(B).exists(), "the defaulted key can be rolled back");
+}
+
+#[test]
+fn a_no_default_key_the_active_release_already_declares_does_not_refuse_activation() {
+    let mut g = FakeGit { validator: true, ..Default::default() };
+    g.extra.push(registry_key("SPIRA_OLD_NODEFAULT", "string", None));
+    let new = registry_key("SPIRA_NEW_KEY", "u32", Some("7"));
+    g.extra_only.push((B.to_string(), new.0, new.1));
+    let w = World::with_git(g);
+    let cfg = Path::new(&w.cfg.toml_spec().unwrap()).to_path_buf();
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\nold_nodefault = \"x\"\n");
+    build_with_schema(&w, A, &[], &[]);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\n");
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert_eq!(w.current().as_deref(), Some(B));
+    assert!(cfg_text(&w).contains("new_key = 7") && !cfg_text(&w).contains("old_nodefault"), "{}", cfg_text(&w));
 }
 
 #[test]
