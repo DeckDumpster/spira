@@ -1116,6 +1116,65 @@ fn set_path_leaf(
     })
 }
 
+/// `text` with only the keys that differ between `old` and `new` changed: every other line —
+/// comments, order, quoting, empty strings — stays byte-identical. A whole-file re-serialise
+/// rewrites keys the caller never named.
+pub fn edit_text(text: &str, old: &SpiraToml, new: &SpiraToml) -> Result<String, String> {
+    let mut edited: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let old_v = toml::Value::try_from(old).map_err(|e| e.to_string())?;
+    let new_v = toml::Value::try_from(new).map_err(|e| e.to_string())?;
+    let mut path = Vec::new();
+    diff_apply(edited.as_table_mut(), &mut path, Some(&old_v), Some(&new_v))?;
+    Ok(edited.to_string())
+}
+
+fn diff_apply(
+    root: &mut toml_edit::Table,
+    path: &mut Vec<String>,
+    old: Option<&toml::Value>,
+    new: Option<&toml::Value>,
+) -> Result<(), String> {
+    if old == new {
+        return Ok(());
+    }
+    if let (Some(toml::Value::Table(o)), Some(toml::Value::Table(n))) = (old, new) {
+        let keys: std::collections::BTreeSet<&String> = o.keys().chain(n.keys()).collect();
+        for k in keys {
+            path.push(k.clone());
+            diff_apply(root, path, o.get(k), n.get(k))?;
+            path.pop();
+        }
+        return Ok(());
+    }
+    let Some((leaf, parents)) = path.split_last() else { return Ok(()) };
+    let mut cur: &mut dyn toml_edit::TableLike = root;
+    for seg in parents {
+        if new.is_none() && cur.get(seg).is_none() {
+            return Ok(());
+        }
+        let entry = cur.entry(seg).or_insert_with(|| {
+            let mut t = toml_edit::Table::new();
+            t.set_implicit(true);
+            toml_edit::Item::Table(t)
+        });
+        cur = entry.as_table_like_mut().ok_or_else(|| format!("{}: not a table", parents.join(".")))?;
+    }
+    let Some(new) = new else {
+        cur.remove(leaf);
+        return Ok(());
+    };
+    let mut wrap = toml::map::Map::new();
+    wrap.insert(leaf.clone(), new.clone());
+    let doc: toml_edit::DocumentMut =
+        toml::to_string(&wrap).map_err(|e| e.to_string())?.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let mut item = doc.as_table().get(leaf).cloned().ok_or("lost the value")?;
+    if let (Some(prev), toml_edit::Item::Value(v)) = (cur.get(leaf).and_then(|i| i.as_value()), &mut item) {
+        *v.decor_mut() = prev.decor().clone();
+    }
+    cur.insert(leaf, item);
+    Ok(())
+}
+
 /// Sets one dotted path (`spira.prod`, `spira.instance`, `spira.max_live_aeons`) to a value
 /// given as a plain command-line string, for `spira-config set` — the writer `deploy.sh`,
 /// `install.sh` and `conf.sh`'s own `spira_config_set` shell helper use once nothing writes
@@ -1164,6 +1223,22 @@ pub fn unset_path(doc: &SpiraToml, path: &str) -> Result<SpiraToml, String> {
     set_path_leaf(doc, path, serde_json::Value::Null)
 }
 
+/// `text` without the retired key at `path`, every other line untouched.
+pub fn remove_retired_text(text: &str, path: &str) -> Result<String, String> {
+    let mut edited: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string())?;
+    let mut cur: &mut dyn toml_edit::TableLike = edited.as_table_mut();
+    let segs: Vec<&str> = path.split('.').collect();
+    let Some((leaf, parents)) = segs.split_last() else { return Ok(text.to_string()) };
+    for seg in parents {
+        match cur.get_mut(seg).and_then(|i| i.as_table_like_mut()) {
+            Some(t) => cur = t,
+            None => return Ok(text.to_string()),
+        }
+    }
+    cur.remove(leaf);
+    Ok(edited.to_string())
+}
+
 /// Whether `path` names a retired key (see [`unset_path`]).
 pub fn is_retired_path(path: &str) -> bool {
     let parts: Vec<&str> = path.split('.').collect();
@@ -1181,11 +1256,12 @@ pub fn is_retired_path(path: &str) -> bool {
 /// document is never observed with one written and not the other.
 pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Result<(), String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let mut doc = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    let before = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    let mut doc = before.clone();
     for (path, value) in pairs {
         doc = set_path(&doc, path, value)?;
     }
-    let out = toml::to_string_pretty(&doc).map_err(|e| format!("{}: {e}", file.display()))?;
+    let out = edit_text(&text, &before, &doc).map_err(|e| format!("{}: {e}", file.display()))?;
     validate(&out)?;
     write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
 }

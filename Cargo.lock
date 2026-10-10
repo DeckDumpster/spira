@@ -1447,6 +1447,7 @@ dependencies = [
  "serde_path_to_error",
  "testkit",
  "toml",
+ "toml_edit",
  "tsd",
 ]
 
