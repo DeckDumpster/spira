@@ -845,7 +845,7 @@ wantrc "a fence edit without an ask is refused" 3 $?
 is "the refused mend leaves the row MENDING" "MENDING" "$(mrow_state test-b.sh | cut -d' ' -f1)"
 mendrow test-b.sh tipM1 tipM2 queue/src/a.rs >/dev/null
 wantrc "an in-diff source edit is mended" 0 $?
-is "the row is MENDED" "MENDED" "$(mrow_state test-b.sh)"
+is "the row is MENDED" "MENDED" "$(mrow_state test-b.sh | cut -d' ' -f1)"
 is "the mended tip is the branch's recorded tip" "tipM2" "$(lc mending tips --beads sp-lc-m-1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["sp-lc-m-1"])')"
 for s in test-c.sh test-d.sh test-e.sh; do
     pev batch-mend "{\"Failed\":{\"suite\":\"$s\",\"n\":1}}" >/dev/null
