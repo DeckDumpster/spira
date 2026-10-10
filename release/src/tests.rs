@@ -2032,3 +2032,17 @@ fn dolt_renders_from_the_install_locations_when_path_omits_it() {
     let got = cfg.host_values().unwrap().remove("DOLT").unwrap();
     assert_eq!(got, dolt.display().to_string());
 }
+
+#[test]
+fn build_stages_the_candidates_delta_before_any_release_exists_and_without_one_stages_nothing() {
+    let w = World::with_git(delta_git("[added]\n\"spira.groom_gate_label\" = \"placeholder-gate\"\n"));
+    let before = "[spira]\nid_prefix = \"sp\"\n";
+    let spec = w.cfg.toml_spec().unwrap();
+    file(Path::new(&spec), before);
+    let (dir, staged) = config_delta::staged_for_commit(&w.git, &spec, Path::new("/repo"), B).unwrap().expect("the candidate declares a delta");
+    let text = fs::read_to_string(&staged).unwrap();
+    assert!(text.contains("groom_gate_label = \"placeholder-gate\""), "{text}");
+    assert_eq!(cfg_text(&w), before, "staging writes nothing to the files in force");
+    let _ = fs::remove_dir_all(dir);
+    assert!(config_delta::staged_for_commit(&w.git, &spec, Path::new("/repo"), A).unwrap().is_none(), "control: a commit with no delta entry leaves production config as it is, so its missing key stays a refusal naming it");
+}
