@@ -9,7 +9,10 @@ use std::time::Duration;
 
 use crate::alarm::MailAlarm;
 use crate::config::{Config, PveEnv};
-use crate::pool::{Attempt, Deps, Pool, Spawner};
+use crate::ec2::{AwsCli, Ec2, Ec2Config};
+use crate::pool::{Attempt, Deps, Pool, Spawner, SpillPlan};
+use crate::route::Routed;
+use crate::spill::Rule;
 use crate::procs::{block_termination_signals, command};
 use crate::provider::Timing;
 use crate::pve::{HttpTransport, Pve};
@@ -29,19 +32,51 @@ pub fn real_attempt() -> Result<Attempt, String> {
         .map_err(|_| format!("round-vm: SPIRA_ROUND_VM_HOST_PUBKEY not readable: {}", cfg.host_pubkey.display()))?;
     let env = PveEnv::load(&cfg.pve_env_path, &|k| std::env::var(k).ok())?;
     let transport = HttpTransport::new(&env)?;
+    let local = Pve {
+        t: transport,
+        env,
+        task_timeout: secs_env("PVE_TASK_TIMEOUT", 300),
+        exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30),
+        poll: Duration::from_secs(1),
+    };
+    let (ec2, spill) = spill_wiring(&cfg);
     Ok(Attempt {
-        provider: Box::new(Pve {
-            t: transport,
-            env,
-            task_timeout: secs_env("PVE_TASK_TIMEOUT", 300),
-            exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30),
-            poll: Duration::from_secs(1),
-        }),
+        provider: Box::new(Routed { local: Box::new(local), ec2 }),
+        spill,
         iface: cfg.net_iface.clone(),
         ssh_user: cfg.ssh_user.clone(),
         pubkey,
         timing: Timing { boot_tries: cfg.boot_tries, poll: cfg.boot_poll, gone_tries: 30 },
     })
+}
+
+/// The EC2 provider and the spill rule, when `SPIRA_ROUND_VM_SPILL=ec2`. A provider that
+/// cannot start says what is missing and the pool stays local: a half-configured spill must
+/// not take the local rounds down with it.
+fn spill_wiring(cfg: &Config) -> (Option<std::sync::Arc<dyn crate::provider::Provider>>, Option<SpillPlan>) {
+    if crate::config::str_env_opt("SPIRA_ROUND_VM_SPILL").as_deref() != Some("ec2") {
+        return (None, None);
+    }
+    let ec2cfg = Ec2Config::from_lookup(&|k| std::env::var(k).ok());
+    let api = AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2"));
+    let ec2: std::sync::Arc<dyn crate::provider::Provider> = match Ec2::new(api, &ec2cfg) {
+        Ok(p) => std::sync::Arc::new(p),
+        Err(e) => {
+            eprintln!("{e}; rounds stay local");
+            return (None, None);
+        }
+    };
+    let num = |k: &str, d: u64| crate::config::str_env_opt(k).and_then(|v| v.parse().ok()).unwrap_or(d);
+    let plan = SpillPlan {
+        ec2: ec2.clone(),
+        rule: Rule {
+            wait: Duration::from_secs(num("SPIRA_ROUND_VM_SPILL_WAIT_SECS", 30)),
+            io_full_avg60: crate::config::str_env_opt("SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60").and_then(|v| v.parse().ok()).unwrap_or(30.0),
+        },
+        pressure: Box::new(|| crate::spill::read_io_full_avg60(crate::spill::PSI_IO)),
+        timing: Timing { boot_tries: num("SPIRA_ROUND_VM_EC2_BOOT_TRIES", 150) as u32, poll: cfg.boot_poll, gone_tries: 60 },
+    };
+    (Some(ec2), Some(plan))
 }
 
 /// Starts `round-vm _provision-bg` in its own process group (so a `timeout` killing the

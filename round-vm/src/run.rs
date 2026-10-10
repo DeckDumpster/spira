@@ -968,6 +968,18 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         }
     };
     eprintln!("round-vm run: {} {} {}", vm.handle, vm.addr, mode.as_str());
+    let host_addr = if crate::ec2::is_ec2_handle(&vm.handle) {
+        match crate::config::str_env_opt("SPIRA_ROUND_VM_EC2_HOST_ADDR") {
+            Some(a) => a,
+            None => {
+                eprintln!("round-vm run: SPIRA_ROUND_VM_EC2_HOST_ADDR is not set; a spilled VM cannot reach this host");
+                let _ = env.pool.release(&vm.handle, ProcId::current(), env.deps.factory);
+                return 2;
+            }
+        }
+    } else {
+        host_addr
+    };
     let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, progress, results_dir);
     if let Err(e) = env.pool.release(&vm.handle, ProcId::current(), env.deps.factory) {
         eprintln!("round-vm run: warning: release of {} failed: {e}", vm.handle);
@@ -1287,6 +1299,7 @@ fn after_batch(
         batch_wall_secs: wall,
         build_wall_secs: build,
         suite_wall_secs_sum: suite_sum,
+        provider: if crate::ec2::is_ec2_handle(&vm.handle) { "ec2" } else { "proxmox" }.to_string(),
     };
     let mdir = cfg.state_dir.join("manifests");
     let written = fs::create_dir_all(&mdir)
@@ -1932,6 +1945,7 @@ mod tests {
         let f = move || {
             Ok(Attempt {
                 provider: Box::new(fp.clone()),
+                spill: None,
                 iface: "ens18".into(),
                 ssh_user: "root".into(),
                 pubkey: "k".into(),
@@ -1949,6 +1963,7 @@ mod tests {
         let f = move || {
             Ok(Attempt {
                 provider: Box::new(fp.clone()),
+                spill: None,
                 iface: "ens18".into(),
                 ssh_user: "root".into(),
                 pubkey: "k".into(),

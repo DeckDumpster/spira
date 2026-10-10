@@ -9,14 +9,24 @@ use crate::alarm::Alarm;
 use crate::procs::FileLock;
 use crate::provider::{destroy_verified, provision, DestroyError, Provider, ProvisionSpec, Timing};
 use crate::machine::VmState;
+use crate::spill::{decide, Place, Rule};
 use crate::schema::{now, AcquireMode, Lease, Outage, PoolState, ProcId, Provisioning, Vm};
 
 /// Everything one attempt needs, built fresh from config and pve.env each time (G7).
 pub struct Attempt {
     pub provider: Box<dyn Provider>,
+    pub spill: Option<SpillPlan>,
     pub iface: String,
     pub ssh_user: String,
     pub pubkey: String,
+    pub timing: Timing,
+}
+
+/// Where a pass may run instead of the local pool, and the rule that sends it there.
+pub struct SpillPlan {
+    pub ec2: std::sync::Arc<dyn Provider>,
+    pub rule: Rule,
+    pub pressure: Box<dyn Fn() -> Option<f64>>,
     pub timing: Timing,
 }
 
@@ -99,6 +109,12 @@ impl Pool {
                 }
                 s.provisioning = None;
             }
+        }
+        let (orphans, running): (Vec<Provisioning>, Vec<Provisioning>) = s.spilled.drain(..).partition(|pr| !pr.owner.alive());
+        s.spilled = running;
+        for id in orphans.into_iter().filter_map(|pr| pr.vmid) {
+            s.note(&id, VmState::Doomed, "its spilled provisioner died");
+            s.doomed.push(id);
         }
         let (dead, live): (Vec<Lease>, Vec<Lease>) =
             s.leases.drain(..).partition(|l| l.owner.map(|o| !o.alive()).unwrap_or(false));
@@ -193,6 +209,9 @@ impl Pool {
         let mut waited = false;
         let started = std::time::Instant::now();
         let mut waiting_on = String::from("the first attempt");
+        let mut wait_since: Option<std::time::Instant> = None;
+        let mut spill_failed = false;
+        let mut reaped_stale = false;
         loop {
             if !self.acquire_deadline.is_zero() && started.elapsed() >= self.acquire_deadline {
                 return Err(format!(
@@ -208,6 +227,20 @@ impl Pool {
                     continue;
                 }
             };
+            if !std::mem::replace(&mut reaped_stale, true) {
+                self.reap_stale(&attempt);
+            }
+            if let Some(plan) = attempt.spill.as_ref().filter(|_| !spill_failed) {
+                if let Place::Ec2(reason) = decide(&plan.rule, wait_since.map(|t| t.elapsed()), (plan.pressure)()) {
+                    match self.spill(&attempt, plan, owner, &reason) {
+                        Ok(vm) => return Ok((vm, AcquireMode::Cold)),
+                        Err(e) => {
+                            eprintln!("round-vm: spill to EC2 failed, staying local: {e}");
+                            spill_failed = true;
+                        }
+                    }
+                }
+            }
             let p = attempt.provider.as_ref();
             let next = self.with_state(|s| {
                 Self::reap(s, p, attempt.timing);
@@ -216,7 +249,7 @@ impl Pool {
                 }
                 if let Some(vm) = s.ready.take() {
                     if p.alive(&vm.handle).unwrap_or(false) {
-                        Self::hand_out(s, &vm, owner, deps.spawner, "warm VM handed out");
+                        Self::hand_out(s, &vm, owner, deps.spawner, "warm VM handed out (provider: proxmox)");
                         return Next::Got(vm);
                     }
                     s.note(&vm.handle, VmState::Doomed, "died while ready");
@@ -233,6 +266,7 @@ impl Pool {
                 Next::Got(vm) => return Ok((vm, if waited { AcquireMode::Cold } else { AcquireMode::Warm })),
                 Next::Wait => {
                     waited = true;
+                    wait_since.get_or_insert_with(std::time::Instant::now);
                     waiting_on = "the provision in flight to finish".into();
                     std::thread::sleep(self.wait_poll);
                 }
@@ -249,7 +283,7 @@ impl Pool {
                         Ok(vm) => {
                             self.with_state(|s| {
                                 clear_mine(s);
-                                Self::hand_out(s, &vm, owner, deps.spawner, "provisioned for this acquire");
+                                Self::hand_out(s, &vm, owner, deps.spawner, "provisioned for this acquire (provider: proxmox)");
                             })?;
                             return Ok((vm, AcquireMode::Cold));
                         }
@@ -264,6 +298,72 @@ impl Pool {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Destroys what the provider says outlived the run deadline: a leak (G2), whoever holds it.
+    pub fn reap_stale(&self, attempt: &Attempt) {
+        let stale = attempt.provider.stale();
+        if stale.is_empty() {
+            return;
+        }
+        let _ = self.with_state(|s| {
+            for h in &stale {
+                eprintln!("round-vm: {h} outlived the run deadline; destroying it");
+                s.leases.retain(|l| &l.vm.handle != h);
+                s.spilled.retain(|pr| pr.vmid.as_deref() != Some(h));
+                if s.ready.as_ref().map(|v| &v.handle == h).unwrap_or(false) {
+                    s.ready = None;
+                }
+                if matches!(s.state_of(h), Some(VmState::Provisioning | VmState::Ready | VmState::Leased | VmState::Released)) {
+                    s.note(h, VmState::Doomed, "outlived the run deadline");
+                }
+                if !s.doomed.contains(h) {
+                    s.doomed.push(h.clone());
+                }
+            }
+            Self::reap(s, attempt.provider.as_ref(), attempt.timing);
+        });
+    }
+
+    /// Provisions this pass's VM on EC2. Recorded in `spilled` before the instance exists
+    /// (G2); leased on success; destroyed or doomed on failure.
+    fn spill(&self, attempt: &Attempt, plan: &SpillPlan, owner: Option<ProcId>, reason: &str) -> Result<Vm, String> {
+        let me = ProcId::current();
+        let why = format!("spilled to ec2: {reason}");
+        let mut handle: Option<String> = None;
+        let spec = ProvisionSpec { timing: plan.timing, ..attempt.spec() };
+        let result = provision(plan.ec2.as_ref(), &spec, &mut |id| {
+            handle = Some(id.to_string());
+            let _ = self.with_state(|s| {
+                s.spilled.push(Provisioning { owner: me, vmid: Some(id.to_string()), since: now() });
+                s.note(id, VmState::Provisioning, &why);
+            });
+        });
+        match result {
+            Ok(vm) => {
+                self.with_state(|s| {
+                    s.spilled.retain(|pr| pr.vmid.as_deref() != Some(&vm.handle));
+                    s.note(&vm.handle, VmState::Leased, &format!("{why} (provider: ec2)"));
+                    s.leases.push(Lease { vm: vm.clone(), owner, since: now() });
+                    s.outage = None;
+                })?;
+                Ok(vm)
+            }
+            Err(f) => {
+                self.with_state(|s| {
+                    if let Some(h) = &handle {
+                        s.spilled.retain(|pr| pr.vmid.as_deref() != Some(h));
+                        if f.doomed.as_deref() == Some(h.as_str()) {
+                            s.note(h, VmState::Doomed, &f.reason);
+                            s.doomed.push(h.clone());
+                        } else {
+                            s.note(h, VmState::Destroyed, &f.reason);
+                        }
+                    }
+                })?;
+                Err(f.reason)
             }
         }
     }
@@ -443,6 +543,8 @@ impl Pool {
                     h.extend(pr.vmid.clone());
                     s.provisioning = None;
                 }
+                h.extend(s.spilled.iter().filter(|pr| pr.owner == owner).filter_map(|pr| pr.vmid.clone()));
+                s.spilled.retain(|pr| pr.owner != owner);
                 h
             })
             .unwrap_or_default();
@@ -545,7 +647,7 @@ mod tests {
     }
 
     fn attempt(p: &FakeProvider) -> Attempt {
-        Attempt { provider: Box::new(p.clone()), iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: T }
+        Attempt { provider: Box::new(p.clone()), spill: None, iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: T }
     }
 
     /// Records spawns; hands back the test process's own identity as the "background"
@@ -1061,5 +1163,120 @@ mod tests {
         pl.provision_background(&f).unwrap();
         assert!(!pl.ensure_spare(&sp).unwrap(), "a ready VM is the spare");
         assert_eq!(sp.count(), 1);
+    }
+
+    fn ec2_provider(d: &TempDir, fake: &crate::testutil::FakeEc2) -> Arc<dyn Provider> {
+        let key = d.path().join("ts.key");
+        std::fs::write(&key, "tskey").unwrap();
+        let cfg = crate::ec2::Ec2Config {
+            profile: "p".into(), region: "r".into(), ami: "a".into(), instance_type: "t".into(), subnet: "s".into(),
+            security_group: String::new(), instance_profile: String::new(), tailscale_key_file: key.to_string_lossy().into(),
+            run_deadline: Duration::from_secs(7200), host_addr: "h".into(),
+        };
+        Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
+    }
+
+    fn spilling(p: &FakeProvider, ec2: Arc<dyn Provider>, pressure: Option<f64>) -> Attempt {
+        let plan = SpillPlan {
+            ec2: ec2.clone(),
+            rule: Rule { wait: Duration::ZERO, io_full_avg60: 30.0 },
+            pressure: Box::new(move || pressure),
+            timing: T,
+        };
+        let routed = crate::route::Routed { local: Box::new(p.clone()), ec2: Some(ec2) };
+        Attempt { provider: Box::new(routed), spill: Some(plan), iface: "ens18".into(), ssh_user: "root".into(), pubkey: "k".into(), timing: T }
+    }
+
+    fn lease_reason(pl: &Pool, handle: &str) -> String {
+        let s = read_state(&pl.state_file()).unwrap();
+        s.events.iter().rev().find(|e| e.vm == handle && e.to == VmState::Leased).map(|e| e.reason.clone()).unwrap_or_default()
+    }
+
+    #[test]
+    fn io_pressure_above_the_threshold_runs_the_pass_on_ec2_and_records_why() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(41.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
+        assert!(fp.live_vms().is_empty(), "nothing was provisioned locally");
+        assert_eq!(sp.count(), 0, "a spill does not start a local background provision");
+        let why = lease_reason(&pl, &vm.handle);
+        assert!(why.contains("spilled to ec2") && why.contains("io pressure") && why.contains("provider: ec2"), "{why}");
+        assert!(read_state(&pl.state_file()).unwrap().spilled.is_empty());
+        pl.release(&vm.handle, ProcId::current(), &f).unwrap();
+        assert!(fake.ids().is_empty(), "the instance is terminated on release");
+    }
+
+    #[test]
+    fn without_pressure_the_pass_runs_local_and_says_so() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(3.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(!crate::ec2::is_ec2_handle(&vm.handle));
+        assert!(fake.ids().is_empty());
+        assert!(lease_reason(&pl, &vm.handle).contains("provider: proxmox"));
+    }
+
+    #[test]
+    fn a_pool_that_cannot_lease_within_the_wait_spills() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        pl.with_state(|s| s.provisioning = Some(Provisioning { owner: ProcId::current(), vmid: None, since: now() })).unwrap();
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle));
+        assert!(lease_reason(&pl, &vm.handle).contains("no local VM within"));
+    }
+
+    #[test]
+    fn a_failed_spill_falls_back_to_local_and_leaks_nothing() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        fake.fail_run();
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(99.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(!crate::ec2::is_ec2_handle(&vm.handle));
+        let s = read_state(&pl.state_file()).unwrap();
+        assert!(s.spilled.is_empty() && s.doomed.is_empty());
+    }
+
+    #[test]
+    fn acquire_reaps_a_stale_tagged_instance_and_leaves_an_untagged_one() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        fake.plant("i-old", Some("ec2-old"), "round-ec2-old", 1);
+        fake.plant("i-untagged", None, "round-ec2-old2", 1);
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
+        pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert_eq!(fake.ids(), ["i-untagged"]);
+    }
+
+    #[test]
+    fn a_dead_spilled_provisioner_is_destroyed_by_the_next_acquire() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        fake.plant("i-gone", Some("ec2-gone"), "round-ec2-gone", crate::schema::now());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        pl.with_state(|s| {
+            s.spilled.push(Provisioning { owner: dead_proc(), vmid: Some("ec2-gone".into()), since: now() });
+            s.note("ec2-gone", VmState::Provisioning, "spilled");
+        })
+        .unwrap();
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
+        pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(fake.ids().is_empty(), "{:?}", fake.ids());
     }
 }

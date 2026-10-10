@@ -31,6 +31,14 @@ pub trait Provider {
     fn is_template(&self, vmid: &str) -> Result<bool, String>;
     /// Blocks (bounded) while an ephemeral CI VM provisions, so a sweep VM does not boot against it.
     fn hold_for_ci(&self) {}
+    /// Handles of VMs this provider created that outlived the run deadline: leaked, to be destroyed.
+    fn stale(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Why a VM that never reached the network is stuck, for the failure's reason.
+    fn diagnose(&self, _vmid: &str) -> String {
+        String::new()
+    }
 }
 
 /// The only name round-vm gives a VM, and the only name it will ever destroy (G4).
@@ -195,7 +203,11 @@ pub fn boot(p: &dyn Provider, vmid: &str, spec: &ProvisionSpec) -> Result<String
             std::thread::sleep(t.poll);
         }
     }
-    let addr = addr.ok_or_else(|| format!("VM {vmid} did not come up on the network ({})", spec.iface))?;
+    let addr = addr.ok_or_else(|| {
+        let why = p.diagnose(vmid);
+        let why = if why.is_empty() { String::new() } else { format!("; {why}") };
+        format!("VM {vmid} did not come up on the network ({}){why}", spec.iface)
+    })?;
     deliver_key(p, vmid, spec.ssh_user, spec.pubkey)
         .map_err(|e| format!("guest-agent key delivery failed on VM {vmid}: {e}"))?;
     Ok(addr)
