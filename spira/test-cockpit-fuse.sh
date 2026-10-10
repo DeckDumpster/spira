@@ -72,6 +72,7 @@ make_aeon() {
     local pid="$!"
     PIDS+=("$pid")
     echo "$pid" > "$RUN/aeon-builder-${bead}.pid"
+    printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-builder-${bead}.lease"
 }
 
 # make_gate <bead> -> start a fake gate process and write the gate-run pid file.
