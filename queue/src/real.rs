@@ -766,6 +766,9 @@ impl Forge for RealForge {
     fn run_metadata(&self, forge: &Path, repo: &Path, run: &str) -> String {
         stdout_of(Command::new(forge).arg("run-metadata").arg(repo).arg(run)).unwrap_or_default()
     }
+    fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String {
+        stdout_of(Command::new(forge).arg("fail-lines").arg(repo).arg(run).arg(suites)).unwrap_or_default()
+    }
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str) {
         let _ = ok(Command::new(forge).arg("run-cancel").arg(repo).arg(run).stderr(Stdio::null()));
     }
