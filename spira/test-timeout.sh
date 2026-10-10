@@ -113,9 +113,10 @@ chmod +x "$TMP/aeon.sh"
 STUB_PID=$!
 exec 3>"$TMP/hold"        # open write end; unblocks stub's stdin open
 printf '%d' "$STUB_PID" > "$PF"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "${PF%.pid}.lease"
 age_live="$(ops_age_of "$RUN")"
 exec 3>&-                 # close write end; stub's read returns EOF; stub exits
-wait "$STUB_PID" 2>/dev/null; rm -f "$PF"
+wait "$STUB_PID" 2>/dev/null; rm -f "$PF" "${PF%.pid}.lease"
 is "live pidfile: SP_OPS_AGE is 0" "0" "$age_live"
 
 wait  # reap zombie subshells from earlier command substitutions before exit
