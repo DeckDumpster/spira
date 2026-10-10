@@ -226,7 +226,9 @@ impl Heartbeat {
             let fuse = b.fuse();
             self.renew_identity(now);
             if crate::stop::requested(&self.run, &self.bead) {
+                let why = crate::stop::reason(&self.run, &self.bead);
                 crate::stop::clear(&self.run, &self.bead);
+                b.disposition("slain", &why);
                 b.log(&format!("{}: {} stop requested — stopping the session", self.fayth, self.bead));
                 stop.trip(libc::SIGTERM);
                 return None;
@@ -397,6 +399,7 @@ mod tests {
         assert_eq!(stop.signalled(), Some(libc::SIGTERM));
         assert!(!crate::stop::requested(&d, "sp-a"), "the request is consumed");
         assert!(b.logs.lock().unwrap()[0].contains("stop requested"));
+        assert_eq!(b.dispositions.lock().unwrap().clone(), vec![("slain".to_string(), "why".to_string())]);
     }
 
     #[test]

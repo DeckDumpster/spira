@@ -12,6 +12,10 @@ pub fn requested(run: &Path, bead: &str) -> bool {
     request_file(run, bead).is_file()
 }
 
+pub fn reason(run: &Path, bead: &str) -> String {
+    std::fs::read_to_string(request_file(run, bead)).unwrap_or_default().trim().to_string()
+}
+
 pub fn clear(run: &Path, bead: &str) {
     let _ = std::fs::remove_file(request_file(run, bead));
 }
@@ -33,7 +37,6 @@ pub fn request(run: &Path, bead: &str, why: &str, now: i64) -> Result<String, St
     let name = std::fs::read_to_string(pf.with_extension("name")).unwrap_or_default();
     let name = if name.trim().is_empty() { "?" } else { name.trim() };
     let why = if why.is_empty() { "stopped by the operator" } else { why };
-    std::fs::write(run.join(format!("{bead}.slain")), format!("{now}\t{why}\n")).map_err(|e| format!("cannot record the stop: {e}"))?;
     let f = request_file(run, bead);
     if let Some(d) = f.parent() {
         let _ = std::fs::create_dir_all(d);
@@ -93,7 +96,7 @@ mod tests {
         let m = request(&t, "sp-a", "because", 500).unwrap();
         assert!(m.contains("ifrit") && m.contains("sp-a"), "{m}");
         assert!(requested(&t, "sp-a"));
-        assert!(std::fs::read_to_string(t.join("sp-a.slain")).unwrap().contains("because"));
+        assert_eq!(reason(&t, "sp-a"), "because");
         clear(&t, "sp-a");
         assert!(!requested(&t, "sp-a"));
     }
@@ -105,7 +108,7 @@ mod tests {
         let e = request(&t, "sp-a", "", 500).unwrap_err();
         assert!(e.contains("no live aeon on sp-a"), "{e}");
         assert!(request(&t, "sp-nobody", "", 500).is_err());
-        assert!(!requested(&t, "sp-a") && !t.join("sp-a.slain").exists(), "a refusal records nothing");
+        assert!(!requested(&t, "sp-a"), "a refusal records nothing");
     }
 
     #[test]
