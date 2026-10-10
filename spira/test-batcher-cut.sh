@@ -340,7 +340,7 @@ cut_repo() {
     STUB_EXIT4="${STUB_EXIT4:-}" \
     SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-$TMP/lc-default.log}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
-        batcher cut "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
+        batcher "${BATCHER_VERB:-cut}" "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
 
 B() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" "$@"; }
@@ -565,7 +565,7 @@ timeout 5 git -C "$REPO" push -q origin main
 timeout 5 git -C "$REPO" fetch -q origin
 rm -f "$QUEUEDIR/$REPONAME/base-moved"
 
-out_c="$(STUB_RED_SUITES="" cut_repo)"
+out_c="$(BATCHER_VERB=sift STUB_RED_SUITES="" cut_repo; STUB_RED_SUITES="" cut_repo)"
 is   "C: sp-cccc3 is reopened"   "open" "$(status_of sp-cccc3)"
 is   "C: the pre-round screen sent sp-cccc3 to REWORK (no-rebase)" "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-cccc3")"
 want "C: the screen says so" "SIFT sent sp-cccc3 to REWORK" "$out_c"
