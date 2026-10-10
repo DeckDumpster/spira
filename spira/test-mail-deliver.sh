@@ -469,10 +469,10 @@ is "8c: well under the 10s liveness bound end to end" "1" "$([ "$elapsed" -le 10
 echo
 echo "9. WATCH LEASE — health is the lease, never a process scan:"
 LRUN="$TMP/lease-run"; mkdir -p "$LRUN"
-tl_config SPIRA_RUN="$LRUN"
+tl_config SPIRA_RUN="$LRUN" SPIRA_MAIL_READERS="leasebox=echo wake"
 lease_health() {
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" \
-        SPIRA_MAIL_READERS="leasebox=echo wake" bash "$HERE/spira-mail-deliver.sh" health >/dev/null 2>&1
+        bash "$HERE/spira-mail-deliver.sh" health >/dev/null 2>&1
     echo $?
 }
 is "9a: no lease -> not watching" "1" "$(lease_health)"
