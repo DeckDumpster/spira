@@ -20,9 +20,39 @@ pub fn cmd_ops_view(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(view) = args.first().and_then(|a| VIEWS.iter().find(|v| **v == a.as_str())) else {
         return (2, format!("ops-view: takes one of {}", VIEWS.join(" | ")));
     };
+    if let Some(rows) = conn.live().and_then(|l| l.ops_view(view, crate::db::now_epoch())) {
+        return (0, Value::Array(rows).to_string());
+    }
     match conn.query(&format!("SELECT * FROM {view}")) {
         Ok(rows) => (0, Value::Array(rows).to_string()),
         Err(e) => (2, format!("cannot tell: {e:?}")),
+    }
+}
+
+/// `live-check`: compare the live rows with Dolt now. A mismatch reloads memory and raises an
+/// incident naming the divergent beads (exit 1); a match is exit 0.
+pub fn cmd_live_check(conn: &Conn) -> (i32, String) {
+    match run_live_check(conn, &raise_incident) {
+        Ok(check) => (i32::from(!check.divergent.is_empty()), serde_json::json!({ "consistent": check.divergent.is_empty(), "rows": check.rows, "memory_hash": check.memory_hash, "dolt_hash": check.dolt_hash, "divergent": check.divergent }).to_string()),
+        Err(e) => (2, format!("live-check: {e}")),
+    }
+}
+
+pub fn run_live_check(conn: &Conn, raise: &dyn Fn(&[String])) -> Result<crate::live::Check, String> {
+    let check = conn.live_check()?;
+    if !check.divergent.is_empty() {
+        raise(&check.divergent);
+    }
+    Ok(check)
+}
+
+pub fn raise_incident(divergent: &[String]) {
+    let title = format!("lc-serve live rows diverged from Dolt: {}", divergent.iter().take(5).cloned().collect::<Vec<_>>().join(", "));
+    let body = format!("The consistency check found these beads in memory differing from the lifecycle store, and reloaded them from Dolt:\n{}\n\nA row changed without passing through lc-serve's write path, or a write's refresh was lost.\n", divergent.join("\n"));
+    let env = [("SPIRA_INCIDENT_TYPE", "bug"), ("SPIRA_INCIDENT_PRIORITY", "1"), ("SPIRA_INCIDENT_ACTOR", "lc-serve"), ("SPIRA_INCIDENT_REPO", "spira"), ("SPIRA_INCIDENT_REF", "lc-live-divergence"), ("SPIRA_INCIDENT_CAUSE", "lc-live-divergence")];
+    let (code, out) = crate::bd::tool_env("incident.sh", &["file".to_string(), title, "-".to_string()], Some(&body), "lc-serve", 60, &env);
+    if code != 0 {
+        eprintln!("spira-lc: live-check could not raise its incident ({code}): {out}");
     }
 }
 
