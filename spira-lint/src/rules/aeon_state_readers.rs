@@ -152,3 +152,9 @@ mod tests {
         assert!(run(&t, &["round-vm/y.rs"]).is_err());
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(AeonStateReaders::default()),
+    ]
+}
