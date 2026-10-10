@@ -51,6 +51,43 @@ pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &st
     None
 }
 
+pub const KIND: &str = "fast-tier-red";
+pub const DIGEST_MAX_LINES: usize = 60;
+
+/// The lines of a red that say what to fix: the failing step, compiler errors with their
+/// `-->` locations, and a rebase conflict's paths. Warnings and the rest are dropped.
+pub fn digest(red: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut in_error = false;
+    for (i, line) in red.lines().enumerate() {
+        let t = line.trim_start();
+        let keep = if i == 0 {
+            in_error = false;
+            true
+        } else if t.starts_with("error") || t.contains("CONFLICT") {
+            in_error = true;
+            true
+        } else if t.starts_with("warning") {
+            in_error = false;
+            false
+        } else if t.starts_with("-->") {
+            in_error
+        } else {
+            false
+        };
+        if keep {
+            out.push(line);
+        }
+    }
+    out.truncate(DIGEST_MAX_LINES);
+    out.join("\n")
+}
+
+/// Whether a digest names a compile error, which `cargo check` would reproduce.
+pub fn names_compile_error(digest: &str) -> bool {
+    digest.lines().any(|l| l.trim_start().starts_with("error[E") || l.trim_start().starts_with("error:") && !l.contains("aborting") && !l.contains("could not compile"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +182,32 @@ mod tests {
         assert_eq!(red(&G(0), &e, &w.join("."), &w.join("."), "b", "base", false), None);
         assert!(red(&G(0), &e, &w.join("."), &w.join("."), "b", "base", true).unwrap().contains("no fast tier"));
         assert!(e.1.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_digest_keeps_two_errors_and_their_locations_out_of_fifty_warnings() {
+        let mut red = String::from("spira/build-fence.sh failed (rc=101):\n");
+        for i in 0..50 {
+            red.push_str(&format!("warning: unused variable `v{i}`\n  --> src/w{i}.rs:1:1\n   |\n1  | let v = 1;\n\n"));
+        }
+        red.push_str("error[E0432]: unresolved import `crate::nope`\n  --> src/a.rs:3:5\n   |\n3  | use crate::nope;\n\nerror[E0063]: missing field `x`\n  --> src/b.rs:9:1\n");
+        let d = digest(&red);
+        assert!(!d.contains("warning") && !d.contains("src/w"), "{d}");
+        assert_eq!(d.lines().collect::<Vec<_>>(), [
+            "spira/build-fence.sh failed (rc=101):",
+            "error[E0432]: unresolved import `crate::nope`",
+            "  --> src/a.rs:3:5",
+            "error[E0063]: missing field `x`",
+            "  --> src/b.rs:9:1",
+        ]);
+        assert!(names_compile_error(&d));
+    }
+
+    #[test]
+    fn a_rebase_conflict_digest_keeps_its_paths_and_is_capped() {
+        let red = format!("b does not rebase onto base cleanly:\n{}", (0..200).map(|i| format!("CONFLICT (content): Merge conflict in f{i}.rs\n")).collect::<String>());
+        let d = digest(&red);
+        assert_eq!(d.lines().count(), DIGEST_MAX_LINES);
+        assert!(d.contains("in f1.rs") && !names_compile_error(&d));
     }
 }

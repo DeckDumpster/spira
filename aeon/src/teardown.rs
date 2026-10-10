@@ -59,8 +59,25 @@ impl Run<'_> {
     /// failure text instead of waiting a certification cycle to learn it.
     fn refuse_handoff(&self, red: &str) {
         let br = &self.s.branch;
-        self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{red}"));
+        let digest = crate::fast_tier::digest(red);
+        self.record_fact(crate::fast_tier::KIND, &digest);
+        self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{digest}"));
         self.log(&format!("{}: {} REOPENED — fast tier red, handoff refused", self.f(), self.s.bead));
+    }
+
+    /// A session that ends without submitting, when the bead's last fast-tier red named a
+    /// compile error and the session never ran `cargo check`, is recorded as a blind rework.
+    fn note_blind_rework(&self) {
+        let red = self.last_fast_tier_red();
+        if !crate::fast_tier::names_compile_error(&red) {
+            return;
+        }
+        let log = self.s.logf.as_deref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+        if log.contains("cargo check") || log.contains("build-fence") {
+            return;
+        }
+        self.record_fact("blind-rework", "ended without submitting; never ran cargo check against the last fast-tier red");
+        self.note("Blind rework: the previous closeout's fast tier named a compile error, and this session ended without submitting or ever running cargo check against it. Reproduce the error first.");
     }
 
     /// Commits naming this bead between the base and the branch.
@@ -297,6 +314,7 @@ impl Run<'_> {
             }
             NoteKey::Unlanded => {
                 let o = i.outcome.clone().unwrap_or_default();
+                self.note_blind_rework();
                 self.note(&format!("Unlanded ({o}): the session ran to its own end and left this bead open. That is a verdict about the work; the next claim counts toward the poison threshold via the events trail."));
                 self.log(&format!("{f}: {id} not closed ({o}), released"));
                 self.release();

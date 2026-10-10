@@ -11,11 +11,14 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 /// Closed: a kind outside this list is refused, so a typo cannot start a new history.
-pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "__doctor_probe__"];
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "blind-rework", "__doctor_probe__"];
 
 pub const MACHINE: &str = "fact";
 pub const CAUSE_MAX: usize = 200;
 pub const READ_MAX: usize = 120;
+/// Kinds whose cause is a multi-line digest rather than a one-line token.
+pub const LONG_KINDS: &[&str] = &["fast-tier-red"];
+pub const LONG_MAX: usize = 6000;
 
 fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
@@ -23,6 +26,10 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 
 fn bounded(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).take(CAUSE_MAX).collect()
+}
+
+fn bounded_long(s: &str) -> String {
+    s.chars().filter(|c| *c == '\n' || !c.is_control()).take(LONG_MAX).collect()
 }
 
 pub fn insert_sql(key: &str, kind: &str, cause: &str, actor: &str, at: i64) -> String {
@@ -51,7 +58,8 @@ pub fn cmd_fact(args: &[String], conn: &Conn) -> (i32, String) {
     if key.is_empty() || actor.is_empty() {
         return (CANNOT_TELL, "fact: empty <bead-id> or --actor".into());
     }
-    let cause = bounded(&flag(args, "--cause").unwrap_or_default());
+    let raw = flag(args, "--cause").unwrap_or_default();
+    let cause = if LONG_KINDS.contains(&kind.as_str()) { bounded_long(&raw) } else { bounded(&raw) };
     match conn.append_event(&insert_sql(key, &kind, &cause, &bounded(&actor), db::now_epoch())) {
         Ok(()) => (0, String::new()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
@@ -60,8 +68,9 @@ pub fn cmd_fact(args: &[String], conn: &Conn) -> (i32, String) {
 
 pub fn select_sql(ids: &[String], kinds: &[String], since: Option<i64>) -> String {
     let list = |v: &[String]| v.iter().map(|i| format!("'{}'", rows::escape(i))).collect::<Vec<_>>().join(",");
+    let long = LONG_KINDS.iter().map(|k| format!("event = '{k}'")).collect::<Vec<_>>().join(" OR ");
     let mut sql = format!(
-        "SELECT lc_key AS issue_id, event AS event_type, SUBSTRING(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')), ''), 1, {READ_MAX}) AS new_value, actor, `at` FROM event WHERE machine = '{MACHINE}'"
+        "SELECT lc_key AS issue_id, event AS event_type, CASE WHEN ({long}) THEN SUBSTRING(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')), ''), 1, {LONG_MAX}) ELSE SUBSTRING(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.cause')), ''), 1, {READ_MAX}) END AS new_value, actor, `at` FROM event WHERE machine = '{MACHINE}'"
     );
     if !ids.is_empty() {
         sql.push_str(&format!(" AND lc_key IN ({})", list(ids)));
@@ -209,6 +218,15 @@ mod tests {
     fn a_cause_is_bounded_and_single_line() {
         assert_eq!(bounded(&format!("a\nb{}", "x".repeat(300))).len(), CAUSE_MAX);
         assert!(!bounded("a\nb").contains('\n'));
+    }
+
+    #[test]
+    fn a_fast_tier_red_keeps_its_lines_and_reads_back_whole() {
+        assert!(KINDS.contains(&"fast-tier-red"));
+        assert!(bounded_long("a\nb").contains('\n'));
+        assert_eq!(bounded_long(&"x".repeat(LONG_MAX + 50)).len(), LONG_MAX);
+        let q = select_sql(&["sp-a".into()], &["fast-tier-red".into()], None);
+        assert!(q.contains(&format!("1, {LONG_MAX}")), "{q}");
     }
 
     #[test]
