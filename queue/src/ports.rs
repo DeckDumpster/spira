@@ -214,12 +214,12 @@ pub trait Scripts {
     /// (`release verify`'s pre-activate store check reads it). Stdout and stderr are kept
     /// apart: `release build` answers the sha on stdout.
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut;
-    /// `round-vm run <tree> --results-dir <results> --base <base>` under `timeout <wall_secs>`: the full
+    /// `round-vm run <tree> --results-dir <results> --base <base> --round-batch <batch> --round-repo <repo>` under `timeout <wall_secs>`: the full
     /// corpus of `tree` on the round VM. Exit 0/1 ran (the results say which suites are red);
     /// 124/137 hit the wall; anything else is the harness's fault.
     /// `handle` is where the run's pid is written while it runs: the one thing `round preempt`
     /// addresses. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, wall_secs: u64, handle: &Path) -> RunOut;
+    fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut;
     /// SIGTERM to a run's pid: round-vm salvages the finished suites' results and releases the VM.
     fn pass_terminate(&self, pid: u32);
     fn pass_alive(&self, pid: u32) -> bool;

@@ -224,7 +224,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
             let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default() };
             let remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
             let Some(a) = run_args.as_ref() else { return 2 };
-            let env = RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote };
+            let env = RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote, record: &crate::run::QueueRecorder };
             let code = no_panic(|| run(&env, a));
             if code == PANIC_EXIT {
                 // G2: a panic mid-run must not leave this run's VM leased to a dying process.

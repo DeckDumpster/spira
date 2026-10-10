@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>]";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -35,6 +35,9 @@ pub struct RunArgs {
     /// The landing ref the round is judged against: the VM runs `spira-lint --base` on it and
     /// attributes a hit to the member whose diff touches the file. Absent: no lint step.
     pub base: Option<String>,
+    /// The spira-lc batch this pass belongs to: the suites boundary is recorded on it live.
+    pub round_batch: Option<String>,
+    pub round_repo: Option<String>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -58,6 +61,8 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--results-dir" => r.results_dir = Some(PathBuf::from(val()?)),
             "--attr-spool" => r.attr_spool = Some(PathBuf::from(val()?)),
             "--base" => r.base = Some(val()?).filter(|v| !v.is_empty()),
+            "--round-batch" => r.round_batch = Some(val()?).filter(|v| !v.is_empty()),
+            "--round-repo" => r.round_repo = Some(val()?).filter(|v| !v.is_empty()),
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
     }
@@ -784,6 +789,53 @@ pub struct RunEnv<'a> {
     pub deps: &'a Deps<'a>,
     pub host: &'a dyn Host,
     pub remote: &'a dyn Remote,
+    pub record: &'a dyn Recorder,
+}
+
+/// Writes a pass boundary onto the round's batch row.
+pub trait Recorder: Sync {
+    fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
+}
+
+/// `queue round suites-started`: the lifecycle machine's own verb, so a refusal names the phase.
+pub struct QueueRecorder;
+
+impl Recorder for QueueRecorder {
+    fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", "60", "queue", "round", "suites-started", batch]).args(repo).stdin(Stdio::null());
+        let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("queue round suites-started refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+}
+
+/// The suites boundary, written the first time the pass is seen past its build. A refused write is
+/// kept so the pass ends a fault: a pass the batch row cannot follow is not one to certify.
+fn record_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, refused: &mut Option<String>) {
+    let Some(batch) = args.round_batch.as_deref() else { return };
+    if progress.take_suites_began() {
+        if let Err(e) = env.record.suites_started(batch, args.round_repo.as_deref()) {
+            eprintln!("round-vm run: {e}");
+            refused.get_or_insert(e);
+        }
+    }
+}
+
+/// A batch that finished between two polls is still recorded; a refused record turns a judged pass
+/// (green or red) into a fault.
+fn settle_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, results_dir: &Path, refused: &mut Option<String>, code: i32) -> i32 {
+    progress.update(results_dir);
+    record_boundary(env, args, progress, refused);
+    match refused {
+        Some(e) if code == 0 || code == 1 => {
+            eprintln!("round-vm run: the pass could not be recorded on its batch ({e}); it is not judged");
+            2
+        }
+        _ => code,
+    }
 }
 
 /// `round-vm run`. Returns the process exit code (DESIGN.md §2.2).
@@ -934,6 +986,7 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
     let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
     let mut progress = crate::progress::Progress::start(&cfg.run_dir, &results_dir, commit_sha, tree_sha, total, cfg.cap_secs);
+    let mut refused: Option<String> = None;
     let Some(spool_dir) = args.attr_spool.clone() else {
         let streamed = std::thread::scope(|sc| {
             let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
@@ -942,6 +995,7 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
                 if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
                     stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
                     progress.update(&results_dir);
+                    record_boundary(env, args, &mut progress, &mut refused);
                     last = Some(Instant::now());
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -963,6 +1017,7 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
             }
         };
         let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
+        let code = settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code);
         progress.finish(&results_dir, code);
         return code;
     };
@@ -993,6 +1048,7 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
             if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
                 stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
                 progress.update(&results_dir);
+                record_boundary(env, args, &mut progress, &mut refused);
                 last = Some(Instant::now());
             }
             server.serve(sc, false);
@@ -1004,7 +1060,10 @@ fn on_vm_run(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 (2, false)
             }
-            Ok(Ok(rc)) => (after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs()), true),
+            Ok(Ok(rc)) => {
+                let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs());
+                (settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code), true)
+            }
             Ok(Err(e)) => {
                 eprintln!("round-vm run: {e}");
                 (2, false)
@@ -1748,7 +1807,71 @@ mod tests {
         };
         let alarm = FakeAlarm::default();
         let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
-        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote }, a)
+        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: &FakeRecorder::default() }, a)
+    }
+
+    fn go_recorded(fx: &Fixture, remote: &FakeRemote, a: &RunArgs, rec: &FakeRecorder) -> i32 {
+        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
+        let fp = fx.fp.clone();
+        let f = move || {
+            Ok(Attempt {
+                provider: Box::new(fp.clone()),
+                iface: "ens18".into(),
+                ssh_user: "root".into(),
+                pubkey: "k".into(),
+                timing: Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 },
+            })
+        };
+        let alarm = FakeAlarm::default();
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &NoSpawn };
+        run(&RunEnv { cfg: &fx.cfg, pool: &pool, deps: &deps, host: &FakeHost, remote, record: rec }, a)
+    }
+
+    #[derive(Default)]
+    struct FakeRecorder {
+        calls: Mutex<Vec<String>>,
+        refuse: bool,
+    }
+
+    impl Recorder for FakeRecorder {
+        fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
+            self.calls.lock().unwrap().push(format!("{batch} {}", repo.unwrap_or("-")));
+            if self.refuse { Err("the batch is ATTRIBUTING, not CI_RUNNING".into()) } else { Ok(()) }
+        }
+    }
+
+    #[test]
+    fn a_pass_with_a_batch_records_its_suites_boundary_once() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), round_repo: Some("sp".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
+        assert_eq!(*rec.calls.lock().unwrap(), vec!["r-9 sp".to_string()]);
+    }
+
+    #[test]
+    fn a_pass_with_no_batch_records_nothing() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 0);
+        assert!(rec.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_refused_record_makes_the_pass_a_fault_not_a_verdict() {
+        let fx = fixture();
+        let rec = FakeRecorder { refuse: true, ..Default::default() };
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some("r-9".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 2);
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!(v["verdict"].as_str(), Some("fault"));
+    }
+
+    #[test]
+    fn the_round_flags_are_parsed() {
+        let a = parse_run_args(&args(&["t", "--round-batch", "r-1", "--round-repo=sp"])).unwrap();
+        assert_eq!((a.round_batch.as_deref(), a.round_repo.as_deref()), (Some("r-1"), Some("sp")));
     }
 
     fn tree(fx: &Fixture) -> RunArgs {

@@ -587,7 +587,7 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
         };
         let began = w.clock.now();
         let _ = fs::create_dir_all(rounds_dir(&c));
-        let out = w.scripts.round_vm(&wt, &results, &base, c.s.round_wall_secs, &handle_of(&c, batch));
+        let out = w.scripts.round_vm(&wt, &results, &base, (batch, &c.r.name), c.s.round_wall_secs, &handle_of(&c, batch));
         let _ = fs::remove_file(handle_of(&c, batch));
         if preempt_marker(&c, batch).exists() {
             w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
@@ -607,13 +607,16 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
             rc => Some(format!("round-vm exited {rc}")),
         };
         if let Some(why) = fault {
-            warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false));
+            let recorded = pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false);
             let _g = lock(w, label, &c);
             if let Ok(mut kv) = load(w, label, &c, batch) {
                 set_phase(w, &mut kv, "fault");
                 let _ = save(w, label, &c, &kv);
             }
             w.err(format!("queue.sh {label}: {why}; the round is not judged\n{}", tail(&out.err, 20)));
+            if let Err((rc, e)) = recorded {
+                w.err(format!("queue.sh {label}: REFUSED — the incomplete pass of round {batch} was not recorded on spira-lc (rc={rc}): {e}"));
+            }
             return FAULT;
         }
         reds.extend(found.iter().filter(|(_, s)| BLOCKING.contains(&s.as_str())).map(|(n, _)| n.clone()));
@@ -628,10 +631,13 @@ fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> 
         return FAIL;
     }
     if !reds.is_empty() {
-        if reds != [BUILD_RED] {
-            warn_unrecorded(w, label, batch, "the suites phase", suites_started(w, batch, false));
+        let recorded = (if reds != [BUILD_RED] { suites_started(w, batch, false) } else { Ok(()) }).and_then(|()| pass_verdict_event(w, batch, &Verdict::Red(&reds, timings), false));
+        if let Err((rc, e)) = recorded {
+            w.err(format!("queue.sh {label}: REFUSED — the red pass of round {batch} was not recorded on spira-lc (rc={rc}): {e}"));
+            set_phase(w, &mut kv, "fault");
+            let _ = save(w, label, &c, &kv);
+            return FAULT;
         }
-        warn_unrecorded(w, label, batch, "the red pass", pass_verdict_event(w, batch, &Verdict::Red(&reds, timings), false));
         set(&mut kv, "red", &reds.join(","));
         set_phase(w, &mut kv, "red");
         if save(w, label, &c, &kv).is_err() {
