@@ -21,8 +21,11 @@ planted="$(printf 'let x = "file-overlap-defer";\n' | grep -c 'file-overlap-defe
 is "the matcher finds a planted offender" 1 "$planted"
 
 hits="$(grep -rIl 'file-overlap-defer\|overlap_defer\|OVERLAP_DEFER\|detect_file_overlaps\|defer_file_overlaps\|check7e' \
-    "$ROOT/sentinel/src" "$ROOT/spira-claim/src" "$ROOT/spira/lib.sh" "$ROOT/spira/conf.d" \
-    "$ROOT/spira/config-delta.toml" 2>/dev/null)"
+    "$ROOT/sentinel/src" "$ROOT/spira-claim/src" "$ROOT/spira/lib.sh" "$ROOT/spira/conf.d" 2>/dev/null)"
 is "no exclusion list, config key or check carries the old label" "" "$hits"
+
+# config-delta.toml is where a release retires a key, so the key must be named there, in `removed`.
+removed="$(grep -E '^removed *=' "$ROOT/spira/config-delta.toml" 2>/dev/null | grep -c 'spira.overlap_defer_label')"
+is "the release retires spira.overlap_defer_label in config-delta.toml" 1 "$removed"
 
 tl_summary
