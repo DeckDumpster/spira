@@ -219,33 +219,9 @@ fn live_aeons() -> Option<Vec<LiveAeon>> {
             continue;
         }
         let started = get("ActiveEnterTimestamp").trim_start_matches('@').parse().unwrap_or(0);
-        out.push(LiveAeon { unit: get("Id"), pid, started, phase: aeon_phase(pid) });
+        out.push(LiveAeon { unit: get("Id"), pid, started, phase: String::new() });
     }
     Some(out)
-}
-
-/// session while the aeon's agent runs; else closeout, naming the step it is in.
-fn aeon_phase(pid: i64) -> String {
-    let (mut comms, mut cmds) = (Vec::new(), Vec::new());
-    let mut stack = vec![pid];
-    while let Some(p) = stack.pop() {
-        if comms.len() > 400 {
-            break;
-        }
-        comms.push(std::fs::read_to_string(format!("/proc/{p}/comm")).unwrap_or_default().trim().to_string());
-        cmds.push(std::fs::read(format!("/proc/{p}/cmdline")).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).unwrap_or_default());
-        let kids = std::fs::read_to_string(format!("/proc/{p}/task/{p}/children")).unwrap_or_default();
-        stack.extend(kids.split_whitespace().filter_map(|k| k.parse::<i64>().ok()));
-    }
-    if comms.iter().any(|c| c == "claude") {
-        "session".into()
-    } else if cmds.iter().any(|c| c.contains("build-fence")) {
-        "closeout · build-fence".into()
-    } else if cmds.iter().any(|c| c.contains("testenv")) {
-        "closeout · testenv".into()
-    } else {
-        "closeout".into()
-    }
 }
 
 fn gather() -> Snapshot {
@@ -257,9 +233,14 @@ fn gather() -> Snapshot {
         .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "?".into());
 
+    // An aeon's phase is on its lifecycle row (sp-vknc2j.16); the pane never scans /proc.
+    let mut phases: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
     match run("spira-lc", &["list"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("spira-lc list: {e}"))) {
         Ok(v) => {
             for r in v.as_array().cloned().unwrap_or_default() {
+                if let (Some(pid), Some(ph)) = (r["holder"].as_str().and_then(holder_pid), r["aeon_phase"].as_str()) {
+                    phases.insert(pid, ph.to_string());
+                }
                 let holds: Vec<String> = r["holds"].as_str().and_then(|h| serde_json::from_str(h).ok()).unwrap_or_default();
                 s.rows.push(Row {
                     id: r["bead_id"].as_str().unwrap_or("").into(),
@@ -323,7 +304,12 @@ fn gather() -> Snapshot {
         s.errors.push(e);
         "?".into()
     });
-    s.live = live_aeons();
+    s.live = live_aeons().map(|mut l| {
+        for a in l.iter_mut() {
+            a.phase = phases.get(&a.pid).cloned().unwrap_or_else(|| "working".into());
+        }
+        l
+    });
     let live_pids: Vec<i64> = s.live.as_ref().map(|l| l.iter().map(|a| a.pid).collect()).unwrap_or_default();
     if let Ok(run) = spira_config::process::cfg("SPIRA_RUN") {
         for r in s.rows.iter().filter(|r| (r.state == "WORKING" && r.holder.is_some()) || r.holder.as_deref().and_then(holder_pid).is_some_and(|p| live_pids.contains(&p))) {
