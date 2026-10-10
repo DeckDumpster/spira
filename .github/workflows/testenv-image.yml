@@ -55,6 +55,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolvable config for the release binaries
+        run: bash spira/ci-config.sh "$GITHUB_WORKSPACE"
+
       - name: Resolve the registry path
         id: reg
         run: |
@@ -74,6 +77,7 @@ jobs:
 
       - name: Publish the image if this closure has not been published
         env:
+          SPIRA_TOML: ${{ runner.temp }}/ci-config.toml
           SPIRA_HOME: ${{ github.workspace }}/spira
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
         run: |

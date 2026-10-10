@@ -205,3 +205,9 @@ pub fn after() -> std::path::PathBuf {{ {CALL} }}\n"
         assert_eq!(run(&t, &["a.sh", "testkit/src/lib.rs"]), Err(LintError::EmptyScope));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(TmpLeak),
+    ]
+}

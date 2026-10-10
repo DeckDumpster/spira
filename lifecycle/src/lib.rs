@@ -1,12 +1,14 @@
-//! lifecycle — the three pure transition machines (bead, delivery, batch) and the event
+//! lifecycle — the pure transition machines (bead, delivery, batch, ask) and the event
 //! log fold that replays them. Every function here is pure: no I/O, no clock, no git.
 //! A caller that needs the current time or a git fact computes it and passes it in as
 //! evidence on the event; nothing in this crate ever reaches out for one.
 
+pub mod ask;
 pub mod batch;
 pub mod bead;
 pub mod classify;
 pub mod delivery;
+pub mod provenance;
 pub mod reason;
 pub mod replay;
 
@@ -49,6 +51,9 @@ pub enum Refusal {
     /// A `manual` hold with no reason, a bare bead id (that is a dependency edge), or a
     /// snooze (that is a `wait` hold). `exit` names the mechanism that does the job.
     ManualHoldReason { reason: String, exit: String },
+    /// `submit` at the tip a round already ejected as red for this bead: the same tree is
+    /// red again, so only a changed tip can be submitted.
+    EjectedRedTip { tip: String },
 }
 
 /// The result of applying one event to one row. `row` is the new row when `applied` is

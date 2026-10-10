@@ -213,3 +213,9 @@ mod tests {
         assert_eq!(run(&t, &["spira/test-a.sh"]), Err(LintError::EmptyScope));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(CoversEntries),
+    ]
+}

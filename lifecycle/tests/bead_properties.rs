@@ -1,4 +1,4 @@
-use lifecycle::bead::{apply, BeadEvent, BeadEventKind, BeadRow, BeadState, HoldKind, Stack};
+use lifecycle::bead::{apply, AeonPhase, DispositionStatus, BeadEvent, BeadEventKind, BeadRow, BeadState, HoldKind, Stack};
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use lifecycle::Refusal;
 use proptest::prelude::*;
@@ -29,6 +29,8 @@ fn kind() -> impl Strategy<Value = BeadEventKind> {
         Just(BeadEventKind::Reply { message_id: "m".into() }),
         Just(BeadEventKind::AskWithdrawn),
         Just(BeadEventKind::Renew { lease_until: 2 }),
+        Just(BeadEventKind::Phase { phase: AeonPhase::Session }),
+        Just(BeadEventKind::Disposition { status: DispositionStatus::Thrash, note: "n".into() }),
     ]
 }
 

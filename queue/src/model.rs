@@ -160,6 +160,8 @@ pub struct LcBeadRow {
     pub since: Option<u64>,
     #[serde(default)]
     pub blocked_by: Vec<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 fn opt_u64_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {

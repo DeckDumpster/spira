@@ -172,7 +172,6 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         verdict_ttl: num("verdict_ttl", 0).max(0) as u64,
         verdicts: path_opt("verdicts").unwrap_or_else(|| PathBuf::from(&run).join("verdicts")),
         deferral_escalate_at: num("deferral_at", 5).max(0) as u32,
-        express_label: g("express_label"),
         cutover_label: g("cutover_label"),
         submitted_label: g("submitted_label"),
         rebase_escalate_at: num("rebase_escalate_at", 3).max(0) as u32,
@@ -598,6 +597,7 @@ impl RealBeads {
         let lc = spira_config::lc_state::index(lc);
         for r in rows.iter_mut() {
             r.state = lc.get(&r.id).map(|x| x.state.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| "-".into());
+            r.express = lc.get(&r.id).is_some_and(|x| x.express);
         }
         Ok(())
     }
@@ -1190,6 +1190,15 @@ impl Tools for RealTools {
             })
             .collect()
     }
+    fn forge_pr_red(&self, repo: &Path, selector: &str) -> Option<crate::ports::PrRed> {
+        let mut c = command("forge");
+        c.arg("pr-red").arg(repo).arg(selector).stdin(Stdio::null());
+        let (rc, so, _) = run_capture(c);
+        if rc != 0 {
+            return None;
+        }
+        crate::ports::PrRed::parse(&String::from_utf8_lossy(&so))
+    }
     fn forge_pr_automerge(&self, repo: &Path, selector: &str) -> bool {
         let mut c = command("forge");
         c.arg("pr-automerge").arg(repo).arg(selector).stdin(Stdio::null());
@@ -1235,9 +1244,7 @@ impl Clock for RealClock {
 mod holder_alive_tests {
     use super::*;
 
-    // Wave 4.23 (sp-0ffox) retired this crate's own hold/aeon-argv checking — the
-    // aeon-cmdline positive/negative controls now live with the one implementation,
-    // sending::reap (see its own suite). This just confirms RealProcs reaches it.
+    // The liveness predicates live in sending::reap; this confirms RealProcs reaches them.
     #[test]
     fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
         let run = testkit::TempDir::new("landing-pass-holder-alive");
@@ -1248,11 +1255,14 @@ mod holder_alive_tests {
     }
 
     #[test]
-    fn holder_alive_requires_aeon_argv_for_an_aeon_pidfile() {
+    fn holder_alive_requires_a_running_lease_for_an_aeon_pidfile() {
         let run = testkit::TempDir::new("landing-pass-holder-alive-aeon");
         std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
         let procs = RealProcs { run: run.to_path_buf() };
-        assert!(!procs.holder_alive("sp-a1"), "a live pid that is not an aeon must not count");
+        assert!(!procs.holder_alive("sp-a1"), "a live pid with no lease must not count");
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        std::fs::write(run.join("aeon-builder-sp-a1.lease"), (now + 60).to_string()).unwrap();
+        assert!(procs.holder_alive("sp-a1"));
     }
 }
 
@@ -1288,7 +1298,7 @@ mod lifecycle_join_tests {
         let p = dir.join("spira-lc");
         testkit::write_exe(
             &p,
-            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\"}]' ;; esac\n",
+            "#!/bin/bash\ncase \"$1\" in show) echo '{\"bead\":{\"bead_id\":\"'$2'\",\"state\":\"WORKING\"}}' ;; list) echo '[{\"bead_id\":\"sp-w\",\"state\":\"WORKING\"},{\"bead_id\":\"sp-x\",\"state\":\"SUBMITTED\",\"express\":\"1\"}]' ;; esac\n",
         );
         p
     }
@@ -1308,6 +1318,8 @@ mod lifecycle_join_tests {
         let rows = b.show(&["sp-w".to_string(), "sp-x".to_string(), "sp-y".to_string()]).unwrap();
         let st: Vec<(&str, bool)> = rows.iter().map(|r| (r.state.as_str(), r.handed_on())).collect();
         assert_eq!(st, vec![("WORKING", false), ("SUBMITTED", true), ("-", false)]);
+        let ex: Vec<bool> = rows.iter().map(|r| r.express).collect();
+        assert_eq!(ex, vec![false, true, false], "express is the lifecycle row's column, not a bd label");
     }
 
     /// A machine that cannot answer is an Err, never a row read as handed on.

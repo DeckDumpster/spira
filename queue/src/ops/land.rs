@@ -286,6 +286,9 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
         ),
     );
     w.out(format!("queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"));
+    if !w.scripts.rebase_waiting_start(&name) {
+        w.err(format!("queue.sh land-local: could not start the rebase of the waiting beads; run `queue.sh rebase-waiting {name}`"));
+    }
     if matches!(outcome, Some(super::deploy::Outcome::Fault(_))) {
         return super::DEPLOY_FAULT;
     }

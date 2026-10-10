@@ -78,7 +78,12 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+fn env_nonempty(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|v| !v.is_empty())
+}
+
 use spira_config::chamber;
+use spira_config::{edit_text, is_retired_path, remove_retired_text};
 use spira_config::locate::locate;
 use spira_config::repos::{Column, Registry};
 use spira_config::resolve::{resolve, ResolveError, ResolveInput, EXPORT_KEYS};
@@ -335,7 +340,7 @@ fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) 
             }
             eprintln!(
                 "spira: containment check failed for instance {} — halting",
-                env::var("SPIRA_INSTANCE").unwrap_or_default()
+                env_nonempty("SPIRA_INSTANCE").unwrap_or_default()
             );
             ExitCode::FAILURE
         }
@@ -359,7 +364,7 @@ fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) 
 fn cmd_env_bootstrap_sh() -> ExitCode {
     let current_path = env::var("PATH").unwrap_or_default();
     let home = env::var("HOME").unwrap_or_default();
-    let spira_path = env::var("SPIRA_PATH").unwrap_or_default();
+    let spira_path = env_nonempty("SPIRA_PATH").unwrap_or_default();
     let existing_bd = env::var("SPIRA_BD").unwrap_or_default();
     print!(
         "{}",
@@ -406,7 +411,7 @@ fn cmd_check_bd() -> ExitCode {
 /// `SPIRA_SYSTEMCTL` are read from the environment, same not-yet-exported reason as every
 /// other `cmd_*` function here that reads a per-copy fact `conf.sh` passes explicitly.
 fn cmd_unit(args: &[String]) -> ExitCode {
-    let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
+    let instance = env_nonempty("SPIRA_INSTANCE").unwrap_or_default();
     if args.first().map(String::as_str) == Some("--watch") {
         return match args.get(1) {
             Some(name) => {
@@ -539,8 +544,8 @@ fn parse_column(s: &str) -> Option<Column> {
 fn cmd_repo_containment_check() -> ExitCode {
     // conf.sh has just resolved and EXPORTED these from the one source of config (lib.sh is
     // this check's only caller, right after it) — read as resolved config, never as a default.
-    let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
-    let workspaces = env::var("SPIRA_WORKSPACES").unwrap_or_default();
+    let instance = env_nonempty("SPIRA_INSTANCE").unwrap_or_default();
+    let workspaces = env_nonempty("SPIRA_WORKSPACES").unwrap_or_default();
     let map_text = env::var("SPIRA_REPO_MAP")
         .ok()
         .filter(|p| !p.is_empty())
@@ -836,6 +841,12 @@ fn read_doc_or_default(file: &str) -> Result<SpiraToml, String> {
     }
 }
 
+fn read_text_and_doc(file: &str) -> Result<(String, SpiraToml), String> {
+    let text = if Path::new(file).exists() { fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))? } else { String::new() };
+    let doc = if text.trim().is_empty() { SpiraToml::default() } else { validate(&text)? };
+    Ok((text, doc))
+}
+
 /// A `tests/fixtures/` file is an input: a writer pointed at one rewrites tracked content and
 /// leaves its `.bak.*` backup in the tree for every later scan to find.
 fn is_checked_in_fixture(path: &Path) -> bool {
@@ -847,18 +858,12 @@ fn is_checked_in_fixture(path: &Path) -> bool {
 /// contents, back up whatever `file` currently holds, then rename — in that order, so a
 /// crash at any point before the rename leaves `file` exactly as it was, and a doc that
 /// fails to round-trip through validation is never renamed into place at all.
-fn write_doc(file: &str, doc: &SpiraToml, verb: &str) -> ExitCode {
+fn write_doc(file: &str, text: &str, verb: &str) -> ExitCode {
     if is_checked_in_fixture(Path::new(file)) {
         eprintln!("spira-config {verb}: {file}: refusing to write a checked-in test fixture — layer an override file over it instead");
         return ExitCode::FAILURE;
     }
-    let out = match toml::to_string_pretty(doc) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("spira-config {verb}: {file}: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let out = text.to_string();
     let path = Path::new(file);
     let pending = match atomic_write_start(path, &out) {
         Ok(p) => p,
@@ -886,7 +891,7 @@ fn write_doc(file: &str, doc: &SpiraToml, verb: &str) -> ExitCode {
 
 /// `set <dotted.path> <value> <file>` — write one path's value into `file` in place.
 fn cmd_set(path: &str, value: &str, file: &str) -> ExitCode {
-    let doc = match read_doc_or_default(file) {
+    let (text, doc) = match read_text_and_doc(file) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("spira-config: {e}");
@@ -900,13 +905,19 @@ fn cmd_set(path: &str, value: &str, file: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    write_doc(file, &new_doc, "set")
+    match edit_text(&text, &doc, &new_doc) {
+        Ok(out) => write_doc(file, &out, "set"),
+        Err(e) => {
+            eprintln!("spira-config set: {file}: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// `unset <dotted.path> <file>` — remove one path's value from `file` in place, so the key
 /// stops appearing rather than being left behind as an empty string.
 fn cmd_unset(path: &str, file: &str) -> ExitCode {
-    let doc = match read_doc_or_default(file) {
+    let (text, doc) = match read_text_and_doc(file) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("spira-config: {e}");
@@ -920,7 +931,14 @@ fn cmd_unset(path: &str, file: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    write_doc(file, &new_doc, "unset")
+    let edited = if is_retired_path(path) { remove_retired_text(&text, path) } else { edit_text(&text, &doc, &new_doc) };
+    match edited {
+        Ok(out) => write_doc(file, &out, "unset"),
+        Err(e) => {
+            eprintln!("spira-config unset: {file}: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// `writeback <candidate>` (conf.sh's `spira_config_writeback`; wave 4.7, sp-ksrss) — reads

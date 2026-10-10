@@ -11,6 +11,8 @@ pub struct VmInfo {
     pub status: String,
     pub lock: Option<String>,
     pub registered: bool,
+    /// A Proxmox template: never a runner, so never "provisioning".
+    pub template: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,20 +22,20 @@ pub enum Yield {
 }
 
 fn is_ci(vm: &VmInfo) -> bool {
-    CI_PREFIXES.iter().any(|p| vm.name.starts_with(p))
+    // A template (ci-runner-template-resealed) is stopped and unregistered forever; counting it
+    // held every cold provision for the full MAX_WAIT_SECS (r-auto-110, 2026-10-10).
+    !vm.template && CI_PREFIXES.iter().any(|p| vm.name.starts_with(p))
 }
 
-/// A CI VM is provisioning if it is locked (clone in progress) or not yet
-/// a registered running runner.
-pub fn ci_provisioning(vms: &[VmInfo]) -> bool {
-    vms.iter()
-        .filter(|v| is_ci(v))
-        .any(|v| v.lock.is_some() || !(v.status == "running" && v.registered))
+/// A CI job is in progress while any CI VM exists: provisioning, or running a job. The
+/// hypervisor cannot see a runner's job, so a live runner VM counts as one.
+pub fn ci_in_progress(vms: &[VmInfo]) -> bool {
+    vms.iter().any(is_ci)
 }
 
-/// Hold while CI provisions, but never longer than MAX_WAIT_SECS.
+/// Hold while CI is in progress, but never longer than MAX_WAIT_SECS.
 pub fn decide(vms: &[VmInfo], waited_secs: u64) -> Yield {
-    if waited_secs >= MAX_WAIT_SECS || !ci_provisioning(vms) {
+    if waited_secs >= MAX_WAIT_SECS || !ci_in_progress(vms) {
         Yield::Proceed
     } else {
         Yield::Hold
@@ -64,8 +66,16 @@ pub fn wait_for_ci(
 mod tests {
     use super::*;
     fn vm(n: &str, s: &str, l: Option<&str>, r: bool) -> VmInfo {
-        VmInfo { name: n.into(), status: s.into(), lock: l.map(String::from), registered: r }
+        VmInfo { name: n.into(), status: s.into(), lock: l.map(String::from), registered: r, template: false }
     }
+    #[test]
+    fn a_ci_named_template_never_holds_a_provision() {
+        let t = VmInfo { name: "ci-runner-template-resealed".into(), status: "stopped".into(), lock: None, registered: false, template: true };
+        assert_eq!(decide(&[t.clone()], 0), Yield::Proceed);
+        let live = VmInfo { template: false, ..t };
+        assert_eq!(decide(&[live], 0), Yield::Hold, "positive control: a stopped, unregistered ci VM still holds");
+    }
+
     #[test]
     fn sweep_only_proceeds() {
         assert_eq!(decide(&[vm("round-102", "running", None, false)], 0), Yield::Proceed);
@@ -79,8 +89,9 @@ mod tests {
         assert_eq!(decide(&[vm("gh-runner-7", "running", None, false)], 5), Yield::Hold);
     }
     #[test]
-    fn registered_proceeds() {
-        assert_eq!(decide(&[vm("gh-runner-7", "running", None, true)], 5), Yield::Proceed);
+    fn a_running_registered_runner_holds() {
+        assert_eq!(decide(&[vm("gh-runner-7", "running", None, true)], 5), Yield::Hold);
+        assert_eq!(decide(&[vm("gh-runner-7", "running", None, true)], 600), Yield::Proceed);
     }
     #[test]
     fn bounded_wait() {

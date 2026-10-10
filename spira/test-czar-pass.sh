@@ -100,6 +100,7 @@ cat > "$STUB_INC" <<'IEOF'
 printf 'incident: cause=%s ref=%s subj=%s priority=%s labels=%s\n' \
     "${SPIRA_INCIDENT_CAUSE:-}" "${SPIRA_INCIDENT_REF:-}" "${2:-}" \
     "${SPIRA_INCIDENT_PRIORITY:-}" "${SPIRA_INCIDENT_LABELS:-}" >> "$INC_LOG"
+printf 'express=%s\n' "${SPIRA_INCIDENT_EXPRESS:-}" >> "$INC_LOG"
 exit 0
 IEOF
 chmod +x "$STUB_INC"
@@ -434,8 +435,8 @@ want "base-red: the fire summons the czar (sentinel --summon czar)" "--summon cz
 want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes" "$_log"
 want "base-red: bead filed with cause=base-red" "cause=base-red" "$_inc_log"
 want "base-red: filed at priority 0 (P0)" "priority=0" "$_inc_log"
-want "base-red: filed with the express label" "labels=" "$_inc_log"
-want "base-red: express label present in filed labels" "express" "$_inc_log"
+want "base-red: filed express, as lifecycle state" "express=1" "$_inc_log"
+nowant "base-red: no express bd label in the filed labels" "labels=plan,express" "$_inc_log"
 want "base-red: subject names a failing suite" "test-watch-refresh.sh" "$_inc_log"
 want "base-red: subject names the other failing suite" "test-install-bootstrap-release.sh" "$_inc_log"
 _ref17="$(printf '%s\n' "$_inc_log" | grep -o 'ref=[^ ]*' | tail -1)"

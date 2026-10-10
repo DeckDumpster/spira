@@ -46,6 +46,17 @@ pub fn repo_label(bead_id: &str) -> Result<Option<String>, String> {
     Ok(labels.iter().filter_map(|l| l.as_str()).find_map(|l| l.strip_prefix("repo:").map(str::to_string)))
 }
 
+/// Every label on `bead_id`, read from bd.
+pub fn labels(bead_id: &str) -> Result<Vec<String>, String> {
+    let out = run(&["show", bead_id, "--json"])?;
+    let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
+    let doc = match &parsed {
+        serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+        v => v.clone(),
+    };
+    Ok(doc.get("labels").and_then(|l| l.as_array()).map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()).unwrap_or_default())
+}
+
 /// The live [`crate::callers::Bd`]: bd itself, resolved as [`run`] resolves it.
 pub struct LiveBd;
 
@@ -79,6 +90,15 @@ impl crate::callers::Bd for LiveBd {
         };
         let labels = doc.get("labels").and_then(|l| l.as_array()).cloned().unwrap_or_default();
         Ok(labels.iter().filter_map(|l| l.as_str()).filter_map(|l| l.strip_prefix("work-bead:").map(str::to_string)).collect())
+    }
+    fn external(&mut self, id: &str) -> Result<bool, String> {
+        let out = run(&["show", id, "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
+        let doc = match &parsed {
+            serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+            v => v.clone(),
+        };
+        Ok(doc.get("external_ref").and_then(|r| r.as_str()).is_some_and(|r| !r.trim().is_empty()))
     }
     fn reopen(&mut self, id: &str) -> Result<(), String> {
         // The store follows the row the door just moved: open, unassigned, and no longer wearing
@@ -252,5 +272,21 @@ mod noisy_tests {
         assert_eq!(code, 0);
         assert!(out.contains("routed to the concierge"), "{out}");
         assert!(!tool("sh", &["-c".to_string(), "echo hidden >&2".to_string()], None, "t", 10).1.contains("hidden"));
+    }
+}
+
+impl crate::ask::AskSource for LiveBd {
+    fn open_asks(&mut self, ask_label: &str) -> Result<Vec<(String, Vec<String>)>, String> {
+        let out = run(&["list", "--type", "decision", "--label", ask_label, "--status", "open", "--limit", "0", "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd list --json: {e}"))?;
+        let rows = parsed.as_array().cloned().unwrap_or_default();
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let id = r.get("id")?.as_str()?.to_string();
+                let works = r.get("labels").and_then(|l| l.as_array()).map(|l| l.iter().filter_map(|x| x.as_str()).filter_map(|x| x.strip_prefix("work-bead:").map(str::to_string)).collect()).unwrap_or_default();
+                Some((id, works))
+            })
+            .collect())
     }
 }

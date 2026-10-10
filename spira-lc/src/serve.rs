@@ -117,15 +117,22 @@ fn handle(stream: UnixStream, conn: &Arc<Conn>) {
             return;
         }
     };
+    let caller = peer_pid(&stream).map(crate::slow::caller_of_pid).unwrap_or_else(|| "-".to_string());
+    let verb = argv.first().cloned().unwrap_or_default();
     let map = std::fs::read_to_string(personas_path()).map(|t| crate::work::parse_persona_uids(&t)).unwrap_or_default();
     let (code, out) = match crate::work::bind_peer(&argv, peer_uid(&stream), &map) {
         Ok(argv) => {
             let worker = Arc::clone(conn);
-            within(crate::db::QUERY_DEADLINE.saturating_sub(received.elapsed()), move || crate::dispatch(&argv, &worker))
+            let who = caller.clone();
+            within(crate::db::QUERY_DEADLINE.saturating_sub(received.elapsed()), move || {
+                crate::slow::set_caller(&who);
+                crate::dispatch(&argv, &worker)
+            })
                 .unwrap_or_else(|| (2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)))
         }
         Err(refusal) => refusal,
     };
+    crate::slow::request_done(&verb, &caller, received.elapsed());
     let _ = write_response(&stream, code, &out);
 }
 
@@ -154,13 +161,21 @@ extern "C" {
     fn getsockopt(fd: i32, level: i32, name: i32, val: *mut Ucred, len: *mut u32) -> i32;
 }
 
-pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
+fn peer_cred(stream: &UnixStream) -> Option<Ucred> {
     use std::os::fd::AsRawFd;
     const SOL_SOCKET: i32 = 1;
     const SO_PEERCRED: i32 = 17;
     let mut cred = Ucred { pid: 0, uid: 0, gid: 0 };
     let mut len = std::mem::size_of::<Ucred>() as u32;
-    (unsafe { getsockopt(stream.as_raw_fd(), SOL_SOCKET, SO_PEERCRED, &mut cred, &mut len) } == 0).then_some(cred.uid)
+    (unsafe { getsockopt(stream.as_raw_fd(), SOL_SOCKET, SO_PEERCRED, &mut cred, &mut len) } == 0).then_some(cred)
+}
+
+pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    peer_cred(stream).map(|c| c.uid)
+}
+
+fn peer_pid(stream: &UnixStream) -> Option<i32> {
+    peer_cred(stream).map(|c| c.pid)
 }
 
 #[cfg(test)]
@@ -195,6 +210,12 @@ mod tests {
         let mut got = String::new();
         b.read_to_string(&mut got).unwrap();
         assert_eq!(got, format!("{{\"exit_code\":3,\"len\":{}}}\n{body}", body.len()));
+    }
+
+    #[test]
+    fn peer_pid_reads_the_connecting_process() {
+        let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
+        assert_eq!(super::peer_pid(&a), Some(std::process::id() as i32));
     }
 
     #[test]

@@ -56,6 +56,11 @@ pub struct Row {
     pub lease_until: Option<i64>,
     pub holds: Vec<String>,
     pub express: bool,
+    /// The prerequisite bead ids this bead's current work is stacked on.
+    pub stack: Vec<String>,
+    pub phase: Option<String>,
+    pub disposition: Option<String>,
+    pub disposition_note: Option<String>,
 }
 
 impl Row {
@@ -119,6 +124,18 @@ fn holds(v: Option<&Value>) -> Vec<String> {
     arr.into_iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
 }
 
+fn stack(v: Option<&Value>) -> Vec<String> {
+    let obj = match v {
+        Some(Value::String(s)) if !s.trim().is_empty() => serde_json::from_str::<Value>(s).ok(),
+        Some(o) => Some(o.clone()),
+        None => None,
+    };
+    match obj {
+        Some(Value::Object(m)) => m.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn row_of(r: &Value) -> Row {
     Row {
         bead_id: scalar(r.get("bead_id")).unwrap_or_default(),
@@ -127,6 +144,10 @@ fn row_of(r: &Value) -> Row {
         lease_until: scalar(r.get("lease_until")).and_then(|x| x.trim().parse::<f64>().ok()).map(|f| f as i64),
         holds: holds(r.get("holds")),
         express: matches!(scalar(r.get("express")).as_deref(), Some("1" | "true")),
+        stack: stack(r.get("stack")),
+        phase: scalar(r.get("aeon_phase")).filter(|x| !x.is_empty()),
+        disposition: scalar(r.get("disposition")).filter(|x| !x.is_empty()),
+        disposition_note: scalar(r.get("disposition_note")),
     }
 }
 
@@ -173,6 +194,15 @@ fn run_within(bin: &str, args: &[&str], secs: u32) -> Result<(i32, String), Stri
 /// cannot read the state must not decide as if it had (law-a-control-that-cannot-check-must-refuse).
 pub fn list_with(bin: &str) -> Result<Vec<Row>, String> {
     list_within(bin, 5)
+}
+
+/// The rows in one state (`spira-lc list --state <STATE>`): what a reader that wants only
+/// the WORKING aeons asks, instead of every row.
+pub fn list_state_with(bin: &str, state: &str) -> Result<Vec<Row>, String> {
+    match run_within(bin, &["list", "--state", state], 5)? {
+        (0, out) => parse_rows(&out),
+        (rc, _) => Err(format!("{bin} list --state {state} exited {rc}")),
+    }
 }
 
 /// `list_with` for a batch caller that can wait out a loaded store: `secs` bounds the read.

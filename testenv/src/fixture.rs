@@ -325,6 +325,9 @@ pub struct Session<'a> {
     pub setup_deadline: Option<Instant>,
     /// Seconds `up` may wait for a container slot before it is a queue fault, not a boot one.
     pub queue_bound: Option<u64>,
+    /// `up`'s `--pids-limit` / `--memory` for a container with a budget of its own.
+    pub pids_limit: Option<u32>,
+    pub memory: Option<String>,
 }
 
 fn kv(k: &str, v: impl Into<String>) -> (String, String) {
@@ -344,6 +347,8 @@ impl<'a> Session<'a> {
             liveness_sleep: Duration::from_secs(3),
             setup_deadline: None,
             queue_bound: None,
+            pids_limit: None,
+            memory: None,
         }
     }
 
@@ -435,6 +440,12 @@ impl<'a> Session<'a> {
         }
         if self.setup_deadline.is_some() {
             args.push("--no-build".into());
+        }
+        if let Some(p) = self.pids_limit {
+            args.extend(["--pids-limit".into(), p.to_string()]);
+        }
+        if let Some(m) = &self.memory {
+            args.extend(["--memory".into(), m.clone()]);
         }
         let up = self.rt.testenv(&args, self.setup_deadline);
         if up.rc == RC_DEADLINE {

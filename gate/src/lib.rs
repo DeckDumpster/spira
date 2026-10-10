@@ -10,6 +10,7 @@ pub mod engine;
 pub mod fence;
 pub mod fencecache;
 pub mod key;
+pub mod machine;
 pub mod parse;
 pub mod ports;
 pub mod real;

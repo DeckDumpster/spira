@@ -65,6 +65,7 @@ pub enum NoteKey {
     Submitted,
     YieldHeadless,
     PreSession,
+    HarnessRed,
     Unlanded,
     NoProgress,
     NotJudged,
@@ -87,6 +88,7 @@ pub struct DispositionIn {
     pub operator_wait: bool,
     pub yield_headless: bool,
     pub session_started: bool,
+    pub harness_red: bool,
     pub outcome: Option<String>,
     pub submitted: bool,
     /// Did THIS session's own turn move the branch tip (sp-1zxru-2)? Distinct from
@@ -145,6 +147,9 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     }
     if i.slain {
         return d("slain", false, Some("unjudged-slain"), Slain);
+    }
+    if i.harness_red {
+        return d("harness-red", false, Some("unjudged-harness-red"), HarnessRed);
     }
     if i.thrash {
         return if i.thrash_charged {
@@ -492,6 +497,9 @@ mod tests {
         assert_eq!(disposition(&i), d("open", false, Some("unjudged-killed"), NoteKey::NotJudged));
         i.session_started = false;
         assert_eq!(disposition(&i), d("pre-session", true, None, NoteKey::PreSession));
+        i.harness_red = true;
+        assert_eq!(disposition(&i), d("harness-red", false, Some("unjudged-harness-red"), NoteKey::HarnessRed), "a session the harness could not start is not an attempt");
+        i.harness_red = false;
         i.yield_headless = true;
         assert_eq!(disposition(&i).note, NoteKey::YieldHeadless);
         i.submitted = true;

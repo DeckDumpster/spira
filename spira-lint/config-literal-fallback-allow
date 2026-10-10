@@ -1,4 +1,7 @@
 # shrink-only — spira-lint/config-literal-fallback-allow. A line is an exact repo-relative
 # path with an existing violation migrated into this fence; nothing is added for a newly
 # written file. Fix the default (resolve it through spira_config, in-process, with a named
-# refusal — never a literal) to remove a line, never to add one. Empty: nothing is fenced.
+# refusal — never a literal) to remove a line, never to add one.
+
+# Debt the registered-key extension (literal or empty default on any key with a spira/conf.d
+# entry) found on its first run. Same shrink-only rule: fix the read, then delete the line.

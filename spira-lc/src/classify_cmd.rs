@@ -363,7 +363,11 @@ fn classify_one(
         is_epic: bd.is_epic,
     };
 
-    let outcome = classify::classify(&facts);
+    let mut outcome = classify::classify(&facts);
+    if bd.external && outcome.rule == lifecycle::bead::RESIDUE_RULE {
+        outcome.state = lifecycle::bead::BeadState::Ready;
+        outcome.rule = EXTERNAL_RESIDUE_RULE;
+    }
 
     if let Some(row) = existing {
         if !correctable(&row, &outcome) {
@@ -406,6 +410,9 @@ fn classify_one(
 /// A re-run corrects an existing row only by the rules that were missing when it was written,
 /// and only where the row is the classifier's own guess: recomputing every other rule would
 /// overwrite what the machine has since decided.
+/// An external bead closed with no evidence is unresolved work, not a drop (law-a-learned-failure-mode-becomes-a-state).
+pub const EXTERNAL_RESIDUE_RULE: &str = "external-closed-no-outcome";
+
 fn correctable(row: &lifecycle::bead::BeadRow, outcome: &classify::Classification) -> bool {
     use lifecycle::bead::BeadState::*;
     if outcome.rule.starts_with("epic-") {
@@ -468,17 +475,7 @@ fn write_classified_bead(
         rows::escape(outcome.rule),
         at,
     );
-    let ev = EventRecord {
-        machine: "bead".into(),
-        key: id.into(),
-        event: "Classified".into(),
-        expect: "NONE".into(),
-        from_state: "NONE".into(),
-        refusal: None,
-        evidence,
-        actor: "classifier".into(),
-        at,
-    };
+    let ev = EventRecord::import_absent("bead", id, "Classified", evidence, "classifier", at);
     let bead_inserted = conn
         .insert_if_absent_and_log("bead", insert_columns, &insert_values, &ev, outcome.state.as_str())
         .map_err(|e| format!("{e:?}"))?;
@@ -510,17 +507,7 @@ fn write_classified_delivery(conn: &Conn, id: &str, state: DeliveryState, repo_n
         state.as_str(),
         opt_sql_str(&batch_id),
     );
-    let ev = EventRecord {
-        machine: "delivery".into(),
-        key: id.into(),
-        event: "Classified".into(),
-        expect: "NONE".into(),
-        from_state: "NONE".into(),
-        refusal: None,
-        evidence: json!({"repo": repo_name}),
-        actor: "classifier".into(),
-        at,
-    };
+    let ev = EventRecord::import_absent("delivery", id, "Classified", json!({"repo": repo_name}), "classifier", at);
     conn.insert_if_absent_and_log("delivery", insert_columns, &insert_values, &ev, state.as_str())
         .map(|_| ())
         .map_err(|e| format!("{e:?}"))
@@ -551,17 +538,7 @@ fn write_open_batch(conn: &Conn, repo_name: &str, ob: &legacy_files::OpenBatch, 
         opt_sql_str(&ob.base),
         opened_at,
     );
-    let ev = EventRecord {
-        machine: "batch".into(),
-        key: batch_id.clone(),
-        event: "Classified".into(),
-        expect: "NONE".into(),
-        from_state: "NONE".into(),
-        refusal: None,
-        evidence: json!({"repo": repo_name, "members": ob.members}),
-        actor: "classifier".into(),
-        at,
-    };
+    let ev = EventRecord::import_absent("batch", &batch_id, "Classified", json!({"repo": repo_name, "members": ob.members}), "classifier", at);
     conn.insert_if_absent_and_log("batch", insert_columns, &insert_values, &ev, "OPEN").map_err(|e| format!("{e:?}"))?;
 
     for member in &ob.members {

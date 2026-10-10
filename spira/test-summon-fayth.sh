@@ -123,15 +123,16 @@ trap 'kill "${FAKE_AEON_PIDS[@]}" 2>/dev/null; wait "${FAKE_AEON_PIDS[@]}" 2>/de
 # set_live <fayth> <n> -> exactly <n> live pidfiles for <fayth> (clears its own first).
 set_live() {
     local fayth="$1" n="${2:-0}" i
-    rm -f "$SPIRA_RUN"/aeon-"$fayth"-mock*.pid
+    rm -f "$SPIRA_RUN"/aeon-"$fayth"-mock*.pid "$SPIRA_RUN"/aeon-"$fayth"-mock*.lease
     for ((i = 1; i <= n; i++)); do
         # Reused cyclically past the pool's own size (callers that just need "a lot" —
         # e.g. 999, to prove an unset ceiling ignores the count entirely — never need
         # that many DISTINCT pids, only that many pidfiles).
         printf '%s' "${FAKE_AEON_PIDS[$(((i - 1) % ${#FAKE_AEON_PIDS[@]}))]}" > "$SPIRA_RUN/aeon-$fayth-mock$i.pid"
+        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-$fayth-mock$i.lease"
     done
 }
-clear_live() { rm -f "$SPIRA_RUN"/aeon-*-mock*.pid; }
+clear_live() { rm -f "$SPIRA_RUN"/aeon-*-mock*.pid "$SPIRA_RUN"/aeon-*-mock*.lease; }
 
 # set_ready <fayth> <n> -> fayth_ready(<fayth>) as `summon_fayth` (now a `sentinel` shim,
 # wave 4.27) reaches it: `spira-claim fayth-ready`, a real subprocess on PATH, never a

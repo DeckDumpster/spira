@@ -208,3 +208,9 @@ mod tests {
         assert!(matches!(ConfKeyRegistry.check(&tree), Err(LintError::BadAllow { .. })));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ConfKeyRegistry),
+    ]
+}

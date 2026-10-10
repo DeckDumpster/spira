@@ -136,7 +136,29 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             );
         }
     }
+    if row.ejected_red_tip.as_deref() == Some(tip.as_str()) {
+        return (
+            REFUSED,
+            format!(
+                "refused: {tip} is the tip a round ejected {bead_id} for as red{} — change the tree (fix the named reds, rebase) and commit again before resubmitting",
+                ejected_reasons(conn, bead_id, &tip).map(|r| format!(": {r}")).unwrap_or_default()
+            ),
+        );
+    }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip })
+}
+
+fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
+    let sql = format!(
+        "SELECT JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Eject.reason')) AS reason FROM event e \
+         JOIN batch_member m ON m.batch_id = e.lc_key \
+         WHERE e.machine = 'batch' AND e.event = 'Eject' AND m.bead_id = '{b}' AND m.tip = '{t}' \
+           AND JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Eject.bead_id')) = '{b}' ORDER BY e.seq DESC LIMIT 1",
+        b = rows::escape(bead_id),
+        t = rows::escape(tip)
+    );
+    let found = conn.query(&sql).ok()?;
+    found.first()?.get("reason")?.as_str().map(str::to_string)
 }
 
 fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
@@ -147,7 +169,38 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(delivers) = flag(args, "--delivers") else {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
     };
+    if actor == "groomer" {
+        match rows::fetch_bead(conn, bead_id) {
+            Ok(Some(row)) if row.state == bead::BeadState::Done => return (0, format!("{bead_id} is already DONE; nothing to do")),
+            Ok(_) => {}
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        }
+        match crate::bd::labels(bead_id) {
+            Ok(labels) if labels.iter().any(|l| l == GROOM_TRIGGER_MARKER) => {}
+            Ok(_) => return release_untriggered_groom(bead_id, &actor, conn),
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+        }
+    }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Done { delivers })
+}
+
+/// The label groom-trigger.sh stamps on the beads it files; the groom label alone also
+/// selects work beads, which a groom pass must never close.
+const GROOM_TRIGGER_MARKER: &str = "groom-trigger";
+
+fn release_untriggered_groom(bead_id: &str, actor: &str, conn: &Conn) -> (i32, String) {
+    let (code, out) = apply_bead_event(conn, bead_id, actor, BeadEventKind::Release);
+    if code != 0 {
+        return (code, out);
+    }
+    let why = "claimed by the groom predicate but is not a groom trigger; relabel for its builder";
+    let _ = crate::bd::note(bead_id, why);
+    let subject = format!("{bead_id} was claimed by the groomer but is not a groom trigger");
+    let body = format!("## Question\n{bead_id} carries the groom label without the {GROOM_TRIGGER_MARKER} marker, so the groomer released it instead of closing it. Which builder persona should it be relabelled for?\n\n## Default\nrelabel {bead_id} for its builder\n");
+    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), &subject, "relabel for its builder", bead_id, &body) {
+        Ok(_) => (REFUSED, format!("refused: work done: {why}; released, ask filed")),
+        Err(e) => (REFUSED, format!("refused: work done: {why}; released, but filing the ask failed: {e}")),
+    }
 }
 
 fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
@@ -161,22 +214,17 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(default) = flag(args, "--default") else {
         return (CANNOT_TELL, "work blocked: --default <default> is required".into());
     };
-    let (code, out) = apply_bead_event(
-        conn,
-        bead_id,
-        &actor,
-        BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) },
-    );
-    if code != 0 {
-        return (code, out);
-    }
     // mail's own "question" kind requires a filled "## Question" and "## Default"
     // section in the body (every "## " heading in its template is a required section,
     // not just the X-Spira-Default header) — a bare question string is refused.
     let body = format!("## Question\n{question}\n\n## Default\n{default}\n");
-    match crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), question, &default, bead_id, &body) {
-        Ok(_) => (0, format!("hold applied; ask filed for {bead_id}")),
-        Err(e) => (CANNOT_TELL, format!("hold applied, but filing the ask failed: {e}")),
+    if let Err(e) = crate::bd::ask_operator(&format!("{actor} <{actor}@spira>"), question, &default, bead_id, &body) {
+        return (REFUSED, format!("refused: work blocked: the question could not be delivered, so no hold was applied: {e}"));
+    }
+    let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) };
+    match apply_bead_event(conn, bead_id, &actor, hold) {
+        (0, _) => (0, format!("ask filed; hold applied for {bead_id}")),
+        (code, e) => (code, format!("the question WAS delivered (do not ask again), but the ask hold on {bead_id} was not applied: {e}")),
     }
 }
 

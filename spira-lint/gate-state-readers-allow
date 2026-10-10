@@ -1,0 +1,8 @@
+# gate-state-readers: files in the operator-facing trees that still find a running gate by
+# matching gate.sh in a process listing, one repo-relative path per line. Blank lines and
+# `#` comments are ignored.
+#
+# SHRINK-ONLY. A line leaves when its file asks `gate status` instead; nothing is ever added
+# for a NEW reader.
+spira-world/src/lib.rs
+spira-world/src/proc.rs

@@ -1,0 +1,16 @@
+[Unit]
+Description=Group the day's refused lifecycle transitions hourly
+
+[Timer]
+OnBootSec=15min
+OnActiveSec=15min
+OnUnitActiveSec=1h
+AccuracySec=5min
+Persistent=true
+Unit=spira-refusal-watch.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

@@ -200,6 +200,7 @@ impl<T: Transport> Pve<T> {
                     name: v.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
                     registered: status == "running",
                     lock: v.get("lock").and_then(Value::as_str).map(String::from),
+                    template: truthy(v.get("template")),
                     status,
                 }
             })

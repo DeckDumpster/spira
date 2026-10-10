@@ -111,22 +111,13 @@ pub fn default_conf_d(home: &Path) -> std::path::PathBuf {
 /// race a `std::env::set_var`-based version of this test caused: another thread's own
 /// unrelated `git` spawn, running concurrently with the lock this test held, inherited
 /// the poison anyway, because inheritance does not consult any Rust-level lock).
-pub fn derive_repo_filesystem(home: &Path, env: &BTreeMap<String, String>) -> std::path::PathBuf {
-    let scrubbed = env
-        .iter()
-        .filter(|(k, _)| !matches!(k.as_str(), "GIT_DIR" | "GIT_WORK_TREE" | "GIT_INDEX_FILE" | "GIT_PREFIX"));
-    let toplevel = crate::bounded::bounded("git")
-        .env_clear()
-        .envs(scrubbed)
-        .arg("-C")
-        .arg(home)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(std::path::PathBuf::from);
+pub fn derive_repo_filesystem(home: &Path, _env: &BTreeMap<String, String>) -> std::path::PathBuf {
+    // `git rev-parse --show-toplevel`, answered from the filesystem: the nearest directory at
+    // or above `home` holding a `.git` (a directory, or a worktree's file). Spawning git for it
+    // cost every Spira process ~100 ms at start, and from a release's bundled `spira/` (no
+    // checkout at all) it only ever failed into the fallback below.
+    let start = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    let toplevel = start.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf);
     toplevel.unwrap_or_else(|| {
         home.join("..")
             .canonicalize()
@@ -162,14 +153,13 @@ pub fn resolve_for_process(
     repo: &Path,
     env: &BTreeMap<String, String>,
 ) -> Result<Resolved, String> {
-    resolve_process(home, repo, env, resolve)
+    resolve_process(home, repo, env)
 }
 
 fn resolve_process(
     home: &Path,
     repo: &Path,
     env: &BTreeMap<String, String>,
-    run: fn(ResolveInput<'_>) -> Result<Resolved, ResolveError>,
 ) -> Result<Resolved, String> {
     // ONE SOURCE: the file $SPIRA_TOML names. Unset or missing is a refusal, never "no config".
     // From the env this call was HANDED, like every other input — never the process's own.
@@ -180,13 +170,14 @@ fn resolve_process(
     let toml_path = std::path::PathBuf::from(spec);
     let doc = Some(crate::load(&toml_path)?);
     let conf_d = default_conf_d(home);
-    run(ResolveInput {
+    let registry = registry::embedded().map_err(|e| e.to_string())?;
+    resolve_checked(ResolveInput {
         env,
         home,
         repo,
         toml: doc.as_ref(),
         conf_d: &conf_d,
-    })
+    }, &registry)
     .map_err(|e| e.to_string())
 }
 
@@ -410,7 +401,6 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_DESIGN",
     "SPIRA_DOLT_DATA",
     "SPIRA_EXPORTER",
-    "SPIRA_EXPRESS_LABEL",
     "SPIRA_FLAKY_GH_REPO",
     "SPIRA_GATE_BASEFAIL",
     "SPIRA_GATE_NOVERDICT",
@@ -418,6 +408,7 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_GH_INTAKE_PRIORITY",
     "SPIRA_GH_INTAKE_REPO",
     "SPIRA_GROOM_ASK_LABEL",
+    "SPIRA_GROOM_GATE_LABEL",
     "SPIRA_ID_PREFIX",
     "SPIRA_INCIDENT_LABEL",
     "SPIRA_INCIDENT_PRIORITY",
@@ -428,6 +419,7 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_LC_SOCKET",
     "SPIRA_LC_TESTDB_DATA",
     "SPIRA_LC_TESTDB_PORT",
+    "SPIRA_LC_TIMEOUT",
     "SPIRA_LC_UNIX_GROUP",
     "SPIRA_LC_UNIX_USER",
     "SPIRA_LOOM_ADDR",
@@ -553,7 +545,7 @@ thread_local! {
 /// config (`init`), never for reading one: a process reads only what the file declares.
 pub fn resolve_with_defaults(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
     GENERATING.set(true);
-    let r = resolve_unchecked(input);
+    let r = registry::load(input.conf_d).map_err(ResolveError::Registry).and_then(|reg| resolve_unchecked(input, &reg));
     GENERATING.set(false);
     r
 }
@@ -728,7 +720,12 @@ fn compute_home_repo_default(repo: &Path) -> String {
 
 /// `spira_conf_defaults` plus `spira_containment_check`, ported.
 pub fn resolve(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
-    let resolved = resolve_unchecked(input)?;
+    let registry = registry::load(input.conf_d).map_err(ResolveError::Registry)?;
+    resolve_checked(input, &registry)
+}
+
+fn resolve_checked(input: ResolveInput<'_>, registry: &BTreeMap<String, registry::RegistryKey>) -> Result<Resolved, ResolveError> {
+    let resolved = resolve_unchecked(input, registry)?;
     let repo_map_text = crate::containment::read_repo_map(Path::new(resolved.get("SPIRA_REPO_MAP")));
     crate::containment::check(
         resolved.get("SPIRA_INSTANCE"),
@@ -740,7 +737,7 @@ pub fn resolve(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
 }
 
 /// Every key, with no containment judgement; callers go through [`resolve`].
-fn resolve_unchecked(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
+fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, registry::RegistryKey>) -> Result<Resolved, ResolveError> {
     let env = input.env;
     let toml_map = input.toml.map(toml_key_map).unwrap_or_default();
     let home_str = input.home.to_string_lossy().to_string();
@@ -1014,8 +1011,7 @@ fn resolve_unchecked(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> 
 
     // The generic registry pass: every remaining `spira/conf.d/<KEY>` not already resolved
     // above, in topological order.
-    let registry = registry::load(input.conf_d).map_err(ResolveError::Registry)?;
-    let order = registry::topo_order(&registry).map_err(ResolveError::Registry)?;
+    let order = registry::topo_order(registry).map_err(ResolveError::Registry)?;
     for key in &order {
         if known.contains_key(key) {
             continue; // already hand-resolved above
@@ -1205,8 +1201,8 @@ mod tests {
         assert_eq!(derive_home_repo(&home, &e), Path::new("/explicit/override"));
     }
 
-    // derive_repo_filesystem runs its git subprocess with exactly this map (`.env_clear()`
-    // plus it) — PATH must be in it for the real `git` binary to be found at all.
+    // The tests' own `git init` needs PATH; derive_repo_filesystem itself reads only the
+    // filesystem now, so a poisoned map (GIT_DIR below) cannot steer it.
     fn env_with_path(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         let mut m = env(pairs);
         m.entry("PATH".to_string()).or_insert_with(|| std::env::var("PATH").unwrap_or_default());
@@ -1272,7 +1268,7 @@ mod tests {
         run_git(&repo, &["init", "-q"]);
         let toml = crate::fixture_toml_file(ws.path(), &BTreeMap::new());
         let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
-        let direct = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&BTreeMap::new())), conf_d: &home.join("conf.d") }).unwrap();
+        let direct = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&BTreeMap::new())), conf_d: &Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d") }).unwrap();
         let via_wrapper = resolve_for_process(&home, &repo, &e).unwrap();
         assert_eq!(direct, via_wrapper);
     }

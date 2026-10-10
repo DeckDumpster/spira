@@ -194,7 +194,6 @@ impl World {
             ("SPIRA_MAX_LIVE_AEONS", ""),
             ("SPIRA_LANES_MAX_LIVE", ""),
             ("SPIRA_QUEUE_THROTTLE_OVERRIDE", ""),
-            ("SPIRA_EXPRESS_LABEL", "express"),
             ("SPIRA_SUMMON_LOCK_WAIT", "30"),
             ("SPIRA_LANES", "ops groomer qa maechen czar warden"),
             ("SPIRA_REPO_MAP", ""),
@@ -230,7 +229,6 @@ impl World {
             incident_label: get("SPIRA_INCIDENT_LABEL"),
             queue_wait: get("SPIRA_QUEUE_WAIT_LABEL"),
             open_children: get("SPIRA_OPEN_CHILDREN_LABEL"),
-            overlap_defer: get("SPIRA_OVERLAP_DEFER_LABEL"),
             submitted: get("SPIRA_SUBMITTED_LABEL"),
             work_types: get("SPIRA_WORK_CLOSE_TYPES").split_whitespace().map(str::to_string).collect(),
             reclaim_grace: get("SPIRA_RECLAIM_GRACE_SECS").parse().unwrap_or(10800),
@@ -241,7 +239,6 @@ impl World {
             max_live_aeons: opt("SPIRA_MAX_LIVE_AEONS"),
             lanes_max_live: opt("SPIRA_LANES_MAX_LIVE"),
             queue_throttle_override: get("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
-            express_label: get("SPIRA_EXPRESS_LABEL"),
             summon_lock_wait: get("SPIRA_SUMMON_LOCK_WAIT").parse().unwrap_or(30),
             lanes: get("SPIRA_LANES"),
             repo_map: get("SPIRA_REPO_MAP"),
@@ -354,6 +351,8 @@ pub fn run_mode<'a>(
     extra: &[(&str, &str)],
     repos: Option<&[&str]>,
 ) -> i32 {
+    let chamber = w.home.join("chamber");
+    let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", chamber.to_str())]);
     let h: &'a Host<'a> = Box::leak(Box::new(Host::new(r, clock, sink)));
     let s = Sentinel::new(
         h,
@@ -880,7 +879,7 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_label: String::new() },
+        Mode::Summon { fayth: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
@@ -901,7 +900,7 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_label: "express".into() },
+        Mode::Summon { fayth: "builder".into(), pool: None, require_express: true },
         &[("PATH", &format!("{}:/usr/bin:/bin", bin.display()))],
         None,
     );
@@ -912,8 +911,8 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
     assert!(launch.args.contains(&w.home.to_string_lossy().into_owned()));
     assert!(launch.args.contains(&"builder".to_string()));
     assert!(launch.args.iter().any(|a| a.starts_with("--unit=spira-aeon-builder-")));
-    assert!(launch.args.contains(&"--setenv=SPIRA_REQUIRE_LABEL=express".to_string()));
-    assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to 'express'"), "{}", sink.text());
+    assert!(launch.args.contains(&"--setenv=SPIRA_REQUIRE_EXPRESS=1".to_string()));
+    assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to express"), "{}", sink.text());
 }
 
 /// sp-hh599, law-a-control-that-cannot-check-must-refuse: `fayth_ready`'s own rc contract
@@ -941,7 +940,7 @@ fn summon_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_label: String::new() },
+        Mode::Summon { fayth: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
@@ -1066,8 +1065,8 @@ fn ck7_summon_pass_rotates_across_two_real_passes() {
 
 /// A `spira-claim` stub answering `fayth-exclude` (empty — no exclusions in this
 /// fixture), `fayth-ready` (ordinary per-fayth readiness; "builder" alone is ready) and
-/// `ready-count` (the express-composed query `express_ready_in_task_pool` issues — ready
-/// only when the label list it was handed carries ",express").
+/// `ready-count` (the express query `express_ready_in_task_pool` issues — ready only when
+/// it was handed `--express`).
 fn stub_express_claim(r: &FakeRunner) {
     r.on(|s| {
         if s.prog != "spira-claim" {
@@ -1078,7 +1077,7 @@ fn stub_express_claim(r: &FakeRunner) {
         match verb {
             "fayth-exclude" => ok(""),
             "fayth-ready" => ok(if arg1 == "builder" { "1" } else { "0" }),
-            "ready-count" => ok(if arg1.contains(",express") { "1" } else { "0" }),
+            "ready-count" => ok(if s.args.iter().any(|a| a == "--express") { "1" } else { "0" }),
             _ => None,
         }
     });
@@ -1108,15 +1107,15 @@ fn express_ready_in_task_pool_bypasses_the_throttle_and_summons() {
     let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
     assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
     assert!(
-        sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1 (restricted to 'express')"),
+        sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1 (restricted to express)"),
         "{}",
         sink.text()
     );
     assert!(sink.has("ACT summoned a builder aeon"), "{}", sink.text());
     let launch = r.find(|s| s.prog == "systemd-run").expect("systemd-run must have been called");
     assert!(
-        launch.args.iter().any(|a| a == "--setenv=SPIRA_REQUIRE_LABEL=express"),
-        "express grant must restrict the summoned aeon to the express label: {:?}",
+        launch.args.iter().any(|a| a == "--setenv=SPIRA_REQUIRE_EXPRESS=1"),
+        "express grant must restrict the summoned aeon to express: {:?}",
         launch.args
     );
     // Exactly one summon: the express grant sets the pool to EXACTLY 1 — a second ready
@@ -1163,9 +1162,8 @@ fn no_express_ready_stays_throttled() {
 /// `${VAR:+...}` guard) — exactly `builder.fayth`'s own real shape — and nothing in this
 /// fixture resolves it (no `spira.toml`, no `conf.d` registry under `w.home`), so
 /// `fayth_predicate` refuses rather than handing back an empty label
-/// `express_ready_in_task_pool` would otherwise compose into `",express"` and query as
-/// "anything carrying the express label" — the whole queue's worth of express-tagged
-/// work, not builder's own partition. The refusal must be LOUD (CLAIM-ERROR, stderr) and
+/// `express_ready_in_task_pool` would otherwise query as "anything express" — the whole
+/// queue's worth of express work, not builder's own partition. The refusal must be LOUD (CLAIM-ERROR, stderr) and
 /// must never reach `ready-count` for builder at all.
 #[test]
 fn express_ready_in_task_pool_a_claim_error_is_loud_and_never_widens() {
@@ -2641,131 +2639,23 @@ fn on_check2d_an_unresolved_repo_map_hold_stands() {
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "event"), 0, "{}", sink.text());
 }
 
-// ---------------------------------------------------------------------------------------
-// CHECK 7e (file overlaps)
-
-const OVERLAP_LABEL: &str = "hold-back-fo";
-
-fn overlap_world(r: &FakeRunner, w: &World) {
+#[test]
+fn two_beads_touching_one_file_are_both_left_claimable() {
+    let (w, r, sink, clock) = setup("ov-gone");
     let repo_root = w.dir.join("repo");
     std::fs::create_dir_all(repo_root.join(".git")).unwrap();
     let root = repo_root.to_string_lossy().into_owned();
     r.on(move |s| {
         (s.prog == "spira-config" && s.args == ["repo", "root", "spira"]).then(|| ok(&format!("{root}\n"))).flatten()
     });
-    const LIST: &str = concat!(r#"[
-      {"id":"sp-busy","status":"in_progress","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-early","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-late","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-alone","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-asked","status":"open","issue_type":"task","labels":["spira","repo:spira",
-"#,
-        r#""needs-operator""#, // literal-ok: test fixture
-        r#"]}
-    ]"#
-    );
+    const LIST: &str = r#"[
+      {"id":"sp-a","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
+      {"id":"sp-b","status":"open","issue_type":"task","labels":["spira","repo:spira"]}
+    ]"#;
     r.on(|s| (is_bd(s, "list") && s.args.iter().any(|a| a == "--exclude-type")).then(|| ok(LIST)).flatten());
     r.on(|s| (s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")).then(|| ok(&lc_mirror(LIST))).flatten());
-    r.on(|s| {
-        if s.prog != "git" {
-            return None;
-        }
-        let a = s.args.join(" ");
-        let branch_of = |ids: &[(&str, &str)]| ids.iter().find(|(id, _)| a.contains(&format!("spira/{id}"))).map(|(_, v)| v.to_string());
-        if a.contains(" diff ") {
-            return branch_of(&[
-                ("sp-early", "shared.txt\nonly-early.txt\n"),
-                ("sp-late", "shared.txt\n"),
-                ("sp-busy", "busy.txt\n"),
-                ("sp-alone", "other.txt\n"),
-                ("sp-asked", "shared.txt\n"),
-            ])
-            .and_then(|o| ok(&o));
-        }
-        if a.contains(" log ") {
-            return branch_of(&[("sp-early", "1000\n"), ("sp-late", "2000\n"), ("sp-busy", "3000\n"), ("sp-alone", "1500\n"), ("sp-asked", "2500\n")])
-                .and_then(|o| ok(&o));
-        }
-        None
-    });
-}
-
-fn overlap_run(w: &World, r: &FakeRunner, sink: &FakeSink, clock: &FakeClock, mode: Mode) {
-    run_mode(
-        w,
-        r,
-        sink,
-        clock,
-        mode,
-        &[("SPIRA_OVERLAP_DEFER_LABEL", OVERLAP_LABEL)],
-        Some(&["spira\t/src/spira\torigin/main\t0"]),
-    );
-}
-
-#[test]
-fn detect_overlaps_names_the_later_bead_and_stays_quiet_on_disjoint_and_asked_beads() {
-    let (w, r, sink, clock) = setup("ov-detect");
-    overlap_world(&r, &w);
-    overlap_run(&w, &r, &sink, &clock, Mode::DetectOverlaps);
-    assert!(sink.has("OVERLAP sp-late spira shared.txt sp-early"), "{}", sink.text());
-    assert!(!sink.has("OVERLAP sp-early"));
-    assert!(!sink.has("sp-alone"));
-    assert!(!sink.has("sp-asked"), "a bead a human already has is not given a serialisation verdict");
-    assert!(!sink.has("sp-busy"));
-}
-
-#[test]
-fn detect_overlaps_is_off_when_the_label_is_unset() {
-    let (w, r, sink, clock) = setup("ov-off");
-    overlap_world(&r, &w);
-    run_mode(&w, &r, &sink, &clock, Mode::DetectOverlaps, &[], Some(&["spira\t/src/spira\torigin/main\t0"]));
-    assert!(!sink.has("OVERLAP"));
-}
-
-#[test]
-fn a_claimed_holder_defers_the_unclaimed_bead_touching_its_file() {
-    let (w, r, sink, clock) = setup("ov-claimed");
-    overlap_world(&r, &w);
-    r.on(|s| {
-        let a = s.args.join(" ");
-        (s.prog == "git" && a.contains(" diff ") && a.contains("spira/sp-late")).then(|| ok("busy.txt\n")).flatten()
-    });
-    overlap_run(&w, &r, &sink, &clock, Mode::DetectOverlaps);
-    assert!(sink.has("OVERLAP sp-late spira busy.txt sp-busy"), "{}", sink.text());
-}
-
-#[test]
-fn audit_defers_the_later_bead_and_resumes_one_that_no_longer_overlaps() {
-    let (w, r, sink, clock) = setup("ov-audit");
-    overlap_world(&r, &w);
-    r.on(|s| {
-        (is_bd(s, "list") && s.args.iter().any(|a| a == "--label"))
-            .then(|| ok(r#"[{"id":"sp-alone","status":"open","issue_type":"task","labels":["spira",
-"hold-back-fo"]}]"#))
-            .flatten()
-    });
-    overlap_run(&w, &r, &sink, &clock, Mode::Audit);
-    assert!(sink.has("DEFERRED sp-late spira sp-early"), "{}", sink.text());
-    assert!(sink.has("RESUMED sp-alone"));
-    assert!(sink.has("ACT deferred 1 file-overlap bead(s)"));
-    let add = |id: &str| r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", id, OVERLAP_LABEL]).is_some();
-    assert!(add("sp-late"));
-    assert!(!add("sp-early"), "the holder is never deferred");
-    assert!(r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "remove", "sp-alone", OVERLAP_LABEL]).is_some());
-    // literal-ok: test fixture
-    assert!(r.find(|s| is_bd(s, "label") && s.args.iter().any(|a| a == "needs-operator") && s.args.iter().any(|a| a == "sp-late")).is_none());
-}
-
-#[test]
-fn audit_does_not_reapply_a_label_the_bead_already_carries() {
-    let (w, r, sink, clock) = setup("ov-idem");
-    overlap_world(&r, &w);
-    r.on(|s| {
-        (is_bd(s, "label") && s.args.get(3).map(String::as_str) == Some("list") && s.args.get(4).map(String::as_str) == Some("sp-late"))
-            .then(|| ok("hold-back-fo\n"))
-            .flatten()
-    });
-    overlap_run(&w, &r, &sink, &clock, Mode::Audit);
-    assert!(sink.has("DEFERRED sp-late"));
-    assert_eq!(r.count(|s| is_bd(s, "note") && s.args.iter().any(|a| a == "sp-late")), 0, "no repeat note");
+    r.on(|s| (s.prog == "git" && s.args.join(" ").contains(" diff ")).then(|| ok("shared.txt\n")).flatten());
+    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(&["spira\t/src/spira\torigin/main\t0"]));
+    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "{}", sink.text());
+    assert!(!sink.has("OVERLAP") && !sink.has("DEFERRED"), "{}", sink.text());
 }

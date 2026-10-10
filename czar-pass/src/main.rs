@@ -89,7 +89,6 @@ struct Config {
     spira_db: String,
     scope_label: String,
     czar_label: String,
-    express_label: String,
     land_unit: String,
     repo_map: Option<PathBuf>,
     /// `SPIRA_CZAR_STAGE_<CLASS>` for every registered class (spira/conf.d), resolved once
@@ -177,7 +176,6 @@ impl Config {
             spira_db: must_cfg("SPIRA_DB"),
             scope_label: must_cfg("SPIRA_SCOPE_LABEL"),
             czar_label: must_cfg("SPIRA_CZAR_LABEL"),
-            express_label: must_cfg("SPIRA_EXPRESS_LABEL"),
             land_unit: "spira-landing".to_string(),
             repo_map: (!repo_map.is_empty()).then(|| PathBuf::from(repo_map)),
             stages,
@@ -329,13 +327,13 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
 // A red base blocks every branch of its own repository, not one batch's members, so it is
 // filed at P0 + express against the REPOSITORY THAT IS RED rather than at czar-pass's usual
 // P1 against "spira" — a red main.py needs a builder in the failing repo, at the front of
-// the queue, not a routine queue-health ticket. Priority does not imply express — the label
-// is added explicitly, since incident.sh's `bd create` does not route through bead.sh.
+// the queue, not a routine queue-health ticket. Priority does not imply express — it is asked
+// for explicitly, as lifecycle state, through SPIRA_INCIDENT_EXPRESS.
 fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, repo: &str) {
     match cfg.stage(class) {
         Stage::Shadow => czar_would_log(cfg, class, "inference", subj),
         Stage::Act => {
-            let mut labels = format!("plan,{}", cfg.express_label);
+            let mut labels = "plan".to_string();
             if !cfg.scope_label.is_empty() {
                 labels = format!("{},{}", cfg.scope_label, labels);
             }
@@ -348,6 +346,7 @@ fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, r
                 .env("SPIRA_INCIDENT_LABELS", labels)
                 .env("SPIRA_INCIDENT_TYPE", "bug")
                 .env("SPIRA_INCIDENT_PRIORITY", "0")
+                .env("SPIRA_INCIDENT_EXPRESS", "1")
                 .env("SPIRA_INCIDENT_ACTOR", "czar-pass")
                 .env("SPIRA_SIN_EXEMPT", "1")
                 .env("SPIRA_INCIDENT_REPO", repo)
@@ -1603,7 +1602,6 @@ mod tests {
             spira_db: String::new(),
             scope_label: String::new(),
             czar_label: "czar-trigger".to_string(),
-            express_label: "express".to_string(),
             land_unit: "spira-landing".to_string(),
             repo_map: None,
             // Every case here runs in Shadow stage (the suite's own doc comment above) —

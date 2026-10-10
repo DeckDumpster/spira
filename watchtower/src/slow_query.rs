@@ -1,5 +1,5 @@
 //! `--slow-query-check` — one incident per pass for every slow shape found in the slow-query log that
-//! `spira-lc` appends to (`<epoch>\t<verb>\t<millis>\t<shape>`). Only lines past the saved
+//! `spira-lc` appends to (`<epoch>\t<verb>\t<caller>\t<millis>\t<shape>`; the older four-field line has no caller). Only lines past the saved
 //! offset are read, so new slow lines are reported on the pass that sees them; the incident
 //! reference is fixed, so one slow store is one incident however many statements it slows.
 
@@ -32,8 +32,12 @@ impl Shape {
 pub fn group(text: &str) -> Vec<Shape> {
     let mut by: BTreeMap<String, Shape> = BTreeMap::new();
     for l in text.lines() {
-        let f: Vec<&str> = l.splitn(4, '\t').collect();
-        let [_, verb, ms, shape] = f[..] else { continue };
+        let f: Vec<&str> = l.splitn(5, '\t').collect();
+        let (verb, ms, shape) = match f[..] {
+            [_, verb, _, ms, shape] if ms.parse::<u64>().is_ok() => (verb, ms, shape),
+            [_, verb, ms, ..] => (verb, ms, l.splitn(4, '\t').nth(3).unwrap_or("")),
+            _ => continue,
+        };
         let Ok(ms) = ms.parse::<u64>() else { continue };
         let s = by.entry(shape.to_string()).or_insert_with(|| Shape { shape: shape.to_string(), verbs: vec![], millis: vec![] });
         if !s.verbs.iter().any(|v| v == verb) {
@@ -134,6 +138,14 @@ mod tests {
     fn distinct_shapes_group_separately() {
         let g = group("1\ta\t1100\tX\n2\tb\t1200\tY\n3\ta\t1300\tX\n");
         assert_eq!(g.len(), 2);
+    }
+
+    #[test]
+    fn a_line_with_a_caller_groups_with_the_same_shape_without_one() {
+        let g = group("1\ta\t1100\tX\n2\ta\tspira-lc\t1200\tX\n3\tb\tclaim\t1300\tREQUEST\n");
+        assert_eq!(g.len(), 2);
+        let x = g.iter().find(|s| s.shape == "X").unwrap();
+        assert_eq!((x.count(), x.max()), (2, 1200));
     }
 
     #[test]

@@ -214,6 +214,21 @@ spira-lc release sp-rel-refused test-suite
 wantrc "lc_release from READY is refused" 3 $?
 
 # ── lc_drop (sp-rlyl0: slay.sh --close) — orthogonal, legal even with no Claim ever applied ─
+# The drop door asks bd whether the bead came from outside (external_ref); a stub answers
+# the one call, so an unreadable origin stays a refusal rather than a pass.
+cat > "$TMP/bd" <<'STUBEOF'
+#!/usr/bin/env bash
+case "$*" in
+    *sp-drop-ext*) echo '[{"id":"sp-drop-ext","status":"open","external_ref":"github:o/r#4"}]' ;;
+    *) echo '[{"id":"sp-drop-1","status":"open"}]' ;;
+esac
+STUBEOF
+chmod +x "$TMP/bd"
+tl_config SPIRA_BD="$TMP/bd"
+seed_bead sp-drop-ext READY
+spira-lc drop sp-drop-ext "operator decided to drop this" test-suite
+wantrc "SEEN RED: a bare drop of an external bead is refused" 3 $?
+is "...and the row stays READY" "READY" "$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='sp-drop-ext'" -r json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["state"] if d else "")')"
 seed_bead sp-drop-1 READY
 spira-lc drop sp-drop-1 "operator decided to drop this" test-suite
 wantrc "lc_drop applies from READY (orthogonal, no Claim needed)" 0 $?

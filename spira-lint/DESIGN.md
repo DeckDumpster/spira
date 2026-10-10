@@ -201,6 +201,11 @@ anywhere a test module's own `mod name;` loads transitively.
   this defect; a `/` in that default would still mean it is secretly a path, so it still
   counts.
 
+  A key with an entry under `spira/conf.d/` (a registered config key, other than a program
+  name: `SPIRA_BD`, `SPIRA_GH`, `SPIRA_FORGE`, `SPIRA_CTRL`, `SPIRA_SYSTEMCTL`) is refused ANY
+  literal default and `.unwrap_or_default()` too: the registry owns the default, so an
+  env read that supplies its own bypasses the config store.
+
 **Allow list.** `spira-lint/config-literal-fallback-allow`, exact paths, shrink-only. Not
 empty at birth: the rule's own first run over the whole tree found 24 pre-existing sites
 outside the eight binaries sp-ivfu3 itself fixed (`broker`, `census`, `cockpit-collect`,
@@ -424,6 +429,15 @@ constructor per kind of call, so a deploy without `--allow-draft` or a tool with
 release's launcher environment cannot be written) or a unit test of the `acceptance`
 module (the override key against `SPIRA_CONF_KEYS`, the whole run against a fake host).
 `acceptance-agent.sh` stays bash; `test-acceptance-agent.sh` drives it for real.
+
+## Rule `workflow-config`
+
+A step in `.github/workflows/*.yml` that runs a release binary (`target/release/<bin>`,
+`$RUNNER_TEMP/build/<bin>`, or a workspace binary by name once a step has put the staged
+release on PATH) must have `SPIRA_TOML` in its own `env:`, its job's, the workflow's, or
+written to `GITHUB_ENV` by an earlier step of the same job. `spira/ci-config.sh` writes the file a step names in its own env; it exports nothing job-wide. A
+hosted runner has no box config. Comment lines are not invocations; a `PATH` addition is not
+one either. No allow list.
 
 ## Rule `gate-workflow`
 
@@ -687,6 +701,54 @@ row, never from a progress or result file a second writer keeps.
 
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: cockpit-no-round-files
 checked <n> files`.
+
+## Rule `pool-state-readers`
+
+**Intent.** Operator-facing tooling reads the round VM pool through `round-vm status --json`, which
+reports the pool's recorded events, never from `pool.json`, `template.json` or the round-vm state
+directory.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/` and `spira-world/`.
+
+**Violation.** A live (non-comment) line naming `pool.json`, `template.json`, `round-vm/state` or
+`round-vm.lock`.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: pool-state-readers checked
+<n> files`.
+
+
+## Rule `gate-state-readers`
+
+**Intent.** Operator-facing tooling reads a gate through `gate status <bead>` and stops one with
+`gate cancel <bead>`, never from `gate.log`, the admission and holder files or the gate machine's
+record, and never by matching `gate.sh` in a process listing.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/` and `spira-world/`.
+
+**Violation.** A live (non-comment) line naming `gate.log`, `gate-admission`, `gate-machine`,
+`.lock.holder`, `SPIRA_GATE_LOG` or `gate.sh`. Files that still match a process listing are listed in
+`spira-lint/gate-state-readers-allow`, which only shrinks: a listed file with no match is a finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: gate-state-readers checked
+<n> files`.
+
+## Rule `aeon-state-readers`
+
+**Intent.** An aeon's phase and how its session was cut short are fields of its WORKING row,
+read through spira-lc. Nothing writes or reads the retired `.lapsed`, `.thrash` and `.slain`
+marker files, and the operator-facing health and panel readers read no pidfile, lease file,
+ledger or `/proc` entry.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `watchtower/`, `aeon/`,
+`spira-world/` and `spira/*.sh` for the marker names; `cockpit/ops/src/health*` and
+`cockpit/panel/` for the pid, lease, ledger and `/proc` reads. Suites, `tests.rs`, `tests/` and
+everything after a `#[cfg(test)]` line are out of scope.
+
+**Violation.** A live line naming a marker file in a string (`<id>.slain`, `"…thrash"`), or in a
+reader, `/proc`, `procfs::`, a `.pid` or `.lease` name, or `aeon-ledger`.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: aeon-state-readers
+checked <n> files`; its unit tests plant a read of each kind and require a finding for it.
 
 ## Rule `incident-cause-lint`
 

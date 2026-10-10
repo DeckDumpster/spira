@@ -114,6 +114,8 @@ pub struct Partition<'a> {
     /// for it (sp-psztcc).
     pub held_ask: HashSet<String>,
     pub held_poison: HashSet<String>,
+    /// Live bead → the prerequisites its lifecycle row's stack names.
+    pub stacked_on: HashMap<String, Vec<String>>,
     pub vocab: &'a Vocab,
     pub facts: &'a Facts,
 }
@@ -183,6 +185,7 @@ impl<'a> Partition<'a> {
             self.epic(e, &mut memo, &mut rows);
         }
         self.cycles(&members, &mut rows);
+        self.stack_deadlocks(&members, &mut rows);
         rows
     }
 
@@ -476,6 +479,24 @@ impl<'a> Partition<'a> {
         }
     }
 
+    // -- a delegated parent whose open child is stacked on it: each waits on the other.
+    fn stack_deadlocks(&self, members: &[&Bead], rows: &mut Vec<Row>) {
+        for p in members.iter().filter(|b| self.delegated(b)) {
+            for c in self.store.children(&p.id) {
+                if c.is_closed() || !self.stacked_on.get(&c.id).is_some_and(|s| s.contains(&p.id)) {
+                    continue;
+                }
+                rows.push(Row::new(
+                    "stack-deadlock",
+                    &p.id,
+                    Disposition::Escalate,
+                    format!("{} is stacked on {}, which is labeled {} and waits on its children: neither can be claimed", c.id, p.id, self.vocab.open_children),
+                    format!("remove the {} label from {}: it has work of its own", self.vocab.open_children, p.id),
+                ));
+            }
+        }
+    }
+
     // -- cycles: Tarjan over the partition's open sub-graph.
     fn cycles(&self, members: &[&Bead], rows: &mut Vec<Row>) {
         let ids: Vec<&str> = members.iter().map(|b| b.id.as_str()).collect();
@@ -594,6 +615,9 @@ mod tests {
         run_working(s, ready, &[], facts)
     }
     fn run_working(s: &Store, ready: &[&str], working: &[&str], facts: &Facts) -> Vec<Row> {
+        run_stacked(s, ready, working, &HashMap::new(), facts)
+    }
+    fn run_stacked(s: &Store, ready: &[&str], working: &[&str], stacked_on: &HashMap<String, Vec<String>>, facts: &Facts) -> Vec<Row> {
         let vocab = Vocab { ask: ASK.into(), ..Vocab::default() };
         let p = Partition {
             store: s,
@@ -602,6 +626,7 @@ mod tests {
             working: working.iter().map(|s| s.to_string()).collect(),
             held_ask: s.beads.iter().filter(|b| b.has(ASK)).map(|b| b.id.clone()).collect(),
             held_poison: s.beads.iter().filter(|b| b.has("spira-poison")).map(|b| b.id.clone()).collect(),
+            stacked_on: stacked_on.clone(),
             vocab: &vocab,
             facts,
         };
@@ -617,6 +642,21 @@ mod tests {
     }
 
     // ---- the bead's own four, plus empty ----
+
+    #[test]
+    fn a_labeled_parent_and_a_child_stacked_on_it_is_a_deadlock() {
+        let pl = plan_with(&["spira-open-children"]);
+        let s = store(vec![
+            bead("p", "open", &pl, None, &[]),
+            bead("k", "open", &PLAN, Some("p"), &[]),
+        ]);
+        let f = Facts { live: 1, ..Facts::default() };
+        let stacked: HashMap<String, Vec<String>> = [("k".to_string(), vec!["p".to_string()])].into();
+        let found = kinds(&run_stacked(&s, &[], &[], &stacked, &f));
+        assert!(found.contains(&("stack-deadlock".into(), "p".into())), "{found:?}");
+        let found = kinds(&run_stacked(&s, &[], &[], &HashMap::new(), &f));
+        assert!(!found.iter().any(|(k, _)| k == "stack-deadlock"), "positive control: no stack, no row");
+    }
 
     #[test]
     fn closed_blocker_is_not_reported() {

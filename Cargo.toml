@@ -13,6 +13,7 @@ members = [
     "supervise",
     "spira-config",
     "queue-watch",
+    "perf-watch",
     "tsd",
     "cert-sweep",
     "desired-state",
@@ -72,6 +73,7 @@ members = [
     "spira/sim",
     "reclaim",
     "sift",
+    "refusal-watch",
 ]
 resolver = "2"
 

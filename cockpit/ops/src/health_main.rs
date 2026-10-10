@@ -100,27 +100,11 @@ fn gather_drain(run: &str) -> DrainState {
     DrainState { stamp_mtime: mtime }
 }
 
-/// Aeons genuinely live right now, from `/proc` (cheap, exact — the snapshot can be up to
-/// 120s stale, so a short-lived aeon can start and finish inside one collector pass and read
-/// as absent for its whole life without this).
-fn live_aeon_n(run: &str) -> i64 {
-    let mut n = 0i64;
-    let Ok(rd) = std::fs::read_dir(run) else { return 0 };
-    for ent in rd.flatten() {
-        let name = ent.file_name();
-        let name = name.to_string_lossy();
-        if !(name.starts_with("aeon-") && name.ends_with(".pid")) {
-            continue;
-        }
-        let Ok(pid_s) = std::fs::read_to_string(ent.path()) else { continue };
-        let Ok(pid) = pid_s.trim().parse::<i32>() else { continue };
-        let Some(argv) = cockpit_ops::procfs::cmdline(pid) else { continue };
-        let joined = argv.join(" ");
-        if joined.contains("aeon.sh") || joined.split('/').next_back().map(|b| b == "aeon" || b.starts_with("aeon ")).unwrap_or(false) || joined.contains("/aeon ") || joined.ends_with("/aeon") {
-            n += 1;
-        }
-    }
-    n
+/// The WORKING rows of the lifecycle store with their phase: an aeon's presence and place in
+/// its run are the machine's read, never a pidfile or a `/proc` entry.
+fn working_rows() -> Option<Vec<(String, String)>> {
+    let rows = spira_config::lc_state::list_state_with(&cockpit_ops::db::lc_bin(), "WORKING").ok()?;
+    Some(rows.into_iter().map(|r| (r.bead_id, r.phase.unwrap_or_else(|| "?".to_string()))).collect())
 }
 
 fn renderer_rev() -> String {
@@ -188,7 +172,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
         hhmm,
         age_secs,
         snap_stale_s,
-        live_aeon_n: live_aeon_n(run),
+        working: working_rows(),
         trace_lines,
         halt: gather_halt(run),
         drain: gather_drain(run),

@@ -67,7 +67,7 @@ pub fn parse_show(code: Option<i32>, stdout: &[u8]) -> Result<Option<LcBead>, St
     let text = |x: Option<&serde_json::Value>| x.and_then(|t| t.as_str()).unwrap_or("").to_string();
     let merge = text(v.get("delivery").and_then(|d| d.get("merge_sha")));
     let sha = if merge.is_empty() { text(bead.get("tip")) } else { merge };
-    Ok(Some(LcBead { state: text(bead.get("state")), sha }))
+    Ok(Some(LcBead { state: text(bead.get("state")), sha, reason: text(bead.get("reason")) }))
 }
 
 pub struct RealBd {

@@ -2,6 +2,7 @@
 //! spira-lc, the config (spira-config library only), the clock, the environment, stdio.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
@@ -174,6 +175,30 @@ impl Git for RealGit {
     fn merge_abort(&self, wt: &Path) {
         let _ = ok(git(wt).args(["merge", "--abort"]).stderr(Stdio::null()));
     }
+    fn rebase_onto(&self, repo: &Path, scratch: &Path, tip: &str, upstream: &str, onto: &str, git_name: &str, git_email: &str) -> Result<String, Vec<String>> {
+        self.worktree_prune(repo);
+        self.worktree_remove(repo, scratch);
+        if !self.worktree_add_detached(repo, scratch, tip) {
+            return Err(Vec::new());
+        }
+        let done = ok(git(scratch)
+            .arg("-c")
+            .arg(format!("user.name={git_name}"))
+            .arg("-c")
+            .arg(format!("user.email={git_email}"))
+            .args(["rebase", "--onto", onto, upstream])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()));
+        let result = if done {
+            self.rev_parse(scratch, "HEAD").ok_or_else(Vec::new)
+        } else {
+            let paths = stdout_of(git(scratch).args(["diff", "--name-only", "--diff-filter=U"])).unwrap_or_default();
+            let _ = ok(git(scratch).args(["rebase", "--abort"]).stderr(Stdio::null()));
+            Err(paths.lines().map(str::to_string).collect())
+        };
+        self.worktree_remove(repo, scratch);
+        result
+    }
     fn is_clean(&self, wt: &Path) -> bool {
         stdout_of(git(wt).args(["status", "--porcelain"])).map(|s| s.trim().is_empty()).unwrap_or(false)
     }
@@ -333,7 +358,6 @@ impl Lib for RealLib {
         let git_name = spira_config::process::cfg("SPIRA_GIT_NAME")?;
         let git_email = spira_config::process::cfg("SPIRA_GIT_EMAIL")?;
         let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
-        let express_label = spira_config::process::cfg("SPIRA_EXPRESS_LABEL")?;
         let round_wall_secs = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
         let s = Settings {
             home: PathBuf::from(g("home")),
@@ -365,7 +389,6 @@ impl Lib for RealLib {
             git_name,
             git_email,
             mailbox,
-            express_label,
             round_wall_secs,
         };
         let path = reg.root(&name);
@@ -490,7 +513,7 @@ impl Lib for RealLib {
             ans
         }
     }
-    fn sort_rows(&self, express_label: &str, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)> {
+    fn sort_rows(&self, express: &HashSet<String>, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)> {
         // In-process (sp-hwjsq, "wave 4.32"): queue_sort_rows and its internal
         // queue_is_suite_transition, both ported here. queue_is_suite_transition has no
         // caller left at all once this goes in-process, so lib.sh's copy is retired
@@ -503,7 +526,7 @@ impl Lib for RealLib {
                 (id, tip, epoch, is_trans)
             })
             .collect();
-        let (ranked, warning) = crate::ops::helpers::sort_rows(&with_trans, prio_json, express_label);
+        let (ranked, warning) = crate::ops::helpers::sort_rows(&with_trans, prio_json, express);
         if let Some(w) = warning {
             eprintln!("{w}");
         }
@@ -642,6 +665,42 @@ impl Scripts for RealScripts {
         // SAFETY: signal 0 only checks existence.
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
+    fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
+        let width = ids.len().clamp(1, REBASE_WIDTH);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<std::sync::Mutex<Option<RunOut>>> = ids.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        std::thread::scope(|sc| {
+            for _ in 0..width {
+                sc.spawn(|| loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let Some(id) = ids.get(i) else { break };
+                    // batch-job: rebase-stale bounds itself by its own lock wait and gate
+                    let out = match Command::new("rebase-stale").arg(id).arg(repo).stdin(Stdio::null()).output() {
+                        Ok(o) => RunOut {
+                            rc: o.status.code().unwrap_or(127),
+                            out: String::from_utf8_lossy(&o.stdout).to_string(),
+                            err: String::from_utf8_lossy(&o.stderr).to_string(),
+                        },
+                        Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run rebase-stale: {e}") },
+                    };
+                    *slots[i].lock().unwrap_or_else(|p| p.into_inner()) = Some(out);
+                });
+            }
+        });
+        ids.iter().cloned().zip(slots.into_iter().map(|s| s.into_inner().unwrap_or_else(|p| p.into_inner()).unwrap_or_default())).collect()
+    }
+    fn rebase_waiting_start(&self, repo: &str) -> bool {
+        let Ok(exe) = std::env::current_exe() else { return false };
+        // batch-job: the rebase pass runs as long as its gates take, detached from the landing
+        Command::new(exe)
+            .args(["rebase-waiting", repo])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .is_ok()
+    }
     fn pass_restart(&self, batch: &str, repo: &str) -> bool {
         let Ok(exe) = std::env::current_exe() else { return false };
         // batch-job: the next pass runs as long as its round-vm wall allows, detached from this verb
@@ -657,6 +716,10 @@ impl Scripts for RealScripts {
 }
 
 // ---------------------------------------------------------------------------------- forge
+
+/// How many `rebase-stale` runs go at once; the engine's own per-repo lock serialises the
+/// rebase itself, so this bounds only the waiting.
+const REBASE_WIDTH: usize = 4;
 
 pub struct RealForge;
 
@@ -703,6 +766,9 @@ impl Forge for RealForge {
     fn run_metadata(&self, forge: &Path, repo: &Path, run: &str) -> String {
         stdout_of(Command::new(forge).arg("run-metadata").arg(repo).arg(run)).unwrap_or_default()
     }
+    fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String {
+        stdout_of(Command::new(forge).arg("fail-lines").arg(repo).arg(run).arg(suites)).unwrap_or_default()
+    }
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str) {
         let _ = ok(Command::new(forge).arg("run-cancel").arg(repo).arg(run).stderr(Stdio::null()));
     }
@@ -720,12 +786,15 @@ pub struct RealLc {
 impl RealLc {
     fn run(&self, args: &[&str]) -> (i32, String) {
         let Some(bin) = &self.bin else { return (2, "no spira-lc program".into()) };
-        let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "15".into());
+        let timeout = match crate::conf::nonempty("SPIRA_LC_TIMEOUT") {
+            Ok(t) => t,
+            Err(e) => return (2, e),
+        };
         run_combined(Command::new("timeout").arg(timeout).arg(bin).args(args))
     }
     fn stdout(&self, args: &[&str]) -> Result<String, String> {
         let bin = self.bin.as_ref().ok_or("no spira-lc program")?;
-        let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "15".into());
+        let timeout = crate::conf::nonempty("SPIRA_LC_TIMEOUT")?;
         let mut last = String::new();
         for attempt in 0..2 {
             if attempt > 0 {
@@ -774,6 +843,21 @@ impl Lc for RealLc {
             return Err((rc, out.trim().to_string()));
         }
         Ok(self.batch_state(batch_id).map(|(_, version)| version).unwrap_or_default())
+    }
+    fn stage(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, parent: &str, actor: &str) -> Result<String, (i32, String)> {
+        let (rc, out) = self.run(&["stage", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", members, "--parent", parent, "--actor", actor]);
+        if rc != 0 {
+            return Err((rc, out.trim().to_string()));
+        }
+        Ok(self.batch_state(batch_id).map(|(_, version)| version).unwrap_or_default())
+    }
+    fn promote(&self, batch_id: &str, head: &str, base: &str, actor: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["promote", batch_id, "--head", head, "--base", base, "--actor", actor]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
     }
     fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["abandon-batch", batch_id, "--expect", state, "--version", version, "--actor", actor, "--reason", reason]);
@@ -831,6 +915,11 @@ impl Lc for RealLc {
             None => self.stdout(&["list"])?,
         };
         serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))
+    }
+    fn express_ids(&self) -> Result<Vec<String>, String> {
+        let out = self.stdout(&["list", "--express"])?;
+        let rows: Vec<LcBeadRow> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))?;
+        Ok(rows.into_iter().map(|r| r.bead_id).collect())
     }
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow> {
         let out = self.stdout(&["show", bead]).ok()?;
@@ -1019,7 +1108,6 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         ("SPIRA_GIT_NAME", "spira"),
         ("SPIRA_GIT_EMAIL", "spira@spira.invalid"),
         ("SPIRA_MAIL_SESSION_MAILBOX", "concierge"),
-        ("SPIRA_EXPRESS_LABEL", "express"),
     ];
 
     /// Declares `SPIRA_REPO_MAP` (and `SPIRA_HOME_REPO` when given), plus
@@ -1045,7 +1133,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     }
 
     /// `context()` reads SPIRA_CERTIFY_SUITES/SPIRA_GIT_NAME/SPIRA_GIT_EMAIL/
-    /// SPIRA_MAIL_SESSION_MAILBOX/SPIRA_EXPRESS_LABEL through spira-config's one door
+    /// SPIRA_MAIL_SESSION_MAILBOX through spira-config's one door
     /// (law-one-source-of-config), not the stubbed lib.sh above — a `context()`-exercising
     /// test needs a resolvable `$SPIRA_TOML` for these five, which in turn needs
     /// `$SPIRA_HOME` to point at a REAL `conf.d` (`registry::load` refuses a directory with
@@ -1159,7 +1247,6 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         assert_eq!(s.git_name, "spira");
         assert_eq!(s.git_email, "spira@spira.invalid");
         assert_eq!(s.mailbox, "concierge");
-        assert_eq!(s.express_label, "express");
         assert_eq!(r.path, Some(repo.clone()));
         assert_eq!(r.mode, LandMode::QueueLocal);
         assert_eq!(r.map_land, "queue.local");
@@ -1231,7 +1318,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         // the real `git diff` behind queue_is_suite_transition fails closed (not a
         // transition) for both rows, same as the bash stub it replaced always answered.
         assert_eq!(
-            lib.sort_rows("express", Path::new("/repo"), "b0", "[]", "sp-a ta 6\nsp-b tb 5\n"),
+            lib.sort_rows(&HashSet::new(), Path::new("/repo"), "b0", "[]", "sp-a ta 6\nsp-b tb 5\n"),
             vec![("sp-b".to_string(), "tb".to_string()), ("sp-a".to_string(), "ta".to_string())]
         );
     }
@@ -1264,7 +1351,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         // sp-t carries the LATER epoch (2 vs. 1): the transition tiebreak must still put it
         // first, ahead of certification age — sp-ihxa0's "tiebreak only within a priority"
         // rule, not a rank of its own that could outrank arrival order the other way.
-        let out = lib.sort_rows("express", &repo, &base, "[]", &format!("sp-t {trans_tip} 2\nsp-p {base} 1\n"));
+        let out = lib.sort_rows(&HashSet::new(), &repo, &base, "[]", &format!("sp-t {trans_tip} 2\nsp-p {base} 1\n"));
         // sp-t (the transition) ranks first within the same (default) priority, despite
         // its later epoch.
         assert_eq!(out, vec![("sp-t".to_string(), trans_tip), ("sp-p".to_string(), base)]);

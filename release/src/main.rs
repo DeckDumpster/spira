@@ -136,6 +136,10 @@ fn fail_err(m: String) -> (u8, String) {
 fn resolve_config(a: &Args, env: &config::Env, cmd: &str, rest: &[String]) -> Result<Config, String> {
     let staged = match (cmd, rest.first(), env.get("SPIRA_TOML").filter(|s| !s.is_empty())) {
         ("verify" | "activate", Some(sha), Some(spec)) => release::config_delta::staged_for_resolution(spec, a.flags.releases.as_deref(), sha)?,
+        ("build", Some(commit), Some(spec)) => {
+            let repo = release::repo::resolve(a.repo.as_deref().map(Path::new), env).or_else(|| a.repo.clone().map(PathBuf::from)).or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("."));
+            release::config_delta::staged_for_commit(&RealGit, spec, &repo, commit)?
+        }
         _ => None,
     };
     let Some((dir, spec)) = staged else { return Config::resolve(&a.flags, env) };

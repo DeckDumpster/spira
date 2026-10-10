@@ -60,7 +60,7 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
             older(&mut certify_ep, r.updated_at);
         }
         for r in &rework {
-            if matches!(r.reason.as_str(), "batch-ejected" | "base-withdrawn") {
+            if matches!(r.reason.as_str(), "batch-ejected" | "batch-ejected-red" | "base-withdrawn") {
                 ejected += 1;
                 continue;
             }
@@ -88,9 +88,8 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
         push(&mut out, "SP_FUNNEL_CERT_AGE", epoch_to_age(cert_ep, now));
     }
 
-    let express_label = cfg.express_label.as_str();
     // spira-claim's count, the one ready set (sp-7g5q6) — not a bd ready query of our own.
-    let enr = io::run_tool("spira-claim", &["ready-count", express_label], None)
+    let enr = io::run_tool("spira-claim", &["ready-count", "", "--express"], None)
         .and_then(|s| s.trim().parse::<usize>().ok())
         .unwrap_or(0);
     push(&mut out, "SP_EXPRESS_N", enr.to_string());

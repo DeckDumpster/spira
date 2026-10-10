@@ -216,7 +216,7 @@ pub fn machinery_mail(id: &str, branch: &str, repo_name: &str, outcome: &str, re
 /// Reasons whose cause is the host, not the branch: every branch fails the same way, so the
 /// streak is counted and asked once per (repo, reason).
 pub fn is_host_wide_reason(reason: &str) -> bool {
-    matches!(reason, "harness-fault" | "budget" | "admission-timeout" | "scratch-short") || reason.starts_with("deadline-")
+    matches!(reason, "harness-fault" | "budget" | "admission-timeout" | "scratch-short" | "build-cache-fault") || reason.starts_with("deadline-")
 }
 
 /// lib.sh `spira_ask_machinery_class`'s dedupe subject.

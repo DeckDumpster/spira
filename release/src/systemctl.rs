@@ -30,6 +30,14 @@ pub trait Systemctl {
     /// `activate::switch` retiring a unit whose template's gate has closed. Idempotent: a
     /// unit that was never enabled, or already stopped, is not an error.
     fn disable_now(&self, unit: &str) -> Result<(), String>;
+    /// Names of the failed units matching `glob`.
+    fn list_failed(&self, _glob: &str) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+    /// `systemctl --user reset-failed <unit>`: clears a start-limit hit so a restart is not refused.
+    fn reset_failed(&self, _unit: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub struct RealSystemctl {
@@ -91,6 +99,13 @@ impl Systemctl for RealSystemctl {
     }
     fn disable_now(&self, unit: &str) -> Result<(), String> {
         self.run(&["disable", "--now", unit]).map(|_| ())
+    }
+    fn reset_failed(&self, unit: &str) -> Result<(), String> {
+        self.run(&["reset-failed", unit]).map(|_| ())
+    }
+    fn list_failed(&self, glob: &str) -> Result<Vec<String>, String> {
+        let out = self.run(&["list-units", "--state=failed", "--no-legend", "--plain", glob])?;
+        Ok(out.lines().filter_map(|l| l.split_whitespace().next()).map(String::from).collect())
     }
     fn list_active(&self, glob: &str) -> Result<Vec<String>, String> {
         let out = self.run(&["list-units", "--state=active", "--no-legend", glob])?;

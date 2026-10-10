@@ -8,6 +8,13 @@ use crate::ports::s;
 use crate::run::Run;
 use crate::session::SessionSpec;
 
+/// A sweep has no heartbeat of its own: a side thread renews its identity lease four times per window.
+const SWEEP_LEASE_S: i64 = 120;
+
+fn epoch_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
 impl Run<'_> {
     pub fn sweep(&mut self, prompt: Option<String>) -> i32 {
         let f = self.fayth.name.clone();
@@ -54,6 +61,7 @@ impl Run<'_> {
         let pidfile = run.join(format!("aeon-{f}-sweep-{}.pid", self.pid));
         let _ = std::fs::write(pidfile.with_extension("name"), &name);
         let _ = std::fs::write(&pidfile, format!("{}\n", self.pid));
+        strand::probe::write_lease(&pidfile, self.now() + SWEEP_LEASE_S);
         self.s.bead = "sweep".into();
         self.ledger.awake(self.now(), &f, "sweep");
         let logf = run.join(format!("sweep-{f}-{}.log", self.pid));
@@ -76,7 +84,16 @@ impl Run<'_> {
         let (sys, task) = brief::split(&statutes, &prompt);
         let _ = std::fs::write(&sys_file, sys);
         let _ = std::fs::write(&task_file, task);
-        let argv = self.claude_argv(&sys_file);
+        let argv = match self.claude_argv(&sys_file) {
+            Ok(a) => a,
+            Err(m) => {
+                self.die_line(&m);
+                let _ = std::fs::remove_file(&pidfile);
+                let _ = std::fs::remove_file(pidfile.with_extension("name"));
+                self.ledger.done(self.now(), &f, "sweep", 1, "harness-red", &ledger::session_result_fields(Some(&logf), &self.conf.trace_mark()));
+                return 1;
+            }
+        };
         let spec = SessionSpec {
             prog: self.conf.agent(),
             args: argv,
@@ -87,8 +104,25 @@ impl Run<'_> {
             timeout: self.fayth.timeout_seconds,
             halted: None,
         };
-        let rc = self.d.launcher.run(&spec, &self.stop);
+        let renewing = std::sync::atomic::AtomicBool::new(true);
+        let rc = std::thread::scope(|sc| {
+            sc.spawn(|| {
+                let mut slept: i64 = 0;
+                while renewing.load(std::sync::atomic::Ordering::SeqCst) {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    slept += 100;
+                    if slept >= SWEEP_LEASE_S * 1000 / 4 {
+                        slept = 0;
+                        strand::probe::write_lease(&pidfile, epoch_now() + SWEEP_LEASE_S);
+                    }
+                }
+            });
+            let rc = self.d.launcher.run(&spec, &self.stop);
+            renewing.store(false, std::sync::atomic::Ordering::SeqCst);
+            rc
+        });
         let _ = std::fs::remove_file(&pidfile);
+        let _ = std::fs::remove_file(strand::probe::lease_file(&pidfile));
         let _ = std::fs::remove_file(pidfile.with_extension("name"));
         let fields = ledger::session_result_fields(Some(&logf), &self.conf.trace_mark());
         self.ledger.done(self.now(), &f, "sweep", rc, "sweep", &fields);

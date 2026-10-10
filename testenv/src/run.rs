@@ -1461,8 +1461,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let jobs: Vec<Job> = runnable
         .iter()
         .map(|n| Job {
-            name: n.clone(),
-            exclusive: headers[n].exclusive.clone(),
+            weight: headers[n].pids.unwrap_or(schedule::DEFAULT_PIDS_WEIGHT),
+            lane: headers[n].lane.clone(),
+            ..Job::new(n, headers[n].exclusive.clone())
         })
         .collect();
     // Order is never implicit (per Ryan 2026-10-03, sp-kitrt). An explicit --suites list is the
@@ -1489,6 +1490,62 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             schedule::order(&jobs, &timing::mean_wall_by_suite(&timing_text))
         }
     };
+    let (jobs, sim_jobs) = if args.mode == Mode::Parallel {
+        schedule::split_sim(jobs)
+    } else {
+        (jobs, Vec::new())
+    };
+    let sim_session = (!sim_jobs.is_empty()).then(|| {
+        let mut ss = Session::new(deps.rt, &format!("{instance}-sim"), &pdir);
+        ss.bins = session.bins.clone();
+        ss.liveness_retries = session.liveness_retries;
+        ss.liveness_sleep = session.liveness_sleep;
+        ss.setup_deadline = session.setup_deadline;
+        ss.queue_bound = session.queue_bound;
+        ss.pids_limit = Some(schedule::SIM_PIDS_LIMIT);
+        ss.memory = Some(schedule::SIM_MEMORY.to_string());
+        ss
+    });
+    let mut sim_fixtures = None;
+    let mut _sim_guard = None;
+    if let Some(ss) = &sim_session {
+        let owner_file = deps.owner_dir.join(format!("{}.owner", ss.name));
+        if !claim_owner(&owner_file) {
+            deps.log(&format!("{} is claimed by another live pid — refusing to share it", ss.name));
+            return Finish::fault(2, "concurrent-run", 0);
+        }
+        let home = deps.owner_dir.join(format!("spira-batch-{}", ss.instance));
+        let _ = fs::create_dir_all(&home);
+        _sim_guard = Some(ContainerGuard { session: ss, owner_file, key_owner: None, home, deps });
+        deps.log(&format!(
+            "starting sim-lane container {} (pids {}, memory {}, slots {}) for {} suite(s)",
+            ss.name,
+            schedule::SIM_PIDS_LIMIT,
+            schedule::SIM_MEMORY,
+            schedule::SIM_SLOTS,
+            sim_jobs.len()
+        ));
+        if let Err(f) = ss.up(&wt.path) {
+            deps.log(f.message());
+            return Finish::fault(f.rc(), "container-up", 0);
+        }
+        let sim_setup = match ss.setup(&runner, !s.skip_install, std::iter::empty(), &|m| deps.log(m)) {
+            Ok(v) => v,
+            Err(SetupFault { fault, reason }) => {
+                deps.log(fault.message());
+                return Finish::fault(fault.rc(), reason, 0);
+            }
+        };
+        sim_fixtures = Some(if sim_setup.template.ok() {
+            Fixtures::Server
+        } else {
+            match ss.baseline().0 {
+                Some(t) => Fixtures::Shared(t),
+                None => Fixtures::PerSuite,
+            }
+        });
+        ph.mark("sim-lane");
+    }
     match args.mode {
         // sp-tj8k3: maxpar is always a positive, bounded count now — "unlimited" is no
         // longer a value `mx.value` ever carries (0 refuses before this point is reached).
@@ -1595,7 +1652,22 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     }
     let cpu0 = util::cpu_jiffies(&util::read("/proc/stat"));
     let t_suites = Instant::now();
-    let outcome = batch::run(&session, &cfg, &hooks, &fixtures, &jobs);
+    let outcome = match (&sim_session, &sim_fixtures) {
+        (Some(ss), Some(sf)) => {
+            let sim_cfg = BatchCfg { maxpar: schedule::SIM_SLOTS, ..cfg.clone() };
+            let (mut main_out, sim_out) = std::thread::scope(|sc| {
+                let sim = sc.spawn(|| batch::run(ss, &sim_cfg, &hooks, sf, &sim_jobs));
+                let main = batch::run(&session, &cfg, &hooks, &fixtures, &jobs);
+                (main, sim.join().unwrap_or_default())
+            });
+            main_out.absorb(sim_out);
+            main_out
+        }
+        _ => batch::run(&session, &cfg, &hooks, &fixtures, &jobs),
+    };
+    if let Some(line) = sim_session.as_ref().and_then(|x| x.pids_peak_line()) {
+        deps.log(&format!("sim container: {line}"));
+    }
     let suites_wall = t_suites.elapsed().as_secs();
     ph.mark("suites");
     let cpu1 = util::cpu_jiffies(&util::read("/proc/stat"));

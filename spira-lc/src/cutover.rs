@@ -65,14 +65,18 @@ pub fn is_row_key(x: &str) -> bool {
 /// engine rather than probed for by a second read inside the write. With a title or priority
 /// the duplicate instead updates just those mirrored columns — a value not given is kept — and
 /// never touches `version`, so a mirror write cannot lose a transition's CAS.
-fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i64>) -> String {
-    if title.is_none() && priority.is_none() {
+fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i64>, submitted_tip: Option<&str>) -> String {
+    if title.is_none() && priority.is_none() && submitted_tip.is_none() {
         return format!("INSERT IGNORE INTO bead (bead_id, state, holds, version, updated_at) VALUES ({}, 'READY', '[]', 0, {at});\n", q(id));
     }
     let title_sql = title.map_or("NULL".to_string(), |t| q(&t.chars().take(MIRROR_TITLE_CHARS).collect::<String>()));
     let priority_sql = priority.map_or("NULL".to_string(), |p| p.to_string());
+    let (state, tip_sql) = match submitted_tip {
+        Some(t) => ("SUBMITTED", q(t)),
+        None => ("READY", "NULL".to_string()),
+    };
     format!(
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at, title, priority) VALUES ({}, 'READY', '[]', 0, {at}, {title_sql}, {priority_sql}) \
+        "INSERT INTO bead (bead_id, state, tip, holds, version, updated_at, title, priority) VALUES ({}, '{state}', {tip_sql}, '[]', 0, {at}, {title_sql}, {priority_sql}) \
          ON DUPLICATE KEY UPDATE title = COALESCE(VALUES(title), title), priority = COALESCE(VALUES(priority), priority);\n",
         q(id)
     )
@@ -81,7 +85,8 @@ fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i
 /// `bead.title` is VARCHAR(512).
 const MIRROR_TITLE_CHARS: usize = 512;
 
-/// `create-bead <bead-id> [--title T] [--priority 0..4]`.
+/// `create-bead <bead-id> [--title T] [--priority 0..4] [--submitted-tip SHA]`. With a tip the
+/// row is born SUBMITTED at it, so no claimable READY window exists; an existing row is untouched.
 pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
@@ -97,7 +102,7 @@ pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
         },
     };
     let at = crate::db::now_epoch();
-    let script = create_bead_script(id, at, flag(args, "--title").as_deref(), priority);
+    let script = create_bead_script(id, at, flag(args, "--title").as_deref(), priority, flag(args, "--submitted-tip").as_deref());
     match conn.run_plain(&script) {
         Ok(()) => (0, String::new()),
         Err(e) => cannot_tell(e),
@@ -144,6 +149,120 @@ pub fn cmd_show_batch(args: &[String], conn: &Conn) -> (i32, String) {
 
 /// `cut <batch-id> --repo R --head H --base B --members "id:tip,id:tip" --actor A [--parent P]`
 ///
+/// `stage <batch-id> --repo R --head H --base B --members "id:tip,..." --actor A --parent P`
+///
+/// A round assembled behind the still-running round `P`: the batch row is written STAGED with
+/// its `batch_member` rows and nothing else. No member is delivered, so a staged round that is
+/// discarded returns nothing; `promote` is what cuts it.
+pub fn cmd_stage(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(batch_id) = args.first() else {
+        return (CANNOT_TELL, "stage: missing <batch-id>".into());
+    };
+    let (Some(repo), Some(head), Some(base), Some(members_s), Some(_actor), Some(parent)) =
+        (flag(args, "--repo"), flag(args, "--head"), flag(args, "--base"), flag(args, "--members"), flag(args, "--actor"), flag(args, "--parent"))
+    else {
+        return (CANNOT_TELL, "stage: --repo, --head, --base, --members, --actor and --parent are all required".into());
+    };
+    let Some(members) = parse_members(&members_s) else {
+        return (CANNOT_TELL, "stage: --members must be \"id:tip,id:tip,...\"".into());
+    };
+    if members.is_empty() {
+        return (CANNOT_TELL, "stage: --members must name at least one bead".into());
+    }
+    if let Err(early) = fetch_certified_members(conn, &members, true) {
+        return early;
+    }
+    let at = crate::db::now_epoch();
+    let mut preamble = format!(
+        "INSERT INTO batch (batch_id, repo, state, parent, head, base, run, version, opened_at)\n\
+         VALUES ({batch_id}, {repo}, 'STAGED', {parent}, {head}, {base}, NULL, 0, {at});\n",
+        batch_id = q(batch_id),
+        repo = q(&repo),
+        parent = q(&parent),
+        head = q(&head),
+        base = q(&base),
+    );
+    for (id, tip) in &members {
+        preamble.push_str(&format!(
+            "INSERT INTO batch_member (batch_id, bead_id, tip) VALUES ({}, {}, {});\n",
+            q(batch_id),
+            q(id),
+            q(tip),
+        ));
+    }
+    match conn.cascade(&preamble, &[]) {
+        Ok(_) => (0, serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i, _)| i).collect::<Vec<_>>()}).to_string()),
+        Err(e) => cannot_tell(e),
+    }
+}
+
+/// `promote <batch-id> --head H --base B --actor A`
+///
+/// STAGED -> OPEN at the head and base the members were re-merged onto, and in the same
+/// transaction the cascade `cut` performs for every staged member. Every member must still be
+/// SUBMITTED or CERTIFIED at its staged tip; one that moved refuses the whole promotion,
+/// before anything is written.
+pub fn cmd_promote(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(batch_id) = args.first() else {
+        return (CANNOT_TELL, "promote: missing <batch-id>".into());
+    };
+    let (Some(head), Some(base), Some(actor)) = (flag(args, "--head"), flag(args, "--base"), flag(args, "--actor")) else {
+        return (CANNOT_TELL, "promote: --head, --base and --actor are all required".into());
+    };
+    let batch_row = match rows::fetch_batch(conn, batch_id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return (CANNOT_TELL, format!("promote: no batch row for {batch_id}")),
+        Err(e) => return cannot_tell(e),
+    };
+    if batch_row.state != batch::BatchState::Staged {
+        return (REFUSED, format!("refused: {batch_id} is {} not STAGED", batch_row.state.as_str()));
+    }
+    let members = match fetch_members(conn, batch_id) {
+        Ok(m) => m,
+        Err(e) => return cannot_tell(e),
+    };
+    let bead_rows = match fetch_certified_members(conn, &members, true) {
+        Ok(r) => r,
+        Err(early) => return early,
+    };
+    let delivery_rows = match fetch_cuttable_deliveries(conn, &members) {
+        Ok(r) => r,
+        Err(early) => return early,
+    };
+    let at = crate::db::now_epoch();
+    let promote_ev = batch::BatchEvent {
+        expect: batch::BatchState::Staged,
+        version: batch_row.version,
+        kind: batch::BatchEventKind::Promote { head, base },
+        actor: actor.clone(),
+    };
+    let outcome = batch::apply(&batch_row, &promote_ev);
+    if !outcome.applied {
+        return (REFUSED, format!("refused: {:?}", outcome.refusal));
+    }
+    let mut steps = vec![CascadeStep {
+        table: "batch",
+        key_column: "batch_id",
+        key: batch_id.clone(),
+        old_version: batch_row.version,
+        set_clause: rows::batch_set_clause(&outcome.row),
+        applied_to_state: outcome.row.state.as_str().to_string(),
+        event: EventRecord::of_apply("batch", batch_id, "Promote", "STAGED", batch_row.state.as_str(), None, serde_json::to_value(&promote_ev.kind).unwrap_or_default(), &actor, at),
+    }];
+    let mut preamble = String::new();
+    match member_added_steps(batch_id, outcome.row, &members, &bead_rows, &delivery_rows, &actor, at, &mut preamble, "promote") {
+        Ok(more) => steps.extend(more),
+        Err(early) => return early,
+    }
+    match conn.cascade(&preamble, &steps) {
+        Ok(applied) => {
+            let summary = serde_json::json!({"batch_id": batch_id, "members": members.iter().map(|(i, _)| i).collect::<Vec<_>>(), "applied": applied});
+            (if applied.iter().all(|a| *a) { 0 } else { REFUSED }, summary.to_string())
+        }
+        Err(e) => cannot_tell(e),
+    }
+}
+
 /// Every named member must currently be CERTIFIED at exactly the given tip — checked before
 /// anything is written, so a stale caller refuses cleanly instead of cutting a batch with
 /// the wrong content. On success, in one transaction: the batch row is created (OPEN), one
@@ -167,6 +286,10 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
     }
 
     let bead_rows = match fetch_certified_members(conn, &members, true) {
+        Ok(r) => r,
+        Err(early) => return early,
+    };
+    let delivery_rows = match fetch_cuttable_deliveries(conn, &members) {
         Ok(r) => r,
         Err(early) => return early,
     };
@@ -197,7 +320,7 @@ pub fn cmd_cut(args: &[String], conn: &Conn) -> (i32, String) {
     // cascade step's SET clause (built from that clone) keeps carrying it forward instead
     // of writing the constructor's NULL back over the preamble's own INSERT.
     batch_row.parent = parent.clone();
-    let steps = match member_added_steps(batch_id, batch_row, &members, &bead_rows, &actor, at, &mut preamble, "cut") {
+    let steps = match member_added_steps(batch_id, batch_row, &members, &bead_rows, &delivery_rows, &actor, at, &mut preamble, "cut") {
         Ok(s) => s,
         Err(early) => return early,
     };
@@ -250,6 +373,10 @@ pub fn cmd_stack(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(r) => r,
         Err(early) => return early,
     };
+    let delivery_rows = match fetch_cuttable_deliveries(conn, &members) {
+        Ok(r) => r,
+        Err(early) => return early,
+    };
 
     let at = crate::db::now_epoch();
     let mut preamble = String::new();
@@ -262,7 +389,7 @@ pub fn cmd_stack(args: &[String], conn: &Conn) -> (i32, String) {
         ));
     }
 
-    let steps = match member_added_steps(batch_id, batch_row, &members, &bead_rows, &actor, at, &mut preamble, "stack") {
+    let steps = match member_added_steps(batch_id, batch_row, &members, &bead_rows, &delivery_rows, &actor, at, &mut preamble, "stack") {
         Ok(s) => s,
         Err(early) => return early,
     };
@@ -307,9 +434,31 @@ fn fetch_certified_members(conn: &Conn, members: &[(String, String)], allow_subm
     Ok(bead_rows)
 }
 
-/// The `MemberAdded` (batch) + `Deliver` (bead) + `Cut` (delivery, appended to `preamble`
-/// as an upsert — not REPLACE: REPLACE is a DELETE+INSERT under the hood, and spira_lc has
-/// no DELETE grant on any table, design §3.3) cascade steps for each of `members`, folded
+/// Each member's existing delivery row, or None. A row still BATCHED in another batch is
+/// that batch's member: the cut refuses, naming the batch. Only a QUEUED or EXITED row can
+/// be cut.
+fn fetch_cuttable_deliveries(conn: &Conn, members: &[(String, String)]) -> Result<Vec<Option<delivery::DeliveryRow>>, (i32, String)> {
+    let mut out = Vec::new();
+    for (id, _) in members {
+        let row = match rows::fetch_delivery(conn, id) {
+            Ok(r) => r,
+            Err(e) => return Err(cannot_tell(e)),
+        };
+        if let Some(r) = &row {
+            match r.state {
+                delivery::DeliveryState::Queued | delivery::DeliveryState::Exited => {}
+                delivery::DeliveryState::Batched => {
+                    return Err((REFUSED, format!("refused: {id} is still BATCHED in {}", r.batch_id.as_deref().unwrap_or("another batch"))));
+                }
+                s => return Err((REFUSED, format!("refused: {id}'s delivery is {} and cannot be cut", s.as_str()))),
+            }
+        }
+        out.push(row);
+    }
+    Ok(out)
+}
+
+/// The `MemberAdded` (batch) + `Deliver` (bead) + `Enqueued`/`Cut` (delivery) cascade steps for each of `members`, folded
 /// onto `batch_row` in order so each step's CAS'd version follows the last. Shared by
 /// `cut` (a freshly constructed OPEN row) and `stack` (an existing one fetched from the
 /// database) — both hand this the same batch row shape and get the same steps back.
@@ -319,13 +468,14 @@ fn member_added_steps(
     mut batch_row: batch::BatchRow,
     members: &[(String, String)],
     bead_rows: &[bead::BeadRow],
+    delivery_rows: &[Option<delivery::DeliveryRow>],
     actor: &str,
     at: i64,
     preamble: &mut String,
     verb: &str,
 ) -> Result<Vec<CascadeStep>, (i32, String)> {
     let mut steps = Vec::new();
-    for ((id, tip), bead_row) in members.iter().zip(bead_rows.iter()) {
+    for (((id, tip), bead_row), delivery_row) in members.iter().zip(bead_rows.iter()).zip(delivery_rows.iter()) {
         let member_ev = batch::BatchEvent {
             expect: batch_row.state,
             version: batch_row.version,
@@ -343,17 +493,7 @@ fn member_added_steps(
             old_version: batch_row.version,
             set_clause: rows::batch_set_clause(&outcome.row),
             applied_to_state: outcome.row.state.as_str().to_string(),
-            event: EventRecord {
-                machine: "batch".into(),
-                key: batch_id.to_string(),
-                event: "MemberAdded".into(),
-                expect: batch_row.state.as_str().into(),
-                from_state: batch_row.state.as_str().into(),
-                refusal: None,
-                evidence: serde_json::to_value(&member_ev.kind).unwrap_or_default(),
-                actor: actor.to_string(),
-                at,
-            },
+            event: EventRecord::of_apply("batch", batch_id, "MemberAdded", batch_row.state.as_str(), batch_row.state.as_str(), None, serde_json::to_value(&member_ev.kind).unwrap_or_default(), actor, at),
         });
         batch_row = outcome.row;
 
@@ -375,45 +515,58 @@ fn member_added_steps(
             old_version: bead_row.version,
             set_clause: rows::bead_set_clause(&bead_outcome.row),
             applied_to_state: bead_outcome.row.state.as_str().to_string(),
-            event: EventRecord {
-                machine: "bead".into(),
-                key: id.clone(),
-                event: "Deliver".into(),
-                expect: bead::BeadState::Certified.as_str().into(),
-                from_state: bead::BeadState::Certified.as_str().into(),
-                refusal: None,
-                evidence: serde_json::to_value(&deliver_ev.kind).unwrap_or_default(),
-                actor: actor.to_string(),
-                at,
-            },
+            event: EventRecord::of_apply("bead", &id, "Deliver", bead_row.state.as_str(), bead_row.state.as_str(), None, serde_json::to_value(&deliver_ev.kind).unwrap_or_default(), actor, at),
         });
 
-        let fresh_delivery = delivery::DeliveryRow::start_queue(id.as_str());
+        let (queued, requeue_step) = match delivery_row {
+            None => {
+                let fresh = delivery::DeliveryRow::start_queue(id.as_str());
+                let enqueued = EventRecord::import_absent("delivery", id, "Enqueued", serde_json::Value::Null, actor, at);
+                preamble.push_str(&format!(
+                    "INSERT INTO delivery (bead_id, mode, state, batch_id, pr, merge_sha, version)\n\
+                     VALUES ({id}, 'queue', 'QUEUED', NULL, NULL, NULL, {version});\n",
+                    id = q(id),
+                    version = fresh.version,
+                ));
+                preamble.push_str(&enqueued.applied_insert_sql(delivery::DeliveryState::Queued.as_str()));
+                (fresh, None)
+            }
+            Some(row) if row.state == delivery::DeliveryState::Exited => {
+                let mut fresh = delivery::DeliveryRow::start_queue(id.as_str());
+                fresh.version = row.version + 1;
+                let step = CascadeStep {
+                    table: "delivery",
+                    key_column: "bead_id",
+                    key: id.clone(),
+                    old_version: row.version,
+                    set_clause: format!("mode = 'queue', state = 'QUEUED', batch_id = NULL, pr = NULL, merge_sha = NULL, version = {}", fresh.version),
+                    applied_to_state: delivery::DeliveryState::Queued.as_str().to_string(),
+                    event: EventRecord::of_apply("delivery", id, "Enqueued", row.state.as_str(), row.state.as_str(), None, serde_json::Value::Null, actor, at),
+                };
+                (fresh, Some(step))
+            }
+            Some(row) => (row.clone(), None),
+        };
+        steps.extend(requeue_step);
         let cut_ev = delivery::DeliveryEvent {
             expect: delivery::DeliveryState::Queued,
-            version: 0,
+            version: queued.version,
             kind: delivery::DeliveryEventKind::Cut { batch_id: batch_id.to_string() },
             actor: actor.to_string(),
         };
-        let delivery_outcome = delivery::apply(&fresh_delivery, &cut_ev);
-        preamble.push_str(&format!(
-            "INSERT INTO delivery (bead_id, mode, state, batch_id, pr, merge_sha, version)\n\
-             VALUES ({id}, 'queue', {state}, {new_batch_id}, NULL, NULL, {version})\n\
-             ON DUPLICATE KEY UPDATE mode = 'queue', state = {state}, batch_id = {new_batch_id}, pr = NULL, merge_sha = NULL, version = {version};\n",
-            id = q(id),
-            state = q(delivery_outcome.row.state.as_str()),
-            new_batch_id = q(batch_id),
-            version = delivery_outcome.row.version,
-        ));
-        preamble.push_str(&format!(
-            "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at)\n\
-             VALUES ('delivery', {id}, 'Cut', 'QUEUED', 'QUEUED', {to_state}, 1, NULL, {evidence}, {actor}, {at});\n",
-            id = q(id),
-            to_state = q(delivery_outcome.row.state.as_str()),
-            evidence = q(&serde_json::to_string(&cut_ev.kind).unwrap_or_default()),
-            actor = q(actor),
-            at = at,
-        ));
+        let delivery_outcome = delivery::apply(&queued, &cut_ev);
+        if !delivery_outcome.applied {
+            return Err((CANNOT_TELL, format!("{verb}: Cut refused unexpectedly for {id}: {:?}", delivery_outcome.refusal)));
+        }
+        steps.push(CascadeStep {
+            table: "delivery",
+            key_column: "bead_id",
+            key: id.clone(),
+            old_version: queued.version,
+            set_clause: rows::delivery_set_clause(&delivery_outcome.row),
+            applied_to_state: delivery_outcome.row.state.as_str().to_string(),
+            event: EventRecord::of_apply("delivery", id, "Cut", queued.state.as_str(), queued.state.as_str(), None, serde_json::to_value(&cut_ev.kind).unwrap_or_default(), actor, at),
+        });
     }
     Ok(steps)
 }
@@ -453,17 +606,7 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
     let outcome = batch::apply(&batch_row, &ff_ev);
     let evidence = serde_json::to_value(&ff_ev.kind).unwrap_or_default();
     if !outcome.applied {
-        let rec = EventRecord {
-            machine: "batch".into(),
-            key: batch_id.clone(),
-            event: "FastForward".into(),
-            expect: expect.clone(),
-            from_state: batch_row.state.as_str().into(),
-            refusal: outcome.refusal.as_ref().map(refusal_name),
-            evidence,
-            actor: actor.clone(),
-            at,
-        };
+        let rec = EventRecord::of_apply("batch", &batch_id, "FastForward", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
         return match conn.insert_refusal_event(&rec) {
             Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
             Err(e) => cannot_tell(e),
@@ -482,17 +625,7 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord {
-            machine: "batch".into(),
-            key: batch_id.clone(),
-            event: "FastForward".into(),
-            expect: expect.clone(),
-            from_state: batch_row.state.as_str().into(),
-            refusal: None,
-            evidence,
-            actor: actor.clone(),
-            at,
-        },
+        event: EventRecord::of_apply("batch", &batch_id, "FastForward", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
     }];
 
     for (id, tip) in &members {
@@ -602,17 +735,7 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
     let settle_ev = batch::BatchEvent { expect: expect_state, version, kind: batch::BatchEventKind::Settle, actor: actor.clone() };
     let outcome = batch::apply(&batch_row, &settle_ev);
     if !outcome.applied {
-        let rec = EventRecord {
-            machine: "batch".into(),
-            key: batch_id.clone(),
-            event: "Settle".into(),
-            expect: expect.clone(),
-            from_state: batch_row.state.as_str().into(),
-            refusal: outcome.refusal.as_ref().map(refusal_name),
-            evidence: serde_json::Value::String("Settle".into()),
-            actor: actor.clone(),
-            at,
-        };
+        let rec = EventRecord::of_apply("batch", &batch_id, "Settle", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), serde_json::Value::String("Settle".into()), &actor, at);
         return match conn.insert_refusal_event(&rec) {
             Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
             Err(e) => cannot_tell(e),
@@ -626,17 +749,7 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord {
-            machine: "batch".into(),
-            key: batch_id.clone(),
-            event: "Settle".into(),
-            expect: expect.clone(),
-            from_state: batch_row.state.as_str().into(),
-            refusal: None,
-            evidence: serde_json::Value::String("Settle".into()),
-            actor: actor.clone(),
-            at,
-        },
+        event: EventRecord::of_apply("batch", &batch_id, "Settle", &expect, batch_row.state.as_str(), None, serde_json::Value::String("Settle".into()), &actor, at),
     }];
 
     // Closure (design stacked-dependents-2026-09-28 §3): ejecting a member ejects every
@@ -652,7 +765,7 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
         requeue_ids.into_iter().filter(|id| !cascade_ids.contains(id) && !eject_ids.contains(id)).collect();
 
     for id in &eject_ids {
-        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjected }, &actor, at) { return cannot_tell(e); }
+        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed }, &actor, at) { return cannot_tell(e); }
     }
     // A stacked dependent is collateral, not itself red: `base-withdrawn`, not
     // `batch-ejected`, so the reconciler's rework-by-cause query can tell them apart.
@@ -730,17 +843,7 @@ pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
     let outcome = batch::apply(&batch_row, &ev);
     let evidence = serde_json::to_value(&ev.kind).unwrap_or_default();
     if !outcome.applied {
-        let rec = EventRecord {
-            machine: "batch".into(),
-            key: batch_id.clone(),
-            event: "Abandon".into(),
-            expect: expect.clone(),
-            from_state: batch_row.state.as_str().into(),
-            refusal: outcome.refusal.as_ref().map(refusal_name),
-            evidence,
-            actor: actor.clone(),
-            at,
-        };
+        let rec = EventRecord::of_apply("batch", &batch_id, "Abandon", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
         return match conn.insert_refusal_event(&rec) {
             Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
             Err(e) => cannot_tell(e),
@@ -759,17 +862,7 @@ pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord {
-            machine: "batch".into(),
-            key: batch_id.clone(),
-            event: "Abandon".into(),
-            expect: expect.clone(),
-            from_state: batch_row.state.as_str().into(),
-            refusal: None,
-            evidence,
-            actor: actor.clone(),
-            at,
-        },
+        event: EventRecord::of_apply("batch", &batch_id, "Abandon", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
     }];
 
     for (id, tip) in &members {
@@ -896,17 +989,7 @@ pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
     let outcome = batch::apply(&batch_row, &ev);
     let evidence = serde_json::to_value(&ev.kind).unwrap_or_default();
     if !outcome.applied {
-        let rec = EventRecord {
-            machine: "batch".into(),
-            key: batch_id.clone(),
-            event: "Eject".into(),
-            expect: expect.clone(),
-            from_state: batch_row.state.as_str().into(),
-            refusal: outcome.refusal.as_ref().map(refusal_name),
-            evidence,
-            actor: actor.clone(),
-            at,
-        };
+        let rec = EventRecord::of_apply("batch", &batch_id, "Eject", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
         return match conn.insert_refusal_event(&rec) {
             Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
             Err(e) => cannot_tell(e),
@@ -920,17 +1003,7 @@ pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord {
-            machine: "batch".into(),
-            key: batch_id.clone(),
-            event: "Eject".into(),
-            expect: expect.clone(),
-            from_state: batch_row.state.as_str().into(),
-            refusal: None,
-            evidence,
-            actor: actor.clone(),
-            at,
-        },
+        event: EventRecord::of_apply("batch", &batch_id, "Eject", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
     }];
 
     if let Err(e) = add_exit_steps(conn, &mut steps, &bead_id, delivery::DeliveryEventKind::Requeued { tip }, &actor, at) {
@@ -1066,15 +1139,15 @@ fn stacked_dependents_from(
 fn name_prerequisites(steps: &mut [CascadeStep], cascade: &[(String, String)]) {
     for step in steps.iter_mut() {
         let Some((_, prereq)) = cascade.iter().find(|(id, _)| id == &step.key) else { continue };
-        if step.event.event != "Returned" {
+        if step.event.event_name() != "Returned" {
             continue;
         }
-        let mut evidence = match std::mem::take(&mut step.event.evidence) {
+        let mut evidence = match std::mem::take(step.event.evidence_mut()) {
             serde_json::Value::Object(m) => m,
             other => serde_json::Map::from_iter([("evidence".to_string(), other)]),
         };
         evidence.insert("stacked_on".into(), serde_json::Value::String(prereq.clone()));
-        step.event.evidence = serde_json::Value::Object(evidence);
+        *step.event.evidence_mut() = serde_json::Value::Object(evidence);
     }
 }
 
@@ -1085,7 +1158,7 @@ mod tests {
 
     #[test]
     fn create_bead_is_one_ignoring_insert() {
-        let s = create_bead_script("sp-a'b", 7, None, None);
+        let s = create_bead_script("sp-a'b", 7, None, None, None);
         assert!(s.starts_with("INSERT IGNORE INTO bead"), "{s}");
         assert!(!s.contains("NOT EXISTS"), "{s}");
         assert_eq!(s.matches(';').count(), 1);
@@ -1093,13 +1166,21 @@ mod tests {
 
     #[test]
     fn a_mirrored_create_updates_only_the_mirror_columns_and_never_the_version() {
-        let s = create_bead_script("sp-a", 7, Some("it's a title"), Some(1));
+        let s = create_bead_script("sp-a", 7, Some("it's a title"), Some(1), None);
         assert!(s.contains("it\\'s a title") && s.contains("ON DUPLICATE KEY UPDATE title = COALESCE"), "{s}");
         assert!(!s.contains("version ="), "{s}");
-        let only_priority = create_bead_script("sp-a", 7, None, Some(0));
-        assert!(only_priority.contains("VALUES ('sp-a', 'READY', '[]', 0, 7, NULL, 0)"), "{only_priority}");
-        let long = create_bead_script("sp-a", 7, Some(&"é".repeat(600)), None);
+        let only_priority = create_bead_script("sp-a", 7, None, Some(0), None);
+        assert!(only_priority.contains("VALUES ('sp-a', 'READY', NULL, '[]', 0, 7, NULL, 0)"), "{only_priority}");
+        let long = create_bead_script("sp-a", 7, Some(&"é".repeat(600)), None, None);
         assert_eq!(long.matches('é').count(), MIRROR_TITLE_CHARS, "cut at the column width by chars, not bytes");
+    }
+
+    #[test]
+    fn a_submitted_create_is_born_submitted_at_its_tip() {
+        let s = create_bead_script("sp-a", 7, Some("t"), Some(2), Some("abc123"));
+        assert!(s.contains("VALUES ('sp-a', 'SUBMITTED', 'abc123', '[]', 0, 7,"), "{s}");
+        assert!(!s.contains("'READY'"), "{s}");
+        assert!(!s.contains("state ="), "an existing row's state is never rewritten: {s}");
     }
 
     fn stacked(id: &str, prereq: &str, prereq_tip: &str) -> (String, bead::BeadRow) {
@@ -1200,8 +1281,8 @@ mod tests {
     fn the_prerequisite_is_named_in_the_returned_evidence() {
         let mut steps = vec![cascade_step("bead", "bead_id", "b", 1, String::new(), "REWORK", "bead", "Returned", "IN_DELIVERY", &serde_json::json!({"Returned": {"reason": "base-withdrawn"}}), "t", 0)];
         name_prerequisites(&mut steps, &[("b".to_string(), "a".to_string())]);
-        assert_eq!(steps[0].event.evidence["stacked_on"], "a");
-        assert!(steps[0].event.evidence.get("Returned").is_some());
+        assert_eq!(steps[0].event.evidence()["stacked_on"], "a");
+        assert!(steps[0].event.evidence().get("Returned").is_some());
     }
 }
 
@@ -1297,17 +1378,7 @@ fn cascade_step(
         old_version,
         set_clause,
         applied_to_state: applied_to_state.to_string(),
-        event: EventRecord {
-            machine: machine.to_string(),
-            key: key.to_string(),
-            event: event_name.to_string(),
-            expect: from_state.to_string(),
-            from_state: from_state.to_string(),
-            refusal: None,
-            evidence: serde_json::to_value(evidence_kind).unwrap_or_default(),
-            actor: actor.to_string(),
-            at,
-        },
+        event: EventRecord::of_apply(machine, key, event_name, from_state, from_state, None, serde_json::to_value(evidence_kind).unwrap_or_default(), actor, at),
     }
 }
 
@@ -1324,6 +1395,35 @@ fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::AwaitingReply { .. } => "AwaitingReply".to_string(),
         lifecycle::Refusal::NotHolder { .. } => "NotHolder".to_string(),
         lifecycle::Refusal::ManualHoldReason { .. } => "ManualHoldReason".to_string(),
+        lifecycle::Refusal::EjectedRedTip { .. } => "EjectedRedTip".to_string(),
     }
 
+}
+
+/// `event-continuity`: for each (machine, lc_key), every applied event's from_state must equal
+/// the previous applied event's to_state. Prints the first break per key as one JSON line;
+/// exits 3 when any key breaks.
+pub fn cmd_event_continuity(_args: &[String], conn: &Conn) -> (i32, String) {
+    let sql = "SELECT machine, lc_key, seq, event, from_state, prev_to FROM (\
+               SELECT seq, machine, lc_key, event, from_state, \
+               LAG(to_state) OVER (PARTITION BY machine, lc_key ORDER BY seq) AS prev_to \
+               FROM event WHERE applied = 1) t \
+               WHERE prev_to IS NOT NULL AND from_state <> prev_to ORDER BY seq";
+    let rows = match conn.query(sql) {
+        Ok(r) => r,
+        Err(e) => return cannot_tell(e),
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut breaks = Vec::new();
+    for r in rows {
+        let field = |c: &str| r.get(c).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if seen.insert((field("machine"), field("lc_key"))) {
+            breaks.push(serde_json::json!({
+                "machine": field("machine"), "key": field("lc_key"), "seq": field("seq"),
+                "event": field("event"), "from_state": field("from_state"), "previous_to_state": field("prev_to"),
+            }));
+        }
+    }
+    let out = breaks.iter().map(|b| b.to_string()).collect::<Vec<_>>().join("\n");
+    if breaks.is_empty() { (0, String::new()) } else { (REFUSED, out) }
 }

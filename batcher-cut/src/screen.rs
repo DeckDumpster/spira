@@ -50,14 +50,43 @@ pub fn screened(env: &Env, repo: &Repo, pool: Vec<Member>, open: Option<&OpenBat
         repo: repo.path.clone(),
         base_ref: repo.base.clone(),
         work: work.clone(),
-        lint: std::env::var_os("SIM_WORLD").is_none_or(|v| v.is_empty()),
         state: Box::new(move |id| io::lc_state(&probe_env, id)),
     };
+    let started = std::time::Instant::now();
     let candidates: Vec<Candidate> = pool.iter().map(|m| Candidate { id: m.id.clone(), tip: m.tip.clone() }).collect();
     let open_round: Vec<Candidate> = open.map(|o| o.members.iter().map(|(id, tip)| Candidate { id: id.clone(), tip: tip.clone() }).collect()).unwrap_or_default();
     let out = sift::screen(&probe, &FileStore::new(work), &mut Live { env }, &candidates, &open_round);
     for e in &out.errors {
         eprintln!("batcher {}: {e}", repo.name);
     }
+    println!("batcher {}: sift screened {} in {}s", repo.name, candidates.len(), started.elapsed().as_secs());
     sift::filter(pool, |m| m.id.as_str(), &out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::base_conflict_tests::{fixture, git};
+    use crate::io::Land;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_screened_pool_never_spawns_cargo() {
+        let d = testkit::TempDir::new("batcher-cut-screen");
+        let [base, a, _b, _c, _root] = fixture(&d);
+        git(&d, &["checkout", "-q", "--detach", &base]);
+        let bin = d.join("shim");
+        std::fs::create_dir_all(&bin).unwrap();
+        let marker = d.join("cargo-ran");
+        testkit::write_exe(&bin.join("cargo"), &format!("#!/bin/sh\necho \"$@\" >> '{}'\nexit 1\n", marker.display()));
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+        let _g = testkit::env(&[("PATH", Some(path.as_str())), ("SIM_WORLD", None), ("SPIRA_CONCIERGE_INBOX", None)]);
+        let mut e = io::lifecycle_tests_env(&d);
+        e.run = d.to_path_buf();
+        let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local };
+        let m = Member { id: "sp-a".into(), tip: a, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: Default::default(), blocked_by: Vec::new() };
+        let kept = screened(&e, &repo, vec![m], None);
+        assert_eq!(kept.len(), 1, "a clean candidate passes the screen");
+        assert!(!marker.exists(), "the screen ran cargo: {}", std::fs::read_to_string(&marker).unwrap_or_default());
+    }
 }

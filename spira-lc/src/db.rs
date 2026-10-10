@@ -463,15 +463,99 @@ pub(crate) enum ScriptFailure {
 }
 
 pub struct EventRecord {
-    pub machine: String,
-    pub key: String,
-    pub event: String,
-    pub expect: String,
-    pub from_state: String,
-    pub refusal: Option<String>,
-    pub evidence: serde_json::Value,
-    pub actor: String,
-    pub at: i64,
+    machine: String,
+    key: String,
+    event: String,
+    expect: String,
+    from_state: String,
+    refusal: Option<String>,
+    evidence: serde_json::Value,
+    actor: String,
+    at: i64,
+}
+
+impl EventRecord {
+    /// An applied event as one INSERT, for a preamble statement that created the row itself.
+    pub fn applied_insert_sql(&self, to_state: &str) -> String {
+        format!(
+            "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) VALUES ({}, {}, {}, {}, {}, {}, 1, NULL, {}, {}, {});\n",
+            sql_str(&self.machine),
+            sql_str(&self.key),
+            sql_str(&self.event),
+            sql_str(&self.expect),
+            sql_str(&self.from_state),
+            sql_str(to_state),
+            sql_json(&self.evidence),
+            sql_str(&self.actor),
+            self.at,
+        )
+    }
+
+    pub fn event_name(&self) -> &str {
+        &self.event
+    }
+
+    #[cfg(test)]
+    pub fn evidence(&self) -> &serde_json::Value {
+        &self.evidence
+    }
+
+    pub fn evidence_mut(&mut self) -> &mut serde_json::Value {
+        &mut self.evidence
+    }
+
+    /// The only way an event about an existing row is recorded: `before` is the state of the
+    /// row the machine applied to. An applied event (no refusal) expected exactly that state,
+    /// so `asked_expect` is only kept for a refusal, where it is what the caller wrongly named.
+    #[allow(clippy::too_many_arguments)]
+    pub fn of_apply(
+        machine: impl AsRef<str>,
+        key: impl AsRef<str>,
+        event: impl AsRef<str>,
+        asked_expect: impl AsRef<str>,
+        before: impl AsRef<str>,
+        refusal: Option<String>,
+        evidence: serde_json::Value,
+        actor: impl AsRef<str>,
+        at: i64,
+    ) -> Self {
+        let before = before.as_ref().to_string();
+        let expect = if refusal.is_none() { before.clone() } else { asked_expect.as_ref().to_string() };
+        EventRecord {
+            machine: machine.as_ref().into(),
+            key: key.as_ref().into(),
+            event: event.as_ref().into(),
+            expect,
+            from_state: before,
+            refusal,
+            evidence,
+            actor: actor.as_ref().into(),
+            at,
+        }
+    }
+
+    /// The sanctioned exception: the import of a row that did not exist, state `NONE`. Only
+    /// `insert_if_absent_and_log` takes one, and it proves absence in the same transaction.
+    pub fn import_absent(
+        machine: impl AsRef<str>,
+        key: impl AsRef<str>,
+        event: impl AsRef<str>,
+        evidence: serde_json::Value,
+        actor: impl AsRef<str>,
+        at: i64,
+    ) -> Self {
+        EventRecord {
+            machine: machine.as_ref().into(),
+            key: key.as_ref().into(),
+            event: event.as_ref().into(),
+            expect: "NONE".into(),
+            from_state: "NONE".into(),
+            refusal: None,
+            evidence,
+            actor: actor.as_ref().into(),
+            at,
+        }
+    }
 }
 
 fn batch_script(insert_sqls: &[String]) -> Option<String> {

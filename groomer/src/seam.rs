@@ -7,11 +7,28 @@ use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// One persona's claim predicate: the labels a bead must carry and the labels that exclude it.
+#[derive(Clone, Debug, Default)]
+pub struct PersonaPredicate {
+    pub persona: String,
+    pub labels: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+fn split_labels(s: &str) -> Vec<String> {
+    s.split(',').map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
 pub trait Seam {
+    /// Every persona's claim predicate, read from the chamber; personas with no partition
+    /// (and personas whose predicate refuses to resolve) are omitted.
+    fn persona_predicates(&self) -> Vec<PersonaPredicate>;
     /// `bump_poison_cleared <id> <cause>`.
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String>;
     /// `poison_asked_clear <id>`.
     fn poison_asked_clear(&self, id: &str) -> Result<(), String>;
+    /// A resolved `SPIRA_*` config key, read after sourcing conf.sh/lib.sh. Empty if unset.
+    fn conf(&self, key: &str) -> Result<String, String>;
     /// `all_partition_members` — every open/in_progress bead id across every partition
     /// this roster covers, deduplicated, one per line.
     fn all_partition_members(&self) -> Result<String, String>;
@@ -88,12 +105,41 @@ impl LibSeam {
 }
 
 impl Seam for LibSeam {
+    fn persona_predicates(&self) -> Vec<PersonaPredicate> {
+        let home = self.lib_sh.parent().map(Path::to_path_buf).unwrap_or_default();
+        spira_config::chamber::fayth_names(&home)
+            .into_iter()
+            .filter_map(|f| {
+                let p = spira_config::chamber::fayth_predicate(&home, &f).ok()?;
+                let labels = split_labels(&p.labels);
+                (!labels.is_empty()).then(|| PersonaPredicate { persona: f, labels, exclude: split_labels(&p.exclude_labels) })
+            })
+            .collect()
+    }
+
     fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String> {
         self.run(&["bump_poison_cleared", id, cause]).map(|_| ())
     }
 
     fn poison_asked_clear(&self, id: &str) -> Result<(), String> {
         self.run(&["poison_asked_clear", id]).map(|_| ())
+    }
+
+    fn conf(&self, key: &str) -> Result<String, String> {
+        let script = format!(r#". "$0" >/dev/null 2>&1 || exit 97; printf '%s' "${{{key}:-}}""#);
+        // batch-job: runs a gate, build or forge script that takes as long as its work
+        let o = Command::new("bash")
+            .arg("-c")
+            .arg(script)
+            .arg(&self.lib_sh)
+            .envs(spira_config::release_env::child_path_env_for_process())
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("lib.sh conf {key}: {e}"))?;
+        if !o.status.success() {
+            return Err(format!("lib.sh conf {key} exited {}", o.status.code().unwrap_or(-1)));
+        }
+        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
     }
 
     fn all_partition_members(&self) -> Result<String, String> {
@@ -160,11 +206,13 @@ pub mod fake {
     #[derive(Default)]
     pub struct FakeSeam {
         pub calls: RefCell<Vec<String>>,
+        pub confs: RefCell<std::collections::BTreeMap<String, String>>,
         pub partition_members: RefCell<String>,
         pub repos: RefCell<std::collections::BTreeMap<String, String>>,
         pub roots: RefCell<std::collections::BTreeMap<String, String>>,
         pub bases: RefCell<std::collections::BTreeMap<String, String>>,
         pub held_poison: RefCell<std::collections::BTreeSet<String>>,
+        pub predicates: RefCell<Vec<PersonaPredicate>>,
     }
 
     impl FakeSeam {
@@ -178,6 +226,10 @@ pub mod fake {
     }
 
     impl Seam for FakeSeam {
+        fn persona_predicates(&self) -> Vec<PersonaPredicate> {
+            self.predicates.borrow().clone()
+        }
+
         fn bump_poison_cleared(&self, id: &str, cause: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("bump_poison_cleared {id} {cause}"));
             Ok(())
@@ -186,6 +238,10 @@ pub mod fake {
         fn poison_asked_clear(&self, id: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("poison_asked_clear {id}"));
             Ok(())
+        }
+
+        fn conf(&self, key: &str) -> Result<String, String> {
+            Ok(self.confs.borrow().get(key).cloned().unwrap_or_default())
         }
 
         fn all_partition_members(&self) -> Result<String, String> {

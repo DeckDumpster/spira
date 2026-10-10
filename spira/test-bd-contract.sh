@@ -40,7 +40,7 @@ is "list --json -l <absent label> is an empty array" "0" "$other"
 
 echo
 echo "circuit breaker ordering:"
-port="$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()")"
+reserve_port port
 name="bdcontract$$"
 mkdir -p "$TMP/srv/.beads"
 printf '{"dolt_mode":"server","dolt_server_port":%s,"dolt_database":"%s","project_id":"test"}\n' \

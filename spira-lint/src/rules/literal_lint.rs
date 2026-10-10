@@ -389,3 +389,9 @@ mod tests {
         assert!(names.contains(&"needs-env".to_string()), "{names:?}");
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(LiteralLint),
+    ]
+}

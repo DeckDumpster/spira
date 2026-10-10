@@ -10,7 +10,6 @@ struct Fake {
     patch: BTreeMap<String, String>,
     stacked: BTreeMap<String, Vec<String>>,
     states: BTreeMap<String, String>,
-    lint: BTreeMap<String, Vec<String>>,
     broken: Vec<String>,
     merges: Cell<u32>,
 }
@@ -37,9 +36,6 @@ impl Probe for Fake {
     }
     fn state(&self, id: &str) -> Result<String, String> {
         self.states.get(id).cloned().ok_or_else(|| "unknown".to_string())
-    }
-    fn lint(&self, merged: &str) -> Result<Vec<String>, String> {
-        Ok(self.lint.get(merged.trim_start_matches("merged-")).cloned().unwrap_or_default())
     }
 }
 
@@ -177,16 +173,6 @@ fn stacked_on_a_bead_in_rework_is_sent_back_naming_it_but_a_live_prerequisite_is
     let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
     assert_eq!((o.pass, o.sent_back), (vec!["b".to_string()], vec!["a".to_string()]));
     assert!(r.log.iter().any(|l| l.starts_with("note a:") && l.contains("sp-x")));
-}
-
-#[test]
-fn lint_findings_new_against_the_base_send_the_bead_back_as_a_policy_violation() {
-    let mut f = fake();
-    f.lint.insert("t-a".into(), vec!["src/x.rs:3 wall-clock budget".into()]);
-    let mut r = Rec::default();
-    let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
-    assert_eq!(o.pass, ["b"]);
-    assert_eq!(reds(&r), ["red a t-a policy-violation"]);
 }
 
 #[test]

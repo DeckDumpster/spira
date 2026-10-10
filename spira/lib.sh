@@ -203,18 +203,14 @@ bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an integer, 0 on anything unparseable
 
 # --------------------------------------------------------------------------------------
-# Liveness. NEVER pgrep -f: the pattern is a substring of any command line that mentions
-# it, including the caller's own, so a `pgrep -f 'aeon.sh builder'` inside a script named
-# in that pattern reports itself alive. pgrep may nominate; /proc decides, on the actual
-# argv of the recorded pid.
+# Liveness is the lease and nothing else: an aeon is alive while the deadline in its
+# identity's `.lease` file is ahead of the clock, renewed every heartbeat and removed at
+# teardown. No pidfile pid is probed, no /proc cmdline read, and never pgrep -f (the pattern
+# is a substring of any command line that mentions it, the caller's own included).
 #
 # aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes are SHIMS onto `strand aeon-alive
-# / aeon-count / aeons-live-total / aeons-live-lanes` (wave 4.23, sp-0ffox: lib.sh family E
-# -> strand, the owning crate; collapses the bead/cockpit-collect copies of aeon_alive onto
-# this same implementation). The logic — including the exclude-unit threading through
-# aeon_count and the FAYTH_NAME resolution in aeons_live_lanes — lives in
-# strand/src/probe.rs now; this file keeps the names so bash sourcers (hold.sh)
-# need no change.
+# / aeon-count / aeons-live-total / aeons-live-lanes`; the logic lives in
+# strand/src/probe.rs, and this file keeps the names so bash sourcers (hold.sh) need no change.
 #
 # aeons_live_lanes ALONE threads SPIRA_HOME/SPIRA_FAYTHS through explicitly: conf.sh
 # deliberately never exports either (a fact about this one copy of the harness, not
@@ -222,7 +218,7 @@ json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an i
 # and silently count zero lane aeons forever, the exact shape of sp-nki5w's scar. The other
 # three need only SPIRA_RUN/SPIRA_SUMMON/SPIRA_SYSTEMCTL, all already exported.
 # --------------------------------------------------------------------------------------
-aeon_alive() {           # aeon_alive <pidfile> -> 0 if the recorded pid is a live aeon
+aeon_alive() {           # aeon_alive <pidfile> -> 0 if the identity's lease is still running
     strand aeon-alive "$1"
 }
 
@@ -378,7 +374,7 @@ ready_count() {
 # `_spira_claim`: the exec-boundary shim for the rest of family F (epic_parent_lookup
 # through bulk_ready_by_fayth, plus ready_shared_exclude) — same pattern
 # `_spira_config_fayth`/`_spira_config_repo` use. `SPIRA_QUEUE_WAIT_LABEL`/
-# `SPIRA_OPEN_CHILDREN_LABEL`/`SPIRA_OVERLAP_DEFER_LABEL` are threaded explicitly because conf.sh never exports them
+# `SPIRA_OPEN_CHILDREN_LABEL` are threaded explicitly because conf.sh never exports them
 # (the exec-boundary trap); `SPIRA_NO_LOOP_LABEL` is exported but threaded anyway for
 # defence in depth. `SPIRA_SCOPE_LABEL` is threaded too: it is an unexported shell var for callers that source
 # conf without export (sp-jr2fm). `SPIRA_CLAIM_RETRIES`/`SPIRA_CLAIM_RETRY_DELAY_S`/
@@ -387,7 +383,7 @@ ready_count() {
 _spira_claim() {
     SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" \
     SPIRA_NO_LOOP_LABEL="${SPIRA_NO_LOOP_LABEL:-}" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
-    SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" SPIRA_OVERLAP_DEFER_LABEL="${SPIRA_OVERLAP_DEFER_LABEL:-}" \
+    SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" \
     SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         spira-claim "$@"
 }
@@ -570,16 +566,14 @@ lc_claim_bead() {
     _bump_write_event "$id" claimed "$holder"
 }
 
-# lc_release_bead <id> <actor> — best-effort Release. release_own_claim's own lifecycle half
-# is `spira-lc unclaim` now (sp-hyo5e), which applies the same Release. Like it, this fires
-# from states where Release is illegal (SUBMITTED, DONE, ...) as often as from WORKING;
-# those refusals are expected, not errors, and are never surfaced to the caller — the row
-# is already exactly where it should be.
+# lc_release_bead <id> <actor> — best-effort Release, sent only from WORKING, the one state
+# where Release applies. Any other state is already where it should be, and sending the
+# event anyway is recorded as a refusal the refusal-rate alarm counts. Never fails the caller.
 lc_release_bead() {
     local id="$1" actor="$2" row state version
     row="$(lc_bead_row "$id")" || return 0
     IFS=$'\t' read -r state version _ _ <<< "$row"
-    [ -n "$state" ] || return 0
+    [ "$state" = WORKING ] || return 0
     lc_event_bead "$id" "$state" "$version" "$actor" '"Release"'
     return 0
 }
@@ -756,14 +750,13 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
     return 0
 }
 
-# summon_fayth <fayth> [pool-remaining] [require-label] [reuse-ready] -> 0 if an aeon was
+# summon_fayth <fayth> [pool-remaining] [require-express] [reuse-ready] -> 0 if an aeon was
 # started, 1 otherwise.
 #
-# require-label is passed to the aeon as SPIRA_REQUIRE_LABEL, which it adds to its own
-# FAYTH_LABELS before claiming (aeon.sh). Set it only when the slot itself is restricted —
-# an express grant, say — so the aeon summoned under it cannot claim a bead outside that
-# restriction. A normal summon leaves it unset and claims under the fayth's own predicate
-# exactly as before.
+# A non-empty require-express is passed to the aeon as SPIRA_REQUIRE_EXPRESS, which narrows
+# its ready set to beads whose lifecycle row is express. Set it only when the slot itself is
+# restricted — an express grant, say. A normal summon leaves it unset and claims under the
+# fayth's own predicate exactly as before.
 #
 # reuse-ready=1 skips the fayth_ready bd round trip and uses SUMMON_FAYTH_CACHED_READY
 # (set by the previous call, in this same shell, for the SAME fayth) instead — a caller
@@ -821,7 +814,7 @@ world_gate() {         # world_gate <fayth> <log-prefix> -> 0 if summons are per
 summon_argv() {         # summon_argv <fayth> -> systemd-run property/setenv flags, one per line
     sentinel --summon-argv "$1"
 }
-summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label] -> 0 if an aeon was started, 1 otherwise
+summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-express] -> 0 if an aeon was started, 1 otherwise
     sentinel --summon "$1" "${2:-}" "${3:-}"
 }
 ck7_summon_pass() {
@@ -1528,9 +1521,6 @@ detect_branch_collisions() {
 }
 park_branch_collisions() {   # park_branch_collisions <detect_branch_collisions output>
     sentinel --park-collisions <<< "$1"
-}
-detect_file_overlaps() {   # -> one OVERLAP line per open bead whose branch shares a file with an earlier one
-    sentinel --detect-overlaps
 }
 
 # detect_livelocked -> one LIVELOCK line per open bead that cannot make progress.
@@ -2349,7 +2339,7 @@ queue_sort_rows() {
     _pjf="$(mktemp)" || return 1
     printf '%s' "$_pj" > "$_pjf"
     _pj=""
-    queue-helpers sort-rows "$repo" "$base_sha" --prio-file "$_pjf" --express-label "${SPIRA_EXPRESS_LABEL:-express}"
+    queue-helpers sort-rows "$repo" "$base_sha" --prio-file "$_pjf"
     _rc=$?
     rm -f "$_pjf"
     return "$_rc"

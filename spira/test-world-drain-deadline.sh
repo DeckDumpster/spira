@@ -99,6 +99,7 @@ echo "drain --deadline 0 with a live aeon:"
 bash "$SH/aeon.sh" & WORKER_PID=$!
 sleep 0.3   # let the process appear in /proc
 printf '%s\n' "$WORKER_PID" > "$RUN/aeon-valefor-${TEST_BEAD}.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-valefor-${TEST_BEAD}.lease"
 
 : > "$SLAY_CALLS"; rm -f "$RUN/world.draining"
 drain --deadline 0
@@ -116,7 +117,7 @@ nowant "does not print NOT DRAINED"             "NOT DRAINED" "$out"
 [ -f "$RUN/world.draining" ] && ok "stamp stays (gate held after slay)" \
                              || bad "stamp stays" "stamp was removed"
 
-rm -f "$RUN/aeon-valefor-${TEST_BEAD}.pid"
+rm -f "$RUN/aeon-valefor-${TEST_BEAD}.pid" "$RUN/aeon-valefor-${TEST_BEAD}.lease"
 kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID=""
 rm -f "$RUN/world.draining"
 
@@ -129,6 +130,7 @@ echo "drain --timeout 0 with a live aeon (warn-and-return unchanged):"
 bash "$SH/aeon.sh" & WORKER_PID=$!
 sleep 0.3
 printf '%s\n' "$WORKER_PID" > "$RUN/aeon-valefor-${TEST_BEAD}.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-valefor-${TEST_BEAD}.lease"
 
 : > "$SLAY_CALLS"; rm -f "$RUN/world.draining"
 drain --timeout 0
@@ -140,7 +142,7 @@ want   "prints NOT DRAINED"                    "NOT DRAINED" "$out"
 want   "says summons remain gated"             "REMAIN GATED" "$out"
 nowant "--timeout does not call slay.sh"       "--bead"       "${slay_args:-}"
 
-rm -f "$RUN/aeon-valefor-${TEST_BEAD}.pid"
+rm -f "$RUN/aeon-valefor-${TEST_BEAD}.pid" "$RUN/aeon-valefor-${TEST_BEAD}.lease"
 kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID=""
 rm -f "$RUN/world.draining"
 

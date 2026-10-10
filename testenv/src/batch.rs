@@ -6,7 +6,7 @@
 use crate::fixture::{is_user_account_fault, Fixtures, Liveness, Session};
 use crate::record::{self, Mode, Producer, ResultRecord, Status};
 use crate::runtime::cancelled;
-use crate::schedule::Job;
+use crate::schedule::{pids_budget, Admission, Job, LANE_SLOTS};
 use crate::skipgate::{self, SkipGate};
 use crate::tap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,6 +20,7 @@ pub fn now_epoch() -> u64 {
     spira_config::vtime::now_epoch()
 }
 
+#[derive(Clone)]
 pub struct BatchCfg {
     pub mode: Mode,
     pub producer: Producer,
@@ -65,6 +66,16 @@ pub struct BatchOutcome {
 }
 
 impl BatchOutcome {
+    /// Folds a concurrently-run lane's outcome into this one.
+    pub fn absorb(&mut self, other: BatchOutcome) {
+        self.records.extend(other.records);
+        self.container_dead = self.container_dead.take().or(other.container_dead);
+        self.exec_fault = self.exec_fault.take().or(other.exec_fault);
+        self.account_fault = self.account_fault.take().or(other.account_fault);
+        self.cancelled |= other.cancelled;
+        self.deadline_hit |= other.deadline_hit;
+    }
+
     pub fn blocking_reds(&self) -> Vec<String> {
         self.records
             .iter()
@@ -273,10 +284,10 @@ impl Shared<'_> {
     }
 }
 
-struct DoneOnDrop(mpsc::Sender<()>);
+struct DoneOnDrop(mpsc::Sender<(u32, Option<String>)>, (u32, Option<String>));
 impl Drop for DoneOnDrop {
     fn drop(&mut self) {
-        let _ = self.0.send(());
+        let _ = self.0.send(self.1.clone());
     }
 }
 
@@ -416,22 +427,41 @@ fn run_serial(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
 }
 
 fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
-    let (tx, rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::channel::<(u32, Option<String>)>();
+    let mut adm = Admission::new(sh.cfg.maxpar, pids_budget(), LANE_SLOTS);
     std::thread::scope(|scope| {
-        let mut inflight = 0usize;
-        let wait_one = |inflight: &mut usize| {
-            if *inflight > 0 && rx.recv().is_ok() {
-                *inflight -= 1;
+        let wait_one = |adm: &mut Admission| {
+            if adm.running() > 0 {
+                if let Ok((w, lane)) = rx.recv() {
+                    adm.release(w, &lane);
+                }
             }
         };
-        for (idx, job) in jobs.iter().enumerate() {
+        let mut pending: Vec<(usize, &Job)> = jobs.iter().enumerate().collect();
+        while !pending.is_empty() {
             if cancelled() {
                 outcome.cancelled = true;
                 break;
             }
+            // The first suite that fits, so a lane at its slots or a heavy suite waiting on
+            // weight never idles the pool; an exclusive suite is a barrier nothing passes.
+            let pos = pending
+                .iter()
+                .enumerate()
+                .find_map(|(i, (_, j))| match (j.exclusive.is_some(), i) {
+                    (true, 0) => Some(0),
+                    (true, _) => Some(usize::MAX),
+                    _ => adm.fits(j).then_some(i),
+                })
+                .filter(|p| *p != usize::MAX);
+            let Some(pos) = pos else {
+                wait_one(&mut adm);
+                continue;
+            };
+            let (idx, job) = pending.remove(pos);
             if let Some(reason) = &job.exclusive {
-                while inflight > 0 {
-                    wait_one(&mut inflight);
+                while adm.running() > 0 {
+                    wait_one(&mut adm);
                 }
                 (sh.hooks.log)(&format!(
                     "draining for exclusive suite {} ({reason})",
@@ -443,11 +473,6 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 std::thread::sleep(sh.cfg.psi_pause);
             }
             let n = idx + 1;
-            if job.exclusive.is_none() && sh.cfg.maxpar > 0 {
-                while inflight >= sh.cfg.maxpar as usize {
-                    wait_one(&mut inflight);
-                }
-            }
             if sh.past_deadline() {
                 outcome.deadline_hit = true;
                 break;
@@ -468,7 +493,7 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 break;
             }
             sh.session.make_home(n);
-            let done = DoneOnDrop(tx.clone());
+            let done = DoneOnDrop(tx.clone(), (job.weight, job.lane.clone()));
             let name = job.name.clone();
             scope.spawn(move || {
                 let _done = done;
@@ -485,15 +510,15 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 }
                 sh.finish(n, &name, rc, secs, &output);
             });
-            inflight += 1;
+            adm.admit(job);
             if job.exclusive.is_some() {
-                while inflight > 0 {
-                    wait_one(&mut inflight);
+                while adm.running() > 0 {
+                    wait_one(&mut adm);
                 }
             }
         }
-        while inflight > 0 {
-            wait_one(&mut inflight);
+        while adm.running() > 0 {
+            wait_one(&mut adm);
         }
     });
 
@@ -557,10 +582,7 @@ mod tests {
     fn jobs(names: &[&str]) -> Vec<Job> {
         names
             .iter()
-            .map(|n| Job {
-                name: n.to_string(),
-                exclusive: None,
-            })
+            .map(|n| Job::new(n, None))
             .collect()
     }
 

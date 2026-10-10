@@ -92,6 +92,7 @@ is "the fixture holds the amended bead in_progress" in_progress \
 FAKE_PID=$$
 FAKE_PF="$SPIRA_RUN/aeon-builder-$BID2.pid"
 echo "$FAKE_PID" > "$FAKE_PF"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "${FAKE_PF%.pid}.lease"
 
 mkdir -p "$SPIRA_MAIL/aeon-$BID2/new" "$SPIRA_MAIL/aeon-$BID2/cur" "$SPIRA_MAIL/aeon-$BID2/tmp"
 
@@ -104,7 +105,7 @@ is   "SEEN RED (b): amend delivers mail to aeon mailbox"  "1"  "$mbx_new"
 msg_body="$(cat "$SPIRA_MAIL/aeon-$BID2/new"/* 2>/dev/null)"
 want  "SEEN RED (b): mail contains the note text"  "Scope expanded"  "$msg_body"
 
-rm -f "$FAKE_PF"
+rm -f "$FAKE_PF" "${FAKE_PF%.pid}.lease"
 rm -rf "$SPIRA_MAIL/aeon-$BID2"
 
 echo

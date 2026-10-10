@@ -206,3 +206,9 @@ mod tests {
         assert_eq!(run(&t, &["a.txt"]), Err(LintError::EmptyScope));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(WallClockBudget),
+    ]
+}

@@ -152,6 +152,7 @@ pub struct Real {
     pub home: PathBuf,
     admission: RefCell<Vec<File>>,
     tree_lock: RefCell<Option<File>>,
+    cancel: RefCell<Option<PathBuf>>,
 }
 
 impl Real {
@@ -160,6 +161,7 @@ impl Real {
             home,
             admission: RefCell::new(Vec::new()),
             tree_lock: RefCell::new(None),
+            cancel: RefCell::new(None),
         }
     }
 
@@ -895,7 +897,7 @@ impl World for Real {
                 Ok(None) => {}
                 Err(_) => break -1,
             }
-            if SIGNALLED.load(Ordering::SeqCst) && !termed {
+            if self.signalled() && !termed {
                 unsafe {
                     libc::kill(child.id() as i32, libc::SIGTERM);
                 }
@@ -925,7 +927,17 @@ impl World for Real {
         std::process::id()
     }
     fn signalled(&self) -> bool {
-        SIGNALLED.load(Ordering::SeqCst)
+        SIGNALLED.load(Ordering::SeqCst) || self.cancel.borrow().as_ref().is_some_and(|p| p.is_file())
+    }
+    fn machine_save(&self, run: &Path, r: &crate::machine::Run) -> Result<(), String> {
+        *self.cancel.borrow_mut() = Some(crate::machine::cancel_path(run, &r.id));
+        crate::machine::save(run, r)
+    }
+    fn machine_cancelled(&self, run: &Path, id: &str) -> bool {
+        crate::machine::cancel_requested(run, id)
+    }
+    fn machine_clear_cancel(&self, run: &Path, id: &str) {
+        crate::machine::clear_cancel(run, id)
     }
     fn eprint(&self, s: &str) {
         eprintln!("{s}");

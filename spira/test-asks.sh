@@ -48,5 +48,21 @@ arun health >/dev/null; is "health passes after a fresh poll" "0" "$?"
 echo "ok 1 100 7" > "$TMP/run/watchd/asks.health"
 arun health >/dev/null; is "health fails once the last poll is stale" "1" "$?"
 
+mkdir -p "$TMP/mail/concierge/new" "$TMP/fakebin"
+printf 'Subject: Which branch?\nX-Spira-Default: take main\nX-Spira-Work-Bead: sp-held\nMessage-ID: <m9@spira>\n\nbody\n' > "$TMP/mail/concierge/new/m9"
+rm -f "$LOG" "$CUR" "$TMP/run/watchd/asks.health"
+echo '[]' > "$ASKS"
+tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_BD="$TMP/fakebd" SPIRA_MAIL="$TMP/mail"
+: > "$INBOX"
+printf '#!/usr/bin/env bash\n[ "$1" = list-held ] && [ -e "%s/armed" ] && echo sp-held\nexit 0\n' "$TMP" > "$TMP/fakebin/spira-lc"; chmod +x "$TMP/fakebin/spira-lc"
+(env -i PATH="$TMP/fakebin:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" FAKE_ASKS="$ASKS" bash "$HERE/asks.sh" watch --interval 1 --ticks 4 >/dev/null 2>&1) &
+wpid=$!
+for _ in $(seq 100); do [ -e "$TMP/run/watchd/asks.health" ] && break; sleep 0.1; done
+touch "$TMP/armed"; wait "$wpid"
+hl="$(cat "$INBOX")"
+want "an ask hold line carries the question" "Which branch?" "$hl"
+want "an ask hold line carries the default" "take main" "$hl"
+want "an ask hold line carries the message id" "m9@spira" "$hl"
+
 grep -q '^asks|daemon|' "$HERE/watchers"; is "watchers manifest carries the asks row" "0" "$?"
 tl_summary

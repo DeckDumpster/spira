@@ -69,6 +69,8 @@ struct FakeGit {
     unit_ensure: bool,
     /// A config delta that only the release built from this sha carries.
     delta_for: Option<(String, String)>,
+    /// Files only the release built from the given sha carries: `(sha, path, body)`.
+    extra_only: Vec<(String, String, String)>,
     ancestors: RefCell<BTreeSet<(String, String)>>,
 }
 
@@ -116,6 +118,11 @@ impl Git for FakeGit {
         if let Some((only, body)) = &self.delta_for {
             if only == sha {
                 file(&into.join("spira/config-delta.toml"), body);
+            }
+        }
+        for (only, p, body) in &self.extra_only {
+            if only == sha {
+                file(&into.join(p), body);
             }
         }
         for (p, body, x) in &self.extra {
@@ -219,6 +226,7 @@ struct FakeSystemctl {
     unit_dir: PathBuf,
     states: RefCell<BTreeMap<String, UnitState>>,
     restarts: RefCell<Vec<String>>,
+    resets: RefCell<Vec<String>>,
     reloads: RefCell<usize>,
     poison: Option<String>,
     /// Unit names `list_active` must never return, mirroring a `systemd-run` transient
@@ -249,6 +257,7 @@ impl FakeSystemctl {
             unit_dir,
             states: RefCell::new(s),
             restarts: RefCell::new(vec![]),
+            resets: RefCell::new(vec![]),
             reloads: RefCell::new(0),
             poison: None,
             transient: BTreeSet::new(),
@@ -294,6 +303,10 @@ impl Systemctl for FakeSystemctl {
         e.result = "success".into();
         Ok(())
     }
+    fn reset_failed(&self, unit: &str) -> Result<(), String> {
+        self.resets.borrow_mut().push(unit.into());
+        Ok(())
+    }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.restarts.borrow_mut().push(unit.into());
         if self.restart_fails.contains(unit) {
@@ -318,6 +331,10 @@ impl Systemctl for FakeSystemctl {
             e.result = "success".into();
         }
         Ok(())
+    }
+    fn list_failed(&self, glob: &str) -> Result<Vec<String>, String> {
+        let (pre, suf) = glob.split_once('*').unwrap_or((glob, ""));
+        Ok(self.states.borrow().iter().filter(|(n, st)| st.active == "failed" && n.starts_with(pre) && n.ends_with(suf)).map(|(n, _)| n.clone()).collect())
     }
     fn list_active(&self, glob: &str) -> Result<Vec<String>, String> {
         // The only glob shapes install-tarball ever passes: "<prefix>*<suffix>".
@@ -848,6 +865,62 @@ fn every_shipped_service_renders_against_real_host_values() {
 }
 
 // ---------------------------------------------------------------- activate
+
+#[test]
+fn activate_clears_a_start_limit_on_every_unit_it_restarts() {
+    let w = World::new();
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    w.install_units(A);
+    sc.restarts.borrow_mut().clear();
+    sc.resets.borrow_mut().clear();
+    let s = activate::activate(&c, B, None).unwrap();
+    assert!(!s.restarted.is_empty(), "control: something was restarted");
+    assert_eq!(*sc.resets.borrow(), s.restarted);
+}
+
+#[test]
+fn activate_revives_an_installed_unit_found_failed_and_not_otherwise_restarted() {
+    let w = World::new();
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    w.install_units(A);
+    let failed = "spira-watch-pool-prod.service";
+    sc.states.borrow_mut().get_mut(failed).unwrap().active = "failed".into();
+    sc.resets.borrow_mut().clear();
+    let s = activate::activate(&c, B, None).unwrap();
+    assert!(s.revived.contains(&failed.to_string()) || s.restarted.contains(&failed.to_string()), "{s:?}");
+    assert!(sc.resets.borrow().contains(&failed.to_string()));
+    assert_eq!(sc.states.borrow()[failed].active, "active");
+}
+
+#[test]
+fn path_shadows_names_a_dropin_dir_that_carries_a_binary_the_release_ships() {
+    let w = World::new();
+    w.build(A).unwrap();
+    let rel = w.cfg.releases.join(A);
+    let shipped = std::fs::read_dir(rel.join("bin")).unwrap().flatten().next().expect("release ships a bin").file_name();
+    let shim = w.sb.p().join("shim-bin");
+    std::fs::create_dir_all(&shim).unwrap();
+    let ud = w.units();
+    let d = ud.join("spira-x-prod.service.d");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("50.conf"), format!("[Service]\nEnvironment=PATH={}:{}/current/bin\n", shim.display(), w.cfg.releases.display())).unwrap();
+    assert!(units::path_shadows(&ud, &rel, &w.cfg.releases).is_empty(), "control: empty shim dir shadows nothing");
+    let f = shim.join(&shipped);
+    std::fs::write(&f, "#!/bin/sh\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let got = units::path_shadows(&ud, &rel, &w.cfg.releases);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].starts_with("PATH-SHADOW"));
+}
 
 #[test]
 fn activate_swaps_current_rewrites_units_and_restarts_only_changed_long_running_services() {
@@ -1780,6 +1853,63 @@ fn config_delta_that_leaves_a_required_key_unset_refuses_naming_it_and_changes_n
     assert_eq!(cfg_text(&w), before);
 }
 
+fn registry_key(name: &str, ty: &str, default: Option<&str>) -> (String, String, bool) {
+    let stmt = default.map(|d| format!("    : \"${{{name}:={d}}}\"\n")).unwrap_or_else(|| "    # NO DEFAULT\n".into());
+    (format!("spira/conf.d/{name}"), format!("TYPE={ty}\nGROUP=test\nDOC=a key\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n{stmt}SPIRA_CONF_DEFAULT_EOF\n"), false)
+}
+
+#[test]
+fn a_registry_key_with_no_delta_entry_is_defaulted_into_the_config_at_activation() {
+    let mut g = delta_git("");
+    g.delta_for = None;
+    g.extra.push(registry_key("SPIRA_NEW_KEY", "u32", Some("32768")));
+    g.extra.push(registry_key("SPIRA_OLD_KEY", "u32", Some("5")));
+    let w = World::with_git(g);
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nold_key = 9\n");
+    build_with_schema(&w, B, &["new_key"], &[]);
+    assert!(!loads(&w, B), "control: the config as found does not load under the new release");
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = 32768") && cfg_text(&w).contains("old_key = 9"), "{}", cfg_text(&w));
+    assert!(loads(&w, B), "a unit that resolves config starts");
+    assert!(w.cfg.state_dir().unwrap().join("config-undo").join(B).exists(), "the defaulted key can be rolled back");
+}
+
+#[test]
+fn a_no_default_key_the_active_release_already_declares_does_not_refuse_activation() {
+    let mut g = FakeGit { validator: true, ..Default::default() };
+    g.extra.push(registry_key("SPIRA_OLD_NODEFAULT", "string", None));
+    let new = registry_key("SPIRA_NEW_KEY", "u32", Some("7"));
+    g.extra_only.push((B.to_string(), new.0, new.1));
+    let w = World::with_git(g);
+    let cfg = Path::new(&w.cfg.toml_spec().unwrap()).to_path_buf();
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\nold_nodefault = \"x\"\n");
+    build_with_schema(&w, A, &[], &[]);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\n");
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert_eq!(w.current().as_deref(), Some(B));
+    assert!(cfg_text(&w).contains("new_key = 7") && !cfg_text(&w).contains("old_nodefault"), "{}", cfg_text(&w));
+}
+
+#[test]
+fn a_registry_key_with_no_default_is_left_out_and_activation_proceeds() {
+    let mut g = FakeGit { validator: true, ..Default::default() };
+    g.extra.push(registry_key("SPIRA_NEW_KEY", "string", None));
+    g.extra.push(registry_key("SPIRA_COMPUTED_KEY", "string", Some("$SPIRA_RUN/x")));
+    let w = World::with_git(g);
+    let before = "[spira]\nid_prefix = \"sp\"\n";
+    file(Path::new(&w.cfg.toml_spec().unwrap()), before);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), B, None).expect("an optional key never refuses activation");
+    assert_eq!(w.current().as_deref(), Some(B));
+    let after = cfg_text(&w);
+    assert!(!after.contains("new_key") && !after.contains("computed_key"), "nothing invented for an optional key: {after}");
+}
+
 #[test]
 fn a_failed_switch_puts_the_config_back() {
     let w = World::with_git(delta_git(DELTA_BOTH));
@@ -1967,4 +2097,18 @@ fn dolt_renders_from_the_install_locations_when_path_omits_it() {
     let cfg = Config::resolve_with(&Flags::default(), &env, None, &reg).unwrap();
     let got = cfg.host_values().unwrap().remove("DOLT").unwrap();
     assert_eq!(got, dolt.display().to_string());
+}
+
+#[test]
+fn build_stages_the_candidates_delta_before_any_release_exists_and_without_one_stages_nothing() {
+    let w = World::with_git(delta_git("[added]\n\"spira.groom_gate_label\" = \"placeholder-gate\"\n"));
+    let before = "[spira]\nid_prefix = \"sp\"\n";
+    let spec = w.cfg.toml_spec().unwrap();
+    file(Path::new(&spec), before);
+    let (dir, staged) = config_delta::staged_for_commit(&w.git, &spec, Path::new("/repo"), B).unwrap().expect("the candidate declares a delta");
+    let text = fs::read_to_string(&staged).unwrap();
+    assert!(text.contains("groom_gate_label = \"placeholder-gate\""), "{text}");
+    assert_eq!(cfg_text(&w), before, "staging writes nothing to the files in force");
+    let _ = fs::remove_dir_all(dir);
+    assert!(config_delta::staged_for_commit(&w.git, &spec, Path::new("/repo"), A).unwrap().is_none(), "control: a commit with no delta entry leaves production config as it is, so its missing key stays a refusal naming it");
 }

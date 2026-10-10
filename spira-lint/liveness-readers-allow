@@ -1,0 +1,11 @@
+# liveness-readers: files in the operator-facing trees that still read liveness from a process
+# (pgrep, /proc cmdline, an aeon pidfile), one repo-relative path per line. Blank lines and
+# `#` comments are ignored.
+#
+# SHRINK-ONLY. A line leaves when its file asks the lease instead; nothing is ever added for
+# a NEW reader.
+cockpit-collect/src/io.rs
+cockpit/ops/src/layout.rs
+cockpit/ops/src/procfs.rs
+cockpit/ops/src/rebuild.rs
+spira-world/src/proc.rs

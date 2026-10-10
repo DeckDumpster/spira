@@ -55,6 +55,30 @@ gate [--home <spira-dir>] --definition [repo-name] # the landing ref's gate comm
   live_workers`) keep matching.
 * A missing `<branch>` prints usage and exits 1, as `${1:?}` did.
 
+### The gate machine
+
+A run moves queued → admitted → rebased → fences → trial → verdict (`machine.rs`); every move is
+an event with a reason, kept in `$SPIRA_RUN/gate-machine/<bead>.json` (the branch name stands in
+when no bead is named; the latest run replaces the last).
+
+* `queued` when the branch and base resolve; `admitted` once a slot is held (`fences only: no slot
+  needed` when none is taken); `rebased` once the merge is checked out in the gate tree; `fences`
+  while the tools build and the fences run; `trial` for the build, test and re-entry phases. A suites
+  composition runs fences and suites as one gate command, so it goes rebased → trial. `verdict`
+  carries `<OUTCOME> <reason>`.
+* A move the table does not allow, or a record that cannot be written, ends the run NO_VERDICT
+  `machine-fault`; a refusal names the run, its state and the state refused.
+* `gate status <bead>` prints the record as JSON (`state`, `reason`, `since`, `age_s`,
+  `cancel_requested`, `events`); exit 1 when no run is recorded.
+* `gate cancel <bead> [--why <text>]` leaves a request. The run sees it at its next move, in its
+  waits and while a phase runs (the same check `signalled` makes), and ends NO_VERDICT
+  `cancelled`. A bead whose run is at `verdict`, or that has none, is refused naming the state.
+  No pid is signalled and no process is matched.
+* A gate killed by SIGKILL cannot record its end; its record stays at the state it died in, with an
+  `age_s` that keeps growing. `gate wait` is what notices that death.
+* The record file moves into the lifecycle store once the write path has been measured to have room
+  for it (state-machines item 9); the table and the two reads are what move.
+
 ### Callers (all unchanged: they call `gate.sh`)
 
 | caller | how | reads |

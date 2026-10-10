@@ -100,7 +100,19 @@ pub fn probe_marker(subject: &str, body: &str) -> Option<&'static str> {
     PROBE_MARKERS.iter().copied().find(|m| hay.contains(m))
 }
 
+pub type DeliverFn<'a> = &'a dyn Fn(&Path, &str, &str, bool) -> Result<PathBuf, String>;
+
+fn deliver_to_maildir(dir: &Path, msgid: &str, msg: &str, mute: bool) -> Result<PathBuf, String> {
+    maildir::mail_ensure(dir).map_err(|e| format!("cannot create mailbox {}: {e}", dir.display()))?;
+    fs::write(dir.join("tmp").join(msgid), msg).map_err(|e| format!("cannot write message: {e}"))?;
+    maildir::mail_deliver(dir, msgid, mute).map_err(|e| format!("cannot deliver message: {e}"))
+}
+
 pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<SendOutcome, String> {
+    send_with(bd, env, args, body, &deliver_to_maildir)
+}
+
+pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver: DeliverFn) -> Result<SendOutcome, String> {
     let mut mailbox = args.mailbox.to_string();
     maildir::mailbox_valid(&mailbox)?;
     let mut steps = vec![format!("mailbox {mailbox}: valid")];
@@ -201,7 +213,16 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
             }
             return Err("ask label does not resolve — refusing to file an ask under a guessed one".to_string());
         }
-        if let Some(dec_bead) = bead::create_tracking_bead(bd, true, args.subject, &body, &env.ask_label, work_bead) {
+        let created = match bead::create_tracking_bead(bd, true, args.subject, &body, &env.ask_label, work_bead) {
+            Ok(c) => c,
+            Err(e) => {
+                if is_operator {
+                    repeat::repeat_release(repeat_guard.take().unwrap());
+                }
+                return Err(format!("ask not sent — {e}"));
+            }
+        };
+        if let Some(dec_bead) = created {
             if !args.bead.is_empty() {
                 if env.allow_blocking {
                     if bead::dep_add(bd, args.bead, &dec_bead, "blocks") {
@@ -229,7 +250,6 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     };
 
     let dir = maildir::mail_dir(env, &mailbox);
-    maildir::mail_ensure(&dir).map_err(|e| format!("cannot create mailbox {mailbox}: {e}"))?;
     let msgid = maildir::mint_msgid();
 
     let mut msg = String::new();
@@ -265,8 +285,17 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     msg.push_str(&final_body);
     msg.push('\n');
 
-    fs::write(dir.join("tmp").join(&msgid), &msg).map_err(|e| format!("cannot write message: {e}"))?;
-    let delivered_path = maildir::mail_deliver(&dir, &msgid, env.mute).map_err(|e| format!("cannot deliver message: {e}"))?;
+    let delivered = bead::retry_until_deadline(|| deliver(&dir, &msgid, &msg, env.mute && work_bead.is_empty()));
+    let delivered_path = match delivered {
+        Ok(p) => p,
+        Err(e) => {
+            let tracked = if x_bead.is_empty() || x_bead == args.bead { String::new() } else { format!("; {}", bead::abandon_bead(bd, &x_bead, &format!("mail not delivered: {e}"))) };
+            if is_operator {
+                repeat::repeat_release(repeat_guard.take().unwrap());
+            }
+            return Err(format!("ask not sent — {e}{tracked}"));
+        }
+    };
 
     if is_operator {
         repeat::repeat_stamp(repeat_guard.take().unwrap());
@@ -481,6 +510,9 @@ pub fn sweep_dismissed(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, mail_root:
         let reason = format!("dismissed by operator (mail deleted) — default taken: {}", if default.is_empty() { "<none given>" } else { default });
         if bead::close(bd, bead_id, &reason).is_ok() {
             report.dismissed += 1;
+            if let Some(w) = lc::take_default(lc, bead_id, &reason, operator_actor) {
+                eprintln!("{w}");
+            }
             if let Some(w) = lc::lift_ask(lc, fields.get(5).copied().unwrap_or(""), Lift::Reply { message_id: msgid }, operator_actor) {
                 eprintln!("{w}");
             }
@@ -551,7 +583,9 @@ mod sweep_tests {
         let lc = FakeLc::new(0);
         let Ok(SweepOutcome::Report(r)) = sweep_dismissed(&bd, &lc, true, t.path(), &idx, "ops", "ryan") else { panic!("no report") };
         assert_eq!(r.dismissed, 2, "{:?}", bd.calls());
-        assert_eq!(lc.calls(), vec![vec!["reply", "sp-work1", "m1@spira", "ryan"]]);
+        let calls = lc.calls();
+        assert_eq!(calls.iter().filter(|c| c[0] == "close-ask" && c.contains(&"default".to_string())).count(), 2, "{calls:?}");
+        assert!(calls.contains(&vec!["reply".to_string(), "sp-work1".into(), "m1@spira".into(), "ryan".into()]), "{calls:?}");
     }
 }
 
@@ -739,5 +773,89 @@ mod probe_tests {
         let calls = bd.calls();
         assert!(calls[0].0.iter().any(|a| a.starts_with("needs-x")), "{calls:?}");
         assert!(out.delivered_path.to_string_lossy().contains("/operator/"), "{:?}", out.delivered_path);
+    }
+
+    fn ask_env(root: &Path) -> Env {
+        for d in ["mail/operator/new", "run"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        let mut e = env(root);
+        e.db = "db".into();
+        e.bd_bin = "bd".into();
+        e
+    }
+
+    fn ask_args() -> SendArgs<'static> {
+        SendArgs { mailbox: "operator", from: None, subject: "Grant it?", kind: "question", default: "grant", class: "permissions", bead: "", urgent: false, digest: false, dry_run: false }
+    }
+
+    const ASK_BODY: &str = "## Question\nq\n\n## Class basis\nneeds a credential\n";
+
+    fn closed(bd: &FakeBd) -> bool {
+        bd.calls().iter().any(|c| c.0[0] == "close" && c.0[1] == "sp-new1")
+    }
+
+    #[test]
+    fn a_lifecycle_row_failing_once_is_retried_and_the_ask_is_whole() {
+        let t = testkit::TempDir::new("mail-ask-row-once");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        bd.row_failures.set(1);
+        let out = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap();
+        assert_eq!(bd.row_attempts.get(), 2);
+        assert_eq!(out.x_bead.as_deref(), Some("sp-new1"));
+        assert_eq!(mailbox_entries(t.path()), 1);
+        assert!(!closed(&bd));
+    }
+
+    #[test]
+    fn a_lifecycle_row_that_never_lands_closes_the_bead_and_delivers_nothing() {
+        let t = testkit::TempDir::new("mail-ask-row-never");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        bd.row_failures.set(u32::MAX);
+        let err = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap_err();
+        assert!(err.contains("ask row") && err.contains("sp-new1 closed"), "{err}");
+        assert!(closed(&bd));
+        assert_eq!(mailbox_entries(t.path()), 0);
+    }
+
+    #[test]
+    fn a_maildir_write_failing_once_is_retried_and_the_ask_is_whole() {
+        let t = testkit::TempDir::new("mail-ask-mail-once");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        let fails = std::cell::Cell::new(1);
+        let deliver = |d: &Path, id: &str, m: &str, mute: bool| {
+            if fails.replace(0) == 1 {
+                return Err("disk full".to_string());
+            }
+            deliver_to_maildir(d, id, m, mute)
+        };
+        let out = send_with(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into(), &deliver).unwrap();
+        assert_eq!(out.x_bead.as_deref(), Some("sp-new1"));
+        assert_eq!(mailbox_entries(t.path()), 1);
+        assert!(!closed(&bd));
+    }
+
+    #[test]
+    fn a_maildir_that_never_accepts_the_mail_closes_the_bead_and_exits_with_an_error() {
+        let t = testkit::TempDir::new("mail-ask-mail-never");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok(""), BdOut::ok("")]);
+        let deliver = |_: &Path, _: &str, _: &str, _: bool| Err::<PathBuf, String>("disk full".to_string());
+        let err = send_with(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into(), &deliver).unwrap_err();
+        assert!(err.contains("disk full") && err.contains("sp-new1 closed"), "{err}");
+        assert!(closed(&bd));
+        assert_eq!(mailbox_entries(t.path()), 0);
+    }
+
+    #[test]
+    fn a_muted_work_ask_still_lands_unseen_in_new() {
+        let t = testkit::TempDir::new("mail-ask-muted-work");
+        let mut e = env(t.path());
+        e.mute = true;
+        let ask = SendArgs { bead: "sp-work9", ..args("Which way?", false) };
+        let body = "## Class basis\nit is policy\n";
+        let out = send(&FakeBd::new(vec![]), &e, &ask, body.into()).unwrap();
+        assert!(out.delivered_path.to_string_lossy().contains("/new/"), "{:?}", out.delivered_path);
+        let plain = send(&FakeBd::new(vec![]), &e, &args("Plain?", false), body.into()).unwrap();
+        assert!(plain.delivered_path.to_string_lossy().contains("/cur/"), "{:?}", plain.delivered_path);
     }
 }

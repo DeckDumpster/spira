@@ -80,8 +80,25 @@ fi
 # refreshes the tracking ref and compares both heads through the one engine it resolved
 # in-process (never an env var or a second engine), so the store verified is the store
 # pushed, and only that comparison produces the OK line.
-remote_head="$(timeout 900 beads-store push --db "$DB" --remote beads 2>&1)" \
-    || fail_out "$remote_head"
+# A failed push is the expensive one: it packs the whole repository before the remote refuses
+# or the deadline kills it. So a failure parks further attempts for a day instead of
+# repacking on every timer tick.
+failed_stamp="${SPIRA_RUN:-/tmp}/beads-push.failed-at"
+retry_after="${BEADS_PUSH_RETRY_AFTER_FAILURE_SECS:-86400}"
+if [ -f "$failed_stamp" ]; then
+    since=$(( $(date +%s) - $(cat "$failed_stamp" 2>/dev/null || echo 0) ))
+    if [ "$since" -lt "$retry_after" ]; then
+        fail_out "last push failed ${since}s ago; not repacking again for $((retry_after - since))s (remove $failed_stamp to retry now)"
+    fi
+fi
+
+deadline="${BEADS_PUSH_DEADLINE_SECS:-600}"
+remote_head="$(BEADS_STORE_PUSH_DEADLINE_SECS="$deadline" ionice -c3 nice -n 19 \
+    beads-store push --db "$DB" --remote beads 2>&1)" || {
+    date +%s > "$failed_stamp"
+    fail_out "${remote_head:-push exited non-zero with no output}"
+}
+rm -f "$failed_stamp"
 
 echo "beads-push: $stamp — spira OK ($(_bp_statute_count "$DB") statutes, remote at $remote_head)"
 exit 0

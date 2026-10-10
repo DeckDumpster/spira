@@ -55,6 +55,11 @@ testdb_reset
 
 export SPIRA_CONF="/nonexistent-$$.conf"
 
+mkdir -p "$TMP/chamber"
+printf 'FAYTH_LABELS=spira,plan\n' > "$TMP/chamber/builder.fayth"
+printf 'FAYTH_LABELS=spira,groom\n' > "$TMP/chamber/groomer.fayth"
+export SPIRA_CHAMBER="$TMP/chamber"
+
 seed() {
     printf '{"id":"%s","title":"%s","status":"open","issue_type":"task","labels":["plan","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$2" | testdb_seed
@@ -112,6 +117,24 @@ parent_of_child="$(timeout 5 bd -C "$SPIRA_DB" children sp-tgsp-orig 2>/dev/null
 case "$parent_of_child" in
     *"$child"*) ok "split-piece: the new piece is recorded as a child of the original" ;;
     *) bad "split-piece: the new piece is recorded as a child of the original" "not found in: $parent_of_child" ;;
+esac
+
+echo
+# ======================================================================================
+echo "split-piece: a piece of a groom parent is built, not groomed:"
+# ======================================================================================
+printf '{"id":"%s","title":"%s","status":"open","issue_type":"task","labels":["spira","groom","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    sp-tgsp-groom "groom parent" | testdb_seed
+gchild="$(groomer split-piece sp-tgsp-groom --title "groom piece" --type task 2>"$TMP/gerr")"
+is "groom-parent split-piece exits 0" "0" "$?"
+glabels=" $(labels_of "$gchild") "
+case "$glabels" in
+    *" plan "*) ok "groom-parent piece carries plan" ;;
+    *) bad "groom-parent piece carries plan" "labels:$glabels" ;;
+esac
+case "$glabels" in
+    *" groom "*) bad "groom-parent piece does not carry groom" "labels:$glabels" ;;
+    *) ok "groom-parent piece does not carry groom" ;;
 esac
 
 echo

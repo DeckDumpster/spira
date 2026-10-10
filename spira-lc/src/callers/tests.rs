@@ -23,6 +23,9 @@ struct Fake {
     calls: usize,
     /// Answer every call with this (a machine that cannot be reached).
     down: bool,
+    /// Ask rows on the ask machine, and the `close-ask` calls made against them.
+    ask_rows: Vec<String>,
+    ask_closes: Vec<Vec<String>>,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -42,6 +45,9 @@ impl Fake {
             "bead_id": r.bead_id, "state": r.state.as_str(), "tip": opt(&r.tip), "gate_key": opt(&r.gate_key),
             "holder": opt(&r.holder), "lease_until": r.lease_until.map(|n| Value::String(n.to_string())).unwrap_or(Value::Null),
             "holds": serde_json::to_string(&holds).unwrap(), "reason": opt(&r.reason), "version": r.version.to_string(),
+            "aeon_phase": r.phase.map(|p| Value::String(p.as_str().into())).unwrap_or(Value::Null),
+            "disposition": r.disposition.map(|d| Value::String(d.as_str().into())).unwrap_or(Value::Null),
+            "disposition_note": opt(&r.disposition_note),
         })
     }
     fn state(&self, id: &str) -> &'static str {
@@ -111,6 +117,24 @@ impl Machine for Fake {
                     self.deliveries.insert(key, o.row);
                 }
                 (0, String::new())
+            }
+            "history" => {
+                let rows: Vec<Value> = self
+                    .events
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| e.1 == args[1])
+                    .map(|(i, e)| {
+                        let kind: Value = serde_json::from_str(&e.5).unwrap();
+                        let name = kind.as_object().and_then(|o| o.keys().next().cloned()).unwrap_or_else(|| kind.as_str().unwrap_or("").to_string());
+                        json!({"seq": (i + 1).to_string(), "event": name})
+                    })
+                    .collect();
+                (0, Value::Array(rows).to_string())
+            }
+            "close-ask" => {
+                self.ask_closes.push(args.to_vec());
+                if self.ask_rows.contains(&args[1]) { (0, String::new()) } else { (1, format!("close-ask: {} is no ask", args[1])) }
             }
             other => panic!("unexpected primitive {other}"),
         }
@@ -245,6 +269,17 @@ fn writers_acting_on_a_state_that_moved_send_no_event() {
     f.bead("sp-r", BeadState::Ready);
     assert_eq!(go(&mut f, "reply", &["sp-r", "m-1@spira"]).code, REFUSED);
     assert!(f.events.is_empty(), "{:?}", f.events);
+}
+
+#[test]
+fn a_reply_by_hold_seq_lifts_an_ask_whose_mail_is_lost() {
+    let mut f = Fake::default();
+    f.bead("sp-q", BeadState::Working);
+    assert_eq!(go(&mut f, "hold", &["sp-q", "ask", "which way?", "aeon"]).code, APPLIED);
+    assert_eq!(go(&mut f, "reply", &["sp-q", "seq:9", "ops"]).code, REFUSED, "no such seq");
+    assert_eq!(go(&mut f, "holds", &["sp-q"]).stdout, "ask");
+    assert_eq!(go(&mut f, "reply", &["sp-q", "seq:1", "ops"]).code, APPLIED);
+    assert_eq!(go(&mut f, "holds", &["sp-q"]).stdout, "");
 }
 
 #[test]
@@ -447,6 +482,16 @@ fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
 }
 
 #[test]
+fn certify_skips_an_infra_verdict_on_a_tip_the_row_has_left() {
+    let mut f = Fake::default();
+    f.bead("sp-st", BeadState::Submitted).tip = Some("new111".into());
+    let a = go(&mut f, "certify", &["sp-st", "old000", "infra", "-"]);
+    assert_eq!((a.code, a.cert_log.unwrap().0), (REFUSED, "skip".into()));
+    assert!(f.events.is_empty());
+    assert_eq!(go(&mut f, "certify", &["sp-st", "new111", "infra", "-"]).code, APPLIED);
+}
+
+#[test]
 fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
     for (raw, want) in [("branch-red", "suites-failed"), ("syntax", "syntax"), ("beads-data", "policy-violation"), ("foreign-harness", "policy-violation"), ("no-rebase", "no-rebase"), ("timeout", "timeout"), ("confine", "confine"), ("a-reason-never-heard-of", "suites-failed")] {
         let mut f = Fake::default();
@@ -568,10 +613,18 @@ struct FakeBd {
     reopened: Vec<String>,
     /// ask bead id -> the work beads its `work-bead:` labels name.
     asks: BTreeMap<String, Vec<String>>,
+    /// bead ids carrying an `external_ref`.
+    external: std::collections::BTreeSet<String>,
     down: bool,
 }
 
 impl Bd for FakeBd {
+    fn external(&mut self, id: &str) -> Result<bool, String> {
+        if self.down {
+            return Err("bd down".into());
+        }
+        Ok(self.external.contains(id))
+    }
     fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String> {
         if self.down {
             return Err("bd down".into());
@@ -888,6 +941,17 @@ fn closing_an_ask_withdraws_the_hold_on_its_work_bead_and_moves_nothing_else() {
 }
 
 #[test]
+fn closing_an_ask_with_no_bead_row_closes_its_ask_row_withdrawn_and_a_bead_with_a_row_does_not() {
+    let mut f = Fake { ask_rows: vec!["sp-ask".into()], ..Default::default() };
+    f.bead("sp-w", BeadState::Landed);
+    let mut bd = FakeBd::default();
+    assert_eq!(close(&v(&["sp-ask", "--reason", "moot", "--actor", "claude"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    assert_eq!(f.ask_closes, vec![v(&["close-ask", "sp-ask", "--exit", "withdrawn", "--quote", "moot", "--actor", "claude"])]);
+    assert_eq!(close(&v(&["sp-w", "--reason", "landed at abc"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    assert_eq!(f.ask_closes.len(), 1, "a bead with a row is no ask");
+}
+
+#[test]
 fn closing_an_ask_whose_work_bead_has_no_hold_or_no_row_still_closes() {
     let mut f = Fake::default();
     f.bead("sp-w", BeadState::Submitted);
@@ -1033,4 +1097,128 @@ fn reopen_names_an_eject_as_the_batchs_and_keeps_a_hold() {
     assert_eq!(reopen_cmd(&v(&["sp-e", "eject"]), &mut f, &mut FakeBd::default()).code, APPLIED);
     assert_eq!(reopen_kinds(&f).last().unwrap(), r#"{"Returned":{"reason":"batch-ejected"}}"#);
     assert!(f.beads["sp-e"].holds.contains(&HoldKind::Manual), "reopening is not an unhold");
+}
+
+#[test]
+fn reopen_names_a_red_eject_so_the_tip_is_barred() {
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Certified).tip = Some("red1".into());
+    assert_eq!(reopen_cmd(&v(&["sp-r", "eject-red"]), &mut f, &mut FakeBd::default()).code, APPLIED);
+    assert_eq!(reopen_kinds(&f).last().unwrap(), r#"{"Returned":{"reason":"batch-ejected-red"}}"#);
+    assert_eq!(f.beads["sp-r"].ejected_red_tip.as_deref(), Some("red1"));
+}
+
+// ---- external provenance ------------------------------------------------------------------
+
+fn external_world() -> (Fake, FakeBd) {
+    let mut f = Fake::default();
+    f.bead("sp-x", BeadState::Ready);
+    let mut b = FakeBd::default();
+    b.external.insert("sp-x".into());
+    (f, b)
+}
+
+#[test]
+fn closing_an_external_bead_with_no_named_outcome_is_refused() {
+    let (mut f, mut bd) = external_world();
+    let a = close(&v(&["sp-x", "--reason", "closed as residue"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, REFUSED, "{}", a.stderr);
+    assert!(a.stderr.contains("named outcome"), "{}", a.stderr);
+    assert_eq!(f.state("sp-x"), "READY");
+    assert!(bd.closed.is_empty() && f.events.is_empty(), "nothing written");
+}
+
+#[test]
+fn an_external_bead_closes_on_a_named_outcome_or_a_successor() {
+    let (mut f, mut bd) = external_world();
+    let a = close(&v(&["sp-x", "--reason", "duplicate-of sp-7"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-x"), "DROPPED");
+    let (mut f, mut bd) = external_world();
+    let a = close(&v(&["sp-x", "--reason", "fixed elsewhere", "--superseded-by", "sp-8"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-x"), "SUPERSEDED");
+}
+
+#[test]
+fn a_bead_with_no_external_origin_still_closes_bare() {
+    let mut f = Fake::default();
+    f.bead("sp-n", BeadState::Ready);
+    let mut bd = FakeBd::default();
+    assert_eq!(close(&v(&["sp-n", "--reason", "decided"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+}
+
+#[test]
+fn an_unreadable_origin_refuses_the_close() {
+    let (mut f, mut bd) = external_world();
+    bd.down = true;
+    assert_eq!(close(&v(&["sp-x", "--reason", "duplicate-of sp-7"]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL);
+}
+
+#[test]
+fn the_drop_verb_refuses_a_bare_drop_of_an_external_bead() {
+    let (mut f, mut bd) = external_world();
+    assert_eq!(drop_cmd(&v(&["sp-x", "operator decided", "slay"]), &mut f, &mut bd).code, REFUSED);
+    assert_eq!(f.state("sp-x"), "READY");
+    assert_eq!(drop_cmd(&v(&["sp-x", "won't-fix by ryan", "slay"]), &mut f, &mut bd).code, APPLIED);
+    assert_eq!(f.state("sp-x"), "DROPPED");
+}
+
+#[test]
+fn reconcile_closed_leaves_an_external_residue_ready() {
+    let (mut f, mut bd) = external_world();
+    bd.reasons.insert("sp-x".into(), "Answered: yes".into());
+    let a = reconcile_closed(&v(&["--apply"]), &mut f, &mut bd);
+    assert_eq!(a.code, REFUSED, "{}", a.stdout);
+    assert_eq!(f.state("sp-x"), "READY");
+}
+
+// ---- phase and disposition: the WORKING row's own record of its run ---------------------
+
+fn claim_for(f: &mut Fake, id: &str, holder: &str) {
+    f.bead(id, BeadState::Ready);
+    let ev = serde_json::to_string(&BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None }).unwrap();
+    let (rc, out) = f.call(&v(&["event", "bead", id, "--expect", "READY", "--version", "0", "--actor", holder, "--kind", &ev]));
+    assert_eq!(rc, 0, "{out}");
+}
+
+#[test]
+fn phase_walks_the_holder_forward_and_show_reads_back_exactly_what_was_recorded() {
+    let mut f = Fake::default();
+    claim_for(&mut f, "sp-p", "aeon-1");
+    for name in ["building", "session", "teardown"] {
+        let a = go(&mut f, "phase", &["sp-p", "aeon-1", name]);
+        assert_eq!(a.code, APPLIED, "{name}: {}", a.stderr);
+        let shown: Value = serde_json::from_str(&f.call(&v(&["show", "sp-p"])).1).unwrap();
+        assert_eq!(bead_field(&shown, "aeon_phase"), name);
+    }
+}
+
+#[test]
+fn a_backward_or_foreign_phase_is_refused_and_changes_nothing() {
+    let mut f = Fake::default();
+    claim_for(&mut f, "sp-p", "aeon-1");
+    assert_eq!(go(&mut f, "phase", &["sp-p", "aeon-1", "session"]).code, APPLIED);
+    let back = go(&mut f, "phase", &["sp-p", "aeon-1", "building"]);
+    assert_eq!(back.code, REFUSED);
+    assert!(back.stderr.contains("WORKING/session"), "{}", back.stderr);
+    assert_eq!(go(&mut f, "phase", &["sp-p", "aeon-2", "teardown"]).code, REFUSED);
+    assert_eq!(f.beads["sp-p"].phase, Some(AeonPhase::Session));
+    assert_eq!(go(&mut f, "phase", &["sp-p", "aeon-1", "nonsense"]).code, CANNOT_TELL);
+    assert_eq!(go(&mut f, "phase", &["sp-none", "aeon-1", "session"]).code, NO_ROW);
+}
+
+#[test]
+fn disposition_is_recorded_on_the_working_row_and_refused_elsewhere() {
+    let mut f = Fake::default();
+    claim_for(&mut f, "sp-d", "aeon-1");
+    let a = go(&mut f, "disposition", &["sp-d", "lapsed", "300\tlast words", "watchdog"]);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.beads["sp-d"].disposition, Some(DispositionStatus::Lapsed));
+    assert_eq!(f.beads["sp-d"].disposition_note.as_deref(), Some("300\tlast words"));
+    assert_eq!(go(&mut f, "disposition", &["sp-d", "slain", "operator"]).code, APPLIED);
+    assert_eq!(go(&mut f, "disposition", &["sp-d", "thrash", "x"]).code, REFUSED, "a weaker word never overwrites");
+    assert_eq!(f.beads["sp-d"].disposition, Some(DispositionStatus::Slain));
+    f.bead("sp-r", BeadState::Ready);
+    assert_eq!(go(&mut f, "disposition", &["sp-r", "slain", "x"]).code, REFUSED);
 }

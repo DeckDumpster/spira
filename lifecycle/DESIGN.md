@@ -8,7 +8,10 @@ event-log fold that replays them. Every function is pure; evidence arrives on th
 The machine governs beads. A thing that is not a bead is outside it, and nothing here models
 it:
 
-- a non-work bead (ask, alert, insight, intake mirror, epic, hold bead, incident bead) has no
+- an ask is not a bead: it has its own machine (`ask`: OPEN, then ANSWERED, DEFAULT_TAKEN or
+  WITHDRAWN, each exit carrying who and the quoted words), so no list or claim over the bead
+  machine can return one. Its decision bead in the store carries the text only.
+- a non-work bead (alert, insight, intake mirror, epic, hold bead, incident bead) has no
   lifecycle row; its state is bd's `status`, read through `spira_config::nonwork` naming the
   kind. An incident bead is non-work: a work bead that resolves one may refer to it and takes
   no state from it.

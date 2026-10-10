@@ -76,7 +76,11 @@ fn main() {
             let Some((id, extra)) = rest.split_first() else {
                 die("split-piece: original bead id required");
             };
-            match cmds::split_piece(&bd, id, extra) {
+            let Some(home) = home else {
+                die("cannot find lib.sh (set SPIRA_HOME)");
+            };
+            let seam = LibSeam::new(home.join("lib.sh"));
+            match cmds::split_piece(&bd, &seam, id, extra) {
                 Ok(out) => print!("{out}"),
                 Err((code, msg)) => {
                     eprintln!("groomer: {msg}");
@@ -90,7 +94,8 @@ fn main() {
             };
             let flags = parse_flags("supersede", tail, &["--with"]).unwrap_or_else(|e| die_str(&e));
             let with = flags.values.get("--with").cloned().unwrap_or_default();
-            run_cmd(cmds::supersede(&bd, id, &with));
+            let gate = spira_config::process::cfg("SPIRA_GROOM_GATE_LABEL").unwrap_or_else(|e| die(&e));
+            run_cmd(cmds::supersede(&bd, &gate, id, &with));
         }
         "close" => {
             let Some((id, tail)) = rest.split_first() else {
@@ -98,7 +103,8 @@ fn main() {
             };
             let flags = parse_flags("close", tail, &["--evidence"]).unwrap_or_else(|e| die_str(&e));
             let evidence = flags.values.get("--evidence").cloned().unwrap_or_default();
-            run_cmd(cmds::close(&bd, id, &evidence));
+            let gate = spira_config::process::cfg("SPIRA_GROOM_GATE_LABEL").unwrap_or_else(|e| die(&e));
+            run_cmd(cmds::close(&bd, &gate, id, &evidence));
         }
         "correct-lane" => {
             let Some((id, tail)) = rest.split_first() else {

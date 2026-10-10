@@ -150,3 +150,9 @@ mod tests {
         assert_eq!(run(&empty, &["README.md"]), Err(LintError::EmptyScope));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(BdStdinLint::default()),
+    ]
+}

@@ -376,6 +376,7 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "the staging step sets SPIRA_RELEASE for every later step", "SPIRA_RELEASE=%s", &stage);
     j.want(GATE, "the staging step sets PATH for every later step", "PATH=%s", &stage);
     j.want(GATE, "the staging step names the checkout as the repository under test", "SPIRA_REPO=%s", &stage);
+    j.want(GATE, "the staging step declares SPIRA_HOME for the release tool", "SPIRA_HOME: ${{ github.workspace }}/spira", &stage);
     j.want(GATE, "the staging step writes both to GITHUB_ENV", "GITHUB_ENV", &stage);
     j.want(GATE, "PATH starts with the staged release", "_path=\"$_rel/bin:$_rel/spira:", &stage);
     j.want(GATE, "the suites step runs after the staging step", "Stage the build as a release", &suites_job);
@@ -687,4 +688,10 @@ mod tests {
             vec!["pve-ca-cert"]
         );
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(GateWorkflow),
+    ]
 }

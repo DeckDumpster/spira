@@ -3,7 +3,7 @@
 //! own files live in a scratch directory.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,6 +12,7 @@ use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
 use crate::testutil::tmpdir;
 
+mod rebase;
 mod round;
 mod verdict;
 
@@ -28,6 +29,8 @@ struct FGit {
     current: RefCell<Option<String>>,
     fetch_ok: Cell<bool>,
     merge_fail: RefCell<BTreeSet<String>>,
+    /// Tips whose rebase onto the round's head conflicts, with the paths it names.
+    rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
     branches: RefCell<Vec<(String, String)>>,
     calls: RefCell<Vec<String>>,
 }
@@ -124,6 +127,13 @@ impl Git for FGit {
         true
     }
     fn merge_abort(&self, _: &Path) {}
+    fn rebase_onto(&self, _: &Path, _: &Path, tip: &str, _: &str, onto: &str, _: &str, _: &str) -> Result<String, Vec<String>> {
+        self.calls.borrow_mut().push(format!("rebase-onto {tip} {onto}"));
+        match self.rebase_fail.borrow().get(tip) {
+            Some(paths) => Err(paths.clone()),
+            None => Ok(format!("rebased-{tip}")),
+        }
+    }
     fn is_clean(&self, _: &Path) -> bool {
         true
     }
@@ -244,7 +254,7 @@ impl Lib for FLib {
     fn land_subject(&self, id: &str) -> String {
         format!("spira: land {id}")
     }
-    fn sort_rows(&self, _express_label: &str, _: &Path, _: &str, prio: &str, rows: &str) -> Vec<(String, String)> {
+    fn sort_rows(&self, _express: &HashSet<String>, _: &Path, _: &str, prio: &str, rows: &str) -> Vec<(String, String)> {
         self.log(format!("sort_rows {prio}"));
         rows.lines().filter_map(|l| {
             let mut it = l.split_whitespace();
@@ -277,6 +287,8 @@ impl Lib for FLib {
 #[derive(Default)]
 struct FScripts {
     gate_rc: Cell<i32>,
+    /// Set once `release activate` ran; the store's fake reads it to begin its outage.
+    activated: std::rc::Rc<Cell<bool>>,
     /// `release <sub>` exit status by subcommand (absent = 0), and the stderr line it prints.
     release_rc: RefCell<BTreeMap<String, (i32, String)>>,
     /// What `release build` answers on stdout (absent = the commit it was asked for).
@@ -298,6 +310,8 @@ struct FScripts {
     /// `round-vm` is preempted while it runs: the marker the verb leaves is there when it returns.
     preempted_during_vm: Cell<bool>,
     restart_fails: Cell<bool>,
+    /// What `rebase-stale <id>` answers, by bead (absent = exit 0, nothing printed).
+    rebase: RefCell<BTreeMap<String, RunOut>>,
     survives_term: Cell<bool>,
 }
 
@@ -335,6 +349,18 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("restart {batch} {repo}"));
         !self.restart_fails.get()
     }
+    fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
+        ids.iter()
+            .map(|id| {
+                self.calls.borrow_mut().push(format!("rebase-stale {id} {repo}"));
+                (id.clone(), self.rebase.borrow().get(id).cloned().unwrap_or_default())
+            })
+            .collect()
+    }
+    fn rebase_waiting_start(&self, repo: &str) -> bool {
+        self.calls.borrow_mut().push(format!("rebase-waiting-start {repo}"));
+        true
+    }
     fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
         self.calls.borrow_mut().push(format!("round-vm {} base={base} round={}/{} wall={wall_secs}", tree.display(), round.0, round.1));
         fs::write(handle, "777").unwrap();
@@ -353,6 +379,9 @@ impl Scripts for FScripts {
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         self.release_calls.borrow_mut().push((bin.display().to_string(), args.join(" "), db.to_string()));
         self.calls.borrow_mut().push(format!("release {}", args[0]));
+        if args[0] == "activate" {
+            self.activated.set(true);
+        }
         let (rc, err) = self.release_rc.borrow().get(&args[0]).cloned().unwrap_or((0, String::new()));
         let out = if args[0] == "build" && rc == 0 { format!("{}\n", self.build_answers.borrow().clone().unwrap_or_else(|| args[1].clone())) } else { String::new() };
         RunOut { rc, out, err }
@@ -370,6 +399,8 @@ struct FForge {
     pr_state: RefCell<Option<String>>,
     run: RefCell<Option<String>>,
     meta: RefCell<String>,
+    /// What `fail-lines` answers.
+    fails: RefCell<String>,
 }
 
 impl Forge for FForge {
@@ -408,6 +439,10 @@ impl Forge for FForge {
         self.calls.borrow_mut().push(format!("run-metadata {run}"));
         self.meta.borrow().clone()
     }
+    fn fail_lines(&self, _: &Path, _: &Path, run: &str, suites: &str) -> String {
+        self.calls.borrow_mut().push(format!("fail-lines {run} {suites}"));
+        self.fails.borrow().clone()
+    }
     fn run_cancel(&self, _: &Path, _: &Path, run: &str) {
         self.calls.borrow_mut().push(format!("run-cancel {run}"));
     }
@@ -422,6 +457,12 @@ struct FLc {
     rows: RefCell<Result<Vec<LcBeadRow>, String>>,
     certify_refused: Cell<bool>,
     land_refused: Cell<Option<&'static str>>,
+    promote_refused: Cell<Option<&'static str>>,
+    /// Per-batch answers to `show-batch`, ahead of `batch_view`.
+    batch_states: RefCell<BTreeMap<String, (String, String)>>,
+    /// Reads of `show-batch` that fail once the release is activated (the store restarting).
+    down_for: Cell<u32>,
+    activated: std::rc::Rc<Cell<bool>>,
     eject_refused: Cell<bool>,
     /// Every bead event is refused with this text (a locked lifecycle store).
     event_refused: Cell<Option<&'static str>>,
@@ -438,7 +479,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), down_for: Cell::new(0), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -459,6 +500,13 @@ impl Lc for FLc {
     }
     fn batch_state(&self, id: &str) -> Option<(String, String)> {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
+        if let Some(s) = self.batch_states.borrow().get(id) {
+            return Some(s.clone());
+        }
+        if self.activated.get() && self.down_for.get() > 0 {
+            self.down_for.set(self.down_for.get() - 1);
+            return None;
+        }
         match &*self.batch_view.borrow() {
             Some((s, v, _, _)) => Some((s.clone(), v.to_string())),
             None => Some(("CI_RUNNING".into(), "4".into())),
@@ -476,7 +524,19 @@ impl Lc for FLc {
     }
     fn cut(&self, id: &str, _: &str, _: &str, _: &str, members: &str, _: &str) -> Result<String, (i32, String)> {
         self.calls.borrow_mut().push(format!("cut {id} {members}"));
+        self.batch_view.borrow_mut().get_or_insert(("OPEN".into(), 1, 0, String::new()));
         Ok("1".into())
+    }
+    fn stage(&self, id: &str, _: &str, head: &str, base: &str, members: &str, parent: &str, _: &str) -> Result<String, (i32, String)> {
+        self.calls.borrow_mut().push(format!("stage {id} {head} {base} {members} behind {parent}"));
+        Ok("0".into())
+    }
+    fn promote(&self, id: &str, head: &str, base: &str, _: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!("promote {id} {head} {base}"));
+        match self.promote_refused.get() {
+            Some(why) => Err((3, why.into())),
+            None => Ok(()),
+        }
     }
     fn abandon_batch(&self, id: &str, s: &str, v: &str, _: &str, r: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("abandon-batch {id} {s} {v} {r}"));
@@ -534,6 +594,10 @@ impl Lc for FLc {
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String> {
         self.calls.borrow_mut().push(format!("list {}", state.unwrap_or("")));
         self.rows.borrow().clone().map(|r| r.into_iter().filter(|b| state.is_none_or(|s| b.state == s)).collect())
+    }
+    fn express_ids(&self) -> Result<Vec<String>, String> {
+        self.calls.borrow_mut().push("list --express".into());
+        Ok(Vec::new())
     }
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow> {
         self.calls.borrow_mut().push(format!("row {bead}"));
@@ -673,7 +737,6 @@ impl T {
             git_name: "spira".into(),
             git_email: "spira@spira.invalid".into(),
             mailbox: "concierge".into(),
-            express_label: "express".into(),
             round_wall_secs: 900,
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
@@ -716,6 +779,7 @@ impl T {
         *forge.pr.borrow_mut() = Some("77".into());
         let lc = FLc::default();
         lc.available.set(true);
+        let lc = FLc { activated: scripts.activated.clone(), ..lc };
         T { _serial: serial, dir, git, bd: FBd::default(), lib, scripts, forge, lc, config: FConfig::default(), clock: FClock { now: Cell::new(1_000) }, env: FEnv::default(), io: Cap::default() }
     }
 
@@ -757,7 +821,7 @@ impl T {
     }
     /// A spira-lc bead row entered at `since`.
     fn lc_row(&self, id: &str, state: &str, tip: &str, since: u64) {
-        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new() };
+        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }
     fn open_record(&self, text: &str) {
@@ -1418,6 +1482,7 @@ fn land_local_accepts_a_round_green_for_the_head_tree() {
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     assert!(t.err().contains(&format!("tree {T1} certified by round GREEN")), "{}", t.err());
+    assert!(t.scripts.calls.borrow().contains(&"rebase-waiting-start spira".to_string()), "a landing starts the rebase of the waiting queue: {:?}", t.scripts.calls.borrow());
 }
 
 #[test]
@@ -2102,6 +2167,37 @@ fn settle_opens_a_publish_when_none_is_open_and_skips_other_modes() {
     let t = T::new(LandMode::Queue);
     assert_eq!(t.run(&["publish-settle"]), 0);
     assert!(t.forge.calls.borrow().is_empty());
+}
+
+#[test]
+fn settle_defers_the_cut_while_a_round_pass_runs_and_cuts_after_it() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    *t.forge.pr.borrow_mut() = Some("78".into());
+    fs::write(t.qfile("round"), "batch_id=b-1\n").unwrap();
+    t.lc.batch_states.borrow_mut().insert("b-1".into(), ("CI_RUNNING".into(), "4".into()));
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.out().contains("a round pass holds the hypervisor"), "{}", t.out());
+    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "{:?}", t.forge.calls.borrow());
+    t.lc.batch_states.borrow_mut().insert("b-1".into(), ("GREEN".into(), "5".into()));
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "{:?}", t.forge.calls.borrow());
+}
+
+#[test]
+fn settle_defers_the_cut_while_round_progress_is_live_and_fresh() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    *t.forge.pr.borrow_mut() = Some("78".into());
+    fs::create_dir_all(t.dir.join("run")).unwrap();
+    let prog = t.dir.join("run/round-progress.json");
+    fs::write(&prog, "{\"phase\":\"suites\",\"updated_at\":900}\n").unwrap();
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.out().contains("a round pass holds the hypervisor"), "{}", t.out());
+    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "{:?}", t.forge.calls.borrow());
+    fs::write(&prog, "{\"phase\":\"suites\",\"updated_at\":100}\n").unwrap();
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "a stale file does not hold the cut: {:?}", t.forge.calls.borrow());
 }
 
 #[test]

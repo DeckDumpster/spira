@@ -116,3 +116,9 @@ mod tests {
         assert!(clean.is_empty());
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(WikiAddFence),
+    ]
+}

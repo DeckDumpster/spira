@@ -309,6 +309,26 @@ wantrc() {  # wantrc <name> <expected-rc> <actual-rc>
 # produced no "test ... ok|FAILED" line at all is either a compile error (rc != 0 — the
 # crate's one thing to report as failed) or a filter that matched zero tests (rc = 0 —
 # nothing to report a case for, same as cargo itself saying nothing failed).
+# reserve_port <var> — set <var> to a kernel-assigned port that stays reserved (bound,
+# not listening) by a holder process until the suite exits. A listener started on it
+# must set SO_REUSEPORT; nothing else can take the port in between.
+reserve_port() {
+    local _f; _f="$(mktemp)"
+    python3 -c '
+import os, socket, sys, time
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+s.bind(("127.0.0.1", 0))
+open(sys.argv[1], "w").write(str(s.getsockname()[1]))
+pp = os.getppid()
+while os.getppid() == pp: time.sleep(0.5)
+' "$_f" &
+    disown
+    local _i
+    for _i in $(seq 1 100); do [ -s "$_f" ] && break; sleep 0.05; done
+    printf -v "$1" '%s' "$(cat "$_f")"; rm -f "$_f"
+}
+
 # copy_conf_registry <dest-dir> — copy $HERE/conf.d/ and $HERE/conf-gen.sh into
 # <dest-dir> (created if needed). Every suite that `cp`'s $HERE/conf.sh into a fixture
 # needs this too (sp-g3uwp): conf.sh's own self-heal (_spira_conf_gen_ensure) resolves
@@ -371,6 +391,8 @@ case "$1" in
         if [ "$2" = "--delivery" ]; then join "$LC_FIX/delivery/${4:-}"/*; elif [ -n "${3:-}" ]; then join "$LC_FIX/bead/$3"/*; else join "$LC_FIX/bead"/*/*; fi ;;
     show) [ -f "$LC_FIX/show/$2" ] && cat "$LC_FIX/show/$2" || exit 1 ;;
     event) printf '%s\n' "$*" >> "$LC_FIX/events.log"; [ -f "$LC_FIX/refuse" ] && exit 3; exit 0 ;;
+    create-bead) printf '%s\n' "$*" >> "$LC_FIX/creates.log"; [ -f "$LC_FIX/refuse-create" ] && exit 2
+        mkdir -p "$LC_FIX/bead/READY"; printf '{"bead_id":"%s","state":"READY","holds":[]}' "$2" > "$LC_FIX/bead/READY/$2"; exit 0 ;;
     content)
         shift; bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
         exec "${bd:-bd}" ${db:+-C "$db"} "$@" ;;
@@ -410,6 +432,8 @@ if [ "\$1" = reopen ]; then
 fi
 if [ "\$1" = show ] && [ -n "\${LC_STUB_ROW:-}" ]; then echo "{}"; exit 0; fi
 if [ "\$1" = show ] && [ -n "\${LC_STUB_NOROW:-}" ]; then exit 1; fi
+if [ "\$1" = create-bead ]; then exit 0; fi
+case "\$1" in create-ask) exit 0 ;; show-ask|close-ask) exit 1 ;; esac
 if [ "\$1" != close ]; then [ -n "$real" ] && exec "$real" "\$@"; exit 7; fi
 id="\$2"; shift 2; reason=""
 while [ \$# -gt 0 ]; do
@@ -549,6 +573,8 @@ lc_fact_count() {
 # ($SPIRA_ASK_LABEL) → an ask hold; epics and events have no row. A fixture row may say
 # `"_lc_state"` / `"_lc_holds"` to set its row outright, or `"_lc_rowless": true` for none;
 # for a real store (which drops unknown fields), `<dir>/states` lines `<id> <STATE>` do it.
+# Express is the row's `express` column: a fixture row's `"_lc_express": true`, or an id on a
+# line of `<dir>/express`; `list --express` keeps only those.
 # Sets SPIRA_LC_BIN; pass it (and LC_MIRROR_CLOSED, if set) through any `env -i`.
 lc_mirror_bd() {
     local dir="${1:?lc_mirror_bd needs a directory}"
@@ -599,6 +625,11 @@ try:
             pinned[f[0]] = f[1]
 except (OSError, KeyError):
     pass
+express = set()
+try:
+    express = set(open(os.path.join(os.environ["LC_MIRROR_DIR"], "express")).read().split())
+except (OSError, KeyError):
+    pass
 rows = []
 for b in beads:
     if not isinstance(b, dict) or not b.get("id") or b.get("_lc_rowless"):
@@ -611,13 +642,15 @@ for b in beads:
     if holds is None:
         holds = (["poison"] if "spira-poison" in labels else []) + (["ask"] if ask and ask in labels else [])
     rows.append({"bead_id": b["id"], "state": state, "holds": holds,
-                 "holder": (b.get("assignee") or None) if state == "WORKING" else None})
+                 "holder": (b.get("assignee") or None) if state == "WORKING" else None,
+                 "express": 1 if (b.get("_lc_express") or b["id"] in express) else 0})
 if verb == "list":
     a = sys.argv[2:]
     opt = {a[k]: a[k + 1] for k in range(len(a) - 1) if a[k] in ("--state", "--ids")}
     states = opt["--state"].split(",") if "--state" in opt else None
     ids = opt["--ids"].split(",") if "--ids" in opt else None
-    print(json.dumps([r for r in rows if (states is None or r["state"] in states) and (ids is None or r["bead_id"] in ids)]))
+    only_express = "--express" in a
+    print(json.dumps([r for r in rows if (states is None or r["state"] in states) and (ids is None or r["bead_id"] in ids) and (not only_express or r["express"])]))
 elif verb == "show":
     hit = [r for r in rows if r["bead_id"] == (sys.argv[2] if len(sys.argv) > 2 else "")]
     if not hit:
@@ -742,7 +775,8 @@ except Exception: print("")' 2>/dev/null
 # `event bead <id> ... --actor A --kind K`: Claim applies only to a READY/REWORK row (else
 # exit 3, refused — a bead another aeon holds is never taken over) and records the holder
 # (and appends "<id> <actor>" to $SPIRA_RUN/lc-claims.log, so a suite can ask who claimed);
-# Release/HolderDead drop that claim; Submit writes lc-row SUBMITTED; any other kind (Renew,
+# Release/HolderDead drop that claim; `phase` is accepted, `disposition <id> <status> <note>`
+# is recorded in $SPIRA_RUN/lc-disposition/<id> and shown on the WORKING row until the next Claim; Submit writes lc-row SUBMITTED; any other kind (Renew,
 # Hold, ...) applies without changing the row. Every other verb goes to the real spira-lc
 # further down PATH, exactly as before the stub.
 lc_aeon_mirror() {
@@ -751,6 +785,8 @@ lc_aeon_mirror() {
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
+    phase) exit 0 ;;
+    disposition) mkdir -p "${SPIRA_RUN:?}/lc-disposition"; printf '%s\t%s\n' "${3:-}" "${4:-}" > "$SPIRA_RUN/lc-disposition/${2:?}"; exit 0 ;;
     express) mkdir -p "${SPIRA_RUN:?}/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; exit 0 ;;
     unexpress) rm -f "${SPIRA_RUN:?}/lc-express/${2:?}"; exit 0 ;;
     hold) mkdir -p "${SPIRA_RUN:?}"; printf '%s %s %s\n' "${2:-}" "${3:-}" "${4:-}" >> "$SPIRA_RUN/lc-holds.log"
@@ -805,6 +841,9 @@ def row(b):
         r["state"], r["holder"] = "WORKING", (b.get("assignee") or None)
     if r["state"] == "SUBMITTED" and not r["tip"]:
         r["tip"] = "fixturetip"
+    disp = read(os.path.join(run, "lc-disposition", i))
+    if disp and r["state"] == "WORKING":
+        r["disposition"], _, r["disposition_note"] = disp.partition("\t")
     return r
 rows = {b["id"]: row(b) for b in beads
         if isinstance(b, dict) and b.get("id") and b.get("issue_type") not in ("epic", "event")}
@@ -856,6 +895,8 @@ elif verb == "event":
         os.makedirs(claims, exist_ok=True)
         open(os.path.join(claims, i), "w").write(actor)
         open(os.path.join(run, "lc-claims.log"), "a").write("%s %s\n" % (i, actor))
+        if os.path.exists(os.path.join(run, "lc-disposition", i)):
+            os.remove(os.path.join(run, "lc-disposition", i))
         pinned = os.path.join(run, "lc-row", i)
         if os.path.exists(pinned):
             os.remove(pinned)

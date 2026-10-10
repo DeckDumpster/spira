@@ -3,6 +3,7 @@
 //! environment and the two output streams. `real.rs` implements them against the host;
 //! the unit tests implement them as fakes.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
@@ -45,8 +46,6 @@ pub struct Settings {
     /// `SPIRA_MAIL_SESSION_MAILBOX` (declared value): the mailbox `notify`/`divergence`
     /// alarm into.
     pub mailbox: String,
-    /// `SPIRA_EXPRESS_LABEL` (declared value): the bd label `sort_rows` ranks first.
-    pub express_label: String,
     /// `SPIRA_ROUND_CERTIFY_WALL_SECS` (declared value): the wall `round certify` allows the
     /// round VM's corpus.
     pub round_wall_secs: u64,
@@ -135,6 +134,11 @@ pub trait Git {
     /// conflict.
     fn merge_no_ff(&self, wt: &Path, message: &str, tip: &str, git_name: &str, git_email: &str) -> bool;
     fn merge_abort(&self, wt: &Path);
+    /// Replays `upstream..tip` onto `onto` in a throwaway worktree at `scratch`, leaving every
+    /// branch alone: Ok(the rebased tip), or Err(the conflicting paths; empty when the rebase
+    /// could not be attempted).
+    #[allow(clippy::too_many_arguments)]
+    fn rebase_onto(&self, repo: &Path, scratch: &Path, tip: &str, upstream: &str, onto: &str, git_name: &str, git_email: &str) -> Result<String, Vec<String>>;
     /// `status --porcelain` is empty.
     fn is_clean(&self, wt: &Path) -> bool;
 }
@@ -178,8 +182,8 @@ pub trait Lib {
     fn rebase(&self, branch: &str, onto: &str, path: &Path, name: &str) -> Result<(), String>;
     fn land_subject(&self, id: &str) -> String;
     /// R15: `queue_sort_rows` over `<id> <tip> <epoch>` rows; returns `<id> <tip>` rows.
-    /// `express_label`: `Settings::express_label` (`SPIRA_EXPRESS_LABEL`'s declared value).
-    fn sort_rows(&self, express_label: &str, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)>;
+    /// `express`: the beads whose lifecycle row carries Express.
+    fn sort_rows(&self, express: &HashSet<String>, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)>;
     fn cancel_runs(&self, forge: &Path, path: &Path, branch: &str);
     fn format_batch(&self, wt: &Path, base: &str, name: &str);
     /// `_base_conflict`: true when the tip conflicts with the base.
@@ -225,6 +229,10 @@ pub trait Scripts {
     fn pass_alive(&self, pid: u32) -> bool;
     /// Start `queue round certify <batch> <repo>` detached, so the next pass outlives the caller.
     fn pass_restart(&self, batch: &str, repo: &str) -> bool;
+    /// `rebase-stale <id> <repo>` for every id, bounded-parallel: (id, result) in input order.
+    fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)>;
+    /// Start `queue rebase-waiting <repo>` detached, so the landing never waits on it.
+    fn rebase_waiting_start(&self, repo: &str) -> bool;
 }
 
 /// A finished child: its exit status (127 when it could not run), stdout and stderr.
@@ -250,6 +258,8 @@ pub trait Forge {
     fn run_id(&self, forge: &Path, repo: &Path, branch: &str) -> Option<String>;
     /// `run-metadata <repo> <run>` → its stdout (empty when it failed).
     fn run_metadata(&self, forge: &Path, repo: &Path, run: &str) -> String;
+    /// `fail-lines <repo> <run> <suites>` → `fail-line: <suite>: <text>` lines (empty when it failed).
+    fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String;
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str);
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str);
 }
@@ -264,6 +274,11 @@ pub trait Lc {
     fn create_bead(&self, id: &str);
     /// `cut` → Ok(version) or Err((rc, output)).
     fn cut(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)>;
+    /// `stage` → the batch row written STAGED behind `parent`; no member moves. Ok(version).
+    #[allow(clippy::too_many_arguments)]
+    fn stage(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, parent: &str, actor: &str) -> Result<String, (i32, String)>;
+    /// `promote` → STAGED to OPEN at `head`/`base`, every member delivered, in one transaction.
+    fn promote(&self, batch_id: &str, head: &str, base: &str, actor: &str) -> Result<(), (i32, String)>;
     fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
     fn eject_member(&self, batch_id: &str, bead: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
     /// `event batch <id> --expect S --version V --actor A --kind K` (one CAS'd event).
@@ -278,6 +293,8 @@ pub trait Lc {
     fn probe(&self) -> Result<(), String>;
     /// `list [--state S]`: every bead row (with `since`). Err = cannot tell.
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String>;
+    /// `list --express`: the id of every bead whose row carries Express. Err = cannot tell.
+    fn express_ids(&self) -> Result<Vec<String>, String>;
     /// `show <bead>` → the bead row; None when it has no row or the machine cannot say.
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow>;
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.

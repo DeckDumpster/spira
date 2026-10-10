@@ -110,25 +110,13 @@ mod tests {
     #[test]
     fn a_name_held_by_a_live_aeon_is_skipped() {
         let run = fresh("live");
-        // Kill-on-drop (sp-r70dc): a failed assertion between spawn and the explicit kill
-        // below used to leave this fixture running for its full 30s as an orphan.
-        let mut child =
-            testkit::ChildGuard::spawn(std::process::Command::new("sleep").arg0("aeon").arg("30"));
         std::fs::write(run.join("aeon-builder-sp-1.name"), "ifrit").unwrap();
         let pidfile = run.join("aeon-builder-sp-1.pid");
-        std::fs::write(&pidfile, child.id().to_string()).unwrap();
-        // Settle the fork/exec race: immediately after spawn(), /proc/<pid>/cmdline can
-        // still read empty (exec not yet landed) — wait until it reports this pid alive.
-        for _ in 0..200 {
-            if strand::probe::aeon_alive(&pidfile) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        std::fs::write(&pidfile, "1").unwrap();
+        strand::probe::write_lease(&pidfile, i64::MAX);
         let name = aeon_name_take(&run, "builder");
         assert_ne!(name, "ifrit", "ifrit is live — must not be handed out twice");
         assert_eq!(name, "ixion");
-        child.kill();
     }
 
     #[test]

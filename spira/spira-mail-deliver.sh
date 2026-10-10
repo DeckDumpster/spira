@@ -13,7 +13,7 @@
 # new/ -> cur/ move is what makes a wake for an already-read message impossible to send
 # twice. Unregistered mailboxes are never watched.
 #
-#   spira-mail-deliver.sh health   exit 0 if every registered mailbox has a live watcher —
+#   spira-mail-deliver.sh health   exit 0 if every registered mailbox has a running watch lease —
 #                                  watchd's health probe for this daemon's `extern` row.
 #
 # NOTE: SPIRA_WAKE types text into the concierge's tmux pane. A locally
@@ -113,6 +113,17 @@ _settle_wait() {
     done
 }
 
+_WATCH_BEAT=15
+_WATCH_LEASE=60
+
+_watch_lease_file() { printf '%s/mail-deliver-%s.lease' "$SPIRA_RUN" "$1"; }
+
+# The watcher's only liveness signal: a deadline it keeps ahead of the clock while it lives.
+_renew_watch_lease() {
+    local f; f="$(_watch_lease_file "$1")"
+    printf '%s\n' "$(( $(date +%s) + _WATCH_LEASE ))" > "$f.tmp" && mv -f "$f.tmp" "$f"
+}
+
 _watch() {
     local mailbox="$1" wake_cmd="$2"
     local dir="$SPIRA_MAIL/$mailbox/new"
@@ -120,7 +131,12 @@ _watch() {
     # Catch-up: mail already unread when this daemon (re)starts gets no inotify event.
     _kick "$mailbox" "$wake_cmd"
     inotifywait -m -q -e close_write -e moved_to "$dir" 2>/dev/null | \
-    while IFS= read -r _event; do
+    while :; do
+        _renew_watch_lease "$mailbox"
+        IFS= read -r -t "$_WATCH_BEAT" _event
+        _rc=$?
+        [ "$_rc" -gt 128 ] && continue
+        [ "$_rc" -eq 0 ] || break
         _settle_wait "$dir"
         # Drain events that piled up during the settle period.
         while IFS= read -r -t 0.1 _burst 2>/dev/null; do :; done
@@ -133,18 +149,15 @@ _watch() {
 # mail-health.sh's alarm, not this one. Exit 0: every mailbox has a live watcher. Exit 1:
 # at least one does not (named on stderr).
 cmd_health() {
-    command -v pgrep >/dev/null 2>&1 || {
-        echo "spira-mail-deliver: no 'pgrep' on PATH — cannot confirm a mailbox is watched" >&2
-        return 1
-    }
-    local rc=0 _line _mb _dir
+    local rc=0 _line _mb _until
     while IFS= read -r _line; do
         case "$_line" in ''|'#'*) continue ;; esac
         _mb="${_line%%=*}"
         [ -z "$_mb" ] && continue
-        _dir="$SPIRA_MAIL/$_mb/new"
-        pgrep -f "inotifywait -m -q -e close_write -e moved_to $_dir\$" >/dev/null 2>&1 || {
-            echo "spira-mail-deliver: not watching $_mb ($_dir)" >&2
+        _until="$(cat "$(_watch_lease_file "$_mb")" 2>/dev/null)"
+        case "$_until" in ''|*[!0-9]*) _until=0 ;; esac
+        [ "$_until" -gt "$(date +%s)" ] || {
+            echo "spira-mail-deliver: not watching $_mb (no running watch lease)" >&2
             rc=1
         }
     done <<< "${SPIRA_MAIL_READERS:-}"

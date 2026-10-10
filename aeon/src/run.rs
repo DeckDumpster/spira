@@ -38,6 +38,9 @@ pub enum Abort {
     Exit(i32),
     /// TERM/INT, or the heartbeat's own trip: rc 128+sig.
     Signal(i32),
+    /// The harness cannot start the session (config it needs is absent): the work is not at
+    /// fault, so the teardown records a harness red and charges no attempt.
+    Harness(String),
 }
 
 pub struct Deps<'a> {
@@ -76,6 +79,7 @@ pub struct State {
     pub fixture: Option<FixtureInfo>,
     pub fixture_lib: Option<PathBuf>,
     pub session_started: bool,
+    pub harness_red: Option<String>,
     /// The claude session id this run launched or resumed (empty before launch).
     pub session_id: String,
     pub session_rc: i32,
@@ -103,6 +107,9 @@ pub struct State {
     /// Empty for a claim that is not stacked on anything.
     pub stack: std::collections::BTreeMap<String, String>,
 }
+
+/// `spira-lc phase`'s exit for a move the machine refused (not WORKING, not the holder, not forward).
+pub const PHASE_REFUSED: i32 = 3;
 
 pub struct Run<'a> {
     pub d: Deps<'a>,
@@ -165,8 +172,33 @@ impl<'a> Run<'a> {
         self.sdo("release_own_claim", &s(&[&self.s.bead]));
     }
 
+    /// Record this run's next phase on the bead's lifecycle row. Best-effort: a refusal (the
+    /// row already left WORKING, or the machine is unreachable) never ends the run.
+    pub fn phase(&self, name: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["phase", &self.s.bead, &self.s.holder, name]), None, None);
+        if o.code != 0 && o.code != crate::run::PHASE_REFUSED {
+            self.log(&format!("{}: lifecycle phase {name} not recorded (rc={}): {}", self.s.bead, o.code, o.first_err_line()));
+        }
+    }
+
     pub fn bead_reopen(&self, cause: &str, note: &str) -> i32 {
         self.sdo("bead_reopen", &s(&[&self.s.bead, cause, note]))
+    }
+
+    /// The digest of the bead's latest `fast-tier-red` fact; empty when it has none.
+    pub fn last_fast_tier_red(&self) -> String {
+        let o = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &self.s.bead, "--kinds", crate::fast_tier::KIND]), None, None);
+        if !o.success() {
+            return String::new();
+        }
+        checkpoint::parse_facts(&o.stdout).into_iter().rev().find(|f| f.kind == crate::fast_tier::KIND).map(|f| f.cause).unwrap_or_default()
+    }
+
+    pub fn record_fact(&self, kind: &str, cause: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["fact", &self.s.bead, "--kind", kind, "--actor", &self.s.aeon, "--cause", cause]), None, None);
+        if !o.success() {
+            self.log(&format!("{}: {} could not record {kind} fact (rc={})", self.f(), self.s.bead, o.code));
+        }
     }
 
     pub fn bump_requeue(&self, cause: &str) {
@@ -302,6 +334,11 @@ impl<'a> Run<'a> {
                 Ok(()) => 0,
                 Err(Abort::Die(m)) => {
                     self.die_line(&m);
+                    1
+                }
+                Err(Abort::Harness(m)) => {
+                    self.die_line(&m);
+                    self.s.harness_red = Some(m);
                     1
                 }
                 Err(Abort::Exit(n)) => n,
@@ -624,6 +661,7 @@ impl<'a> Run<'a> {
         let pidfile = self.run_dir().join(format!("aeon-{}-{}.pid", self.f(), c.id));
         let logf = self.run_dir().join(format!("{}.log", c.id));
         let _ = std::fs::write(&pidfile, format!("{}\n", self.pid));
+        strand::probe::write_lease(&pidfile, self.now() + self.fayth.lease_seconds());
         let _ = std::fs::write(pidfile.with_extension("name"), &self.s.aeon);
         let mark = ledger::trace_mark_line(&logf, &self.s.aeon, &self.conf.trace_mark(), self.now());
         append(&logf, &format!("{mark}\n"));
@@ -632,7 +670,7 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// Other live aeons' pidfile names; a pidfile whose pid is gone is removed.
+    /// Other live aeons' pidfile names; a pidfile whose lease has run out is removed.
     fn live_peers(&self) -> String {
         let mut names = Vec::new();
         let Ok(rd) = std::fs::read_dir(self.run_dir()) else { return String::new() };
@@ -645,9 +683,9 @@ impl<'a> Run<'a> {
             .collect();
         files.sort();
         for pf in files {
-            let pid = std::fs::read_to_string(&pf).map(|s| s.trim().to_string()).unwrap_or_default();
-            if !util::pid_alive(&pid) {
+            if !strand::probe::aeon_alive(&pf) {
                 let _ = std::fs::remove_file(&pf);
+                let _ = std::fs::remove_file(strand::probe::lease_file(&pf));
                 continue;
             }
             names.push(pf.file_stem().and_then(|n| n.to_str()).unwrap_or("").to_string());
@@ -680,6 +718,7 @@ impl<'a> Run<'a> {
         self.d.env.set("SPIRA_MAIL", &mail);
         self.d.env.set("SPIRA_MAIL_FROM", &self.fayth.mail_from());
         self.start_heartbeat(sc);
+        self.phase("building");
         self.check_stop()?;
 
         // ---- the base: a freshly fetched remote-tracking ref, never guessed ----
@@ -825,6 +864,7 @@ impl<'a> Run<'a> {
         self.s.session_start_tip = if start_tip.success() { start_tip.text().trim().to_string() } else { "?".into() };
 
         // ---- work ----
+        self.phase("session");
         self.session(&work)?;
         self.wiki_commit();
         self.verdict();
@@ -905,6 +945,7 @@ impl<'a> Run<'a> {
         let keep = self.conf.i("SPIRA_BRIEF_KEEP_RECURRENCES").max(0) as usize;
         let max = self.conf.i("SPIRA_BRIEF_NOTES_MAX_CHARS").max(0) as usize;
         let mut body = brief::bound_bead_notes(&format!("{body}\n"), keep, max).trim_end_matches('\n').to_string();
+        let red = self.last_fast_tier_red();
         let tracked = if self.s.repo.join(".git").exists() {
             let o = self.d.git.git(&self.s.repo, &["ls-files"]);
             if o.success() { o.stdout } else { String::new() }
@@ -921,6 +962,8 @@ impl<'a> Run<'a> {
                 body = format!("{body}\n\n{hb}");
             }
         }
+
+        body = format!("{}{body}", brief::fast_tier_red_brief(&red));
 
         // A thrashed bead leads with its sticking point, while the tip has not moved.
         let mut banner = None;
@@ -1028,22 +1071,19 @@ impl<'a> Run<'a> {
     }
 
     /// `aeon_claude_argv <flag> <file>`.
-    pub fn claude_argv(&self, sys_file: &Path) -> Vec<String> {
+    pub fn claude_argv(&self, sys_file: &Path) -> Result<Vec<String>, String> {
         let flag = match self.fayth.system_prompt {
             SystemPrompt::Replace => "--system-prompt-file",
             SystemPrompt::Append => "--append-system-prompt-file",
         };
-        let model = conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML")).unwrap_or_else(|e| {
-            eprintln!("aeon: FATAL: {e}");
-            std::process::exit(1)
-        });
+        let model = conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML"))?;
         let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
         a.extend(s(&["--model", &model, "--allowedTools", &self.fayth.tools, "--dangerously-skip-permissions"]));
         if self.fayth.project_instructions == "none" {
             a.extend(s(&["--setting-sources", "user"]));
         }
         a.extend(s(&["--settings", &aeon_settings(self.home())]));
-        a
+        Ok(a)
     }
 
     fn agent_bin(&self) -> String {
@@ -1131,7 +1171,7 @@ impl<'a> Run<'a> {
         }
         let sys_file = self.run_dir().join(format!("{bead}.system.md"));
         let task_file = self.run_dir().join(format!("{bead}.task.md"));
-        let mut argv = self.claude_argv(&sys_file);
+        let mut argv = self.claude_argv(&sys_file).map_err(Abort::Harness)?;
         argv.extend(self.checkpoint_args(work, &task_file));
         self.s.session_started = true;
         let agent = self.agent_bin();
@@ -1326,6 +1366,12 @@ impl Beat for RealBeat<'_> {
             *last = o.code;
         }
         true
+    }
+    fn disposition(&self, status: &str, note: &str) {
+        let o = self.exec.exec("spira-lc", &s(&["disposition", &self.bead, status, note, &self.holder]), None, None);
+        if o.code != 0 {
+            self.log(&format!("{}: lifecycle disposition {status} refused (rc={}): {}", self.bead, o.code, o.first_err_line()));
+        }
     }
     fn log(&self, msg: &str) {
         self.sink.out(&util::log_line((self.clock)(), msg));

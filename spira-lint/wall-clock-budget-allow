@@ -15,7 +15,6 @@ spira/test-batcher-cut.sh
 spira/test-czar-pass.sh
 spira/test-gate-cap.sh
 spira/test-gate-wait.sh
-spira/test-lifecycle-container.sh
 spira/test-mail-deliver.sh
 spira/test-mail.sh
 spira/test-testenv-curl-bounds.sh

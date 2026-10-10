@@ -17,6 +17,8 @@
 //!   `spira_config::nonwork` (bd status is an epic's only state); any other rowless child
 //!   counts as OPEN — the conservative answer, since a parent wrongly kept out of dispatch
 //!   is a visible stall while a parent wrongly dispatched builds on unfinished work;
+//! - a parent with work of its own (a recorded tip, or a live child whose stack names it)
+//!   is not a coordination bead and is never labeled: its children wait on its rework;
 //! - a labeled candidate whose children are all done (or who has none) loses it;
 //! - the same log lines, byte for byte.
 
@@ -88,7 +90,7 @@ pub fn decide(snap: &store::Snapshot, ready: &[Bead], label: &str) -> Vec<Change
         if id.is_empty() || !seen.insert(id) {
             continue;
         }
-        let has_open = open.contains(id);
+        let has_open = open.contains(id) && !snap.has_own_work(id);
         let currently = labeled_set.contains(id);
         if has_open && !currently {
             out.push(Change::Add(id.to_string()));
@@ -240,6 +242,30 @@ mod tests {
                     {"id":"r","status":"open"},{"id":"x","status":"closed","issue_type":"task","parent":"r"}]"#;
         let s = lc_snap(j, &[("p", "READY"), ("r", "READY")]);
         assert_eq!(decide(&s, &beads(r#"[{"id":"p"},{"id":"r"}]"#), L), vec![Change::Add("r".into())]);
+    }
+
+    #[test]
+    fn a_rework_parent_with_a_stacked_child_is_never_labeled() {
+        let j = r#"[{"id":"p","status":"open"},{"id":"k","status":"open","parent":"p"},
+                    {"id":"c","status":"open"},{"id":"ck","status":"open","parent":"c"}]"#;
+        let mk = |id: &str, st: &str, tip: Option<&str>, stack: &[&str]| crate::model::LcRow {
+            bead_id: id.into(),
+            state: st.into(),
+            tip: tip.map(Into::into),
+            stack: stack.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        let rows = [
+            mk("p", "REWORK", Some("abc"), &[]),
+            mk("k", "REWORK", None, &["p"]),
+            mk("c", "READY", None, &[]),
+            mk("ck", "READY", None, &[]),
+        ];
+        let s = store::Snapshot::from_json(j, None).with_lc(Some(&rows));
+        assert_eq!(decide(&s, &beads(r#"[{"id":"p"},{"id":"c"}]"#), L), vec![Change::Add("c".into())]);
+        let labeled = r#"[{"id":"p","status":"open","labels":["spira-open-children"]},{"id":"k","status":"open","parent":"p"}]"#;
+        let s = store::Snapshot::from_json(labeled, None).with_lc(Some(&[mk("p", "REWORK", Some("abc"), &[]), mk("k", "REWORK", None, &["p"])]));
+        assert_eq!(decide(&s, &[], L), vec![Change::Remove("p".into())]);
     }
 
     #[test]

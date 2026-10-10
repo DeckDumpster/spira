@@ -223,19 +223,17 @@ fn file_stall_incident(incident_sh: &Path, db: Option<&Path>, repo: &str, pr: &s
 fn watch(o: &Opts) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
-    // SPIRA_QUEUE_DIR/SPIRA_BD/SPIRA_EXPRESS_LABEL/SPIRA_CI_QUEUED_MAX_SECS/SPIRA_FORGE are
+    // SPIRA_QUEUE_DIR/SPIRA_BD/SPIRA_CI_QUEUED_MAX_SECS/SPIRA_FORGE are
     // registered keys (spira/conf.d) — the one source of config, no crate-local default.
     let queue_dir = spira_config::process::cfg("SPIRA_QUEUE_DIR")?;
     let env_ = Env {
         queue_dir: if queue_dir.is_empty() { run.join("queue") } else { PathBuf::from(queue_dir) },
         db: o.db.clone(),
         bd: spira_config::process::cfg("SPIRA_BD")?,
-        express_label: spira_config::process::cfg("SPIRA_EXPRESS_LABEL")?,
         // SPIRA_LC_BIN is not a registered config key — a bare binary found on PATH, same as
         // always.
         lc_bin: lc_bin_from(env::var_os("SPIRA_LC_BIN"), &env::var_os("PATH").unwrap_or_default()),
-        // SPIRA_LC_TIMEOUT is not a registered config key.
-        lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(15),
+        lc_timeout: spira_config::process::cfg_parse("SPIRA_LC_TIMEOUT")?,
     };
     let lim = Limits {
         // QUEUE_WATCH_IDLE_STALL_SECS/QUEUE_WATCH_HEAD_STALL_SECS are not registered config

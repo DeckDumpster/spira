@@ -101,7 +101,7 @@ mod tests {
     fn row_tip_wins_only_when_in_range() {
         let commits = vec![c("m1", &["f0", "t1"], "spira: land sp-a")];
         let mut ls = BTreeMap::new();
-        ls.insert("sp-a".to_string(), LcBeadRow { bead_id: "sp-a".into(), state: "LANDED".into(), tip: Some("real".into()), since: Some(1), blocked_by: Vec::new() });
+        ls.insert("sp-a".to_string(), LcBeadRow { bead_id: "sp-a".into(), state: "LANDED".into(), tip: Some("real".into()), since: Some(1), blocked_by: Vec::new(), reason: None });
         assert_eq!(members(&commits, &ls, &|t| t == "real")[0].tip, "real");
         assert_eq!(members(&commits, &ls, &|_| false)[0].tip, "t1");
         ls.get_mut("sp-a").unwrap().state = "CERTIFIED".into();

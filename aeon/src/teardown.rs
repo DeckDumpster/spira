@@ -50,17 +50,39 @@ impl Run<'_> {
 
     /// The in-session fast tier (`fast_tier::red`); a tool that is absent (127) is skipped,
     /// never a red.
-    fn fast_tier_red(&self) -> Option<String> {
+    fn fast_tier_red(&self) -> Option<crate::fast_tier::Red> {
         let work = self.s.work.as_deref()?;
         crate::fast_tier::red(self.d.git, self.d.exec, &self.s.repo, work, &self.s.branch, &self.s.base_fq, false)
     }
 
     /// Refuses the handoff when the fast tier is red: the bead goes back to the graph with the
     /// failure text instead of waiting a certification cycle to learn it.
-    fn refuse_handoff(&self, red: &str) {
+    fn refuse_handoff(&self, red: &crate::fast_tier::Red) {
         let br = &self.s.branch;
-        self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{red}"));
+        let digest = crate::fast_tier::digest(&red.text);
+        if red.harness {
+            self.bead_reopen("fast-tier-harness", &format!("Reopened by aeon.sh: the in-session fast tier could not run on {br} (a tool failed, not the work) and the handoff was refused. No attempt charged.\n\n{digest}"));
+            self.log(&format!("{}: {} REOPENED — fast tier harness failure, no attempt charged", self.f(), self.s.bead));
+            return;
+        }
+        self.record_fact(crate::fast_tier::KIND, &digest);
+        self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{digest}"));
         self.log(&format!("{}: {} REOPENED — fast tier red, handoff refused", self.f(), self.s.bead));
+    }
+
+    /// A session that ends without submitting, when the bead's last fast-tier red named a
+    /// compile error and the session never ran `cargo check`, is recorded as a blind rework.
+    fn note_blind_rework(&self) {
+        let red = self.last_fast_tier_red();
+        if !crate::fast_tier::names_compile_error(&red) {
+            return;
+        }
+        let log = self.s.logf.as_deref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+        if log.contains("cargo check") || log.contains("build-fence") {
+            return;
+        }
+        self.record_fact("blind-rework", "ended without submitting; never ran cargo check against the last fast-tier red");
+        self.note("Blind rework: the previous closeout's fast tier named a compile error, and this session ended without submitting or ever running cargo check against it. Reproduce the error first.");
     }
 
     /// Commits naming this bead between the base and the branch.
@@ -74,6 +96,7 @@ impl Run<'_> {
         let id = self.s.bead.clone();
         let f = self.fayth.name.clone();
         self.stop_heartbeat();
+        self.phase("teardown");
         self.fixture_drop();
         let _ = std::fs::remove_file(self.run_dir().join("aeon").join(format!("{id}.lease")));
         self.restore_world();
@@ -90,13 +113,14 @@ impl Run<'_> {
         // row. The claim released any bead already carrying a non-wait hold
         // (run.rs blocking_holds), so an ask hold here was placed during this session.
         let asked = lc.as_ref().is_some_and(|r| r.held("ask"));
+        let disposition = lc.as_ref().and_then(|r| r.disposition.as_deref());
+        let disposition_note = lc.as_ref().and_then(|r| r.disposition_note.clone()).unwrap_or_default();
         let logf = self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
 
-        let mut i = DispositionIn { status: st.clone(), session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, ..Default::default() };
+        let mut i = DispositionIn { status: st.clone(), session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, harness_red: self.s.harness_red.is_some(), ..Default::default() };
         let (mut reset, mut thrash_note, mut thrash_tip, mut streak) = (String::new(), String::new(), String::new(), 0i64);
         let (mut lapsed_quiet, mut lapsed_last, mut gw) = (String::new(), String::new(), String::new());
         let mut unlanded_reason = String::new();
-        let run = self.run_dir().to_path_buf();
         let work = self.s.work.clone();
         let short_tip = |this: &Self| {
             let o = this.d.git.git(work.as_deref().unwrap_or(Path::new("/dev/null")), &["rev-parse", "--short", "HEAD"]);
@@ -115,30 +139,27 @@ impl Run<'_> {
         if let Some(r) = cr {
             i.capacity = true;
             reset = r.to_string();
-        } else if run.join(format!("{id}.slain")).exists() {
+        } else if disposition == Some("slain") {
             i.slain = true;
-        } else if run.join(format!("{id}.thrash")).exists() {
+        } else if disposition == Some("thrash") {
             i.thrash = true;
-            thrash_note = std::fs::read_to_string(run.join(format!("{id}.thrash"))).unwrap_or_default().trim_end_matches('\n').to_string();
-            let _ = std::fs::remove_file(run.join(format!("{id}.thrash")));
+            thrash_note = disposition_note.clone();
             thrash_tip = short_tip(self);
             let n = if thrash_note.is_empty() { "?" } else { &thrash_note };
             streak = self.sv("thrash_streak_bump", &s(&[&id, &thrash_tip, n])).text().trim().parse().unwrap_or(0);
             i.thrash_charged = streak >= self.conf.i("SPIRA_THRASH_STREAK_CAP");
-        } else if run.join(format!("{id}.lapsed")).exists() {
+        } else if disposition == Some("lapsed") {
             i.lapsed = true;
-            let body = std::fs::read_to_string(run.join(format!("{id}.lapsed"))).unwrap_or_default().trim_end_matches('\n').to_string();
-            match body.split_once('\t') {
+            match disposition_note.split_once('\t') {
                 Some((q, l)) => {
                     lapsed_quiet = q.into();
                     lapsed_last = l.into();
                 }
                 None => {
-                    lapsed_quiet = body.clone();
-                    lapsed_last = body;
+                    lapsed_quiet = disposition_note.clone();
+                    lapsed_last = disposition_note.clone();
                 }
             }
-            let _ = std::fs::remove_file(run.join(format!("{id}.lapsed")));
         } else if let Some((2, why)) = self.gate_status() {
             i.gate_unfinished = true;
             gw = why;
@@ -286,6 +307,17 @@ impl Run<'_> {
                 self.release();
                 return self.finish(rc, &status);
             }
+            NoteKey::HarnessRed => {
+                let why = self.s.harness_red.clone().unwrap_or_default();
+                if rc == 0 {
+                    rc = 1;
+                }
+                self.bump_requeue(&cause);
+                self.note(&format!("Harness red (rc={rc}): the aeon could not start its session — {why}. NO attempt was charged and nothing about the work is implied; this repeats until the harness config is fixed."));
+                self.log(&format!("{f}: {id} harness red (rc={rc}): {why} — no attempt charged"));
+                self.release();
+                return self.finish(rc, &status);
+            }
             NoteKey::PreSession => {
                 if rc == 0 {
                     rc = 1;
@@ -297,6 +329,7 @@ impl Run<'_> {
             }
             NoteKey::Unlanded => {
                 let o = i.outcome.clone().unwrap_or_default();
+                self.note_blind_rework();
                 self.note(&format!("Unlanded ({o}): the session ran to its own end and left this bead open. That is a verdict about the work; the next claim counts toward the poison threshold via the events trail."));
                 self.log(&format!("{f}: {id} not closed ({o}), released"));
                 self.release();
@@ -354,7 +387,8 @@ impl Run<'_> {
             NoteKey::NotJudged => {
                 let o = i.outcome.clone().unwrap_or_default();
                 self.bump_requeue(&cause);
-                self.note(&format!("Not judged ({o}): the worker did not survive to judge this bead, so NO attempt was charged and nothing about the work is implied. See {logf}."));
+                let red = if o == "refused" { format!("Harness red (session exit rc={}, no transcript). ", self.s.session_rc) } else { String::new() };
+                self.note(&format!("{red}Not judged ({o}): the worker did not survive to judge this bead, so NO attempt was charged and nothing about the work is implied. See {logf}."));
                 self.log(&format!("{f}: {id} never judged ({o}) — no attempt charged"));
                 self.release();
             }
@@ -369,6 +403,7 @@ impl Run<'_> {
     fn remove_identity(&self) {
         if let Some(p) = &self.s.pidfile {
             let _ = std::fs::remove_file(p);
+            let _ = std::fs::remove_file(strand::probe::lease_file(p));
             let _ = std::fs::remove_file(p.with_extension("name"));
         }
         let mail = self.conf.s("SPIRA_MAIL");

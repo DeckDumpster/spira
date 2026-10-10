@@ -172,24 +172,25 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\nexit 0\n' "$ARGS_FILE" > "$MOCK_
 chmod +x "$MOCK_QUOTA"
 
 # ==========================================================================================
-# summon_fayth — an express grant passes the label to the claim predicate (sp-zcvh1)
+# summon_fayth — an express grant restricts the claim to express beads
 # ==========================================================================================
-# summon_fayth's third argument is carried to the aeon as SPIRA_REQUIRE_LABEL, so the aeon
+# summon_fayth's third argument is carried to the aeon as SPIRA_REQUIRE_EXPRESS, so the aeon
 # started under an express grant cannot claim a non-express bead.
 export SPIRA_SUMMON="$MOCK_QUOTA"
 
 set_store "$PLAN_BEAD"; rm -f "$ARGS_FILE"
 summon_fayth builder 1 >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
-nowant "no require-label: SPIRA_REQUIRE_LABEL is absent from args" "SPIRA_REQUIRE_LABEL" "$args"
+nowant "no express grant: SPIRA_REQUIRE_EXPRESS is absent from args" "SPIRA_REQUIRE_EXPRESS" "$args"
 
-# The express grant counts only beads carrying the express label (summon.rs: ready-count
-# "<FAYTH_LABELS>,express"), so this store's plan bead carries it.
-set_store "$(bead_json sp-fy-express "$builder_labels,express")"; rm -f "$ARGS_FILE"
+# The express grant counts only beads whose lifecycle row is express (summon.rs: ready-count
+# --express), so this store's plan bead is on the mirror's express list.
+set_store "$(bead_json sp-fy-express "$builder_labels")"; rm -f "$ARGS_FILE"
+echo sp-fy-express > "$T/lc/express"
 summon_fayth builder 1 express >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
-want "express grant: SPIRA_REQUIRE_LABEL=express appears in args" \
-     "SPIRA_REQUIRE_LABEL=express" "$args"
+want "express grant: SPIRA_REQUIRE_EXPRESS=1 appears in args" \
+     "SPIRA_REQUIRE_EXPRESS=1" "$args"
 
 export SPIRA_SUMMON="$MOCK_SUMMON"
 

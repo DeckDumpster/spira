@@ -1,4 +1,5 @@
 # Keys this release adds to the one source (release/src/config_delta.rs, sp-pr6jn6), applied at activation.
+removed = ["spira.express_label", "spira.overlap_defer_label"]
 [added]
 "spira.gate_deadline" = 300
 "spira.scratch_max_age_hours" = 24
@@ -24,5 +25,9 @@
 "spira.census_cluster_gap_s" = "300"
 "spira.czar_stage_reconciler_stale" = "shadow"
 "spira.admit_stagger_secs" = 30
-"spira.overlap_defer_label" = "file-overlap-defer"
 "spira.testenv_pids_limit" = "32768"
+"spira.groom_gate_label" = "placeholder-gate"
+"spira.read_watch_budget_ms" = 500
+"spira.read_watch_interval" = 300
+"spira.read_watch_remind" = 3600
+"spira.lc_timeout" = 30

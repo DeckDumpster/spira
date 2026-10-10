@@ -379,3 +379,8 @@ census_cluster_gap_s
 czar_stage_reconciler_stale
 admit_stagger_secs
 overlap_defer_label
+groom_gate_label
+read_watch_budget_ms
+read_watch_interval
+read_watch_remind
+lc_timeout

@@ -241,3 +241,9 @@ mod tests {
         assert!(matches!(run(&t, vec!["spira/x.sh".into()], &[]), Err(LintError::BadAllow { .. })));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(EventTaxonomy),
+    ]
+}

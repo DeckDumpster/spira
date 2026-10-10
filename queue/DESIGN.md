@@ -115,6 +115,7 @@ nothing changed), then effects in order.
 | `publish` | queue.local | queue lock unless LOCK_HELD | local base; forge target; refuse if a `publish` record exists; fetch; divergence check refuses; equal → "nothing to publish", exit 0; members from land commits (§8 D4), none → refuse; push `spira/publish/<stamp>`; pr-create; `publish` record; `QUEUE PUBLISH` line. |
 | `to-forge` | queue.local | queue lock, whole move | agreement check (§6 R1); **in-delivery refusal** (§8 D5); local base exists, not checked out; re-read mode under lock; final publish (lock held); poll the verdict's publish settle (in process) until the record is gone (3 → refuse; deadline → refuse); fetch, forge tip == local tip; write mode `queue.forge`, base `<remote>/<branch>` (§8 D6); verify; archive `refs/archive/<local-base>`, delete local branch; mail. |
 | `to-local` | queue (forge) | queue lock | agreement check; in-delivery refusal; base remote-tracking; `local/<branch>` absent and not checked out; re-read mode; fetch; an archived `refs/archive/local/<branch>` must be an ancestor of the forge tip; create `local/<branch>` at the forge tip; write mode `queue.local`, base `local/<branch>` (branch deleted if that fails); verify; mail. |
+| `rebase-waiting [repo]` | any | none | started detached at the end of `land-local` (and so `round land`) once the landing is recorded. For every bead SUBMITTED or CERTIFIED, or REWORK with reason `no-rebase`, whose `spira/<id>` is in the repo: `rebase-stale <id> <repo>`, four at a time. Exit 0 with a tip the row does not carry: `Submit{tip}` in place (REWORK: `Claim` then `Submit`, actor `rebase-stale`). Exit 1: `GateRed{no-rebase}` if the row still waits, and a `rebase-conflict` comment naming the paths (for the mender). Exit 2/3: logged, nothing moved. One `QUEUE REBASE-WAITING` line per bead. Exit 0 always but for an unreachable spira-lc. |
 | `rollback-local` | queue.local | queue lock unless LOCK_HELD | round-seq ≥ 2; `refs/archive/rounds/<n-1>`; a release in force and `$SPIRA_RELEASES/<prev>` present; `release verify <prev>` → `release activate <prev>` (never rebuilt, §8 D13); CAS the ref back; mail. Bead state untouched. |
 
 The czar fence (`SPIRA_FAYTH=czar` with `SPIRA_CZAR_CLASS`) runs `czar-fence.sh <class>`
@@ -634,6 +635,22 @@ from §2.2/§8:
 | rollback-local | `rollback_local_reactivates_the_previous_rounds_release_without_rebuilding` |
 | stats, CLI, records, idents | `stats::tests`, `cli::tests`, `records::tests`, `ident::tests`, `model::tests`, `lock::tests` |
 | the seam mechanism itself, for real through bash with a stand-in lib.sh | `seam::tests::values_travel_on_stdin_with_newlines_and_empties_intact`, `real::tests::context_seam_round_trips_through_bash`, `real::tests::answer_seams_ignore_log_lines_and_carry_failures` |
+
+## Staged rounds
+
+A queue.local round's suites run for minutes while the next round could already be assembled.
+`round stage` does that behind the open round `N`; the batch row is STAGED, parented to `N`,
+and no bead moves, so a discarded stage returns nothing.
+
+| verb | effect |
+|---|---|
+| `round stage --members` | needs an open round. Admits as `round open` does (SUBMITTED or CERTIFIED at the named tip, blockers landed or merged ahead — `N`'s members count as ahead), skips `N`'s own members, merges onto `N`'s head with open's merges (`land_subject`, the queue's git identity, the same order), runs the gate's fences on the result, then writes the STAGED row and `round-staged`. One stage per repo. |
+| `round stage-test` | refused until `N`'s phase is `green`; runs the round VM on the staged head and records `tested_tree` on a green. |
+| `round promote` | refused while any round is open. `N` not LANDED, a member no longer admissible, or a member that no longer merges onto the moved base: STAGED → DISCARDED with the reason, exit 1. Otherwise the members are re-merged onto the landing ref only if it is not the head `N` landed at, then spira-lc `promote` cuts STAGED → OPEN and delivers the members in one transaction. A green `tested_tree` equal to the promoted head's tree is attested through `round certify --attest`; otherwise the round waits for its own pass. |
+| `round discard --reason` | STAGED → DISCARDED by hand. |
+
+`N` going red, being abandoned or being emptied discards the stage behind it; `round open`
+discards a stage whose round is gone.
 
 ## 10. Lifecycle machine
 

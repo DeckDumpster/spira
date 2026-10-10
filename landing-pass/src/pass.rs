@@ -283,7 +283,7 @@ impl<'a> Pass<'a> {
             }
         };
         let rows: Vec<OrderRow> =
-            refs.iter().map(|(b, _)| OrderRow::of(b, beads.get(b.trim_start_matches("spira/")), &self.s.express_label)).collect();
+            refs.iter().map(|(b, _)| OrderRow::of(b, beads.get(b.trim_start_matches("spira/")))).collect();
         let order = certify_order(name, &rows);
         let by_branch: HashMap<&str, &OrderRow> = rows.iter().map(|r| (r.branch.as_str(), r)).collect();
         let fix_front: Vec<&str> =
@@ -502,10 +502,16 @@ impl<'a> Pass<'a> {
         if g.outcome != GateOutcome::Pass {
             let reason = g.reason_or("unspecified");
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
-            match g.outcome {
-                GateOutcome::Fail => drop(self.lc_certify(id, &tip, "red", &reason)),
-                GateOutcome::NoVerdict => drop(self.lc_certify(id, &tip, "infra", "")),
-                _ => {}
+            let moved = matches!(g.outcome, GateOutcome::Fail | GateOutcome::NoVerdict)
+                && self.git.rev_parse(&repo.path, br).unwrap_or_default() != tip;
+            if moved {
+                self.log(&format!("CHECK6 {id}: {br} moved during the gate — verdict on {tip} not recorded"));
+            } else {
+                match g.outcome {
+                    GateOutcome::Fail => drop(self.lc_certify(id, &tip, "red", &reason)),
+                    GateOutcome::NoVerdict => drop(self.lc_certify(id, &tip, "infra", "")),
+                    _ => {}
+                }
             }
             match g.outcome {
                 GateOutcome::BaseFail => {
@@ -727,7 +733,7 @@ impl<'a> Pass<'a> {
         pending.extend(added.iter().cloned());
         let rows: Vec<OrderRow> = pending
             .iter()
-            .map(|b| OrderRow::of(b, w.beads.get(b.trim_start_matches("spira/")), &self.s.express_label))
+            .map(|b| OrderRow::of(b, w.beads.get(b.trim_start_matches("spira/"))))
             .collect();
         *pending = certify_order(&repo.name, &rows);
         self.log(&format!("CHECK6 {}: candidates refreshed — {} newly ready: {}", repo.name, added.len(), added.join(" ")));

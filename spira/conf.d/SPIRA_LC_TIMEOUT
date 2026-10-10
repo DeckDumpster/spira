@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=lc
+DOC=SECONDS A SPIRA-LC CALL MAY TAKE before the caller's timeout kills it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS A SPIRA-LC CALL MAY TAKE before the caller's timeout kills it.
+    : "${SPIRA_LC_TIMEOUT:=30}"
+SPIRA_CONF_DEFAULT_EOF

@@ -25,6 +25,13 @@ pub struct SuiteHeaders {
     /// `_testdb_embedded_check` runs as it would with no server template built at all.
     #[serde(default)]
     pub testdb_embedded: bool,
+    /// `# pids: N` — peak processes the suite holds; the batch admits suites while the
+    /// running weights fit the container's pids budget.
+    #[serde(default)]
+    pub pids: Option<u32>,
+    /// `# lane: <name>` — suites of a lane share their own slot budget (sim worlds).
+    #[serde(default)]
+    pub lane: Option<String>,
 }
 
 fn header_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
@@ -71,6 +78,16 @@ impl SuiteHeaders {
             let v = header_value(l, "testdb-mode")?;
             v.split(|c: char| !c.is_ascii_alphanumeric()).next()
         }
+        h.pids = text
+            .lines()
+            .take_while(|l| !l.starts_with("set -"))
+            .find_map(|l| header_value(l, "pids"))
+            .and_then(|v| v.trim().parse().ok());
+        h.lane = text
+            .lines()
+            .take_while(|l| !l.starts_with("set -"))
+            .find_map(|l| header_value(l, "lane"))
+            .and_then(|v| v.split_whitespace().next().map(str::to_string));
         h.testdb_server = text.lines().any(|l| mode_word(l) == Some("server"));
         h.testdb_embedded = text.lines().any(|l| mode_word(l) == Some("embedded"));
         h
@@ -246,6 +263,14 @@ mod tests {
         assert!(!h.testdb_server);
         assert!(!SuiteHeaders::parse("# testdb-mode: server — x\n").testdb_embedded);
         assert!(!SuiteHeaders::parse("").testdb_embedded);
+    }
+
+    #[test]
+    fn pids_and_lane_are_read_from_the_header_only() {
+        let h = SuiteHeaders::parse("# pids: 900\n# lane: sim — four worlds\nset -uo pipefail\n# pids: 5\n");
+        assert_eq!((h.pids, h.lane.as_deref()), (Some(900), Some("sim")));
+        let h = SuiteHeaders::parse("# pids: many\nset -e\n# lane: sim\n");
+        assert_eq!((h.pids, h.lane), (None, None));
     }
 
     #[test]

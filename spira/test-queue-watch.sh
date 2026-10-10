@@ -86,7 +86,7 @@ cat > "$FX/beads.json" <<'EOF'
  {"id":"sp-a","priority":0,"title":"alpha work","labels":["repo:q"]},
  {"id":"sp-b","priority":3,"title":"sp-zzz99: beta work","labels":["repo:q"]},
  {"id":"sp-c","priority":3,"title":"gamma work","labels":["repo:q"]},
- {"id":"sp-d","priority":0,"title":"delta urgent","labels":["repo:q","express"]},
+ {"id":"sp-d","priority":0,"title":"delta urgent","labels":["repo:q"]},
  {"id":"sp-o","priority":0,"title":"other repo","labels":["repo:elsewhere"]}
 ]
 EOF
@@ -117,13 +117,14 @@ n=$(( $(cat "$FX/calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FX/calls"
 exit 0
 EOF
 
-# Fake spira-lc: answers `list --state CERTIFIED` from certified.json — the CERTIFIED pool
+# Fake spira-lc: answers `list --express` (sp-d) and `list --state CERTIFIED` from certified.json — the CERTIFIED pool
 # now lives in spira_lifecycle, read through spira-lc, never a landstate directory scan.
 # lc-broken is a POSITIVE CONTROL toggle: with it present, spira-lc refuses to tell, and
 # read_certified must surface that as blind rather than reading zero certified beads.
 cat > "$FX/spira-lc" <<'EOF'
 #!/usr/bin/env bash
 [ -f "$FX/lc-broken" ] && { echo "cannot tell: db unreachable" >&2; exit 2; }
+[ "$1" = list ] && [ "$2" = --express ] && { echo '[{"bead_id":"sp-d","express":"1"}]'; exit 0; }
 [ "$1" = list ] && [ "$2" = --state ] && [ "$3" = CERTIFIED ] || { echo "unexpected args: $*" >&2; exit 2; }
 cat "$FX/certified.json" 2>/dev/null || echo '[]'
 EOF

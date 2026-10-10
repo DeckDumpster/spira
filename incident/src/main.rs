@@ -130,6 +130,7 @@ struct Env {
     home_repo: String,
     known_repos: Vec<String>,
     ask_label: String,
+    express: bool,
     unit: String,
     path: String,
     lock_path: std::path::PathBuf,
@@ -163,6 +164,7 @@ impl Env {
             home_repo: env_or("SPIRA_HOME_REPO", "spira"),
             known_repos: repo_names(),
             ask_label: env_or("SPIRA_ASK_LABEL", "needs-ryan"), // literal-ok: Rust fallback mirroring lib.sh's own default when SPIRA_ASK_LABEL is unset
+            express: env("SPIRA_INCIDENT_EXPRESS").as_deref() == Some("1"),
             unit: env_or("SPIRA_INCIDENT_UNIT", &unit_from_cgroup()),
             path: env_or("SPIRA_INCIDENT_PATH", "?"),
             lock_path: std::path::PathBuf::from(env_or("SPIRA_INCIDENT_LOCK", &format!("{spira_run}/incident.lock"))),
@@ -197,6 +199,7 @@ impl Env {
             home_repo: &self.home_repo,
             known_repos: &self.known_repos,
             ask_label: &self.ask_label,
+            express: self.express,
             provenance,
         }
     }

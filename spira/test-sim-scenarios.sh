@@ -2,6 +2,8 @@
 # tier: T2
 # requires: testenv
 # covers: spira/sim/** spira/lib.sh sim/actors.toml sim/durations.toml spira/release.sh .github/workflows/gate.yml lifecycle/src/** spira-lc/src/** work/src/** landing-pass/src/** queue/src/** batcher/src/** batcher-cut/src/** gate-worker/** systemd/spira-sentinel.* systemd/spira-rounds.* systemd/spira-publish.* systemd/spira-gate-worker.*
+# lane: sim
+# pids: 1200
 #
 # test-sim-scenarios.sh — every scenario under spira/sim/scenarios/, run in a sim world by
 # `sim run` under a fixed seed list, logged so a red reproduces. SIM_SCENARIOS_FRESH=1 adds one

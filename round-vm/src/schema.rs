@@ -56,6 +56,10 @@ pub struct PoolState {
     pub ready: Option<Vm>,
     #[serde(default)]
     pub provisioning: Option<Provisioning>,
+    /// Provisions on EC2 in flight: spilled passes are not the pool of one (G1), but each is
+    /// still recorded before its instance exists (G2).
+    #[serde(default)]
+    pub spilled: Vec<Provisioning>,
     #[serde(default)]
     pub leases: Vec<Lease>,
     #[serde(default)]
@@ -64,6 +68,8 @@ pub struct PoolState {
     pub outage: Option<Outage>,
     #[serde(default)]
     pub refreshing: Option<ProcId>,
+    #[serde(default)]
+    pub events: Vec<crate::machine::PoolEvent>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +101,8 @@ pub struct Manifest {
     pub batch_wall_secs: u64,
     pub build_wall_secs: Option<u64>,
     pub suite_wall_secs_sum: u64,
+    #[serde(default)]
+    pub provider: String,
 }
 
 pub fn now() -> u64 {
@@ -121,11 +129,12 @@ mod tests {
             batch_wall_secs: 700,
             build_wall_secs: Some(90),
             suite_wall_secs_sum: 9000,
+            provider: "proxmox".into(),
         };
         let v: serde_json::Value = serde_json::to_value(&m).unwrap();
         for k in [
             "tree_sha", "tree_sha_found", "commit_sha", "vm", "acquire", "vcpus", "maxpar",
-            "batch_wall_secs", "build_wall_secs", "suite_wall_secs_sum",
+            "batch_wall_secs", "build_wall_secs", "suite_wall_secs_sum", "provider",
         ] {
             assert!(v.get(k).is_some(), "manifest lacks {k}");
         }

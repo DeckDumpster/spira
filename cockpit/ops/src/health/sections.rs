@@ -337,7 +337,7 @@ fn unread_row(label: &str, what: &str) -> String {
 /// One aeon's four rows for `now_section`. `lease` is `?` or minutes. Trailing moments
 /// (`SP_AEON{i}_ACT{j}`) are rendered newest-last when present; otherwise the single
 /// `SP_AEON{i}_ACT` plus `SP_AEON{i}_SAID` fall back to the original single-line shape.
-fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lines: i64) -> Vec<String> {
+fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lines: i64, working: &[(String, String)]) -> Vec<String> {
     let g = |k: &str| snap.q(&format!("SP_AEON{i}_{k}")).to_string();
     let nm = g("NAME");
     let fy = g("FAYTH");
@@ -366,8 +366,9 @@ fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lin
 
     let mut out = Vec::new();
     let label = if is_first { "NOW" } else { "   " };
+    let phase = working.iter().find(|(b, _)| *b == bd).map_or("?", |(_, p)| p.as_str());
     let tail = fit(
-        &format!("the {fy} on {model_disp} \u{b7} {mn}m \u{b7} {tn} turns \u{b7} ctx {} \u{b7} {fl} files", tok(&cx)),
+        &format!("the {fy} on {model_disp} \u{b7} {phase} \u{b7} {mn}m \u{b7} {tn} turns \u{b7} ctx {} \u{b7} {fl} files", tok(&cx)),
         cols - 9 - nm.chars().count() as i64,
     );
     out.push(format!("{DIM}{label}{RST}    {OK}{B}{nm}{RST} {DIM}{tail}{RST}"));
@@ -440,11 +441,17 @@ fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lin
     out
 }
 
-pub fn now_section(snap: &Snapshot, cols: i64, live_aeon_n: i64, trace_lines: i64) -> Vec<String> {
+/// NOW reads the WORKING rows of the lifecycle store (`(bead, phase)`; `None` when the store
+/// cannot answer). The snapshot only adds the detail a row does not carry.
+pub fn now_section(snap: &Snapshot, cols: i64, working: Option<&[(String, String)]>, trace_lines: i64) -> Vec<String> {
+    let live_aeon_n = working.map_or(-1, |w| w.len() as i64);
+    let rows = working.unwrap_or(&[]);
     let snap_n_raw = snap.get("SP_AEON_N");
     if snap_n_raw.is_none() || snap_n_raw == Some("?") {
         return if live_aeon_n > 0 {
             vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} details pending snapshot{RST}")]
+        } else if live_aeon_n == 0 {
+            vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")]
         } else {
             vec![unread_row("NOW", "cannot read the aeon roster")]
         };
@@ -454,15 +461,18 @@ pub fn now_section(snap: &Snapshot, cols: i64, live_aeon_n: i64, trace_lines: i6
         return vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")];
     }
     if snap_n == 0 && live_aeon_n > 0 {
-        return vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} not yet in snapshot{RST}")];
+        let phases: Vec<String> = rows.iter().map(|(b, p)| format!("{b} {p}")).collect();
+        return vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} {}{RST}", phases.join(", "))];
     }
     let mut out = Vec::new();
     for i in 0..snap_n as usize {
-        out.extend(now_aeon_rows(snap, cols, i, i == 0, trace_lines));
+        out.extend(now_aeon_rows(snap, cols, i, i == 0, trace_lines, rows));
     }
     let extra = live_aeon_n - snap_n;
     if extra > 0 {
-        out.push(format!("        {DIM}+{extra} more aeon(s) live \u{2014} not yet in snapshot{RST}"));
+        let shown: Vec<&str> = (0..snap_n as usize).filter_map(|i| snap.get(&format!("SP_AEON{i}_BEAD"))).collect();
+        let rest: Vec<String> = rows.iter().filter(|(b, _)| !shown.contains(&b.as_str())).map(|(b, p)| format!("{b} {p}")).collect();
+        out.push(format!("        {DIM}+{extra} more aeon(s) live \u{2014} not yet in snapshot: {}{RST}", rest.join(", ")));
     }
     out
 }
@@ -1193,17 +1203,39 @@ mod tests {
     }
 
     #[test]
-    fn now_section_unread_when_snapshot_missing_and_no_live_aeons() {
+    fn now_section_unread_when_the_lifecycle_store_cannot_answer() {
         let s = snap(&[]);
-        let out = now_section(&s, 80, 0, 2);
+        let out = now_section(&s, 80, None, 2);
         assert_eq!(out.len(), 1);
         assert!(out[0].contains("cannot read the aeon roster"));
     }
 
     #[test]
+    fn now_section_says_idle_from_the_store_even_with_no_snapshot() {
+        let out = now_section(&snap(&[]), 80, Some(&[]), 2);
+        assert!(out[0].contains("no aeon working"), "{out:?}");
+    }
+
+    #[test]
+    fn now_section_names_the_phase_the_row_records_for_a_snapshotted_aeon() {
+        let s = snap(&[("SP_AEON_N", "1"), ("SP_AEON0_BEAD", "sp-a"), ("SP_AEON0_NAME", "aeon-x"), ("SP_AEON0_FAYTH", "builder")]);
+        let working = vec![("sp-a".to_string(), "session".to_string())];
+        let out = now_section(&s, 120, Some(&working), 0).join("\n");
+        assert!(out.contains("\u{b7} session \u{b7}"), "{out}");
+    }
+
+    #[test]
+    fn now_section_names_a_working_row_the_snapshot_has_not_caught_up_to() {
+        let s = snap(&[("SP_AEON_N", "0")]);
+        let working = vec![("sp-new".to_string(), "building".to_string())];
+        let out = now_section(&s, 120, Some(&working), 0).join("\n");
+        assert!(out.contains("1 aeon(s) live") && out.contains("sp-new building"), "{out}");
+    }
+
+    #[test]
     fn now_section_idle_when_both_zero() {
         let s = snap(&[("SP_AEON_N", "0")]);
-        let out = now_section(&s, 80, 0, 2);
+        let out = now_section(&s, 80, Some(&[]), 2);
         assert_eq!(out, vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")]);
     }
 

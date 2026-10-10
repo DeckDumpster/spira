@@ -67,6 +67,7 @@ if [ -s "$c" ]; then
     while read -r id pid; do
         [ -n "$id" ] || continue
         printf "%s\\n" "$pid" > "$SPIRA_RUN/aeon-builder-$id.pid"
+        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-builder-$id.lease"
     done < "$c"
     : > "$c"
 fi

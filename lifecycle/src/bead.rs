@@ -71,6 +71,61 @@ impl BeadState {
     }
 }
 
+/// Where a WORKING bead's aeon is in its own run. Forward-only: a phase may be recorded only
+/// once, and only after every earlier one. `Teardown` is last; leaving WORKING clears it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+pub enum AeonPhase {
+    Claimed,
+    Building,
+    Session,
+    Teardown,
+}
+
+impl AeonPhase {
+    pub const ALL: [AeonPhase; 4] = [AeonPhase::Claimed, AeonPhase::Building, AeonPhase::Session, AeonPhase::Teardown];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AeonPhase::Claimed => "claimed",
+            AeonPhase::Building => "building",
+            AeonPhase::Session => "session",
+            AeonPhase::Teardown => "teardown",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == s)
+    }
+}
+
+/// How a session was cut short, recorded on the WORKING row by whoever cut it. The ranking is
+/// the teardown's precedence: a stop by the operator outranks a thrash trip, which outranks a
+/// lapsed lease, so a later, weaker word never overwrites a stronger one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+pub enum DispositionStatus {
+    Lapsed,
+    Thrash,
+    Slain,
+}
+
+impl DispositionStatus {
+    pub const ALL: [DispositionStatus; 3] = [DispositionStatus::Lapsed, DispositionStatus::Thrash, DispositionStatus::Slain];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DispositionStatus::Lapsed => "lapsed",
+            DispositionStatus::Thrash => "thrash",
+            DispositionStatus::Slain => "slain",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.as_str() == s)
+    }
+}
+
 /// Holds are orthogonal to state: they suspend any non-terminal state without losing it
 /// (design: "Holds are a dimension, not states").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
@@ -131,6 +186,18 @@ pub struct BeadRow {
     /// The one sanctioned way to put a bead ahead of the line; orthogonal to state.
     #[serde(default)]
     pub express: bool,
+    /// The holder's place in its run; set only while WORKING (see [`AeonPhase`]).
+    #[serde(default)]
+    pub phase: Option<AeonPhase>,
+    /// How the session was cut short, with the cutter's own words in `disposition_note`;
+    /// set only while WORKING.
+    #[serde(default)]
+    pub disposition: Option<DispositionStatus>,
+    #[serde(default)]
+    pub disposition_note: Option<String>,
+    /// The tip a round last ejected as red for this bead; `submit` refuses it.
+    #[serde(default)]
+    pub ejected_red_tip: Option<String>,
 }
 
 impl BeadRow {
@@ -152,6 +219,10 @@ impl BeadRow {
             stack_depth: 0,
             since: None,
             express: false,
+            phase: None,
+            disposition: None,
+            disposition_note: None,
+            ejected_red_tip: None,
         }
     }
 }
@@ -217,6 +288,12 @@ pub enum BeadEventKind {
     /// and only forward — a lease never shrinks. A holder that stops renewing (a dead aeon)
     /// still expires, and the stale-lease reaper's `HolderDead` clears it as before.
     Renew { lease_until: i64 },
+    /// The holder's move to its next [`AeonPhase`]. Holder-only like `Renew`, WORKING only,
+    /// and strictly forward: a repeat or a step back is refused naming the phase.
+    Phase { phase: AeonPhase },
+    /// The session was cut short. WORKING only; replaces an earlier disposition only with a
+    /// stronger one ([`DispositionStatus`] ranking).
+    Disposition { status: DispositionStatus, #[serde(default)] note: String },
     /// Put the bead ahead of the line. Idempotent: a second `Express` applies and changes nothing.
     Express,
     /// Withdraw `Express`. Idempotent likewise.
@@ -244,6 +321,14 @@ fn illegal(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
         row.clone(),
         Refusal::IllegalTransition { state: row.state.as_str().to_string(), event: format!("{kind:?}") },
     )
+}
+
+fn illegal_in_phase(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
+    let state = match row.phase {
+        Some(p) => format!("{}/{}", row.state.as_str(), p.as_str()),
+        None => row.state.as_str().to_string(),
+    };
+    Outcome::refuse(row.clone(), Refusal::IllegalTransition { state, event: format!("{kind:?}") })
 }
 
 fn awaiting_reply(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
@@ -319,6 +404,11 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
     let entered = out.row.state != row.state && matches!(out.row.state, BeadState::Landed | BeadState::Certified);
     if out.applied && entered {
         out.row.since = ev.at;
+    }
+    if out.applied && out.row.state != row.state {
+        out.row.phase = (out.row.state == BeadState::Working).then_some(AeonPhase::Claimed);
+        out.row.disposition = None;
+        out.row.disposition_note = None;
     }
     if out.applied && out.row.state.is_terminal() {
         out.row.holder = None;
@@ -477,6 +567,42 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         | BeadEventKind::BaseWithdrawn { .. }
         | BeadEventKind::PrereqLanded { .. } => primary_transition(row, &ev.kind),
 
+        BeadEventKind::Phase { phase } => {
+            if row.state.is_terminal() {
+                return terminal(row);
+            }
+            if row.state != BeadState::Working {
+                return illegal(row, &ev.kind);
+            }
+            if row.holder.as_deref() != Some(ev.actor.as_str()) {
+                return Outcome::refuse(row.clone(), Refusal::NotHolder { actor: ev.actor.clone(), holder: row.holder.clone() });
+            }
+            if row.phase.is_some_and(|cur| *phase <= cur) {
+                return illegal_in_phase(row, &ev.kind);
+            }
+            let mut new = row.clone();
+            new.phase = Some(*phase);
+            new.version += 1;
+            Outcome::applied(new)
+        }
+
+        BeadEventKind::Disposition { status, note } => {
+            if row.state.is_terminal() {
+                return terminal(row);
+            }
+            if row.state != BeadState::Working {
+                return illegal(row, &ev.kind);
+            }
+            if row.disposition.is_some_and(|cur| *status <= cur) {
+                return illegal_in_phase(row, &ev.kind);
+            }
+            let mut new = row.clone();
+            new.disposition = Some(*status);
+            new.disposition_note = Some(note.clone());
+            new.version += 1;
+            Outcome::applied(new)
+        }
+
         // Holder-only: the one event whose legality turns on who sends it. Checked here,
         // where the actor is in hand; the per-state table below decides the rest.
         BeadEventKind::Renew { .. } => {
@@ -530,7 +656,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         BeadState::Open => illegal(row, kind),
@@ -550,6 +676,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 Outcome::applied(new)
             }
             Submit { tip } => {
+                if row.ejected_red_tip.as_deref() == Some(tip.as_str()) {
+                    return Outcome::refuse(row.clone(), Refusal::EjectedRedTip { tip: tip.clone() });
+                }
                 let mut new = row.clone();
                 new.state = BeadState::Submitted;
                 new.tip = Some(tip.clone());
@@ -596,7 +725,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Express | Unexpress => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         BeadState::Submitted => match kind {
@@ -672,7 +801,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         BeadState::Certified => match kind {
@@ -727,7 +856,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => {
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress => {
                 illegal(row, kind)
             }
         },
@@ -744,6 +873,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 let mut new = row.clone();
                 new.state = BeadState::Rework;
                 new.reason = Some(reason.as_str().to_string());
+                if *reason == ReturnedReason::BatchEjectedRed {
+                    new.ejected_red_tip = row.tip.clone();
+                }
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -788,7 +920,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateInfra { .. } | Deliver
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
@@ -823,7 +955,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress => illegal(row, kind),
         },
 
         // Terminal states: every one of the 19 events is illegal here, because there is no
@@ -836,7 +968,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Express | Unexpress => terminal(row),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress => terminal(row),
         },
     }
 }
@@ -954,6 +1086,8 @@ fn kind_name(kind: &BeadEventKind) -> &'static str {
         BeadEventKind::AskWithdrawn => "AskWithdrawn",
         BeadEventKind::Reclassify { .. } => "Reclassify",
         BeadEventKind::Renew { .. } => "Renew",
+        BeadEventKind::Phase { .. } => "Phase",
+        BeadEventKind::Disposition { .. } => "Disposition",
         BeadEventKind::Express => "Express",
         BeadEventKind::Unexpress => "Unexpress",
     }
@@ -986,6 +1120,8 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "t1".into() },
         BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
         BeadEventKind::Renew { lease_until: 2 },
+        BeadEventKind::Phase { phase: AeonPhase::Building },
+        BeadEventKind::Disposition { status: DispositionStatus::Slain, note: "n".into() },
         BeadEventKind::Express,
         BeadEventKind::Unexpress,
     ]
@@ -1063,6 +1199,8 @@ mod tests {
 
     fn sample_kinds() -> Vec<BeadEventKind> {
         vec![
+            BeadEventKind::Phase { phase: AeonPhase::Session },
+            BeadEventKind::Disposition { status: DispositionStatus::Lapsed, note: "n".into() },
             BeadEventKind::Express,
             BeadEventKind::Unexpress,
             BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
@@ -1597,13 +1735,42 @@ mod tests {
         GateRedReason::Timeout,
         GateRedReason::Confine,
     ];
-    const ALL_RETURNED_REASONS: [ReturnedReason; 5] = [
+    const ALL_RETURNED_REASONS: [ReturnedReason; 6] = [
         ReturnedReason::PrClosedUnmerged,
         ReturnedReason::PrChangesRequested,
         ReturnedReason::PushRejected,
         ReturnedReason::BatchEjected,
+        ReturnedReason::BatchEjectedRed,
         ReturnedReason::BaseWithdrawn,
     ];
+    #[test]
+    fn submit_at_a_tip_a_round_ejected_red_is_refused_and_a_new_tip_is_accepted() {
+        let mut r = row(BeadState::Working);
+        r.tip = Some("red1".into());
+        r.state = BeadState::InDelivery;
+        let ejected = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Returned { reason: ReturnedReason::BatchEjectedRed }));
+        assert_eq!((ejected.row.state, ejected.row.ejected_red_tip.as_deref()), (BeadState::Rework, Some("red1")));
+        let claimed = apply(&ejected.row, &ev(BeadState::Rework, ejected.row.version, BeadEventKind::Claim { holder: "h".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }));
+        assert_eq!(claimed.row.state, BeadState::Working);
+
+        let again = apply(&claimed.row, &ev(BeadState::Working, claimed.row.version, BeadEventKind::Submit { tip: "red1".into() }));
+        assert!(!again.applied);
+        assert_eq!(again.refusal, Some(Refusal::EjectedRedTip { tip: "red1".into() }));
+        assert_eq!(again.row, claimed.row, "a refusal leaves the row untouched");
+
+        let fresh = apply(&claimed.row, &ev(BeadState::Working, claimed.row.version, BeadEventKind::Submit { tip: "new2".into() }));
+        assert!(fresh.applied);
+        assert_eq!((fresh.row.state, fresh.row.tip.as_deref()), (BeadState::Submitted, Some("new2")));
+    }
+
+    #[test]
+    fn an_ejection_that_was_not_red_does_not_bar_the_tip() {
+        let mut r = row(BeadState::InDelivery);
+        r.tip = Some("t1".into());
+        let ejected = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Returned { reason: ReturnedReason::BatchEjected }));
+        assert_eq!(ejected.row.ejected_red_tip, None);
+    }
+
     const ALL_DROP_REASONS: [DropReason; 2] = [DropReason::ClosedNoBranch, DropReason::Unwanted];
     const ALL_HOLD_CAUSES: [HoldCause; 5] = [
         HoldCause::AttemptsExhausted,
@@ -2094,5 +2261,194 @@ mod tests {
         let out = apply(&succ, &renew_by("aeon-mindy", &succ, 5_000));
         assert!(!out.applied);
         assert_eq!(out.row.lease_until, Some(900));
+    }
+
+    fn claimed(holder: &str) -> BeadRow {
+        let ev = BeadEvent { actor: holder.into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) };
+        apply(&BeadRow::filed("sp-test"), &ev).row
+    }
+
+    fn phase_ev(actor: &str, r: &BeadRow, phase: AeonPhase) -> BeadEvent {
+        BeadEvent { actor: actor.into(), ..ev(r.state, r.version, BeadEventKind::Phase { phase }) }
+    }
+
+    #[test]
+    fn a_claim_starts_the_row_in_the_claimed_phase() {
+        let r = claimed("aeon-a");
+        assert_eq!(r.phase, Some(AeonPhase::Claimed));
+        assert_eq!(BeadRow::filed("sp-x").phase, None);
+    }
+
+    #[test]
+    fn every_forward_phase_applies_and_is_recorded() {
+        let mut r = claimed("aeon-a");
+        for (i, phase) in AeonPhase::ALL.into_iter().enumerate().skip(1) {
+            let out = apply(&r, &phase_ev("aeon-a", &r, phase));
+            assert!(out.applied, "{phase:?}: {:?}", out.refusal);
+            assert_eq!(out.row.phase, Some(phase), "the read returns exactly the recorded phase");
+            assert_eq!(out.row.version, r.version + 1);
+            assert_eq!(out.row.state, BeadState::Working);
+            assert_eq!(AeonPhase::ALL[i], phase);
+            r = out.row;
+        }
+    }
+
+    #[test]
+    fn only_phases_a_working_row_can_still_reach_exist() {
+        assert_eq!(AeonPhase::ALL.map(AeonPhase::as_str), ["claimed", "building", "session", "teardown"]);
+        assert_eq!(AeonPhase::from_str("fast_tier"), None);
+        assert_eq!(AeonPhase::from_str("submitting"), None);
+    }
+
+    #[test]
+    fn a_phase_may_skip_ahead() {
+        let r = claimed("aeon-a");
+        let out = apply(&r, &phase_ev("aeon-a", &r, AeonPhase::Teardown));
+        assert!(out.applied);
+        assert_eq!(out.row.phase, Some(AeonPhase::Teardown));
+    }
+
+    #[test]
+    fn a_repeated_or_backward_phase_is_refused_naming_the_state() {
+        let mut r = claimed("aeon-a");
+        r = apply(&r, &phase_ev("aeon-a", &r, AeonPhase::Session)).row;
+        for phase in [AeonPhase::Session, AeonPhase::Building, AeonPhase::Claimed] {
+            let out = apply(&r, &phase_ev("aeon-a", &r, phase));
+            assert!(!out.applied);
+            assert_eq!(out.row, r);
+            match out.refusal {
+                Some(Refusal::IllegalTransition { state, .. }) => assert_eq!(state, "WORKING/session"),
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_phase_from_anyone_but_the_holder_is_refused() {
+        let r = claimed("aeon-a");
+        let out = apply(&r, &phase_ev("aeon-b", &r, AeonPhase::Building));
+        assert!(!out.applied);
+        assert!(matches!(out.refusal, Some(Refusal::NotHolder { .. })));
+    }
+
+    #[test]
+    fn a_phase_outside_working_is_refused_naming_the_state() {
+        for &state in &ALL_STATES {
+            if state == BeadState::Working {
+                continue;
+            }
+            let mut r = row(state);
+            r.holder = Some("aeon-a".into());
+            let out = apply(&r, &phase_ev("aeon-a", &r, AeonPhase::Building));
+            assert!(!out.applied, "{state:?}");
+            match out.refusal {
+                Some(Refusal::IllegalTransition { state: s, .. }) => assert_eq!(s, state.as_str()),
+                Some(Refusal::Terminal { state: s }) => assert_eq!(s, state.as_str()),
+                other => panic!("{state:?}: {other:?}"),
+            }
+            assert_eq!(out.row.phase, None);
+        }
+    }
+
+    #[test]
+    fn leaving_working_clears_the_phase_and_the_disposition() {
+        let mut r = claimed("aeon-a");
+        r = apply(&r, &phase_ev("aeon-a", &r, AeonPhase::Session)).row;
+        r = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status: DispositionStatus::Slain, note: "why".into() })).row;
+        assert_eq!(r.disposition, Some(DispositionStatus::Slain));
+        for kind in [BeadEventKind::Release, BeadEventKind::HolderDead, BeadEventKind::Submit { tip: "t1".into() }] {
+            let out = apply(&r, &ev(BeadState::Working, r.version, kind));
+            assert!(out.applied);
+            assert_eq!((out.row.phase, out.row.disposition, out.row.disposition_note), (None, None, None));
+        }
+    }
+
+    #[test]
+    fn a_reclaim_starts_a_fresh_phase_and_no_disposition() {
+        let mut r = claimed("aeon-a");
+        r = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status: DispositionStatus::Lapsed, note: "q".into() })).row;
+        r = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Release)).row;
+        let out = apply(&r, &BeadEvent { actor: "aeon-b".into(), ..ev(BeadState::Ready, r.version, BeadEventKind::Claim { holder: "aeon-b".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) });
+        assert!(out.applied);
+        assert_eq!((out.row.phase, out.row.disposition), (Some(AeonPhase::Claimed), None));
+    }
+
+    #[test]
+    fn every_disposition_applies_and_is_recorded_with_its_note() {
+        for status in DispositionStatus::ALL {
+            let r = claimed("aeon-a");
+            let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status, note: "the cutter's words".into() }));
+            assert!(out.applied, "{status:?}");
+            assert_eq!(out.row.disposition, Some(status));
+            assert_eq!(out.row.disposition_note.as_deref(), Some("the cutter's words"));
+            assert_eq!(out.row.version, r.version + 1);
+            assert_eq!(out.row.phase, r.phase, "a disposition does not move the phase");
+        }
+    }
+
+    #[test]
+    fn a_weaker_or_repeated_disposition_never_overwrites_a_stronger_one() {
+        let r = claimed("aeon-a");
+        let slain = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status: DispositionStatus::Slain, note: "op".into() })).row;
+        for status in DispositionStatus::ALL {
+            let out = apply(&slain, &ev(BeadState::Working, slain.version, BeadEventKind::Disposition { status, note: "later".into() }));
+            assert!(!out.applied, "{status:?}");
+            assert_eq!(out.row, slain);
+            match out.refusal {
+                Some(Refusal::IllegalTransition { state, .. }) => assert_eq!(state, "WORKING/claimed"),
+                other => panic!("{other:?}"),
+            }
+        }
+        let lapsed = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status: DispositionStatus::Lapsed, note: "q".into() })).row;
+        let stronger = apply(&lapsed, &ev(BeadState::Working, lapsed.version, BeadEventKind::Disposition { status: DispositionStatus::Slain, note: "op".into() }));
+        assert!(stronger.applied);
+        assert_eq!(stronger.row.disposition_note.as_deref(), Some("op"));
+    }
+
+    #[test]
+    fn a_disposition_outside_working_is_refused_naming_the_state() {
+        for &state in &ALL_STATES {
+            if state == BeadState::Working {
+                continue;
+            }
+            let r = row(state);
+            let out = apply(&r, &ev(state, r.version, BeadEventKind::Disposition { status: DispositionStatus::Slain, note: String::new() }));
+            assert!(!out.applied, "{state:?}");
+            match out.refusal {
+                Some(Refusal::IllegalTransition { state: s, .. }) => assert_eq!(s, state.as_str()),
+                Some(Refusal::Terminal { state: s }) => assert_eq!(s, state.as_str()),
+                other => panic!("{state:?}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn phase_and_disposition_names_round_trip() {
+        for p in AeonPhase::ALL {
+            assert_eq!(AeonPhase::from_str(p.as_str()), Some(p));
+        }
+        for d in DispositionStatus::ALL {
+            assert_eq!(DispositionStatus::from_str(d.as_str()), Some(d));
+        }
+        assert_eq!(AeonPhase::from_str("nope"), None);
+        for unreachable in ["fast_tier", "submitting"] {
+            assert_eq!(AeonPhase::from_str(unreachable), None, "the model's submit leaves WORKING first: {unreachable} cannot be recorded");
+        }
+    }
+
+    #[test]
+    fn a_replay_of_the_log_reproduces_the_phase_and_disposition() {
+        let r0 = BeadRow::filed("sp-replay");
+        let log = vec![
+            BeadEvent { actor: "aeon-a".into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-a".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) },
+            BeadEvent { actor: "aeon-a".into(), ..ev(BeadState::Working, 1, BeadEventKind::Phase { phase: AeonPhase::Session }) },
+            ev(BeadState::Working, 2, BeadEventKind::Disposition { status: DispositionStatus::Thrash, note: "t".into() }),
+        ];
+        let mut live = r0;
+        for e in &log {
+            live = apply(&live, e).row;
+        }
+        assert_eq!(crate::replay::fold_bead("sp-replay", &log), live);
+        assert_eq!((live.phase, live.disposition), (Some(AeonPhase::Session), Some(DispositionStatus::Thrash)));
     }
 }

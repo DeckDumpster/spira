@@ -231,8 +231,21 @@ fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
     };
     stack
         .as_object()
-        .map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .filter(|(k, _)| !prereq_is_finished(env, k))
+                .collect()
+        })
         .unwrap_or_default()
+}
+
+/// A prerequisite the machine records as LANDED, SUPERSEDED or DROPPED sequences nothing.
+/// An unreadable row is read as live: sequencing a member is the safe side.
+fn prereq_is_finished(env: &Env, id: &str) -> bool {
+    let Ok(out) = lcq(env, &["show", id]) else { return false };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) else { return false };
+    matches!(v.get("bead").and_then(|b| b.get("state")).and_then(|s| s.as_str()), Some("LANDED" | "SUPERSEDED" | "DROPPED"))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -260,6 +273,9 @@ fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
         pool.extend(rows.iter().filter(|r| holds_empty(r)).filter_map(|r| {
             let id = r.get("bead_id")?.as_str()?.to_string();
             let tip = r.get("tip").and_then(|t| t.as_str()).unwrap_or("none").to_string();
+            if r.get("ejected_red_tip").and_then(|t| t.as_str()) == Some(tip.as_str()) {
+                return None;
+            }
             let epoch = [r.get("since"), r.get("updated_at")]
                 .into_iter()
                 .flatten()
@@ -677,6 +693,12 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
             .arg(tip),
     );
     if ok {
+        let numbered = crate::renumber::after_merge(wt).map(drop).and_then(|_| crate::renumber::check(wt));
+        if let Err(e) = numbered {
+            eprintln!("batcher: refusing {id}: migrations after its merge: {e}");
+            let _ = run(Command::new("git").arg("-C").arg(wt).args(["reset", "-q", "--hard", "HEAD^1"]), "git reset --hard HEAD^1");
+            return MergeResult::Conflict;
+        }
         MergeResult::Ok
     } else {
         let _ = run(Command::new("git").arg("-C").arg(wt).args(["merge", "--abort"]), "git merge --abort");
@@ -2390,6 +2412,15 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn a_tip_a_round_ejected_red_is_not_in_the_round_pool_but_a_new_one_is() {
+        let d = scratch("ejected-red");
+        let reply = r#"[{"bead_id":"sp-r","tip":"rrrr","ejected_red_tip":"rrrr","updated_at":4},{"bead_id":"sp-n","tip":"nnnn","ejected_red_tip":"oooo","updated_at":5},{"bead_id":"sp-c","tip":"cccc","ejected_red_tip":null,"updated_at":6}]"#;
+        let e = env(&d, Some(fake_lc(&d, reply)));
+        let ids: Vec<String> = read_pool(&e).unwrap().into_iter().map(|r| r.0).collect();
+        assert_eq!(ids, vec!["sp-c".to_string(), "sp-n".to_string()]);
+    }
+
+    #[test]
     fn a_held_row_is_not_in_the_round_pool() {
         let d = scratch("held");
         let reply = r#"[{"bead_id":"sp-h","tip":"hhhh","since":5,"updated_at":9,"holds":["ask"]},{"bead_id":"sp-s","tip":"ssss","since":3,"updated_at":9,"holds":"[]"},{"bead_id":"sp-j","tip":"jjjj","updated_at":4,"holds":[]},{"bead_id":"sp-t","tip":"tttt","updated_at":4,"holds":"[\"wait\"]"}]"#;
@@ -2416,6 +2447,19 @@ mod lifecycle_tests {
         let d = scratch("stack");
         let e = env(&d, Some(fake_lc(&d, r#"{"bead":{"stack":{"sp-z":"zzzz"}}}"#)));
         assert_eq!(read_stack(&e, "sp-a").get("sp-z").map(String::as_str), Some("zzzz"));
+    }
+
+    #[test]
+    fn a_landed_prerequisite_drops_out_of_the_stack_a_live_one_stays() {
+        let d = scratch("stack-landed");
+        let p = d.join("spira-lc");
+        testkit::write_exe(
+            &p,
+            "#!/bin/sh\ncase \"$2\" in\n sp-dep) printf '%s' '{\"bead\":{\"stack\":{\"sp-done\":\"t1\",\"sp-live\":\"t2\",\"sp-gone\":\"t3\"}}}';;\n sp-done) printf '%s' '{\"bead\":{\"state\":\"LANDED\"}}';;\n sp-gone) printf '%s' '{\"bead\":{\"state\":\"DROPPED\"}}';;\n *) printf '%s' '{\"bead\":{\"state\":\"CERTIFIED\"}}';;\nesac\n",
+        );
+        let e = env(&d, Some(p));
+        let stack = read_stack(&e, "sp-dep");
+        assert_eq!(stack.keys().map(String::as_str).collect::<Vec<_>>(), ["sp-live"]);
     }
 
     #[test]

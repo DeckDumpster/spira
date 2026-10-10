@@ -536,6 +536,35 @@ fn no_open_batch_never_calls_the_forge() {
 }
 
 #[test]
+fn a_publish_red_bead_carries_the_failing_suite_lines() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("555".into());
+    *t.forge.fails.borrow_mut() = "fail-line: test-a.sh: gate: test-a.sh FAILED\nfail-line: test-a.sh: not ok 3 - widget\n".into();
+    t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\nrun-url: http://r/9\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(has_call(&t.forge.calls, "fail-lines 555 test-a.sh"));
+    assert!(t.lib.has("create_bug"));
+    let bug = t.lib.calls.borrow().iter().find(|c| c.starts_with("create_bug")).cloned().unwrap();
+    assert!(bug.contains("Failing lines:\nfail-line: test-a.sh: gate: test-a.sh FAILED\nfail-line: test-a.sh: not ok 3 - widget"), "{bug}");
+}
+
+#[test]
+fn a_second_publish_red_with_the_same_failing_set_amends_the_first_with_its_lines() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    fs::write(t.qfile("publish-red"), "head=m2\nfix_forward=sp-old\nsuites=test-a.sh\n").unwrap();
+    *t.forge.run.borrow_mut() = Some("556".into());
+    *t.forge.fails.borrow_mut() = "fail-line: test-a.sh: not ok 3 - widget\n".into();
+    t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lib.has("amend_bug queue.sh sp-old"));
+    let note = t.lib.calls.borrow().iter().find(|c| c.starts_with("amend_bug")).cloned().unwrap();
+    assert!(note.contains("not ok 3 - widget"), "{note}");
+    assert!(!t.lib.has("create_bug"));
+}
+
+#[test]
 fn a_repeat_publish_red_for_the_same_suites_amends_the_open_bead_rather_than_filing() {
     let t = T::new(LandMode::QueueLocal);
     publish_record(&t);

@@ -331,6 +331,7 @@ mod tests {
             external_ref: None,
             title: String::new(),
             notes: Vec::new(),
+            express: false,
         }
     }
 

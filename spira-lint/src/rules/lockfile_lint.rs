@@ -205,3 +205,9 @@ mod tests {
         assert!(version_tuple("1.10.0") > version_tuple("1.9.9"));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(LockfileLint::default()),
+    ]
+}

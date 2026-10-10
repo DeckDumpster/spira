@@ -222,3 +222,91 @@ impl FakeAlarm {
         self.0.lock().unwrap().clone()
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct FakeEc2Inst {
+    pub id: String,
+    pub tag: Option<String>,
+    pub name: String,
+    pub launched_at: u64,
+}
+
+#[derive(Default)]
+struct Ec2Inner {
+    n: u32,
+    insts: Vec<FakeEc2Inst>,
+    scripts: Vec<String>,
+    user_data: Vec<String>,
+    never_joins: bool,
+    fail_run: bool,
+}
+
+/// An EC2 account in memory: instances, the SSM scripts run on them, the tailnet.
+#[derive(Clone, Default)]
+pub struct FakeEc2(Arc<Mutex<Ec2Inner>>);
+
+impl FakeEc2 {
+    pub fn plant(&self, id: &str, tag: Option<&str>, name: &str, launched_at: u64) {
+        self.0.lock().unwrap().insts.push(FakeEc2Inst { id: id.into(), tag: tag.map(String::from), name: name.into(), launched_at });
+    }
+    pub fn never_joins_tailnet(&self) {
+        self.0.lock().unwrap().never_joins = true;
+    }
+    pub fn fail_run(&self) {
+        self.0.lock().unwrap().fail_run = true;
+    }
+    pub fn ids(&self) -> Vec<String> {
+        self.0.lock().unwrap().insts.iter().map(|i| i.id.clone()).collect()
+    }
+    pub fn scripts(&self) -> Vec<String> {
+        self.0.lock().unwrap().scripts.clone()
+    }
+    pub fn user_data(&self) -> Vec<String> {
+        self.0.lock().unwrap().user_data.clone()
+    }
+}
+
+impl crate::ec2::Ec2Api for FakeEc2 {
+    fn run(&self, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
+        let mut g = self.0.lock().unwrap();
+        if g.fail_run {
+            return Err("fake run-instances refused".into());
+        }
+        g.n += 1;
+        let id = format!("i-{:04}", g.n);
+        g.user_data.push(user_data.to_string());
+        g.insts.push(FakeEc2Inst { id: id.clone(), tag: Some(handle.into()), name: name.into(), launched_at: crate::schema::now() });
+        Ok(id)
+    }
+    fn find(&self, handle: &str) -> Result<Option<crate::ec2::Inst>, String> {
+        Ok(self.list_tagged()?.into_iter().find(|i| i.handle == handle))
+    }
+    fn list_tagged(&self) -> Result<Vec<crate::ec2::Inst>, String> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .insts
+            .iter()
+            .filter_map(|i| {
+                i.tag.as_ref().map(|t| crate::ec2::Inst { id: i.id.clone(), handle: t.clone(), name: i.name.clone(), running: true, launched_at: i.launched_at })
+            })
+            .collect())
+    }
+    fn terminate(&self, id: &str) -> Result<(), String> {
+        self.0.lock().unwrap().insts.retain(|i| i.id != id);
+        Ok(())
+    }
+    fn ssm(&self, id: &str, script: &str) -> Result<(i32, String), String> {
+        let mut g = self.0.lock().unwrap();
+        if !g.insts.iter().any(|i| i.id == id) {
+            return Err(format!("{id} is not a managed instance"));
+        }
+        g.scripts.push(script.to_string());
+        Ok((0, "diagnostic output".into()))
+    }
+    fn tailnet_addr(&self, hostname: &str) -> Result<Option<String>, String> {
+        let g = self.0.lock().unwrap();
+        Ok(g.insts.iter().find(|i| i.name == hostname && !g.never_joins).map(|i| format!("100.64.0.{}", i.id.trim_start_matches("i-").trim_start_matches('0'))))
+    }
+}

@@ -58,7 +58,7 @@ fn the_shipped_cut_job_reads_as_its_named_script_steps() {
 
 #[test]
 fn only_the_expressions_a_runner_provides_are_expanded() {
-    let cx = Context { sha: "abc", workspace: Path::new("/w") };
+    let cx = Context { sha: "abc", workspace: Path::new("/w"), temp: Path::new("/t") };
     assert_eq!(expand("${{ github.sha }}:${{github.workspace}}:${{ github.head_ref }}|", &cx).unwrap(), "abc:/w:|");
     assert!(expand("${{ matrix.os }}", &cx).unwrap_err().contains("matrix.os"));
     assert!(expand("${{ github.sha", &cx).is_err());
@@ -75,7 +75,7 @@ fn a_job_runs_its_steps_in_a_clean_env_and_stops_at_the_first_failure() {
     std::fs::create_dir_all(&ws).unwrap();
     let all = steps(TOY, "cut").unwrap();
     let mut log = String::new();
-    let job = Job { steps: &all, skip: &[], cx: Context { sha: "s1", workspace: &ws }, scratch: &t.join("scratch"), gh_dir: &t.join("gh"), release_bin: &t.join("rel"), path: &[std::path::PathBuf::from("/opt/runner-image")], env: &[("IMAGE".to_string(), "yes".to_string())] };
+    let job = Job { steps: &all, skip: &[], cx: Context { sha: "s1", workspace: &ws, temp: &t.join("scratch") }, scratch: &t.join("scratch"), gh_dir: &t.join("gh"), release_bin: &t.join("rel"), path: &[std::path::PathBuf::from("/opt/runner-image")], env: &[("IMAGE".to_string(), "yes".to_string())] };
     let code = run_job(&job, Path::new("/bin/true"), |l| log.push_str(l)).unwrap();
     assert_eq!(code, 7, "{log}");
     assert!(log.contains("sha=s1 who=sim-token plain=two words"), "{log}");

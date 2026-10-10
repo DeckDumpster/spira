@@ -183,3 +183,9 @@ mod tests {
         assert!(matches!(ConfigDelta::default().check(&tree), Err(LintError::Refused(_))));
     }
 }
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ConfigDelta::default()),
+    ]
+}

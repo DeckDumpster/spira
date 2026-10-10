@@ -12,6 +12,7 @@
 //! every request the socket receives, printing nothing of its own. One implementation, two
 //! callers, and the service path and the same-user fallback can never drift apart.
 
+mod ask;
 mod bd;
 mod bd_facts;
 mod callers;
@@ -82,6 +83,7 @@ fn main() {
         Some("reconcile-closed") => {
             std::process::exit(emit(&[], callers::reconcile_closed(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
         }
+        Some("migrate-asks") => std::process::exit(emit(&[], ask::migrate_asks(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
         Some("reconcile-epics") => {
             std::process::exit(emit(&[], callers::reconcile_epics(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd)))
         }
@@ -119,6 +121,9 @@ fn main() {
     // The caller verbs (callers.rs; DESIGN.md §2).
     if let Some(verb) = args.first().filter(|v| callers::is_verb(v)) {
         let rest = &args[1..];
+        if verb == "drop" {
+            std::process::exit(emit(rest, callers::drop_cmd(rest, &mut Live { conn: None }, &mut bd::LiveBd)));
+        }
         let ans = callers::run(verb, rest, &mut Live { conn: None });
         std::process::exit(emit(rest, ans));
     }
@@ -219,6 +224,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("list") => cmd_list(&args[1..], conn),
         Some("history") => cmd_history(&args[1..], conn),
         Some("event") => cmd_event(&args[1..], conn),
+        Some("stats") => (0, slow::stats_json()),
         // The attempt and poison history (facts.rs): appended facts, never a transition.
         Some("fact") => facts::cmd_fact(&args[1..], conn),
         Some("facts") => facts::cmd_facts(&args[1..], conn),
@@ -230,10 +236,19 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // cascades a batch's own transition emits to its members (cutover.rs's own doc).
         Some("show-batch") => cutover::cmd_show_batch(&args[1..], conn),
         Some("create-bead") => cutover::cmd_create_bead(&args[1..], conn),
+        // The ask machine (ask.rs): an escalation is its own lifecycle, never a bead row.
+        Some("create-ask") => ask::cmd_create_ask(&args[1..], conn),
+        Some("show-ask") => ask::cmd_show_ask(&args[1..], conn),
+        Some("list-asks") => ask::cmd_list_asks(&args[1..], conn),
+        Some("close-ask") => ask::cmd_close_ask(&args[1..], conn),
         Some("cut") => cutover::cmd_cut(&args[1..], conn),
         // batcher-cut's own pipelining onto an already-OPEN batch (sp-o7nbr.4): the same
         // MemberAdded/Deliver/Cut cascade `cut` performs, minus the batch row's own INSERT.
         Some("stack") => cutover::cmd_stack(&args[1..], conn),
+        // A round assembled behind a running one, and its promotion (queue round stage/promote).
+        Some("stage") => cutover::cmd_stage(&args[1..], conn),
+        Some("promote") => cutover::cmd_promote(&args[1..], conn),
+        Some("event-continuity") => cutover::cmd_event_continuity(&args[1..], conn),
         Some("land") => cutover::cmd_land(&args[1..], conn),
         Some("settle") => cutover::cmd_settle(&args[1..], conn),
         Some("abandon-batch") => cutover::cmd_abandon_batch(&args[1..], conn),
@@ -250,6 +265,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("admin-migrate") => migrate::run(&args[1..], conn),
         // The ops read model (lifecycle/migrations/0007): a view as JSON, and the one-time title backfill.
         Some("ops-view") => ops::cmd_ops_view(&args[1..], conn),
+        Some("ops-refusals") => ops::cmd_ops_refusals(&args[1..], conn),
         Some("dep-add") => deps::cmd_dep_add(&args[1..], conn),
         Some("dep-remove") => deps::cmd_dep_remove(&args[1..], conn),
         Some("backfill-deps") => deps::cmd_backfill_deps(&args[1..], conn),
@@ -263,7 +279,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | event-continuity | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
         ),
     }
 }
@@ -318,7 +334,7 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "show: missing <bead-id>".into());
     };
     let bead_rows = match conn.query(&format!(
-        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, express, updated_at FROM bead WHERE bead_id = '{}'",
+        "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, express, aeon_phase, disposition, disposition_note, ejected_red_tip, updated_at FROM bead WHERE bead_id = '{}'",
         rows::escape(bead_id)
     )) {
         Ok(r) => r,
@@ -396,7 +412,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, express, blockers.blocked_by FROM bead \
+        "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, express, aeon_phase, disposition, disposition_note, ejected_red_tip, blockers.blocked_by FROM bead \
          LEFT JOIN {} ON blockers.waiting = bead.bead_id{where_clause} ORDER BY bead_id",
         blockers_join()
     );
@@ -581,17 +597,7 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
         _ => bead::apply(&row, &ev),
     };
     let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
-    let rec = db::EventRecord {
-        machine: "bead".into(),
-        key: key.into(),
-        event: kind_name(&evidence),
-        expect: expect.into(),
-        from_state: row.state.as_str().into(),
-        refusal: outcome.refusal.as_ref().map(refusal_name),
-        evidence,
-        actor: actor.into(),
-        at,
-    };
+    let rec = db::EventRecord::of_apply("bead", key, kind_name(&evidence), expect, row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
     if !outcome.applied {
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return (CANNOT_TELL, format!("cannot tell: {e:?}"));
@@ -656,17 +662,7 @@ fn run_delivery_event(conn: &Conn, key: &str, expect: &str, version: u64, actor:
     let ev = delivery::DeliveryEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string() };
     let outcome = delivery::apply(&row, &ev);
     let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
-    let rec = db::EventRecord {
-        machine: "delivery".into(),
-        key: key.into(),
-        event: kind_name(&evidence),
-        expect: expect.into(),
-        from_state: row.state.as_str().into(),
-        refusal: outcome.refusal.as_ref().map(refusal_name),
-        evidence,
-        actor: actor.into(),
-        at,
-    };
+    let rec = db::EventRecord::of_apply("delivery", key, kind_name(&evidence), expect, row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
     if !outcome.applied {
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return (CANNOT_TELL, format!("cannot tell: {e:?}"));
@@ -697,17 +693,7 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
     let ev = batch::BatchEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string() };
     let outcome = batch::apply(&row, &ev);
     let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
-    let rec = db::EventRecord {
-        machine: "batch".into(),
-        key: key.into(),
-        event: kind_name(&evidence),
-        expect: expect.into(),
-        from_state: row.state.as_str().into(),
-        refusal: outcome.refusal.as_ref().map(refusal_name),
-        evidence,
-        actor: actor.into(),
-        at,
-    };
+    let rec = db::EventRecord::of_apply("batch", key, kind_name(&evidence), expect, row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, actor, at);
     if !outcome.applied {
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return (CANNOT_TELL, format!("cannot tell: {e:?}"));
@@ -722,13 +708,17 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
     }
 }
 
-/// The externally-tagged serde representation of an event kind is `{"Variant": {...}}`;
-/// the tag itself is what `event` logs as the event's name.
+/// Externally-tagged serde writes a struct variant as `{"Variant": {...}}` and a unit variant as
+/// the bare string `"Variant"`; either way the tag is the event's name.
 fn kind_name(evidence: &Value) -> String {
-    evidence.as_object().and_then(|m| m.keys().next()).cloned().unwrap_or_else(|| "unknown".to_string())
+    match evidence {
+        Value::String(s) => s.clone(),
+        Value::Object(m) => m.keys().next().cloned().unwrap_or_else(|| "unknown".to_string()),
+        _ => "unknown".to_string(),
+    }
 }
 
-fn refusal_name(r: &lifecycle::Refusal) -> String {
+pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
     match r {
         lifecycle::Refusal::ExpectMismatch { .. } => "ExpectMismatch".to_string(),
         lifecycle::Refusal::StaleVersion { .. } => "StaleVersion".to_string(),
@@ -741,6 +731,7 @@ fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::AwaitingReply { .. } => "AwaitingReply".to_string(),
         lifecycle::Refusal::NotHolder { .. } => "NotHolder".to_string(),
         lifecycle::Refusal::ManualHoldReason { .. } => "ManualHoldReason".to_string(),
+        lifecycle::Refusal::EjectedRedTip { .. } => "EjectedRedTip".to_string(),
     }
 }
 
@@ -756,5 +747,13 @@ mod tests {
         assert!(sql.contains("applied = 1"));
         assert!(sql.contains("GROUP BY lc_key, to_state"));
         assert!(!sql.contains("e.lc_key = delivery"));
+    }
+
+    #[test]
+    fn a_unit_variant_and_a_struct_variant_are_both_named() {
+        let unit = serde_json::to_value(lifecycle::bead::BeadEventKind::Release).unwrap();
+        let strukt = serde_json::to_value(lifecycle::bead::BeadEventKind::Submit { tip: "abc".into() }).unwrap();
+        assert_eq!(kind_name(&unit), "Release");
+        assert_eq!(kind_name(&strukt), "Submit");
     }
 }

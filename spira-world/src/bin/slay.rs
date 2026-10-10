@@ -6,7 +6,7 @@
 //! NAMED ARGUMENTS ONLY, same as the bash version and for the same scar: a bare word here
 //! used to become the bead id, so a reason written beside the id silently replaced it.
 //!
-//! WHAT MOVED WHERE (DESIGN.md Decisions has the full account): the marker write, the
+//! WHAT MOVED WHERE (DESIGN.md Decisions has the full account): the disposition record, the
 //! hold-vs-aeon distinction, the systemd-unit-or-pid stop and the wait/escalate-to-KILL
 //! loop are native Rust (`spira_world::proc`, `spira_world::sysctl`) — this is the part of
 //! the original file that was genuinely process-control logic, and the part whose own
@@ -135,15 +135,6 @@ fn spira_run() -> PathBuf {
     })
 }
 
-fn now_iso() -> String {
-    spira_config::bounded::bounded("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
-}
-
 fn epoch() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -201,9 +192,8 @@ fn main() {
 
     let mut fail = false;
 
-    // ---- 1. the marker ------------------------------------------------------------------
-    let marker = run.join(format!("{id}.slain"));
-    let _ = std::fs::write(&marker, format!("{}\t{}\n", now_iso(), args.why));
+    // ---- 1. the disposition: the row says why the session ends -------------------------
+    let _ = spira_config::bounded::bounded("spira-lc").args(["disposition", id, "slain", &args.why, "slay"]).output();
 
     // ---- 2/3. the holder (aeon OR manual hold) ------------------------------------------
     let mut name = String::new();
@@ -292,7 +282,6 @@ fn main() {
             }
         }
     }
-    let _ = std::fs::remove_file(&marker);
 
     // ---- 4a/5/4b/6 — everything downstream that still needs lib.sh's chokepoints -------
     let (mode, reason) = match &args.mode_close {

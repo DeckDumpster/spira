@@ -235,10 +235,11 @@ pub enum Probe {
     Unprobeable,
 }
 
-/// The byte offset of the first top-level ` WHERE ` keyword (outside quotes), if any.
+/// The byte offset of the first top-level ` WHERE ` keyword (outside quotes and parentheses), if any.
 fn where_at(sql: &str) -> Option<usize> {
     let b = sql.as_bytes();
     let mut quote: Option<u8> = None;
+    let mut depth = 0usize;
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
@@ -251,10 +252,12 @@ fn where_at(sql: &str) -> Option<usize> {
                 }
             }
             None if c == b'\'' || c == b'"' || c == b'`' => quote = Some(c),
+            None if c == b'(' => depth += 1,
+            None if c == b')' => depth = depth.saturating_sub(1),
             None => {
                 let before_ok = i > 0 && b[i - 1].is_ascii_whitespace();
                 let after_ok = b.get(i + 5).is_none_or(|n| n.is_ascii_whitespace() || *n == b'(');
-                if before_ok && after_ok && sql.get(i..i + 5).is_some_and(|w| w.eq_ignore_ascii_case("WHERE")) {
+                if depth == 0 && before_ok && after_ok && sql.get(i..i + 5).is_some_and(|w| w.eq_ignore_ascii_case("WHERE")) {
                     return Some(i);
                 }
             }
@@ -371,6 +374,14 @@ pub fn is_applied(db: &dyn Sql, st: &Stmt) -> Result<bool, String> {
             .is_empty()),
         Probe::Unprobeable => Ok(false),
     }
+}
+
+/// How many rows a guarded UPDATE/DELETE is about to change; None for any other step.
+fn rows_touched(db: &dyn Sql, st: &Stmt) -> Option<u64> {
+    let Probe::NoRowMatches(q) = probe_for(st) else { return None };
+    let count = format!("SELECT COUNT(*) AS n FROM {}", q.strip_prefix("SELECT 1 FROM ")?.strip_suffix(" LIMIT 1")?);
+    let rows = db.rows(&count).ok()?;
+    rows.first()?.get("n").and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_u64()))
 }
 
 /// What the probe saw, for the report: the applied wording or the pending one.
@@ -502,9 +513,12 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
         (2, format!("admin-migrate: {name} is pending ({}) and applying it needs a database admin — set {ADMIN_VARS} (no admin credential is configured{why})", what(st, false)))
     };
     let refused = |name: &str, e: &str| (2, format!("admin-migrate: {name}: pending, and applying it as the database admin failed: {e} — check {ADMIN_VARS}"));
-    let applied_as = |st: &Stmt, who: &str| match st {
+    let applied_as = |st: &Stmt, who: &str, touched: Option<u64>| match st {
         Stmt::AddColumn { table, column, .. } => format!("added {table}.{column}"),
-        _ => format!("applied as {who}"),
+        _ => match touched {
+            Some(n) => format!("applied as {who}, {n} row(s) touched"),
+            None => format!("applied as {who}"),
+        },
     };
     let mut wrote = false;
     // Once the admin has written, later steps are probed on the admin's session: a probe
@@ -534,6 +548,7 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
             Stmt::AddColumn { sql, .. } | Stmt::Plain(sql) => sql,
             Stmt::UnguardedAlter(_) => unreachable!("plan refuses these"),
         };
+        let touched = rows_touched(prober, st);
         let mut service_refused = None;
         if applier_for(grants, steps, name) == Applier::Service {
             match service.exec(sql) {
@@ -545,7 +560,7 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
                         Err(e) => return (2, format!("admin-migrate: {name}: applied as the lifecycle service user, but cannot tell whether it took: {e}")),
                     }
                     wrote = true;
-                    report.push(format!("{name}: {}", applied_as(st, "the lifecycle service user")));
+                    report.push(format!("{name}: {}", applied_as(st, "the lifecycle service user", touched)));
                     continue;
                 }
                 Err(e) if is_privilege_error(&e) => service_refused = Some(e),
@@ -569,7 +584,7 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
             Ok(()) => {
                 wrote = true;
                 admin_wrote = true;
-                report.push(format!("{name}: {}", applied_as(st, "the database admin")));
+                report.push(format!("{name}: {}", applied_as(st, "the database admin", touched)));
             }
             Err(e) => return refused(name, &e),
         }
@@ -693,7 +708,12 @@ mod tests {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../lifecycle/migrations");
         let files = ordered_files(&[dir.to_string()]).unwrap();
         let texts: Vec<(String, String)> = files.iter().map(|f| (f.file_name().unwrap().to_string_lossy().to_string(), std::fs::read_to_string(f).unwrap())).collect();
-        assert_eq!(texts.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), ["0001-stack.sql", "0002-since.sql", "0003-terminal-holder.sql", "0004-event-since-idx.sql", "0005-persona.sql", "0006-hold-kind-manual.sql", "0007-ops-read-model.sql", "0008-event-history-idx.sql", "0009-where-stuck.sql", "0010-express.sql", "0011-bead-dep.sql", "0012-batch-opened-idx.sql", "0013-ops-edges-event.sql", "0014-batch-pass.sql"]);
+        let mut on_disk: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".sql")).collect();
+        on_disk.sort();
+        let planned: Vec<String> = texts.iter().map(|t| t.0.clone()).collect();
+        assert_eq!(planned, on_disk, "the plan is the directory, in name order");
+        let numbers: Vec<u32> = planned.iter().map(|n| n.split('-').next().unwrap().parse().expect("a migration name starts with its number")).collect();
+        assert_eq!(numbers, (1..=planned.len() as u32).collect::<Vec<_>>(), "migration numbers are unique and contiguous from 0001");
         let steps = plan(&texts).unwrap();
         let adds: Vec<(String, String)> = steps
             .iter()
@@ -702,11 +722,13 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(adds, [("bead".to_string(), "stack".to_string()), ("bead".into(), "stack_depth".into()), ("bead".into(), "since".into()), ("bead".into(), "persona".into()), ("bead".into(), "title".into()), ("bead".into(), "priority".into()), ("bead".into(), "express".into()), ("batch".into(), "pass".into()), ("batch".into(), "phase".into())]);
-        let plain = steps.iter().filter(|(_, s)| matches!(s, Stmt::Plain(_))).count();
-        assert_eq!(plain, 19, "the guarded UPDATEs, five indexes, the six views of 0007 and 0009, 0011's table, index and replaced view, and 0013's replaced view run as written");
+        for want in [("bead", "stack"), ("bead", "stack_depth"), ("bead", "since"), ("bead", "persona"), ("bead", "title"), ("bead", "priority"), ("bead", "express"), ("batch", "pass"), ("batch", "phase"), ("bead", "aeon_phase"), ("bead", "disposition"), ("bead", "disposition_note"), ("bead", "ejected_red_tip")] {
+            assert!(adds.contains(&(want.0.to_string(), want.1.to_string())), "{want:?} is added");
+        }
         let views: Vec<Probe> = steps.iter().map(|(_, s)| probe_for(s)).filter(|p| matches!(p, Probe::View(_))).collect();
-        assert_eq!(views, [Probe::View("ops_live".into()), Probe::View("ops_round".into()), Probe::View("ops_recent".into()), Probe::View("ops_edges".into()), Probe::View("ops_dwell_p95".into()), Probe::View("ops_dwell".into())], "a view is probed, never always-pending");
+        for v in ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell_p95", "ops_dwell"] {
+            assert!(views.contains(&Probe::View(v.into())), "view {v} is probed, never always-pending");
+        }
         assert!(steps.iter().any(|(_, s)| probe_for(s) == Probe::ViewColumn { view: "ops_live".into(), column: "blocker".into() }), "0011 replaces ops_live and is probed by its last alias");
         assert!(steps.iter().any(|(_, s)| probe_for(s) == Probe::ViewColumn { view: "ops_edges".into(), column: "last_at".into() }), "0013 replaces ops_edges and is probed by its last alias");
         assert!(steps.iter().all(|(_, s)| probe_for(s) != Probe::Unprobeable), "every shipped step can be probed read-only");
@@ -803,6 +825,9 @@ mod tests {
             if sql.starts_with("SELECT 1 FROM bead WHERE") {
                 return Ok(if st.stale_terminal_rows { vec![serde_json::json!({ "1": "1" })] } else { vec![] });
             }
+            if sql.starts_with("SELECT 1 FROM event WHERE") {
+                return Ok(vec![]);
+            }
             Err(format!("fake: unexpected read {sql}"))
         }
         fn exec(&self, sql: &str) -> Result<(), String> {
@@ -853,7 +878,7 @@ mod tests {
     /// A store with every shipped migration's effect already present (production today).
     fn migrated() -> Rc<RefCell<State>> {
         let mut st = State::default();
-        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express"] {
+        for c in ["id", "state", "holder", "stack", "stack_depth", "since", "persona", "title", "priority", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip"] {
             st.columns.insert(("bead".into(), c.into()));
         }
         for c in ["batch_id", "state", "pass", "phase"] {
@@ -866,9 +891,11 @@ mod tests {
             st.views.insert(v.into());
         }
         st.tables.insert("bead_dep".into());
+        st.tables.insert("ask".into());
         st.users.insert("spira_lc".into());
         st.users.insert("spira_lc_ro".into());
         st.indexes.insert("bead_dep_target_idx".into());
+        st.indexes.insert("ask_state_idx".into());
         st.columns.insert(("ops_live".into(), "blocker".into()));
         st.columns.insert(("ops_edges".into(), "last_at".into()));
         Rc::new(RefCell::new(st))

@@ -188,12 +188,63 @@ lc event bead sp-lc-rw --expect SUBMITTED --version "$v" --actor test --kind '{"
 lc cut batch-rw --repo spira --head HR --base BR --members "sp-lc-rw:tipR" --actor test >/dev/null 2>&1
 wantrc "cut still refuses a REWORK member" 3 $?
 
+# ── an applied event's states come from the row it applied to (sp-zt7r2p) ───────────────
+ev_field() {   # ev_field <machine> <key> <event> <column>
+    root_sql --use-db spira_lifecycle sql -q "SELECT $4 AS v FROM event WHERE machine = '$1' AND lc_key = '$2' AND event = '$3' AND applied = 1 ORDER BY seq DESC LIMIT 1" -r json \
+        | python3 -c 'import json,sys; d=json.load(sys.stdin)["rows"]; print(d[0]["v"] if d else "")' 2>/dev/null
+}
+is "a SUBMITTED member's Deliver logs SUBMITTED as its from_state" "SUBMITTED" "$(ev_field bead sp-lc-sub Deliver from_state)"
+is "...and as its expect" "SUBMITTED" "$(ev_field bead sp-lc-sub Deliver expect)"
+is "a CERTIFIED member's Deliver logs CERTIFIED" "CERTIFIED" "$(ev_field bead sp-lc-cer Deliver from_state)"
+is "a delivery row that did not exist is enqueued from NONE" "NONE" "$(ev_field delivery sp-lc-sub Enqueued from_state)"
+is "...and cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-sub Cut from_state)"
+
+certify sp-lc-bx tipBX
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO delivery (bead_id, mode, state, batch_id, version) VALUES ('sp-lc-bx', 'queue', 'BATCHED', 'batch-elsewhere', 1)" >/dev/null
+out="$(lc cut batch-bx --repo spira --head HX --base BX --members "sp-lc-bx:tipBX" --actor test 2>&1)"
+wantrc "a cut over a member BATCHED in another batch is refused" 3 $?
+want "...naming that batch" "batch-elsewhere" "$out"
+is "...and the member's bead is untouched" "CERTIFIED" "$(member_field sp-lc-bx bead state)"
+is "...and its delivery row still names the other batch" "batch-elsewhere" "$(member_field sp-lc-bx delivery batch_id)"
+
+certify sp-lc-ex tipEX
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO delivery (bead_id, mode, state, version) VALUES ('sp-lc-ex', 'queue', 'EXITED', 4)" >/dev/null
+lc cut batch-ex --repo spira --head HE --base BE --members "sp-lc-ex:tipEX" --actor test >/dev/null
+wantrc "a cut over an EXITED delivery row re-queues it by compare-and-swap" 0 $?
+is "...logging the EXITED row it was" "EXITED" "$(ev_field delivery sp-lc-ex Enqueued from_state)"
+is "...then the cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-ex Cut from_state)"
+is "...to BATCHED in the new batch" "batch-ex" "$(member_field sp-lc-ex delivery batch_id)"
+is "...at version 6" "6" "$(member_field sp-lc-ex delivery version)"
+
+# ── event continuity: red first on a planted break, then on the real log ────────────────
+lc event-continuity >/dev/null
+wantrc "the log the cascades above wrote is continuous" 0 $?
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-brk','A','X','X','Y',1,'{}','t',1),('bead','sp-lc-brk','B','Q','Q','R',1,'{}','t',2),('bead','sp-lc-brk','C','Q','Q','S',1,'{}','t',3)" >/dev/null
+out="$(lc event-continuity)"
+wantrc "a planted break is reported" 3 $?
+want "...naming the key" '"key":"sp-lc-brk"' "$out"
+is "...once, the first break only" "1" "$(printf '%s\n' "$out" | grep -c sp-lc-brk)"
+root_sql --use-db spira_lifecycle sql -q "DELETE FROM event WHERE lc_key = 'sp-lc-brk'" >/dev/null
+
+# ── migration 0013 corrects the hard-coded Deliver/Cut states from their predecessors ───
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-mig','Submit','WORKING','WORKING','SUBMITTED',1,'{}','t',1),('bead','sp-lc-mig','Deliver','CERTIFIED','CERTIFIED','IN_DELIVERY',1,'{}','t',2),('delivery','sp-lc-mig','Cut','QUEUED','QUEUED','BATCHED',1,'{}','t',3)" >/dev/null
+lc event-continuity >/dev/null
+wantrc "POSITIVE CONTROL: the old hard-coded states are seen as breaks" 3 $?
+root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0019-event-continuity.sql" >/dev/null 2>&1
+wantrc "migration 0013 applies" 0 $?
+is "the Deliver now says what the bead was" "SUBMITTED" "$(ev_field bead sp-lc-mig Deliver from_state)"
+is "the Cut of a row with no predecessor says NONE" "NONE" "$(ev_field delivery sp-lc-mig Cut from_state)"
+lc event-continuity >/dev/null
+wantrc "...and the log is continuous again" 0 $?
+root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0019-event-continuity.sql" >/dev/null 2>&1
+wantrc "migration 0013 is idempotent" 0 $?
+
 # ── criterion 1: a green batch lands every member atomically in one transaction ──────────
 certify sp-lc-1 tipA
 certify sp-lc-2 tipB
 out="$(lc cut batch-green --repo spira --head H1 --base B1 --members "sp-lc-1:tipA,sp-lc-2:tipB" --actor test)"
 wantrc "cut opens batch-green with two members" 0 $?
-want "cut applied every step" '"applied":[true,true,true,true]' "$out"
+want "cut applied every step" '"applied":[true,true,true,true,true,true]' "$out"
 
 v="$(batch_field batch-green version)"
 lc event batch batch-green --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
@@ -352,7 +403,7 @@ certify sp-lc-s2 tipS2
 certify sp-lc-s3 tipS3
 out="$(lc stack batch-stack --members "sp-lc-s2:tipS2,sp-lc-s3:tipS3" --actor test)"
 wantrc "stack applies" 0 $?
-want "stack applied every step" '"applied":[true,true,true,true]' "$out"
+want "stack applied every step" '"applied":[true,true,true,true,true,true]' "$out"
 
 is "stack does not insert a second batch row — still OPEN" "OPEN" "$(batch_field batch-stack state)"
 is "stack advances the batch's version by exactly the new member count" "3" "$(batch_field batch-stack version)"
@@ -408,7 +459,7 @@ wantrc "settle applies even though the caller's own --requeue still names the st
 
 is "batch settles" "SETTLED" "$(batch_field batch-stacked-red state)"
 is "ejected prerequisite A needs rework" "REWORK" "$(member_field sp-f-a bead state)"
-is "A's reason names the direct eject" "batch-ejected" "$(member_field sp-f-a bead reason)"
+is "A's reason names the direct red eject" "batch-ejected-red" "$(member_field sp-f-a bead reason)"
 is "SEEN RED FIRST: B follows A into REWORK rather than the caller's own --requeue leaving it CERTIFIED" \
     "REWORK" "$(member_field sp-f-b bead state)"
 is "B's reason names base-withdrawn — collateral, not itself accused" "base-withdrawn" "$(member_field sp-f-b bead reason)"
@@ -673,5 +724,57 @@ pev batch-cap '{"PassIncomplete":{"n":1,"reason":"over the 900s cap"}}' >/dev/nu
 passes_json="$(lc list --batches)"
 pfield() { printf '%s' "$passes_json" | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["batch_id"]=="batch-cap"][0]; print(eval(sys.argv[1]))' "$1"; }
 is "a pass killed at the cap is incomplete, in ATTRIBUTING, neither red nor green" "incomplete ATTRIBUTING" "$(pfield 'b["last_pass"]["verdict"] + " " + b["state"]')"
+
+# ── a round staged behind a running one: members untouched until promoted ───────────────
+certify sp-lc-g1 tipG1
+certify sp-lc-g2 tipG2
+out="$(lc stage batch-staged --repo spira --head headG --base baseG --members "sp-lc-g1:tipG1,sp-lc-g2:tipG2" --actor test --parent batch-running)"
+wantrc "stage writes the staged round" 0 $?
+is "a staged round is STAGED, behind its parent" "STAGED batch-running" "$(batch_field batch-staged state) $(batch_field batch-staged parent)"
+is "staging delivers no member" "CERTIFIED CERTIFIED" "$(member_field sp-lc-g1 bead state) $(member_field sp-lc-g2 bead state)"
+out="$(lc stage batch-staged-stale --repo spira --head h --base b --members "sp-lc-g1:tip-does-not-match" --actor test --parent batch-running)"
+wantrc "PLANTED VIOLATION: stage refuses a member whose tip does not match" 3 $?
+is "the refused stage wrote no row" "" "$(batch_field batch-staged-stale state)"
+out="$(lc promote batch-staged --head headG2 --base baseG2 --actor test)"
+wantrc "promote cuts the staged round" 0 $?
+is "a promoted round is OPEN at the rebuilt head and base" "OPEN headG2 baseG2" "$(batch_field batch-staged state) $(batch_field batch-staged head) $(batch_field batch-staged base)"
+is "promotion delivers every member" "IN_DELIVERY IN_DELIVERY" "$(member_field sp-lc-g1 bead state) $(member_field sp-lc-g2 bead state)"
+is "promotion batches each member's delivery onto the round" "BATCHED" "$(member_field sp-lc-g2 delivery state)"
+out="$(lc promote batch-staged --head h --base b --actor test)"
+wantrc "PLANTED VIOLATION: a round already OPEN is not promoted again" 3 $?
+
+certify sp-lc-g3 tipG3
+lc stage batch-staged-dead --repo spira --head headD --base baseD --members "sp-lc-g3:tipG3" --actor test --parent batch-running >/dev/null
+lc event batch batch-staged-dead --expect STAGED --version 0 --actor test --kind '{"Discard":{"reason":"parent red"}}' >/dev/null
+is "a discarded stage is DISCARDED with its reason" "DISCARDED parent red" "$(batch_field batch-staged-dead state) $(batch_field batch-staged-dead reason)"
+is "discarding returns nothing: the member is still CERTIFIED" "CERTIFIED" "$(member_field sp-lc-g3 bead state)"
+out="$(lc promote batch-staged-dead --head h --base b --actor test)"
+wantrc "PLANTED VIOLATION: a discarded stage is not promoted" 3 $?
+
+# ── an aeon's phase and disposition on the WORKING row, against the real store ──
+lc create-bead sp-lc-ph >/dev/null
+lc event bead sp-lc-ph --expect READY --version 0 --actor aeon-ph --kind '{"Claim":{"holder":"aeon-ph","lease_until":1}}' >/dev/null
+phase_of() { lc show sp-lc-ph | python3 -c 'import json,sys; print(json.load(sys.stdin)["bead"]["aeon_phase"])'; }
+is "a claim starts the row in phase claimed" "claimed" "$(phase_of)"
+lc phase sp-lc-ph aeon-ph building >/dev/null
+wantrc "the holder records its next phase" 0 $?
+is "show reads exactly the recorded phase" "building" "$(phase_of)"
+out="$(lc phase sp-lc-ph aeon-ph claimed 2>&1)"
+wantrc "a step back is refused" 3 $?
+want "the refusal names the state and phase" "WORKING/building" "$out"
+lc phase sp-lc-ph aeon-other session >/dev/null 2>&1
+wantrc "a phase from a non-holder is refused" 3 $?
+is "the refused moves left the phase where it was" "building" "$(phase_of)"
+lc disposition sp-lc-ph lapsed "300	last words" watchdog >/dev/null
+wantrc "a lapsed disposition is recorded" 0 $?
+lc disposition sp-lc-ph slain "by hand" slay >/dev/null
+wantrc "a stronger disposition replaces it" 0 $?
+lc disposition sp-lc-ph thrash "x" heartbeat >/dev/null 2>&1
+wantrc "a weaker one never does" 3 $?
+is "list --state WORKING carries the phase and the disposition" "building slain by hand" "$(lc list --state WORKING | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["bead_id"]=="sp-lc-ph"][0]; print(b["aeon_phase"], b["disposition"], b["disposition_note"])')"
+lc release sp-lc-ph aeon-ph >/dev/null
+is "leaving WORKING clears the phase and the disposition" "None None" "$(lc show sp-lc-ph | python3 -c 'import json,sys; b=json.load(sys.stdin)["bead"]; print(b["aeon_phase"], b["disposition"])')"
+lc disposition sp-lc-ph slain "late" slay >/dev/null 2>&1
+wantrc "a disposition outside WORKING is refused" 3 $?
 
 tl_summary

@@ -83,6 +83,20 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
 /// bash seam round trip at all — `merge_resolved_config` already runs entirely in-process
 /// (`spira_config::resolve::resolve_for_process`); the bash seam exists only to source a
 /// fayth file and lib.sh's own derived values, neither of which this subcommand needs.
+fn run_stop(args: &[String]) -> i32 {
+    let original: BTreeMap<String, String> = std::env::vars().collect();
+    let exe = std::env::current_exe().ok();
+    let Some(home) = conf::resolve_home(None, &original, exe.as_deref()) else {
+        fatal("cannot find the harness's spira/ directory (set SPIRA_HOME)")
+    };
+    let mut snap = seam::Snapshot::default();
+    if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
+        fatal(&format!("config resolution: {e}"));
+    }
+    let conf = Conf::new(&snap, &home);
+    aeon::stop::run(&conf.run, args, util::now_epoch())
+}
+
 fn run_capacity(args: &[String]) -> i32 {
     let original: BTreeMap<String, String> = std::env::vars().collect();
     // The lifecycle machine is the only mode (sp-v62vn): a retired switch saying off is
@@ -109,7 +123,7 @@ fn run_capacity(args: &[String]) -> i32 {
 
 /// `aeon fast-tier <repo> <work> <branch> <base>`: the handoff's fast tier (`fast_tier::red`)
 /// against a checkout, with an absent tool or a tree without the fence refused rather than
-/// skipped. Exit 0 green, 1 red (the text on stdout), 2 usage.
+/// skipped. Exit 0 green, 1 red (the text on stdout), 2 usage, 3 a tool failure that judges nothing.
 fn run_fast_tier(args: &[String]) -> i32 {
     let [repo, work, branch, base] = args else {
         eprintln!("usage: aeon fast-tier <repo> <work> <branch> <base>");
@@ -120,8 +134,8 @@ fn run_fast_tier(args: &[String]) -> i32 {
     let (git, exec) = (RealGit { env: &env }, RealExec { env: &env, timeout: None });
     match aeon::fast_tier::red(&git, &exec, Path::new(repo), Path::new(work), branch, base, true) {
         Some(red) => {
-            println!("{red}");
-            1
+            println!("{}", red.text);
+            if red.harness { 3 } else { 1 }
         }
         None => {
             println!("fast tier green: {branch} against {base}");
@@ -146,6 +160,9 @@ fn main() {
     }
     if args.first().map(String::as_str) == Some("fast-tier") {
         std::process::exit(run_fast_tier(&args[1..]));
+    }
+    if args.first().map(String::as_str) == Some("stop") {
+        std::process::exit(run_stop(&args[1..]));
     }
     if args.first().map(String::as_str) == Some("capacity") {
         std::process::exit(run_capacity(&args[1..]));

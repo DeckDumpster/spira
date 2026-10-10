@@ -50,9 +50,11 @@ stub confine.sh 'exit 0'
 mkdir -p "$TMP/lcx"
 cat > "$TMP/lcx/spira-lc" <<'LCX'
 #!/usr/bin/env bash
+MIRROR="$(dirname "$0")/../lc"
 case "${1:-}" in
-    express) mkdir -p "$SPIRA_RUN/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}" ;;
+    express) mkdir -p "$SPIRA_RUN/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; echo "$2" >> "$MIRROR/express" ;;
     unexpress) rm -f "$SPIRA_RUN/lc-express/${2:?}" ;;
+    *) [ ! -x "$MIRROR/spira-lc" ] || exec "$MIRROR/spira-lc" "$@" ;;
 esac
 exit 0
 LCX
@@ -102,7 +104,7 @@ out="$(SPIRA_HOME="$SH" \
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
-    want "file --express: express label present" "express" "$LABELS"
+    nowant "file --express: no express label, express is lifecycle state" "express" "$LABELS"
     is "file --express: the lifecycle row is marked express" "yes" "$([ -f "$RUN/lc-express/$BID" ] && echo yes || echo no)"
 else
     bad "file --express: could not create bead" "output: $out"
@@ -138,7 +140,8 @@ out="$(SPIRA_HOME="$SH" \
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
-    want "P0 --express: express label present" "express" "$LABELS"
+    nowant "P0 --express: no express label, express is lifecycle state" "express" "$LABELS"
+    is "P0 --express: the lifecycle row is marked express" "yes" "$([ -f "$RUN/lc-express/$BID" ] && echo yes || echo no)"
 else
     bad "P0 --express: could not create bead" "output: $out"
 fi
@@ -177,7 +180,7 @@ if [ -n "$BID" ]; then
     SPIRA_HOME="$SH" \
         bash "$SH/bead.sh" amend "$BID" --express 2>&1 >/dev/null || true
     LABELS="$(labels_of "$BID")"
-    want "amend --express: express label added" "express" "$LABELS"
+    nowant "amend --express: no express label, express is lifecycle state" "express" "$LABELS"
     is "amend --express: the lifecycle row is marked express" "yes" "$([ -f "$RUN/lc-express/$BID" ] && echo yes || echo no)"
 else
     bad "amend --express: could not create bead" "output: $out"
@@ -215,6 +218,7 @@ chmod +x "$SH/mock-summon"
 # the only mode); the stand-in (testlib lc_mirror_bd) answers spira-lc `list` from this
 # REAL bd store — an open bead is a READY row — ahead of the tree's spira-lc on PATH.
 lc_mirror_bd "$TMP/lc"
+export SPIRA_LC_BIN="$TMP/lcx/spira-lc"
 sentinel_run() {
     # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of
     # the real one) is exec'd as sentinel's own child for its ready reads and reads them as
@@ -253,8 +257,8 @@ BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     rm -f "$SUMMONED"
     out="$(sentinel_run 2>&1)" || true
-    want "express bead ready: bypass grants pool=1, restricted to 'express'" \
-         "granting pool=1 (restricted to 'express')" "$out"
+    want "express bead ready: bypass grants pool=1, restricted to express" \
+         "granting pool=1 (restricted to express)" "$out"
     want "express bead ready: builder is summoned despite the throttle" \
          "SUMMONED:builder" "$(cat "$SUMMONED" 2>/dev/null)"
 else

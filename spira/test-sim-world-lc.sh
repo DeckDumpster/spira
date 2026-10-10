@@ -2,6 +2,8 @@
 # tier: T2
 # requires: testenv
 # covers: spira/sim/src/world.rs
+# lane: sim
+# pids: 400
 #
 # test-sim-world-lc.sh — a sim world runs its own `spira-lc serve` (sp-hq1v76).
 #

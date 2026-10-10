@@ -161,8 +161,15 @@ pub trait Beat: Send + Sync {
     /// session runs: the lifecycle row's `spira-lc renew` (sp-2jf0a). False ends the
     /// heartbeat.
     fn renew(&self, lease_until: i64) -> bool;
+    /// Record how this session was cut short on the bead's lifecycle row (`spira-lc
+    /// disposition`); the teardown reads it from there.
+    fn disposition(&self, status: &str, note: &str);
     fn log(&self, msg: &str);
 }
+
+/// An identity lease outlives a missed beat or two, and no more: a dead aeon's name and
+/// capacity slot free within this window.
+const IDENTITY_TTL_FLOOR: i64 = 90;
 
 pub struct Heartbeat {
     pub bead: String,
@@ -176,6 +183,16 @@ pub struct Heartbeat {
 impl Heartbeat {
     fn lease_file(&self) -> PathBuf {
         self.run.join("aeon").join(format!("{}.lease", self.bead))
+    }
+
+    fn identity_pidfile(&self) -> PathBuf {
+        self.run.join(format!("aeon-{}-{}.pid", self.fayth, self.bead))
+    }
+
+    fn renew_identity(&self, now: i64) {
+        if self.identity_pidfile().is_file() {
+            strand::probe::write_lease(&self.identity_pidfile(), now + IDENTITY_TTL_FLOOR.max(3 * self.every.as_secs() as i64));
+        }
     }
 
     fn write_lease(&self, deadline: i64) {
@@ -192,6 +209,7 @@ impl Heartbeat {
         let session_start = b.now();
         let mut deadline = session_start + self.lease_s;
         self.write_lease(deadline);
+        self.renew_identity(session_start);
         loop {
             let t = Instant::now();
             while t.elapsed() < self.every {
@@ -206,6 +224,15 @@ impl Heartbeat {
             let cur = b.trace_mtime();
             let now = b.now();
             let fuse = b.fuse();
+            self.renew_identity(now);
+            if crate::stop::requested(&self.run, &self.bead) {
+                let why = crate::stop::reason(&self.run, &self.bead);
+                crate::stop::clear(&self.run, &self.bead);
+                b.disposition("slain", &why);
+                b.log(&format!("{}: {} stop requested — stopping the session", self.fayth, self.bead));
+                stop.trip(libc::SIGTERM);
+                return None;
+            }
             match hb_tick(prev, cur, now, deadline, if fuse.is_empty() { "?" } else { &fuse }, self.wall_min, session_start) {
                 HbTick::Renew => {
                     prev = cur;
@@ -216,7 +243,7 @@ impl Heartbeat {
                     let last = b.trace_last(200);
                     let quiet = now - cur;
                     let last = if last.is_empty() { "?".to_string() } else { last };
-                    let _ = std::fs::write(self.run.join(format!("{}.lapsed", self.bead)), format!("{quiet}\t{last}\n"));
+                    b.disposition("lapsed", &format!("{quiet}\t{last}"));
                     b.log(&format!("{}: {} lease lapsed (trace quiet {quiet}s, last: {last}) — killing", self.fayth, self.bead));
                     stop.trip(libc::SIGTERM);
                     return Some(HbTick::Lapse);
@@ -225,7 +252,7 @@ impl Heartbeat {
                     let dsess = (now - session_start) / 60;
                     let last = b.trace_last(300);
                     let last = if last.is_empty() { "no last action".to_string() } else { last };
-                    let _ = std::fs::write(self.run.join(format!("{}.thrash", self.bead)), format!("{last}\n"));
+                    b.disposition("thrash", &last);
                     b.log(&format!(
                         "{}: {} deliverable stalled {fuse}m session {dsess}m (wall {}m) — requeueing for thrash",
                         self.fayth, self.bead, self.wall_min
@@ -263,6 +290,8 @@ mod tests {
         renewals: Mutex<Vec<i64>>,
         /// End the heartbeat after this many renewals (0: never).
         stop_after: usize,
+        /// Every (status, note) the heartbeat recorded as the session's disposition.
+        dispositions: Mutex<Vec<(String, String)>>,
     }
     impl Beat for FakeBeat {
         fn now(&self) -> i64 {
@@ -290,6 +319,9 @@ mod tests {
             r.push(lease_until);
             self.stop_after == 0 || r.len() < self.stop_after
         }
+        fn disposition(&self, status: &str, note: &str) {
+            self.dispositions.lock().unwrap().push((status.into(), note.into()));
+        }
         fn log(&self, m: &str) {
             self.logs.lock().unwrap().push(m.into());
         }
@@ -299,7 +331,7 @@ mod tests {
         testkit::TempDir::new(&format!("aeon-hb-{n}"))
     }
 
-    // test-aeon-lease.sh: a silent trace lapses the lease, writes .lapsed, trips the stop.
+    // A silent trace lapses the lease, records a lapsed disposition, trips the stop.
     #[test]
     fn silent_trace_lapses_and_trips() {
         let d = tmp("lapse");
@@ -309,8 +341,11 @@ mod tests {
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
         assert_eq!(r, Some(HbTick::Lapse));
         assert_eq!(stop.signalled(), Some(15));
-        let lapsed = std::fs::read_to_string(d.join("sp-a.lapsed")).unwrap();
-        assert!(lapsed.contains("\t{\"type\":\"assistant\"}"));
+        let recorded = b.dispositions.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, "lapsed");
+        assert!(recorded[0].1.contains("\t{\"type\":\"assistant\"}"));
+        assert!(!d.join("sp-a.lapsed").exists(), "no marker file: the row carries the outcome");
         assert!(b.logs.lock().unwrap()[0].contains("sp-a lease lapsed (trace quiet"));
         assert!(d.join("aeon/sp-a.lease").is_file());
     }
@@ -324,7 +359,11 @@ mod tests {
         let stop = Stop::default();
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
         assert_eq!(r, Some(HbTick::Thrash));
-        assert!(std::fs::read_to_string(d.join("sp-a.thrash")).unwrap().starts_with("{\"type\""));
+        let recorded = b.dispositions.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, "thrash");
+        assert!(recorded[0].1.starts_with("{\"type\""));
+        assert!(!d.join("sp-a.thrash").exists(), "no marker file: the row carries the outcome");
         assert!(b.logs.lock().unwrap()[0].contains("deliverable stalled 30m session"));
         assert!(*b.beats.lock().unwrap() >= 1, "bd heartbeat ran on the renewing beats");
     }
@@ -346,6 +385,33 @@ mod tests {
         assert!(r.windows(2).all(|w| w[1] > w[0]), "every renewal advances: {r:?}");
         assert!(*r.last().unwrap() - r[0] > 120 * 5, "the session outlived several leases: {r:?}");
         assert!(r.iter().all(|&u| u % 60 == 0 && u >= 120 + 60), "each deadline is that beat's now + lease: {r:?}");
+    }
+
+    #[test]
+    fn a_stop_request_trips_the_session_and_is_consumed() {
+        let d = tmp("stopreq");
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 10_000 };
+        std::fs::create_dir_all(d.join("aeon")).unwrap();
+        std::fs::write(crate::stop::request_file(&d, "sp-a"), "why\n").unwrap();
+        let b = FakeBeat { mtimes: Mutex::new((1..=10).collect()), fuse: "?".into(), ..Default::default() };
+        let stop = Stop::default();
+        assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), None);
+        assert_eq!(stop.signalled(), Some(libc::SIGTERM));
+        assert!(!crate::stop::requested(&d, "sp-a"), "the request is consumed");
+        assert!(b.logs.lock().unwrap()[0].contains("stop requested"));
+        assert_eq!(b.dispositions.lock().unwrap().clone(), vec![("slain".to_string(), "why".to_string())]);
+    }
+
+    #[test]
+    fn every_beat_renews_the_identity_lease_to_a_short_window() {
+        let d = tmp("idlease");
+        let pf = d.join("aeon-builder-sp-a.pid");
+        std::fs::write(&pf, "1\n").unwrap();
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 6000, every: Duration::from_millis(1), wall_min: 10_000 };
+        let b = FakeBeat { mtimes: Mutex::new((1..=10).collect()), fuse: "?".into(), stop_after: 3, ..Default::default() };
+        assert_eq!(hb.run(&b, &Stop::default(), &AtomicBool::new(false)), None);
+        let deadline: i64 = std::fs::read_to_string(strand::probe::lease_file(&pf)).unwrap().trim().parse().unwrap();
+        assert!(deadline <= 60 * 4 + IDENTITY_TTL_FLOOR, "the identity lease is the short liveness window, not the session lease: {deadline}");
     }
 
     #[test]

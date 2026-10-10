@@ -34,6 +34,28 @@ fn rows_of(snap: &Snapshot, prefix: &str) -> Vec<String> {
     (0..).map_while(|i| snap.get(&format!("{prefix}{i}")).filter(|s| !s.is_empty())).map(str::to_string).collect()
 }
 
+fn step_label(phase: &str) -> &str {
+    match phase {
+        "vm" => "VM",
+        "build" => "building",
+        "unit-build" => "compiling unit tests",
+        "suites" => "suites",
+        "unit-tests" => "unit tests",
+        "salvage" => "pulling results",
+        p => p,
+    }
+}
+
+/// The pass's current progress phase on its own clock — "provisioning VM 109 5m" — from the
+/// `_STEP*` keys; a stalled detail is shown in the warning colour.
+fn step_cell(snap: &Snapshot, k: &str, now: i64) -> String {
+    let Some(phase) = snap.get(&format!("{k}_STEP")).filter(|s| !s.is_empty()) else { return String::new() };
+    let detail = snap.get(&format!("{k}_STEP_DETAIL")).unwrap_or("");
+    let since = num(snap, &format!("{k}_STEP_AT")).map_or("?".to_string(), |t| mail_dur(&(now - t).max(0).to_string()));
+    let (col, what) = if detail.starts_with("stalled") { (BAD, detail) } else if detail.is_empty() { (DIM, step_label(phase)) } else { (DIM, detail) };
+    format!("  {col}{what} {since}{RST}")
+}
+
 pub fn round_section(snap: &Snapshot, cols: i64, now: i64, rows: i64) -> Vec<String> {
     let phone = cols < PHONE_COLS;
     let pool = snap.q("SP_ROUND_POOL");
@@ -66,14 +88,15 @@ fn open_rows(snap: &Snapshot, cols: i64, now: i64, phone: bool, rows: i64) -> Ve
             }
             (true, None) => format!("  {BAD}?/{cap}s{RST}"),
         };
+        let step = if phase == "certifying" { step_cell(snap, &k, now) } else { String::new() };
         if phone {
             let out_n = if ejected.is_empty() { String::new() } else { format!(" {WARN}-{}{RST}", ejected.len()) };
-            out.push(format!(" {label} {B}{name}{RST} {phase}{}{} {n}m{out_n}", wall.trim_end(), RST));
+            out.push(format!(" {label} {B}{name}{RST} {phase}{}{}{step} {n}m{out_n}", wall.trim_end(), RST));
             continue;
         }
         let open = on_vm == Some(i) && room;
         let mark = if open { "\u{25be}" } else { "\u{25b8}" };
-        out.push(format!(" {label}  {mark} {B}{name}{RST}  {ACC}{phase}{RST}{wall}  {n} member(s){}", if ejected.is_empty() { String::new() } else { format!("  {WARN}-{}{RST}", ejected.len()) }));
+        out.push(format!(" {label}  {mark} {B}{name}{RST}  {ACC}{phase}{RST}{wall}{step}  {n} member(s){}", if ejected.is_empty() { String::new() } else { format!("  {WARN}-{}{RST}", ejected.len()) }));
         if !open {
             continue;
         }
@@ -145,6 +168,17 @@ mod tests {
         assert!(text.contains("ROUNDS") && text.contains("r-9  certifying  100s/900s  2 member(s)"), "{text}");
         assert!(text.contains("sp-a  in") && text.contains("sp-b  skipped: Conflict"), "{text}");
         assert!(text.contains("ejected sp-c  red: test-x.sh"), "{text}");
+    }
+
+    #[test]
+    fn the_vm_phase_renders_its_own_label_and_clock_not_the_last_fence() {
+        let snap = format!("{}SP_ROUNDS0_STEP='vm'\nSP_ROUNDS0_STEP_AT='1000'\nSP_ROUNDS0_STEP_DETAIL='provisioning VM 109'\n", open("certifying"));
+        let rows = render(&snap, 120, 1300);
+        assert!(strip(&rows[0]).contains("provisioning VM 109 5m"), "{}", strip(&rows[0]));
+        let stalled = snap.replace("provisioning VM 109", "stalled: no progress in 300s (last: provisioning VM 109)");
+        assert!(strip(&render(&stalled, 120, 1300)[0]).contains("stalled: no progress in 300s"));
+        let bare = format!("{}SP_ROUNDS0_STEP='unit-build'\nSP_ROUNDS0_STEP_AT='1000'\n", open("certifying"));
+        assert!(strip(&render(&bare, 120, 1060)[0]).contains("compiling unit tests 60s"));
     }
 
     #[test]

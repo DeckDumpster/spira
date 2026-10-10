@@ -152,9 +152,6 @@ After each `done` line: `_tsd_aeon_session` (native since sp-27d3d — wave 4.34
 | `$SPIRA_RUN/sweep-<fayth>-<pid>.log`, `.system.md`, `.task.md` | w | sweep trace and prompt |
 | `$SPIRA_RUN/<bead>.system.md`, `<bead>.task.md` | w | the split prompt |
 | `$SPIRA_RUN/aeon/<bead>.lease` | w/rm | lease deadline epoch, written beside + renamed; removed at teardown |
-| `$SPIRA_RUN/<bead>.lapsed` | w/r/rm | `<quiet_s>\t<last>` written by the heartbeat, consumed by teardown |
-| `$SPIRA_RUN/<bead>.thrash` | w/r/rm | last action, written by the heartbeat, consumed by teardown |
-| `$SPIRA_RUN/<bead>.slain` | r | written by slay.sh |
 | `$SPIRA_RUN/worktree/<bead>` | w | the worktree (the sanctioned root) |
 | `$SPIRA_RUN/aeon-empty-gh/` | w | empty `GH_CONFIG_DIR` for the session |
 | `$SPIRA_MAIL/aeon-<bead>/{new,cur,tmp}` | w/rm | per-claim mailbox |
@@ -361,19 +358,32 @@ Every `FAYTH_HEARTBEAT_SECONDS` (default 30): trace mtime changed → renew (dea
 lease); else now ≥ deadline → **lapse**; else fuse (`aeon_fuse_minutes`, integer) ≥ wall
 (`SPIRA_THRASH_MINUTES`, 20) **and** session minutes ≥ wall → **thrash**; else ok. Then
 `spira-lc renew <id> <holder> <deadline>` renews the lifecycle row's lease (sp-2jf0a); a
-refusal is logged once per change and never ends the heartbeat. Lapse writes `.lapsed`, thrash writes `.thrash`, then the session's process
+refusal is logged once per change and never ends the heartbeat. Lapse records a `lapsed` disposition (`<quiet_s>\t<last>`) and thrash a `thrash` one (the last action) on the bead's row with `spira-lc disposition`, then the session's process
 group is sent TERM and the aeon goes straight to teardown with rc 143 (the bash killed its
 own process group, so its trap ran with 143 and skipped the verdict block — same outcome).
+
+### 4.2a Phase and disposition on the row
+
+The WORKING row carries the run's place and how it was cut short, both cleared when the row
+leaves WORKING and fresh at the next claim. `Phase` is the holder's, forward-only:
+claimed (the claim itself), `building` (worktree, brief, fixture), `session`, `teardown`.
+The aeon records the last three with `spira-lc phase <bead> <holder> <phase>`. The model's
+`work submit` leaves WORKING before the aeon's fast tier runs, so there is no fast-tier or
+submitting phase to record: a row in SUBMITTED carries no phase, and `teardown` lands only
+for a run still WORKING. `Disposition{status}` is `lapsed`, `thrash` or `slain` with the cutter's words;
+a stronger status replaces a weaker, never the reverse. The pane reads both from
+`spira-lc list --state WORKING`; nothing reads a marker, pidfile or `/proc` for them
+(lint rule `aeon-state-readers`).
 
 ### 4.3 Disposition (`aeon_disposition`, first match wins)
 
 | # | input | status | charge | requeue cause | note |
 |---|---|---|---|---|---|
 | 1 | capacity_reset_at found | capacity | free | unjudged-capacity | capacity |
-| 2 | `.slain` | slain | free | unjudged-slain | slain |
-| 3 | `.thrash`, streak ≥ cap | requeue-thrash-charged | charge | thrash-stale | thrash-charged |
-| 3' | `.thrash` | requeue-thrash | free | thrash | thrash |
-| 4 | `.lapsed` | lapsed | charge | - | lapsed |
+| 2 | row disposition `slain` (slay) | slain | free | unjudged-slain | slain |
+| 3 | row disposition `thrash`, streak ≥ cap | requeue-thrash-charged | charge | thrash-stale | thrash-charged |
+| 3' | row disposition `thrash` | requeue-thrash | free | thrash | thrash |
+| 4 | row disposition `lapsed` | lapsed | charge | - | lapsed |
 | 5 | gate still running | gate-unfinished | free | unjudged-gate-unfinished | gate-unfinished |
 | 6 | open ask blocker | decision-blocked | free | unjudged-decision-blocked | decision-blocked |
 | 7 | session rc 124, nothing committed | timeout | free | unjudged-timeout | timeout |

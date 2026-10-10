@@ -6,6 +6,7 @@ use crate::def::{self, Resolved};
 use crate::fence;
 use crate::compose::{self, Composition, Forces};
 use crate::key::{self, KeyInputs};
+use crate::machine::{self, GateState, Run};
 use crate::parse::{self, Attribution};
 use crate::ports::{Ctx, Merge, World};
 use crate::toolkey;
@@ -62,9 +63,19 @@ pub struct Args {
     pub release_bins: bool,
 }
 
+/// Records a move of the gate machine, or returns the NO_VERDICT that refuses the run.
+macro_rules! mv {
+    ($t:expr, $to:expr, $why:expr) => {
+        if let Err(e) = $t.mv($to, $why) {
+            return e;
+        }
+    };
+}
+
 /// What the finish needs to know about how far the trial got.
 #[derive(Default)]
 struct State {
+    machine: Option<Run>,
     repo_name: String,
     repo: PathBuf,
     run: String,
@@ -203,6 +214,10 @@ impl<'w, W: World> Trial<'w, W> {
                 .to_string(),
         );
         self.s.caller = ctx.var_or("SPIRA_GATE_CALLER", &br).to_string();
+        let id = machine::id_for(&self.s.bead, &br);
+        w.machine_clear_cancel(Path::new(&self.s.run), &id);
+        self.s.machine = Some(Run::new(&id, &br, &name));
+        mv!(self, GateState::Queued, &format!("branch {br}"));
 
         let Some(base) = ctx.landref.clone() else {
             return v(NOVERDICT, "no-base", format!(
@@ -446,7 +461,8 @@ impl<'w, W: World> Trial<'w, W> {
         // are fixed below: a first message on blocking (and one on being admitted, if the
         // wait was not instant), and the wait accumulated into `self.s.waited` so the
         // tree-lock section's own wait adds to it instead of overwriting it.
-        if suites_mode != "off" || covered || !ejected.trim().is_empty() || cached.is_some() {
+        let needs_slot = suites_mode != "off" || covered || !ejected.trim().is_empty() || cached.is_some();
+        if needs_slot {
             let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
             w.mkdir_p(&dir);
             let t0 = w.now();
@@ -491,6 +507,8 @@ impl<'w, W: World> Trial<'w, W> {
             // instead of overwriting it.
             self.s.waited = w.now() - t0;
         }
+        let admitted = if needs_slot { format!("gate slot after {}s", self.s.waited) } else { "fences only: no slot needed".to_string() };
+        mv!(self, GateState::Admitted, &admitted);
 
         // THE TREE, locked for the whole trial.
         let tree = PathBuf::from(format!(
@@ -560,6 +578,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.eprint(&e);
             return v(NOVERDICT, "tree-unidentified", "");
         }
+        mv!(self, GateState::Rebased, &format!("{br} merged onto {base}; the merge is checked out in the gate tree"));
 
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
@@ -608,6 +627,21 @@ impl<'w, W: World> Trial<'w, W> {
             w.eprint(&format!(
                 "gate: re-entry: not required here (declared skip in spira/skip-allowlist.tsv, cannot run under testenv; the full-suite round proves them): {}",
                 declared_skips.join(" ")
+            ));
+        }
+        let timing = w
+            .read(&Path::new(&self.s.run).join("tsd/suite-timing.jsonl"))
+            .map(|t| suite_select::timing::p90s(&t, 20).by_suite)
+            .unwrap_or_default();
+        let (kept, over) = compose::defer_over_budget(
+            &kept,
+            &timing,
+            phase_cap("gate").unwrap_or(0),
+        );
+        for (s, t) in &over {
+            w.eprint(&format!(
+                "gate: re-entry: {s} deferred to the round — recorded {t}s, past what is left of the gate's {}s suite budget; the round runs it",
+                phase_cap("gate").unwrap_or(0)
             ));
         }
         re.required = kept;
@@ -727,24 +761,40 @@ impl<'w, W: World> Trial<'w, W> {
             let rem = deadline.saturating_sub(w.now().saturating_sub(t_start)).max(1);
             key::digits(&timeout).map_or(rem, |t| t.min(rem)).to_string()
         };
-        let (rc, out, ph) = run_composed(
-            w,
-            &tree,
-            &comp,
-            &with_bins(
-                env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp),
-                tree_def.as_ref(),
+        let fkey = self.fences_key(&want_tree);
+        let mut mark_err: Option<String> = None;
+        let (rc, out, ph) = {
+            let (run_dir, machine) = (Path::new(&self.s.run), &mut self.s.machine);
+            let mut mark = |to: GateState, why: &str| {
+                let Some(r) = machine.as_mut() else { return };
+                let moved = r.enter(to, why, w.now()).and_then(|m| if m { w.machine_save(run_dir, r) } else { Ok(()) });
+                if let Err(e) = moved {
+                    mark_err.get_or_insert(e);
+                }
+            };
+            run_composed(
+                w,
+                &tree,
+                &comp,
+                &with_bins(
+                    env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp),
+                    tree_def.as_ref(),
+                    tools.as_ref(),
+                ),
+                &eff(),
+                &cmd,
                 tools.as_ref(),
-            ),
-            &eff(),
-            &cmd,
-            tools.as_ref(),
-            jobs,
-            &re.required,
-            "",
-            self.fences_key(&want_tree).as_ref(),
-        );
+                jobs,
+                &re.required,
+                "",
+                fkey.as_ref(),
+                &mut mark,
+            )
+        };
         self.s.phases.extend(ph);
+        if let Some(e) = mark_err {
+            return v(NOVERDICT, "machine-fault", format!("gate: cannot record the gate's moves: {e} — refusing to judge what it cannot record"));
+        }
         self.s.queue_secs = parse::queue_secs(&out);
         if w.signalled() {
             return v(
@@ -826,6 +876,11 @@ impl<'w, W: World> Trial<'w, W> {
         if spira_config::scratch::is_exhaustion(&out) {
             return v(NOVERDICT, "scratch-short", format!(
                 "gate: {name}'s build ran out of scratch space mid-trial — the host's room, not a fault in {br}.\n{}",
+                parse::tail_bytes(&out, 4000)));
+        }
+        if parse::cache_transport_failure(&out) {
+            return v(NOVERDICT, "build-cache-fault", format!(
+                "gate: {name}'s build lost its compiler cache (sccache transport error) — the host's cache server, not a fault in {br}.\n{}",
                 parse::tail_bytes(&out, 4000)));
         }
         if let Some(d) = parse::harness_fault_detail(&out) {
@@ -934,6 +989,7 @@ impl<'w, W: World> Trial<'w, W> {
                 &base_required,
                 "base-",
                 self.fences_key(&base_tree).as_ref(),
+                &mut |_, _| {},
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
@@ -1107,6 +1163,11 @@ impl<'w, W: World> Trial<'w, W> {
         if spira_config::scratch::is_exhaustion(&base_out) {
             return v(NOVERDICT, "scratch-short", format!(
                 "gate: {name}'s base trial ran out of scratch space — the host's room; it judged neither {base} nor {br}.\n{}",
+                parse::tail_bytes(&base_out, 4000)));
+        }
+        if parse::cache_transport_failure(&base_out) {
+            return v(NOVERDICT, "build-cache-fault", format!(
+                "gate: {name}'s base trial lost its compiler cache (sccache transport error); it judged neither {base} nor {br}.\n{}",
                 parse::tail_bytes(&base_out, 4000)));
         }
         let spaced = |v: &[String]| v.join(" ");
@@ -1505,6 +1566,34 @@ impl<'w, W: World> Trial<'w, W> {
     /// EJECTED SUITES: the first line of `$SPIRA_RUN/ejected/<bead>` — the suites a
     /// withdrawal is known to have reddened (spira-claim reopen writes it). Its own
     /// directory, not the retired landstate ledger's (sp-2c1n0).
+    /// Records the run's move to `to`. A move the machine refuses, or cannot write, or a
+    /// `gate cancel` found at the boundary, is the NO_VERDICT that ends the run.
+    fn mv(&mut self, to: GateState, reason: &str) -> Result<(), Verdict> {
+        let w = self.w;
+        let Some(r) = self.s.machine.as_mut() else { return Ok(()) };
+        let run = Path::new(&self.s.run);
+        r.enter(to, reason, w.now()).map_err(|e| v(NOVERDICT, "machine-fault", e))?;
+        w.machine_save(run, r).map_err(|e| {
+            v(NOVERDICT, "machine-fault", format!("gate: cannot record the gate's move to {}: {e} — refusing to judge what it cannot record", to.as_str()))
+        })?;
+        if w.machine_cancelled(run, &r.id) {
+            return Err(v(NOVERDICT, "cancelled", "gate: cancelled by `gate cancel`"));
+        }
+        Ok(())
+    }
+
+    /// The run's last move: its verdict. A record that cannot be written is said, not hidden.
+    fn conclude(&mut self, vd: &Verdict) {
+        let w = self.w;
+        let Some(r) = self.s.machine.as_mut() else { return };
+        let run = Path::new(&self.s.run);
+        let why = format!("{} {}", outcome(vd.status), vd.reason);
+        if let Err(e) = r.enter(GateState::Verdict, &why, w.now()).and_then(|_| w.machine_save(run, r)) {
+            w.eprint(&format!("gate: the verdict could not be recorded for `gate status`: {e}"));
+        }
+        w.machine_clear_cancel(run, &r.id);
+    }
+
     fn ejected(&self, ctx: &Ctx) -> String {
         if self.s.bead.is_empty() {
             return String::new();
@@ -1637,7 +1726,15 @@ impl<'w, W: World> Trial<'w, W> {
     fn finish(&mut self, vd: Verdict) -> i32 {
         let mut vd = vd;
         let w = self.w;
+        if vd.reason == "died" {
+            if let Some(r) = &self.s.machine {
+                if w.machine_cancelled(Path::new(&self.s.run), &r.id) {
+                    vd = v(NOVERDICT, "cancelled", "gate: cancelled by `gate cancel`");
+                }
+            }
+        }
         vd = settle(vd);
+        self.conclude(&vd);
         if !vd.msg.is_empty() {
             w.eprint(&vd.msg);
         }
@@ -2107,7 +2204,9 @@ pub fn run_composed<W: World>(
     reentry: &[String],
     prefix: &str,
     fences: Option<&crate::fencecache::Key>,
+    mark: &mut dyn FnMut(GateState, &str),
 ) -> (i32, String, Vec<(String, u64)>) {
+    let first_state = if comp.suites_off() { GateState::Fences } else { GateState::Trial };
     let budget = key::digits(timeout);
     let start = w.now();
     let left = |name: &str| {
@@ -2126,6 +2225,7 @@ pub fn run_composed<W: World>(
     // Built into the shared target/, then installed into the directory keyed by the tree id
     // (sp-g9f3t), and — built or reused — proved before any step reads it.
     if let Some(tl) = tools {
+        mark(first_state, "tools");
         let mut build = tl.build.clone();
         // A shared entry built from the same sources (toolkey.rs): installed, keyed and
         // proved like a build; one that cannot be installed is built instead.
@@ -2156,6 +2256,7 @@ pub fn run_composed<W: World>(
         }
     }
     let first = if comp.suites_off() { "fences" } else { "gate" };
+    mark(first_state, if comp.suites_off() { "fences" } else { "the gate command: fences and suites" });
     // A unit composition builds once (sp-aprxm): its build phase, not the build fence.
     let (cmd, _) = compose::gate_string(comp, cmd);
     let mut fences_rc = 0;
@@ -2214,6 +2315,7 @@ pub fn run_composed<W: World>(
             phases.push((format!("{prefix}{name}"), 0));
             return (124, out, phases);
         }
+        mark(GateState::Trial, name);
         let t = w.now();
         let hermetic;
         let step_env = if name == "test" {
