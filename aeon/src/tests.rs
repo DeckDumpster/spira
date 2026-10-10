@@ -1789,6 +1789,20 @@ fn a_run_records_its_phases_on_the_row_in_order_and_reads_no_marker_file() {
 }
 
 #[test]
+fn a_run_whose_row_left_working_records_no_teardown_phase() {
+    let f = fx("phase-after-submit");
+    seed(&f, "sp-ps");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, w, _| {
+        w.lock().unwrap().lc.insert("sp-ps".into(), "SUBMITTED".into());
+        0
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    let phases: Vec<String> = exec_verbs(&w, "phase").into_iter().map(|a| a[3].clone()).collect();
+    assert_eq!(phases, ["building", "session"], "{}", o.log);
+}
+
+#[test]
 fn a_thrash_disposition_on_the_row_requeues_for_thrash_and_the_note_carries_its_words() {
     let f = fx("thrash-row");
     seed(&f, "sp-th");
