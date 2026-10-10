@@ -735,7 +735,7 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
         if let Some(jobs) = v.get("jobs").and_then(Value::as_array) {
             let mut latest = 0u64;
             for j in jobs {
-                if jstr(j, "status").as_deref() == Some("in_progress") {
+                if jstr(j, "completed_at").is_none() && jstr(j, "started_at").is_some() {
                     if let Some(id) = j.get("id").and_then(Value::as_u64) {
                         let log = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")]);
                         latest = latest.max(last_log_stamp(&String::from_utf8_lossy(&log.stdout)));
