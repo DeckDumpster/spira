@@ -279,6 +279,9 @@ jobs:
     # the default sits inside the normal range, so any busy moment is a fault and
     # a queue retry, not a defect in the guest. 300s covers the measured range
     # with headroom instead of chasing the host's instantaneous load.
+    permissions:
+      contents: read
+      id-token: write
     env:
       AGENT_TIMEOUT: 300
     steps:
@@ -295,6 +298,10 @@ jobs:
           pve-ca-cert:        ${{ vars.PVE_CA_CERT }}
           pve-node:           ${{ vars.PVE_NODE }}
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
+          spill:              ec2
+          spill-after-seconds: 600
+          spill-max-instances: 2
+          aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
 
   # ---------------------------------------------------------------------------
   # The suites themselves, on the machine provisioned above. Skipped when

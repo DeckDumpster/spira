@@ -122,6 +122,9 @@ jobs:
     # same value, and the same reasoning: sp-5a30t). Unset here, an agent that
     # comes up slow but healthy times out and acceptance queues on a runner
     # label no runner will ever hold.
+    permissions:
+      contents: read
+      id-token: write
     env:
       AGENT_TIMEOUT: 300
     steps:
@@ -138,6 +141,10 @@ jobs:
           pve-ca-cert:        ${{ vars.PVE_CA_CERT }}
           pve-node:           ${{ vars.PVE_NODE }}
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
+          spill:              ec2
+          spill-after-seconds: 600
+          spill-max-instances: 2
+          aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
 
   # ---------------------------------------------------------------------------
   # The acceptance run itself, on the provisioned machine.
