@@ -894,6 +894,26 @@ fn a_submitted_session_that_exits_nonzero_ledgers_the_models_rc() {
     assert!(done.starts_with("done builder sp-q rc=1 status=submitted"), "{done}");
 }
 
+/// A bead reopened by a fast-tier red leads its next claim's brief with the digest's error
+/// lines, above the bead body, and none of the warnings the red was buried in.
+#[test]
+fn a_reworked_bead_leads_with_its_last_fast_tier_red() {
+    let f = fx("rework-brief");
+    seed(&f, "sp-r");
+    f.w.lock().unwrap().facts = serde_json::json!([
+        {"issue_id": "sp-r", "event_type": "fast-tier-red", "new_value": "spira/build-fence.sh failed (rc=101):\nerror[E0432]: unresolved import `crate::nope`\n  --> src/a.rs:3:5"},
+    ])
+    .to_string();
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, commits_and_closes());
+    assert_eq!(o.code, 0, "{}", o.log);
+    let task = std::fs::read_to_string(f.run.join("sp-r.task.md")).unwrap();
+    assert!(task.starts_with("## The bead\n## Your last closeout failed — fix this first\n\nspira/build-fence.sh failed (rc=101):\nerror[E0432]"), "{task}");
+    assert!(task.find("--> src/a.rs:3:5").unwrap() < task.find("sp-r ·").unwrap(), "{task}");
+    assert!(!task.contains("warning"), "{task}");
+}
+
 // ---- the whole run --------------------------------------------------------------------
 
 #[test]

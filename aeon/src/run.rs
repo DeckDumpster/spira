@@ -169,6 +169,22 @@ impl<'a> Run<'a> {
         self.sdo("bead_reopen", &s(&[&self.s.bead, cause, note]))
     }
 
+    /// The digest of the bead's latest `fast-tier-red` fact; empty when it has none.
+    pub fn last_fast_tier_red(&self) -> String {
+        let o = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &self.s.bead, "--kinds", crate::fast_tier::KIND]), None, None);
+        if !o.success() {
+            return String::new();
+        }
+        checkpoint::parse_facts(&o.stdout).into_iter().rev().find(|f| f.kind == crate::fast_tier::KIND).map(|f| f.cause).unwrap_or_default()
+    }
+
+    pub fn record_fact(&self, kind: &str, cause: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["fact", &self.s.bead, "--kind", kind, "--actor", &self.s.aeon, "--cause", cause]), None, None);
+        if !o.success() {
+            self.log(&format!("{}: {} could not record {kind} fact (rc={})", self.f(), self.s.bead, o.code));
+        }
+    }
+
     pub fn bump_requeue(&self, cause: &str) {
         self.sdo("bump_requeue", &s(&[&self.s.bead, cause]));
     }
@@ -906,6 +922,7 @@ impl<'a> Run<'a> {
         let keep = self.conf.i("SPIRA_BRIEF_KEEP_RECURRENCES").max(0) as usize;
         let max = self.conf.i("SPIRA_BRIEF_NOTES_MAX_CHARS").max(0) as usize;
         let mut body = brief::bound_bead_notes(&format!("{body}\n"), keep, max).trim_end_matches('\n').to_string();
+        let red = self.last_fast_tier_red();
         let tracked = if self.s.repo.join(".git").exists() {
             let o = self.d.git.git(&self.s.repo, &["ls-files"]);
             if o.success() { o.stdout } else { String::new() }
@@ -922,6 +939,8 @@ impl<'a> Run<'a> {
                 body = format!("{body}\n\n{hb}");
             }
         }
+
+        body = format!("{}{body}", brief::fast_tier_red_brief(&red));
 
         // A thrashed bead leads with its sticking point, while the tip has not moved.
         let mut banner = None;
