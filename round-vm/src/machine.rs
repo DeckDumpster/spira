@@ -62,6 +62,10 @@ impl PoolState {
     pub fn record(&mut self, vm: &str, to: VmState, reason: &str) -> Result<(), String> {
         let ok = match self.state_of(vm) {
             None => to == VmState::Provisioning,
+            // Proxmox's /cluster/nextid reuses ids, so a new allocation of a destroyed VM's id is a new
+            // VM (law-the-allocator-assigns-the-identifier). Refusing it wedged every round once id
+            // 109 came round again (r-auto-110, 2026-10-10).
+            Some(VmState::Destroyed) => to == VmState::Provisioning,
             Some(from) => from.can_go(to),
         };
         if !ok {
@@ -132,6 +136,20 @@ impl PoolState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_destroyed_vm_id_provisions_again_as_a_new_vm() {
+        let mut p = PoolState::default();
+        p.record("109", VmState::Provisioning, "adopted").unwrap();
+        p.record("109", VmState::Doomed, "its provisioner died").unwrap();
+        p.record("109", VmState::Destroyed, "destroy verified").unwrap();
+        p.record("109", VmState::Provisioning, "provision started").expect("a reused id starts over");
+        let mut q = PoolState::default();
+        q.record("7", VmState::Provisioning, "x").unwrap();
+        q.record("7", VmState::Doomed, "x").unwrap();
+        q.record("7", VmState::Destroyed, "x").unwrap();
+        assert!(q.record("7", VmState::Ready, "x").is_err(), "only provisioning follows destroyed");
+    }
+
     use super::*;
     use VmState::*;
 
@@ -170,7 +188,7 @@ mod tests {
 
     #[test]
     fn every_illegal_transition_is_refused_naming_the_state() {
-        let legal = |f, t| LEGAL.contains(&(f, t)) || (f, t) == (Released, Doomed) || (f, t) == (Doomed, Destroyed);
+        let legal = |f, t| LEGAL.contains(&(f, t)) || (f, t) == (Released, Doomed) || (f, t) == (Doomed, Destroyed) || (f, t) == (Destroyed, Provisioning);
         for from in ALL {
             for to in ALL {
                 if legal(from, to) {
