@@ -140,6 +140,13 @@ struct Fake {
     /// When set, only this exact slot number is ever free — every other slot always
     /// reports busy, regardless of `admission_free`/`admission_free_after`.
     admission_only_slot_free: Cell<Option<u64>>,
+    // ---- the gate machine
+    /// Every save of the run's record, in order.
+    machine: RefCell<Vec<crate::machine::Run>>,
+    /// The refusal `machine_save` answers.
+    machine_err: RefCell<Option<String>>,
+    /// A cancel request appears once the record holds this many events.
+    cancel_at: Cell<Option<usize>>,
 }
 
 fn ctx() -> Ctx {
@@ -261,6 +268,9 @@ impl Fake {
             certify_par_live_after: Cell::new(0),
             admission_free_after: Cell::new(0),
             admission_only_slot_free: Cell::new(None),
+            machine: RefCell::default(),
+            machine_err: RefCell::default(),
+            cancel_at: Cell::new(None),
         }
     }
     fn put_var(&self, k: &str, v: &str) {
@@ -666,6 +676,17 @@ impl World for Fake {
     fn signalled(&self) -> bool {
         self.signal.get()
     }
+    fn machine_save(&self, _: &Path, r: &crate::machine::Run) -> Result<(), String> {
+        if let Some(e) = self.machine_err.borrow().clone() {
+            return Err(e);
+        }
+        self.machine.borrow_mut().push(r.clone());
+        Ok(())
+    }
+    fn machine_cancelled(&self, _: &Path, _: &str) -> bool {
+        self.cancel_at.get().is_some_and(|n| self.machine.borrow().last().is_some_and(|r| r.events.len() >= n))
+    }
+    fn machine_clear_cancel(&self, _: &Path, _: &str) {}
     fn eprint(&self, s: &str) {
         self.err.borrow_mut().push(s.to_string());
     }
@@ -3824,4 +3845,75 @@ fn a_branch_that_adds_a_suite_red_and_a_fence_red_is_held_for_those_only() {
     let e = f.stderr();
     assert!(e.contains("red on this branch and not on local/main: test-s2.sh fence-g"), "{e}");
     assert!(e.contains("inherited, not judged (red on local/main too): test-s1.sh fence-f"), "{e}");
+}
+
+mod machine_events {
+    use super::*;
+    use crate::machine::GateState::{self, *};
+
+    fn states(f: &Fake) -> Vec<GateState> {
+        f.machine.borrow().last().map(|r| r.events.iter().map(|e| e.to).collect()).unwrap_or_default()
+    }
+
+    fn last_reason(f: &Fake) -> String {
+        f.machine.borrow().last().and_then(|r| r.events.last().map(|e| e.reason.clone())).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_trial_is_recorded_from_queued_to_its_verdict() {
+        let f = Fake::new();
+        assert_eq!(f.run(), 0, "{}", f.stderr());
+        assert_eq!(states(&f), vec![Queued, Admitted, Rebased, Trial, Verdict]);
+        assert!(last_reason(&f).starts_with("PASS pass"), "{}", last_reason(&f));
+    }
+
+    #[test]
+    fn a_branch_that_does_not_merge_ends_at_its_verdict_from_queued() {
+        let f = Fake::new();
+        *f.merge.borrow_mut() = Merge::Conflict(vec!["a".into()]);
+        assert_eq!(f.run(), 1);
+        assert_eq!(states(&f), vec![Queued, Verdict]);
+        assert!(last_reason(&f).starts_with("FAIL no-rebase"), "{}", last_reason(&f));
+    }
+
+    #[test]
+    fn a_fences_only_run_passes_through_fences_and_takes_no_slot() {
+        let f = Fake::new();
+        f.put_var("SPIRA_GATE_SUITES", "off");
+        assert_eq!(f.run(), 0, "{}", f.stderr());
+        let got = states(&f);
+        assert_eq!(&got[..3], &[Queued, Admitted, Rebased], "{got:?}");
+        assert!(got.contains(&Trial) || got.contains(&Fences), "{got:?}");
+        assert_eq!(*got.last().unwrap(), Verdict);
+        let slot = f.machine.borrow().last().unwrap().events[1].reason.clone();
+        assert!(slot.contains("no slot"), "{slot}");
+    }
+
+    #[test]
+    fn a_record_that_cannot_be_written_refuses_the_run() {
+        let f = Fake::new();
+        *f.machine_err.borrow_mut() = Some("disk full".into());
+        assert_eq!(f.run(), 75);
+        assert!(f.verdict_line().contains("reason=machine-fault"), "{}", f.verdict_line());
+        assert!(f.ran.borrow().is_empty(), "nothing ran");
+    }
+
+    #[test]
+    fn a_cancel_requested_while_the_run_is_live_ends_it_cancelled() {
+        let f = Fake::new();
+        f.cancel_at.set(Some(2));
+        assert_eq!(f.run(), 75, "{}", f.stderr());
+        assert!(f.verdict_line().contains("reason=cancelled"), "{}", f.verdict_line());
+        assert_eq!(states(&f), vec![Queued, Admitted, Verdict]);
+        assert!(last_reason(&f).starts_with("NO_VERDICT cancelled"), "{}", last_reason(&f));
+    }
+
+    #[test]
+    fn a_cancel_that_stops_a_waiting_run_reads_as_cancelled_not_died() {
+        let f = Fake::new();
+        f.signal.set(true);
+        f.cancel_at.set(Some(4));
+        assert_eq!(f.run(), 75);
+        assert!(f.verdict_line().contains("reason=cancelled"), "{}", f.verdict_line());
+    }
 }

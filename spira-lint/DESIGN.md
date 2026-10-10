@@ -702,6 +702,21 @@ directory.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: pool-state-readers checked
 <n> files`.
 
+## Rule `gate-state-readers`
+
+**Intent.** Operator-facing tooling reads a gate through `gate status <bead>` and stops one with
+`gate cancel <bead>`, never from `gate.log`, the admission and holder files or the gate machine's
+record, and never by matching `gate.sh` in a process listing.
+
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/` and `spira-world/`.
+
+**Violation.** A live (non-comment) line naming `gate.log`, `gate-admission`, `gate-machine`,
+`.lock.holder`, `SPIRA_GATE_LOG` or `gate.sh`. Files that still match a process listing are listed in
+`spira-lint/gate-state-readers-allow`, which only shrinks: a listed file with no match is a finding.
+
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: gate-state-readers checked
+<n> files`.
+
 ## Rule `incident-cause-lint`
 
 Ported from `spira/incident-cause-lint.sh` (sp-pppt0), which is deleted.
