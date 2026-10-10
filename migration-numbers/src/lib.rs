@@ -88,6 +88,16 @@ pub fn numbering_fault(names: &[String]) -> Option<String> {
     Some(format!("migration numbers are not contiguous from 0001: {:04} is at position {}", gap.1, gap.0 + 1))
 }
 
+/// After a member's merge at HEAD: renumbers its colliding migrations, then refuses a tree
+/// whose numbering is still broken. On refusal the merge commit is undone.
+pub fn settle(wt: &Path) -> Result<(), String> {
+    let r = after_merge(wt).map(drop).and_then(|_| check(wt));
+    if r.is_err() {
+        let _ = git(wt, &["reset", "-q", "--hard", "HEAD^1"]);
+    }
+    r
+}
+
 /// Refuses a tree at HEAD whose migrations collide or leave a gap.
 pub fn check(wt: &Path) -> Result<(), String> {
     match numbering_fault(&names(wt, "HEAD")) {
@@ -198,5 +208,31 @@ mod tests {
         assert!(d.join(DIR).join("0002-main.sql").exists());
         assert_eq!(fs::read_to_string(d.join("ref.txt")).unwrap(), "uses migrations/0003-side.sql");
         assert!(after_merge(&d).unwrap().is_empty(), "a renumbered tree has no collision left");
+    }
+
+    #[test]
+    fn two_members_each_adding_the_same_number_land_as_consecutive_numbers() {
+        let d = testkit::TempDir::new("settle");
+        git_ok(&d, &["init", "-q", "-b", "main"]);
+        git_ok(&d, &["config", "user.email", "t@t"]);
+        git_ok(&d, &["config", "user.name", "t"]);
+        fs::create_dir_all(d.join(DIR)).unwrap();
+        fs::write(d.join(DIR).join("0001-base.sql"), "x").unwrap();
+        git_ok(&d, &["add", "-A"]);
+        git_ok(&d, &["commit", "-q", "-m", "base"]);
+        for (b, f) in [("one", "0002-mending.sql"), ("two", "0002-sifted-tip.sql")] {
+            git_ok(&d, &["checkout", "-q", "-b", b, "main"]);
+            fs::write(d.join(DIR).join(f), "y").unwrap();
+            git_ok(&d, &["add", "-A"]);
+            git_ok(&d, &["commit", "-q", "-m", b]);
+        }
+        git_ok(&d, &["checkout", "-q", "main"]);
+        for b in ["one", "two"] {
+            git_ok(&d, &["merge", "-q", "--no-ff", "-m", b, b]);
+            settle(&d).unwrap();
+        }
+        let mut have = names(&d, "HEAD");
+        have.sort();
+        assert_eq!(have, s(&["0001-base.sql", "0002-mending.sql", "0003-sifted-tip.sql"]));
     }
 }

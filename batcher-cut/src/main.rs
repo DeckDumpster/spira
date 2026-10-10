@@ -26,7 +26,6 @@ mod drive;
 mod flip;
 mod io;
 mod order;
-mod renumber;
 mod screen;
 mod vm;
 

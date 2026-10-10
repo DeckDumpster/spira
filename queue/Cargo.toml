@@ -12,6 +12,7 @@ spira-config = { path = "../spira-config" }
 gate = { path = "../gate" }
 release = { path = "../release" }
 landing-pass = { path = "../landing-pass" }
+migration-numbers = { path = "../migration-numbers" }
 
 [[bin]]
 name = "queue"

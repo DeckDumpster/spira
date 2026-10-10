@@ -285,6 +285,12 @@ fn worktree_of(kv: &Kv) -> PathBuf {
 
 /// The round's tree rebuilt from `base_sha` with `members` merged in order, in `wt`. A
 /// member that no longer merges leaves `wt` as it was (at `fallback`) and is the Err.
+/// Merges a member and renumbers any migration whose number the round already holds; a merge
+/// that leaves the numbering broken is undone and reported as not merging.
+pub(super) fn merge_member(w: &World, c: &Ctx, wt: &Path, id: &str, tip: &str) -> bool {
+    w.git.merge_no_ff(wt, &w.lib.land_subject(id), tip, &c.s.git_name, &c.s.git_email) && migration_numbers::settle(wt).is_ok()
+}
+
 pub(super) fn assemble(w: &World, c: &Ctx, path: &Path, wt: &Path, base_sha: &str, members: &[Member], fallback: &str) -> Result<String, String> {
     w.git.worktree_prune(path);
     w.git.worktree_remove(path, wt);
@@ -295,7 +301,7 @@ pub(super) fn assemble(w: &World, c: &Ctx, path: &Path, wt: &Path, base_sha: &st
         return Err("cannot create the round worktree".into());
     }
     for m in members {
-        if !w.git.merge_no_ff(wt, &w.lib.land_subject(&m.id), &m.tip, &c.s.git_name, &c.s.git_email) {
+        if !merge_member(w, c, wt, &m.id, &m.tip) {
             w.git.merge_abort(wt);
             w.git.worktree_remove(path, wt);
             let _ = w.git.worktree_add_detached(path, wt, fallback);
@@ -428,7 +434,7 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
             skips.push(format!("{}: blocked by {b}, which has not landed and is not merged ahead of it in this round — not admitted", m.id));
             continue;
         }
-        if w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &m.tip, &c.s.git_name, &c.s.git_email) {
+        if merge_member(w, &c, &wt, &m.id, &m.tip) {
             merged.push(m);
         } else {
             w.git.merge_abort(&wt);
@@ -445,7 +451,7 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
                 let scratch = wt.with_file_name(format!("{}.rebase", wt.file_name().and_then(|n| n.to_str()).unwrap_or("round")));
                 let upstream = w.git.merge_base(&path, &base_sha, &m.tip).unwrap_or_else(|| base_sha.clone());
                 match w.git.rebase_onto(&path, &scratch, &m.tip, &upstream, &onto, &c.s.git_name, &c.s.git_email) {
-                    Ok(rebased) if w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &rebased, &c.s.git_name, &c.s.git_email) => {
+                    Ok(rebased) if merge_member(w, &c, &wt, &m.id, &rebased) => {
                         merged.push(Member { id: m.id, tip: rebased })
                     }
                     Ok(_) => {

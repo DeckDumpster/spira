@@ -19,6 +19,7 @@ members = [
     "desired-state",
     "batcher",
     "batcher-cut",
+    "migration-numbers",
     "tsd",
     "reconciler-engine",
     "reconciler",

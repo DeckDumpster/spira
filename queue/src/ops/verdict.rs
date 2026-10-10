@@ -630,7 +630,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
         if w.git.worktree_add_detached(b.path, &wt, cur) {
             let mut conflict = None;
             for m in &b.members {
-                if !w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &m.tip, &c.s.git_name, &c.s.git_email) {
+                if !super::round::merge_member(w, c, &wt, &m.id, &m.tip) {
                     w.git.merge_abort(&wt);
                     conflict = Some(m.id.clone());
                     break;

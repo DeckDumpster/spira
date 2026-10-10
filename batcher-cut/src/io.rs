@@ -693,10 +693,8 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
             .arg(tip),
     );
     if ok {
-        let numbered = crate::renumber::after_merge(wt).map(drop).and_then(|_| crate::renumber::check(wt));
-        if let Err(e) = numbered {
+        if let Err(e) = migration_numbers::settle(wt) {
             eprintln!("batcher: refusing {id}: migrations after its merge: {e}");
-            let _ = run(Command::new("git").arg("-C").arg(wt).args(["reset", "-q", "--hard", "HEAD^1"]), "git reset --hard HEAD^1");
             return MergeResult::Conflict;
         }
         MergeResult::Ok

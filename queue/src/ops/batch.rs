@@ -408,8 +408,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             skips.push(format!("{id}: not a valid id:tip"));
             continue;
         }
-        let subject = w.lib.land_subject(&id);
-        if w.git.merge_no_ff(&wt, &subject, &tip, &c.s.git_name, &c.s.git_email) {
+        if super::round::merge_member(w, &c, &wt, &id, &tip) {
             members.push(Member { id, tip });
         } else {
             w.git.merge_abort(&wt);

@@ -121,7 +121,7 @@ pub fn stage(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&st
             skips.push(format!("{}: blocked by {b}, which has not landed and is not merged ahead of it — not staged", m.id));
             continue;
         }
-        if w.git.merge_no_ff(&wt, &w.lib.land_subject(&m.id), &m.tip, &c.s.git_name, &c.s.git_email) {
+        if super::round::merge_member(w, &c, &wt, &m.id, &m.tip) {
             merged.push(m);
         } else {
             w.git.merge_abort(&wt);
