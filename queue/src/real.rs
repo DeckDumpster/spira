@@ -175,6 +175,30 @@ impl Git for RealGit {
     fn merge_abort(&self, wt: &Path) {
         let _ = ok(git(wt).args(["merge", "--abort"]).stderr(Stdio::null()));
     }
+    fn rebase_onto(&self, repo: &Path, scratch: &Path, tip: &str, upstream: &str, onto: &str, git_name: &str, git_email: &str) -> Result<String, Vec<String>> {
+        self.worktree_prune(repo);
+        self.worktree_remove(repo, scratch);
+        if !self.worktree_add_detached(repo, scratch, tip) {
+            return Err(Vec::new());
+        }
+        let done = ok(git(scratch)
+            .arg("-c")
+            .arg(format!("user.name={git_name}"))
+            .arg("-c")
+            .arg(format!("user.email={git_email}"))
+            .args(["rebase", "--onto", onto, upstream])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()));
+        let result = if done {
+            self.rev_parse(scratch, "HEAD").ok_or_else(Vec::new)
+        } else {
+            let paths = stdout_of(git(scratch).args(["diff", "--name-only", "--diff-filter=U"])).unwrap_or_default();
+            let _ = ok(git(scratch).args(["rebase", "--abort"]).stderr(Stdio::null()));
+            Err(paths.lines().map(str::to_string).collect())
+        };
+        self.worktree_remove(repo, scratch);
+        result
+    }
     fn is_clean(&self, wt: &Path) -> bool {
         stdout_of(git(wt).args(["status", "--porcelain"])).map(|s| s.trim().is_empty()).unwrap_or(false)
     }
