@@ -241,6 +241,19 @@ rc=$?
 is "release past WORKING: never fails the caller" "0" "$rc"
 want "release past WORKING: row is untouched (Release illegal from SUBMITTED)" '"state":"SUBMITTED"' "$(row_json sp-lcrel2)"
 
+_sent=0
+_real_lc_event_bead="$(declare -f lc_event_bead)"
+lc_event_bead() { _sent=$((_sent + 1)); return 3; }
+for _st in REWORK SUBMITTED DONE READY; do
+    seed_bead "sp-lcrel-$_st" "$_st"
+    lc_release_bead "sp-lcrel-$_st" "overseer"
+done
+is "release from a non-WORKING row sends no event (no refusal for the alarm to count)" "0" "$_sent"
+seed_bead "sp-lcrel-w" WORKING "aeon-t3" 999999999
+lc_release_bead "sp-lcrel-w" "aeon-t3"
+is "release from WORKING still sends its event" "1" "$_sent"
+eval "$_real_lc_event_bead"
+
 # ===========================================================================
 echo
 echo "lc_bead_verified: the disposition read that replaces bd status:"

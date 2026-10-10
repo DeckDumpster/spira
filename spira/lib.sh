@@ -566,16 +566,14 @@ lc_claim_bead() {
     _bump_write_event "$id" claimed "$holder"
 }
 
-# lc_release_bead <id> <actor> — best-effort Release. release_own_claim's own lifecycle half
-# is `spira-lc unclaim` now (sp-hyo5e), which applies the same Release. Like it, this fires
-# from states where Release is illegal (SUBMITTED, DONE, ...) as often as from WORKING;
-# those refusals are expected, not errors, and are never surfaced to the caller — the row
-# is already exactly where it should be.
+# lc_release_bead <id> <actor> — best-effort Release, sent only from WORKING, the one state
+# where Release applies. Any other state is already where it should be, and sending the
+# event anyway is recorded as a refusal the refusal-rate alarm counts. Never fails the caller.
 lc_release_bead() {
     local id="$1" actor="$2" row state version
     row="$(lc_bead_row "$id")" || return 0
     IFS=$'\t' read -r state version _ _ <<< "$row"
-    [ -n "$state" ] || return 0
+    [ "$state" = WORKING ] || return 0
     lc_event_bead "$id" "$state" "$version" "$actor" '"Release"'
     return 0
 }
