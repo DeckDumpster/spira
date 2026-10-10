@@ -41,13 +41,12 @@ impl Store for FileStore {
             conflict: v.get("conflict").filter(|c| !c.is_null()).map(strings),
             patch_id: v.get("patch_id")?.as_str()?.to_string(),
             stacked: strings(v.get("stacked")?),
-            lint: strings(v.get("lint")?),
         })
     }
 
     fn put(&self, v: &Verdict) -> Result<(), String> {
         let path = self.verdict_path(&v.id, &v.tip);
-        let body = json!({"base": v.base, "conflict": v.conflict, "patch_id": v.patch_id, "stacked": v.stacked, "lint": v.lint});
+        let body = json!({"base": v.base, "conflict": v.conflict, "patch_id": v.patch_id, "stacked": v.stacked});
         write_atomic(&path, &body.to_string())
     }
 
