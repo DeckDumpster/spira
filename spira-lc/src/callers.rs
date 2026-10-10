@@ -642,12 +642,12 @@ fn renew(m: &mut dyn Machine, args: &[String]) -> Answer {
     }
 }
 
-/// `phase <bead-id> <holder> <claimed|building|session|fast_tier|submitting|teardown>` — the
+/// `phase <bead-id> <holder> <claimed|building|session|teardown>` — the
 /// holder's move to its next phase. Exit: 0 applied · 1 no row · 2 cannot tell · 3 refused
 /// (not WORKING, not the holder, or not strictly forward — the refusal names the state).
 fn phase(m: &mut dyn Machine, args: &[String]) -> Answer {
     let (Some(id), Some(holder), Some(name)) = (args.first(), args.get(1), args.get(2)) else {
-        return usage("phase <bead-id> <holder> <claimed|building|session|fast_tier|submitting|teardown>");
+        return usage("phase <bead-id> <holder> <claimed|building|session|teardown>");
     };
     let Some(phase) = AeonPhase::from_str(name) else {
         return usage(&format!("phase: unknown phase {name:?}; one of {}", AeonPhase::ALL.map(AeonPhase::as_str).join(" ")));

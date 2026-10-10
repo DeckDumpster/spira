@@ -1159,7 +1159,7 @@ fn claim_for(f: &mut Fake, id: &str, holder: &str) {
 fn phase_walks_the_holder_forward_and_show_reads_back_exactly_what_was_recorded() {
     let mut f = Fake::default();
     claim_for(&mut f, "sp-p", "aeon-1");
-    for name in ["building", "session", "fast_tier", "submitting", "teardown"] {
+    for name in ["building", "session", "teardown"] {
         let a = go(&mut f, "phase", &["sp-p", "aeon-1", name]);
         assert_eq!(a.code, APPLIED, "{name}: {}", a.stderr);
         let shown: Value = serde_json::from_str(&f.call(&v(&["show", "sp-p"])).1).unwrap();
