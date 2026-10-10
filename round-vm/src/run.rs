@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]]";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -38,6 +38,8 @@ pub struct RunArgs {
     /// The spira-lc batch this pass belongs to: the suites boundary is recorded on it live.
     pub round_batch: Option<String>,
     pub round_repo: Option<String>,
+    /// Words of a command run with each suite's name appended, the moment that suite goes red.
+    pub on_red: Option<Vec<String>>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -63,6 +65,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--base" => r.base = Some(val()?).filter(|v| !v.is_empty()),
             "--round-batch" => r.round_batch = Some(val()?).filter(|v| !v.is_empty()),
             "--round-repo" => r.round_repo = Some(val()?).filter(|v| !v.is_empty()),
+            "--on-red" => r.on_red = Some(val()?.split_whitespace().map(String::from).collect()).filter(|v: &Vec<String>| !v.is_empty()),
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
     }
@@ -967,7 +970,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
     let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
     let budgets = crate::progress::Budgets { vm: cfg.vm_budget_secs, build: cfg.build_budget_secs };
-    let progress = Mutex::new(crate::progress::Progress::start(&cfg.run_dir, &results_dir, &commit_sha, &tree_sha, total, cfg.cap_secs, budgets));
+    let progress = Mutex::new(crate::progress::Progress::start(&cfg.run_dir, &results_dir, &commit_sha, &tree_sha, total, cfg.cap_secs, budgets).on_red(args.on_red.clone()));
     if let Some(batch) = args.round_batch.as_deref() {
         // A pass already recorded by certify is refused here; only an unrecorded start needs the write.
         if let Err(e) = env.record.pass_started(batch, args.round_repo.as_deref()) {

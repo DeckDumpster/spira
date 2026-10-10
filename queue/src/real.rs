@@ -640,6 +640,7 @@ impl Scripts for RealScripts {
             .arg("--base")
             .arg(base)
             .args(["--round-batch", round.0, "--round-repo", round.1])
+            .args(on_red_hook(round.0, round.1))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -714,6 +715,17 @@ impl Scripts for RealScripts {
             .spawn()
             .is_ok()
     }
+}
+
+/// round-vm's `--on-red` argument: this binary's `round failed`, the suite name appended by round-vm.
+/// round-vm splits it on whitespace, so a path that holds any gets no hook rather than a wrong one.
+fn on_red_hook(batch: &str, repo: &str) -> Vec<String> {
+    let Ok(exe) = std::env::current_exe() else { return vec![] };
+    let cmd = format!("{} round failed {batch} {repo} --suite", exe.display());
+    if cmd.split_whitespace().count() != 6 {
+        return vec![];
+    }
+    vec!["--on-red".into(), cmd]
 }
 
 // ---------------------------------------------------------------------------------- forge

@@ -56,6 +56,7 @@ pub enum Round {
     Preempt { batch: String, repo: Option<String>, eject: String, reason: Text, suites: String },
     PassStart { batch: String, repo: Option<String> },
     SuitesStarted { batch: String, repo: Option<String> },
+    Failed { batch: String, repo: Option<String>, suite: String },
     PassVerdict { batch: String, repo: Option<String>, verdict: String, red_suites: String, suites_s: u64, build_s: u64, reason: Text },
     Status { repo: Option<String> },
     /// Assemble the next round behind the open one and run the fences on it.
@@ -67,7 +68,7 @@ pub enum Round {
     Discard { repo: Option<String>, reason: Text },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -176,6 +177,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
     let (mut suites, mut red, mut harness_fault, mut rebuild) = (String::new(), false, false, true);
     let mut eject = String::new();
     let (mut verdict, mut red_suites, mut suites_s, mut build_s) = (String::new(), String::new(), None, None);
+    let mut suite = None;
     let mut pos: Vec<String> = Vec::new();
     while let Some(t) = w.next() {
         match t {
@@ -185,6 +187,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             Tok::Opt("worktree", v) => worktree = Some(PathBuf::from(w.value(v))),
             Tok::Opt("attest", v) => attest = Some(w.value(v)),
             Tok::Opt("suites", v) => suites = w.value(v),
+            Tok::Opt("suite", v) => suite = Some(w.value(v)),
             Tok::Opt("eject", v) => eject = w.value(v),
             Tok::Opt("verdict", v) => verdict = w.value(v),
             Tok::Opt("red-suites", v) => red_suites = w.value(v),
@@ -218,6 +221,7 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
         }
         "pass-start" => Ok(Round::PassStart { batch: need("batch id", pos.next())?, repo: pos.next() }),
         "suites-started" => Ok(Round::SuitesStarted { batch: need("batch id", pos.next())?, repo: pos.next() }),
+        "failed" => Ok(Round::Failed { batch: need("batch id", pos.next())?, repo: pos.next(), suite: need("--suite", suite)? }),
         "pass-verdict" => {
             if !["green", "red", "incomplete"].contains(&verdict.as_str()) {
                 return Err(Usage("queue.sh round pass-verdict: --verdict green|red|incomplete is required".into()));
@@ -421,6 +425,8 @@ mod tests {
         assert_eq!(p(&["round", "land", "b1"]), Ok(Cmd::Round(Round::Land { batch: "b1".into(), repo: None })));
         assert_eq!(p(&["round", "status"]), Ok(Cmd::Round(Round::Status { repo: None })));
         assert_eq!(p(&["round", "pass-start", "b1"]), Ok(Cmd::Round(Round::PassStart { batch: "b1".into(), repo: None })));
+        assert_eq!(p(&["round", "failed", "b1", "--suite", "test-x.sh"]), Ok(Cmd::Round(Round::Failed { batch: "b1".into(), repo: None, suite: "test-x.sh".into() })));
+        assert!(p(&["round", "failed", "b1"]).is_err(), "a failure names its suite");
         assert_eq!(p(&["round", "suites-started", "b1", "spira"]), Ok(Cmd::Round(Round::SuitesStarted { batch: "b1".into(), repo: Some("spira".into()) })));
         let c = p(&["round", "pass-verdict", "b1", "--verdict", "red", "--red-suites", "t.sh", "--suites-s", "90", "--build-s=30"]).unwrap();
         assert!(matches!(c, Cmd::Round(Round::PassVerdict { ref verdict, ref red_suites, suites_s: 90, build_s: 30, .. }) if verdict == "red" && red_suites == "t.sh"));

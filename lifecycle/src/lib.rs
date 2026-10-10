@@ -9,6 +9,7 @@ pub mod bead;
 pub mod classify;
 pub mod delivery;
 pub mod provenance;
+pub mod mending;
 pub mod reason;
 pub mod replay;
 
@@ -57,6 +58,9 @@ pub enum Refusal {
     /// `claim` of a REWORK row after a red gate verdict, proposing the very stack the red
     /// work was built on: only a moved prerequisite tip can change the outcome.
     StackUnchanged { prereqs: Vec<String> },
+    /// A mender's outcome arrived at or after the MENDING row's deadline; the machine's own
+    /// `Expire` is the only transition left.
+    DeadlinePassed { deadline: i64, at: i64 },
 }
 
 /// The result of applying one event to one row. `row` is the new row when `applied` is

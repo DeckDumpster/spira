@@ -20,6 +20,8 @@ use std::time::{Duration, Instant};
 
 use crate::db::Conn;
 
+const SWEEP_EVERY: Duration = Duration::from_secs(5);
+
 pub fn run(args: &[String]) -> i32 {
     // An explicit argv[0] (the launching unit's own ExecStart) wins outright; otherwise the
     // one source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
@@ -86,6 +88,13 @@ pub fn run(args: &[String]) -> i32 {
         scope.spawn(move || loop {
             std::thread::sleep(check_every);
             live_tick(&checker);
+        });
+        let sweeper = Arc::clone(&conn);
+        scope.spawn(move || loop {
+            std::thread::sleep(SWEEP_EVERY);
+            if let Err(e) = crate::mending::expire_overdue(&sweeper, "spira-lc.sweep") {
+                eprintln!("spira-lc serve: mending sweep: {e:?}");
+            }
         });
         for conn_stream in listener.incoming() {
             match conn_stream {

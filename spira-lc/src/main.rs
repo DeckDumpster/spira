@@ -27,6 +27,7 @@ mod facts;
 mod git_evidence;
 mod legacy_files;
 mod live;
+mod mending;
 mod migrate;
 mod ops;
 mod passes;
@@ -226,6 +227,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("history") => cmd_history(&args[1..], conn),
         Some("event") => cmd_event(&args[1..], conn),
         Some("stats") => (0, slow::stats_json()),
+        Some("mending") => mending::dispatch(&args[1..], conn),
         // The attempt and poison history (facts.rs): appended facts, never a transition.
         Some("fact") => facts::cmd_fact(&args[1..], conn),
         Some("facts") => facts::cmd_facts(&args[1..], conn),
@@ -283,7 +285,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | batch-progress <batch-id> (JSON on stdin) | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | live-check | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | ops-snapshot | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | event-continuity | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | batch-progress <batch-id> (JSON on stdin) | list [--delivery] [--live] [--state S[,S...]] [--ids a,b] [--hold poison|ask|wait|manual] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | fact <bead-id> --kind K --actor A [--cause C] | facts [--ids a,b] [--kinds x,y] [--since EPOCH] | facts-query <select over the fact table> | create-bead <id> [--title T] [--priority N] | create-ask <id> [--work-bead W] | show-ask <id> | list-asks [--state S] | close-ask <id> --exit answered|default|withdrawn --quote Q --actor A [--channel C] | migrate-asks --ask-label L [--apply] | ops-view <ops_live|ops_round|ops_recent|ops_edges|ops_dwell|ops_dwell_p95> | ops-refusals <window-secs> | live-check | ops-gantt [--print-sql] | ops-bead <bead-id> | ops-graph | ops-snapshot | backfill-titles | dep-add <id> <depends-on-id> [--type T] | dep-remove <id> <depends-on-id> | backfill-deps [--force] | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | stage <batch-id> --repo R --head H --base B --members id:tip,... --actor A --parent P | promote <batch-id> --head H --base B --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | event-continuity | mending pickup|event|sweep|list ... | requeue-orphans --actor A [--apply] | reconcile-epics [--apply] [id...] | classify (--repo NAME... | --every-bead) [--home DIR] [--bd-db PATH] [--bd-bin BIN] [--queue-dir DIR] [--base REF] [--dry-run] | work <bead-id> <verb> ... | stats | serve | unclaim <bead-id> <actor> | close <bead-id> (--reason R | --reason-file F|-) [--superseded-by ID] [--actor A] | close-epic <bead-id> <reason> | content <list|show|comments|gate list|memories|state|update --add-label/--remove-label|comments add> … | drop-orphans [--apply] [id...] | caller verbs: hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit|renew".to_string(),
         ),
     }
 }
@@ -679,6 +681,13 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
         Ok(None) => return (CANNOT_TELL, format!("event: no batch row for {key}")),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
+    if let batch::BatchEventKind::Failed { suite, n } = &kind {
+        match mending::fetch(conn, key, *n, suite) {
+            Ok(Some(_)) => return (0, format!("already recorded: {suite} failed in pass {n}")),
+            Ok(None) => {}
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        }
+    }
     let ev = batch::BatchEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string() };
     let outcome = batch::apply(&row, &ev);
     let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
@@ -690,6 +699,22 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
         return (REFUSED, format!("refused: {:?}", outcome.refusal));
     }
     let set = rows::batch_set_clause(&outcome.row);
+    if let batch::BatchEventKind::Failed { suite, n } = &kind {
+        let step = db::CascadeStep {
+            table: "batch",
+            key_column: "batch_id",
+            key: key.into(),
+            old_version: version,
+            set_clause: set,
+            applied_to_state: outcome.row.state.as_str().into(),
+            event: rec,
+        };
+        return match mending::open_with_failed(conn, step, suite, *n, at) {
+            Ok(true) => (0, String::new()),
+            Ok(false) => (REFUSED, "refused: lost the race to another writer".into()),
+            Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        };
+    }
     match conn.cas_update_and_log("batch", "batch_id", key, version, &set, &rec, outcome.row.state.as_str()) {
         Ok(true) => (0, String::new()),
         Ok(false) => (REFUSED, "refused: lost the race to another writer".into()),
@@ -722,6 +747,7 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::ManualHoldReason { .. } => "ManualHoldReason".to_string(),
         lifecycle::Refusal::EjectedRedTip { .. } => "EjectedRedTip".to_string(),
         lifecycle::Refusal::StackUnchanged { .. } => "StackUnchanged".to_string(),
+        lifecycle::Refusal::DeadlinePassed { .. } => "DeadlinePassed".to_string(),
     }
 }
 

@@ -109,6 +109,21 @@ CREATE TABLE IF NOT EXISTS ask (
     closed_at BIGINT NULL
 );
 CREATE INDEX IF NOT EXISTS ask_state_idx ON ask (state, opened_at);
+-- One row per suite that went red in a pass: the mender's pickup, deadline and outcome
+-- (migrations/0020-mending.sql for an existing database).
+CREATE TABLE IF NOT EXISTS mending (
+    batch_id        VARCHAR(40) NOT NULL,
+    pass            BIGINT NOT NULL,
+    suite           VARCHAR(80) NOT NULL,
+    state           VARCHAR(16) NOT NULL,
+    failed_at       BIGINT NOT NULL,
+    picked_at       BIGINT NULL,
+    deadline        BIGINT NULL,
+    triage_ended_at BIGINT NULL,
+    diagnosis       TEXT NULL,
+    version         BIGINT NOT NULL,
+    PRIMARY KEY (batch_id, pass, suite)
+);
 
 -- The truth. Append-only: grants.sql gives spira_lc INSERT and SELECT only, so not even
 -- the machine's own user can UPDATE or DELETE a row here (design §3.3).

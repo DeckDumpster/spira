@@ -64,6 +64,8 @@ pub struct Progress {
     phase_started: u64,
     last_change: u64,
     phases: Vec<(String, u64)>,
+    on_red: Option<Vec<String>>,
+    notified: HashSet<String>,
 }
 
 fn result_names(dir: &Path) -> Vec<(String, String)> {
@@ -124,9 +126,42 @@ impl Progress {
             phase_started: t0,
             last_change: t0,
             phases: Vec::new(),
+            on_red: None,
+            notified: HashSet::new(),
         };
         p.write(results_dir, None);
         p
+    }
+
+    /// `argv` is run once per suite that goes red, with the suite's name appended; the pass
+    /// does not wait for it.
+    pub fn on_red(mut self, argv: Option<Vec<String>>) -> Progress {
+        self.on_red = argv.filter(|a| !a.is_empty());
+        self
+    }
+
+    fn notify(&mut self, red: &[&str]) {
+        let Some(argv) = &self.on_red else { return };
+        for suite in red {
+            if !self.notified.insert(suite.to_string()) {
+                continue;
+            }
+            // batch-job: detached; the pass never waits on the hook
+            match std::process::Command::new(&argv[0])
+                .args(&argv[1..])
+                .arg(suite)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                }
+                Err(e) => eprintln!("round-vm run: --on-red {}: {e}", argv[0]),
+            }
+        }
     }
 
     /// Moves the pass into `phase` (`vm`, `build`, `salvage`), with its own clock.
@@ -180,6 +215,8 @@ impl Progress {
             _ => self.detail.clone(),
         };
         let red: Vec<&str> = fresh.iter().filter(|(_, v)| v == "red").map(|(n, _)| n.as_str()).collect();
+        let failed: Vec<&str> = fresh.iter().filter(|(_, v)| matches!(v.as_str(), "red" | "timeout" | "fault")).map(|(n, _)| n.as_str()).collect();
+        self.notify(&failed);
         let mut body = json!({
             "round": self.round,
             "pass": self.pass,
@@ -302,6 +339,33 @@ mod tests {
         let v = read(&run);
         assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("red")));
         assert_eq!(read(&run)["round"], "r1");
+    }
+
+    #[test]
+    fn each_red_suite_is_announced_once_as_it_goes_red_and_earlier_passes_reds_never() {
+        let d = TempDir::new();
+        let (run, res, seen) = (d.path().join("run"), d.path().join("res"), d.path().join("seen"));
+        fs::create_dir_all(&res).unwrap();
+        fs::write(res.join("test-old.sh.result"), "red 1 5 - p e 1\n").unwrap();
+        let argv = ["sh", "-c", "echo \"$1\" >> \"$0\"", seen.to_str().unwrap()].map(String::from).to_vec();
+        let mut p = Progress::start(&run, &res, "r1", "p1", 4, 777, BUDGETS).on_red(Some(argv));
+        let wait_for = |n: usize| {
+            for _ in 0..200 {
+                if fs::read_to_string(&seen).map_or(0, |t| t.lines().count()) >= n {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            fs::read_to_string(&seen).unwrap_or_default().lines().map(String::from).collect::<Vec<_>>()
+        };
+        fs::write(res.join("test-a.sh.result"), "ok 1 30 - p e 0\n").unwrap();
+        fs::write(res.join("test-b.sh.result"), "red 1 12 fp p e 1\n").unwrap();
+        p.update(&res);
+        p.update(&res);
+        assert_eq!(wait_for(1), ["test-b.sh"]);
+        fs::write(res.join("test-c.sh.result"), "timeout 1 12 fp p e 1\n").unwrap();
+        p.finish(&res, 1);
+        assert_eq!(wait_for(2), ["test-b.sh", "test-c.sh"], "in the order they failed, none twice");
     }
 
     #[test]

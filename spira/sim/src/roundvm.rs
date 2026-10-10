@@ -58,6 +58,8 @@ pub struct Run {
     pub results: PathBuf,
     /// `--suites`: the suites the caller wants run, instead of the tree's whole corpus.
     pub suites: Option<Vec<String>>,
+    /// `--on-red`: words of a command run, in suite order, with each red suite's name appended.
+    pub on_red: Option<Vec<String>>,
 }
 
 /// Flags the batcher passes that say how a real VM runs, and mean nothing to a stub.
@@ -68,7 +70,8 @@ pub fn parse_args(args: &[String]) -> Result<Run, String> {
     if verb != "run" {
         return Err(format!("the sim round-vm answers only `run`, not {verb:?}"));
     }
-    let (mut tree, mut results, mut suites) = (None, None, None);
+    let (mut tree, mut results, mut suites, mut on_red) = (None, None, None, None);
+    let words = |v: &str| Some(v.split_whitespace().map(str::to_string).collect::<Vec<_>>()).filter(|w| !w.is_empty());
     let csv = |v: &str| v.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect::<Vec<_>>();
     let mut it = rest.iter();
     while let Some(a) = it.next() {
@@ -80,6 +83,10 @@ pub fn parse_args(args: &[String]) -> Result<Run, String> {
             suites = Some(csv(v));
         } else if a == "--suites" {
             suites = Some(csv(it.next().ok_or("--suites needs a value")?));
+        } else if let Some(v) = a.strip_prefix("--on-red=") {
+            on_red = words(v);
+        } else if a == "--on-red" {
+            on_red = words(it.next().ok_or("--on-red needs a value")?);
         } else if IGNORED_FLAGS.iter().any(|f| a == f) {
             it.next().ok_or_else(|| format!("{a} needs a value"))?;
         } else if IGNORED_FLAGS.iter().any(|f| a.strip_prefix(f).is_some_and(|r| r.starts_with('='))) {
@@ -89,7 +96,7 @@ pub fn parse_args(args: &[String]) -> Result<Run, String> {
             return Err("round-vm run takes one tree".into());
         }
     }
-    Ok(Run { tree: tree.ok_or("round-vm run needs a tree")?, results: results.ok_or("the sim round-vm needs --results-dir")?, suites })
+    Ok(Run { tree: tree.ok_or("round-vm run needs a tree")?, results: results.ok_or("the sim round-vm needs --results-dir")?, suites, on_red })
 }
 
 /// The corpus as testenv defines it: every `test-*.sh` regular file in `<tree>/spira`.
@@ -189,6 +196,10 @@ fn run_inner(world: &Path, args: &[String], env: &dyn Fn(&str) -> Option<String>
             format!("ok {now} 0 - serial {PRODUCER} 0")
         };
         write_result(&r.results, s, &line)?;
+        if let (true, Some(argv)) = (reds.contains(s), &r.on_red) {
+            // batch-job: the hook is the caller's own command, as long as that takes
+            std::process::Command::new(&argv[0]).args(&argv[1..]).arg(s).status().map_err(|e| format!("--on-red {}: {e}", argv[0]))?;
+        }
     }
     if reds.is_empty() {
         Ok((0, String::new()))
