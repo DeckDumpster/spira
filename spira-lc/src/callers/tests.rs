@@ -1099,6 +1099,15 @@ fn reopen_names_an_eject_as_the_batchs_and_keeps_a_hold() {
     assert!(f.beads["sp-e"].holds.contains(&HoldKind::Manual), "reopening is not an unhold");
 }
 
+#[test]
+fn reopen_names_a_red_eject_so_the_tip_is_barred() {
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Certified).tip = Some("red1".into());
+    assert_eq!(reopen_cmd(&v(&["sp-r", "eject-red"]), &mut f, &mut FakeBd::default()).code, APPLIED);
+    assert_eq!(reopen_kinds(&f).last().unwrap(), r#"{"Returned":{"reason":"batch-ejected-red"}}"#);
+    assert_eq!(f.beads["sp-r"].ejected_red_tip.as_deref(), Some("red1"));
+}
+
 // ---- external provenance ------------------------------------------------------------------
 
 fn external_world() -> (Fake, FakeBd) {

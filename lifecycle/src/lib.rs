@@ -51,6 +51,9 @@ pub enum Refusal {
     /// A `manual` hold with no reason, a bare bead id (that is a dependency edge), or a
     /// snooze (that is a `wait` hold). `exit` names the mechanism that does the job.
     ManualHoldReason { reason: String, exit: String },
+    /// `submit` at the tip a round already ejected as red for this bead: the same tree is
+    /// red again, so only a changed tip can be submitted.
+    EjectedRedTip { tip: String },
 }
 
 /// The result of applying one event to one row. `row` is the new row when `applied` is

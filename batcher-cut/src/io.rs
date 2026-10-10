@@ -273,6 +273,9 @@ fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
         pool.extend(rows.iter().filter(|r| holds_empty(r)).filter_map(|r| {
             let id = r.get("bead_id")?.as_str()?.to_string();
             let tip = r.get("tip").and_then(|t| t.as_str()).unwrap_or("none").to_string();
+            if r.get("ejected_red_tip").and_then(|t| t.as_str()) == Some(tip.as_str()) {
+                return None;
+            }
             let epoch = [r.get("since"), r.get("updated_at")]
                 .into_iter()
                 .flatten()
@@ -2403,6 +2406,15 @@ mod lifecycle_tests {
         assert!(log.contains("list --state CERTIFIED") && log.contains("list --state SUBMITTED"), "{log}");
         assert!(read_pool(&env(&d, Some(fake_lc(&d, "not json")))).unwrap_err().contains("unparsed"));
         assert!(read_pool(&env(&d, None)).is_err());
+    }
+
+    #[test]
+    fn a_tip_a_round_ejected_red_is_not_in_the_round_pool_but_a_new_one_is() {
+        let d = scratch("ejected-red");
+        let reply = r#"[{"bead_id":"sp-r","tip":"rrrr","ejected_red_tip":"rrrr","updated_at":4},{"bead_id":"sp-n","tip":"nnnn","ejected_red_tip":"oooo","updated_at":5},{"bead_id":"sp-c","tip":"cccc","ejected_red_tip":null,"updated_at":6}]"#;
+        let e = env(&d, Some(fake_lc(&d, reply)));
+        let ids: Vec<String> = read_pool(&e).unwrap().into_iter().map(|r| r.0).collect();
+        assert_eq!(ids, vec!["sp-c".to_string(), "sp-n".to_string()]);
     }
 
     #[test]

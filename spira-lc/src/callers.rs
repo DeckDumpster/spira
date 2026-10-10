@@ -673,6 +673,7 @@ fn disposition(m: &mut dyn Machine, args: &[String]) -> Answer {
 fn reopen_returned_reason(cause: &str) -> ReturnedReason {
     match cause {
         "eject" | "batch-eject" => ReturnedReason::BatchEjected,
+        "eject-red" => ReturnedReason::BatchEjectedRed,
         "base-withdrawn" => ReturnedReason::BaseWithdrawn,
         "pr-checks-red" => ReturnedReason::PrChangesRequested,
         _ => ReturnedReason::PushRejected,
