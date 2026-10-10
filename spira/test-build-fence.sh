@@ -221,4 +221,37 @@ is   "a real file change: build-fence still runs its ordinary path (skip, no bui
 want "and reports the ordinary changed-file count, not the verified-empty line" "fence: build-fence checked 1 changed-files" "$out"
 nowant "and never claims verified-empty for a real diff" "verified by tree-id" "$out"
 
+# =========================================================================================
+# 8 — TWO WORKTREES, NO EXPLICIT TARGET DIR: B's verdict is B's own tree's. Cargo's freshness
+# check is relative paths plus mtimes, so one target dir shared across trees lets B reuse the
+# artifact A built; A's lib exports `gone`, B's does not and B's older files look fresh, so a
+# shared default reports B green while B does not compile. No target override is set here: the
+# default is what is under test.
+# =========================================================================================
+echo "8. a second worktree never reuses the first one's artifacts:"
+mk_wt() {   # mk_wt <dir> <lib-body>
+    mkdir -p "$1/spira" "$1/lc/src" "$1/app/src"
+    cp "$HERE/build-fence.sh" "$1/spira/build-fence.sh"
+    printf '[workspace]\nmembers = ["lc", "app"]\nresolver = "2"\n' > "$1/Cargo.toml"
+    printf '[package]\nname = "lc"\nversion = "0.1.0"\nedition = "2021"\n' > "$1/lc/Cargo.toml"
+    printf '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\nlc = { path = "../lc" }\n' > "$1/app/Cargo.toml"
+    printf '%s\n' "$2" > "$1/lc/src/lib.rs"
+    printf 'fn main() { lc::gone(); }\n' > "$1/app/src/main.rs"
+    (cd "$1" && cargo generate-lockfile --offline >/dev/null 2>&1)
+}
+WTA="$TMP/wt-a"; WTB="$TMP/wt-b"
+mk_wt "$WTA" 'pub fn gone() {}'
+mk_wt "$WTB" 'pub fn other() {}'
+touch -d '2001-01-01' "$WTB/lc/src/lib.rs" "$WTB/app/src/main.rs" "$WTB/lc/Cargo.toml" "$WTB/app/Cargo.toml" "$WTB/Cargo.toml" "$WTB/Cargo.lock"
+F8="$TMP/f8x"; printf 'M\tlc/src/lib.rs\n' > "$F8"
+wt_fence() {   # wt_fence <tree>
+    (cd "$1" && env -u CARGO_TARGET_DIR -u SPIRA_FENCE_TARGET_DIR XDG_CACHE_HOME="$TMP/home8/.cache" \
+        SPIRA_GATE_FILES="$F8" bash spira/build-fence.sh 2>&1)
+}
+out="$(wt_fence "$WTA")"; rc=$?
+is "worktree A (carries gone) passes" "0" "$rc"
+out="$(wt_fence "$WTB")"; rc=$?
+is "worktree B (lacks gone) is RED after A has run, not green off A's artifacts" "1" "$rc"
+want "and the failure is B's own missing item" "gone" "$out"
+
 tl_summary
