@@ -839,7 +839,7 @@ is "the expiry never touched the pass" "CI_RUNNING suites" "$(batch_field batch-
 
 mfacts() { printf '{"changes":[{"path":"%s","added":1,"deleted":0}],"member_files":["%s"],"required_checks":[],"checked":[],"ask":null}' "$1" "$1"; }
 mendrow() { lc mending mend batch-mend --pass 1 --suite "$1" --members "sp-lc-m-1:$2:$3" --facts "$(mfacts "$4")" --fences '["gate/"]' --actor "mender-$1"; }
-mrow_state() { lc mending list --batch batch-mend | python3 -c 'import json,sys; r={x["suite"]:x for x in json.load(sys.stdin)}; print(r[sys.argv[1]]["state"], r[sys.argv[1]]["diagnosis"] or "")' "$1"; }
+mrow_state() { lc mending list --batch batch-mend | python3 -c 'import json,sys; r={x["suite"]:x for x in json.load(sys.stdin)}; print(" ".join(filter(None, [r[sys.argv[1]]["state"], r[sys.argv[1]]["diagnosis"]])))' "$1"; }
 mendrow test-b.sh tipM1 tipM2 gate/x.rs >/dev/null 2>&1
 wantrc "a fence edit without an ask is refused" 3 $?
 is "the refused mend leaves the row MENDING" "MENDING" "$(mrow_state test-b.sh | cut -d' ' -f1)"
