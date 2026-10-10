@@ -134,7 +134,7 @@ pub fn classify(cause: &str) -> ReturnClass {
     if lc.split(|ch: char| !ch.is_ascii_alphanumeric()).any(|t| t == "red" || t.starts_with("fail")) {
         return ReturnClass::Judged;
     }
-    if lc.contains("conflict") || lc.starts_with("rebase") || lc.contains("stale") || lc.starts_with("base_withdrawn") {
+    if lc.contains("conflict") || lc.starts_with("rebase") || lc.starts_with("no-rebase") || lc.contains("stale") || lc.starts_with("base_withdrawn") {
         return ReturnClass::RebaseReturn;
     }
     ReturnClass::Judged
@@ -403,6 +403,26 @@ mod tests {
             EventRow::new(B, "requeued", "stack-conflict", "2026-09-01T00:01:02Z"),
         ];
         assert_eq!(fold(B, &r).attempts, 0);
+    }
+
+    #[test]
+    fn a_no_rebase_after_a_clean_submit_is_not_an_attempt() {
+        assert_eq!(classify("no-rebase"), ReturnClass::RebaseReturn);
+        let r = rows(&[
+            ("claimed", ""),
+            ("closed", "OUTCOME: submitted"),
+            ("requeued", "no-rebase"),
+            ("claimed", ""),
+            ("requeued", "no-rebase"),
+            ("claimed", ""),
+            ("requeued", "no-rebase"),
+            ("claimed", ""),
+            ("requeued", "no-rebase"),
+        ]);
+        let l = fold(B, &r);
+        assert_eq!((l.attempts, l.requeues), (0, 0), "{l:#?}");
+        let red = rows(&[("claimed", ""), ("requeued", "cert-gate-red")]);
+        assert_eq!(fold(B, &red).attempts, 1, "planted control: a real red is still charged");
     }
 
     #[test]

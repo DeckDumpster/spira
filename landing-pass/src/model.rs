@@ -364,6 +364,24 @@ impl GateRun {
     }
 }
 
+/// The cause a red gate records. A branch that no longer merges onto a moved base was not
+/// judged, so it must not read as a red that charges an attempt.
+pub fn red_cause(judged: &str, reason: &str) -> String {
+    if reason.starts_with("no-rebase") { "no-rebase".into() } else { judged.into() }
+}
+
+#[cfg(test)]
+mod red_cause_tests {
+    use super::red_cause;
+
+    #[test]
+    fn a_no_rebase_red_is_not_a_judged_cause() {
+        assert_eq!(red_cause("cert-gate-red", "no-rebase"), "no-rebase");
+        assert_eq!(red_cause("gate-red", "no-rebase"), "no-rebase");
+        assert_eq!(red_cause("gate-red", "suites-failed"), "gate-red");
+    }
+}
+
 /// `landing.status`, rewritten on every exit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatusFile {

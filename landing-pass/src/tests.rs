@@ -691,7 +691,8 @@ fn a_branch_that_no_longer_merges_is_red_no_rebase_and_returned() {
     h.closed("sp-a", "t1");
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (1, "gate:   spira/lib.sh\ngate: VERDICT=FAIL reason=no-rebase branch=spira/sp-a repo=spira suite=-\n".into()));
     h.run();
-    assert!(h.lib.has("reopen sp-a cert-gate-red"), "the bead is returned for a rebase");
+    assert!(h.lib.has("reopen sp-a no-rebase"), "the bead is returned for a rebase, uncharged");
+    assert!(!h.lib.has("cert-gate-red"), "a moved base is not a judged red");
     assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("reopen sp-a") && c.contains("gate:   spira/lib.sh")), "the note names the conflicting paths");
     assert!(!h.lib.has("noverdict"), "a conflict is never NO_VERDICT");
 }
