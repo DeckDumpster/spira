@@ -1401,9 +1401,22 @@ fn refusal_name(r: &lifecycle::Refusal) -> String {
 }
 
 /// `event-continuity`: for each (machine, lc_key), every applied event's from_state must equal
-/// the previous applied event's to_state. Prints the first break per key as one JSON line;
-/// exits 3 when any key breaks.
+/// the previous applied event's to_state. Prints the first break per key as one JSON line.
+/// The first run records the highest break seq in `event-continuity.baseline` under the run
+/// directory and exits 0; later runs exit 3 only for a break past that mark.
 pub fn cmd_event_continuity(_args: &[String], conn: &Conn) -> (i32, String) {
+    let baseline_path = match crate::lifecycle_run_dir() {
+        Ok(d) => d.join("event-continuity.baseline"),
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
+    let baseline: Option<i64> = match std::fs::read_to_string(&baseline_path) {
+        Ok(t) => match t.trim().parse() {
+            Ok(n) => Some(n),
+            Err(_) => return (CANNOT_TELL, format!("cannot tell: {} is not a seq", baseline_path.display())),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {}: {e}", baseline_path.display())),
+    };
     let sql = "SELECT machine, lc_key, seq, event, from_state, prev_to FROM (\
                SELECT seq, machine, lc_key, event, from_state, \
                LAG(to_state) OVER (PARTITION BY machine, lc_key ORDER BY seq) AS prev_to \
@@ -1415,9 +1428,14 @@ pub fn cmd_event_continuity(_args: &[String], conn: &Conn) -> (i32, String) {
     };
     let mut seen = std::collections::HashSet::new();
     let mut breaks = Vec::new();
+    let mut high = 0i64;
+    let mut fresh = false;
     for r in rows {
         let field = |c: &str| r.get(c).and_then(|v| v.as_str()).unwrap_or("").to_string();
         if seen.insert((field("machine"), field("lc_key"))) {
+            let seq: i64 = field("seq").parse().unwrap_or(0);
+            high = high.max(seq);
+            fresh |= baseline.is_some_and(|b| seq > b);
             breaks.push(serde_json::json!({
                 "machine": field("machine"), "key": field("lc_key"), "seq": field("seq"),
                 "event": field("event"), "from_state": field("from_state"), "previous_to_state": field("prev_to"),
@@ -1425,5 +1443,10 @@ pub fn cmd_event_continuity(_args: &[String], conn: &Conn) -> (i32, String) {
         }
     }
     let out = breaks.iter().map(|b| b.to_string()).collect::<Vec<_>>().join("\n");
-    if breaks.is_empty() { (0, String::new()) } else { (REFUSED, out) }
+    if baseline.is_none() {
+        if let Err(e) = std::fs::write(&baseline_path, high.to_string()) {
+            return (CANNOT_TELL, format!("cannot tell: {}: {e}", baseline_path.display()));
+        }
+    }
+    if fresh { (REFUSED, out) } else { (0, out) }
 }

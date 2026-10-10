@@ -204,7 +204,7 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
 /// `$SPIRA_TOML` declares, judged against a confined (non-prod) instance's workspace the
 /// same way an explicit, env-pinned `SPIRA_RUN` always was — never this process's own
 /// environment, and no guessed literal.
-fn lifecycle_run_dir() -> Result<std::path::PathBuf, String> {
+pub(crate) fn lifecycle_run_dir() -> Result<std::path::PathBuf, String> {
     let dir = spira_config::process::cfg("SPIRA_RUN")?;
     if dir.is_empty() {
         return Err("spira.run is empty in the config file — refusing to guess a run directory".to_string());

@@ -226,6 +226,22 @@ want "...naming the key" '"key":"sp-lc-brk"' "$out"
 is "...once, the first break only" "1" "$(printf '%s\n' "$out" | grep -c sp-lc-brk)"
 root_sql --use-db spira_lifecycle sql -q "DELETE FROM event WHERE lc_key = 'sp-lc-brk'" >/dev/null
 
+# ── a baseline turns history into a success: only a break past it is red ────────────────
+CONT_RUN="$TMP/continuity-run"; mkdir -p "$CONT_RUN"
+cont() { SPIRA_TOML="$(tl_layer SPIRA_RUN="$CONT_RUN")" spira-lc event-continuity; }
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-old','A','X','X','Y',1,'{}','t',1),('bead','sp-lc-old','B','Q','Q','R',1,'{}','t',2)" >/dev/null
+out="$(cont)"; rc=$?
+wantrc "first run over old breaks exits 0" 0 $rc
+want "...and still reports them" '"key":"sp-lc-old"' "$out"
+want "...recording a baseline" "event-continuity.baseline" "$(ls "$CONT_RUN")"
+cont >/dev/null
+wantrc "a later run with no new break exits 0" 0 $?
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-new','A','X','X','Y',1,'{}','t',1),('bead','sp-lc-new','B','Q','Q','R',1,'{}','t',2)" >/dev/null
+out="$(cont)"; rc=$?
+wantrc "a new break exits 3" 3 $rc
+want "...naming the new key" '"key":"sp-lc-new"' "$out"
+root_sql --use-db spira_lifecycle sql -q "DELETE FROM event WHERE lc_key IN ('sp-lc-old','sp-lc-new')" >/dev/null
+
 # ── migration 0013 corrects the hard-coded Deliver/Cut states from their predecessors ───
 root_sql --use-db spira_lifecycle sql -q "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) VALUES ('bead','sp-lc-mig','Submit','WORKING','WORKING','SUBMITTED',1,'{}','t',1),('bead','sp-lc-mig','Deliver','CERTIFIED','CERTIFIED','IN_DELIVERY',1,'{}','t',2),('delivery','sp-lc-mig','Cut','QUEUED','QUEUED','BATCHED',1,'{}','t',3)" >/dev/null
 lc event-continuity >/dev/null
