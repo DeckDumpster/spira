@@ -248,6 +248,7 @@ is "bead starts assigned"      aeon-test   "$(assignee_of sp-s1)"
 
 out="$(slay --bead sp-s1 2>&1)"
 rc=$?
+[ "$rc" = 0 ] || printf '# slay-out: %s\n' "$out"
 is  "slay exits 0"             0    "$rc"
 # bd's own STATUS is no longer slay.sh's to flip (sp-rlyl0: HolderDead goes through
 # spira-lc, not bd reopen) — bd's field is left exactly where a live aeon left it; the
