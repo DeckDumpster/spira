@@ -342,7 +342,7 @@ impl Exec for ProcessExec {
         self.log(command, now_ms, &format!("{status} in {}ms", started.elapsed().as_millis()), &out, &err);
         // conf.env freezes the config; a step that changes it sends later commands back through conf.sh
         if status.success() && (command.contains("spira-config set") || command.contains("spira-config unset")) {
-            std::fs::remove_file(self.world.join(CONF_ENV)).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(self.world.join(CONF_ENV));
         }
         status.code().ok_or_else(|| format!("{command}: {status}"))
     }
