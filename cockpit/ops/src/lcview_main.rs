@@ -3,7 +3,7 @@
 //! commits (drift, cached by sha), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{carry_forward, holder_pid, own_ids, render, tail_lines, view, LiveAeon, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{carry_forward, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveAeon, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -139,6 +139,14 @@ fn gather_state_machine(s: &mut Snapshot) {
         }
         Err(e) => s.errors.push(e),
     }
+    match lc_json(&["list", "--delivery"]) {
+        Ok(rows) => {
+            for b in s.batches.iter_mut().filter(|b| b.pr == 0) {
+                b.pr = rows.iter().filter(|d| text(&d["batch_id"]) == b.id).filter_map(|d| num(&d["pr"])).max().unwrap_or(0);
+            }
+        }
+        Err(e) => s.errors.push(e),
+    }
     // Eject times for the newest round only: that is the one the pane names.
     if let Some(b) = s.batches.iter_mut().max_by_key(|b| b.opened_at.max(b.last_at)).filter(|b| !b.ejected.is_empty()) {
         match lc_json(&["history", &b.id, "--machine", "batch"]) {
@@ -151,6 +159,23 @@ fn gather_state_machine(s: &mut Snapshot) {
             }
             Err(e) => s.errors.push(e),
         }
+    }
+}
+
+fn gather_vm_runs(s: &mut Snapshot) {
+    let status = run("round-vm", &["status", "--json"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("round-vm status --json: {e}")));
+    let v = match status {
+        Ok(v) => v,
+        Err(e) => return s.errors.push(e),
+    };
+    let strs = |x: &serde_json::Value| x.as_array().map(|a| a.iter().map(text).collect()).unwrap_or_default();
+    for l in v["leases"].as_array().cloned().unwrap_or_default() {
+        s.vm_runs.push(VmRun { vm: text(&l["vm"]), age_secs: num(&l["age_secs"]).unwrap_or(0), owner: text(&l["owner"]), cmd: strs(&l["cmd"]), idle: false });
+    }
+    if let Some(r) = v["ready"].as_object().filter(|r| !r.is_empty()) {
+        let handle = r.get("vm").map(text).unwrap_or_default();
+        let since = v["vms"].as_array().and_then(|a| a.iter().find(|x| text(&x["vm"]) == handle)).and_then(|x| num(&x["age_secs"])).unwrap_or(0);
+        s.vm_runs.push(VmRun { vm: handle, age_secs: since, owner: String::new(), cmd: Vec::new(), idle: true });
     }
 }
 
@@ -231,6 +256,7 @@ fn gather() -> Snapshot {
     let sm = std::thread::spawn(|| {
         let mut t = Snapshot::default();
         gather_state_machine(&mut t);
+        gather_vm_runs(&mut t);
         t
     });
     // An aeon's phase is on its lifecycle row (sp-vknc2j.16); the pane never scans /proc.
@@ -310,6 +336,7 @@ fn gather() -> Snapshot {
     s.edges = sm.edges;
     s.dwell = sm.dwell;
     s.batches = sm.batches;
+    s.vm_runs = sm.vm_runs;
     s.eject_why = sm.eject_why;
     s.errors.extend(sm.errors);
     // The pass's live counts are not on the batch row yet, and the pane reads a pass only
