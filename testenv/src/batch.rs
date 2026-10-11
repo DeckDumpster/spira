@@ -179,6 +179,7 @@ struct Shared<'a> {
     empty_output: Mutex<BTreeMap<String, bool>>,
     account_fault: Mutex<Option<String>>,
     deadline_at: Option<Instant>,
+    finished: Mutex<Vec<(usize, String, i32, u64)>>,
 }
 
 impl Shared<'_> {
@@ -254,12 +255,24 @@ impl Shared<'_> {
             .unwrap()
             .insert(suite.to_string(), output.trim().is_empty());
         self.records.lock().unwrap().insert(suite.to_string(), rec);
-        let (calls, ms) = crate::timing::bd_totals(&self.session.read_file(&self.session.bd_log(
-            self.cfg.mode,
-            n,
-            suite,
-        )));
-        (self.hooks.timing)(suite, rc, secs, calls, ms);
+        self.finished
+            .lock()
+            .unwrap()
+            .push((n, suite.to_string(), rc, secs));
+    }
+
+    /// One exec reads every finished suite's bd log, instead of one per suite.
+    fn report_timing(&self) {
+        let done = std::mem::take(&mut *self.finished.lock().unwrap());
+        let paths: Vec<String> = done
+            .iter()
+            .map(|(n, suite, _, _)| self.session.bd_log(self.cfg.mode, *n, suite))
+            .collect();
+        let logs = self.session.read_files(&paths);
+        for ((_, suite, rc, secs), log) in done.iter().zip(logs) {
+            let (calls, ms) = crate::timing::bd_totals(&log);
+            (self.hooks.timing)(suite, *rc, *secs, calls, ms);
+        }
     }
 
     /// A red with 0 s and no output — or the account-fault text — is podman failing to
@@ -318,6 +331,7 @@ pub fn run(
         records: Mutex::new(BTreeMap::new()),
         empty_output: Mutex::new(BTreeMap::new()),
         account_fault: Mutex::new(None),
+        finished: Mutex::new(Vec::new()),
         // The clock starts as the first suite is scheduled (D7).
         deadline_at: cfg.deadline.map(|d| Instant::now() + d),
     };
@@ -341,6 +355,7 @@ pub fn run(
             }
         }
     }
+    sh.report_timing();
     outcome.records = sh.records.into_inner().unwrap();
     outcome.cancelled |= cancelled();
     outcome
