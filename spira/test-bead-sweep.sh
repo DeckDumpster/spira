@@ -44,7 +44,7 @@ echo '[{"bead_id":"sp-done","state":"LANDED"}]' > "$STUB_DIR/term.json"
 run() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_ASK_LABEL=needs-boss SPIRA_CONCIERGE_INBOX="$TMP/inbox"
     env -i PATH="$TMP/bin:$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" STUB_DIR="$STUB_DIR" \
-        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/widgets" \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="${SWEEP_REPO:-$TMP/widgets}" ${SWEEP_HOME_REPO-SPIRA_HOME_REPO=widgets} \
         bash "$HERE/bead-sweep.sh" "$@" 2>&1
 }
 
@@ -74,6 +74,21 @@ for c in "SUSPECT sp-pois READY POISONED" "SUSPECT sp-ask READY ASK HOLD" "SUSPE
     want "class: $c" "$c" "$out"
 done
 
+SHA="$TMP/d9f47a657061e16a9df8df8911340ecc293ad1ab"; mkdir -p "$SHA"
+board "$(row sp-mine CERTIFIED "$OLD" '[]')" "$(row sp-theirs CERTIFIED "$OLD" '[]')" -- \
+    "$(cont sp-mine '["repo:widgets"]')" "$(cont sp-theirs '["repo:other"]')"
+out="$(SWEEP_REPO="$SHA" run --show)"
+case "$out" in *"SUSPECT sp-mine"*) bad=1 ;; *) bad=0 ;; esac
+is "a sha-named release dir raises no SUSPECT on a home-repo bead" "0" "$bad"
+want "a foreign CERTIFIED bead still raises it" "SUSPECT sp-theirs CERTIFIED CERTIFIED outside repo:widgets" "$out"
+out="$(SWEEP_REPO="$SHA" SWEEP_HOME_REPO= run --show)"
+want "an undeclared home repo refuses" "SWEEP FAILED" "$out"
+board "$(row sp-pois READY "$NOW" '["poison"]')" "$(row sp-ask READY "$NOW" '["ask"]')" \
+    "$(row sp-man READY "$OLD" '["manual"]')" "$(row sp-edge READY "$NOW" '[]' '["sp-done"]')" \
+    "$(row sp-rw REWORK "$OLD" '[]')" "$(row sp-cert CERTIFIED "$OLD" '[]')" \
+    "$(row sp-wait SUBMITTED "$OLD" '[]')" "$(row sp-blk READY "$NOW" '[]' '["sp-pois"]')" \
+    "$(row sp-askl READY "$NOW" '[]')" -- \
+    "$(cont sp-cert '["repo:other"]')" "$(cont sp-rowless '[]')" "$(cont sp-askl '["needs-boss"]')"
 run watch --interval 5 --ticks 1 >/dev/null
 n="$(grep -c 'watch:bead-sweep. SUSPECT' "$TMP/inbox")"
 is "each SUSPECT reached the inbox once" "8" "$n"
