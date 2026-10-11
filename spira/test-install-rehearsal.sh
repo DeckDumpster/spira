@@ -181,6 +181,10 @@ echo "configure — non-interactive spira.conf bootstrap:"
     "$CNAME" bash /workspace/spira/configure.sh >&2
 iszero "configure.sh exits 0" "$?"
 
+# configure leaves derivable keys commented out; the home repository has no derivation.
+"${CEXEC[@]}" "$CNAME" bash -c 'spira-config set spira.home_repo home "$(spira-config locate)"' >&2
+iszero "home repository declared in the rehearsal config" "$?"
+
 # configure.sh and ready.sh run before install puts the release's bin/ on PATH: they must
 # find spira-config in their own release tree. PATH here holds no Spira directory at all.
 "${CEXEC[@]}" \
