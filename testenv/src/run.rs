@@ -1877,13 +1877,17 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             ("build_wall_s", build_wall_secs.to_string()),
         ],
     );
+    let t_tail = Instant::now();
+    let bd_paths: Vec<String> = selected
+        .iter()
+        .map(|n| format!("{}/{n}.log", session.bd_timing_dir()))
+        .collect();
     let bd_ms: HashMap<String, u64> = selected
         .iter()
-        .filter_map(|n| {
-            let t = session.read_file(&format!("{}/{n}.log", session.bd_timing_dir()));
-            (!t.is_empty()).then(|| (n.clone(), timing::bd_totals(&t).1))
-        })
+        .zip(session.read_files(&bd_paths))
+        .filter_map(|(n, t)| (!t.trim().is_empty()).then(|| (n.clone(), timing::bd_totals(t.trim_end()).1)))
         .collect();
+    deps.log(&format!("tail: bd timing read for {} suites in {}s", bd_paths.len(), t_tail.elapsed().as_secs()));
     let tsv: String = selected
         .iter()
         .filter_map(|n| {
@@ -1902,8 +1906,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let _ = fs::write(results.join("timing.tsv"), tsv);
     deps.log(&format!("testdb: {} used", fixtures.describe()));
     ph.mark("post");
+    let t_down = Instant::now();
     drop(guard);
     ph.mark("teardown");
+    deps.log(&format!("tail: teardown {}s", t_down.elapsed().as_secs()));
     let batch_wall = t_batch.elapsed().as_secs();
     let _ = timing::append(
         &run_root,
