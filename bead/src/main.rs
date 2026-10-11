@@ -143,7 +143,7 @@ fn is_incident(home: &str, id: &str) -> bool {
 /// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
-fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>) -> i32 {
+fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
     if incident.is_none() && mirror.is_none() && !express {
         return bdq_status(home, args);
     }
@@ -164,12 +164,12 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
     if let Some((title, priority)) = mirror {
         match submitted_tip {
             Some(tip) => {
-                if let Err(e) = create_submitted_row(&new_id, title, priority, tip) {
+                if let Err(e) = create_submitted_row(&new_id, title, priority, tip, repo) {
                     eprintln!("bead: file: {new_id} filed but its lifecycle row was not created SUBMITTED: {e}; it is not claimable until one exists: spira-lc create-bead {new_id} --submitted-tip {tip}");
                     rc = 1;
                 }
             }
-            None => mirror_to_lifecycle(&new_id, Some(title), priority),
+            None => mirror_to_lifecycle(&new_id, Some(title), priority, repo),
         }
     }
     if express {
@@ -194,10 +194,13 @@ const BD_DEFAULT_PRIORITY: i64 = 2;
 /// Write the bead's title and priority into its lifecycle row, which the ops views read
 /// instead of bd. Detached: filing has a server deadline and a second connect inside it
 /// overran it. A write that fails is repaired by `spira-lc backfill-titles`.
-fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64) {
+fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64, repo: Option<&str>) {
     let mut args = vec!["30".to_string(), "spira-lc".into(), "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
     if let Some(t) = title {
         args.extend(["--title".to_string(), t.to_string()]);
+    }
+    if let Some(r) = repo {
+        args.extend(["--repo".to_string(), r.to_string()]);
     }
     // batch-job: detached, bounded by timeout(1), one point write
     let spawned = Command::new("timeout")
@@ -213,10 +216,15 @@ fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64) {
 }
 
 /// Synchronous, unlike the mirror: the row must exist SUBMITTED before this call returns.
-fn create_submitted_row(id: &str, title: &str, priority: i64, tip: &str) -> Result<(), String> {
+fn create_submitted_row(id: &str, title: &str, priority: i64, tip: &str, repo: Option<&str>) -> Result<(), String> {
     let bin = spira_config::lifecycle_row::lc_bin();
+    let priority = priority.to_string();
+    let mut args = vec!["5", &bin, "create-bead", id, "--priority", &priority, "--title", title, "--submitted-tip", tip];
+    if let Some(r) = repo {
+        args.extend(["--repo", r]);
+    }
     let out = Command::new("timeout")
-        .args(["5", &bin, "create-bead", id, "--priority", &priority.to_string(), "--title", title, "--submitted-tip", tip])
+        .args(&args)
         .envs(spira_config::release_env::child_path_env_for_process())
         .stdin(Stdio::null())
         .output()
@@ -559,7 +567,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("--no-inherit-labels".into());
         }
         let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
-        bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref())
+        bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref(), Some(repo.as_str()))
     } else {
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
@@ -601,7 +609,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_create(home, &bd_args, incident_parent.as_deref(), None, express, None)
+        bdq_create(home, &bd_args, incident_parent.as_deref(), None, express, None, None)
     }
 }
 
@@ -668,7 +676,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         let upd = bdq_status(home, &s(&["update", &id, "-p", &new.to_string()]));
         rc |= upd;
         if upd == 0 {
-            mirror_to_lifecycle(&id, None, new);
+            mirror_to_lifecycle(&id, None, new, None);
             let text = bead::priority_note(&actor, Some(old), new, note.as_deref());
             rc |= bdq_status(home, &s(&["note", &id, &text]));
             changed.push_str(&text);

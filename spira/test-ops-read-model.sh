@@ -147,7 +147,7 @@ before="$(untitled)"
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/bd" <<'STUB'
 #!/usr/bin/env bash
-[ "$1" = show ] && printf '[{"id":"%s","title":"from bd %s","priority":3}]\n' "$2" "$2"
+[ "$1" = show ] && printf '[{"id":"%s","title":"from bd %s","priority":3,"labels":["plan","repo:spira"]}]\n' "$2" "$2"
 [ "$1 $2 $3" = "dep list sp-b9" ] && printf '[{"depends_on_id":"sp-b8","type":"blocks"},{"depends_on_id":"sp-b3","type":"parent-child"}]\n'
 [ "$1 $2" = "dep list" ] && [ "$3" != sp-b9 ] && echo '[]'
 exit 0
@@ -160,6 +160,11 @@ is "the backfill leaves no live row untitled" 0 "$(untitled)"
 is "the backfill leaves no recent landing untitled" 0 "$(lcfix_sql -r csv -q 'SELECT COUNT(*) FROM ops_recent WHERE title IS NULL' | sed -n 2p)"
 want "the backfill wrote bd's title" "from bd sp-b40" "$(lcfix_sql -r csv -q "SELECT title FROM bead WHERE bead_id='sp-b40'")"
 is "the backfill keeps an existing title" "t0" "$(lcfix_sql -r csv -q "SELECT title FROM bead WHERE bead_id='sp-b0'" | sed -n 2p)"
+
+unrepoed() { lcfix_sql -r csv -q "SELECT COUNT(*) FROM bead WHERE repo IS NULL AND state IN ('OPEN','READY','WORKING','SUBMITTED','CERTIFIED','IN_DELIVERY','REWORK')" | sed -n 2p; }
+[ "$(unrepoed)" -gt 0 ] && ok "positive control: live rows have no repo before the backfill" || bad "positive control: live rows have no repo before the backfill" "$(unrepoed)"
+spira-lc backfill-repos >/dev/null 2>&1; wantrc "the repo backfill completes" 0 $?
+is "the repo backfill leaves no live row without a repo" 0 "$(unrepoed)"
 
 live_row() { spira-lc ops-view ops_live | python3 -I -c 'import json,sys; r=[x for x in json.load(sys.stdin) if x["bead_id"]==sys.argv[1]]; print(r[0]["claimable"], r[0]["blocker"]) if r else print("absent")' "$1"; }
 is "positive control: no edges before the backfill, so a READY bead is claimable" "1 None" "$(live_row sp-b1)"
@@ -201,6 +206,11 @@ spira-lc create-bead sp-mirror --title "it's mine" --priority 1 >/dev/null
 spira-lc create-bead sp-mirror --priority 0 >/dev/null
 row="$(lcfix_sql -r csv -q "SELECT title, priority, version FROM bead WHERE bead_id='sp-mirror'" | sed -n 2p)"
 is "a mirror write sets title and priority, keeps an earlier title, and never bumps the version" "it's mine,0,0" "$row"
+spira-lc create-bead sp-filed-here --repo pokedumpster --priority 2 >/dev/null
+is "a bead created with --repo gets the column" "pokedumpster" "$(lcfix_sql -r csv -q "SELECT repo FROM bead WHERE bead_id='sp-filed-here'" | sed -n 2p)"
+is "list --repo returns exactly that repo's beads" "sp-filed-here" "$(spira-lc list --repo pokedumpster | python3 -I -c 'import json,sys; print(",".join(r["bead_id"] for r in json.load(sys.stdin)))')"
+is "list --repo with --state composes" "" "$(spira-lc list --repo pokedumpster --state LANDED | python3 -I -c 'import json,sys; print(",".join(r["bead_id"] for r in json.load(sys.stdin)))')"
+want "list rows carry repo" '"repo"' "$(spira-lc list --ids sp-filed-here)"
 spira-lc create-bead sp-mirror --priority 9 >/dev/null 2>&1; wantrc "a priority outside 0..4 is refused" 2 $?
 
 sed -e "s/@SPIRA_LC_PASSWORD@/rw-pw/" -e "s/@SPIRA_LC_RO_PASSWORD@/ro-pw/" "$LC_DIR/grants.sql" > "$TMP/grants.sql"
