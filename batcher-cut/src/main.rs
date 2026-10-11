@@ -164,7 +164,7 @@ fn default_round_vm() -> PathBuf {
 /// environment. A key that cannot be resolved is a refusal naming it, never a Rust-level
 /// default standing in for it. `SPIRA_BATCHER_ROUND_SLOTS`/`SPIRA_BATCHER_POLL_SECS`/
 /// `SPIRA_LC_TIMEOUT`/`SPIRA_VERDICTS`/`SPIRA_BATCHER_LAND_LOCK_ATTEMPTS`/
-/// `SPIRA_BATCHER_LAND_LOCK_WAIT` are NOT registered keys (`ls spira/conf.d/` does not name
+/// `SPIRA_BATCHER_LAND_LOCK_WAIT`/`SPIRA_BATCHER_LAND_UNPAUSE` (a pause-file path; unset = off) are NOT registered keys (`ls spira/conf.d/` does not name
 /// them) — they stay bare `env::var` reads with their existing defaults, unchanged by this
 /// migration.
 fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
@@ -194,6 +194,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
         land_lock_wait: std::time::Duration::from_secs(env::var("SPIRA_BATCHER_LAND_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(30)),
+        land_unpause: env::var("SPIRA_BATCHER_LAND_UNPAUSE").ok().filter(|v| !v.is_empty()).map(PathBuf::from),
     })
 }
 
@@ -739,6 +740,12 @@ fn finish_local_round(
         return Ok(None);
     }
 
+    match io::unpause_after_land(env_) {
+        Ok(io::Unpause::Cleared) => println!("batcher {}: landed; cut pause cleared", repo.name),
+        Ok(io::Unpause::Held) => println!("batcher {}: landed; cut pause stays (deliberate hold)", repo.name),
+        Ok(_) => {}
+        Err(e) => println!("batcher {}: landed but the cut pause was not cleared: {e}", repo.name),
+    }
     io::write_local_verdict(env_, &repo.name, "green", "");
     println!("batcher {}: landed locally at {head} — {} member(s)", repo.name, stable.members.len());
 
