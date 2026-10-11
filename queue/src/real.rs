@@ -1230,7 +1230,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let (s, _) = lib.context(Some("spira")).unwrap();
         assert_eq!(
             s.verdict,
-            VerdictSettings { ci_maxsec: 77, ci_idle_sec: 12, infra_retries: 4, lock_wait: 9, lock_starve_max: 3, incident_priority: "3".into(), red_tracker_label: String::new(), mender_label: "mend".into() }
+            VerdictSettings { ci_maxsec: 77, ci_idle_sec: 12, infra_retries: 4, lock_wait: 9, lock_starve_max: 3, incident_priority: "3".into(), red_tracker_label: String::new(), mender_label: "mender-failure".into() }
         );
         // another repository gets the global value; a name that is not an identifier none
         let (s, _) = lib.context(Some("svc")).unwrap();
