@@ -744,7 +744,8 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
 
     let Ok(_g) = lock(w, label, &c) else { return FAIL };
     let Ok(mut kv) = load(w, label, &c, batch) else { return FAIL };
-    if phase_of(w, batch) != "certifying" || kv.get("head") != Some(head.as_str()) {
+    let already_green = reds.is_empty() && phase_of(w, batch) == "green";
+    if !(phase_of(w, batch) == "certifying" || already_green) || kv.get("head") != Some(head.as_str()) {
         w.err(format!("queue.sh {label}: the round {batch} changed while it was being certified — the result is discarded; certify again"));
         return FAIL;
     }
@@ -768,7 +769,9 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
     }
 
     let greened = suites_started(w, batch, false).and_then(|()| pass_verdict_event(w, batch, &Verdict::Green(timings), false));
-    if let Err((rc, out)) = greened {
+    // A write that timed out may have applied: the batch row is the arbiter, not the reply.
+    let applied = greened.is_err() && phase_of(w, batch) == "green";
+    if let (Err((rc, out)), false) = (greened, applied) {
         w.err(format!("queue.sh {label}: spira-lc refused the GREEN for {batch} (rc={rc}): {out}"));
         return FAIL;
     }

@@ -495,6 +495,8 @@ struct FLc {
     event_refused: Cell<Option<&'static str>>,
     /// A batch event whose kind names this is refused.
     batch_event_refused: Cell<Option<&'static str>>,
+    /// A batch event whose kind names this applies, then reports that the reply timed out.
+    batch_event_times_out: Cell<Option<&'static str>>,
     /// Bead events report success and change nothing.
     event_ignored: Cell<bool>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
@@ -510,7 +512,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), down_for: Cell::new(0), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
+        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), down_for: Cell::new(0), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), batch_event_times_out: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -602,6 +604,9 @@ impl Lc for FLc {
                 _ => (view.0.as_str(), view.2, view.3.as_str()),
             };
             *view = (state.to_string(), view.1 + 1, pass, phase.to_string());
+        }
+        if self.batch_event_times_out.get().is_some_and(|k| kind.contains(k)) {
+            return Err((2, "cannot tell: deadline".into()));
         }
         Ok(())
     }
