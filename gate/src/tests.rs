@@ -3968,3 +3968,116 @@ mod machine_events {
         assert!(f.verdict_line().contains("reason=cancelled"), "{}", f.verdict_line());
     }
 }
+
+// ------------------------------------------------- family J: what the verdict suites held
+
+#[test]
+fn a_timeout_names_its_budget_and_command_and_is_not_cached() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_TIMEOUT", "10");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (124, String::new()));
+    assert_eq!(f.run(), NOVERDICT);
+    let e = f.stderr();
+    assert!(e.contains("killed at 10s") && e.contains("gate: command: bash spira/fence.sh"), "{e}");
+    assert!(f.verdict_line().contains("VERDICT=NO_VERDICT reason=timeout"), "{}", f.verdict_line());
+    assert!(f.written.borrow().is_empty(), "{:?}", f.written.borrow());
+}
+
+#[test]
+fn a_harness_fault_is_never_cached_or_charged_to_the_base() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (75, String::new()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=harness-fault"));
+    assert!(!f.stderr().contains("BASE_FAIL") && !f.verdict_line().contains("branch-red"));
+    assert!(f.written.borrow().is_empty() && f.ran.borrow().len() == 1);
+}
+
+#[test]
+fn a_container_death_found_only_at_the_deadline_keeps_its_real_cause() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (124, "batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)".into()),
+    );
+    assert_eq!(f.run(), NOVERDICT);
+    let line = f.verdict_line();
+    assert!(line.contains("reason=harness-fault") && !line.contains("reason=timeout"), "{line}");
+    assert!(f.stderr().contains("ExitCode=137 OOMKilled=false"), "{}", f.stderr());
+    assert!(f.written.borrow().is_empty());
+}
+
+#[test]
+fn both_trials_see_the_same_env_contract() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "lint said no".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (1, "lint said no".into()));
+    f.run();
+    assert_eq!(f.ran.borrow().len(), 2, "branch trial and base trial");
+    for i in 0..2 {
+        assert_eq!(f.env_of(i, "SPIRA_GATE_SELECT_HEAD"), BR, "trial {i}");
+        assert_eq!(f.env_of(i, "SPIRA_GATE_BASE"), BASE, "trial {i}");
+        assert_eq!(f.env_of(i, "SPIRA_GATE_BUDGET"), "300", "trial {i}");
+        assert_eq!(f.env_of(i, "SPIRA_RUN"), RUN, "trial {i}");
+        assert!(
+            !f.ran.borrow()[i].iter().any(|(k, _)| k == "SPIRA_GATE_HOST_CORES"),
+            "trial {i}: the retired host-cores export is back"
+        );
+    }
+}
+
+#[test]
+fn a_red_keeps_its_early_diagnostic_whole_and_a_pass_prints_none_of_it() {
+    let noisy = format!("DIAG: kept\n{}", (1..=25).map(|i| format!("suite-{i}.sh ok\n")).collect::<String>());
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, noisy.clone()));
+    f.runs.borrow_mut().insert(BASE.into(), (0, String::new()));
+    assert_eq!(f.run(), FAIL);
+    assert!(f.stderr().contains("DIAG: kept"), "{}", f.stderr());
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, noisy));
+    assert_eq!(f.run(), PASS);
+    assert!(!f.stderr().contains("DIAG: kept"), "{}", f.stderr());
+}
+
+#[test]
+fn an_inherited_red_carries_the_bases_own_output() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red("test-shared.sh")));
+    f.runs.borrow_mut().insert(BASE.into(), (1, format!("{}\nBASE-ONLY-EVIDENCE", red("test-shared.sh"))));
+    f.reruns.borrow_mut().insert((BASE.into(), "test-shared.sh".into()), (1, red("test-shared.sh")));
+    assert_eq!(f.run(), PASS);
+    let e = f.stderr();
+    assert!(e.contains("inherited, not judged") && e.contains("BASE-ONLY-EVIDENCE"), "{e}");
+    assert!(!f.verdict_line().contains("base-red"));
+}
+
+#[test]
+fn a_base_with_reds_and_timeouts_inherits_the_shared_red() {
+    let both = format!("{}\n  test-slow.sh                     TIMEOUT after 600s", red("test-real.sh"));
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, both.clone()));
+    f.runs.borrow_mut().insert(BASE.into(), (1, both));
+    f.reruns.borrow_mut().insert((BASE.into(), "test-real.sh".into()), (1, red("test-real.sh")));
+    assert_eq!(f.run(), PASS);
+    assert!(f.stderr().contains("inherited, not judged") && f.stderr().contains("test-real.sh"));
+}
+
+#[test]
+fn an_unnamed_red_on_both_trials_is_the_bases_with_no_suite() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "lint said no".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (1, "lint said no".into()));
+    f.run();
+    let line = f.verdict_line();
+    assert!(line.contains("reason=base-red") && line.ends_with("suite=-"), "{line}");
+}
+
+#[test]
+fn a_base_trial_that_reports_a_harness_fault_is_no_verdict_not_base_fail() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "lint said no".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (75, String::new()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(!f.verdict_line().contains("BASE_FAIL") && !f.verdict_line().contains("base-red"), "{}", f.verdict_line());
+}

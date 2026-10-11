@@ -28,13 +28,6 @@
 #
 # Blank lines and `#` comments are ignored. One repository-relative path per line.
 
-# THE VERDICT CACHE'S OWN, and it earns its place by being the one check between a branch and
-# a landing that decides whether any of the others run. A cache that answers a question it was
-# never asked lands work on a trial nobody performed, and it does it silently: a reused verdict
-# and a real pass are the same exit status, in the same words, at the same cost as success. Five
-# seconds, and it plants an offender for every side of the key.
-spira/test-gate-verdict.sh
-
 # THE HOST-ESCAPE FENCE'S OWN POSITIVE CONTROL. host-check.sh requires every suite to run
 # in a container or carry a # host-reason: declaration; this suite plants an undeclared host
 # suite (SEEN RED), withdraws it (SEEN GREEN), and verifies the count suites.sh renders.

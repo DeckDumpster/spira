@@ -193,6 +193,13 @@ mod tests {
     }
 
     #[test]
+    fn the_same_entry_is_reused_under_a_longer_ttl() {
+        let e = render_entry("w", 1000, "b", "r", "br", "-");
+        assert_eq!(cache_fresh(&e, "60", 1100), None);
+        assert!(cache_fresh(&e, "3660", 1100).is_some());
+    }
+
+    #[test]
     fn a_hostile_when_is_only_text() {
         let e = "when=$(touch /tmp/pwned)\nat=10\nby=\n";
         assert_eq!(
