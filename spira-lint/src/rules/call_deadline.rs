@@ -537,6 +537,64 @@ are counted in spira-lint/call-deadline-allow, which only shrinks; regenerate wi
     }
 }
 
+pub struct ShortPodmanTimeout;
+
+const PODMAN_NAME: &str = "short-podman-timeout";
+const PODMAN_FLOOR_SECS: f64 = 10.0;
+
+fn is_suite(path: &str) -> bool {
+    path.strip_prefix("spira/").is_some_and(|f| f.starts_with("test-") && f.ends_with(".sh") && !f.contains('/'))
+}
+
+pub fn scan_short_podman(src: &[u8]) -> Vec<Hit> {
+    let mut out = Vec::new();
+    let text = String::from_utf8_lossy(src);
+    for (n, l) in text.lines().enumerate() {
+        let l = l.split('#').next().unwrap_or("");
+        let words: Vec<&str> = l.split_whitespace().collect();
+        for (i, w) in words.iter().enumerate() {
+            if w.rsplit('(').next() != Some("timeout") {
+                continue;
+            }
+            let mut k = i + 1;
+            while words.get(k).is_some_and(|w| w.starts_with('-')) {
+                k += if matches!(words[k], "-k" | "-s") { 2 } else { 1 };
+            }
+            let secs = words.get(k).and_then(|w| parse_duration_word(w));
+            if secs.is_some_and(|s| s <= PODMAN_FLOOR_SECS) && words.get(k + 1).is_some_and(|w| program_of(w) == "podman") {
+                out.push(hit(n + 1, format!("podman under a {}s timeout is a wall-clock budget — use a hang guard of 120 s with a batch-job marker", secs.unwrap_or(0.0))));
+            }
+        }
+    }
+    out
+}
+
+impl Rule for ShortPodmanTimeout {
+    fn name(&self) -> &'static str {
+        PODMAN_NAME
+    }
+
+    fn applies_to(&self, e: &Entry) -> bool {
+        is_suite(&e.path)
+    }
+
+    fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
+        let mut out = Vec::new();
+        for e in crate::scope(tree, &ShortPodmanTimeout)? {
+            let Some(src) = tree.content(e) else { continue };
+            for h in scan_short_podman(src) {
+                out.push(Finding { rule: PODMAN_NAME, path: e.path.clone(), line: Some(h.line), message: h.message });
+            }
+        }
+        Ok(out)
+    }
+
+    fn hint(&self) -> &'static str {
+        "a suite that kills a slow container call fails for load, not code. Give every podman call a hang \
+guard of 120 s and mark it `# batch-job: <why>`; no assertion may depend on how long a call took."
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,6 +663,15 @@ mod tests {
         assert_eq!(sh("timeout 60 bd list\n"), vec![(1, over(60.0))]);
         assert_eq!(sh("timeout 2m bd list\n").len(), 1);
         assert_eq!(sh("curl --max-time 30 http://x\n"), vec![(1, over(30.0))]);
+    }
+
+    #[test]
+    fn a_short_podman_timeout_is_caught_and_a_hang_guard_passes() {
+        let got = |s: &str| scan_short_podman(s.as_bytes()).into_iter().map(|h| h.line).collect::<Vec<_>>();
+        assert_eq!(got("timeout 5 podman rm -f x\nX=(timeout 10 podman exec c)\n"), vec![1, 2]);
+        assert_eq!(got("a && timeout -k 1 3 podman run x\n"), vec![1]);
+        assert!(got("timeout 120 podman rm x\ntimeout 5 bd list\n# timeout 5 podman x\n").is_empty());
+        assert!(is_suite("spira/test-a.sh") && !is_suite("spira/testlib/x.sh") && !is_suite("spira/a.sh"));
     }
 
     #[test]
@@ -693,5 +760,6 @@ mod tests {
 pub fn rules() -> Vec<Box<dyn crate::Rule>> {
     vec![
         Box::new(CallDeadline),
+        Box::new(ShortPodmanTimeout),
     ]
 }
