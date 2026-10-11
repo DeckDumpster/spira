@@ -323,7 +323,7 @@ want "sentinel timer active" "active" "$active_out"
 #    does not FAIL since the collector has not run yet).
 # `doctor` is a compiled binary now (sp-yyk47), resolved by bare name on the container's
 # own PATH like every other release tool (sp-gypjk) — never a `bash .../doctor.sh` path.
-doc_out="$("${CEXEC[@]}" "$CNAME" doctor 2>&1)"
+doc_out="$("${INSTALL_EXEC[@]}" "$CNAME" doctor 2>&1)"
 doc_rc=$?
 iszero "doctor exits 0" "$doc_rc"
 nowant "doctor: no FAIL at all" "FAIL" "$doc_out"
@@ -334,7 +334,7 @@ nowant "doctor: no FAIL at all" "FAIL" "$doc_out"
 #    collector check is a known FAIL (see NOT PROVEN, header) since nothing here
 #    starts spira-cockpit-prod.service, so specific lines are asserted instead of
 #    the overall exit code.
-ready_out="$("${CEXEC[@]}" \
+ready_out="$("${INSTALL_EXEC[@]}" \
     -e "SPIRA_LOOM_PROBE=${STUBS_CTR}/loom-probe" \
     "$CNAME" bash /workspace/spira/ready.sh 2>&1)"
 want "ready.sh: sentinel timer active" "pass  sentinel timer active" "$ready_out"
