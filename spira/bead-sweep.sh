@@ -19,7 +19,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 
 HEALTH_FILE="$SPIRA_RUN/watchd/bead-sweep.health"
-HOME_LABEL="repo:$(basename "$SPIRA_REPO")"
+HOME_LABEL="${SPIRA_HOME_REPO:+repo:$SPIRA_HOME_REPO}"
 HOLD_MIN="${BEAD_SWEEP_HOLD_MIN:-120}"
 REWORK_MIN="${BEAD_SWEEP_REWORK_MIN:-20}"
 CERT_MIN="${BEAD_SWEEP_CERT_MIN:-10}"
@@ -28,6 +28,7 @@ declare -A _bs_seen
 
 _bs_classify() {
     local t="$1"
+    [ -n "$HOME_LABEL" ] || { echo "SWEEP FAILED: SPIRA_HOME_REPO is not declared" >&2; return 1; }
     # batch-job: whole-store listing the sweep classifies; bounded by the daemon row cadence
     timeout 60 spira-lc list --state READY,REWORK,SUBMITTED,CERTIFIED,WORKING,OPEN,IN_DELIVERY > "$t/rows.json" 2>/dev/null || return 1
     # batch-job: whole-store listing the sweep classifies; bounded by the daemon row cadence
