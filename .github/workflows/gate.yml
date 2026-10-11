@@ -673,6 +673,7 @@ jobs:
         if: always()
         env:
           SPIRA_BATCH_TAIL_LINES: ${{ vars.SPIRA_BATCH_TAIL_LINES || 50 }}
+          SPIRA_TOML: ${{ runner.temp }}/ci-config.toml
         run: |
           batch="$RUNNER_TEMP/batch"
           [ -d "$batch" ] || exit 0
