@@ -232,4 +232,14 @@ wantrc "a timeout parks only for the shorter timeout window" 0 "$rc"
 st push ok
 
 echo
+echo "H. a legacy stamp with no failure kind is void, not a day's park:"
+echo "$(( $(date +%s) - 60 ))" > "$TMP/run/beads-push.failed-at"
+out="$(env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
+    SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
+    bash "$REPO/beads-push.sh" 2>&1)"; rc=$?
+wantrc "a kindless stamp does not park the push" 0 "$rc"
+want   "and the push runs"                       "OK" "$out"
+st push ok
+
+echo
 tl_summary

@@ -84,7 +84,7 @@ fi
 # pushed, and only that comparison produces the OK line.
 # A failed push is the expensive one: it packs the whole repository before the remote refuses
 # or the deadline kills it. So a failure parks further attempts for a day instead of
-# repacking on every timer tick. A stamp older than the server's last start is void: the
+# repacking on every timer tick. A stamp without a failure kind predates the classifier and is void, as is one older than the server's last start: the
 # restart is how a fix to the cause takes effect.
 failed_stamp="${SPIRA_RUN:-/tmp}/beads-push.failed-at"
 retry_after="${BEADS_PUSH_RETRY_AFTER_FAILURE_SECS:-86400}"
@@ -100,6 +100,9 @@ if [ -f "$failed_stamp" ]; then
 fi
 if [ -f "$failed_stamp" ]; then
     read -r failed_at failed_kind < "$failed_stamp" 2>/dev/null || failed_at=0
+    [ -n "${failed_kind:-}" ] || { rm -f "$failed_stamp"; failed_at=0; }
+fi
+if [ -f "$failed_stamp" ]; then
     since=$(( $(date +%s) - ${failed_at:-0} ))
     [ "${failed_kind:-}" = timeout ] && retry_after="$retry_after_timeout"
     if [ "$since" -lt "$retry_after" ]; then
