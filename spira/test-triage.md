@@ -47,8 +47,8 @@ migration bead per family from this table.
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-sim-scenarios.sh | 195 | every scenario × fixed seeds reaches its goal with all invariants; two controls prove the invariant checker can fail | keep+shard | This is the destination. Wall is the nine scenarios in series per seed list; one suite per scenario file runs them in parallel and cuts it to the longest scenario. |
-| test-sim-happy-path.sh | 64 | the happy-path world runs submit → land end to end under the real units' wiring | keep | Already a sim; its rows overlap `happy-path.toml` in A and should be folded into it so one world is built, not two. |
+| test-sim-scenarios.sh | 195 | every scenario × fixed seeds reaches its goal with all invariants; two controls prove the invariant checker can fail | keep+shard | **Done (sp-ypunvh):** one `test-sim-<scenario>.sh` per scenario file over `sim-scenario-lib.sh`; the two controls and the every-scenario-has-a-suite check are `test-sim-controls.sh`. |
+| test-sim-happy-path.sh | 64 | the happy-path world runs submit → land end to end under the real units' wiring | keep | **Done (sp-ypunvh):** it is the happy-path scenario's suite (run, probe, replay, unreachable-goal control); the shard loop does not run it a second time. |
 
 ### B — landing hand-offs
 
