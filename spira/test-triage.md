@@ -109,15 +109,16 @@ migration bead per family from this table.
 
 ### F — persona brief, prompt, model
 
-| suite | wall | property | target | reason |
-| --- | ---: | --- | --- | --- |
-| test-aeon-chamber-overlay.sh | 60 | the builder brief says how to verify once; an operator overlay beats the release text | unit | Text composition in the aeon crate. |
-| test-aeon-chamber-overlay-mech.sh | 60 | the overlay-mechanism rows | unit | Shard; goes with parent. |
-| test-aeon-prompt-layers.sh | 53 | claude argv from the fayth knobs: replace vs append system prompt, settings sources, hook wiring | unit | Pure argv builder. |
-| test-aeon-prompt-layers-sticking.sh | 58 | thrash-banner rows | unit | Shard; goes with parent. |
-| test-persona-model.sh | 42 | one resolver for a persona's launch model, overridable without a PR | unit | A resolver with precedence. |
-| test-concierge.sh | 32 | Concierge brief composition, resume/headless handling, historic ways in broke | unit | Brief render; the tmux/systemd halves are already in `test-concierge-acceptance.sh`. |
-| test-summon-fayth.sh | 86 | `summon_fayth` refusal ladder and `fayth_free` arithmetic | unit | A ladder of predicates over stubs; shell stubs are the cost. |
+Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figures are
+`testenv --suites <suite>` on the parent commit and on this branch.
+
+| suite | wall | property | outcome |
+| --- | ---: | --- | --- |
+| test-aeon-chamber-overlay.sh, -mech.sh | 60 + 60 | builder brief says how to verify once; overlay beats release text | deleted. Overlay mechanism was already `brief::tests::overlays_whole_section_append_and_absent`, doctor's rows `doctor::tests::chamber_overlays_*`; added `brief::tests::the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish` (golden rows). |
+| test-aeon-prompt-layers.sh, -sticking.sh | 53 + 58 | claude argv from the fayth knobs, thrash banner | deleted. Banner and split were `brief::tests`; added `aeon::tests::a_replace_fayth_…`, `an_append_fayth_…` and `brief::tests::the_shipped_groomer_splits_…`. |
+| test-persona-model.sh | 42 | one resolver for a persona's launch model | deleted. Resolver was `conf::tests::persona_model_reads_…`; added `aeon::tests::the_launch_model_is_the_toml_persona_model_…` and `conf::tests::no_launcher_scrapes_a_model_…` (the source greps). |
+| test-summon-fayth.sh | 86 | `summon_fayth` refusal ladder and `fayth_free` arithmetic | ladder moved to eight `sentinel` tests (`an_elastic_fayth_…`, `a_task_fayth_yields_…`, `the_collective_lane_cap_…`, `the_fleet_ceiling_…`, `a_task_fayth_honours_the_pool_…`, `an_elastic_fayth_takes_the_pool_remainder_…`, `a_summon_carries_a_timeout_…`, `a_halt_refuses_…`). Kept: lib.sh `fayth_free` (real bash), `aeon --escape` through the world gate, the `world drain` expiry writer. Alone: 312 s before, 133 s after. |
+| test-concierge.sh | 32 | Concierge brief composition, resume/headless handling, historic ways in broke | kept. `concierge.sh` is the shell program under test (statute-book brief, tmux, `/proc` holder scan, wake delivery); there is no Rust owner to move it to, and a unit test of a shell function is the same shell test. |
 
 ### G — install, deploy, units
 
