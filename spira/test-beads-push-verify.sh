@@ -221,6 +221,14 @@ st push hang
 out="$(BEADS_PUSH_DEADLINE_SECS=2 run_push)"; rc=$?
 wantrc "a hung push exits non-zero"      1 "$rc"
 want   "and says it timed out"           "timed out after 2s" "$out"
+want   "and reports the phase it spent the deadline in"  "push phase" "$out"
+want   "and classes it as a timeout"                       "kind timeout" "$out"
+st push ok
+out="$(env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
+    BEADS_PUSH_RETRY_AFTER_TIMEOUT_SECS=0 \
+    SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
+    bash "$REPO/beads-push.sh" 2>&1)"; rc=$?
+wantrc "a timeout parks only for the shorter timeout window" 0 "$rc"
 st push ok
 
 echo
