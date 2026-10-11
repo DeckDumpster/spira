@@ -243,32 +243,21 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
             // base = aeon-<fayth>-<bead>
             let rest = base.strip_prefix("aeon-").unwrap_or("");
             let (fay, bead) = rest.split_once('-').unwrap_or(("", rest));
-            let name = io::lib_call(&home, "aeon_named", &[pf.to_str().unwrap_or("")])
-                .unwrap_or_else(|| "?".to_string());
+            let st = aeon_static(&run, &home, bead, fay, &pf);
             let pid = io::read_trim(&pf).and_then(|s| s.trim().parse::<i64>().ok());
             let secs = pid.and_then(io::proc_etimes).unwrap_or(0);
 
-            let meta = io::contentjson(&["show", bead]);
-            let (pri, title, repo_name) = parse_show_meta(meta, bead);
-
-            let partition = io::content(&["state", bead, "fayth"])
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "?".to_string());
-
-            push(&mut out, &format!("SP_AEON{i}_PRI"), pri);
-            push(&mut out, &format!("SP_AEON{i}_PARTITION"), partition);
-            push(&mut out, &format!("SP_AEON{i}_TITLE"), title);
-            push(&mut out, &format!("SP_AEON{i}_NAME"), name);
+            push(&mut out, &format!("SP_AEON{i}_PRI"), st.pri.clone());
+            push(&mut out, &format!("SP_AEON{i}_PARTITION"), st.partition.clone());
+            push(&mut out, &format!("SP_AEON{i}_TITLE"), st.title.clone());
+            push(&mut out, &format!("SP_AEON{i}_NAME"), st.name.clone());
             push(&mut out, &format!("SP_AEON{i}_FAYTH"), if fay.is_empty() { "?".into() } else { fay.to_string() });
 
             let seed = std::fs::read_to_string(home.join("chamber").join(format!("{fay}.fayth")))
                 .ok()
                 .and_then(|c| c.lines().find_map(|l| l.strip_prefix("FAYTH_MODEL=").map(|s| s.trim_matches(|c| c == '"' || c == '\'').to_string())));
-            let fayth_model = io::lib_call(&home, "persona_model", &[fay])
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "?".to_string());
+            let fayth_model = st.fayth_model.clone();
+            let repo_name = st.repo.clone();
             let overridden = seed.as_deref().is_some_and(|s| !s.is_empty() && s != fayth_model) && fayth_model != "?";
             push(&mut out, &format!("SP_AEON{i}_MODEL_OVERRIDE"), if overridden { "1" } else { "0" }.to_string());
             push(&mut out, &format!("SP_AEON{i}_FAYTH_MODEL"), fayth_model);
@@ -315,6 +304,7 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
         }
     }
     push(&mut out, "SP_AEON_N", i.to_string());
+    sweep_aeon_static(&run, io::now());
 
     push(&mut out, "SP_SENTINEL_TIMER", unit_active_key("sentinel", "timer", &cfg.instance));
     push(&mut out, "SP_SENTINEL_AGE", age_of(&run.join("sentinel.log")));
@@ -534,6 +524,88 @@ fn aeon_alive(pidfile: &Path) -> bool {
 }
 
 /// `show <bead>` -> (priority, sanitized title, repo name), `?`/empty on any failure.
+const AEON_STATIC_TTL_S: i64 = 300;
+
+struct AeonStatic {
+    name: String,
+    pri: String,
+    title: String,
+    repo: String,
+    partition: String,
+    fayth_model: String,
+}
+
+fn aeon_static_path(run: &std::path::Path, bead: &str) -> std::path::PathBuf {
+    run.join(format!("cockpit-aeon-{bead}.cache"))
+}
+
+fn aeon_static_load(path: &std::path::Path, now: i64) -> Option<AeonStatic> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    if now - v.get("at")?.as_i64()? > AEON_STATIC_TTL_S {
+        return None;
+    }
+    let f = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+    Some(AeonStatic {
+        name: f("name")?,
+        pri: f("pri")?,
+        title: f("title")?,
+        repo: f("repo")?,
+        partition: f("partition")?,
+        fayth_model: f("fayth_model")?,
+    })
+}
+
+/// What a running aeon's row shows that does not change while it runs: read once per
+/// `AEON_STATIC_TTL_S` instead of costing ~4 subprocesses per live aeon per 5 s tick. A
+/// cannot-tell field (`?`) is never cached, so a transient failure heals on the next tick.
+fn aeon_static(run: &std::path::Path, home: &std::path::Path, bead: &str, fay: &str, pf: &std::path::Path) -> AeonStatic {
+    let path = aeon_static_path(run, bead);
+    let now = io::now();
+    if let Some(hit) = aeon_static_load(&path, now) {
+        return hit;
+    }
+    let name = io::lib_call(home, "aeon_named", &[pf.to_str().unwrap_or("")]).unwrap_or_else(|| "?".to_string());
+    let (pri, title, repo) = parse_show_meta(io::contentjson(&["show", bead]), bead);
+    let partition = io::content(&["state", bead, "fayth"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "?".to_string());
+    let fayth_model = io::lib_call(home, "persona_model", &[fay])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "?".to_string());
+    let st = AeonStatic { name, pri, title, repo, partition, fayth_model };
+    let whole = [&st.name, &st.pri, &st.title, &st.partition, &st.fayth_model].iter().all(|s| s.as_str() != "?");
+    if whole {
+        let body = serde_json::json!({
+            "at": now, "name": st.name, "pri": st.pri, "title": st.title,
+            "repo": st.repo, "partition": st.partition, "fayth_model": st.fayth_model,
+        });
+        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        if std::fs::write(&tmp, body.to_string()).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+    st
+}
+
+fn sweep_aeon_static(run: &std::path::Path, now: i64) {
+    let Ok(entries) = std::fs::read_dir(run) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        if !(name.starts_with("cockpit-aeon-") && name.ends_with(".cache")) {
+            continue;
+        }
+        let age = e.metadata().and_then(|m| m.modified()).ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| now - d.as_secs() as i64);
+        if age.is_some_and(|a| a > 2 * AEON_STATIC_TTL_S) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
 fn parse_show_meta(raw: Option<String>, _bead: &str) -> (String, String, String) {
     let Some(rows) = io::json_rows(raw) else {
         return ("?".to_string(), "?".to_string(), "?".to_string());
@@ -1334,6 +1406,20 @@ pub fn czar_progress(bead: &Value, lc: Option<&HashMap<String, lc::Row>>) -> Cza
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn aeon_static_cache_honours_ttl_and_refuses_partial_rows() {
+        let t = testkit::TempDir::new("aeon-static");
+        let d = t.path().to_path_buf();
+        let p = aeon_static_path(&d, "sp-x");
+        let row = |at: i64| serde_json::json!({"at": at, "name": "n", "pri": "2", "title": "t", "repo": "r", "partition": "p", "fayth_model": "m"});
+        std::fs::write(&p, row(1000).to_string()).unwrap();
+        let hit = aeon_static_load(&p, 1000 + AEON_STATIC_TTL_S).expect("fresh row is served");
+        assert_eq!((hit.name.as_str(), hit.partition.as_str()), ("n", "p"));
+        assert!(aeon_static_load(&p, 1001 + AEON_STATIC_TTL_S).is_none(), "an expired row is re-read");
+        std::fs::write(&p, r#"{"at":1000,"name":"n"}"#).unwrap();
+        assert!(aeon_static_load(&p, 1000).is_none(), "a row missing fields is not served");
+    }
+
     use super::*;
 
     fn lcmap(rows: &[(&str, &str, &[&str])]) -> HashMap<String, lc::Row> {
