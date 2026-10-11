@@ -79,6 +79,7 @@ board "$(row sp-mine CERTIFIED "$OLD" '[]')" "$(row sp-theirs CERTIFIED "$OLD" '
     "$(cont sp-mine '["repo:widgets"]')" "$(cont sp-theirs '["repo:other"]')"
 out="$(SWEEP_REPO="$SHA" run --show)"
 case "$out" in *"SUSPECT sp-mine"*) bad=1 ;; *) bad=0 ;; esac
+echo "DBG: $out" >&2
 is "a sha-named release dir raises no SUSPECT on a home-repo bead" "0" "$bad"
 want "a foreign CERTIFIED bead still raises it" "SUSPECT sp-theirs CERTIFIED CERTIFIED outside repo:widgets" "$out"
 out="$(SWEEP_REPO="$SHA" SWEEP_HOME_REPO= run --show)"
