@@ -276,7 +276,7 @@ fn repo_map() -> HashMap<String, String> {
 }
 
 fn title_map() -> HashMap<String, String> {
-    let raw = io::contentjson_shared(&["list", "--all", "--limit", "0"]);
+    let raw = io::pane_beads("");
     let Some(rows) = io::json_rows(raw) else { return HashMap::new() };
     rows.iter()
         .filter_map(|i| {
@@ -292,7 +292,7 @@ fn title_map() -> HashMap<String, String> {
 // ---------------------------------------------------------------------------------------
 
 fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
-    let raw = io::contentjson_shared(&["list", "--all", "--limit", "0"]);
+    let raw = io::pane_beads("");
     let Some(rows) = io::json_rows(raw) else {
         push(out, "SP_INFLOW_WIN", "?");
         push(out, "SP_INFLOW_N", "?");
@@ -434,7 +434,7 @@ fn awaiting_ci_section(out: &mut Kv, cfg: &Cfg) {
 fn throughput_section(out: &mut Kv, run: &std::path::Path, cfg: &Cfg) {
     let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let raw = io::contentjson(&["list", "--all", "--limit", "0", "--label", &label]).unwrap_or_default();
+    let raw = io::history_beads(&label).unwrap_or_default();
     let landing_log = run.join("landing.log");
     if let Some(sparklines) = io::run_tool("cockpit-sparklines.py", &[landing_log.to_str().unwrap_or("")], Some(&raw)) {
         for line in sparklines.lines() {

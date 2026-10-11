@@ -267,6 +267,124 @@ pub fn contentjson_shared(args: &[&str]) -> Option<String> {
     fresh
 }
 
+pub const PANE_TTL_SECS: i64 = 30;
+const PANE_WINDOW_SECS: i64 = 86_400;
+const HISTORY_TTL_SECS: i64 = 600;
+const LOCK_WAIT_MS: u64 = 20_000;
+
+fn utc_stamp(epoch: i64) -> String {
+    let (days, rem) = (epoch.div_euclid(86_400), epoch.rem_euclid(86_400));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+fn merge_rows(parts: &[Option<String>]) -> Option<String> {
+    let mut all = Vec::new();
+    for p in parts {
+        all.extend(json_rows(p.clone())?);
+    }
+    serde_json::to_string(&all).ok()
+}
+
+/// One cross-process read: every probe is its own process, so a memo in memory shares nothing.
+/// A fresh file under `dir` is served; otherwise one process holds the lock and fetches while
+/// the rest wait for its answer.
+pub fn shared_read(dir: &Path, key: &str, ttl: i64, now: i64, fetch: impl FnOnce() -> Option<String>) -> Option<String> {
+    let _ = std::fs::create_dir_all(dir);
+    let file = dir.join(format!("{key}.json"));
+    let lock = dir.join(format!("{key}.lock"));
+    let fresh = || {
+        let m = std::fs::metadata(&file).ok()?.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+        (now - m < ttl).then(|| std::fs::read_to_string(&file).ok()).flatten()
+    };
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(hit) = fresh() {
+            return Some(hit);
+        }
+        if std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).is_ok() {
+            let got = fetch();
+            if let Some(raw) = &got {
+                let tmp = dir.join(format!("{key}.{}.tmp", std::process::id()));
+                if std::fs::write(&tmp, raw).is_ok() {
+                    let _ = std::fs::rename(&tmp, &file);
+                }
+            }
+            let _ = std::fs::remove_file(&lock);
+            return got;
+        }
+        let stale = std::fs::metadata(&lock).ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|e| e.as_millis() as u64 > LOCK_WAIT_MS);
+        if stale {
+            let _ = std::fs::remove_file(&lock);
+        } else if started.elapsed().as_millis() as u64 > LOCK_WAIT_MS {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn with_labels(raw: Option<String>, labels: &str) -> Option<String> {
+    let want: Vec<&str> = labels.split(',').filter(|l| !l.is_empty()).collect();
+    if want.is_empty() {
+        return raw;
+    }
+    let rows = json_rows(raw)?;
+    let kept: Vec<_> = rows
+        .into_iter()
+        .filter(|r| {
+            let have: Vec<&str> = r.get("labels").and_then(|l| l.as_array()).into_iter().flatten().filter_map(|l| l.as_str()).collect();
+            want.iter().all(|w| have.contains(w))
+        })
+        .collect();
+    serde_json::to_string(&kept).ok()
+}
+
+fn pane_fetch(read: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Option<String> {
+    let since = utc_stamp(now - PANE_WINDOW_SECS);
+    merge_rows(&[
+        read(&["list", "--limit", "0", "--json"]),
+        read(&["list", "--status", "closed", "--closed-after", &since, "--limit", "0", "--json"]),
+    ])
+}
+
+fn history_fetch(read: &dyn Fn(&[&str]) -> Option<String>) -> Option<String> {
+    merge_rows(&[read(&["list", "--limit", "0", "--json"]), read(&["list", "--status", "closed", "--limit", "100000", "--json"])])
+}
+
+fn read_json(args: &[&str]) -> Option<String> {
+    content(args).map(|s| json_only(&s).to_string())
+}
+
+pub fn ttl_from_env(key: &str, default: i64) -> i64 {
+    env_or(key, &default.to_string()).parse().unwrap_or(default)
+}
+
+/// The beads the pane shows — live ones plus the last day's closures — that carry every label
+/// in `labels` (comma-separated, may be empty). One lifecycle-store read serves every probe in a
+/// refresh; never `--all --limit 0`.
+pub fn pane_beads(labels: &str) -> Option<String> {
+    let now = now();
+    let ttl = ttl_from_env("SPIRA_PANE_READ_TTL", PANE_TTL_SECS);
+    let raw = shared_read(&run_dir().join("pane-read"), "pane", ttl, now, || pane_fetch(&read_json, now));
+    with_labels(raw, labels)
+}
+
+/// Every bead carrying `labels`, closed ones included, for the probes that count history. Read
+/// at most once per `SPIRA_HISTORY_READ_TTL` across all probes.
+pub fn history_beads(labels: &str) -> Option<String> {
+    let ttl = ttl_from_env("SPIRA_HISTORY_READ_TTL", HISTORY_TTL_SECS);
+    let raw = shared_read(&run_dir().join("pane-read"), "history", ttl, now(), || history_fetch(&read_json));
+    with_labels(raw, labels)
+}
+
 /// Parse a `contentjson` response into a `Vec<Value>`, the shape every probe needs:
 /// the answer is either a bare object or an array. Empty/unparseable input (a refusal, per
 /// `contentjson`'s contract) returns `None`, never an empty vec — the two are different claims.
@@ -596,4 +714,69 @@ mod tests {
     // crate-local fallback logic left here to pin with a unit test, and `cfg`'s per-process
     // cache makes a fixture-driven unit test of this one-liner order-dependent rather than
     // meaningful (see the triage guide: only a fresh-binary test may vary config per case).
+}
+
+#[cfg(test)]
+mod pane_read_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn utc_stamp_is_rfc3339() {
+        assert_eq!(utc_stamp(1790726400), "2026-09-30T00:00:00Z");
+        assert_eq!(utc_stamp(0), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn a_pane_pass_is_two_scoped_reads_shared_by_every_probe_and_never_all_history() {
+        let t = testkit::TempDir::new("pane-read");
+        let calls: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
+        let read = |a: &[&str]| {
+            calls.borrow_mut().push(a.iter().map(|s| s.to_string()).collect());
+            Some(r#"[{"id":"a","labels":["plan","spira"]}]"#.to_string())
+        };
+        for probe in 0..12 {
+            let got = shared_read(&t.join("d"), "pane", 30, 1000 + probe, || pane_fetch(&read, 1000));
+            assert!(got.is_some());
+        }
+        let calls = calls.borrow();
+        assert_eq!(calls.len(), 2, "twelve probes, one fetch: {calls:?}");
+        for c in calls.iter() {
+            assert!(!(c.iter().any(|a| a == "--all") && c.windows(2).any(|w| w == ["--limit", "0"])), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn a_stale_read_is_refetched_and_labels_filter_in_process() {
+        let t = testkit::TempDir::new("pane-ttl");
+        let n = RefCell::new(0);
+        let fetch = || {
+            *n.borrow_mut() += 1;
+            Some(r#"[{"id":"a","labels":["plan","spira"]},{"id":"b","labels":["plan"]}]"#.to_string())
+        };
+        let now = now();
+        shared_read(&t.join("d"), "k", 30, now, fetch);
+        shared_read(&t.join("d"), "k", 30, now + 100, fetch);
+        assert_eq!(*n.borrow(), 2);
+        let rows = json_rows(with_labels(fetch(), "spira,plan")).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(json_rows(with_labels(fetch(), "")).unwrap().len(), 2);
+        assert_eq!(json_rows(with_labels(fetch(), "none")).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn no_probe_reads_all_history_from_the_store() {
+        let probes = [
+            include_str!("probes/core_detail.rs"),
+            include_str!("probes/mod.rs"),
+            include_str!("probes/reachable.rs"),
+            include_str!("probes/unsent.rs"),
+        ];
+        let needle = ["\"--all\"", "\"--limit\", \"0\""];
+        let hits = |s: &str| s.lines().filter(|l| !l.trim_start().starts_with("//") && l.contains(needle[0]) && l.contains(needle[1])).count();
+        assert!(hits(&format!("x(&[{}, {}])", needle[0], needle[1])) == 1, "matcher must see a planted offender");
+        for p in probes {
+            assert_eq!(hits(p), 0);
+        }
+    }
 }

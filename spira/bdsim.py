@@ -59,6 +59,8 @@ def _parse_list_args(args):
         elif a in ("--label", "-l"):
             i += 1
             labels.extend(x for x in args[i].split(",") if x)
+        elif a == "--closed-after":
+            i += 1
         elif a in ("--limit", "-n"):
             i += 1
             limit = int(args[i])

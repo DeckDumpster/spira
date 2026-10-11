@@ -390,7 +390,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
     let home_repo = io::repo_registry().home_repo().to_string();
     // Every plan bead's content; which of them the builder finished is the lifecycle row's
     // to say (design §3.4, sp-mve9i), not bd's `closed`.
-    let raw = io::content(&["list", "--all", "--limit", "0", "--label", &label, "--json"]);
+    let raw = io::history_beads(&label);
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
         for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
             push(out, k, "?");
