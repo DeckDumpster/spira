@@ -372,10 +372,39 @@ unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_total" "$unit_progress" &
 stream_pid=$!
-# THE CAP CLOCK runs from testenv's first suite to the bare lane's end: post-processing, the
-# unit-test wait and the pulls are outside it, each under its own guard.
+# THE CAP CLOCK runs from testenv's first suite to the bare lane's end: container setup, post-processing,
+# the unit-test wait and the pulls are outside it, each under its own guard. testenv's "running N
+# suite(s)" line is the start mark; one guard times the corpus and the bare lane from it.
+suites_cap_guard() {
+    local mark="$1" cap="$2" fired="$3" pid alive; shift 3
+    until [ -e "$mark" ]; do
+        alive=""
+        for pid in "$@"; do kill -0 "$pid" 2>/dev/null && alive=1; done
+        [ -n "$alive" ] || return 0
+        sleep 1
+    done
+    sleep "$cap"
+    for pid in "$@"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "$(( $(date +%s) - $(stat -c %Y "$mark") ))" > "$fired"
+            kill -TERM "$pid" 2>/dev/null
+        fi
+    done
+    sleep 5
+    for pid in "$@"; do kill -KILL "$pid" 2>/dev/null; done
+}
+suites_mark_stream() {
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do
+        printf '%s\n' "$line"
+        case "$line" in *"batch: running "*" suite(s)"*) [ -e "$suites_mark" ] || : > "$suites_mark" ;; esac
+    done
+}
+suites_mark="$HOME/round-suites-mark"
+cap_fired="$HOME/round-cap-fired"
+rm -f "$suites_mark" "$cap_fired"
 t_suites=$(date +%s)
-echo "round-vm: SUITES-CLOCK: start (cap ${cap}s)" >&2
+echo "round-vm: SUITES-CLOCK: start (cap ${cap}s from the first suite)" >&2
 over_cap=""
 # THE BARE LANE runs beside the corpus: the bare-host suites SKIP inside the corpus container (it
 # has no podman), so the VM itself runs them, with the shared script the publish gate runs.
@@ -384,25 +413,31 @@ over_cap=""
 bare_out="$HOME/round-bare-results"
 rm -rf "$bare_out"; mkdir -p "$bare_out"
 if [ -n "$suites" ]; then bare_sel=(--selected "$suites"); else bare_sel=(--suites all); fi
-timeout -k 5 "$cap" bash spira/bare-suites.sh "${bare_sel[@]}" --results "$bare_out" >&2 &
+bash spira/bare-suites.sh "${bare_sel[@]}" --results "$bare_out" >&2 &
 bare_pid=$!
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
-    timeout -k 5 "$cap" testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round > >(suites_mark_stream) 2> >(suites_mark_stream >&2) &
 else
-    timeout -k 5 "$cap" testenv --mode parallel --artifacts "$HOME/round-work/target/release" round
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" round > >(suites_mark_stream) 2> >(suites_mark_stream >&2) &
 fi
+testenv_pid=$!
+suites_cap_guard "$suites_mark" "$cap" "$cap_fired" "$testenv_pid" "$bare_pid" &
+guard_pid=$!
+wait "$testenv_pid"
 rc=$?
-case "$rc" in 124|137) over_cap=1 ;; esac
 wait "$bare_pid"
 bare_rc=$?
+pkill -P "$guard_pid" 2>/dev/null; kill "$guard_pid" 2>/dev/null; wait "$guard_pid" 2>/dev/null
+[ -e "$cap_fired" ] && over_cap=1
+case "$rc" in 124|137) over_cap=1 ;; esac
 case "$bare_rc" in 124|137) over_cap=1 ;; esac
 bare_rdir="$HOME/round-work/.runtime/spira/batch-results"
 bare_leaf="$(find "$bare_rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
 bare_leaf="${bare_leaf:-$bare_rdir}"
 mkdir -p "$bare_leaf"
 cp -rf "$bare_out"/. "$bare_leaf"/
-suites_clock=$(( $(date +%s) - t_suites ))
+if [ -e "$suites_mark" ]; then suites_clock=$(( $(date +%s) - $(stat -c %Y "$suites_mark") )); else suites_clock=$(( $(date +%s) - t_suites )); fi
 echo "round-vm: SUITES-CLOCK: ${suites_clock}s of the ${cap}s cap" >&2
 if [ "$bare_rc" -ne 0 ]; then
     echo "round-vm: BARE-SUITES: FAIL (rc=$bare_rc)" >&2
@@ -411,13 +446,13 @@ elif [ -z "$over_cap" ]; then
     echo "round-vm: BARE-SUITES: PASS" >&2
 fi
 if [ -n "$over_cap" ]; then
-    echo "round-vm: OVER-CAP: the suites and bare lane ran ${suites_clock}s, past the ${cap}s cap" >&2
+    echo "round-vm: OVER-CAP: guard=suites-cap elapsed=${suites_clock}s cap=${cap}s — the suites and bare lane ran past the cap" >&2
 fi
 if kill -0 "$unit_pid" 2>/dev/null; then echo "round-vm: UNIT-TESTS: waiting (suites done, unit job still running)" >&2; fi
 unit_deadline=$(( $(date +%s) + post_guard ))
 while kill -0 "$unit_pid" 2>/dev/null && [ "$(date +%s)" -lt "$unit_deadline" ]; do sleep 2; done
 if kill -0 "$unit_pid" 2>/dev/null; then
-    echo "round-vm: UNIT-TESTS: HUNG past the ${post_guard}s guard after the cap clock stopped; killed" >&2
+    echo "round-vm: UNIT-TESTS: HUNG guard=unit-post elapsed=${post_guard}s past the ${post_guard}s guard after the cap clock stopped; killed" >&2
     pkill -TERM -P "$unit_pid" 2>/dev/null; kill "$unit_pid" 2>/dev/null
 fi
 wait "$unit_pid"; unit_rc=$?
@@ -2259,17 +2294,42 @@ mod tests {
     #[test]
     fn the_cap_clock_covers_the_suites_and_the_bare_lane_only() {
         let start = REMOTE_SCRIPT.find("t_suites=$(date +%s)").expect("the clock starts");
-        let corpus = REMOTE_SCRIPT.find("timeout -k 5 \"$cap\" testenv --mode parallel").expect("the corpus is under the cap");
-        let bare = REMOTE_SCRIPT.find("spira/bare-suites.sh").unwrap();
-        let stop = REMOTE_SCRIPT.find("suites_clock=$(( $(date +%s) - t_suites ))").expect("the clock stops");
+        let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").expect("the corpus runs");
+        let bare = REMOTE_SCRIPT.find("bash spira/bare-suites.sh").unwrap();
+        let guard = REMOTE_SCRIPT.find("suites_cap_guard \"$suites_mark\"").expect("one guard times both");
+        let stop = REMOTE_SCRIPT.find("if [ -e \"$suites_mark\" ]; then suites_clock=").expect("the clock stops");
         let unit_wait = REMOTE_SCRIPT.find("wait \"$unit_pid\"").unwrap();
         let bins = REMOTE_SCRIPT.find("round-bins/ \\;").unwrap();
-        assert!(start < bare && bare < corpus && corpus < stop && stop < unit_wait && unit_wait < bins);
-        assert!(REMOTE_SCRIPT[start..stop].contains("timeout -k 5 \"$cap\" bash spira/bare-suites.sh"), "the lane runs under the same cap, beside the corpus");
+        assert!(start < bare && bare < corpus && corpus < guard && guard < stop && stop < unit_wait && unit_wait < bins);
+        assert!(REMOTE_SCRIPT[guard..stop].contains("\"$testenv_pid\" \"$bare_pid\""), "the lane runs under the same cap, beside the corpus");
+        assert!(!REMOTE_SCRIPT[start..stop].contains("timeout -k 5 \"$cap\""), "no timer counts from before the first suite");
         assert!(REMOTE_SCRIPT.contains("round-vm: BARE-SUITES: PASS"));
-        assert!(REMOTE_SCRIPT.contains("round-vm: OVER-CAP:") && REMOTE_SCRIPT.contains("if [ -n \"$over_cap\" ]; then exit 124; fi"));
+        assert!(REMOTE_SCRIPT.contains("round-vm: OVER-CAP: guard=suites-cap elapsed=") && REMOTE_SCRIPT.contains("if [ -n \"$over_cap\" ]; then exit 124; fi"));
         assert!(REMOTE_SCRIPT[stop..bins].contains("+ post_guard ))"), "the unit-test wait has its own guard");
         assert_eq!(exit_for_remote(124), 124, "over-cap reaches the caller as itself");
+    }
+
+    fn run_guard(setup_secs: u64, run_secs: u64, cap: u64) -> (bool, String) {
+        let from = REMOTE_SCRIPT.find("suites_cap_guard() {").unwrap();
+        let func = &REMOTE_SCRIPT[from..from + REMOTE_SCRIPT[from..].find("\n}\n").unwrap() + 3];
+        let d = TempDir::new();
+        let script = format!(
+            "{func}\nmark={m}; fired={f}\n( sleep {setup_secs}; : > \"$mark\"; sleep {run_secs} ) &\nworker=$!\nsuites_cap_guard \"$mark\" {cap} \"$fired\" \"$worker\" &\nguard=$!\nwait \"$worker\"\nwait \"$guard\"\n",
+            m = d.path().join("mark").display(),
+            f = d.path().join("fired").display(),
+        );
+        let o = std::process::Command::new("bash").arg("-c").arg(script).output().unwrap();
+        let fired = d.path().join("fired");
+        (fired.exists(), fs::read_to_string(fired).unwrap_or_default())
+    }
+
+    #[test]
+    fn a_long_setup_does_not_spend_the_cap_and_a_run_past_it_is_killed_with_its_elapsed() {
+        let (fired, _) = run_guard(3, 1, 2);
+        assert!(!fired, "setup longer than the cap, suites inside it: not killed");
+        let (fired, elapsed) = run_guard(1, 30, 2);
+        assert!(fired, "a run past the cap from its mark is killed");
+        assert!(elapsed.trim().parse::<u64>().unwrap() >= 2, "the elapsed counts from the mark: {elapsed}");
     }
 
     #[test]

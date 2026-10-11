@@ -651,6 +651,15 @@ fn wall_complete(wt: &Path, found: &[(String, String)], err: &str) -> bool {
     !found.is_empty() && unjudgeable(wt, found).is_none() && err.contains("UNIT-TESTS: PASS")
 }
 
+fn over_cap_why(err: &str, cap: u64) -> String {
+    let line = err.lines().find_map(|l| l.split("OVER-CAP:").nth(1)).unwrap_or("").trim();
+    if line.is_empty() {
+        format!("the suites and bare lane exceeded the {cap}s cap")
+    } else {
+        format!("INCOMPLETE, cut off by {line}")
+    }
+}
+
 pub(super) fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
@@ -725,8 +734,12 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
                 reds.push(BUILD_RED.into());
                 None
             }
-            124 | 137 if out.err.contains("OVER-CAP") => Some(format!("the suites and bare lane exceeded the {}s cap", c.s.round_wall_secs)),
-            124 | 137 => Some(format!("round-vm hung past its guard (cap {}s)", c.s.round_wall_secs)),
+            124 | 137 if out.err.contains("OVER-CAP") => Some(over_cap_why(&out.err, c.s.round_wall_secs)),
+            124 | 137 => Some(format!(
+                "round-vm hung past its guard (guard=hang-guard elapsed={}s cap {}s)",
+                w.clock.now().saturating_sub(began),
+                c.s.round_wall_secs
+            )),
             rc => Some(format!("round-vm exited {rc}")),
         };
         if let Some(why) = fault {
