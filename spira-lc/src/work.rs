@@ -145,7 +145,25 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             ),
         );
     }
+    if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
+        return refusal;
+    }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip })
+}
+
+/// A bead that declares a target closes only with a verdict (MET, CONTRADICTED, or SHORT with a
+/// follow-on or escalation). The verdict is written to the bead as a note, where Sift reads it.
+fn record_target_verdict(bead_id: &str, verb: &str, args: &[String]) -> Result<(), (i32, String)> {
+    let text = crate::bd::show(bead_id).map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}")))?;
+    let lookup = |id: &str| -> Result<Option<spira_config::target::Named>, String> {
+        let Ok(shown) = crate::bd::show(id) else { return Ok(None) };
+        Ok(Some(spira_config::target::Named { target: spira_config::target::parse_target(&shown), labels: crate::bd::labels(id)? }))
+    };
+    match spira_config::target::judge(spira_config::target::parse_target(&text).as_deref(), args, &lookup, bead_id) {
+        Err(e) => Err((REFUSED, format!("work {verb}: {e}"))),
+        Ok(None) => Ok(()),
+        Ok(Some(line)) => crate::bd::note(bead_id, &line).map(|_| ()).map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}"))),
+    }
 }
 
 fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
@@ -179,6 +197,11 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             Ok(labels) if labels.iter().any(|l| l == GROOM_TRIGGER_MARKER) => {}
             Ok(_) => return release_untriggered_groom(bead_id, &actor, conn),
             Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+        }
+    }
+    if actor != "groomer" {
+        if let Err(refusal) = record_target_verdict(bead_id, "done", args) {
+            return refusal;
         }
     }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Done { delivers })

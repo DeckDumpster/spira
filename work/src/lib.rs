@@ -45,9 +45,16 @@ mod bead_id_tests {
 /// not just a designated slot, because a designated slot can be bypassed by whatever else
 /// the model hands us. `superseded-by`'s first argument is the sole, deliberate exception
 /// — it names a *different* bead by design (the successor), never the bead acted upon.
+/// The flags of a target-bead verdict whose value names the follow-on bead or escalation the
+/// aeon filed: another bead by design, validated by the broker.
+const TARGET_EXIT_FLAGS: &[&str] = &["--follow-on", "--escalation"];
+
 pub fn foreign_bead_reference<'a>(verb: &str, bound: &str, args: &'a [String]) -> Option<&'a str> {
     for (i, a) in args.iter().enumerate() {
         if verb == "superseded-by" && i == 0 {
+            continue;
+        }
+        if i > 0 && matches!(verb, "submit" | "done") && TARGET_EXIT_FLAGS.contains(&args[i - 1].as_str()) {
             continue;
         }
         if looks_like_bead_id(a) && !a.eq_ignore_ascii_case(bound) {
@@ -204,6 +211,10 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
         }
         "submit" => {
             let Some(tip) = tip else { return Err("work submit: no tip could be read from the worktree".to_string()) };
+            if let Some(t) = verb_args.iter().find(|a| matches!(a.as_str(), "--tip")) {
+                return Err(format!("work submit: {t} is read from the worktree, never taken from the caller; refused"));
+            }
+            req.extend(verb_args.iter().cloned());
             req.extend(["--tip".to_string(), tip.to_string(), "--actor".to_string(), actor.to_string()]);
         }
         "file-followup" | "split" => {
@@ -240,6 +251,14 @@ mod tests {
     }
 
     #[test]
+    fn a_target_exit_may_name_the_follow_on_bead() {
+        let args = ["--short".to_string(), "37 s".into(), "--follow-on".into(), "sp-next1".into()];
+        assert_eq!(foreign_bead_reference("submit", "sp-3m1p9", &args), None);
+        assert_eq!(foreign_bead_reference("done", "sp-3m1p9", &args), None);
+        assert_eq!(foreign_bead_reference("note", "sp-3m1p9", &args), Some("sp-next1"));
+    }
+
+    #[test]
     fn refuses_a_foreign_bead_as_a_flag_value() {
         assert_eq!(foreign_bead_reference("done", "sp-3m1p9", &["--delivers".into(), "sp-other1".into()]), Some("sp-other1"));
     }
@@ -273,11 +292,7 @@ mod tests {
 
     #[test]
     fn build_request_never_lets_submit_take_a_tip_argument() {
-        // The design is explicit: submit never takes the tip as an argument. Any
-        // user-supplied verb_args for `submit` are simply not part of the wire request —
-        // there is no flag name that reaches it.
-        let req = build_request("sp-3m1p9", "submit", &["--tip".into(), "usersupplied".into()], Some("real"), "a").unwrap();
-        assert!(!req.contains(&"usersupplied".to_string()));
+        assert!(build_request("sp-3m1p9", "submit", &["--tip".into(), "usersupplied".into()], Some("real"), "a").is_err());
     }
 
     #[test]

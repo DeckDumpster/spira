@@ -323,6 +323,16 @@ fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
     Ok(pool)
 }
 
+/// `bd show <id>` as text: the description and notes, where a target and its verdict live.
+pub fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
+    let mut cmd = Command::new(&env.bd);
+    if let Some(db) = &env.db {
+        cmd.current_dir(db);
+    }
+    cmd.arg("show").arg(id);
+    run(&mut cmd, "bd show")
+}
+
 fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
     if ids.is_empty() {
         return Ok(serde_json::Value::Array(vec![]));

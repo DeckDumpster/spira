@@ -10,6 +10,7 @@ struct Fake {
     patch: BTreeMap<String, String>,
     stacked: BTreeMap<String, Vec<String>>,
     states: BTreeMap<String, String>,
+    target_gaps: BTreeMap<String, String>,
     broken: Vec<String>,
     merges: Cell<u32>,
 }
@@ -36,6 +37,9 @@ impl Probe for Fake {
     }
     fn state(&self, id: &str) -> Result<String, String> {
         self.states.get(id).cloned().ok_or_else(|| "unknown".to_string())
+    }
+    fn target_gap(&self, id: &str) -> Result<Option<String>, String> {
+        Ok(self.target_gaps.get(id).cloned())
     }
 }
 
@@ -450,4 +454,15 @@ mod machine_tests {
         assert_eq!(store.record_send_back("sp-old", "t", "r").unwrap(), 3);
         assert_eq!(store.load("sp-old").unwrap().events.len(), 3);
     }
+}
+
+#[test]
+fn a_target_bead_without_a_follow_on_is_sent_back_and_one_without_a_gap_passes() {
+    let mut f = fake();
+    f.target_gaps.insert("a".into(), "target [x < 1] verdict is SHORT with no follow-on bead or escalation".into());
+    let mut r = Rec::default();
+    let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
+    assert_eq!((o.pass.as_slice(), o.sent_back.as_slice()), (&["b".to_string()][..], &["a".to_string()][..]));
+    assert_eq!(reds(&r), ["red a t-a policy-violation"]);
+    assert!(r.log.iter().any(|l| l.starts_with("note a: ") && l.contains("SHORT")));
 }
