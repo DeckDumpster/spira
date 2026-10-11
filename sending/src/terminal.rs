@@ -30,10 +30,14 @@ pub enum Decision {
 }
 
 /// `state`: the lifecycle state of the entry's name, None when no row exists. `is_git`: the
-/// entry is a git checkout. `age`: since its mtime.
-pub fn decide(name: &str, state: Option<&str>, is_git: bool, unsaved: Unsaved, age: Duration, max_age: Duration) -> Decision {
+/// entry is a git checkout. `age`: since the newest mtime beneath it. `held`: why a person or
+/// process is using it (keep marker, live cwd), which outranks every other reason to reap.
+pub fn decide(name: &str, state: Option<&str>, is_git: bool, unsaved: Unsaved, age: Duration, max_age: Duration, held: Option<&'static str>) -> Decision {
     if name.starts_with('.') {
         return Decision::Keep("harness tree");
+    }
+    if let Some(why) = held {
+        return Decision::Keep(why);
     }
     let why = match state {
         Some(s) if spira_config::lc_state::is_terminal(s) => Why::Terminal,
@@ -70,12 +74,48 @@ fn repo_of(wt: &Path) -> Option<PathBuf> {
     (common.file_name()? == ".git").then(|| common.parent().map(Path::to_path_buf))?
 }
 
+pub const KEEP_MARKER: &str = ".spira-keep";
+const WALK_CAP: usize = 200_000;
+
+fn newest_mtime(p: &Path, budget: &mut usize) -> Option<SystemTime> {
+    let m = std::fs::symlink_metadata(p).ok()?;
+    let mut newest = m.modified().ok();
+    if m.is_dir() {
+        for e in std::fs::read_dir(p).ok()?.filter_map(|e| e.ok()) {
+            if *budget == 0 {
+                return Some(SystemTime::now());
+            }
+            *budget -= 1;
+            newest = newest.max(newest_mtime(&e.path(), budget));
+        }
+    }
+    newest
+}
+
+/// Time since the newest mtime anywhere beneath `p`; a tree too large to walk counts as fresh.
 fn age_of(p: &Path) -> Duration {
-    std::fs::symlink_metadata(p)
-        .and_then(|m| m.modified())
-        .ok()
+    newest_mtime(p, &mut WALK_CAP.clone())
         .and_then(|t| SystemTime::now().duration_since(t).ok())
         .unwrap_or_default()
+}
+
+/// A process whose working directory is `p` or inside it.
+fn has_live_cwd(p: &Path) -> bool {
+    let Ok(real) = std::fs::canonicalize(p) else { return false };
+    let Ok(rd) = std::fs::read_dir("/proc") else { return false };
+    rd.filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()))
+        .any(|e| std::fs::read_link(e.path().join("cwd")).is_ok_and(|c| c.starts_with(&real)))
+}
+
+fn held_by(p: &Path) -> Option<&'static str> {
+    if std::fs::symlink_metadata(p.join(KEEP_MARKER)).is_ok() {
+        Some("keep marker")
+    } else if has_live_cwd(p) {
+        Some("a process has its cwd inside")
+    } else {
+        None
+    }
 }
 
 /// One pass. `states`: bead id -> lifecycle state, from one `spira-lc list`. Exit 1 when a
@@ -100,7 +140,7 @@ pub fn run(w: &dyn World, states: &HashMap<String, String>, max_age: Duration, d
             None => Unsaved::Unknown,
         };
         let is_git = path.join(".git").exists();
-        let decision = decide(&name, state, is_git, if is_git { uns } else { Unsaved::No }, age_of(&path), max_age);
+        let decision = decide(&name, state, is_git, if is_git { uns } else { Unsaved::No }, age_of(&path), max_age, held_by(&path));
         match decision {
             Decision::Keep(why) => w.emit(&format!("KEEP    {name}  {why}")),
             Decision::Remove(why) => {

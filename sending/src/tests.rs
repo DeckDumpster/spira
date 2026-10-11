@@ -564,34 +564,100 @@ mod terminal_reaper {
     #[test]
     fn a_terminal_bead_with_nothing_unsaved_is_removed() {
         for s in ["DONE", "LANDED", "DROPPED", "SUPERSEDED"] {
-            assert_eq!(decide("sp-a", Some(s), true, Unsaved::No, Duration::ZERO, MAX), Decision::Remove(Why::Terminal), "{s}");
+            assert_eq!(decide("sp-a", Some(s), true, Unsaved::No, Duration::ZERO, MAX, None), Decision::Remove(Why::Terminal), "{s}");
         }
     }
 
     #[test]
     fn a_live_bead_is_never_removed_however_old() {
         for s in ["READY", "WORKING", "REWORK", "SUBMITTED", "CERTIFIED", "IN_DELIVERY"] {
-            assert_eq!(decide("sp-a", Some(s), true, Unsaved::No, OLD, MAX), Decision::Keep("live bead"), "{s}");
+            assert_eq!(decide("sp-a", Some(s), true, Unsaved::No, OLD, MAX, None), Decision::Keep("live bead"), "{s}");
         }
     }
 
     #[test]
     fn unsaved_or_unreadable_commits_keep_the_worktree() {
-        assert!(matches!(decide("sp-a", Some("LANDED"), true, Unsaved::Yes, OLD, MAX), Decision::Keep(_)));
-        assert!(matches!(decide("sp-a", Some("LANDED"), true, Unsaved::Unknown, OLD, MAX), Decision::Keep(_)));
-        assert!(matches!(decide("chk-1", None, true, Unsaved::Yes, OLD, MAX), Decision::Keep(_)));
+        assert!(matches!(decide("sp-a", Some("LANDED"), true, Unsaved::Yes, OLD, MAX, None), Decision::Keep(_)));
+        assert!(matches!(decide("sp-a", Some("LANDED"), true, Unsaved::Unknown, OLD, MAX, None), Decision::Keep(_)));
+        assert!(matches!(decide("chk-1", None, true, Unsaved::Yes, OLD, MAX, None), Decision::Keep(_)));
     }
 
     #[test]
     fn a_row_less_entry_is_scratch_only_once_it_is_old_enough() {
-        assert!(matches!(decide("chk-1", None, false, Unsaved::No, Duration::from_secs(5), MAX), Decision::Keep(_)));
-        assert_eq!(decide("chk-1", None, false, Unsaved::No, OLD, MAX), Decision::Remove(Why::Scratch));
+        assert!(matches!(decide("chk-1", None, false, Unsaved::No, Duration::from_secs(5), MAX, None), Decision::Keep(_)));
+        assert_eq!(decide("chk-1", None, false, Unsaved::No, OLD, MAX, None), Decision::Remove(Why::Scratch));
     }
 
     #[test]
     fn a_dot_named_tree_is_never_touched() {
-        assert!(matches!(decide(".harness", None, false, Unsaved::No, OLD, MAX), Decision::Keep(_)));
-        assert!(matches!(decide(".harness", Some("DONE"), false, Unsaved::No, OLD, MAX), Decision::Keep(_)));
+        assert!(matches!(decide(".harness", None, false, Unsaved::No, OLD, MAX, None), Decision::Keep(_)));
+        assert!(matches!(decide(".harness", Some("DONE"), false, Unsaved::No, OLD, MAX, None), Decision::Keep(_)));
+    }
+
+    fn hold_world() -> (testkit::TempDir, Fake) {
+        let t = testkit::TempDir::new("sending-hold");
+        let wts = t.path().join("run/worktree");
+        std::fs::create_dir_all(&wts).unwrap();
+        let f = Fake { wts, ..Default::default() };
+        (t, f)
+    }
+
+    fn backdate(p: &Path) {
+        let old = std::time::SystemTime::now() - Duration::from_secs(10_000);
+        let f = std::fs::File::open(p).unwrap();
+        f.set_modified(old).unwrap();
+    }
+
+    #[test]
+    fn a_keep_marker_outranks_age_and_a_terminal_row() {
+        assert!(matches!(decide("acc", None, false, Unsaved::No, OLD, MAX, Some("keep marker")), Decision::Keep("keep marker")));
+        let (_t, f) = hold_world();
+        let d = f.wts.join("acc");
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(".spira-keep"), "").unwrap();
+        backdate(&d.join(".spira-keep"));
+        backdate(&d);
+        assert_eq!(run(&f, &HashMap::new(), MAX, false), 0);
+        assert!(d.exists(), "{}", f.out());
+    }
+
+    #[test]
+    fn a_tree_with_a_fresh_file_survives_and_a_stale_one_is_reaped() {
+        let (_t, f) = hold_world();
+        let busy = f.wts.join("busy");
+        let stale = f.wts.join("stale");
+        for d in [&busy, &stale] {
+            std::fs::create_dir_all(d.join("sub")).unwrap();
+            std::fs::write(d.join("sub/f"), "x").unwrap();
+        }
+        std::fs::write(stale.join("sub/f"), "x").unwrap();
+        for d in [&busy, &stale] {
+            backdate(&d.join("sub/f"));
+            backdate(&d.join("sub"));
+            backdate(d);
+        }
+        std::fs::write(busy.join("sub/f"), "fresh").unwrap();
+        backdate(&busy.join("sub"));
+        backdate(&busy);
+        assert_eq!(run(&f, &HashMap::new(), Duration::from_secs(5000), false), 0);
+        assert!(busy.exists(), "newest file is fresh: {}", f.out());
+        assert!(!stale.exists(), "{}", f.out());
+    }
+
+    #[test]
+    fn a_tree_with_a_live_process_cwd_survives() {
+        let (_t, f) = hold_world();
+        let d = f.wts.join("occupied");
+        std::fs::create_dir_all(&d).unwrap();
+        backdate(&d);
+        let mut child = std::process::Command::new("sleep").arg("30").current_dir(&d).spawn().unwrap();
+        let rc = run(&f, &HashMap::new(), MAX, false);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(rc, 0);
+        assert!(d.exists(), "{}", f.out());
+        assert_eq!(run(&f, &HashMap::new(), MAX, false), 0);
+        assert!(!d.exists(), "reaped once nothing holds it: {}", f.out());
     }
 
     fn states(xs: &[(&str, &str)]) -> HashMap<String, String> {
