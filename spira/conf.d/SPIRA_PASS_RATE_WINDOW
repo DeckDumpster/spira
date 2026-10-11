@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=batch
+DOC=Seconds of batch timing ledger pass-rate.sh measures passes per landing over.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_PASS_RATE_WINDOW:=86400}"
+SPIRA_CONF_DEFAULT_EOF

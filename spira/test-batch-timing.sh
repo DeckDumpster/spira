@@ -69,7 +69,7 @@ SPIRA_BATCH_LEDGER="$LEDGER" SPIRA_RUN="$TMP" \
 
 row="$(cat "$LEDGER")"
 fields="$(printf '%s' "$row" | awk -F'\t' '{print NF}')"
-is "A1: row has 15 fields" "15" "$fields"
+is "A1: row has 18 fields" "18" "$fields"
 
 # Field order: run_id when branch base verdict wall_s n_ok n_red n_skip n_other sum_s maxpar nproc memtotal_kb cpu_busy_pct
 is "A2: run_id"        "testrun001"  "$(printf '%s' "$row" | awk -F'\t' '{print $1}')"
@@ -86,6 +86,9 @@ is "A12: maxpar"       "16"          "$(printf '%s' "$row" | awk -F'\t' '{print 
 is "A13: nproc"        "16"          "$(printf '%s' "$row" | awk -F'\t' '{print $13}')"
 is "A14: memtotal_kb"  "65536000"    "$(printf '%s' "$row" | awk -F'\t' '{print $14}')"
 is "A15: cpu_busy_pct" "72"          "$(printf '%s' "$row" | awk -F'\t' '{print $15}')"
+is "A16: n_overcap"     "0"           "$(printf '%s' "$row" | awk -F'\t' '{print $16}')"
+is "A17: n_fault"       "0"           "$(printf '%s' "$row" | awk -F'\t' '{print $17}')"
+is "A18: passes"        "1"           "$(printf '%s' "$row" | awk -F'\t' '{print $18}')"
 
 # ===========================================================================
 # PART B: missing runner.meta → shape fields are "-" not "0" or blank

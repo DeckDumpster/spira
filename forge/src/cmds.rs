@@ -822,7 +822,34 @@ pub fn force_cancel(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
     Out { code: r.code, lines: passthrough(&r) }
 }
 
+/// A completed run with a verdict (success, or red outside a faulted suites job) was decided by
+/// its tree, its workflow file and the harness at that commit; re-running it can only repeat
+/// the answer, so it is refused with that reason. Only a fault or an unfinished run is re-run.
+pub fn rerun_refusal(gh: &dyn Gh, repo: &Path, run_id: &str) -> Option<String> {
+    let run = parse(&gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}")]).stdout)?;
+    if jstr(&run, "status").as_deref() != Some("completed") {
+        return None;
+    }
+    let concl = jstr(&run, "conclusion").unwrap_or_default().to_lowercase();
+    if concl != "success" && concl != "failure" {
+        return None;
+    }
+    if concl == "failure" {
+        let jobs = parse(&gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs")]).stdout)?;
+        if suites_job_faulted(&jobs) {
+            return None;
+        }
+    }
+    let sha = jstr(&run, "head_sha").unwrap_or_default();
+    let wf = jstr(&run, "path").unwrap_or_default();
+    Some(format!("run {run_id} concluded {concl} on tree {sha}, workflow {wf}, same harness: no input changed, a rerun can only repeat the verdict"))
+}
+
 pub fn workflow_rerun(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
+    if let Some(why) = rerun_refusal(gh, repo, run_id) {
+        eprintln!("forge: workflow-rerun refused: {why}");
+        return Out { code: 3, lines: vec![] };
+    }
     let st = gh.call(Some(repo), &["run", "view", run_id, "--json", "status", "-q", ".status"]);
     let status = st.text().trim().to_string();
     if status == "in_progress" || status == "queued" {

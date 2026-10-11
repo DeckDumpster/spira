@@ -402,6 +402,45 @@ fn force_cancel_still_cancels_when_the_jobs_are_unreadable_and_refuses_without_a
     assert!(gh.calls.borrow().is_empty());
 }
 
+// ── workflow-rerun ───────────────────────────────────────────────────────────────────────
+
+fn rerun_gh(conclusion: &str, jobs: &str) -> FakeGh {
+    let gh = FakeGh::default();
+    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/9"], 0, &format!(r#"{{"status":"completed","conclusion":"{conclusion}","head_sha":"abc","path":".github/workflows/gate.yml"}}"#));
+    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/9/jobs"], 0, jobs);
+    gh.on(&["run", "view", "9", "--json", "status", "-q", ".status"], 0, "completed");
+    gh.on(&["run", "rerun", "9"], 0, "");
+    gh
+}
+
+fn rerun_called(gh: &FakeGh) -> bool {
+    gh.calls.borrow().iter().any(|c| c.first().map(String::as_str) == Some("run") && c.get(1).map(String::as_str) == Some("rerun"))
+}
+
+#[test]
+fn workflow_rerun_of_a_decided_run_is_refused_with_the_unchanged_inputs() {
+    for concl in ["success", "failure"] {
+        let gh = rerun_gh(concl, r#"{"jobs":[{"name":"suites","conclusion":"failure"}]}"#);
+        assert_eq!(workflow_rerun(&gh, repo(), "9").code, 3, "{concl}");
+        assert!(!rerun_called(&gh), "{concl}: must not reach gh run rerun");
+        let why = rerun_refusal(&gh, repo(), "9").unwrap();
+        assert!(why.contains("abc") && why.contains("gate.yml") && why.contains("no input changed"), "{why}");
+    }
+}
+
+#[test]
+fn workflow_rerun_still_serves_a_fault_and_an_unreadable_run() {
+    let faulted = rerun_gh("failure", r#"{"jobs":[{"name":"suites","conclusion":"cancelled"}]}"#);
+    assert_eq!(workflow_rerun(&faulted, repo(), "9").code, 0);
+    assert!(rerun_called(&faulted));
+    let cancelled = rerun_gh("cancelled", r#"{"jobs":[]}"#);
+    assert_eq!(workflow_rerun(&cancelled, repo(), "9").code, 0);
+    let unreadable = FakeGh::default();
+    unreadable.on(&["run", "rerun", "9"], 0, "");
+    assert_eq!(workflow_rerun(&unreadable, repo(), "9").code, 0);
+    assert!(rerun_called(&unreadable));
+}
+
 // ── stranded-runners ─────────────────────────────────────────────────────────────────────
 
 const NOW: u64 = 1_790_640_000 + 3600;
