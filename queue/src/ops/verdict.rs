@@ -703,6 +703,61 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
     OK
 }
 
+/// A red with no suite annotations is a setup red: re-run it once in full, then raise one
+/// incident if it is red again. The batcher never acts on it, so it must not wait silently.
+fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
+    let (name, pr) = (b.name, &b.pr);
+    let now = w.clock.now();
+    let step = tagged(out, "failed-step: ").first().map(|s| s.trim().to_string()).unwrap_or_default();
+    let rerun_at: Option<u64> = b.kv.get("setup_rerun").and_then(|t| t.trim().parse().ok());
+    if b.kv.get("setup_incident").is_some() {
+        w.out(format!("verdict {name}: PR {pr} red — {bo}setup red, incident already raised"));
+        return OK;
+    }
+    if let Some(t) = rerun_at {
+        if now.saturating_sub(t) < c.s.verdict.ci_idle_sec {
+            w.out(format!("verdict {name}: PR {pr} red — {bo}setup red, re-run in flight"));
+            return OK;
+        }
+    } else if let Some(run) = w.forge.run_id(&c.s.forge, b.path, &b.branch) {
+        w.forge.workflow_rerun(&c.s.forge, b.path, &run);
+        w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations (step: {}); re-running run {run} once", if step.is_empty() { "unknown" } else { &step }));
+        return match rewrite(b.file, &["setup_rerun", "setup_step"], &[("setup_rerun", &now.to_string()), ("setup_step", &step)]) {
+            Ok(()) => OK,
+            Err(e) => {
+                w.err(format!("verdict {name}: PR {pr} re-run started but not recorded: {e}"));
+                FAIL
+            }
+        };
+    }
+    let first = b.kv.get("setup_step").unwrap_or("").to_string();
+    let log = tagged(out, "step-log: ").join("\n");
+    let same = if rerun_at.is_none() {
+        "no run id to re-run"
+    } else if first == step {
+        "same failing step on the re-run"
+    } else {
+        "a different failing step on the re-run"
+    };
+    w.scripts.mail_operator(
+        &format!("Merge queue: {name} PR {pr} red in setup, no suite ran"),
+        &format!(
+            "## Incident\nBatch PR {pr} for {name} (head {}) is red with no suite annotations ({same}).\n\nFailed step: {}\nFirst failed step: {}\n\nLog tail:\n{log}\n\nThe PR is left open; members are untouched.\n",
+            b.head,
+            if step.is_empty() { "unknown" } else { &step },
+            if first.is_empty() { "unknown" } else { &first }
+        ),
+    );
+    w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations, {same}; incident raised"));
+    match rewrite(b.file, &["setup_incident"], &[("setup_incident", &now.to_string())]) {
+        Ok(()) => OK,
+        Err(e) => {
+            w.err(format!("verdict {name}: PR {pr} incident raised but not recorded: {e}"));
+            FAIL
+        }
+    }
+}
+
 /// A red batch PR goes to the batcher persona (D1): the suites and a run link, nothing else
 /// touched — the PR and its members stay exactly as they are.
 fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
@@ -716,8 +771,7 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
     }
     let suites = red_suites_csv(out);
     if suites.is_empty() {
-        w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations; leaving for the batcher to re-check"));
-        return OK;
+        return setup_red(w, c, b, out, bo);
     }
     if c.s.batcher_off {
         let lead = if bo.is_empty() { String::new() } else { "batcher-owned but ".into() };

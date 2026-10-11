@@ -453,12 +453,44 @@ fn a_hand_cut_batch_red_goes_to_judgement_too() {
 }
 
 #[test]
+fn a_setup_red_is_rerun_once_then_raises_one_incident_never_an_endless_defer() {
+    let t = T::new(LandMode::Queue);
+    batch(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    let red = "red\nfailed-step: gate / Set up runner\nstep-log: no space left\n";
+    let tick = |t: &T| {
+        t.forge.status.borrow_mut().push(Some(red.into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    };
+    let count = |t: &T, what: &str| t.forge.calls.borrow().iter().filter(|c| c.starts_with(what)).count();
+    let mails = |t: &T| t.scripts.calls.borrow().iter().filter(|c| c.starts_with("mail-operator")).count();
+    tick(&t);
+    assert_eq!(count(&t, "workflow-rerun 77"), 1);
+    assert_eq!(mails(&t), 0);
+    tick(&t);
+    assert_eq!(count(&t, "workflow-rerun 77"), 1, "{}", t.out());
+    assert_eq!(mails(&t), 0, "a rerun inside the grace is still in flight");
+    t.clock.now.set(t.clock.now.get() + t.lib.s.verdict.ci_idle_sec + 1);
+    tick(&t);
+    assert_eq!(mails(&t), 1);
+    let calls = t.scripts.calls.borrow().join("\n");
+    assert!(calls.contains("Failed step: gate / Set up runner") && calls.contains("no space left"), "{calls}");
+    for _ in 0..3 {
+        t.clock.now.set(t.clock.now.get() + 10_000);
+        tick(&t);
+    }
+    assert_eq!(count(&t, "workflow-rerun 77"), 1);
+    assert_eq!(mails(&t), 1);
+}
+
+#[test]
 fn red_without_suites_or_without_a_batcher_is_not_judged() {
     let t = T::new(LandMode::Queue);
     batch(&t);
     t.forge.status.borrow_mut().push(Some("red\n".into()));
+    *t.forge.run.borrow_mut() = Some("77".into());
     assert_eq!(t.run(&["verdict", "spira"]), 0);
-    assert!(t.out().contains("verdict spira: PR 12 red — batcher-owned, no suite annotations; leaving for the batcher to re-check"));
+    assert!(t.out().contains("verdict spira: PR 12 red — batcher-owned, no suite annotations (step: unknown); re-running run 77 once"), "{}", t.out());
     let mut t = T::new(LandMode::Queue);
     batch(&t);
     t.lib.s.batcher_off = true;
