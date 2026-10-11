@@ -24,7 +24,11 @@ impl Real {
     /// environment once.
     pub fn try_new() -> Result<Real, String> {
         let home = Self::resolve_home()?;
-        let env = Self::capture_env(&home);
+        if std::env::var_os("SPIRA_HOME").map_or(true, |v| v.is_empty()) {
+            std::env::set_var("SPIRA_HOME", &home);
+        }
+        let mut env = Self::capture_env(&home);
+        env.entry("SPIRA_HOME".to_string()).or_insert_with(|| home.display().to_string());
         Ok(Real { home, env })
     }
 

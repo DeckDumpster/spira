@@ -10,7 +10,7 @@
 # 2. NON-INTERACTIVE: runs to completion with only env vars, no stdin reads.
 # 3. TRAP KEYS ACTIVE: SPIRA_PROD, SPIRA_MAX_AEONS, SPIRA_MAX_LIVE_AEONS,
 #    SPIRA_LOOM_ADDR, SPIRA_DOLT_DATA appear as active (uncommented) lines.
-# 4. DERIVABLE KEYS COMMENTED: at least one non-trap key appears as a comment.
+# 4. EVERY KEY DECLARED: non-trap keys are written as active lines, and the file resolves.
 # 5. NO OVERWRITE: an existing config file is not touched; the script reports it.
 # 6. ROUND-TRIP: the generated file is accepted by conf.sh (spira-config validates, conf.sh resolves).
 #
@@ -77,11 +77,12 @@ FAKE_HOME="$TMP/home"
 OUT="$FAKE_HOME/.config/spira/spira.toml"
 FAKE_PROD="$TMP/fake-prod/spira"
 
-mkdir -p "$FAKE_HOME"
+mkdir -p "$FAKE_HOME" "$TMP/stub"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/stub/bd"; chmod +x "$TMP/stub/bd"
 
 run_configure() {
     env -i \
-        PATH="$PATH" \
+        PATH="$TMP/stub:$PATH" \
         HOME="$FAKE_HOME" \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -120,11 +121,9 @@ is "SPIRA_PROD value matches CONFIGURE_PROD" "$FAKE_PROD" "$_prod_val"
 _max_aeons_val="$(_active_key max_aeons)"
 is "SPIRA_MAX_AEONS value is 2 (what we passed)" "2" "$_max_aeons_val"
 
-# SPIRA_MAX_LIVE_AEONS was set to "" — empty means no ceiling, so it is omitted
-_max_live_line="$(grep -v '^[[:space:]]*#' "$OUT" 2>/dev/null | \
-    grep -i "max_live_aeons" | head -1 || true)"
-[ -z "$_max_live_line" ] && ok "SPIRA_MAX_LIVE_AEONS empty is omitted (no ceiling)" \
-                          || bad "SPIRA_MAX_LIVE_AEONS written despite empty" "$_max_live_line"
+# SPIRA_MAX_LIVE_AEONS was set to "" — nothing answered it, so the registered default is declared
+_max_live_val="$(_active_key max_live_aeons)"
+is "SPIRA_MAX_LIVE_AEONS empty takes the registered default" "2" "$_max_live_val"
 
 _loom_val="$(_active_key loom_addr)"
 is "SPIRA_LOOM_ADDR value is 127.0.0.1:8788" "127.0.0.1:8788" "$_loom_val"
@@ -137,12 +136,14 @@ _dolt_line="$(grep -v '^[[:space:]]*#' "$OUT" 2>/dev/null | \
 
 # ==========================================================================
 echo
-echo "derivable keys commented — at least one non-trap key appears as a comment:"
+echo "every key declared — non-trap keys are active lines and the file resolves:"
 # ==========================================================================
-_commented="$(grep '^[[:space:]]*#' "$OUT" 2>/dev/null | \
-    grep -i "spira.db\b\|spira.run\b\|spira.workspaces\b" | head -1 || true)"
-[ -n "$_commented" ] && ok "at least one derivable key (SPIRA_DB/RUN/WORKSPACES) appears as a comment" \
-                      || bad "no derivable keys found as comments" "in: $OUT"
+_db_val="$(_active_key db)"
+[ -n "$_db_val" ] && ok "a non-trap key (db) is an active line" \
+                   || bad "db missing as active line" "in: $OUT"
+_res_err="$(SPIRA_HOME="$HERE" SPIRA_REPO="$(dirname "$HERE")" spira-config resolve --sh-all "$OUT" 2>&1 >/dev/null)"; _res_rc=$?
+iszero "spira-config resolves the generated file with no key missing" "$_res_rc"
+[ "$_res_rc" -eq 0 ] || printf '%s\n' "$_res_err" >&2
 
 # ==========================================================================
 echo

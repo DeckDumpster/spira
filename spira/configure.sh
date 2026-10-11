@@ -34,7 +34,7 @@
 #   CONFIGURE_OUT             output file (default: ${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml)
 #   CONFIGURE_PROD            SPIRA_PROD
 #   CONFIGURE_MAX_AEONS       SPIRA_MAX_AEONS
-#   CONFIGURE_MAX_LIVE_AEONS  SPIRA_MAX_LIVE_AEONS (empty string = no fleet ceiling)
+#   CONFIGURE_MAX_LIVE_AEONS  SPIRA_MAX_LIVE_AEONS (empty string = the registered default)
 #   CONFIGURE_LOOM_ADDR       SPIRA_LOOM_ADDR
 #   CONFIGURE_DOLT_DATA       SPIRA_DOLT_DATA (empty string = do not manage the server)
 #
@@ -42,10 +42,11 @@
 # through to the derived default with a notice if not.
 #
 # WHAT IS WRITTEN
-#   Trap keys — active `key = value` lines in the [spira] table, one per trap
-#   (an empty SPIRA_MAX_LIVE_AEONS is omitted: absent means no ceiling).
-#   Derivable keys — commented-out `# spira.key = value` lines for every other
-#   settable key, so the operator can see what is available.
+#   `spira-config init` writes the answers and every other key at its registered
+#   default, because the resolver refuses a key the file does not declare. Further
+#   inputs: CONFIGURE_INSTANCE, CONFIGURE_ID_PREFIX, CONFIGURE_HOME_REPO,
+#   CONFIGURE_HOME_REPO_PATH, CONFIGURE_DB, CONFIGURE_RUN, CONFIGURE_RELEASES,
+#   CONFIGURE_OPERATED (0 = nobody reads escalations: doctor warns rather than fails).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -100,29 +101,19 @@ if [ -f "$_out" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Derive defaults for every configurable key by sourcing conf.sh in a clean
-# subprocess.  The result is a set of KEY=value lines we read back below.
+# Defaults for the keys asked about and the paths a fresh box must name. Every other
+# key is left to `spira-config init`, which writes it at its registered default.
 # ---------------------------------------------------------------------------
-_defaults="$(
-    env -i \
-        PATH="$PATH" \
-        "HOME=${HOME:-}" \
-        "XDG_DATA_HOME=${XDG_DATA_HOME:-}" \
-        "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}" \
-        SPIRA_CONF=/nonexistent \
-        CONF_HERE="$HERE" \
-        bash -c '
-            . "$CONF_HERE/conf.sh" 2>/dev/null
-            # Print every key in the allowlist with its derived value.
-            for _k in $SPIRA_CONF_KEYS; do
-                [ -z "$_k" ] && continue
-                printf "%s=%s\n" "$_k" "${!_k:-}"
-            done
-        ' 2>/dev/null
-)"
-
-# Return the derived value for KEY.
-_def() { printf '%s\n' "$_defaults" | grep "^$1=" | head -1 | cut -d= -f2-; }
+_data="${XDG_DATA_HOME:-$HOME/.local/share}/spira"
+_releases="${CONFIGURE_RELEASES:-$_data/releases}"
+declare -A _defaults=(
+    [SPIRA_PROD]="$_releases/current"
+    [SPIRA_MAX_AEONS]=4
+    [SPIRA_MAX_LIVE_AEONS]=
+    [SPIRA_LOOM_ADDR]=127.0.0.1:8788
+    [SPIRA_DOLT_DATA]="$_data/dolt"
+)
+_def() { printf '%s' "${_defaults[$1]-}"; }
 
 # ---------------------------------------------------------------------------
 # Interactive prompts for any trap key not already provided.
@@ -163,7 +154,7 @@ fi
 if [ -z "$_maxlive_given" ]; then
     _maxlive="$(_ask \
         "SPIRA_MAX_LIVE_AEONS — whole-fleet ceiling (pool + lane fayths combined).
-  Empty means no ceiling (the shipped default). Set it when your API account
+  Empty takes the registered default. Set it when your API account
   limits how many parallel sessions you can run across ALL personas." \
         SPIRA_MAX_LIVE_AEONS "$(_def SPIRA_MAX_LIVE_AEONS)")"
 fi
@@ -186,51 +177,31 @@ if [ -z "$_dolt_given" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Write the config file. Trap keys go through `spira-config set` (typed, atomic,
-# the same writer every other config writer uses); derivable keys follow as
-# commented-out TOML lines.
+# Write the config file through `spira-config init`: the answers below, and every other
+# key at its registered default, so the resolver finds every key declared.
 # ---------------------------------------------------------------------------
+_repo_root="$(cd "$HERE/.." && pwd -P)"
+_init_args=(
+    --out "$_out"
+    --instance "${CONFIGURE_INSTANCE:-prod}"
+    --id_prefix "${CONFIGURE_ID_PREFIX:-sp}"
+    --home_repo "${CONFIGURE_HOME_REPO:-$(basename "$_repo_root")}"
+    --home_repo_path "${CONFIGURE_HOME_REPO_PATH:-$_repo_root}"
+    --db "${CONFIGURE_DB:-$_data/db}"
+    --run "${CONFIGURE_RUN:-$_data/run}"
+    --releases "$_releases"
+    --dolt_data "${_dolt:-$_data/dolt}"
+    --prod "$_prod"
+    --max_aeons "${_maxaeons:-4}"
+    --loom_addr "${_loom:-127.0.0.1:8788}"
+)
+[ -n "$_maxlive" ] && _init_args+=(--max_live_aeons "$_maxlive")
+[ -n "${CONFIGURE_OPERATED:-}" ] && _init_args+=(--operated "$CONFIGURE_OPERATED")
 mkdir -p "$(dirname "$_out")"
-
-_toml_key() { printf 'spira.%s' "$(printf '%s' "${1#SPIRA_}" | tr '[:upper:]' '[:lower:]')"; }
-_toml_val() { case "$1" in ''|*[!0-9]*) printf '"%s"' "$1" ;; *) printf '%s' "$1" ;; esac; }
-
-_set() { spira-config set "$(_toml_key "$1")" "$2" "$_out" >/dev/null || { rm -f "$_out"; printf 'configure: ERROR: could not write %s\n' "$1" >&2; exit 1; }; }
-
-_set SPIRA_ID_PREFIX sp
-_set SPIRA_PROD "$_prod"
-_set SPIRA_MAX_AEONS "${_maxaeons:-4}"
-[ -n "$_maxlive" ] && _set SPIRA_MAX_LIVE_AEONS "$_maxlive"
-_set SPIRA_LOOM_ADDR "${_loom:-127.0.0.1:8788}"
-_set SPIRA_DOLT_DATA "$_dolt"
-
-_trap_keys=" SPIRA_ID_PREFIX SPIRA_PROD SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LOOM_ADDR SPIRA_DOLT_DATA "
-{
-    cat <<'DERIVABLE'
-
-# ============================================================
-# spira.toml — written by configure.sh. The [spira] table above holds the
-# keys whose derived default is plausibly wrong for a fresh clone:
-#   id_prefix       REQUIRED; the prefix of this installation's bead ids.
-#   prod            the activated release directory systemd executes from.
-#   max_aeons       task-pool ceiling; a guess about your cores.
-#   max_live_aeons  whole-fleet ceiling; omitted = no ceiling.
-#   loom_addr       loopback by design; Loom has no authentication.
-#   dolt_data       Dolt server data dir; empty = you run the server yourself.
-#
-# Below, every other key as conf.sh would derive it here. Move a line into
-# [spira] and edit it to override; `spira-config validate` checks the result.
-# Change keys with `spira-config set`, not by re-running configure.sh.
-# ============================================================
-DERIVABLE
-    while IFS= read -r _kv; do
-        [ -z "$_kv" ] && continue
-        _k="${_kv%%=*}"
-        [ -z "$_k" ] && continue
-        case " $_trap_keys " in *" $_k "*) continue ;; esac
-        printf '# %s = %s\n' "$(_toml_key "$_k")" "$(_toml_val "${_kv#*=}")"
-    done <<< "$_defaults"
-} >> "$_out"
+SPIRA_HOME="$HERE" spira-config init "${_init_args[@]}" >/dev/null </dev/null \
+    || { rm -f "$_out"; printf 'configure: ERROR: could not write %s\n' "$_out" >&2; exit 1; }
+[ -n "$_dolt" ] || spira-config set spira.dolt_data "" "$_out" >/dev/null \
+    || { rm -f "$_out"; printf 'configure: ERROR: could not write dolt_data\n' >&2; exit 1; }
 
 # Round-trip: the generated file must pass spira-config's own validation.
 if ! _rt_warn="$(spira-config validate "$_out" 2>&1)"; then
