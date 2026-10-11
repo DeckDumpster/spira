@@ -218,6 +218,13 @@ spira_config_unset() {
     _spira_config_write unset "$(spira_toml_write_target)" "$1"
 }
 
+# Fresh-host entry points (ready.sh, uninstall.sh) run before anything exports the pin: they
+# opt in to the path configure writes. Every other caller still refuses on an unset SPIRA_TOML.
+if [ -z "${SPIRA_TOML:-}" ] && [ -n "${SPIRA_ADOPT_CONFIGURE_DEFAULT:-}" ]; then
+    _spira_default_toml="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml"
+    [ -f "$_spira_default_toml" ] && export SPIRA_TOML="$_spira_default_toml"
+fi
+
 SPIRA_TOML_FILE="$(spira_toml_file)"
 
 # --------------------------------------------------------------------------------------

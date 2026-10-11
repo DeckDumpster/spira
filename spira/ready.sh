@@ -37,6 +37,7 @@
 #   SPIRA_LOOM_PROBE   — if set, called instead of the Python HTTP probe;
 #                        must print "200 Nms", "ERR Nms reason", or "NNN Nms"
 set -uo pipefail
+export SPIRA_ADOPT_CONFIGURE_DEFAULT=1
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh" || exit 1
 
 SC="${SPIRA_SYSTEMCTL:-systemctl}"

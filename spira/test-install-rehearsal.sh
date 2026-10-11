@@ -165,7 +165,7 @@ _sc="$(command -v spira-config 2>/dev/null || true)"
 [ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
 timeout 5 podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 \
     && timeout 5 podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
-iszero "the tree's spira-config is staged in the container's release bin/" "$?"
+iszero "the tree's spira-config is staged in the container's release bin/" "$_rc"
 
 # ===========================================================================
 echo
@@ -211,6 +211,15 @@ INSTALL_BIN="/tmp/spira-install"
 podman cp "$_si" "$CNAME:$INSTALL_BIN" >&2 && podman exec "$CNAME" chmod 0755 "$INSTALL_BIN" >&2
 iszero "the tree's spira-install is staged in the container" "$?"
 
+_doc="$(command -v doctor 2>/dev/null || true)"
+[ -n "$_doc" ] || bail "doctor is not on PATH (the tree's build provides it)"
+# batch-job: staging the installer and doctor into the fake release bin/ install resolves its own release from
+podman cp "$_si" "$CNAME:/tmp/spira-prod/bin/spira-install" >&2 && podman cp "$_doc" "$CNAME:/tmp/spira-prod/bin/doctor" >&2
+_rc=$?
+# batch-job: marking the staged release binaries executable
+[ "$_rc" -eq 0 ] && { podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-install /tmp/spira-prod/bin/doctor >&2; _rc=$?; }
+iszero "the tree's spira-install and doctor are staged in the container's release bin/" "$_rc"
+
 _sc="$(command -v spira-config 2>/dev/null || true)"
 [ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
 # batch-job: staging the tree's spira-config into the fake release bin/ conf.sh resolves through
@@ -244,12 +253,16 @@ echo "install — world.halted pre-created; units are enabled but not started:"
     "mkdir -p '${SPIRA_RUN_CTR}' && touch '${SPIRA_RUN_CTR}/world.halted'" >&2
 iszero "world.halted created" "$?"
 
+# A fresh host exports neither SPIRA_TOML nor SPIRA_RELEASES: install runs from the release it
+# ships in (doctor beside it, no Spira directory on the inherited PATH) and finds the config
+# configure wrote at its default path.
 "${CEXEC[@]}" \
+    -e "PATH=${STUBS_CTR}:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e "SPIRA_INSTALL_FORCE=1" \
     -e "SPIRA_INSTALL_LC_STORE_CONSIDERED=1" \
     -e "SPIRA_INSTALL_AERC_CONSIDERED=1" \
-    "$CNAME" "$INSTALL_BIN" >&2
-iszero "install exits 0" "$?"
+    "$CNAME" bash -c 'unset SPIRA_TOML SPIRA_RELEASES; exec /tmp/spira-prod/bin/spira-install' >&2
+iszero "install exits 0 with SPIRA_TOML and SPIRA_RELEASES both unset" "$?"
 
 # ===========================================================================
 echo
@@ -350,7 +363,7 @@ echo "stray sweep positive control — plant a unit, confirm STRAY is reported:"
     -e "SPIRA_INSTALL_FORCE=1" \
     -e "SPIRA_INSTALL_LC_STORE_CONSIDERED=1" \
     -e "SPIRA_INSTALL_AERC_CONSIDERED=1" \
-    "$CNAME" "$INSTALL_BIN" >/dev/null 2>&1
+    "$CNAME" bash -c 'unset SPIRA_TOML SPIRA_RELEASES; exec /tmp/spira-prod/bin/spira-install' >/dev/null 2>&1
 iszero "re-install for stray test exits 0" "$?"
 
 # Plant a unit not present in the owned manifest. uninstall.sh's stray sweep walks
