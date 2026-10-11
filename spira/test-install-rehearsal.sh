@@ -165,7 +165,7 @@ _sc="$(command -v spira-config 2>/dev/null || true)"
 [ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
 timeout 5 podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 \
     && timeout 5 podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
-iszero "the tree's spira-config is staged in the container's release bin/" "$_rc"
+iszero "the tree's spira-config is staged in the container's release bin/" "$?"
 
 # ===========================================================================
 echo
