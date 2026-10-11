@@ -82,9 +82,19 @@ fi
 # pushed, and only that comparison produces the OK line.
 # A failed push is the expensive one: it packs the whole repository before the remote refuses
 # or the deadline kills it. So a failure parks further attempts for a day instead of
-# repacking on every timer tick.
+# repacking on every timer tick. A stamp older than the server's last start is void: the
+# restart is how a fix to the cause takes effect.
 failed_stamp="${SPIRA_RUN:-/tmp}/beads-push.failed-at"
 retry_after="${BEADS_PUSH_RETRY_AFTER_FAILURE_SECS:-86400}"
+server_unit="${BEADS_PUSH_SERVER_UNIT:-dolt-beads}"
+if [ -f "$failed_stamp" ]; then
+    failed_at="$(cat "$failed_stamp" 2>/dev/null || echo 0)"
+    server_up="$(systemctl --user show "$server_unit" -p ActiveEnterTimestamp --value 2>/dev/null)"
+    server_up="$([ -n "$server_up" ] && date -d "$server_up" +%s 2>/dev/null || echo 0)"
+    if [ "$server_up" -gt "$failed_at" ]; then
+        rm -f "$failed_stamp"
+    fi
+fi
 if [ -f "$failed_stamp" ]; then
     since=$(( $(date +%s) - $(cat "$failed_stamp" 2>/dev/null || echo 0) ))
     if [ "$since" -lt "$retry_after" ]; then

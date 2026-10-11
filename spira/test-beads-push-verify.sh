@@ -96,6 +96,13 @@ exit 0
 STUB
 chmod +x "$BIN/bd"
 
+cat > "$BIN/systemctl" <<'STUB'
+#!/usr/bin/env bash
+cat "$(dirname "$0")/../state.server_up" 2>/dev/null
+STUB
+chmod +x "$BIN/systemctl"
+st server_up ""
+
 TOOLS="$(command -v beads-store)" && TOOLS="$(dirname "$TOOLS")" || bail "beads-store is not on PATH"
 run_push() {
     rm -f "$TMP/run/beads-push.failed-at"
@@ -195,6 +202,20 @@ out="$(env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
     bash "$REPO/beads-push.sh" 2>&1)"; rc=$?
 wantrc "an immediate retry is parked, not repacked" 1 "$rc"
 want   "and says when it may run again"             "not repacking again" "$out"
+
+echo
+echo "G. a server restart after the failure voids the park:"
+st push refuse
+out="$(run_push)"; rc=$?
+wantrc "seed a failure"                      1 "$rc"
+st push ok
+st server_up "$(date -d '+1 minute' '+%Y-%m-%d %H:%M:%S %Z')"
+out="$(env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
+    SPIRA_CONF=/nonexistent SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
+    bash "$REPO/beads-push.sh" 2>&1)"; rc=$?
+wantrc "a server started after the stamp retries" 0 "$rc"
+want   "and pushes"                              "OK" "$out"
+st server_up ""
 
 st push hang
 out="$(BEADS_PUSH_DEADLINE_SECS=2 run_push)"; rc=$?
