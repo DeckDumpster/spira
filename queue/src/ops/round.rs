@@ -152,10 +152,63 @@ fn failed_verb(w: &World, batch: &str, repo: Option<&str>, suite: &str) -> i32 {
     if idents(w, "round failed", &[("suite", suite)]).is_err() {
         return FAIL;
     }
-    pass_verb(w, "round failed", batch, repo, |_, _| {
+    pass_verb(w, "round failed", batch, repo, |c, _| {
         suites_started(w, batch, false)?;
-        pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string()))
+        pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string()))?;
+        summon_mender(w, c, batch, suite);
+        Ok(())
     })
+}
+
+/// File the mender-lane bead for a failure whose MENDING row the event just opened. A marker
+/// per (batch, pass, suite) keeps a repeated report from filing twice; a filing that fails is
+/// said aloud and leaves no marker, so the next report of the same failure files it.
+fn summon_mender(w: &World, c: &Ctx, batch: &str, suite: &str) {
+    let Some((pass, _)) = w.lc.batch_pass(batch) else {
+        w.err(format!("queue.sh round failed: WARNING — no mender bead filed for {suite} of {batch}: spira-lc cannot say which pass it is on"));
+        return;
+    };
+    let marker = rounds_dir(c).join(format!("{batch}.mender-{pass}-{suite}"));
+    if marker.exists() {
+        return;
+    }
+    let results = rounds_dir(c).join(format!("{batch}.results"));
+    let output = suite_output(&results, suite, 0).map(|o| tail(&o, 80)).unwrap_or_else(|| "(the suite left no output in the round's results)".into());
+    let body = format!(
+        "A suite went red in pass {pass} of round {batch} ({repo}): {suite}.\n\nBatch: {batch}\nPass: {pass}\nSuite: {suite}\nDeadline: the machine stamps it when you claim this failure; list it with `spira-lc mending list --batch {batch} --live`. Record your outcome with `queue round mended|return|environment|flaky|unsure {batch} {suite}` before it passes.\n\nSuite output (tail):\n{output}\n",
+        repo = c.r.name,
+    );
+    let mut labels = String::new();
+    if let Some(scope) = w.var("SPIRA_SCOPE_LABEL").filter(|l| !l.is_empty()) {
+        labels.push_str(&scope);
+        labels.push(',');
+    }
+    labels.push_str(&c.s.verdict.mender_label);
+    labels.push_str(&format!(",repo:{}", c.r.name));
+    let title = format!("mend {suite} red in pass {pass} of round {batch}");
+    match w.lib.create_bug(&actor(w), &title, "1", &labels, &body) {
+        Some(id) => {
+            w.lc.create_bead(&id);
+            let _ = write_atomic(&marker, &format!("{id}\n"));
+            w.out(format!("queue.sh round failed: mender bead {id} filed for {suite} in pass {pass} of {batch}"));
+        }
+        None => w.err(format!("queue.sh round failed: WARNING — the mender bead for {suite} of {batch} could not be filed; report the failure again to retry")),
+    }
+}
+
+fn suite_output(dir: &Path, suite: &str, depth: u32) -> Option<String> {
+    let want = format!("{suite}.out");
+    for e in fs::read_dir(dir).ok()?.flatten() {
+        let p = e.path();
+        if p.is_dir() && depth < 2 {
+            if let Some(o) = suite_output(&p, suite, depth + 1) {
+                return Some(o);
+            }
+        } else if p.file_name().and_then(|n| n.to_str()) == Some(want.as_str()) {
+            return fs::read_to_string(&p).ok();
+        }
+    }
+    None
 }
 
 fn pass_verdict(w: &World, batch: &str, repo: Option<&str>, verdict: &str, red_suites: &str, t: Timings, reason: &Text) -> i32 {
