@@ -97,6 +97,7 @@ sop write|applied                                   the runbook shelf
 {{RULE}} retire <slug> | list | show <slug>
 {{COCKPIT}}/layout.sh up|down|ensure                the cockpit; `ensure` self-heals
 {{COCKPIT}}/rebuild.sh [probe]                      when the tmux server itself died
+{{SPIRA_HOME}}/aws-mfa.sh <6-digit code>              his MFA code -> one-hour role session (SPIRA_AWS_* env)
 ```
 
 Skills cover the ones with real procedure behind them — `slay-aeon`, `spira-world`,
