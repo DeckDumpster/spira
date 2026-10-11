@@ -61,6 +61,19 @@ _batch_sweep_dead_owners() {
     done
 }
 
+# _batch_container_started_epoch <cname> — start time in epoch seconds. podman renders
+# StartedAt as a Go time string whose suffix (zone name, "m=+..." monotonic reading)
+# varies by host, so ask for the integer and parse the string only as a fallback.
+_batch_container_started_epoch() {
+    local cname="$1" ts
+    ts="$(timeout 5 podman container inspect --format '{{.State.StartedAt.Unix}}' "$cname" 2>/dev/null)"
+    if [[ "$ts" =~ ^[0-9]+$ ]] && [ "$ts" -gt 0 ]; then printf '%s\n' "$ts"; return 0; fi
+    ts="$(timeout 5 podman container inspect --format '{{.State.StartedAt}}' "$cname" 2>/dev/null)" || return 1
+    ts="${ts%% m=*}"
+    date -d "$ts" +%s 2>/dev/null && return 0
+    date -d "${ts% *}" +%s 2>/dev/null
+}
+
 # _batch_sweep_ownerless <min-age-seconds> [name-prefix] — arm 2: a container matching
 # <name-prefix> (default spira-batch-, the production scope) with NO owner file at all,
 # older than the given bound. name-prefix lets a test narrow the sweep to its own
@@ -68,11 +81,10 @@ _batch_sweep_dead_owners() {
 # real podman stops every ownerless container on the host, not just the caller's own.
 # One line per sweep on stdout.
 _batch_sweep_ownerless() {
-    local min_age="${1:-3600}" name_prefix="${2:-spira-batch-}" _sw_cname _sw_started _sw_started_epoch _sw_age
+    local min_age="${1:-3600}" name_prefix="${2:-spira-batch-}" _sw_cname _sw_started_epoch _sw_age
     for _sw_cname in $(timeout 5 podman ps -a --filter "name=^${name_prefix}" --format '{{.Names}}' 2>/dev/null); do
         [ -f "/tmp/${_sw_cname}.owner" ] && continue  # governed by the dead-owner arm
-        _sw_started="$(timeout 5 podman container inspect --format '{{.State.StartedAt}}' "$_sw_cname" 2>/dev/null)" || continue
-        _sw_started_epoch="$(date -d "$_sw_started" +%s 2>/dev/null)" || continue
+        _sw_started_epoch="$(_batch_container_started_epoch "$_sw_cname")" || continue
         _sw_age=$(( $(date +%s) - _sw_started_epoch ))
         [ "$_sw_age" -ge "$min_age" ] || continue
         # batch-job: podman stop waits out the container grace period
