@@ -75,6 +75,38 @@ pub const VERBS: &[&str] = &[
     "fence", "sending", "mender",
 ];
 
+/// Verbs answered in this process, never sent to the socket.
+pub const LOCAL_VERBS: &[&str] = &["crates"];
+
+/// The `-p` selection for a branch's diff: every workspace member it touches plus its direct
+/// dependents — the gate's own selection (`gate::compose`), never `--workspace`. A
+/// workspace-wide input (root manifest, lockfile, toolchain pin) names every member.
+pub fn crates_selection(diff_raw: &[u8], metadata_json: &str) -> Result<Vec<String>, String> {
+    use gate::compose::{classify, parse_diff_raw, parse_metadata, with_dependents, Class, UNIT_READERS};
+    let members = parse_metadata(metadata_json)?;
+    let mut touched = std::collections::BTreeSet::new();
+    let mut workspace = false;
+    for c in parse_diff_raw(diff_raw) {
+        match classify(&c, &members) {
+            Class::Crate(n) => {
+                touched.insert(n);
+            }
+            Class::Workspace => workspace = true,
+            Class::Units => touched.extend(UNIT_READERS.iter().filter(|r| members.iter().any(|m| m.name == **r)).map(|r| r.to_string())),
+            Class::Doc | Class::Suite | Class::Script | Class::Config => {}
+        }
+    }
+    if workspace {
+        return Ok(members.iter().map(|m| m.name.clone()).collect());
+    }
+    Ok(with_dependents(&touched, &members))
+}
+
+/// `crates` as the words to append to a cargo command: `-p a -p b`, empty when nothing buildable changed.
+pub fn crates_words(crates: &[String]) -> String {
+    crates.iter().map(|c| format!("-p {c}")).collect::<Vec<_>>().join(" ")
+}
+
 /// The tokens the client appends itself; a caller typing one could otherwise name another
 /// persona (`--actor`) or smuggle a body (`--stdin`) past the broker's trailer parse.
 pub const RESERVED: &[&str] = &["--actor", "--stdin"];
@@ -318,5 +350,34 @@ mod tests {
     #[test]
     fn build_request_refuses_unknown_verb() {
         assert!(build_request("sp-3m1p9", "close", &[], None, "a").is_err());
+    }
+
+    const META: &str = r#"{"workspace_root":"/w","workspace_members":["p#a 0.1.0 (path+file:///w/a)","p#b 0.1.0 (path+file:///w/b)","p#c 0.1.0 (path+file:///w/c)"],"packages":[
+      {"id":"p#a 0.1.0 (path+file:///w/a)","name":"a","manifest_path":"/w/a/Cargo.toml","dependencies":[]},
+      {"id":"p#b 0.1.0 (path+file:///w/b)","name":"b","manifest_path":"/w/b/Cargo.toml","dependencies":[{"name":"a","path":"/w/a"}]},
+      {"id":"p#c 0.1.0 (path+file:///w/c)","name":"c","manifest_path":"/w/c/Cargo.toml","dependencies":[]}]}"#;
+
+    fn raw(paths: &[&str]) -> Vec<u8> {
+        paths.iter().map(|p| format!(":100644 100644 aaa bbb M\0{p}\0")).collect::<String>().into_bytes()
+    }
+
+    #[test]
+    fn a_fixture_diff_selects_the_touched_crate_and_its_dependents_never_the_workspace() {
+        let sel = crates_selection(&raw(&["a/src/lib.rs", "docs/x.md"]), META).unwrap();
+        assert_eq!(sel, ["a", "b"]);
+        let w = crates_words(&sel);
+        assert_eq!(w, "-p a -p b");
+        assert!(!w.contains("--workspace"));
+    }
+
+    #[test]
+    fn a_diff_touching_no_crate_selects_nothing() {
+        assert!(crates_selection(&raw(&["docs/x.md"]), META).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_workspace_input_names_every_member_with_p() {
+        let sel = crates_selection(&raw(&["Cargo.lock"]), META).unwrap();
+        assert_eq!(crates_words(&sel), "-p a -p b -p c");
     }
 }

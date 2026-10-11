@@ -29,10 +29,13 @@ const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(verb) = args.first().cloned() else {
-        eprintln!("usage: work <verb> [args...] (verbs: {})", work::VERBS.join(", "));
+        eprintln!("usage: work <verb> [args...] (verbs: {}, {})", work::VERBS.join(", "), work::LOCAL_VERBS.join(", "));
         std::process::exit(CANNOT_TELL);
     };
     let verb_args = args[1..].to_vec();
+    if work::LOCAL_VERBS.contains(&verb.as_str()) {
+        std::process::exit(crates(&verb_args));
+    }
 
     // A lane verb (sp-st0mm) runs unbound too — the archivist has no bead of its own — and
     // sends `-` in the bound slot; a bound verb refuses without a binding.
@@ -151,4 +154,36 @@ fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
     }
     let out = String::from_utf8(body).map_err(|e| format!("reply was not UTF-8: {e}"))?;
     Ok((code, out))
+}
+
+/// `work crates [<base>]`: the `-p` words for the worktree's diff against `<base>` (default
+/// `local/main`) — touched crates plus direct dependents. Append them to `cargo build`,
+/// `check` or `test`; empty output means nothing buildable changed.
+fn crates(args: &[String]) -> i32 {
+    let base = args.first().map(String::as_str).unwrap_or("local/main");
+    let run = |argv: &[&str]| spira_config::bounded::bounded(argv[0]).args(&argv[1..]).output();
+    let diff = match run(&["git", "diff", "--raw", "-z", "--no-renames", &format!("{base}...HEAD")]) {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => {
+            eprintln!("work crates: git diff {base}...HEAD failed");
+            return REFUSED;
+        }
+    };
+    let meta = match run(&["cargo", "metadata", "--format-version", "1", "--no-deps"]) {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        _ => {
+            eprintln!("work crates: cargo metadata failed");
+            return REFUSED;
+        }
+    };
+    match work::crates_selection(&diff, &meta) {
+        Ok(c) => {
+            println!("{}", work::crates_words(&c));
+            0
+        }
+        Err(e) => {
+            eprintln!("work crates: {e}");
+            REFUSED
+        }
+    }
 }

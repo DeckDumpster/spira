@@ -1511,6 +1511,17 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
 }
 
 #[test]
+fn a_session_builds_into_its_slots_warm_target_dir() {
+    let f = fx("warm-target");
+    seed(&f, "sp-warm");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let target = o.seen[0].env.get("CARGO_TARGET_DIR").cloned().expect("CARGO_TARGET_DIR set");
+    let want = f.run.join(spira_config::build::AEON_WARM_DIR).join("slot.1");
+    assert_eq!(target, want.display().to_string());
+    assert!(want.is_dir(), "the slot outlives the session");
+}
+
+#[test]
 fn an_enforced_sessions_cargo_still_goes_through_spira_admit_and_sccache() {
     let f = fx("admit-enforced");
     seed(&f, "sp-admenf");
