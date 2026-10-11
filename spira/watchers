@@ -119,6 +119,10 @@ inbox-keeper|daemon|inbox-keeper.sh
 # same as pr-notify), so a backlog stuck over threshold does not become a siren.
 publish-backlog|daemon|publish-backlog.sh watch --interval 900|publish-backlog.sh health
 
+# LC-BACKUP is the age alarm for the lifecycle store's off-box backup (lc-backup.sh, run by
+# lc-backup.timer): it alerts the operator on the crossing into stale, or into no destination at all.
+lc-backup|daemon|@SPIRA_HOME@/lc-backup.sh watch --interval 900|@SPIRA_HOME@/lc-backup.sh health
+
 # STRANDED-RUNNER catches the gap GitHub itself does not: an ephemeral self-hosted job whose
 # runner registered, then vanished before taking it. Nothing re-assigns that job's per-run
 # label to a second runner, so without this it sits queued until GitHub's own 24h ceiling

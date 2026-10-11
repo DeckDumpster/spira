@@ -1,0 +1,6 @@
+TYPE=bool
+GROUP=lc
+DOC=Accept a file:// backup destination on the data directory's own filesystem (a disk loss then takes the backup too).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_BACKUP_ALLOW_LOCAL:=0}"
+SPIRA_CONF_DEFAULT_EOF

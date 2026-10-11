@@ -1,0 +1,12 @@
+[Unit]
+Description=Back up the lifecycle store every six hours
+
+[Timer]
+OnCalendar=*-*-* 02,08,14,20:35:00
+Persistent=true
+AccuracySec=5min
+RandomizedDelaySec=300
+Unit=lc-backup.service
+
+[Install]
+WantedBy=timers.target
