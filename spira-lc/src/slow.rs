@@ -201,7 +201,7 @@ mod tests {
     fn a_wrapper_with_spira_caller_is_counted_under_it() {
         let dir = testkit::TempDir::new("slow-caller");
         let client = dir.path().join(CLIENT);
-        std::fs::copy("/bin/dash", &client).unwrap();
+        std::os::unix::fs::symlink("/bin/dash", &client).unwrap();
         let run = |name: Option<&str>| {
             let mut c = std::process::Command::new(&client);
             c.args(["-c", "read x"]).stdin(std::process::Stdio::piped());
