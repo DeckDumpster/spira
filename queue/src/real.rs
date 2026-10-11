@@ -1,6 +1,10 @@
 //! The ports against the host: git, bd, the lib.sh seam, the harness scripts, the forge,
 //! spira-lc, the config (spira-config library only), the clock, the environment, stdio.
 
+/// round-vm enforces the cap on the tests itself; the outer `timeout` only catches a hang in the
+/// unbounded rest (pulls, post-processing).
+const ROUND_HANG_GUARD_FACTOR: u64 = 2;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
@@ -658,9 +662,9 @@ impl Scripts for RealScripts {
         }
     }
     fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
-        // batch-job: the round's lint and suites, bounded by the caller's wall budget
+        // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
         let spawned = Command::new("timeout")
-            .args(["-k", "5", &wall_secs.to_string(), "round-vm", "run"])
+            .args(["-k", "5", &wall_secs.saturating_mul(ROUND_HANG_GUARD_FACTOR).to_string(), "round-vm", "run"])
             .arg(tree)
             .arg("--results-dir")
             .arg(results)
