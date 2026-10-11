@@ -98,8 +98,8 @@ cmd_run() {
     rm -f "$work"/latest.tar.* && tar -C "$stage" -caf "$tarball.tmp" --format=posix . 2>/dev/null && mv "$tarball.tmp" "$tarball" \
         || { echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
     rm -rf "$stage"
-    prefix="${SPIRA_LC_BACKUP_URL#*://}"; prefix="${prefix#*/}"; [ "$prefix" = "${SPIRA_LC_BACKUP_URL#*://}" ] && prefix=""
-    prefix="${prefix%/}"; [ -z "$prefix" ] || prefix="$prefix/"
+    prefix=""
+    case "$SPIRA_LC_BACKUP_URL" in s3://*/*) prefix="${SPIRA_LC_BACKUP_URL#s3://*/}"; prefix="${prefix%/}"; [ -z "$prefix" ] || prefix="$prefix/" ;; esac
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     key="$prefix$SPIRA_LC_BACKUP_DB/$stamp.tar.$ext"
     _lcb_upload "$tarball" "$key" || { echo "lc-backup: upload of $key failed" >&2; return 1; }
