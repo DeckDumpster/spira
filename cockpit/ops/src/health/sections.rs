@@ -477,7 +477,14 @@ pub fn now_section(snap: &Snapshot, cols: i64, working: Option<&[(String, String
     out
 }
 
-fn next_row(cols: i64, raw: &str) -> String {
+pub const REPO_TAG_W: usize = 8;
+
+fn repo_cell(repo: &str) -> String {
+    let t: String = repo.chars().take(REPO_TAG_W).collect();
+    format!("{ACC}{t:<w$}{RST}", w = REPO_TAG_W)
+}
+
+fn next_row(cols: i64, raw: &str, repo: &str) -> String {
     let mut it = raw.splitn(4, ' ');
     let pri = it.next().unwrap_or("");
     let part = it.next().unwrap_or("");
@@ -485,10 +492,11 @@ fn next_row(cols: i64, raw: &str) -> String {
     let rest = it.next().unwrap_or("");
     let pw = (part.chars().count() as i64).max(8);
     let id_w = (id.chars().count() as i64).max(14);
-    let f = fit(rest, cols - 11 - pri.chars().count() as i64 - pw - id_w);
+    let f = fit(rest, cols - 11 - REPO_TAG_W as i64 - 1 - pri.chars().count() as i64 - pw - id_w);
     format!(
-        "        {}{pri}{RST} {DIM}{part:<pw$}{RST} {ACC}{id:<14}{RST} {DIM}{f}{RST}",
+        "        {}{pri}{RST} {DIM}{part:<pw$}{RST} {ACC}{id:<14}{RST} {} {DIM}{f}{RST}",
         pri_colour(pri),
+        repo_cell(repo),
         pw = pw as usize,
     )
 }
@@ -513,7 +521,7 @@ pub fn next_section(snap: &Snapshot, cols: i64) -> Vec<String> {
     out.push(format!(" {DIM}NEXT{RST}   {B}{count_line}{RST} {DIM}\u{2014} across all partitions:{RST}"));
     for i in 0..MAX_NEXT_ROWS {
         let Some(raw) = snap.get(&format!("SP_NEXT{i}")).filter(|s| !s.is_empty()) else { break };
-        out.push(next_row(cols, raw));
+        out.push(next_row(cols, raw, snap.get(&format!("SP_NEXT{i}_REPO")).unwrap_or("")));
     }
     out
 }
@@ -680,7 +688,7 @@ pub fn queue_section(snap: &Snapshot, cols: i64) -> Vec<String> {
 /// parsed into fixed leading fields then a variable tail, printed in the SAME left-to-right
 /// order (time, state, persona/kind, bead, description) so the two sections read as one
 /// column. A row that cannot be parsed is printed as-is, still cut to the pane.
-pub fn recent_row(cols: i64, raw: &str, pad: i64) -> String {
+pub fn recent_row(cols: i64, raw: &str, pad: i64, repo: &str) -> String {
     let re = regex::Regex::new(r"^([0-9]+[smhd])\s+(\S+)\s+(\S+)\s+(\S+)\s*(.*)$").unwrap();
     let Some(caps) = re.captures(raw) else {
         return format!("{DIM}{}{RST}", fit(raw, cols - pad));
@@ -709,11 +717,12 @@ pub fn recent_row(cols: i64, raw: &str, pad: i64) -> String {
         );
     }
     let id_w = (id.chars().count() as i64).max(14);
-    let f = fit(rest_cap, cols - pad - aw - vw - pw - id_w - 4);
+    let f = fit(rest_cap, cols - pad - aw - vw - pw - id_w - 4 - REPO_TAG_W as i64 - 1);
     format!(
-        "{DIM}{age:<aw$}{RST} {}{verb:<vw$}{RST} {}{actor:<pw$}{RST} {ACC}{id:<14}{RST} {DIM}{f}{RST}",
+        "{DIM}{age:<aw$}{RST} {}{verb:<vw$}{RST} {}{actor:<pw$}{RST} {ACC}{id:<14}{RST} {} {DIM}{f}{RST}",
         verb_colour(verb),
         part_colour(actor),
+        repo_cell(repo),
         aw = aw as usize,
         vw = vw as usize,
         pw = pw as usize,
@@ -728,15 +737,15 @@ pub fn recent_section(snap: &Snapshot, cols: i64, snap_exists: bool) -> Vec<Stri
             vec![unread_row("RECENT", "no snapshot to read")]
         };
     };
-    let mut out = vec![format!(" {DIM}RECENT{RST} {}", recent_row(cols, ev0, 8))];
+    let mut out = vec![format!(" {DIM}RECENT{RST} {}", recent_row(cols, ev0, 8, snap.get("SP_EVENT0_REPO").unwrap_or("")))];
     for i in 1..MAX_RECENT_ROWS {
         let Some(ev) = snap.get(&format!("SP_EVENT{i}")).filter(|s| !s.is_empty()) else { break };
-        out.push(format!("        {}", recent_row(cols, ev, 8)));
+        out.push(format!("        {}", recent_row(cols, ev, 8, snap.get(&format!("SP_EVENT{i}_REPO")).unwrap_or(""))));
     }
     out
 }
 
-fn inflow_row(cols: i64, raw: &str) -> String {
+fn inflow_row(cols: i64, raw: &str, repo: &str) -> String {
     let re = regex::Regex::new(r"^([0-9]+[smhd])\s+(\S+)\s+(P\S+)\s+(\S+)\s*(.*)$").unwrap();
     let Some(caps) = re.captures(raw) else {
         return format!("        {DIM}{}{RST}", fit(raw, cols - 8));
@@ -749,11 +758,12 @@ fn inflow_row(cols: i64, raw: &str) -> String {
     let aw = (age.chars().count() as i64).max(4);
     let kw = (kind.chars().count() as i64).max(8);
     let id_w = (id.chars().count() as i64).max(14);
-    let f = fit(rest, cols - 12 - aw - kw - pri.chars().count() as i64 - id_w);
+    let f = fit(rest, cols - 12 - REPO_TAG_W as i64 - 1 - aw - kw - pri.chars().count() as i64 - id_w);
     format!(
-        "        {DIM}{age:<aw$}{RST} {}{kind:<kw$}{RST} {}{pri}{RST} {ACC}{id:<14}{RST} {DIM}{f}{RST}",
+        "        {DIM}{age:<aw$}{RST} {}{kind:<kw$}{RST} {}{pri}{RST} {ACC}{id:<14}{RST} {} {DIM}{f}{RST}",
         kind_colour(kind),
         pri_colour(pri),
+        repo_cell(repo),
         aw = aw as usize,
         kw = kw as usize,
     )
@@ -773,7 +783,7 @@ pub fn inflow_section(snap: &Snapshot, cols: i64) -> Vec<String> {
     )];
     for i in 0..MAX_INFLOW_ROWS {
         let Some(raw) = snap.get(&format!("SP_INFLOW{i}")).filter(|s| !s.is_empty()) else { break };
-        out.push(inflow_row(cols, raw));
+        out.push(inflow_row(cols, raw, snap.get(&format!("SP_INFLOW{i}_REPO")).unwrap_or("")));
     }
     out
 }
@@ -1249,28 +1259,39 @@ mod tests {
 
     #[test]
     fn recent_row_parses_bead_id_and_colours_it() {
-        let line = recent_row(80, "52s builder landed sp-abcd Fixed the thing", 8);
+        let line = recent_row(80, "52s builder landed sp-abcd Fixed the thing", 8, "");
         assert!(line.contains("sp-abcd"));
         assert!(line.contains(ACC));
     }
 
     #[test]
     fn recent_row_unparseable_prints_as_is_dimmed_and_cut() {
-        let line = recent_row(20, "not the expected shape at all, quite long", 8);
+        let line = recent_row(20, "not the expected shape at all, quite long", 8, "");
         assert!(line.starts_with(DIM));
         assert!(line.contains('\u{2026}'));
     }
 
     #[test]
     fn recent_row_aggregate_verb_does_not_colour_the_count_as_a_bead() {
-        let line = recent_row(80, "3m sentinel reaped 1 landed branch(es)", 8);
+        let line = recent_row(80, "3m sentinel reaped 1 landed branch(es)", 8, "");
         // "1" must not be printed in the accent colour reserved for real sp- ids.
         assert!(!line.contains(&format!("{ACC}1")));
     }
 
     #[test]
+    fn inflow_row_renders_the_repo_tag() {
+        let line = inflow_row(100, "5m task P2 sp-xyz9 multi-tenancy 4", "deckdumpster");
+        assert!(line.contains("deckdump"), "{line}");
+        assert!(!line.contains("deckdumpster"), "{line}");
+        let line = recent_row(100, "52s builder landed sp-abcd Fixed", 8, "deckdumpster");
+        assert!(line.contains("deckdump"), "{line}");
+        let line = next_row(100, "P2 builder sp-abcd Fixed", "deckdumpster");
+        assert!(line.contains("deckdump"), "{line}");
+    }
+
+    #[test]
     fn inflow_row_parses_kind_and_priority() {
-        let line = inflow_row(80, "5m bug P0 sp-xyz9 Something broke");
+        let line = inflow_row(80, "5m bug P0 sp-xyz9 Something broke", "");
         assert!(line.contains("sp-xyz9"));
         assert!(line.contains(BAD)); // bug is coloured BAD
     }

@@ -282,4 +282,11 @@ is     "no parent: exits 0"                     "0"                   "$rc"
 nowant "no parent: --parent NOT passed"         "--parent"            "$(cat "$BD_LOG")"
 nowant "no parent: --no-inherit-labels NOT passed" "--no-inherit-labels" "$(cat "$BD_LOG")"
 
+# a title that begins with the --repo name is refused (the repo is the bead's label)
+out="$(run_bead "testrepo x: y" --for builder --repo testrepo 2>&1)"; rc=$?
+is   "repo-prefixed title: exits 2"      "2"                    "$rc"
+want "repo-prefixed title: names the repo" "begins with the repo name" "$out"
+out="$(run_bead "testrepository is a word" --for builder --repo testrepo 2>&1)"; rc=$?
+is   "title merely sharing a stem: exits 0" "0"                 "$rc"
+
 tl_summary

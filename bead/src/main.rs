@@ -393,6 +393,15 @@ fn cfg_label(key: &str) -> String {
 // file
 // =========================================================================================
 
+fn title_leads_with_repo(title: &str, repo: &str) -> bool {
+    let t = title.trim_start().to_lowercase();
+    let r = repo.to_lowercase();
+    match t.strip_prefix(&r) {
+        Some(rest) => rest.chars().next().map_or(true, |c| !(c.is_alphanumeric() || c == '_')),
+        None => false,
+    }
+}
+
 fn cmd_file(home: &str, args: &[String]) -> i32 {
     if args.is_empty() {
         eprintln!("bead: title required");
@@ -468,6 +477,13 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
                 valid
             };
             eprintln!("bead: repo:{r} is not in the repo map; valid keys: {valid}");
+            return 2;
+        }
+    }
+
+    if let Some(r) = &repo {
+        if title_leads_with_repo(&title, r) {
+            eprintln!("bead: title begins with the repo name \"{r}\"; the repo is already the bead's repo: label and the pane shows it. Drop the prefix and re-file (exit 2).");
             return 2;
         }
     }
