@@ -41,6 +41,7 @@ pr() {
 mail_count() { ls "$RUN/mail/concierge/new" 2>/dev/null | wc -l | tr -d ' '; }
 NOW="$(date +%s)"
 
+pr check >/dev/null   # first call generates the conf defaults and prints about it
 echo; echo "1 — rows carry over-cap, fault and passes-to-land"
 pass r1 red 'ok 0 5 - p d 0' 'timeout 0 9 - p d 1' 'weird 0 3 - p d 1'
 pass r1 red 'red 0 4 fp p d 1'
