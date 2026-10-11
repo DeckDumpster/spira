@@ -51,3 +51,22 @@ rsk ec2 watch --interval 1 --ticks 1 --spill ec2 >/dev/null
 rsk ec2 health >/dev/null; is "health passes after a poll" "0" "$?"
 echo "ok 1 100 1" > "$TMP/run/watchd/round-spill-key.health"
 rsk ec2 health >/dev/null; is "health fails once the poll is stale" "1" "$?"
+
+mkdir -p "$TMP/bin"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/aws.log"\n[ "$1 $2" = "configure get" ] && [ -e "%s/has-access" ] && echo AKIAX\n[ "$1 $2" = "configure get" ] && [ ! -e "%s/has-access" ] && exit 1\nexit 0\n' "$TMP" "$TMP" "$TMP" > "$TMP/bin/aws"
+chmod +x "$TMP/bin/aws"
+KEY="$TMP/keydir/k.tskey"
+rsp() {
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_VM_EC2_PROFILE=prof-x SPIRA_ROUND_VM_EC2_REGION=eu-test-9 SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY"
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_AWS="$TMP/bin/aws" bash "$HERE/round-spill-profile.sh" "$@" 2>&1
+}
+rsp ensure >/dev/null; is "ensure succeeds" "0" "$?"
+want "ensure sets the configured profile's region" "configure set region eu-test-9 --profile prof-x" "$(cat "$TMP/aws.log")"
+is "ensure creates the key directory 0700" "700" "$(stat -c %a "$TMP/keydir")"
+nowant "ensure never writes a credential" "aws_access_key_id --profile prof-x" "$(grep ' set ' "$TMP/aws.log")"
+out="$(rsp status)"; rc=$?
+is "status fails with nothing supplied" "1" "$rc"
+want "status names the missing access key" "no access key" "$out"
+want "status names the missing tailscale key" "absent or empty" "$out"
+touch "$TMP/has-access"; echo tskey > "$KEY"
+rsp status >/dev/null; is "status passes once both are supplied" "0" "$?"
