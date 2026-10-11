@@ -36,8 +36,9 @@ command -v podman >/dev/null 2>&1 || { echo "bare-local: podman is not on PATH" 
 systemctl --user show-environment >/dev/null 2>&1 || { echo "bare-local: no user systemd session for $(id -un)" >&2; exit 2; }
 command -v cargo >/dev/null 2>&1 || { echo "bare-local: cargo is not on PATH" >&2; exit 2; }
 
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/bare-local.XXXXXX")" || exit 2
-trap 'rm -rf "$scratch"' EXIT
+. "$HERE/bare-local-scratch.sh"
+bare_local_reap "${TMPDIR:-/tmp}" "${SPIRA_BARE_LOCAL_CAP:-7200}"
+bare_local_scratch_new "${TMPDIR:-/tmp}" || exit 2
 if [ -d "$target" ]; then
     tree="$(cd "$target" && pwd -P)"
 else
