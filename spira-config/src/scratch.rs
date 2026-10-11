@@ -4,8 +4,10 @@
 //!
 //! A reservation is a file in the ledger directory, locked with `flock` by its holder for as
 //! long as the holder lives: a crashed holder's lock dies with it, and its file is then
-//! garbage that the next reserver removes. Reservations are counted whole (never reduced by
-//! what the holder has already written), which over-counts and so errs toward refusing.
+//! garbage that the next reserver removes. A holder may name the tree it builds into
+//! ([`Guard::account`]); a refusal is then re-judged with that reservation reduced by what the
+//! tree already holds, because free space has already lost those bytes and counting them in
+//! the reservation too would subtract them twice.
 //!
 //! Classes of service: a `Landing` reserver that finds no room posts a want marker (`w-…`,
 //! flocked like a reservation) and polls; a `Certify` reserver refuses while any live want
@@ -39,6 +41,14 @@ pub struct Guard {
     path: PathBuf,
 }
 
+impl Guard {
+    /// Name the tree this holder writes into, so its written bytes are not also counted as
+    /// reserved.
+    pub fn account(&mut self, tree: &Path) {
+        let _ = writeln!(self._file, "{}", tree.display());
+    }
+}
+
 impl Drop for Guard {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
@@ -50,8 +60,30 @@ fn try_flock(f: &fs::File) -> bool {
     unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
 }
 
+fn tree_mib(p: &Path) -> u64 {
+    fn walk(p: &Path) -> u64 {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(m) = fs::symlink_metadata(p) else { return 0 };
+        let own = m.blocks() * 512;
+        if !m.is_dir() {
+            return own;
+        }
+        own + fs::read_dir(p).map(|rd| rd.flatten().map(|e| walk(&e.path())).sum::<u64>()).unwrap_or(0)
+    }
+    walk(p) / (1024 * 1024)
+}
+
 /// MiB held by live reservations; removes the files of dead holders.
 pub fn reserved_mib(dir: &Path) -> u64 {
+    reserved_with(dir, &|_| 0)
+}
+
+/// As [`reserved_mib`], each accounted reservation reduced by `written(tree)`.
+pub fn reserved_remaining_mib(dir: &Path) -> u64 {
+    reserved_with(dir, &tree_mib)
+}
+
+fn reserved_with(dir: &Path, written: &dyn Fn(&Path) -> u64) -> u64 {
     let Ok(rd) = fs::read_dir(dir) else { return 0 };
     let mut sum = 0;
     for e in rd.flatten() {
@@ -64,7 +96,13 @@ pub fn reserved_mib(dir: &Path) -> u64 {
             let _ = fs::remove_file(e.path());
             continue;
         }
-        sum += fs::read_to_string(e.path()).ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0);
+        let body = fs::read_to_string(e.path()).unwrap_or_default();
+        let mut lines = body.lines();
+        let mib = lines.next().and_then(|l| l.trim().parse::<u64>().ok()).unwrap_or(0);
+        sum += match lines.next() {
+            Some(t) => mib.saturating_sub(written(Path::new(t))),
+            None => mib,
+        };
     }
     sum
 }
@@ -183,7 +221,10 @@ pub fn reserve(
         return Err("scratch: cannot lock the reservation ledger".into());
     }
     let free = free_mib().ok_or("scratch: cannot probe the scratch filesystem's free space")?;
-    let held = reserved_mib(dir);
+    let mut held = reserved_mib(dir);
+    if free < mib.saturating_add(floor_mib).saturating_add(held) {
+        held = reserved_remaining_mib(dir);
+    }
     let need = mib.saturating_add(floor_mib).saturating_add(held);
     if free < need {
         return Err(format!(
@@ -321,6 +362,20 @@ mod tests {
         drop(a);
         assert_eq!(reserved_mib(&d), 0);
         assert!(reserve(&d, "b", 600, 100, &free).is_ok());
+    }
+
+    #[test]
+    fn bytes_a_holder_has_written_are_not_subtracted_twice() {
+        let d = tmp("twice");
+        let tree = tmp("twice-tree");
+        let free = || Some(12u64);
+        let mut a = reserve(&d, "a", 8, 0, &free).unwrap();
+        assert!(reserve(&d, "b", 8, 0, &free).is_err(), "an unaccounted reservation counts whole");
+        a.account(tree.path());
+        std::fs::write(tree.path().join("blob"), vec![1u8; 6 * 1024 * 1024]).unwrap();
+        assert_eq!(reserved_mib(&d), 8);
+        assert!(reserved_remaining_mib(&d) <= 2);
+        assert!(reserve(&d, "b", 8, 0, &free).is_ok());
     }
 
     #[test]

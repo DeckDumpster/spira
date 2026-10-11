@@ -121,6 +121,7 @@ struct State {
     home_dir: String,
     release: String,
     timeout: String,
+    replayed: bool,
 }
 
 pub struct Trial<'w, W: World> {
@@ -445,6 +446,19 @@ impl<'w, W: World> Trial<'w, W> {
                     }
                     cached = Some(hit);
                 }
+            }
+        }
+
+        if cached.is_none() {
+            if let Some(red) = crate::redcache::path(&verdict_dir, &self.s.key)
+                .and_then(|p| w.read(&p))
+                .and_then(|e| crate::redcache::fresh(&e, ctx.var("SPIRA_VERDICT_TTL"), w.now()))
+            {
+                self.s.suite = red.suite;
+                self.s.replayed = true;
+                return v(red.status, &red.reason, format!(
+                    "gate: this exact tree was already judged red by {name}'s gate at {} ({}) — repeated, not re-run.\ngate: key {} — same tree, same changed files, same command, same harness.\n{}",
+                    red.when, red.by, self.s.key, red.msg));
             }
         }
 
@@ -1259,11 +1273,6 @@ impl<'w, W: World> Trial<'w, W> {
                 } else {
                     s
                 };
-                if s == "-" && matches!(comp, Composition::Unit { .. }) {
-                    return v(NOVERDICT, "gate-defect", format!(
-                        "gate: {name}'s unit trial is red on {base} but names no failing suite or test — a base-red nothing can file or dedupe is a gate defect, not {base}'s fault.\ngate: command: {cmd}\n--- {base}'s own output ---\n{}",
-                        parse::tail_bytes(&base_out, 8000)));
-                }
                 self.s.suite = s;
                 let reds = parse::red_units(&base_out).join("\n");
                 let reds = if reds.is_empty() { "(no suite named; read the output)".to_string() } else { reds };
@@ -1627,6 +1636,14 @@ impl<'w, W: World> Trial<'w, W> {
     /// Every PASS certifies the merged tree it judged (cert.rs; queue/DESIGN.md §8 D12): the
     /// record `queue land-local` requires before it lands a head with that tree. Keyed by
     /// `(repo, tree)` only; a PASS that never reached the merge certifies nothing.
+    fn record_red(&self, vd: &Verdict) {
+        let w = self.w;
+        let Some(p) = crate::redcache::path(&self.s.verdict_dir, &self.s.key) else { return };
+        let (Some(dir), Some(name)) = (p.parent(), p.file_name().and_then(|n| n.to_str())) else { return };
+        w.mkdir_p(dir);
+        w.write_atomic(dir, name, &crate::redcache::render(vd.status, &vd.reason, &self.s.suite, &w.utc(), w.now(), &self.s.caller, &vd.msg));
+    }
+
     fn certify(&self) {
         let w = self.w;
         let Some(dir) = cert::path(&self.s.verdict_dir, &self.s.repo_name, &self.s.merged_tree)
@@ -1751,6 +1768,9 @@ impl<'w, W: World> Trial<'w, W> {
             repo_name,
             self.s.suite
         ));
+        if !self.s.replayed && crate::redcache::recordable(vd.status, &vd.reason) {
+            self.record_red(&vd);
+        }
         if vd.status == PASS {
             self.certify();
             if self.a.release_bins {
@@ -1919,7 +1939,7 @@ pub fn describe_reentry(bead: &str, r: &compose::Reentry) -> Option<String> {
 }
 
 /// The most a named phase may take, seconds (`base-` prefix ignored). They are the branch
-/// trial's fixed phases and sum under SPIRA_GATE_DEADLINE's 300 s, so the suites keep the rest;
+/// trial's fixed phases and sum to SPIRA_GATE_DEADLINE's 300 s, and the gate cap is no shorter than the suites budget handed to testenv;
 /// phases not listed take whatever of the deadline is left.
 ///
 /// The `tools` cap bounds tools that come from the shared store (toolkey.rs) — an install, or
@@ -1931,7 +1951,7 @@ pub fn phase_cap(name: &str) -> Option<u64> {
         TOOLS_COLD => None,
         "tools" => Some(40),
         "fences" => Some(90),
-        "gate" => Some(190),
+        "gate" => Some(260),
         _ => None,
     }
 }

@@ -829,7 +829,7 @@ impl World for Real {
         let owner = format!("gate-{}", tree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
         let ledger = spira_config::scratch::ledger_for(&root);
         let mib = spira_config::scratch::estimate_mib(&ledger, &target::composition(tree), lim.reserve_mib);
-        let g = spira_config::scratch::reserve_class(
+        let mut g = spira_config::scratch::reserve_class(
             &ledger,
             &owner,
             spira_config::scratch::Class::parse(class),
@@ -838,6 +838,7 @@ impl World for Real {
             std::time::Duration::from_secs(wait_secs),
             &|| target::free_mib(&root),
         )?;
+        g.account(tree);
         Ok(Box::new(g))
     }
     fn remove_worktree(&self, repo: &Path, tree: &Path) {

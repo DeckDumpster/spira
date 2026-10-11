@@ -473,6 +473,10 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: gate-worker's verdict for {br} at {tip} is in — applying it"));
             return self.certify_judge(w, br, id, bead, tip, d.run);
         }
+        if self.files.backing_off(br, tip, self.clock.now(), self.s.gate_backoff) {
+            self.log(&format!("CHECK6 {id}: {br} at {tip} found no room for a gate lately — not queued again yet"));
+            return Flow::Next;
+        }
         let fix = is_base_fix(bead.external_ref.as_deref(), name);
         match q.enqueue(&GateJob::new(name, br, id, tip, fix)) {
             Ok(true) => {
@@ -519,6 +523,9 @@ impl<'a> Pass<'a> {
                     self.base_fail(w, br, id, bead, &tip, &g);
                 }
                 GateOutcome::NoVerdict => {
+                    if matches!(reason.as_str(), "scratch-short" | "died") {
+                        self.files.back_off(br, &tip, self.clock.now());
+                    }
                     self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
                 }
                 _ => {

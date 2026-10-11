@@ -156,24 +156,20 @@ out="$(rungate)"; rc=$?
 isnt "a changed harness is judged again" "$before" "$(runs)"
 isnt "and does not inherit the old verdict"   0    "$rc"
 
-# --------------------------------------------------------------------------------------
-# ONLY A PASS IS CACHED. A red is not a pure function of the tree — a flaky suite fails once
-# and passes next time — so caching one would pin a flake to a branch permanently, which is
-# far worse than paying for a re-run. The trip file makes every run below red.
-# --------------------------------------------------------------------------------------
+# A RED THAT NAMES WHOSE FAULT IT IS IS REMEMBERED, per key. A command that fails with no
+# attribution is not: the trip file makes every run below red, and this command's red names
+# nothing, so the next caller must still reach the command.
+# ----------------------------------------------------------------------------------------
 cp "$HERE/exclude.sh" "$HERE/commit-cite.sh" "$SH/"
-# A COMMAND NOTHING HAS PASSED UNDER, so the red below is a red and not a reused pass from
-# earlier in this suite. `:` takes an argument and does nothing with it, which moves the key
-# without changing what the command does — a `#` would comment out the rest of the line and
-# turn the failing command into a passing one.
-setcmd ': only-a-pass-is-cached; '
+# A COMMAND NOTHING HAS PASSED UNDER, so the red below is a red and not a reused pass.
+setcmd ': red-without-attribution; '
 entries_before="$(entries)"; before="$(runs)"
 rungate >/dev/null 2>&1
 isnt "a red gate reaches the command"        "$before" "$(runs)"
-is   "and records no verdict"      "$entries_before" "$(entries)"
+is   "and records no pass verdict" "$entries_before" "$(entries)"
 before="$(runs)"
 rungate >/dev/null 2>&1
-isnt "so the next caller runs the suites again" "$before" "$(runs)"
+isnt "an unattributed red is run again" "$before" "$(runs)"
 
 # --------------------------------------------------------------------------------------
 # AND A VERDICT EXPIRES. The key names everything the verdict depended on except the box —

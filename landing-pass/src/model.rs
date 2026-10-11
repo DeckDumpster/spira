@@ -111,6 +111,9 @@ pub struct Settings {
     /// `SPIRA_NOVERDICT_CLASS_WINDOW` (default 86400s): a harness-fault class's count
     /// resets after this long since it last escalated.
     pub noverdict_class_window: i64,
+    /// `SPIRA_GATE_BACKOFF` (default 300s): after the host could not give a gate room, the
+    /// same tip is not queued again for this long.
+    pub gate_backoff: i64,
     /// `SPIRA_REBASE_DECOMPOSE_FILES` (default 4): a rebase-loop branch touching this many
     /// files or more gets "split it" advice instead of "rebase it again".
     pub rebase_decompose_files: u32,
@@ -163,6 +166,7 @@ impl Settings {
             ask_label: String::new(),
             noverdict_max: 3,
             noverdict_class_window: 86_400,
+            gate_backoff: 300,
             rebase_decompose_files: 4,
             rebase_generated_files: String::new(),
             repo_map_ok: true,
