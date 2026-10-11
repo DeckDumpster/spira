@@ -373,7 +373,10 @@ pub fn detect_invalid_closed(cfg: &Config) -> String {
     }
     // The close records are the subject: a bead that carries a close reason, whatever bd's
     // status says (sp-mve9i: bd status is not read for a work bead; the reason is content).
-    let raw = with_close_reason(&raw);
+    classify_invalid_closed(&with_close_reason(&raw), cfg)
+}
+
+fn classify_invalid_closed(raw: &str, cfg: &Config) -> String {
     let home = cfg.home.clone().unwrap_or_default().to_string_lossy().into_owned();
     let run = cfg.run.clone().unwrap_or_default().to_string_lossy().into_owned();
     let o = probe::run(
@@ -443,5 +446,40 @@ mod tests {
         assert_eq!(v.as_array().unwrap().len(), 1);
         assert_eq!(v[0]["id"], "a");
         assert_eq!(with_close_reason("not json"), "not json");
+    }
+
+    fn invalid_closed_rows(reason: &str, allow: Option<&str>) -> String {
+        let dir = testkit::TempDir::new("strand-invalid-closed");
+        let run = dir.path().join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        if let Some(a) = allow {
+            std::fs::write(run.join("invalid-closed.allow"), a).unwrap();
+        }
+        let cfg = Config {
+            home: Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")),
+            run: Some(run),
+            id_prefix: "zz".into(),
+            ..Config::test_fixture()
+        };
+        let raw = serde_json::json!([{"id": "zz-cr-1", "title": "t", "status": "closed", "close_reason": reason}]).to_string();
+        classify_invalid_closed(&raw, &cfg)
+    }
+
+    #[test]
+    fn an_allowlisted_invalid_closed_id_is_reported_allowed_not_invalid() {
+        let reason = "Applied a temporary workaround — real fix needed.";
+        let plain = invalid_closed_rows(reason, None);
+        assert!(plain.starts_with("INVALID-CLOSED zz-cr-1"), "{plain}");
+        let allowed = invalid_closed_rows(reason, Some("zz-cr-1 quotation: names the flag list\n"));
+        assert_eq!(allowed, "ALLOWED-IC zz-cr-1 — quotation: names the flag list");
+    }
+
+    #[test]
+    fn an_allowlisted_unfiled_follow_id_is_reported_allowed_not_unfiled() {
+        let reason = "The real fix is a proper guard. Deployed the stopgap.";
+        let plain = invalid_closed_rows(reason, None);
+        assert!(plain.starts_with("UNFILED-FOLLOW zz-cr-1"), "{plain}");
+        let allowed = invalid_closed_rows(reason, Some("zz-cr-1 follow-up filed\n"));
+        assert_eq!(allowed, "ALLOWED-IC zz-cr-1 — follow-up filed");
     }
 }
