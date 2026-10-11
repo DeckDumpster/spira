@@ -1921,7 +1921,7 @@ fn open_trace_exit(code: i32) -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Se
 }
 
 fn ask_blocking(title: &str) -> serde_json::Value {
-    serde_json::json!({"dependency_type": "blocks", "status": "open", "labels": ["needs-ryan", "overseer"], "title": title})
+    serde_json::json!({"dependency_type": "blocks", "status": "open", "labels": ["needs-ryan", "overseer"], "title": title}) // literal-ok: fixture ask labels
 }
 
 #[test]
