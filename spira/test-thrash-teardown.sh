@@ -2,27 +2,10 @@
 # test-thrash-teardown.sh — G2: the thrash-requeue teardown branch in aeon.sh's cleanup(),
 #   driven through the real aeon.sh rather than asserted by line-order/awk greps.
 #
-# THE GAP THIS CLOSES (sp-eq8a4.2.2, G2). The heartbeat records a thrash disposition on the bead's row and kills the
-# session when the deliverable has stalled (hb_tick's `thrash` verdict); cleanup() reads that
-# disposition and requeues instead of charging an attempt, ON THE THEORY that the aeon was killed
-# for stalling, not judged on its work. Until now the only suite touching this branch grepped
-# aeon.sh's source for the shape of the code — never ran it. Two behaviours are asserted here:
-#
-#   1. THE FIRST thrash requeue on a bead is exempt: `bump_requeue <id> thrash` (an event
-#      attempts_of subtracts), the note says "No attempt charged", the ledger status is
-#      `requeue-thrash`.
-#   2. A SECOND thrash requeue with the branch tip UNCHANGED since the first — nothing has
-#      been committed, so this is the same stall, not a second unlucky aeon (sp-gs24i) — IS
-#      charged: `bump_requeue <id> thrash-stale` (not subtracted), the note says "STICKING
-#      POINT" and "attempt IS charged", the ledger status is `requeue-thrash-charged`.
-#
-# The disposition is recorded by the claude shim exactly as the heartbeat would leave it
-# behind after a kill -TERM -$$: this suite is about cleanup()'s read of it, not
-# about the heartbeat's own trip condition (that is hb_tick's table, test-aeon-lease.sh) or
-# the streak arithmetic itself (thrash_streak_bump's cap/reset/poison-via-thrash cases are
-# the retired test-thrash-streak.sh's, called directly against a real bead with no aeon.sh run at all).
-# This suite exists to prove cleanup() is actually WIRED to that arithmetic — the note text,
-# the bump_requeue cause, and the ledger status it writes once the streak crosses the cap.
+# What stays here is the one property only a real process can show: a real SIGTERM to the
+# process group mid-thrash runs cleanup() once, not twice (CASE 3 below). The thrash dispositions
+# themselves (first requeue exempt, streak at the cap charged, the sticking-point note) are
+# aeon::tests (`cargo test -p aeon thrash`).
 #
 # defect: sp-4rzlw
 # tier: T2
@@ -93,37 +76,6 @@ lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
 command -v aeon >/dev/null 2>&1 \
     || bail "aeon is not on PATH — refusing to run the real model"
 
-# Shim A (positive control): exits with the bead open and no disposition — attempt IS charged.
-# COMMITS (sp-1zxru): this row's whole point is a real charged attempt to contrast the
-# thrash-exempt cases below against — a session with no commit is a no-progress exit now
-# (its own suite, test-aeon-teardown-e2e.sh's "no commit, left open" row), not this one.
-cat > "$BIN/claude-no-thrash" <<'SHIM'
-#!/usr/bin/env bash
-cat /dev/stdin > /dev/null
-printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-if [ -n "${BEAD_ID:-}" ]; then
-    printf 'the aeon wrote this %s\n' "$(date +%s%N)" > f
-    git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$BEAD_ID — the work"
-fi
-printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
-exit 0
-SHIM
-chmod +x "$BIN/claude-no-thrash"
-
-# Shim B: records the thrash disposition exactly as the heartbeat would, then exits — simulating
-# a session the heartbeat has already killed for the deliverable not moving.
-{ printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
-cat /dev/stdin > /dev/null
-printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-if [ -n "${BEAD_ID:-}" ]; then
-    SPIRA_RUN="$RUN_DIR" "$TMP/lc/spira-lc" disposition "$BEAD_ID" thrash "stalled: no last action" heartbeat
-fi
-printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
-exit 0
-SHIM
-} > "$BIN/claude-thrash"
-chmod +x "$BIN/claude-thrash"
-
 # Shim C: records the disposition, then hangs — standing in for a session the real heartbeat
 # hasn't killed YET, so a real `kill -TERM` sent to the process group from outside (below)
 # reaches aeon.sh itself as a signal, not as cleanup() running off the natural EXIT path.
@@ -144,11 +96,6 @@ seed() {
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
-run_aeon() {
-    rm -rf "$SPIRA_RUN/worktree"
-    aeon --home "$SPIRA_HOME" builder > "$TMP/out" 2>&1
-    echo $?
-}
 bead_status() {
     # batch-job: fixture bd call against the suite's throwaway store
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
@@ -167,53 +114,10 @@ d = json.load(sys.stdin)
 d = d if isinstance(d, list) else [d]
 print(d[0].get("notes", "") or "")' 2>/dev/null
 }
-ledger_line() { grep "done builder $1" "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null | tail -1; }
 ledger_count() { grep -c " done builder $1 " "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null; }
 fresh() { testdb_reset; }
 
 echo "test-thrash-teardown.sh"
-
-# ======================================================================================
-# POSITIVE CONTROL: without a thrash disposition, exit with the bead open IS charged.
-# ======================================================================================
-echo
-echo "positive control — no thrash disposition — attempt IS charged"
-
-ln -sf "$BIN/claude-no-thrash" "$BIN/claude"
-fresh; seed sp-tt-1
-run_aeon
-is   "SEEN RED: bead is still open"    "open"     "$(bead_status sp-tt-1)"
-want "SEEN RED: note says Unlanded"    "Unlanded" "$(bead_notes sp-tt-1)"
-
-# ======================================================================================
-# CASE 1: first thrash requeue — no attempt charged, ledger requeue-thrash.
-# ======================================================================================
-echo
-echo "first thrash requeue on a bead — no attempt charged"
-
-ln -sf "$BIN/claude-thrash" "$BIN/claude"
-fresh; seed sp-tt-2
-run_aeon
-is    "bead is still open (requeued, not closed)"    "open" "$(bead_status sp-tt-2)"
-notes1="$(bead_notes sp-tt-2)"
-want   "note says Requeued (thrash)"                  "Requeued (thrash)"  "$notes1"
-want   "note says no attempt charged"                 "No attempt charged" "$notes1"
-nowant "note does not yet name a sticking point"      "STICKING POINT"     "$notes1"
-want   "ledger status is requeue-thrash (first time)" "requeue-thrash"     "$(ledger_line sp-tt-2)"
-nowant "ledger is not yet the charged variant"        "requeue-thrash-charged" "$(ledger_line sp-tt-2)"
-
-# ======================================================================================
-# CASE 2: second thrash requeue, SAME branch tip (no commit happened) — attempt IS charged.
-# ======================================================================================
-echo
-echo "second thrash requeue at the same tip — attempt IS charged (sp-gs24i)"
-
-run_aeon
-is    "bead is still open (requeued again)"          "open" "$(bead_status sp-tt-2)"
-notes2="$(bead_notes sp-tt-2)"
-want  "note names the sticking point"                "STICKING POINT"     "$notes2"
-want  "note says an attempt IS charged this time"    "attempt IS charged" "$notes2"
-want  "ledger status is requeue-thrash-charged"       "requeue-thrash-charged" "$(ledger_line sp-tt-2)"
 
 # ======================================================================================
 # CASE 3: a real SIGTERM to the process group mid-thrash must not re-enter cleanup() and

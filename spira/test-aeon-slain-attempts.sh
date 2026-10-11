@@ -7,7 +7,7 @@
 # whose new_value is 'thrash' or 'unjudged%' (lib.sh _attempts_sql_query), and this release
 # path called bump_requeue for none of them. The claim that started the session stayed on the
 # events trail unanswered, so every slain release counted toward the poison threshold exactly
-# like a genuine failure — the same class of gap test-aeon-gate-unfinished-attempts.sh closed
+# like a genuine failure — the same class of gap `cargo test -p aeon a_session_ending_with_its_gate_still_running` closes
 # for gate-unfinished (capacity and timeout already call bump_requeue with their own
 # unjudged-<cause>, covered at the unit level by `cargo test -p aeon decide::tests::
 # disposition_table`).

@@ -82,14 +82,14 @@ migration bead per family from this table.
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-aeon-teardown-e2e.sh | 64 | charge and pre-session teardown rows through a real aeon.sh run | sim | The disposition tables are already Rust tests; what is left is aeon → lifecycle wiring. |
-| test-aeon-teardown-e2e-wired.sh | 88 | decision-blocked, own-closeout and ledger-segment rows | sim | Shard; goes with parent. |
-| test-aeon-teardown-e2e-exit.sh | 81 | yield-headless, exit-code and operator-wait rows | sim | Shard; goes with parent. |
-| test-aeon-lifecycle-cutover.sh | 65 | aeon.sh on the semantic layer against a throwaway Dolt and real bd | sim | The semantic layer has a sim; the Dolt-grant half belongs to family I. |
-| test-ops-closing.sh | 92 | close-time fences on an aeon's finished session, through the real aeon with a shim | sim | Fence = predicate over close evidence (unit) + wiring (scenario step); neither needs 92 s of aeon. |
-| test-thrash-teardown.sh | 45 | a thrash disposition requeues instead of charging an attempt | unit | Branch in `cleanup()` over a recorded disposition; belongs in the aeon crate's `decide` tests. |
-| test-aeon-gate-unfinished-attempts.sh | 31 | releasing a bead while its gate is still running leaves `attempts_of` unchanged | unit | An SQL net-zero rule over events; test the attempts query. |
-| test-slay.sh | 52 | slay stops one aeon cleanly, removes its work, makes the bead say what is true | sim | Operator action in a world with a live aeon. |
+| test-aeon-teardown-e2e.sh | 64 | charge and pre-session teardown rows through a real aeon.sh run | **migrated**: whole-run tests in `aeon/src/tests.rs`; suite deleted | The disposition tables are already Rust tests; what is left is aeon → lifecycle wiring. |
+| test-aeon-teardown-e2e-wired.sh | 88 | decision-blocked, own-closeout and ledger-segment rows | **migrated**: whole-run tests in `aeon/src/tests.rs`; suite deleted | Shard; goes with parent. |
+| test-aeon-teardown-e2e-exit.sh | 81 | yield-headless, exit-code and operator-wait rows | **partly migrated**: yield-headless and exit-code rows moved to `aeon/src/tests.rs`; the operator-wait rows stay (real work broker and mail) | Shard; goes with parent. |
+| test-aeon-lifecycle-cutover.sh | 65 | aeon.sh on the semantic layer against a throwaway Dolt and real bd | sim (not migrated: the sim has no aeon actor, and the property is aeon against real bd) | The semantic layer has a sim; the Dolt-grant half belongs to family I. |
+| test-ops-closing.sh | 92 | close-time fences on an aeon's finished session, through the real aeon with a shim | **migrated**: aeon runs are whole-run tests; the shell keeps only the pure phrase table | Fence = predicate over close evidence (unit) + wiring (scenario step); neither needs 92 s of aeon. |
+| test-thrash-teardown.sh | 45 | a thrash disposition requeues instead of charging an attempt | **partly migrated**: dispositions moved to `aeon/src/tests.rs`; the real-SIGTERM single-teardown case stays (needs a real process group) | Branch in `cleanup()` over a recorded disposition; belongs in the aeon crate's `decide` tests. |
+| test-aeon-gate-unfinished-attempts.sh | 31 | releasing a bead while its gate is still running leaves `attempts_of` unchanged | **migrated**: `aeon/src/tests.rs` plus `spira-claim` events fold; suite deleted | An SQL net-zero rule over events; test the attempts query. |
+| test-slay.sh | 52 | slay stops one aeon cleanly, removes its work, makes the bead say what is true | sim (not migrated: the sim has no aeon actor or process group to slay) | Operator action in a world with a live aeon. |
 
 ### E — aeon claim, resume and hygiene
 
