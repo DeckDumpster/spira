@@ -765,12 +765,37 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
                     }
                 }
             }
+            if let Some(step) = running_step(jobs) {
+                lines.push(format!("running-step: {step}"));
+            }
             if latest > 0 {
                 lines.push(format!("last-activity: {latest}"));
             }
         }
     }
     ok(lines)
+}
+
+/// `job / step` of the first in-progress job, the step omitted when none is running yet.
+const GH_STATE_KEY: &str = "status";
+const GH_RUNNING: &str = "in_progress";
+
+fn gh_running(v: &Value) -> bool {
+    jstr(v, GH_STATE_KEY).as_deref() == Some(GH_RUNNING)
+}
+
+fn running_step(jobs: &[Value]) -> Option<String> {
+    let job = jobs.iter().find(|j| gh_running(j))?;
+    let name = jstr(job, "name").filter(|n| !n.is_empty())?;
+    let step = job
+        .get("steps")
+        .and_then(Value::as_array)
+        .and_then(|ss| ss.iter().find(|s| gh_running(s)))
+        .and_then(|s| jstr(s, "name"));
+    Some(match step {
+        Some(s) => format!("{name} / {s}"),
+        None => name,
+    })
 }
 
 /// The largest `timeout-minutes:` a workflow file declares (the longest job bounds the run).

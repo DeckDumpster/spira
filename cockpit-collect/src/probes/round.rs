@@ -4,15 +4,25 @@
 use super::{push, Kv};
 use crate::quoting::sanitize;
 use serde_json::Value;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 const MAX_ROWS: usize = 12;
 const MAX_ROUNDS: usize = 4;
 
-pub fn round_keys(cap_secs: i64) -> Kv {
+pub fn round_keys(cap_secs: i64, queue_dir: &str) -> Kv {
     let batches = list_batches().and_then(|raw| parse_batches(&raw));
     let pool = spira_config::lc_state::list().ok().map(|rows| pool_waiting(&rows));
-    round_keys_from(batches.as_deref(), pool, cap_secs)
+    round_keys_from(batches.as_deref(), pool, cap_secs, Path::new(queue_dir))
+}
+
+/// The verdict's last look at the forge for `batch`, read from the file it leaves beside the
+/// queue's `open` record; a record naming another batch is stale and ignored.
+fn forge_state(queue_dir: &Path, repo: &str, batch: &str) -> Option<Vec<(String, String)>> {
+    let text = std::fs::read_to_string(queue_dir.join(repo).join("forge-state")).ok()?;
+    let kv: Vec<(String, String)> = text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let get = |k: &str| kv.iter().rev().find(|(key, _)| key == k).map(|(_, v)| v.as_str());
+    (get("batch_id") == Some(batch)).then_some(kv)
 }
 
 fn list_batches() -> Option<String> {
@@ -23,6 +33,7 @@ fn list_batches() -> Option<String> {
 
 pub struct Batch {
     pub id: String,
+    pub repo: String,
     pub state: String,
     pub reason: String,
     pub parent: String,
@@ -54,6 +65,7 @@ pub fn parse_batches(raw: &str) -> Option<Vec<Batch>> {
         rows.iter()
             .map(|r| Batch {
                 id: text(r, "batch_id"),
+                repo: text(r, "repo"),
                 state: text(r, "state"),
                 reason: text(r, "reason"),
                 parent: text(r, "parent"),
@@ -100,7 +112,7 @@ fn member_state(outcome: &str) -> &str {
     if outcome.is_empty() { "in" } else { outcome }
 }
 
-pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs: i64) -> Kv {
+pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs: i64, queue_dir: &Path) -> Kv {
     let mut out = Kv::new();
     push(&mut out, "SP_ROUND_POOL", pool.map_or("?".to_string(), |n| n.to_string()));
     push(&mut out, "SP_ROUND_CAP", cap_secs.to_string());
@@ -126,6 +138,25 @@ pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs:
             for (i, (id, outcome)) in members.iter().take(MAX_ROWS).enumerate() {
                 push(&mut out, &format!("{k}_MEMBER{i}"), format!("{}|{}", sanitize(id), sanitize(member_state(outcome))));
             }
+            let mut progress = b.last_at.unwrap_or(b.opened_at);
+            let mut stall = if members.is_empty() { "no members" } else { "" };
+            if let Some(f) = forge_state(queue_dir, &b.repo, &b.id) {
+                let get = |key: &str| f.iter().rev().find(|(n, _)| n == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty());
+                for (key, name) in [("pr", "PR"), ("pr_state", "PRSTATE"), ("ci", "CI"), ("step", "CI_STEP"), ("run_started", "CI_START"), ("wall", "WALL")] {
+                    if let Some(v) = get(key) {
+                        push(&mut out, &format!("{k}_{name}"), sanitize(v));
+                    }
+                }
+                let seen: Option<i64> = [get("last_activity"), get("run_started")].into_iter().flatten().filter_map(|v| v.parse().ok()).max();
+                progress = progress.max(seen.unwrap_or(0));
+                if matches!(get("pr_state"), Some("closed" | "merged")) && stall.is_empty() {
+                    stall = if get("pr_state") == Some("merged") { "PR merged but batch not landed" } else { "PR closed but batch live" };
+                }
+            }
+            push(&mut out, &format!("{k}_PROGRESS"), progress.to_string());
+            if !stall.is_empty() {
+                push(&mut out, &format!("{k}_STALL"), stall);
+            }
             push(&mut out, &format!("{k}_EJECT_N"), b.ejected.len().to_string());
             for (i, (id, why)) in b.ejected.iter().take(MAX_ROWS).enumerate() {
                 push(&mut out, &format!("{k}_EJECT{i}"), format!("{}|{}", sanitize(id), sanitize(why)));
@@ -149,6 +180,53 @@ pub fn round_keys_from(batches: Option<&[Batch]>, pool: Option<usize>, cap_secs:
 mod tests {
     use super::*;
 
+    fn forge_dir(tag: &str, state: &str) -> testkit::TempDir {
+        let d = testkit::TempDir::new(tag);
+        std::fs::create_dir_all(d.path().join("deckdumpster")).unwrap();
+        std::fs::write(d.path().join("deckdumpster/forge-state"), state).unwrap();
+        d
+    }
+
+    fn forge_keys(tag: &str, members: &str, state: &str) -> Kv {
+        let raw = format!(r#"[{{"batch_id":"dd-1","repo":"deckdumpster","state":"CI_RUNNING","opened_at":1000,"last_at":1010,"members":[{members}],"ejected":[]}}]"#);
+        round_keys_from(Some(&parse_batches(&raw).unwrap()), Some(0), 900, forge_dir(tag, state).path())
+    }
+
+    const M: &str = r#"{"bead_id":"dd-a","outcome":null}"#;
+
+    #[test]
+    fn a_running_forge_batch_carries_its_pr_run_step_and_progress() {
+        let kv = forge_keys("run", M, "batch_id=dd-1\npr=422\npr_state=open\nci=pending\nrun=7\nrun_started=1100\nlast_activity=1300\nstep=unit / pytest\nwall=3600\n");
+        for (k, v) in [("PR", "422"), ("PRSTATE", "open"), ("CI", "pending"), ("CI_STEP", "unit / pytest"), ("CI_START", "1100"), ("PROGRESS", "1300"), ("WALL", "3600")] {
+            assert_eq!(get(&kv, &format!("SP_ROUNDS0_{k}")), Some(v), "{k}");
+        }
+        assert_eq!(get(&kv, "SP_ROUNDS0_STALL"), None);
+    }
+
+    #[test]
+    fn green_awaiting_merge_is_not_stalled() {
+        let kv = forge_keys("green", M, "batch_id=dd-1\npr=422\npr_state=open\nci=green\n");
+        assert_eq!(get(&kv, "SP_ROUNDS0_CI"), Some("green"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_STALL"), None);
+    }
+
+    #[test]
+    fn a_merged_or_closed_pr_under_a_live_batch_is_stalled() {
+        let merged = forge_keys("merged", M, "batch_id=dd-1\npr=207\npr_state=merged\nci=green\n");
+        assert_eq!(get(&merged, "SP_ROUNDS0_STALL"), Some("PR merged but batch not landed"));
+        let closed = forge_keys("closed", M, "batch_id=dd-1\npr=422\npr_state=closed\nci=pending\n");
+        assert_eq!(get(&closed, "SP_ROUNDS0_STALL"), Some("PR closed but batch live"));
+    }
+
+    #[test]
+    fn an_empty_open_batch_is_stalled_and_a_stale_forge_record_is_ignored() {
+        let kv = forge_keys("empty", "", "batch_id=dd-1\npr=422\npr_state=open\nci=pending\n");
+        assert_eq!(get(&kv, "SP_ROUNDS0_STALL"), Some("no members"));
+        let other = forge_keys("stale", M, "batch_id=dd-0\npr=1\npr_state=closed\nci=red\n");
+        assert_eq!(get(&other, "SP_ROUNDS0_PR"), None);
+        assert_eq!(get(&other, "SP_ROUNDS0_STALL"), None);
+    }
+
     fn get<'a>(kv: &'a Kv, k: &str) -> Option<&'a str> {
         kv.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str())
     }
@@ -162,7 +240,7 @@ mod tests {
     #[test]
     fn an_open_batch_reports_phase_opened_members_and_ejections() {
         let b = parse_batches(RAW).unwrap();
-        let kv = round_keys_from(Some(&b), Some(4), 900);
+        let kv = round_keys_from(Some(&b), Some(4), 900, Path::new("/nonexistent"));
         assert_eq!(get(&kv, "SP_ROUND_STATE"), Some("open"));
         assert_eq!(get(&kv, "SP_ROUNDS_N"), Some("1"));
         assert_eq!(get(&kv, "SP_ROUNDS0_NAME"), Some("r-9"));
@@ -182,7 +260,7 @@ mod tests {
           {"batch_id":"r-11","state":"STAGED","opened_at":2000,"members":[{"bead_id":"sp-z","outcome":"skipped: unlanded dependency"}],"ejected":[]},
           {"batch_id":"r-10","state":"CI_RUNNING","opened_at":1000,"members":[{"bead_id":"sp-y","outcome":null}],"ejected":[]},
           {"batch_id":"r-9","state":"LANDED","opened_at":500,"members":[{"bead_id":"sp-x","outcome":null}],"ejected":[]}]"#;
-        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900);
+        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900, Path::new("/nonexistent"));
         assert_eq!(get(&kv, "SP_ROUNDS_N"), Some("2"));
         assert_eq!(get(&kv, "SP_ROUNDS0_PHASE"), Some("staged"));
         assert_eq!(get(&kv, "SP_ROUNDS0_MEMBER0"), Some("sp-z|skipped: unlanded dependency"));
@@ -197,7 +275,7 @@ mod tests {
           {"batch_id":"r-11","state":"OPEN","parent":null,"opened_at":1500,"members":[],"ejected":[]},
           {"batch_id":"r-10","state":"CI_RUNNING","parent":null,"opened_at":1000,"members":[{"bead_id":"sp-y","outcome":null}],"ejected":[]},
           {"batch_id":"r-9","state":"DISCARDED","parent":"r-10","opened_at":900,"members":[],"ejected":[]}]"#;
-        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900);
+        let kv = round_keys_from(Some(&parse_batches(raw).unwrap()), Some(0), 900, Path::new("/nonexistent"));
         assert_eq!(get(&kv, "SP_ROUNDS_N"), Some("3"));
         let names: Vec<_> = (0..3).map(|i| get(&kv, &format!("SP_ROUNDS{i}_NAME")).unwrap()).collect();
         assert_eq!(names, ["r-11", "r-10", "r-12"]);
@@ -215,12 +293,12 @@ mod tests {
     #[test]
     fn no_open_batch_reports_the_last_verdict() {
         let b = parse_batches(RAW).unwrap();
-        let kv = round_keys_from(Some(&b[1..]), Some(0), 900);
+        let kv = round_keys_from(Some(&b[1..]), Some(0), 900, Path::new("/nonexistent"));
         assert_eq!(get(&kv, "SP_ROUND_STATE"), Some("idle"));
         assert_eq!(get(&kv, "SP_ROUND_LAST_VERDICT"), Some("GREEN"));
         assert_eq!(get(&kv, "SP_ROUND_LAST_AT"), Some("700"));
         let red = parse_batches(r#"[{"batch_id":"r-7","state":"ABANDONED","reason":"red: test-a.sh test-b.sh","opened_at":1,"last_at":2,"members":[],"ejected":[]}]"#).unwrap();
-        let kv = round_keys_from(Some(&red), None, 900);
+        let kv = round_keys_from(Some(&red), None, 900, Path::new("/nonexistent"));
         assert_eq!(get(&kv, "SP_ROUND_LAST_VERDICT"), Some("RED"));
         assert_eq!(get(&kv, "SP_ROUND_LAST_WHY"), Some("red: test-a.sh test-b.sh"));
         assert_eq!(get(&kv, "SP_ROUND_POOL"), Some("?"));
@@ -228,7 +306,7 @@ mod tests {
 
     #[test]
     fn an_unreadable_store_is_cannot_tell_not_idle() {
-        let kv = round_keys_from(None, None, 900);
+        let kv = round_keys_from(None, None, 900, Path::new("/nonexistent"));
         assert_eq!(get(&kv, "SP_ROUND_STATE"), Some("?"));
         assert!(parse_batches("cannot tell: x").is_none());
     }

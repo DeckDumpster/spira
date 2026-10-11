@@ -401,6 +401,7 @@ struct Batch<'a> {
     base_sha: String,
     branch: String,
     members: Vec<Member>,
+    pr_state: String,
 }
 
 impl Batch<'_> {
@@ -431,11 +432,15 @@ fn process(w: &World, c: &Ctx, path: &Path, file: &Path) -> i32 {
         return FAIL;
     };
     let members: Vec<Member> = kv.get("members").unwrap_or("").split_whitespace().map(Member::parse_record).collect();
-    let b = Batch { name, path, file, pr, head, base_sha, branch: g("branch"), members, kv };
+    let pr_state = w.forge.pr_state(&c.s.forge, path, &pr).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "unknown".into());
+    let b = Batch { name, path, file, pr, head, base_sha, branch: g("branch"), members, kv, pr_state };
 
     let out = w.forge.check_status(&c.s.forge, path, &b.pr, &b.branch).unwrap_or_else(|| "pending".into());
     let raw = first_line(&out);
     let status = normalize_status(if raw.is_empty() { "pending" } else { raw }).to_string();
+    if status != "pending" {
+        record_forge_state(w, c, &b, &status, "", "");
+    }
     match status.as_str() {
         "pending" => pending(w, c, &b),
         "harness_fault" => harness_fault(w, c, &b),
@@ -448,12 +453,34 @@ fn process(w: &World, c: &Ctx, path: &Path, file: &Path) -> i32 {
     }
 }
 
+/// What the verdict last saw of the forge for this batch, left where the ops pane reads it so
+/// the pane never polls the forge itself.
+fn record_forge_state(w: &World, c: &Ctx, b: &Batch, ci: &str, run: &str, meta: &str) {
+    let (started, last) = parse_run_metadata(meta);
+    let step = meta.lines().rev().find_map(|l| l.strip_prefix("running-step: ")).unwrap_or("").trim();
+    let mut kv = Kv::default();
+    kv.push("batch_id", b.kv.get("batch_id").unwrap_or(""));
+    kv.push("pr", &b.pr);
+    kv.push("pr_state", &b.pr_state);
+    kv.push("ci", ci);
+    kv.push("run", run);
+    kv.push("run_started", &started.map(|t| t.to_string()).unwrap_or_default());
+    kv.push("last_activity", &last.map(|t| t.to_string()).unwrap_or_default());
+    kv.push("step", &records::one_line(step));
+    kv.push("wall", &c.s.verdict.ci_maxsec.to_string());
+    kv.push("observed", &w.clock.now().to_string());
+    if let Err(e) = write_atomic(&c.queue_file("forge-state"), &kv.render()) {
+        w.err(format!("verdict {}: cannot record the forge state: {e}", b.name));
+    }
+}
+
 fn pending(w: &World, c: &Ctx, b: &Batch) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     let now = w.clock.now();
     let run = w.forge.run_id(&c.s.forge, b.path, &b.branch);
     let meta = run.as_ref().map(|r| w.forge.run_metadata(&c.s.forge, b.path, r)).unwrap_or_default();
     let (started, last) = parse_run_metadata(&meta);
+    record_forge_state(w, c, b, "pending", run.as_deref().unwrap_or(""), &meta);
     let maxsec = c.s.verdict.ci_maxsec.max(parse_declared_timeout(&meta).unwrap_or(0));
     let run_age = match (started, &run) {
         (Some(s), _) => Some(now.saturating_sub(s)),

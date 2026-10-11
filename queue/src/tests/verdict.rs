@@ -714,3 +714,17 @@ fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
     assert!(t.out().contains("verdict spira: reaped stale queue ref spira/queue/old"));
     assert!(!t.git.calls.borrow().iter().any(|c| c.ends_with("spira/queue/new")));
 }
+
+#[test]
+fn each_pass_leaves_the_forge_state_the_pane_reads() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.pr_state.borrow_mut() = Some("closed".into());
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.meta.borrow_mut() = "started-at: 800\nlast-activity: 950\nrunning-step: unit / pytest\n".into();
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    let state = fs::read_to_string(t.qfile("forge-state")).unwrap();
+    for want in ["batch_id=spira-1\n", "pr=12\n", "pr_state=closed\n", "ci=pending\n", "run=77\n", "run_started=800\n", "last_activity=950\n", "step=unit / pytest\n"] {
+        assert!(state.contains(want), "{want:?} missing from {state}");
+    }
+}

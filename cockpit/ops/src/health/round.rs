@@ -56,6 +56,32 @@ fn step_cell(snap: &Snapshot, k: &str, now: i64) -> String {
     format!("  {col}{what} {since}{RST}")
 }
 
+/// Why a round is flagged STALLED: the collector's lifecycle/forge disagreement or empty batch,
+/// else no progress for longer than the round's expected CI wall.
+fn stall_reason(snap: &Snapshot, k: &str, now: i64, cap: i64) -> Option<String> {
+    if let Some(why) = snap.get(&format!("{k}_STALL")).filter(|s| !s.is_empty()) {
+        return Some(why.to_string());
+    }
+    let wall = num(snap, &format!("{k}_WALL")).filter(|w| *w > 0).unwrap_or(cap);
+    let idle = now - num(snap, &format!("{k}_PROGRESS"))?;
+    (wall > 0 && idle > wall).then(|| format!("no progress in {}", mail_dur(&idle.to_string())))
+}
+
+/// `PR 422 open  CI running 6m "unit / pytest"  progress 40s ago` from the `_PR*`/`_CI*` keys.
+fn forge_cell(snap: &Snapshot, k: &str, now: i64) -> String {
+    let Some(pr) = snap.get(&format!("{k}_PR")).filter(|s| !s.is_empty()) else { return String::new() };
+    let pr_state = snap.q(&format!("{k}_PRSTATE"));
+    let ci = snap.get(&format!("{k}_CI")).map_or("?", |c| if c == "pending" { "running" } else { c });
+    let ci_col = match ci {
+        "green" => OK,
+        "red" | "harness_fault" => BAD,
+        _ => DIM,
+    };
+    let since = num(snap, &format!("{k}_CI_START")).filter(|_| ci == "running").map_or(String::new(), |t| format!(" {}", mail_dur(&(now - t).max(0).to_string())));
+    let step = snap.get(&format!("{k}_CI_STEP")).filter(|s| !s.is_empty()).map_or(String::new(), |s| format!(" \"{s}\""));
+    format!("  {DIM}PR {pr} {pr_state}{RST}  {ci_col}CI {ci}{since}{step}{RST}")
+}
+
 pub fn round_section(snap: &Snapshot, cols: i64, now: i64, rows: i64) -> Vec<String> {
     let phone = cols < PHONE_COLS;
     let pool = snap.q("SP_ROUND_POOL");
@@ -94,14 +120,17 @@ fn open_rows(snap: &Snapshot, cols: i64, now: i64, phone: bool, rows: i64) -> Ve
             (true, None) => format!("  {BAD}?/{cap}s{RST}"),
         };
         let step = if phase == "certifying" { step_cell(snap, &k, now) } else { String::new() };
+        let forge = forge_cell(snap, &k, now);
+        let progress = num(snap, &format!("{k}_PROGRESS")).map_or(String::new(), |t| format!("  {DIM}progress {} ago{RST}", mail_dur(&(now - t).max(0).to_string())));
+        let stalled = stall_reason(snap, &k, now, cap).map_or(String::new(), |why| format!("  {BAD}STALLED: {why}{RST}"));
         if phone {
             let out_n = if ejected.is_empty() { String::new() } else { format!(" {WARN}-{}{RST}", ejected.len()) };
-            out.push(format!(" {label} {indent}{B}{name}{RST} {phase}{}{}{step} {n}m{out_n}", wall.trim_end(), RST));
+            out.push(format!(" {label} {indent}{B}{name}{RST} {phase}{}{}{step} {n}m{out_n}{stalled}", wall.trim_end(), RST));
             continue;
         }
         let open = (on_vm == Some(i) || parent.is_some()) && room;
         let mark = if open { "\u{25be}" } else { "\u{25b8}" };
-        out.push(format!(" {label}  {indent}{mark} {B}{name}{RST}  {ACC}{phase}{RST}{behind}{wall}{step}  {n} member(s){}", if ejected.is_empty() { String::new() } else { format!("  {WARN}-{}{RST}", ejected.len()) }));
+        out.push(format!(" {label}  {indent}{mark} {B}{name}{RST}  {ACC}{phase}{RST}{behind}{wall}{step}{forge}{progress}  {n} member(s){stalled}{}", if ejected.is_empty() { String::new() } else { format!("  {WARN}-{}{RST}", ejected.len()) }));
         if !open {
             continue;
         }
@@ -256,6 +285,44 @@ mod tests {
         assert!(green.contains("idle") && green.contains("last r-8 GREEN landed 5m ago") && green.contains("pool 4 waiting"), "{green}");
         let red = strip(&render("SP_ROUND_STATE='idle'\nSP_ROUND_LAST_NAME='r-7'\nSP_ROUND_LAST_VERDICT='RED'\nSP_ROUND_LAST_WHY='red: test-a.sh'\nSP_ROUND_LAST_AT='0'\nSP_ROUND_POOL='0'\n", 100, 600)[0]);
         assert!(red.contains("r-7 RED red: test-a.sh 10m ago") && red.contains("pool 0 waiting"), "{red}");
+    }
+
+    fn forge_round(extra: &str) -> String {
+        format!("SP_ROUND_STATE='open'\nSP_ROUND_CAP='900'\nSP_ROUNDS_N='1'\nSP_ROUNDS0_NAME='dd-1'\nSP_ROUNDS0_PHASE='certifying'\nSP_ROUNDS0_OPENED='1000'\nSP_ROUNDS0_N='2'\nSP_ROUNDS0_PR='422'\nSP_ROUNDS0_WALL='3600'\n{extra}")
+    }
+
+    #[test]
+    fn a_running_forge_round_shows_pr_ci_step_and_progress_without_a_flag() {
+        let snap = forge_round("SP_ROUNDS0_PRSTATE='open'\nSP_ROUNDS0_CI='pending'\nSP_ROUNDS0_CI_START='1000'\nSP_ROUNDS0_CI_STEP='unit / pytest'\nSP_ROUNDS0_PROGRESS='1330'\n");
+        let text = strip(&render(&snap, 140, 1360)[0]);
+        assert!(text.contains("PR 422 open  CI running 6m \"unit / pytest\"  progress 30s ago"), "{text}");
+        assert!(!text.contains("STALLED"), "{text}");
+    }
+
+    #[test]
+    fn green_awaiting_merge_reads_green_and_is_not_stalled() {
+        let snap = forge_round("SP_ROUNDS0_PRSTATE='open'\nSP_ROUNDS0_CI='green'\nSP_ROUNDS0_PROGRESS='1300'\n");
+        let text = strip(&render(&snap, 140, 1360)[0]);
+        assert!(text.contains("PR 422 open  CI green") && !text.contains("STALLED"), "{text}");
+    }
+
+    #[test]
+    fn a_merged_pr_or_an_empty_batch_is_stalled_by_name() {
+        let merged = forge_round("SP_ROUNDS0_PRSTATE='merged'\nSP_ROUNDS0_CI='green'\nSP_ROUNDS0_STALL='PR merged but batch not landed'\nSP_ROUNDS0_PROGRESS='1300'\n");
+        let row = &render(&merged, 140, 1360)[0];
+        assert!(strip(row).contains("PR 422 merged") && strip(row).contains("STALLED: PR merged but batch not landed"), "{}", strip(row));
+        assert!(row.contains(&format!("{BAD}STALLED")), "{row}");
+        let empty = strip(&render(&forge_round("SP_ROUNDS0_PRSTATE='open'\nSP_ROUNDS0_STALL='no members'\n"), 140, 1360)[0]);
+        assert!(empty.contains("STALLED: no members"), "{empty}");
+    }
+
+    #[test]
+    fn no_progress_past_the_repos_ci_wall_is_stalled_and_the_wall_defaults_to_the_cap() {
+        let snap = forge_round("SP_ROUNDS0_PRSTATE='open'\nSP_ROUNDS0_CI='pending'\nSP_ROUNDS0_PROGRESS='1000'\n");
+        assert!(!strip(&render(&snap, 140, 1000 + 3600)[0]).contains("STALLED"));
+        assert!(strip(&render(&snap, 140, 1000 + 3601)[0]).contains("STALLED: no progress in 60m"), "{}", strip(&render(&snap, 140, 1000 + 3601)[0]));
+        let local = open("certifying").replace("SP_ROUNDS0_OPENED", "SP_ROUNDS0_PROGRESS='1000'\nSP_ROUNDS0_OPENED");
+        assert!(strip(&render(&local, 140, 1000 + 901)[0]).contains("STALLED: no progress in"), "{}", strip(&render(&local, 140, 1901)[0]));
     }
 
     #[test]
