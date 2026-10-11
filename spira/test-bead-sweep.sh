@@ -75,14 +75,14 @@ for c in "SUSPECT sp-pois READY POISONED" "SUSPECT sp-ask READY ASK HOLD" "SUSPE
 done
 
 SHA="$TMP/d9f47a657061e16a9df8df8911340ecc293ad1ab"; mkdir -p "$SHA"
-board "$(row sp-mine CERTIFIED "$OLD" '[]')" "$(row sp-theirs CERTIFIED "$OLD" '[]')" -- \
+MID=$((NOW - 15 * 60))
+board "$(row sp-mine CERTIFIED "$MID" '[]')" "$(row sp-theirs CERTIFIED "$MID" '[]')" -- \
     "$(cont sp-mine '["repo:widgets"]')" "$(cont sp-theirs '["repo:other"]')"
 out="$(SWEEP_REPO="$SHA" run --show)"
 case "$out" in *"SUSPECT sp-mine"*) bad=1 ;; *) bad=0 ;; esac
-echo "DBG: $out" >&2
 is "a sha-named release dir raises no SUSPECT on a home-repo bead" "0" "$bad"
 want "a foreign CERTIFIED bead still raises it" "SUSPECT sp-theirs CERTIFIED CERTIFIED outside repo:widgets" "$out"
-out="$(SWEEP_REPO="$SHA" SWEEP_HOME_REPO= run --show)"
+out="$(SWEEP_REPO="$SHA" SWEEP_HOME_REPO=SPIRA_HOME_REPO= run --show)"
 want "an undeclared home repo refuses" "SWEEP FAILED" "$out"
 board "$(row sp-pois READY "$NOW" '["poison"]')" "$(row sp-ask READY "$NOW" '["ask"]')" \
     "$(row sp-man READY "$OLD" '["manual"]')" "$(row sp-edge READY "$NOW" '[]' '["sp-done"]')" \
