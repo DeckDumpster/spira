@@ -50,6 +50,7 @@ git -C "$W" add -A; git -C "$W" commit -q -m "feat: fixture work"
 # fails whenever the trip file exists — so "the cache held" is not inferred from a log line
 # the gate writes about itself, but from the command's own count and from a red that does not
 # appear.
+untrip() { rm -f "$TRIP"; rm -rf "$VDIR/red"; }   # the red record is the thing under test elsewhere, not here
 setcmd() {               # setcmd [extra-shell-prefix]
     printf 'repo | %s | push | origin/main |  | %s%s\n' \
         "$REPO" "${1:-}" "printf 'ran\\n' >> $RUNS; [ ! -e $TRIP ]" > "$MAP"
@@ -106,7 +107,7 @@ printf 'moved\n' > "$REPO/other.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "someone else landed"
 timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" checkout -q --detach origin/main
-rm -f "$TRIP"           # the trial must run, and pass
+untrip           # the trial must run, and pass
 out="$(rungate)"; rc=$?
 : > "$TRIP"             # restored for the rows below, which must not reach the command
 is  "a landing on the base retires the verdict: the merge is judged again" 2 "$(runs)"
@@ -125,7 +126,7 @@ out="$(rungate)"; rc=$?
 isnt "a changed tree is judged again"  "$before" "$(runs)"
 isnt "and its verdict is not the old one"     0   "$rc"
 
-rm -f "$TRIP"
+untrip
 before="$(runs)"; entries_before="$(entries)"
 out="$(rungate)"; rc=$?
 is  "the changed tree passes on its own account"    0 "$rc"
@@ -156,9 +157,7 @@ out="$(rungate)"; rc=$?
 isnt "a changed harness is judged again" "$before" "$(runs)"
 isnt "and does not inherit the old verdict"   0    "$rc"
 
-# A RED THAT NAMES WHOSE FAULT IT IS IS REMEMBERED, per key. A command that fails with no
-# attribution is not: the trip file makes every run below red, and this command's red names
-# nothing, so the next caller must still reach the command.
+# A RED IS REMEMBERED, per key: the same tree, files, command and harness answer the same.
 # ----------------------------------------------------------------------------------------
 cp "$HERE/exclude.sh" "$HERE/commit-cite.sh" "$SH/"
 # A COMMAND NOTHING HAS PASSED UNDER, so the red below is a red and not a reused pass.
@@ -169,7 +168,11 @@ isnt "a red gate reaches the command"        "$before" "$(runs)"
 is   "and records no pass verdict" "$entries_before" "$(entries)"
 before="$(runs)"
 rungate >/dev/null 2>&1
-isnt "an unattributed red is run again" "$before" "$(runs)"
+is   "the same red, repeated, is answered and not re-run" "$before" "$(runs)"
+untrip; : > "$TRIP"
+before="$(runs)"
+rungate >/dev/null 2>&1
+isnt "and once the record is gone the command runs again" "$before" "$(runs)"
 
 # --------------------------------------------------------------------------------------
 # AND A VERDICT EXPIRES. The key names everything the verdict depended on except the box —
@@ -177,7 +180,7 @@ isnt "an unattributed red is run again" "$before" "$(runs)"
 # while the key stands still. The age is the entry's own `at=`, so this is a fixture and not
 # a wait.
 # --------------------------------------------------------------------------------------
-rm -f "$TRIP"
+untrip
 rungate >/dev/null 2>&1                     # a fresh pass to age
 ENTRY="$(newest)"
 : > "$TRIP"
@@ -214,7 +217,7 @@ isnt "an entry with no timestamp is not reused" "$before" "$(runs)"
 # branch broke anything. The message names both the budget and the command, so the reader
 # knows what to raise and what was running.
 # --------------------------------------------------------------------------------------
-rm -f "$TRIP"
+untrip
 setcmd 'sleep 10; '
 before="$(runs)"
 out="$(rungate SPIRA_GATE_TIMEOUT=1)"; rc=$?
@@ -237,7 +240,7 @@ is  "a timeout records no verdict"     "$entries_before" "$(entries)"
 # run through base attribution, because a base trial would trivially pass (no changed files)
 # and make the fault look like the branch's own failure.
 # --------------------------------------------------------------------------------------
-rm -f "$TRIP"
+untrip
 printf 'repo | %s | push | origin/main |  | exit 75\n' "$REPO" > "$MAP"
 entries_before="$(entries)"
 out="$(rungate)"; rc=$?
@@ -256,7 +259,7 @@ is     "and is not cached"           "$entries_before" "$(entries)"
 # own evidence already states: the reason must still be harness-fault, carrying the real
 # ExitCode/OOMKilled the batch captured, never the generic budget message.
 # --------------------------------------------------------------------------------------
-rm -f "$TRIP"
+untrip
 setcmd "printf '%s\\n' 'batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)'; sleep 10; "
 entries_before="$(entries)"
 out="$(rungate SPIRA_GATE_TIMEOUT=1)"; rc=$?
