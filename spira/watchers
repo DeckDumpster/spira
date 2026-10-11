@@ -166,3 +166,9 @@ gh-provenance|daemon|gh-intake provenance watch --interval 900|gh-intake provena
 # EVENT-CONTINUITY is the alarm for a break in the lifecycle event log: spira-event-continuity.timer
 # appends one JSON line per key whose first break it finds, and a clean log writes nothing.
 event-continuity|log|@SPIRA_RUN@/event-continuity.log
+
+# BEAD-SWEEP classifies every live bead (OK, BLOCKED, HELD, ASK, SUSPECT) on a half-hour cadence
+# and raises each SUSPECT class — poison, unanswered ask hold, stale manual hold, rowless bead,
+# stale blocked edge, unclaimed rework, expired lease, certified with no batch — as an inbox line
+# the pass it first appears. Health is the last pass that could read the lifecycle.
+bead-sweep|daemon|@SPIRA_HOME@/bead-sweep.sh watch --interval 1800|@SPIRA_HOME@/bead-sweep.sh health
