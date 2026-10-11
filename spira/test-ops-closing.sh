@@ -1,62 +1,14 @@
 #!/usr/bin/env bash
 #
-# test-ops-closing.sh — the close-time fences on an aeon's finished session.
+# test-ops-closing.sh — close-reason-flags.py, the phrase table the close-reason fence and
+# detect_invalid_closed share, and the ops.md instruction check.
 #
-#   ./test-ops-closing.sh
-#
-# Driven through the REAL aeon against a real bd on a throwaway fixture, with a shim
-# standing in for the model: a builder's hand-on standing as SUBMITTED, and the retired SOP
-# closing rule's key being ignored with a warning.
-#
-# The close-reason fence judges the restricted hand-on (decide::builder_submitted): a refused
-# submission reopens in bd and returns the lifecycle row to REWORK, asserted on the row.
-# The T1 table over close-reason-flags.py: lib.sh's detect_invalid_closed shares it.
-#
-# WHAT "SILENCE" MEANS, EXACTLY, and why the distinction is the entire suite. A session may
-# end three honest ways, and each is one command:
-#
-#   nothing on the shelf fit; something new was diagnosed   sop write
-#   an SOP fit but was incomplete                           sop write   (the upsert)
-#   an SOP fit and its CHECK confirmed                      sop applied --check pass
-#
-# The third row is what keeps this from firing on the good case. "It matched, it held, it
-# taught us nothing new" is the outcome a healthy shelf produces most of the time and is
-# creditable; a check that poisoned it would punish the sessions the design wants. So every
-# case here is a PAIR (law-absence-needs-a-positive-control): a silent session is required to
-# poison, and each honest ending is required NOT to — including the two that are merely
-# cheap. A check that never fires and a check that always fires look the same from a report
-# that only ever contains one of them.
-#
-# THE FOUR EDGES WORTH NAMING, because each is a way the rule could go wrong in the direction
-# nobody would notice:
-#
-#   --held no       satisfies. It is an honest outcome of a runbook that genuinely fitted,
-#                   and demanding an amendment on top of it would make `--held yes` the
-#                   cheapest exit — a lie, in the one field the shelf is measured by.
-#   --check fail    does NOT satisfy. That is the session's own statement that nothing on the
-#                   shelf applied, which is row one, and row one's exit is a write.
-#   a retirement    does NOT satisfy. Removing a runbook is curation; it is not the thing the
-#                   incident was supposed to leave behind.
-#   an OLD record   does not satisfy a LATER session. The question is what this session
-#                   recorded, not whether the bead has ever been recorded against.
-#
-# AND IT DECLINES TO JUDGE WHAT IT CANNOT READ. An unreadable ledger is not an absence, and
-# treating one as an absence would poison every incident closed on the day the database is
-# down — the day a runbook is worth most.
-#
-# THE PERSONA IS A FIXTURE NAMED SOMETHING ELSE, on purpose. The rule is declared by a fayth
-# (FAYTH_SOP_REQUIRED) rather than keyed on the string "ops" in aeon.sh, so the suite pins a
-# non-default: a healer that is not called ops is still held to the rule, and a builder is
-# not. Asserting through the shipped ops.fayth would pass just as well against a check with
-# the persona's name written into it.
-#
-# Driven through the REAL aeon and the REAL sop against a real bd on a throwaway
-# fixture, with a shim standing in for the model. What is under test is a comparison of two
-# database reads either side of a session, and a stub of either side would be a second
-# implementation of the thing in question (law-prefer-the-real-dependency).
+# The fence wiring (a submission whose reason admits unfinished work goes back to REWORK, a
+# clean one stands SUBMITTED) and the retired FAYTH_SOP_REQUIRED warning are aeon tests
+# (`cargo test -p aeon close_reason retired_sop`).
 #
 # defect: sp-9pyr
-# tier: T3
+# tier: T1
 # covers: aeon/src/* sop/src/*.rs spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
 # covers: aeon/src/* spira/close-reason-flags.py spira/chamber/ops.fayth spira/test-ops-closing.sh UC-aeon-execution-16
 set -uo pipefail
@@ -65,128 +17,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 echo "test-ops-closing.sh"
 
-# shellcheck disable=SC1090
-. "$HERE/testdb.sh"
-testdb_require test-ops-closing
-TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up opsclosing || { echo "test-ops-closing: could not build a fixture database"; exit 1; }
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-
-ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
-git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
-printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
-
-HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/close-reason-flags.py" "$HOMEDIR/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HOMEDIR/"
-cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
-RUN="$TMP/run"; mkdir -p "$RUN"
-REPO_MAP="$TMP/repo-map"
-printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$REPO_MAP"
-# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
-# point it at this suite's own fixture chamber explicitly.
-tl_config SPIRA_CHAMBER="$HOMEDIR/chamber"
-
-# A FAYTH NOT CALLED ops, so nothing here can key on the persona's name.
-for f in builder; do
-    cat > "$HOMEDIR/chamber/$f.fayth" <<FAYTH
-FAYTH_NAME=$f
-FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
-    printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
-        > "$HOMEDIR/chamber/$f.md"
-done
-
-# THE SHIM IS THE SESSION. It always commits and always closes, so the commit half of the
-# verdict is satisfied in every case here and the only thing under test is the verdict. The guard is not decoration: a suite shimming
-# `claude` by PATH alone would run the real model against a real account if anything reordered PATH.
-BIN="$TMP/bin"; mkdir -p "$BIN"
-# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
-# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
-lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
-# aeon and the spira-claim it ranks through are invoked by name on the suite's PATH
-# (sp-gypjk); run_aeon's env -i keeps that PATH.
-for _t in aeon spira-claim; do
-    command -v "$_t" >/dev/null 2>&1 \
-        || { echo "test-ops-closing: $_t is not on PATH — refusing to run the real model" >&2; exit 1; }
-done
-cat > "$BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
-cat /dev/stdin > "$TMP/prompt"
-id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
-printf 'my work\n' >> f
-git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
-case "$(cat "$TMP/act")" in
-    bad-reason) bd -C "$SPIRA_DB" close "$id" --reason "DIAGNOSED: X. TEMPORARY WORKAROUND: Y must be removed once fix lands." >/dev/null 2>&1 ;;
-    *)          bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1 ;;
-esac
-printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
-exit 0
-SHIM
-chmod +x "$BIN/claude"
-# The model session is restricted (sp-v62vn); the shim is a fixture — testlib
-# aeon_fixture_agent (SPIRA_AGENT below names the wrapper it writes).
-aeon_fixture_agent "$BIN/claude"
-
-# THE ENVIRONMENT IS NAMED, NOT INHERITED. Two keys make this mandatory rather than tidy: an
-# inherited SPIRA_CONF would let a real box decide these verdicts, and an inherited
-# SPIRA_WIKI could write into a real wiki page. HOME is the real one because `bd` and `dolt`
-# read their credentials from it, and SPIRA_PATH is passed because conf.sh rebuilds PATH from it.
-run_aeon() {             # run_aeon <fayth> <act>
-    printf '%s' "$2" > "$TMP/act"
-    rm -rf "$RUN/worktree"
-    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_WIKI="" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$SPIRA_AGENT" \
-        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}"
-    env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_TOML="$SPIRA_TOML" TMP="$TMP" \
-        SPIRA_CONF="$TMP/nonexistent.conf" \
-        SPIRA_HOME="$HOMEDIR" \
-        BEADS_NO_AUTO_IMPORT=1 \
-        timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1 # batch-job: runs a whole aeon session under the suite's own 300 s ceiling
-}
-seed() {                 # seed <id> [extra-label]
-    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\"${2:+,\"$2\"}"
-    printf '{"id":"%s","title":"unit failed","status":"open","issue_type":"bug","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
-        "$1" "$_lbl" | testdb_seed
-}
-# batch-job: fixture bd call against the suite's throwaway store
-field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
-import sys,json
-d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
-labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; } # batch-job: fixture bd call against the suite's throwaway store
-notes()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | tr -s '[:space:]' ' '; } # batch-job: fixture bd call against the suite's throwaway store
-
-fresh() {                # fresh <bead-id> [extra-label] — an empty world with one bead
-    testdb_reset
-    seed "$1" "${2:-}"
-}
-# A delivers:action bead is exempt from the submitted conversion, so its close stands.
-fresh_incident() { fresh "$1" delivers:action; }
-
-echo
-echo "a BUILDER that closed — its close stands as submitted:"
-fresh sp-oc-8; run_aeon builder none
-# A builder's plain work bead: the session's bd close reads, in the lifecycle stand-in, as the
-# builder's submit (sp-v62vn: the restricted session never reaches sp-qsona's bd conversion).
-is     "the bead's hand-on stands as SUBMITTED, not undone" SUBMITTED "$(SPIRA_RUN="$RUN" lc_row_state sp-oc-8)"
-nowant "it is not poisoned"        "spira-poison" "$(labels sp-oc-8)"
-nowant "and a fayth without the key draws no retirement warning" "is retired" "$(cat "$TMP/out")"
-nowant "it is not poisoned"        "spira-poison" "$(labels sp-oc-8)"
-
-echo
-echo "a retired FAYTH_SOP_REQUIRED=1 is ignored with a warning naming sp-loycl, never honoured:"
-printf 'FAYTH_SOP_REQUIRED=1\n' >> "$HOMEDIR/chamber/builder.fayth"
-fresh_incident sp-oc-1; run_aeon builder none
-is     "a silent close is not undone"        closed "$(field sp-oc-1 status)"
-nowant "and is not poisoned"                 "spira-poison" "$(labels sp-oc-1)"
-want   "the warning names the key and this bead" "FAYTH_SOP_REQUIRED is retired (sp-loycl)" "$(cat "$TMP/out")"
-nowant "and no closing rule ran"             "closing-rule" "$(cat "$TMP/out")"
 
 echo
 echo "T1: close-reason-flags.py, unit directly — no aeon run, no bd"
@@ -239,17 +69,5 @@ grep -q "not in your worktree" "$OPS_MD"; wantrc "ops.md says where sop write pu
 _probe="commit that page"; printf '%s\n' "$_probe" | grep -Eq 'commit that page|SOP page is normally'
 wantrc "the matcher fires on the old instruction" 0 "$?"
 
-# ===========================================================================================
-echo
-echo "T3: a submission whose close reason has a statute phrase is refused back to REWORK:"
-# ===========================================================================================
-fresh sp-oc-13; run_aeon builder bad-reason
-is   "the lifecycle row goes back to REWORK"   REWORK  "$(SPIRA_RUN="$RUN" lc_row_state sp-oc-13)"
-is   "the bd bead is reopened"                 open    "$(field sp-oc-13 status)"
-want "the note names the matched phrase"       "TEMPORARY WORKAROUND" "$(notes sp-oc-13)"
-want "the log names the override"              "SPIRA_CLOSE_REASON_OVERRIDE" "$(cat "$TMP/out")"
-
-fresh sp-oc-14; run_aeon builder none
-is   "a clean close reason stands SUBMITTED"   SUBMITTED "$(SPIRA_RUN="$RUN" lc_row_state sp-oc-14)"
 
 tl_summary

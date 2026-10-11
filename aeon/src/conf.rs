@@ -351,6 +351,13 @@ pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env:
     Ok(())
 }
 
+/// The warning for a fayth still declaring the retired `FAYTH_SOP_REQUIRED`; the key is never honoured.
+pub fn retired_sop_required_warning(vars: &BTreeMap<String, String>, fayth: &str) -> Option<String> {
+    vars.get("FAYTH_SOP_REQUIRED")
+        .is_some_and(|v| !v.is_empty())
+        .then(|| format!("{fayth}: FAYTH_SOP_REQUIRED is retired (sp-loycl) and ignored — remove it from the fayth"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -526,5 +533,14 @@ mod tests {
             "a declared SPIRA_SUMMON_JITTER did not reach Conf through the real spira/conf.d registry"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_retired_sop_required_key_draws_a_warning_naming_the_fayth_and_an_absent_one_none() {
+        let set = BTreeMap::from([("FAYTH_SOP_REQUIRED".to_string(), "1".to_string())]);
+        let w = retired_sop_required_warning(&set, "builder").expect("planted offender");
+        assert!(w.starts_with("builder: FAYTH_SOP_REQUIRED is retired (sp-loycl)"), "{w}");
+        assert_eq!(retired_sop_required_warning(&BTreeMap::new(), "builder"), None);
+        assert_eq!(retired_sop_required_warning(&BTreeMap::from([("FAYTH_SOP_REQUIRED".to_string(), String::new())]), "builder"), None);
     }
 }

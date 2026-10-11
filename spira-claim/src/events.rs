@@ -697,6 +697,13 @@ mod tests {
     }
 
     #[test]
+    fn a_gate_unfinished_release_nets_its_claim_to_zero() {
+        assert_eq!(fold(B, &rows(&[("claimed", "")])).attempts, 1, "planted control: a claim with no release event is charged");
+        let r = rows(&[("claimed", ""), ("requeued", "unjudged-gate-unfinished")]);
+        assert_eq!(fold(B, &r).attempts, 0);
+    }
+
+    #[test]
     fn judged_reopen_does_not_forgive() {
         let r = rows(&[("claimed", ""), ("reopen", "gate-red"), ("claimed", ""), ("reopen", "gate-red")]);
         assert_eq!(fold(B, &r).attempts, 2);

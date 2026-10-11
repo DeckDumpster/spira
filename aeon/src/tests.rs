@@ -53,6 +53,15 @@ struct World {
     facts: String,
     /// The disposition (status, note) the row carries per bead, as `spira-lc show` answers it.
     disposition: BTreeMap<String, (String, String)>,
+    /// `gate-run.sh --status`' answer (exit code, text); `None` answers "no gate known" (rc 0).
+    gate_status: Option<(i32, String)>,
+    /// Extra `dependencies` entries per bead, as `bd show --json` lists them (an ask that blocks it).
+    dep_rows: BTreeMap<String, Vec<serde_json::Value>>,
+    /// Beads' bd `close_reason`, and what `close-reason-flags.py` answers (the matched phrase).
+    close_reason: BTreeMap<String, String>,
+    close_reason_hit: Option<String>,
+    /// `spira-lc show`'s `tip`/`version` for a SUBMITTED row, so a refused submission can go back to REWORK.
+    submitted_tip: Option<(String, String)>,
 }
 
 fn lc_state_of(w: &World, id: &str) -> String {
@@ -73,6 +82,10 @@ struct FakeBd(W);
 
 fn row_json(w: &World, id: &str) -> String {
     let labels: Vec<String> = w.labels.get(id).map(|l| l.iter().cloned().collect()).unwrap_or_default();
+    let mut deps = w.dep_rows.get(id).cloned().unwrap_or_default();
+    if w.supersedes.contains(id) {
+        deps.push(serde_json::json!({"depends_on_id": "sp-successor", "dependency_type": "supersedes"}));
+    }
     serde_json::json!([{
         "id": id,
         "status": w.status.get(id).cloned().unwrap_or_else(|| "open".into()),
@@ -80,11 +93,8 @@ fn row_json(w: &World, id: &str) -> String {
         "issue_type": w.issue_type.get(id).cloned().unwrap_or_else(|| "task".into()),
         "description": w.descriptions.get(id).cloned().unwrap_or_default(),
         "metadata": w.metadata.get(id).cloned().unwrap_or_default(),
-        "dependencies": if w.supersedes.contains(id) {
-            serde_json::json!([{"depends_on_id": "sp-successor", "dependency_type": "supersedes"}])
-        } else {
-            serde_json::json!([])
-        },
+        "close_reason": w.close_reason.get(id).cloned().unwrap_or_default(),
+        "dependencies": deps,
     }])
     .to_string()
 }
@@ -221,6 +231,17 @@ impl Exec for FakeExec {
                 _ => Out::ok("{}"),
             };
         }
+        if prog == "close-reason-flags.py" {
+            if let Some(hit) = self.0.lock().unwrap().close_reason_hit.clone() {
+                return Out::ok(hit);
+            }
+            return Out::fail(1, "");
+        }
+        if prog == "gate-run.sh" {
+            if let Some((code, text)) = self.0.lock().unwrap().gate_status.clone() {
+                return Out { code, stdout: text, stderr: String::new() };
+            }
+        }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("facts") {
             return Out::ok(self.0.lock().unwrap().facts.clone());
         }
@@ -232,7 +253,7 @@ impl Exec for FakeExec {
             // The row's holds are the same ones `spira-lc holds` answers (one kind a line).
             let holds: Vec<String> = w.holds.get(&args[1]).map(|h| h.lines().map(str::trim).filter(|h| !h.is_empty()).map(String::from).collect()).unwrap_or_default();
             let (disp, note) = w.disposition.get(&args[1]).cloned().unzip();
-            return Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": lc_state_of(&w, &args[1]), "holds": holds, "disposition": disp, "disposition_note": note}, "delivery": null}).to_string());
+            return Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": lc_state_of(&w, &args[1]), "holds": holds, "disposition": disp, "disposition_note": note, "tip": w.submitted_tip.as_ref().map(|t| t.0.clone()), "version": w.submitted_tip.as_ref().map(|t| t.1.clone())}, "delivery": null}).to_string());
         }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && self.0.lock().unwrap().fail_content_on_base {
             return Out::fail(1, "spira-lc content-on-base: stub refusal");
@@ -1844,4 +1865,168 @@ fn a_marker_file_is_no_longer_a_disposition() {
     let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
     let w = o.w.lock().unwrap();
     assert!(!w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-nm", "unjudged-slain"]), "{:?}", w.seam_calls);
+}
+
+#[test]
+fn a_session_ending_with_its_gate_still_running_is_released_uncharged_with_the_unjudged_cause() {
+    let f = fx("gate-unfinished");
+    seed(&f, "sp-gu");
+    f.w.lock().unwrap().gate_status = Some((2, "gate-run: still running for fixture".into()));
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
+        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
+        0
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    let w = o.w.lock().unwrap();
+    assert_eq!(w.status["sp-gu"], "open");
+    assert!(w.notes.iter().any(|(_, n)| n.contains("still running") && n.contains("No attempt was charged")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-gu", "unjudged-gate-unfinished"]), "the claim must be netted by the exempt cause: {:?}", w.seam_calls);
+}
+
+#[test]
+fn a_thrash_at_the_streak_cap_is_charged_and_the_note_names_the_sticking_point() {
+    let f = fx("thrash-cap");
+    seed(&f, "sp-tc");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, w, _| {
+        w.lock().unwrap().disposition.insert("sp-tc".into(), ("thrash".into(), "stalled on the build".into()));
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::from([("thrash_streak_bump", Out::ok("2"))]), act);
+    assert!(l_done(&o).contains("status=requeue-thrash-charged"), "{}", o.ledger);
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-tc", "thrash-stale"]), "{:?}", w.seam_calls);
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("STICKING POINT: stalled on the build") && n.contains("attempt IS charged")), "{:?}", w.notes);
+}
+
+#[test]
+fn a_thrash_below_the_streak_cap_is_exempt_and_ledgered_requeue_thrash() {
+    let f = fx("thrash-first");
+    seed(&f, "sp-tf");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, w, _| {
+        w.lock().unwrap().disposition.insert("sp-tf".into(), ("thrash".into(), "stalled".into()));
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::from([("thrash_streak_bump", Out::ok("1"))]), act);
+    assert!(l_done(&o).contains("status=requeue-thrash"), "{}", o.ledger);
+    assert!(!l_done(&o).contains("charged"), "{}", o.ledger);
+    let w = o.w.lock().unwrap();
+    assert!(!w.notes.iter().any(|(_, n)| n.contains("STICKING POINT")), "{:?}", w.notes);
+}
+
+fn open_trace_exit(code: i32) -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {
+    Box::new(move |spec, _, _| {
+        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
+        code
+    })
+}
+
+fn ask_blocking(title: &str) -> serde_json::Value {
+    serde_json::json!({"dependency_type": "blocks", "status": "open", "labels": ["needs-ryan", "overseer"], "title": title}) // literal-ok: fixture ask labels
+}
+
+#[test]
+fn a_bead_blocked_by_an_open_ask_is_released_decision_blocked_uncharged() {
+    let f = fx("decision-blocked");
+    seed(&f, "sp-db");
+    f.w.lock().unwrap().dep_rows.insert("sp-db".into(), vec![ask_blocking("Operator question about sp-db")]);
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), open_trace_exit(1));
+    assert!(l_done(&o).contains("status=decision-blocked"), "{}", o.ledger);
+    let w = o.w.lock().unwrap();
+    assert_eq!(w.status["sp-db"], "open");
+    assert!(w.notes.iter().any(|(_, n)| n.contains("decision") && n.contains("No attempt charged")), "{:?}", w.notes);
+    assert!(!w.notes.iter().any(|(_, n)| n.contains("Unlanded")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-db", "unjudged-decision-blocked"]), "{:?}", w.seam_calls);
+}
+
+#[test]
+fn a_beads_own_closeout_ask_is_not_its_blocker_and_the_attempt_is_charged() {
+    let f = fx("own-closeout");
+    seed(&f, "sp-oc");
+    f.w.lock().unwrap().dep_rows.insert("sp-oc".into(), vec![ask_blocking("Close GitHub issue github:fixture/testrepo#99 for bead sp-oc")]);
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
+        std::fs::write(spec.cwd.join("f"), "work\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-oc — the work"]);
+        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
+        1
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    assert!(!l_done(&o).contains("decision-blocked"), "{}", o.ledger);
+    let w = o.w.lock().unwrap();
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Unlanded")), "{:?}", w.notes);
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bump_requeue"), "{:?}", w.seam_calls);
+}
+
+#[test]
+fn a_session_that_ends_waiting_for_a_background_task_is_ledgered_yield_headless_and_charged() {
+    let f = fx("yield-headless");
+    seed(&f, "sp-yh");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
+        crate::run::append(
+            &spec.log,
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"cargo build\"}}]}}\n\
+             {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"The build is running. I will wait for the background task notification to continue.\"}],\"stop_reason\":\"end_turn\"}}\n\
+             {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":2}\n",
+        );
+        0
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    assert!(l_done(&o).contains("status=yield-headless"), "{}", o.ledger);
+    let w = o.w.lock().unwrap();
+    assert!(w.notes.iter().any(|(_, n)| n.contains("background task notification")), "{:?}", w.notes);
+}
+
+#[test]
+fn a_second_attempt_that_never_spoke_ledgers_unknown_fields_not_the_first_attempts() {
+    let f = fx("ledger-segment");
+    seed(&f, "sp-lg");
+    let full = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"duration_ms\":90480,\"num_turns\":7,\"total_cost_usd\":1.3474715}\n";
+    let first_act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, _, _| {
+        std::fs::write(spec.cwd.join("f"), "work\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-lg — the work"]);
+        crate::run::append(&spec.log, full);
+        0
+    });
+    let first = l_done(&go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), first_act));
+    assert!(first.contains("turns=7") && first.contains("cost_usd=1.3475"), "{first}");
+    let o2 = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 0));
+    let second = ledger_lines(&o2).into_iter().rfind(|l| l.starts_with("done ")).unwrap_or_default();
+    assert!(second.contains("turns=?") && second.contains("cost_usd=?"), "{second}");
+    assert!(!second.contains("turns=7") && !second.contains("1.3475"), "{second}");
+}
+
+#[test]
+fn a_submission_whose_close_reason_admits_unfinished_work_goes_back_to_rework() {
+    let f = fx("close-reason");
+    seed(&f, "sp-cr");
+    {
+        let mut w = f.w.lock().unwrap();
+        w.close_reason.insert("sp-cr".into(), "DIAGNOSED: X. TEMPORARY WORKAROUND: Y must be removed once fix lands.".into());
+        w.close_reason_hit = Some("TEMPORARY WORKAROUND".into());
+        w.submitted_tip = Some(("abc123".into(), "7".into()));
+    }
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, commits_and_closes());
+    let w = o.w.lock().unwrap();
+    let ev = exec_verbs(&w, "event");
+    assert!(ev.iter().any(|a| a.iter().any(|x| x.contains("policy-violation")) && a.contains(&"sp-cr".to_string())), "the row goes back to REWORK: {ev:?}");
+    assert!(w.notes.iter().any(|(_, n)| n.contains("TEMPORARY WORKAROUND")), "{:?}", w.notes);
+    assert!(o.log.contains("SPIRA_CLOSE_REASON_OVERRIDE"), "{}", o.log);
+}
+
+#[test]
+fn a_submission_with_a_clean_close_reason_stands_submitted() {
+    let f = fx("close-reason-clean");
+    seed(&f, "sp-cc");
+    {
+        let mut w = f.w.lock().unwrap();
+        w.close_reason.insert("sp-cc".into(), "done".into());
+        w.submitted_tip = Some(("abc123".into(), "7".into()));
+    }
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, commits_and_closes());
+    let w = o.w.lock().unwrap();
+    assert!(exec_verbs(&w, "event").is_empty(), "{:?}", exec_verbs(&w, "event"));
+    assert!(!o.log.contains("SPIRA_CLOSE_REASON_OVERRIDE"), "{}", o.log);
 }

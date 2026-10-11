@@ -11,6 +11,11 @@ id = "UC-aeon-execution-02"
 tier = "T3"
 statement = "a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop"
 
+[use_case.uncovered]
+reason = "the shell row (test-aeon-teardown-e2e.sh) moved to a sub-second whole-run test: aeon/src/tests.rs::a_worktree_failure_is_a_pre_session_death"
+date = "2026-10-11"
+bead = "sp-86zzx5"
+
 [[use_case]]
 id = "UC-aeon-execution-03"
 tier = "T1"
@@ -120,6 +125,11 @@ statement = "wiki writes at exit are committed under an `aeon-` author, excludin
 id = "UC-aeon-execution-18"
 tier = "T1"
 statement = "the aeon's exit code and ledger `done` line reflect the real rc, status and spend fields, `?` never 0 when missing"
+
+[use_case.uncovered]
+reason = "the shell row (test-aeon-teardown-e2e-exit.sh) moved to a sub-second whole-run test: aeon/src/tests.rs::a_submitted_session_that_exits_nonzero_ledgers_the_models_rc"
+date = "2026-10-11"
+bead = "sp-86zzx5"
 
 [[use_case]]
 id = "UC-aeon-execution-19"
