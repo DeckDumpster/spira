@@ -1279,20 +1279,100 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         deps,
     };
 
-    let up = if claimed {
-        deps.log(&format!(
-            "claimed warm spare {} (branch {br}) — booted before this trial, torn down after it",
-            session.name
-        ));
-        session.probe()
-    } else {
-        deps.log(&format!(
-            "starting container {} (branch {br})",
-            session.name
-        ));
-        session.up(&wt.path)
+    let sim_wanted = args.mode == Mode::Parallel
+        && active.iter().any(|n| {
+            schedule::is_sim(&Job {
+                lane: headers[n].lane.clone(),
+                ..Job::new(n, headers[n].exclusive.clone())
+            })
+        });
+    let sim_session = sim_wanted.then(|| {
+        let mut ss = Session::new(deps.rt, &format!("{instance}-sim"), &pdir);
+        ss.bins = session.bins.clone();
+        ss.liveness_retries = session.liveness_retries;
+        ss.liveness_sleep = session.liveness_sleep;
+        ss.setup_deadline = session.setup_deadline;
+        ss.queue_bound = session.queue_bound;
+        ss.pids_limit = Some(schedule::SIM_PIDS_LIMIT);
+        ss.memory = Some(schedule::SIM_MEMORY.to_string());
+        ss
+    });
+    let mut _sim_guard = None;
+    if let Some(ss) = &sim_session {
+        let owner_file = deps.owner_dir.join(format!("{}.owner", ss.name));
+        if !claim_owner(&owner_file) {
+            deps.log(&format!("{} is claimed by another live pid — refusing to share it", ss.name));
+            return Finish::fault(2, "concurrent-run", 0);
+        }
+        let home = deps.owner_dir.join(format!("spira-batch-{}", ss.instance));
+        let _ = fs::create_dir_all(&home);
+        _sim_guard = Some(ContainerGuard { session: ss, owner_file, key_owner: None, home, deps });
+    }
+    let runner = match crate::plan::stage_runner(&wt.path, &deps.runner_exe) {
+        Ok(_) => format!("{WORKSPACE}/{}", crate::plan::RUNNER_REL),
+        Err(e) => {
+            deps.log(&format!(
+                "cannot stage the setup runner into {}: {e}",
+                wt.path.display()
+            ));
+            return Finish::fault(2, "stage", 0);
+        }
     };
-    ph.mark("up");
+    let out_fn = deps.out;
+    let sim_log = move |m: &str| out_fn(&format!("{} spira: batch: {m}", iso_utc(now_epoch())));
+    let bring_sim = |ss: &Session| -> Result<Fixtures, Finish> {
+        sim_log(&format!(
+            "starting sim-lane container {} (pids {}, memory {}, slots {})",
+            ss.name,
+            schedule::SIM_PIDS_LIMIT,
+            schedule::SIM_MEMORY,
+            schedule::SIM_SLOTS
+        ));
+        if let Err(f) = ss.up(&wt.path) {
+            sim_log(f.message());
+            return Err(Finish::fault(f.rc(), "container-up", 0));
+        }
+        let sim_setup = ss
+            .setup(&runner, !s.skip_install, std::iter::empty(), &|m| sim_log(m))
+            .map_err(|SetupFault { fault, reason }| {
+                sim_log(fault.message());
+                Finish::fault(fault.rc(), reason, 0)
+            })?;
+        Ok(if sim_setup.template.ok() {
+            Fixtures::Server
+        } else {
+            match ss.baseline().0 {
+                Some(t) => Fixtures::Shared(t),
+                None => Fixtures::PerSuite,
+            }
+        })
+    };
+    let (up, setup_res, sim_res) = std::thread::scope(|sc| {
+        let sim = sim_session.as_ref().map(|ss| sc.spawn(|| bring_sim(ss)));
+        let up = if claimed {
+            deps.log(&format!(
+                "claimed warm spare {} (branch {br}) — booted before this trial, torn down after it",
+                session.name
+            ));
+            session.probe()
+        } else {
+            deps.log(&format!(
+                "starting container {} (branch {br})",
+                session.name
+            ));
+            session.up(&wt.path)
+        };
+        ph.mark("up");
+        let setup_res = up.is_ok().then(|| {
+            session.setup(
+                &runner,
+                !s.skip_install,
+                active.iter().flat_map(|n| headers[n].checkable_requires()),
+                &|m| deps.log(m),
+            )
+        });
+        (up, setup_res, sim.map(|h| h.join()))
+    });
     if let Err(f) = up {
         if let crate::fixture::Fault::Deadline(p) = f {
             share_note(p, &ph);
@@ -1310,39 +1390,31 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         };
         return Finish::fault(f.rc(), reason, 0);
     }
-    // ---- setup: stage, install, requirements, testdb template — ONE exec (§11.4) ------
+    // ---- setup (ran above, beside the sim lane's): stage, install, requirements, testdb template — ONE exec (§11.4) ------
     // The tree under test is staged as a release whether or not the install runs: every
     // exec's PATH is built from it (DESIGN.md §5). Each podman exec pays podman's global
     // locks, whose cost under load is set by everyone else's podman calls and the host's
     // flush latency (sp-t26yx), so the whole setup is one exec of our own runner.
-    let runner = match crate::plan::stage_runner(&wt.path, &deps.runner_exe) {
-        Ok(_) => format!("{WORKSPACE}/{}", crate::plan::RUNNER_REL),
-        Err(e) => {
-            deps.log(&format!(
-                "cannot stage the setup runner into {}: {e}",
-                wt.path.display()
-            ));
-            return Finish::fault(2, "stage", 0);
-        }
-    };
-    let setup = match session.setup(
-        &runner,
-        !s.skip_install,
-        active.iter().flat_map(|n| headers[n].checkable_requires()),
-        &|m| deps.log(m),
-    ) {
-        Ok(v) => v,
-        Err(SetupFault {
+    let setup = match setup_res {
+        Some(Ok(v)) => v,
+        Some(Err(SetupFault {
             fault: crate::fixture::Fault::Deadline(p),
             ..
-        }) => {
+        })) => {
             share_note(p, &ph);
             return Finish::fault(2, deadline_reason(p), 0);
         }
-        Err(SetupFault { fault, reason }) => {
+        Some(Err(SetupFault { fault, reason })) => {
             deps.log(fault.message());
             return Finish::fault(fault.rc(), reason, 0);
         }
+        None => return Finish::fault(2, "container-up", 0),
+    };
+    let sim_fixtures = match sim_res {
+        None => None,
+        Some(Ok(Ok(f))) => Some(f),
+        Some(Ok(Err(fin))) => return fin,
+        Some(Err(_)) => return Finish::fault(2, "container-up", 0),
     };
     // podman's own cost of the exec is the install phase's, where each exec used to pay it;
     // the testdb share stays open for the embedded fallback below (D11).
@@ -1541,57 +1613,6 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     } else {
         (jobs, Vec::new())
     };
-    let sim_session = (!sim_jobs.is_empty()).then(|| {
-        let mut ss = Session::new(deps.rt, &format!("{instance}-sim"), &pdir);
-        ss.bins = session.bins.clone();
-        ss.liveness_retries = session.liveness_retries;
-        ss.liveness_sleep = session.liveness_sleep;
-        ss.setup_deadline = session.setup_deadline;
-        ss.queue_bound = session.queue_bound;
-        ss.pids_limit = Some(schedule::SIM_PIDS_LIMIT);
-        ss.memory = Some(schedule::SIM_MEMORY.to_string());
-        ss
-    });
-    let mut sim_fixtures = None;
-    let mut _sim_guard = None;
-    if let Some(ss) = &sim_session {
-        let owner_file = deps.owner_dir.join(format!("{}.owner", ss.name));
-        if !claim_owner(&owner_file) {
-            deps.log(&format!("{} is claimed by another live pid — refusing to share it", ss.name));
-            return Finish::fault(2, "concurrent-run", 0);
-        }
-        let home = deps.owner_dir.join(format!("spira-batch-{}", ss.instance));
-        let _ = fs::create_dir_all(&home);
-        _sim_guard = Some(ContainerGuard { session: ss, owner_file, key_owner: None, home, deps });
-        deps.log(&format!(
-            "starting sim-lane container {} (pids {}, memory {}, slots {}) for {} suite(s)",
-            ss.name,
-            schedule::SIM_PIDS_LIMIT,
-            schedule::SIM_MEMORY,
-            schedule::SIM_SLOTS,
-            sim_jobs.len()
-        ));
-        if let Err(f) = ss.up(&wt.path) {
-            deps.log(f.message());
-            return Finish::fault(f.rc(), "container-up", 0);
-        }
-        let sim_setup = match ss.setup(&runner, !s.skip_install, std::iter::empty(), &|m| deps.log(m)) {
-            Ok(v) => v,
-            Err(SetupFault { fault, reason }) => {
-                deps.log(fault.message());
-                return Finish::fault(fault.rc(), reason, 0);
-            }
-        };
-        sim_fixtures = Some(if sim_setup.template.ok() {
-            Fixtures::Server
-        } else {
-            match ss.baseline().0 {
-                Some(t) => Fixtures::Shared(t),
-                None => Fixtures::PerSuite,
-            }
-        });
-        ph.mark("sim-lane");
-    }
     match args.mode {
         // sp-tj8k3: maxpar is always a positive, bounded count now — "unlimited" is no
         // longer a value `mx.value` ever carries (0 refuses before this point is reached).
