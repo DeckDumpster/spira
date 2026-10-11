@@ -187,6 +187,9 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
             (d, true)
         }
     };
+    let t = std::time::Instant::now();
+    spira_sim::drive::resolve_conf(&dir, sc.epoch)?;
+    world::mark(&dir, "up.conf-resolve", t);
     let probe = ProcessProbe::for_world(&dir, sc.epoch)?;
     if sc.goal.is_some() && probe.probe.is_none() {
         return Err(format!("the world configures no SIM_PROBE, so goal {:?} cannot be observed", sc.goal.unwrap_or_default()));

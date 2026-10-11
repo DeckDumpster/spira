@@ -235,6 +235,10 @@ pub struct ProcessExec {
 
 impl ProcessExec {
     fn command(&self, shell: &str, now_ms: u64) -> Result<Command, String> {
+        self.command_with(shell, now_ms, true)
+    }
+
+    fn command_with(&self, shell: &str, now_ms: u64, resolved: bool) -> Result<Command, String> {
         let mut cmd = sim::actor_command("sh", self.epoch + now_ms / 1000);
         let path = format!(
             "{}:{}:{}:{}",
@@ -251,8 +255,74 @@ impl ProcessExec {
         for (k, v) in read_env_file(&self.world.join("config/sim.env"))? {
             cmd.env(k, v);
         }
+        if resolved {
+            for (k, v) in read_conf_env(&self.world)? {
+                cmd.env(k, v);
+            }
+        }
         Ok(cmd)
     }
+}
+
+pub const CONF_ENV: &str = "config/conf.env";
+const SHELL_NOISE: &[&str] = &["PWD", "OLDPWD", "SHLVL", "_"];
+
+fn read_conf_env(world: &Path) -> Result<Vec<(String, String)>, String> {
+    match std::fs::read(world.join(CONF_ENV)) {
+        Ok(b) => Ok(parse_env0(&b).into_iter().collect()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("{CONF_ENV}: {e}")),
+    }
+}
+
+fn parse_env0(bytes: &[u8]) -> std::collections::BTreeMap<String, String> {
+    String::from_utf8_lossy(bytes)
+        .split('\0')
+        .filter_map(|l| l.split_once('='))
+        .filter(|(k, _)| !SHELL_NOISE.contains(k))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+/// Resolves the world's configuration through the real `conf.sh` once and writes what it exports
+/// to `config/conf.env`, with `SPIRA_CONF_LOADED` set so every later script skips the
+/// re-resolution. Fails if sourcing `conf.sh` again on top of the resolved environment changes
+/// anything: the exported env must equal what `conf.sh` resolves.
+pub fn resolve_conf(world: &Path, epoch: u64) -> Result<(), String> {
+    let file = world.join(CONF_ENV);
+    if file.exists() {
+        return Ok(());
+    }
+    let exec = ProcessExec { world: world.to_path_buf(), epoch };
+    let env0 = |shell: &str, resolved: bool| -> Result<std::collections::BTreeMap<String, String>, String> {
+        let mut cmd = exec.command_with(shell, 0, resolved)?;
+        let o = cmd.stdin(std::process::Stdio::null()).output().map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            return Err(format!("{shell}: {}: {}", o.status, String::from_utf8_lossy(&o.stderr)));
+        }
+        Ok(parse_env0(&o.stdout))
+    };
+    let home = read_env_file(&world.join("config/sim.env"))?
+        .into_iter()
+        .find(|(k, _)| k == "SPIRA_HOME")
+        .map(|(_, v)| v)
+        .ok_or("sim.env has no SPIRA_HOME")?;
+    let source = format!("bash -c \". '{home}/conf.sh' && env -0\"");
+    let base = env0("env -0", false)?;
+    let once = env0(&source, false)?;
+    let mut bytes = Vec::new();
+    for (k, v) in once.iter().filter(|(k, v)| base.get(*k) != Some(*v)) {
+        bytes.extend_from_slice(format!("{k}={v}\0").as_bytes());
+    }
+    std::fs::write(&file, &bytes).map_err(|e| e.to_string())?;
+    let again = env0(&source, true)?;
+    let differ: Vec<&String> = once.keys().chain(again.keys()).filter(|k| once.get(*k) != again.get(*k)).collect();
+    if !differ.is_empty() {
+        let _ = std::fs::remove_file(&file);
+        return Err(format!("the exported env differs from what conf.sh resolves: {differ:?}"));
+    }
+    bytes.extend_from_slice(b"SPIRA_CONF_LOADED=1\0");
+    std::fs::write(&file, &bytes).map_err(|e| e.to_string())
 }
 
 impl ProcessExec {
