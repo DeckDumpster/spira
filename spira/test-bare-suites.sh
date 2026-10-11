@@ -71,6 +71,9 @@ wantrc "with no bare suite there is nothing to select from" 2 "$rc"
 
 want "G12 calls the shared script" "spira/bare-suites.sh --selected" "$(cat "$HERE/../.github/workflows/gate.yml")"
 nowant "G12 keeps no loop of its own" "_g12_fail" "$(cat "$HERE/../.github/workflows/gate.yml")"
+gate_order="$(grep -nE '^      - name: (Suites|G12 )' "$HERE/../.github/workflows/gate.yml" | sed 's/^[0-9]*:      - name: \(Suites\|G12\).*/\1/' | tr '\n' ' ')"
+is "the Suites step precedes G12" "Suites G12 " "$gate_order"
+nowant "no temporary step order is left in the gate" "TEMPORARY ORDER" "$(cat "$HERE/../.github/workflows/gate.yml")"
 want "bare-local calls the shared script" "spira/bare-suites.sh" "$(cat "$HERE/bare-local.sh")"
 want "the real tree has bare suites to select" "test-install-rehearsal.sh" "$(bash "$HERE/host-check.sh" --bare-suites)"
 
