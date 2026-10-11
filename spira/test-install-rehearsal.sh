@@ -167,10 +167,9 @@ iszero "stubs created inside container" "$?"
 # PATH, the gate and the watcher manifest to answer. The stubbed names stay stubs.
 _reh_bin="$(dirname "$(command -v spira-install 2>/dev/null)")"
 [ -d "$_reh_bin" ] || bail "spira-install is not on PATH (the tree's build provides it)"
+tar -C "$_reh_bin" --exclude=sentinel --exclude=queue --exclude=aeon --exclude=spira-supervise --exclude=landing-pass --exclude=reconciler-flow --exclude=sending -cf - . > /tmp/spira-reh-bin.tar
 # batch-job: streaming the tree's release bin/ into the rehearsal container
-tar -C "$_reh_bin" --exclude=sentinel --exclude=queue --exclude=aeon --exclude=spira-supervise \
-    --exclude=landing-pass --exclude=reconciler-flow --exclude=sending -cf - . \
-    | podman exec -i --user spirauser "$CNAME" tar -C /tmp/spira-prod/bin -xf - >&2
+podman exec -i --user spirauser "$CNAME" tar -C /tmp/spira-prod/bin -xf - < /tmp/spira-reh-bin.tar >&2
 iszero "the tree's release bin/ is staged in the container" "$?"
 
 # The tree's own spira-config, staged as the fake release's bin/spira-config: the image
