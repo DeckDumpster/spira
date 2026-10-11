@@ -1238,6 +1238,18 @@ fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
 }
 
 #[test]
+fn eject_of_a_certified_unbatched_bead_is_not_blocked_by_an_unrelated_open_batch() {
+    let t = T::new(LandMode::Queue);
+    let rec = "pr=12\nmembers=sp-a:ta,sp-b:tb\nbatch_id=spira-1\nversion=3\n";
+    t.open_record(rec);
+    t.lc_row("sp-c", "CERTIFIED", "tc", 5);
+    assert_eq!(t.run(&["eject", "sp-c", "--red", "--reason-file", "-"]), 0, "{}", t.err());
+    assert!(t.lib.has("bead_reopen sp-c eject-red "));
+    assert_eq!(fs::read_to_string(t.qfile("open")).unwrap(), rec);
+    assert!(!t.lc.has("abandon-batch"));
+}
+
+#[test]
 fn eject_takes_a_comma_separated_suites_list_and_still_refuses_a_bad_name_in_it() {
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
