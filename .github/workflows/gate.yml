@@ -531,9 +531,9 @@ jobs:
           spira-lint --only workflow-config
           bash spira/orphan-test.sh || [ $? -eq 77 ]
 
-      # TEMPORARY ORDER (per Ryan, 2026-10-11): G12 runs BEFORE the corpus until R1.1 publishes,
+      # TEMPORARY ORDER: G12 runs BEFORE the corpus until the next release publishes,
       # so a bare-lane red (the only red on publish PRs 536 and 537) shows in minutes, not after
-      # the 37-minute corpus. Restore G12 after Suites once R1.1 is cut.
+      # the 37-minute corpus. Restore G12 after Suites once that release is cut.
       - name: G12 — bare-host suites (real systemd, host podman)
         # Every suite marked `# bare-host:` (host-check.sh --bare-suites) builds its OWN
         # container via `testenv container up`. Run through the step above they would be nested
