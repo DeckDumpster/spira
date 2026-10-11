@@ -1,6 +1,6 @@
 # Where one sim world's wall time goes
 
-`sim run` prints `sim: profile …` on success; `test-sim-scenarios.sh` echoes it per world.
+`sim run` prints `sim: profile …` on success; the `test-sim-<scenario>.sh` suites echo it per world.
 Measured in the sim lane (4 worlds side by side), seed 7, happy-path unless noted.
 
 | phase | before | after |
