@@ -881,13 +881,11 @@ out="$(lc mend-watch --seen "$SEEN")"
 want "a planted overdue MENDING row fires the alarm" "MEND-WATCH OVERDUE batch-mend#1#test-f.sh" "$out"
 is "an announced breach is not repeated" "" "$(lc mend-watch --seen "$SEEN")"
 want "without a seen file the breach is still reported" "MEND-WATCH OVERDUE" "$(lc mend-watch)"
-mend_bead() {   # mend_bead <suite> <bead> <from> <to>
-    root_sql --use-db spira_lifecycle sql -q "INSERT INTO mending (batch_id, pass, suite, state, failed_at, version) VALUES ('batch-mend', 2, '$1', 'WAITING', UNIX_TIMESTAMP(), 0)" >/dev/null
-    lc mending pickup batch-mend --pass 2 --suite "$1" --deadline-secs 600 --actor mender >/dev/null
-    lc mending mend batch-mend --pass 2 --suite "$1" --members "$2:$3:$4" --facts "$(mfacts queue/src/a.rs)" --fences '["gate/"]' --actor mender >/dev/null
+mend_bead() {   # mend_bead <suite> <bead>: plants a mend row the machine's own cap would have refused
+    root_sql --use-db spira_lifecycle sql -q "INSERT INTO mend (batch_id, pass, suite, bead_id, from_tip, tip, at) VALUES ('batch-mend', 2, '$1', '$2', 'f', 't', UNIX_TIMESTAMP())" >/dev/null
 }
-mend_bead m1.sh sp-twice a1 a2; mend_bead m2.sh sp-twice a2 a3
-mend_bead m3.sh sp-loop b1 b2; mend_bead m4.sh sp-loop b2 b3; mend_bead m5.sh sp-loop b3 b4
+mend_bead m1.sh sp-twice; mend_bead m2.sh sp-twice
+mend_bead m3.sh sp-loop; mend_bead m4.sh sp-loop; mend_bead m5.sh sp-loop
 out="$(lc mend-watch)"
 want "a third mend of one bead in a day fires the alarm" "MEND-WATCH MENDS sp-loop was mended 3 times" "$out"
 nowant "two mends of a bead are inside the cap" "sp-twice" "$out"
