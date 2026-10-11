@@ -22,9 +22,9 @@ DATA="$TMP/data"; RUN="$TMP/run"; DEST="$TMP/dest"; mkdir -p "$DATA/spira_lifecy
     && dolt sql -q "CALL DOLT_COMMIT('-Am','seed')" >/dev/null ) || bail "fixture store"
 
 lcb() {
-    tl_config SPIRA_RUN="$RUN" SPIRA_DOLT_DATA="$DATA" SPIRA_LC_BACKUP_URL="${URL-file://$DEST}" \
-        SPIRA_LC_BACKUP_MAX_AGE=1000 SPIRA_LC_BACKUP_ALLOW_LOCAL="${LOCALOK-1}" SPIRA_LC_BACKUP_DB=spira_lifecycle
-    bash "$HERE/lc-backup.sh" "$@" 2>&1
+    SPIRA_TOML="$(tl_layer SPIRA_RUN="$RUN" SPIRA_DOLT_DATA="$DATA" SPIRA_LC_BACKUP_URL="${URL-file://$DEST}" \
+        SPIRA_LC_BACKUP_MAX_AGE=1000 SPIRA_LC_BACKUP_ALLOW_LOCAL="${LOCALOK-1}" SPIRA_LC_BACKUP_DB=spira_lifecycle)" \
+        bash "$HERE/lc-backup.sh" "$@" 2>&1
 }
 
 echo; echo "refusals — no destination, same disk:"
@@ -43,9 +43,9 @@ rm -f "$RUN/lc-backup.ok"
 
 echo; echo "run, then drill — uncommitted rows are carried, counts identical:"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (4)" )
-out="$(lcb run)"; rc=$?; echo "# DBG run: $out"; wantrc "run succeeds [$(echo $out | tr -d "\n" | cut -c1-300)]" 0 $rc; want "run reports the sync" synced "$out"
+out="$(lcb run)"; rc=$?; wantrc "run succeeds" 0 $rc; want "run reports the sync" synced "$out"
 lcb age >/dev/null; wantrc "age green after run" 0 $?
-out="$(lcb drill)"; rc=$?; echo "# DBG drill: $out"; wantrc "drill ok on identical stores" 0 $rc; want "drill reports tables" "2 table(s) identical" "$out"
+out="$(lcb drill)"; rc=$?; wantrc "drill ok on identical stores" 0 $rc; want "drill reports tables" "2 table(s) identical" "$out"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (5)" && dolt sql -q "CALL DOLT_COMMIT('-Am','later')" >/dev/null )
 lcb drill >/dev/null; wantrc "drill compares AS OF the backed-up commit, so later live writes are not drift" 0 $?
 
