@@ -28,8 +28,11 @@ declare -A _bs_seen
 
 _bs_classify() {
     local t="$1"
+    # batch-job: whole-store listing the sweep classifies; bounded by the daemon row cadence
     timeout 60 spira-lc list --state READY,REWORK,SUBMITTED,CERTIFIED,WORKING,OPEN,IN_DELIVERY > "$t/rows.json" 2>/dev/null || return 1
+    # batch-job: whole-store listing the sweep classifies; bounded by the daemon row cadence
     timeout 90 spira-lc content list --status open,in_progress,blocked,deferred --json --limit 0 > "$t/content.json" 2>/dev/null || return 1
+    # batch-job: whole-store listing the sweep classifies; bounded by the daemon row cadence
     timeout 60 spira-lc list --state LANDED,DONE,DROPPED,SUPERSEDED > "$t/term.json" 2>/dev/null || return 1
     python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" <<'PY'
 import json, sys, time
