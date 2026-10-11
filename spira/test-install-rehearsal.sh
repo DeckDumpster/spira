@@ -82,7 +82,6 @@ ok "user systemd running (probe exits 0)"
 # not polluted.
 # ---------------------------------------------------------------------------
 SPIRA_RUN_CTR="/tmp/spira-reh"
-REH_CONFIG="/tmp/spira-rehearsal.toml"
 CEXEC=(timeout 5 podman exec --user spirauser
     -e XDG_RUNTIME_DIR=/run/user/1001
     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus"
@@ -92,13 +91,11 @@ CEXEC=(timeout 5 podman exec --user spirauser
     -e "SPIRA_RUN=${SPIRA_RUN_CTR}"
     -e "SPIRA_WORKSPACES=/tmp"
     -e "SPIRA_HOME_REPO=home"
-    -e "SPIRA_TOML=${REH_CONFIG}"
+    -e "SPIRA_ADOPT_CONFIGURE_DEFAULT=1"
     # This container has nobody at the console reading escalations; doctor's
     # operator-channel check (hunk, mail client) is documented to FAIL only on an
     # operated box and WARN on "a headless fixture or CI box" — which this is.
     -e "SPIRA_OPERATED=0"
-    -e "SPIRA_TOML=/tmp/spira-reh-conf.toml"
-    -e "CONFIGURE_OUT=/tmp/spira-reh-conf.toml"
 )
 
 # ---------------------------------------------------------------------------
@@ -176,7 +173,6 @@ echo "configure — non-interactive spira.conf bootstrap:"
 # stubs block above so it already exists when configure.sh writes it out.
 # CONFIGURE_DOLT_DATA="" suppresses the dolt-beads.service unit (no Dolt here).
 "${CEXEC[@]}" \
-    -e "CONFIGURE_OUT=${REH_CONFIG}" \
     -e "CONFIGURE_PROD=/tmp/spira-prod/spira" \
     -e "CONFIGURE_MAX_AEONS=1" \
     -e "CONFIGURE_MAX_LIVE_AEONS=1" \
