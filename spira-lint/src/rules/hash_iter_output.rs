@@ -5,7 +5,7 @@
 //! Existing violations are counted per file in `spira-lint/hash-iter-output-allow`, which
 //! only shrinks: a file over its count fails, and a file under it fails until it is lowered.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use regex::bytes::Regex;
@@ -29,11 +29,11 @@ fn has(pat: &'static OnceLock<Regex>, src: &str, text: &[u8]) -> bool {
     re(pat, src).is_match(text)
 }
 
-fn hash_names(code: &[u8]) -> BTreeSet<Vec<u8>> {
+fn hash_names(code: &[u8]) -> Vec<(usize, Vec<u8>)> {
     static TYPED: OnceLock<Regex> = OnceLock::new();
     static NEW: OnceLock<Regex> = OnceLock::new();
     static COLLECT: OnceLock<Regex> = OnceLock::new();
-    let mut out = BTreeSet::new();
+    let mut out = Vec::new();
     let pats = [
         re(&TYPED, r"\b(\w+)\s*:\s*(?:&\s*(?:'\w+\s+)?(?:mut\s+)?)?(?:\w+::)*Hash(?:Map|Set)\b"),
         re(&NEW, r"\blet\s+(?:mut\s+)?(\w+)\s*=\s*(?:\w+::)*Hash(?:Map|Set)\s*::"),
@@ -41,7 +41,7 @@ fn hash_names(code: &[u8]) -> BTreeSet<Vec<u8>> {
     ];
     for p in pats {
         for c in p.captures_iter(code) {
-            out.insert(c[1].to_vec());
+            out.push((c.get(1).unwrap().start(), c[1].to_vec()));
         }
     }
     out
@@ -80,11 +80,17 @@ pub fn scan(src: &[u8], in_test: &dyn Fn(usize) -> bool) -> Vec<(usize, String)>
     static SORTFN: OnceLock<Regex> = OnceLock::new();
     let cl = rust::classify(src);
     let code = cl.code_only();
-    let names = hash_names(&code);
-    if names.is_empty() {
+    let decls = hash_names(&code);
+    if decls.is_empty() {
         return Vec::new();
     }
     let spans = fn_spans(&code);
+    let is_hash = |name: &[u8], at: usize| {
+        let scope = enclosing(&spans, at).map(|s| (s.start, s.end));
+        decls.iter().any(|(pos, n)| {
+            n.as_slice() == name && enclosing(&spans, *pos).map(|s| (s.start, s.end)).map_or(true, |d| Some(d) == scope)
+        })
+    };
     let fn_sorts = |at: usize| {
         let (a, b) = enclosing(&spans, at).map_or((0, code.len()), |s| (s.start, s.end));
         has(&SORTFN, r"\.\s*sort\w*\s*\(", &code[a..b])
@@ -98,7 +104,7 @@ pub fn scan(src: &[u8], in_test: &dyn Fn(usize) -> bool) -> Vec<(usize, String)>
     for c in for_re.captures_iter(&code) {
         let m = c.get(0).unwrap();
         headers.push((m.start(), m.end()));
-        if !names.contains(&c[1]) || in_test(m.start()) {
+        if !is_hash(&c[1], m.start()) || in_test(m.start()) {
             continue;
         }
         let body = &code[m.end() - 1..body_end(&code, m.end() - 1)];
@@ -110,7 +116,7 @@ pub fn scan(src: &[u8], in_test: &dyn Fn(usize) -> bool) -> Vec<(usize, String)>
     let chain = re(&CHAIN, &format!(r"\b(?:self\s*\.\s*)?(\w+)\s*\.\s*(?:{ITER})\s*\(\s*\)"));
     for c in chain.captures_iter(&code) {
         let m = c.get(0).unwrap();
-        if !names.contains(&c[1]) || in_test(m.start()) || headers.iter().any(|(a, b)| *a <= m.start() && m.start() < *b) {
+        if !is_hash(&c[1], m.start()) || in_test(m.start()) || headers.iter().any(|(a, b)| *a <= m.start() && m.start() < *b) {
             continue;
         }
         let stmt = statement(&code, m.start());
@@ -247,6 +253,19 @@ mod tests {
         assert!(rs("fn f(m: HashMap<String, u32>, s: HashSet<u32>) -> bool {\n    println!(\"{:?}\", m.get(\"a\"));\n    m.contains_key(\"b\") && s.contains(&1) && m.len() > 0\n}\n").is_empty());
         assert!(rs("fn f(m: HashMap<String, u32>) -> u32 {\n    m.values().sum()\n}\n").is_empty());
         assert!(rs("fn f(m: HashMap<String, u32>) {\n    for (k, v) in &m {\n        total += v;\n    }\n}\n").is_empty());
+    }
+
+    #[test]
+    fn a_hashmap_in_another_function_does_not_taint_a_btreemap() {
+        let src = "fn a() -> Vec<u32> {\n    let mut by: BTreeMap<u32, u32> = BTreeMap::new();\n    by.into_iter().map(|x| x.0).collect()\n}\nfn b() {\n    let mut by = HashMap::new();\n    by.insert(1, 2);\n}\n";
+        assert!(rs(src).is_empty());
+        let same = "fn b() -> Vec<u32> {\n    let mut by = HashMap::new();\n    by.insert(1, 2);\n    by.into_iter().map(|x| x.0).collect()\n}\n";
+        assert_eq!(rs(same), vec![4]);
+    }
+
+    #[test]
+    fn a_hashmap_field_still_applies_inside_methods() {
+        assert_eq!(rs("struct S { by: HashMap<u32, u32> }\nimpl S {\n    fn f(&self) -> Vec<u32> {\n        self.by.keys().cloned().collect()\n    }\n}\n"), vec![4]);
     }
 
     #[test]
