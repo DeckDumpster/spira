@@ -23,6 +23,9 @@ same seed, same trace); and `conf.sh` resolved once per world. `sim run` sources
 `SPIRA_CONF_LOADED` set, and every command inherits it, so no script re-runs the staleness loop,
 `spira-config resolve`, `env-bootstrap` or `check-bd`. The real path is still exercised once per
 world: the run fails unless sourcing `conf.sh` on top of the exported env changes nothing.
+Only exported keys are carried, so a step that runs `spira-config set` drops `conf.env` and
+later commands go back through `conf.sh` (three scenarios do, and keep their old cost). Probes
+never see it: the probe refuses a store outside the world, and the resolved config names one.
 
 Same scenario, same box load, with and without `conf.env` (happy-path, seed 7, two runs each):
 first `landing-pass land` 5.8–9.5 s with, 16–22 s without; later commands 1.1–2.7 s with,
