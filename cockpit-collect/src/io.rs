@@ -351,12 +351,12 @@ fn pane_fetch(read: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Option<Stri
     let since = utc_stamp(now - PANE_WINDOW_SECS);
     merge_rows(&[
         read(&["list", "--limit", "0", "--json"]),
-        read(&["list", "--status", "closed", "--closed-after", &since, "--limit", "0", "--json"]),
+        read(&["list", "--all", "--closed-after", &since, "--limit", "100000", "--json"]),
     ])
 }
 
 fn history_fetch(read: &dyn Fn(&[&str]) -> Option<String>) -> Option<String> {
-    merge_rows(&[read(&["list", "--limit", "0", "--json"]), read(&["list", "--status", "closed", "--limit", "100000", "--json"])])
+    merge_rows(&[read(&["list", "--limit", "0", "--json"]), read(&["list", "--all", "--limit", "100000", "--json"])])
 }
 
 fn read_json(args: &[&str]) -> Option<String> {
