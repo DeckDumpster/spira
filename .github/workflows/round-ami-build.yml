@@ -93,7 +93,7 @@ jobs:
 
           toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
           cmds="$(jq -nc --arg b "${{ vars.ROUND_AMI_STAGING_BUCKET }}" --arg r "${{ github.run_id }}" --arg t "$toolchain" \
-            '{commands:["set -euo pipefail","mkdir -p /root/tree && cd /root/tree","aws s3 cp s3://\($b)/round-ami/\($r).tgz - | tar -xz","bash round-vm/ami-setup.sh /root/tree \($t) /root/.cargo"]}')"
+            -f round-vm/ssm-commands.jq)"
           cid="$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript \
             --timeout-seconds 3600 --parameters "$cmds" --query Command.CommandId --output text)"
           for _ in $(seq 1 240); do
