@@ -29,7 +29,7 @@ lcb() {
 
 echo; echo "refusals — no destination, same disk:"
 URL="" lcb run >/dev/null; wantrc "run with no destination refuses" 1 $?
-out="$(URL="" lcb age)"; rc=$?; wantrc "age with no destination is red" 1 $?; want "age names the gap" no-destination "$out"
+out="$(URL="" lcb age)"; rc=$?; wantrc "age with no destination is red" 1 $rc; want "age names the gap" no-destination "$out"
 out="$(LOCALOK=0 lcb run)"; rc=$?; wantrc "same-disk file:// destination refused" 1 $rc; want "refusal names the exit" ALLOW_LOCAL "$out"
 
 echo; echo "age — stale and fresh fixtures:"
@@ -43,9 +43,9 @@ rm -f "$RUN/lc-backup.ok"
 
 echo; echo "run, then drill — uncommitted rows are carried, counts identical:"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (4)" )
-out="$(lcb run)"; wantrc "run succeeds" 0 $?; want "run reports the sync" synced "$out"
+out="$(lcb run)"; rc=$?; echo "# DBG run: $out"; wantrc "run succeeds" 0 $rc; want "run reports the sync" synced "$out"
 lcb age >/dev/null; wantrc "age green after run" 0 $?
-out="$(lcb drill)"; rc=$?; wantrc "drill ok on identical stores" 0 $rc; want "drill reports tables" "2 table(s) identical" "$out"
+out="$(lcb drill)"; rc=$?; echo "# DBG drill: $out"; wantrc "drill ok on identical stores" 0 $rc; want "drill reports tables" "2 table(s) identical" "$out"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (5)" && dolt sql -q "CALL DOLT_COMMIT('-Am','later')" >/dev/null )
 lcb drill >/dev/null; wantrc "drill compares AS OF the backed-up commit, so later live writes are not drift" 0 $?
 
