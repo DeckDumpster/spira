@@ -43,16 +43,48 @@ rm -f "$RUN/lc-backup.ok"
 
 echo; echo "run, then drill — uncommitted rows are carried, counts identical:"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (4)" )
-out="$(lcb run)"; rc=$?; wantrc "run succeeds" 0 $rc; want "run reports the sync" synced "$out"
+out="$(lcb run)"; rc=$?; wantrc "run succeeds" 0 $rc; want "run reports the upload" uploaded "$out"
+obj="$(ls "$DEST"/spira_lifecycle/*.tar.zst 2>/dev/null | head -1)"
+[ -s "$obj" ] && ok "one tar.zst object lands under <db>/<stamp>" || bad "one tar.zst object lands under <db>/<stamp>"
 lcb age >/dev/null; wantrc "age green after run" 0 $?
 out="$(lcb drill)"; rc=$?; wantrc "drill ok on identical stores" 0 $rc; want "drill reports tables" "2 table(s) identical" "$out"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (5)" && dolt sql -q "CALL DOLT_COMMIT('-Am','later')" >/dev/null )
 lcb drill >/dev/null; wantrc "drill compares AS OF the backed-up commit, so later live writes are not drift" 0 $?
+lcb drill "$obj" >/dev/null; wantrc "drill restores a given object" 0 $?
 
-echo; echo "drill — positive control: a destination that disagrees is red:"
-rm -rf "$DEST"/*; mkdir -p "$TMP/other" && ( cd "$TMP/other" && mkdir spira_lifecycle && cd spira_lifecycle && dolt init >/dev/null \
-    && dolt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); CALL DOLT_COMMIT('-Am','x')" >/dev/null && dolt sql -q "CALL DOLT_BACKUP('sync-url','file://$DEST')" >/dev/null )
-out="$(lcb drill)"; rc=$?; wantrc "drill red when the destination holds another store" 1 $rc; want "drill names the head mismatch" "stamped head" "$out"
+echo; echo "drill — positive control: a snapshot of another store is red:"
+mkdir -p "$TMP/other" && ( cd "$TMP/other" && mkdir spira_lifecycle snap && cd spira_lifecycle && dolt init >/dev/null \
+    && dolt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); CALL DOLT_COMMIT('-Am','x')" >/dev/null && dolt sql -q "CALL DOLT_BACKUP('sync-url','file://$TMP/other/snap')" >/dev/null \
+    && tar -C "$TMP/other/snap" -cf - . | zstd -q -o "$TMP/other.tar.zst" )
+out="$(lcb drill "$TMP/other.tar.zst")"; rc=$?; wantrc "drill red on another store's snapshot" 1 $rc; want "drill names the head mismatch" "stamped head" "$out"
+
+echo; echo "s3 — one signed PUT, no read verbs:"
+cat > "$TMP/sink.py" <<'PYEOF'
+import http.server, sys
+log = sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def _rec(self):
+        n = int(self.headers.get("Content-Length", 0)); self.rfile.read(n)
+        open(log, "a").write("%s %s %s %s\n" % (self.command, self.path, (self.headers.get("Authorization") or "")[:16], self.headers.get("x-amz-server-side-encryption")))
+        self.send_response(200); self.send_header("Content-Length", "0"); self.end_headers()
+    do_PUT = do_GET = do_DELETE = do_HEAD = _rec
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(str(srv.server_port))
+srv.serve_forever()
+PYEOF
+python3 "$TMP/sink.py" "$TMP/port" "$TMP/reqs" & SINK=$!
+trap 'kill $SINK 2>/dev/null; rm -rf "$TMP"' EXIT
+for _ in $(seq 50); do [ -s "$TMP/port" ] && break; sleep 0.1; done
+export AWS_ACCESS_KEY_ID=AKTEST AWS_SECRET_ACCESS_KEY=sk AWS_DEFAULT_REGION=us-west-2 AWS_ENDPOINT_URL_S3="http://127.0.0.1:$(cat "$TMP/port")"
+rm -f "$RUN/lc-backup.ok"
+out="$(URL="s3://bkt/spira/" lcb run)"; rc=$?; wantrc "s3 run succeeds" 0 $rc
+[ "$(wc -l < "$TMP/reqs")" = 1 ] && ok "exactly one request" || bad "exactly one request"
+grep -q '^PUT /bkt/spira/spira_lifecycle/[0-9TZ]*\.tar\.zst AWS4-HMAC-SHA25 AES256$' "$TMP/reqs" && ok "signed PUT of <prefix><db>/<stamp>.tar.zst with SSE" || bad "signed PUT shape: $(cat "$TMP/reqs")"
+lcb age >/dev/null; wantrc "age green after s3 run" 0 $?
+rm -f "$RUN/lc-backup.ok"; out="$(unset AWS_SECRET_ACCESS_KEY; URL="s3://bkt/spira/" lcb run)"; rc=$?
+wantrc "s3 run without credentials fails" 1 $rc
+[ ! -e "$RUN/lc-backup.ok" ] && ok "failed upload writes no stamp" || bad "failed upload writes no stamp"
 
 echo; echo "units and rows:"
 grep -q '^ExecStart=@SPIRA_HOME@/lc-backup.sh run' "$HERE/../systemd/lc-backup.service" && ok "service runs the backup" || bad "service runs the backup"
