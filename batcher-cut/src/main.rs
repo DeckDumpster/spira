@@ -219,7 +219,8 @@ fn cut(o: &Opts) -> Result<(), String> {
         return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name));
     };
 
-    let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(io::certified_pool(&env_, &repo)?));
+    let screened = screen::cut_pool(io::certified_pool(&env_, &repo)?, &io::sifted_tips(&env_)?);
+    let (pool, kind) = batcher::core::select_round(batcher::core::base_fix_lane(screened));
     let (pool, refused) = batcher::core::refuse_blocked(pool);
     for r in &refused {
         println!("batcher {}: {r}", repo.name);
@@ -228,7 +229,6 @@ fn cut(o: &Opts) -> Result<(), String> {
         println!("batcher {}: feature round {root} ({} members)", repo.name, pool.len());
     }
     let open = io::read_open_batch(&env_, &repo.name)?;
-    let pool = screen::cut_pool(pool, &io::sifted_tips(&env_)?);
 
     if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
         return Ok(());
