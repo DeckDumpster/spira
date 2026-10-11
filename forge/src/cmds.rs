@@ -777,13 +777,20 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
 }
 
 /// `job / step` of the first in-progress job, the step omitted when none is running yet.
+const GH_STATE_KEY: &str = "status";
+const GH_RUNNING: &str = "in_progress";
+
+fn gh_running(v: &Value) -> bool {
+    jstr(v, GH_STATE_KEY).as_deref() == Some(GH_RUNNING)
+}
+
 fn running_step(jobs: &[Value]) -> Option<String> {
-    let job = jobs.iter().find(|j| jstr(j, "status").as_deref() == Some("in_progress"))?;
+    let job = jobs.iter().find(|j| gh_running(j))?;
     let name = jstr(job, "name").filter(|n| !n.is_empty())?;
     let step = job
         .get("steps")
         .and_then(Value::as_array)
-        .and_then(|ss| ss.iter().find(|s| jstr(s, "status").as_deref() == Some("in_progress")))
+        .and_then(|ss| ss.iter().find(|s| gh_running(s)))
         .and_then(|s| jstr(s, "name"));
     Some(match step {
         Some(s) => format!("{name} / {s}"),
