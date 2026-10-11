@@ -880,10 +880,18 @@ pub fn lc_gate_red(env: &Env, id: &str, tip: &str, reason: &str) -> Result<(), S
 
 /// Records the screen's pass for `tip`; the machine refuses it unless `id` is still SUBMITTED or
 /// CERTIFIED at that tip.
+fn sifted_accepts(state: &str) -> bool {
+    matches!(state, "SUBMITTED" | "CERTIFIED")
+}
+
 pub fn lc_sifted(env: &Env, id: &str, tip: &str) -> Result<(), String> {
     let v: serde_json::Value = serde_json::from_str(&lcq(env, &["show", id])?).map_err(|e| format!("show: unparsed reply: {e}"))?;
     let bead = v.get("bead").cloned().unwrap_or_default();
     let state = bead.get("state").and_then(|s| s.as_str()).unwrap_or("");
+    if !sifted_accepts(state) {
+        println!("batcher: sift: {id} is {state}, not screened at {tip}; no pass recorded");
+        return Ok(());
+    }
     let version = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).ok_or("show: no version")?;
     let kind = serde_json::json!({"Sifted": {"tip": tip}}).to_string();
     lcq(env, &["event", "bead", id, "--expect", state, "--version", &version.to_string(), "--actor", "sift", "--kind", &kind]).map(|_| ())
@@ -2566,6 +2574,17 @@ mod certify_tests {
         assert_eq!(utc_stamp(0), "19700101T000000Z");
         assert_eq!(utc_stamp(951782400), "20000229T000000Z");
         let _ = fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod sifted_state_tests {
+    use super::sifted_accepts;
+
+    #[test]
+    fn a_pass_is_recorded_only_where_the_machine_accepts_it() {
+        assert!(sifted_accepts("SUBMITTED") && sifted_accepts("CERTIFIED"));
+        assert!(!sifted_accepts("REWORK") && !sifted_accepts(""));
     }
 }
 
