@@ -450,11 +450,12 @@ fn machine_mode_unreachable_machine_is_cannot_tell() {
     // Unreachable by construction: no spira-lc on PATH. Inheriting the caller's PATH and
     // SPIRA_LC_* reached the production store from the gate and passed only while it was slow.
     let no_lc = testkit::TempDir::new("spira-claim-no-lc");
+    let path = format!("{}:/usr/bin:/bin", no_lc.path().to_str().unwrap());
     let o = run_cfg(
         &["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs],
         &ready,
         &[],
-        &[("PATH", Some(no_lc.path().to_str().unwrap()))],
+        &[("PATH", Some(path.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
     assert!(o.err.contains("the machine must answer"), "{}", o.err);
