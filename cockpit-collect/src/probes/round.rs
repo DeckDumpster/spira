@@ -43,6 +43,7 @@ pub struct Progress {
 
 pub struct Batch {
     pub id: String,
+    pub repo: String,
     pub progress: Option<Progress>,
     pub state: String,
     pub reason: String,
@@ -103,6 +104,7 @@ pub fn parse_batches(raw: &str) -> Option<Vec<Batch>> {
         rows.iter()
             .map(|r| Batch {
                 id: text(r, "batch_id"),
+                repo: text(r, "repo"),
                 progress: r.get("progress").and_then(progress_of),
                 state: text(r, "state"),
                 reason: text(r, "reason"),
