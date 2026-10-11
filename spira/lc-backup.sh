@@ -40,7 +40,7 @@ _lcb_refuse_unconfigured() {
 _lcb_refuse_same_disk() {
     local path dev_dest dev_data
     case "$SPIRA_LC_BACKUP_URL" in file://*) path="${SPIRA_LC_BACKUP_URL#file://}" ;; *) return 0 ;; esac
-    [ "$SPIRA_LC_BACKUP_ALLOW_LOCAL" = 1 ] && return 0
+    case "$SPIRA_LC_BACKUP_ALLOW_LOCAL" in 1|true|yes|on) return 0 ;; esac
     mkdir -p "$path" 2>/dev/null
     dev_dest="$(stat -c %d "$path" 2>/dev/null)"
     dev_data="$(stat -c %d "$SPIRA_DOLT_DATA" 2>/dev/null)"

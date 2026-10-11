@@ -43,7 +43,7 @@ rm -f "$RUN/lc-backup.ok"
 
 echo; echo "run, then drill — uncommitted rows are carried, counts identical:"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (4)" )
-out="$(lcb run)"; rc=$?; wantrc "run succeeds [$(echo $out | tr -d "\n" | cut -c1-400)]" 0 $rc; want "run reports the sync" synced "$out"
+out="$(lcb run)"; rc=$?; wantrc "run succeeds" 0 $rc; want "run reports the sync" synced "$out"
 lcb age >/dev/null; wantrc "age green after run" 0 $?
 out="$(lcb drill)"; rc=$?; wantrc "drill ok on identical stores" 0 $rc; want "drill reports tables" "2 table(s) identical" "$out"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (5)" && dolt sql -q "CALL DOLT_COMMIT('-Am','later')" >/dev/null )
