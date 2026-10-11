@@ -484,6 +484,7 @@ struct FLc {
     certify_refused: Cell<bool>,
     land_refused: Cell<Option<&'static str>>,
     promote_refused: Cell<Option<&'static str>>,
+    cut_refused: Cell<Option<&'static str>>,
     /// Per-batch answers to `show-batch`, ahead of `batch_view`.
     batch_states: RefCell<BTreeMap<String, (String, String)>>,
     /// Reads of `show-batch` that fail once the release is activated (the store restarting).
@@ -509,7 +510,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), down_for: Cell::new(0), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
+        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), down_for: Cell::new(0), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -557,6 +558,9 @@ impl Lc for FLc {
     }
     fn cut(&self, id: &str, _: &str, _: &str, _: &str, members: &str, _: &str) -> Result<String, (i32, String)> {
         self.calls.borrow_mut().push(format!("cut {id} {members}"));
+        if let Some(why) = self.cut_refused.get() {
+            return Err((3, why.into()));
+        }
         self.batch_view.borrow_mut().get_or_insert(("OPEN".into(), 1, 0, String::new()));
         Ok("1".into())
     }
@@ -1436,6 +1440,22 @@ fn open_batch_with_lifecycle_on_cuts_on_spira_lc_and_records_the_batch_id() {
     assert!(calls.contains(&"create-bead sp-a".to_string()));
     assert!(calls.contains(&"cut spira-20260929T010203Z sp-a:ta".to_string()));
     assert!(fs::read_to_string(t.qfile("open")).unwrap().ends_with("batch_id=spira-20260929T010203Z\nversion=1\n"));
+}
+
+#[test]
+fn open_batch_refused_cut_opens_no_pr_and_leaves_no_state() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
+    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.lc.cut_refused.set(Some("refused: sp-b is REWORK not SUBMITTED or CERTIFIED"));
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
+    assert!(t.err().contains("spira-lc cut refused"), "{}", t.err());
+    assert!(!t.out().contains("opened"), "{}", t.out());
+    assert!(!t.qfile("open").exists());
+    assert!(t.git.calls.borrow().iter().any(|c| c == "branch -D spira/queue/20260929T010203Z"));
+    assert!(!t.git.calls.borrow().iter().any(|c| c.starts_with("push")), "{:?}", t.git.calls.borrow());
 }
 
 #[test]

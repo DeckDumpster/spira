@@ -481,8 +481,26 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             return FAIL;
         }
     }
+    let lc_id = format!("{name}-{stamp}");
+    let csv = members.iter().map(Member::render).collect::<Vec<_>>().join(",");
+    for m in &members {
+        w.lc.create_bead(&m.id);
+    }
+    let version = match w.lc.cut(&lc_id, &name, &head, &base_sha, &csv, "queue.sh") {
+        Ok(v) => v,
+        Err((rc, out)) => {
+            w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"));
+            w.git.branch_delete(&path, &batch_br);
+            return FAIL;
+        }
+    };
+    let undo = |why: &str| {
+        let _ = lc_cas(w, &lc_id, |s, v| w.lc.abandon_batch(&lc_id, s, v, "queue.sh", why));
+        w.git.branch_delete(&path, &batch_br);
+    };
     if !w.lib.push(&path, &remote, &format!("{head}:refs/heads/{batch_br}")) {
         w.err(format!("queue.sh open-batch: could not push {batch_br}"));
+        undo("open-batch could not push the batch branch");
         return FAIL;
     }
     let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
@@ -497,10 +515,12 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     let title = format!("queue: {} beads for {name}", members.len());
     let Some(pr) = w.forge.pr_create(&c.s.forge, &path, &batch_br, &base_branch, &title, body.trim_end_matches('\n')) else {
         w.err(format!("queue.sh open-batch: forge pr-create failed for {batch_br}"));
+        undo("open-batch could not open the PR");
         return FAIL;
     };
     if pr.is_empty() {
         w.err(format!("queue.sh open-batch: forge returned no PR number for {batch_br}"));
+        undo("open-batch got no PR number");
         return FAIL;
     }
     let opened = w.clock.now();
@@ -518,23 +538,14 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     }
     if let Err(e) = write_atomic(&open, &rec.render()) {
         w.err(format!("queue.sh open-batch: {e}"));
+        undo("open-batch could not write the open record");
         return FAIL;
     }
-
-    let lc_id = format!("{name}-{stamp}");
-    let csv = members.iter().map(Member::render).collect::<Vec<_>>().join(",");
-    for m in &members {
-        w.lc.create_bead(&m.id);
-    }
-    match w.lc.cut(&lc_id, &name, &head, &base_sha, &csv, "queue.sh") {
-        Ok(version) if !version.is_empty() => {
-            rec.push("batch_id", &lc_id);
-            rec.push("version", &version);
-            let _ = write_atomic(&open, &rec.render());
-            w.out(format!("queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"));
-        }
-        Ok(_) => {}
-        Err((rc, out)) => w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out}")),
+    if !version.is_empty() {
+        rec.push("batch_id", &lc_id);
+        rec.push("version", &version);
+        let _ = write_atomic(&open, &rec.render());
+        w.out(format!("queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"));
     }
     let _ = fs::remove_file(c.s.run.join(format!("queue-stuck-{name}")));
     landing_log(&c.s.run, &format!("QUEUE BATCH {opened} repo={name} members={} gate_seconds=0 verdict=green source=open-batch", members.len()));
