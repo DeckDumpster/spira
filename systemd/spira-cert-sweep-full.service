@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 Description=Spira cert-sweep (full) — certify the landing ref's tip: every suite on the round VM
 Documentation=file://@SPIRA_PROD_ROOT@/cert-sweep/DESIGN.md
 After=default.target

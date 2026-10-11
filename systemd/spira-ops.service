@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # The Ops persona's TIMER trigger. The timer path runs a beadless sweep: Ops reads the
 # watchtower snapshot, runs the scans on its menu, and files beads for anything that needs
 # attention. Incident claims arrive from the sentinel, which summons Ops directly when an

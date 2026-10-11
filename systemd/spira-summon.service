@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # The fast path: CHECK 7 alone, so a slot an exiting aeon just freed refills in seconds
 # rather than waiting for spira-sentinel's own 2-minute pass. Also fired directly by every
 # aeon unit's own ExecStopPost (sp-0y2av); this timer is the fallback cadence between exits.

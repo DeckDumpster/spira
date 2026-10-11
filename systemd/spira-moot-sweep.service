@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # Auto-resolve asks that have a MOOT-WHEN predicate and whose predicate now exits 0.
 # Runs with --apply so resolution is real, not just reported.
 # A predicate that errors or times out is treated as "still live", so a broken probe

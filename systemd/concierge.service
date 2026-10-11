@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # The concierge is the phone's only way in; "always available" is the whole property.
 # `concierge.sh start` is idempotent and backgrounds a tmux server, so systemd cannot
 # supervise it as a main process — this is an ensure on a timer, replacing the cron

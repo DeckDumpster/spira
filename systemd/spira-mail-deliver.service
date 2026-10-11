@@ -1,11 +1,13 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 Description=Spira mail delivery daemon — wake registered readers on new mail
 Documentation=file://@SPIRA_HOME@/spira-mail-deliver.sh
 After=default.target
-# Restart bounds: five restarts over 120s before giving up.  inotifywait exits
+# Restart bounds: five restarts over 300s before giving up.  inotifywait exits
 # immediately if the watch path is missing; the daemon recreates it before
 # exec so ordinary restarts do not count toward the limit.
-StartLimitIntervalSec=120
+StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
@@ -20,7 +22,7 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/b
 Type=simple
 ExecStart=@SPIRA_PROD@/spira-mail-deliver.sh
 Restart=always
-RestartSec=15
+RestartSec=30
 # A halt's SIGTERM exits 143; without this the unit lands 'failed', not 'inactive'.
 SuccessExitStatus=143
 # Same path watchd.sh's own _wd_logfile computes for an `extern` row: @SPIRA_RUN@/watchd/%name%.log.

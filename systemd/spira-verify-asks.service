@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # Close asks whose VERIFY check already exits 0 — the operator satisfied them and
 # forgot to tick, or a tool completed the work without filing a close.
 # Runs with --apply so closure is real. Each VERIFY command runs under a 120-second

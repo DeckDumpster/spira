@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # Self-heal for the cockpit. Was documented as depending on a session-scoped watcher,
 # which is precisely what dies when a session is interrupted — on 2026-09-01 the health
 # pane exited and nothing brought it back, while every liveness check stayed green.

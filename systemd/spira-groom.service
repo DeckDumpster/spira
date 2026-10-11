@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # The Groomer persona's TIMER trigger. The timer path files a trigger bead carrying
 # SPIRA_GROOMER_LABEL; the sentinel detects the bead and summons a groomer aeon to
 # claim it. This service does not run the groomer — it only ensures the trigger bead

@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # The Maechen persona's TIMER trigger. The timer path evaluates two trigger conditions
 # — a landing count and a time gap — against a shared watermark, then files a sweep
 # bead carrying SPIRA_MAECHEN_LABEL. The sentinel detects the bead and summons a

@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # sccache-dav (sp-xjnzl): the box's shared compilation cache, over WebDAV, reachable from
 # this host's own builds AND every ephemeral round-vm — not a VM-local cache, not Redis
 # (disk-backed, and it must not compete with the agents' own RAM).

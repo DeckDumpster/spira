@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # Pushes Spira's beads database to its configured Dolt remote. make-beads-repo.sh wired
 # real private GitHub remotes and then nothing ever pushed again — three databases last
 # received data on 2026-09-02 within 36 seconds of each other, the signature of a one-shot

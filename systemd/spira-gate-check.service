@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # Evaluate open gh:run gates and resolve those whose CI run has passed.
 #
 # WHY THIS IS NOT PART OF THE SENTINEL. The sentinel runs once every two minutes and
