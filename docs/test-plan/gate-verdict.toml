@@ -71,6 +71,11 @@ id = "UC-gate-verdict-10"
 tier = "T2"
 statement = "The gate command receives the env contract: `SPIRA_GATE_BRANCH`, `_BASE`, `_SELECT_HEAD` (= the branch on *both* trials), `_FILES`, `_HOST_CORES` (= `host_cores()`, not `nproc`), `_EJECTED_SUITES`, `_SUITES`."
 
+[use_case.uncovered]
+reason = "suites test-gate-verdict.sh and test-gate-base-evidence.sh retired (sp-k8z731, test-triage family J); behaviour now verified by gate::tests::both_trials_see_the_same_env_contract"
+date = "2026-10-11"
+bead = "sp-k8z731"
+
 [[use_case]]
 id = "UC-gate-verdict-11"
 tier = "T1"
@@ -81,20 +86,40 @@ id = "UC-gate-verdict-12"
 tier = "T1"
 statement = "Base-trial attribution. Branch red and base green gives FAIL `branch-red`. The same suite red on both gives BASE_FAIL `base-red`, naming the suite and carrying the base output. Base reds that are all timeouts give NO_VERDICT `base-timeout`. Genuine reds plus timeouts give BASE_FAIL. Suites red only on the branch give FAIL even when the base is red elsewhere. An unnamed red on both gives `suite=-`. A base trial that exits 75/124 or cannot check out gives NO_VERDICT `base-untestable`."
 
+[use_case.uncovered]
+reason = "suites test-gate-verdict.sh and test-gate-base-evidence.sh retired (sp-k8z731, test-triage family J); behaviour now verified by gate::tests::an_inherited_red_carries_the_bases_own_output, a_base_with_reds_and_timeouts_inherits_the_shared_red, an_unnamed_red_on_both_trials_is_the_bases_with_no_suite, a_base_trial_that_reports_a_harness_fault_is_no_verdict_not_base_fail, a_base_that_only_timed_out_proves_nothing"
+date = "2026-10-11"
+bead = "sp-k8z731"
+
 [[use_case]]
 id = "UC-gate-verdict-13"
 tier = "T2"
 statement = "A branch trial killed at `SPIRA_GATE_TIMEOUT` gives NO_VERDICT `timeout`, naming the budget and the command, and is not cached. A branch trial exiting 75 gives NO_VERDICT `harness-fault`. (sp-p4rl)"
+
+[use_case.uncovered]
+reason = "suites test-gate-verdict.sh and test-gate-base-evidence.sh retired (sp-k8z731, test-triage family J); behaviour now verified by gate::tests::a_timeout_names_its_budget_and_command_and_is_not_cached, a_harness_fault_is_never_cached_or_charged_to_the_base, a_container_death_found_only_at_the_deadline_keeps_its_real_cause"
+date = "2026-10-11"
+bead = "sp-k8z731"
 
 [[use_case]]
 id = "UC-gate-verdict-14"
 tier = "T2"
 statement = "A red verdict carries the command's full early diagnostics, not a `tail -20` window. A passing gate does not print them."
 
+[use_case.uncovered]
+reason = "suites test-gate-verdict.sh and test-gate-base-evidence.sh retired (sp-k8z731, test-triage family J); behaviour now verified by gate::tests::a_red_keeps_its_early_diagnostic_whole_and_a_pass_prints_none_of_it"
+date = "2026-10-11"
+bead = "sp-k8z731"
+
 [[use_case]]
 id = "UC-gate-verdict-15"
 tier = "T1"
 statement = "Verdict cache. The key is repo + tree + changed files + command + harness bytes (gate.sh, exclude.sh, skew.sh) + `SPIRA_GATE_SUITES`. Only PASS is cached. Reuse is metered `rc=0 cached`. A landing on the base does not invalidate an un-rebased branch. A restored command finds its old entry. A verdict older than `SPIRA_VERDICT_TTL` is refused, as is an entry without `at=` or a non-numeric TTL. (sp-0v8)"
+
+[use_case.uncovered]
+reason = "suites test-gate-verdict.sh and test-gate-base-evidence.sh retired (sp-k8z731, test-triage family J); behaviour now verified by gate::tests::a_pass_is_cached_under_the_merged_tree, a_fresh_cached_pass_skips_admission_and_the_trial, a_stale_cached_pass_runs_again, only_a_pass_is_cached, and gate::key::tests::every_input_moves_the_key, the_same_entry_is_reused_under_a_longer_ttl, an_old_or_unreadable_entry_is_stale"
+date = "2026-10-11"
+bead = "sp-k8z731"
 
 [[use_case]]
 id = "UC-gate-verdict-16"

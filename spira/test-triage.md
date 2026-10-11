@@ -163,11 +163,11 @@ migration bead per family from this table.
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-gate-verdict.sh | 49 | a gate computes its verdict once and reuses it only for the same question | unit | Cache-key rule. |
 | test-gate-tree.sh | 32 | the gate tree is locked per branch; same-branch serialise, different-branch run concurrently | keep | Needs real concurrent locks. |
-| test-gate-base-evidence.sh | 30 | a red base names its own red suites and excuses only those red on it too | unit | Already T1; wall is repeated gate invocations, not content. |
 | test-commit-cite.sh | 31 | the gate refuses a commit citing a nonexistent bead and never mistakes "store could not answer" for "exists" | unit | Two-valued lookup with an error state. |
 | test-statute-projection.sh | 44 | rule.sh: synth-failure propagation and the enact/retire/list/show set | keep | Real statute book; fixture is the cost. |
+
+Migrated (sp-k8z731): test-gate-verdict.sh (49 s) and test-gate-base-evidence.sh (30 s) moved to `cargo test -p gate` (whole crate 7.5 s warm, these tests sub-second). test-commit-cite.sh stays: the id extraction is `commit-cite.sh`'s grep -P over real `bd show`, not yet a Rust unit; the Rust gate tests hold only its exit-code mapping.
 
 ### K — bead tooling
 
