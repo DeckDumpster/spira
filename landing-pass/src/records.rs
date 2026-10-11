@@ -79,6 +79,7 @@ impl Files {
 
     /// A PASS clears the machinery-fault counters for this branch.
     pub fn clear_noverdict(&self, branch: &str) {
+        let _ = fs::remove_file(self.backoff_file(branch));
         let key = branch_key(branch);
         if let Ok(rd) = fs::read_dir(self.run.join("noverdict")) {
             for e in rd.flatten() {
@@ -87,6 +88,24 @@ impl Files {
                 }
             }
         }
+    }
+
+    fn backoff_file(&self, branch: &str) -> PathBuf {
+        self.run.join("gate-backoff").join(branch_key(branch))
+    }
+
+    /// Note that the gate could not judge `branch` at `tip` for want of the host's room.
+    pub fn back_off(&self, branch: &str, tip: &str, now: u64) {
+        let _ = fs::create_dir_all(self.run.join("gate-backoff"));
+        let _ = atomic_write(&self.backoff_file(branch), &format!("{tip}\n{now}\n"));
+    }
+
+    /// True while `window` seconds have not passed since [`Files::back_off`] for this very tip.
+    pub fn backing_off(&self, branch: &str, tip: &str, now: u64, window: i64) -> bool {
+        let Ok(t) = fs::read_to_string(self.backoff_file(branch)) else { return false };
+        let mut l = t.lines();
+        let (Some(was), Some(at)) = (l.next(), l.next().and_then(|n| n.parse::<u64>().ok())) else { return false };
+        was == tip && (now.saturating_sub(at) as i64) < window
     }
 
     pub fn write_status(&self, st: &StatusFile) {
@@ -190,5 +209,23 @@ mod deferred_tests {
         fs::create_dir_all(f.deferred_dir()).unwrap();
         fs::write(f.deferred_dir().join("spira_sp-a"), "4\n").unwrap();
         assert_eq!(f.bump_deferred("spira/sp-a", "spira", 9), 5);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_backed_off_tip_waits_out_its_window_and_a_moved_tip_does_not() {
+        let d = crate::testutil::tmpdir("backoff");
+        let f = Files::new(&d);
+        assert!(!f.backing_off("spira/sp-a", "t1", 100, 300));
+        f.back_off("spira/sp-a", "t1", 100);
+        assert!(f.backing_off("spira/sp-a", "t1", 399, 300));
+        assert!(!f.backing_off("spira/sp-a", "t1", 400, 300));
+        assert!(!f.backing_off("spira/sp-a", "t2", 150, 300));
+        f.clear_noverdict("spira/sp-a");
+        assert!(!f.backing_off("spira/sp-a", "t1", 150, 300));
     }
 }

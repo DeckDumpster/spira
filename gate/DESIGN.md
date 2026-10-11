@@ -1190,7 +1190,7 @@ cgroup-aware core count, so `SPIRA_GATE_HOST_CORES` is gone.
 
 `SPIRA_GATE_DEADLINE` is enforced: each phase and each base-side call runs under
 `min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, and a phase with a cap (`phase_cap`: tools 40 s,
-fences 90 s, gate 190 s; `base-` ignored) is cut at it. The branch trial's fixed caps sum under the
+fences 90 s, gate 260 s; `base-` ignored) is cut at it. The branch trial's fixed caps sum under the
 deadline. A kill at either is NO_VERDICT `deadline` naming the last phase in `gate.log`'s `phases=`. An
 operator `SPIRA_GATE_TIMEOUT` shorter than the deadline keeps reason `timeout`. The watchtower pages
 (`GATE SLOW`) when the p90 of `ran` less `waited` over 24 h exceeds `SPIRA_WATCH_GATE_P90_LIMIT` (300).

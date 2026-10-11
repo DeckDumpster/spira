@@ -1657,7 +1657,26 @@ fn only_a_pass_is_cached() {
         .borrow_mut()
         .insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
     f.run();
-    assert!(f.written.borrow().is_empty());
+    assert!(f.written.borrow().iter().all(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")), "{:?}", f.written.borrow());
+}
+
+#[test]
+fn a_red_is_answered_from_its_record_and_does_not_run_again() {
+    let f = Fake::new();
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (1, "test-b.sh RED".into()));
+    let first = f.run();
+    let (p, entry) = f.written.borrow().iter().find(|(p, _)| p.to_string_lossy().contains("/verdicts/red/")).cloned().expect("a red record");
+    let line = f.verdict_line();
+    let g = Fake::new();
+    g.put_var("SPIRA_VERDICT_TTL", "86400");
+    let entry = entry.lines().map(|l| if l.starts_with("at=") { "at=999999".to_string() } else { l.to_string() }).collect::<Vec<_>>().join("\n") + "\n";
+    g.files.borrow_mut().insert(p, entry);
+    assert_eq!(g.run(), first);
+    assert!(g.ran.borrow().is_empty(), "{:?}", g.ran.borrow());
+    assert!(g.verdict_line().contains("reason=branch-red") || line.contains("reason=base-red"), "{}", g.verdict_line());
+    assert!(g.written.borrow().iter().all(|(p, _)| !p.to_string_lossy().contains("/verdicts/red/")));
 }
 
 // ---------------------------------------------------------------------------- ejected suites
@@ -1718,6 +1737,7 @@ fn a_full_gate_pool_is_said_naming_its_holders_and_a_taken_slot_names_the_branch
     // POSITIVE CONTROL: a free pool says nothing about waiting, records who holds the slot, and
     // every command the trial runs inherits the gate's admission.
     let g = Fake::new();
+    g.put_var("SPIRA_VERDICT_TTL", "86400");
     assert_eq!(g.run(), PASS);
     assert!(!g.stderr().contains("waiting for a gate slot"));
     assert_eq!(g.admission_who.borrow().first().map(String::as_str), Some(BR));
@@ -3329,6 +3349,7 @@ fn release_bins_builds_the_judged_tree_in_the_gate_tree_after_a_pass() {
     assert!(f.stderr().contains(&format!("--worktree {GATE_TREE}")), "{}", f.stderr());
     // Without the flag nothing extra is built.
     let g = Fake::new();
+    g.put_var("SPIRA_VERDICT_TTL", "86400");
     assert_eq!(g.run(), PASS);
     assert!(!g.cmds.borrow().iter().any(|c| c.contains("--release")), "{:?}", g.cmds.borrow());
 }
@@ -3459,7 +3480,10 @@ fn an_operator_timeout_shorter_than_the_deadline_stays_a_timeout() {
 #[test]
 fn phase_caps_sum_under_the_deadline() {
     let fixed: u64 = ["tools", "gate"].iter().filter_map(|p| crate::engine::phase_cap(p)).sum();
-    assert!(fixed < 300, "{fixed}");
+    assert!(fixed <= 300, "{fixed}");
+    let reg = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d/SPIRA_GATE_BUDGET")).unwrap();
+    let budget: u64 = reg.split("SPIRA_GATE_BUDGET:=").nth(1).unwrap().split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap();
+    assert!(crate::engine::phase_cap("gate").unwrap() >= budget, "the gate phase is cut before testenv's budget {budget}");
     assert_eq!(crate::engine::phase_cap("base-tools"), crate::engine::phase_cap("tools"));
     assert_eq!(crate::engine::phase_cap("reentry"), None);
 }

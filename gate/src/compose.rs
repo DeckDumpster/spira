@@ -628,10 +628,11 @@ pub fn unproven(out: &str, required: &[String]) -> Vec<String> {
 /// The re-entry phase's command: exactly `suites`, by name, through the suite runner the
 /// gate string uses, on the revision under test, with **no `--deadline`** — the round named
 /// them, so a budget must not cut them (`SPIRA_GATE_TIMEOUT` still bounds the phase). The
+/// runner is the tree's own when its definition declares one, as in `engine::base_rerun_cmd`. The
 /// runner's harness faults (2, 3) are NO_VERDICT (75), as in the gate string.
 pub fn reentry_command(suites: &[String]) -> String {
     format!(
-        "_b=0; testenv --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
+        "_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {} \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
         suites.join(",")
     )
 }
@@ -1163,13 +1164,15 @@ cargo: test tests::x ... ok";
         let c = reentry_command(&v(&["test-a.sh", "test-b.sh"]));
         assert!(
             c.contains(
-                "testenv --suites test-a.sh,test-b.sh \"$SPIRA_GATE_BRANCH\""
+                "--suites test-a.sh,test-b.sh \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\""
             ),
             "{c}"
         );
         assert!(!c.contains("--deadline"));
         assert!(c.contains("2|3|127) exit 75"), "a testenv missing from PATH (127) is NO_VERDICT");
-        assert!(!c.contains("SPIRA_TESTENV_BIN"), "testenv by bare name (sp-gypjk)");
+        let bin = "\"${SPIRA_TESTENV_BIN:-testenv}\" --suites";
+        assert!(c.contains(bin), "{c}");
+        assert!(crate::engine::base_rerun_cmd(&v(&["test-a.sh"])).contains(bin), "the re-entry and the base re-run invoke one binary");
     }
 
     #[test]

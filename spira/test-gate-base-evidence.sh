@@ -18,10 +18,12 @@ gate_fixture_branch "$BR" f1.txt one
 # below is a fresh call: a red verdict removes the worktree (UC-gate-verdict-18), so the one
 # fixture from gate_fixture_init is safe to reuse across cases rather than rebuilding a
 # remote-plus-clone per case (docs/test-plan/gate-verdict.md section 4 cluster 2).
+CASEF="$TMP/case"; : > "$CASEF"
 gate_with() {
+    echo x >> "$CASEF"; CASE="$(wc -l < "$CASEF" | tr -d ' ')"
     printf '%s\n' "$1" > "$TMP/at-branch"; printf '%s\n' "$2" > "$TMP/at-base"
     printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" \
-        "if [ \"\$SPIRA_GATE_BRANCH\" = \"$BR\" ]; then cat $TMP/at-branch; else cat $TMP/at-base; fi; exit 1" > "$MAP"
+        ": case-$CASE; if [ \"\$SPIRA_GATE_BRANCH\" = \"$BR\" ]; then cat $TMP/at-branch; else cat $TMP/at-base; fi; exit 1" > "$MAP"
     gate_fixture_run "$BR" repo SPIRA_VERDICT_TTL=600
 }
 
