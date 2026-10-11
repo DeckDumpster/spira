@@ -672,6 +672,7 @@ jobs:
         # Runs whether or not the Suites step succeeded so a failed run always has output.
         if: always()
         env:
+          SPIRA_TOML: ${{ runner.temp }}/ci-config.toml
           SPIRA_BATCH_TAIL_LINES: ${{ vars.SPIRA_BATCH_TAIL_LINES || 50 }}
         run: |
           batch="$RUNNER_TEMP/batch"
