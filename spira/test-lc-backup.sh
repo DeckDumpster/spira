@@ -75,7 +75,8 @@ srv.serve_forever()
 PYEOF
 python3 "$TMP/sink.py" "$TMP/port" "$TMP/reqs" & SINK=$!
 trap 'kill $SINK 2>/dev/null; rm -rf "$TMP"' EXIT
-for _ in $(seq 50); do [ -s "$TMP/port" ] && break; sleep 0.1; done
+for _ in $(seq 300); do [ -s "$TMP/port" ] && break; sleep 0.1; done
+[ -s "$TMP/port" ] || bail "s3 sink did not start"
 export AWS_ACCESS_KEY_ID=AKTEST AWS_SECRET_ACCESS_KEY=sk AWS_DEFAULT_REGION=us-west-2 AWS_ENDPOINT_URL_S3="http://127.0.0.1:$(cat "$TMP/port")"
 rm -f "$RUN/lc-backup.ok"
 out="$(URL="s3://bkt/spira/" lcb run)"; rc=$?; wantrc "s3 run succeeds" 0 $rc; [ $rc = 0 ] || bad "s3 run output: ${out//$'\n'/ | }"
