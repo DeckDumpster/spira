@@ -307,7 +307,8 @@ pub fn resolve_conf(world: &Path, epoch: u64) -> Result<(), String> {
         .find(|(k, _)| k == "SPIRA_HOME")
         .map(|(_, v)| v)
         .ok_or("sim.env has no SPIRA_HOME")?;
-    let source = format!("bash -c \". '{home}/conf.sh' && env -0\"");
+    // set -a: conf.sh leaves most keys unexported, and a script that skips it still reads them
+    let source = format!("bash -c \"set -a; . '{home}/conf.sh' && env -0\"");
     let base = env0("env -0", false)?;
     let once = env0(&source, false)?;
     let mut bytes = Vec::new();
