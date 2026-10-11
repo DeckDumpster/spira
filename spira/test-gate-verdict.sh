@@ -206,7 +206,7 @@ is  "and is still a pass"                              0    "$rc"
 # FAIL CLOSED ON ITS OWN BOOKKEEPING. An entry with no timestamp cannot be aged, and an
 # un-ageable verdict is one whose freshness nobody can vouch for — so it is refused, and the
 # cost is one gate that would have been skipped.
-sed -i '/^at=/d' "$ENTRY"
+sed -i '/^at=/d' "$ENTRY"; rm -rf "$VDIR/red"
 before="$(runs)"
 out="$(rungate)"; rc=$?
 isnt "an entry with no timestamp is not reused" "$before" "$(runs)"
