@@ -42,9 +42,9 @@ board() { # board <rows...> -- <content...>
 echo '[{"bead_id":"sp-done","state":"LANDED"}]' > "$STUB_DIR/term.json"
 
 run() {
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_ASK_LABEL=needs-boss SPIRA_CONCIERGE_INBOX="$TMP/inbox"
+    tl_config ${SWEEP_HOME_REPO-SPIRA_HOME_REPO=widgets} SPIRA_RUN="$TMP/run" SPIRA_ASK_LABEL=needs-boss SPIRA_CONCIERGE_INBOX="$TMP/inbox"
     env -i PATH="$TMP/bin:$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" STUB_DIR="$STUB_DIR" \
-        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="${SWEEP_REPO:-$TMP/widgets}" ${SWEEP_HOME_REPO-SPIRA_HOME_REPO=widgets} \
+        SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="${SWEEP_REPO:-$TMP/widgets}" \
         bash "$HERE/bead-sweep.sh" "$@" 2>&1
 }
 
