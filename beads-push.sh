@@ -68,8 +68,10 @@ fail_out() { echo "beads-push: $stamp — $1" >&2; exit 1; }
 # verifies through that alone (beads-store/DESIGN.md).
 command -v beads-store >/dev/null 2>&1 \
     || fail_out "beads-store not on PATH — cannot commit before push."
+commit_began=$SECONDS
 commit_out="$(beads-store commit --db "$DB" --message "beads-push: $stamp" 2>&1)"
 commit_rc=$?
+commit_secs=$((SECONDS - commit_began))
 [ "$commit_rc" -eq 0 ] || fail_out "$commit_out"
 if [ "$commit_out" -gt 0 ] 2>/dev/null; then
     echo "beads-push: $stamp — committed ${commit_out} dirty table(s) ($(_bp_statute_count "$DB") statutes)"
@@ -86,9 +88,10 @@ fi
 # restart is how a fix to the cause takes effect.
 failed_stamp="${SPIRA_RUN:-/tmp}/beads-push.failed-at"
 retry_after="${BEADS_PUSH_RETRY_AFTER_FAILURE_SECS:-86400}"
+retry_after_timeout="${BEADS_PUSH_RETRY_AFTER_TIMEOUT_SECS:-3600}"
 server_unit="${BEADS_PUSH_SERVER_UNIT:-dolt-beads}"
 if [ -f "$failed_stamp" ]; then
-    failed_at="$(cat "$failed_stamp" 2>/dev/null || echo 0)"
+    failed_at="$(cut -d' ' -f1 "$failed_stamp" 2>/dev/null || echo 0)"
     server_up="$(systemctl --user show "$server_unit" -p ActiveEnterTimestamp --value 2>/dev/null)"
     server_up="$([ -n "$server_up" ] && date -d "$server_up" +%s 2>/dev/null || echo 0)"
     if [ "$server_up" -gt "$failed_at" ]; then
@@ -96,17 +99,24 @@ if [ -f "$failed_stamp" ]; then
     fi
 fi
 if [ -f "$failed_stamp" ]; then
-    since=$(( $(date +%s) - $(cat "$failed_stamp" 2>/dev/null || echo 0) ))
+    read -r failed_at failed_kind < "$failed_stamp" 2>/dev/null || failed_at=0
+    since=$(( $(date +%s) - ${failed_at:-0} ))
+    [ "${failed_kind:-}" = timeout ] && retry_after="$retry_after_timeout"
     if [ "$since" -lt "$retry_after" ]; then
         fail_out "last push failed ${since}s ago; not repacking again for $((retry_after - since))s (remove $failed_stamp to retry now)"
     fi
 fi
 
 deadline="${BEADS_PUSH_DEADLINE_SECS:-600}"
+push_began=$SECONDS
 remote_head="$(BEADS_STORE_PUSH_DEADLINE_SECS="$deadline" ionice -c3 nice -n 19 \
     beads-store push --db "$DB" --remote beads 2>&1)" || {
-    date +%s > "$failed_stamp"
-    fail_out "${remote_head:-push exited non-zero with no output}"
+    elapsed=$((SECONDS - push_began))
+    kind=error
+    case "$remote_head" in *"timed out after"*) kind=timeout ;; esac
+    echo "$(date +%s) $kind" > "$failed_stamp"
+    store_kb="$(du -sk "$DB/.beads" 2>/dev/null | cut -f1)"
+    fail_out "${remote_head:-push exited non-zero with no output} [push phase ${elapsed}s of ${deadline}s deadline; commit phase ${commit_secs}s; store ${store_kb:-?}KB; kind ${kind}]"
 }
 rm -f "$failed_stamp"
 
