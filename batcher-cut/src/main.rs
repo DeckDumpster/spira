@@ -181,6 +181,11 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         queue_bin: PathBuf::from("queue"),
         rebase_stale_bin: PathBuf::from("rebase-stale"),
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
+        hypervisor: io::Hypervisor {
+            host_mib: cfg_parse::<u64>("SPIRA_HYPERVISOR_MEM_MIB")?,
+            round_vm_mib: cfg_parse::<u64>("SPIRA_ROUND_VM_MEM_MIB")?,
+            runner_mib: cfg_parse::<u64>("SPIRA_CI_RUNNER_MEM_MIB")?,
+        },
         poll_secs: env::var("SPIRA_BATCHER_POLL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
         // own hardware-derived or unpinned defaults — see io::run_suites.
@@ -529,6 +534,10 @@ fn stabilize_round(
 
     let mut runner = vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?;
     let stage_bg = match batch {
+        Some(_) if !stage.is_empty() && !env_.hypervisor.fits_a_staged_round() => {
+            println!("batcher {}: no round staged — the hypervisor cannot hold the staged round beside this one and a CI runner", repo.name);
+            None
+        }
         Some(_) if !stage.is_empty() => match io::round_stage_spawn(env_, repo, &staged_worktree(env_, repo), stage) {
             Ok(bg) => Some(bg),
             Err(e) => {

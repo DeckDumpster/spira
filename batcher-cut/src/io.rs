@@ -37,6 +37,22 @@ pub struct Repo {
     pub land: Land,
 }
 
+/// What the round VM hypervisor can hold, in MiB; a zero host or VM size is an unknown one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hypervisor {
+    pub host_mib: u64,
+    pub round_vm_mib: u64,
+    pub runner_mib: u64,
+}
+
+impl Hypervisor {
+    /// A staged round starts only beside the certifying round and one CI runner, so both VMs
+    /// and the runner must fit; an unknown size never fits.
+    pub fn fits_a_staged_round(&self) -> bool {
+        self.host_mib > 0 && self.round_vm_mib > 0 && self.round_vm_mib.saturating_mul(2).saturating_add(self.runner_mib) <= self.host_mib
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Env {
     pub home: PathBuf,
@@ -56,6 +72,7 @@ pub struct Env {
     /// The round's slot budget for concurrent attribution (DESIGN.md §4.2):
     /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
     pub round_slots: Option<u32>,
+    pub hypervisor: Hypervisor,
     /// How often the attribution loop polls the corpus and its reruns (seconds).
     pub poll_secs: u64,
     /// The Concierge's own proven parallelism (round.sh: SPIRA_BATCH_MAXPAR=16) — set
@@ -3055,6 +3072,7 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         queue_bin: dir.join("queue"),
         rebase_stale_bin: dir.join("rebase-stale"),
         round_slots: None,
+        hypervisor: Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
         poll_secs: 1,
         maxpar: 1,
         wall_secs: 1,
@@ -3066,5 +3084,26 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         verdicts: dir.join("verdicts"),
         land_lock_attempts: 3,
         land_lock_wait: Duration::from_millis(1),
+    }
+}
+
+#[cfg(test)]
+mod hypervisor_tests {
+    use super::Hypervisor;
+
+    fn hv(host_mib: u64, round_vm_mib: u64) -> Hypervisor {
+        Hypervisor { host_mib, round_vm_mib, runner_mib: 16384 }
+    }
+
+    #[test]
+    fn two_round_vms_and_a_runner_must_fit() {
+        assert!(hv(2 * 65536 + 16384, 65536).fits_a_staged_round());
+        assert!(!hv(2 * 65536 + 16383, 65536).fits_a_staged_round());
+    }
+
+    #[test]
+    fn an_unknown_size_never_fits() {
+        assert!(!hv(0, 65536).fits_a_staged_round());
+        assert!(!hv(1 << 30, 0).fits_a_staged_round());
     }
 }

@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=batcher
+DOC=MiB reserved on the hypervisor for one CI runner, which a staged round must leave free.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # MiB reserved on the hypervisor for one CI runner, which a staged round must leave free.
+    : "${SPIRA_CI_RUNNER_MEM_MIB:=16384}"
+SPIRA_CONF_DEFAULT_EOF

@@ -177,6 +177,10 @@ land, `round promote` cuts the stage. An attested promotion lands on the staged 
 unattested one gets its own pass (`follow_promoted`). Every staged-round verb that fails is
 logged and the cut goes on as if nothing had been staged. One stage per cut.
 
+A stage starts only when the hypervisor can hold it: two round VMs (`SPIRA_ROUND_VM_MEM_MIB`)
+plus one CI runner (`SPIRA_CI_RUNNER_MEM_MIB`) must fit in `SPIRA_HYPERVISOR_MEM_MIB`. An unknown
+(0) host or VM size never fits, so staging is off until the operator declares the budget.
+
 ## Rounds by land mode (sp-4wdogg)
 
 `batcher rounds-local` (spira-rounds) cuts queue.local repos one at a time, so one VM round runs
