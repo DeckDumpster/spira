@@ -1632,6 +1632,24 @@ pub fn round_members(env: &Env, repo: &Repo) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// The id of the repo's open round, if `queue round status` reports one.
+pub fn open_round_id(env: &Env, repo: &Repo) -> Result<Option<String>, String> {
+    let run = round_verb(env, &["status", &repo.name], "")?;
+    if run.code != Some(0) {
+        return Err(verb_failed("queue round status", &run));
+    }
+    if verb_value(&run.out, "round").as_deref() != Some("open") {
+        return Ok(None);
+    }
+    Ok(Some(verb_value(&run.out, "batch_id").unwrap_or_default()))
+}
+
+/// The repo's local verdict as `write_local_verdict` recorded it: (verdict, at).
+pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
+    let kv = parse_kv(&fs::read_to_string(env.queue_dir.join(repo).join("local-verdict")).ok()?);
+    Some((kv.get("verdict")?.clone(), kv.get("at")?.parse().ok()?))
+}
+
 pub fn round_abandon(env: &Env, repo: &Repo, batch: &str, why: &str) {
     match round_verb(env, &["abandon", batch, &repo.name, "--reason-file", "-"], why) {
         Ok(r) if r.code == Some(0) => {}

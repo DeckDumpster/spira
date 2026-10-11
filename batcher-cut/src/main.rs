@@ -28,6 +28,7 @@ mod endpass;
 mod flip;
 mod io;
 mod order;
+mod pace;
 mod screen;
 mod vm;
 
@@ -1201,6 +1202,28 @@ fn settle_batch(env_: &Env, name: &str) -> Result<(), String> {
     }
 }
 
+fn utc_stamp(at: u64) -> String {
+    let (days, rem) = ((at / 86400) as i64, at % 86400);
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), String> {
+    let repo = find_repo(env_, name)?;
+    let inbox = PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
+    let stamp = utc_stamp;
+    let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp };
+    pace::paced(&pace::Files::new(&env_.run, name), &sm, || io::open_round_id(env_, &repo), || io::read_local_verdict(env_, name), || cut(one))
+}
+
 /// One scheduler pass over the repo map. `Pass::Local` is the harness's VM rounds, run one repo
 /// at a time; `Pass::Forge` settles and opens queue.forge batches. They run as separate units so
 /// a long VM round never delays a forge batch. `SPIRA_BATCHER_ENABLE=0` holds only the local
@@ -1217,12 +1240,17 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     let env_ = env_for(o, home, run)?;
     let reg = io::registry(&env_);
+    let paced = cfg("SPIRA_ROUNDS_PACING")?.trim() == "1";
     let repos: Vec<(String, String)> = reg.all().into_iter().map(|n| { let l = reg.land(&n); (n, l) }).collect();
     let failed = drive_pass(&repos, pass, local_enabled, |name, step| match step {
         Step::Verdict => settle_batch(&env_, name),
         Step::Cut => {
             let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
-            cut(&one)
+            if paced && reg.land(name) == "queue.local" {
+                paced_cut(&env_, name, &one)
+            } else {
+                cut(&one)
+            }
         }
     });
     if failed.is_empty() {
@@ -1463,6 +1491,13 @@ mod base_conflict_handling {
 mod vtime_tests {
     use super::*;
 
+
+    #[test]
+    fn utc_stamp_formats_epoch_seconds() {
+        assert_eq!(utc_stamp(0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_stamp(1_791_687_211), "2026-10-11T02:53:31Z");
+        assert_eq!(utc_stamp(951_782_400), "2000-02-29T00:00:00Z");
+    }
 
     #[test]
     fn now_honours_spira_now() {
