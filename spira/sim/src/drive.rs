@@ -284,6 +284,7 @@ pub fn profile_line(world: &Path) -> String {
         .map(|(k, ms)| format!("{k}={ms}ms"))
         .collect();
     let (mut cmds, mut cmd_ms, mut probes, mut probe_ms) = (0u64, 0u64, 0u64, 0u64);
+    let mut timed_cmds: Vec<(u64, String)> = Vec::new();
     for l in std::fs::read_to_string(world.join(EXEC_LOG)).unwrap_or_default().lines() {
         let timed = l.contains("(probe): in ") || l.contains(": exit status: ");
         let Some(ms) = Some(l).filter(|_| timed).and_then(|l| l.rsplit_once(" in ")).and_then(|(_, t)| t.strip_suffix("ms")).and_then(|t| t.parse::<u64>().ok()) else { continue };
@@ -293,9 +294,12 @@ pub fn profile_line(world: &Path) -> String {
         } else {
             cmds += 1;
             cmd_ms += ms;
+            timed_cmds.push((ms, l.chars().take(70).collect()));
         }
     }
-    format!("{} commands={cmds}/{cmd_ms}ms probes={probes}/{probe_ms}ms", phases.join(" "))
+    timed_cmds.sort_by(|a, b| b.0.cmp(&a.0));
+    let slowest: Vec<String> = timed_cmds.iter().take(4).map(|(ms, c)| format!("{ms}ms {c}")).collect();
+    format!("{} commands={cmds}/{cmd_ms}ms probes={probes}/{probe_ms}ms slowest: {}", phases.join(" "), slowest.join(" | "))
 }
 
 pub struct ProcessProbe {
