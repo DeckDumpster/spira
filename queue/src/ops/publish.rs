@@ -189,12 +189,18 @@ pub enum Settle {
     Supersede,
     Retire,
     Open,
+    /// The run's suites job was cancelled or timed out on the same head: run the whole workflow again.
+    Rerun,
+    /// The rerun was untested too: tell a human, once.
+    Alarm,
+    /// Already alarmed; the record waits for a hand.
+    Parked,
 }
 
 /// The open publish PR as the pass saw it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pr {
-    Open { ci: Ci, behind: bool },
+    Open { ci: Ci, behind: bool, tries: u8 },
     Gone,
     Unknown,
 }
@@ -217,6 +223,7 @@ pub fn ci_of(status: &str) -> Ci {
     }
 }
 
+/// `tries`: 0 never rerun, 1 rerun once, 2 and alarmed.
 /// None: no publish PR on record. A PR whose CI is not concluded, or concluded green, is
 /// left to the verdict pass; only a concluded-red or untested head that local has moved
 /// past is superseded (law-a-retry-must-change-an-input: the republish carries a new head).
@@ -225,7 +232,10 @@ pub fn decide(pr: Option<Pr>) -> Settle {
         None => Settle::Open,
         Some(Pr::Gone) => Settle::Retire,
         Some(Pr::Unknown) => Settle::Wait,
-        Some(Pr::Open { ci: Ci::Red | Ci::Untested, behind: true }) => Settle::Supersede,
+        Some(Pr::Open { ci: Ci::Red | Ci::Untested, behind: true, .. }) => Settle::Supersede,
+        Some(Pr::Open { ci: Ci::Untested, tries: 0, .. }) => Settle::Rerun,
+        Some(Pr::Open { ci: Ci::Untested, tries: 1, .. }) => Settle::Alarm,
+        Some(Pr::Open { ci: Ci::Untested, .. }) => Settle::Parked,
         Some(Pr::Open { .. }) => Settle::Wait,
     }
 }
@@ -287,7 +297,7 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
     let kv = records::read_kv(&pfile).ok().flatten();
     let pr = kv.as_ref().map(|kv| observe(w, c, &path, kv));
     let action = decide(pr);
-    if action != Settle::Wait && round_pass_running(w, c) {
+    if !matches!(action, Settle::Wait | Settle::Parked | Settle::Alarm) && round_pass_running(w, c) {
         w.out(format!("{} publish-settle {name}: a round pass holds the hypervisor; deferring {action:?} to the next tick", w.clock.now()));
         return OK;
     }
@@ -295,7 +305,8 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
     let pr_no = kv.as_ref().and_then(|k| k.get("pr")).unwrap_or("").to_string();
     w.out(format!("{now} publish-settle {name}: pr={} -> {action:?}", if pr_no.is_empty() { "none" } else { &pr_no }));
     match action {
-        Settle::Wait => OK,
+        Settle::Wait | Settle::Parked => OK,
+        Settle::Rerun | Settle::Alarm => rerun_or_alarm(w, c, &path, &pfile, kv.as_ref(), action),
         Settle::Open => publish_with(w, Some(&name), true),
         Settle::Retire | Settle::Supersede => {
             if action == Settle::Supersede {
@@ -304,6 +315,41 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
             let _ = std::fs::remove_file(&pfile);
             landing_log(&c.s.run, &format!("QUEUE PUBLISH_SUPERSEDED {now} repo={name} pr={pr_no} action={action:?}"));
             publish_with(w, Some(&name), true)
+        }
+    }
+}
+
+fn rerun_or_alarm(w: &World, c: &Ctx, path: &std::path::Path, pfile: &std::path::Path, kv: Option<&Kv>, action: Settle) -> i32 {
+    let name = &c.r.name;
+    let Some(mut rec) = kv.cloned() else { return OK };
+    let pr = rec.get("pr").unwrap_or("").to_string();
+    let branch = rec.get("branch").unwrap_or("").to_string();
+    if action == Settle::Rerun {
+        let Some(run) = w.forge.run_id(&c.s.forge, path, &branch) else {
+            w.err(format!("queue.sh publish-settle: {name}: no run id for {branch}; cannot rerun PR {pr}"));
+            return FAIL;
+        };
+        w.forge.workflow_rerun(&c.s.forge, path, &run);
+        rec.remove("rerun");
+        rec.push("rerun", &run);
+        landing_log(&c.s.run, &format!("QUEUE PUBLISH_RERUN {} repo={name} pr={pr} run={run}", w.clock.now()));
+        w.out(format!("publish-settle {name}: PR {pr} run {run} was never tested (suites cancelled or timed out) — whole workflow rerun"));
+    } else {
+        rec.remove("alarmed");
+        rec.push("alarmed", &w.clock.now().to_string());
+        landing_log(&c.s.run, &format!("QUEUE PUBLISH_UNTESTED {} repo={name} pr={pr}", w.clock.now()));
+        w.lib.notify(
+            &c.s.mailbox,
+            name,
+            &format!("publish PR {pr} untested after a rerun"),
+            &format!("PR {pr} for {name} concluded without testing its head twice running (suites job cancelled or timed out). It will not be rerun again; look at the run and rerun or close it by hand."),
+        );
+    }
+    match write_atomic(pfile, &rec.render()) {
+        Ok(()) => OK,
+        Err(e) => {
+            w.err(format!("queue.sh publish-settle: {e}"));
+            FAIL
         }
     }
 }
@@ -344,5 +390,6 @@ fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {
     let Some(base) = c.r.landref.as_deref() else { return Pr::Unknown };
     let Some(local) = w.git.rev_parse(path, base) else { return Pr::Unknown };
     let ci = ci_of(&w.forge.check_status(&c.s.forge, path, &pr, &branch).unwrap_or_default());
-    Pr::Open { ci, behind: local != head }
+    let tries = if kv.get("alarmed").is_some() { 2 } else if kv.get("rerun").is_some() { 1 } else { 0 };
+    Pr::Open { ci, behind: local != head, tries }
 }

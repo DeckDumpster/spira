@@ -2209,7 +2209,8 @@ use crate::ops::publish::{ci_of, decide, Ci, Pr, Settle};
 
 #[test]
 fn settle_decision_table() {
-    let open = |ci, behind| Some(Pr::Open { ci, behind });
+    let open = |ci, behind| Some(Pr::Open { ci, behind, tries: 0 });
+    let tried = |tries| Some(Pr::Open { ci: Ci::Untested, behind: false, tries });
     assert_eq!(decide(None), Settle::Open);
     assert_eq!(decide(open(Ci::Green, true)), Settle::Wait);
     assert_eq!(decide(open(Ci::Green, false)), Settle::Wait);
@@ -2217,6 +2218,9 @@ fn settle_decision_table() {
     assert_eq!(decide(open(Ci::Red, true)), Settle::Supersede);
     assert_eq!(decide(open(Ci::Untested, true)), Settle::Supersede);
     assert_eq!(decide(open(Ci::Red, false)), Settle::Wait);
+    assert_eq!(decide(open(Ci::Untested, false)), Settle::Rerun);
+    assert_eq!(decide(tried(1)), Settle::Alarm);
+    assert_eq!(decide(tried(2)), Settle::Parked);
     assert_eq!(decide(Some(Pr::Gone)), Settle::Retire);
     assert_eq!(decide(Some(Pr::Unknown)), Settle::Wait);
     assert_eq!(ci_of("provision_fault\n"), Ci::Untested);
@@ -2267,6 +2271,25 @@ fn settle_waits_on_a_green_or_pending_publish_and_on_an_unmoved_red_one() {
         assert!(!calls.iter().any(|c| c.starts_with("pr-close") || c.starts_with("pr-create")), "{calls:?}");
         assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=77\n"));
     }
+}
+
+#[test]
+fn settle_reruns_an_untested_publish_once_then_alarms_once() {
+    let t = T::new(LandMode::QueueLocal);
+    stale_publish(&t, "harness_fault\n");
+    t.git.set("refs/heads/local/main", "m3");
+    *t.forge.run.borrow_mut() = Some("4242".into());
+    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert_eq!(t.forge.calls.borrow().iter().filter(|c| c.as_str() == "workflow-rerun 4242").count(), 1, "{:?}", t.forge.calls.borrow());
+    assert!(fs::read_to_string(t.qfile("publish")).unwrap().contains("rerun=4242"));
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert_eq!(t.forge.calls.borrow().iter().filter(|c| c.as_str() == "workflow-rerun 4242").count(), 1);
+    assert!(fs::read_to_string(t.qfile("publish")).unwrap().contains("alarmed="));
+    assert!(t.lib.has("notify spira publish PR 77 untested after a rerun"));
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert_eq!(t.forge.calls.borrow().iter().filter(|c| c.as_str() == "workflow-rerun 4242").count(), 1);
 }
 
 #[test]
