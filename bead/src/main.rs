@@ -189,7 +189,6 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
                     eprintln!("bead: file: {new_id} filed but its lifecycle row was not created: {e}; the loop cannot see it and a retry would duplicate it. Repair: spira-lc create-bead {new_id} --priority {priority} --title \"{title}\"");
                     return 1;
                 }
-                print!("{stdout}");
             }
         }
     }
