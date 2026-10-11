@@ -421,7 +421,12 @@ pub fn fast_tier_red_brief(digest: &str) -> String {
     if d.is_empty() {
         return String::new();
     }
-    format!("## Your last closeout failed — fix this first\n\n{d}\n\nReproduce with `cargo check` before you submit.\n\n")
+    let repro = if crate::fast_tier::names_lint(d) {
+        "Reproduce with the INSTALLED linter, the one that judged you (not `cargo run -p spira-lint`): `spira-lint --diff <base>` from your worktree, before you submit. Resubmitting an unchanged tip is refused."
+    } else {
+        "Reproduce with `cargo check` before you submit."
+    };
+    format!("## Your last closeout failed — fix this first\n\n{d}\n\n{repro}\n\n")
 }
 
 pub fn thrash_banner(streak: &str, last: &str) -> String {

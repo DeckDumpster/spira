@@ -55,6 +55,21 @@ impl Run<'_> {
         crate::fast_tier::red(self.d.git, self.d.exec, &self.s.repo, work, &self.s.branch, &self.s.base_fq, false)
     }
 
+    fn head_tip(&self) -> String {
+        let work = self.s.work.as_deref().unwrap_or(Path::new("/dev/null"));
+        let o = self.d.git.git(work, &["rev-parse", "HEAD"]);
+        if o.success() { o.text().trim().to_string() } else { String::new() }
+    }
+
+    /// The previous fast-tier red's digest when it judged this very tip: a retry must change an
+    /// input, and a harness fault records no such fact.
+    fn unchanged_tip_red(&self) -> Option<String> {
+        let tip = self.head_tip();
+        let recorded = self.last_fast_tier_red();
+        let (digest, judged) = crate::fast_tier::split_tip(&recorded);
+        (!tip.is_empty() && judged == Some(tip.as_str())).then(|| digest.to_string())
+    }
+
     /// Refuses the handoff when the fast tier is red: the bead goes back to the graph with the
     /// failure text instead of waiting a certification cycle to learn it.
     fn refuse_handoff(&self, red: &crate::fast_tier::Red) {
@@ -65,7 +80,7 @@ impl Run<'_> {
             self.log(&format!("{}: {} REOPENED — fast tier harness failure, no attempt charged", self.f(), self.s.bead));
             return;
         }
-        self.record_fact(crate::fast_tier::KIND, &digest);
+        self.record_fact(crate::fast_tier::KIND, &crate::fast_tier::with_tip(&digest, &self.head_tip()));
         self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{digest}"));
         self.log(&format!("{}: {} REOPENED — fast tier red, handoff refused", self.f(), self.s.bead));
     }
@@ -287,6 +302,12 @@ impl Run<'_> {
             }
             NoteKey::Submitted => {
                 if self.has_own_commit() {
+                    if let Some(prev) = self.unchanged_tip_red() {
+                        let tip = self.head_tip();
+                        let red = crate::fast_tier::Red { harness: false, text: format!("resubmitted tip {tip} unchanged since its fast-tier red; change the tip before submitting. That red:\n{prev}") };
+                        self.refuse_handoff(&red);
+                        return self.finish(rc, "open");
+                    }
                     if let Some(red) = self.fast_tier_red() {
                         self.refuse_handoff(&red);
                         return self.finish(rc, "open");

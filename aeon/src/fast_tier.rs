@@ -97,8 +97,31 @@ pub fn digest(red: &str) -> String {
             out.push(line);
         }
     }
+    if out.len() <= 1 {
+        out = red.lines().collect();
+    }
     out.truncate(DIGEST_MAX_LINES);
     out.join("\n")
+}
+
+const TIP_PREFIX: &str = "\ntip: ";
+
+/// A digest as recorded on the bead: the tip it judged, so a resubmit of that tip is recognised.
+pub fn with_tip(digest: &str, tip: &str) -> String {
+    format!("{digest}{TIP_PREFIX}{tip}")
+}
+
+/// The tip a recorded digest judged, and the digest without it.
+pub fn split_tip(recorded: &str) -> (&str, Option<&str>) {
+    match recorded.rsplit_once(TIP_PREFIX) {
+        Some((d, t)) if !t.contains('\n') && !t.is_empty() => (d, Some(t.trim())),
+        _ => (recorded, None),
+    }
+}
+
+/// Whether a digest is a spira-lint red, which `cargo check` does not reproduce.
+pub fn names_lint(digest: &str) -> bool {
+    digest.starts_with("spira-lint failed")
 }
 
 /// Whether a digest names a compile error, which `cargo check` would reproduce.
@@ -239,5 +262,16 @@ mod tests {
         let d = digest(&red);
         assert_eq!(d.lines().count(), DIGEST_MAX_LINES);
         assert!(d.contains("in f1.rs") && !names_compile_error(&d));
+    }
+
+    #[test]
+    fn a_multi_line_lint_red_is_recorded_whole_and_the_tip_round_trips() {
+        let red = "spira-lint failed (rc=1):\nrule-a: f.rs:3: bad thing\nrule-b: g.rs:9: other\n";
+        let d = digest(red);
+        assert_eq!(d.lines().count(), 3, "{d}");
+        assert!(d.contains("g.rs:9") && names_lint(&d));
+        let rec = with_tip(&d, "abc123");
+        assert_eq!(split_tip(&rec), (d.as_str(), Some("abc123")));
+        assert_eq!(split_tip(&d).1, None);
     }
 }
