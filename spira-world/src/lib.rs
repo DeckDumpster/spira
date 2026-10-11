@@ -115,6 +115,12 @@ pub fn drain_stamp() -> Result<PathBuf, String> {
     spira_run().map(|r| r.join("world.draining"))
 }
 
+/// The reboot-drain marker: `$SPIRA_RUN/world.reboot-drain`. Written by `drain --reboot`,
+/// removed by `resume`; `cockpit.sh resume` reads it to know the drain was for a planned reboot.
+pub fn reboot_marker() -> Result<PathBuf, String> {
+    spira_run().map(|r| r.join("world.reboot-drain"))
+}
+
 /// `$SPIRA_INSTANCE`-qualified suffix for a UNIT NAME — `-<instance>`, always, including
 /// `-prod` (NOT [`spira_config::resolve`]'s own `inst_sfx`, which special-cases `"prod"`
 /// to empty for a DATA DIRECTORY's name — a different convention for a different thing;

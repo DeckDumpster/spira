@@ -3,6 +3,7 @@
 # cockpit.sh — make the cockpit exist. Run it from anywhere, in any state, as often as you like.
 #
 #   cockpit.sh              build or repair the cockpit, then PUT YOU IN IT; safe to repeat
+#   cockpit.sh resume       after a planned reboot (world.sh drain --reboot): lift the drain, then as above
 #   cockpit.sh status       say what is there and change nothing
 #   cockpit.sh --force      also clear a wedged tmux server that still holds live panes
 #   cockpit.sh --no-attach  repair only (timers, scripts; implied when stdin is not a tty)
@@ -50,14 +51,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # scripts under cockpit/ — bare name, never a constructed path.
 command -v rebuild >/dev/null 2>&1 || { echo "cockpit: no 'rebuild' binary on PATH" >&2; exit 1; }
 
-MODE=build; FORCE=0; ATTACH=1
+MODE=build; FORCE=0; ATTACH=1; RESUME=0
 [ -t 0 ] && [ -t 1 ] || ATTACH=0
 for a in "$@"; do
     case "$a" in
         status|probe|--status|--probe) MODE=probe ;;
+        resume|--resume)               RESUME=1 ;;
         --force)                       FORCE=1 ;;
         --no-attach)                   ATTACH=0 ;;
-        -h|--help) sed -n '2,8p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,9p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) echo "cockpit: unknown argument '$a'" >&2; exit 64 ;;
     esac
 done
@@ -71,6 +73,15 @@ CALLER_TMUX="${TMUX:-}"
 unset TMUX TMUX_PANE
 
 if [ "$MODE" = probe ]; then exec rebuild probe; fi
+
+# `resume` lifts only a drain that `world.sh drain --reboot` marked; any other world state is left as found.
+if [ "$RESUME" = 1 ]; then
+    command -v world.sh >/dev/null 2>&1 || { echo "cockpit: no 'world.sh' on PATH" >&2; exit 1; }
+    if world.sh status 2>/dev/null | grep -q 'REBOOT-DRAIN'; then
+        echo "cockpit: world drained for a planned reboot — resuming"
+        world.sh resume 2>&1 | sed 's/^/  /'
+    fi
+fi
 
 # ------------------------------------------------------------------------------------------
 # THE ONE GUARD THIS ADDS: DO NOT LET THE OPERATOR KILL THE PANE THEY ARE SITTING IN.
