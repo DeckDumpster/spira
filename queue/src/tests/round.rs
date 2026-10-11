@@ -399,7 +399,7 @@ fn certify_never_reads_a_harness_fault_as_green_or_red() {
     *t.scripts.round_vm.borrow_mut() = RunOut { rc: 124, out: String::new(), err: "killed".into() };
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
-    assert!(t.err().contains("hung past its guard (cap 900s)"), "{}", t.err());
+    assert!(t.err().contains("hung past its guard (guard=hang-guard elapsed="), "{}", t.err());
     assert!(!certified_tree_exists(&t) && !t.lc.has("event batch spira-20260929T010203Z CI_RUNNING 4 {\"PassGreen\""));
 }
 
@@ -408,11 +408,11 @@ fn a_pass_whose_tests_overran_the_cap_is_a_fault_even_with_every_verdict_in() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
     let batch = batch_of(&t);
-    let err = "round-vm: OVER-CAP: the suites and bare lane ran 901s, past the 900s cap\nround-vm: UNIT-TESTS: PASS (3 test binaries)";
+    let err = "round-vm: OVER-CAP: guard=suites-cap elapsed=901s cap=900s — the suites and bare lane ran past the cap\nround-vm: UNIT-TESTS: PASS (3 test binaries)";
     *t.scripts.round_vm.borrow_mut() = RunOut { rc: 124, out: String::new(), err: err.into() };
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
-    assert!(t.err().contains("exceeded the 900s cap"), "{}", t.err());
+    assert!(t.err().contains("INCOMPLETE, cut off by guard=suites-cap elapsed=901s"), "{}", t.err());
     assert!(!t.lc.has("event batch spira-20260929T010203Z CI_RUNNING 4 {\"PassGreen\""));
 }
 
@@ -571,7 +571,7 @@ fn a_pass_the_vm_could_not_finish_is_incomplete_not_red_or_green() {
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
     let events = events_of(&t, &batch);
-    assert!(events.last().unwrap().starts_with("{\"PassIncomplete\":{\"n\":1,\"reason\":\"round-vm hung past its guard (cap 900s)"), "{events:?}");
+    assert!(events.last().unwrap().starts_with("{\"PassIncomplete\":{\"n\":1,\"reason\":\"round-vm hung past its guard (guard=hang-guard elapsed="), "{events:?}");
     assert!(!events.iter().any(|e| e.starts_with("{\"PassRed\"") || e.starts_with("{\"PassGreen\"")), "{events:?}");
 }
 
