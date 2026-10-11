@@ -14,6 +14,55 @@ use std::path::{Path, PathBuf};
 /// build fence's `make build` (release), a stray dev build, and the tree-keyed tools.
 pub const LINKED: [&str; 4] = ["aeon", "release", "debug", "gate-tools"];
 
+/// Directory under the run dir holding the warm per-slot build output: on disk at a fixed
+/// path, kept between trials, so a unit build recompiles only what the branch changed.
+pub const WARM_DIR: &str = "gate-warm";
+
+/// The build directories that live warm in a slot rather than being rebuilt cold.
+pub const WARM: [&str; 1] = ["aeon"];
+
+/// Claim the first free warm slot of `slots` under `base`: a non-blocking exclusive `flock` on
+/// `slot.<n>.lock` held for as long as the returned file lives. None when every slot is busy
+/// (the trial then builds cold on the tmpfs, never waits for a slot).
+pub fn acquire_warm(base: &Path, slots: u64) -> Option<(PathBuf, fs::File)> {
+    use std::os::unix::io::AsRawFd;
+    for n in 1..=slots.max(1) {
+        let dir = base.join(format!("slot.{n}"));
+        fs::create_dir_all(&dir).ok()?;
+        let Ok(f) = fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join(format!("slot.{n}.lock"))) else {
+            continue;
+        };
+        // SAFETY: flock on a descriptor we own; the lock lives as long as `f`.
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Some((dir, f));
+        }
+    }
+    None
+}
+
+/// Point `tree/target/<WARM dirs>` at `slot/<dir>`, replacing the links [`prepare`] made to the
+/// tmpfs. The tmpfs copies it leaves empty are removed.
+pub fn link_warm(tree: &Path, slot: &Path) -> Result<(), String> {
+    for d in WARM {
+        let dest = slot.join(d);
+        fs::create_dir_all(&dest).map_err(|e| format!("gate: cannot create {}: {e}", dest.display()))?;
+        let link = tree.join("target").join(d);
+        if let Ok(old) = fs::read_link(&link) {
+            if old != dest && !is_warm(&old) {
+                let _ = fs::remove_dir_all(&old);
+            }
+        }
+        let _ = fs::remove_file(&link);
+        std::os::unix::fs::symlink(&dest, &link).map_err(|e| format!("gate: cannot link {} to {}: {e}", link.display(), dest.display()))?;
+    }
+    Ok(())
+}
+
+/// True when `dest` is `<base>/WARM_DIR/slot.<n>/<dir>`: never removed with a trial.
+pub fn is_warm(dest: &Path) -> bool {
+    dest.parent().and_then(Path::parent).and_then(Path::file_name).is_some_and(|n| n == WARM_DIR)
+}
+
 /// Marker inside a kept `release` dir: the binaries are promised to a hand landing, so no
 /// eviction or reaping removes them until the landing clears it or [`PIN_MAX_AGE`] passes.
 pub const PIN: &str = ".gate-pinned";
@@ -254,7 +303,7 @@ pub fn prepare(
 /// The scratch root a tree's linked build dirs live under, read from its symlinks.
 pub fn tree_root(tree: &Path) -> Option<PathBuf> {
     LINKED.iter().find_map(|d| {
-        let dest = fs::read_link(tree.join("target").join(d)).ok()?;
+        let dest = fs::read_link(tree.join("target").join(d)).ok().filter(|p| !is_warm(p))?;
         Some(dest.parent()?.parent()?.to_path_buf())
     })
 }
@@ -275,6 +324,10 @@ pub fn release_tree(tree: &Path, keep_release: bool) -> u64 {
             continue;
         }
         let Ok(dest) = fs::read_link(&link) else { continue };
+        if is_warm(&dest) {
+            let _ = fs::remove_file(&link);
+            continue;
+        }
         bytes += size_of(&dest);
         let _ = fs::remove_dir_all(&dest);
         let _ = fs::remove_file(&link);
@@ -604,5 +657,27 @@ mod tests {
         let stale = std::time::SystemTime::now() - PIN_MAX_AGE - std::time::Duration::from_secs(60);
         fs::File::open(root.join(".gate.harness.pin/release").join(PIN)).unwrap().set_modified(stale).unwrap();
         assert!(!pinned(&root.join(".gate.harness.pin")), "an old pin expires");
+    }
+
+    #[test]
+    fn a_warm_slot_survives_the_trial_and_a_busy_slot_is_skipped() {
+        let s = Scratch::new("warm");
+        let (root, trees, base) = (s.1.join("root"), s.1.join("worktree"), s.1.join("run").join(WARM_DIR));
+        let tree = trees.join(".gate.harness.w");
+        fs::create_dir_all(&tree).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        let (slot, held) = acquire_warm(&base, 2).unwrap();
+        assert_eq!(slot, base.join("slot.1"));
+        let (second, _h2) = acquire_warm(&base, 2).unwrap();
+        assert_eq!(second, base.join("slot.2"), "a held slot is skipped");
+        assert!(acquire_warm(&base, 2).is_none(), "every slot busy: the trial builds cold");
+        link_warm(&tree, &slot).unwrap();
+        write_mib(&slot.join("aeon/deps/libz.rlib"), 1);
+        assert!(!root.join(".gate.harness.w/aeon").exists() || fs::read_dir(root.join(".gate.harness.w/aeon")).unwrap().next().is_none());
+        release_tree(&tree, false);
+        assert!(slot.join("aeon/deps/libz.rlib").is_file(), "release_tree leaves the warm output");
+        assert!(fs::symlink_metadata(tree.join("target/aeon")).is_err(), "the link is gone");
+        drop(held);
+        assert_eq!(acquire_warm(&base, 2).unwrap().0, slot, "the slot is free again at the same path");
     }
 }

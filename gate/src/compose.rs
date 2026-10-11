@@ -54,7 +54,7 @@ pub enum Composition {
     Suites { why: String },
     /// The gate string with suites off and without the build fence ([`gate_string`]), then
     /// `cargo build` and `cargo test` of `crates` on the host. `touched` are the members whose files changed (or `*` for a workspace
-    /// input); `crates` adds their reverse dependents, sorted.
+    /// input); `crates` adds their direct dependents, sorted.
     Unit {
         touched: Vec<String>,
         crates: Vec<String>,
@@ -126,7 +126,7 @@ pub fn classify(c: &Changed, members: &[Member]) -> Class {
 /// Crates whose tests read `../systemd`.
 const UNIT_READERS: &[&str] = &["release", "spira-world", "cert-sweep"];
 
-/// `seed` plus every member that depends on one of them, transitively; sorted.
+/// `seed` plus every member that depends directly on one of them; sorted.
 pub fn with_dependents(seed: &BTreeSet<String>, members: &[Member]) -> Vec<String> {
     let mut rdeps: HashMap<&str, Vec<&str>> = HashMap::new();
     for m in members {
@@ -135,12 +135,9 @@ pub fn with_dependents(seed: &BTreeSet<String>, members: &[Member]) -> Vec<Strin
         }
     }
     let mut out: BTreeSet<String> = seed.clone();
-    let mut todo: Vec<String> = seed.iter().cloned().collect();
-    while let Some(n) = todo.pop() {
+    for n in seed {
         for r in rdeps.get(n.as_str()).into_iter().flatten() {
-            if out.insert(r.to_string()) {
-                todo.push(r.to_string());
-            }
+            out.insert(r.to_string());
         }
     }
     out.into_iter().collect()
@@ -346,7 +343,7 @@ fn pkgs(crates: &[String]) -> String {
 pub const BUILD_FENCE_STEP: &str = "bash spira/build-fence.sh";
 
 /// THE GATE STRING A COMPOSITION RUNS (sp-aprxm). A unit composition has its own build
-/// phase, which compiles every touched crate and its reverse dependents, every target, in the
+/// phase, which compiles every touched crate and its direct dependents, every target, in the
 /// `aeon` profile; the build fence's cold release `make build` of the whole workspace in
 /// front of it only proved the same thing again, at 85% of a Rust-only gate's wall. So a unit
 /// composition runs the gate string with the build fence's step removed, and every other
@@ -807,11 +804,12 @@ mod tests {
     }
 
     #[test]
-    fn a_touched_crate_brings_its_reverse_dependents() {
+    fn a_touched_crate_brings_its_direct_dependents_only() {
         let c = unit(GateMode::Unit, &["spira-config/src/lib.rs"]);
         assert_eq!(
             crates(&c),
-            ["aeon", "landing-pass", "queue", "spira-config"]
+            ["aeon", "queue", "spira-config"],
+            "landing-pass depends on queue, not on spira-config: a transitive dependent is not rebuilt"
         );
         let Composition::Unit { touched, .. } = &c else {
             unreachable!()

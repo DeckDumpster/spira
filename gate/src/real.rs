@@ -151,6 +151,7 @@ exit 0
 pub struct Real {
     pub home: PathBuf,
     admission: RefCell<Vec<File>>,
+    warm: RefCell<Option<(PathBuf, File)>>,
     tree_lock: RefCell<Option<File>>,
     cancel: RefCell<Option<PathBuf>>,
 }
@@ -160,6 +161,7 @@ impl Real {
         Real {
             home,
             admission: RefCell::new(Vec::new()),
+            warm: RefCell::new(None),
             tree_lock: RefCell::new(None),
             cancel: RefCell::new(None),
         }
@@ -795,6 +797,14 @@ impl World for Real {
         let trees = tree.parent().unwrap_or(Path::new("/"));
         let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib)?;
         let mut line = format!("gate: build on tmpfs at {}", p.dir.display());
+        if self.warm.borrow().is_none() {
+            let base = Path::new(run).join(target::WARM_DIR);
+            *self.warm.borrow_mut() = target::acquire_warm(&base, self.certify_par_live().unwrap_or(4));
+        }
+        if let Some((slot, _)) = self.warm.borrow().as_ref() {
+            target::link_warm(tree, slot)?;
+            line.push_str(&format!("; warm target {}", slot.display()));
+        }
         if p.disk_freed_mib > 0 {
             line.push_str(&format!(" ({} MiB of build output moved off the disk)", p.disk_freed_mib));
         }
@@ -806,6 +816,7 @@ impl World for Real {
     fn release_target(&self, tree: &Path, keep_release: bool) {
         let root = crate::target::tree_root(tree);
         let mib = crate::target::release_tree(tree, keep_release);
+        *self.warm.borrow_mut() = None;
         if let (Some(root), true) = (root, mib > 0) {
             spira_config::scratch::record_peak(&spira_config::scratch::ledger_for(&root), &crate::target::composition(tree), mib);
         }

@@ -373,7 +373,7 @@ spira-config set repo.spira.gate_mode suites <spira.toml>   # off (or: unset rep
 | config | anything else (units, data, examples) |
 
 * **Touched crates** = the crate classes' members, plus every member that depends on one of
-  them, transitively (reverse dependents: their own tests exercise the changed code).
+  them, directly (direct dependents: their own tests exercise the changed code).
 
 ### The decision
 
@@ -430,7 +430,7 @@ phase reuses the harnesses.
 
 | the build fence caught | now caught by |
 |---|---|
-| a crate that does not compile (the touched crates and their reverse dependents) | the unit build phase |
+| a crate that does not compile (the touched crates and their direct dependents) | the unit build phase |
 | a workspace input that breaks every crate (`Cargo.lock` the toolchain cannot parse, sp-upkae; `Cargo.toml`, the toolchain pin, `Makefile`) | the unit build phase: a workspace input touches every member |
 | `#[cfg(not(test))]` code in a binary | the unit build phase (`--all-targets`) |
 | `cockpit/panel` | the unit build phase: it is a workspace member |
