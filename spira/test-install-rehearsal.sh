@@ -84,7 +84,9 @@ ok "user systemd running (probe exits 0)"
 # not polluted.
 # ---------------------------------------------------------------------------
 SPIRA_RUN_CTR="/tmp/spira-reh"
-CEXEC=(timeout 5 podman exec --user spirauser
+# The timeout is a hang guard, never a budget (law-no-wall-clock-budgets-in-the-corpus): a 5 s cap
+# killed a successful exec on a loaded 4-vCPU publish runner (PR 537, case 30, exit 124).
+CEXEC=(timeout 120 podman exec --user spirauser
     -e XDG_RUNTIME_DIR=/run/user/1001
     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus"
     -e "PATH=${STUBS_CTR}:/tmp/spira-prod/bin:/tmp/spira-prod/spira:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -176,8 +178,8 @@ iszero "the tree's release bin/ is staged in the container" "$?"
 # carries none (testenv/Containerfile removes it), and conf.sh fails closed without it.
 _sc="$(command -v spira-config 2>/dev/null || true)"
 [ -n "$_sc" ] || bail "spira-config is not on PATH (the tree's build provides it)"
-timeout 5 podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 \
-    && timeout 5 podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
+timeout 120 podman cp "$_sc" "$CNAME:/tmp/spira-prod/bin/spira-config" >&2 \
+    && timeout 120 podman exec "$CNAME" chmod 0755 /tmp/spira-prod/bin/spira-config >&2
 iszero "the tree's spira-config is staged in the container's release bin/" "$?"
 
 # ===========================================================================
