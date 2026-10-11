@@ -1,0 +1,9 @@
+TYPE=u64
+GROUP=mender
+DOC=THE MENDER DEADLINE — seconds from pickup after which the machine returns the failure.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE MENDER DEADLINE — seconds from pickup after which the machine returns the failure
+    # with whatever diagnosis the mender has written. Triage is stamped inside it; the mender
+    # cannot extend it.
+    : "${SPIRA_MENDER_DEADLINE_SECS:=300}"
+SPIRA_CONF_DEFAULT_EOF

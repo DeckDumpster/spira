@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=mender
+DOC=THE MENDER LANE CEILING — how many menders run at once, outside the builder pool.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE MENDER LANE CEILING — how many menders run at once, outside the builder pool. A
+    # failure beyond it waits for a free mender, and its deadline starts at pickup. Eight
+    # was the worst pass the lane was sized from.
+    : "${SPIRA_MENDER_MAX:=8}"
+SPIRA_CONF_DEFAULT_EOF
