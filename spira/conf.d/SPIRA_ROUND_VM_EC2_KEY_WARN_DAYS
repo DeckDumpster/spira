@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS — days before the tailscale key's recorded expiry the watcher warns.
+SCHEMA=Days before the tailscale key's recorded expiry that the round-spill-key watcher warns (default 14).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS:=14}"
+SPIRA_CONF_DEFAULT_EOF

@@ -172,3 +172,8 @@ event-continuity|log|@SPIRA_RUN@/event-continuity.log
 # stale blocked edge, unclaimed rework, expired lease, certified with no batch — as an inbox line
 # the pass it first appears. Health is the last pass that could read the lifecycle.
 bead-sweep|daemon|@SPIRA_HOME@/bead-sweep.sh watch --interval 1800|@SPIRA_HOME@/bead-sweep.sh health
+
+# ROUND-SPILL-KEY warns SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS before the tailscale auth key spilled round
+# instances join the tailnet with expires (the expiry is recorded in <key file>.expires). Off while
+# SPIRA_ROUND_VM_SPILL is unset.
+?round-spill-key|daemon|@SPIRA_HOME@/round-spill-key.sh watch --interval 3600 --spill @SPIRA_ROUND_VM_SPILL@|@SPIRA_HOME@/round-spill-key.sh health

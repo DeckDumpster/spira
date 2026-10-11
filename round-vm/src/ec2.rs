@@ -82,6 +82,7 @@ pub struct Ec2Config {
     pub subnet: String,
     pub security_group: String,
     pub instance_profile: String,
+    pub spot_first: bool,
     pub tailscale_key_file: String,
     pub run_deadline: Duration,
     pub host_addr: String,
@@ -96,10 +97,11 @@ impl Ec2Config {
             profile: s("SPIRA_ROUND_VM_EC2_PROFILE"),
             region: s("SPIRA_ROUND_VM_EC2_REGION"),
             ami: s("SPIRA_ROUND_VM_EC2_AMI"),
-            instance_type: Some(s("SPIRA_ROUND_VM_EC2_INSTANCE_TYPE")).filter(|v| !v.is_empty()).unwrap_or_else(|| "c6i.8xlarge".into()),
+            instance_type: Some(s("SPIRA_ROUND_VM_EC2_INSTANCE_TYPE")).filter(|v| !v.is_empty()).unwrap_or_else(|| "c7i.8xlarge".into()),
             subnet: s("SPIRA_ROUND_VM_EC2_SUBNET"),
             security_group: s("SPIRA_ROUND_VM_EC2_SECURITY_GROUP"),
             instance_profile: s("SPIRA_ROUND_VM_EC2_INSTANCE_PROFILE"),
+            spot_first: s("SPIRA_ROUND_VM_EC2_MARKET") != "on-demand",
             tailscale_key_file: s("SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE"),
             run_deadline: Duration::from_secs(deadline),
             host_addr: s("SPIRA_ROUND_VM_EC2_HOST_ADDR"),
@@ -303,6 +305,7 @@ pub struct AwsCli {
     pub subnet: String,
     pub security_group: String,
     pub instance_profile: String,
+    pub spot_first: bool,
     pub scratch: std::path::PathBuf,
 }
 
@@ -315,6 +318,7 @@ impl AwsCli {
             subnet: cfg.subnet.clone(),
             security_group: cfg.security_group.clone(),
             instance_profile: cfg.instance_profile.clone(),
+            spot_first: cfg.spot_first,
             scratch,
         }
     }
@@ -334,7 +338,7 @@ impl AwsCli {
         }
     }
 
-    pub fn run_args(&self, ami: &str, handle: &str, name: &str, user_data_file: &str) -> Vec<String> {
+    pub fn run_args(&self, ami: &str, handle: &str, name: &str, user_data_file: &str, spot: bool) -> Vec<String> {
         let mut a: Vec<String> = vec![
             "ec2".into(), "run-instances".into(),
             "--image-id".into(), ami.to_string(),
@@ -348,6 +352,9 @@ impl AwsCli {
             "--query".into(), "Instances[0].InstanceId".into(),
             "--output".into(), "text".into(),
         ];
+        if spot {
+            a.extend(["--instance-market-options".into(), "MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}".into()]);
+        }
         if !self.security_group.is_empty() {
             a.extend(["--security-group-ids".into(), self.security_group.clone()]);
         }
@@ -391,7 +398,15 @@ impl Ec2Api for AwsCli {
         let file = self.scratch.join(format!("user-data.{handle}"));
         let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         f.write_all(user_data.as_bytes()).map_err(|e| e.to_string())?;
-        let r = self.aws(self.run_args(ami, handle, name, &file.to_string_lossy()));
+        let path = file.to_string_lossy();
+        let r = if self.spot_first {
+            self.aws(self.run_args(ami, handle, name, &path, true)).or_else(|spot_err| {
+                eprintln!("round-vm: spot launch refused ({spot_err}); falling back to on-demand");
+                self.aws(self.run_args(ami, handle, name, &path, false))
+            })
+        } else {
+            self.aws(self.run_args(ami, handle, name, &path, false))
+        };
         let _ = std::fs::remove_file(&file);
         r.map(|s| s.trim().to_string())
     }
@@ -573,15 +588,49 @@ mod tests {
     #[test]
     fn run_args_tag_the_instance_and_terminate_on_shutdown() {
         let cli = AwsCli {
-            profile: "p".into(), region: "r".into(), instance_type: "c6i.8xlarge".into(),
-            subnet: "subnet-1".into(), security_group: "sg-1".into(), instance_profile: "ssm".into(), scratch: "/tmp".into(),
+            profile: "p".into(), region: "r".into(), instance_type: "c7i.8xlarge".into(),
+            subnet: "subnet-1".into(), security_group: "sg-1".into(), instance_profile: "ssm".into(), spot_first: true, scratch: "/tmp".into(),
         };
-        let a = cli.run_args("ami-1", "ec2-a", "round-ec2-a", "/tmp/ud");
+        let a = cli.run_args("ami-1", "ec2-a", "round-ec2-a", "/tmp/ud", false);
         let j = a.join(" ");
         assert!(j.contains("Tags=[{Key=spira-round-vm,Value=ec2-a},{Key=Name,Value=round-ec2-a}]"), "{j}");
         assert!(j.contains("--instance-initiated-shutdown-behavior terminate"), "{j}");
         assert!(j.contains("--security-group-ids sg-1") && j.contains("--iam-instance-profile Name=ssm"), "{j}");
         assert!(!j.contains("tskey"), "the auth key stays in the user-data file, never in argv");
+        assert!(!j.contains("instance-market-options"), "{j}");
+        let spot = cli.run_args("ami-1", "ec2-a", "round-ec2-a", "/tmp/ud", true).join(" ");
+        assert!(spot.contains("--instance-market-options MarketType=spot,") && spot.contains("InstanceInterruptionBehavior=terminate"), "{spot}");
+    }
+
+    #[test]
+    fn the_defaults_are_a_c7i_spot_first_and_the_market_key_turns_spot_off() {
+        let none = Ec2Config::from_lookup(&|_| None);
+        assert_eq!(none.instance_type, "c7i.8xlarge");
+        assert!(none.spot_first);
+        let od = Ec2Config::from_lookup(&|k| (k == "SPIRA_ROUND_VM_EC2_MARKET").then(|| "on-demand".to_string()));
+        assert!(!od.spot_first);
+    }
+
+    #[test]
+    fn missing_names_each_gap_and_a_configured_provider_starts() {
+        let d = TempDir::new();
+        let good = config(&d);
+        assert!(good.missing().is_empty());
+        for (name, clear) in [
+            ("EC2_PROFILE", (|c: &mut Ec2Config| c.profile.clear()) as fn(&mut Ec2Config)),
+            ("EC2_REGION", |c| c.region.clear()),
+            ("EC2_AMI", |c| c.ami.clear()),
+            ("EC2_SUBNET", |c| c.subnet.clear()),
+            ("EC2_TAILSCALE_KEY_FILE", |c| c.tailscale_key_file.clear()),
+            ("EC2_HOST_ADDR", |c| c.host_addr.clear()),
+        ] {
+            let mut c = config(&d);
+            clear(&mut c);
+            let m = c.missing();
+            assert_eq!(m.len(), 1, "{name}: {m:?}");
+            assert!(m[0].contains(name), "{name}: {m:?}");
+        }
+        assert!(Ec2::new(FakeEc2::default(), &good).is_ok());
     }
 
     #[test]
@@ -599,8 +648,8 @@ mod tests {
         let key = d.path().join("ts.key");
         std::fs::write(&key, "tskey-auth-abc\n").unwrap();
         Ec2Config {
-            profile: "p".into(), region: "r".into(), ami: "ami-1".into(), instance_type: "c6i.8xlarge".into(), subnet: "subnet-1".into(),
-            security_group: String::new(), instance_profile: String::new(), tailscale_key_file: key.to_string_lossy().into(),
+            profile: "p".into(), region: "r".into(), ami: "ami-1".into(), instance_type: "c7i.8xlarge".into(), subnet: "subnet-1".into(),
+            security_group: String::new(), instance_profile: String::new(), spot_first: true, tailscale_key_file: key.to_string_lossy().into(),
             run_deadline: Duration::from_secs(7200), host_addr: "100.64.0.1".into(), recipe_sha: "sha-now".into(),
         }
     }

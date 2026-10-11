@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_INSTANCE_TYPE — EC2 instance type of a spilled round VM.
+SCHEMA=EC2 instance type of a spilled round VM (default c7i.8xlarge).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_INSTANCE_TYPE:=c7i.8xlarge}"
+SPIRA_CONF_DEFAULT_EOF

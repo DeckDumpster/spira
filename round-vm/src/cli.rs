@@ -54,10 +54,10 @@ pub fn real_attempt() -> Result<Attempt, String> {
 /// cannot start says what is missing and the pool stays local: a half-configured spill must
 /// not take the local rounds down with it.
 fn spill_wiring(cfg: &Config) -> (Option<std::sync::Arc<dyn crate::provider::Provider>>, Option<SpillPlan>) {
-    if crate::config::str_env_opt("SPIRA_ROUND_VM_SPILL").as_deref() != Some("ec2") {
+    if crate::config::declared("SPIRA_ROUND_VM_SPILL").as_deref() != Some("ec2") {
         return (None, None);
     }
-    let ec2cfg = Ec2Config::from_lookup(&|k| std::env::var(k).ok());
+    let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
     let api = AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2"));
     let ec2: std::sync::Arc<dyn crate::provider::Provider> = match Ec2::new(api, &ec2cfg) {
         Ok(p) => std::sync::Arc::new(p),
@@ -66,12 +66,12 @@ fn spill_wiring(cfg: &Config) -> (Option<std::sync::Arc<dyn crate::provider::Pro
             return (None, None);
         }
     };
-    let num = |k: &str, d: u64| crate::config::str_env_opt(k).and_then(|v| v.parse().ok()).unwrap_or(d);
+    let num = |k: &str, d: u64| crate::config::declared(k).and_then(|v| v.parse().ok()).unwrap_or(d);
     let plan = SpillPlan {
         ec2: ec2.clone(),
         rule: Rule {
             wait: Duration::from_secs(num("SPIRA_ROUND_VM_SPILL_WAIT_SECS", 30)),
-            io_full_avg60: crate::config::str_env_opt("SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60").and_then(|v| v.parse().ok()).unwrap_or(30.0),
+            io_full_avg60: crate::config::declared("SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60").and_then(|v| v.parse().ok()).unwrap_or(30.0),
         },
         pressure: Box::new(|| crate::spill::read_io_full_avg60(crate::spill::PSI_IO)),
         timing: Timing { boot_tries: num("SPIRA_ROUND_VM_EC2_BOOT_TRIES", 150) as u32, poll: cfg.boot_poll, gone_tries: 60 },

@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_BOOT_TRIES — polls for a spilled instance to join the tailnet before it is given up on.
+SCHEMA=Polls for a spilled instance to reach the tailnet before it is destroyed (default 150).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_BOOT_TRIES:=150}"
+SPIRA_CONF_DEFAULT_EOF

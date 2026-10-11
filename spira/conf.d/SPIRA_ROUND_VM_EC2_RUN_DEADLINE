@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_RUN_DEADLINE — seconds after which a spilled instance terminates itself.
+SCHEMA=Seconds a spilled instance may live before the reaper treats it as stale (unit: seconds; default 7200).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_RUN_DEADLINE:=7200}"
+SPIRA_CONF_DEFAULT_EOF
