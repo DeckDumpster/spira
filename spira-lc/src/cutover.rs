@@ -72,14 +72,29 @@ fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i
     let title_sql = title.map_or("NULL".to_string(), |t| q(&t.chars().take(MIRROR_TITLE_CHARS).collect::<String>()));
     let priority_sql = priority.map_or("NULL".to_string(), |p| p.to_string());
     let repo_sql = repo.map_or("NULL".to_string(), q);
-    let (state, tip_sql) = match submitted_tip {
-        Some(t) => ("SUBMITTED", q(t)),
-        None => ("READY", "NULL".to_string()),
-    };
+    if let Some(tip) = submitted_tip {
+        return submitted_create_script(id, at, &title_sql, &priority_sql, &repo_sql, tip);
+    }
     format!(
-        "INSERT INTO bead (bead_id, state, tip, holds, version, updated_at, title, priority, repo) VALUES ({}, '{state}', {tip_sql}, '[]', 0, {at}, {title_sql}, {priority_sql}, {repo_sql}) \
+        "INSERT INTO bead (bead_id, state, tip, holds, version, updated_at, title, priority, repo) VALUES ({}, 'READY', NULL, '[]', 0, {at}, {title_sql}, {priority_sql}, {repo_sql}) \
          ON DUPLICATE KEY UPDATE title = COALESCE(VALUES(title), title), priority = COALESCE(VALUES(priority), priority), repo = COALESCE(VALUES(repo), repo);\n",
         q(id)
+    )
+}
+
+/// One transaction: an untouched READY row is promoted, an absent row is born SUBMITTED, and the
+/// Submit event is written once; a row already past that is left alone.
+fn submitted_create_script(id: &str, at: i64, title_sql: &str, priority_sql: &str, repo_sql: &str, tip: &str) -> String {
+    let (id, tip) = (q(id), q(tip));
+    format!(
+        "START TRANSACTION;\n\
+         UPDATE bead SET state = 'SUBMITTED', tip = {tip}, version = version + 1, updated_at = {at}, since = {at} WHERE bead_id = {id} AND state = 'READY' AND version = 0 AND tip IS NULL;\n\
+         INSERT INTO bead (bead_id, state, tip, holds, version, updated_at, since, title, priority, repo) VALUES ({id}, 'SUBMITTED', {tip}, '[]', 1, {at}, {at}, {title_sql}, {priority_sql}, {repo_sql}) \
+         ON DUPLICATE KEY UPDATE title = COALESCE(VALUES(title), title), priority = COALESCE(VALUES(priority), priority), repo = COALESCE(VALUES(repo), repo);\n\
+         INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) \
+         SELECT 'bead', {id}, 'Submit', 'READY', 'READY', 'SUBMITTED', 1, NULL, JSON_OBJECT('tip', {tip}), 'bead.sh', {at} FROM bead \
+         WHERE bead_id = {id} AND state = 'SUBMITTED' AND tip = {tip} AND NOT EXISTS (SELECT 1 FROM event WHERE machine = 'bead' AND lc_key = {id});\n\
+         COMMIT;\n"
     )
 }
 
@@ -87,7 +102,7 @@ fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i
 const MIRROR_TITLE_CHARS: usize = 512;
 
 /// `create-bead <bead-id> [--title T] [--priority 0..4] [--repo NAME] [--submitted-tip SHA]`. With a tip the
-/// row is born SUBMITTED at it, so no claimable READY window exists; an existing row is untouched.
+/// row is born SUBMITTED at it (an untouched READY row is promoted), so no claimable READY window exists.
 pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "create-bead: missing <bead-id>".into());
@@ -1205,10 +1220,10 @@ mod tests {
     #[test]
     fn a_submitted_create_is_born_submitted_at_its_tip() {
         let s = create_bead_script("sp-a", 7, Some("t"), Some(2), Some("abc123"), Some("spira"));
-        assert!(s.contains("VALUES ('sp-a', 'SUBMITTED', 'abc123', '[]', 0, 7,"), "{s}");
+        assert!(s.contains("VALUES ('sp-a', 'SUBMITTED', 'abc123', '[]', 1, 7,"), "{s}");
         assert!(s.contains("'spira')") && s.contains("repo = COALESCE(VALUES(repo), repo)"), "{s}");
-        assert!(!s.contains("'READY'"), "{s}");
-        assert!(!s.contains("state ="), "an existing row's state is never rewritten: {s}");
+        assert!(s.contains("'Submit'") && s.contains("AND state = 'READY' AND version = 0 AND tip IS NULL"), "{s}");
+        assert!(!s.contains("ON DUPLICATE KEY UPDATE state"), "a row past READY is never rewritten: {s}");
     }
 
     fn stacked(id: &str, prereq: &str, prereq_tip: &str) -> (String, bead::BeadRow) {

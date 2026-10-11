@@ -148,11 +148,17 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
         return bdq_status(home, args);
     }
     let (code, stdout) = bdq_capture_with(home, args, Stdio::inherit());
-    print!("{stdout}");
+    if submitted_tip.is_none() {
+        print!("{stdout}");
+    }
     if code != 0 {
         return code;
     }
     let Some(new_id) = parse_created_id(&stdout) else {
+        if submitted_tip.is_some() {
+            eprintln!("bead: file: created, but could not read its id to create its SUBMITTED lifecycle row; it is not claimable until one exists: spira-lc create-bead <id> --submitted-tip <sha>");
+            return 1;
+        }
         if let Some(incident) = incident {
             eprintln!("bead: file: created a remedy for incident {incident} but could not read its id; add the edge: bd dep add {incident} <id>");
             return 1;
@@ -165,9 +171,10 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
         match submitted_tip {
             Some(tip) => {
                 if let Err(e) = create_submitted_row(&new_id, title, priority, tip, repo) {
-                    eprintln!("bead: file: {new_id} filed but its lifecycle row was not created SUBMITTED: {e}; it is not claimable until one exists: spira-lc create-bead {new_id} --submitted-tip {tip}");
-                    rc = 1;
+                    eprintln!("bead: file: {new_id} filed but its lifecycle row was not created SUBMITTED: {e}; no id is printed. Once the lifecycle store answers: spira-lc create-bead {new_id} --submitted-tip {tip}");
+                    return 1;
                 }
+                print!("{stdout}");
             }
             None => mirror_to_lifecycle(&new_id, Some(title), priority, repo),
         }

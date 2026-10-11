@@ -85,6 +85,7 @@ LC_LOG="$T/lc.log"
 cat > "$STUB_LC" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$LC_LOG_PATH"
+[ -n "${LC_FAIL:-}" ] && exit 2
 exit 0
 STUB
 chmod +x "$STUB_LC"
@@ -101,18 +102,20 @@ tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/db" SPIRA_REPO_MAP="$T/repo-map" \
     SPIRA_INCIDENT_LABEL="incident" SPIRA_PLAN_LABEL="plan" \
     SPIRA_SUBMITTED_LABEL="testsubmitted" SPIRA_SCOPE_LABEL="testscope"
 
-run_bead() {
+run_bead() { run_bead_raw "$@" 2>&1; }
+run_bead_raw() {
     : > "$BD_LOG"; : > "$LC_LOG"
     env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$NONE" \
         BD_LOG_PATH="$BD_LOG" \
         LC_LOG_PATH="$LC_LOG" \
+        LC_FAIL="${LC_FAIL:-}" \
         SPIRA_LC_BIN="$STUB_LC" \
         SPIRA_HOME="$T" \
         SPIRA_REPO="$T" \
         SPIRA_BEAD_LANE_OVERRIDE="${SPIRA_BEAD_LANE_OVERRIDE:-}" \
-        bead.sh file "$@" 2>&1
+        bead.sh file "$@"
 }
 
 # =====================================================================================
@@ -130,6 +133,10 @@ out="$(run_bead "own fix" --for builder --repo testrepo --submitted --tip abc123
 is   "submitted: exits 0"               "0"             "$rc"
 want "submitted: configured label applied" "testsubmitted" "$(cat "$BD_LOG")"
 want "submitted: row created at the tip, not READY" "create-bead sp-test --priority 2 --title own fix --submitted-tip abc123" "$(cat "$LC_LOG")"
+
+out="$(LC_FAIL=1 run_bead_raw "own fix" --for builder --repo testrepo --submitted --tip abc123 2>/dev/null)"; rc=$?
+is     "submitted, row write fails: exits non-zero" "1" "$rc"
+is     "submitted, row write fails: stdout carries no id" "" "$out"
 
 out="$(run_bead "own fix" --for builder --repo testrepo --submitted)"; rc=$?
 is     "submitted without tip: refused"            "2"     "$rc"
