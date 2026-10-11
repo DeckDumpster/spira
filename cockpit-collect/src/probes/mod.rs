@@ -70,7 +70,6 @@ pub struct Cfg {
     pub ctrl: String,
     pub repo_map: String,
     pub round_cap_secs: i64,
-    pub run: String,
 }
 
 impl Cfg {
@@ -98,7 +97,6 @@ impl Cfg {
             ctrl: cfg("SPIRA_CTRL")?,
             repo_map: cfg("SPIRA_REPO_MAP")?,
             round_cap_secs: cfg_parse::<i64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
-            run: cfg("SPIRA_RUN")?,
         })
     }
 }
@@ -154,7 +152,7 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
     out.extend(tsd::tsd_keys());
     out.extend(unsent::unsent_keys(cfg));
     out.extend(queue::queue_keys(cfg));
-    out.extend(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir, &cfg.run));
+    out.extend(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir));
     out.extend(reachable::reachable_keys(cfg));
     out.extend(sphere_keys(cfg));
     out.extend(repo_label_keys(cfg));
@@ -193,7 +191,7 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
         "tsd" => Some(tsd::tsd_keys()),
         "unsent" => Some(unsent::unsent_keys(cfg)),
         "queue" => Some(queue::queue_keys(cfg)),
-        "round" => Some(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir, &cfg.run)),
+        "round" => Some(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir)),
         "reachable" => Some(reachable::reachable_keys(cfg)),
         "sphere" => Some(sphere_keys(cfg)),
         "repo_labels" => Some(repo_label_keys(cfg)),

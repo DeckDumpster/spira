@@ -4,20 +4,18 @@
 use super::{push, Kv};
 use crate::quoting::sanitize;
 use serde_json::Value;
-use std::fs;
 use std::path::Path;
-use testenv::phase::RunLog;
 use std::process::{Command, Stdio};
 
 const MAX_ROWS: usize = 12;
 const MAX_ROUNDS: usize = 4;
 
-pub fn round_keys(cap_secs: i64, queue_dir: &str, run: &str) -> Kv {
+pub fn round_keys(cap_secs: i64, queue_dir: &str) -> Kv {
     let batches = list_batches().and_then(|raw| parse_batches(&raw));
     let pool = spira_config::lc_state::list().ok().map(|rows| pool_waiting(&rows));
     let mut kv = round_keys_from(batches.as_deref(), pool, cap_secs, Path::new(queue_dir));
     if let Some(batches) = batches.as_deref() {
-        progress_keys(&mut kv, batches, Path::new(run));
+        progress_keys(&mut kv, batches);
     }
     kv
 }
@@ -31,48 +29,21 @@ fn forge_state(queue_dir: &Path, repo: &str, batch: &str) -> Option<Vec<(String,
     (get("batch_id") == Some(batch)).then_some(kv)
 }
 
-pub struct Progress {
-    pub done: usize,
-    pub total: Option<usize>,
-    pub reds: Vec<String>,
-}
-
-/// A certifying round's suites so far, read from the run's recorded events (`run.events`) and
-/// the suite count the batcher wrote beside the corpus. A missing dir is 0 done, not unknown.
-pub fn progress(run: &Path, repo: &str, round: &str) -> Option<Progress> {
-    let root = run.join("batch-results").join(format!("{repo}-{round}"));
-    let total = fs::read_to_string(root.join("total")).ok().and_then(|t| t.trim().parse().ok());
-    let suites = RunLog::in_dir(&root.join("corpus")).load().ok()?.suites();
-    let reds = suites.iter().filter(|(_, s)| matches!(s.as_str(), "red" | "timeout" | "fault")).map(|(n, _)| n.clone()).collect();
-    Some(Progress { done: suites.len(), total, reds })
-}
-
-fn progress_keys(kv: &mut Kv, batches: &[Batch], run: &Path) {
-    let live = children_after_parents(batches.iter().filter(|b| !terminal(&b.state) && b.state != "DISCARDED").collect());
-    for (r, b) in live.iter().take(MAX_ROUNDS).enumerate() {
-        if phase(&b.state) != "certifying" {
-            continue;
-        }
-        let k = format!("SP_ROUNDS{r}");
-        let Some(p) = progress(run, &b.repo, &b.id) else { continue };
-        push(kv, &format!("{k}_SUITES_DONE"), p.done.to_string());
-        push(kv, &format!("{k}_SUITES_TOTAL"), p.total.map_or("?".to_string(), |t| t.to_string()));
-        push(kv, &format!("{k}_REDS_N"), p.reds.len().to_string());
-        for (i, n) in p.reds.iter().take(MAX_ROWS).enumerate() {
-            push(kv, &format!("{k}_RED{i}"), sanitize(n));
-        }
-    }
-}
-
 fn list_batches() -> Option<String> {
     let bin = spira_config::lifecycle_row::lc_bin();
     let o = Command::new("timeout").arg("5").arg(bin).args(["list", "--batches"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
+pub struct Progress {
+    pub done: usize,
+    pub total: Option<usize>,
+    pub reds: Vec<String>,
+}
+
 pub struct Batch {
     pub id: String,
-    pub repo: String,
+    pub progress: Option<Progress>,
     pub state: String,
     pub reason: String,
     pub parent: String,
@@ -98,13 +69,41 @@ fn pairs(v: &Value, k: &str, a: &str, b: &str) -> Vec<(String, String)> {
     v.get(k).and_then(Value::as_array).map(|rows| rows.iter().map(|r| (text(r, a), text(r, b))).collect()).unwrap_or_default()
 }
 
+/// The pass's live counts as `round-vm` publishes them onto the batch row: `done`, `total`, `red`.
+fn progress_of(p: &Value) -> Option<Progress> {
+    let done = p.get("done")?.as_u64()? as usize;
+    let total = p.get("total").and_then(Value::as_u64).map(|t| t as usize);
+    let reds = p.get("red").and_then(Value::as_array).map(|a| a.iter().filter_map(|n| n.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    Some(Progress { done, total, reds })
+}
+
+fn progress_keys(kv: &mut Kv, batches: &[Batch]) {
+    let live = children_after_parents(batches.iter().filter(|b| !terminal(&b.state) && b.state != "DISCARDED").collect());
+    for (r, b) in live.iter().take(MAX_ROUNDS).enumerate() {
+        if phase(&b.state) != "certifying" {
+            continue;
+        }
+        let k = format!("SP_ROUNDS{r}");
+        let (done, total, reds) = match &b.progress {
+            Some(p) => (p.done.to_string(), p.total.map_or("?".to_string(), |t| t.to_string()), p.reds.as_slice()),
+            None => ("0".to_string(), "?".to_string(), &[][..]),
+        };
+        push(kv, &format!("{k}_SUITES_DONE"), done);
+        push(kv, &format!("{k}_SUITES_TOTAL"), total);
+        push(kv, &format!("{k}_REDS_N"), reds.len().to_string());
+        for (i, n) in reds.iter().take(MAX_ROWS).enumerate() {
+            push(kv, &format!("{k}_RED{i}"), sanitize(n));
+        }
+    }
+}
+
 pub fn parse_batches(raw: &str) -> Option<Vec<Batch>> {
     let Value::Array(rows) = serde_json::from_str::<Value>(raw).ok()? else { return None };
     Some(
         rows.iter()
             .map(|r| Batch {
                 id: text(r, "batch_id"),
-                repo: text(r, "repo"),
+                progress: r.get("progress").and_then(progress_of),
                 state: text(r, "state"),
                 reason: text(r, "reason"),
                 parent: text(r, "parent"),
@@ -359,25 +358,17 @@ mod tests {
     }
 
     #[test]
-    fn a_certifying_round_reports_suites_done_total_and_reds_and_an_empty_dir_is_zero() {
-        let run = testkit::TempDir::new("round-progress");
-        let root = run.path().join("batch-results/spira-r-9/corpus");
-        fs::create_dir_all(&root).unwrap();
-        let log = RunLog::in_dir(&root);
-        for (n, s) in [("a.sh", "ok"), ("b.sh", "red"), ("c.sh", "ok"), ("d.sh", "timeout")] {
-            log.record(testenv::phase::RunEvent::Suite { name: n.into(), status: s.into() }, 1).unwrap();
-        }
-        fs::write(run.path().join("batch-results/spira-r-9/total"), "10\n").unwrap();
-        let b = parse_batches(RAW).unwrap();
+    fn a_certifying_round_reports_suites_done_total_and_reds_and_no_progress_is_zero() {
+        let with = RAW.replace(r#""reason":null,"opened_at":"1000""#, r#""reason":null,"progress":"{}","opened_at":"1000""#);
+        let with = with.replace(r#""progress":"{}""#, r#""progress":{"done":4,"total":10,"red":["b.sh","d.sh"]}"#);
         let mut kv = Kv::new();
-        progress_keys(&mut kv, &b, run.path());
+        progress_keys(&mut kv, &parse_batches(&with).unwrap());
         assert_eq!(get(&kv, "SP_ROUNDS0_SUITES_DONE"), Some("4"));
         assert_eq!(get(&kv, "SP_ROUNDS0_SUITES_TOTAL"), Some("10"));
         assert_eq!(get(&kv, "SP_ROUNDS0_REDS_N"), Some("2"));
         assert_eq!(get(&kv, "SP_ROUNDS0_RED1"), Some("d.sh"));
-        let empty = testkit::TempDir::new("round-progress");
         let mut kv = Kv::new();
-        progress_keys(&mut kv, &b, empty.path());
+        progress_keys(&mut kv, &parse_batches(RAW).unwrap());
         assert_eq!(get(&kv, "SP_ROUNDS0_SUITES_DONE"), Some("0"));
         assert_eq!(get(&kv, "SP_ROUNDS0_SUITES_TOTAL"), Some("?"));
     }

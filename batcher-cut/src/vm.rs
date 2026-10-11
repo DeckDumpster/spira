@@ -120,9 +120,6 @@ pub fn install_probe_result(rc: i32) -> JobResult {
     }
 }
 
-/// Beside `corpus/`: how many suites the round runs, which the cockpit shows as the denominator.
-pub const TOTAL_FILE: &str = "total";
-
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -353,9 +350,6 @@ impl RoundRunner for VmRunner<'_> {
                     return Err("the corpus already ran for this round".into());
                 }
                 order::covers(&io::suites_in(&self.wt, "HEAD"), suites)?;
-                if let Some(root) = self.results.parent() {
-                    let _ = fs::write(root.join(TOTAL_FILE), format!("{}\n", suites.len()));
-                }
                 let err = fs::File::create(&self.stderr_path).map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
                 // batch-job: this runs whatever its caller names, as long as that takes
                 let mut cmd = Command::new("systemd-run");
