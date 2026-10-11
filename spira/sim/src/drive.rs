@@ -317,7 +317,7 @@ pub fn resolve_conf(world: &Path, epoch: u64) -> Result<(), String> {
     }
     std::fs::write(&file, &bytes).map_err(|e| e.to_string())?;
     let again = env0(&source, true)?;
-    let differ: Vec<&String> = once.keys().chain(again.keys()).filter(|k| once.get(*k) != again.get(*k)).collect();
+    let differ: Vec<&String> = once.keys().chain(again.keys()).filter(|k| !k.starts_with("BASH_FUNC_") && once.get(*k) != again.get(*k)).collect();
     if !differ.is_empty() {
         let _ = std::fs::remove_file(&file);
         return Err(format!("the exported env differs from what conf.sh resolves: {differ:?}"));
