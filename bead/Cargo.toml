@@ -11,10 +11,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "bead"
 path = "src/main.rs"
+test = false
 
 [[bin]]
 name = "bdq"
 path = "src/bin/bdq.rs"
+test = false
 
 [dependencies]
 regex = "1"

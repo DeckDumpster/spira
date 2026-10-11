@@ -7,6 +7,7 @@ description = "rebase-stale — rebases a submitted branch that went stale again
 [[bin]]
 name = "rebase-stale"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

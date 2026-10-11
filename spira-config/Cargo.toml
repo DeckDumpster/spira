@@ -18,12 +18,14 @@ tsd = { path = "../tsd" }
 [[bin]]
 name = "spira-config"
 path = "src/main.rs"
+test = false
 
 # The admission pools' agent-facing entry (sp-f4ig1, gate/DESIGN-admission.md): RUSTC_WRAPPER
 # mode, `status`, `run`.
 [[bin]]
 name = "spira-admit"
 path = "src/admit_main.rs"
+test = false
 
 [profile.release]
 opt-level = "z"

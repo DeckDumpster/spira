@@ -15,6 +15,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "beads-store"
 path = "src/main.rs"
+test = false
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

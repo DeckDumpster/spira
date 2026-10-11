@@ -11,6 +11,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "sim-fit"
 path = "src/bin/sim-fit.rs"
+test = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

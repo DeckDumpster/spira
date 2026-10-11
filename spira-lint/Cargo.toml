@@ -15,6 +15,7 @@ suite-select = { path = "../suite-select" }
 [[bin]]
 name = "spira-lint"
 path = "src/main.rs"
+test = false
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

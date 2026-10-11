@@ -92,6 +92,16 @@ lto = false
 codegen-units = 16
 strip = true
 
+# The round's unit-test build: workspace members unoptimised, dependencies as release builds
+# them, so their compiled artefacts are shared with the release build.
+[profile.unittest]
+inherits = "release"
+opt-level = 0
+codegen-units = 16
+strip = false
+[profile.unittest.package."*"]
+opt-level = 2
+
 # aeon and gate runs (sp-zv7j4): fast, incremental builds of a worktree that is thrown
 # away after its suites run — none of release's link-time cost buys anything here.
 [profile.aeon]

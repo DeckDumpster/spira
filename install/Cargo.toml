@@ -17,14 +17,17 @@ path = "src/bin/install.rs"
 [[bin]]
 name = "units-install"
 path = "src/bin/units_install.rs"
+test = false
 
 [[bin]]
 name = "unit-ensure"
 path = "src/bin/unit_ensure.rs"
+test = false
 
 [[bin]]
 name = "render-unit"
 path = "src/bin/render_unit.rs"
+test = false
 
 [dependencies]
 release = { path = "../release" }

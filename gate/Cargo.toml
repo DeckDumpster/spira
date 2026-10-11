@@ -7,6 +7,7 @@ description = "gate — the certification gate: judges a branch merged onto its 
 [[bin]]
 name = "gate"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 libc = "0.2"

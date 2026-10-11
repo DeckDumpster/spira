@@ -13,6 +13,7 @@ strand = { path = "../strand" }
 [[bin]]
 name = "groomer"
 path = "src/main.rs"
+test = false
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

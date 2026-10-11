@@ -11,6 +11,7 @@ spira-config = { path = "../spira-config" }
 [[bin]]
 name = "work"
 path = "src/main.rs"
+test = false
 
 [profile.release]
 opt-level = "z"

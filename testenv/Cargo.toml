@@ -12,14 +12,17 @@ path = "src/lib.rs"
 [[bin]]
 name = "testenv"
 path = "src/main.rs"
+test = false
 
 [[bin]]
 name = "bd-meter"
 path = "src/bd_meter_main.rs"
+test = false
 
 [[bin]]
 name = "target-reap"
 path = "src/target_reap_main.rs"
+test = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

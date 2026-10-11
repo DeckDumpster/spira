@@ -11,14 +11,17 @@ path = "src/lib.rs"
 [[bin]]
 name = "world"
 path = "src/bin/world.rs"
+test = false
 
 [[bin]]
 name = "aeons"
 path = "src/bin/aeons.rs"
+test = false
 
 [[bin]]
 name = "slay"
 path = "src/bin/slay.rs"
+test = false
 
 [dependencies]
 spira-ctrl = { path = "../spira-ctrl" }

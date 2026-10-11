@@ -158,8 +158,19 @@ if ! command -v cargo >/dev/null 2>&1; then
     echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
     exit 127
 fi
-rm -rf ~/round-work ~/round-bins ~/round-launcher.env
-git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
+rm -rf ~/round-bins ~/round-launcher.env
+mirror="git://${host_addr}:${port}/mirror.git"
+if [ -d ~/round-work/.git ] \
+    && git -C ~/round-work remote set-url origin "$mirror" \
+    && git -C ~/round-work fetch --quiet --prune origin \
+    && git -C ~/round-work remote set-head origin --auto >/dev/null \
+    && git -C ~/round-work reset --quiet --hard origin/HEAD \
+    && git -C ~/round-work clean --quiet -fdx -e /target; then
+    :
+else
+    rm -rf ~/round-work
+    git clone --quiet "$mirror" ~/round-work
+fi
 cd ~/round-work
 # sp-xjnzl-2: warm conf.sh's own generated fragments (conf.d.keys.generated.sh,
 # conf.d.defaults.generated.sh — gitignored, never present after a fresh clone) ONCE,
@@ -209,7 +220,7 @@ unit_cargo() {
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
         SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-        cargo test --profile release --workspace --config profile.release.incremental=false "$@"
+        cargo test --profile unittest --workspace --config profile.unittest.incremental=false "$@"
 }
 unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
 mkdir -p "$(dirname "$unit_build_mark")"
@@ -1529,6 +1540,16 @@ mod tests {
     }
 
     #[test]
+    fn the_round_tree_is_fetched_into_a_kept_tree_and_only_cloned_when_that_fails() {
+        let fetch = REMOTE_SCRIPT.find("fetch --quiet --prune origin").expect("fetches into the kept tree");
+        let reset = REMOTE_SCRIPT.find("reset --quiet --hard origin/HEAD").unwrap();
+        let clean = REMOTE_SCRIPT.find("clean --quiet -fdx -e /target").expect("the clean spares the warm target");
+        let clone = REMOTE_SCRIPT.find("git clone").unwrap();
+        assert!(fetch < reset && reset < clean && clean < clone);
+        assert!(!REMOTE_SCRIPT.contains("rm -rf ~/round-work ~/round-bins"), "the tree, and its target, is not deleted up front");
+    }
+
+    #[test]
     fn the_unit_test_binaries_compile_in_the_build_phase_and_the_run_is_the_same_command() {
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         let no_run = REMOTE_SCRIPT.find("unit_cargo --no-run").unwrap();
@@ -1537,7 +1558,7 @@ mod tests {
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
         let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
         let body = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
-        assert!(body.contains("cargo test --profile release --workspace --config profile.release.incremental=false"), "{body}");
+        assert!(body.contains("cargo test --profile unittest --workspace --config profile.unittest.incremental=false"), "{body}");
         assert_eq!(REMOTE_SCRIPT.matches("cargo test").count(), 1, "one definition of the unit command, shared by compile and run");
     }
 
