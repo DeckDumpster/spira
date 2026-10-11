@@ -80,6 +80,8 @@ pub struct Env {
     /// How many times `round_land` tries while another queue operation holds the repo's lock.
     pub land_lock_attempts: u32,
     pub land_lock_wait: Duration,
+    /// The Concierge's cut-pause file; a landing clears it unless it starts with `hold:`. `None` is off.
+    pub land_unpause: Option<PathBuf>,
 }
 
 fn now() -> u64 {
@@ -1798,6 +1800,26 @@ pub fn round_land(env: &Env, repo: &Repo, batch: &str) -> Result<LandRun, String
     Ok(last)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum Unpause {
+    Off,
+    Absent,
+    Cleared,
+    Held,
+}
+
+/// A deliberate hold (the file starts with `hold:`) belongs to the operator; any other pause is
+/// the loop's own and a landing ends it.
+pub fn unpause_after_land(env: &Env) -> Result<Unpause, String> {
+    let Some(path) = env.land_unpause.as_ref() else { return Ok(Unpause::Off) };
+    let Ok(text) = fs::read_to_string(path) else { return Ok(Unpause::Absent) };
+    if text.starts_with("hold:") {
+        return Ok(Unpause::Held);
+    }
+    fs::remove_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Unpause::Cleared)
+}
+
 /// True only when `head` is an ancestor of the repo's landing ref: the one fact that says the
 /// round landed, whatever land-local reported.
 pub fn head_on_base(repo: &Repo, head: &str) -> bool {
@@ -2816,6 +2838,25 @@ mod land_exit_tests {
     }
 
     #[test]
+    fn a_landing_clears_a_loop_pause_but_never_a_deliberate_hold() {
+        let d = testkit::TempDir::new("batcher-cut-unpause");
+        let pause = d.join("cut.pause");
+        let mut e = lifecycle_tests_env(&d);
+        assert_eq!(unpause_after_land(&e).unwrap(), Unpause::Off, "default off");
+        fs::write(&pause, "ROUND RED").unwrap();
+        assert!(pause.exists(), "positive control: the pause exists before the call");
+        assert_eq!(unpause_after_land(&e).unwrap(), Unpause::Off);
+        assert!(pause.exists(), "disabled leaves the pause alone");
+        e.land_unpause = Some(pause.clone());
+        assert_eq!(unpause_after_land(&e).unwrap(), Unpause::Cleared);
+        assert!(!pause.exists());
+        assert_eq!(unpause_after_land(&e).unwrap(), Unpause::Absent);
+        fs::write(&pause, "hold: publish red").unwrap();
+        assert_eq!(unpause_after_land(&e).unwrap(), Unpause::Held);
+        assert!(pause.exists(), "a deliberate hold survives a landing");
+    }
+
+    #[test]
     fn a_refusal_without_the_lock_is_final_and_alarms_with_its_line() {
         let d = testkit::TempDir::new("batcher-cut-land-refused");
         let e = stub_queue(&d, 0, 1, "queue.sh round land: not a fast-forward");
@@ -3066,5 +3107,6 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         verdicts: dir.join("verdicts"),
         land_lock_attempts: 3,
         land_lock_wait: Duration::from_millis(1),
+        land_unpause: None,
     }
 }
