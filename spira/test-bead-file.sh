@@ -142,7 +142,7 @@ out="$(LC_FAIL=1 run_bead_raw "plain fix" --for builder --repo testrepo 2>&1)"; 
 is     "row write fails: exits non-zero" "1" "$rc"
 want   "row write fails: names the content id" "sp-test" "$out"
 want   "row write fails: prints the repair command" "spira-lc create-bead sp-test" "$out"
-n="$(grep -c "^create-bead sp-test" "$LC_LOG")"; is "row write fails: retried 3x (got $n; log: $(tr '\n' ';' < "$LC_LOG"))" "3" "$n"
+n="$(grep -c "^create-bead sp-test .*--title plain fix" "$LC_LOG")"; is "row write fails: retried before giving up" "3" "$n"
 
 out="$(run_bead "own fix" --for builder --repo testrepo --submitted)"; rc=$?
 is     "submitted without tip: refused"            "2"     "$rc"
