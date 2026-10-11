@@ -484,6 +484,38 @@ fn a_setup_red_is_rerun_once_then_raises_one_incident_never_an_endless_defer() {
 }
 
 #[test]
+fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
+    let mut t = T::new(LandMode::Queue);
+    batch(&t);
+    t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
+    *t.scripts.judgement.borrow_mut() = RunOut { rc: 0, out: "id=sp-j3\n".into(), err: String::new() };
+    *t.forge.run.borrow_mut() = Some("77".into());
+    t.forge.status.borrow_mut().push(Some("red\nfailed-step: gate / Run tests\nstep-log: FAILED tests/test_progress_file.py::test_x - AssertionError\nstep-log: ===== 1 failed, 9 passed in 2s =====\nstep-log: CI FAILED during step: unit\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(has_call(&t.scripts.calls, "judgement-ci batcher spira tests/test_progress_file.py "), "{:?}", t.scripts.calls);
+    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("workflow-rerun")));
+    assert!(t.out().contains("summoned judgement (sp-j3)"), "{}", t.out());
+}
+
+#[test]
+fn a_provision_failure_log_stays_setup_red_and_an_unparseable_one_still_raises_an_incident() {
+    for log in ["step-log: no space left on device\n", ""] {
+        let mut t = T::new(LandMode::Queue);
+        batch(&t);
+        t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
+        *t.forge.run.borrow_mut() = Some("77".into());
+        t.forge.status.borrow_mut().push(Some(format!("red\nfailed-step: gate / Set up runner\n{log}")));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+        assert!(t.out().contains("no suite annotations"), "{}", t.out());
+        assert!(!has_call(&t.scripts.calls, "judgement-ci"));
+        t.clock.now.set(t.clock.now.get() + t.lib.s.verdict.ci_idle_sec + 1);
+        t.forge.status.borrow_mut().push(Some(format!("red\nfailed-step: gate / Set up runner\n{log}")));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+        assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("mail-operator")));
+    }
+}
+
+#[test]
 fn red_without_suites_or_without_a_batcher_is_not_judged() {
     let t = T::new(LandMode::Queue);
     batch(&t);
