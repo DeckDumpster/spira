@@ -28,6 +28,7 @@ mod endpass;
 mod flip;
 mod io;
 mod order;
+mod pace;
 mod screen;
 mod vm;
 
@@ -1201,6 +1202,20 @@ fn settle_batch(env_: &Env, name: &str) -> Result<(), String> {
     }
 }
 
+fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), String> {
+    let repo = find_repo(env_, name)?;
+    let inbox = PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
+    let stamp = |at: u64| {
+        std::process::Command::new("date")
+            .args(["-u", "-d", &format!("@{at}"), "+%FT%TZ"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp };
+    pace::paced(&pace::Files::new(&env_.run, name), &sm, || io::open_round_id(env_, &repo), || io::read_local_verdict(env_, name), || cut(one))
+}
+
 /// One scheduler pass over the repo map. `Pass::Local` is the harness's VM rounds, run one repo
 /// at a time; `Pass::Forge` settles and opens queue.forge batches. They run as separate units so
 /// a long VM round never delays a forge batch. `SPIRA_BATCHER_ENABLE=0` holds only the local
@@ -1217,12 +1232,17 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     let env_ = env_for(o, home, run)?;
     let reg = io::registry(&env_);
+    let paced = cfg("SPIRA_ROUNDS_PACING")?.trim() == "1";
     let repos: Vec<(String, String)> = reg.all().into_iter().map(|n| { let l = reg.land(&n); (n, l) }).collect();
     let failed = drive_pass(&repos, pass, local_enabled, |name, step| match step {
         Step::Verdict => settle_batch(&env_, name),
         Step::Cut => {
             let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
-            cut(&one)
+            if paced && reg.land(name) == "queue.local" {
+                paced_cut(&env_, name, &one)
+            } else {
+                cut(&one)
+            }
         }
     });
     if failed.is_empty() {

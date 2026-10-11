@@ -188,3 +188,18 @@ at a time. `batcher rounds-forge` (spira-rounds-forge) runs `queue verdict <repo
 each queue.forge repo, which settles the open batch and opens the next. They are separate units
 so a VM round never delays a forge batch; a repo only ever gets its own mode's steps.
 `SPIRA_BATCHER_ENABLE=0` holds local rounds only. `batcher rounds` runs both, in order.
+
+## 6. Pacing (`SPIRA_ROUNDS_PACING`, default off)
+
+With `SPIRA_ROUNDS_PACING=1` each queue.local repo's pass runs through `pace::paced`, state in
+`<run>/rounds-pace/<repo>/` so a repo's hold never touches another's:
+
+- a round that ran and did not land (`NOT LANDED`, or a red local verdict written in the pass)
+  writes `pause` and pages the Concierge inbox; `rm pause` lifts it. A cut that admitted nothing
+  never pauses, whatever its wording;
+- a round with no verdicts (`NO RESULT`, `OVER-CAP`, `cannot check out`, `certify rc=75`, `left
+  no verdicts`) backs the repo off 600 s; the second in a row writes `stopped` and pages;
+- an open round at the start of a pass has no driver: paged once per batch, never re-cut;
+- `OPEN FAILED` pages every time and pauses nothing.
+
+Tests: `pace::tests`, one fixture per rule.
