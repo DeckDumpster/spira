@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS bead (
     -- Mirrored from bd by bead.sh file/amend so the ops views never join to bd; migrations/0007.
     title       VARCHAR(512) NULL,
     priority    TINYINT NULL,
+    -- The repo:<name> the bead was filed against, so a pool is selected by repo without reading bd; migrations/0026-bead-repo.sql for an existing database.
+    repo        VARCHAR(64) NULL,
     -- Ahead of the line (Express/Unexpress events); migrations/0010-express.sql for an existing database.
     express     BOOLEAN NOT NULL DEFAULT FALSE,
     -- The holder's phase and how its session was cut short, set only while WORKING; migrations/0016-aeon-phase.sql for an existing database.

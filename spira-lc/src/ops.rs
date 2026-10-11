@@ -185,9 +185,48 @@ pub fn cmd_backfill_titles(_args: &[String], conn: &Conn) -> (i32, String) {
     (code, format!("backfill-titles: {filled} of {} filled{}", ids.len(), if missed.is_empty() { String::new() } else { format!("; not filled: {}", missed.join(", ")) }))
 }
 
+/// The `repo:<name>` label of a `bd show --json` document, array or object.
+pub fn repo_label(bd_show_json: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(bd_show_json.trim()).ok()?;
+    let doc = match &parsed {
+        Value::Array(a) => a.first()?.clone(),
+        v => v.clone(),
+    };
+    doc.get("labels")?.as_array()?.iter().filter_map(Value::as_str).find_map(|l| l.strip_prefix("repo:")).map(str::to_string)
+}
+
+/// `backfill-repos`: fills `bead.repo` once from the content store's label on every live row without one.
+pub fn cmd_backfill_repos(_args: &[String], conn: &Conn) -> (i32, String) {
+    let sql = format!("SELECT bead_id FROM bead WHERE repo IS NULL AND state IN ({LIVE_STATES})");
+    let ids: Vec<String> = match conn.query(&sql) {
+        Ok(rows) => rows.iter().filter_map(|r| r.get("bead_id").and_then(|v| v.as_str()).map(str::to_string)).collect(),
+        Err(e) => return (2, format!("cannot tell: {e:?}")),
+    };
+    let (mut filled, mut missed) = (0, Vec::new());
+    for id in &ids {
+        let Some(repo) = crate::bd::run(&["show", id, "--json"]).ok().and_then(|o| repo_label(&o)) else {
+            missed.push(id.clone());
+            continue;
+        };
+        match crate::cutover::cmd_create_bead(&[id.clone(), "--repo".into(), repo], conn) {
+            (0, _) => filled += 1,
+            (_, why) => missed.push(format!("{id} ({why})")),
+        }
+    }
+    let code = if missed.is_empty() { 0 } else { 1 };
+    (code, format!("backfill-repos: {filled} of {} filled{}", ids.len(), if missed.is_empty() { String::new() } else { format!("; not filled: {}", missed.join(", ")) }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_repo_label_is_read_from_bd_show_json() {
+        assert_eq!(repo_label(r#"[{"labels":["plan","repo:spira"]}]"#), Some("spira".into()));
+        assert_eq!(repo_label(r#"{"labels":["plan"]}"#), None);
+        assert_eq!(repo_label("not json"), None);
+    }
 
     #[test]
     fn bd_show_json_gives_title_and_priority_whether_array_or_object() {
