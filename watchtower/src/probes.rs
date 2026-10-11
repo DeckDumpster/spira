@@ -367,6 +367,47 @@ pub fn rowless_beads(cfg: &RowlessCfg) -> Reading {
     Reading::Standing(rowless_cond(&rowless(&open, &rows), cfg.cap, cfg.sustain_secs).into_iter().collect())
 }
 
+// ---- (f) content store open beads outrun the lifecycle's live rows ---------------------
+
+pub const CONTENT_DRIFT_REFERENCE: &str = "incident:lifecycle-content-drift";
+
+pub struct ContentDriftCfg {
+    pub lc_bin: String,
+    pub slack: usize,
+    pub sustain_secs: i64,
+}
+
+pub fn content_drift_cond(drifted: usize, slack: usize, sustain_secs: i64) -> Option<Cond> {
+    if drifted <= slack {
+        return None;
+    }
+    Some(Cond {
+        key: "content-drift".into(),
+        reference: CONTENT_DRIFT_REFERENCE.into(),
+        title: "LIFECYCLE: the content store holds open beads whose lifecycle row is terminal".into(),
+        body: format!(
+            "`spira-lc reconcile-content` (dry run) would close {drifted} bead(s) the store still holds open though their lifecycle row is terminal (allowed excess {slack}). Every reader of content status sees a backlog that is not there.\n\nRun `spira-lc reconcile-content --apply`; find the terminal path that did not close its content bead.\n"
+        ),
+        priority: 1,
+        sustain_secs,
+    })
+}
+
+fn drifted_count(stdout: &[u8]) -> Option<usize> {
+    let text = String::from_utf8_lossy(stdout);
+    let last = text.lines().rev().find(|l| !l.trim().is_empty())?;
+    last.strip_prefix("reconcile-content: ")?.split_whitespace().next()?.parse().ok()
+}
+
+pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
+    let drifted = crate::deadline::output("content drift (reconcile-content dry run)", Command::new(&cfg.lc_bin).args(["reconcile-content"]))
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| drifted_count(&o.stdout));
+    let Some(drifted) = drifted else { return Reading::Unknown };
+    Reading::Standing(content_drift_cond(drifted, cfg.slack, cfg.sustain_secs).into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +459,36 @@ mod tests {
         assert!(seen.contains("--exclude-type epic,event"), "epics are out of scope: {seen}");
         cfg.lc_bin = write("lc-down", "exit 1");
         assert!(matches!(rowless_beads(&cfg), Reading::Unknown), "an unanswering store neither files nor clears");
+    }
+
+    #[test]
+    fn content_drift_stands_only_past_the_slack_and_reads_the_dry_run_count() {
+        assert!(content_drift_cond(10, 10, 0).is_none(), "ten is within the slack");
+        let c = content_drift_cond(11, 10, 300).expect("eleven stands");
+        assert_eq!(c.reference, CONTENT_DRIFT_REFERENCE);
+        assert!(c.body.contains("11 bead(s)"), "{}", c.body);
+
+        let t = testkit::TempDir::new("drift");
+        let write = |name: &str, body: &str| {
+            let p = t.path().join(name);
+            testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
+            p.to_string_lossy().into_owned()
+        };
+        let lc = write("lc", "echo 'would close sp-1 (lifecycle DONE)'; echo 'reconcile-content: 5 would close (dry run; --apply to write)'");
+        let mut cfg = ContentDriftCfg { lc_bin: lc, slack: 3, sustain_secs: 0 };
+        match content_drift(&cfg) {
+            Reading::Standing(v) => assert_eq!(v.len(), 1, "5 drifted is past a slack of 3"),
+            Reading::Unknown => panic!("the verb answered"),
+        }
+        cfg.slack = 5;
+        match content_drift(&cfg) {
+            Reading::Standing(v) => assert!(v.is_empty()),
+            Reading::Unknown => panic!("the verb answered"),
+        }
+        cfg.lc_bin = write("lc-down", "exit 2");
+        assert!(matches!(content_drift(&cfg), Reading::Unknown));
+        cfg.lc_bin = write("lc-garbled", "echo nonsense");
+        assert!(matches!(content_drift(&cfg), Reading::Unknown));
     }
 
     #[test]

@@ -81,6 +81,9 @@ impl crate::callers::Bd for LiveBd {
     fn known(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
         crate::bd_facts::known(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
     }
+    fn open_among(&mut self, ids: &[String]) -> Result<Vec<String>, String> {
+        crate::bd_facts::open_among(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
+    }
     fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String> {
         let out = run(&["show", id, "--json"])?;
         let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;

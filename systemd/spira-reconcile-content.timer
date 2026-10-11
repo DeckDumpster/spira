@@ -1,0 +1,15 @@
+[Unit]
+Description=Close the content bead of every terminal lifecycle row every ten minutes
+
+[Timer]
+OnBootSec=5min
+OnActiveSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Unit=spira-reconcile-content.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work
