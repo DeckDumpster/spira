@@ -1702,6 +1702,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         exec_fault_threshold: s.exec_fault_threshold,
         quarantined: quarantined.clone(),
         psi_pause: Duration::from_secs(5),
+        liveness_every: Duration::from_secs(5),
         // D9: what is left of the trial's budget, not S from here.
         deadline: deadline_at.get().map(|d| d.saturating_duration_since(Instant::now())),
         skip_gate,

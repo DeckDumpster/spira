@@ -33,6 +33,7 @@ pub struct BatchCfg {
     pub exec_fault_threshold: usize,
     pub quarantined: BTreeSet<String>,
     pub psi_pause: Duration,
+    pub liveness_every: Duration,
     /// `--deadline`: measured from the start of [`run`]. None = no deadline (D7).
     pub deadline: Option<Duration>,
     /// The skip contract (DESIGN.md §3.7): an undeclared SKIP is reclassified red here, at
@@ -439,6 +440,7 @@ fn run_serial(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
 fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
     let (tx, rx) = mpsc::channel::<(u32, Option<String>)>();
     let mut adm = Admission::new(sh.cfg.maxpar, pids_budget(), LANE_SLOTS);
+    let mut last_alive: Option<Instant> = None;
     std::thread::scope(|scope| {
         let wait_one = |adm: &mut Admission| {
             if adm.running() > 0 {
@@ -487,13 +489,16 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 outcome.deadline_hit = true;
                 break;
             }
-            if let Liveness::Dead { detail } = sh.session.liveness() {
-                (sh.hooks.log)(&format!(
-                    "container died before suite {} — remaining suites will be unreached",
-                    job.name
-                ));
-                outcome.container_dead = Some(detail);
-                break;
+            if last_alive.is_none_or(|t| t.elapsed() >= sh.cfg.liveness_every) {
+                if let Liveness::Dead { detail } = sh.session.liveness() {
+                    (sh.hooks.log)(&format!(
+                        "container died before suite {} — remaining suites will be unreached",
+                        job.name
+                    ));
+                    outcome.container_dead = Some(detail);
+                    break;
+                }
+                last_alive = Some(Instant::now());
             }
             if let Some(d) = sh.account_fault.lock().unwrap().clone() {
                 (sh.hooks.log)(&format!(
@@ -502,11 +507,11 @@ fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
                 outcome.account_fault = Some(d);
                 break;
             }
-            sh.session.make_home(n);
             let done = DoneOnDrop(tx.clone(), (job.weight, job.lane.clone()));
             let name = job.name.clone();
             scope.spawn(move || {
                 let _done = done;
+                sh.session.make_home(n);
                 let (rc, secs, output) = sh.exec_suite(n, &name);
                 if rc == crate::runtime::RC_CANCELLED && cancelled() {
                     return;
@@ -583,6 +588,7 @@ mod tests {
             exec_fault_threshold: 5,
             quarantined: BTreeSet::new(),
             psi_pause: Duration::from_millis(1),
+            liveness_every: Duration::ZERO,
             deadline: None,
             skip_gate: SkipGate::load("").unwrap(),
             embedded_only: BTreeSet::new(),
