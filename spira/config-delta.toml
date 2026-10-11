@@ -33,7 +33,6 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.lc_timeout" = 30
 "spira.lc_live_check_secs" = 60
 "spira.red_tracker_label" = "spira-red-tracker"
-"spira.mender_label" = "mend"
 "spira.sccache_dav_tailnet_addr" = ""
 "spira.forge_workflow" = "Gate"
 "spira.forge_workflows" = ""

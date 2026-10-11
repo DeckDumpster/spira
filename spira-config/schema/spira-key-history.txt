@@ -395,4 +395,3 @@ red_tracker_label
 sccache_dav_tailnet_addr
 forge_workflow
 forge_workflows
-mender_label

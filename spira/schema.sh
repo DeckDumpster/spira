@@ -90,7 +90,7 @@ schema_name() {          # schema_name <key> -> the name; exit 2 on an undeclare
         plan)          printf '%s' "${SPIRA_PLAN_LABEL:-plan}" ;;
         incident)      printf '%s' "${SPIRA_INCIDENT_LABEL:-incident}" ;;
         spike)         printf '%s' "${SPIRA_SPIKE_LABEL:-spike}" ;;
-        mender)        printf '%s' "${SPIRA_MENDER_LABEL:-mend}" ;;
+        mender)        printf '%s' "${SPIRA_MENDER_LABEL:-mender-failure}" ;;
         groomer)       printf '%s' "${SPIRA_GROOMER_LABEL:-groom}" ;;
         maechen)       printf '%s' "${SPIRA_MAECHEN_LABEL:-maechen-sweep}" ;;
         maechen_remedy) printf '%s' "${SPIRA_MAECHEN_REMEDY_LABEL:-maechen-remedy}" ;;
