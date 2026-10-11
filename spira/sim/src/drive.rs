@@ -274,6 +274,30 @@ impl Exec for ProcessExec {
     }
 }
 
+/// One line of where a run's wall time went: world-up phases from `profile.tsv`, and the
+/// count and total of command runs and probes from `exec.log`.
+pub fn profile_line(world: &Path) -> String {
+    let phases: Vec<String> = std::fs::read_to_string(world.join(crate::world::PROFILE))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(k, ms)| format!("{k}={ms}ms"))
+        .collect();
+    let (mut cmds, mut cmd_ms, mut probes, mut probe_ms) = (0u64, 0u64, 0u64, 0u64);
+    for l in std::fs::read_to_string(world.join(EXEC_LOG)).unwrap_or_default().lines() {
+        let timed = l.contains("(probe): in ") || l.contains(": exit status: ");
+        let Some(ms) = Some(l).filter(|_| timed).and_then(|l| l.rsplit_once(" in ")).and_then(|(_, t)| t.strip_suffix("ms")).and_then(|t| t.parse::<u64>().ok()) else { continue };
+        if l.contains("(probe): in ") {
+            probes += 1;
+            probe_ms += ms;
+        } else {
+            cmds += 1;
+            cmd_ms += ms;
+        }
+    }
+    format!("{} commands={cmds}/{cmd_ms}ms probes={probes}/{probe_ms}ms", phases.join(" "))
+}
+
 pub struct ProcessProbe {
     pub exec: ProcessExec,
     pub probe: Option<String>,
