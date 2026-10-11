@@ -98,6 +98,35 @@ fn red_suites_csv(out: &str) -> String {
     seen.join(",")
 }
 
+/// Failing tests named in a failed step's log tail: `FAILED <file>::<test>` files, else the
+/// repo's own `CI FAILED during step: <tier>`, else a bare `N failed` count as `tests`.
+fn test_red_csv(out: &str) -> String {
+    let mut seen: Vec<String> = Vec::new();
+    let mut tier: Option<String> = None;
+    let mut counted = false;
+    for l in tagged(out, "step-log: ") {
+        let l = l.trim();
+        if let Some(rest) = l.strip_prefix("FAILED ") {
+            let file = rest.split("::").next().unwrap_or("").split_whitespace().next().unwrap_or("");
+            if !file.is_empty() && !seen.iter().any(|s| s == file) {
+                seen.push(file.to_string());
+            }
+        } else if let Some(t) = l.split("CI FAILED during step:").nth(1) {
+            tier = Some(t.trim().replace(char::is_whitespace, "-")).filter(|t| !t.is_empty());
+        } else if l.contains(" failed") && l.trim_start_matches('=').trim_start().split_whitespace().next().is_some_and(|n| n.parse::<u32>().is_ok()) {
+            counted = true;
+        }
+    }
+    if seen.is_empty() {
+        if let Some(t) = tier {
+            seen.push(t);
+        } else if counted {
+            seen.push("tests".into());
+        }
+    }
+    seen.join(",")
+}
+
 fn publish_status(w: &World, c: &Ctx, path: &Path, kv: &Kv) -> String {
     let pr = kv.get("pr").unwrap_or("");
     let branch = kv.get("branch").unwrap_or("");
@@ -796,7 +825,10 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         w.out(format!("verdict {name}: PR {pr} red — {bo}judgement already summoned ({j})"));
         return OK;
     }
-    let suites = red_suites_csv(out);
+    let mut suites = red_suites_csv(out);
+    if suites.is_empty() {
+        suites = test_red_csv(out);
+    }
     if suites.is_empty() {
         return setup_red(w, c, b, out, bo);
     }
