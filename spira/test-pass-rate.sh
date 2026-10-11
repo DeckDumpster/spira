@@ -56,7 +56,7 @@ is "1: another branch counts from 1"     "1" "$(col 4 18)"
 echo; echo "2 — 4 passes / 2 landings is 200% > 120%: over (positive control for the matcher)"
 out="$(pr check --now "$NOW")"; rc=$?
 is "2: exit 1" "1" "$rc"
-is "2: counts" "4 2 200 over" "$out"
+is "2: counts [$out]" "4 2 200 over" "$out"
 
 echo; echo "3 — a window that holds no pass is ok, and a ratio under the limit is ok"
 out="$(pr check --now $((NOW + 7200)))"; rc=$?
@@ -84,8 +84,9 @@ pr watch --ticks 1 --interval 1 >/dev/null
 pass r7 green 'ok 0 5 - p d 0'
 pass r8 green 'ok 0 5 - p d 0'
 pass r9 green 'ok 0 5 - p d 0'
+pass r10 green 'ok 0 5 - p d 0'
 pr watch --ticks 1 --interval 1 >/dev/null
-is "5: clear mailed once the ratio is under the limit" "2" "$(mail_count)"
+is "5: clear mailed once under the limit [$(pr check --now "$NOW")]" "2" "$(mail_count)"
 pr health >/dev/null; is "5: health ok after a poll" "0" "$?"
 
 echo; echo "6 — the watcher row and both keys exist"
