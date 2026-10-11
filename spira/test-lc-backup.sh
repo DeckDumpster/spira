@@ -80,7 +80,7 @@ export AWS_ACCESS_KEY_ID=AKTEST AWS_SECRET_ACCESS_KEY=sk AWS_DEFAULT_REGION=us-w
 rm -f "$RUN/lc-backup.ok"
 out="$(URL="s3://bkt/spira/" lcb run)"; rc=$?; wantrc "s3 run succeeds" 0 $rc; [ $rc = 0 ] || bad "s3 run output: ${out//$'\n'/ | }"
 [ "$(wc -l < "$TMP/reqs")" = 1 ] && ok "exactly one request" || bad "exactly one request"
-grep -q '^PUT /bkt/spira/spira_lifecycle/[0-9TZ]*\.tar\.[a-z]* AWS4-HMAC-SHA25 AES256$' "$TMP/reqs" && ok "signed PUT of <prefix><db>/<stamp>.tar.* with SSE" || bad "signed PUT shape: $(cat "$TMP/reqs")"
+grep -q '^PUT /bkt/spira/spira_lifecycle/[0-9TZ]*\.tar\.[a-z]* AWS4-HMAC-SHA256 AES256$' "$TMP/reqs" && ok "signed PUT of <prefix><db>/<stamp>.tar.* with SSE" || bad "signed PUT shape: $(cat "$TMP/reqs")"
 lcb age >/dev/null; wantrc "age green after s3 run" 0 $?
 rm -f "$RUN/lc-backup.ok"; out="$(unset AWS_SECRET_ACCESS_KEY; URL="s3://bkt/spira/" lcb run)"; rc=$?
 wantrc "s3 run without credentials fails" 1 $rc
