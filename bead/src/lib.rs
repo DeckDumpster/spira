@@ -282,6 +282,32 @@ pub fn parse_priority(json: &str) -> Option<i64> {
     obj.get("priority").and_then(|p| p.as_i64())
 }
 
+/// The `description` field of one `bd show --json` payload (object or one-element array).
+pub fn parse_description(json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let obj = match &v {
+        serde_json::Value::Array(a) => a.first()?,
+        other => other,
+    };
+    Some(obj.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string())
+}
+
+/// What a replace prints so the loss is visible: the old body's length and first lines.
+pub fn replaced_body_summary(old: &str) -> String {
+    let head: Vec<&str> = old.lines().take(3).collect();
+    format!(
+        "replaced description ({} bytes, {} lines); old body began:\n  {}",
+        old.len(),
+        old.lines().count(),
+        head.join("\n  ")
+    )
+}
+
+/// The old body with `addition` kept beneath a dated separator.
+pub fn appended_body(old: &str, addition: &str, date: &str) -> String {
+    format!("{}\n\n--- appended {date} ---\n\n{}\n", old.trim_end(), addition.trim_end())
+}
+
 /// A priority argument: 0..=4, optionally written `P1`.
 pub fn parse_priority_arg(arg: &str) -> Option<i64> {
     let n: i64 = arg.strip_prefix('P').unwrap_or(arg).parse().ok()?;
@@ -414,6 +440,26 @@ mod tests {
     const MAECHEN: &str = "maechen-sweep";
     // literal-ok: test fixture mirroring schema.sh's shipped default for `no_loop`
     const NO_LOOP: &str = "no-loop";
+
+    #[test]
+    fn appended_body_keeps_old_text_under_a_dated_separator() {
+        let got = appended_body("old text\n", "new text\n", "2026-10-11");
+        assert_eq!(got, "old text\n\n--- appended 2026-10-11 ---\n\nnew text\n");
+    }
+
+    #[test]
+    fn replaced_body_summary_names_length_and_head() {
+        let got = replaced_body_summary("a\nb\nc\nd");
+        assert!(got.contains("7 bytes") && got.contains("4 lines") && got.contains("a\n  b\n  c"));
+        assert!(!got.contains("b\n  c\n  d"));
+    }
+
+    #[test]
+    fn parse_description_reads_array_and_object() {
+        assert_eq!(parse_description(r#"[{"description":"x"}]"#).as_deref(), Some("x"));
+        assert_eq!(parse_description(r#"{"id":"a"}"#).as_deref(), Some(""));
+        assert_eq!(parse_description("nope"), None);
+    }
 
     #[test]
     fn repos_by_name_reads_names_and_typed_lanes() {

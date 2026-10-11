@@ -24,7 +24,7 @@ naming only its own bead, no `blocks` edge onto an ask- or incident-labelled bea
 bead.sh                                                     # every caller, unchanged
 bead [--home <spira-dir>] file "<title>" --for <persona> --repo <name> [-p N] [--body-file F] [--express] [--json] [--parent <id>]
 bead [--home <spira-dir>] file "<title>" --kind <kind> [--repo <name>] [-p N] [--body-file F] [--express] [--json] [--parent <id>]
-bead [--home <spira-dir>] amend <id> [--note "<text>"] [--body-file F] [--express]
+bead [--home <spira-dir>] amend <id> [--note "<text>"] [--body-file F --replace | --append-body F] [--express]
 bead [--home <spira-dir>] dep add <id> <depends-on-id> [--type <type>]
 bead [--home <spira-dir>] lint [--all|<id>...]
 bead [--home <spira-dir>] contract
