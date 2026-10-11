@@ -85,6 +85,27 @@ pub fn wait<M: Menders>(m: &mut M, deadline_s: i64) -> Result<Vec<Failure>, Stri
         .collect())
 }
 
+pub struct LcMenders<'a> {
+    pub env: &'a crate::io::Env,
+    pub batch: &'a str,
+    pub pass: u32,
+}
+
+impl Menders for LcMenders<'_> {
+    fn now(&self) -> i64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    }
+    fn sleep(&mut self, secs: i64) {
+        std::thread::sleep(std::time::Duration::from_secs(secs.max(0) as u64));
+    }
+    fn rows(&mut self) -> Result<Vec<Row>, String> {
+        parse_rows(&crate::io::lcq(self.env, &["mending", "list", "--batch", self.batch])?, self.pass)
+    }
+    fn sweep(&mut self) -> Result<(), String> {
+        crate::io::lcq(self.env, &["mending", "sweep", "--actor", "batcher"]).map(|_| ())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

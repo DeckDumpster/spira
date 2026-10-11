@@ -323,6 +323,47 @@ struct LiveOps<'a> {
     first_red: Option<u64>,
     key: String,
     batch: Option<&'a str>,
+    prior: batcher::mender::Prior,
+}
+
+const MEND_DEADLINE_SECS: i64 = 900;
+
+impl LiveOps<'_> {
+    fn mending(&mut self, batch: &str, d: &batcher::attrib::Decision, members: &[Member]) -> Result<Option<drive::Mended>, String> {
+        use batcher::mender::{self, Outcome};
+        let shown = io::lcq(self.env, &["show-batch", batch])?;
+        let pass = serde_json::from_str::<serde_json::Value>(&shown)
+            .ok()
+            .and_then(|v| v.get("pass").and_then(serde_json::Value::as_u64))
+            .ok_or_else(|| format!("spira-lc show-batch {batch}: no pass in the reply"))? as u32;
+        let deadline = std::env::var("SPIRA_BATCHER_MEND_DEADLINE_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(MEND_DEADLINE_SECS);
+        let mut lc = endpass::LcMenders { env: self.env, batch, pass };
+        if endpass::Menders::rows(&mut lc)?.is_empty() {
+            return Ok(None);
+        }
+        let mut failures = endpass::wait(&mut lc, deadline)?;
+        let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
+        for f in &mut failures {
+            f.members = d.owners.iter().filter(|(_, s)| s.contains(&f.suite)).map(|(id, _)| id.clone()).collect();
+        }
+        let mut mended = BTreeMap::new();
+        let owners: Vec<String> = failures.iter().filter(|f| f.outcome == Outcome::Mended).flat_map(|f| f.members.clone()).collect();
+        if !owners.is_empty() {
+            let tips = io::lcq(self.env, &["mending", "tips", "--beads", &owners.join(",")])?;
+            let tips: BTreeMap<String, Option<String>> = serde_json::from_str(&tips).map_err(|e| format!("mending tips: unparsed reply: {e}"))?;
+            for m in members.iter().filter(|m| ids.contains(&m.id)) {
+                if let Some(Some(tip)) = tips.get(&m.id) {
+                    if *tip != m.tip {
+                        mended.insert(m.id.clone(), tip.clone());
+                    }
+                }
+            }
+        }
+        let head = io::head_of(self.wt)?;
+        let decision = mender::decide(&head, members, &mended, &failures, &self.prior);
+        self.prior = decision.prior;
+        Ok(Some(drive::Mended { next: decision.next, unattributed: decision.unattributed, suites: failures.into_iter().map(|f| f.suite).collect() }))
+    }
 }
 
 impl drive::RoundOps for LiveOps<'_> {
@@ -388,6 +429,7 @@ impl drive::RoundOps for LiveOps<'_> {
             "base" => "base itself red",
             "unattributed" => "local red could not be attributed to anyone",
             "integration" => "red only in the merged tree, not fixed in the round",
+            "mender-page" => "the menders' passes ended in a box fault the loop cannot fix",
             _ => "workspace failed to build",
         };
         match io::file_local_red_incident(self.env, self.repo, suites, &self.round_branch, &self.evidence, kind) {
@@ -426,6 +468,11 @@ impl drive::RoundOps for LiveOps<'_> {
             let fields = r.tsd_fields(&self.repo.name, &self.round, iteration);
             io::tsd_append(self.env, "round-attribution", &fields);
         }
+    }
+
+    fn settle_mending(&mut self, d: &batcher::attrib::Decision, members: &[Member]) -> Option<Result<drive::Mended, String>> {
+        let batch = self.batch?;
+        self.mending(batch, d, members).transpose()
     }
 
     fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>) {
@@ -560,6 +607,7 @@ fn stabilize_round(
         first_red: None,
         key: batcher::core::round_key(&members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>()),
         batch,
+        prior: batcher::mender::Prior::default(),
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let round_members = members.clone();

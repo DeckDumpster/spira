@@ -78,6 +78,11 @@ pub trait RoundOps {
     /// `member` owns red `suite`; `rerun` is that suite rerun on the full round tree (`None`
     /// when the rerun faulted): green there means it flipped.
     fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>);
+    /// Waits for every mender of this red pass and decides the next pass once. `None` when no
+    /// mender owns the pass, which leaves the owners to be ejected as before.
+    fn settle_mending(&mut self, _: &Decision, _: &[Member]) -> Option<Result<Mended, String>> {
+        None
+    }
 }
 
 /// Ids of the settled-owner reruns start here, clear of the attributor's own.
@@ -231,6 +236,13 @@ fn remove_flips<R: RoundRunner, O: RoundOps>(
     ops.delete_flips(flaky)
 }
 
+pub struct Mended {
+    pub next: batcher::mender::Next,
+    pub unattributed: Vec<String>,
+    /// Every suite the pass's menders handled: what the next pass must prove green.
+    pub suites: Vec<String>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum RoundEnd {
     /// Land these members; `attribution_secs` is the longest per-red attribution wall.
@@ -323,6 +335,37 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 }
             }
             return Ok(RoundEnd::Land { members, attribution_secs: worst });
+        }
+        if let Some(settled) = ops.settle_mending(&d, &members) {
+            let m = settled?;
+            if !m.unattributed.is_empty() {
+                println!("batcher: ALARM mender returns named no member: {}", m.unattributed.join(","));
+                ops.incident("unattributed", &m.unattributed);
+            }
+            match m.next {
+                batcher::mender::Next::Stop { page } => {
+                    ops.incident("mender-page", &m.suites);
+                    return Ok(RoundEnd::Blocked(page));
+                }
+                batcher::mender::Next::Pass { members: next, left, retry } => {
+                    for l in &left {
+                        if let Some(member) = members.iter().find(|x| x.id == l.id) {
+                            let own = d.owners.get(&l.id).cloned().unwrap_or_else(|| m.suites.clone());
+                            ops.eject(member, &own, d.owners.contains_key(&l.id));
+                        }
+                    }
+                    if next.is_empty() {
+                        return Ok(RoundEnd::Blocked("round emptied by ejection".into()));
+                    }
+                    members = if retry && left.is_empty() { next } else { ops.rebuild(&next)? };
+                    if members.is_empty() {
+                        return Ok(RoundEnd::Blocked("round emptied rebuilding the tree after the menders".into()));
+                    }
+                    suites = m.suites;
+                    kind = MainKind::Verify;
+                    continue;
+                }
+            }
         }
         // Every owner leaves with its suites; a member stacked on an owner leaves with it.
         let mut out: BTreeMap<Id, Vec<String>> = d.owners.clone();
@@ -531,6 +574,8 @@ pub(crate) mod tests {
         pub judged: Vec<(Vec<String>, Vec<String>)>,
         /// Base shas the base will move to, one per `base_moved` call; empty means it never moves.
         pub moves: Vec<String>,
+        /// The next pass the menders decide, once per red pass; empty means no mender owns it.
+        pub menders: Vec<batcher::mender::Next>,
     }
 
     impl RoundOps for Ops {
@@ -576,6 +621,12 @@ pub(crate) mod tests {
         }
         fn record(&mut self, iteration: u32, decision: &Decision) {
             self.recorded.push((iteration, decision.clone()));
+        }
+        fn settle_mending(&mut self, d: &Decision, _: &[Member]) -> Option<Result<Mended, String>> {
+            if self.menders.is_empty() {
+                return None;
+            }
+            Some(Ok(Mended { next: self.menders.remove(0), unattributed: vec![], suites: d.owned_suites() }))
         }
         fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>) {
             self.escaped.push((member.id.clone(), suite.to_string(), rerun));
@@ -706,6 +757,36 @@ pub(crate) mod tests {
         assert_eq!(f.main_kind.len(), 2);
         assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-01.sh".into(), "test-03.sh".into(), "test-05.sh".into()]));
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2));
+    }
+
+    #[test]
+    fn a_red_pass_with_menders_takes_its_next_pass_from_their_outcomes_and_ejects_only_the_returned() {
+        use batcher::mender::{Left, Next};
+        let mut f = Fake::new(|s, tree| match s {
+            "test-01.sh" => tree.contains("m1"),
+            "test-03.sh" => tree.contains("m3"),
+            _ => false,
+        });
+        let mut ops = Ops::default();
+        let mended = Member { tip: "m1-mended".into(), ..member("m1") };
+        ops.menders = vec![Next::Pass { members: vec![mended, member("m2")], left: vec![Left { id: "m3".into(), why: "returned".into() }], retry: false }];
+        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 5, maxpar: 2 }).unwrap();
+        assert_eq!(ops.ejected[0], ("m3".to_string(), vec!["test-03.sh".to_string()]));
+        assert_eq!(ops.rebuilt[0], vec!["m1".to_string(), "m2".to_string()]);
+        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-01.sh".into(), "test-03.sh".into()]));
+        assert!(matches!(end, RoundEnd::Land { .. } | RoundEnd::Blocked(_)));
+    }
+
+    #[test]
+    fn a_page_from_the_menders_stops_the_round() {
+        use batcher::mender::Next;
+        let mut f = Fake::new(breaks("m1", "test-01.sh"));
+        let mut ops = Ops::default();
+        ops.menders = vec![Next::Stop { page: "box".into() }];
+        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 5, maxpar: 2 }).unwrap();
+        assert_eq!(end, RoundEnd::Blocked("box".into()));
+        assert!(ops.ejected.is_empty());
+        assert_eq!(ops.incidents.len(), 1);
     }
 
     #[test]
