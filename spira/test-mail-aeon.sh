@@ -43,7 +43,7 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sour
 # reads conf.d/<KEY> straight off this literal SPIRA_HOME (home.join("conf.d")), never
 # through a symlink or source chain (that is `default_conf_d`'s own doc). Every other
 # fixture driving the real `aeon` binary already carries this copy (test-aeon-resume.sh,
-# test-aeon-chamber-overlay.sh, ...); without it, every generic registry key — SPIRA_MAIL
+# test-aeon-resume.sh, ...); without it, every generic registry key — SPIRA_MAIL
 # among them — silently resolves to "" because its conf.d/SPIRA_MAIL file is never found,
 # so part (d) below created no mailbox for the stub to see.
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"

@@ -756,7 +756,7 @@ mod tests {
         assert!(!p.contains("exactly what the landing"));
     }
 
-    // test-aeon-chamber-overlay.sh GOLDEN (sp-wmcvb): {{FINISH}} is the `work` verbs.
+    // {{FINISH}} is the `work` verbs (sp-wmcvb).
     #[test]
     fn finish_is_the_work_verbs() {
         let on = finish_brief("sp-a");
@@ -879,6 +879,31 @@ mod tests {
         let p = render_prompt("id {{BEAD_ID}} db {{DB}}\n{{BEAD}}\n{{PARK}}\n{{FIXTURE}}{{FIXTURE}}\n{{DEADLINE}}{{FINISH}}{{UNKNOWN}}", &t, None);
         // BEAD first, so a {{PARK}} inside the bead body is the first occurrence (as before).
         assert_eq!(p, "id sp-a db /d&b|x\\y\nbody with PARK! & more\n{{PARK}}\nFX{{FIXTURE}}\nDLFIN{{UNKNOWN}}");
+    }
+
+    #[test]
+    fn the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish() {
+        let chamber = include_str!("../../spira/chamber/builder.md");
+        let t = Tokens {
+            single: vec![("TESTENV", TESTENV.into()), ("FOLLOWUP", followup_brief("sp-a")), ("BRANCH", "spira/sp-a".into()), ("REPO_NAME", "spira".into())],
+            finish: finish_brief("sp-a"),
+            ..Default::default()
+        };
+        let (sys, task) = split("LAW", &render_prompt(chamber, &t, None));
+        let both = format!("{sys}{task}");
+        assert!(both.contains("DO NOT run the full landing") && both.contains("testenv"), "{both}");
+        assert!(!both.contains("gate-run.sh") && !both.contains("{{GATE}}"), "{both}");
+        assert!(both.contains("You have no `bd`") && both.contains("work submit"), "{both}");
+        assert!(!both.contains("bd -C"), "{both}");
+        assert!("x gate-run.sh y".contains("gate-run.sh"), "the matcher can see its offender");
+    }
+
+    #[test]
+    fn the_shipped_groomer_splits_operations_into_system_and_finishing_into_task() {
+        let (sys, task) = split("LAW", &render_prompt(include_str!("../../spira/chamber/groomer.md"), &Tokens::default(), None));
+        assert!(sys.contains("Four operations, one refusal") && sys.contains("MUST NOT do"));
+        assert!(task.contains("finish the trigger bead"));
+        assert!(!task.contains("Memories in force") && !task.contains("Four operations, one refusal"));
     }
 
     #[test]

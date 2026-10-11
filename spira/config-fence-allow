@@ -53,12 +53,10 @@ spira/publish-backlog.sh
 spira/release.sh
 spira/stage.sh
 spira/test-aeon-base-ref-qualify.sh
-spira/test-aeon-chamber-overlay.sh
 spira/test-aeon-eviction-race.sh
 spira/test-aeon-gate-close-silent.sh
 spira/test-aeon-lifecycle-cutover.sh
 spira/test-aeon-prod-dirty.sh
-spira/test-aeon-prompt-layers.sh
 spira/test-aeon-resume-collision.sh
 spira/test-aeon-resume.sh
 spira/test-aeon-slain-attempts.sh
@@ -149,7 +147,6 @@ spira/test-maechen-trigger.sh
 spira/test-mail-aeon.sh
 spira/test-ops-closing.sh
 spira/test-park-unmapped.sh
-spira/test-persona-model.sh
 spira/test-pilgrimage.sh
 spira/test-pre-activate.sh
 spira/test-pr-notify.sh

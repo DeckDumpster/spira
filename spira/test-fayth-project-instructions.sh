@@ -10,7 +10,7 @@
 # --------------
 # 1. RETIRED (sp-j89pd, wave 4.2): a direct-call row against aeon_claude_argv (lib.sh,
 #    zero live callers) used to live here under this bead's original defect id. See
-#    test-aeon-prompt-layers.sh's T3 and test-persona-model.sh for the same table's
+#    the aeon crate's whole-run tests (a_replace_fayth_launches_…, an_append_fayth_…) for the same table's
 #    coverage end to end through the real `aeon` binary.
 # 2. Each production fayth declares the right value: ops/maechen/groomer/czar → none,
 #    builder/spike → repo.

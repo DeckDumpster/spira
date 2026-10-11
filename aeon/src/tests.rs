@@ -991,6 +991,52 @@ fn happy_path_submits_through_the_machine() {
     assert!(!o.log.contains("converted to submitted"));
 }
 
+#[test]
+fn a_replace_fayth_launches_with_system_prompt_file_and_user_only_settings() {
+    let f = fx("replace");
+    seed(&f, "sp-r");
+    let extra = [("FAYTH_SYSTEM_PROMPT", "replace"), ("FAYTH_PROJECT_INSTRUCTIONS", "none")];
+    let o = go(&f, "spira,plan", &extra, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert_eq!(o.code, 0, "{}", o.log);
+    let a = o.seen[0].args.join(" ");
+    assert!(a.contains(" --system-prompt-file "), "{a}");
+    assert!(!a.contains("--append-system-prompt-file"), "{a}");
+    assert!(a.contains(" --setting-sources user "), "{a}");
+    let task = std::fs::read_to_string(f.run.join("sp-r.task.md")).unwrap();
+    let sys = std::fs::read_to_string(f.run.join("sp-r.system.md")).unwrap();
+    assert!(o.seen[0].stdin_file.ends_with("sp-r.task.md"));
+    assert!(sys.contains("Memories in force") && sys.contains("You are a builder"), "{sys}");
+    assert!(!task.contains("Memories in force") && task.contains("sp-r"), "{task}");
+}
+
+#[test]
+fn an_append_fayth_with_repo_instructions_adds_neither_replace_nor_setting_sources() {
+    let f = fx("append");
+    seed(&f, "sp-a");
+    let extra = [("FAYTH_SYSTEM_PROMPT", "append"), ("FAYTH_PROJECT_INSTRUCTIONS", "repo")];
+    let o = go(&f, "spira,plan", &extra, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert_eq!(o.code, 0, "{}", o.log);
+    let a = o.seen[0].args.join(" ");
+    assert!(a.contains(" --append-system-prompt-file "), "{a}");
+    assert!(!a.contains(" --system-prompt-file ") && !a.contains("--setting-sources"), "{a}");
+    assert!(a.contains(" --settings {"), "{a}");
+}
+
+#[test]
+fn the_launch_model_is_the_toml_persona_model_not_a_fayth_declaration() {
+    let f = fx("model");
+    let over = f._dir.join("over.toml");
+    std::fs::write(&over, "[persona.builder]\nmodel = \"toml-override-model\"\n").unwrap();
+    let spec = format!("{}:{}", complete_vars()["SPIRA_TOML"], over.display());
+    seed(&f, "sp-m");
+    let extra = [("SPIRA_TOML", spec.as_str()), ("FAYTH_MODEL", "fayth-declared-model-should-not-be-used")];
+    let o = go(&f, "spira,plan", &extra, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert_eq!(o.code, 0, "{}", o.log);
+    let a = o.seen[0].args.join(" ");
+    assert!(a.contains("--model toml-override-model "), "{a}");
+    assert!(!a.contains("fayth-declared-model"), "{a}");
+}
+
 /// The model's stand-in for a close with nothing committed: closes the bead, optionally
 /// recording a successor, writes a result record.
 fn closes_only(supersede: bool) -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {

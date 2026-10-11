@@ -392,7 +392,7 @@ mod tests {
     }
 
     /// capacity_probe's own "defaults to the builder's own resolved model" case (wave
-    /// 4.26, moved from test-persona-model.sh's bash source-grep).
+    /// 4.26).
     #[test]
     fn capacity_probe_model_defaults_to_persona_builder_when_unset() {
         let dir = testkit::TempDir::new("aeon-conf-capacity-model");
@@ -410,6 +410,22 @@ mod tests {
         let conf2 = Conf::new(&snap2, &dir);
         assert_eq!(conf2.capacity_probe_model(), "operator-override", "an explicit SPIRA_CAPACITY_PROBE_MODEL wins");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn reads_fayth_model(src: &str) -> bool {
+        src.contains("${FAYTH_MODEL") || src.contains("$FAYTH_MODEL")
+    }
+
+    #[test]
+    fn no_launcher_scrapes_a_model_out_of_the_fayth_or_hardcodes_one() {
+        assert!(reads_fayth_model("--model \"${FAYTH_MODEL:-x}\""), "the matcher can see its offender");
+        assert!(!reads_fayth_model(include_str!("../../spira/lib.sh")));
+        let concierge = include_str!("../../concierge.sh");
+        assert!(!reads_fayth_model(concierge));
+        assert!(concierge.contains("MODEL=\"$(persona_model \"$FAYTH\")\""));
+        let reflect = include_str!("../../spira/reflect.sh");
+        assert!(!reflect.contains("--model claude-opus-5"));
+        assert!(reflect.contains("SPIRA_REFLECT_MODEL:-claude-opus-5"));
     }
 
     #[test]
