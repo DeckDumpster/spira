@@ -976,10 +976,8 @@ jobs:
           printf 'prev-tag=%s\n' "${_prev:-}" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
-  # Publish. Invoked DIRECTLY as a reusable workflow so the release exists before
-  # the acceptance run reads it. release.yml's tag trigger also fires — because the
-  # cut job uses the App token, not GITHUB_TOKEN — so a tag pushed by hand still
-  # publishes via the same path.
+  # Publish. The only path to a release: release.yml has no push trigger, so the
+  # App-token tag push from cut does not build a second one.
   # ---------------------------------------------------------------------------
   publish:
     needs: cut

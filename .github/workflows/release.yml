@@ -1,6 +1,6 @@
 # release.yml — build and publish a Spira release tarball.
 #
-# Triggered by every spira-release-* tag pushed to the repository. The tag is
+# Called by gate.yml's publish job for each spira-release-* tag its cut job pushes. The tag is
 # cut by release.sh; this workflow builds both Rust binaries against the pinned
 # toolchain, assembles the tarball via build-tarball.sh, and attaches it to a
 # GitHub release of the same name.
@@ -17,18 +17,13 @@
 # non-zero fails the job and the publish step never runs. A build that fails
 # silently publishes a broken binary; this workflow publishes nothing instead.
 
-# TWO WAYS IN, ONE BUILD. The tag trigger stays for a tag pushed by hand. gate.yml
-# calls this workflow directly after it cuts a tag, because GitHub does not start a
-# workflow for a tag pushed with GITHUB_TOKEN — a deliberate anti-recursion rule,
-# and a silent one: the tag appears, the release never does, and nothing reports a
-# failure. Relying on the trigger there would produce tags with no releases forever.
+# ONE WAY IN. gate.yml's publish job calls this workflow after it cuts a tag. There is
+# no push trigger: the cut pushes the tag with an App token, so a trigger would build
+# and release the same tag a second time.
 
 name: Release
 
 on:
-  push:
-    tags:
-      - 'spira-release-*'
   workflow_call:
     inputs:
       tag:
@@ -47,7 +42,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           # The called path must build the TAG, not the branch the caller ran on.
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.tag }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -81,7 +76,7 @@ jobs:
       - name: Build release tarball
         id: tarball
         run: |
-          tag="${{ inputs.tag || github.ref_name }}"
+          tag="${{ inputs.tag }}"
           # Derive the tarball stem from the tag so both share one timestamp.
           # Tag form: spira-release-<reponame>-<YYYYMMDDTHHMMSSZ>
           # Tarball stem: spira-<YYYYMMDDTHHMMSSZ>
@@ -110,8 +105,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="${{ inputs.tag || github.ref_name }}"
+          tag="${{ inputs.tag }}"
           sha="$(git rev-parse HEAD)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release view "$tag" --json assets --jq '.assets[].name' | grep -q '^spira-.*\.tar\.gz$' || {
+              printf 'release: %s exists without a tarball asset\n' "$tag" >&2; exit 1; }
+            printf 'release: %s already exists with its tarball — not creating a second\n' "$tag"
+            exit 0
+          fi
           gh release create "$tag" \
             --title "$tag" \
             --target "$sha" \
