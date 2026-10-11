@@ -14,6 +14,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
+. "$HERE/testlib.sh"
 
 checker='
 import sys, yaml
@@ -36,17 +37,11 @@ for p in sys.argv[1:]:
 sys.exit(rc)
 '
 
-fail=0
 plant="$(mktemp)"; trap 'rm -f "$plant"' EXIT
 printf 'env:\n  A: 1\n  A: 2\n' >"$plant"
-if python3 -I -c "$checker" "$plant" >/dev/null 2>&1; then
-  echo "FAIL: positive control — duplicate key not detected"; exit 1
-fi
-echo "ok: positive control detects duplicate keys"
+python3 -I -c "$checker" "$plant" >/dev/null 2>&1
+isnz=$?
+[ "$isnz" != 0 ] && ok "positive control detects duplicate keys" || { bad "positive control" "duplicate key not detected"; exit 1; }
 
-if out="$(python3 -I -c "$checker" "$ROOT"/.github/workflows/*.yml 2>&1)"; then
-  echo "ok: no workflow has duplicate mapping keys"
-else
-  echo "FAIL: $out"; fail=1
-fi
-exit $fail
+out="$(python3 -I -c "$checker" "$ROOT"/.github/workflows/*.yml 2>&1)"
+wantrc "no workflow has duplicate mapping keys: $out" 0 $?
