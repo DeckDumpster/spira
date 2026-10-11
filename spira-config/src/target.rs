@@ -32,7 +32,7 @@ pub struct Named {
 const EXITS: &str = "the bead declares a target, so the submission must carry one of: \
 --met \"<measured value and where measured>\"; \
 --contradicted \"<the evidence>\"; \
---short \"<measured value>\" with --follow-on <bead id> (a bead you filed carrying the same target) or --escalation <id of a needs-ryan escalation>";
+--short \"<measured value>\" with --follow-on <bead id> (a bead you filed carrying the same target) or --escalation <id of an operator escalation ask>";
 
 fn flag(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned().filter(|v| !v.trim().is_empty())
@@ -40,7 +40,7 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 
 /// Err is the refusal text. Ok(None): the bead has no target. Ok(Some(line)): the verdict
 /// line to record on the bead.
-pub fn judge(target: Option<&str>, args: &[String], lookup: &dyn Fn(&str) -> Result<Option<Named>, String>, self_id: &str) -> Result<Option<String>, String> {
+pub fn judge(target: Option<&str>, args: &[String], lookup: &dyn Fn(&str) -> Result<Option<Named>, String>, self_id: &str, ask_label: &str) -> Result<Option<String>, String> {
     let Some(target) = target else { return Ok(None) };
     let (met, contra, short) = (flag(args, "--met"), flag(args, "--contradicted"), flag(args, "--short"));
     let given = [&met, &contra, &short].iter().filter(|v| v.is_some()).count();
@@ -73,7 +73,7 @@ pub fn judge(target: Option<&str>, args: &[String], lookup: &dyn Fn(&str) -> Res
         }
         (None, Some(id)) => match lookup(&id)? {
             None => Err(format!("refused: --escalation {id} does not exist ({EXITS})")),
-            Some(n) if !n.labels.iter().any(|l| l == "needs-ryan") => Err(format!("refused: --escalation {id} is not labelled needs-ryan ({EXITS})")),
+            Some(n) if !n.labels.iter().any(|l| l == ask_label) => Err(format!("refused: --escalation {id} is not labelled {ask_label} ({EXITS})")),
             Some(_) => Ok(Some(format!("{VERDICT_PREFIX}SHORT [{target}] {measured} escalation: {id}"))),
         },
         _ => Err(format!("refused: --short needs exactly one of --follow-on or --escalation ({EXITS})")),
@@ -96,6 +96,7 @@ pub fn gap(description_and_notes: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    const ASK: &str = "ask-fixture";
     const T: &str = "sim world wall < 10 s";
 
     fn a(v: &[&str]) -> Vec<String> {
@@ -106,19 +107,19 @@ mod tests {
         Ok(match id {
             "sp-next" => Some(Named { target: Some(T.into()), labels: vec![] }),
             "sp-other" => Some(Named { target: Some("x < 1".into()), labels: vec![] }),
-            "sp-esc" => Some(Named { target: None, labels: vec!["needs-ryan".into()] }),
+            "sp-esc" => Some(Named { target: None, labels: vec![ASK.into()] }),
             "sp-plain" => Some(Named { target: None, labels: vec![] }),
             _ => None,
         })
     }
 
     fn judged(args: &[&str]) -> Result<Option<String>, String> {
-        judge(Some(T), &a(args), &lookup, "sp-me")
+        judge(Some(T), &a(args), &lookup, "sp-me", ASK)
     }
 
     #[test]
     fn a_bead_without_a_target_is_unaffected() {
-        assert_eq!(judge(None, &a(&[]), &lookup, "sp-me"), Ok(None));
+        assert_eq!(judge(None, &a(&[]), &lookup, "sp-me", ASK), Ok(None));
     }
 
     #[test]
@@ -143,7 +144,7 @@ mod tests {
         assert!(judged(&["--short", "37 s", "--follow-on", "sp-ghost"]).unwrap_err().contains("does not exist"));
         assert!(judged(&["--short", "37 s", "--follow-on", "sp-other"]).unwrap_err().contains("same --target"));
         assert!(judged(&["--short", "37 s", "--follow-on", "sp-me"]).is_err());
-        assert!(judged(&["--short", "37 s", "--escalation", "sp-plain"]).unwrap_err().contains("needs-ryan"));
+        assert!(judged(&["--short", "37 s", "--escalation", "sp-plain"]).unwrap_err().contains(ASK));
     }
 
     #[test]

@@ -159,7 +159,8 @@ fn record_target_verdict(bead_id: &str, verb: &str, args: &[String]) -> Result<(
         let Ok(shown) = crate::bd::show(id) else { return Ok(None) };
         Ok(Some(spira_config::target::Named { target: spira_config::target::parse_target(&shown), labels: crate::bd::labels(id)? }))
     };
-    match spira_config::target::judge(spira_config::target::parse_target(&text).as_deref(), args, &lookup, bead_id) {
+    let ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}")))?;
+    match spira_config::target::judge(spira_config::target::parse_target(&text).as_deref(), args, &lookup, bead_id, &ask_label) {
         Err(e) => Err((REFUSED, format!("work {verb}: {e}"))),
         Ok(None) => Ok(()),
         Ok(Some(line)) => crate::bd::note(bead_id, &line).map(|_| ()).map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}"))),
