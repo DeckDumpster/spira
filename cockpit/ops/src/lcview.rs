@@ -637,13 +637,13 @@ fn join_parts(parts: Vec<String>) -> String {
 const PLACED: [&str; 3] = ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"];
 
 fn batch_index(s: &Snapshot) -> HashMap<&str, &BatchRow> {
-    let mut by = HashMap::new();
+    let mut batch_by_id = HashMap::new();
     for b in s.batches.iter().filter(|b| OPEN_BATCH.contains(&b.state.as_str())) {
         for m in &b.members {
-            by.insert(m.as_str(), b);
+            batch_by_id.insert(m.as_str(), b);
         }
     }
-    by
+    batch_by_id
 }
 
 fn kind_of(holds: &[String]) -> String {
