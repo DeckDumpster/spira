@@ -193,7 +193,7 @@ pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
 // best-effort and additive (a CAS refusal is reported on stderr and leaves batch_id/version
 // unset, never blocking the PR).
 
-fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
+pub fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
     let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
     let mut cmd = Command::new("timeout");
     cmd.arg(env.lc_timeout.to_string()).arg(bin).args(args);
