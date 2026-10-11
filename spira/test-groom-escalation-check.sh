@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-groom-escalation-check.sh — the groom escalation check's configuration surface:
-# SPIRA_GROOM_ASK_LABEL is a conf key and defaults to groom-asked.
+# test-groom-escalation-check.sh — the groom escalation check's wiring through a real aeon run.
+# SPIRA_GROOM_ASK_LABEL being a conf key defaulting to groom-asked is proved in
+# spira-config/tests/resolve_real_registry.rs.
 #
 #   ./test-groom-escalation-check.sh
 #
@@ -31,9 +32,6 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
-# tree's build, and the tree's own spira/.
-TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -197,15 +195,5 @@ fresh sp-gc-5; run_aeon tiler log-claim
 is     "the hand-on stands SUBMITTED"  SUBMITTED "$(rowstate sp-gc-5)"
 nowant "trigger is not poisoned"  "spira-poison" "$(labels sp-gc-5)"
 nowant "check did not run at all" "groom-escalation-check" "$(cat "$TMP/out")"
-
-echo
-echo "SPIRA_GROOM_ASK_LABEL is in the conf key list and defaults to groom-asked:"
-keys="$(env -i HOME="$TMP" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" SPIRA_TOML="$SPIRA_TOML" \
-    bash -c '. "'"$HERE"'/conf.sh" && printf "%s" "$SPIRA_CONF_KEYS"' 2>/dev/null)"
-want "SPIRA_GROOM_ASK_LABEL is in the key list" "SPIRA_GROOM_ASK_LABEL" "$keys"
-
-val="$(env -i HOME="$TMP" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" SPIRA_TOML="$SPIRA_TOML" \
-    bash -c '. "'"$HERE"'/conf.sh" && printf "%s" "$SPIRA_GROOM_ASK_LABEL"' 2>/dev/null)"
-is "SPIRA_GROOM_ASK_LABEL defaults to groom-asked" "groom-asked" "$val"
 
 tl_summary

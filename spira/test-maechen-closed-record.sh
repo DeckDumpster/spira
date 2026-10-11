@@ -7,7 +7,7 @@
 #
 # WHAT THIS SUITE GUARDS
 # ----------------------
-# 1. detect_invalid_closed (lib.sh) honours the allowlist at
+# 1. (moved to strand/src/detectors.rs unit tests) detect_invalid_closed honours the allowlist at
 #    $SPIRA_RUN/invalid-closed.allow: allowlisted ids are emitted as ALLOWED-IC
 #    rows (not counted by the pane) instead of INVALID-CLOSED or UNFILED-FOLLOW.
 #
@@ -93,81 +93,6 @@ tl_config SPIRA_RUN="$RUNDIR" SPIRA_REPO_MAP="$SELFMAP" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 SPIRA_MAECHEN_LANDING_INTERVAL=999
 
 echo "test-maechen-closed-record.sh"
-
-# ==========================================================================================
-echo
-echo "ALLOWLIST: INVALID-CLOSED id in allowlist → ALLOWED-IC, not counted"
-# ==========================================================================================
-# Plant a closed bead whose close reason hits RED_FLAGS, then show it clears when
-# allowlisted. Uses testdb_seed to set close_reason directly (bd close stores it).
-testdb_up maechen_closed_record_allow || { bad "allowlist fixture: testdb_up failed" ""; }
-[ -n "${SPIRA_DB:-}" ] || { echo "test-maechen-closed-record: testdb_up left SPIRA_DB unset; the fixture store was not built" >&2; exit 1; }
-
-testdb_reset
-testdb_seed <<JSONL
-{"id":"sp-cr-ic1","title":"admitting workaround","status":"closed","issue_type":"task","labels":["$ALLW_SCOPE","plan","repo:pushrepo"],"close_reason":"Applied a temporary workaround — real fix needed."}
-JSONL
-
-run_livelock() {
-    env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
-        SPIRA_TOML="$SPIRA_TOML" \
-        cockpit-collect probe livelock 2>/dev/null
-}
-
-# Without allowlist: INVALID-CLOSED row expected.
-out="$(run_livelock)"
-want  "no allowlist: INVALID-CLOSED row present"  "INVALID-CLOSED" "$out"
-want  "no allowlist: bead id in row"              "sp-cr-ic1"      "$out"
-is "no allowlist: SP_INVALID_CLOSED=1" "1" \
-   "$(printf '%s\n' "$out" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
-
-# Add to allowlist.
-printf 'sp-cr-ic1 quotation: reason names the flag list, not a remainder\n' > "$ALLOW_FILE"
-
-out="$(run_livelock)"
-nowant "allowlisted: no INVALID-CLOSED row"   "INVALID-CLOSED"  "$out"
-want   "allowlisted: ALLOWED-IC row present"  "ALLOWED-IC"      "$out"
-want   "allowlisted: bead id in allowed row"  "sp-cr-ic1"       "$out"
-is "allowlisted: SP_INVALID_CLOSED=0" "0" \
-   "$(printf '%s\n' "$out" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
-
-rm -f "$ALLOW_FILE"
-testdb_drop
-
-# ==========================================================================================
-echo
-echo "ALLOWLIST: UNFILED-FOLLOW id in allowlist → ALLOWED-IC, not counted"
-# ==========================================================================================
-testdb_up maechen_closed_record_uf_allow || { bad "uf-allowlist fixture: testdb_up failed" ""; }
-
-testdb_reset
-testdb_seed <<JSONL
-{"id":"sp-cr-uf1","title":"unfiled follow bead","status":"closed","issue_type":"task","labels":["$ALLW_SCOPE","plan","repo:pushrepo"],"close_reason":"The real fix is a proper guard. Deployed the stopgap."}
-JSONL
-
-run_livelock_uf() {
-    env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
-        SPIRA_TOML="$SPIRA_TOML" \
-        cockpit-collect probe livelock 2>/dev/null
-}
-
-out="$(run_livelock_uf)"
-want "no allowlist: UNFILED-FOLLOW row present" "UNFILED-FOLLOW" "$out"
-is "no allowlist: SP_UNFILED_FOLLOW=1" "1" \
-   "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
-
-printf 'sp-cr-uf1 follow-up filed as sp-fake1\n' > "$ALLOW_FILE"
-out="$(run_livelock_uf)"
-nowant "allowlisted: no UNFILED-FOLLOW row"  "UNFILED-FOLLOW" "$out"
-want   "allowlisted: ALLOWED-IC row present" "ALLOWED-IC"     "$out"
-want   "allowlisted: bead id in row"         "sp-cr-uf1"      "$out"
-is "uf-allowlisted: SP_UNFILED_FOLLOW=0" "0" \
-   "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
-
-rm -f "$ALLOW_FILE"
-testdb_drop
 
 # ==========================================================================================
 echo
