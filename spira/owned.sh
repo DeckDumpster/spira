@@ -35,6 +35,8 @@ _owned_inst="${2:-}"
 [ -n "$_owned_inst" ] && export SPIRA_INSTANCE="$_owned_inst"
 
 . "$HERE/conf.sh"
+# units-install runs watchd, which names its home from the environment and never searches.
+export SPIRA_HOME
 
 # Test seams. conf.sh already exports SPIRA_SYSTEMCTL.
 SPIRA_LOGINCTL="${SPIRA_LOGINCTL:-loginctl}"

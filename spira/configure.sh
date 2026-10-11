@@ -45,7 +45,8 @@
 #   `spira-config init` writes the answers and every other key at its registered
 #   default, because the resolver refuses a key the file does not declare. Further
 #   inputs: CONFIGURE_INSTANCE, CONFIGURE_ID_PREFIX, CONFIGURE_HOME_REPO,
-#   CONFIGURE_HOME_REPO_PATH, CONFIGURE_DB, CONFIGURE_RUN, CONFIGURE_RELEASES.
+#   CONFIGURE_HOME_REPO_PATH, CONFIGURE_DB, CONFIGURE_RUN, CONFIGURE_RELEASES,
+#   CONFIGURE_OPERATED (0 = nobody reads escalations: doctor warns rather than fails).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -195,6 +196,7 @@ _init_args=(
     --loom_addr "${_loom:-127.0.0.1:8788}"
 )
 [ -n "$_maxlive" ] && _init_args+=(--max_live_aeons "$_maxlive")
+[ -n "${CONFIGURE_OPERATED:-}" ] && _init_args+=(--operated "$CONFIGURE_OPERATED")
 mkdir -p "$(dirname "$_out")"
 SPIRA_HOME="$HERE" spira-config init "${_init_args[@]}" >/dev/null </dev/null \
     || { rm -f "$_out"; printf 'configure: ERROR: could not write %s\n' "$_out" >&2; exit 1; }

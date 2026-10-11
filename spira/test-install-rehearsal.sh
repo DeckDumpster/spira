@@ -39,6 +39,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 . "$HERE/testlib.sh"
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
+# Exit 3 is "installed but not ready": no cockpit collector runs in this container.
+installed() { { [ "$2" = 0 ] || [ "$2" = 3 ]; } && ok "$1" || bad "$1" "exit $2"; }
 
 echo "test-install-rehearsal.sh"
 
@@ -97,6 +99,8 @@ CEXEC=(timeout 5 podman exec --user spirauser
     # operated box and WARN on "a headless fixture or CI box" — which this is.
     -e "SPIRA_OPERATED=0"
 )
+# Install runs a dependency phase and doctor: past the 5s a single probe is given.
+INSTALL_EXEC=(timeout 120 "${CEXEC[@]:2}")
 
 # ---------------------------------------------------------------------------
 # CREATE STUB SCRIPTS INSIDE THE CONTAINER as spirauser so they are owned by
@@ -142,7 +146,9 @@ chmod +x '${STUBS_CTR}/loom-probe'
 # @SPIRA_PROD@ (the spira/ subdir), @SPIRA_PROD_COCK@ (its cockpit/ sibling) and
 # @SPIRA_PROD_ROOT@ (the root itself, for beads-push.sh and concierge.sh) — all three
 # need real files here or install.sh refuses the first unit that names one.
-mkdir -p /tmp/spira-prod
+mkdir -p /tmp/spira-reh-rel/r1 /tmp/spira-reh-home
+ln -sfn r1 /tmp/spira-reh-rel/current
+ln -sfn /tmp/spira-reh-rel/r1 /tmp/spira-prod
 cp -a /workspace/spira /tmp/spira-prod/
 cp -a /workspace/cockpit /tmp/spira-prod/
 cp -a /workspace/beads-push.sh /workspace/concierge.sh /tmp/spira-prod/
@@ -156,6 +162,17 @@ done
 " >&2
 iszero "stubs created inside container" "$?"
 
+# The tree's whole build, staged as the fake release's bin/ beside the no-op ExecStart
+# stubs: install's preflight runs doctor, which requires every release tool to resolve on
+# PATH, the gate and the watcher manifest to answer. The stubbed names stay stubs.
+_reh_bin="$(dirname "$(command -v spira-install 2>/dev/null)")"
+[ -d "$_reh_bin" ] || bail "spira-install is not on PATH (the tree's build provides it)"
+# batch-job: streaming the tree's release bin/ into the rehearsal container
+tar -C "$_reh_bin" --exclude=sentinel --exclude=queue --exclude=aeon --exclude=spira-supervise \
+    --exclude=landing-pass --exclude=reconciler-flow --exclude=sending -cf - . \
+    | podman exec -i --user spirauser "$CNAME" tar -C /tmp/spira-prod/bin -xf - >&2
+iszero "the tree's release bin/ is staged in the container" "$?"
+
 # The tree's own spira-config, staged as the fake release's bin/spira-config: the image
 # carries none (testenv/Containerfile removes it), and conf.sh fails closed without it.
 _sc="$(command -v spira-config 2>/dev/null || true)"
@@ -168,13 +185,17 @@ iszero "the tree's spira-config is staged in the container's release bin/" "$?"
 echo
 echo "configure — non-interactive spira.conf bootstrap:"
 # ===========================================================================
-# CONFIGURE_PROD=/tmp/spira-prod/spira is a fake prod path OUTSIDE SPIRA_REPO
+# CONFIGURE_PROD=/tmp/spira-reh-rel/current/spira is a fake prod path OUTSIDE SPIRA_REPO
 # (/workspace) — a split-checkout SPIRA_PROD. The directory was created in the
 # stubs block above so it already exists when configure.sh writes it out.
 # CONFIGURE_DOLT_DATA="" suppresses the dolt-beads.service unit (no Dolt here).
 "${CEXEC[@]}" \
-    -e "CONFIGURE_PROD=/tmp/spira-prod/spira" \
+    -e "CONFIGURE_PROD=/tmp/spira-reh-rel/current/spira" \
     -e "CONFIGURE_HOME_REPO=home" \
+    -e "CONFIGURE_HOME_REPO_PATH=/tmp/spira-reh-home" \
+    -e "CONFIGURE_RELEASES=/tmp/spira-reh-rel" \
+    -e "CONFIGURE_RUN=${SPIRA_RUN_CTR}" \
+    -e "CONFIGURE_OPERATED=0" \
     -e "CONFIGURE_MAX_AEONS=1" \
     -e "CONFIGURE_MAX_LIVE_AEONS=1" \
     -e "CONFIGURE_LOOM_ADDR=127.0.0.1:7300" \
@@ -187,7 +208,9 @@ iszero "configure.sh exits 0" "$?"
 "${CEXEC[@]}" \
     -e "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e "CONFIGURE_OUT=/tmp/spira-reh-nopath.conf" \
-    -e "CONFIGURE_PROD=/tmp/spira-prod/spira" \
+    -e "CONFIGURE_PROD=/tmp/spira-reh-rel/current/spira" \
+    -e "CONFIGURE_RELEASES=/tmp/spira-reh-rel" \
+    -e "CONFIGURE_RUN=${SPIRA_RUN_CTR}" \
     -e "CONFIGURE_MAX_AEONS=1" \
     -e "CONFIGURE_MAX_LIVE_AEONS=1" \
     -e "CONFIGURE_LOOM_ADDR=127.0.0.1:7300" \
@@ -253,13 +276,13 @@ iszero "world.halted created" "$?"
 # A fresh host exports neither SPIRA_TOML nor SPIRA_RELEASES: install runs from the release it
 # ships in (doctor beside it, no Spira directory on the inherited PATH) and finds the config
 # configure wrote at its default path.
-"${CEXEC[@]}" \
+"${INSTALL_EXEC[@]}" \
     -e "PATH=${STUBS_CTR}:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e "SPIRA_INSTALL_FORCE=1" \
     -e "SPIRA_INSTALL_LC_STORE_CONSIDERED=1" \
     -e "SPIRA_INSTALL_AERC_CONSIDERED=1" \
-    "$CNAME" bash -c 'unset SPIRA_TOML SPIRA_RELEASES; exec /tmp/spira-prod/bin/spira-install' >&2
-iszero "install exits 0 with SPIRA_TOML and SPIRA_RELEASES both unset" "$?"
+    "$CNAME" bash -c 'unset SPIRA_TOML SPIRA_RELEASES; exec /tmp/spira-prod/bin/spira-install --skip-build' >&2
+installed "install completes with SPIRA_TOML and SPIRA_RELEASES both unset" "$?"
 
 # ===========================================================================
 echo
@@ -324,7 +347,7 @@ want "ready.sh: loom probe passes"    "loom answers 200"              "$ready_ou
 echo
 echo "uninstall — remove the installation:"
 # ===========================================================================
-uninstall_out="$("${CEXEC[@]}" "$CNAME" \
+uninstall_out="$("${INSTALL_EXEC[@]}" "$CNAME" \
     bash /workspace/spira/uninstall.sh --yes 2>&1)"
 iszero "uninstall.sh --yes exits 0" "$?"
 
@@ -356,12 +379,12 @@ echo "stray sweep positive control — plant a unit, confirm STRAY is reported:"
 # Re-install under world.halted so units are enabled but not started.
 "${CEXEC[@]}" "$CNAME" bash -c \
     "mkdir -p '${SPIRA_RUN_CTR}' && touch '${SPIRA_RUN_CTR}/world.halted'" >/dev/null
-"${CEXEC[@]}" \
+"${INSTALL_EXEC[@]}" \
     -e "SPIRA_INSTALL_FORCE=1" \
     -e "SPIRA_INSTALL_LC_STORE_CONSIDERED=1" \
     -e "SPIRA_INSTALL_AERC_CONSIDERED=1" \
-    "$CNAME" bash -c 'unset SPIRA_TOML SPIRA_RELEASES; exec /tmp/spira-prod/bin/spira-install' >/dev/null 2>&1
-iszero "re-install for stray test exits 0" "$?"
+    "$CNAME" bash -c 'unset SPIRA_TOML SPIRA_RELEASES; exec /tmp/spira-prod/bin/spira-install --skip-build' >/dev/null 2>&1
+installed "re-install for stray test completes" "$?"
 
 # Plant a unit not present in the owned manifest. uninstall.sh's stray sweep walks
 # UNITDIR after the manifest-driven removal; any spira-* file that remains and is
@@ -371,7 +394,7 @@ iszero "re-install for stray test exits 0" "$?"
      > "$HOME/.config/systemd/user/spira-legacy-stray.service"' >/dev/null
 iszero "stray unit planted" "$?"
 
-stray_out="$("${CEXEC[@]}" "$CNAME" \
+stray_out="$("${INSTALL_EXEC[@]}" "$CNAME" \
     bash /workspace/spira/uninstall.sh --yes 2>&1)"
 iszero "uninstall.sh --yes (with stray) exits 0" "$?"
 want "stray sweep reports STRAY"          "STRAY"                        "$stray_out"
