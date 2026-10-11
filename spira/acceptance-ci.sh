@@ -62,6 +62,7 @@ if [ "$_waive_upgrade" -eq 0 ] && [ -n "${SPIRA_WAIVE_UPGRADE_COMMIT:-}" ]; then
     _tag_commit="$(git -C "$_NOTES_REPO" rev-parse "${_tag}^{commit}" 2>/dev/null || true)"
     if [ -n "$_tag_commit" ] && [ "$_tag_commit" = "$SPIRA_WAIVE_UPGRADE_COMMIT" ]; then
         _waive_upgrade=1
+        _declared_waiver="$_tag_commit"
         printf 'acceptance-ci: honoring declared upgrade waiver for commit %s\n' "$_tag_commit"
     fi
 fi
@@ -106,6 +107,7 @@ _run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --bd-db "$_bd_db" --notes
 [ "$_do_record" -eq 1 ] && _run_args+=(--record)
 [ -n "$_prev_tag" ]     && _run_args+=(--prev-tag "$_prev_tag")
 [ "$_waive_upgrade" -eq 1 ] && _run_args+=(--waive-upgrade)
+[ -n "${_declared_waiver:-}" ] && _run_args+=(--declared-waiver "$_declared_waiver")
 
 printf -- '--- runner env ---\n'
 printf 'whoami: %s\n' "$(whoami 2>/dev/null || echo unknown)"

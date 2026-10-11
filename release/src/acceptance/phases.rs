@@ -473,6 +473,14 @@ fn tail(text: &str, n: usize) -> String {
     l[l.len().saturating_sub(n)..].join("\n")
 }
 
+/// The commit a tag points at, from the notes repository; None when it cannot be resolved.
+fn tag_commit(h: &dyn Host, repo: Option<&Path>, tag: &str) -> Option<String> {
+    let repo = repo?.display().to_string();
+    let o = h.run(&Cmd::new("git").args(["-C", &repo, "rev-parse", &format!("{tag}^{{commit}}")]));
+    let c = o.out.trim().to_string();
+    (o.rc == 0 && !c.is_empty()).then_some(c)
+}
+
 /// The nearest earlier tag with an acceptance note, when that note records an upgrade waiver:
 /// a waiver covers its own cut only.
 fn waived_predecessor(h: &dyn Host, repo: Option<&Path>, tag: &str) -> Option<String> {
@@ -530,8 +538,17 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
 
     if prev.is_none() {
         if let Some(w) = waived_predecessor(h, r.o.notes_repo.as_deref(), &tag) {
-            eprintln!("release acceptance: refusing {tag}: {w} carries an upgrade waiver, so this cut must run phases B/C/D (--prev-tag, no --waive-upgrade)");
-            return 2;
+            // A repeat waiver is allowed only when the operator declared it for this cut's exact
+            // commit (law-waive-upgrade-once-when-the-fix-cannot-reach-the-predecessor, amended
+            // "keep waiving until you get a release"): the predecessor can still be one whose own
+            // install cannot pass the upgrade phases. Anything else is refused as before.
+            let declared = r.o.a.declared_waiver.clone().unwrap_or_default();
+            let commit = tag_commit(h, r.o.notes_repo.as_deref(), &tag);
+            if declared.is_empty() || commit.as_deref() != Some(declared.as_str()) {
+                eprintln!("release acceptance: refusing {tag}: {w} carries an upgrade waiver, so this cut must run phases B/C/D (--prev-tag, no --waive-upgrade), unless a waiver is declared for this cut's exact commit (--declared-waiver <sha>)");
+                return 2;
+            }
+            println!("release acceptance: {w} was a waived cut; honouring the repeat waiver declared for {declared}");
         }
     }
 

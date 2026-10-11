@@ -42,6 +42,9 @@ pub struct Args {
     pub record: bool,
     pub file_defects: bool,
     pub waive_upgrade: bool,
+    /// The commit an operator declared a waiver for (WAIVE_UPGRADE_COMMIT). Lets a cut waive
+    /// again after a waived predecessor, but only when it names this cut's own commit.
+    pub declared_waiver: Option<String>,
     pub bd_db: Option<PathBuf>,
     pub agent: Option<String>,
     pub tarball: Option<PathBuf>,
@@ -84,6 +87,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--record" => a.record = true,
             "--file-defects" => a.file_defects = true,
             "--waive-upgrade" => a.waive_upgrade = true,
+            "--declared-waiver" => a.declared_waiver = Some(val()?).filter(|s| !s.is_empty()),
             "-h" | "--help" => return Err(String::new()),
             f if f.starts_with('-') => return Err(format!("unknown option: {f}")),
             p => {

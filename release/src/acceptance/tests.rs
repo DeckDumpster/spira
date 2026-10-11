@@ -182,6 +182,7 @@ struct Fake {
     fast_tier_rc: i32,
     bare_lint_rc: i32,
     tag_notes: Vec<(&'static str, &'static str)>,
+    tag_commit: &'static str,
 }
 
 impl Fake {
@@ -209,6 +210,7 @@ impl Fake {
             fast_tier_rc: 0,
             bare_lint_rc: 3,
             tag_notes: Vec::new(),
+            tag_commit: "",
         }
     }
 
@@ -343,6 +345,10 @@ impl Fake {
                 let p = self.probes.borrow();
                 ok(&p[n(from)..n(to)].iter().map(|i| format!("{i}: acceptance probe")).collect::<Vec<_>>().join("\n"))
             }
+            ("git", ["-C", _, "rev-parse", r]) if r.ends_with("^{commit}") => match self.tag_commit {
+                "" => Out { rc: 128, text: "unknown revision\n".into(), out: String::new() },
+                c => ok(&format!("{c}\n")),
+            },
             ("git", ["-C", _, "tag", "--list", ..]) => ok(&self.tag_notes.iter().map(|(t, _)| format!("{t}\n")).collect::<String>()),
             ("git", ["-C", _, "notes", "--ref=acceptance", "show", r]) => match self.tag_notes.iter().find(|(t, _)| *r == format!("refs/tags/{t}")) {
                 Some((_, n)) => ok(n),
@@ -888,4 +894,28 @@ fn a_bead_that_predates_the_upgrade_without_lifecycle_rows_fails_phase_d() {
     f.seed_no_rows = true;
     assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
     assert!(b.fails().iter().any(|x| x.contains("has lifecycle rows after the aged upgrade")), "{:#?}", b.fails());
+}
+
+#[test]
+fn a_repeat_waiver_is_honoured_only_when_declared_for_this_cuts_exact_commit() {
+    let b = Box_::new();
+    let cut = "spira-release-spira-20260930T000000Z"; // the tag b.opts always runs
+    let prior = "spira-release-spira-20260901T000000Z";
+    let sha = "bdea14c12a8ba5ac77eaa787b2d9813058217abe";
+
+    let mut f = b.fake();
+    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
+    f.tag_commit = sha;
+    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade", "--declared-waiver", sha])), 0, "declared for this commit: {:?}", b.fails());
+
+    let mut f = b.fake();
+    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
+    f.tag_commit = sha;
+    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade", "--declared-waiver", "0000000000000000000000000000000000000000"])), 2, "declared for another commit");
+
+    let mut f = b.fake();
+    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
+    f.tag_commit = "";
+    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade", "--declared-waiver", sha])), 2, "tag commit unresolvable: refuse");
+    assert!(!f.log.borrow().iter().any(|c| c.args.first().map(String::as_str) == Some("install-tarball")), "refused before any phase");
 }
