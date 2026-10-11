@@ -82,6 +82,16 @@ fn forge_cell(snap: &Snapshot, k: &str, now: i64) -> String {
     format!("  {DIM}PR {pr} {pr_state}{RST}  {ci_col}CI {ci}{since}{step}{RST}")
 }
 
+/// "270/468 7 red" for a certifying pass; a pass whose results are unreadable is "?/?", and one
+/// with nothing done yet is "0/T" — never blank.
+fn suites_cell(snap: &Snapshot, k: &str) -> String {
+    let done = snap.get(&format!("{k}_SUITES_DONE")).filter(|s| !s.is_empty()).unwrap_or("?");
+    let total = snap.get(&format!("{k}_SUITES_TOTAL")).filter(|s| !s.is_empty()).unwrap_or("?");
+    let reds = num(snap, &format!("{k}_REDS_N")).unwrap_or(0);
+    let red = if reds > 0 { format!(" {BAD}{reds} red{RST}") } else { String::new() };
+    format!("  {done}/{total}{red}")
+}
+
 pub fn round_section(snap: &Snapshot, cols: i64, now: i64, rows: i64) -> Vec<String> {
     let phone = cols < PHONE_COLS;
     let pool = snap.q("SP_ROUND_POOL");
@@ -123,6 +133,8 @@ fn open_rows(snap: &Snapshot, cols: i64, now: i64, phone: bool, rows: i64) -> Ve
         let forge = forge_cell(snap, &k, now);
         let progress = num(snap, &format!("{k}_PROGRESS")).map_or(String::new(), |t| format!("  {DIM}progress {} ago{RST}", mail_dur(&(now - t).max(0).to_string())));
         let stalled = stall_reason(snap, &k, now, cap).map_or(String::new(), |why| format!("  {BAD}STALLED: {why}{RST}"));
+        let suites = if phase == "certifying" { suites_cell(snap, &k) } else { String::new() };
+        let step = format!("{suites}{step}");
         if phone {
             let out_n = if ejected.is_empty() { String::new() } else { format!(" {WARN}-{}{RST}", ejected.len()) };
             out.push(format!(" {label} {indent}{B}{name}{RST} {phase}{}{}{step} {n}m{out_n}{stalled}", wall.trim_end(), RST));
@@ -137,6 +149,9 @@ fn open_rows(snap: &Snapshot, cols: i64, now: i64, phone: bool, rows: i64) -> Ve
         for raw in rows_of(snap, &format!("{k}_MEMBER")) {
             let (id, state) = pair(&raw);
             out.push(format!("          {indent}{id}  {DIM}{}{RST}", fit(state, cols - 20)));
+        }
+        for name in rows_of(snap, &format!("{k}_RED")) {
+            out.push(format!("          {indent}{BAD}red{RST} {name}"));
         }
         for raw in &ejected {
             let (id, why) = pair(raw);
@@ -199,9 +214,21 @@ mod tests {
     #[test]
     fn the_round_on_the_vm_expands_to_members_and_ejections() {
         let text = strip(&render(&open("certifying"), 100, 1100).join("\n"));
-        assert!(text.contains("ROUNDS") && text.contains("r-9  certifying  100s/900s  2 member(s)"), "{text}");
+        assert!(text.contains("ROUNDS") && text.contains("r-9  certifying  100s/900s  ?/?  2 member(s)"), "{text}");
         assert!(text.contains("sp-a  in") && text.contains("sp-b  skipped: Conflict"), "{text}");
         assert!(text.contains("ejected sp-c  red: test-x.sh"), "{text}");
+    }
+
+    #[test]
+    fn a_certifying_round_shows_suites_done_of_total_and_reds_and_never_blank() {
+        let snap = format!("{}SP_ROUNDS0_SUITES_DONE='270'\nSP_ROUNDS0_SUITES_TOTAL='468'\nSP_ROUNDS0_REDS_N='2'\nSP_ROUNDS0_RED0='test-x.sh'\nSP_ROUNDS0_RED1='test-y.sh'\n", open("certifying"));
+        let out = strip(&render(&snap, 120, 1100).join("\n"));
+        assert!(out.contains("270/468 2 red"), "{out}");
+        assert!(out.contains("red test-x.sh") && out.contains("red test-y.sh"), "{out}");
+        let empty = format!("{}SP_ROUNDS0_SUITES_DONE='0'\nSP_ROUNDS0_SUITES_TOTAL='468'\nSP_ROUNDS0_REDS_N='0'\n", open("certifying"));
+        assert!(strip(&render(&empty, 120, 1100)[0]).contains("0/468") && !strip(&render(&empty, 120, 1100)[0]).contains("0/468 0 red"));
+        assert!(strip(&render(&open("certifying"), 120, 1100)[0]).contains("?/?"));
+        assert!(!strip(&render(&snap.replace("certifying", "merging"), 120, 1100)[0]).contains("270/468"));
     }
 
     #[test]

@@ -232,6 +232,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "strand",
+ "testenv",
  "testkit",
 ]
 
