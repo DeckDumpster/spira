@@ -382,6 +382,16 @@ pub fn lc_command(release: &Path, config: &Path, port: &str) -> Command {
     cmd
 }
 
+pub const PROFILE: &str = "profile.tsv";
+
+/// Appends `<phase>\t<ms since start>` to the world's profile; the phase costs of a run.
+pub fn mark(dir: &Path, phase: &str, start: Instant) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(PROFILE)) {
+        let _ = writeln!(f, "{phase}\t{}", start.elapsed().as_millis());
+    }
+}
+
 pub fn is_world(dir: &Path) -> bool {
     dir.join(MARKER).is_file()
 }
@@ -420,9 +430,12 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     };
     link(&release, &dir.join("release"))?;
 
+    let t = Instant::now();
     let fixture = steps.db_up(dir)?;
     std::fs::write(dir.join("db.fixture"), &fixture).map_err(|e| e.to_string())?;
+    mark(dir, "up.db", t);
 
+    let t = Instant::now();
     let origin = dir.join("origin.git");
     let work = dir.join("work");
     let p = |x: &Path| x.to_string_lossy().to_string();
@@ -443,12 +456,15 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     git(&work, &["push", "-q", "origin", "main"])?;
     git(&work, &["branch", LANDING_BASE, "main"])?;
     git(&work, &["branch", "--set-upstream-to=origin/main", "main"])?;
+    mark(dir, "up.seed-repo", t);
 
     let run_dir = dir.join("run");
     let config = dir.join("config");
     std::fs::create_dir_all(&run_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&config).map_err(|e| e.to_string())?;
+    let t = Instant::now();
     steps.lifecycle(&release, &fixture, &work.join("lifecycle"), &config)?;
+    mark(dir, "up.lifecycle-schema", t);
     let runner = config.join("suite-runner");
     std::fs::write(&runner, "#!/bin/sh\nexit 0\n").map_err(|e| e.to_string())?;
     set_exec(&runner)?;
@@ -470,6 +486,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
     std::fs::write(home.join(REGISTRY_ROWS), registry_rows(&work)).map_err(|e| e.to_string())?;
     std::fs::write(&file, base_config(&home)).map_err(|e| e.to_string())?;
+    let t = Instant::now();
     let bd = steps.bd()?;
     for (k, v) in config_settings(&work, &gh_bin).into_iter().chain(home_settings(dir, &fixture, &bd)) {
         steps.config_set(&release, &file, &k, &v)?;
@@ -477,6 +494,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     for (k, v) in lc_settings(dir) {
         steps.config_set(&release, &file, &k, &v)?;
     }
+    mark(dir, "up.config-set", t);
     let port = std::fs::read_to_string(Path::new(&fixture).join("server.port")).unwrap_or_default();
     std::fs::write(
         config.join("sim.env"),
@@ -501,7 +519,10 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         ),
     )
     .map_err(|e| e.to_string())?;
-    steps.lc_serve(dir, &fixture)
+    let t = Instant::now();
+    let served = steps.lc_serve(dir, &fixture);
+    mark(dir, "up.lc-serve", t);
+    served
 }
 
 /// The gate string the tree under test carries inside a world: the stub suite runner alone, whose

@@ -40,7 +40,7 @@ impl Event {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Snapshot {
     pub beads: Vec<Value>,
     pub refs: Vec<(String, String)>,

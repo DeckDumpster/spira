@@ -106,6 +106,7 @@ for j in "${JOBS[@]}"; do
     control-*) ;;
     *)
         wantrc "$label exits 0 in $(cat "$T/res.$label.s")s" 0 "$rc"
+        grep -h '^sim: profile' "$T/res.$label.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || dump "$label"
         ;;
     esac

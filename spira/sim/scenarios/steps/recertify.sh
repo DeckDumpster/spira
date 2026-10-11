@@ -3,7 +3,7 @@
 # Exit 3 until the bead is CERTIFIED, 9 if the repeat is refused, 0 when it is accepted.
 set -u
 bead="$1"
-state=$(sim probe "$SIM_WORLD" | tr -d ' ' | grep "\"bead\":\"$bead\"" | grep -o '"lc_state":"[A-Z_]*"')
+state=$(env -u SPIRA_DB -u SPIRA_LC_SOCKET -u SPIRA_LC_PASSWORD_FILE sim probe "$SIM_WORLD" | tr -d ' ' | grep "\"bead\":\"$bead\"" | grep -o '"lc_state":"[A-Z_]*"')
 [ "$state" = '"lc_state":"CERTIFIED"' ] || exit 3
 tip=$(git -C "$SIM_WORLD/work" rev-parse "refs/heads/spira/$bead") || exit 9
 spira-lc certify "$bead" "$tip" pass gate || exit 9

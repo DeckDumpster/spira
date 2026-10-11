@@ -181,19 +181,29 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         Some(w) => (PathBuf::from(w), false),
         None => {
             let d = std::env::temp_dir().join(format!("sim-run-{}-{seed}", std::process::id()));
+            let t = std::time::Instant::now();
             world::up(cwd, &d, "HEAD", env, &ProcessSteps::default())?;
+            world::mark(&d, "up", t);
             (d, true)
         }
     };
+    let t = std::time::Instant::now();
+    spira_sim::drive::resolve_conf(&dir, sc.epoch)?;
+    world::mark(&dir, "up.conf-resolve", t);
     let probe = ProcessProbe::for_world(&dir, sc.epoch)?;
     if sc.goal.is_some() && probe.probe.is_none() {
         return Err(format!("the world configures no SIM_PROBE, so goal {:?} cannot be observed", sc.goal.unwrap_or_default()));
     }
     let exec = ProcessExec { world: dir.clone(), epoch: sc.epoch };
+    let t = std::time::Instant::now();
     let result = spira_sim::verbs::run_scenario(&dir, &text, seed, Box::new(exec), Box::new(probe));
+    world::mark(&dir, "run", t);
     let outcome = result.and_then(|r| report(&r));
     if owned && outcome.is_ok() && !set.contains_key("--keep") {
+        let profile = spira_sim::drive::profile_line(&dir);
+        let t = std::time::Instant::now();
         world::down(&dir, &ProcessSteps::default())?;
+        eprintln!("sim: profile {profile} down={}ms", t.elapsed().as_millis());
     } else {
         eprintln!("sim: world kept at {}", dir.display());
     }

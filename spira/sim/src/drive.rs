@@ -235,6 +235,10 @@ pub struct ProcessExec {
 
 impl ProcessExec {
     fn command(&self, shell: &str, now_ms: u64) -> Result<Command, String> {
+        self.command_with(shell, now_ms, true)
+    }
+
+    pub fn command_with(&self, shell: &str, now_ms: u64, resolved: bool) -> Result<Command, String> {
         let mut cmd = sim::actor_command("sh", self.epoch + now_ms / 1000);
         let path = format!(
             "{}:{}:{}:{}",
@@ -251,8 +255,74 @@ impl ProcessExec {
         for (k, v) in read_env_file(&self.world.join("config/sim.env"))? {
             cmd.env(k, v);
         }
+        if resolved {
+            for (k, v) in read_conf_env(&self.world)? {
+                cmd.env(k, v);
+            }
+        }
         Ok(cmd)
     }
+}
+
+pub const CONF_ENV: &str = "config/conf.env";
+const SHELL_NOISE: &[&str] = &["PWD", "OLDPWD", "SHLVL", "_"];
+
+fn read_conf_env(world: &Path) -> Result<Vec<(String, String)>, String> {
+    match std::fs::read(world.join(CONF_ENV)) {
+        Ok(b) => Ok(parse_env0(&b).into_iter().collect()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("{CONF_ENV}: {e}")),
+    }
+}
+
+fn parse_env0(bytes: &[u8]) -> std::collections::BTreeMap<String, String> {
+    String::from_utf8_lossy(bytes)
+        .split('\0')
+        .filter_map(|l| l.split_once('='))
+        .filter(|(k, _)| !SHELL_NOISE.contains(k))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+/// Resolves the world's configuration through the real `conf.sh` once and writes what it exports
+/// to `config/conf.env`, with `SPIRA_CONF_LOADED` set so every later script skips the
+/// re-resolution. Fails if sourcing `conf.sh` again on top of the resolved environment changes
+/// anything: the exported env must equal what `conf.sh` resolves.
+pub fn resolve_conf(world: &Path, epoch: u64) -> Result<(), String> {
+    let file = world.join(CONF_ENV);
+    if file.exists() {
+        return Ok(());
+    }
+    let exec = ProcessExec { world: world.to_path_buf(), epoch };
+    let env0 = |shell: &str, resolved: bool| -> Result<std::collections::BTreeMap<String, String>, String> {
+        let mut cmd = exec.command_with(shell, 0, resolved)?;
+        let o = cmd.stdin(std::process::Stdio::null()).output().map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            return Err(format!("{shell}: {}: {}", o.status, String::from_utf8_lossy(&o.stderr)));
+        }
+        Ok(parse_env0(&o.stdout))
+    };
+    let home = read_env_file(&world.join("config/sim.env"))?
+        .into_iter()
+        .find(|(k, _)| k == "SPIRA_HOME")
+        .map(|(_, v)| v)
+        .ok_or("sim.env has no SPIRA_HOME")?;
+    let source = format!("bash -c \". '{home}/conf.sh' && env -0\"");
+    let base = env0("env -0", false)?;
+    let once = env0(&source, false)?;
+    let mut bytes = Vec::new();
+    for (k, v) in once.iter().filter(|(k, v)| base.get(*k) != Some(*v)) {
+        bytes.extend_from_slice(format!("{k}={v}\0").as_bytes());
+    }
+    std::fs::write(&file, &bytes).map_err(|e| e.to_string())?;
+    let again = env0(&source, true)?;
+    let differ: Vec<&String> = once.keys().chain(again.keys()).filter(|k| once.get(*k) != again.get(*k)).collect();
+    if !differ.is_empty() {
+        let _ = std::fs::remove_file(&file);
+        return Err(format!("the exported env differs from what conf.sh resolves: {differ:?}"));
+    }
+    bytes.extend_from_slice(b"SPIRA_CONF_LOADED=1\0");
+    std::fs::write(&file, &bytes).map_err(|e| e.to_string())
 }
 
 impl ProcessExec {
@@ -270,8 +340,40 @@ impl Exec for ProcessExec {
         let started = std::time::Instant::now();
         let (status, out, err) = run_capture(&mut self.command(command, now_ms)?, COMMAND_DEADLINE)?;
         self.log(command, now_ms, &format!("{status} in {}ms", started.elapsed().as_millis()), &out, &err);
+        // conf.env freezes the config; a step that changes it sends later commands back through conf.sh
+        if status.success() && (command.contains("spira-config set") || command.contains("spira-config unset")) {
+            let _ = std::fs::remove_file(self.world.join(CONF_ENV));
+        }
         status.code().ok_or_else(|| format!("{command}: {status}"))
     }
+}
+
+/// One line of where a run's wall time went: world-up phases from `profile.tsv`, and the
+/// count and total of command runs and probes from `exec.log`.
+pub fn profile_line(world: &Path) -> String {
+    let phases: Vec<String> = std::fs::read_to_string(world.join(crate::world::PROFILE))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(k, ms)| format!("{k}={ms}ms"))
+        .collect();
+    let (mut cmds, mut cmd_ms, mut probes, mut probe_ms) = (0u64, 0u64, 0u64, 0u64);
+    let mut timed_cmds: Vec<(u64, String)> = Vec::new();
+    for l in std::fs::read_to_string(world.join(EXEC_LOG)).unwrap_or_default().lines() {
+        let timed = l.contains("(probe): in ") || l.contains(": exit status: ");
+        let Some(ms) = Some(l).filter(|_| timed).and_then(|l| l.rsplit_once(" in ")).and_then(|(_, t)| t.strip_suffix("ms")).and_then(|t| t.parse::<u64>().ok()) else { continue };
+        if l.contains("(probe): in ") {
+            probes += 1;
+            probe_ms += ms;
+        } else {
+            cmds += 1;
+            cmd_ms += ms;
+            timed_cmds.push((ms, l.chars().take(70).collect()));
+        }
+    }
+    timed_cmds.sort_by(|a, b| b.0.cmp(&a.0));
+    let slowest: Vec<String> = timed_cmds.iter().take(4).map(|(ms, c)| format!("{ms}ms {c}")).collect();
+    format!("{} commands={cmds}/{cmd_ms}ms probes={probes}/{probe_ms}ms slowest: {}", phases.join(" "), slowest.join(" | "))
 }
 
 pub struct ProcessProbe {
@@ -314,7 +416,7 @@ impl ProcessProbe {
             }
         }
         if let Some(p) = &self.probe {
-            let out = run(&mut self.exec.command(p, 0)?, COMMAND_DEADLINE)?;
+            let out = run(&mut self.exec.command_with(p, 0, false)?, COMMAND_DEADLINE)?;
             for l in out.lines().filter(|l| !l.trim().is_empty()) {
                 snap.beads.push(bead_row(&serde_json::from_str(l).map_err(|e| format!("{PROBE_KEY}: {e}: {l}"))?)?);
             }
@@ -367,13 +469,17 @@ pub fn drive(
     let clock = Rc::new(Cell::new(0u64));
     let last_exit: Rc<Cell<Option<i32>>> = Rc::default();
     let fatal: Rc<RefCell<Option<String>>> = Rc::default();
+    let ran: Rc<Cell<bool>> = Rc::default();
 
     let mut sim = Sim::new(seed);
     let call = {
-        let (exec, clock, last_exit, fatal) = (exec.clone(), clock.clone(), last_exit.clone(), fatal.clone());
-        move |command: &str| match exec.borrow_mut().run(command, clock.get()) {
-            Ok(code) => last_exit.set(Some(code)),
-            Err(e) => *fatal.borrow_mut() = Some(format!("{command}: {e}")),
+        let (exec, clock, last_exit, fatal, ran) = (exec.clone(), clock.clone(), last_exit.clone(), fatal.clone(), ran.clone());
+        move |command: &str| {
+            ran.set(true);
+            match exec.borrow_mut().run(command, clock.get()) {
+                Ok(code) => last_exit.set(Some(code)),
+                Err(e) => *fatal.borrow_mut() = Some(format!("{command}: {e}")),
+            }
         }
     };
     for a in &sc.actors {
@@ -427,6 +533,7 @@ pub fn drive(
     let mut events: Vec<Value> = Vec::new();
     let mut open: BTreeMap<String, (u64, i32)> = BTreeMap::new();
     let mut reached = false;
+    let mut last_snap: Option<Snapshot> = None;
     let mut settle_until: Option<u64> = None;
     let mut budget = if let Stop::Events(n) = stop { Some(*n) } else { None };
     while let Some(next) = sim.next_time() {
@@ -477,7 +584,12 @@ pub fn drive(
         if let Some(tr) = trace {
             tr.event(&ev)?;
         }
-        let snap = probe.snapshot().map_err(|e| format!("seed {seed} seq {seq}: probe: {e}"))?;
+        // An event that ran no command cannot have changed what the probe reads.
+        let snap = match (&last_snap, ran.take()) {
+            (Some(prev), false) => prev.clone(),
+            _ => probe.snapshot().map_err(|e| format!("seed {seed} seq {seq}: probe: {e}"))?,
+        };
+        last_snap = Some(snap.clone());
         if let Some(tr) = trace {
             tr.snapshot(seq, &snap)?;
         }
