@@ -1,4 +1,4 @@
-//! `perf-watch --probes FILE [--stats "CMD"] [--record FILE] [--health FILE]`
+//! `perf-watch --probes FILE [--stats "CMD"] [--record FILE] [--health FILE] [--inbox FILE]`
 //! Budget, interval and reminder come from config. Alarm lines go to stdout; a quiet pass
 //! prints nothing. `--health` is rewritten each pass that probes.
 
@@ -58,11 +58,11 @@ fn main() {
     }
 }
 
-const USAGE: &str = "usage: perf-watch --probes FILE [--stats \"CMD\"] [--record FILE] [--health FILE]";
+const USAGE: &str = "usage: perf-watch --probes FILE [--stats \"CMD\"] [--record FILE] [--health FILE] [--inbox FILE]";
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let (mut probes, mut stats, mut record, mut health) = (None, "spira-lc stats".to_string(), None, None);
+    let (mut probes, mut stats, mut record, mut health, mut inbox) = (None, "spira-lc stats".to_string(), None, None, None);
     while let Some(a) = args.next() {
         let v = args.next();
         match (a.as_str(), v) {
@@ -70,6 +70,7 @@ fn run() -> Result<(), String> {
             ("--stats", Some(v)) => stats = v,
             ("--record", Some(v)) => record = Some(v),
             ("--health", Some(v)) => health = Some(v),
+            ("--inbox", Some(v)) => inbox = Some(v),
             _ => return Err(USAGE.to_string()),
         }
     }
@@ -86,8 +87,14 @@ fn run() -> Result<(), String> {
     let prior = health.as_deref().and_then(|f| std::fs::read_to_string(f).ok()).map(|t| Health::parse(&t)).unwrap_or_default();
     let stats_argv: Vec<String> = stats.split_whitespace().map(String::from).collect();
     let Some(out) = run_pass(&cfg, &probes, &stats_argv, &prior, &Wall(Instant::now()), &mut Spawn) else { return Ok(()) };
+    let inbox = match inbox {
+        Some(p) => p,
+        None => spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?,
+    };
+    let now = Wall(Instant::now()).epoch_secs();
     for l in &out.lines {
         println!("{l}");
+        perf_watch::append_inbox(&inbox, &perf_watch::inbox_line(now, l));
     }
     if let Some(r) = record {
         let body: String = out.timings.iter().map(|t| format!("{}\t{}\n", t.name, t.millis)).collect();
