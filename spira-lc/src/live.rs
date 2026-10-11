@@ -3,7 +3,8 @@
 //! live views answer from here and never touch Dolt, so no read waits behind a write.
 //!
 //! Memory changes in two places only: [`Live::write_through`], which re-reads the touched
-//! rows from Dolt AFTER the write committed (a failed write changes nothing), and
+//! rows from Dolt AFTER the write committed (a failed write may have committed, so it
+//! unloads memory until the next reload), and
 //! [`Live::check`], which compares a hash of every row against Dolt's and reloads on a
 //! mismatch. The state lock is never held across I/O.
 
@@ -194,7 +195,13 @@ impl Live {
     /// that returned `Ok` changes memory; the second field is false when the re-read failed
     /// (memory is then unloaded until the next load, and the session should be dropped).
     pub fn write_through<E>(&self, touch: &Touch, script: &str, mut run: impl FnMut(&str) -> Result<Sets, E>) -> Result<(Sets, bool), E> {
-        let out = run(script)?;
+        let out = match run(script) {
+            Ok(out) => out,
+            Err(e) => {
+                self.invalidate();
+                return Err(e);
+            }
+        };
         let refreshed = match touch {
             Touch::Keys(k) if k.is_empty() => true,
             Touch::Keys(k) => self.apply_keys(k, run(&keys_sql(k))),
@@ -420,17 +427,16 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_commit_leaves_memory_unchanged_and_reads_nothing() {
+    fn a_write_whose_reply_is_lost_unloads_memory_so_reads_go_to_dolt() {
         let live = loaded(vec![bead("sp-a", "READY", 0, NOW)], vec![]);
-        let before = live.list(&ListFilter::default()).unwrap();
         let calls = RefCell::new(0);
         let r = live.write_through(&Touch::Keys(vec!["sp-a".into()]), "UPDATE", |_: &str| -> Result<Sets, &str> {
             *calls.borrow_mut() += 1;
-            Err("serialization failure")
+            Err("reply lost")
         });
         assert!(r.is_err());
-        assert_eq!(*calls.borrow(), 1, "no re-read after a failed write");
-        assert_eq!(live.list(&ListFilter::default()).unwrap(), before);
+        assert_eq!(*calls.borrow(), 1, "no re-read on the failed connection");
+        assert!(!live.is_loaded() && live.list(&ListFilter::default()).is_none(), "the write may have committed");
     }
 
     #[test]
