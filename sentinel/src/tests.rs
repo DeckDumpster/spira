@@ -916,6 +916,208 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
     assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to express"), "{}", sink.text());
 }
 
+// ---------------------------------------------------------------------------------------
+// summon_fayth's refusal ladder (the rows test-summon-fayth.sh used to prove in a shell).
+// The roster is `builder`, `ops`; each rule binds to a declaration (FAYTH_ELASTIC,
+// FAYTH_LANE, FAYTH_MAX_CONCURRENT), so the same two names play different roles per test.
+
+struct Ladder {
+    w: World,
+    r: FakeRunner,
+    sink: FakeSink,
+    clock: FakeClock,
+    ready_calls: std::rc::Rc<RefCell<Vec<String>>>,
+}
+
+fn ladder(tag: &str, builder: &str, ops: &str, live: &[(&str, usize)], ready: &[(&str, i64)]) -> Ladder {
+    let (w, r, sink, clock) = setup(tag);
+    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
+    std::fs::write(w.home.join("chamber/builder.fayth"), builder).unwrap();
+    std::fs::write(w.home.join("chamber/ops.fayth"), ops).unwrap();
+    let bin = w.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    exe(&bin.join("aeon"));
+    let ready: Vec<(String, i64)> = ready.iter().map(|(f, n)| (f.to_string(), *n)).collect();
+    let calls = std::rc::Rc::new(RefCell::new(Vec::new()));
+    let calls_c = calls.clone();
+    r.on(move |s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("fayth-ready") {
+            let f = s.args.get(1).cloned().unwrap_or_default();
+            calls_c.borrow_mut().push(f.clone());
+            return ok(&ready.iter().find(|(x, _)| *x == f).map_or(0, |(_, n)| *n).to_string());
+        }
+        None
+    });
+    let live: Vec<(String, usize)> = live.iter().map(|(f, n)| (f.to_string(), *n)).collect();
+    r.on(move |s| {
+        if !s.args.iter().any(|a| a == "list-units") {
+            return None;
+        }
+        let glob = s.args.iter().find(|a| a.starts_with("spira-aeon-")).cloned().unwrap_or_default();
+        let mut lines = String::new();
+        for (f, n) in &live {
+            for i in 1..=*n {
+                let unit = format!("spira-aeon-{f}-{i}.service");
+                let pat = glob.trim_end_matches('*');
+                if unit.starts_with(pat) {
+                    lines.push_str(&format!("{unit} loaded active\n"));
+                }
+            }
+        }
+        ok(&lines)
+    });
+    r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
+    Ladder { w, r, sink, clock, ready_calls: calls }
+}
+
+impl Ladder {
+    fn summon(&self, fayth: &str, pool: Option<i64>, extra: &[(&str, &str)]) -> bool {
+        let path = format!("{}:/usr/bin:/bin", self.w.dir.join("bin").display());
+        let mut all: Vec<(&str, &str)> = vec![("PATH", &path)];
+        all.extend_from_slice(extra);
+        let rc = run_mode(&self.w, &self.r, &self.sink, &self.clock, Mode::Summon { fayth: fayth.into(), pool, require_express: false }, &all, None);
+        let summoned = self.r.find(|s| s.prog == "systemd-run").is_some_and(|s| s.args.last().map(String::as_str) == Some(fayth));
+        assert_eq!(rc == 0, summoned, "rc and the launch agree: {}", self.sink.text());
+        summoned
+    }
+}
+
+const TASK: &str = "FAYTH_MAX_CONCURRENT=4\n";
+const ELASTIC: &str = "FAYTH_MAX_CONCURRENT=4\nFAYTH_ELASTIC=1\n";
+const SOLO: &str = "FAYTH_MAX_CONCURRENT=1\n";
+const LANE: &str = "FAYTH_MAX_CONCURRENT=1\nFAYTH_LANE=ops\n";
+
+#[test]
+fn an_elastic_fayth_is_held_back_on_the_last_slot_only_while_a_non_elastic_one_has_work() {
+    let ceiling = [("SPIRA_MAX_LIVE_AEONS", "3")];
+    // 2 free slots: summoned although the non-elastic fayth is also ready, and the
+    // reservation is never even consulted (one readiness call, for the fayth itself).
+    let l = ladder("el-free", ELASTIC, SOLO, &[("builder", 1)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.summon("builder", Some(4), &ceiling), "{}", l.sink.text());
+    assert_eq!(*l.ready_calls.borrow(), vec!["builder"]);
+
+    // 1 slot free and the non-elastic fayth has work: refused, naming it, and not as a cap.
+    let l = ladder("el-last", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
+    assert!(!l.summon("builder", Some(4), &ceiling));
+    assert!(l.sink.has("held back") && l.sink.has("ops has 1 ready"), "{}", l.sink.text());
+    assert!(!l.sink.has("at concurrency cap"));
+    assert_eq!(*l.ready_calls.borrow(), vec!["ops"], "only the reservation was asked");
+
+    // The same slot, nothing ready elsewhere: summoned.
+    let l = ladder("el-clear", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 0), ("builder", 1)]);
+    assert!(l.summon("builder", Some(4), &ceiling), "{}", l.sink.text());
+
+    // The rule binds to the declaration: the same live state, but the summoned fayth is the
+    // non-elastic one, is never subject to it.
+    let l = ladder("el-solo", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.summon("ops", None, &ceiling), "{}", l.sink.text());
+}
+
+#[test]
+fn a_task_fayth_yields_the_last_slot_to_a_ready_lane_unless_the_lane_has_no_room() {
+    let caps = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "1")];
+    let l = ladder("ln-free", TASK, LANE, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.summon("builder", None, &caps), "{}", l.sink.text());
+
+    let l = ladder("ln-last", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
+    assert!(!l.summon("builder", None, &caps));
+    assert!(l.sink.has("1 fleet slot remaining") && l.sink.has("held back"), "{}", l.sink.text());
+    assert!(!l.sink.has("at concurrency cap"));
+
+    // The ready lane is at its own cap (one live), the collective lane cap is slack.
+    let l = ladder("ln-full", TASK, LANE, &[("builder", 2), ("ops", 1)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.summon("builder", None, &[("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "2")]), "{}", l.sink.text());
+
+    let l = ladder("ln-idle", TASK, LANE, &[("builder", 3)], &[("ops", 0), ("builder", 1)]);
+    assert!(l.summon("builder", None, &caps), "{}", l.sink.text());
+}
+
+#[test]
+fn the_collective_lane_cap_refuses_a_lane_fayth_and_never_a_task_fayth() {
+    let caps = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "1")];
+    let l = ladder("lc-below", TASK, LANE, &[], &[("ops", 1)]);
+    assert!(l.summon("ops", None, &caps), "{}", l.sink.text());
+
+    let l = ladder("lc-at", TASK, LANE, &[("ops", 1)], &[("ops", 1)]);
+    assert!(!l.summon("ops", None, &caps));
+    assert!(l.sink.has("1/1 lane slot(s) in use"), "{}", l.sink.text());
+
+    let l = ladder("lc-task", TASK, LANE, &[("ops", 1)], &[("builder", 1)]);
+    assert!(l.summon("builder", None, &caps), "{}", l.sink.text());
+}
+
+#[test]
+fn the_fleet_ceiling_refuses_whatever_the_persona_and_names_the_count() {
+    let ceiling = [("SPIRA_MAX_LIVE_AEONS", "3")];
+    let l = ladder("fc-below", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1)]);
+    assert!(l.summon("ops", None, &ceiling), "{}", l.sink.text());
+    let l = ladder("fc-at", ELASTIC, SOLO, &[("builder", 3)], &[("ops", 1)]);
+    assert!(!l.summon("ops", None, &ceiling));
+    assert!(l.sink.has("3/3 aeon(s) live across the whole fleet") && l.sink.has("not summoning"), "{}", l.sink.text());
+}
+
+#[test]
+fn a_task_fayth_honours_the_pool_and_a_lane_fayth_is_summoned_without_one() {
+    let l = ladder("pool-1", ELASTIC, LANE, &[], &[("builder", 1)]);
+    assert!(l.summon("builder", Some(1), &[]), "{}", l.sink.text());
+    let l = ladder("pool-0", TASK, LANE, &[], &[("builder", 1)]);
+    assert!(!l.summon("builder", Some(0), &[]));
+    assert!(l.sink.has("at concurrency cap"), "{}", l.sink.text());
+    let l = ladder("pool-elastic-0", ELASTIC, LANE, &[], &[("builder", 1)]);
+    assert!(!l.summon("builder", Some(0), &[]));
+    let l = ladder("pool-lane", ELASTIC, LANE, &[], &[("ops", 1)]);
+    assert!(l.summon("ops", None, &[]), "{}", l.sink.text());
+}
+
+#[test]
+fn an_elastic_fayth_takes_the_pool_remainder_whole_and_a_capped_one_nets_out_what_runs() {
+    for live in 0..=3usize {
+        let l = ladder(&format!("rem-{live}"), ELASTIC, SOLO, &[("builder", live)], &[("builder", 9)]);
+        assert!(l.summon("builder", Some(5), &[]), "have={live} must not reduce a pool=5 remainder: {}", l.sink.text());
+        assert!(l.sink.has("9 ready, 5 free"), "{}", l.sink.text());
+    }
+    let l = ladder("cap-1", ELASTIC, SOLO, &[("ops", 1)], &[("ops", 1)]);
+    assert!(!l.summon("ops", Some(10), &[]));
+    assert!(l.sink.has("at concurrency cap"), "{}", l.sink.text());
+    let l = ladder("cap-0", ELASTIC, SOLO, &[], &[("ops", 1)]);
+    assert!(l.summon("ops", Some(10), &[]), "{}", l.sink.text());
+    assert!(l.sink.has("1 ready, 1 free"), "{}", l.sink.text());
+}
+
+#[test]
+fn a_summon_carries_a_timeout_and_never_a_cpu_quota_or_nice() {
+    let l = ladder("quota", ELASTIC, SOLO, &[], &[("builder", 1)]);
+    assert!(l.summon("builder", None, &[("SPIRA_AEON_CPU_QUOTA", "90")]), "{}", l.sink.text());
+    let launch = l.r.find(|s| s.prog == "systemd-run").unwrap();
+    let argv = launch.args.join(" ");
+    assert!(argv.contains("TimeoutStartSec="), "{argv}");
+    assert!(!argv.contains("CPUQuota") && !argv.contains("Nice="), "{argv}");
+}
+
+#[test]
+fn a_halt_refuses_a_summon_loudly_and_a_stamp_without_an_expiry_ages_by_mtime_plus_ttl() {
+    let l = ladder("halt-ok", ELASTIC, SOLO, &[], &[("builder", 1)]);
+    assert!(l.summon("builder", None, &[]), "positive control: {}", l.sink.text());
+    let l = ladder("halt", ELASTIC, SOLO, &[], &[("builder", 1)]);
+    std::fs::write(l.w.run.join("world.halted"), "").unwrap();
+    assert!(!l.summon("builder", None, &[]));
+    assert!(l.sink.has("halted — not summoning"), "{}", l.sink.text());
+
+    let stamp_aged = |tag: &str, age: i64| {
+        let l = ladder(tag, ELASTIC, SOLO, &[], &[("builder", 1)]);
+        let stamp = l.w.run.join("world.draining");
+        std::fs::write(&stamp, "now\ngated\n").unwrap();
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs((NOW - age) as u64);
+        std::fs::File::options().write(true).open(&stamp).unwrap().set_modified(at).unwrap();
+        let summoned = l.summon("builder", None, &[("SPIRA_DRAIN_TTL", "600")]);
+        (summoned, l.sink.text(), stamp.is_file())
+    };
+    let (summoned, log, kept) = stamp_aged("drain-fresh", 599);
+    assert!(!summoned && kept && log.contains("draining — not summoning"), "{log}");
+    let (summoned, log, kept) = stamp_aged("drain-stale", 601);
+    assert!(summoned && !kept && log.contains("DRAIN EXPIRED") && log.contains("did not resume"), "{log}");
+}
+
 /// sp-hh599, law-a-control-that-cannot-check-must-refuse: `fayth_ready`'s own rc contract
 /// (sp-3ntca) already maps every nonzero OTHER than 2 to `ReadyAnswer::Failed` — this
 /// proves the CONSUMING side holds up its half: a claim-error must be LOUD (stderr, not
