@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_MARKET — `spot-first` (default: spot, on-demand when spot is refused) or `on-demand`.
+SCHEMA=Purchase option: `spot-first` tries spot and falls back to on-demand; `on-demand` skips spot.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_MARKET:=spot-first}"
+SPIRA_CONF_DEFAULT_EOF

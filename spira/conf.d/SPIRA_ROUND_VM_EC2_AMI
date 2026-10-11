@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_AMI — the pinned round AMI id.
+SCHEMA=The pinned round AMI. No default: it is a build output.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

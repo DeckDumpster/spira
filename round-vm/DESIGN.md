@@ -232,7 +232,7 @@ carries `provider`. A spilled pass is not the pool of one (G1): it is recorded i
 its instance exists and leased on success, so G2 holds. It starts no local background provision.
 
 Keys (round-vm's own, read from the environment): `SPIRA_ROUND_VM_EC2_PROFILE`, `_REGION`, `_AMI`,
-`_INSTANCE_TYPE` (c6i.8xlarge), `_SUBNET`, `_SECURITY_GROUP`, `_INSTANCE_PROFILE` (SSM),
+`_INSTANCE_TYPE` (c7i.8xlarge, spot first, on-demand fallback; `_MARKET=on-demand` skips spot), `_SUBNET`, `_SECURITY_GROUP`, `_INSTANCE_PROFILE` (SSM),
 `_TAILSCALE_KEY_FILE`, `_HOST_ADDR` (this host's tailnet address, handed to the instance as the
 mirror and cache address), `_RUN_DEADLINE` (7200 s), `_BOOT_TRIES`. The provider refuses to
 start naming what is missing; the pool then stays local and says so.

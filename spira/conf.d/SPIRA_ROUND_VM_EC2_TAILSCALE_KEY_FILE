@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE — 0600 file holding the reusable ephemeral pre-approved tag:round-vm tailscale auth key.
+SCHEMA=Path of the 0600 file holding the tailscale auth key spilled instances join the tailnet with. The key's expiry is recorded in `<file>.expires` (epoch seconds) for the watcher.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/round-spill.tskey}"
+SPIRA_CONF_DEFAULT_EOF

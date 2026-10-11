@@ -139,6 +139,12 @@ pub fn str_env_opt(key: &str) -> Option<String> {
     std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
+/// A key `spira/conf.d` declares and the environment may override: the environment when set,
+/// else spira.toml's value. None when both are blank or the config cannot be resolved.
+pub fn declared(key: &str) -> Option<String> {
+    str_env_opt(key).or_else(|| cfg(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty()))
+}
+
 /// [`num_env`] for a string-valued knob.
 fn str_env(key: &str, default: &str) -> String {
     std::env::var(key).ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| default.to_string())

@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_PROFILE — AWS CLI profile the spill provider runs as; install configures its region, the operator pastes the access key once.
+SCHEMA=AWS CLI profile of the pared-down IAM user the spill provider runs as (default spira-round-spill).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_PROFILE:=spira-round-spill}"
+SPIRA_CONF_DEFAULT_EOF

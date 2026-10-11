@@ -1175,7 +1175,7 @@ mod tests {
         std::fs::write(&key, "tskey").unwrap();
         let cfg = crate::ec2::Ec2Config {
             profile: "p".into(), region: "r".into(), ami: "a".into(), instance_type: "t".into(), subnet: "s".into(),
-            security_group: String::new(), instance_profile: String::new(), tailscale_key_file: key.to_string_lossy().into(),
+            security_group: String::new(), instance_profile: String::new(), spot_first: false, tailscale_key_file: key.to_string_lossy().into(),
             run_deadline: Duration::from_secs(7200), host_addr: "h".into(), recipe_sha: String::new(),
         };
         Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())

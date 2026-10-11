@@ -1073,7 +1073,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     };
     eprintln!("round-vm run: {} {} {}", vm.handle, vm.addr, mode.as_str());
     let host_addr = if crate::ec2::is_ec2_handle(&vm.handle) {
-        match crate::config::str_env_opt("SPIRA_ROUND_VM_EC2_HOST_ADDR") {
+        match crate::config::declared("SPIRA_ROUND_VM_EC2_HOST_ADDR") {
             Some(a) => a,
             None => {
                 eprintln!("round-vm run: SPIRA_ROUND_VM_EC2_HOST_ADDR is not set; a spilled VM cannot reach this host");

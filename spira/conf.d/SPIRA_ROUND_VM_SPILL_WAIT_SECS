@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SPIRA_ROUND_VM_SPILL_WAIT_SECS — seconds a pass waits for local room before it spills.
+SCHEMA=Seconds a round pass waits for local room before spilling (unit: seconds; default 30).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_SPILL_WAIT_SECS:=30}"
+SPIRA_CONF_DEFAULT_EOF
