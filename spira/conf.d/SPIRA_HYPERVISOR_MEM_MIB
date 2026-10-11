@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=batcher
+DOC=MiB of guest memory the round VM hypervisor can commit; 0 means unknown, and no round is staged behind another.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # MiB of guest memory the round VM hypervisor can commit; 0 means unknown, and no round is staged behind another.
+    : "${SPIRA_HYPERVISOR_MEM_MIB:=0}"
+SPIRA_CONF_DEFAULT_EOF

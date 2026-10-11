@@ -57,6 +57,7 @@ chamber_overlay
 check5_max_file
 check5_max_resolve
 ci_label
+ci_runner_mem_mib
 ci_park_max
 ci_queued_max_secs
 ci_red_max_secs
@@ -139,6 +140,7 @@ groomer_label
 groom_threshold
 health_timeout
 home_repo
+hypervisor_mem_mib
 hook_lines
 id_prefix
 incident_label
@@ -316,6 +318,7 @@ round_vm_host_addr
 round_vm_host_key
 round_vm_host_pubkey
 round_vm_maxpar
+round_vm_mem_mib
 round_vm_max_retries
 round_vm_mirror_port
 round_vm_provider
