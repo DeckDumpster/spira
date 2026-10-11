@@ -678,6 +678,8 @@ mod tests {
         assert!(slot.join("aeon/deps/libz.rlib").is_file(), "release_tree leaves the warm output");
         assert!(fs::symlink_metadata(tree.join("target/aeon")).is_err(), "the link is gone");
         drop(held);
-        assert_eq!(acquire_warm(&base, 2).unwrap().0, slot, "the slot is free again at the same path");
+        // A concurrent test's fork can hold the descriptor for an instant before its exec closes it.
+        let again = (0..200).find_map(|_| acquire_warm(&base, 2).or_else(|| { std::thread::sleep(std::time::Duration::from_millis(10)); None }));
+        assert_eq!(again.unwrap().0, slot, "the slot is free again at the same path");
     }
 }
