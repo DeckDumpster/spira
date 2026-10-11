@@ -691,6 +691,15 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
             w.err(format!("queue.sh {label}: the round worktree {} is not at the round's head {head} — refused", wt.display()));
             return FAIL;
         }
+        // A round the lifecycle already holds GREEN was certified; what is missing (the
+        // certificate, after a lost reply) is completed without running the pass again: a
+        // verified result is never redone (law-a-lost-verified-result-is-data-loss; r-auto-22).
+        if phase_of(w, batch) == "green" {
+            if save(w, label, &c, &kv).is_err() {
+                return FAIL;
+            }
+            return finish_green(w, label, &c, &path, batch, &head, &who, "re-certify of a GREEN round");
+        }
         let run_id = format!("{batch}-{}", w.clock.now());
         let started = start_pass(w, batch, &head, false);
         if let Err((rc, out)) = started {
@@ -757,7 +766,8 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
 
     let Ok(_g) = lock(w, label, &c) else { return FAIL };
     let Ok(mut kv) = load(w, label, &c, batch) else { return FAIL };
-    if phase_of(w, batch) != "certifying" || kv.get("head") != Some(head.as_str()) {
+    let already_green = reds.is_empty() && phase_of(w, batch) == "green";
+    if !(phase_of(w, batch) == "certifying" || already_green) || kv.get("head") != Some(head.as_str()) {
         w.err(format!("queue.sh {label}: the round {batch} changed while it was being certified — the result is discarded; certify again"));
         return FAIL;
     }
@@ -780,22 +790,37 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         return FAIL;
     }
 
+    // The pass is the evidence: its certificate is written before the lifecycle is asked, so no
+    // lost or refused reply can discard what the corpus proved.
+    if let Err(rc) = write_round_certificate(w, label, &c, &path, batch, &head, &who) {
+        return rc;
+    }
     let greened = suites_started(w, batch, false).and_then(|()| pass_verdict_event(w, batch, &Verdict::Green(timings), false));
-    if let Err((rc, out)) = greened {
-        w.err(format!("queue.sh {label}: spira-lc refused the GREEN for {batch} (rc={rc}): {out}"));
+    // A write that timed out may have applied: the batch row is the arbiter, not the reply.
+    let applied = greened.is_err() && phase_of(w, batch) == "green";
+    if let (Err((rc, out)), false) = (greened, applied) {
+        w.err(format!("queue.sh {label}: spira-lc refused the GREEN for {batch} (rc={rc}): {out} — the round certificate for {head} is kept; certify again to finish without re-running"));
         return FAIL;
     }
-    let Some(tree) = w.git.rev_parse(&path, &format!("{head}^{{tree}}")) else {
-        w.err(format!("queue.sh {label}: cannot resolve {head}^{{tree}} — nothing can say what was judged"));
+    if save(w, label, &c, &kv).is_err() {
         return FAIL;
+    }
+    finish_green(w, label, &c, &path, batch, &head, &who, &run_id)
+}
+
+/// The (repo, tree) certificate a green full-corpus pass earns. Rewriting it is harmless.
+fn write_round_certificate(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, head: &str, who: &str) -> Result<String, i32> {
+    let Some(tree) = w.git.rev_parse(path, &format!("{head}^{{tree}}")) else {
+        w.err(format!("queue.sh {label}: cannot resolve {head}^{{tree}} — nothing can say what was judged"));
+        return Err(FAIL);
     };
     let cert = gate::cert::Cert {
         source: gate::cert::Source::Round,
         tree: tree.clone(),
         repo: c.r.name.clone(),
-        rev: head.clone(),
+        rev: head.to_string(),
         branch: format!("round/{batch}"),
-        by: who,
+        by: who.to_string(),
         when: w.clock.stamp(),
         at: w.clock.now(),
         harness: "-".into(),
@@ -804,19 +829,27 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
     let verdicts = gate::cert::verdicts_dir(w.var("SPIRA_VERDICTS").as_deref(), &c.s.run);
     if let Err(e) = gate::cert::write(&verdicts, &cert) {
         w.err(format!("queue.sh {label}: cannot record the round certificate for {head}: {e}"));
-        return FAIL;
+        return Err(FAIL);
     }
+    Ok(tree)
+}
+
+/// Everything after a GREEN the lifecycle holds, shared by a fresh certify and a re-certify so
+/// both end in the same state.
+#[allow(clippy::too_many_arguments)]
+fn finish_green(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, head: &str, who: &str, run_id: &str) -> i32 {
+    let tree = match write_round_certificate(w, label, c, path, batch, head, who) {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
     // A green round IS the full-suite pass on its head (sp-x334k): publish refuses a head with no
     // full-suite local-pass record, and the round's full corpus is the run that earns it.
-    if let Err(e) = spira_config::local_pass::record(&c.s.run, spira_config::local_pass::Kind::FullSuite, &head, &format!("round {batch}"), &w.clock.now().to_string()) {
+    if let Err(e) = spira_config::local_pass::record(&c.s.run, spira_config::local_pass::Kind::FullSuite, head, &format!("round {batch}"), &w.clock.now().to_string()) {
         // Not a reason to discard a green round: publish fails closed on the missing record and
         // names it, so the gap is loud at the one place it matters.
         w.err(format!("queue.sh {label}: WARNING — round {batch} is green but its full-suite local pass for {head} was not recorded ({e}); publish will refuse this head until it is"));
     }
-    if save(w, label, &c, &kv).is_err() {
-        return FAIL;
-    }
-    mark_running(&c, batch);
+    mark_running(c, batch);
     landing_log(&c.s.run, &format!("QUEUE ROUND-GREEN {} repo={} batch={batch} head={head} tree={tree} run={run_id}", w.clock.now(), c.r.name));
     w.out(format!("queue.sh {label}: round {batch} is GREEN at {head} (tree {tree})"));
     OK

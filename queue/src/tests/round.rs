@@ -971,3 +971,59 @@ fn certify_judges_a_wall_killed_run_whose_results_and_unit_tests_are_complete() 
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     assert!(t.out().contains("GREEN"), "{}", t.out());
 }
+
+#[test]
+fn a_green_write_that_times_out_after_applying_still_certifies_and_certify_is_idempotent() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.lc.batch_event_times_out.set(Some("PassGreen"));
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(certified_tree_exists(&t), "the certificate is written though the reply was lost");
+
+    assert_eq!(t.run(&["round", "certify", &batch, "--attest", "merged-ta"]), 0, "{}", t.err());
+    assert!(certified_tree_exists(&t));
+    t.run(&["round", "land", &batch]);
+    assert!(t.err().contains("certified by round GREEN"), "land finds the certificate: {}", t.err());
+}
+
+#[test]
+fn a_retry_after_a_timed_out_green_completes_the_missing_certificate() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.lc.batch_view.borrow_mut() = Some(("GREEN".into(), 1, 1, String::new()));
+    let ran = t.scripts.calls.borrow().len();
+    assert_eq!(t.run(&["round", "certify", &batch, "--attest", "merged-ta"]), 0, "{}", t.err());
+    assert!(certified_tree_exists(&t));
+    assert_eq!(t.scripts.calls.borrow().len(), ran, "a GREEN round is finished, never re-tested: {:?}", t.scripts.calls.borrow());
+}
+
+#[test]
+fn a_green_the_lifecycle_refuses_keeps_the_certificate_the_pass_earned() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.lc.batch_event_refused.set(Some("PassGreen"));
+    assert_eq!(t.run(&["round", "certify", &batch]), 1);
+    assert!(certified_tree_exists(&t), "the full corpus passed on this tree; a refused reply must not lose that");
+    assert!(t.err().contains("certificate") && t.err().contains("kept"), "{}", t.err());
+}
+
+#[test]
+fn a_green_batch_at_another_head_is_still_refused_as_changed() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.lc.batch_view.borrow_mut() = Some(("GREEN".into(), 1, 1, String::new()));
+    t.git.set("refs/heads/elsewhere", "merged-ta");
+    assert_eq!(t.run(&["round", "certify", &batch, "--attest", "elsewhere"]), 1);
+    assert!(!certified_tree_exists(&t));
+}
