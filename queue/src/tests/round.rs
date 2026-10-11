@@ -903,6 +903,30 @@ fn round_open_discards_a_stage_whose_round_is_gone() {
 }
 
 #[test]
+fn each_red_suite_files_one_mender_lane_bead_carrying_its_output_pass_and_batch() {
+    let mut t = round_world();
+    t.lib.s.verdict.mender_label = "mend-fixture".into();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
+    std::fs::create_dir_all(&results).unwrap();
+    std::fs::write(results.join("test-z.sh.out"), "assertion Z failed\n").unwrap();
+
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "test-b.sh"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]), 0, "{}", t.err());
+
+    let calls = t.lib.calls.borrow();
+    let bugs: Vec<&String> = calls.iter().filter(|c| c.starts_with("create_bug")).collect();
+    assert_eq!(bugs.len(), 2, "one bead per failure, none for a repeated report: {bugs:?}");
+    assert!(bugs[0].contains(" mend-fixture,repo:") && bugs[0].contains("test-z.sh"), "{}", bugs[0]);
+    assert!(bugs[0].contains("assertion Z failed") && bugs[0].contains(&format!("Batch: {batch}")) && bugs[0].contains("Pass: 1") && bugs[0].contains("Deadline:"), "{}", bugs[0]);
+    assert!(bugs[1].contains("test-b.sh") && bugs[1].contains("left no output"), "{}", bugs[1]);
+}
+
+#[test]
 fn a_suite_going_red_mid_pass_is_a_failed_event_in_the_order_it_failed_and_the_pass_is_not_judged() {
     let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));

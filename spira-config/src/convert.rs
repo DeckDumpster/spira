@@ -381,6 +381,7 @@ fn label_defaults() -> BTreeMap<String, String> {
         // literal-ok: mirrors conf.sh's own derived default; see above
         ("SPIRA_CI_LABEL", "awaiting-ci"),
         ("SPIRA_SPIKE_LABEL", "spike"),
+        ("SPIRA_MENDER_LABEL", "mender-failure"),
         ("SPIRA_GROOMER_LABEL", "groom"),
         // literal-ok: mirrors conf.sh's own derived defaults; see above
         ("SPIRA_MAECHEN_LABEL", "maechen-sweep"),
