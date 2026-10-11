@@ -118,6 +118,18 @@ pub fn pr_state(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
     ok(vec![word.to_string()])
 }
 
+// ── pr-merge-commit ──────────────────────────────────────────────────────────────────────
+
+pub fn pr_merge_commit(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
+    let r = gh.call(Some(repo), &["pr", "view", selector, "--json", "mergeCommit", "-q", ".mergeCommit.oid"]);
+    let sha = r.text().trim().to_string();
+    if r.code == 0 && !sha.is_empty() && sha != "null" {
+        ok(vec![sha])
+    } else {
+        fail(vec![])
+    }
+}
+
 // ── pr-red ───────────────────────────────────────────────────────────────────────────────
 
 const PR_RED_BAD: [&str; 5] = ["FAILURE", "CANCELLED", "TIMED_OUT", "STALE", "ACTION_REQUIRED"];

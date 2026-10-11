@@ -7,6 +7,7 @@ pub mod helpers;
 pub mod land;
 pub mod mend;
 pub mod publish;
+pub mod reconcile;
 pub mod rebase;
 pub mod round;
 pub mod simple;

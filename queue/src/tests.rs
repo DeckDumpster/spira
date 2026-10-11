@@ -422,6 +422,8 @@ struct FForge {
     status: RefCell<Vec<Option<String>>>,
     /// pr-state answer; `None` reads as `open`.
     pr_state: RefCell<Option<String>>,
+    /// pr-merge-commit answer.
+    merge_commit: RefCell<Option<String>>,
     run: RefCell<Option<String>>,
     meta: RefCell<String>,
     /// What `fail-lines` answers.
@@ -446,6 +448,10 @@ impl Forge for FForge {
     fn pr_state(&self, _: &Path, _: &Path, pr: &str) -> Option<String> {
         self.calls.borrow_mut().push(format!("pr-state {pr}"));
         Some(self.pr_state.borrow().clone().unwrap_or_else(|| "open".into()))
+    }
+    fn pr_merge_commit(&self, _: &Path, _: &Path, pr: &str) -> Option<String> {
+        self.calls.borrow_mut().push(format!("pr-merge-commit {pr}"));
+        self.merge_commit.borrow().clone()
     }
     fn check_status(&self, _: &Path, _: &Path, pr: &str, branch: &str) -> Option<String> {
         self.calls.borrow_mut().push(format!("check-status {pr} {branch}"));
@@ -1054,7 +1060,7 @@ impl T {
         if mode == LandMode::Queue {
             let d = self.lib.s.queue_dir.join(name);
             fs::create_dir_all(&d).unwrap();
-            fs::write(d.join("open"), format!("pr={name}\nhead=h\nbase=b\nmembers=\nopened=1000\nbranch=spira/queue/{name}\n")).unwrap();
+            fs::write(d.join("open"), format!("pr={name}\nhead=h\nbase=b\nmembers=sp-x:tx\nopened=1000\nbranch=spira/queue/{name}\n")).unwrap();
         }
         self.lib.by_name.borrow_mut().insert(name.into(), Ok(r));
     }
@@ -1313,11 +1319,12 @@ fn eject_leaving_a_member_abandons_the_batch_row_so_the_survivor_is_not_stranded
 }
 
 #[test]
-fn eject_of_the_last_member_does_not_abandon_the_batch_row() {
+fn eject_of_the_last_member_abandons_the_emptied_batch_row() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
     assert_eq!(t.run(&["eject", "sp-a"]), 0);
-    assert!(!t.lc.has("abandon-batch"));
+    assert!(t.lc.has("abandon-batch spira-1"));
+    assert!(!t.qfile("open").exists());
 }
 
 #[test]
