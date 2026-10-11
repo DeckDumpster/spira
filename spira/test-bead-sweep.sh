@@ -74,6 +74,18 @@ for c in "SUSPECT sp-pois READY POISONED" "SUSPECT sp-ask READY ASK HOLD" "SUSPE
     want "class: $c" "$c" "$out"
 done
 
+FUT="$(date -u -d '+10 days' +%F)"; PAST="$(date -u -d '-3 days' +%F)"
+rrow() { row "$1" "$2" "$3" "$4" | sed "s/\"reason\":\"r\"/\"reason\":\"$5\"/"; }
+board "$(rrow sp-hfut READY "$OLD" '["manual"]' "review-by:$FUT waits on tenancy")" \
+    "$(rrow sp-hpast READY "$OLD" '["manual"]' "review-by:$PAST waits on tenancy")" \
+    "$(rrow sp-hnone READY "$OLD" '["manual"]' "waits on tenancy")" \
+    "$(rrow sp-hnew READY "$NOW" '["manual"]' "waits on tenancy")" --
+out="$(run --show)"
+want "a manual hold before its review date is HELD, with its reason" "HELD sp-hfut READY manual hold until review $FUT: waits on tenancy" "$out"
+want "a manual hold past its review date is SUSPECT" "SUSPECT sp-hpast READY HOLD REVIEW OVERDUE since $PAST (waits on tenancy)" "$out"
+want "a manual hold with no review date keeps the stale rule" "SUSPECT sp-hnone READY STALE HOLD manual" "$out"
+want "a young hold with no review date stays HELD" "HELD sp-hnew READY holds=['manual']" "$out"
+
 SHA="$TMP/d9f47a657061e16a9df8df8911340ecc293ad1ab"; mkdir -p "$SHA"
 MID=$((NOW - 15 * 60))
 board "$(row sp-mine CERTIFIED "$MID" '[]')" "$(row sp-theirs CERTIFIED "$MID" '[]')" -- \

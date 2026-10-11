@@ -36,7 +36,7 @@ _bs_classify() {
     # batch-job: whole-store listing the sweep classifies; bounded by the daemon row cadence
     timeout 60 spira-lc list --state LANDED,DONE,DROPPED,SUPERSEDED > "$t/term.json" 2>/dev/null || return 1
     python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" <<'PY'
-import json, sys, time
+import calendar, json, re, sys, time
 T, ask, home = sys.argv[1:4]
 hold_min, rework_min, cert_min, wait_min = (int(x) for x in sys.argv[4:8])
 rows = {r["bead_id"]: r for r in json.load(open(T + "/rows.json"))}
@@ -44,7 +44,18 @@ content = {b["id"]: b for b in json.load(open(T + "/content.json"))}
 term = {r["bead_id"]: r["state"] for r in json.load(open(T + "/term.json"))}
 DONE = ("LANDED", "DONE", "DROPPED", "SUPERSEDED")
 now = time.time()
-out = {k: [] for k in ("OK", "BLOCKED", "HELD", "ASK", "SUSPECT")}
+REVIEW = re.compile(r"^review-by:(\d{4})-(\d{2})-(\d{2})(\S*)\s*(.*)$", re.S)
+def review_by(reason):
+    m = REVIEW.match(reason or "")
+    if not m:
+        return None
+    try:
+        return calendar.timegm((int(m[1]), int(m[2]), int(m[3]), 0, 0, 0))
+    except (ValueError, OverflowError):
+        return None
+def review_text(reason):
+    return REVIEW.match(reason or "")[5][:70]
+out ={k: [] for k in ("OK", "BLOCKED", "HELD", "ASK", "SUSPECT")}
 for i, b in content.items():
     if i not in rows and i not in term and b.get("issue_type") not in ("epic", "event") and ask not in b.get("labels", []):
         out["SUSPECT"].append(f"{i} ROWLESS open bead with no lifecycle row")
@@ -66,6 +77,12 @@ for i, r in sorted(rows.items()):
         put("SUSPECT", f"POISONED ({why})")
     elif "ask" in holds:
         put("SUSPECT", f"ASK HOLD unanswered ({why})")
+    elif "manual" in holds and review_by(r.get("reason")) is not None:
+        due = review_by(r.get("reason"))
+        if due > now:
+            put("HELD", f"manual hold until review {time.strftime('%Y-%m-%d', time.gmtime(due))}: {review_text(r.get('reason'))}")
+        else:
+            put("SUSPECT", f"HOLD REVIEW OVERDUE since {time.strftime('%Y-%m-%d', time.gmtime(due))} ({review_text(r.get('reason'))})")
     elif "manual" in holds and age > hold_min:
         put("SUSPECT", f"STALE HOLD manual, over {hold_min}m ({why})")
     elif holds:
