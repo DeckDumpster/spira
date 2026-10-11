@@ -50,7 +50,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -625,6 +625,8 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     let id = args[0].clone();
     let mut note: Option<String> = None;
     let mut body_file: Option<String> = None;
+    let mut append_file: Option<String> = None;
+    let mut replace = false;
     let mut express = false;
     let mut priority: Option<i64> = None;
 
@@ -639,6 +641,11 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                 i += 1;
                 body_file = args.get(i).cloned();
             }
+            "--append-body" => {
+                i += 1;
+                append_file = args.get(i).cloned();
+            }
+            "--replace" => replace = true,
             "--express" => express = true,
             "--priority" | "-p" => {
                 i += 1;
@@ -655,8 +662,20 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
         i += 1;
     }
-    if note.is_none() && body_file.is_none() && !express && priority.is_none() {
-        eprintln!("bead: amend: --note, --body-file, --express, or --priority required");
+    if note.is_none() && body_file.is_none() && append_file.is_none() && !express && priority.is_none() {
+        eprintln!("bead: amend: --note, --body-file, --append-body, --express, or --priority required");
+        return 2;
+    }
+    if body_file.is_some() && append_file.is_some() {
+        eprintln!("bead: amend: --body-file and --append-body are exclusive");
+        return 2;
+    }
+    if body_file.is_some() && !replace {
+        eprintln!("bead: amend: --body-file REPLACES the description of {id}; pass --replace to do that, or --append-body F to keep the old text and add F under a dated separator");
+        return 2;
+    }
+    if replace && body_file.is_none() {
+        eprintln!("bead: amend: --replace only qualifies --body-file");
         return 2;
     }
 
@@ -705,18 +724,50 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
         changed.push_str(n);
     }
-    if let Some(bf) = &body_file {
+    if body_file.is_some() || append_file.is_some() {
+        let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
+        let Some(old) = bead::parse_description(&out) else {
+            eprintln!("bead: amend: cannot read the current description of {id}; refusing");
+            return 1;
+        };
+        let mut staged: Option<PathBuf> = None;
+        let file = if let Some(af) = &append_file {
+            let addition = match std::fs::read_to_string(af) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("bead: amend: cannot read {af}: {e}");
+                    return 1;
+                }
+            };
+            let date = Command::new("date").args(["-u", "+%F"]).output().ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+            let tmp = env::temp_dir().join(format!("bead-amend-{}-{}", std::process::id(), id));
+            if let Err(e) = std::fs::write(&tmp, bead::appended_body(&old, &addition, &date)) {
+                eprintln!("bead: amend: cannot stage the appended body: {e}");
+                return 1;
+            }
+            staged = Some(tmp.clone());
+            tmp.to_string_lossy().into_owned()
+        } else {
+            let bf = body_file.clone().unwrap_or_default();
+            eprintln!("bead: amend: {id}: {}", bead::replaced_body_summary(&old));
+            bf
+        };
         let mut argv = s(&["update"]);
         argv.push(id.clone());
         argv.push("--body-file".into());
-        argv.push(bf.clone());
+        argv.push(file);
         argv.push(bead::claimdesc::FORCE_FLAG.into());
         argv.push("bead.sh amend".into());
         rc |= bdq_status(home, &argv);
+        if let Some(t) = staged {
+            let _ = std::fs::remove_file(t);
+        }
         if !changed.is_empty() {
             changed.push_str("\n\n");
         }
-        changed.push_str("Description updated.");
+        changed.push_str(if append_file.is_some() { "Description appended." } else { "Description updated." });
     }
 
     // Best-effort notification, same as bdq's own `acknowledge_forced_edit`: the real
