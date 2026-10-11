@@ -1,0 +1,120 @@
+# round-ami-build.yml — build the EC2 round image the round-vm EC2 provider launches.
+#
+# The tag `recipe-sha` is `round-vm recipe-sha`, the same function the provider compares
+# against, so a recipe change makes the older image refused rather than silently used.
+# Triggers: a recipe change on main, weekly (base-OS and package drift), dispatch.
+# Configuration is repository variables: ROUND_AMI_ROLE_ARN (the OIDC build role),
+# ROUND_AMI_REGION, ROUND_AMI_SUBNET, ROUND_AMI_SECURITY_GROUP, ROUND_AMI_INSTANCE_PROFILE
+# (SSM-managed), ROUND_AMI_STAGING_BUCKET, ROUND_AMI_BASE_PARAM (SSM parameter naming the
+# base OS image), ROUND_AMI_INSTANCE_TYPE.
+
+name: Round AMI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - round-vm/ami-setup.sh
+      - round-vm/src/template.sh
+      - round-vm/src/recipe.rs
+      - rust-toolchain.toml
+      - spira/testenv/Containerfile
+      - .github/workflows/round-ami-build.yml
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: round-ami-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      AWS_REGION: ${{ vars.ROUND_AMI_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.ROUND_AMI_ROLE_ARN }}
+          aws-region: ${{ vars.ROUND_AMI_REGION }}
+
+      - name: Recipe hash
+        id: recipe
+        run: |
+          set -euo pipefail
+          sha="$(cargo run -q --locked -p round-vm -- recipe-sha)"
+          [ -n "$sha" ] || { echo "empty recipe hash" >&2; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when this recipe already has an image newer than a week
+        id: have
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%S)"
+          n="$(aws ec2 describe-images --owners self \
+            --filters "Name=tag:spill:owner,Values=round" "Name=tag:recipe-sha,Values=${{ steps.recipe.outputs.sha }}" \
+            --query "length(Images[?CreationDate>='$cutoff'])" --output text)"
+          if [ "$n" != 0 ] && [ "${{ github.event_name }}" = schedule ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Stage the tree
+        if: steps.have.outputs.fresh != '1'
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz -o "$RUNNER_TEMP/tree.tgz" HEAD
+          aws s3 cp "$RUNNER_TEMP/tree.tgz" "s3://${{ vars.ROUND_AMI_STAGING_BUCKET }}/round-ami/${{ github.run_id }}.tgz"
+
+      - name: Build, image and tag
+        if: steps.have.outputs.fresh != '1'
+        env:
+          SHA: ${{ steps.recipe.outputs.sha }}
+        run: |
+          set -euo pipefail
+          base="$(aws ssm get-parameter --name "${{ vars.ROUND_AMI_BASE_PARAM }}" --query Parameter.Value --output text)"
+          id="$(aws ec2 run-instances --image-id "$base" \
+            --instance-type "${{ vars.ROUND_AMI_INSTANCE_TYPE }}" \
+            --subnet-id "${{ vars.ROUND_AMI_SUBNET }}" \
+            --security-group-ids "${{ vars.ROUND_AMI_SECURITY_GROUP }}" \
+            --iam-instance-profile "Name=${{ vars.ROUND_AMI_INSTANCE_PROFILE }}" \
+            --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=100,VolumeType=gp3}' \
+            --instance-initiated-shutdown-behavior terminate \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=spill:owner,Value=round},{Key=Name,Value=spira-round-build}]" \
+            --query 'Instances[0].InstanceId' --output text)"
+          trap 'aws ec2 terminate-instances --instance-ids "$id" >/dev/null || true' EXIT
+          aws ec2 wait instance-status-ok --instance-ids "$id"
+
+          toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
+          cmds="$(jq -nc --arg b "${{ vars.ROUND_AMI_STAGING_BUCKET }}" --arg r "${{ github.run_id }}" --arg t "$toolchain" \
+            '{commands:["set -euo pipefail","mkdir -p /root/tree && cd /root/tree","aws s3 cp s3://\($b)/round-ami/\($r).tgz - | tar -xz","bash round-vm/ami-setup.sh /root/tree \($t) /root/.cargo"]}')"
+          cid="$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript \
+            --timeout-seconds 3600 --parameters "$cmds" --query Command.CommandId --output text)"
+          for _ in $(seq 1 240); do
+            st="$(aws ssm get-command-invocation --command-id "$cid" --instance-id "$id" --query Status --output text 2>/dev/null || echo Pending)"
+            case "$st" in
+              Success) break ;;
+              Pending|InProgress|Delayed) sleep 30 ;;
+              *) aws ssm get-command-invocation --command-id "$cid" --instance-id "$id" --query '[StandardOutputContent,StandardErrorContent]' --output text | tail -n 60 >&2
+                 echo "round image setup ended $st" >&2; exit 1 ;;
+            esac
+          done
+          [ "$st" = Success ] || { echo "round image setup did not finish" >&2; exit 1; }
+
+          ami="$(aws ec2 create-image --instance-id "$id" --name "spira-round-$SHA-$(date -u +%Y%m%d%H%M%S)" \
+            --tag-specifications \
+              "ResourceType=image,Tags=[{Key=spill:owner,Value=round},{Key=Name,Value=spira-round},{Key=recipe-sha,Value=$SHA}]" \
+              "ResourceType=snapshot,Tags=[{Key=spill:owner,Value=round}]" \
+            --query ImageId --output text)"
+          aws ec2 wait image-available --image-ids "$ami"
+          echo "built $ami recipe-sha=$SHA"
+
+      - name: Remove the staged tree
+        if: always() && steps.have.outputs.fresh != '1'
+        run: aws s3 rm "s3://${{ vars.ROUND_AMI_STAGING_BUCKET }}/round-ami/${{ github.run_id }}.tgz" || true

@@ -237,6 +237,11 @@ Keys (round-vm's own, read from the environment): `SPIRA_ROUND_VM_EC2_PROFILE`, 
 mirror and cache address), `_RUN_DEADLINE` (7200 s), `_BOOT_TRIES`. The provider refuses to
 start naming what is missing; the pool then stays local and says so.
 
+`_AMI=auto` launches the newest image tagged `spill:owner=round`, and refuses it when its
+`recipe-sha` tag differs from `round-vm recipe-sha` (the hash of the template script, the AMI
+guest setup, the toolchain pin and the test Containerfile), naming both. The CI workflow
+`round-ami-build.yml` builds and tags that image from the same recipe.
+
 ### 2.3 Guarantees
 
 - **G1 Pool of one.** At most one ready VM and at most one provision in flight, ever.

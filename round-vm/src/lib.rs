@@ -12,6 +12,7 @@ pub mod pool;
 pub mod procs;
 pub mod progress;
 pub mod provider;
+pub mod recipe;
 pub mod pve;
 pub mod route;
 pub mod run;
