@@ -911,3 +911,26 @@ fn a_suite_going_red_mid_pass_is_a_failed_event_in_the_order_it_failed_and_the_p
     );
     assert_eq!(t.run(&["round", "failed", &batch, "--suite", "bad suite"]), 1, "a suite name is an identifier");
 }
+
+#[test]
+fn certify_reds_a_pass_whose_unit_tests_failed_though_every_suite_is_ok() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: "round-vm: UNIT-TESTS: FAIL (unit run rc=101)".into() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert!(t.out().contains("red=unit-tests"), "{}", t.out());
+    assert!(!certified_tree_exists(&t), "unit tests that failed certify nothing");
+}
+
+#[test]
+fn certify_judges_a_wall_killed_run_whose_results_and_unit_tests_are_complete() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 124, out: String::new(), err: "round-vm: UNIT-TESTS: PASS (3 test binaries)".into() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(t.out().contains("GREEN"), "{}", t.out());
+}

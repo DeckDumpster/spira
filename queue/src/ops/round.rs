@@ -30,6 +30,7 @@ const PREEMPT_POLLS: u32 = 120;
 
 pub(super) const RECORD: &str = "round";
 pub(super) const BUILD_RED: &str = "workspace-build";
+pub(super) const UNIT_RED: &str = "unit-tests";
 pub(super) const LC_ACTOR: &str = "queue.sh";
 const PASSING: [&str; 2] = ["ok", "skip"];
 pub const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
@@ -591,6 +592,12 @@ pub(crate) fn unjudgeable(wt: &Path, found: &[(String, String)]) -> Option<Strin
     }
 }
 
+/// The wall bounds the tests, not the landing: a run the wall killed after every suite reported
+/// and the unit tests passed is judged on its results.
+fn wall_complete(wt: &Path, found: &[(String, String)], err: &str) -> bool {
+    !found.is_empty() && unjudgeable(wt, found).is_none() && err.contains("UNIT-TESTS: PASS")
+}
+
 pub(super) fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
@@ -660,6 +667,7 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         let fault = match out.rc {
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
             0 | 1 => unjudgeable(&wt, &found),
+            124 | 137 if wall_complete(&wt, &found, &out.err) => None,
             4 => {
                 reds.push(BUILD_RED.into());
                 None
@@ -673,6 +681,9 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
             return FAULT;
         }
         reds.extend(found.iter().filter(|(_, s)| BLOCKING.contains(&s.as_str())).map(|(n, _)| n.clone()));
+        if out.rc == 1 && reds.is_empty() {
+            reds.push(UNIT_RED.into());
+        }
         reds.sort();
         reds.dedup();
     }
