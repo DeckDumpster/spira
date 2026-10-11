@@ -222,10 +222,20 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         return (REFUSED, format!("refused: work blocked: the question could not be delivered, so no hold was applied: {e}"));
     }
     let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question.clone()) };
-    match apply_bead_event(conn, bead_id, &actor, hold) {
+    match apply_ask_hold(conn, bead_id, &actor, hold) {
         (0, _) => (0, format!("ask filed; hold applied for {bead_id}")),
         (code, e) => (code, format!("the question WAS delivered (do not ask again), but the ask hold on {bead_id} was not applied: {e}")),
     }
+}
+
+/// A hold write whose reply was lost may still have applied: read the row back before
+/// reporting it failed, so a timed-out write never reads as an absent hold.
+fn apply_ask_hold(conn: &Conn, bead_id: &str, actor: &str, hold: BeadEventKind) -> (i32, String) {
+    let out = apply_bead_event(conn, bead_id, actor, hold);
+    if out.0 != 0 && matches!(rows::fetch_bead(conn, bead_id), Ok(Some(r)) if r.holds.contains(&HoldKind::Ask)) {
+        return (0, String::new());
+    }
+    out
 }
 
 fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, String) {
@@ -979,7 +989,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
             }
             Step::AskHold { bead, question } => {
                 let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question) };
-                match apply_bead_event(conn, &bead, actor, hold) {
+                match apply_ask_hold(conn, &bead, actor, hold) {
                     (0, _) => (0, format!("question delivered; {bead} is held (ask) until the operator answers\n")),
                     (code, e) => (
                         code,
