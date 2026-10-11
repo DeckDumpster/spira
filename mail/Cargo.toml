@@ -16,6 +16,7 @@ bead = { path = "../bead" }
 [[bin]]
 name = "mail"
 path = "src/main.rs"
+test = false
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

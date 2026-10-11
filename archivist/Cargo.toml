@@ -14,6 +14,7 @@ spira-config = { path = "../spira-config" }
 [[bin]]
 name = "archivist"
 path = "src/main.rs"
+test = false
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

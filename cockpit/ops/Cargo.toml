@@ -11,18 +11,22 @@ path = "src/lib.rs"
 [[bin]]
 name = "health"
 path = "src/health_main.rs"
+test = false
 
 [[bin]]
 name = "layout"
 path = "src/layout_main.rs"
+test = false
 
 [[bin]]
 name = "rebuild"
 path = "src/rebuild_main.rs"
+test = false
 
 [[bin]]
 name = "resolve"
 path = "src/resolve_main.rs"
+test = false
 
 [[bin]]
 name = "lc-view"
@@ -31,6 +35,7 @@ path = "src/lcview_main.rs"
 [[bin]]
 name = "reply"
 path = "src/reply_main.rs"
+test = false
 
 [dependencies]
 crossterm = "0.28"

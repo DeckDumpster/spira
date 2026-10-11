@@ -4,6 +4,11 @@ version = "1.0.0"
 edition = "2021"
 description = "A minimal WebDAV store for sccache (sp-xjnzl): this box and every ephemeral round-vm share one compilation cache instead of each cold-building its dependencies."
 
+[[bin]]
+name = "sccache-dav"
+path = "src/main.rs"
+test = false
+
 [dependencies]
 # axum for routing, tokio for the socket — the same pair loom already uses for a small,
 # single-purpose server on this box. No tower-http, no templating: the whole surface this

@@ -8,6 +8,7 @@ description = "round-vm — a pool of one ephemeral round VM from the hypervisor
 [[bin]]
 name = "round-vm"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 spira-config = { path = "../spira-config" }
