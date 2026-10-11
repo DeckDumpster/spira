@@ -667,12 +667,13 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         let fault = match out.rc {
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
             0 | 1 => unjudgeable(&wt, &found),
-            124 | 137 if wall_complete(&wt, &found, &out.err) => None,
+            124 | 137 if !out.err.contains("OVER-CAP") && wall_complete(&wt, &found, &out.err) => None,
             4 => {
                 reds.push(BUILD_RED.into());
                 None
             }
-            124 | 137 => Some(format!("round-vm exceeded the {}s wall", c.s.round_wall_secs)),
+            124 | 137 if out.err.contains("OVER-CAP") => Some(format!("the suites and bare lane exceeded the {}s cap", c.s.round_wall_secs)),
+            124 | 137 => Some(format!("round-vm hung past its guard (cap {}s)", c.s.round_wall_secs)),
             rc => Some(format!("round-vm exited {rc}")),
         };
         if let Some(why) = fault {

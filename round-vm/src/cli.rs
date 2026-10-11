@@ -492,6 +492,7 @@ mod tests {
             stream_every_secs: 1,
             attr_linger_secs: 1,
             cap_secs: 1,
+            post_guard_secs: 1,
             vm_budget_secs: 300,
             build_budget_secs: 600,
         });

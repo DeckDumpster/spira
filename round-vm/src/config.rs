@@ -58,6 +58,8 @@ pub struct Config {
     pub attr_linger: Duration,
     /// SPIRA_ROUND_CERTIFY_WALL_SECS: the cap the live progress file measures the suites' clock against.
     pub cap_secs: u64,
+    /// How long the VM waits for the unit-test job after the cap clock stops before killing it.
+    pub post_guard_secs: u64,
     /// A progress phase with no change for this long reports itself stalled.
     pub vm_budget_secs: u64,
     pub build_budget_secs: u64,
@@ -94,6 +96,7 @@ pub(crate) struct Fields {
     pub stream_every_secs: u64,
     pub attr_linger_secs: u64,
     pub cap_secs: u64,
+    pub post_guard_secs: u64,
     pub vm_budget_secs: u64,
     pub build_budget_secs: u64,
 }
@@ -206,6 +209,7 @@ impl Config {
             stream_every_secs: num_env("SPIRA_ROUND_VM_STREAM_SECS", 10)?,
             attr_linger_secs: num_env("SPIRA_ROUND_VM_ATTR_LINGER", 3600)?,
             cap_secs: must_cfg_parse("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
+            post_guard_secs: num_env("SPIRA_ROUND_VM_POST_GUARD_SECS", 600)?,
             vm_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_VM_SECS", 300)?,
             build_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_BUILD_SECS", 600)?,
         }))
@@ -242,6 +246,7 @@ impl Config {
             stream_every: Duration::from_secs(f.stream_every_secs),
             attr_linger: Duration::from_secs(f.attr_linger_secs),
             cap_secs: f.cap_secs,
+            post_guard_secs: f.post_guard_secs,
             vm_budget_secs: f.vm_budget_secs,
             build_budget_secs: f.build_budget_secs,
         }
@@ -369,6 +374,7 @@ mod tests {
             stream_every_secs: 10,
             attr_linger_secs: 3600,
             cap_secs: 900,
+            post_guard_secs: 600,
             vm_budget_secs: 300,
             build_budget_secs: 600,
         }

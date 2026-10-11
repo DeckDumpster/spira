@@ -117,6 +117,10 @@ pub struct BatchJob {
     pub testenv_registry: Option<String>,
     /// Seconds of setup (script start to the suites launching) beyond which the run reports SETUP-SLOW.
     pub setup_alarm_secs: u64,
+    /// The cap clock: first suite to the bare lane's end. Past it the VM kills the lane and exits 124.
+    pub cap_secs: u64,
+    /// Seconds the VM waits for the unit-test job once the cap clock has stopped.
+    pub post_guard_secs: u64,
     /// Mirror ref `base` holds the landing ref; set: the round lints before its suites.
     pub lint: bool,
     /// The head's image tag differs from what the template (or the landing ref) holds: the VM
@@ -151,7 +155,7 @@ pub fn shell_quote(s: &str) -> String {
 /// build is incremental on the one just made) and stages `target/release`'s executables
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" lint="$9" build_image="${10}"
+host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}"
 t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 if ! command -v cargo >/dev/null 2>&1; then
@@ -221,6 +225,7 @@ if ! unit_cargo --no-run > ~/round-unit-build.log 2>&1; then
     exit 4
 fi
 echo built > "$unit_build_mark"
+unit_build_secs=$(( $(date +%s) - t_ut ))
 unit_total=$(grep -c '^ *Executable ' ~/round-unit-build.log)
 echo "round-vm: built ${unit_total} unit-test binaries in $(( $(date +%s) - t_ut ))s" >&2
 # One line per unit-test binary as it finishes, from cargo's own "Running" and "test result:"
@@ -279,7 +284,7 @@ else
     echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
     exit 3
 fi
-setup_secs=$(( $(date +%s) - t_start ))
+setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
 sig_out="$HOME/round-work/.runtime/spira/tsd/vm-signals.jsonl"
 mkdir -p "$(dirname "$sig_out")"
@@ -356,13 +361,19 @@ unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_total" "$unit_progress" &
 stream_pid=$!
+# THE CAP CLOCK runs from testenv's first suite to the bare lane's end: post-processing, the
+# unit-test wait and the pulls are outside it, each under its own guard.
+t_suites=$(date +%s)
+echo "round-vm: SUITES-CLOCK: start (cap ${cap}s)" >&2
+over_cap=""
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
-    testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round
+    timeout -k 5 "$cap" testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round
 else
-    testenv --mode parallel --artifacts "$HOME/round-work/target/release" round
+    timeout -k 5 "$cap" testenv --mode parallel --artifacts "$HOME/round-work/target/release" round
 fi
 rc=$?
+case "$rc" in 124|137) over_cap=1 ;; esac
 # THE BARE LANE: the bare-host suites SKIP inside the corpus container (it has no podman), so
 # the VM itself runs them, with the shared script the publish gate runs. Their results replace
 # the corpus's skips; a red makes the round red.
@@ -370,13 +381,32 @@ bare_rdir="$HOME/round-work/.runtime/spira/batch-results"
 bare_leaf="$(find "$bare_rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
 bare_leaf="${bare_leaf:-$bare_rdir}"
 if [ -n "$suites" ]; then bare_sel=(--selected "$suites"); else bare_sel=(--suites all); fi
-bash spira/bare-suites.sh "${bare_sel[@]}" --results "$bare_leaf" >&2
-bare_rc=$?
+bare_rc=0
+if [ -z "$over_cap" ]; then
+    bare_left=$(( cap - ($(date +%s) - t_suites) ))
+    if [ "$bare_left" -lt 1 ]; then bare_left=1; fi
+    timeout -k 5 "$bare_left" bash spira/bare-suites.sh "${bare_sel[@]}" --results "$bare_leaf" >&2
+    bare_rc=$?
+    case "$bare_rc" in 124|137) over_cap=1 ;; esac
+fi
+suites_clock=$(( $(date +%s) - t_suites ))
+echo "round-vm: SUITES-CLOCK: ${suites_clock}s of the ${cap}s cap" >&2
 if [ "$bare_rc" -ne 0 ]; then
     echo "round-vm: BARE-SUITES: FAIL (rc=$bare_rc)" >&2
     [ "$rc" -eq 0 ] && rc=1
+elif [ -z "$over_cap" ]; then
+    echo "round-vm: BARE-SUITES: PASS" >&2
+fi
+if [ -n "$over_cap" ]; then
+    echo "round-vm: OVER-CAP: the suites and bare lane ran ${suites_clock}s, past the ${cap}s cap" >&2
 fi
 if kill -0 "$unit_pid" 2>/dev/null; then echo "round-vm: UNIT-TESTS: waiting (suites done, unit job still running)" >&2; fi
+unit_deadline=$(( $(date +%s) + post_guard ))
+while kill -0 "$unit_pid" 2>/dev/null && [ "$(date +%s)" -lt "$unit_deadline" ]; do sleep 2; done
+if kill -0 "$unit_pid" 2>/dev/null; then
+    echo "round-vm: UNIT-TESTS: HUNG past the ${post_guard}s guard after the cap clock stopped; killed" >&2
+    pkill -TERM -P "$unit_pid" 2>/dev/null; kill "$unit_pid" 2>/dev/null
+fi
 wait "$unit_pid"; unit_rc=$?
 wait "$stream_pid"
 if [ "$lint_rc" -ne 0 ]; then
@@ -406,7 +436,7 @@ else
     grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
     [ "$rc" -eq 0 ] && rc=1
 fi
-suites_secs=$(( $(date +%s) - t_start - setup_secs ))
+suites_secs=$suites_clock
 kill "$sampler_pid" 2>/dev/null; wait "$sampler_pid" 2>/dev/null
 echo "round-vm: setup ${setup_secs}s, suites ${suites_secs}s" >&2
 if [ "$setup_secs" -gt "$setup_alarm" ]; then
@@ -414,6 +444,7 @@ if [ "$setup_secs" -gt "$setup_alarm" ]; then
 fi
 mkdir -p ~/round-bins
 find target/release -maxdepth 1 -type f -executable -exec cp {} ~/round-bins/ \; 2>/dev/null
+if [ -n "$over_cap" ]; then exit 124; fi
 exit "$rc"
 "#;
 
@@ -434,6 +465,8 @@ pub fn remote_command(job: &BatchJob) -> String {
         job.cache_home.clone().unwrap_or_default(),
         job.testenv_registry.clone().unwrap_or_default(),
         job.setup_alarm_secs.to_string(),
+        job.cap_secs.to_string(),
+        job.post_guard_secs.to_string(),
         if job.lint { "1" } else { "" }.to_string(),
         if job.build_image { "1" } else { "" }.to_string(),
     ];
@@ -1142,6 +1175,8 @@ fn on_vm_run(
         cache_home: cfg.cache_home.clone(),
         testenv_registry: cfg.testenv_registry.clone(),
         setup_alarm_secs: cfg.setup_alarm_secs,
+        cap_secs: cfg.cap_secs,
+        post_guard_secs: cfg.post_guard_secs,
         lint: args.base.is_some(),
         build_image,
     };
@@ -1269,7 +1304,7 @@ fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Pa
 /// named on stderr (sp-dp872).
 pub fn exit_for_remote(rc: i32) -> i32 {
     match rc {
-        1..=4 => rc,
+        1..=4 | 124 => rc,
         _ => {
             eprintln!("round-vm run: the remote runner exited {rc}, outside testenv's contract (0-4) — no verdict; see its output above");
             2
@@ -1667,10 +1702,12 @@ mod tests {
             cache_home: Some("/opt/spira/cargo".into()),
             testenv_registry: Some("registry.example/spira".into()),
             setup_alarm_secs: 45,
+            cap_secs: 900,
+            post_guard_secs: 600,
             lint: false,
             build_image: false,
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '' ''");
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' ''");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -1704,7 +1741,7 @@ mod tests {
             .arg("round-vm-test")
             .args(["host", "9430", "", "16", ""])
             .arg(&cache_home)
-            .args(["", "60", "", ""])
+            .args(["", "60", "900", "600", "", ""])
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", "/nonexistent-home")
             .output()
@@ -2005,6 +2042,7 @@ mod tests {
             stream_every_secs: 10,
             attr_linger_secs: 3600,
             cap_secs: 1234,
+            post_guard_secs: 77,
             vm_budget_secs: 300,
             build_budget_secs: 600,
         });
@@ -2131,10 +2169,10 @@ mod tests {
         record_template(&mut fx, "130", "localhost/spira-testenv:tagA", "130");
         let remote = FakeRemote::green();
         assert_eq!(go(&fx, &remote, &newer_tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'180' '' '1'"), "declared: {:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'180' '1234' '77' '' '1'"), "declared: {:?}", remote.jobs.lock().unwrap());
         let remote = FakeRemote::green();
         assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'180' '' ''"), "no image change, no build: {:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'180' '1234' '77' '' ''"), "no image change, no build: {:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
@@ -2156,7 +2194,7 @@ mod tests {
     fn the_remote_script_builds_a_declared_image_in_setup_and_still_refuses_an_undeclared_one() {
         let declared = REMOTE_SCRIPT.find("elif [ -n \"$build_image\" ]").expect("a declared branch");
         let refuse = REMOTE_SCRIPT.find("refusing to cold-build it").unwrap();
-        let setup = REMOTE_SCRIPT.find("setup_secs=$(( $(date +%s) - t_start ))").unwrap();
+        let setup = REMOTE_SCRIPT.find("setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))").unwrap();
         assert!(declared < refuse && refuse < setup, "the build is before the setup clock stops, the refusal stays the fallback");
         assert!(REMOTE_SCRIPT[declared..refuse].contains("testenv container image"));
         assert!(REMOTE_SCRIPT[declared..refuse].contains("exit 3"), "a failed build gives no verdict");
@@ -2171,12 +2209,28 @@ mod tests {
 
     #[test]
     fn the_remote_script_reports_setup_against_suites_and_alarms_over_the_limit() {
-        let setup = REMOTE_SCRIPT.find("setup_secs=$(( $(date +%s) - t_start ))").expect("setup is measured");
+        let setup = REMOTE_SCRIPT.find("setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))").expect("setup is measured");
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(setup < batch, "setup ends where the suites start");
         assert!(REMOTE_SCRIPT.contains("round-vm: setup ${setup_secs}s, suites ${suites_secs}s"));
         assert!(REMOTE_SCRIPT.contains("SETUP-SLOW"));
         assert!(REMOTE_SCRIPT.contains("[ \"$setup_secs\" -gt \"$setup_alarm\" ]"));
+    }
+
+    #[test]
+    fn the_cap_clock_covers_the_suites_and_the_bare_lane_only() {
+        let start = REMOTE_SCRIPT.find("t_suites=$(date +%s)").expect("the clock starts");
+        let corpus = REMOTE_SCRIPT.find("timeout -k 5 \"$cap\" testenv --mode parallel").expect("the corpus is under the cap");
+        let bare = REMOTE_SCRIPT.find("spira/bare-suites.sh").unwrap();
+        let stop = REMOTE_SCRIPT.find("suites_clock=$(( $(date +%s) - t_suites ))").expect("the clock stops");
+        let unit_wait = REMOTE_SCRIPT.find("wait \"$unit_pid\"").unwrap();
+        let bins = REMOTE_SCRIPT.find("round-bins/ \\;").unwrap();
+        assert!(start < corpus && corpus < bare && bare < stop && stop < unit_wait && unit_wait < bins);
+        assert!(REMOTE_SCRIPT[start..stop].contains("timeout -k 5 \"$bare_left\" bash spira/bare-suites.sh"), "the lane gets what is left of the cap");
+        assert!(REMOTE_SCRIPT.contains("round-vm: BARE-SUITES: PASS"));
+        assert!(REMOTE_SCRIPT.contains("round-vm: OVER-CAP:") && REMOTE_SCRIPT.contains("if [ -n \"$over_cap\" ]; then exit 124; fi"));
+        assert!(REMOTE_SCRIPT[stop..bins].contains("+ post_guard ))"), "the unit-test wait has its own guard");
+        assert_eq!(exit_for_remote(124), 124, "over-cap reaches the caller as itself");
     }
 
     #[test]
@@ -2221,7 +2275,7 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'test-slow.sh,test-fast.sh' '24' '' '/opt/spira/cargo' '' '180' '' ''"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'test-slow.sh,test-fast.sh' '24' '' '/opt/spira/cargo' '' '180' '1234' '77' '' ''"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
