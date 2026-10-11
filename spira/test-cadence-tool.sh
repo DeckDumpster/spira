@@ -226,9 +226,11 @@ SVCEOF
 systemctl --user daemon-reload  # hermetic-ok: inside container via podman exec
 systemctl --user start '${SVC}'  # hermetic-ok: inside container via podman exec
 " >&2
-# Give the service a moment to enter active/activating state.
-sleep 2
-svc_st="$("${SC[@]}" show "$SVC" -p ActiveState --value 2>/dev/null)"
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    svc_st="$("${SC[@]}" show "$SVC" -p ActiveState --value 2>/dev/null)"
+    [ "$svc_st" = "active" ] || [ "$svc_st" = "activating" ] && break
+    sleep 0.2
+done
 if [ "$svc_st" = "active" ] || [ "$svc_st" = "activating" ]; then
     out="$("${CEXEC[@]}" \
         -e "SPIRA_RUN=${SPIRA_RUN_CTR}" \
