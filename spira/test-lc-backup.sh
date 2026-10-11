@@ -43,7 +43,7 @@ rm -f "$RUN/lc-backup.ok"
 
 echo; echo "run, then drill — uncommitted rows are carried, counts identical:"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (4)" )
-out="$(lcb run)"; rc=$?; wantrc "run succeeds" 0 $rc; want "run reports the upload" uploaded "$out"
+out="$(lcb run)"; rc=$?; wantrc "run succeeds" 0 $rc;  [ $rc = 0 ] || bad "run output: ${out//$'\n'/ | }"; want "run reports the upload" uploaded "$out"
 obj="$(ls "$DEST"/spira_lifecycle/*.tar.zst 2>/dev/null | head -1)"
 [ -s "$obj" ] && ok "one tar.zst object lands under <db>/<stamp>" || bad "one tar.zst object lands under <db>/<stamp>"
 lcb age >/dev/null; wantrc "age green after run" 0 $?
