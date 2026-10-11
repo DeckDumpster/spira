@@ -307,8 +307,7 @@ pub fn resolve_conf(world: &Path, epoch: u64) -> Result<(), String> {
         .find(|(k, _)| k == "SPIRA_HOME")
         .map(|(_, v)| v)
         .ok_or("sim.env has no SPIRA_HOME")?;
-    // set -a: conf.sh leaves most keys unexported, and a script that skips it still reads them
-    let source = format!("bash -c \"set -a; . '{home}/conf.sh' && env -0\"");
+    let source = format!("bash -c \". '{home}/conf.sh' && env -0\"");
     let base = env0("env -0", false)?;
     let once = env0(&source, false)?;
     let mut bytes = Vec::new();
@@ -317,7 +316,7 @@ pub fn resolve_conf(world: &Path, epoch: u64) -> Result<(), String> {
     }
     std::fs::write(&file, &bytes).map_err(|e| e.to_string())?;
     let again = env0(&source, true)?;
-    let differ: Vec<&String> = once.keys().chain(again.keys()).filter(|k| !k.starts_with("BASH_FUNC_") && once.get(*k) != again.get(*k)).collect();
+    let differ: Vec<&String> = once.keys().chain(again.keys()).filter(|k| once.get(*k) != again.get(*k)).collect();
     if !differ.is_empty() {
         let _ = std::fs::remove_file(&file);
         return Err(format!("the exported env differs from what conf.sh resolves: {differ:?}"));
@@ -341,9 +340,9 @@ impl Exec for ProcessExec {
         let started = std::time::Instant::now();
         let (status, out, err) = run_capture(&mut self.command(command, now_ms)?, COMMAND_DEADLINE)?;
         self.log(command, now_ms, &format!("{status} in {}ms", started.elapsed().as_millis()), &out, &err);
+        // conf.env freezes the config; a step that changes it sends later commands back through conf.sh
         if status.success() && (command.contains("spira-config set") || command.contains("spira-config unset")) {
             std::fs::remove_file(self.world.join(CONF_ENV)).map_err(|e| e.to_string())?;
-            resolve_conf(&self.world, self.epoch)?;
         }
         status.code().ok_or_else(|| format!("{command}: {status}"))
     }
