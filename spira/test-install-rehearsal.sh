@@ -174,16 +174,13 @@ echo "configure — non-interactive spira.conf bootstrap:"
 # CONFIGURE_DOLT_DATA="" suppresses the dolt-beads.service unit (no Dolt here).
 "${CEXEC[@]}" \
     -e "CONFIGURE_PROD=/tmp/spira-prod/spira" \
+    -e "CONFIGURE_HOME_REPO=home" \
     -e "CONFIGURE_MAX_AEONS=1" \
     -e "CONFIGURE_MAX_LIVE_AEONS=1" \
     -e "CONFIGURE_LOOM_ADDR=127.0.0.1:7300" \
     -e "CONFIGURE_DOLT_DATA=" \
     "$CNAME" bash /workspace/spira/configure.sh >&2
 iszero "configure.sh exits 0" "$?"
-
-# configure leaves derivable keys commented out; the home repository has no derivation.
-"${CEXEC[@]}" "$CNAME" bash -c 'spira-config set spira.home_repo home "$(spira-config locate)"' >&2
-iszero "home repository declared in the rehearsal config" "$?"
 
 # configure.sh and ready.sh run before install puts the release's bin/ on PATH: they must
 # find spira-config in their own release tree. PATH here holds no Spira directory at all.
