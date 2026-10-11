@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-release-workflow.sh — .github/workflows/release.yml structural checks:
-# the workflow file exists, triggers on spira-release-* tags, pins the
+# the workflow file exists, is reachable only by workflow_call, pins the
 # toolchain to a specific semver rather than a floating alias, includes
 # an assertion step that verifies the installed version, and every --*-bin
 # flag that build-tarball.sh requires is supplied by the workflow.
@@ -23,7 +23,7 @@
 #
 # CASES
 #   1. POSITIVE CONTROL: workflow file is present.
-#   2. Trigger is a push on tags matching spira-release-*.
+#   2. Trigger is workflow_call only (one release path); creation is idempotent.
 #   3. Toolchain is pinned to a semver (not "stable", "nightly", or "beta").
 #   4. An assertion step verifies the installed Rust version at runtime.
 #   5. No build step silences failure with continue-on-error: true.
@@ -65,11 +65,21 @@ fi
 
 # ============================================================================
 echo
-echo "2. Trigger — push on tags matching spira-release-*"
+echo "2. Trigger — workflow_call only; a tag push must not build a second release"
 # ============================================================================
 
-want "on: push" "push:" "$(cat "$WORKFLOW")"
-want "tag pattern spira-release-*" "spira-release-*" "$(cat "$WORKFLOW")"
+_on_of() { awk '/^on:/{f=1;next} /^[a-z]/{f=0} f'; }
+_on="$(_on_of < "$WORKFLOW")"
+want   "on: workflow_call" "workflow_call:" "$_on"
+nowant "no push trigger"   "push:"          "$_on"
+nowant "no tag pattern"    "spira-release-" "$_on"
+_fon="$(printf 'on:\n  push:\n    tags:\n      - x\n  workflow_call:\n' | _on_of)"
+case "$_fon" in
+    *push:*) ok "positive control: a planted push trigger is extracted" ;;
+    *) bad "positive control: a planted push trigger is extracted" "extractor found nothing" ;;
+esac
+want "release creation is idempotent" 'release view "$tag"' "$(cat "$WORKFLOW")"
+want "gate.yml publish calls release.yml" "uses: ./.github/workflows/release.yml" "$(cat "$REPO_ROOT/.github/workflows/gate.yml")"
 
 # ============================================================================
 echo
