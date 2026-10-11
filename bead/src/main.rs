@@ -739,7 +739,7 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            let date = Command::new("date").args(["-u", "+%F"]).output().ok()
+            let date = Command::new("timeout").args(["5", "date", "-u", "+%F"]).output().ok()
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .unwrap_or_default();
             let tmp = env::temp_dir().join(format!("bead-amend-{}-{}", std::process::id(), id));
