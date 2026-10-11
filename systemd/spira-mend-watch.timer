@@ -1,0 +1,15 @@
+[Unit]
+Description=Check the menders against their bounds
+
+[Timer]
+OnBootSec=2min
+OnActiveSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Unit=spira-mend-watch.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability
