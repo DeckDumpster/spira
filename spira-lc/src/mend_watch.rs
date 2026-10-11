@@ -46,14 +46,7 @@ fn text(row: &serde_json::Value, col: &str) -> String {
 pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
     let now = now_epoch();
     let overdue = conn.query(&format!("SELECT batch_id, pass, suite, deadline FROM mending WHERE state = 'MENDING' AND deadline <= {now} ORDER BY deadline"));
-    let mends = conn.query(&format!(
-        "SELECT a.bead AS bead, COUNT(*) AS n FROM \
-         (SELECT DISTINCT e.lc_key, JSON_UNQUOTE(JSON_EXTRACT(e.evidence, '$.Attribute.bead')) AS bead FROM event e \
-          JOIN mending m ON CONCAT(m.batch_id, '#', m.pass, '#', m.suite) = e.lc_key \
-          WHERE e.machine = 'mending' AND e.event = 'Attribute' AND e.applied = 1 AND m.state = 'MENDED' AND m.failed_at >= {}) a \
-         GROUP BY a.bead",
-        now - DAY_S
-    ));
+    let mends = conn.query(&format!("SELECT bead_id AS bead, COUNT(*) AS n FROM mend WHERE at >= {} GROUP BY bead_id", now - DAY_S));
     let (overdue, mends) = match (overdue, mends) {
         (Ok(o), Ok(m)) => (o, m),
         (Err(e), _) | (_, Err(e)) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),

@@ -99,8 +99,6 @@ pub enum MendingEventKind {
     TriageEnded { at: i64 },
     /// Replaces the diagnosis written so far. Moves no state and no deadline.
     Diagnosis { text: String },
-    /// Names the member whose branch carries the fix; the daily mend count reads it. Moves no state.
-    Attribute { bead: String },
     Mended { at: i64 },
     Environment { at: i64 },
     Flaky { at: i64 },
@@ -165,7 +163,6 @@ pub fn apply(row: &MendingRow, ev: &MendingEvent) -> Outcome<MendingRow> {
             new.diagnosis = Some(text.clone());
             Outcome::applied(new)
         }
-        (MendingState::Mending, MendingEventKind::Attribute { .. }) => Outcome::applied(new),
         (MendingState::Mending, MendingEventKind::Mended { at }) => settle(new, MendingState::Mended, *at),
         (MendingState::Mending, MendingEventKind::Environment { at }) => settle(new, MendingState::Environment, *at),
         (MendingState::Mending, MendingEventKind::Flaky { at }) => settle(new, MendingState::Flaky, *at),
