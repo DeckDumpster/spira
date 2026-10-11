@@ -36,3 +36,6 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.sccache_dav_tailnet_addr" = ""
 "spira.forge_workflow" = "Gate"
 "spira.forge_workflows" = ""
+"spira.hypervisor_mem_mib" = 0
+"spira.round_vm_mem_mib" = 0
+"spira.ci_runner_mem_mib" = 16384
