@@ -178,6 +178,7 @@ fn ctx() -> Ctx {
         vars,
         repo_root: Some(REPO.into()),
         landref: Some(BASE.into()),
+        declared_base: String::new(),
         gate_cmd: "bash spira/fence.sh && run-suites".into(),
         host_cores: "8".into(),
     }
@@ -1541,6 +1542,17 @@ fn the_early_refusals() {
     f.ctx.borrow_mut().as_mut().unwrap().landref = None;
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=no-base"));
+
+    let f = Fake::new();
+    {
+        let mut c = f.ctx.borrow_mut();
+        let c = c.as_mut().unwrap();
+        c.landref = None;
+        c.declared_base = "origin/trunk".into();
+    }
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.stderr().contains("declares base 'origin/trunk'"), "{}", f.stderr());
+    assert!(!f.stderr().contains("give it a `base` column"), "{}", f.stderr());
 
     let f = Fake::new();
     *f.diff.borrow_mut() = Err("fatal: bad revision".into());

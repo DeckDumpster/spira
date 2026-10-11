@@ -221,8 +221,13 @@ impl<'w, W: World> Trial<'w, W> {
         mv!(self, GateState::Queued, &format!("branch {br}"));
 
         let Some(base) = ctx.landref.clone() else {
+            let why = if ctx.declared_base.is_empty() {
+                format!("gate: give it a `base` column in {map}")
+            } else {
+                format!("gate: {map} declares base '{}' for it, but that ref did not verify in {} (missing, or git timed out under load)", ctx.declared_base, repo.display())
+            };
             return v(NOVERDICT, "no-base", format!(
-                "gate: cannot resolve the ref '{name}' lands on — refusing to guess a base\ngate: give it a `base` column in {map}"));
+                "gate: cannot resolve the ref '{name}' lands on — refusing to guess a base\n{why}"));
         };
         // THE BASE IS PINNED (sp-hh5h0): the landing ref is resolved to a commit once, here,
         // and every later read — the merge, the touched set, the gate string's

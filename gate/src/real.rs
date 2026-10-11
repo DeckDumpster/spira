@@ -260,6 +260,7 @@ impl World for Real {
         let snap: std::collections::BTreeMap<String, String> = kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let reg = spira_config::repos::Registry::from_env(snap, &self.home);
         let repo_name = if raw_repo_name.is_empty() { reg.home_repo().to_string() } else { raw_repo_name };
+        let declared_base = reg.base(&repo_name).unwrap_or_default();
         let (repo_root, landref, gate_cmd) = match reg.root(&repo_name) {
             Some(root) => {
                 let landref = spira_config::repos::landref(&reg, &root);
@@ -273,6 +274,7 @@ impl World for Real {
             vars: kv,
             repo_root,
             landref,
+            declared_base,
             gate_cmd,
             host_cores,
         })
