@@ -36,8 +36,7 @@
 # network egress to install openssh-server/rsync/git INSIDE the freshly started container —
 # testenv-batch.sh's own container runs suites as an unprivileged user with none of that on
 # PATH, so this suite SKIPs there; it runs for real wherever suites.sh's own cadence or an
-# operator runs it directly (the same shape test-batch-owner.sh's "host-reason: needs podman
-# on PATH" already uses).
+# operator runs it directly.
 #
 # tier: T3
 # covers: round-vm/src/*.rs

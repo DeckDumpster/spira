@@ -4,6 +4,7 @@
 //! (`queue_certified_list`) stay `lib.sh`'s own — this bead does not own or re-derive them
 //! (wave 4, not this one).
 
+use super::lc::LcRow;
 use super::{push, Cfg, Kv};
 use crate::io;
 use crate::quoting::epoch_to_age;
@@ -13,15 +14,10 @@ use std::collections::HashSet;
 // The one definition of "a bead an aeon can take" lives in `spira-claim`: the express-lane
 // count below asks its `ready-count` rather than keeping a bd ready query of its own.
 
-pub fn queue_keys(cfg: &Cfg) -> Kv {
+/// The DONE → LANDED funnel keys over the CERTIFIED, SUBMITTED and REWORK rows; `None` (a
+/// store that could not answer) renders `?` everywhere, never a zero.
+fn funnel_keys(funnel: Option<(Vec<LcRow>, Vec<LcRow>, Vec<LcRow>)>, now: i64) -> Kv {
     let mut out = Kv::new();
-    let qdir = std::path::PathBuf::from(&cfg.queue_dir);
-    let now = io::now();
-
-    let funnel = match (super::lc::list(Some("CERTIFIED")), super::lc::list(Some("SUBMITTED")), super::lc::list(Some("REWORK"))) {
-        (Some(c), Some(s), Some(r)) => Some((c, s, r)),
-        _ => None,
-    };
     if funnel.is_none() {
         for k in [
             "SP_QUEUE_DEPTH", "SP_QUEUE_EJECTED", "SP_QUEUE_RED", "SP_FUNNEL_CERTIFY_N",
@@ -87,6 +83,19 @@ pub fn queue_keys(cfg: &Cfg) -> Kv {
         push(&mut out, "SP_FUNNEL_RED_CONFLICT", red_cf.to_string());
         push(&mut out, "SP_FUNNEL_CERT_AGE", epoch_to_age(cert_ep, now));
     }
+    out
+}
+
+pub fn queue_keys(cfg: &Cfg) -> Kv {
+    let mut out = Kv::new();
+    let qdir = std::path::PathBuf::from(&cfg.queue_dir);
+    let now = io::now();
+
+    let funnel = match (super::lc::list(Some("CERTIFIED")), super::lc::list(Some("SUBMITTED")), super::lc::list(Some("REWORK"))) {
+        (Some(c), Some(s), Some(r)) => Some((c, s, r)),
+        _ => None,
+    };
+    out.extend(funnel_keys(funnel, now));
 
     // spira-claim's count, the one ready set (sp-7g5q6) — not a bd ready query of our own.
     let enr = io::run_tool("spira-claim", &["ready-count", "", "--express"], None)
@@ -241,6 +250,50 @@ fn row_pri_title(row: &Value) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(state: &str, reason: &str, updated_at: i64) -> LcRow {
+        LcRow { id: "sp-x".into(), state: state.into(), reason: reason.into(), updated_at: Some(updated_at) }
+    }
+
+    fn funnel_get(kv: &Kv, k: &str) -> String {
+        kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone()).unwrap_or_else(|| panic!("no {k}"))
+    }
+
+    #[test]
+    fn funnel_counts_stages_red_breakdown_and_oldest_ages() {
+        let now = 100_000;
+        let old = now - 7200;
+        let kv = funnel_keys(
+            Some((
+                vec![row("CERTIFIED", "", old)],
+                vec![row("SUBMITTED", "", old), row("SUBMITTED", "", now), row("SUBMITTED", "", now)],
+                vec![
+                    row("REWORK", "timeout", old),
+                    row("REWORK", "no-rebase", now),
+                    row("REWORK", "suites-failed", now),
+                    row("REWORK", "policy-violation", now),
+                    row("REWORK", "confine", now),
+                    row("REWORK", "batch-ejected", now),
+                ],
+            )),
+            now,
+        );
+        for (k, v) in [
+            ("SP_QUEUE_DEPTH", "1"), ("SP_FUNNEL_CERTIFY_N", "3"), ("SP_FUNNEL_RED_N", "5"),
+            ("SP_QUEUE_RED", "5"), ("SP_QUEUE_EJECTED", "1"), ("SP_FUNNEL_RED_TIMEOUT", "1"),
+            ("SP_FUNNEL_RED_REBASE", "1"), ("SP_FUNNEL_RED_GATE", "2"), ("SP_FUNNEL_RED_CONFLICT", "1"),
+            ("SP_FUNNEL_CERTIFY_AGE", "2h"), ("SP_FUNNEL_RED_AGE", "2h"), ("SP_FUNNEL_CERT_AGE", "2h"),
+        ] {
+            assert_eq!(funnel_get(&kv, k), v, "{k}");
+        }
+    }
+
+    #[test]
+    fn funnel_from_an_unanswering_store_is_question_marks_not_zero() {
+        let kv = funnel_keys(None, 100_000);
+        assert_eq!(kv.len(), 12);
+        assert!(kv.iter().all(|(_, v)| v == "?"));
+    }
 
     #[test]
     fn unreachable_lifecycle_store_renders_question_marks() {

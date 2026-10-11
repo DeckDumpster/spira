@@ -84,7 +84,6 @@ spira/test-certify.sh
 spira/test-chamber-repo-labels.sh
 spira/test-closed-strand.sh
 spira/test-cockpit-bd-contract.sh
-spira/test-cockpit-funnel.sh
 spira/test-cockpit-queue-section.sh
 spira/test-cockpit-repo-labels.sh
 spira/test-cockpit-runtime-path.sh
