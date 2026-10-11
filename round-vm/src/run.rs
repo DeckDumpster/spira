@@ -366,6 +366,15 @@ stream_pid=$!
 t_suites=$(date +%s)
 echo "round-vm: SUITES-CLOCK: start (cap ${cap}s)" >&2
 over_cap=""
+# THE BARE LANE runs beside the corpus: the bare-host suites SKIP inside the corpus container (it
+# has no podman), so the VM itself runs them, with the shared script the publish gate runs.
+# Their results replace the corpus's skips once the corpus has written its own; a red makes the
+# round red.
+bare_out="$HOME/round-bare-results"
+rm -rf "$bare_out"; mkdir -p "$bare_out"
+if [ -n "$suites" ]; then bare_sel=(--selected "$suites"); else bare_sel=(--suites all); fi
+timeout -k 5 "$cap" bash spira/bare-suites.sh "${bare_sel[@]}" --results "$bare_out" >&2 &
+bare_pid=$!
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
     timeout -k 5 "$cap" testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round
@@ -374,21 +383,14 @@ else
 fi
 rc=$?
 case "$rc" in 124|137) over_cap=1 ;; esac
-# THE BARE LANE: the bare-host suites SKIP inside the corpus container (it has no podman), so
-# the VM itself runs them, with the shared script the publish gate runs. Their results replace
-# the corpus's skips; a red makes the round red.
+wait "$bare_pid"
+bare_rc=$?
+case "$bare_rc" in 124|137) over_cap=1 ;; esac
 bare_rdir="$HOME/round-work/.runtime/spira/batch-results"
 bare_leaf="$(find "$bare_rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
 bare_leaf="${bare_leaf:-$bare_rdir}"
-if [ -n "$suites" ]; then bare_sel=(--selected "$suites"); else bare_sel=(--suites all); fi
-bare_rc=0
-if [ -z "$over_cap" ]; then
-    bare_left=$(( cap - ($(date +%s) - t_suites) ))
-    if [ "$bare_left" -lt 1 ]; then bare_left=1; fi
-    timeout -k 5 "$bare_left" bash spira/bare-suites.sh "${bare_sel[@]}" --results "$bare_leaf" >&2
-    bare_rc=$?
-    case "$bare_rc" in 124|137) over_cap=1 ;; esac
-fi
+mkdir -p "$bare_leaf"
+cp -rf "$bare_out"/. "$bare_leaf"/
 suites_clock=$(( $(date +%s) - t_suites ))
 echo "round-vm: SUITES-CLOCK: ${suites_clock}s of the ${cap}s cap" >&2
 if [ "$bare_rc" -ne 0 ]; then
@@ -1330,6 +1332,9 @@ pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scra
     n
 }
 
+/// Where the VM's runner writes its time-series rows.
+const TSD_DIR: &str = "round-work/.runtime/spira/tsd/";
+
 /// Where the VM's testenv writes the corpus's results.
 pub const REMOTE_RESULTS: &str = "round-work/.runtime/spira/batch-results/";
 
@@ -1354,8 +1359,24 @@ fn after_batch(
     let mut own_fault = false;
 
     let pulled = scratch("results");
-    let _ = fs::remove_dir_all(&pulled);
-    let pulled_ok = env.remote.pull(&vm.addr, REMOTE_RESULTS, &pulled).is_ok();
+    let tsd = scratch("tsd");
+    let bins = scratch("bins");
+    for d in [&pulled, &tsd, &bins] {
+        let _ = fs::remove_dir_all(d);
+    }
+    let timed = |what: &str, remote_path: &str, local: &Path| {
+        let t0 = std::time::Instant::now();
+        let ok = env.remote.pull(&vm.addr, remote_path, local).is_ok();
+        eprintln!("round-vm run: PULL {what}: {}s ({})", t0.elapsed().as_secs(), if ok { "ok" } else { "failed" });
+        ok
+    };
+    let (pulled_ok, tsd_ok) = std::thread::scope(|sc| {
+        let tsd_pull = sc.spawn(|| timed("tsd", TSD_DIR, &tsd));
+        let bins_pull = sc.spawn(|| timed("bins", REMOTE_BINS, &bins));
+        let results_ok = timed("results", REMOTE_RESULTS, &pulled);
+        let _ = bins_pull.join();
+        (results_ok, tsd_pull.join().unwrap_or(false))
+    });
     let leaf = results_leaf(&pulled);
     if let Some(leaf) = &leaf {
         if let Err(e) = copy_tree(leaf, &results_dir) {
@@ -1370,18 +1391,13 @@ fn after_batch(
     let suite_sum = suite_wall_sum(&results_dir);
     let build = build_wall(&results_dir);
 
-    let tsd = scratch("tsd");
-    let _ = fs::remove_dir_all(&tsd);
-    if env.remote.pull(&vm.addr, "round-work/.runtime/spira/tsd/", &tsd).is_ok() {
+    if tsd_ok {
         if let Err(e) = merge_tsd(&tsd, &cfg.run_dir, &vm.handle, cfg.vcpus, maxpar) {
             eprintln!("round-vm run: tsd merge: {e}");
         }
     }
     let _ = fs::remove_dir_all(&tsd);
 
-    let bins = scratch("bins");
-    let _ = fs::remove_dir_all(&bins);
-    let _ = env.remote.pull(&vm.addr, REMOTE_BINS, &bins);
     let reported = reported_tree(&results_dir);
     let manifest = Manifest {
         tree_sha: tree_sha.to_string(),
@@ -1459,9 +1475,11 @@ mod tests {
         let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         let bare = REMOTE_SCRIPT.find("spira/bare-suites.sh").unwrap();
         let unit_wait = REMOTE_SCRIPT.find("wait \"$unit_pid\"").unwrap();
-        assert!(corpus < bare && bare < unit_wait, "the bare lane runs after the corpus, beside the unit tests");
+        assert!(bare < corpus && corpus < unit_wait, "the bare lane starts before the corpus and is waited on after it");
         let lane = &REMOTE_SCRIPT[bare..unit_wait];
-        assert!(lane.contains("--results \"$bare_leaf\""), "results land beside the corpus's");
+        assert!(REMOTE_SCRIPT[bare..corpus].contains("&\nbare_pid=$!"), "the bare lane runs in the background beside the corpus");
+        assert!(lane.contains("wait \"$bare_pid\""));
+        assert!(lane.contains("--results \"$bare_out\"") || REMOTE_SCRIPT[bare..corpus].contains("--results \"$bare_out\""), "its results are copied beside the corpus's once the corpus has written its own");
         assert!(lane.contains("[ \"$rc\" -eq 0 ] && rc=1"), "a red bare suite makes the round red");
         assert!(REMOTE_SCRIPT.contains("--selected \"$suites\"") && REMOTE_SCRIPT.contains("--suites all"));
     }
@@ -2225,8 +2243,8 @@ mod tests {
         let stop = REMOTE_SCRIPT.find("suites_clock=$(( $(date +%s) - t_suites ))").expect("the clock stops");
         let unit_wait = REMOTE_SCRIPT.find("wait \"$unit_pid\"").unwrap();
         let bins = REMOTE_SCRIPT.find("round-bins/ \\;").unwrap();
-        assert!(start < corpus && corpus < bare && bare < stop && stop < unit_wait && unit_wait < bins);
-        assert!(REMOTE_SCRIPT[start..stop].contains("timeout -k 5 \"$bare_left\" bash spira/bare-suites.sh"), "the lane gets what is left of the cap");
+        assert!(start < bare && bare < corpus && corpus < stop && stop < unit_wait && unit_wait < bins);
+        assert!(REMOTE_SCRIPT[start..stop].contains("timeout -k 5 \"$cap\" bash spira/bare-suites.sh"), "the lane runs under the same cap, beside the corpus");
         assert!(REMOTE_SCRIPT.contains("round-vm: BARE-SUITES: PASS"));
         assert!(REMOTE_SCRIPT.contains("round-vm: OVER-CAP:") && REMOTE_SCRIPT.contains("if [ -n \"$over_cap\" ]; then exit 124; fi"));
         assert!(REMOTE_SCRIPT[stop..bins].contains("+ post_guard ))"), "the unit-test wait has its own guard");

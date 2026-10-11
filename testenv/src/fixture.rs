@@ -913,6 +913,32 @@ impl<'a> Session<'a> {
         }
     }
 
+    /// The contents of each of `paths` inside the container, in order, in one exec; a file
+    /// that is missing, or an exec that fails, reads as empty.
+    pub fn read_files(&self, paths: &[String]) -> Vec<String> {
+        if paths.is_empty() {
+            return Vec::new();
+        }
+        let mut argv: Vec<&str> = vec![
+            "bash",
+            "-c",
+            "for f in \"$@\"; do cat -- \"$f\" 2>/dev/null; printf '\\n%s\\n' '@@END@@'; done",
+            "_",
+        ];
+        argv.extend(paths.iter().map(String::as_str));
+        let out = self.rt.exec(&self.as_user(&argv, vec![kv("XDG_RUNTIME_DIR", USER_RUNTIME)]));
+        let mut logs: Vec<String> = if out.ok() {
+            out.output
+                .split("\n@@END@@\n")
+                .map(str::to_string)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        logs.resize(paths.len(), String::new());
+        logs
+    }
+
     /// A single failed or empty inspect is transient; only a definitive `false`, or
     /// `liveness_retries` non-true answers in a row, is death. A failed lookup says so.
     ///
@@ -1725,6 +1751,27 @@ mod tests {
             r.env_value("SPIRA_BD_LOG"),
             Some("/tmp/spira-batch-abc123/bd/test-a.sh.log")
         );
+    }
+
+    #[test]
+    fn bd_logs_of_many_suites_are_read_in_one_exec() {
+        let rt = FakeRuntime::new();
+        rt.on(
+            |r| r.argv.get(2).is_some_and(|a| a.contains("@@END@@")),
+            |_| ExecOutcome {
+                rc: 0,
+                output: "12 0 list\n30 0 show\n\n@@END@@\n\n@@END@@\n7 0 list\n\n@@END@@\n".into(),
+            },
+        );
+        let paths: Vec<String> = ["a", "b", "c"].iter().map(|s| format!("/tmp/{s}.log")).collect();
+        let logs = session(&rt).read_files(&paths);
+        assert_eq!(logs.len(), 3);
+        assert_eq!(crate::timing::bd_totals(&logs[0]), (2, 42));
+        assert_eq!(crate::timing::bd_totals(&logs[1]), (0, 0));
+        assert_eq!(crate::timing::bd_totals(&logs[2]), (1, 7));
+        let execs = rt.execs.lock().unwrap();
+        assert_eq!(execs.len(), 1, "one exec for every log");
+        assert!(paths.iter().all(|p| execs[0].argv.contains(p)));
     }
 
     #[test]
