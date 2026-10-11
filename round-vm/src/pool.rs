@@ -588,7 +588,7 @@ impl Pool {
         let leases: Vec<_> = s
             .leases
             .iter()
-            .map(|l| serde_json::json!({"vm": l.vm.handle, "addr": l.vm.addr, "owner": l.owner.map(|o| o.to_string()), "since": l.since, "age_secs": age(l.since)}))
+            .map(|l| serde_json::json!({"vm": l.vm.handle, "addr": l.vm.addr, "owner": l.owner.map(|o| o.to_string()), "cmd": l.owner.map(|o| owner_cmd(o.pid)), "since": l.since, "age_secs": age(l.since)}))
             .collect();
         let doomed: Vec<_> = s
             .doomed
@@ -625,6 +625,11 @@ impl Pool {
         let outage = s.outage.map(|o| o.reason).unwrap_or_else(|| "none".into());
         Ok(format!("ready: {ready}\nprovisioning: {prov}\noutage: {outage}\n"))
     }
+}
+
+fn owner_cmd(pid: u32) -> Vec<String> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    raw.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect()
 }
 
 #[cfg(test)]

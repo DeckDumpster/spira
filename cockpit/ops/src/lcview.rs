@@ -205,6 +205,9 @@ pub struct Snapshot {
     pub claimable: Option<Vec<String>>,
     #[serde(default)]
     pub progress: Option<PassProgress>,
+    /// Every VM round-vm holds, from its own pool record: leased to a live run, or idle and warm.
+    #[serde(default)]
+    pub vm_runs: Vec<VmRun>,
     /// Sources that failed this pass, named in the frame — never a silent empty section.
     pub errors: Vec<String>,
     #[serde(default)]
@@ -384,6 +387,54 @@ pub struct RoundView {
     pub staged: Vec<RoundView>,
 }
 
+/// One VM in round-vm's pool: a lease with the argv of the process holding it, or the warm spare.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VmRun {
+    pub vm: String,
+    pub age_secs: i64,
+    pub owner: String,
+    #[serde(default)]
+    pub cmd: Vec<String>,
+    pub idle: bool,
+}
+
+/// A VM row of ROUNDS: who holds it and for what, or `idle (warm)`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct VmRunView {
+    pub vm: String,
+    pub kind: String,
+    pub id: String,
+    pub phase: String,
+    pub age: String,
+}
+
+impl VmRunView {
+    pub fn line(&self) -> String {
+        if self.phase == "idle (warm)" {
+            return format!("VM {} · idle (warm) · {}", self.vm, self.age);
+        }
+        format!("VM {} · {} · {} · {} · {}", self.vm, self.kind, self.id, self.phase, self.age)
+    }
+}
+
+fn vm_run_view(r: &VmRun) -> VmRunView {
+    let age = age(r.age_secs);
+    if r.idle {
+        return VmRunView { vm: r.vm.clone(), kind: "pool".into(), id: String::new(), phase: "idle (warm)".into(), age };
+    }
+    let tree = r.cmd.iter().position(|a| a == "run").and_then(|i| r.cmd.get(i + 1)).map(std::path::Path::new);
+    let leaf = |p: &std::path::Path| p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    let (kind, id) = match tree {
+        Some(t) if leaf(t) == "tree" => {
+            let parent = t.parent().map(leaf).unwrap_or_default();
+            (parent.clone(), parent)
+        }
+        Some(t) => ("run".to_string(), leaf(t)),
+        None => ("run".to_string(), r.owner.clone()),
+    };
+    VmRunView { vm: r.vm.clone(), kind, id, phase: "leased".into(), age }
+}
+
 /// One repo's live round, with the rounds staged behind it.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct RepoRound {
@@ -512,6 +563,8 @@ pub struct View {
     pub round: Option<RoundView>,
     /// One live round per repo, then the STALE rows, each with its staged rounds.
     pub rounds: Vec<RepoRound>,
+    #[serde(default)]
+    pub vm_runs: Vec<VmRunView>,
     pub progress: Option<PassProgress>,
     pub now: i64,
     /// Questions waiting on the operator (needs-ryan), oldest first. Never counted as work.
@@ -697,7 +750,7 @@ fn repo_rounds(s: &Snapshot, round_view: &dyn Fn(&BatchRow) -> RoundView) -> Vec
     let mut live: BTreeMap<String, &BatchRow> = BTreeMap::new();
     let mut stale: Vec<&BatchRow> = Vec::new();
     for b in s.batches.iter().filter(|b| OPEN_BATCH.contains(&b.state.as_str())) {
-        let running = b.progress.as_ref().is_some_and(|p| p.running(s.now));
+        let running = b.progress.as_ref().is_some_and(|p| p.running(s.now)) || s.vm_runs.iter().any(|r| r.cmd.iter().any(|a| a.contains(&b.id)));
         if b.state == "OPEN" && b.pr == 0 && !running && s.now - b.opened_at.max(b.last_at) > STALE_OPEN_S {
             stale.push(b);
             continue;
@@ -885,6 +938,12 @@ pub fn view(s: &Snapshot) -> View {
         r
     });
     v.rounds = repo_rounds(s, &round_view);
+    v.vm_runs = s
+        .vm_runs
+        .iter()
+        .filter(|r| r.idle || !s.batches.iter().any(|b| OPEN_BATCH.contains(&b.state.as_str()) && r.cmd.iter().any(|a| a.contains(&b.id))))
+        .map(vm_run_view)
+        .collect();
     // round-vm's writer names the round by its head sha and the pass by a sha: one VM round
     // runs at a time, so a sha-named pass is the open round's current pass.
     if let (Some(p), Some(r)) = (v.progress.as_mut(), v.round.as_ref()) {
@@ -1079,7 +1138,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     }
     out.push(String::new());
     out.push(format!("{B}ROUNDS{R}"));
-    if v.rounds.is_empty() {
+    if v.rounds.is_empty() && v.vm_runs.is_empty() {
         out.push(format!("  {D}none live{R}"));
     }
     for r in &v.rounds {
@@ -1087,6 +1146,9 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
         for c in &r.round.staged {
             out.push(format!("      {D}{} · {} · {} member(s) · head {}{R}", c.name, c.state, c.members.len(), c.members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(" ")));
         }
+    }
+    for r in &v.vm_runs {
+        out.push(format!("  {}", cut(&r.line(), w - 4)));
     }
     out.push(String::new());
     out.push(format!("{B}BATCH{R}"));
@@ -1567,6 +1629,30 @@ mod tests {
         assert!(once.contains("ROUNDS") && once.contains("deckdumpster · deckdumpster-1 · forge batch PR #41") && once.contains("r-auto-62 · STALE"), "{once}");
         let at = |n: &str| once.find(n).unwrap();
         assert!(at("r-auto-143") < at("r-stage-8") && at("r-stage-8") < at("r-auto-62"), "{once}");
+    }
+
+    #[test]
+    fn rounds_show_every_vm_run_and_the_idle_vm_and_an_open_pr_is_not_stale() {
+        let mut s = rounds_snap();
+        s.vm_runs = vec![
+            VmRun { vm: "109".into(), age_secs: 700, owner: "5@1".into(), cmd: vec!["round-vm".into(), "run".into(), "/r/run/cert-sweep/tree".into(), "--maxpar".into(), "16".into()], idle: false },
+            VmRun { vm: "111".into(), age_secs: 90, owner: "6@1".into(), cmd: vec!["round-vm".into(), "run".into(), "/r/run/r-auto-143".into()], idle: false },
+            VmRun { vm: "112".into(), age_secs: 4000, owner: String::new(), cmd: vec![], idle: true },
+        ];
+        let v = view(&s);
+        let lines: Vec<String> = v.vm_runs.iter().map(|r| r.line()).collect();
+        assert_eq!(lines.len(), 2, "the batch pass is its batch's row: {lines:?}");
+        assert!(lines[0].contains("VM 109") && lines[0].contains("cert-sweep") && lines[0].contains("leased"), "{lines:?}");
+        assert!(lines[1].contains("VM 112 · idle (warm)"), "{lines:?}");
+        let text = render(&v, 120).join("\n");
+        assert!(text.contains("VM 109") && text.contains("idle (warm)") && text.contains("r-auto-143"), "{text}");
+        let mut quiet = rounds_snap();
+        quiet.batches.retain(|b| b.id == "deckdumpster-1");
+        quiet.batches[0].opened_at = quiet.now - 7200;
+        quiet.batches[0].last_at = quiet.now - 7200;
+        assert!(!view(&quiet).rounds[0].stale, "an open PR is not stale");
+        quiet.batches[0].pr = 0;
+        assert!(view(&quiet).rounds[0].stale);
     }
 
     #[test]

@@ -223,8 +223,8 @@ pub fn tree(v: &View) -> Vec<Node> {
         );
     }
 
-    if !v.rounds.is_empty() {
-        let kids: Vec<Node> = v
+    if !v.rounds.is_empty() || !v.vm_runs.is_empty() {
+        let mut kids: Vec<Node> = v
             .rounds
             .iter()
             .map(|r| {
@@ -239,7 +239,8 @@ pub fn tree(v: &View) -> Vec<Node> {
                 Node::new(key.clone(), r.line()).kids(staged.collect())
             })
             .collect();
-        let live = v.rounds.iter().filter(|r| !r.stale).count();
+        kids.extend(v.vm_runs.iter().map(|r| Node::new(format!("rounds/vm/{}", r.vm), r.line())));
+        let live = v.rounds.iter().filter(|r| !r.stale).count() + v.vm_runs.iter().filter(|r| r.phase != "idle (warm)").count();
         out.push(Node::new("rounds", format!("{B}ROUNDS{R}  {B}{live}{R} live")).kids(kids));
     }
     let single = match &v.round {
