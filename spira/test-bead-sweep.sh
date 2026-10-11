@@ -25,6 +25,7 @@ STUB
 chmod +x "$TMP/bin/spira-lc"
 export STUB_DIR="$TMP/stub"; mkdir -p "$STUB_DIR"
 
+: > "$TMP/inbox"
 NOW="$(date +%s)"; OLD=$((NOW - 3 * 3600))
 row() { # row <id> <state> <since> <holds-json> [blocked-json]
     printf '{"bead_id":"%s","state":"%s","since":%s,"holds":"%s","blocked_by":%s,"reason":"r"}' \
@@ -41,10 +42,9 @@ board() { # board <rows...> -- <content...>
 echo '[{"bead_id":"sp-done","state":"LANDED"}]' > "$STUB_DIR/term.json"
 
 run() {
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_ASK_LABEL=needs-boss
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_ASK_LABEL=needs-boss SPIRA_CONCIERGE_INBOX="$TMP/inbox"
     env -i PATH="$TMP/bin:$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" STUB_DIR="$STUB_DIR" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/widgets" \
-        SPIRA_CONCIERGE_INBOX="$TMP/inbox" \
         bash "$HERE/bead-sweep.sh" "$@" 2>&1
 }
 
