@@ -1,5 +1,5 @@
 //! The batcher's use of the `sift` screen. `sift_repo` screens the proto-round on its own pass;
-//! `cut_pool` is all a cut does with it: take what already has a pass at its current tip.
+//! `cut_pool` is all a cut does with it: take what already has a pass at its current tip, before the round is selected from it.
 
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
