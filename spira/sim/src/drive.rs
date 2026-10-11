@@ -395,13 +395,17 @@ pub fn drive(
     let clock = Rc::new(Cell::new(0u64));
     let last_exit: Rc<Cell<Option<i32>>> = Rc::default();
     let fatal: Rc<RefCell<Option<String>>> = Rc::default();
+    let ran: Rc<Cell<bool>> = Rc::default();
 
     let mut sim = Sim::new(seed);
     let call = {
-        let (exec, clock, last_exit, fatal) = (exec.clone(), clock.clone(), last_exit.clone(), fatal.clone());
-        move |command: &str| match exec.borrow_mut().run(command, clock.get()) {
-            Ok(code) => last_exit.set(Some(code)),
-            Err(e) => *fatal.borrow_mut() = Some(format!("{command}: {e}")),
+        let (exec, clock, last_exit, fatal, ran) = (exec.clone(), clock.clone(), last_exit.clone(), fatal.clone(), ran.clone());
+        move |command: &str| {
+            ran.set(true);
+            match exec.borrow_mut().run(command, clock.get()) {
+                Ok(code) => last_exit.set(Some(code)),
+                Err(e) => *fatal.borrow_mut() = Some(format!("{command}: {e}")),
+            }
         }
     };
     for a in &sc.actors {
@@ -455,6 +459,7 @@ pub fn drive(
     let mut events: Vec<Value> = Vec::new();
     let mut open: BTreeMap<String, (u64, i32)> = BTreeMap::new();
     let mut reached = false;
+    let mut last_snap: Option<Snapshot> = None;
     let mut settle_until: Option<u64> = None;
     let mut budget = if let Stop::Events(n) = stop { Some(*n) } else { None };
     while let Some(next) = sim.next_time() {
@@ -505,7 +510,12 @@ pub fn drive(
         if let Some(tr) = trace {
             tr.event(&ev)?;
         }
-        let snap = probe.snapshot().map_err(|e| format!("seed {seed} seq {seq}: probe: {e}"))?;
+        // An event that ran no command cannot have changed what the probe reads.
+        let snap = match (&last_snap, ran.take()) {
+            (Some(prev), false) => prev.clone(),
+            _ => probe.snapshot().map_err(|e| format!("seed {seed} seq {seq}: probe: {e}"))?,
+        };
+        last_snap = Some(snap.clone());
         if let Some(tr) = trace {
             tr.snapshot(seq, &snap)?;
         }
