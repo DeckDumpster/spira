@@ -16,6 +16,7 @@ mod ask;
 mod bd;
 mod bd_facts;
 mod callers;
+mod churn;
 mod classify_cmd;
 mod content;
 mod client;
@@ -231,6 +232,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("event") => cmd_event(&args[1..], conn),
         Some("stats") => (0, slow::stats_json()),
         Some("mending") => mending::dispatch(&args[1..], conn),
+        Some("churn-facts") => churn::cmd_churn_facts(&args[1..], conn),
         // The attempt and poison history (facts.rs): appended facts, never a transition.
         Some("fact") => facts::cmd_fact(&args[1..], conn),
         Some("facts") => facts::cmd_facts(&args[1..], conn),

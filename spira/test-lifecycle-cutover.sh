@@ -864,4 +864,11 @@ want "the failure is returned with the cap in its diagnosis" "RETURNED mend cap"
 lc mending event batch-mend --pass 1 --suite test-b.sh --actor mender --kind '{"Mended":{"at":0}}' >/dev/null 2>&1
 wantrc "a bare Mended event cannot bypass the assessment" 3 $?
 is "the machine's expiry is on the log under its own actor" "test" "$(lc history 'batch-mend#1#test-z.sh' --machine mending | python3 -c 'import json,sys; print([e for e in json.load(sys.stdin) if e["event"]=="Expire" and e["applied"]=="1"][0]["actor"])')"
+pev batch-mend '{"Failed":{"suite":"test-f.sh","n":1}}' >/dev/null
+lc mending pickup batch-mend --pass 1 --suite test-f.sh --deadline-secs 600 --actor mender-test-f.sh >/dev/null
+churn_facts() { lc churn-facts --since 0 | python3 -c 'import json,sys; f=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
+is "churn-facts stamps an expired failure's outcome from the event log" "('RETURNED', True)" "$(churn_facts 'next((m["state"], m["outcome_at"] not in (None, "")) for m in f["mendings"] if m["suite"] == "test-z.sh")')"
+is "churn-facts leaves a running failure without an outcome" "('MENDING', True)" "$(churn_facts 'next((m["state"], m["outcome_at"] in (None, "")) for m in f["mendings"] if m["suite"] == "test-f.sh")')"
+lc churn-facts >/dev/null 2>&1
+wantrc "churn-facts refuses to guess a window" 2 $?
 tl_summary

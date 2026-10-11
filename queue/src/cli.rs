@@ -22,6 +22,8 @@ pub enum Cmd {
     Submit { branch: String, repo: Option<String> },
     Protect { repo: Option<String> },
     Stats,
+    /// `churn [--since <when>] [--until <when>] [<repo>]`: the mender's meter.
+    Churn { since: Option<String>, until: Option<String>, repo: Option<String> },
     Flush { repo: Option<String> },
     Step { repo: String },
     /// `verdict <repo>`: settle the repository's CI result (DESIGN-verdict.md).
@@ -70,7 +72,7 @@ pub enum Round {
     Discard { repo: Option<String>, reason: Text },
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] | queue.sh round return|environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh churn [--since <dur|date>] [--until <dur|date>] [<repo>] | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] | queue.sh round return|environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -283,6 +285,19 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
         // protect/flush/step took their first positional and ignored the rest.
         "protect" => Ok(Cmd::Protect { repo: pos(0) }),
         "stats" => Ok(Cmd::Stats),
+        "churn" => {
+            let mut w = Walk { cmd: "churn", args, i: 0 };
+            let (mut since, mut until, mut repo) = (None, None, None);
+            while let Some(t) = w.next() {
+                match t {
+                    Tok::Opt("since", v) => since = Some(w.value(v)),
+                    Tok::Opt("until", v) => until = Some(w.value(v)),
+                    Tok::Opt(k, _) => return Err(w.unknown(k)),
+                    Tok::Pos(p) => repo = Some(p.to_string()),
+                }
+            }
+            Ok(Cmd::Churn { since, until, repo })
+        }
         "flush" => Ok(Cmd::Flush { repo: pos(0) }),
         "step" => {
             let repo = pos(0).ok_or_else(|| Usage("queue.sh step: repo required".into()))?;
@@ -479,6 +494,16 @@ mod tests {
         assert_eq!(p(&["round", "land", "b1", "--bogus"]), Err(Usage("queue.sh round land: unknown option: --bogus".into())));
         assert_eq!(p(&["round", "nope"]), Err(Usage(USAGE.into())));
         assert_eq!(p(&["round"]), Err(Usage(USAGE.into())));
+    }
+
+    #[test]
+    fn churn_takes_a_window_and_a_repo() {
+        assert_eq!(p(&["churn"]), Ok(Cmd::Churn { since: None, until: None, repo: None }));
+        assert_eq!(
+            p(&["churn", "--since", "14d", "--until=2026-10-09", "spira"]),
+            Ok(Cmd::Churn { since: Some("14d".into()), until: Some("2026-10-09".into()), repo: Some("spira".into()) })
+        );
+        assert_eq!(p(&["churn", "--bogus"]), Err(Usage("queue.sh churn: unknown option: --bogus".into())));
     }
 
     #[test]

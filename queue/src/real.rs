@@ -987,6 +987,9 @@ impl Lc for RealLc {
         let v: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc mending tips: {e}"))?;
         Ok(v.into_iter().filter_map(|(k, t)| t.as_str().map(|t| (k, t.to_string()))).collect())
     }
+    fn churn_facts(&self, since: i64) -> Result<String, String> {
+        self.stdout(&["churn-facts", "--since", &since.to_string()])
+    }
     fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["certify", bead, tip, "pass", detail, actor]);
         if rc == 0 {

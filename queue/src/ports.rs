@@ -313,6 +313,10 @@ pub trait Lc {
     fn mend(&self, batch_id: &str, pass: u32, suite: &str, members: &str, facts: &str, fences: &str, actor: &str) -> Result<(), (i32, String)>;
     /// `mending tips`: each bead's latest mended tip, absent when it was never mended.
     fn mend_tips(&self, beads: &[String]) -> Result<BTreeMap<String, String>, String>;
+    /// `churn-facts --since <epoch>`: the rows the churn report measures, as the JSON text.
+    fn churn_facts(&self, _since: i64) -> Result<String, String> {
+        Err("churn-facts is not available on this lifecycle".into())
+    }
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.
     fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)>;
 }
