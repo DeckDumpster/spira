@@ -4,3 +4,5 @@
 
 pub mod attrib;
 pub mod core;
+
+pub mod mender;

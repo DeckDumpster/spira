@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS ask (
 );
 CREATE INDEX IF NOT EXISTS ask_state_idx ON ask (state, opened_at);
 -- One row per suite that went red in a pass: the mender's pickup, deadline and outcome
--- (migrations/0022-mending.sql for an existing database).
+-- (migrations/0024-mending.sql for an existing database).
 CREATE TABLE IF NOT EXISTS mending (
     batch_id        VARCHAR(40) NOT NULL,
     pass            BIGINT NOT NULL,
