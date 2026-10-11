@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=batch
+DOC=Gate passes per landed round, as a percent, above which pass-rate.sh alarms (150 = 1.5 passes per landing).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_PASS_RATE_MAX_PCT:=150}"
+SPIRA_CONF_DEFAULT_EOF

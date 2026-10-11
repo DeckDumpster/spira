@@ -8,6 +8,11 @@
 #   run_id  when  branch  base  verdict  wall_s
 #   n_ok  n_red  n_skip  n_other  sum_s
 #   maxpar  nproc  memtotal_kb  cpu_busy_pct
+#   n_overcap  n_fault  passes
+#
+# n_overcap counts suites that hit their cap (the subset of n_red that timed out); n_fault
+# is n_other. passes is this branch's pass number since its last green row, so a green row
+# carries passes-to-land; pass-rate.sh reads the ledger for the passes-per-landing alarm.
 #
 # wall_s is the wall-clock seconds of the suites step only (not the full batch
 # setup time).  sum_s is the sum of per-suite seconds across all suites that
@@ -51,7 +56,7 @@ if [ -r "$RESULTS/runner.meta" ]; then
     _v="$(_kv suites_wall_s "$RESULTS/runner.meta")"; [ -n "${_v:-}" ] && wall_s="$_v"
 fi
 
-n_ok=0; n_red=0; n_skip=0; n_other=0; sum_s=0
+n_ok=0; n_red=0; n_skip=0; n_other=0; sum_s=0; n_overcap=0
 for _f in "$RESULTS"/*.result; do
     [ -f "$_f" ] || continue
     _st="$(awk '{print $1}' "$_f" 2>/dev/null)" || continue
@@ -59,16 +64,23 @@ for _f in "$RESULTS"/*.result; do
     _s="$(awk '{print $3}' "$_f" 2>/dev/null)"; case "${_s:-x}" in ''|*[!0-9]*) _s=0 ;; esac
     case "$_st" in
         ok)                     n_ok=$(( n_ok+1   )); sum_s=$(( sum_s+_s )) ;;
-        red|timeout)            n_red=$(( n_red+1  )); sum_s=$(( sum_s+_s )) ;;
+        red|timeout)            n_red=$(( n_red+1  )); sum_s=$(( sum_s+_s ))
+                                [ "$_st" = timeout ] && n_overcap=$(( n_overcap+1 )) ;;
         skip|skip-req|disabled) n_skip=$(( n_skip+1 ))                       ;;
         *)                      n_other=$(( n_other+1 )); sum_s=$(( sum_s+_s )) ;;
     esac
 done
 
+passes=1
+if [ -r "$LEDGER" ] && [ "$branch" != "-" ]; then
+    passes="$(awk -F'\t' -v b="$branch" '$3==b{ n = ($5=="green") ? 0 : n+1 } END{print n+1}' "$LEDGER")"
+fi
+
 when="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "$(dirname "$LEDGER")"
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$run_id" "$when" "$branch" "$base" "$VERDICT" \
     "$wall_s" "$n_ok" "$n_red" "$n_skip" "$n_other" "$sum_s" \
     "$maxpar" "$nproc" "$memtotal_kb" "$cpu_busy_pct" \
+    "$n_overcap" "$n_other" "$passes" \
     >> "$LEDGER"
