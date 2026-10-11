@@ -22,7 +22,7 @@ chmod +x "$SH"/*.sh 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 LEDGER="$TMP/ledger.tsv"
 
-pass() {   # pass <branch> <verdict> [result-lines...] -> one gate-timing row
+gate_row() {   # gate_row <branch> <verdict> [result-lines...] -> one gate-timing row
     local d="$TMP/res.$RANDOM$RANDOM" b="$1" v="$2"; shift 2
     mkdir -p "$d"
     printf 'key=%s\nbranch=%s\nbase=x\n' "$RANDOM" "$b" > "$d/batch.meta"
@@ -43,10 +43,10 @@ NOW="$(date +%s)"
 
 pr check >/dev/null   # first call generates the conf defaults and prints about it
 echo; echo "1 — rows carry over-cap, fault and passes-to-land"
-pass r1 red 'ok 0 5 - p d 0' 'timeout 0 9 - p d 1' 'weird 0 3 - p d 1'
-pass r1 red 'red 0 4 fp p d 1'
-pass r1 green 'ok 0 5 - p d 0'
-pass r2 green 'ok 0 5 - p d 0'
+gate_row r1 red 'ok 0 5 - p d 0' 'timeout 0 9 - p d 1' 'weird 0 3 - p d 1'
+gate_row r1 red 'red 0 4 fp p d 1'
+gate_row r1 green 'ok 0 5 - p d 0'
+gate_row r2 green 'ok 0 5 - p d 0'
 is "1: first pass over-cap count" "1" "$(col 1 16)"
 is "1: first pass fault count"    "1" "$(col 1 17)"
 is "1: first pass is pass 1"      "1" "$(col 1 18)"
@@ -63,29 +63,29 @@ echo; echo "3 — a window that holds no pass is ok, and a ratio under the limit
 out="$(pr check --now $((NOW + 7200)))"; rc=$?
 is "3: empty window ok" "0 0 0 ok" "$out"
 is "3: exit 0" "0" "$rc"
-pass r3 green 'ok 0 5 - p d 0'
-pass r4 green 'ok 0 5 - p d 0'
+gate_row r3 green 'ok 0 5 - p d 0'
+gate_row r4 green 'ok 0 5 - p d 0'
 out="$(pr check --now "$NOW")"
 is "3: 6 passes / 4 landings = 150% still over 120" "6 4 150 over" "$out"
 
 echo; echo "4 — passes with no landing are over, not a divide by zero"
 rm -f "$LEDGER"
-pass r5 red 'red 0 4 fp p d 1'
+gate_row r5 red 'red 0 4 fp p d 1'
 is "4: no landing" "1 0 999999 over" "$(pr check --now "$NOW")"
 
 echo; echo "5 — watch mails the crossing once and the clear once"
 rm -f "$LEDGER" "$RUN/watchd/pass-rate.state"
-pass r6 red 'red 0 4 fp p d 1'
+gate_row r6 red 'red 0 4 fp p d 1'
 pr watch --ticks 1 --interval 1 >/dev/null
 is "5: over mailed" "1" "$(mail_count)"
 pr watch --ticks 1 --interval 1 >/dev/null
 is "5: no repeat while still over" "1" "$(mail_count)"
-pass r6 green 'ok 0 5 - p d 0'
+gate_row r6 green 'ok 0 5 - p d 0'
 pr watch --ticks 1 --interval 1 >/dev/null
-pass r7 green 'ok 0 5 - p d 0'
-pass r8 green 'ok 0 5 - p d 0'
-pass r9 green 'ok 0 5 - p d 0'
-pass r10 green 'ok 0 5 - p d 0'
+gate_row r7 green 'ok 0 5 - p d 0'
+gate_row r8 green 'ok 0 5 - p d 0'
+gate_row r9 green 'ok 0 5 - p d 0'
+gate_row r10 green 'ok 0 5 - p d 0'
 pr watch --ticks 1 --interval 1 >/dev/null
 is "5: clear mailed once under the limit [$(pr check --now "$NOW")]" "2" "$(mail_count)"
 pr health >/dev/null; is "5: health ok after a poll" "0" "$?"
