@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # A session near the context ceiling is also the session carrying the most that was never
 # written down, so the cheap fix — clearing it — is the one nobody dares take. This sweeps
 # the live sessions and rescues their unfinished business into beads, asks and notes, reading

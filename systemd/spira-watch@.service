@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # ONE TEMPLATE FOR EVERY WATCHER. The instance name is the watcher's name in the manifest,
 # and nothing else about a watcher appears here — not its command, not its log — so adding
 # one is a manifest row plus an install run rather than another unit file to keep in step.
@@ -10,12 +12,12 @@
 Description=Spira watcher %i
 Documentation=file://@SPIRA_PROD_ROOT@/watchd/DESIGN.md
 After=default.target
-# THE BURST LIMITER HAS TO BE REACHABLE. Five starts at RestartSec=15 span at least 60s, so
+# THE BURST LIMITER HAS TO BE REACHABLE. Five starts at RestartSec=30 span at least 120s, so
 # systemd's default 10s window can never hold five and the limiter never fires — a target
 # that exits on every start loops forever instead of landing in failed. Keep this above
 # RestartSec * (StartLimitBurst - 1); test-watch-unit-restart.sh asserts the relationship,
 # not the numbers. These belong in [Unit]: systemd ignores them under [Service].
-StartLimitIntervalSec=120
+StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
@@ -36,7 +38,7 @@ Type=simple
 # used to live at @SPIRA_PROD@/watchd.sh).
 ExecStart=@SPIRA_PROD_ROOT@/bin/watchd exec %i
 Restart=always
-RestartSec=15
+RestartSec=30
 # THE HINGE. The unit appends stdout to exactly the log the cursor indexes, which is how
 # systemd can own the process without changing the contract a reader latches onto: two files,
 # a log and an integer, and `tail -n +N -F` is a conforming client.

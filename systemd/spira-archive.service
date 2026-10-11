@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # The transcripts are the only record of every decision taken in conversation that never
 # became a bead, and the client keeps them unversioned, on whatever volume the home directory
 # sits on, with no retention promise to anyone.

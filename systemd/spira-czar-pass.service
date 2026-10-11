@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 Description=Spira czar fast pass — queue-stall detection with deterministic remedies
 Documentation=file://@SPIRA_HOME@/../czar-pass/src/main.rs
 After=default.target

@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # Landed is not in effect. A bead is judged against the branch it named, and nothing
 # afterwards asks whether the copy THIS service manager executes is that branch — so when
 # the harness exists in two trees, correct work lands in one and the other goes on running,

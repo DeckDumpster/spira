@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # THE HOLE A HOOK STRUCTURALLY CANNOT CLOSE. A session hook fires at a SESSION BOUNDARY,
 # which is a property of one client: an event a watcher produced while nothing was running
 # waits for the next session to open, and for a headless agent that is never. A poll is the

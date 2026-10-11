@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # Spira's own collector. It used to be driven from inside the Gas Town collector, which
 # called `spira/cockpit.sh once` at the end of its own pass — a dependency that would have
 # silently frozen this dashboard the moment the purge deleted that file. A pane that stops
@@ -10,7 +12,7 @@
 Description=Spira cockpit collector (snapshot for the ops pane)
 Documentation=file://@SPIRA_PROD_ROOT@/cockpit-collect/DESIGN.md
 After=default.target
-StartLimitIntervalSec=120
+StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
@@ -30,7 +32,7 @@ ExecStart=@SPIRA_PROD_ROOT@/bin/spira-supervise @SPIRA_PROD_ROOT@/bin/cockpit-co
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_SNAP_STALE_S=@SPIRA_SNAP_STALE_S@
 Restart=always
-RestartSec=15
+RestartSec=30
 # Watchdog fires when spira-supervise stops pinging — which it does when the snapshot
 # stops being written on schedule (SPIRA_SNAP_STALE_S, default 60s). WatchdogSec=60
 # means the supervisor pings every 30s; systemd kills after 60s with no ping.

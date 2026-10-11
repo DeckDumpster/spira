@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # The outer harness for Spira: compare current state to desired state and close the gap.
 # It is deliberately a oneshot on a timer rather than a daemon — a loop hung off a session
 # cannot repair the case where the session died, which is the scar behind cockpit-ensure.

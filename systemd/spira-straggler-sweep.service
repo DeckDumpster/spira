@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # Queue-mode repos are not swept by the per-pass sentinel Sending (spira-sentinel's
 # --skip-queue call) — their landed branches are reaped at landing itself. This is the
 # once-a-day backstop for whatever that landing-time reap missed.

@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 Description=Spira cert-sweep (sample) — certify the landing ref's tip: a random quarter of the suites on this host
 Documentation=file://@SPIRA_PROD_ROOT@/cert-sweep/DESIGN.md
 After=default.target

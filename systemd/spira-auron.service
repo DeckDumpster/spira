@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # The watchdog OVER the loop, not a second loop. Its only power is speech: it reads
 # timestamps and counters, compares them to thresholds, and raises or clears an alert
 # bead. It repairs nothing, restarts nothing and summons nothing, and it must not grow the

@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # A long-lived process pins the configuration it read at startup, and nothing about it looks
 # wrong afterwards: a watcher started before a database cutover went on addressing the
 # retired databases for days, holding not one id from the live store, while every process

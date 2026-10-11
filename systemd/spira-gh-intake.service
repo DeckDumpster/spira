@@ -1,4 +1,6 @@
 [Unit]
+After=lc-serve.service
+Wants=lc-serve.service
 # gh-intake fetches open issues from SPIRA_GH_INTAKE_REPO and runs them
 # through a triage gate: OWNER/MEMBER/COLLABORATOR authors become work beads;
 # everyone else gets an untrusted record and a daily digest. Promotion via

@@ -279,4 +279,35 @@ printf '[Service]\nExecStart=@SPIRA_PROD_ROOT@/bin/x\n' > "$TMP/planted-notoml.s
 _notoml="$(cd "$ROOT/systemd" && no_toml *.service | tr '\n' ' ')"
 is "every service template sets Environment=SPIRA_TOML" "" "${_notoml% }"
 
+# EVERY UNIT THAT HOLDS THE STORE CREDENTIAL ORDERS ITSELF AFTER AND WANTS THE STORE'S SERVE
+# UNIT, and a restarting one outlasts a store that comes up late: RestartSec*(burst-1) must
+# cover STORE_LATE seconds, or a cold boot exhausts the start limit and the unit stays dead.
+# Positive control first.
+STORE_LATE=60
+store_unordered() {
+    local f
+    for f in "$@"; do
+        grep -q '^Environment=SPIRA_LC_PASSWORD_FILE=' "$f" || continue
+        case "${f##*/}" in dolt-*|lc-serve.service|spira-lc.service|sccache-dav.service) continue ;; esac
+        grep -q '^After=.*lc-serve.service' "$f" && grep -q '^Wants=.*lc-serve.service' "$f" || echo "${f##*/}"
+    done
+}
+store_short_retry() {
+    local f r b
+    for f in "$@"; do
+        grep -q '^Environment=SPIRA_LC_PASSWORD_FILE=' "$f" || continue
+        grep -qE '^Restart=(always|on-failure)' "$f" || continue
+        case "${f##*/}" in dolt-*|lc-serve.service|spira-lc.service|sccache-dav.service) continue ;; esac
+        r="$(sed -n 's/^RestartSec=\([0-9]*\).*/\1/p' "$f")"; b="$(sed -n 's/^StartLimitBurst=\([0-9]*\).*/\1/p' "$f")"
+        [ $(( ${r:-0} * (${b:-5} - 1) )) -ge "$STORE_LATE" ] || echo "${f##*/}"
+    done
+}
+printf '[Unit]\n[Service]\nEnvironment=SPIRA_LC_PASSWORD_FILE=x\nRestart=always\nRestartSec=5\n' > "$TMP/planted-store.service"
+[ -n "$(store_unordered "$TMP/planted-store.service")" ] && [ -n "$(store_short_retry "$TMP/planted-store.service")" ] \
+    && ok "store-ordering matchers flag a planted unit" || bad "store-ordering matchers flag a planted unit" "silent on planted offender"
+_unord="$(cd "$ROOT/systemd" && store_unordered *.service | tr '\n' ' ')"
+is "every store-credentialed unit is After= and Wants= lc-serve.service" "" "${_unord% }"
+_short="$(cd "$ROOT/systemd" && store_short_retry *.service | tr '\n' ' ')"
+is "every restarting store-credentialed unit outlasts a ${STORE_LATE}s-late store" "" "${_short% }"
+
 tl_summary
