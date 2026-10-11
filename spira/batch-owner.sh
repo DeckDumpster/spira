@@ -12,7 +12,7 @@
 # log that case, since it means teardown did not do what it was asked.
 _batch_owner_release() {
     local cname="$1" ownerfile="$2"
-    timeout 5 podman container exists "$cname" 2>/dev/null && return 1
+    timeout 60 podman container exists "$cname" 2>/dev/null && return 1  # batch-job: podman call; hang guard, not a budget
     rm -f "$ownerfile"
 }
 
@@ -50,11 +50,11 @@ _batch_sweep_dead_owners() {
         [ -n "$_sw_pid" ] || continue
         [ -d "/proc/$_sw_pid" ] && continue  # still alive
         _sw_cname="${_sw_f#/tmp/}"; _sw_cname="${_sw_cname%.owner}"
-        # batch-job: podman stop waits out the container grace period
-        podman stop "$_sw_cname" >/dev/null 2>&1 || true
-        timeout 5 podman rm   "$_sw_cname" >/dev/null 2>&1 || true
-        timeout 5 podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true
-        timeout 5 podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true
+        # batch-job: one forced remove with zero grace; a hang guard, not a budget (a 5 s rm after a
+        # graceful stop left the container in place on a loaded host: round r-auto-9, case C1)
+        timeout 60 podman rm -f -t 0 "$_sw_cname" >/dev/null 2>&1 || true
+        timeout 60 podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true  # batch-job: podman call; hang guard, not a budget
+        timeout 60 podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true  # batch-job: podman call; hang guard, not a budget
         rm -rf "/tmp/${_sw_cname}" 2>/dev/null || true
         rm -f "$_sw_f"
         printf 'swept orphan container %s (owner pid %s gone)\n' "$_sw_cname" "$_sw_pid"
@@ -66,9 +66,9 @@ _batch_sweep_dead_owners() {
 # varies by host, so ask for the integer and parse the string only as a fallback.
 _batch_container_started_epoch() {
     local cname="$1" ts
-    ts="$(timeout 5 podman container inspect --format '{{.State.StartedAt.Unix}}' "$cname" 2>/dev/null)"
+    ts="$(timeout 60 podman container inspect --format '{{.State.StartedAt.Unix}}' "$cname" 2>/dev/null)"  # batch-job: podman call; hang guard, not a budget
     if [[ "$ts" =~ ^[0-9]+$ ]] && [ "$ts" -gt 0 ]; then printf '%s\n' "$ts"; return 0; fi
-    ts="$(timeout 5 podman container inspect --format '{{.State.StartedAt}}' "$cname" 2>/dev/null)" || return 1
+    ts="$(timeout 60 podman container inspect --format '{{.State.StartedAt}}' "$cname" 2>/dev/null)" || return 1  # batch-job: podman call; hang guard, not a budget
     ts="${ts%% m=*}"
     date -d "$ts" +%s 2>/dev/null && return 0
     date -d "${ts% *}" +%s 2>/dev/null
@@ -82,16 +82,16 @@ _batch_container_started_epoch() {
 # One line per sweep on stdout.
 _batch_sweep_ownerless() {
     local min_age="${1:-3600}" name_prefix="${2:-spira-batch-}" _sw_cname _sw_started_epoch _sw_age
-    for _sw_cname in $(timeout 5 podman ps -a --filter "name=^${name_prefix}" --format '{{.Names}}' 2>/dev/null); do
+    for _sw_cname in $(timeout 60 podman ps -a --filter "name=^${name_prefix}" --format '{{.Names}}' 2>/dev/null); do  # batch-job: podman call; hang guard, not a budget
         [ -f "/tmp/${_sw_cname}.owner" ] && continue  # governed by the dead-owner arm
         _sw_started_epoch="$(_batch_container_started_epoch "$_sw_cname")" || continue
         _sw_age=$(( $(date +%s) - _sw_started_epoch ))
         [ "$_sw_age" -ge "$min_age" ] || continue
-        # batch-job: podman stop waits out the container grace period
-        podman stop "$_sw_cname" >/dev/null 2>&1 || true
-        timeout 5 podman rm   "$_sw_cname" >/dev/null 2>&1 || true
-        timeout 5 podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true
-        timeout 5 podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true
+        # batch-job: one forced remove with zero grace; a hang guard, not a budget (a 5 s rm after a
+        # graceful stop left the container in place on a loaded host: round r-auto-9, case C1)
+        timeout 60 podman rm -f -t 0 "$_sw_cname" >/dev/null 2>&1 || true
+        timeout 60 podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true  # batch-job: podman call; hang guard, not a budget
+        timeout 60 podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true  # batch-job: podman call; hang guard, not a budget
         rm -rf "/tmp/${_sw_cname}" 2>/dev/null || true
         printf 'swept ownerless container %s (age %ss, no owner file)\n' "$_sw_cname" "$_sw_age"
     done
