@@ -124,7 +124,7 @@ pub fn classify(c: &Changed, members: &[Member]) -> Class {
 }
 
 /// Crates whose tests read `../systemd`.
-const UNIT_READERS: &[&str] = &["release", "spira-world", "cert-sweep"];
+pub const UNIT_READERS: &[&str] = &["release", "spira-world", "cert-sweep"];
 
 /// `seed` plus every member that depends directly on one of them; sorted.
 pub fn with_dependents(seed: &BTreeSet<String>, members: &[Member]) -> Vec<String> {

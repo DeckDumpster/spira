@@ -1158,6 +1158,23 @@ impl<'a> Run<'a> {
             }
             Err(e) => self.log(&format!("{}: {e} — this session's builds are UNCACHED", self.f())),
         }
+        // THE WARM TARGET: the session builds into its slot's directory, kept between sessions
+        // and worktrees (cargo's fingerprints cover the different checkout), so a second session
+        // on a bead recompiles only what changed. The slot's lock is held until this returns.
+        let warm_base = self.run_dir().join(spira_config::build::AEON_WARM_DIR);
+        let _warm = match spira_config::build::acquire_warm(&warm_base, spira_config::build::AEON_WARM_SLOTS) {
+            Some((dir, lock)) => {
+                if spira_config::build::reap_over_cap(&dir, spira_config::build::AEON_WARM_CAP_MIB) {
+                    self.log(&format!("{}: warm target {} was over {} MiB — started empty", self.f(), dir.display(), spira_config::build::AEON_WARM_CAP_MIB));
+                }
+                env.set("CARGO_TARGET_DIR", &dir.display().to_string());
+                Some(lock)
+            }
+            None => {
+                self.log(&format!("{}: every warm target slot is busy — this session builds in its worktree", self.f()));
+                None
+            }
+        };
         // THE SUMMON JITTER (sp-f4ig1 §3.4): aeons a pass summoned together start apart.
         let max = self.conf.i(spira_config::admission::JITTER_ENV).max(0) as u64;
         let seed = ((std::process::id() as u64) << 32)

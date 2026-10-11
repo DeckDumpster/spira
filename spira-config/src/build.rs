@@ -301,6 +301,57 @@ pub fn one_shot_words(profile: &str) -> String {
     format!("--config profile.{profile}.incremental=false")
 }
 
+/// Directory under the run dir holding each aeon slot's warm `CARGO_TARGET_DIR`.
+pub const AEON_WARM_DIR: &str = "aeon-warm";
+
+/// Slots offered: one per aeon name, so a free one always exists below the live-aeon ceiling.
+pub const AEON_WARM_SLOTS: u64 = 10;
+
+/// MiB a slot may hold before the next session to take it starts it empty: reaped by size,
+/// never per session.
+pub const AEON_WARM_CAP_MIB: u64 = 12288;
+
+/// Claim the first free slot under `base` with a non-blocking exclusive `flock` that lives as
+/// long as the returned file. None when every slot is busy: the session then builds in its
+/// worktree's own target, never waits.
+pub fn acquire_warm(base: &Path, slots: u64) -> Option<(PathBuf, std::fs::File)> {
+    use std::os::unix::io::AsRawFd;
+    std::fs::create_dir_all(base).ok()?;
+    for n in 1..=slots.max(1) {
+        let Ok(f) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join(format!("slot.{n}.lock"))) else {
+            continue;
+        };
+        // SAFETY: flock on a descriptor we own; the lock lives as long as `f`.
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            let dir = base.join(format!("slot.{n}"));
+            std::fs::create_dir_all(&dir).ok()?;
+            return Some((dir, f));
+        }
+    }
+    None
+}
+
+/// Bytes under `p`, not following symlinks.
+pub fn size_of(p: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(md) = std::fs::symlink_metadata(p) else { return 0 };
+    if !md.is_dir() {
+        return md.blocks() * 512;
+    }
+    std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| size_of(&e.path())).sum()).unwrap_or(0)
+}
+
+/// Empty `slot` when it holds more than `cap_mib`. True when it did. The caller holds the
+/// slot's lock.
+pub fn reap_over_cap(slot: &Path, cap_mib: u64) -> bool {
+    if size_of(slot) <= cap_mib * 1024 * 1024 {
+        return false;
+    }
+    let _ = std::fs::remove_dir_all(slot);
+    let _ = std::fs::create_dir_all(slot);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,5 +593,21 @@ mod from_env_tests {
         assert_eq!(got.as_deref(), Some("10.9.8.7:9431"));
         let unset = with_env(&[("SPIRA_TOML", Some("/nonexistent-sp-ei6jt/spira.toml")), (STORE_ADDR_ENV, None)], || addr_for_home(&home));
         assert_eq!(unset, None, "an unconfigured store stays None");
+    }
+
+    #[test]
+    fn warm_slots_are_exclusive_and_reaped_by_size() {
+        let d = testkit::TempDir::new("spira-config-aeon-warm");
+        let (a, la) = acquire_warm(d.path(), 2).unwrap();
+        let (b, _lb) = acquire_warm(d.path(), 2).unwrap();
+        assert_ne!(a, b);
+        assert!(acquire_warm(d.path(), 2).is_none());
+        drop(la);
+        assert_eq!(acquire_warm(d.path(), 2).unwrap().0, a);
+        std::fs::write(a.join("big"), vec![1u8; 2 * 1024 * 1024]).unwrap();
+        assert!(!reap_over_cap(&a, 100));
+        assert!(a.join("big").exists());
+        assert!(reap_over_cap(&a, 1));
+        assert!(a.is_dir() && !a.join("big").exists());
     }
 }

@@ -42,6 +42,12 @@ session: sp-2tv was summoned twenty-two times, each turn stopping at "Let me che
 
     cargo test -p <crate>
 
+Your session's `CARGO_TARGET_DIR` is a warm directory kept between sessions: build only what
+the branch touches, never `--workspace`. `work crates` prints the `-p` words for your diff
+(touched crates plus their direct dependents):
+
+    cargo test $(work crates)
+
 **Before closing, do not run the suites.** Commit and close: the landing pass certifies your
 branch with the budgeted gate right after, under the host-wide admission that keeps gates from
 starving one another. A runner call with no `--suites` is not the gate's selection — it runs the
