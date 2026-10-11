@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cert_sweep::{
     bead_body, bead_title, bisect, culprit_body, culprit_title, filing_kind, first_fail_line, judge, open_duplicate, still_open, parse_members, parse_result_file,
-    parse_testenv_stdout, pick_subset, runner_verdict, record, red_body, Culprit, Event, Judgement, Member, Outcome, Row, Verdict, EVENT_FAMILY, FAMILY,
+    parse_testenv_stdout, certified, live_leases, pick_subset, runner_verdict, record, red_body, Culprit, Event, Judgement, Member, Outcome, Row, Verdict, EVENT_FAMILY, FAMILY,
 };
 use serde_json::Value;
 
@@ -28,7 +28,7 @@ extern "C" {
 }
 const LOCK_EX: i32 = 2;
 
-const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME] [--start-deadline SECS]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
+const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME] [--start-deadline SECS] [--round-wait SECS] [--round-poll SECS]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -232,6 +232,20 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     let picks = if mode == "full" { all } else { pick_subset(&all, num(f, "subset-div", 4)? as usize, now() ^ u64::from(std::process::id()) << 32) };
+    if mode == "full" {
+        let tree = git(&repo, &["rev-parse", &format!("{tip}^{{tree}}")])?;
+        let history = read_history(&run);
+        let mut seen: BTreeMap<String, bool> = BTreeMap::new();
+        let mut same_tree = |c: &str| *seen.entry(c.to_string()).or_insert_with(|| git(&repo, &["rev-parse", &format!("{c}^{{tree}}")]).is_ok_and(|t| t == tree));
+        if certified(&history, &picks, &mut same_tree) {
+            println!("cert-sweep: tree {tree} of {tip} is already certified; no pass");
+            return Ok(ExitCode::SUCCESS);
+        }
+        if !wait_for_round(f)? {
+            println!("cert-sweep: a round pass held the round VM for the whole wait; deferred to the next tick");
+            return Ok(ExitCode::SUCCESS);
+        }
+    }
     let start = now();
     let rt = Rt { f, run: &run, repo: &repo, mode, seq: std::cell::Cell::new(0), vm_cut: std::cell::Cell::new(false) };
 
@@ -333,6 +347,9 @@ impl Rt<'_> {
             if self.vm_cut.get() {
                 return Err("the round VM gave no verdict earlier in this pass; not waiting on it again".into());
             }
+            if self.seq.get() > 0 && !wait_for_round(self.f)? {
+                return Err("a round pass held the round VM for the whole wait".into());
+            }
             let r = run_on_vm(self.f, self.run, self.repo, commit, picks, start, self.seq.replace(self.seq.get() + 1))?;
             self.vm_cut.set(r.0.is_empty());
             Ok(r)
@@ -421,6 +438,40 @@ impl Rt<'_> {
                 Ok(Attribution { filing: Some((culprit_title(&c), culprit_body(&c, e))), event: e.clone(), rows })
             }
         }
+    }
+}
+
+fn proc_alive(id: &str) -> bool {
+    let Some((pid, start)) = id.split_once('@') else { return false };
+    let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else { return false };
+    stat.rfind(')').and_then(|i| stat[i + 1..].split_whitespace().nth(19).map(|s| s == start)).unwrap_or(false)
+}
+
+/// Waits for every round-VM lease to be released, polling; false when `--round-wait` runs
+/// out first. A status that cannot be read proceeds: a broken probe must not stop the sweep.
+fn wait_for_round(f: &Flags) -> Result<bool, String> {
+    let limit = num(f, "round-wait", 2400)?;
+    let poll = num(f, "round-poll", 15)?.max(1);
+    let began = now();
+    loop {
+        let held = match spira_config::bounded::bounded("round-vm").args(["status", "--json"]).stdin(Stdio::null()).output() {
+            Ok(o) if o.status.success() => match live_leases(&String::from_utf8_lossy(&o.stdout), &proc_alive) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("cert-sweep: {e}; not waiting");
+                    return Ok(true);
+                }
+            },
+            _ => return Ok(true),
+        };
+        if held.is_empty() {
+            return Ok(true);
+        }
+        if now() - began >= limit {
+            return Ok(false);
+        }
+        eprintln!("cert-sweep: round VM leased ({}); waiting", held.join(", "));
+        std::thread::sleep(std::time::Duration::from_secs(poll));
     }
 }
 

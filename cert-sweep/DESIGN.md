@@ -16,6 +16,12 @@ Both read the tip of `--base` (default `local/main` when the repo has it, else t
 map's land ref for `--repo`; a repo with no `spira/test-*.sh` at that tip is a clean no-op) and label it with the
 `refs/archive/rounds/<n>` that points at it (`?` if none does).
 
+A full pass starts nothing when every suite already has an `ok`/`red` row of mode `full` or
+`seed` on a commit with the tip's tree (a round's seed or an earlier sweep certified it), and
+waits while `round-vm status --json` shows a live lease, up to `--round-wait` (default 2400 s,
+polled every `--round-poll`); past that it defers to the next tick and exits 0. Changed tips
+are passed as before, so FLIP detection is unchanged.
+
 ## History and events
 
 Every result is a row in the `cert-history` tsd family: `commit round suite verdict secs mode`.
