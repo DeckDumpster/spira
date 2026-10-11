@@ -481,7 +481,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         }
     }
 
-    if let Some(r) = &repo {
+    if let Some(r) = repo.as_ref().filter(|_| for_fayth.is_none() && incident_parent.is_none()) {
         if title_leads_with_repo(&title, r) {
             eprintln!("bead: title begins with the repo name \"{r}\"; the repo is already the bead's repo: label and the pane shows it. Drop the prefix and re-file (exit 2).");
             return 2;
