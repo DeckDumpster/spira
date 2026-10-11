@@ -40,15 +40,15 @@ impl Exec for Count {
 }
 
 struct Script {
-    snaps: u32,
+    runs: Rc<Cell<u32>>,
+    base: u32,
     landed_at: u32,
     broken: bool,
 }
 
 impl Probe for Script {
     fn snapshot(&mut self) -> Result<Snapshot, String> {
-        self.snaps += 1;
-        let landed = self.snaps >= self.landed_at;
+        let landed = self.base + self.runs.get() >= self.landed_at;
         let (state, tip) = if self.broken { ("SUBMITTED", "bbb") } else if landed { ("LANDED", "aaa") } else { ("WORKING", "aaa") };
         let row = json!({"bead": "sp-x", "bd_status": "open", "lc_state": state, "lc_tip": "aaa", "branch_tip": tip, "on_local_main": landed});
         Ok(Snapshot { beads: vec![bead_row(&row)?], ..Default::default() })
@@ -60,7 +60,8 @@ fn world(name: &str) -> testkit::TempDir {
 }
 
 fn go(w: &Path, seed: u64, landed_at: u32, broken: bool) -> spira_sim::verbs::RunResult {
-    run_scenario(w, SCENARIO, seed, Box::new(Count(Rc::default())), Box::new(Script { snaps: 0, landed_at, broken })).unwrap()
+    let runs = Rc::new(Cell::new(0));
+    run_scenario(w, SCENARIO, seed, Box::new(Count(runs.clone())), Box::new(Script { runs, base: 0, landed_at, broken })).unwrap()
 }
 
 #[test]
@@ -112,7 +113,7 @@ fn replaying_a_run_that_stopped_at_its_goal_reports_no_divergence() {
     let w = world("sim-verbs-replay-goal");
     let r = go(&w, 7, 3, false);
     assert!(r.goal_reached);
-    assert_eq!(Trace::open(&w).unwrap().events().unwrap().len(), 3);
+    assert_eq!(Trace::open(&w).unwrap().events().unwrap().len(), 4);
     assert_eq!(replay_world(&w, 7).unwrap(), None);
 }
 
@@ -142,17 +143,18 @@ fn step_resumes_without_re_executing_recorded_events() {
     }
     let w = world("sim-verbs-step");
     let runs = Rc::new(Cell::new(0));
-    run_scenario(&w, SCENARIO, 7, Box::new(Count(runs.clone())), Box::new(Script { snaps: 0, landed_at: 4, broken: false })).unwrap();
+    run_scenario(&w, SCENARIO, 7, Box::new(Count(runs.clone())), Box::new(Script { runs: runs.clone(), base: 0, landed_at: 4, broken: false })).unwrap();
     let before = Trace::open(&w).unwrap().events().unwrap().len();
-    assert_eq!(before, 4);
+    assert_eq!(before, 6);
     let more = Rc::new(Cell::new(0));
-    step_world(&w, None, Box::new(Count(more.clone())), Box::new(Script { snaps: 4, landed_at: 4, broken: false })).unwrap();
-    assert_eq!(Trace::open(&w).unwrap().events().unwrap().len(), 5);
+    step_world(&w, None, Box::new(Count(more.clone())), Box::new(Script { runs: more.clone(), base: runs.get(), landed_at: 4, broken: false })).unwrap();
+    assert_eq!(Trace::open(&w).unwrap().events().unwrap().len(), 7);
     assert!(more.get() <= 1, "only the new event may execute, ran {}", more.get());
 }
 
 fn go_text(text: &str, w: &Path, seed: u64, landed_at: u32) -> spira_sim::verbs::RunResult {
-    run_scenario(w, text, seed, Box::new(Count(Rc::default())), Box::new(Script { snaps: 0, landed_at, broken: false })).unwrap()
+    let runs = Rc::new(Cell::new(0));
+    run_scenario(w, text, seed, Box::new(Count(runs.clone())), Box::new(Script { runs, base: 0, landed_at, broken: false })).unwrap()
 }
 
 #[test]
@@ -164,9 +166,9 @@ fn a_settle_keeps_the_run_going_after_the_goal_and_replays_clean() {
     let w = world("sim-verbs-settle");
     let r = go_text(&text, &w, 7, 3);
     let events = Trace::open(&w).unwrap().events().unwrap();
-    let goal_at = events[2]["vtime"].as_u64().unwrap();
+    let goal_at = events[3]["vtime"].as_u64().unwrap();
     assert!(r.goal_reached && r.failures().is_empty(), "{:?}", r.failures());
-    assert!(events.len() > 3, "events after the goal are traced");
+    assert!(events.len() > 4, "events after the goal are traced");
     assert!(events.iter().all(|e| e["vtime"].as_u64().unwrap() <= goal_at + 250), "and none past the settle");
     assert_eq!(replay_world(&w, 7).unwrap(), None);
 }
@@ -195,7 +197,7 @@ fn a_step_that_exits_outside_the_contract_trips_the_scenarios_own_invariant() {
         }
     }
     let text = format!("{SCENARIO}\n[[invariant]]\nname = \"step_failed\"\nsql = \"SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)\"\n");
-    let run = |code: i32, name: &str| run_scenario(&world(name), &text, 7, Box::new(Exit(code)), Box::new(Script { snaps: 0, landed_at: 100_000, broken: false })).unwrap();
+    let run = |code: i32, name: &str| run_scenario(&world(name), &text, 7, Box::new(Exit(code)), Box::new(Script { runs: Rc::default(), base: 0, landed_at: 100_000, broken: false })).unwrap();
     for ok in [0, 3] {
         assert!(run(ok, "sim-verbs-step-ok").violations.is_empty());
     }
