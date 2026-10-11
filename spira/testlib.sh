@@ -663,7 +663,7 @@ else:
 STUB
     } > "$dir/spira-lc"
     chmod +x "$dir/spira-lc"
-    SPIRA_LC_BIN="$dir/spira-lc"
+    SPIRA_LC_BIN="$dir/spira-lc"; export SPIRA_LC_BIN
 }
 
 plan() {    # plan <n> — must be called before the first ok/bad/want/nowant/wantrc
