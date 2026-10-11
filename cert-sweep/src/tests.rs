@@ -206,3 +206,28 @@ fn a_runner_verdict_line_is_found_and_absence_is_none() {
     assert_eq!(runner_verdict(out), Some("VERDICT FAULT rc=2 ran=0 reason=deadline-build"));
     assert_eq!(runner_verdict("nothing here\n"), None);
 }
+
+fn full_row(suite: &str, commit: &str, mode: &str, verdict: Verdict) -> Row {
+    Row { commit: commit.into(), round: "1".into(), suite: suite.into(), verdict, secs: None, mode: mode.into() }
+}
+
+#[test]
+fn certification_needs_every_pick_from_a_full_or_seed_row_on_the_tree() {
+    let picks = vec!["a".to_string(), "b".to_string()];
+    let h = vec![full_row("a", "c1", "full", Verdict::Ok), full_row("b", "c1", "seed", Verdict::Red)];
+    assert!(certified(&h, &picks, &mut |c| c == "c1"));
+    assert!(!certified(&h, &picks, &mut |c| c == "other"));
+    assert!(!certified(&h[..1], &picks, &mut |_| true));
+    let weak = vec![full_row("a", "c1", "full", Verdict::Ok), full_row("b", "c1", "subset", Verdict::Ok)];
+    assert!(!certified(&weak, &picks, &mut |_| true));
+    let fault = vec![full_row("a", "c1", "full", Verdict::Ok), full_row("b", "c1", "full", Verdict::Fault)];
+    assert!(!certified(&fault, &picks, &mut |_| true));
+    assert!(!certified(&[], &[], &mut |_| true));
+}
+
+#[test]
+fn only_leases_with_a_live_or_absent_owner_are_held() {
+    let j = r#"{"leases":[{"vm":"x","owner":"1@2"},{"vm":"y","owner":"3@4"},{"vm":"z","owner":null}]}"#;
+    assert_eq!(live_leases(j, &|o| o == "1@2").unwrap(), vec!["x", "z"]);
+    assert!(live_leases("{}", &|_| true).is_err());
+}

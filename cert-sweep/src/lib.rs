@@ -257,6 +257,30 @@ pub fn record(history: &[Row], results: &[Outcome], commit: &str, round: &str, m
     (rows, events)
 }
 
+/// Every pick already has a verdict on a commit with the tip's tree, from a full sweep or a
+/// round's seed. Subset and rerun rows say nothing about the rest of the corpus, and a fault
+/// or skip is no verdict, so none of them certify.
+pub fn certified(history: &[Row], picks: &[String], same_tree: &mut dyn FnMut(&str) -> bool) -> bool {
+    !picks.is_empty()
+        && picks.iter().all(|s| {
+            history
+                .iter()
+                .any(|r| &r.suite == s && matches!(r.mode.as_str(), "full" | "seed") && matches!(r.verdict, Verdict::Ok | Verdict::Red) && same_tree(&r.commit))
+        })
+}
+
+/// The leases in `round-vm status --json` whose holder is still running; a lease with no
+/// owner was handed to an external caller and counts as held. `alive` takes `pid@start`.
+pub fn live_leases(status_json: &str, alive: &dyn Fn(&str) -> bool) -> Result<Vec<String>, String> {
+    let v: Value = serde_json::from_str(status_json).map_err(|e| format!("round-vm status: {e}"))?;
+    let leases = v.get("leases").and_then(Value::as_array).ok_or("round-vm status: no leases field")?;
+    Ok(leases
+        .iter()
+        .filter(|l| l.get("owner").and_then(Value::as_str).map_or(true, alive))
+        .map(|l| l.get("vm").and_then(Value::as_str).unwrap_or("?").to_string())
+        .collect())
+}
+
 /// `div`-th of `all` (at least one), chosen by a seeded shuffle: the same seed picks the
 /// same suites, a fresh seed per pass resamples.
 pub fn pick_subset(all: &[String], div: usize, seed: u64) -> Vec<String> {

@@ -349,3 +349,68 @@ fn the_runner_is_bound_to_the_start_deadline_for_its_own_acquire_wait() {
     fx.cert(&["pass", "--mode", "full", "--tree", &p.join("tree").display().to_string(), "--start-deadline", "7"]);
     assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), "7");
 }
+
+fn round_vm_stub(fx: &Fx, status: &str) -> std::path::PathBuf {
+    let p = fx.d.path();
+    let ran = p.join("vm-ran");
+    write_exe(
+        p.join("bin/round-vm"),
+        &format!("#!/bin/sh\n[ \"$1\" = status ] && {{ echo '{status}'; exit 0; }}\necho run >> {}\nexit 1\n", ran.display()),
+    );
+    ran
+}
+
+fn full(fx: &Fx, extra: &[&str]) -> (i32, String, String) {
+    let tree = fx.d.path().join("tree").display().to_string();
+    let mut a = vec!["pass", "--mode", "full", "--tree", &tree];
+    a.extend_from_slice(extra);
+    fx.cert(&a)
+}
+
+#[test]
+fn a_tip_whose_tree_a_round_already_certified_starts_no_pass() {
+    let fx = Fx::new();
+    fx.commit("1");
+    fx.seed("1");
+    fx.commit("2");
+    let ran = round_vm_stub(&fx, r#"{"leases":[]}"#);
+    let (rc, out, err) = full(&fx, &[]);
+    assert_eq!(rc, 0, "{err}");
+    assert!(out.contains("already certified"), "{out}");
+    assert!(!ran.exists(), "no VM pass for a certified tree");
+}
+
+#[test]
+fn a_tip_with_a_new_tree_is_passed_and_a_partial_certification_does_not_count() {
+    let fx = Fx::new();
+    fx.commit("1");
+    fx.seed("1");
+    let repo = fx.d.path().join("repo");
+    fs::write(repo.join("spira/test-c.sh"), "#!/bin/sh\n").unwrap();
+    let g = |a: &[&str]| assert!(Command::new("git").arg("-C").arg(&repo).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).status().unwrap().success());
+    g(&["add", "."]);
+    g(&["commit", "-q", "-m", "c"]);
+    g(&["branch", "-f", "local/main", "HEAD"]);
+    let ran = round_vm_stub(&fx, r#"{"leases":[]}"#);
+    let (_, out, _) = full(&fx, &["--start-deadline", "5"]);
+    assert!(!out.contains("already certified"), "{out}");
+    assert!(ran.exists(), "a changed tree is passed");
+}
+
+#[test]
+fn a_full_pass_waits_while_a_round_holds_the_vm_and_defers_without_failing() {
+    let fx = Fx::new();
+    let ran = round_vm_stub(&fx, r#"{"leases":[{"vm":"r-1","owner":null}]}"#);
+    let (rc, out, _) = full(&fx, &["--round-wait", "1", "--round-poll", "1"]);
+    assert_eq!(rc, 0, "{out}");
+    assert!(out.contains("deferred"), "{out}");
+    assert!(!ran.exists(), "no pass beside a live round");
+}
+
+#[test]
+fn a_lease_whose_owner_is_dead_does_not_hold_the_pass() {
+    let fx = Fx::new();
+    let ran = round_vm_stub(&fx, r#"{"leases":[{"vm":"r-1","owner":"999999999@1"}]}"#);
+    full(&fx, &["--round-wait", "1", "--round-poll", "1", "--start-deadline", "5"]);
+    assert!(ran.exists());
+}
