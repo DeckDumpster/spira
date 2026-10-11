@@ -99,7 +99,7 @@ fi
 echo
 echo "3. END TO END: the real \`queue\` binary's publish-settle against this row"
 # ===========================================================================
-# Mirrors test-queue-publish.sh's own env wiring (sp-bc49w) — the CONTEXT seam still
+# The CONTEXT seam still
 # shells to bash with SPIRA_HOME sourcing lib.sh/conf.sh for Settings; the repo-specific
 # fields (mode/base/landref/publish) are resolved in-process from SPIRA_REPO_MAP.
 SH="$TMP/spira"; mkdir -p "$SH"

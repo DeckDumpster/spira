@@ -1238,6 +1238,18 @@ fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
 }
 
 #[test]
+fn eject_of_a_certified_unbatched_bead_is_not_blocked_by_an_unrelated_open_batch() {
+    let t = T::new(LandMode::Queue);
+    let rec = "pr=12\nmembers=sp-a:ta,sp-b:tb\nbatch_id=spira-1\nversion=3\n";
+    t.open_record(rec);
+    t.lc_row("sp-c", "CERTIFIED", "tc", 5);
+    assert_eq!(t.run(&["eject", "sp-c", "--red", "--reason-file", "-"]), 0, "{}", t.err());
+    assert!(t.lib.has("bead_reopen sp-c eject-red "));
+    assert_eq!(fs::read_to_string(t.qfile("open")).unwrap(), rec);
+    assert!(!t.lc.has("abandon-batch"));
+}
+
+#[test]
 fn eject_takes_a_comma_separated_suites_list_and_still_refuses_a_bad_name_in_it() {
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
@@ -2489,6 +2501,18 @@ fn land_local_lands_and_archives_and_delivers_on_spira_lc() {
     assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\""));
     assert!(t.lib.has("bead_close sp-b h1"));
     assert!(t.out().contains("queue.sh land-local: local/main fast-forwarded to h1 (round 1, archived at refs/archive/rounds/1)"));
+}
+
+#[test]
+fn land_local_lands_through_a_forge_divergence_and_an_open_publish() {
+    let t = T::new(LandMode::QueueLocal);
+    t.submitted(&["sp-a"]);
+    local_repo(&t);
+    t.lib.diverged.set(true);
+    fs::write(t.qfile("publish"), "pr=9\n").unwrap();
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert!(t.lib.has("divergence f0 b0"));
+    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h1"));
 }
 
 #[test]

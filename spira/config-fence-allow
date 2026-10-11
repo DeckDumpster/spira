@@ -82,7 +82,6 @@ spira/test-certify.sh
 spira/test-chamber-repo-labels.sh
 spira/test-closed-strand.sh
 spira/test-cockpit-bd-contract.sh
-spira/test-cockpit-funnel.sh
 spira/test-cockpit-queue-section.sh
 spira/test-cockpit-repo-labels.sh
 spira/test-cockpit-runtime-path.sh
@@ -163,10 +162,8 @@ spira/test-queue-ops.sh
 spira/test-queue-owner-mail.sh
 spira/test-queue-owner-refuse.sh
 spira/test-queue-protect.sh
-spira/test-queue-publish.sh
 spira/test-queue-step-eject-race.sh
 spira/test-queue-submit.sh
-spira/test-queue-transition.sh
 spira/test-queue-watch.sh
 spira/test-rebase-branch.sh
 spira/test-reclaim-slay-branch-guard.sh

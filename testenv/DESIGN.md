@@ -704,7 +704,6 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
 | `spira/chamber/*.fayth` `FAYTH_TOOLS` (`Bash(*testenv-batch.sh*)`) and the statute `law-tests-run-only-through-testenv-batch` | names the script | name the binary (`Bash(*testenv *)`) |
 | **delete** `spira/testenv-batch.sh`, `spira/cargo-target-bins-prune.sh`, `spira/test-testenv-batch-with-bins.sh`, `spira/test-cargo-target-bins-prune.sh` (if present) | — | replaced by this crate |
 | `spira/binary-path-fence-allow:11,63` | allows `spira/testenv-batch.sh`, `spira/test-testenv-batch.sh` | remove once deleted |
-| `spira/batch-owner.sh` | sourced by testenv-batch.sh and its test | keep while testenv.sh and tests use it; testenv implements the same protocol |
 | suites that source/grep testenv-batch.sh's text (`test-testenv-batch*.sh`, `test-select.sh` E2-E5, `test-testenv-tmux-isolation.sh` C2, `test-gate-workflow.sh`, `test-aeon-fence.sh` E1-E3, `test-testenv-batch-fence.sh`) | assert on the script | rewrite against `cargo test -p testenv` or the binary's behaviour |
 
 ## 9. Findings

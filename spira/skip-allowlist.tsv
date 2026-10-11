@@ -17,7 +17,6 @@
 # paper over a red.
 test-acceptance-local.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides (T4 host acceptance)
 test-attribute.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
-test-batch-owner.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-cadence-tool.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-install-rehearsal.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-testenv.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides

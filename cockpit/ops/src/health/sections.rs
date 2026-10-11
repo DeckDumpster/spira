@@ -1338,4 +1338,29 @@ mod tests {
         let s = Spec::new(NEXT_BASE_ROWS + 1, 3, false);
         assert_eq!(s.base, 6);
     }
+
+    fn queue_text(snap: &str) -> String {
+        queue_section(&Snapshot::parse(snap), 120).join("\n")
+    }
+
+    #[test]
+    fn queue_pane_renders_funnel_stages_and_red_breakdown() {
+        let t = queue_text(
+            "SP_STRANDED_N='2'\nSP_UNLANDED_N='5'\nSP_QUEUE_DEPTH='1'\nSP_FUNNEL_CERTIFY_N='5'\nSP_FUNNEL_CERTIFY_AGE='2h'\n\
+             SP_FUNNEL_RED_N='5'\nSP_FUNNEL_RED_TIMEOUT='1'\nSP_FUNNEL_RED_REBASE='1'\nSP_FUNNEL_RED_GATE='2'\nSP_FUNNEL_RED_CONFLICT='1'\n",
+        );
+        for want in ["QUEUE", "done  2", "certify", "red  5", "timeout", "no-rebase", "gate", "conflict"] {
+            assert!(t.contains(want), "{want} missing from {t:?}");
+        }
+        assert!(!t.contains("anomaly"));
+    }
+
+    #[test]
+    fn queue_pane_renders_question_marks_never_zero_for_unread_or_absent_funnel() {
+        let unread = queue_text("SP_QUEUE_DEPTH='?'\nSP_FUNNEL_CERTIFY_N='?'\nSP_FUNNEL_RED_N='?'\n");
+        assert!(unread.contains("cannot read the queue"), "{unread:?}");
+        let absent = queue_text("SP_UNLANDED_N='3'\nSP_QUEUE_DEPTH='0'\n");
+        assert!(absent.contains("certify  ?") && absent.contains("red  ?"), "{absent:?}");
+        assert!(!absent.contains("certify  0") && !absent.contains("red  0"), "{absent:?}");
+    }
 }
