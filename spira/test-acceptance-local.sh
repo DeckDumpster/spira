@@ -55,7 +55,8 @@ mkdir -p "$NOT_SPIRA"
 bash "$SCRIPT" "$NOT_SPIRA" >/dev/null 2>&1
 wantrc "tree with no spira/build-tarball.sh -> exit 2" "2" "$?"
 
-timeout 5 podman container exists "$CNAME" 2>/dev/null \
+# batch-job: hang guard only; podman is slow on a loaded host
+timeout 120 podman container exists "$CNAME" 2>/dev/null \
     && bad "usage errors never start a container" "container $CNAME exists" \
     || ok "usage errors never start a container"
 
@@ -207,7 +208,8 @@ echo
 echo "7. Container is torn down after the run either way"
 # ===========================================================================
 
-timeout 5 podman container exists "$CNAME" 2>/dev/null \
+# batch-job: hang guard only; podman is slow on a loaded host
+timeout 120 podman container exists "$CNAME" 2>/dev/null \
     && bad "container torn down after a FAIL run" "container $CNAME still exists" \
     || ok "container torn down after a FAIL run"
 
