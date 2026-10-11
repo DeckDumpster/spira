@@ -5,8 +5,8 @@
 //!
 //! In AUTO, the pane gives up detail only as far as it is forced to, deepest and least important
 //! first: RECENT, HOLDS, REFUSED, BLOCKED and DRIFT thin out; then the state machine drops its idle
-//! transitions, then its empty states, then folds the rest into their states; then NEXT, REWORK
-//! and PIPE shorten; then NOW folds each aeon's output. ROUND and NOW themselves are never cut.
+//! transitions, then its empty states, then folds the rest into their states; then REWORK
+//! shortens; then NOW folds each aeon's output. ROUND and NOW themselves are never cut.
 //! Anything AUTO removed comes back on the next frame once there is room or it is not empty.
 //!
 //! Everything here is pure (view, choices, size in; lines out) so it is tested without a terminal.
@@ -41,9 +41,6 @@ const R_EMPTY_STATE: u16 = 22;
 const R_STATE_BEADS: u16 = 23;
 const R_STATE_FOLD: u16 = 24;
 const R_TERMINAL: u16 = 25;
-const R_NEXT_SOME: u16 = 30;
-const R_NEXT_FEW: u16 = 31;
-const R_NEXT_ALL: u16 = 36;
 const R_NOW_FOLD: u16 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -200,7 +197,7 @@ fn banner(v: &View) -> Vec<String> {
 }
 
 /// The whole pane as a tree, in Ryan's order: DECIDE, ROUND, NOW, STATE MACHINE (with each state's
-/// beads under it; PIPE and REWORK retired 2026-10-09), NEXT, and DRIFT only as an alarm,
+/// beads under it; READY's header and rows carry the claimability NEXT used to show), and DRIFT only as an alarm,
 /// BLOCKED, DRIFT, REFUSED, HOLDS, RECENT.
 pub fn tree(v: &View) -> Vec<Node> {
     let mut out = Vec::new();
@@ -353,7 +350,14 @@ pub fn tree(v: &View) -> Vec<Node> {
                 // (ported from the retired REWORK section, per Ryan 2026-10-09).
                 let kind = if i.note.is_empty() || st.name != "REWORK" { String::new() } else { format!("{YEL}[{}]{R} ", i.note) };
                 let note = if i.note.is_empty() || st.name == "REWORK" { String::new() } else { format!(" {D}· {}{R}", i.note) };
-                let n = Node::new(format!("{sk}/{}", i.id), format!("{:<12} {D}{:>4}{R} {} {kind}{}{note}", i.id, i.age, i.prio, i.title));
+                let claim = if i.claim.is_empty() {
+                    String::new()
+                } else if i.claim.starts_with('#') {
+                    format!("{GRN}{:<4}{R} ", i.claim)
+                } else {
+                    format!("{YEL}{}{R} ", i.claim)
+                };
+                let n = Node::new(format!("{sk}/{}", i.id), format!("{claim}{:<12} {D}{:>4}{R} {} {kind}{}{note}", i.id, i.age, i.prio, i.title));
                 if i.why.is_empty() {
                     n
                 } else {
@@ -364,7 +368,15 @@ pub fn tree(v: &View) -> Vec<Node> {
         moves.extend(ranked(beads, &[(3, R_STATE_BEADS_MORE), (0, R_STATE_BEADS)]));
         let c = if st.name == "REWORK" { YEL } else { "" };
         let detail = if st.detail.is_empty() { String::new() } else { format!("  {}", st.detail) };
-        let mut n = Node::new(sk, format!("{c}{B}{:<12}{R}{B}{:>4}{R}{detail}{}", st.name, st.count, dot(st.red))).kids(moves).fold(R_STATE_FOLD);
+        let head = if st.name == "READY" {
+            let m = if v.next_unknown { format!("{YEL}?{R}") } else { format!("{B}{}{R}", v.next_count) };
+            let rest = st.detail.split(" · ").filter(|p| !p.starts_with("claimable ")).collect::<Vec<_>>().join(" · ");
+            let rest = if rest.is_empty() { String::new() } else { format!("  {rest}") };
+            format!("{B}{:<12}{R}{B}{:>4}{R} ready · {m} claimable{rest}{}", st.name, st.count, dot(st.red))
+        } else {
+            format!("{c}{B}{:<12}{R}{B}{:>4}{R}{detail}{}", st.name, st.count, dot(st.red))
+        };
+        let mut n = Node::new(sk, head).kids(moves).fold(R_STATE_FOLD);
         if st.count == 0 && !st.red && !st.no_rework_exit {
             n = n.elide(R_EMPTY_STATE);
         }
@@ -372,19 +384,6 @@ pub fn tree(v: &View) -> Vec<Node> {
     }
     states.push(Node::new("state/terminal", format!("{D}terminal 24h  {}{R}", v.terminal)).elide(R_TERMINAL));
     out.push(Node::new("state", format!("{B}STATES{R}  {D}counts now · moves per hour{R}")).kids(states));
-
-    let next = v.next.iter().map(|i| Node::new(format!("next/{}", i.id), format!("{} {:<12} {}", i.prio, i.id, i.title))).collect();
-    out.push(
-        Node::new(
-            "next",
-            if v.next_unknown {
-                format!("{B}NEXT{R}   {YEL}unknown{R} {D}— the claim tool has not answered{R}")
-            } else {
-                format!("{B}NEXT{R}   {B}{}{R} claimable {D}(the claim tool's own set){R}", v.next_count)
-            },
-        )
-            .kids(ranked(next, &[(5, R_NEXT_SOME), (2, R_NEXT_FEW), (0, R_NEXT_ALL)])),
-    );
 
     let blocked = v.blocked.iter().map(|i| Node::new(format!("blocked/{}", i.id), format!("{} {:<26} {}", i.prio, i.note, i.title))).collect();
     if !v.blocked.is_empty() {
