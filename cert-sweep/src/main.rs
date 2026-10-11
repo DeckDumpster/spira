@@ -9,6 +9,7 @@
 //! per suite going red, flipping or losing its verdict. `seed` records a known-green run as
 //! history so the first red has a last-green to point at.
 
+use cert_sweep::runner_declined;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -251,6 +252,10 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
 
     let (outcomes, text) = rt.run(&tip, &picks, start)?;
     if outcomes.is_empty() {
+        if runner_declined(&text) {
+            println!("cert-sweep: the runner declined ({}); deferred to the next tick", runner_verdict(&text).unwrap_or_default());
+            return Ok(ExitCode::SUCCESS);
+        }
         let why = match runner_verdict(&text) {
             Some(v) => format!("the runner returned no results: {v}"),
             None => "the runner returned no results".into(),
