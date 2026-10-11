@@ -1959,6 +1959,7 @@ pub fn file_judgement(env: &Env, repo: &Repo, j: &batcher::core::Judgement, memb
             .arg("batcher")
             .arg("--repo")
             .arg(&repo.name)
+            .arg("--harness-title")
             .arg("--body-file")
             .arg(&tmp)
             .arg("--json"),
@@ -1993,7 +1994,7 @@ pub fn file_flip_bead(env: &Env, repo: &Repo, suite: &str, round_branch: &str) -
     let tmp = tmp_dir.join(format!("flip-{}-{}.txt", repo.name, now()));
     fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = run(
-        Command::new("bead.sh").args(["file", &title, "--for", "batcher", "--repo", &repo.name, "--body-file"]).arg(&tmp).arg("--json"),
+        Command::new("bead.sh").args(["file", &title, "--for", "batcher", "--repo", &repo.name, "--harness-title", "--body-file"]).arg(&tmp).arg("--json"),
         "bead.sh file",
     );
     let _ = fs::remove_file(&tmp);
