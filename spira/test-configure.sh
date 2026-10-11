@@ -143,7 +143,7 @@ echo "every key declared — non-trap keys are active lines and the file resolve
 _db_val="$(_active_key db)"
 [ -n "$_db_val" ] && ok "a non-trap key (db) is an active line" \
                    || bad "db missing as active line" "in: $OUT"
-_res_err="$(spira-config resolve --sh-all "$OUT" 2>&1 >/dev/null)"; _res_rc=$?
+_res_err="$(SPIRA_HOME="$HERE" SPIRA_REPO="$(dirname "$HERE")" spira-config resolve --sh-all "$OUT" 2>&1 >/dev/null)"; _res_rc=$?
 iszero "spira-config resolves the generated file with no key missing" "$_res_rc"
 [ "$_res_rc" -eq 0 ] || printf '%s\n' "$_res_err" >&2
 

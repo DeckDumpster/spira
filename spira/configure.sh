@@ -196,7 +196,7 @@ _init_args=(
 )
 [ -n "$_maxlive" ] && _init_args+=(--max_live_aeons "$_maxlive")
 mkdir -p "$(dirname "$_out")"
-spira-config init "${_init_args[@]}" >/dev/null </dev/null \
+SPIRA_HOME="$HERE" spira-config init "${_init_args[@]}" >/dev/null </dev/null \
     || { rm -f "$_out"; printf 'configure: ERROR: could not write %s\n' "$_out" >&2; exit 1; }
 [ -n "$_dolt" ] || spira-config set spira.dolt_data "" "$_out" >/dev/null \
     || { rm -f "$_out"; printf 'configure: ERROR: could not write dolt_data\n' >&2; exit 1; }
