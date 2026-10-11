@@ -340,6 +340,10 @@ impl Exec for ProcessExec {
         let started = std::time::Instant::now();
         let (status, out, err) = run_capture(&mut self.command(command, now_ms)?, COMMAND_DEADLINE)?;
         self.log(command, now_ms, &format!("{status} in {}ms", started.elapsed().as_millis()), &out, &err);
+        if status.success() && (command.contains("spira-config set") || command.contains("spira-config unset")) {
+            std::fs::remove_file(self.world.join(CONF_ENV)).map_err(|e| e.to_string())?;
+            resolve_conf(&self.world, self.epoch)?;
+        }
         status.code().ok_or_else(|| format!("{command}: {status}"))
     }
 }
