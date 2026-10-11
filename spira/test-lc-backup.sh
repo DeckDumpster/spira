@@ -14,12 +14,14 @@ echo "test-lc-backup.sh"
 command -v dolt >/dev/null 2>&1 || skip "no dolt on PATH"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 export DOLT_ROOT_PATH="$TMP/doltroot"; mkdir -p "$DOLT_ROOT_PATH"
-dolt config --global --add user.name t >/dev/null; dolt config --global --add user.email t@t >/dev/null
+# batch-job: fixture setup against a throwaway local store, no remote
+dlt() { dolt "$@"; }
+dlt config --global --add user.name t >/dev/null; dlt config --global --add user.email t@t >/dev/null
 
 DATA="$TMP/data"; RUN="$TMP/run"; DEST="$TMP/dest"; mkdir -p "$DATA/spira_lifecycle" "$RUN" "$DEST"
-( cd "$DATA/spira_lifecycle" && dolt init >/dev/null \
-    && dolt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); CREATE TABLE audit (id INT PRIMARY KEY); INSERT INTO bead VALUES (1),(2),(3); INSERT INTO audit VALUES (1);" \
-    && dolt sql -q "CALL DOLT_COMMIT('-Am','seed')" >/dev/null ) || bail "fixture store"
+( cd "$DATA/spira_lifecycle" && dlt init >/dev/null \
+    && dlt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); CREATE TABLE audit (id INT PRIMARY KEY); INSERT INTO bead VALUES (1),(2),(3); INSERT INTO audit VALUES (1);" \
+    && dlt sql -q "CALL DOLT_COMMIT('-Am','seed')" >/dev/null ) || bail "fixture store"
 
 lcb() {
     SPIRA_TOML="$(tl_layer SPIRA_RUN="$RUN" SPIRA_DOLT_DATA="$DATA" SPIRA_LC_BACKUP_URL="${URL-file://$DEST}" \
@@ -42,19 +44,19 @@ printf 'junk\n' > "$RUN/lc-backup.ok"; lcb age >/dev/null; wantrc "unreadable st
 rm -f "$RUN/lc-backup.ok"
 
 echo; echo "run, then drill — uncommitted rows are carried, counts identical:"
-( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (4)" )
+( cd "$DATA/spira_lifecycle" && dlt sql -q "INSERT INTO bead VALUES (4)" )
 out="$(lcb run)"; rc=$?; wantrc "run succeeds" 0 $rc;  [ $rc = 0 ] || bad "run output: ${out//$'\n'/ | }"; want "run reports the upload" uploaded "$out"
 obj="$(ls "$DEST"/spira_lifecycle/*.tar.* 2>/dev/null | head -1)"
 [ -s "$obj" ] && ok "one tar object lands under <db>/<stamp>" || bad "one tar object lands under <db>/<stamp>"
 lcb age >/dev/null; wantrc "age green after run" 0 $?
 out="$(lcb drill)"; rc=$?; wantrc "drill ok on identical stores" 0 $rc; want "drill reports tables" "2 table(s) identical" "$out"
-( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (5)" && dolt sql -q "CALL DOLT_COMMIT('-Am','later')" >/dev/null )
+( cd "$DATA/spira_lifecycle" && dlt sql -q "INSERT INTO bead VALUES (5)" && dlt sql -q "CALL DOLT_COMMIT('-Am','later')" >/dev/null )
 lcb drill >/dev/null; wantrc "drill compares AS OF the backed-up commit, so later live writes are not drift" 0 $?
 lcb drill "$obj" >/dev/null; wantrc "drill restores a given object" 0 $?
 
 echo; echo "drill — positive control: a snapshot of another store is red:"
-mkdir -p "$TMP/other" && ( cd "$TMP/other" && mkdir spira_lifecycle snap && cd spira_lifecycle && dolt init >/dev/null \
-    && dolt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); CALL DOLT_COMMIT('-Am','x')" >/dev/null && dolt sql -q "CALL DOLT_BACKUP('sync-url','file://$TMP/other/snap')" >/dev/null \
+mkdir -p "$TMP/other" && ( cd "$TMP/other" && mkdir spira_lifecycle snap && cd spira_lifecycle && dlt init >/dev/null \
+    && dlt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); CALL DOLT_COMMIT('-Am','x')" >/dev/null && dlt sql -q "CALL DOLT_BACKUP('sync-url','file://$TMP/other/snap')" >/dev/null \
     && tar -C "$TMP/other/snap" -czf "$TMP/other.tar.gz" . )
 out="$(lcb drill "$TMP/other.tar.gz")"; rc=$?; wantrc "drill red on another store's snapshot" 1 $rc; want "drill names the head mismatch" "stamped head" "$out"
 

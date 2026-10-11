@@ -55,6 +55,7 @@ _lcb_refuse_same_disk() {
     fi
 }
 
+# batch-job: snapshot and restore of the whole store run for as long as the store is large
 _lcb_sql() { ( cd "$(_lcb_db_dir)" && dolt sql "$@" ); }
 
 _lcb_head() { _lcb_sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null | tail -n +2; }
@@ -74,6 +75,7 @@ _lcb_upload() {
     sum="$(sha256sum "$file" | cut -d' ' -f1)"
     if [ -n "${AWS_ENDPOINT_URL_S3:-}" ]; then host="${AWS_ENDPOINT_URL_S3%/}/$bucket"
     else host="https://$bucket.s3.$region.amazonaws.com"; fi
+    # batch-job: the snapshot upload is bounded by size, not by a round trip
     curl -sS --fail-with-body --max-time 1500 -X PUT -T "$file" \
         --aws-sigv4 "aws:amz:$region:s3" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
         ${AWS_SESSION_TOKEN:+-H "x-amz-security-token: $AWS_SESSION_TOKEN"} \
@@ -143,8 +145,10 @@ cmd_drill() {
     scratch="$(mktemp -d "${TMPDIR:-/tmp}/lc-backup-drill.XXXXXX")" || return 1
     mkdir "$scratch/snap" && tar -C "$scratch/snap" -xaf "$tarball" \
         || { echo "lc-backup: drill: cannot unpack $tarball" >&2; rm -rf "$scratch"; return 1; }
+    # batch-job: restoring a snapshot into the scratch dir
     ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$SPIRA_LC_BACKUP_DB" ) >"$scratch/restore.log" 2>&1 \
         || { echo "lc-backup: drill: restore failed: $(cat "$scratch/restore.log")" >&2; rm -rf "$scratch"; return 1; }
+    # batch-job: reads of the restored scratch copy
     live_head="$( cd "$scratch/$SPIRA_LC_BACKUP_DB" && dolt sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" | tail -n +2 )"
     [ "$live_head" = "$head" ] \
         || { echo "lc-backup: drill: restored head ${live_head:-?} is not the stamped head $head" >&2; rm -rf "$scratch"; return 1; }
@@ -152,6 +156,7 @@ cmd_drill() {
     [ -n "$tables" ] || { echo "lc-backup: drill: live store lists no tables" >&2; rm -rf "$scratch"; return 1; }
     for tbl in $tables; do
         live="$(_lcb_sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" | tail -n +2)"
+        # batch-job: reads of the restored scratch copy
         restored="$( cd "$scratch/$SPIRA_LC_BACKUP_DB" && dolt sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\`" | tail -n +2 )"
         if [ -z "$live" ] || [ "$live" != "$restored" ]; then
             echo "lc-backup: drill: $tbl live ${live:-?} != restored ${restored:-?}" >&2; rc=1
