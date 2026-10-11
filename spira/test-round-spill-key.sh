@@ -47,7 +47,7 @@ rm -f "$KEY.expires"; fresh
 want "no recorded expiry is said" "no expiry recorded" "$(rsk ec2 pass)"
 
 fresh; echo "$((now + 86400))" > "$KEY.expires"
-rsk ec2 watch --interval 1 --ticks 1 --spill ec2 >/dev/null
+rsk ec2 watch --interval 1 --ticks 1 >/dev/null
 rsk ec2 health >/dev/null; is "health passes after a poll" "0" "$?"
 echo "ok 1 100 1" > "$TMP/run/watchd/round-spill-key.health"
 rsk ec2 health >/dev/null; is "health fails once the poll is stale" "1" "$?"

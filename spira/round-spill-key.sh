@@ -3,13 +3,13 @@
 # round-spill-key.sh — warns before the round-spill tailscale auth key expires, as a watchd daemon.
 #
 #   round-spill-key.sh pass                              one check
-#   round-spill-key.sh watch [--interval S] [--ticks N] [--spill V]  loop forever (or N times)
+#   round-spill-key.sh watch [--interval S] [--ticks N]  loop forever (or N times)
 #   round-spill-key.sh health                            non-zero when the loop stopped polling
 #
 # The key file is SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE; its expiry (epoch seconds) is recorded
 # beside it in <file>.expires, written by whoever pastes the key. A spilled pass cannot join the
 # tailnet with an expired key, so the warning comes SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS before.
-# --spill only carries the row's gate (an empty placeholder turns the row off). Silent while SPIRA_ROUND_VM_SPILL is not ec2. Each distinct condition is said once.
+# Silent while SPIRA_ROUND_VM_SPILL is not ec2. Each distinct condition is said once.
 #
 # covers: spira/round-spill-key.sh spira/watchers spira/conf.d/SPIRA_ROUND_VM_EC2_*
 set -uo pipefail
@@ -71,7 +71,6 @@ cmd_watch() {
         case "$1" in
             --interval) interval="${2:?--interval needs a value}"; shift 2 ;;
             --ticks)    ticks="${2:?--ticks needs a value}"; shift 2 ;;
-            --spill)    shift 2 ;;
             *) echo "round-spill-key.sh: watch: unknown argument '$1'" >&2; return 2 ;;
         esac
     done
