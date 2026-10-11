@@ -59,3 +59,10 @@ fn every_real_registry_key_resolves_without_error() {
     }
     assert!(!resolved.values.keys().any(|k| k == "SPIRA_HOME" || k == "SPIRA_REPO"));
 }
+
+#[test]
+fn groom_ask_label_is_a_registered_key_defaulting_to_groom_asked() {
+    let registry = spira_config::registry::load(&conf_d()).unwrap();
+    let key = registry.get("SPIRA_GROOM_ASK_LABEL").expect("SPIRA_GROOM_ASK_LABEL is a registered conf key");
+    assert_eq!(key.default_expr(), Some("groom-asked"));
+}
