@@ -286,7 +286,7 @@ fn notify_aeons(notifier: &mut spira_world::notice::Notifier, what: &str, elapse
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--reboot] [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
@@ -618,9 +618,14 @@ fn cmd_drain(args: &[String]) -> i32 {
     let mut dtimeout: u64 = env::var("SPIRA_DRAIN_TTL").ok().and_then(|v| v.parse().ok()).unwrap_or(1800);
     let mut dfor: u64 = dtimeout;
     let mut dslay = false;
+    let mut reboot = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--reboot" => {
+                reboot = true;
+                i += 1;
+            }
             "--timeout" => {
                 dtimeout = args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or(1800);
                 i += 2;
@@ -649,6 +654,10 @@ fn cmd_drain(args: &[String]) -> i32 {
             epoch_secs() + dfor
         ),
     );
+    if reboot {
+        let marker = spira_world::reboot_marker().unwrap_or_else(|e| die(&e));
+        let _ = std::fs::write(&marker, format!("{}\nplanned reboot; lift with: cockpit.sh resume\n", now_iso()));
+    }
     println!("spira: draining — no new aeons; loop, landing and reaping continue");
 
     let limit = if dslay { dtimeout } else { dfor };
@@ -705,6 +714,7 @@ fn cmd_drain(args: &[String]) -> i32 {
 }
 
 fn cmd_resume() -> i32 {
+    let _ = std::fs::remove_file(spira_world::reboot_marker().unwrap_or_else(|e| die(&e)));
     if drain_stamp_or_die().is_file() {
         let _ = std::fs::remove_file(drain_stamp_or_die());
         println!("spira: summons resumed");
@@ -722,6 +732,9 @@ fn cmd_status() -> i32 {
         if let Some(l2) = lines.next() {
             println!("{l2}");
         }
+    }
+    if spira_world::reboot_marker().unwrap_or_else(|e| die(&e)).is_file() {
+        println!("spira: REBOOT-DRAIN — drained for a planned reboot; lift with: cockpit.sh resume");
     }
     let instance = instance_or_die();
     if halt_stamp_or_die().is_file() {

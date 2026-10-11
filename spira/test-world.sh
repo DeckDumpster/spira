@@ -257,6 +257,16 @@ want "resume reports it" "summons resumed" "$out"
 out="$(world status)"
 nowant "status stops saying DRAINING after resume" "DRAINING" "$out"
 
+world drain --reboot >/dev/null
+[ -f "$RUN/world.reboot-drain" ] && ok "drain --reboot writes the reboot marker" \
+                                 || bad "drain --reboot writes the reboot marker" "no $RUN/world.reboot-drain"
+want "status names the reboot drain" "REBOOT-DRAIN" "$(world status)"
+world resume >/dev/null
+[ -f "$RUN/world.reboot-drain" ] && bad "resume removes the reboot marker" "marker still present" \
+                                 || ok "resume removes the reboot marker"
+nowant "plain drain leaves no reboot marker" "REBOOT-DRAIN" "$(world drain >/dev/null; world status)"
+world resume >/dev/null
+
 out="$(world resume)"
 want "resume on a world that was not draining says so" "not draining" "$out"
 
