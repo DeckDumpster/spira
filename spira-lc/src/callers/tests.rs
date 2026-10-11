@@ -173,6 +173,19 @@ fn a_manual_hold_with_a_bare_bead_id_or_no_reason_is_refused_and_a_snooze_is_a_w
 }
 
 #[test]
+fn a_manual_hold_carries_its_reason_and_review_date_in_the_event() {
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Ready);
+    let a = go(&mut f, "hold", &["sp-r", "manual", "operator", "--reason", "waits on tenancy", "--review-by", "2026-10-20"]);
+    assert_eq!(a.code, APPLIED, "{a:?}");
+    assert!(f.events[0].5.contains(r#""detail":"review-by:2026-10-20 waits on tenancy""#), "{}", f.events[0].5);
+    assert_eq!(f.events[0].4, "operator");
+    let bad = go(&mut f, "hold", &["sp-r", "manual", "--reason", "x", "--review-by", "next week"]);
+    assert_eq!(bad.code, REFUSED);
+    assert_eq!(f.events.len(), 1, "a malformed date sends nothing");
+}
+
+#[test]
 fn hold_suspends_without_moving_state_and_unhold_restores_it() {
     let mut f = Fake::default();
     f.bead("sp-h", BeadState::Working);

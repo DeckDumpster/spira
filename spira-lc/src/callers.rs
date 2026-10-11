@@ -93,11 +93,24 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
     let need = |n: usize| args.len() >= n && args[..n].iter().all(|s| !s.is_empty());
     match verb {
         "hold" => {
-            if !need(2) {
-                return usage("hold <bead-id> <poison|ask|wait|manual> [cause] [actor]\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"");
+            let (pos, reason, review_by) = match hold_flags(args) {
+                Ok(x) => x,
+                Err(a) => return a,
+            };
+            if pos.len() < 2 || pos[..2].iter().any(|s| s.is_empty()) {
+                return usage("hold <bead-id> <poison|ask|wait|manual> [cause] [actor] [--reason <text>] [--review-by <ISO date>]\n  a timed snooze is: hold <bead-id> wait \"snooze-until:<epoch seconds>[ explanation]\"\n  with --reason the cause is the flag and the third positional is the actor");
             }
-            let actor = actor_or(args.get(3), "sentinel");
-            hold(m, &a(0), &a(1), &a(2), &actor)
+            let at = |i: usize| pos.get(i).cloned().unwrap_or_default();
+            let (cause, actor_ix) = match reason {
+                Some(r) => (r, 2),
+                None => (at(2), 3),
+            };
+            let cause = match review_by {
+                Some(d) if cause.is_empty() => format!("{REVIEW_BY_PREFIX}{d}"),
+                Some(d) => format!("{REVIEW_BY_PREFIX}{d} {cause}"),
+                None => cause,
+            };
+            hold(m, &at(0), &at(1), &cause, &actor_or(pos.get(actor_ix), "sentinel"))
         }
         "unhold" => {
             if !need(2) {
@@ -242,6 +255,42 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
         "disposition" => disposition(m, args),
         other => usage(&format!("unknown caller verb {other:?}")),
     }
+}
+
+/// The reason prefix the bead-sweep reads as a manual hold's review date.
+const REVIEW_BY_PREFIX: &str = "review-by:";
+
+type HoldArgs = (Vec<String>, Option<String>, Option<String>);
+
+/// Split `--reason` / `--review-by` out of a hold's argv; what remains is positional.
+fn hold_flags(args: &[String]) -> Result<HoldArgs, Answer> {
+    let (mut pos, mut reason, mut review_by) = (Vec::new(), None, None);
+    let mut it = args.iter();
+    while let Some(x) = it.next() {
+        match x.as_str() {
+            "--reason" | "--review-by" => {
+                let Some(v) = it.next().filter(|v| !v.is_empty()) else {
+                    return Err(usage(&format!("hold: {x} needs a value")));
+                };
+                if x == "--reason" {
+                    reason = Some(v.clone());
+                } else if !is_iso_date(v) {
+                    return Err(Answer { code: REFUSED, stderr: format!("lc: --review-by {v:?} is not an ISO date (YYYY-MM-DD[THH:MM:SSZ]); no hold was applied\n"), ..Default::default() });
+                } else {
+                    review_by = Some(v.clone());
+                }
+            }
+            _ => pos.push(x.clone()),
+        }
+    }
+    Ok((pos, reason, review_by))
+}
+
+fn is_iso_date(v: &str) -> bool {
+    let b = v.as_bytes();
+    b.len() >= 10
+        && b[..10].iter().enumerate().all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() })
+        && !v.contains(char::is_whitespace)
 }
 
 fn hold_event_exists(m: &mut dyn Machine, id: &str, seq: &str) -> bool {
