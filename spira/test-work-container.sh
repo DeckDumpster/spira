@@ -152,6 +152,7 @@ tl_config SPIRA_LC_SOCKET="$SOCK"
 # ── one real bd bead, filed through bead.sh's own contract, and its lifecycle twin ───
 BID="$(bead.sh file "aeon semantic layer container-tier fixture" --for builder --repo testrepo 2>"$TMP/file.err")"
 [ -n "$BID" ] || bail "bead.sh file did not return an id: $(cat "$TMP/file.err")"
+[ ! -s "$TMP/file.err" ] || echo "# bead.sh file stderr: $(cat "$TMP/file.err")"
 seed_bead "$BID"
 
 work_as() {   # work_as <bead-id> <verb> [args...]
