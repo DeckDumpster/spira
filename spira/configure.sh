@@ -34,7 +34,7 @@
 #   CONFIGURE_OUT             output file (default: ${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml)
 #   CONFIGURE_PROD            SPIRA_PROD
 #   CONFIGURE_MAX_AEONS       SPIRA_MAX_AEONS
-#   CONFIGURE_MAX_LIVE_AEONS  SPIRA_MAX_LIVE_AEONS (empty string = no fleet ceiling)
+#   CONFIGURE_MAX_LIVE_AEONS  SPIRA_MAX_LIVE_AEONS (empty string = the registered default)
 #   CONFIGURE_LOOM_ADDR       SPIRA_LOOM_ADDR
 #   CONFIGURE_DOLT_DATA       SPIRA_DOLT_DATA (empty string = do not manage the server)
 #
@@ -153,7 +153,7 @@ fi
 if [ -z "$_maxlive_given" ]; then
     _maxlive="$(_ask \
         "SPIRA_MAX_LIVE_AEONS — whole-fleet ceiling (pool + lane fayths combined).
-  Empty means no ceiling (the shipped default). Set it when your API account
+  Empty takes the registered default. Set it when your API account
   limits how many parallel sessions you can run across ALL personas." \
         SPIRA_MAX_LIVE_AEONS "$(_def SPIRA_MAX_LIVE_AEONS)")"
 fi

@@ -121,11 +121,9 @@ is "SPIRA_PROD value matches CONFIGURE_PROD" "$FAKE_PROD" "$_prod_val"
 _max_aeons_val="$(_active_key max_aeons)"
 is "SPIRA_MAX_AEONS value is 2 (what we passed)" "2" "$_max_aeons_val"
 
-# SPIRA_MAX_LIVE_AEONS was set to "" — empty means no ceiling, so it is omitted
-_max_live_line="$(grep -v '^[[:space:]]*#' "$OUT" 2>/dev/null | \
-    grep -i "max_live_aeons" | head -1 || true)"
-[ -z "$_max_live_line" ] && ok "SPIRA_MAX_LIVE_AEONS empty is omitted (no ceiling)" \
-                          || bad "SPIRA_MAX_LIVE_AEONS written despite empty" "$_max_live_line"
+# SPIRA_MAX_LIVE_AEONS was set to "" — nothing answered it, so the registered default is declared
+_max_live_val="$(_active_key max_live_aeons)"
+is "SPIRA_MAX_LIVE_AEONS empty takes the registered default" "2" "$_max_live_val"
 
 _loom_val="$(_active_key loom_addr)"
 is "SPIRA_LOOM_ADDR value is 127.0.0.1:8788" "127.0.0.1:8788" "$_loom_val"
