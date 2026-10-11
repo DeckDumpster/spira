@@ -363,6 +363,19 @@ else
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" round
 fi
 rc=$?
+# THE BARE LANE: the bare-host suites SKIP inside the corpus container (it has no podman), so
+# the VM itself runs them, with the shared script the publish gate runs. Their results replace
+# the corpus's skips; a red makes the round red.
+bare_rdir="$HOME/round-work/.runtime/spira/batch-results"
+bare_leaf="$(find "$bare_rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
+bare_leaf="${bare_leaf:-$bare_rdir}"
+if [ -n "$suites" ]; then bare_sel=(--selected "$suites"); else bare_sel=(--suites all); fi
+bash spira/bare-suites.sh "${bare_sel[@]}" --results "$bare_leaf" >&2
+bare_rc=$?
+if [ "$bare_rc" -ne 0 ]; then
+    echo "round-vm: BARE-SUITES: FAIL (rc=$bare_rc)" >&2
+    [ "$rc" -eq 0 ] && rc=1
+fi
 if kill -0 "$unit_pid" 2>/dev/null; then echo "round-vm: UNIT-TESTS: waiting (suites done, unit job still running)" >&2; fi
 wait "$unit_pid"; unit_rc=$?
 wait "$stream_pid"
@@ -1404,6 +1417,18 @@ mod tests {
         assert!(parse_run_args(&args(&["/t", "--bogus"])).unwrap_err().contains("unknown option: --bogus"));
         assert!(parse_run_args(&args(&["/t", "--maxpar", "x"])).unwrap_err().contains("--maxpar"));
         assert!(parse_run_args(&args(&["/t", "--suites"])).unwrap_err().contains("needs a value"));
+    }
+
+    #[test]
+    fn the_round_runs_the_bare_host_suites_on_the_vm_after_the_corpus() {
+        let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        let bare = REMOTE_SCRIPT.find("spira/bare-suites.sh").unwrap();
+        let unit_wait = REMOTE_SCRIPT.find("wait \"$unit_pid\"").unwrap();
+        assert!(corpus < bare && bare < unit_wait, "the bare lane runs after the corpus, beside the unit tests");
+        let lane = &REMOTE_SCRIPT[bare..unit_wait];
+        assert!(lane.contains("--results \"$bare_leaf\""), "results land beside the corpus's");
+        assert!(lane.contains("[ \"$rc\" -eq 0 ] && rc=1"), "a red bare suite makes the round red");
+        assert!(REMOTE_SCRIPT.contains("--selected \"$suites\"") && REMOTE_SCRIPT.contains("--suites all"));
     }
 
     #[test]
