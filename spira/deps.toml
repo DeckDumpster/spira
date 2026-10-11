@@ -152,7 +152,7 @@ version_probe = "jq --version"
 [[dep]]
 name = "zstd"
 tier = "optional"
-purpose = "compressing archived transcripts; gzip is used when it is absent"
+purpose = "compressing archived transcripts and the lifecycle store backup; gzip is used when it is absent"
 version_min = ""
 version_probe = "zstd --version"
 

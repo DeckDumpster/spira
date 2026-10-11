@@ -84,22 +84,24 @@ _lcb_upload() {
 cmd_run() {
     _lcb_refuse_unconfigured || return 1
     _lcb_refuse_same_disk || return 1
-    local out head work stage tarball prefix stamp key
+    local out head work stage tarball prefix stamp key ext
     out="$(_lcb_sql -q "CALL DOLT_COMMIT('-Am', 'lc-backup $(date -u +%Y-%m-%dT%H:%M:%SZ)')" 2>&1)" \
         || case "$out" in *"nothing to commit"*) ;; *) echo "lc-backup: commit failed: $out" >&2; return 1 ;; esac
-    work="$SPIRA_RUN/lc-backup"; stage="$work/stage"; tarball="$work/latest.tar.zst"
+    work="$SPIRA_RUN/lc-backup"; stage="$work/stage"
+    if command -v zstd >/dev/null 2>&1; then ext=zst; else ext=gz; fi
+    tarball="$work/latest.tar.$ext"
     rm -rf "$stage" && mkdir -p "$stage" || return 1
     out="$(_lcb_sql -q "CALL DOLT_BACKUP('sync-url', 'file://$stage')" 2>&1)" \
         || { echo "lc-backup: local snapshot failed: $out" >&2; return 1; }
     head="$(_lcb_head)"
     [ -n "$head" ] || { echo "lc-backup: snapshot taken but cannot read the store's head commit" >&2; return 1; }
-    tar -C "$stage" -cf - . | zstd -q -f -o "$tarball.tmp" && mv "$tarball.tmp" "$tarball" \
+    rm -f "$work"/latest.tar.* && tar -C "$stage" -caf "$tarball.tmp" --format=posix . 2>/dev/null && mv "$tarball.tmp" "$tarball" \
         || { echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
     rm -rf "$stage"
     prefix="${SPIRA_LC_BACKUP_URL#*://}"; prefix="${prefix#*/}"; [ "$prefix" = "${SPIRA_LC_BACKUP_URL#*://}" ] && prefix=""
     prefix="${prefix%/}"; [ -z "$prefix" ] || prefix="$prefix/"
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    key="$prefix$SPIRA_LC_BACKUP_DB/$stamp.tar.zst"
+    key="$prefix$SPIRA_LC_BACKUP_DB/$stamp.tar.$ext"
     _lcb_upload "$tarball" "$key" || { echo "lc-backup: upload of $key failed" >&2; return 1; }
     printf '%s %s\n' "$(date +%s)" "$head" > "$STAMP.tmp" && mv "$STAMP.tmp" "$STAMP"
     echo "lc-backup: uploaded $SPIRA_LC_BACKUP_DB at $head as $key to $SPIRA_LC_BACKUP_URL"
@@ -133,13 +135,13 @@ cmd_age() {
 cmd_drill() {
     [ -n "$SPIRA_DOLT_DATA" ] && [ -d "$(_lcb_db_dir)/.dolt" ] \
         || { echo "lc-backup: no dolt database at $(_lcb_db_dir)" >&2; return 1; }
-    local tarball="${1:-$SPIRA_RUN/lc-backup/latest.tar.zst}"
+    local tarball="${1:-$(ls "$SPIRA_RUN"/lc-backup/latest.tar.* 2>/dev/null | head -1)}"
     local t head scratch rc=0 tables tbl live restored live_head
     [ -r "$tarball" ] || { echo "lc-backup: drill: no snapshot at $tarball" >&2; return 1; }
     [ -r "$STAMP" ] || { echo "lc-backup: drill: no stamp — nothing has been backed up" >&2; return 1; }
     read -r t head < "$STAMP"
     scratch="$(mktemp -d "${TMPDIR:-/tmp}/lc-backup-drill.XXXXXX")" || return 1
-    mkdir "$scratch/snap" && zstd -dc -q "$tarball" | tar -C "$scratch/snap" -xf - \
+    mkdir "$scratch/snap" && tar -C "$scratch/snap" -xaf "$tarball" \
         || { echo "lc-backup: drill: cannot unpack $tarball" >&2; rm -rf "$scratch"; return 1; }
     ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$SPIRA_LC_BACKUP_DB" ) >"$scratch/restore.log" 2>&1 \
         || { echo "lc-backup: drill: restore failed: $(cat "$scratch/restore.log")" >&2; rm -rf "$scratch"; return 1; }

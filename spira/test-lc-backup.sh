@@ -44,8 +44,8 @@ rm -f "$RUN/lc-backup.ok"
 echo; echo "run, then drill — uncommitted rows are carried, counts identical:"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (4)" )
 out="$(lcb run)"; rc=$?; wantrc "run succeeds" 0 $rc;  [ $rc = 0 ] || bad "run output: ${out//$'\n'/ | }"; want "run reports the upload" uploaded "$out"
-obj="$(ls "$DEST"/spira_lifecycle/*.tar.zst 2>/dev/null | head -1)"
-[ -s "$obj" ] && ok "one tar.zst object lands under <db>/<stamp>" || bad "one tar.zst object lands under <db>/<stamp>"
+obj="$(ls "$DEST"/spira_lifecycle/*.tar.* 2>/dev/null | head -1)"
+[ -s "$obj" ] && ok "one tar object lands under <db>/<stamp>" || bad "one tar object lands under <db>/<stamp>"
 lcb age >/dev/null; wantrc "age green after run" 0 $?
 out="$(lcb drill)"; rc=$?; wantrc "drill ok on identical stores" 0 $rc; want "drill reports tables" "2 table(s) identical" "$out"
 ( cd "$DATA/spira_lifecycle" && dolt sql -q "INSERT INTO bead VALUES (5)" && dolt sql -q "CALL DOLT_COMMIT('-Am','later')" >/dev/null )
@@ -55,8 +55,8 @@ lcb drill "$obj" >/dev/null; wantrc "drill restores a given object" 0 $?
 echo; echo "drill — positive control: a snapshot of another store is red:"
 mkdir -p "$TMP/other" && ( cd "$TMP/other" && mkdir spira_lifecycle snap && cd spira_lifecycle && dolt init >/dev/null \
     && dolt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); CALL DOLT_COMMIT('-Am','x')" >/dev/null && dolt sql -q "CALL DOLT_BACKUP('sync-url','file://$TMP/other/snap')" >/dev/null \
-    && tar -C "$TMP/other/snap" -cf - . | zstd -q -o "$TMP/other.tar.zst" )
-out="$(lcb drill "$TMP/other.tar.zst")"; rc=$?; wantrc "drill red on another store's snapshot" 1 $rc; want "drill names the head mismatch" "stamped head" "$out"
+    && tar -C "$TMP/other/snap" -czf "$TMP/other.tar.gz" . )
+out="$(lcb drill "$TMP/other.tar.gz")"; rc=$?; wantrc "drill red on another store's snapshot" 1 $rc; want "drill names the head mismatch" "stamped head" "$out"
 
 echo; echo "s3 — one signed PUT, no read verbs:"
 cat > "$TMP/sink.py" <<'PYEOF'
@@ -80,7 +80,7 @@ export AWS_ACCESS_KEY_ID=AKTEST AWS_SECRET_ACCESS_KEY=sk AWS_DEFAULT_REGION=us-w
 rm -f "$RUN/lc-backup.ok"
 out="$(URL="s3://bkt/spira/" lcb run)"; rc=$?; wantrc "s3 run succeeds" 0 $rc
 [ "$(wc -l < "$TMP/reqs")" = 1 ] && ok "exactly one request" || bad "exactly one request"
-grep -q '^PUT /bkt/spira/spira_lifecycle/[0-9TZ]*\.tar\.zst AWS4-HMAC-SHA25 AES256$' "$TMP/reqs" && ok "signed PUT of <prefix><db>/<stamp>.tar.zst with SSE" || bad "signed PUT shape: $(cat "$TMP/reqs")"
+grep -q '^PUT /bkt/spira/spira_lifecycle/[0-9TZ]*\.tar\.[a-z]* AWS4-HMAC-SHA25 AES256$' "$TMP/reqs" && ok "signed PUT of <prefix><db>/<stamp>.tar.* with SSE" || bad "signed PUT shape: $(cat "$TMP/reqs")"
 lcb age >/dev/null; wantrc "age green after s3 run" 0 $?
 rm -f "$RUN/lc-backup.ok"; out="$(unset AWS_SECRET_ACCESS_KEY; URL="s3://bkt/spira/" lcb run)"; rc=$?
 wantrc "s3 run without credentials fails" 1 $rc
