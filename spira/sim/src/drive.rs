@@ -238,7 +238,7 @@ impl ProcessExec {
         self.command_with(shell, now_ms, true)
     }
 
-    fn command_with(&self, shell: &str, now_ms: u64, resolved: bool) -> Result<Command, String> {
+    pub fn command_with(&self, shell: &str, now_ms: u64, resolved: bool) -> Result<Command, String> {
         let mut cmd = sim::actor_command("sh", self.epoch + now_ms / 1000);
         let path = format!(
             "{}:{}:{}:{}",
@@ -412,7 +412,7 @@ impl ProcessProbe {
             }
         }
         if let Some(p) = &self.probe {
-            let out = run(&mut self.exec.command(p, 0)?, COMMAND_DEADLINE)?;
+            let out = run(&mut self.exec.command_with(p, 0, false)?, COMMAND_DEADLINE)?;
             for l in out.lines().filter(|l| !l.trim().is_empty()) {
                 snap.beads.push(bead_row(&serde_json::from_str(l).map_err(|e| format!("{PROBE_KEY}: {e}: {l}"))?)?);
             }
