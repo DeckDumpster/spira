@@ -100,6 +100,8 @@ pub fn probe_marker(subject: &str, body: &str) -> Option<&'static str> {
     PROBE_MARKERS.iter().copied().find(|m| hay.contains(m))
 }
 
+const ASK_KEY_WINDOW_S: u64 = 86_400;
+
 pub type DeliverFn<'a> = &'a dyn Fn(&Path, &str, &str, bool) -> Result<PathBuf, String>;
 
 fn deliver_to_maildir(dir: &Path, msgid: &str, msg: &str, mute: bool) -> Result<PathBuf, String> {
@@ -163,6 +165,11 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
             Err(e) => eprintln!("mail: duplicate check skipped: {e}"),
         }
     }
+    let mut ask_guard = if !args.dry_run && !args.bead.is_empty() && (args.kind == "question" || args.kind == "decision") {
+        Some(repeat::ask_key_check(&env.run_dir, args.bead, args.subject, ASK_KEY_WINDOW_S, env.lock_timeout_ms, env.repeat_considered.as_deref())?)
+    } else {
+        None
+    };
     let mut repeat_guard = if is_operator {
         Some(repeat::repeat_check(&env.run_dir, &mailbox, args.subject, env.repeat_window_s, env.lock_timeout_ms, env.repeat_considered.as_deref())?)
     } else {
@@ -297,6 +304,9 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
         }
     };
 
+    if let Some(g) = ask_guard.take() {
+        repeat::repeat_stamp(g);
+    }
     if is_operator {
         repeat::repeat_stamp(repeat_guard.take().unwrap());
 
@@ -735,6 +745,23 @@ mod probe_tests {
         assert_eq!(root_mailbox_entries(t.path(), "operator"), 0);
         let other = FakeBd::new(vec![BdOut::ok(open), BdOut::ok("sp-new1"), BdOut::ok("")]);
         assert!(send(&other, &e, &args("Wholly unrelated?", false), body.into()).is_ok());
+    }
+
+    #[test]
+    fn ten_identical_asks_on_one_bead_deliver_one_mail() {
+        let t = testkit::TempDir::new("mail-ask-ten");
+        let mut e = ask_env(t.path());
+        e.repeat_considered = None;
+        std::fs::create_dir_all(t.path().join("mail/concierge/new")).unwrap();
+        let ask = SendArgs { bead: "sp-w1", class: "", ..ask_args() };
+        let mut ok = 0;
+        for _ in 0..10 {
+            if send(&FakeBd::new(vec![]), &e, &ask, "## Question\nq\n".into()).is_ok() {
+                ok += 1;
+            }
+        }
+        assert_eq!(ok, 1);
+        assert_eq!(root_mailbox_entries(t.path(), "concierge"), 1);
     }
 
     #[test]

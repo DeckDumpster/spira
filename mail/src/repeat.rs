@@ -111,7 +111,21 @@ pub fn repeat_check(
     let caller = caller_name();
     let norm = normalize_subject(subject);
     let fp = fingerprint(&caller, &norm, mailbox);
+    guard(run_dir, fp, &caller, mailbox, window_s, lock_timeout_ms)
+}
 
+/// One ask per (work bead, exact question), whoever sends it and wherever it routes: a
+/// re-ask of a key seen inside `window_s` is refused, so a re-summoned aeon cannot mail the
+/// same question twice. Same lock/stamp protocol as [`repeat_check`].
+pub fn ask_key_check(run_dir: &Path, work_bead: &str, subject: &str, window_s: u64, lock_timeout_ms: u64, considered: Option<&str>) -> Result<RepeatCheck, String> {
+    if considered.is_some() {
+        return Ok(RepeatCheck { fp: String::new(), stamp_dir: stamp_dir(run_dir), lock: None });
+    }
+    let fp = fingerprint("ask", &format!("{work_bead}\u{1f}{}", subject.trim()), "key");
+    guard(run_dir, fp, "an aeon", &format!("the ask on {work_bead}"), window_s, lock_timeout_ms)
+}
+
+fn guard(run_dir: &Path, fp: String, caller: &str, mailbox: &str, window_s: u64, lock_timeout_ms: u64) -> Result<RepeatCheck, String> {
     let dir = stamp_dir(run_dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("mail: repeat guard: cannot create {}: {e}", dir.display()))?;
     let lock_path = dir.join(format!("{fp}.lock"));
@@ -218,6 +232,21 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(2), "took {:?}", start.elapsed());
         assert!(err.contains("timed out"), "{err}");
         repeat_release(rc1);
+    }
+}
+
+#[cfg(test)]
+mod ask_key {
+    use super::*;
+
+    #[test]
+    fn a_re_ask_of_a_stamped_key_is_refused_and_another_bead_or_question_is_not() {
+        let d = testkit::TempDir::new("mail-ask-key");
+        let k = ask_key_check(d.path(), "sp-a", "Should it be law?", 3600, 5000, None).unwrap();
+        repeat_stamp(k);
+        assert!(ask_key_check(d.path(), "sp-a", "Should it be law?", 3600, 5000, None).unwrap_err().contains("already sent"));
+        assert!(ask_key_check(d.path(), "sp-b", "Should it be law?", 3600, 5000, None).is_ok());
+        assert!(ask_key_check(d.path(), "sp-a", "Another question?", 3600, 5000, None).is_ok());
     }
 }
 
