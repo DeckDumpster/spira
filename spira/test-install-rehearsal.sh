@@ -95,6 +95,8 @@ CEXEC=(timeout 5 podman exec --user spirauser
     # operator-channel check (hunk, mail client) is documented to FAIL only on an
     # operated box and WARN on "a headless fixture or CI box" — which this is.
     -e "SPIRA_OPERATED=0"
+    -e "SPIRA_TOML=/tmp/spira-reh-conf.toml"
+    -e "CONFIGURE_OUT=/tmp/spira-reh-conf.toml"
 )
 
 # ---------------------------------------------------------------------------
