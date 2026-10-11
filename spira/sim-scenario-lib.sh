@@ -1,4 +1,4 @@
-# sim-scenario-lib.sh — one scenario file run in a sim world per seed, shared by the
+# sim-scenario-lib.sh — Sourced, never executed. One scenario file run in a sim world per seed, shared by the
 # test-sim-<scenario>.sh shards. Sourced after testlib.sh; defines sim_scenario_shard and
 # sim_fixture_repo.
 
