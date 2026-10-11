@@ -300,6 +300,10 @@ fn gather() -> Snapshot {
                     persona: r["persona"].as_str().map(String::from),
                     claimable: None,
                     blocker,
+                    repo: text(&r["repo"]),
+                    tip: r["tip"].as_str().map(String::from),
+                    sifted_tip: r["sifted_tip"].as_str().map(String::from),
+                    ejected_red_tip: r["ejected_red_tip"].as_str().map(String::from),
                 });
             }
             s.claimable = Some(claimable);

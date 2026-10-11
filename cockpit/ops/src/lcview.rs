@@ -33,6 +33,14 @@ pub struct Row {
     pub claimable: Option<bool>,
     #[serde(default)]
     pub blocker: Option<String>,
+    #[serde(default)]
+    pub repo: String,
+    #[serde(default)]
+    pub tip: Option<String>,
+    #[serde(default)]
+    pub sifted_tip: Option<String>,
+    #[serde(default)]
+    pub ejected_red_tip: Option<String>,
 }
 
 /// What `work list` knows that the lifecycle does not.
@@ -626,6 +634,88 @@ fn join_parts(parts: Vec<String>) -> String {
     parts.join(" · ")
 }
 
+const PLACED: [&str; 3] = ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"];
+
+fn batch_index(s: &Snapshot) -> HashMap<&str, &BatchRow> {
+    let mut by = HashMap::new();
+    for b in s.batches.iter().filter(|b| OPEN_BATCH.contains(&b.state.as_str())) {
+        for m in &b.members {
+            by.insert(m.as_str(), b);
+        }
+    }
+    by
+}
+
+fn kind_of(holds: &[String]) -> String {
+    holds.join("+")
+}
+
+/// Where a SUBMITTED, CERTIFIED or IN_DELIVERY bead is and why: (group for the header, line for
+/// the bead). A bead nothing places lands in "unplaced", never out of the count.
+fn place(r: &Row, in_batch: &HashMap<&str, &BatchRow>) -> (String, String) {
+    let unplaced = || ("unplaced".to_string(), "unplaced".to_string());
+    let repo = if r.repo.is_empty() { "?" } else { r.repo.as_str() };
+    let held = || {
+        let why = r.reason.as_deref().filter(|x| !x.is_empty()).map(|x| format!(": {}", cut(x, 60))).unwrap_or_default();
+        ("held".to_string(), format!("held ({}){why}", kind_of(&r.holds)))
+    };
+    match r.state.as_str() {
+        "IN_DELIVERY" => match in_batch.get(r.id.as_str()) {
+            Some(b) => {
+                let phase = if b.phase.is_empty() { b.state.as_str() } else { b.phase.as_str() };
+                let key = if b.pr > 0 { format!("{} PR {}", b.repo, b.pr) } else { b.id.clone() };
+                (key.clone(), format!("{key} · {phase}"))
+            }
+            None => unplaced(),
+        },
+        "CERTIFIED" => {
+            if let Some(b) = in_batch.get(r.id.as_str()) {
+                return ("in a round".into(), format!("in {} (should not be)", b.id));
+            }
+            if r.holds.iter().any(|h| h == "wait") {
+                let ids = bead_ids_in(r.reason.as_deref().unwrap_or(""));
+                let by = if ids.is_empty() { r.blocker.clone().unwrap_or_default() } else { ids.join(" ") };
+                return ("blocked".into(), format!("blocked by {by}"));
+            }
+            if !r.holds.is_empty() {
+                return held();
+            }
+            if r.tip.is_some() && r.ejected_red_tip == r.tip {
+                return ("excluded".into(), "excluded from cuts (ejected tip)".into());
+            }
+            if r.blocker.is_some() {
+                return ("blocked".into(), format!("blocked by {}", r.blocker.clone().unwrap_or_default()));
+            }
+            (format!("waiting {repo}"), format!("waiting for the next {repo} batch"))
+        }
+        "SUBMITTED" => {
+            if !r.holds.is_empty() {
+                return held();
+            }
+            if r.tip.is_some() && r.ejected_red_tip == r.tip {
+                return ("gate red, awaiting rework".into(), "gate red, waiting rework".into());
+            }
+            if r.tip.is_some() && r.sifted_tip == r.tip {
+                ("sifted, awaiting gate".into(), "sifted, awaiting gate".into())
+            } else {
+                ("awaiting gate/Sift".into(), "awaiting gate/Sift".into())
+            }
+        }
+        _ => unplaced(),
+    }
+}
+
+fn placement_parts(s: &Snapshot, rows: &[&Row]) -> Vec<String> {
+    let idx = batch_index(s);
+    let mut by: BTreeMap<String, usize> = BTreeMap::new();
+    for r in rows {
+        *by.entry(place(r, &idx).0).or_default() += 1;
+    }
+    let mut v: Vec<(String, usize)> = by.into_iter().collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    v.into_iter().map(|(k, n)| format!("{k} {n}")).collect()
+}
+
 fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
     let in_batch: std::collections::HashSet<&str> =
         s.batches.iter().filter(|b| OPEN_BATCH.contains(&b.state.as_str())).flat_map(|b| b.members.iter().map(String::as_str)).collect();
@@ -693,10 +783,11 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
                 parts.push(format!("skipped: conflict {skipped}"));
             }
         }
+        if PLACED.contains(&name) {
+            parts.extend(placement_parts(s, &rows.iter().copied().collect::<Vec<_>>()));
+        }
         if name == "IN_DELIVERY" {
-            let inside = rows.iter().filter(|r| in_batch.contains(r.id.as_str())).count();
-            parts.push(format!("in open batch {inside} · orphaned {}", rows.len() - inside));
-            red |= inside < rows.len();
+            red |= rows.iter().any(|r| !in_batch.contains(r.id.as_str()));
         }
         if name == "LANDED" {
             parts.push("last 24h".into());
@@ -929,6 +1020,7 @@ pub fn view(s: &Snapshot) -> View {
     ];
 
     v.machine = state_machine(s, &|id| s.on_base.contains_key(id));
+    let idx = batch_index(s);
     for st in v.machine.iter_mut() {
         let mut rows: Vec<&Row> = s.rows.iter().filter(|r| r.state == st.name).collect();
         if st.name == "LANDED" {
@@ -941,7 +1033,8 @@ pub fn view(s: &Snapshot) -> View {
             .iter()
             .take(40)
             .map(|r| {
-                let mut it = item(r, if st.name == "LANDED" { r.updated_at } else { r.since }, r.reason.clone().unwrap_or_default());
+                let note = if PLACED.contains(&st.name.as_str()) { place(r, &idx).1 } else { r.reason.clone().unwrap_or_default() };
+                let mut it = item(r, if st.name == "LANDED" { r.updated_at } else { r.since }, note);
                 if st.name == "REWORK" {
                     it.why = rework_why(s, &r.id);
                 }
@@ -1759,6 +1852,7 @@ mod tests {
         let mut s = snap(vec![row("sp-r", "READY", 90_000), row("sp-w", "WORKING", 99_000), row("sp-c", "CERTIFIED", 99_000)]);
         s.rows[1].holder = Some("aeon-guardian".into());
         s.rows[1].lease_until = Some(100_500);
+        s.rows[2].repo = "spira".into();
         s.graph = graph(true);
         s.edges = vec![applied("READY", "WORKING", 12), applied("WORKING", "SUBMITTED", 9)];
         s.dwell = vec![dwell("sp-w", "WORKING", 99_000, 7_200), dwell("sp-c", "CERTIFIED", 99_000, 7_200)];
@@ -1796,10 +1890,10 @@ WORKING          1
 SUBMITTED        0
   │ gate-pass                     0/h
   └▶ gate-red ▶ REWORK            0/h
-CERTIFIED        1
+CERTIFIED        1  waiting spira 1
   │ deliver                       0/h
   └▶ gate-red ▶ REWORK            0/h
-IN_DELIVERY      0  in open batch 0 · orphaned 0
+IN_DELIVERY      0
   │ delivered                     0/h
   └▶ returned ▶ REWORK            0/h
 LANDED           0  last 24h
@@ -1830,7 +1924,7 @@ BATCH
         s.graph = graph(false);
         s.dwell = vec![dwell("sp-cert-a", "CERTIFIED", 100_000 - 23 * 3600, 3_600), dwell("sp-cert-b", "CERTIFIED", 100_000 - 18 * 3600, 3_600)];
         let f = squash(&machine_lines(&s).join("\n"));
-        assert!(f.contains("CERTIFIED 2 stuck >p95 2 ●"), "{f}");
+        assert!(f.contains("CERTIFIED 2 waiting ? 2 · stuck >p95 2 ●"), "{f}");
         assert!(f.contains("└▶ (no exit to REWORK) ●"), "{f}");
         assert!(f.contains("│ deliver"), "{f}");
     }
@@ -1849,14 +1943,61 @@ BATCH
     }
 
     #[test]
-    fn stranded_delivery_is_split_into_open_batch_and_orphaned() {
+    fn every_placed_state_says_where_its_beads_are_and_the_parts_sum_to_the_count() {
         let mut s = healthy();
-        s.rows = (0..5).map(|i| row(&format!("sp-d{i}"), "IN_DELIVERY", 99_000)).collect();
-        s.batches = vec![BatchRow { id: "r-1".into(), state: "CI_RUNNING".into(), last_at: 99_000, members: vec!["sp-d0".into(), "sp-d1".into()], ..Default::default() }];
-        let f = squash(&machine_lines(&s).join("\n"));
-        assert!(f.contains("IN_DELIVERY 5 in open batch 2 · orphaned 3 ●"), "{f}");
-        s.rows.truncate(2);
-        assert!(!squash(&machine_lines(&s).join("\n")).contains("orphaned 0 ●"));
+        let mk = |id: &str, st: &str, f: &dyn Fn(&mut Row)| {
+            let mut r = row(id, st, 99_000);
+            r.repo = "deckdumpster".into();
+            r.tip = Some("t1".into());
+            f(&mut r);
+            r
+        };
+        let mut rows = Vec::new();
+        for i in 0..3 {
+            rows.push(mk(&format!("sp-a{i}"), "IN_DELIVERY", &|_| {}));
+        }
+        rows.push(mk("sp-p0", "IN_DELIVERY", &|_| {}));
+        rows.push(mk("sp-lost", "IN_DELIVERY", &|_| {}));
+        rows.push(mk("sp-w0", "CERTIFIED", &|_| {}));
+        rows.push(mk("sp-w1", "CERTIFIED", &|r| r.repo = "spira".into()));
+        rows.push(mk("sp-b0", "CERTIFIED", &|r| {
+            r.holds = vec!["wait".into()];
+            r.reason = Some("blocked on sp-up1".into());
+        }));
+        rows.push(mk("sp-h0", "CERTIFIED", &|r| {
+            r.holds = vec!["manual".into()];
+            r.reason = Some("operator hold".into());
+        }));
+        rows.push(mk("sp-x0", "CERTIFIED", &|r| r.ejected_red_tip = Some("t1".into())));
+        rows.push(mk("sp-g0", "SUBMITTED", &|_| {}));
+        rows.push(mk("sp-g1", "SUBMITTED", &|r| r.sifted_tip = Some("t1".into())));
+        rows.push(mk("sp-g2", "SUBMITTED", &|r| r.ejected_red_tip = Some("t1".into())));
+        s.rows = rows;
+        s.batches = vec![
+            BatchRow { id: "r-auto-26".into(), repo: "spira".into(), state: "CI_RUNNING".into(), phase: "certifying".into(), members: vec!["sp-a0".into(), "sp-a1".into(), "sp-a2".into()], ..Default::default() },
+            BatchRow { id: "b-1".into(), repo: "pokedumpster".into(), pr: 209, state: "GREEN".into(), phase: "merging".into(), members: vec!["sp-p0".into()], ..Default::default() },
+        ];
+        let v = view(&s);
+        let line = |name: &str| squash(&machine_lines(&s).join("\n")).lines().find(|l| l.starts_with(name)).unwrap_or("").to_string();
+        let d = line("IN_DELIVERY");
+        assert!(d.contains("IN_DELIVERY 5 r-auto-26 3 · pokedumpster PR 209 1 · unplaced 1 ●"), "{d}");
+        let c = line("CERTIFIED");
+        for part in ["blocked 1", "excluded 1", "held 1", "waiting deckdumpster 1", "waiting spira 1"] {
+            assert!(c.contains(part), "{part} in {c}");
+        }
+        let g = line("SUBMITTED");
+        for part in ["awaiting gate/Sift 1", "sifted, awaiting gate 1", "gate red, awaiting rework 1"] {
+            assert!(g.contains(part), "{part} in {g}");
+        }
+        for st in ["IN_DELIVERY", "CERTIFIED", "SUBMITTED"] {
+            let m = v.machine.iter().find(|m| m.name == st).unwrap();
+            let sum: usize = m.detail.split(" · ").filter_map(|p| p.rsplit_once(' ').and_then(|(_, n)| n.parse::<usize>().ok())).sum();
+            assert_eq!(sum, m.count, "{st}: {}", m.detail);
+        }
+        let notes: Vec<String> = v.machine.iter().find(|m| m.name == "CERTIFIED").unwrap().beads.iter().map(|b| b.note.clone()).collect();
+        assert!(notes.iter().any(|n| n == "blocked by sp-up1") && notes.iter().any(|n| n.starts_with("held (manual): operator hold")), "{notes:?}");
+        let d_notes: Vec<String> = v.machine.iter().find(|m| m.name == "IN_DELIVERY").unwrap().beads.iter().map(|b| b.note.clone()).collect();
+        assert!(d_notes.iter().any(|n| n == "pokedumpster PR 209 · merging"), "{d_notes:?}");
     }
 
     #[test]
