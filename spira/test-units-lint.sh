@@ -288,7 +288,7 @@ store_unordered() {
     local f
     for f in "$@"; do
         grep -q '^Environment=SPIRA_LC_PASSWORD_FILE=' "$f" || continue
-        case "${f##*/}" in dolt-*|lc-serve.service|spira-lc.service) continue ;; esac
+        case "${f##*/}" in dolt-*|lc-serve.service|spira-lc.service|sccache-dav.service) continue ;; esac
         grep -q '^After=.*lc-serve.service' "$f" && grep -q '^Wants=.*lc-serve.service' "$f" || echo "${f##*/}"
     done
 }
@@ -297,7 +297,7 @@ store_short_retry() {
     for f in "$@"; do
         grep -q '^Environment=SPIRA_LC_PASSWORD_FILE=' "$f" || continue
         grep -qE '^Restart=(always|on-failure)' "$f" || continue
-        case "${f##*/}" in dolt-*|lc-serve.service|spira-lc.service) continue ;; esac
+        case "${f##*/}" in dolt-*|lc-serve.service|spira-lc.service|sccache-dav.service) continue ;; esac
         r="$(sed -n 's/^RestartSec=\([0-9]*\).*/\1/p' "$f")"; b="$(sed -n 's/^StartLimitBurst=\([0-9]*\).*/\1/p' "$f")"
         [ $(( ${r:-0} * (${b:-5} - 1) )) -ge "$STORE_LATE" ] || echo "${f##*/}"
     done
