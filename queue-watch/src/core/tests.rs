@@ -267,7 +267,7 @@ fn publish_open_ci_green_land() {
 
 // A red publish is never an ejection or a block — queue.local's whole point is that local
 // landing does not wait on the forge. The PR simply closes without landing; queue.sh's own
-// fix-forward bead filing is asserted at the shell layer (test-queue-publish.sh), not here.
+// fix-forward bead filing is asserted in the queue crate (queue/src/tests/verdict.rs), not here.
 #[test]
 fn publish_red_closes_without_landing_not_an_ejection() {
     let s0 = snap(0);

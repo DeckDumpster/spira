@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 #
-# test-queue-land-local.sh — sp-ae08w: queue.sh land-local, the queue.local ending. A local
-# round's own GREEN verdict fast-forwards the repo's local landing ref straight to the round
-# head — no PR — archives that head, marks every member LANDED and closes its bead citing the
-# landed commit. A head that does not descend from the ref's current tip is refused and
-# nothing is written. One writer: the per-repo queue lock, skippable only via
-# SPIRA_QUEUE_LOCK_HELD=1 for a caller that already holds it (sp-91hb5's shape, so the
-# batcher cannot deadlock on itself).
+# test-queue-land-local.sh — a quarantine edit lands through land-local as a change bead:
+# `testenv suites quarantine` (testenv) -> the queue's submit (certifies on spira-lc) ->
+# land-local, across three binaries. land-local's own fast-forward, archive, lock and refusal
+# rows are Rust tests in the queue crate.
 #
 # tier: T1
 # covers: queue/src/* gate/src/cert.rs spira/lib.sh spira/conf.sh testenv/src/suites/*
@@ -85,136 +82,7 @@ run() {
     SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
-run_lockheld() {
-    SPIRA_CONF=/nonexistent \
-    SPIRA_HOME="$SH" \
-    SPIRA_REPO="$REPO" \
-    SPIRA_QUEUE_LOCK_HELD=1 \
-    SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
-        SPIRA_HOME="$SH" queue "$@" 2>&1
-}
 localmain() { git -C "$REPO" rev-parse local/main; }
-roundseq()  { cat "$QDIR/fixq/round-seq" 2>/dev/null; }
-
-# ============================================================================
-echo
-echo "1 — a fixture round lands: fast-forward, LANDED, bead closed citing the commit, archived"
-# ============================================================================
-testdb_reset
-seed sp-lloc1
-
-git -C "$REPO" checkout -qb round-1 local/main
-printf 'one\n' > "$REPO/one.txt"
-git -C "$REPO" add one.txt
-git -C "$REPO" commit -q -m "sp-lloc1: the work"
-HEAD1="$(git -C "$REPO" rev-parse round-1)"
-lcfix_seed sp-lloc1 CERTIFIED "$HEAD1"
-git -C "$REPO" checkout -q trunk
-git -C "$REPO" branch -D round-1 >/dev/null 2>&1
-mk_bins "$HEAD1" round-1-bin
-
-# queue/DESIGN.md §8 D12: no round GREEN for this tree, no override -> refused.
-out="$(LAND_UNGATED='' run land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
-[ "$rc" -ne 0 ] && ok "1: an uncertified tree is refused" || bad "1: an uncertified tree is refused" "rc=$rc out=$out"
-want "1: the refusal says no round GREEN certifies it" "no round GREEN for $HEAD1" "$out"
-is "1: the refusal moved nothing" "$(git -C "$REPO" rev-parse trunk)" "$(localmain)"
-
-out="$(run land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
-want "1: the override is loud" "UNGATED LANDING of $HEAD1" "$out"
-[ "$rc" -eq 0 ] && ok "1: exit 0 on a real fast-forward" || bad "1: exit 0 on a real fast-forward" "got rc=$rc out=$out"
-is "1: local/main equals the round head" "$HEAD1" "$(localmain)"
-is "1: the member's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-lloc1)"
-is "1: the bead is closed"                closed "$(field sp-lloc1 status)"
-want "1: close reason declares landed"    "OUTCOME: landed" "$(field sp-lloc1 close_reason)"
-want "1: close reason cites the round head" "$HEAD1"           "$(field sp-lloc1 close_reason)"
-is "1: round-seq advances to 1"           "1" "$(roundseq)"
-is "1: the round head is archived"        "$HEAD1" "$(git -C "$REPO" rev-parse -q --verify refs/archive/rounds/1 2>/dev/null)"
-want "1: reports the archive ref"         "refs/archive/rounds/1" "$out"
-
-# ============================================================================
-echo
-echo "2 — a non-fast-forward head is refused: nothing changes"
-# ============================================================================
-testdb_reset
-seed sp-lloc2
-PRE_MAIN="$(localmain)"
-PRE_SEQ="$(roundseq)"
-
-# Cut from trunk, which never moved — this does NOT descend from local/main's current tip
-# (round 1 already moved it forward), so land-local must refuse it outright.
-git -C "$REPO" checkout -qb stray-round trunk
-printf 'stray\n' > "$REPO/stray.txt"
-git -C "$REPO" add stray.txt
-git -C "$REPO" commit -q -m "sp-lloc2: stray work"
-STRAY="$(git -C "$REPO" rev-parse stray-round)"
-lcfix_seed sp-lloc2 CERTIFIED "$STRAY"
-git -C "$REPO" checkout -q trunk
-git -C "$REPO" branch -D stray-round >/dev/null 2>&1
-
-out="$(run land-local fixq --head "$STRAY" --members "sp-lloc2:$STRAY" --worktree "$(bins_wt "$STRAY")")"; rc=$?
-[ "$rc" -ne 0 ] && ok "2: exit non-zero on a non-fast-forward head" || bad "2: exit non-zero on a non-fast-forward head" "got rc=$rc"
-want "2: names the refusal"               "does not fast-forward" "$out"
-nowant "2: never claims success"          "fast-forwarded to"     "$out"
-is "2: local/main is unchanged"           "$PRE_MAIN" "$(localmain)"
-is "2: round-seq is unchanged"            "$PRE_SEQ"  "$(roundseq)"
-is "2: the refused member's lifecycle row is still CERTIFIED" "CERTIFIED" "$(lcfix_state sp-lloc2)"
-is "2: the bead is left open"             open "$(field sp-lloc2 status)"
-
-# ============================================================================
-echo
-echo "3 — repo not in queue.local mode is refused"
-# ============================================================================
-RMAP2="$TMP/repo-map-other"
-printf 'fixq | %s | queue | local/main | | |\n' "$REPO" > "$RMAP2"
-tl_config SPIRA_REPO_MAP="$RMAP2"
-out="$(SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
-    SPIRA_HOME="$SH" queue land-local fixq --head "$HEAD1" --members "sp-lloc1:$HEAD1" --worktree "$(bins_wt "$HEAD1")" 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && ok "3: exit non-zero for a non-queue.local mode" || bad "3: exit non-zero for a non-queue.local mode" "got rc=$rc"
-want "3: names the actual mode" "mode=queue" "$out"
-# Restore: sections 4+ reuse run()/run_lockheld(), which rely on SPIRA_REPO_MAP="$RMAP".
-tl_config SPIRA_REPO_MAP="$RMAP"
-
-# ============================================================================
-echo
-echo "4 — the per-repo lock is held: land-local refuses rather than race it"
-# ============================================================================
-testdb_reset
-seed sp-lloc4
-git -C "$REPO" checkout -qb round-4 local/main
-printf 'four\n' > "$REPO/four.txt"
-git -C "$REPO" add four.txt
-git -C "$REPO" commit -q -m "sp-lloc4: the work"
-HEAD4="$(git -C "$REPO" rev-parse round-4)"
-lcfix_seed sp-lloc4 CERTIFIED "$HEAD4"
-git -C "$REPO" checkout -q trunk
-git -C "$REPO" branch -D round-4 >/dev/null 2>&1
-mk_bins "$HEAD4" round-4-bin
-
-mkdir -p "$QDIR/fixq"
-exec 8>"$QDIR/fixq/lock"
-flock -n 8
-
-out="$(run land-local fixq --head "$HEAD4" --members "sp-lloc4:$HEAD4" --worktree "$(bins_wt "$HEAD4")")"; rc=$?
-[ "$rc" -ne 0 ] && ok "4: refused while another operation holds the lock" \
-    || bad "4: refused while another operation holds the lock" "got rc=$rc out=$out"
-want "4: names the lock contention" "holds the lock" "$out"
-is "4: local/main is unchanged while locked" "$HEAD1" "$(localmain)"
-
-# ============================================================================
-echo
-echo "5 — SPIRA_QUEUE_LOCK_HELD=1 skips the wait for a caller that already holds it"
-# ============================================================================
-out="$(run_lockheld land-local fixq --head "$HEAD4" --members "sp-lloc4:$HEAD4" --worktree "$(bins_wt "$HEAD4")")"; rc=$?
-[ "$rc" -eq 0 ] && ok "5: SPIRA_QUEUE_LOCK_HELD=1 proceeds despite the outside lock" \
-    || bad "5: SPIRA_QUEUE_LOCK_HELD=1 proceeds despite the outside lock" "got rc=$rc out=$out"
-is "5: local/main advances to the round head" "$HEAD4" "$(localmain)"
-is "5: the member's lifecycle row is LANDED" "LANDED" "$(lcfix_state sp-lloc4)"
-is "5: the bead is closed"                    closed "$(field sp-lloc4 status)"
-is "5: round-seq advances to 2"               "2" "$(roundseq)"
-is "5: round head 4 is archived"              "$HEAD4" "$(git -C "$REPO" rev-parse -q --verify refs/archive/rounds/2 2>/dev/null)"
-
-flock -u 8
-exec 8>&-
 
 # ============================================================================
 echo

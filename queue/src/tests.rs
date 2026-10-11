@@ -2469,6 +2469,18 @@ fn land_local_lands_and_archives_and_delivers_on_spira_lc() {
 }
 
 #[test]
+fn land_local_lands_through_a_forge_divergence_and_an_open_publish() {
+    let t = T::new(LandMode::QueueLocal);
+    t.submitted(&["sp-a"]);
+    local_repo(&t);
+    t.lib.diverged.set(true);
+    fs::write(t.qfile("publish"), "pr=9\n").unwrap();
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert!(t.lib.has("divergence f0 b0"));
+    assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h1"));
+}
+
+#[test]
 fn publish_members_come_from_land_commits_even_when_lifecycle_rows_are_missing() {
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);
