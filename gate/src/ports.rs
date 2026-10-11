@@ -15,6 +15,8 @@ pub struct Ctx {
     pub repo_root: Option<String>,
     /// `spira_landref <repo-path>` — None when it refused.
     pub landref: Option<String>,
+    /// The base the registry declares for the repository; empty when none.
+    pub declared_base: String,
     /// `repo_gate <name>`.
     pub gate_cmd: String,
     pub host_cores: String,
