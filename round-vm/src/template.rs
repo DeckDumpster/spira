@@ -154,57 +154,7 @@ pub const TEMPLATE_WORK: &str = "/root/template-work";
 /// `cargo` binary has no such self-location check (confirmed on the host, which runs the
 /// identical rustup), so installing the exact release tarball directly avoids the defect
 /// rather than working around it.
-pub const TEMPLATE_SCRIPT: &str = r#"set -euo pipefail
-work="$1" host_addr="$2" toolchain="$3" cache_home="$4"
-cd "$work"
-export CARGO_HOME="${cache_home:-$HOME/.cargo}"
-mkdir -p "$CARGO_HOME/bin"
-if [ -n "$toolchain" ] && [ ! -x "$CARGO_HOME/bin/rustc" ]; then
-    echo "round-vm template: installing rust $toolchain standalone into $CARGO_HOME (must match the host's rustc byte-for-byte, sp-xjnzl)" >&2
-    tmp="$(mktemp -d)"
-    curl -fsSL "https://static.rust-lang.org/dist/rust-${toolchain}-x86_64-unknown-linux-gnu.tar.gz" -o "$tmp/rust.tar.gz"
-    tar -xzf "$tmp/rust.tar.gz" -C "$tmp" --strip-components=1
-    "$tmp/install.sh" --prefix="$CARGO_HOME" --destdir="" --disable-ldconfig >&2
-    rm -rf "$tmp"
-fi
-export PATH="$CARGO_HOME/bin:$PATH"
-export SPIRA_HOME="$work/spira"
-mkdir -p "$work/.runtime/spira"
-cat > "$work/template-config.toml" <<TEMPLATECFG
-[spira]
-run = "$work/.runtime/spira"
-releases = "$work/.runtime/releases"
-home_repo = "$work"
-TEMPLATECFG
-export SPIRA_TOML="$work/spira-config/tests/fixtures/complete.toml:$work/template-config.toml"
-if [ ! -x "$CARGO_HOME/bin/sccache" ]; then
-    echo "round-vm template: installing sccache (webdav backend) into $CARGO_HOME/bin" >&2
-    cargo install sccache --locked --no-default-features --features webdav --quiet
-fi
-export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
-export SCCACHE_IGNORE_SERVER_IO_ERROR=1
-if [ -n "$host_addr" ]; then
-    export SCCACHE_WEBDAV_ENDPOINT="http://${host_addr}:9431"
-    export SCCACHE_WEBDAV_KEY_PREFIX="/"
-fi
-# testenv's own cold-build step stages a sibling `spira-config` binary into the image build
-# context for the Containerfile's doctor-check (container.rs's stage_spira_config,
-# testenv/Containerfile) — `cargo run -p testenv` alone never builds spira-config, since
-# nothing else in the workspace pulls in ITS bin target. Built explicitly here so the
-# sibling exists before testenv ever looks for it.
-cargo build -q --locked --release -p testenv -p spira-config
-img="$(cargo run -q --locked --release -p testenv -- container image)"
-if [ -z "$img" ]; then echo "round-vm template: testenv container image printed no image ref" >&2; exit 1; fi
-podman images --format '{{.Repository}}:{{.Tag}}' \
-    | { grep '^localhost/spira-testenv:' || true; } | { grep -vxF "$img" || true; } \
-    | while read -r old; do podman rmi "$old" >&2; done
-cargo fetch --locked >&2
-"$CARGO_HOME/bin/sccache" --stop-server >&2 || true
-cd /
-rm -rf "$work" /root/.ssh/authorized_keys
-sync
-printf 'image=%s\n' "$img"
-"#;
+pub const TEMPLATE_SCRIPT: &str = include_str!("template.sh");
 
 /// The image ref TEMPLATE_SCRIPT reported, if it did.
 pub fn reported_image(stdout: &str) -> Option<String> {

@@ -28,9 +28,40 @@ pub struct Inst {
     pub launched_at: u64,
 }
 
+pub const AMI_AUTO: &str = "auto";
+pub const AMI_OWNER_TAG: (&str, &str) = ("spill:owner", "round");
+pub const AMI_RECIPE_TAG: &str = "recipe-sha";
+
+/// A round image as the CI build tagged it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    pub id: String,
+    pub recipe_sha: String,
+    pub created: String,
+}
+
+/// The newest image, which must carry `expected` as its recipe-sha. Creation dates are ISO-8601
+/// in one zone, so they order as strings. A stale newest image is refused, never skipped for an
+/// older one: an older image is staler still.
+pub fn select_image(images: &[Image], expected: &str) -> Result<String, String> {
+    let newest = images
+        .iter()
+        .max_by(|a, b| a.created.cmp(&b.created))
+        .ok_or_else(|| format!("no AMI tagged {}={} {AMI_RECIPE_TAG} exists; run the round-ami-build workflow", AMI_OWNER_TAG.0, AMI_OWNER_TAG.1))?;
+    if newest.recipe_sha != expected {
+        return Err(format!(
+            "the newest round AMI {} carries {AMI_RECIPE_TAG} {:?} but this release's recipe is {expected:?}; run the round-ami-build workflow",
+            newest.id, newest.recipe_sha
+        ));
+    }
+    Ok(newest.id.clone())
+}
+
 pub trait Ec2Api {
-    /// Launches one instance tagged `TAG_KEY=handle`, `Name=name`; its instance id.
-    fn run(&self, handle: &str, name: &str, user_data: &str) -> Result<String, String>;
+    /// Launches one instance of `ami` tagged `TAG_KEY=handle`, `Name=name`; its instance id.
+    fn run(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String>;
+    /// Every available image tagged as a round image, with its recipe-sha.
+    fn images(&self) -> Result<Vec<Image>, String>;
     /// The live instance tagged with `handle`; None once it is terminated or never existed.
     fn find(&self, handle: &str) -> Result<Option<Inst>, String>;
     /// Every live instance carrying `TAG_KEY`; an untagged instance is never listed.
@@ -54,6 +85,7 @@ pub struct Ec2Config {
     pub tailscale_key_file: String,
     pub run_deadline: Duration,
     pub host_addr: String,
+    pub recipe_sha: String,
 }
 
 impl Ec2Config {
@@ -71,6 +103,7 @@ impl Ec2Config {
             tailscale_key_file: s("SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE"),
             run_deadline: Duration::from_secs(deadline),
             host_addr: s("SPIRA_ROUND_VM_EC2_HOST_ADDR"),
+            recipe_sha: crate::recipe::sha(),
         }
     }
 
@@ -79,7 +112,7 @@ impl Ec2Config {
         let mut m: Vec<String> = [
             ("SPIRA_ROUND_VM_EC2_PROFILE (the AWS profile)", &self.profile),
             ("SPIRA_ROUND_VM_EC2_REGION", &self.region),
-            ("SPIRA_ROUND_VM_EC2_AMI (the pinned round AMI)", &self.ami),
+            ("SPIRA_ROUND_VM_EC2_AMI (an image id, or auto)", &self.ami),
             ("SPIRA_ROUND_VM_EC2_SUBNET", &self.subnet),
             ("SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE (the tailscale auth key file)", &self.tailscale_key_file),
             ("SPIRA_ROUND_VM_EC2_HOST_ADDR (this host's tailnet address)", &self.host_addr),
@@ -102,6 +135,9 @@ pub struct Ec2<A: Ec2Api> {
     pub api: A,
     tailscale_key: String,
     run_deadline: Duration,
+    ami: String,
+    recipe_sha: String,
+    resolved: std::sync::Mutex<Option<String>>,
 }
 
 impl<A: Ec2Api> Ec2<A> {
@@ -112,7 +148,29 @@ impl<A: Ec2Api> Ec2<A> {
             return Err(format!("round-vm: the EC2 provider cannot start; missing: {}", missing.join("; ")));
         }
         let key = std::fs::read_to_string(&cfg.tailscale_key_file).map_err(|e| format!("{}: {e}", cfg.tailscale_key_file))?;
-        Ok(Ec2 { api, tailscale_key: key.trim().to_string(), run_deadline: cfg.run_deadline })
+        Ok(Ec2 {
+            api,
+            tailscale_key: key.trim().to_string(),
+            run_deadline: cfg.run_deadline,
+            ami: cfg.ami.clone(),
+            recipe_sha: cfg.recipe_sha.clone(),
+            resolved: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// The image to launch: the configured id, or under `auto` the newest tagged round image,
+    /// resolved once per process.
+    fn image(&self) -> Result<String, String> {
+        if self.ami != AMI_AUTO {
+            return Ok(self.ami.clone());
+        }
+        let mut g = self.resolved.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(id) = g.as_ref() {
+            return Ok(id.clone());
+        }
+        let id = select_image(&self.api.images()?, &self.recipe_sha)?;
+        *g = Some(id.clone());
+        Ok(id)
     }
 
     fn inst(&self, handle: &str) -> Result<Inst, String> {
@@ -152,7 +210,8 @@ impl<A: Ec2Api> Provider for Ec2<A> {
         if self.api.find(vmid)?.is_some() {
             return Err(format!("EC2 instance {vmid} already exists"));
         }
-        self.api.run(vmid, name, &user_data(&self.tailscale_key, name)).map(|_| ())
+        let ami = self.image()?;
+        self.api.run(&ami, vmid, name, &user_data(&self.tailscale_key, name)).map(|_| ())
     }
 
     fn start(&self, vmid: &str) -> Result<(), String> {
@@ -240,7 +299,6 @@ impl<A: Ec2Api> Provider for Ec2<A> {
 pub struct AwsCli {
     pub profile: String,
     pub region: String,
-    pub ami: String,
     pub instance_type: String,
     pub subnet: String,
     pub security_group: String,
@@ -253,7 +311,6 @@ impl AwsCli {
         AwsCli {
             profile: cfg.profile.clone(),
             region: cfg.region.clone(),
-            ami: cfg.ami.clone(),
             instance_type: cfg.instance_type.clone(),
             subnet: cfg.subnet.clone(),
             security_group: cfg.security_group.clone(),
@@ -277,10 +334,10 @@ impl AwsCli {
         }
     }
 
-    pub fn run_args(&self, handle: &str, name: &str, user_data_file: &str) -> Vec<String> {
+    pub fn run_args(&self, ami: &str, handle: &str, name: &str, user_data_file: &str) -> Vec<String> {
         let mut a: Vec<String> = vec![
             "ec2".into(), "run-instances".into(),
-            "--image-id".into(), self.ami.clone(),
+            "--image-id".into(), ami.to_string(),
             "--instance-type".into(), self.instance_type.clone(),
             "--subnet-id".into(), self.subnet.clone(),
             "--count".into(), "1".into(),
@@ -316,14 +373,25 @@ impl AwsCli {
 }
 
 impl Ec2Api for AwsCli {
-    fn run(&self, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
+    fn images(&self) -> Result<Vec<Image>, String> {
+        let out = self.aws(vec![
+            "ec2".into(), "describe-images".into(), "--owners".into(), "self".into(),
+            "--filters".into(),
+            format!("Name=tag:{},Values={}", AMI_OWNER_TAG.0, AMI_OWNER_TAG.1),
+            "Name=state,Values=available".into(),
+            "--output".into(), "json".into(),
+        ])?;
+        parse_images(&out)
+    }
+
+    fn run(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         std::fs::create_dir_all(&self.scratch).map_err(|e| format!("{}: {e}", self.scratch.display()))?;
         let file = self.scratch.join(format!("user-data.{handle}"));
         let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         f.write_all(user_data.as_bytes()).map_err(|e| e.to_string())?;
-        let r = self.aws(self.run_args(handle, name, &file.to_string_lossy()));
+        let r = self.aws(self.run_args(ami, handle, name, &file.to_string_lossy()));
         let _ = std::fs::remove_file(&file);
         r.map(|s| s.trim().to_string())
     }
@@ -399,6 +467,29 @@ pub fn peer_addr(json: &str, hostname: &str) -> Result<Option<String>, String> {
                 .and_then(|ips| ips.iter().filter_map(Value::as_str).find(|ip| !ip.contains(':')))
                 .map(String::from)
         }))
+}
+
+pub fn parse_images(json: &str) -> Result<Vec<Image>, String> {
+    let v: Value = serde_json::from_str(json).map_err(|e| format!("describe-images: {e}"))?;
+    Ok(v.get("Images")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|i| Image {
+            id: i.get("ImageId").and_then(Value::as_str).unwrap_or("").to_string(),
+            created: i.get("CreationDate").and_then(Value::as_str).unwrap_or("").to_string(),
+            recipe_sha: i
+                .get("Tags")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|t| t.get("Key").and_then(Value::as_str) == Some(AMI_RECIPE_TAG))
+                .and_then(|t| t.get("Value").and_then(Value::as_str))
+                .unwrap_or("")
+                .to_string(),
+        })
+        .filter(|i| !i.id.is_empty())
+        .collect())
 }
 
 pub fn parse_instances(json: &str) -> Result<Vec<Inst>, String> {
@@ -482,10 +573,10 @@ mod tests {
     #[test]
     fn run_args_tag_the_instance_and_terminate_on_shutdown() {
         let cli = AwsCli {
-            profile: "p".into(), region: "r".into(), ami: "ami-1".into(), instance_type: "c6i.8xlarge".into(),
+            profile: "p".into(), region: "r".into(), instance_type: "c6i.8xlarge".into(),
             subnet: "subnet-1".into(), security_group: "sg-1".into(), instance_profile: "ssm".into(), scratch: "/tmp".into(),
         };
-        let a = cli.run_args("ec2-a", "round-ec2-a", "/tmp/ud");
+        let a = cli.run_args("ami-1", "ec2-a", "round-ec2-a", "/tmp/ud");
         let j = a.join(" ");
         assert!(j.contains("Tags=[{Key=spira-round-vm,Value=ec2-a},{Key=Name,Value=round-ec2-a}]"), "{j}");
         assert!(j.contains("--instance-initiated-shutdown-behavior terminate"), "{j}");
@@ -510,7 +601,7 @@ mod tests {
         Ec2Config {
             profile: "p".into(), region: "r".into(), ami: "ami-1".into(), instance_type: "c6i.8xlarge".into(), subnet: "subnet-1".into(),
             security_group: String::new(), instance_profile: String::new(), tailscale_key_file: key.to_string_lossy().into(),
-            run_deadline: Duration::from_secs(7200), host_addr: "100.64.0.1".into(),
+            run_deadline: Duration::from_secs(7200), host_addr: "100.64.0.1".into(), recipe_sha: "sha-now".into(),
         }
     }
 
@@ -590,6 +681,56 @@ mod tests {
         fake.plant("i-new", Some("ec2-new"), "round-ec2-new", crate::schema::now());
         let p = Ec2::new(fake.clone(), &config(&d)).unwrap();
         assert_eq!(p.stale(), ["ec2-old"]);
+    }
+
+    fn image(id: &str, sha: &str, created: &str) -> Image {
+        Image { id: id.into(), recipe_sha: sha.into(), created: created.into() }
+    }
+
+    #[test]
+    fn auto_selects_the_newest_image_when_its_recipe_matches() {
+        let imgs = [image("ami-old", "sha-old", "2026-10-01T00:00:00.000Z"), image("ami-new", "sha-now", "2026-10-09T00:00:00.000Z")];
+        assert_eq!(select_image(&imgs, "sha-now").unwrap(), "ami-new");
+    }
+
+    #[test]
+    fn a_stale_newest_image_is_refused_naming_both_hashes_not_replaced_by_an_older_match() {
+        let imgs = [image("ami-old", "sha-now", "2026-10-01T00:00:00.000Z"), image("ami-new", "sha-stale", "2026-10-09T00:00:00.000Z")];
+        let e = select_image(&imgs, "sha-now").unwrap_err();
+        assert!(e.contains("ami-new") && e.contains("sha-stale") && e.contains("sha-now"), "{e}");
+        assert!(select_image(&[], "sha-now").unwrap_err().contains("no AMI"));
+    }
+
+    #[test]
+    fn describe_images_output_yields_id_date_and_recipe_tag() {
+        let json = r#"{"Images":[{"ImageId":"ami-1","CreationDate":"2026-10-09T00:00:00.000Z","Tags":[{"Key":"recipe-sha","Value":"abc"}]},
+                                 {"ImageId":"ami-2","CreationDate":"2026-10-10T00:00:00.000Z"}]}"#;
+        let v = parse_images(json).unwrap();
+        assert_eq!(v, [image("ami-1", "abc", "2026-10-09T00:00:00.000Z"), image("ami-2", "", "2026-10-10T00:00:00.000Z")]);
+    }
+
+    #[test]
+    fn auto_launches_the_selected_image_and_a_stale_one_launches_nothing() {
+        let d = TempDir::new();
+        let fake = FakeEc2::default();
+        fake.plant_image("ami-new", "sha-now", "2026-10-09T00:00:00.000Z");
+        let mut c = config(&d);
+        c.ami = AMI_AUTO.into();
+        let p = Ec2::new(fake.clone(), &c).unwrap();
+        provision(&p, &spec(), &mut |_| {}).unwrap();
+        assert_eq!(fake.launched_amis(), ["ami-new"]);
+
+        let stale = FakeEc2::default();
+        stale.plant_image("ami-stale", "sha-other", "2026-10-09T00:00:00.000Z");
+        let p = Ec2::new(stale.clone(), &c).unwrap();
+        let e = provision(&p, &spec(), &mut |_| {}).unwrap_err();
+        assert!(e.reason.contains("sha-other") && e.reason.contains("sha-now"), "{}", e.reason);
+        assert!(stale.ids().is_empty());
+
+        c.ami = "ami-pinned".into();
+        let pinned = FakeEc2::default();
+        provision(&Ec2::new(pinned.clone(), &c).unwrap(), &spec(), &mut |_| {}).unwrap();
+        assert_eq!(pinned.launched_amis(), ["ami-pinned"]);
     }
 
     #[test]

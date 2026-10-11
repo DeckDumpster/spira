@@ -239,6 +239,8 @@ struct Ec2Inner {
     user_data: Vec<String>,
     never_joins: bool,
     fail_run: bool,
+    images: Vec<crate::ec2::Image>,
+    launched_amis: Vec<String>,
 }
 
 /// An EC2 account in memory: instances, the SSM scripts run on them, the tailnet.
@@ -248,6 +250,12 @@ pub struct FakeEc2(Arc<Mutex<Ec2Inner>>);
 impl FakeEc2 {
     pub fn plant(&self, id: &str, tag: Option<&str>, name: &str, launched_at: u64) {
         self.0.lock().unwrap().insts.push(FakeEc2Inst { id: id.into(), tag: tag.map(String::from), name: name.into(), launched_at });
+    }
+    pub fn plant_image(&self, id: &str, recipe_sha: &str, created: &str) {
+        self.0.lock().unwrap().images.push(crate::ec2::Image { id: id.into(), recipe_sha: recipe_sha.into(), created: created.into() });
+    }
+    pub fn launched_amis(&self) -> Vec<String> {
+        self.0.lock().unwrap().launched_amis.clone()
     }
     pub fn never_joins_tailnet(&self) {
         self.0.lock().unwrap().never_joins = true;
@@ -267,8 +275,12 @@ impl FakeEc2 {
 }
 
 impl crate::ec2::Ec2Api for FakeEc2 {
-    fn run(&self, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
+    fn images(&self) -> Result<Vec<crate::ec2::Image>, String> {
+        Ok(self.0.lock().unwrap().images.clone())
+    }
+    fn run(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
         let mut g = self.0.lock().unwrap();
+        g.launched_amis.push(ami.to_string());
         if g.fail_run {
             return Err("fake run-instances refused".into());
         }
