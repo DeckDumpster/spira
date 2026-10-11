@@ -322,6 +322,19 @@ fn run_metadata_prints_started_at_then_both_last_activity_lines() {
 }
 
 #[test]
+fn run_metadata_names_the_job_and_step_in_progress() {
+    let gh = FakeGh::default();
+    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/9"], 0, r#"{"run_started_at":"2026-09-29T00:00:00Z"}"#);
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/9/jobs"],
+        0,
+        r#"{"jobs":[{"name":"lint","status":"completed","completed_at":"2026-09-29T00:02:00Z","steps":[]},{"name":"test","status":"completed","completed_at":"2026-09-29T00:03:00Z","steps":[]},{"name":"unit","status":"in_progress","started_at":"2026-09-29T00:01:00Z","steps":[{"name":"checkout","status":"completed"},{"name":"pytest","status":"in_progress"}]}]}"#,
+    );
+    let out = run_metadata(&gh, repo(), "9");
+    assert!(out.lines.contains(&"running-step: unit / pytest".to_string()), "{:?}", out.lines);
+}
+
+#[test]
 fn run_metadata_reads_declared_timeout_and_live_job_log_activity() {
     let gh = FakeGh::default();
     gh.on(

@@ -48,6 +48,13 @@ derived from it.
   render from `SP_ROUNDS<i>_OPENED` against `SP_ROUND_CAP` (`SPIRA_ROUND_CERTIFY_WALL_SECS`):
   amber past 80%, red past the cap. With no live batch: last verdict and the SUBMITTED +
   CERTIFIED unheld pool. Under 60 columns, one line per round.
+  A forge repo's round also shows its PR and state, the CI run's state, elapsed time and
+  job/step, and the age of the last progress event (`_PR`, `_PRSTATE`, `_CI`, `_CI_START`,
+  `_CI_STEP`, `_PROGRESS`, `_WALL`). These come from the `forge-state` file `queue verdict`
+  leaves beside the batch's `open` record each pass — the pane never polls the forge. A round
+  is flagged STALLED when the PR is closed or merged under a live batch, when it has no
+  members (`_STALL`, set by the collector), or when nothing has progressed for longer than
+  `_WALL` (the repo's CI ceiling; `SP_ROUND_CAP` for a round with none).
 
 ### 2.2 `layout up|down|status|ensure [--window <target>]`
 
