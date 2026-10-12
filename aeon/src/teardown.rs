@@ -85,6 +85,38 @@ impl Run<'_> {
         self.log(&format!("{}: {} REOPENED — fast tier red, handoff refused", self.f(), self.s.bead));
     }
 
+    /// The unlanded prerequisite this claim was stacked on whose certified tip changed a file
+    /// the rebase conflict names: the bead waits for it instead of retrying the conflict.
+    fn conflicting_blocker(&self, red: &crate::fast_tier::Red) -> Option<(String, String)> {
+        let paths = crate::fast_tier::conflict_paths(&red.text);
+        if paths.is_empty() {
+            return None;
+        }
+        let repo_disp = self.s.repo.display().to_string();
+        let mut main = spira_config::repos::qualify_base_ref(&self.s.base, &repo_disp);
+        if main.is_empty() {
+            main = self.s.base.clone();
+        }
+        self.s.stack.iter().find_map(|(prereq, tip)| {
+            let o = self.d.git.git(&self.s.repo, &["diff", "--name-only", &format!("{main}...{tip}")]);
+            let changed = o.success() && o.stdout.lines().any(|f| paths.iter().any(|p| p == f.trim()));
+            changed.then(|| (prereq.clone(), tip.clone()))
+        })
+    }
+
+    /// A rebase conflict with a blocker that has not landed is waiting, not a fault: the
+    /// blocker's marker keeps the bead unclaimable until the blocker's tip moves or it lands,
+    /// and the cause is one the attempt census does not charge.
+    fn wait_for_blocker(&self, prereq: &str, tip: &str, red: &crate::fast_tier::Red) {
+        spira_config::stack_conflict::record(&self.run_dir(), prereq, tip);
+        let digest = crate::fast_tier::digest(&red.text);
+        self.bead_reopen(
+            crate::fast_tier::BLOCKER_CONFLICT_CAUSE,
+            &format!("Reopened by aeon.sh: {} conflicts with files changed by its blocker {prereq}, which has not landed. The bead waits for {prereq} to land (one rebase then); no attempt charged.\n\n{digest}", self.s.branch),
+        );
+        self.log(&format!("{}: {} waits for blocker {prereq} — rebase conflict on its files, no attempt charged", self.f(), self.s.bead));
+    }
+
     /// A session that ends without submitting, when the bead's last fast-tier red named a
     /// compile error and the session never ran `cargo check`, is recorded as a blind rework.
     fn note_blind_rework(&self) {
@@ -309,6 +341,10 @@ impl Run<'_> {
                         return self.finish(rc, "open");
                     }
                     if let Some(red) = self.fast_tier_red() {
+                        if let Some((prereq, tip)) = self.conflicting_blocker(&red) {
+                            self.wait_for_blocker(&prereq, &tip, &red);
+                            return self.finish(rc, "open");
+                        }
                         self.refuse_handoff(&red);
                         return self.finish(rc, "open");
                     }
