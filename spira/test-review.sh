@@ -92,6 +92,7 @@ ln -s "$HERE/conf.sh" "$SH/conf.sh"
 # readlink-to-the-real-file trick), so $SH needs its own registry symlink too
 # (pattern 1, per Ryan 2026-10-05).
 ln -s "$HERE/conf.d" "$SH/conf.d"
+for f in bead.sh schema.sh chamber; do ln -s "$HERE/$f" "$SH/$f"; done
 chmod +x "$SH/review.sh" "$SH/release.sh"
 
 REPO_MAP="$TMP/repo-map"
