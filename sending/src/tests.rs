@@ -740,3 +740,25 @@ mod terminal_reaper {
         assert!(done.exists());
     }
 }
+
+#[test]
+fn a_terminal_beads_unlanded_branch_is_archived_in_one_pass_and_a_live_beads_is_kept() {
+    let (fx, mut f) = fixture();
+    let r = &fx.repo;
+    git(r, &["checkout", "-q", "-b", "spira/sp-dropped", "main"]);
+    commit_file(r, "sp-dropped.txt", "abandoned\n", "sp-dropped: work nobody will land");
+    git(r, &["checkout", "-q", "main"]);
+    f.put("sp-dropped", json!({"id": "sp-dropped", "status": "open"}));
+    f.lc_terminal.insert("sp-dropped".into());
+    let tip = git(r, &["rev-parse", "spira/sp-dropped"]);
+    let base = f.base.clone().unwrap();
+    let c = Ctx { w: &f, repo: r, name: "home", base: &base, submitted_label: "spira-submitted" };
+    assert_eq!(disposition(&c, "sp-dropped", "spira/sp-dropped"), Disp::ArchiveTerminal);
+    assert_eq!(disposition(&c, "sp-unlanded", "spira/sp-unlanded"), Disp::KeepUnlanded);
+
+    assert_eq!(sweep(&f, opts(), &[repo(&fx)]), 0, "{}", f.out());
+    assert!(!exists(&fx, "spira/sp-dropped"));
+    assert_eq!(Git(r).verify("refs/archive/spira/sp-dropped").as_deref(), Some(tip.as_str()));
+    assert!(exists(&fx, "spira/sp-unlanded"));
+    assert!(Git(r).verify("refs/archive/spira/sp-unlanded").is_none());
+}

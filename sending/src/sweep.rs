@@ -43,6 +43,9 @@ pub enum Disp {
     KeepUnlanded,
     KeepCherryUnapplied,
     OrphanNoBead,
+    /// The lifecycle row is terminal and the base lacks the branch's work: nothing will
+    /// ever land it, so it is parked under refs/archive, never left to stand or deleted.
+    ArchiveTerminal,
 }
 
 impl Disp {
@@ -58,6 +61,7 @@ impl Disp {
             Disp::KeepUnlanded => "KEEP unlanded",
             Disp::KeepCherryUnapplied => "KEEP cherry-unapplied",
             Disp::OrphanNoBead => "ORPHAN no-bead",
+            Disp::ArchiveTerminal => "ARCHIVE terminal",
         }
     }
 }
@@ -99,6 +103,9 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     if b.is_some_and(superseded) {
         let n = g.ahead(lr, br);
         if n != Some(0) && g.merges_clean(lr, br) {
+            if c.w.lc_terminal(id) {
+                return Disp::ArchiveTerminal;
+            }
             return Disp::KeepSupersededUnsafe;
         }
         return Disp::ReapSupersededSafe;
@@ -127,6 +134,9 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     }
 
     if b.is_some() {
+        if c.w.lc_terminal(id) {
+            return Disp::ArchiveTerminal;
+        }
         return Disp::KeepUnlanded;
     }
     // No bead, and not an ancestor (that one was sent at the first check): real commits
@@ -314,7 +324,7 @@ impl<'a> Sweep<'a> {
                 "KEEP   {id}  {} commit(s) not in {lr}; the lifecycle record says LANDED but git cherry finds unapplied commits — not safe to reap",
                 q(g.ahead(lr, br))
             )),
-            Disp::OrphanNoBead => {
+            Disp::OrphanNoBead | Disp::ArchiveTerminal => {
                 if dry {
                     self.say(&format!("WOULD  {id}  archive orphan branch {br} ({} commit(s) not in {lr}) to refs/archive/{br}", q(g.ahead(lr, br))));
                     return;
