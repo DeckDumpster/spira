@@ -1,0 +1,12 @@
+[Unit]
+Description=Collect Nix garbage weekly
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+AccuracySec=1h
+RandomizedDelaySec=1h
+Unit=spira-nix-gc.service
+
+[Install]
+WantedBy=timers.target
