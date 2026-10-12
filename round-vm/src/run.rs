@@ -1119,7 +1119,15 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     } else {
         host_addr
     };
-    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, progress, results_dir);
+    let keep = AtomicBool::new(false);
+    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, progress, results_dir, &keep);
+    if keep.load(Ordering::SeqCst) {
+        eprintln!("round-vm run: INCOMPLETE: results not fully pulled; keeping VM {} at {} for a re-pull (release it with `round-vm release {}`)", vm.handle, vm.addr, vm.handle);
+        if let Err(e) = env.pool.hold(&vm.handle) {
+            eprintln!("round-vm run: warning: could not hold {}: {e}", vm.handle);
+        }
+        return code;
+    }
     if let Err(e) = env.pool.release(&vm.handle, ProcId::current(), env.deps.factory) {
         eprintln!("round-vm run: warning: release of {} failed: {e}", vm.handle);
     }
@@ -1178,9 +1186,9 @@ fn pool_detail(state_file: &Path) -> Option<String> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool, progress: crate::progress::Progress, results_dir: PathBuf) -> i32 {
+fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool, progress: crate::progress::Progress, results_dir: PathBuf, keep: &AtomicBool) -> i32 {
     let watch = crate::load::Watch::start(&vm.handle);
-    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image, progress, results_dir);
+    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image, progress, results_dir, keep);
     watch.finish();
     rc
 }
@@ -1197,6 +1205,7 @@ fn on_vm_run(
     build_image: bool,
     mut progress: crate::progress::Progress,
     results_dir: PathBuf,
+    keep: &AtomicBool,
 ) -> i32 {
     let cfg = env.cfg;
     let maxpar = args.maxpar.unwrap_or(cfg.maxpar);
@@ -1250,6 +1259,7 @@ fn on_vm_run(
         let remote_rc = match streamed {
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
+                keep_after_lost_ssh(env, vm, &results_dir, keep);
                 progress.finish(&results_dir, 2);
                 return 2;
             }
@@ -1263,7 +1273,7 @@ fn on_vm_run(
         progress.update(&results_dir);
         record_boundary(env, args, &mut progress, &mut refused);
         progress.enter(&results_dir, "salvage", None);
-        let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs());
+        let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, remote_rc, t0.elapsed().as_secs(), keep);
         let code = settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code);
         progress.finish(&results_dir, code);
         publish_progress(env, args, &mut progress);
@@ -1306,13 +1316,14 @@ fn on_vm_run(
         let (code, usable) = match batch.join() {
             Ok(Ok(255)) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
+                keep_after_lost_ssh(env, vm, &results_dir, keep);
                 (2, false)
             }
             Ok(Ok(rc)) => {
                 progress.update(&results_dir);
                 record_boundary(env, args, &mut progress, &mut refused);
                 progress.enter(&results_dir, "salvage", None);
-                let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs());
+                let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs(), keep);
                 (settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code), true)
             }
             Ok(Err(e)) => {
@@ -1360,6 +1371,36 @@ pub fn exit_for_remote(rc: i32) -> i32 {
     }
 }
 
+/// One pull, retried: a dropped ssh must not cost a finished corpus its results.
+fn pull_retry(remote: &dyn Remote, cfg: &Config, addr: &str, remote_path: &str, local: &Path) -> bool {
+    let tries = cfg.ssh_tries.max(3);
+    for i in 0..tries {
+        if i > 0 {
+            std::thread::sleep(cfg.boot_poll);
+            let _ = fs::remove_dir_all(local);
+        }
+        match remote.pull(addr, remote_path, local) {
+            Ok(()) => return true,
+            Err(e) => eprintln!("round-vm run: pull {remote_path} try {} of {tries}: {e}", i + 1),
+        }
+    }
+    false
+}
+
+/// The batch's ssh dropped, so what the VM holds is unknown: take what it has and keep the VM.
+fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, keep: &AtomicBool) {
+    keep.store(true, Ordering::SeqCst);
+    let scratch = env.cfg.state_dir.join(format!(".pulled-lost.{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    if pull_retry(env.remote, env.cfg, &vm.addr, REMOTE_RESULTS, &scratch) {
+        let n = stream_into(&scratch, results_dir).unwrap_or(0);
+        eprintln!("round-vm run: INCOMPLETE: the batch's ssh dropped; salvaged {n} results");
+    } else {
+        eprintln!("round-vm run: INCOMPLETE: the batch's ssh dropped and the results pull failed");
+    }
+    let _ = fs::remove_dir_all(&scratch);
+}
+
 /// A run cut by a signal still holds the verdicts its VM produced: pulls them into
 /// `results_dir` (results already there are kept) before the VM is released. Bounded by
 /// `within`, because the caller's kill-after is seconds away. Returns how many were new.
@@ -1397,6 +1438,7 @@ fn after_batch(
     maxpar: u32,
     remote_rc: i32,
     wall: u64,
+    keep: &AtomicBool,
 ) -> i32 {
     let cfg = env.cfg;
     let pid = std::process::id();
@@ -1410,9 +1452,10 @@ fn after_batch(
     for d in [&pulled, &tsd, &bins] {
         let _ = fs::remove_dir_all(d);
     }
+    let remote = env.remote;
     let timed = |what: &str, remote_path: &str, local: &Path| {
         let t0 = std::time::Instant::now();
-        let ok = env.remote.pull(&vm.addr, remote_path, local).is_ok();
+        let ok = pull_retry(remote, cfg, &vm.addr, remote_path, local);
         eprintln!("round-vm run: PULL {what}: {}s ({})", t0.elapsed().as_secs(), if ok { "ok" } else { "failed" });
         ok
     };
@@ -1428,10 +1471,17 @@ fn after_batch(
         if let Err(e) = copy_tree(leaf, &results_dir) {
             eprintln!("round-vm run: {e}");
             own_fault = true;
+            keep.store(true, Ordering::SeqCst);
         }
     } else if !pulled_ok || remote_rc == 0 {
         eprintln!("round-vm run: no suite results came back from {}", vm.handle);
         own_fault = true;
+        keep.store(true, Ordering::SeqCst);
+    }
+    if !pulled_ok {
+        eprintln!("round-vm run: INCOMPLETE: the results pull from {} failed after retries; this is not a verdict", vm.handle);
+        keep.store(true, Ordering::SeqCst);
+        return 2;
     }
     let _ = fs::remove_dir_all(&pulled);
     let suite_sum = suite_wall_sum(&results_dir);
@@ -1996,6 +2046,8 @@ mod tests {
         /// the corpus runs until its results have been pulled once, then the connection drops
         hold_for_stream: bool,
         result_pulls: std::sync::atomic::AtomicUsize,
+        /// how many results pulls fail before one succeeds
+        fail_result_pulls: std::sync::atomic::AtomicUsize,
     }
     impl FakeRemote {
         fn green() -> FakeRemote {
@@ -2020,6 +2072,7 @@ mod tests {
                 batch_running: std::sync::atomic::AtomicBool::new(false),
                 hold_for_stream: false,
                 result_pulls: std::sync::atomic::AtomicUsize::new(0),
+                fail_result_pulls: std::sync::atomic::AtomicUsize::new(0),
             }
         }
     }
@@ -2050,6 +2103,10 @@ mod tests {
         fn pull(&self, _: &str, remote_path: &str, local: &Path) -> Result<(), String> {
             if remote_path == REMOTE_RESULTS {
                 self.result_pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let failing = self.fail_result_pulls.fetch_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
+                if failing {
+                    return Err("rsync exited 255".into());
+                }
             }
             let files = self.files.get(remote_path).ok_or("no such remote dir")?;
             for (rel, body) in files {
@@ -2407,9 +2464,7 @@ mod tests {
             let fx = fixture();
             let remote = FakeRemote { rc: Ok(rc), files: BTreeMap::new(), ..FakeRemote::green() };
             assert_eq!(go(&fx, &remote, &tree(&fx)), 2, "remote rc {rc}");
-            assert!(fx.fp.live_vms().is_empty(), "leaked {:?}", fx.fp.live_vms());
-            let m: Manifest = serde_json::from_str(&fs::read_to_string(fx.cfg.state_dir.join("manifests/treesha.json")).unwrap()).unwrap();
-            assert_eq!(m.acquire, AcquireMode::Cold, "no VM was ready: the no-ready-VM path");
+            assert_eq!(fx.fp.live_vms().len(), 1, "no results came back, so the VM is kept: {:?}", fx.fp.live_vms());
         }
     }
 
@@ -2420,7 +2475,7 @@ mod tests {
         let (a, sp) = spool_fixture(&fx);
         assert_eq!(go(&fx, &remote, &a), 2);
         assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=2\n");
-        assert!(fx.fp.live_vms().is_empty());
+        assert_eq!(fx.fp.live_vms().len(), 1, "kept: the pull found nothing");
     }
 
     /// sp-dp872: testenv has two binaries (testenv, bd-meter); an unqualified `cargo run -p
@@ -2436,16 +2491,16 @@ mod tests {
 
     #[test]
     fn every_failure_on_the_vm_is_exit_2_and_releases_it() {
-        let cases: Vec<FakeRemote> = vec![
-            FakeRemote { reachable: false, ..FakeRemote::green() },
-            FakeRemote { rc: Ok(255), ..FakeRemote::green() },
-            FakeRemote { rc: Err("ssh: spawn failed".into()), ..FakeRemote::green() },
-            FakeRemote { files: BTreeMap::new(), ..FakeRemote::green() },
+        let cases: Vec<(FakeRemote, usize)> = vec![
+            (FakeRemote { reachable: false, ..FakeRemote::green() }, 0),
+            (FakeRemote { rc: Ok(255), ..FakeRemote::green() }, 1),
+            (FakeRemote { rc: Err("ssh: spawn failed".into()), ..FakeRemote::green() }, 0),
+            (FakeRemote { files: BTreeMap::new(), ..FakeRemote::green() }, 1),
         ];
-        for remote in cases {
+        for (remote, kept) in cases {
             let fx = fixture();
             assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
-            assert!(fx.fp.live_vms().is_empty(), "leaked {:?}", fx.fp.live_vms());
+            assert_eq!(fx.fp.live_vms().len(), kept, "{:?}", fx.fp.live_vms());
         }
     }
 
@@ -2533,6 +2588,53 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_results_pull_is_retried_and_the_full_set_comes_back() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        remote.fail_result_pulls.store(1, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
+        let results = fx.cfg.run_dir.join("batch-results");
+        assert!(results.join("test-a.sh.result").is_file() && results.join("test-b.sh.result").is_file());
+        assert!(fx.fp.live_vms().is_empty(), "a complete pull releases the VM");
+    }
+
+    #[test]
+    fn a_pull_that_never_completes_is_incomplete_and_the_vm_is_kept() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        remote.fail_result_pulls.store(1000, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
+        assert_eq!(fx.fp.live_vms().len(), 1, "kept for a re-pull: {:?}", fx.fp.live_vms());
+    }
+
+    #[test]
+    fn a_dropped_batch_ssh_salvages_what_it_can_and_keeps_the_vm() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.rc = Ok(255);
+        assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
+        assert!(fx.cfg.run_dir.join("batch-results/test-a.sh.result").is_file());
+        assert_eq!(fx.fp.live_vms().len(), 1);
+    }
+
+    #[test]
+    fn a_missing_local_file_mid_stream_does_not_abort_the_rest() {
+        let d = TempDir::new();
+        let pulled = d.path().join("pulled/KEY");
+        fs::create_dir_all(&pulled).unwrap();
+        for n in ["a", "b", "c"] {
+            fs::write(pulled.join(format!("test-{n}.sh.out")), "o").unwrap();
+            fs::write(pulled.join(format!("test-{n}.sh.result")), "ok 1 1 - p e 0\n").unwrap();
+        }
+        fs::write(pulled.join("test-b.sh.out.streaming"), "").unwrap();
+        fs::create_dir(pulled.parent().unwrap().join("x")).unwrap();
+        let out = d.path().join("out");
+        fs::create_dir_all(out.join("test-b.sh.out.streaming")).unwrap();
+        assert_eq!(stream_into(&d.path().join("pulled"), &out).unwrap(), 2, "a and c land; b's blocked write is skipped");
+        assert!(out.join("test-c.sh.result").is_file());
+    }
+
+    #[test]
     fn a_run_publishes_its_progress_and_leaves_it_done_with_the_verdict() {
         let fx = fixture();
         let remote = FakeRemote::green();
@@ -2569,7 +2671,7 @@ mod tests {
         for s in ["test-a.sh", "test-b.sh"] {
             assert!(fx.d.path().join("results").join(format!("{s}.result")).is_file(), "{s} streamed before the cut");
         }
-        assert!(fx.fp.live_vms().is_empty());
+        assert_eq!(fx.fp.live_vms().len(), 1, "kept for a re-pull");
     }
 
     #[test]
@@ -2580,7 +2682,7 @@ mod tests {
         fs::remove_file(sp.dir.join("close")).unwrap();
         assert_eq!(go(&fx, &remote, &a), 2);
         assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=2\n");
-        assert!(fx.fp.live_vms().is_empty());
+        assert_eq!(fx.fp.live_vms().len(), 1, "kept for a re-pull");
     }
 
     #[test]
