@@ -163,7 +163,6 @@ spira/test-queue-step-eject-race.sh
 spira/test-queue-submit.sh
 spira/test-queue-watch.sh
 spira/test-rebase-branch.sh
-spira/test-reclaim-slay-branch-guard.sh
 spira/test-reconciler.sh
 spira/test-released-defects.sh
 spira/test-release.sh
