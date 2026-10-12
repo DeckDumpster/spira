@@ -75,6 +75,16 @@ fn write_exec(path: &Path, body: &str) -> Result<(), String> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).map_err(|e| format!("cannot chmod {}: {e}", path.display()))
 }
 
+/// The stage's content store is an embedded bd, not a database on its lifecycle server, so
+/// `spira-lc content-rows` is answered from bd here; every other verb goes to the next
+/// `spira-lc` on PATH.
+fn lc_content_shim(db: &Path) -> String {
+    format!(
+        "#!/bin/sh\nif [ \"$1\" = content-rows ]; then\n    exec bd-embedded -C '{}' list --id \"$3\" --status all --limit 0 --json\nfi\nme=$(readlink -f \"$0\")\nIFS=:\nfor d in $PATH; do\n    [ -x \"$d/spira-lc\" ] && [ \"$(readlink -f \"$d/spira-lc\")\" != \"$me\" ] && exec \"$d/spira-lc\" \"$@\"\ndone\nexit 127\n",
+        db.display()
+    )
+}
+
 /// `chamber/canary.fayth`'s content. `FAYTH_MAX_CONCURRENT=1` lets sentinel summon exactly
 /// one worker; `FAYTH_LABELS` must include `SPIRA_SCOPE_LABEL` (when non-empty) to pass
 /// `fayth_fenced`.
@@ -247,6 +257,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     // ---- lifecycle store (sp-880u4): every claim goes through the lifecycle machine, so the
     // stage gets a machine of its own, built from the release's lifecycle/ the way install
     // builds one. The release root is the parent of its spira/ directory.
+    write_exec(&bin.join("spira-lc"), &lc_content_shim(&db))?;
     let path_env = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
     let lifecycle_dir = o.harness_spira.parent().map(|r| r.join("lifecycle")).unwrap_or_default();
     let store = match crate::stage_lc::up(&root, &lifecycle_dir, &path_env) {
