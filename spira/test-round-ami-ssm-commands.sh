@@ -23,7 +23,7 @@ want "toolchain passed to setup" "ami-setup.sh /root/tree" "$(cat "$F")"
 if ! command -v jq >/dev/null 2>&1; then
     ok "jq absent; rendered-document checks skipped"
 else
-    doc="$(jq -nc --arg b "stage-bkt" --arg r "123" --arg t "1.90.0" -f "$F")"
+    doc="$(jq -nc --arg u "https://h/round-ami/123.tgz?X-Amz-Signature=a&X-Amz-Expires=1" --arg t "1.90.0" -f "$F")"
     n="$(printf '%s' "$doc" | jq '.commands | length')"
     is "one command, so no sh-level line can fail on bash-isms" 1 "$n"
     printf '%s\n' "$(printf '%s' "$doc" | jq -r '.commands[0]')" > "$TMP/script.sh"
@@ -37,7 +37,10 @@ else
         ok "dash absent; skipped"
     fi
     bash -n "$TMP/script.sh" && ok "generated script parses under bash" || bad "generated script parses under bash" "rejected"
-    want "bucket path interpolated" "s3://stage-bkt/round-ami/123.tgz" "$doc"
+    want "presigned url interpolated, quoted" "'https://h/round-ami/123.tgz?X-Amz-Signature=a&X-Amz-Expires=1'" "$(cat "$TMP/script.sh")"
+    if grep -Eq '(^|[^[:alnum:]_-])aws[[:space:]]' "$TMP/script.sh"; then bad "no aws binary on the instance" "found"; else ok "no aws binary on the instance"; fi
+    want "non-200 fails loudly" "http_code" "$doc"
+    want "empty body refused before tar" "-s /root/tree.tgz" "$doc"
     want "toolchain passed to setup" "ami-setup.sh /root/tree 1.90.0" "$doc"
 fi
 grep -q 'ssm-commands.jq' "$ROOT/.github/workflows/round-ami-build.yml" \
