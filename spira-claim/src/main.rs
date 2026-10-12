@@ -834,12 +834,19 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
     rows.retain(|r| want.contains(r.id.as_str()) && ready::in_scope(r, &scope, &no_loop));
     let wanted = rank::all_blockers(&rows);
-    let missing: Vec<String> = wanted.iter().filter(|b| !bd.contains_key(*b)).cloned().collect();
+    let blocker_rows: Vec<String> = wanted.iter().filter(|b| !lc.contains_key(*b)).cloned().collect();
+    lc.extend(st.lifecycle_of(&blocker_rows)?);
+    // rank::claimable reads a blocker's bd row only when it has no lifecycle row or is
+    // CERTIFIED/IN_DELIVERY (stacking); every other state is decided by the lifecycle alone.
+    let missing: Vec<String> = wanted
+        .iter()
+        .filter(|b| !bd.contains_key(*b))
+        .filter(|b| lc.get(*b).is_none_or(|r| matches!(r.state, lifecycle::bead::BeadState::Certified | lifecycle::bead::BeadState::InDelivery)))
+        .cloned()
+        .collect();
     if !missing.is_empty() {
         bd.extend(rank::index_rows(st.list_by_ids(&missing)?));
     }
-    let blocker_rows: Vec<String> = wanted.iter().filter(|b| !lc.contains_key(*b)).cloned().collect();
-    lc.extend(st.lifecycle_of(&blocker_rows)?);
     rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
     let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
