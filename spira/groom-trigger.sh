@@ -126,18 +126,19 @@ if [ "$_score" -lt "$_threshold" ] 2>/dev/null; then
     exit 0
 fi
 
-# FILE THE TRIGGER BEAD. Type task (not decision) — this is work the groomer does,
-# not a question Ryan answers. Priority 3: hygiene work, not urgent, but important
-# enough to run on schedule. No repo: label — the groomer reads the whole graph,
-# not one repository.
-if SPIRA_DB="$DB" SPIRA_BD="$BD" bdq create \
+# FILE THE TRIGGER BEAD through bead.sh, the one filer that writes the lifecycle row with
+# the bead: a raw bd create leaves it rowless and so unclaimable. Priority 3: hygiene work.
+# The delivers: label is not part of the filing contract and is added afterwards.
+_gt_repo="$(spira_home_repo 2>/dev/null)" || _gt_repo=""
+_gt_body="$(mktemp)"
+printf '%s\n' "Scheduled trigger: the groomer persona will claim this bead, run a hygiene pass over the open bead graph (splitting unsplittable beads, merging duplicates, closing stale premises, correcting mislabelled lanes), and close this bead when finished. See spira/chamber/groomer.md for the pass procedure." > "$_gt_body"
+_gt_id="$(SPIRA_DB="$DB" SPIRA_BD="$BD" "${SPIRA_BEAD_BIN:-$HERE/bead.sh}" file \
     "Groomer pass — scheduled graph hygiene" \
-    --type task \
-    --label "$LABELS,groom-trigger,delivers:note:${SPIRA_RUN}/groom.log" \
-    --priority 3 \
-    --description "Scheduled trigger: the groomer persona will claim this bead, run a hygiene pass over the open bead graph (splitting unsplittable beads, merging duplicates, closing stale premises, correcting mislabelled lanes), and close this bead when finished. See spira/chamber/groomer.md for the pass procedure." \
-; then
-    log "groomer trigger bead filed (labels: $LABELS,delivers:note:${SPIRA_RUN}/groom.log)"
+    --for groomer --repo "$_gt_repo" --priority 3 --body-file "$_gt_body" | tr -d '[:space:]')"
+rm -f "$_gt_body"
+if [ -n "$_gt_id" ] \
+    && SPIRA_DB="$DB" SPIRA_BD="$BD" bdq update "$_gt_id" --add-label "delivers:note:${SPIRA_RUN}/groom.log" >/dev/null; then
+    log "groomer trigger bead $_gt_id filed (labels: $LABELS,delivers:note:${SPIRA_RUN}/groom.log)"
 else
     log "ERROR: failed to file groomer trigger bead"
     exit 1
