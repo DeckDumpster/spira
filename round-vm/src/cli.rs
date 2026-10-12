@@ -266,8 +266,13 @@ pub fn main_with(args: Vec<String>) -> i32 {
             let sig_scratch = cfg.state_dir.join(format!(".salvage.{}", me.pid));
             block_termination_signals(move |sig| {
                 for vm in sig_pool.leased_to(me) {
-                    let n = salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6));
-                    eprintln!("round-vm run: signal {sig}: salvaged {n} suite result(s) from {} before release", vm.handle);
+                    match salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6)) {
+                        Some(n) => eprintln!("round-vm run: signal {sig}: salvaged {n} suite result(s) from {} before release", vm.handle),
+                        None => {
+                            eprintln!("round-vm run: signal {sig}: results pull from {} failed; keeping it for a re-pull (release it with `round-vm release {}`)", vm.handle, vm.handle);
+                            let _ = sig_pool.hold(&vm.handle);
+                        }
+                    }
                 }
                 crate::progress::mark_killed(&sig_run_dir);
                 eprintln!("round-vm run: signal {sig}: releasing this run's VM");
