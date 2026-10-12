@@ -81,6 +81,17 @@ names it was explaining.
 
 {{WIKI}}
 
+**Claim before you file, so a killed sweep resumes instead of repeating.** Give every item a
+key naming its source span in the transcript (`t41-44: single-deliverable question`), and run
+
+    {{ARCHIVIST}} claim {{SESSION}} "<key>"
+
+first. Exit 0 means file it now; exit 3 means an earlier run already did — file nothing and move
+on. Work through the digest in turn order and run `{{ARCHIVIST}} progress {{SESSION}} <turn>`
+once everything up to that turn is filed or deliberately skipped.
+
+{{FILED}}
+
 **An ask without a default is incomplete.** You have read the whole conversation and the
 operator has not; recommending nothing hands the work of deciding back to the person the
 escalation exists to spare.

@@ -28,6 +28,8 @@ archivist state [<s>]      print what the status line and the dashboard are read
 archivist digest <t> [<from-turn>] [--full]
                             the transcript rendered small enough for an agent to read
 archivist record <line>    register one durably-filed finding for today's digest
+archivist claim <s> <key> take the right to file one item (exit 3: an earlier run filed it)
+archivist progress <s> <n> advance the covered mark to turn n (forward only)
 archivist digest-send      mail today's digest (at most once a day) and empty the queue
 ```
 
@@ -87,7 +89,7 @@ not only at the end.
 
 Two more of this crate's own private files, read and written by nothing else:
 `<session>.covered` (`turn=<n>`, the high-water mark `set_covered` only advances on
-success) and `<session>.timeout_count` (a bare integer, the retry budget).
+success) `<session>.filed` (one claimed item key per line, kept across failed runs so a re-run skips them) and `<session>.timeout_count` (a bare integer, the retry budget).
 
 ## Decisions (what was dropped, and why)
 

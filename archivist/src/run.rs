@@ -62,6 +62,47 @@ fn set_covered(arc: &Path, sid: &str, turn: u64) -> std::io::Result<()> {
     std::fs::rename(&tmp, arc.join(format!("{sid}.covered")))
 }
 
+fn filed_path(arc: &Path, sid: &str) -> PathBuf {
+    arc.join(format!("{sid}.filed"))
+}
+
+fn filed_keys(arc: &Path, sid: &str) -> Vec<String> {
+    std::fs::read_to_string(filed_path(arc, sid)).map(|t| t.lines().map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// `archivist claim <session> <key>` — take the right to file one item. `Ok(true)`: the key
+/// was new and is now recorded, so file it; `Ok(false)`: an earlier run already did.
+pub fn claim(arc: &Path, sid: &str, key: &str) -> Result<bool, String> {
+    let key = key.trim();
+    if key.is_empty() || key.contains('\n') {
+        return Err("claim needs a one-line key naming the item's source span".into());
+    }
+    std::fs::create_dir_all(arc).map_err(|e| e.to_string())?;
+    let _g = lock::wait_lock(&arc.join(format!("{sid}.filed.lock")));
+    if filed_keys(arc, sid).iter().any(|k| k == key) {
+        return Ok(false);
+    }
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(filed_path(arc, sid)).map_err(|e| e.to_string())?;
+    writeln!(f, "{key}").map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// `archivist progress <session> <turn>` — everything up to `turn` is handled; the covered
+/// mark only moves forward, and never past the turn this run read.
+pub fn progress(arc: &Path, sid: &str, turn: u64) -> Result<(), String> {
+    let at: u64 = state::read_state_key(arc, sid, "at_turn")
+        .ok_or_else(|| format!("no archivist run in progress for {sid} — nothing to advance"))?
+        .parse()
+        .unwrap_or(0);
+    let prior = state::numeric_or_zero(covered_raw(arc, sid).as_deref()).0;
+    let next = turn.min(at).max(prior);
+    if next == prior && covered_raw(arc, sid).is_some() {
+        return Ok(());
+    }
+    set_covered(arc, sid, next).map_err(|e| e.to_string())
+}
+
 /// `arc_numeric`: coerce a meter or cursor value to a non-negative integer, LOGGING the
 /// coercion — the established "unreadable" sentinel in this codebase is `-` or `?`, and a
 /// sweep that silently treated one as 0 would be indistinguishable from one that read a
@@ -149,6 +190,12 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
         ),
         None => "There is no wiki configured on this installation, so craft knowledge has nowhere\nbetter to go than an insight. Record it as one and say in the body that it wants a\nhome.".to_string(),
     };
+    let filed = filed_keys(arc, sid);
+    let filed_text = if filed.is_empty() {
+        "Nothing has been filed from this session yet.".to_string()
+    } else {
+        format!("An earlier run already filed these; `archivist claim` refuses them again:\n\n{}", filed.iter().map(|k| format!("    {k}")).collect::<Vec<_>>().join("\n"))
+    };
     let tp_disp = tp.to_string_lossy().into_owned();
     let at_s = at.to_string();
     let from_s = from.to_string();
@@ -168,6 +215,7 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
             // nothing that calls bd (sp-st0mm).
             ("NOTIFY", "work ask"),
             ("WIKI", wiki_text.as_str()),
+            ("FILED", filed_text.as_str()),
         ],
     );
 
@@ -321,7 +369,7 @@ fn forget_stale_sessions(cfg: &Env, arc: &Path, lines: &mut Vec<String>) {
         if transcript_exists(projects, &sid) {
             continue;
         }
-        for suffix in [".state", ".hwm", ".covered", ".notified", ".lock", ".timeout_count"] {
+        for suffix in [".state", ".hwm", ".covered", ".filed", ".filed.lock", ".notified", ".lock", ".timeout_count"] {
             let _ = std::fs::remove_file(arc.join(format!("{sid}{suffix}")));
         }
         let _ = std::fs::remove_file(Path::new(&cfg.run).join(format!("archivist-{sid}.log")));
@@ -546,6 +594,62 @@ mod tests {
         let out = state_cmd(&dir, None);
         assert!(out.contains("sess-1\tsafe\t10 turn\t2 filed\n"));
         assert!(!out.contains("sweep\t"));
+    }
+
+    #[test]
+    fn a_run_killed_after_two_of_five_items_refiles_only_the_other_three() {
+        let dir = testkit::TempDir::new("archivist-run");
+        let items = ["t3-5:a", "t6-8:b", "t9-9:c", "t10-12:d", "t13-14:e"];
+        let mut filed = Vec::new();
+        for k in &items[..2] {
+            assert!(claim(&dir, "sess-1", k).unwrap());
+            filed.push(*k);
+        }
+        for k in items {
+            if claim(&dir, "sess-1", k).unwrap() {
+                filed.push(k);
+            }
+        }
+        assert_eq!(filed, ["t3-5:a", "t6-8:b", "t9-9:c", "t10-12:d", "t13-14:e"]);
+        assert!(!claim(&dir, "sess-1", "t3-5:a").unwrap());
+        assert!(claim(&dir, "sess-2", "t3-5:a").unwrap(), "keys are per session");
+    }
+
+    #[test]
+    fn claim_refuses_an_empty_or_multiline_key() {
+        let dir = testkit::TempDir::new("archivist-run");
+        assert!(claim(&dir, "s", "  ").is_err());
+        assert!(claim(&dir, "s", "a\nb").is_err());
+    }
+
+    #[test]
+    fn progress_only_moves_the_covered_mark_forward_and_not_past_the_turn_read() {
+        let dir = testkit::TempDir::new("archivist-run");
+        assert!(progress(&dir, "s", 5).is_err());
+        state::write_state(&dir, "s", State::Archiving, 20, 0).unwrap();
+        progress(&dir, "s", 8).unwrap();
+        assert_eq!(covered_raw(&dir, "s"), Some("8".into()));
+        progress(&dir, "s", 3).unwrap();
+        assert_eq!(covered_raw(&dir, "s"), Some("8".into()));
+        progress(&dir, "s", 99).unwrap();
+        assert_eq!(covered_raw(&dir, "s"), Some("20".into()));
+    }
+
+    #[test]
+    fn a_failed_run_keeps_its_ledger_and_the_next_prompt_lists_it() {
+        let dir = testkit::TempDir::new("archivist-run");
+        let chamber = testkit::TempDir::new("archivist-chamber");
+        std::fs::write(chamber.join("archivist.md"), "task {{FILED}}").unwrap();
+        let mut c = cfg();
+        c.chamber = chamber.path().to_string_lossy().into_owned();
+        c.run = dir.path().to_string_lossy().into_owned();
+        claim(&dir, "sess-1", "t3-5:a").unwrap();
+        let seam = FakeSeam::new();
+        *seam.agent_rc.borrow_mut() = 1;
+        archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/sess-1.jsonl"), 10, "5", "t", false);
+        assert!(seam.agent_calls.borrow()[0].contains("    t3-5:a"));
+        assert_eq!(covered_raw(&dir, "sess-1"), None);
+        assert!(!claim(&dir, "sess-1", "t3-5:a").unwrap());
     }
 
     #[test]
