@@ -155,19 +155,27 @@ pub fn stream_into(pulled: &Path, results_dir: &Path) -> Result<usize, String> {
     files.sort();
     let is_result = |p: &Path| p.extension().map(|x| x == "result").unwrap_or(false);
     let mut new = 0;
+    let mut failed: BTreeSet<std::ffi::OsString> = BTreeSet::new();
     for f in files.iter().filter(|p| !is_result(p)).chain(files.iter().filter(|p| is_result(p))) {
         let to = results_dir.join(f.file_name().unwrap());
-        if is_result(f) {
-            if to.exists() {
-                continue;
-            }
-            new += 1;
+        if is_result(f) && (to.exists() || f.file_stem().is_some_and(|st| failed.contains(st))) {
+            continue;
         }
-        let body = fs::read(f).map_err(|e| format!("{}: {e}", f.display()))?;
-        let mut tmp = to.as_os_str().to_owned();
-        tmp.push(".streaming");
-        fs::write(&tmp, body).map_err(|e| format!("{}: {e}", to.display()))?;
-        fs::rename(&tmp, &to).map_err(|e| format!("{}: {e}", to.display()))?;
+        let copied = fs::read(f).map_err(|e| format!("{}: {e}", f.display())).and_then(|body| {
+            let mut tmp = to.as_os_str().to_owned();
+            tmp.push(".streaming");
+            let _ = fs::create_dir_all(results_dir);
+            fs::write(&tmp, body).map_err(|e| format!("{}: {e}", to.display()))?;
+            fs::rename(&tmp, &to).map_err(|e| format!("{}: {e}", to.display()))
+        });
+        match copied {
+            Ok(()) if is_result(f) => new += 1,
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("round-vm run: streaming results: {e}");
+                failed.extend(f.file_stem().map(|st| st.to_owned()));
+            }
+        }
     }
     Ok(new)
 }

@@ -426,6 +426,16 @@ impl Pool {
         self.release_inner(handle, caller, false, factory)
     }
 
+    /// Keeps `handle` out of every reaper: its lease belongs to no process, so only a person
+    /// (or the run deadline's leak sweep) ends it.
+    pub fn hold(&self, handle: &str) -> Result<(), String> {
+        self.with_state(|s| {
+            for l in s.leases.iter_mut().filter(|l| l.vm.handle == handle) {
+                l.owner = None;
+            }
+        })
+    }
+
     fn release_inner(&self, handle: &str, caller: ProcId, any_lease_holds: bool, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<(), String> {
         let attempt = factory()?;
         self.with_state(|s| {
