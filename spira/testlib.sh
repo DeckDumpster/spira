@@ -594,6 +594,7 @@ if [ "$1" = close ]; then
     exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" close "$id" --force --reason "$reason"
 fi
 # reopen (sp-swh8b8): this mirror's rows ARE the store's, so the reopen is the store's.
+if [ "$1" = create-bead ]; then exit 0; fi
 if [ "$1" = reopen ]; then
     "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" update "$2" --status open --assignee "" >/dev/null || exit 2
     [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" label remove "$2" "$SPIRA_SUBMITTED_LABEL" >/dev/null 2>&1
@@ -662,7 +663,7 @@ else:
 STUB
     } > "$dir/spira-lc"
     chmod +x "$dir/spira-lc"
-    SPIRA_LC_BIN="$dir/spira-lc"
+    SPIRA_LC_BIN="$dir/spira-lc"; export SPIRA_LC_BIN
 }
 
 plan() {    # plan <n> — must be called before the first ok/bad/want/nowant/wantrc

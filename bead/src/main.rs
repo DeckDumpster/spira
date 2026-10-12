@@ -152,6 +152,14 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
         print!("{stdout}");
     }
     if code != 0 {
+        // bd may have written the content bead before it errored; without a row the loop cannot see it.
+        if let (Some(id), Some((title, priority))) = (parse_created_id(&stdout), mirror) {
+            if submitted_tip.is_none() && create_row_retrying(&id, Some(title), priority, None, repo).is_ok() {
+                eprintln!("bead: file: bd create exited {code} after creating {id}; its lifecycle row was created");
+            } else {
+                eprintln!("bead: file: bd create exited {code} after creating {id}; repair: spira-lc create-bead {id} --priority {priority} --title \"{title}\"");
+            }
+        }
         return code;
     }
     let Some(new_id) = parse_created_id(&stdout) else {
@@ -170,13 +178,18 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
     if let Some((title, priority)) = mirror {
         match submitted_tip {
             Some(tip) => {
-                if let Err(e) = create_submitted_row(&new_id, title, priority, tip, repo) {
+                if let Err(e) = create_row_retrying(&new_id, Some(title), priority, Some(tip), repo) {
                     eprintln!("bead: file: {new_id} filed but its lifecycle row was not created SUBMITTED: {e}; no id is printed. Once the lifecycle store answers: spira-lc create-bead {new_id} --submitted-tip {tip}");
                     return 1;
                 }
                 print!("{stdout}");
             }
-            None => mirror_to_lifecycle(&new_id, Some(title), priority, repo),
+            None => {
+                if let Err(e) = create_row_retrying(&new_id, Some(title), priority, None, repo) {
+                    eprintln!("bead: file: {new_id} filed but its lifecycle row was not created: {e}; the loop cannot see it and a retry would duplicate it. Repair: spira-lc create-bead {new_id} --priority {priority} --title \"{title}\"");
+                    return 1;
+                }
+            }
         }
     }
     if express {
@@ -222,11 +235,33 @@ fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64, repo: Optio
     }
 }
 
-/// Synchronous, unlike the mirror: the row must exist SUBMITTED before this call returns.
-fn create_submitted_row(id: &str, title: &str, priority: i64, tip: &str, repo: Option<&str>) -> Result<(), String> {
+const ROW_ATTEMPTS: u32 = 3;
+
+/// Filing is two writes; a transient store error on the second must not strand the first.
+fn create_row_retrying(id: &str, title: Option<&str>, priority: i64, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
+    let mut last = String::new();
+    for attempt in 0..ROW_ATTEMPTS {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        match create_row(id, title, priority, tip, repo) {
+            Ok(()) => return Ok(()),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+fn create_row(id: &str, title: Option<&str>, priority: i64, tip: Option<&str>, repo: Option<&str>) -> Result<(), String> {
     let bin = spira_config::lifecycle_row::lc_bin();
     let priority = priority.to_string();
-    let mut args = vec!["5", &bin, "create-bead", id, "--priority", &priority, "--title", title, "--submitted-tip", tip];
+    let mut args = vec!["5", &bin, "create-bead", id, "--priority", &priority];
+    if let Some(t) = title {
+        args.extend(["--title", t]);
+    }
+    if let Some(tip) = tip {
+        args.extend(["--submitted-tip", tip]);
+    }
     if let Some(r) = repo {
         args.extend(["--repo", r]);
     }
