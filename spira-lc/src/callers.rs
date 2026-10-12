@@ -1237,6 +1237,13 @@ pub fn close(
                     };
                 }
             } else if !terminal {
+                if actor == "mail" && !reason.trim_start().to_lowercase().starts_with("drop") {
+                    return Answer {
+                        code: REFUSED,
+                        stderr: format!("spira-lc close: {id}: a work bead in {state} is not closed by a mail reply — only an explicit DROP from the operator drops it\n"),
+                        ..Default::default()
+                    };
+                }
                 let kind = match by.as_deref().filter(|b| !b.is_empty()) {
                     Some(b) => BeadEventKind::Supersede { by: b.to_string() },
                     None => terminal_event_for(&reason),

@@ -973,6 +973,20 @@ fn close_records_the_end_on_the_row_before_the_store_closes() {
 }
 
 #[test]
+fn a_mail_close_never_drops_a_live_work_bead_unless_the_reply_says_drop() {
+    let mut f = Fake::default();
+    f.bead("sp-w", BeadState::Rework);
+    let mut bd = FakeBd::default();
+    let a = close(&v(&["sp-w", "--reason", "Keep going.", "--actor", "mail"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, REFUSED, "{}", a.stderr);
+    assert_eq!(f.state("sp-w"), "REWORK");
+    assert!(bd.closed.is_empty() && f.events.is_empty());
+    let a = close(&v(&["sp-w", "--reason", "DROP it.", "--actor", "mail"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-w"), "DROPPED");
+}
+
+#[test]
 fn close_withdraws_an_open_ask_first_and_names_a_successor() {
     let mut f = Fake::default();
     f.bead("sp-a", BeadState::Ready).holds.insert(HoldKind::Ask);
