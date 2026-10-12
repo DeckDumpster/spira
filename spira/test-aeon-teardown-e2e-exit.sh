@@ -51,6 +51,7 @@ OW_SOCK="$FA_TMP/lc.sock"
 tl_config SPIRA_LC_SOCKET="$OW_SOCK"
 spira-lc serve "$OW_SOCK" > "$FA_TMP/serve.log" 2>&1 &
 OW_SERVE_PID=$!
+lc_content_shim "$FA_TMP/lcshim"; export PATH="$FA_TMP/lcshim:$PATH"
 for _ in $(seq 1 50); do [ -S "$OW_SOCK" ] && break; sleep 0.1; done
 [ -S "$OW_SOCK" ] || bail "spira-lc serve never opened its socket: $(cat "$FA_TMP/serve.log")"
 aeon_fixture_agent "$FA_BIN/claude"   # re-capture PATH: the model reaches `work`, not the stand-in

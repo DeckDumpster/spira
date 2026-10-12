@@ -761,6 +761,24 @@ try: print(json.load(sys.stdin)["bead"]["state"])
 except Exception: print("")' 2>/dev/null
 }
 
+# lc_content_shim <dir> — a spira-lc ahead of the real one on PATH that answers `content-rows`
+# from the suite's bd fixture (a lifecycle fixture server holds no content store) and hands every
+# other verb to the next spira-lc on PATH.
+lc_content_shim() {
+    local dir="${1:?lc_content_shim needs a directory}"
+    mkdir -p "$dir"
+    cat > "$dir/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = content-rows ]; then
+    bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
+    BD_IGNORE_SCHEMA_SKEW=1 exec "${bd:-bd}" ${db:+-C "$db"} list --id "$3" --status all --limit 0 --json
+fi
+for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done
+exit 2
+STUB
+    chmod +x "$dir/spira-lc"
+}
+
 # lc_aeon_mirror <dir> — a spira-lc, installed by name into <dir> (put <dir> first on the
 # aeon's PATH), for the legacy aeon suites whose model shim closes its bead in bd. The aeon
 # reads a bead's state from its lifecycle row, never bd status (sp-mve9i), and since sp-v62vn

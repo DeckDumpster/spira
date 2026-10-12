@@ -66,6 +66,7 @@ LC_SOCK="$TMP/lc.sock"
 tl_config SPIRA_LC_SOCKET="$LC_SOCK"
 spira-lc serve "$LC_SOCK" > "$TMP/serve.log" 2>&1 &
 SERVE_PID=$!
+lc_content_shim "$TMP/lcshim"; export PATH="$TMP/lcshim:$PATH"
 for _ in $(seq 1 50); do [ -S "$LC_SOCK" ] && break; sleep 0.1; done
 [ -S "$LC_SOCK" ] || bail "spira-lc serve never opened its socket: $(cat "$TMP/serve.log")"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
