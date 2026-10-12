@@ -31,6 +31,11 @@ pub trait Probe {
     fn patch_id(&self, tip: &str) -> Result<String, String>;
     fn stacked_on(&self, id: &str, tip: &str) -> Result<Vec<String>, String>;
     fn state(&self, id: &str) -> Result<String, String>;
+    /// Why a bead that declares a target may not proceed: its submission carries no verdict, or a
+    /// SHORT with no follow-on or escalation.
+    fn target_gap(&self, _id: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
 }
 
 pub trait Store {
@@ -184,7 +189,12 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
             }
             continue;
         }
-        let findings = v.findings(&state_of);
+        let mut findings = v.findings(&state_of);
+        match probe.target_gap(&c.id) {
+            Ok(Some(text)) => findings.push(Finding { reason: "policy-violation", text }),
+            Ok(None) => {}
+            Err(e) => out.errors.push(format!("sift: {} target not read ({e}); passed on the target", c.id)),
+        }
         if findings.is_empty() {
             if let Err(e) = store.record_screened(&c.id, &c.tip) {
                 out.errors.push(format!("sift: {} screened not recorded ({e})", c.id));

@@ -428,6 +428,17 @@ fn cfg_label(key: &str) -> String {
 // file
 // =========================================================================================
 
+/// A body file carrying the `Target:` line ahead of the caller's body, so the target is part of the bead.
+fn with_target_line(target: &str, body_file: Option<&str>) -> Result<String, String> {
+    let body = match body_file {
+        Some(f) => std::fs::read_to_string(f).map_err(|e| format!("reading {f}: {e}"))?,
+        None => String::new(),
+    };
+    let path = env::temp_dir().join(format!("bead-target-{}.md", std::process::id()));
+    std::fs::write(&path, format!("{}{target}\n\n{body}", spira_config::target::TARGET_PREFIX)).map_err(|e| format!("writing {}: {e}", path.display()))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 fn cmd_file(home: &str, args: &[String]) -> i32 {
     if args.is_empty() {
         eprintln!("bead: title required");
@@ -445,10 +456,15 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut tip: Option<String> = None;
     let mut json = false;
     let mut parent: Option<String> = None;
+    let mut target: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "--target" => {
+                i += 1;
+                target = args.get(i).cloned();
+            }
             "--for" => {
                 i += 1;
                 for_fayth = args.get(i).cloned();
@@ -487,6 +503,24 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             }
         }
         i += 1;
+    }
+
+    if let Some(t) = &target {
+        if let Err(e) = spira_config::target::valid_target(t) {
+            eprintln!("bead: {e}");
+            return 2;
+        }
+        if kind.as_deref().is_some_and(|k| k != "work") {
+            eprintln!("bead: --target applies only to work beads");
+            return 2;
+        }
+        match with_target_line(t, body_file.as_deref()) {
+            Ok(p) => body_file = Some(p),
+            Err(e) => {
+                eprintln!("bead: {e}");
+                return 2;
+            }
+        }
     }
 
     let incident_parent = match &parent {

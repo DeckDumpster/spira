@@ -9,6 +9,7 @@ pub struct GitProbe {
     pub base_ref: String,
     pub work: PathBuf,
     pub state: Box<dyn Fn(&str) -> Result<String, String>>,
+    pub shown: Box<dyn Fn(&str) -> Result<String, String>>,
 }
 
 fn git(dir: &Path) -> Command {
@@ -75,6 +76,10 @@ impl Probe for GitProbe {
     fn state(&self, id: &str) -> Result<String, String> {
         (self.state)(id)
     }
+
+    fn target_gap(&self, id: &str) -> Result<Option<String>, String> {
+        (self.shown)(id).map(|text| spira_config::target::gap(&text))
+    }
 }
 
 #[cfg(test)]
@@ -106,7 +111,7 @@ mod tests {
         let conflict = commit(&p, "f", "other\n", "sp-other: edits the same line");
         g(&p, &["checkout", "-q", "-b", "clean", "main"]);
         let clean = commit(&p, "g", "new\n", "spira: land sp-bead — adds g");
-        let probe = GitProbe { repo: p.clone(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())) };
+        let probe = GitProbe { repo: p.clone(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())), shown: Box::new(|_| Ok(String::new())) };
         (d, probe, [conflict, clean, "x".into()])
     }
 

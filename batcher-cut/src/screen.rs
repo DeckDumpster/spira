@@ -63,6 +63,10 @@ pub fn sift_repo(env: &Env, repo: &Repo, open: Option<&OpenBatch>) -> Result<sif
         base_ref: repo.base.clone(),
         work: work.clone(),
         state: Box::new(move |id| io::lc_state(&probe_env, id)),
+        shown: Box::new({
+            let env = env.clone();
+            move |id| io::bd_show_text(&env, id)
+        }),
     };
     let candidates: Vec<Candidate> = pool.iter().map(|m| Candidate { id: m.id.clone(), tip: m.tip.clone() }).collect();
     let open_round: Vec<Candidate> = open.map(|o| o.members.iter().map(|(id, tip)| Candidate { id: id.clone(), tip: tip.clone() }).collect()).unwrap_or_default();
