@@ -287,9 +287,15 @@ fn utc_stamp(epoch: i64) -> String {
 }
 
 fn merge_rows(parts: &[Option<String>]) -> Option<String> {
-    let mut all = Vec::new();
+    let mut all: Vec<serde_json::Value> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for p in parts {
-        all.extend(json_rows(p.clone())?);
+        for row in json_rows(p.clone())? {
+            let fresh = row.get("id").and_then(|i| i.as_str()).is_none_or(|i| seen.insert(i.to_string()));
+            if fresh {
+                all.push(row);
+            }
+        }
     }
     serde_json::to_string(&all).ok()
 }
