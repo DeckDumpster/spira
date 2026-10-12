@@ -1,7 +1,6 @@
-//! The two decoupled workers the full pass starts and never waits on: the audit worker
-//! (`spira-audit`, this binary with --audit) and the landing worker (`spira-landing`,
-//! `landing-pass land`). The unit name is the mutex; `--collect` keeps a failed unit from blocking
-//! every later dispatch; what a worker did is known only from what it wrote — the mailbox
+//! The decoupled landing worker (`spira-landing`, `landing-pass land`) the full pass starts
+//! and never waits on. The unit name is the mutex; `--collect` keeps a failed unit from blocking
+//! every later dispatch; what it did is known only from what it wrote — the mailbox
 //! (drained by rename) and the status file (the positive control).
 
 use std::path::Path;
@@ -108,111 +107,6 @@ impl<'a> Sentinel<'a> {
         if !p.exists() {
             let _ = std::fs::write(p, format!("{}\n", self.h.now()));
         }
-    }
-
-    /// CHECK 4/5/6b/7c/7d dispatch — start the audit worker and move on.
-    pub fn audit_dispatch(&self) {
-        let mailbox = self.cfg.audit_mailbox.clone();
-        let unit = self.cfg.audit_unit.clone();
-        self.drain_into_progress(&mailbox, "audit.progress");
-
-        let mut age: i64 = -1;
-        if let Some(f) = self.read_status("audit.status", "SP_AUDIT_") {
-            let at: i64 = status_get(&f, "SP_AUDIT_AT")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0);
-            age = self.h.now() - at;
-            self.log(&format!(
-                "CHECK4/5 audit: last run {age}s ago — rc={}",
-                status_get(&f, "SP_AUDIT_RC").unwrap_or("?")
-            ));
-        }
-
-        if self.unit_active(&unit) {
-            self.log("CHECK4/5 audit: already running — this pass does not start another");
-        } else {
-            let mut a = vec![
-                "--user".to_string(),
-                "--collect".into(),
-                "--quiet".into(),
-                format!("--unit={unit}"),
-                format!("--property=RuntimeMaxSec={}", self.cfg.audit_maxsec),
-                format!(
-                    "--property=StandardOutput=append:{}/audit.log",
-                    self.cfg.run.display()
-                ),
-                format!(
-                    "--property=StandardError=append:{}/audit.log",
-                    self.cfg.run.display()
-                ),
-            ];
-            a.extend(self.setenv(&[
-                "PATH",
-                // The release the worker's PATH was built from (sp-31gtu), for its own
-                // launches (a gate, an aeon worktree's hooks) to build theirs.
-                "SPIRA_RELEASE",
-                // The one source of config every launched process resolves from.
-                "SPIRA_TOML",
-                "HOME",
-                "SPIRA_HOME",
-                "SPIRA_RUN",
-                "SPIRA_DB",
-                "SPIRA_REPO",
-                "SPIRA_REPO_MAP",
-            ]));
-            a.push(format!("--setenv=SPIRA_HOME_REPO={}", self.cfg.home_repo));
-            a.push(format!("--setenv=SPIRA_BD={}", self.cfg.bd));
-            a.push(format!(
-                "--setenv=SPIRA_GH={}",
-                if self.cfg.raw("SPIRA_GH").is_empty() {
-                    "gh"
-                } else {
-                    self.cfg.raw("SPIRA_GH")
-                }
-            ));
-            a.push(format!("--setenv=SPIRA_POISON_AT={}", self.cfg.poison_at));
-            a.push(format!("--setenv=SPIRA_REQUEUE_AT={}", self.cfg.requeue_at));
-            a.push(format!("--setenv=SPIRA_RECLAIM_AT={}", self.cfg.reclaim_at));
-            a.extend(self.setenv(&[
-                "SPIRA_ASK_LABEL",
-                "SPIRA_SCOPE_LABEL",
-                "SPIRA_WORK_CLOSE_TYPES",
-            ]));
-            // B1: the switches the operator sets on the sentinel's unit reach the worker
-            // that actually runs the checks they switch off.
-            for k in ["SPIRA_SKIP_RECLAIM"] {
-                if !self.cfg.raw(k).is_empty() {
-                    a.push(format!("--setenv={k}={}", self.cfg.raw(k)));
-                }
-            }
-            a.push(self.exe.clone());
-            a.push("--audit".into());
-            let o = self.h.run(
-                Spec::args_owned(self.cfg.launch.clone(), a)
-                    .out(Io::Inherit)
-                    .err(Io::Null),
-            );
-            if o.ok() {
-                self.log(&format!("CHECK4/5 audit: dispatched as {unit}"));
-                self.stamp_dispatched("audit.dispatched");
-            } else if self.unit_active(&unit) {
-                self.log("CHECK4/5 audit: started underneath this pass — not starting another");
-            } else {
-                self.log("CHECK4/5 audit WARN: could not dispatch the audit worker; poison, lifecycle-state (CHECK5-LC), sending and collision checks will not run until this is fixed");
-            }
-        }
-
-        if age < 0 {
-            if let Some(a) = self.dispatched_age("audit.dispatched") {
-                age = a;
-            }
-        }
-        if !self.unit_active(&unit) && age > self.cfg.audit_stale {
-            self.log(&format!(
-                "CHECK4/5 audit WARN: no audit pass has completed in {age}s and none is running"
-            ));
-        }
-        self.drain_into_progress(&mailbox, "audit.progress");
     }
 
     /// lib.sh `land_log_tail 30`.
@@ -442,15 +336,15 @@ mod tests {
     #[test]
     fn drain_reads_every_drain_file_once() {
         let d = testkit::TempDir::new("sentinel-drain");
-        let mb = d.join("audit.progress");
+        let mb = d.join("landing.progress");
         std::fs::write(&mb, "poisoned x\n\nreclaimed 1\n").unwrap();
-        std::fs::write(d.join("audit.progress.drain.999999"), "left behind\n").unwrap();
-        let l = drain(&d, &mb, "audit.progress");
+        std::fs::write(d.join("landing.progress.drain.999999"), "left behind\n").unwrap();
+        let l = drain(&d, &mb, "landing.progress");
         assert_eq!(l.len(), 3);
         assert!(l.contains(&"left behind".to_string()) && l.contains(&"poisoned x".to_string()));
         assert!(!mb.exists());
         assert!(
-            drain(&d, &mb, "audit.progress").is_empty(),
+            drain(&d, &mb, "landing.progress").is_empty(),
             "each line exactly once"
         );
         let _ = std::fs::remove_dir_all(&d);

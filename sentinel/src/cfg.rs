@@ -181,16 +181,12 @@ pub struct Declared {
     pub scope: String,
     pub ask: String,
     pub no_loop: String,
-    pub incident_label: String,
     pub queue_wait: String,
     pub open_children: String,
     /// SPIRA_RED_TRACKER_LABEL; empty disables the tracker close.
     pub red_tracker: String,
-    pub submitted: String,
     pub work_types: Vec<String>,
     pub reclaim_grace: i64,
-    pub c5_max_file: u32,
-    pub c5_max_resolve: u32,
     pub land_maxsec: String,
     pub max_aeons: Option<i64>,
     pub max_live_aeons: Option<i64>,
@@ -231,18 +227,14 @@ impl Declared {
             scope: spira_config::process::cfg("SPIRA_SCOPE_LABEL")?,
             ask: spira_config::process::cfg("SPIRA_ASK_LABEL")?,
             no_loop: spira_config::process::cfg("SPIRA_NO_LOOP_LABEL")?,
-            incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
             queue_wait: spira_config::process::cfg("SPIRA_QUEUE_WAIT_LABEL")?,
             open_children: spira_config::process::cfg("SPIRA_OPEN_CHILDREN_LABEL")?,
             red_tracker: spira_config::process::cfg("SPIRA_RED_TRACKER_LABEL")?,
-            submitted: spira_config::process::cfg("SPIRA_SUBMITTED_LABEL")?,
             work_types: spira_config::process::cfg("SPIRA_WORK_CLOSE_TYPES")?
                 .split_whitespace()
                 .map(str::to_string)
                 .collect(),
             reclaim_grace: spira_config::process::cfg_parse::<i64>("SPIRA_RECLAIM_GRACE_SECS")?,
-            c5_max_file: spira_config::process::cfg_parse::<u32>("SPIRA_CHECK5_MAX_FILE")?,
-            c5_max_resolve: spira_config::process::cfg_parse::<u32>("SPIRA_CHECK5_MAX_RESOLVE")?,
             land_maxsec: spira_config::process::cfg("SPIRA_LAND_MAXSEC")?,
             max_aeons: opt_i64("SPIRA_MAX_AEONS")?,
             max_live_aeons: opt_i64("SPIRA_MAX_LIVE_AEONS")?,
@@ -270,15 +262,11 @@ impl Declared {
             scope: String::new(),
             ask: String::new(),
             no_loop: String::new(),
-            incident_label: "incident".into(),
             queue_wait: String::new(),
             open_children: String::new(),
             red_tracker: String::new(),
-            submitted: String::new(),
             work_types: vec!["task".into(), "bug".into(), "feature".into()],
             reclaim_grace: 10800,
-            c5_max_file: 5,
-            c5_max_resolve: 50,
             land_maxsec: "5400".into(),
             max_aeons: None,
             max_live_aeons: None,
@@ -306,27 +294,13 @@ pub struct Cfg {
     pub scope: String,
     pub ask: String,
     pub no_loop: String,
-    pub incident_label: String,
     pub queue_wait: String,
     /// SPIRA_OPEN_CHILDREN_LABEL (conf.sh defaults it); empty disables CHECK 3c.
     pub open_children: String,
     /// SPIRA_RED_TRACKER_LABEL; empty disables the tracker close.
     pub red_tracker: String,
-    pub submitted: String,
-    pub work_types: Vec<String>,
-    pub poison_at: u32,
-    pub requeue_at: u32,
-    pub reclaim_at: u32,
     pub reclaim_grace: i64,
     pub inference_every: i64,
-    pub audit_max_idle: i64,
-    pub c5_max_file: u32,
-    pub c5_max_resolve: u32,
-    pub c5_budget: i64,
-    pub audit_unit: String,
-    pub audit_maxsec: String,
-    pub audit_stale: i64,
-    pub audit_mailbox: PathBuf,
     pub land_unit: String,
     pub land_maxsec: String,
     pub land_stale: i64,
@@ -351,10 +325,6 @@ pub struct Cfg {
     pub home_repo: String,
     pub fayths_str: String,
     pub pass_target: i64,
-    pub poison_asked: PathBuf,
-    pub requeue_asked: PathBuf,
-    pub reclaim_asked: PathBuf,
-    pub poison_lifted: PathBuf,
     pub roster_stamp: PathBuf,
     /// The capacity pause file (family K, wave 4.26 — owned by `aeon`; this is a pure
     /// read, never a probe: `aeon::capacity::pause_state`).
@@ -462,29 +432,11 @@ impl Cfg {
             scope: d.scope,
             ask: d.ask,
             no_loop: d.no_loop,
-            incident_label: d.incident_label,
             queue_wait: d.queue_wait,
             open_children: d.open_children,
             red_tracker: d.red_tracker,
-            submitted: d.submitted,
-            work_types: d.work_types,
-            poison_at: num("SPIRA_POISON_AT", 3).max(0) as u32,
-            requeue_at: num("SPIRA_REQUEUE_AT", 5).max(0) as u32,
-            reclaim_at: num("SPIRA_RECLAIM_AT", 5).max(0) as u32,
             reclaim_grace: d.reclaim_grace,
             inference_every: num("SPIRA_INFERENCE_EVERY", 3600),
-            audit_max_idle: num("SPIRA_AUDIT_MAX_IDLE", 1800),
-            c5_max_file: d.c5_max_file,
-            c5_max_resolve: d.c5_max_resolve,
-            c5_budget: num("SPIRA_CHECK5_BUDGET_SECS", 60),
-            audit_unit: or("SPIRA_AUDIT_UNIT", "spira-audit"),
-            audit_maxsec: or("SPIRA_AUDIT_MAXSEC", "1800"),
-            audit_stale: num("SPIRA_AUDIT_STALE", 1800),
-            audit_mailbox: c
-                .get("SPIRA_AUDIT_MAILBOX")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| run.join("audit.progress")),
             land_unit: or("SPIRA_LAND_UNIT", "spira-landing"),
             land_maxsec: d.land_maxsec,
             land_stale: num("SPIRA_LAND_STALE", 1800),
@@ -508,10 +460,6 @@ impl Cfg {
             home_repo,
             fayths_str: c.fayth_names().join(" "),
             pass_target: num("SPIRA_SENTINEL_PASS_TARGET_SECS", 60),
-            poison_asked: dir("SPIRA_POISON_ASKED", "poison-asked"),
-            requeue_asked: dir("SPIRA_REQUEUE_ASKED", "requeue-asked"),
-            reclaim_asked: dir("SPIRA_RECLAIM_ASKED", "reclaim-asked"),
-            poison_lifted: dir("SPIRA_POISON_LIFTED", "poison-lifted"),
             roster_stamp: dir("SPIRA_ROSTER_WARN_STAMP", "roster-warn.stamp"),
             // literal-ok: conf.sh's default before sp-i2m7y retired the key
             capacity_pause: dir("SPIRA_CAPACITY_PAUSE", "capacity-pause"),
@@ -640,10 +588,6 @@ pub mod tests {
         let c = Context::parse(&probe_bytes(&[], &[], &[], &[], &[], None)).unwrap();
         let d = Declared { run: PathBuf::from("/r"), ..Declared::test_default() };
         let k = Cfg::from_context(&c, Path::new("/h"), d);
-        assert_eq!((k.poison_at, k.requeue_at, k.reclaim_at), (3, 5, 5));
-        assert_eq!(k.audit_unit, "spira-audit");
-        assert_eq!(k.audit_mailbox, PathBuf::from("/r/audit.progress"));
-        assert_eq!(k.poison_asked, PathBuf::from("/r/poison-asked"));
         assert_eq!(k.home, PathBuf::from("/h"));
         assert_eq!(k.home_repo, "h");
         assert_eq!(k.incident_sh, PathBuf::from("incident.sh"));
@@ -657,12 +601,10 @@ pub mod tests {
         // with no Rust-side default or fallback of its own (one source of config).
         let c = Context::parse(&probe_bytes(&[], &[], &[], &[], &[], None)).unwrap();
         let k = Cfg::from_context(&c, Path::new("/h"), Declared::test_default());
-        assert_eq!(k.work_types, vec!["task", "bug", "feature"]);
         assert_eq!(k.land_maxsec, "5400");
         assert_eq!(k.plan_labels(), vec!["plan"]);
         assert_eq!(k.lanes_declared, "ops groomer qa maechen czar warden mender");
         assert_eq!(k.reclaim_grace, 10800);
-        assert_eq!((k.c5_max_file, k.c5_max_resolve), (5, 50));
         assert_eq!(k.summon_lock_wait, 30);
         assert_eq!((k.max_aeons, k.max_live_aeons, k.lanes_max_live), (None, None, None));
         assert_eq!(k.raw.get("SPIRA_ASK_LABEL").map(String::as_str), Some(""));

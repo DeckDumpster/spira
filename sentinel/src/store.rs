@@ -1,9 +1,9 @@
 //! The bead store: lib.sh `bdq`'s calling convention, and the pass's one snapshot with
 //! every set the checks derive from it (DESIGN.md §2.4, G1).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
-use crate::cfg::{Cfg, Partition};
+use crate::cfg::Cfg;
 use crate::host::{Host, Out, Spec};
 use crate::model::{parse_beads, Bead, LcRow};
 use spira_config::lc_state;
@@ -134,18 +134,12 @@ pub fn has_all(b: &Bead, need: &[String]) -> bool {
     need.iter().all(|n| b.has(n))
 }
 
-/// labels ∩ excl = ∅.
-pub fn has_none(b: &Bead, excl: &[String]) -> bool {
-    !excl.iter().any(|x| b.has(x))
-}
-
 /// One read of the store, and the pass's view of it.
 #[derive(Debug, Default)]
 pub struct Snapshot {
     pub list: Vec<Bead>,
     pub list_raw: String,
     pub ready: Option<Vec<Bead>>,
-    pub ready_raw: String,
     index: HashMap<String, usize>,
     /// Each work bead's lifecycle state (`spira-lc list`), keyed by id: the pass's state
     /// view (design §3.4: bd holds content, spira-lc holds state). Empty when the machine
@@ -162,15 +156,11 @@ impl Snapshot {
             .enumerate()
             .map(|(i, b)| (b.id.clone(), i))
             .collect();
-        let (ready_raw, ready) = match ready {
-            Some((r, v)) => (r, Some(v)),
-            None => (String::new(), None),
-        };
+        let ready = ready.map(|(_, v)| v);
         Snapshot {
             list,
             list_raw,
             ready,
-            ready_raw,
             index,
             lc: HashMap::new(),
             own_work: HashSet::new(),
@@ -255,44 +245,6 @@ impl Snapshot {
             .count()
     }
 
-    fn per_partition<F: Fn(&Bead, &Partition) -> bool>(
-        &self,
-        parts: &[Partition],
-        keep: F,
-    ) -> Vec<(String, String)> {
-        let mut seen = BTreeSet::new();
-        let mut out = Vec::new();
-        for p in parts {
-            for b in &self.list {
-                if keep(b, p)
-                    && has_all(b, &p.labels)
-                    && has_none(b, &p.exclude)
-                    && seen.insert(b.id.clone())
-                {
-                    out.push((b.id.clone(), b.labels_csv()));
-                }
-            }
-        }
-        out
-    }
-
-    /// dispatchable_open: every non-epic/event bead a partition can reach whose lifecycle
-    /// row still owes builder work.
-    pub fn dispatchable(&self, parts: &[Partition]) -> Vec<(String, String)> {
-        self.per_partition(parts, |b, _| {
-            self.lc_open(&b.id) && !matches!(b.typ(), "epic" | "event")
-        })
-    }
-
-    /// check4_closed_branched: beads in a partition the builder has handed on (lifecycle
-    /// past WORKING) that carry a `branch:` label.
-    pub fn closed_branched(&self, parts: &[Partition]) -> Vec<(String, String)> {
-        self.per_partition(parts, |b, _| {
-            self.lc_past_builder(&b.id)
-                && !matches!(b.typ(), "epic" | "event")
-                && b.labels.iter().any(|l| l.starts_with("branch:"))
-        })
-    }
 }
 
 /// The bulk reads, with their failure kept distinct from "empty".
@@ -322,24 +274,11 @@ pub fn bulk(bd: &Bd, h: &Host, ready_args: &[String]) -> Reads {
     }
 }
 
-/// The audit's read: every row without its free text, uncached (the cache holds the
-/// full list the main pass parses), so no body is read, parsed or written to disk.
-pub fn bulk_brief(bd: &Bd, h: &Host, ready_args: &[String]) -> Reads {
-    let mut list = list_all_args();
-    list.push("--brief".into());
-    let mut ready = ready_args.to_vec();
-    ready.push("--brief".into());
-    Reads {
-        list: read_json(bd, h, &list),
-        ready: read_json(bd, h, &ready),
-    }
-}
-
 const FINGERPRINT_SQL: &str = "select dolt_hashof_db() as h";
 
 /// The store's content hash, working set included; None when it cannot be read, which
 /// means "re-read everything".
-pub fn fingerprint(bd: &Bd, h: &Host) -> Option<String> {
+fn fingerprint(bd: &Bd, h: &Host) -> Option<String> {
     if bd.cfg.bd_fixture.is_some() {
         return None;
     }
@@ -433,40 +372,6 @@ mod tests {
             .collect()
     }
 
-    /// sp-mve9i: a work bead's state is its lifecycle row, never bd's `status` — bd says the
-    /// opposite of the machine for every bead here, and every set follows the machine.
-    #[test]
-    fn every_set_reads_the_lifecycle_row_not_bd_status() {
-        let list = r#"[
-          {"id":"w","status":"closed","labels":["spira","plan","branch:spira/w"],"issue_type":"task"},
-          {"id":"s","status":"open","labels":["spira","plan","branch:spira/s"],"issue_type":"task"},
-          {"id":"h","status":"open","labels":["spira","plan"],"issue_type":"task"},
-          {"id":"n","status":"open","labels":["spira","plan"],"issue_type":"task"}
-        ]"#;
-        let s = Snapshot::from_json(list, None).with_lc(Some(&lc(&[("w", "WORKING"), ("s", "SUBMITTED"), ("h", "LANDED")])));
-        assert_eq!(s.plan_open(&cfg("spira")), vec!["w"], "WORKING is backlog; SUBMITTED/LANDED and a rowless bead are not");
-        assert_eq!(s.plan_inprog(&cfg("spira")), 1, "WORKING, though bd says closed");
-        let d: Vec<String> = s.dispatchable(&parts()).into_iter().map(|x| x.0).collect();
-        assert_eq!(d, vec!["w"]);
-        let cb: Vec<String> = s.closed_branched(&parts()).into_iter().map(|x| x.0).collect();
-        assert_eq!(cb, vec!["s"], "handed on by the builder, though bd says open");
-        let none = Snapshot::from_json(list, None);
-        assert!(none.plan_open(&cfg("spira")).is_empty(), "no lifecycle read: no state, no backlog");
-    }
-
-    fn parts() -> Vec<Partition> {
-        vec![
-            Partition {
-                labels: vec!["spira".into(), "plan".into()],
-                exclude: vec!["spira-poison".into()],
-            },
-            Partition {
-                labels: vec!["spira".into()],
-                exclude: vec![],
-            },
-        ]
-    }
-
     #[test]
     fn state_comes_from_the_snapshot() {
         let s = snap();
@@ -480,22 +385,6 @@ mod tests {
             "another scope's plan beads are not this backlog"
         );
         assert_eq!(s.plan_inprog(&cfg("spira")), 1);
-    }
-
-    #[test]
-    fn dispatchable_is_the_partition_predicate_deduplicated() {
-        let s = snap();
-        let d: Vec<String> = s.dispatchable(&parts()).into_iter().map(|x| x.0).collect();
-        // partition 1 (excludes poison) gives a, c; partition 2 adds d and i-less rows with "spira"
-        assert_eq!(d, vec!["a", "c", "d"]);
-        let cb = s.closed_branched(&parts());
-        assert_eq!(
-            cb,
-            vec![(
-                "b".to_string(),
-                "spira,plan,branch:spira/b,repo:other".to_string()
-            )]
-        );
     }
 
     #[test]

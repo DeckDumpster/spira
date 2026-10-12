@@ -226,15 +226,11 @@ impl World {
             scope: get("SPIRA_SCOPE_LABEL"),
             ask: get("SPIRA_ASK_LABEL"),
             no_loop: get("SPIRA_NO_LOOP_LABEL"),
-            incident_label: get("SPIRA_INCIDENT_LABEL"),
             queue_wait: get("SPIRA_QUEUE_WAIT_LABEL"),
             open_children: get("SPIRA_OPEN_CHILDREN_LABEL"),
             red_tracker: get("SPIRA_RED_TRACKER_LABEL"),
-            submitted: get("SPIRA_SUBMITTED_LABEL"),
             work_types: get("SPIRA_WORK_CLOSE_TYPES").split_whitespace().map(str::to_string).collect(),
             reclaim_grace: get("SPIRA_RECLAIM_GRACE_SECS").parse().unwrap_or(10800),
-            c5_max_file: get("SPIRA_CHECK5_MAX_FILE").parse().unwrap_or(5),
-            c5_max_resolve: get("SPIRA_CHECK5_MAX_RESOLVE").parse().unwrap_or(50),
             land_maxsec: get("SPIRA_LAND_MAXSEC"),
             max_aeons: opt("SPIRA_MAX_AEONS"),
             max_live_aeons: opt("SPIRA_MAX_LIVE_AEONS"),
@@ -361,7 +357,6 @@ pub fn run_mode<'a>(
         w.declared(extra),
         &w.home,
         mode,
-        "/opt/bin/sentinel".into(),
         "host-1-1".into(),
     );
     let rc = s.run();
@@ -500,7 +495,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
 }
 
 #[test]
-fn audit_dispatch_argv_and_b1_skip_switches() {
+fn landing_dispatch_argv_carries_no_cpu_fence() {
     let (w, r, sink, clock) = setup("adisp");
     run_mode(
         &w,
@@ -513,37 +508,18 @@ fn audit_dispatch_argv_and_b1_skip_switches() {
         ],
         None,
     );
-    let a = r
-        .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|x| x == "--audit"))
-        .expect("audit dispatched");
-    let l = a.line();
-    for want in [
-        "--user --collect --quiet --unit=spira-audit --property=RuntimeMaxSec=1800 --property=StandardOutput=",
-        &format!("--property=StandardOutput=append:{}/audit.log", w.run.display()),
-        "--setenv=SPIRA_DB=/db --setenv=SPIRA_REPO= --setenv=SPIRA_REPO_MAP= --setenv=SPIRA_HOME_REPO=spira --setenv=SPIRA_BD=bd --setenv=SPIRA_GH=gh",
-        "--setenv=SPIRA_POISON_AT=3 --setenv=SPIRA_REQUEUE_AT=5 --setenv=SPIRA_RECLAIM_AT=5 --setenv=SPIRA_ASK_LABEL=needs-operator --setenv=SPIRA_SCOPE_LABEL=spira --setenv=SPIRA_WORK_CLOSE_TYPES=", // literal-ok: asserts argv built from the fixture
-        "/opt/bin/sentinel --audit",
-    ] {
-        assert!(l.contains(want), "missing {want:?} in {l}");
-    }
     assert!(
-        !l.contains("SPIRA_SKIP_RECLAIM"),
-        "unset switches are not passed"
+        r.find(|s| s.prog == "/stub/launch" && s.args.iter().any(|x| x.contains("spira-audit"))).is_none(),
+        "no audit worker is dispatched"
     );
-    assert!(sink.has("CHECK4/5 audit: dispatched as spira-audit"));
-    assert!(w.run.join("audit.dispatched").exists());
     let land = r
         .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|x| x == "land"))
         .expect("landing dispatched");
     assert!(land
         .line()
         .contains("--unit=spira-landing --property=RuntimeMaxSec=3600 --property=StandardOutput="));
-    // No explicit CPU quota or niceness on either dispatched worker (sp-b4oct,
-    // law-isolate-greedy-work-in-vms): the OS schedules them.
-    for (what, line) in [("audit", a.line()), ("land", land.line())] {
-        for fence in ["CPUQuota", "Nice="] {
-            assert!(!line.contains(fence), "{what} dispatch carries {fence}: {line}");
-        }
+    for fence in ["CPUQuota", "Nice="] {
+        assert!(!land.line().contains(fence), "land dispatch carries {fence}: {}", land.line());
     }
     assert!(land
         .line()
@@ -563,25 +539,14 @@ fn a_running_worker_is_not_started_twice() {
         }
     });
     run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
-    assert!(sink.has("CHECK4/5 audit: already running — this pass does not start another"));
     assert!(sink.has("CHECK6: a landing is already in flight — this pass does not start another"));
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 0);
 }
 
 #[test]
-fn mailboxes_count_as_progress_and_status_files_are_read() {
+fn the_landing_mailbox_counts_as_progress_and_its_status_file_is_read() {
     let (w, r, sink, clock) = setup("mail");
-    std::fs::write(
-        w.run.join("audit.progress"),
-        "poisoned sp-q after 3 attempts\n",
-    )
-    .unwrap();
     std::fs::write(w.run.join("landing.progress"), "landed sp-z\n").unwrap();
-    std::fs::write(
-        w.run.join("audit.status"),
-        format!("SP_AUDIT_AT={}\nSP_AUDIT_RC=0\n", NOW - 50),
-    )
-    .unwrap();
     std::fs::write(
         w.run.join("landing.status"),
         format!(
@@ -611,17 +576,15 @@ fn mailboxes_count_as_progress_and_status_files_are_read() {
         None
     });
     run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
-    assert!(sink.has("ACT poisoned sp-q after 3 attempts"));
     assert!(sink.has("ACT landed sp-z"));
-    assert!(sink.has("CHECK4/5 audit: last run 50s ago — rc=0"));
     assert!(sink.has("CHECK6: last landing 70s ago — rc=2, 4 branch(es) seen, 1 moved"));
     assert!(sink.has(&format!(
         "CHECK6 WARN: the last landing exited 2 — see {}/landing.log",
         w.run.display()
     )));
-    // 2 drained progress + the escalation's act
+    // 1 drained progress + the escalation's act
     assert!(
-        sink.has("pass complete — 3 action(s), 2 progress"),
+        sink.has("pass complete — 2 action(s), 1 progress"),
         "{}",
         sink.text()
     );
@@ -644,7 +607,7 @@ fn ask_already_open_queries_open_asks_by_label_and_matches_the_subject_substring
         ok(r#"[{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open"}]"#)
     });
     let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));
-    let s = Sentinel::new(h, w.ctx(&[], None), w.declared(&[]), &w.home, Mode::Report, "sentinel".into(), "p".into());
+    let s = Sentinel::new(h, w.ctx(&[], None), w.declared(&[]), &w.home, Mode::Report, "p".into());
     assert!(s.ask_already_open("Spira is landing nothing"), "{}", sink.text());
     assert!(!s.ask_already_open("no bead carries this subject"));
 }
@@ -674,7 +637,7 @@ fn judgement_sees_a_bounded_sample_of_a_large_backlog() {
     assert!(sink.has("STARVED — 40 open, 0 ready, 0 running. Dropping to inference."), "{}", sink.text());
     let refl = r.find(|s| s.prog.ends_with("/reflect.sh")).unwrap();
     let ids: Vec<&str> = refl.args[0].lines().collect();
-    assert_eq!(ids.len(), crate::audit::REFLECT_IDS);
+    assert_eq!(ids.len(), crate::judge::REFLECT_IDS);
     assert_eq!(ids[0], "sp-b00");
 }
 
@@ -1619,569 +1582,11 @@ fn on_a_refused_ready_count_is_unknown_not_zero() {
 }
 
 // ---------------------------------------------------------------------------------------
-// CHECK 4 (audit)
-
-const AUDIT_LIST: &str = r#"[
-  {"id":"sp-epic","status":"open","issue_type":"epic"},
-  {"id":"sp-p","status":"open","labels":["spira","plan","repo:spira"],"issue_type":"task","title":"Poison me","created_at":"2026-09-20T00:00:00Z"},
-  {"id":"sp-q","status":"open","labels":["spira","plan"],"issue_type":"task"},
-  {"id":"sp-h","status":"open","labels":["spira","plan"],"issue_type":"task"}
-]"#;
-
-fn audit_world(tag: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
-    let (w, r, sink, clock) = setup(tag);
-    r.on(|s| {
-        if is_bd(s, "list") {
-            ok(AUDIT_LIST)
-        } else {
-            None
-        }
-    });
-    r.on(|s| {
-        if s.prog == "spira-lc" && s.args[0] == "list" {
-            return ok(r#"[{"bead_id":"sp-h","state":"READY","holds":["poison"],"version":"2"},
-                          {"bead_id":"sp-p","state":"READY","holds":[],"version":"9"},
-                          {"bead_id":"sp-q","state":"READY","holds":[],"version":"1"}]"#);
-        }
-        if s.prog == "spira-lc" && s.args[0] == "show" {
-            return ok(r#"{"bead":{"state":"READY","version":"9"}}"#);
-        }
-        None
-    });
-    r.on(|s| {
-        if s.prog == "spira-claim" && s.args[0] == "counts" {
-            let ids = String::from_utf8(s.stdin.clone().unwrap()).unwrap();
-            let mut o = String::new();
-            for id in ids.lines() {
-                o.push_str(match id {
-                    "sp-p" => "sp-p\t3\t0\t0\n",
-                    "sp-q" => "sp-q\t0\t5\t0\n",
-                    "sp-h" => "sp-h\t1\t0\t0\n",
-                    x => return ok(&format!("{x}\t0\t0\t0\n")),
-                });
-            }
-            return ok(&o);
-        }
-        if s.prog == "spira-claim" && s.args[0] == "decide" {
-            let pos = &s.args[8..];
-            return ok(
-                match (
-                    pos[0].as_str(),
-                    pos[1].as_str(),
-                    pos.get(5).map(String::as_str),
-                ) {
-                    ("3", _, Some("0")) => "poison ask\n",
-                    ("0", "5", _) => "requeue-mail\n",
-                    ("1", _, Some("1")) => "clear\n",
-                    _ => "none\n",
-                },
-            );
-        }
-        None
-    });
-    r.on(|s| {
-        if is_bd(s, "show") {
-            ok(r#"[{"id":"sp-p","status":"open","title":"Poison me","labels":["spira","plan"]}]"#)
-        } else {
-            None
-        }
-    });
-    r.on(|s| {
-        if s.prog == "git" && s.args.iter().any(|a| a == "show-ref") {
-            fail(1)
-        } else {
-            None
-        }
-    });
-    (w, r, sink, clock)
-}
-
-#[test]
-fn check4_poisons_asks_mails_and_clears() {
-    let (w, r, sink, clock) = audit_world("c4");
-    let repos: &[&str] = &["spira\t/src/spira\torigin/main\t0"];
-    assert_eq!(
-        run_mode(
-            &w,
-            &r,
-            &sink,
-            &clock,
-            Mode::Audit,
-            &[
-                ("SPIRA_SKIP_RECLAIM", "1"),
-            ],
-            Some(repos)
-        ),
-        0
-    );
-    assert!(
-        sink.has("CHECK4 examining 3 dispatchable bead(s), poison=3 requeue=5 reclaim=5"),
-        "{}",
-        sink.text()
-    );
-    // decide got thresholds, the stamp and the lifecycle poison read
-    let d = r
-        .find(|s| s.prog == "spira-claim" && s.args[0] == "decide" && s.args[8] == "3")
-        .unwrap();
-    assert_eq!(
-        d.args,
-        vec![
-            "decide",
-            "--poison-at",
-            "3",
-            "--requeue-at",
-            "5",
-            "--reclaim-at",
-            "5",
-            "--",
-            "3",
-            "0",
-            "0",
-            "spira,plan,repo:spira",
-            "0:0:0:0",
-            "0"
-        ]
-    );
-    // the poison: live status re-read, lifecycle hold, note, progress (and mailbox), event
-    assert!(r
-        .find(|s| is_bd(s, "show") && s.args[3] == "sp-p")
-        .is_some());
-    let hold = r
-        .find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-p")
-        .unwrap();
-    assert_eq!(
-        hold.args[3..],
-        [
-            "--expect",
-            "READY",
-            "--version",
-            "9",
-            "--actor",
-            "sentinel",
-            "--kind",
-            r#"{"Hold":{"kind":"Poison","cause":"attempts-exhausted","detail":"poisoned after 3 in_progress transition(s) without landing"}}"#
-        ]
-    );
-    assert!(sink.has("ACT poisoned sp-p after 3 attempts"));
-    assert_eq!(
-        std::fs::read_to_string(w.run.join("audit.progress"))
-            .unwrap()
-            .lines()
-            .next(),
-        Some("poisoned sp-p after 3 attempts")
-    );
-    let ev = r
-        .find(|s| seam_name(s).as_deref() == Some("sentinel-event"))
-        .unwrap();
-    assert_eq!(ev.stdin.unwrap(), b"bead.poisoned\0sp-p\0poisoned sp-p after 3 attempts\0the groomer triages it, not a human\0".to_vec());
-    // the ask: evidence carries the bead, the repo and the trace; marked once accepted
-    let ask = r
-        .find(|s| {
-            s.prog == "mail" && s.args.iter().any(|a| a.contains("change the approach"))
-        })
-        .unwrap();
-    assert!(env_of(&ask, "SPIRA_MAIL_REPEAT_CONSIDERED").is_none());
-    assert_eq!(ask.args[..2], ["send", "concierge"], "a poison alert is the concierge's, never the operator's");
-    let body = String::from_utf8(ask.stdin.unwrap()).unwrap();
-    assert!(body.starts_with("## Question\nSpira bead sp-p — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?\n\n## Default\nif the work is correct"), "{body}");
-    assert!(body.contains("BEAD    sp-p  [open, PNone, open ?]\nTITLE   Poison me"));
-    assert!(body.contains("\nREPO      spira (/src/spira)\nATTEMPTS  3 (poison threshold 3) — each in_progress transition from the events trail\nBRANCH    none — nothing was committed\n\n--- last session log (tail) ---\n"));
-    assert_eq!(
-        std::fs::read_to_string(w.run.join("poison-asked/sp-p")).unwrap(),
-        "3\n"
-    );
-    // the requeue mail
-    let rq = r
-        .find(|s| {
-            s.prog == "mail" && s.args.iter().any(|a| a.contains("requeued 5 times"))
-        })
-        .unwrap();
-    assert_eq!(
-        env_of(&rq, "SPIRA_MAIL_REPEAT_CONSIDERED"),
-        Some("sentinel-own-dedup")
-    );
-    assert!(rq.args.contains(&"Spira bead sp-q — completed and requeued 5 times, never landed (unrecorded) — the harness cannot land it".to_string()));
-    assert_eq!(
-        std::fs::read_to_string(w.run.join("requeue-asked/sp-q")).unwrap(),
-        "5\n"
-    );
-    // the stale clear
-    let un = r
-        .find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-h")
-        .unwrap();
-    assert_eq!(un.args.last().unwrap(), r#"{"Unhold":{"kind":"Poison"}}"#);
-    assert!(sink.has("ACT CHECK4 sp-h: stale poison cleared — 1 attempt(s), below threshold 3"));
-    assert!(w.run.join("audit.status").exists());
-    // CHECK-ROWLESS runs every pass (sp-jnwbn); every ready work bead here has its row, so
-    // nothing is backfilled.
-    assert!(!sink.has("rowless"), "{}", sink.text());
-    assert!(
-        sink.has("audit pass complete — 2 action(s), 2 progress"),
-        "{}",
-        sink.text()
-    );
-    // the audit worker never lands, summons or writes phase rows
-    assert_eq!(
-        r.count(|s| seam_name(s).as_deref() == Some("sentinel-ck7")),
-        0
-    );
-    assert_eq!(r.count(|s| s.args.iter().any(|a| a == "sentinel-phase")), 0);
-}
-
-#[test]
-fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
-    let (w, r, sink, clock) = audit_world("c4fail");
-    r.on(|s| {
-        if s.prog == "spira-claim" && s.args[0] == "counts" {
-            fail(2)
-        } else {
-            None
-        }
-    });
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[
-            ("SPIRA_SKIP_RECLAIM", "1"),
-        ],
-        Some(&[]),
-    );
-    assert!(sink.has("CHECK4 bulk attempts query failed (rc=2) — making no poison/requeue/reclaim decision this pass"));
-    assert_eq!(
-        r.count(|s| s.prog == "spira-claim" && s.args[0] == "decide"),
-        0
-    );
-    assert!(sink.has(
-        "CHECK4 sp-h: attempts query failed — stale-poison-clear makes no decision this pass"
-    ));
-
-    // The builder handed sp-p on while the pass ran: its lifecycle row, re-read live, is
-    // SUBMITTED (sp-mve9i — bd's status is not read; bd still says open here).
-    let (w, r, sink, clock) = audit_world("c4closed");
-    r.on(|s| {
-        if s.prog == "spira-lc" && s.args[0] == "show" && s.args.get(1).map(String::as_str) == Some("sp-p") {
-            ok(r#"{"bead":{"bead_id":"sp-p","state":"SUBMITTED","version":"10"}}"#)
-        } else {
-            None
-        }
-    });
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[
-            ("SPIRA_SKIP_RECLAIM", "1"),
-        ],
-        Some(&[]),
-    );
-    assert!(sink.has(
-        "CHECK4 sp-p: 3 attempts, but it closed while this pass ran — not poisoned, not asked"
-    ));
-    assert!(r
-        .find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-p")
-        .is_none());
-}
-
-// ---------------------------------------------------------------------------------------
 // CHECK5-LC is deleted (sp-mve9i): each of its three shapes was bd `status` disagreeing with
 // the lifecycle row, and bd status is inert for work beads (design §3.4).
 
-/// SEEN RED before the deletion: this exact world printed all three STATE-LC lines.
-#[test]
-fn check5_lc_is_gone_because_bd_status_has_nothing_to_disagree_with() {
-    let (w, r, sink, clock) = audit_world("c5lc");
-    r.on(|s| {
-        if is_bd(s, "list") {
-            ok(r#"[
-                {"id":"sp-goal","status":"open","issue_type":"epic"},
-                {"id":"a","status":"open","issue_type":"task"},
-                {"id":"b","status":"in_progress","issue_type":"task"},
-                {"id":"c","status":"closed","issue_type":"task"},
-                {"id":"d","status":"closed","issue_type":"task"},
-                {"id":"e","status":"open","issue_type":"task","dependencies":[{"depends_on_id":"c","type":"blocks"}]},
-                {"id":"f","status":"open","issue_type":"task","dependencies":[{"depends_on_id":"d","type":"blocks"}]}
-            ]"#)
-        } else {
-            None
-        }
-    });
-    r.on(|s| {
-        if s.prog == "spira-lc" && s.args[0] == "list" {
-            ok(r#"[
-                {"bead_id":"a","state":"LANDED","holds":[],"version":"1"},
-                {"bead_id":"b","state":"WORKING","holds":[],"version":"1"},
-                {"bead_id":"c","state":"WORKING","holds":[],"version":"1"},
-                {"bead_id":"d","state":"LANDED","holds":[],"version":"1"}
-            ]"#)
-        } else {
-            None
-        }
-    });
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[
-            ("SPIRA_SKIP_RECLAIM", "1"),
-        ],
-        Some(&[]),
-    );
-    for shape in ["landed-but-open", "closed-unlanded", "blocked-by-unlanded", "CHECK5-LC"] {
-        assert!(!sink.has(shape), "{shape}: {}", sink.text());
-    }
-    assert!(sink.has("audit pass complete"), "{}", sink.text());
-}
-
-#[test]
-fn check5_lc_is_silent_when_every_row_agrees_with_bd() {
-    let (w, r, sink, clock) = audit_world("c5lcquiet");
-    r.on(|s| {
-        if is_bd(s, "list") {
-            ok(r#"[
-                {"id":"sp-goal","status":"open","issue_type":"epic"},
-                {"id":"a","status":"in_progress","issue_type":"task"},
-                {"id":"c","status":"closed","issue_type":"task"}
-            ]"#)
-        } else {
-            None
-        }
-    });
-    r.on(|s| {
-        if s.prog.ends_with("/lc") && s.args[0] == "list" {
-            ok(r#"[
-                {"bead_id":"a","state":"WORKING","holds":[],"version":"1"},
-                {"bead_id":"c","state":"LANDED","holds":[],"version":"1"}
-            ]"#)
-        } else {
-            None
-        }
-    });
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[
-            ("SPIRA_SKIP_RECLAIM", "1"),
-        ],
-        Some(&[]),
-    );
-    assert!(!sink.has("CHECK5-LC"), "{}", sink.text());
-}
-
-/// sp-jnwbn: the landstate CHECK 5 (closed-not-landed) is deleted, not switched off — with
-/// no skip switch in the environment (the drop-in a unit re-render deleted on
-/// 2026-10-04), a closed, aeon-worked bead with no landing record files no incident, walks
-/// no base history, and logs no CHECK5 line. Before the deletion this exact world filed an
-/// incident for sp-n ("landstate=none tip=none ...") and walked the base once.
-#[test]
-fn landstate_check5_never_runs_without_its_off_switch() {
-    let (w, r, sink, clock) = setup("c5gone");
-    r.on(|s| {
-        if is_bd(s, "list") {
-            return ok(r#"[{"id":"sp-epic","status":"open"},{"id":"sp-n","status":"closed","issue_type":"task","labels":["spira","plan"]}]"#);
-        }
-        None
-    });
-    std::fs::write(w.run.join("sp-n.log"), "").unwrap();
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[("SPIRA_SKIP_RECLAIM", "1")],
-        Some(&["spira\t/src/spira\torigin/main\t0"]),
-    );
-    assert!(sink.has("audit pass complete"), "{}", sink.text());
-    assert!(!sink.has("CHECK5"), "{}", sink.text());
-    assert_eq!(
-        r.count(|s| s.prog == "bash" && s.args.get(1).map(String::as_str) == Some("file")),
-        0,
-        "no closed-not-landed incident is filed"
-    );
-    assert_eq!(
-        r.count(|s| s.prog == "git" && s.args.iter().any(|a| a == "--format=%s")),
-        0,
-        "no base-history walk"
-    );
-}
-
 // ---------------------------------------------------------------------------------------
 // CHECK 6b / 7c / 7d (audit)
-
-/// CHECK 7c/7d are native now (wave 4.28, sp-fbqsv): no more bash seams S7-S10 to mock by
-/// name, so this drives the real underlying calls (bd list/show/label, git, spira-config,
-/// sending) instead. Three collisions, one of each disposition (FREED/UNLABELED/parked) —
-/// the same three dispositions the old canned-text version asserted.
-#[test]
-fn sending_7c_7d_count_what_their_seams_report() {
-    const COLLISIONS: &str = r#"[
-      {"id":"sp-c1","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-c1"]},
-      {"id":"sp-c2","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-other"]},
-      {"id":"sp-c3","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-c3"]},
-      {"id":"sp-c4","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-c3"]}
-    ]"#;
-    let (w, r, sink, clock) = setup("tail");
-    // `detect_branch_collisions` checks `<root>/.git` exists on the real filesystem before
-    // trusting a repo's worktree listing — give it a real directory to find.
-    let repo_root = w.dir.join("repo");
-    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
-    let repo_root_str = repo_root.to_string_lossy().into_owned();
-    let wt = |id: &str| w.run.join("worktree").join(id).to_string_lossy().into_owned();
-    let porcelain = format!(
-        "worktree {}\nHEAD a1\nbranch refs/heads/spira/sp-c1\n\nworktree {}\nHEAD a2\nbranch refs/heads/spira/sp-other\n\nworktree {}\nHEAD a3\nbranch refs/heads/spira/sp-c3\n",
-        wt("sp-h1"), wt("sp-h2"), wt("sp-h3")
-    );
-    r.on(|s| {
-        if s.prog == "sending" && s.args == ["--skip-queue"] {
-            ok("SENT sp-a  spira spira/sp-a  merged\nFAILED sp-b  refused\n")
-        } else {
-            None
-        }
-    });
-    r.on(|s| {
-        if s.prog == "git" && s.args.iter().any(|a| a == "rev-parse") {
-            ok("abc\n")
-        } else {
-            None
-        }
-    });
-    // detect_branch_collisions's own bd list query (--exclude-type disambiguates it from
-    // the pass's bulk `list --all`, already mocked broadly by `standard()`/`store_is`).
-    r.on(move |s| {
-        if is_bd(s, "list") && s.args.iter().any(|a| a == "--exclude-type") {
-            ok(COLLISIONS)
-        } else {
-            None
-        }
-    });
-    r.on(move |s| {
-        if s.prog == "spira-config" && s.args == ["repo", "root", "spira"] {
-            ok(&format!("{repo_root_str}\n"))
-        } else {
-            None
-        }
-    });
-    let porcelain2 = porcelain.clone();
-    r.on(move |s| {
-        if s.prog != "git" {
-            return None;
-        }
-        if s.args.iter().any(|a| a == "worktree") {
-            ok(&porcelain2)
-        } else if s.args.iter().any(|a| a == "status" || a == "log") {
-            // "status": every holder's worktree is clean. "log": no inherited commits on
-            // sp-c2's holder worktree.
-            ok("")
-        } else {
-            None
-        }
-    });
-    // bd label list <id>: only sp-c2 still carries the inherited branch: label.
-    r.on(|s| {
-        if is_bd(s, "label") && s.args.get(3).map(String::as_str) == Some("list") {
-            return match s.args.get(4).map(String::as_str) {
-                Some("sp-c2") => ok("branch:spira/sp-other\nspira\n"),
-                _ => ok(""),
-            };
-        }
-        None
-    });
-    // The lifecycle machine (sp-mve9i — bd status decides nothing): the three colliders are
-    // claimable; sp-h1 (sp-c1's holder) is SUBMITTED, handed on by its builder; sp-h3
-    // (sp-c3's holder) is READY (never freed). bd says the opposite of both below.
-    r.on(|s| {
-        if s.prog == "spira-lc" && s.args[0] == "list" {
-            ok(r#"[{"bead_id":"sp-c1","state":"READY"},{"bead_id":"sp-c2","state":"REWORK"},{"bead_id":"sp-c3","state":"READY"},
-                   {"bead_id":"sp-c4","state":"SUBMITTED"},
-                   {"bead_id":"sp-h1","state":"SUBMITTED"},{"bead_id":"sp-h3","state":"READY"}]"#)
-        } else {
-            None
-        }
-    });
-    // bd show: sp-other (sp-c2's inherited-from bead) exists; bd's statuses for the holders
-    // are the reverse of the machine's and are not read.
-    r.on(|s| {
-        if !is_bd(s, "show") {
-            return None;
-        }
-        if s.args.iter().any(|a| a == "sp-h1") {
-            ok(r#"[{"id":"sp-h1","status":"open"}]"#)
-        } else if s.args.iter().any(|a| a == "sp-h3") {
-            ok(r#"[{"id":"sp-h3","status":"closed"}]"#)
-        } else if s.args.iter().any(|a| a == "sp-other") {
-            ok(r#"[{"id":"sp-other","status":"open"}]"#)
-        } else {
-            None
-        }
-    });
-    r.on(|s| match s.prog.as_str() {
-        "sending" if s.args.first().map(String::as_str) == Some("holder-alive") => fail(1), // nobody home
-        "sending" if s.args.first().map(String::as_str) == Some("destroy-worktree") => ok(""),
-        _ => None,
-    });
-    r.on(|s| if s.prog == "unclaimable.py" { ok("UNCLAIMABLE sp-u — no persona\n") } else { None });
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[],
-        Some(&["spira\t/src/spira\torigin/main\t0"]),
-    );
-    assert!(sink.has("ACT sent spira spira/sp-a sp-a"));
-    assert!(sink.has("sending reported a branch it could not delete"));
-    assert_eq!(
-        std::fs::read_to_string(w.run.join("sending.base")).unwrap(),
-        "spira=abc\n"
-    );
-    let file = r
-        .find(|s| s.prog == "bash" && s.args.get(1).map(String::as_str) == Some("file"))
-        .unwrap();
-    assert_eq!(file.stdin.unwrap(), b"no persona".to_vec());
-    assert!(sink.has("ACT surfaced 1 unclaimable ready bead(s)"));
-    assert!(sink.has(&format!("COLLISION sp-c1 spira spira/sp-c1 sp-h1 {}", wt("sp-h1"))));
-    assert!(sink.has(&format!("FREED sp-c1 spira spira/sp-c1 sp-h1 {}", wt("sp-h1"))));
-    // sp-c4 is open in bd but SUBMITTED in the machine: not waiting for a builder, so not a
-    // collision (sp-mve9i).
-    assert!(!sink.has("COLLISION sp-c4"), "{}", sink.text());
-    assert!(sink.has("UNLABELED sp-c2 spira spira/sp-other sp-other"));
-    assert!(sink.has("ACT freed 1 branch-collision worktree(s)"));
-    assert!(sink.has("ACT unlabeled 1 inherited branch-collision bead(s)"));
-    assert!(sink.has("CHECK7d: 1 bead(s) whose recorded branch is held by another bead's worktree — parking with needs-operator")); // literal-ok: asserts log text built from the fixture
-    // Parked by the row's ask hold and the overseer label, never the ask label (sp-psztcc).
-    assert!(
-        r.find(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("hold") && s.args.get(1).map(String::as_str) == Some("sp-c3") && s.args.get(2).map(String::as_str) == Some("ask"))
-            .is_some(),
-        "sp-c3 (no free, no inherited label) is parked: {:#?}",
-        r.lines()
-    );
-    assert!(r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-c3", "needs-operator"]).is_none(), "{:#?}", r.lines()); // literal-ok: the fixture's SPIRA_ASK_LABEL default
-    assert!(r.find(|s| s.prog == "sending" && s.args.first().map(String::as_str) == Some("destroy-worktree")).is_some());
-
-    // the next audit finds every base unchanged and does not walk
-    let sink2 = FakeSink::default();
-    run_mode(
-        &w,
-        &r,
-        &sink2,
-        &clock,
-        Mode::Audit,
-        &[],
-        Some(&["spira\t/src/spira\torigin/main\t0"]),
-    );
-    assert!(sink2.has("sending: base unchanged — skipped"));
-}
 
 // ---------------------------------------------------------------------------------------
 // §2.7
@@ -2209,7 +1614,7 @@ fn home_is_found_from_the_executable() {
 fn probe_failure_is_reported() {
     let r = FakeRunner::new();
     r.on(|_| fail(97));
-    let e = crate::probe(&r, Path::new("/h"), true).unwrap_err();
+    let e = crate::probe(&r, Path::new("/h")).unwrap_err();
     assert!(e.contains("rc=97"));
     let s = r.find(|_| true).unwrap();
     // repos (sp-k6lku, "wave 4.13") no longer widens the probe's own bash seam — it is
@@ -2296,7 +1701,7 @@ fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
     let raw = "@vars\0SPIRA_HOME_REPO_RESOLVED=spira\0SPIRA_TOML_FILE=\0@fayths\0@partitions\0@chamber\0@end\0";
     let r = FakeRunner::new();
     r.on(move |_| ok(raw));
-    let ctx = crate::probe(&r, &w.home, false);
+    let ctx = crate::probe(&r, &w.home);
 
     drop(env);
 
@@ -2334,7 +1739,6 @@ fn roster_warnings_name_each_left_out_persona_once() {
         declared(),
         &w.home,
         Mode::Report,
-        "x".into(),
         "p".into(),
     )
     .run();
@@ -2352,7 +1756,6 @@ fn roster_warnings_name_each_left_out_persona_once() {
         declared(),
         &w.home,
         Mode::Report,
-        "x".into(),
         "p".into(),
     )
     .run();
@@ -2401,95 +1804,6 @@ fn phases_are_tsd_rows_for_the_full_pass_only() {
 
 // ---------------------------------------------------------------------------------------
 // §2.9 the lifecycle switch: both modes of every affected CHECK.
-
-#[test]
-fn on_check4_note_names_the_hold() {
-    let (w, r, sink, clock) = audit_world("on4note");
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[
-            ("SPIRA_SKIP_RECLAIM", "1"),
-        ],
-        Some(&[]),
-    );
-    let note = r.find(|s| is_bd(s, "note")).unwrap();
-    assert!(String::from_utf8(note.stdin.unwrap())
-        .unwrap()
-        .ends_with("while the hold stands."));
-    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "ON writes no bd label");
-}
-
-#[test]
-fn on_an_unreachable_machine_is_loud_and_fails_the_unit() {
-    let (w, r, sink, clock) = setup("onfail");
-    r.on(|s| {
-        if s.prog == "spira-lc" {
-            return Some(Out {
-                rc: 2,
-                stdout: String::new(),
-                stderr: "cannot tell: Access denied for user 'spira_lc'\n".into(),
-            });
-        }
-        None
-    });
-    let rc = run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Pass,
-        &[],
-        None,
-    );
-    assert_eq!(
-        rc, 1,
-        "the unit goes red every pass until the machine answers"
-    );
-    assert!(sink.has("LIFECYCLE UNREACHABLE — `spira-lc list` failed (rc=2: cannot tell: Access denied for user 'spira_lc')"), "{}", sink.text());
-    assert_eq!(
-        sink.0
-            .borrow()
-            .iter()
-            .filter(|l| l.contains("LIFECYCLE UNREACHABLE"))
-            .count(),
-        1,
-        "said once per pass"
-    );
-    // the rest of the pass still ran: landing and summoning do not wait on the machine.
-    // CK7 is in-process now (wave 4.27); its own observable reach is `fayth_ready`'s
-    // `spira-claim` call, once per roster persona (builder, ops).
-    assert_eq!(r.count(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("fayth-ready")), 2);
-    assert!(sink.has("pass complete"));
-    // no legacy fallback either
-    assert_eq!(r.count(|s| is_bd(s, "reclaim") || is_bd(s, "assign")), 0);
-
-    let (w, r, sink, clock) = setup("onmissing");
-    // spira-lc missing from PATH: the spawn fails (rc 127), naming the tool.
-    r.on(|s| if s.prog == "spira-lc" { fail(127) } else { None });
-    let rc = run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[
-        ],
-        Some(&[]),
-    );
-    assert_eq!(rc, 1);
-    assert!(sink.has("LIFECYCLE UNREACHABLE — `spira-lc list` failed (rc=127"), "{}", sink.text());
-    assert!(sink
-        .has("CHECK4 lifecycle read failed — making no poison/requeue/reclaim decision this pass"));
-    assert_eq!(
-        r.count(|s| is_bd(s, "label")),
-        0,
-        "ON never falls back to labels"
-    );
-}
 
 // ---------------------------------------------------------------------------------------
 // CHECK 3c (sp-du8bv): open children decided from the snapshot, never `bd children`.
@@ -2652,7 +1966,6 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
         w.declared(&extra),
         &w.home,
         Mode::SummonOnly,
-        "/opt/bin/sentinel".into(),
         "host-1-1".into(),
     );
     let argv = s.summon_argv("builder").join("\n");
@@ -2661,45 +1974,6 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     assert!(!argv.contains(&old), "no token may name the caller's release: {argv}");
     assert!(argv.contains("--property=IOSchedulingClass=idle"), "{argv}");
     assert!(argv.contains("--property=IOWeight=10"), "{argv}");
-}
-
-#[test]
-fn rowless_open_bead_is_surfaced_and_backfilled() {
-    // sp-mve9i: the rowless search is the ready set, never bd status — sp-gone is rowless
-    // and closed in bd, absent from ready: not backfilled to a claimable READY row.
-    let (w, r, sink, clock) = audit_world("rowless");
-    r.on(|s| {
-        if is_bd(s, "list") {
-            ok(r#"[{"id":"sp-nr","status":"open","issue_type":"task"},{"id":"sp-has","status":"open","issue_type":"task"},
-                   {"id":"sp-gone","status":"closed","issue_type":"task"}]"#)
-        } else {
-            None
-        }
-    });
-    r.on(|s| {
-        if is_bd(s, "ready") {
-            ok(r#"[{"id":"sp-nr","issue_type":"task"},{"id":"sp-has","issue_type":"task"}]"#)
-        } else {
-            None
-        }
-    });
-    r.on(|s| {
-        if s.prog == "spira-lc" && s.args[0] == "list" {
-            ok(r#"[{"bead_id":"sp-has","state":"READY","holds":[],"version":"1"}]"#)
-        } else {
-            None
-        }
-    });
-    run_mode(
-        &w, &r, &sink, &clock, Mode::Audit,
-        &[("SPIRA_SKIP_RECLAIM", "1")],
-        Some(&[]),
-    );
-    assert!(sink.has("STATE-LC sp-nr rowless"), "{}", sink.text());
-    assert!(!sink.has("STATE-LC sp-has rowless"), "{}", sink.text());
-    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-nr"]), 1);
-    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-has"]), 0);
-    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-gone"]), 0);
 }
 
 /// sp-mve9i: close_landed_queue_waiters finds the labeled beads as content (`list --all
@@ -2727,70 +2001,6 @@ fn close_landed_queue_waiters_reads_the_label_not_bd_status() {
     assert!(q.args.iter().any(|a| a == "--all") && !q.args.iter().any(|a| a == "--status"), "{:?}", q.args);
     assert!(r.find(|s| is_bd(s, "close") && s.args.get(3).map(String::as_str) == Some("sp-w")).is_some(), "{:#?}", r.lines());
     assert!(r.find(|s| is_bd(s, "close") && s.args.get(3).map(String::as_str) == Some("sp-x")).is_none());
-}
-
-/// sp-mve9i: CHECK 4's stale-poison clear considers a poison-held bead by its lifecycle
-/// row, never bd status: sp-h is open in bd but SUBMITTED in the machine — handed on by its
-/// builder, it is not a stale poison to lift.
-#[test]
-fn check4_stale_clear_reads_the_lifecycle_row_not_bd_status() {
-    let (w, r, sink, clock) = audit_world("c4stale-lc");
-    r.on(|s| {
-        if s.prog == "spira-lc" && s.args[0] == "list" {
-            ok(r#"[{"bead_id":"sp-h","state":"SUBMITTED","holds":["poison"],"version":"2"},
-                   {"bead_id":"sp-p","state":"READY","holds":[],"version":"9"},
-                   {"bead_id":"sp-q","state":"READY","holds":[],"version":"1"}]"#)
-        } else {
-            None
-        }
-    });
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[("SPIRA_SKIP_RECLAIM", "1")],
-        Some(&[]),
-    );
-    assert!(r.find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-h").is_none(), "{:#?}", r.lines());
-    assert!(!sink.has("stale poison cleared"), "{}", sink.text());
-}
-
-fn tip_world(tag: &str, recorded: &str, now: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
-    let (w, r, sink, clock) = audit_world(tag);
-    std::fs::create_dir_all(w.run.join("poison-tip")).unwrap();
-    std::fs::write(w.run.join("poison-tip/sp-h"), format!("{recorded}\n")).unwrap();
-    let now = now.to_string();
-    r.on(move |s| {
-        if s.prog == "git" && s.args.iter().any(|a| a == "rev-parse") && s.args.iter().any(|a| a == "refs/heads/spira/sp-h") {
-            ok(&format!("{now}\n"))
-        } else if s.prog == "spira-claim" && s.args[0] == "unpoison" {
-            ok("")
-        } else {
-            None
-        }
-    });
-    (w, r, sink, clock)
-}
-
-#[test]
-fn a_poison_is_lifted_with_its_cause_when_the_beads_tip_has_moved() {
-    let (w, r, sink, clock) = tip_world("c4tip-moved", "aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb");
-    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[("SPIRA_SKIP_RECLAIM", "1")], Some(&["spira\t/src/spira\torigin/main\t0"]));
-    let un = r.find(|s| s.prog == "spira-claim" && s.args[0] == "unpoison").expect("no unpoison call");
-    assert!(un.args.iter().any(|a| a == "sp-h"), "{:?}", un.args);
-    assert!(un.args.iter().any(|a| a.starts_with("tip-changed: aaaaaaaaaaaa -> bbbbbbbbbbbb")), "{:?}", un.args);
-    assert!(sink.has("CHECK4 sp-h: poison lifted — tip-changed"), "{}", sink.text());
-    assert!(!w.run.join("poison-tip/sp-h").exists());
-}
-
-#[test]
-fn a_poison_whose_tip_has_not_moved_is_not_lifted_by_the_tip_rule() {
-    let (w, r, sink, clock) = tip_world("c4tip-same", "aaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa");
-    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[("SPIRA_SKIP_RECLAIM", "1")], Some(&["spira\t/src/spira\torigin/main\t0"]));
-    assert!(r.find(|s| s.prog == "spira-claim" && s.args[0] == "unpoison").is_none());
-    assert!(!sink.has("poison lifted — tip-changed"));
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2840,73 +2050,4 @@ fn on_check2d_an_unresolved_repo_map_hold_stands() {
     });
     run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "event"), 0, "{}", sink.text());
-}
-
-#[test]
-fn two_beads_touching_one_file_are_both_left_claimable() {
-    let (w, r, sink, clock) = setup("ov-gone");
-    let repo_root = w.dir.join("repo");
-    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
-    let root = repo_root.to_string_lossy().into_owned();
-    r.on(move |s| {
-        (s.prog == "spira-config" && s.args == ["repo", "root", "spira"]).then(|| ok(&format!("{root}\n"))).flatten()
-    });
-    const LIST: &str = r#"[
-      {"id":"sp-a","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
-      {"id":"sp-b","status":"open","issue_type":"task","labels":["spira","repo:spira"]}
-    ]"#;
-    r.on(|s| (is_bd(s, "list") && s.args.iter().any(|a| a == "--exclude-type")).then(|| ok(LIST)).flatten());
-    r.on(|s| (s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")).then(|| ok(&lc_mirror(LIST))).flatten());
-    r.on(|s| (s.prog == "git" && s.args.join(" ").contains(" diff ")).then(|| ok("shared.txt\n")).flatten());
-    run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(&["spira\t/src/spira\torigin/main\t0"]));
-    assert_eq!(r.count(|s| is_bd(s, "label")), 0, "{}", sink.text());
-    assert!(!sink.has("OVERLAP") && !sink.has("DEFERRED"), "{}", sink.text());
-}
-
-fn audit_gate_world(tag: &str, seq: &'static str) -> (World, FakeRunner, FakeSink, FakeClock) {
-    let (w, r, sink, clock) = audit_world(tag);
-    r.on(|s| (is_bd(s, "sql")).then(|| ok("0123456789abcdef0123")).flatten());
-    r.on(move |s| (s.prog == "spira-lc" && s.args[0] == "event-seq").then(|| ok(seq)).flatten());
-    (w, r, sink, clock)
-}
-
-#[test]
-fn audit_reads_no_bodies_and_writes_no_store_snapshot() {
-    let (w, r, sink, clock) = audit_gate_world("audit-slim", "41");
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(&["spira\t/src/spira\torigin/main\t0"])), 0);
-    let lists = r.count(|s| is_bd(s, "list") || is_bd(s, "ready"));
-    let brief = r.count(|s| (is_bd(s, "list") || is_bd(s, "ready")) && s.args.iter().any(|a| a == "--brief"));
-    assert!(lists >= 2 && lists == brief, "{lists} bulk reads, {brief} brief");
-    assert!(r.find(|s| env_of(s, "SPIRA_LIST_SNAPSHOT").is_some()).is_none());
-    let snaps = std::fs::read_dir(&w.run).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("list-snapshot")).count();
-    assert_eq!(snaps, 0, "the audit writes no store-sized file");
-}
-
-#[test]
-fn audit_skips_while_store_and_events_are_unchanged_and_reruns_when_either_moves() {
-    let repos: &[&str] = &["spira\t/src/spira\torigin/main\t0"];
-    let (w, r, sink, clock) = audit_gate_world("audit-gate", "41");
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(repos)), 0);
-    let first = r.count(|s| is_bd(s, "list"));
-    assert!(first > 0);
-
-    clock.0.set(NOW + 60);
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(repos)), 0);
-    assert_eq!(r.count(|s| is_bd(s, "list")), first, "nothing moved: no bead read");
-    assert!(sink.has("audit: store, lifecycle events and landing refs unchanged — skipped"));
-    assert!(std::fs::read_to_string(w.run.join("audit.status")).unwrap().contains(&format!("SP_AUDIT_AT={}", NOW + 60)));
-
-    let (w2, r2, sink2, clock2) = audit_gate_world("audit-gate-seq", "41");
-    run_mode(&w2, &r2, &sink2, &clock2, Mode::Audit, &[], Some(repos));
-    let seen = std::fs::read_to_string(w2.run.join("audit.seen")).unwrap();
-    let (w3, r3, sink3, clock3) = audit_gate_world("audit-gate-seq2", "42");
-    std::fs::write(w3.run.join("audit.seen"), &seen).unwrap();
-    run_mode(&w3, &r3, &sink3, &clock3, Mode::Audit, &[], Some(repos));
-    assert!(r3.count(|s| is_bd(s, "list")) > 0, "the event seq moved: the audit runs");
-
-    let (w4, r4, sink4, clock4) = audit_gate_world("audit-gate-idle", "41");
-    std::fs::write(w4.run.join("audit.seen"), &seen).unwrap();
-    clock4.0.set(NOW + 1801);
-    run_mode(&w4, &r4, &sink4, &clock4, Mode::Audit, &[], Some(repos));
-    assert!(r4.count(|s| is_bd(s, "list")) > 0, "past the idle ceiling the audit runs regardless");
 }

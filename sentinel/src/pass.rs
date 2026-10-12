@@ -2,7 +2,6 @@
 //! checks run in for each entry point (DESIGN.md §4).
 
 use std::cell::{Cell, RefCell};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::cfg::{Cfg, Context, Declared};
@@ -16,7 +15,6 @@ pub enum Mode {
     Pass,
     Report,
     SummonOnly,
-    Audit,
     /// CHECK 3c alone; `dry` prints the decision and writes nothing.
     OpenChildren { dry: bool },
     /// `land_escalate` alone, stdin `<why>\n<evidence>` (sp-31hjr): the real-sender
@@ -56,7 +54,6 @@ impl Mode {
         match a {
             Some("--report") => Mode::Report,
             Some("--summon-only") => Mode::SummonOnly,
-            Some("--audit") => Mode::Audit,
             Some("--open-children") => Mode::OpenChildren { dry: false },
             Some("--land-escalate") => Mode::LandEscalate,
             Some("--mark-queue-waiters") => Mode::MarkQueueWaiters,
@@ -111,8 +108,6 @@ pub struct Sentinel<'a> {
     /// The seams' act/progress mailbox (DESIGN.md §6).
     pub tally_file: PathBuf,
     pub lib: PathBuf,
-    /// This executable, for the audit worker's own command line.
-    pub exe: String,
     pub pass_id: String,
     phase: RefCell<Option<(String, i64)>>,
     pub started: i64,
@@ -130,7 +125,6 @@ impl<'a> Sentinel<'a> {
         declared: Declared,
         home: &Path,
         mode: Mode,
-        exe: String,
         pass_id: String,
     ) -> Sentinel<'a> {
         let cfg = Cfg::from_context(&ctx, home, declared);
@@ -148,7 +142,6 @@ impl<'a> Sentinel<'a> {
             progressed: Cell::new(0),
             tally_file,
             lib,
-            exe,
             pass_id,
             phase: RefCell::new(None),
             started,
@@ -171,18 +164,13 @@ impl<'a> Sentinel<'a> {
         self.log(&format!("ACT {msg}"));
     }
 
-    /// `progress`: the DAG moved. In the audit worker the line also goes to the mailbox the
-    /// next normal pass drains, because `progressed` is per-process and CHECK 8 must see it.
+    /// `progress`: the DAG moved.
     pub fn progress(&self, msg: &str) {
         self.progressed.set(self.progressed.get() + 1);
         self.act(msg);
-        if self.mode == Mode::Audit {
-            append_line(&self.cfg.audit_mailbox, msg);
-        }
     }
 
     /// `_phase <name>`: flush the check that just ended as a tsd row, start the next clock.
-    /// The audit worker never had `_phase` defined, so it writes no rows (B5).
     pub fn phase(&self, name: &str) {
         if self.mode != Mode::Pass {
             return;
@@ -251,12 +239,9 @@ impl<'a> Sentinel<'a> {
             for line in tally.lines() {
                 match line.split_once('\t') {
                     Some(("act", _)) => self.acted.set(self.acted.get() + 1),
-                    Some(("progress", m)) => {
+                    Some(("progress", _)) => {
                         self.acted.set(self.acted.get() + 1);
                         self.progressed.set(self.progressed.get() + 1);
-                        if self.mode == Mode::Audit {
-                            append_line(&self.cfg.audit_mailbox, m);
-                        }
                     }
                     _ => {}
                 }
@@ -424,10 +409,9 @@ impl<'a> Sentinel<'a> {
     }
 
     /// The bulk reads and the DB check (every mode but --summon-only).
-    fn read_store(&self, brief: bool) -> Result<Snapshot, i32> {
+    fn read_store(&self) -> Result<Snapshot, i32> {
         let bd = self.bd();
-        let args = store::ready_raw_args(&self.cfg);
-        let r = if brief { store::bulk_brief(&bd, self.h, &args) } else { store::bulk(&bd, self.h, &args) };
+        let r = store::bulk(&bd, self.h, &store::ready_raw_args(&self.cfg));
         let (list_raw, list) = match r.list {
             Ok(x) => x,
             Err(e) => {
@@ -471,7 +455,7 @@ impl<'a> Sentinel<'a> {
         if self.mode == Mode::Audit {
             return self.audit_run();
         }
-        let snap = match self.read_store(false) {
+        let snap = match self.read_store() {
             Ok(s) => s,
             Err(rc) => return rc,
         };
@@ -530,8 +514,6 @@ impl<'a> Sentinel<'a> {
         self.phase("CHECK3");
         let plan_ready = self.check3(plan_ready, plan_inprog, n_open);
 
-        self.audit_dispatch();
-
         self.phase("CHECK6");
         self.check6();
         self.phase("CHECK3b");
@@ -563,79 +545,6 @@ impl<'a> Sentinel<'a> {
     /// until it is fixed — after the rest of the pass (landing, summoning) has run.
     fn exit_code(&self) -> i32 {
         i32::from(self.lc_failed.get())
-    }
-
-    /// What the audit's checks decide from: the content store's hash, the lifecycle event
-    /// seq and every swept repo's landing sha. None when any part cannot be read — then the
-    /// audit runs.
-    fn audit_key(&self) -> Option<String> {
-        let content = store::fingerprint(&self.bd(), self.h)?;
-        let o = self.h.run(Spec::args_owned(self.cfg.lc_bin.clone(), vec!["event-seq".into()]));
-        let seq = o.ok().then(|| o.stdout.trim().to_string()).filter(|s| !s.is_empty())?;
-        let mut key = format!("{content}\n{seq}\n");
-        for r in self.ctx.repos.iter().filter(|r| !r.forge_queued) {
-            key.push_str(&format!("{}={}\n", r.name, self.landref_sha(r).unwrap_or_default()));
-        }
-        Some(key)
-    }
-
-    fn audit_unchanged(&self, key: &str) -> bool {
-        let Ok(stamp) = std::fs::read_to_string(self.cfg.run.join("audit.seen")) else {
-            return false;
-        };
-        let Some((at, seen)) = stamp.split_once('\n') else {
-            return false;
-        };
-        let age = at.parse::<i64>().map_or(i64::MAX, |t| self.h.now() - t);
-        seen == key && (0..self.cfg.audit_max_idle).contains(&age)
-    }
-
-    fn audit_status(&self) {
-        let _ = std::fs::write(
-            self.cfg.run.join("audit.status"),
-            format!("SP_AUDIT_AT={}\nSP_AUDIT_RC=0\n", self.h.now()),
-        );
-    }
-
-    /// The audit, run only when its inputs moved since the last clean run (or the idle
-    /// ceiling passed), over a body-free read that is never written out.
-    fn audit_run(&self) -> i32 {
-        let key = self.audit_key();
-        if let Some(k) = &key {
-            if self.audit_unchanged(k) {
-                self.audit_status();
-                self.log("audit: store, lifecycle events and landing refs unchanged — skipped");
-                return 0;
-            }
-        }
-        let snap = match self.read_store(true) {
-            Ok(s) => s,
-            Err(rc) => return rc,
-        };
-        let rc = self.audit(&snap);
-        if let (0, Some(k)) = (rc, key) {
-            let _ = std::fs::write(self.cfg.run.join("audit.seen"), format!("{}\n{k}", self.h.now()));
-        }
-        rc
-    }
-
-    fn audit(&self, snap: &Snapshot) -> i32 {
-        self.check4(snap);
-        if let Some(rows) = self.lc_rows() {
-            self.check_rowless(snap, &rows);
-        }
-        self.check6b();
-        if !self.cfg.skip_reclaim {
-            self.check7c(snap);
-            self.check7d();
-        }
-        self.audit_status();
-        self.log(&format!(
-            "audit pass complete — {} action(s), {} progress",
-            self.acted.get(),
-            self.progressed.get()
-        ));
-        self.exit_code()
     }
 
     /// B7: the positive control on the pass-time budget (DESIGN.md §5).
@@ -836,16 +745,6 @@ pub fn read_stdin() -> String {
     s
 }
 
-pub fn append_line(p: &Path, line: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(p)
-    {
-        let _ = writeln!(f, "{line}");
-    }
-}
-
 /// `command -v <name>` against `path`: the first executable `<dir>/<name>`, else `name`
 /// unchanged (so the spawn fails naming the tool). Resolution by PATH, never construction.
 pub fn on_path(name: &str, path: &str) -> String {
@@ -876,7 +775,6 @@ mod tests {
         assert_eq!(Mode::from_first(None), Mode::Pass);
         assert_eq!(Mode::from_first(Some("--report")), Mode::Report);
         assert_eq!(Mode::from_first(Some("--summon-only")), Mode::SummonOnly);
-        assert_eq!(Mode::from_first(Some("--audit")), Mode::Audit);
         assert_eq!(Mode::from_first(Some("--bogus")), Mode::Pass);
         assert_eq!(
             Mode::from_args(Some("--open-children"), None),
@@ -886,7 +784,6 @@ mod tests {
             Mode::from_args(Some("--open-children"), Some("--dry-run")),
             Mode::OpenChildren { dry: true }
         );
-        assert_eq!(Mode::from_args(Some("--audit"), Some("--dry-run")), Mode::Audit);
     }
 
     #[test]

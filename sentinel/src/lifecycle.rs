@@ -10,7 +10,6 @@ use serde_json::Value;
 use crate::host::{Io, Spec};
 use crate::model::{parse_lc_rows, LcRow};
 use crate::pass::Sentinel;
-use crate::store::Snapshot;
 use spira_config::lc_state;
 use spira_config::nonwork::{self, Kind};
 
@@ -141,29 +140,6 @@ pub fn inconsistent(rows: &[LcRow]) -> Vec<String> {
                 None
             }
         })
-        .collect()
-}
-
-/// Open work beads with no `spira_lifecycle` row: they can never be claimed.
-///
-/// NAMED EXCEPTION to lifecycle-guard's bd-status-read rule (lifecycle-guard/DESIGN.md,
-/// "The rowless controls"; the Concierge's ruling on sp-mve9i): this is the positive control
-/// for "no bead is rowless". A bead with no lifecycle row has no state but bd's, so the only
-/// way to find one is to ask bd which beads it considers live and look for each in the
-/// machine — reading bd status here audits the machine's coverage, it decides nothing about
-/// a bead the machine holds. The rule names this function; nothing else may do this.
-///
-/// The CHECK5-LC shapes (landed-but-open, closed-unlanded, blocked-by-unlanded) are gone:
-/// each was a disagreement between bd `status` and the lifecycle row, and with bd status
-/// inert for work beads (design §3.4, sp-mve9i) there is nothing for the row to disagree with.
-pub fn rowless(snap: &Snapshot, rows: &[LcRow], work_types: &[String]) -> Vec<String> {
-    let have: HashSet<&str> = rows.iter().map(|r| r.bead_id.as_str()).collect();
-    snap.list
-        .iter()
-        .filter(|b| matches!(b.status.as_str(), "open" | "in_progress"))
-        .filter(|b| work_types.iter().any(|t| t == b.typ()))
-        .filter(|b| !have.contains(b.id.as_str()))
-        .map(|b| b.id.clone())
         .collect()
 }
 
@@ -410,39 +386,6 @@ impl<'a> Sentinel<'a> {
 }
 
 impl<'a> Sentinel<'a> {
-    /// Surface every rowless open work bead and backfill its row (`create-bead` is
-    /// idempotent). A failed backfill is loud and retried next pass.
-    pub fn check_rowless(&self, snap: &Snapshot, rows: &[LcRow]) {
-        let rowless_ids = rowless(snap, rows, &self.cfg.work_types);
-        if rowless_ids.is_empty() {
-            return;
-        }
-        let bin = self.cfg.lc_bin.clone();
-        let mut failed = Vec::new();
-        for id in &rowless_ids {
-            let o = self.h.run(
-                Spec::args_owned(bin.clone(), vec!["create-bead".into(), id.clone()])
-                    .out(Io::Null)
-                    .err(Io::Null),
-            );
-            if !o.ok() {
-                failed.push(id.clone());
-            }
-        }
-        self.h.print(
-            &rowless_ids.iter()
-                .map(|i| format!("STATE-LC {i} rowless — open bead had no spira-lc row; backfilled"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
-        self.log(&format!(
-            "CHECK-ROWLESS: {} open bead(s) had no lifecycle row; {} backfill(s) failed{}",
-            rowless_ids.len(),
-            failed.len(),
-            if failed.is_empty() { String::new() } else { format!(": {}", failed.join(" ")) }
-        ));
-        self.act(&format!("backfilled {} rowless bead(s)", rowless_ids.len() - failed.len()));
-    }
 }
 
 #[cfg(test)]
@@ -627,21 +570,4 @@ mod tests {
         }
     }
 
-    fn wt() -> Vec<String> {
-        vec!["task".into(), "bug".into(), "feature".into()]
-    }
-
-    /// The rowless control (a named exception, see `rowless`): open and in-progress work
-    /// beads bd holds with no lifecycle row; a closed bead or an epic is not one.
-    #[test]
-    fn rowless_flags_live_work_beads_with_no_row() {
-        let s = Snapshot::from_json(
-            r#"[{"id":"a","status":"open","issue_type":"task"},{"id":"c","status":"closed","issue_type":"task"},
-                {"id":"r","status":"in_progress","issue_type":"task"},{"id":"g","status":"open","issue_type":"epic"}]"#,
-            None,
-        );
-        let rows = vec![lc5_row("a", "READY")];
-        assert_eq!(rowless(&s, &rows, &wt()), vec!["r"]);
-        assert!(rowless(&s, &[lc5_row("a", "READY"), lc5_row("r", "READY")], &wt()).is_empty());
-    }
 }

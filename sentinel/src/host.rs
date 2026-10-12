@@ -321,17 +321,6 @@ pub fn civil(days: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// (y, m, d) → days since 1970-01-01.
-pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let m = m as i64;
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
 /// `date -u +%Y-%m-%dT%H:%M:%SZ`.
 pub fn utc(epoch: i64) -> String {
     let days = epoch.div_euclid(86_400);
@@ -345,52 +334,6 @@ pub fn utc(epoch: i64) -> String {
     )
 }
 
-/// Python's `datetime.fromisoformat(ts.replace("Z", "+00:00"))` for the shapes bd writes;
-/// None for a naive or unparseable timestamp (python then prints "?").
-pub fn parse_iso(ts: &str) -> Option<i64> {
-    let ts = ts.trim();
-    if ts.len() < 19 {
-        return None;
-    }
-    let b = ts.as_bytes();
-    let num = |a: usize, z: usize| -> Option<i64> { ts.get(a..z)?.parse().ok() };
-    if b[4] != b'-'
-        || b[7] != b'-'
-        || !(b[10] == b'T' || b[10] == b' ')
-        || b[13] != b':'
-        || b[16] != b':'
-    {
-        return None;
-    }
-    let (y, mo, d, h, mi, s) = (
-        num(0, 4)?,
-        num(5, 7)?,
-        num(8, 10)?,
-        num(11, 13)?,
-        num(14, 16)?,
-        num(17, 19)?,
-    );
-    let mut rest = &ts[19..];
-    if let Some(r) = rest.strip_prefix('.') {
-        let n = r.find(|c: char| !c.is_ascii_digit()).unwrap_or(r.len());
-        rest = &r[n..];
-    }
-    let off = if rest == "Z" {
-        0
-    } else if rest.len() == 6
-        && (rest.starts_with('+') || rest.starts_with('-'))
-        && &rest[3..4] == ":"
-    {
-        let sign = if rest.starts_with('-') { -1 } else { 1 };
-        let oh: i64 = rest[1..3].parse().ok()?;
-        let om: i64 = rest[4..6].parse().ok()?;
-        sign * (oh * 3600 + om * 60)
-    } else {
-        return None;
-    };
-    Some(days_from_civil(y, mo as u32, d as u32) * 86_400 + h * 3600 + mi * 60 + s - off)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,15 +342,6 @@ mod tests {
     fn utc_formats_like_date_u() {
         assert_eq!(utc(0), "1970-01-01T00:00:00Z");
         assert_eq!(utc(1_790_653_638), "2026-09-29T03:47:18Z");
-    }
-
-    #[test]
-    fn iso_round_trips_and_refuses_naive() {
-        assert_eq!(parse_iso("2026-09-29T03:47:18Z"), Some(1_790_653_638));
-        assert_eq!(parse_iso("2026-09-29T03:47:18.123Z"), Some(1_790_653_638));
-        assert_eq!(parse_iso("2026-09-29T05:47:18+02:00"), Some(1_790_653_638));
-        assert_eq!(parse_iso("2026-09-29T03:47:18"), None);
-        assert_eq!(parse_iso("garbage"), None);
     }
 
     #[test]

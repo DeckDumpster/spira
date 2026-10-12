@@ -5,39 +5,9 @@
 //! --escape` (G5; escape.sh before it, retired sp-zpaq0) across the process boundary — a
 //! real OS flock, so two binaries contending for it still serialize correctly.
 
-use crate::cfg::Fayth;
 use crate::host::{Io, Spec};
-use crate::model::Bead;
 use crate::pass::{self, Sentinel};
-use crate::store::{has_all, has_none};
 
-/// ready-bucket.py: a bead counts for a fayth iff its labels ⊇ FAYTH_LABELS, are disjoint
-/// from FAYTH_EXCLUDE_LABELS and from the shared queue-wait/submitted exclusion, and — when
-/// it carries `fayth:<name>` — this fayth is among the named preferences. Fayths with no
-/// labels are not rows (bulk_ready_by_fayth skips them).
-pub fn bucket(ready: &[Bead], fayths: &[Fayth], shared_exclude: &[String]) -> Vec<(String, usize)> {
-    let parts: Vec<&Fayth> = fayths.iter().filter(|f| !f.labels.is_empty()).collect();
-    let mut counts: Vec<(String, usize)> = parts.iter().map(|f| (f.name.clone(), 0)).collect();
-    for b in ready {
-        if !has_none(b, shared_exclude) {
-            continue;
-        }
-        let pref: Vec<&str> = b
-            .labels
-            .iter()
-            .filter_map(|l| l.strip_prefix("fayth:"))
-            .collect();
-        for (i, f) in parts.iter().enumerate() {
-            if !pref.is_empty() && !pref.contains(&f.name.as_str()) {
-                continue;
-            }
-            if has_all(b, &f.labels) && has_none(b, &f.exclude) {
-                counts[i].1 += 1;
-            }
-        }
-    }
-    counts
-}
 
 pub fn parse_cache(text: &str) -> Vec<(String, usize)> {
     text.lines()
@@ -57,14 +27,6 @@ pub fn render_cache(counts: &[(String, usize)]) -> String {
 }
 
 impl<'a> Sentinel<'a> {
-    fn shared_exclude(&self) -> Vec<String> {
-        [&self.cfg.queue_wait, &self.cfg.submitted]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .cloned()
-            .collect()
-    }
-
     /// ready_cache_populate: never hand back an empty-but-existing file, because fayth_ready
     /// trusts the cache unconditionally once it exists.
     ///
@@ -860,47 +822,6 @@ impl<'a> Sentinel<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::parse_beads;
-
-    fn f(n: &str, l: &str, e: &str) -> Fayth {
-        Fayth {
-            name: n.into(),
-            labels: crate::cfg::csv(l),
-            exclude: crate::cfg::csv(e),
-        }
-    }
-
-    #[test]
-    fn bucket_is_ready_bucket_py() {
-        let ready = parse_beads(
-            r#"[{"id":"1","labels":["spira","plan"]},
-                {"id":"2","labels":["spira","plan","fayth:ops"]},
-                {"id":"3","labels":["spira","incident"]},
-                {"id":"4","labels":["spira","plan","spira-queue-waiting"]},
-                {"id":"5","labels":["spira","plan","qa-proposed"]}]"#,
-        )
-        .unwrap();
-        let fs = vec![
-            f("builder", "spira,plan", "qa-proposed"),
-            f("ops", "spira,incident", ""),
-            f("spike", "spira", ""),
-            f("concierge", "", ""),
-        ];
-        let c = bucket(
-            &ready,
-            &fs,
-            &["spira-queue-waiting".into(), "spira-submitted".into()],
-        );
-        assert_eq!(
-            c,
-            vec![
-                ("builder".into(), 1),
-                ("ops".into(), 1),
-                ("spike".into(), 3)
-            ]
-        );
-        assert_eq!(render_cache(&c), "builder 1\nops 1\nspike 3\n");
-    }
 
     #[test]
     fn parse_cache_reads_claims_own_bucket_lines_and_skips_noise() {
