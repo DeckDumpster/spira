@@ -181,6 +181,11 @@ id = "UC-landing-merge-queue-30"
 tier = "T2"
 statement = "Every queue operation (eject, abandon, batch, verdict) refuses and changes nothing while another holds the per-repo lock. Stderr written after taking the lock reaches the caller. `--dry-run` prints the plan and changes nothing."
 
+[use_case.uncovered]
+reason = "the step-vs-eject lock race suite flipped green/red on one commit and was deleted; no deterministic check replaces it yet (gap G13)"
+date = "2026-10-12"
+bead = "sp-qwh7oi"
+
 [[use_case]]
 id = "UC-landing-merge-queue-31"
 tier = "T1"
