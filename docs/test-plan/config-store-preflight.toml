@@ -151,6 +151,11 @@ id = "UC-config-store-preflight-26"
 tier = "T1"
 statement = "beads-push reports a push only when the remote head proves it happened"
 
+[use_case.uncovered]
+reason = "beads-push was retired; lc-backup replaced it"
+date = "2026-10-12"
+bead = "sp-vrnpql.2.3"
+
 [[use_case]]
 id = "UC-config-store-preflight-27"
 tier = "T2"

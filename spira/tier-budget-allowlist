@@ -70,8 +70,6 @@ test-bd-schema-stamp.sh	T1	2.5
 test-bead-file.sh	T1	27.0
 test-bead-lint.sh	T1	29.5
 test-bead-repo-guard.sh	T1	8.5
-test-beads-push-commit.sh	T1	18.5
-test-beads-push-verify.sh	T1	5.0
 test-beads-sparklines.sh	T1	3.0
 test-bin-manifest.sh	T1	3.0
 test-boundary.sh	T1	3.5

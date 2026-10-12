@@ -160,8 +160,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | bead-file | no | - | 8 | static, configuration or single-tool contract: no hand-off between loop actors |
 | bead-lint | no | - | 23 | static, configuration or single-tool contract: no hand-off between loop actors |
 | bead-repo-guard | no | - | 7 | static, configuration or single-tool contract: no hand-off between loop actors |
-| beads-push-commit | no | - | 20 | static, configuration or single-tool contract: no hand-off between loop actors |
-| beads-push-verify | no | - | 4 | static, configuration or single-tool contract: no hand-off between loop actors |
 | beads-sparklines | no | - | 3 | cockpit/pane rendering and its probes: no loop actor changes state |
 | bin-manifest | no | - | 14 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | boundary | no | - | 2 | static, configuration or single-tool contract: no hand-off between loop actors |

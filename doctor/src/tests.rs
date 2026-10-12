@@ -1044,7 +1044,7 @@ fn prod_checkout_unit_outside_releases_fails() {
 fn prod_checkout_all_under_releases_is_ok() {
     let f = Fake::default();
     f.set("SPIRA_RELEASES", "/fixture/releases");
-    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("beads-push.service", "enabled", "/fixture/releases/current/beads-push.sh")]);
+    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("spira-x.service", "enabled", "/fixture/releases/current/x.sh")]);
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Ok]);
 }
 
@@ -1052,7 +1052,7 @@ fn prod_checkout_all_under_releases_is_ok() {
 fn prod_checkout_sibling_prefix_is_outside() {
     let f = Fake::default();
     f.set("SPIRA_RELEASES", "/fixture/releases");
-    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("beads-push.service", "enabled", "/fixture/releases-old/x")]);
+    *f.unit_execs.borrow_mut() = Ok(vec![exec_row("spira-x.service", "enabled", "/fixture/releases-old/x")]);
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail]);
 }
 

@@ -11,7 +11,7 @@
 #    install.sh disables them BEFORE enabling per-instance units — no window
 #    where both sets are enabled simultaneously.
 # 2. MIGRATION SCOPE: install.sh disables the spira-* units that have per-instance
-#    counterparts (not shared units like cockpit-ensure, concierge, beads-push).
+#    counterparts (not shared units like cockpit-ensure, concierge).
 # 3. CLEAN INSTALL: when no legacy units are present, no spurious disable calls
 #    report success — a fresh-box install produces no migration output.
 # 4. --NO-MIGRATE-WATCHERS: skips only watcher loops; sentinel is still migrated.
@@ -223,15 +223,13 @@ remove_legacy "spira-sentinel.service" "spira-sentinel.timer" \
 
 # ==========================================================================
 echo
-echo "MIGRATION SCOPE — shared units (cockpit-ensure, concierge, beads-push) excluded:"
+echo "MIGRATION SCOPE — shared units (cockpit-ensure, concierge) excluded:"
 # ==========================================================================
 
 nowant "scope: cockpit-ensure.service not passed to disable" \
        "disable" "$(grep 'cockpit-ensure' "$SCTL_LOG" || true)"
 nowant "scope: concierge.service not passed to disable" \
        "disable" "$(grep 'concierge' "$SCTL_LOG" || true)"
-nowant "scope: beads-push.service not passed to disable" \
-       "disable" "$(grep 'beads-push' "$SCTL_LOG" || true)"
 
 # ==========================================================================
 echo

@@ -5,7 +5,7 @@
 # unit files instead of six suites each re-reading them.
 #
 # tier: T0
-# covers: systemd/*.timer systemd/*.service install/src/manifest.rs install/src/values.rs systemd/concierge.service systemd/beads-push.service cockpit-collect/src/* supervise/** UC-instance-lifecycle-31 UC-landing-merge-queue-50
+# covers: systemd/*.timer systemd/*.service install/src/manifest.rs install/src/values.rs systemd/concierge.service cockpit-collect/src/* supervise/** UC-instance-lifecycle-31 UC-landing-merge-queue-50
 #
 # WHAT THIS GUARDS. Defect sp-7gklu: a timer template existed in systemd/ but was absent from
 # units.sh's UNITS array, so install.sh never wrote it to disk. Defect sp-mplcb: WatchdogSec
@@ -344,7 +344,7 @@ printf '[Service]\nExecStart=@SPIRA_REPO@/something.sh\n' > "$_rd_bad"
 want "positive control: @SPIRA_REPO@ renders to checkout path — detector fires" \
     "ExecStart=$_rd_repo/" "$(render_unit "$_rd_bad")"
 
-for svc in concierge.service beads-push.service; do
+for svc in concierge.service; do
     _rd_execline="$(grep -E '^ExecStart=' "$UNIT_DIR/$svc")"
     nowant "$svc: ExecStart does not use @SPIRA_REPO@" "@SPIRA_REPO@" "$_rd_execline"
     want "$svc: ExecStart uses @SPIRA_PROD_ROOT@" "@SPIRA_PROD_ROOT@" "$_rd_execline"

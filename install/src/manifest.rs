@@ -108,8 +108,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("cockpit-ensure.timer", true));
     m.units.push(t("concierge.service", false));
     m.units.push(t("concierge.timer", true));
-    m.units.push(t("beads-push.service", false));
-    m.units.push(t("beads-push.timer", true));
     m.units.push(t("lc-backup.service", false));
     m.units.push(t("lc-backup.timer", true));
     m.units.push(t("spira-archive.service", false));

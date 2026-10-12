@@ -85,7 +85,7 @@ printf 'seed\n' > "$FAKE_REPO/f"; git -C "$FAKE_REPO" add f; git -C "$FAKE_REPO"
 git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"; timeout 5 git -C "$FAKE_REPO" push -q origin main 2>/dev/null
 timeout 5 git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
 git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
-for _s in concierge.sh beads-push.sh; do
+for _s in concierge.sh; do
     [ -f "$REAL_REPO/$_s" ] && ln -sf "$REAL_REPO/$_s" "$FAKE_REPO/$_s"
 done
 

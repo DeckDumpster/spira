@@ -30,7 +30,7 @@ render_rc=$?
 is "render: install.sh test --render exits 0" "0" "$render_rc"
 
 # Non-shared units (everything named spira-*) must carry the -test suffix; shared
-# units (cockpit-ensure, concierge, beads-push, dolt-beads) keep plain names.
+# units (cockpit-ensure, concierge, dolt-beads) keep plain names.
 bad_rendered="$(printf '%s\n' "$rendered" \
     | grep '^===== spira-' \
     | sed 's/^===== \(spira-[^ ]*\) =====/\1/' \
@@ -48,8 +48,6 @@ want "naming: cockpit-ensure.service present (shared, plain name)" \
      "===== cockpit-ensure.service =====" "$rendered"
 want "naming: concierge.service present (shared, plain name)" \
      "===== concierge.service =====" "$rendered"
-want "naming: beads-push.service present (shared, plain name)" \
-     "===== beads-push.service =====" "$rendered"
 
 # ENABLE is the array units-install's own enable/restart loop reads to decide what to
 # enable — already instance-qualified (inst_name applied per manifest entry, install/src/

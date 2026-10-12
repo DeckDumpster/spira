@@ -10,7 +10,6 @@ use std::path::Path;
 
 /// Units no instance owns, so `spira-*` never matches them.
 pub const SHARED_UNITS: &[&str] = &[
-    "beads-push.service",
     "cockpit-ensure.service",
     "concierge.service",
     "dolt-beads.service",
@@ -156,7 +155,7 @@ mod tests {
     fn the_probe_covers_shared_units_as_well_as_spira_prefixed_ones() {
         let a = list_args();
         assert!(a.contains(&"spira-*"));
-        for u in ["beads-push.service", "dolt-beads.service", "cockpit-ensure.service", "concierge.service"] {
+        for u in ["dolt-beads.service", "cockpit-ensure.service", "concierge.service"] {
             assert!(a.contains(&u), "{u}");
         }
     }
@@ -177,12 +176,12 @@ mod tests {
     fn sp_ezeiy_never_extracts_the_bullet_character_and_handles_a_double_leading_space() {
         let lines = [
             "● spira-watch-answers-prod.service loaded failed failed Spira watcher answers",
-            "● beads-push.service loaded failed failed Push Spira's beads",
+            "● dolt-beads.service loaded failed failed Dolt beads",
             "  ● another-unit.service loaded failed failed Another unit",
         ];
         let expected = [
             "spira-watch-answers-prod.service",
-            "beads-push.service",
+            "dolt-beads.service",
             "another-unit.service",
         ];
         for (line, want) in lines.iter().zip(expected.iter()) {

@@ -146,14 +146,14 @@ chmod +x '${STUBS_CTR}/loom-probe'
 # checks that ExecStart targets are executable, so the scripts must be present. Unit
 # templates resolve three placeholders against this one checkout root (render.py):
 # @SPIRA_PROD@ (the spira/ subdir), @SPIRA_PROD_COCK@ (its cockpit/ sibling) and
-# @SPIRA_PROD_ROOT@ (the root itself, for beads-push.sh and concierge.sh) — all three
+# @SPIRA_PROD_ROOT@ (the root itself, for concierge.sh) — all three
 # need real files here or install.sh refuses the first unit that names one.
 mkdir -p /tmp/spira-reh-rel/r1 /tmp/spira-reh-home
 ln -sfn r1 /tmp/spira-reh-rel/current
 ln -sfn /tmp/spira-reh-rel/r1 /tmp/spira-prod
 cp -a /workspace/spira /tmp/spira-prod/
 cp -a /workspace/cockpit /tmp/spira-prod/
-cp -a /workspace/beads-push.sh /workspace/concierge.sh /tmp/spira-prod/
+cp -a /workspace/concierge.sh /tmp/spira-prod/
 # The release's bin/: the units ExecStart /tmp/spira-prod/bin/<tool> (sp-gypjk). world.halted
 # (below) means units are only enabled, never started, so no-op stubs satisfy install.sh's
 # executable-bit check. NOT PROVEN here: the tree's own build staged as this bin/ (sp-isom7).
