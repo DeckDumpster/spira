@@ -41,23 +41,6 @@ impl RegistryKey {
         let start = idx + needle.len();
         extract_braced(&self.default_body, start)
     }
-
-    /// Every OTHER DEFAULTED registry key named inside this key's own default text — same
-    /// test `conf-gen.sh`'s dependency-edge loop uses (`*"\$$other"*` / `*'${'"$other"*`),
-    /// and restricted the same way `conf-gen.sh` restricts it: only among `has_default` keys
-    /// (`for other in "${has_default[@]}"`). A hand-written key like `SPIRA_RUN` is named in
-    /// plenty of defaults but carries no registry default of its own, so it is never a node
-    /// in this graph — counting it as one would inflate another key's in-degree past what
-    /// [`topo_order`]'s Kahn's-algorithm pass could ever bring back to zero, misreporting an
-    /// ordinary hand-written dependency as a cycle.
-    fn deps_among(&self, all: &BTreeMap<String, RegistryKey>) -> Vec<String> {
-        let Some(expr) = self.default_expr() else { return Vec::new() };
-        all.iter()
-            .filter(|(k, rk)| *k != &self.name && rk.default_expr().is_some())
-            .filter(|(k, _)| expr.contains(k.as_str()))
-            .map(|(k, _)| k.clone())
-            .collect()
-    }
 }
 
 /// Scans forward from `start` (the byte offset right after an already-consumed, unmatched
@@ -176,36 +159,41 @@ fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
 /// directory's merely-alphabetical file order. Refuses (rather than guessing an order) on a
 /// dependency cycle, same as `conf-gen.sh`.
 pub fn topo_order(registry: &BTreeMap<String, RegistryKey>) -> Result<Vec<String>, String> {
-    let defaulted: Vec<String> = registry
-        .iter()
-        .filter(|(_, k)| k.default_expr().is_some())
-        .map(|(n, _)| n.clone())
-        .collect();
-    let deps: BTreeMap<String, Vec<String>> =
-        defaulted.iter().map(|n| (n.clone(), registry[n].deps_among(registry))).collect();
-    let mut indeg: BTreeMap<String, usize> =
-        deps.iter().map(|(k, ds)| (k.clone(), ds.len())).collect();
-
-    let mut remaining: Vec<String> = defaulted;
-    let mut order: Vec<String> = Vec::new();
-    while !remaining.is_empty() {
-        let mut avail: Vec<String> =
-            remaining.iter().filter(|k| indeg[*k] == 0).cloned().collect();
-        if avail.is_empty() {
-            let mut cyc = remaining.clone();
-            cyc.sort();
-            return Err(format!("conf.d: dependency cycle among registry defaults: {}", cyc.join(", ")));
+    // A key depends on every OTHER defaulted key its default text names, and only on defaulted
+    // ones: a hand-written key is named in plenty of defaults but is no node, and counting it
+    // would leave an in-degree no round could bring to zero, reading as a cycle. Every process
+    // resolves config through here, so each default is parsed once and a key is only looked
+    // for in a default that could name one.
+    let nodes: Vec<(&str, &str)> = registry.iter().filter_map(|(n, k)| k.default_expr().map(|e| (n.as_str(), e))).collect();
+    let mut indeg = vec![0usize; nodes.len()];
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    for (i, (_, expr)) in nodes.iter().enumerate() {
+        if !expr.bytes().any(|b| b.is_ascii_uppercase() || b == b'_') {
+            continue;
         }
-        avail.sort();
-        for k in &avail {
-            order.push(k.clone());
-            for other in &remaining {
-                if deps[other].contains(k) {
-                    *indeg.get_mut(other).unwrap() -= 1;
-                }
+        for (j, (name, _)) in nodes.iter().enumerate() {
+            if i != j && expr.contains(name) {
+                indeg[i] += 1;
+                dependents[j].push(i);
             }
         }
-        remaining.retain(|k| !avail.contains(k));
+    }
+
+    let mut done = vec![false; nodes.len()];
+    let mut order: Vec<String> = Vec::with_capacity(nodes.len());
+    while order.len() < nodes.len() {
+        let avail: Vec<usize> = (0..nodes.len()).filter(|&i| !done[i] && indeg[i] == 0).collect();
+        if avail.is_empty() {
+            let cyc: Vec<&str> = (0..nodes.len()).filter(|&i| !done[i]).map(|i| nodes[i].0).collect();
+            return Err(format!("conf.d: dependency cycle among registry defaults: {}", cyc.join(", ")));
+        }
+        for &k in &avail {
+            done[k] = true;
+            order.push(nodes[k].0.to_string());
+            for &o in &dependents[k] {
+                indeg[o] -= 1;
+            }
+        }
     }
     Ok(order)
 }
@@ -328,6 +316,34 @@ mod tests {
         let pos_a = order.iter().position(|k| k == "SPIRA_A").unwrap();
         let pos_b = order.iter().position(|k| k == "SPIRA_B").unwrap();
         assert!(pos_a < pos_b, "{order:?}");
+    }
+
+    /// The straightforward Kahn rounds `topo_order` replaced: the order it gave is the order
+    /// `conf-gen.sh` writes, so the fast one must reproduce it on the real registry.
+    fn reference_order(registry: &BTreeMap<String, RegistryKey>) -> Vec<String> {
+        let defaulted: Vec<&String> = registry.iter().filter(|(_, k)| k.default_expr().is_some()).map(|(n, _)| n).collect();
+        let deps = |n: &String| -> Vec<&String> {
+            let expr = registry[n].default_expr().unwrap();
+            defaulted.iter().copied().filter(|k| *k != n && expr.contains(k.as_str())).collect()
+        };
+        let mut remaining: Vec<&String> = defaulted.clone();
+        let mut order: Vec<String> = Vec::new();
+        while !remaining.is_empty() {
+            let placed: Vec<&String> = remaining.iter().copied().filter(|n| deps(n).iter().all(|d| order.contains(d))).collect();
+            assert!(!placed.is_empty(), "the real registry has a cycle");
+            order.extend(placed.iter().map(|n| n.to_string()));
+            remaining.retain(|n| !placed.contains(n));
+        }
+        order
+    }
+
+    #[test]
+    fn topo_order_matches_the_reference_on_the_embedded_registry() {
+        let reg = embedded().unwrap();
+        let order = topo_order(&reg).unwrap();
+        assert!(order.len() > 100, "positive control: the registry carries defaults");
+        assert!(reg.values().any(|k| k.default_expr().is_some_and(|e| e.contains("$SPIRA_"))), "positive control: some default names another key");
+        assert_eq!(order, reference_order(&reg));
     }
 
     #[test]
