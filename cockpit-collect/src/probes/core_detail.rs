@@ -265,7 +265,7 @@ fn leading_timestamp(line: &str) -> Option<&str> {
 }
 
 fn repo_map() -> HashMap<String, String> {
-    let raw = io::contentjson_shared(&["list", "--all", "--limit", "0"]);
+    let raw = io::pane_beads("");
     let Some(rows) = io::json_rows(raw) else { return HashMap::new() };
     rows.iter()
         .filter_map(|i| {
