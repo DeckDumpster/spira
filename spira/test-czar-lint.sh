@@ -59,4 +59,10 @@ else
     bail "conf.sh not found at $conf_sh"
 fi
 
+# ==========================================================================================
+echo
+echo "czar.fayth allows the default lint"
+# ==========================================================================================
+want "FAYTH_TOOLS includes czar-pass --lint-default" "czar-pass --lint-default" "$(grep '^FAYTH_TOOLS=' "$HERE/chamber/czar.fayth")"
+
 tl_summary

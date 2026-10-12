@@ -186,8 +186,14 @@ fn bump_and_note(
     let prev_hash = bd.label_list(cfg.db, id).into_iter().find(|l| l.starts_with("payload-hash:"));
     let (note_suffix, new_hash) = decide::recur_note_body(prev_hash.as_deref(), payload, was_reopened);
     let reopen_note = if was_reopened { "\nReopened by dedup — same external ref seen again within the lookback window." } else { "" };
-    let note = format!("Recurrence {n} at {}.{reopen_note}{}", iso_now_public(now), note_suffix.clone().unwrap_or_default());
-    bd.note(cfg.db, id, &note);
+    if note_suffix.is_some() || was_reopened {
+        let note = format!("Recurrence {n} at {}.{reopen_note}{}", iso_now_public(now), note_suffix.clone().unwrap_or_default());
+        bd.note(cfg.db, id, &note);
+    }
+    for stale in bd.label_list(cfg.db, id).into_iter().filter(|l| l.starts_with("recurrence:")) {
+        bd.label_remove(cfg.db, id, &stale);
+    }
+    bd.label_add(cfg.db, id, &format!("recurrence:{n}@{}", iso_now_public(now)));
     if note_suffix.is_some() {
         if let Some(prev) = &prev_hash {
             bd.label_remove(cfg.db, id, prev);
@@ -620,6 +626,27 @@ mod tests {
     }
 
     #[test]
+    fn ten_unchanged_recurrences_leave_one_counter_line_and_no_per_tick_notes() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let c = cfg(&known);
+        let mut id = String::new();
+        for _ in 0..11 {
+            id = match file_one(&bd, &mailer, &clock, &c, "incident:tick", "t", b"same", "spira,incident", &mut log) {
+                FileOutcome::Filed(id) => id,
+                _ => panic!(),
+            };
+        }
+        let notes = bd.notes.borrow().get(&id).cloned().unwrap_or_default();
+        assert_eq!(notes.len(), 1, "only the first payload is noted: {notes:?}");
+        let counters: Vec<String> = bd.label_list("", &id).into_iter().filter(|l| l.starts_with("recurrence:")).collect();
+        assert_eq!(counters.len(), 1, "{counters:?}");
+    }
+
+    #[test]
     fn three_identical_filings_write_the_payload_note_exactly_once() {
         let bd = FakeBd::new();
         let mailer = FakeMailer { sent: RefCell::new(vec![]) };
@@ -736,7 +763,8 @@ mod tests {
             assert!(matches!(out, FileOutcome::Filed(ref id) if id == "sp-dup"));
         }
         assert_eq!(bd.created.borrow().len(), 0, "no bead filed while the fix is in flight");
-        assert_eq!(bd.notes.borrow().get("sp-dup").map(Vec::len), Some(2), "each recurrence is recorded on the incident");
+        assert_eq!(bd.notes.borrow().get("sp-dup").map(Vec::len), Some(1), "only the first payload is noted; later recurrences update the counter label");
+        assert!(bd.label_list("", "sp-dup").iter().any(|l| l.starts_with("recurrence:")), "the counter label records the recurrence");
 
         bd.successors.borrow_mut().clear();
         file_one(&bd, &mailer, &clock, &c, "basefail:r:test-a.sh", "t", b"p", "spira", &mut log);

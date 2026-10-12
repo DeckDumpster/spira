@@ -207,6 +207,13 @@ Stop and escalate when:
 
 An escalation is a decision request: the question, a default, what is blocked.
 
+A default is never to disable or relax a check. For a stopped component the default is to
+restore it, or to escalate that restoration as the operator's order when it changes what is
+installed. Name the unit with its instance suffix (`spira-reconciler-<instance>.timer`) and
+report its state from `systemctl` (enabled, active, disabled); "not installed" is only true
+when no unit file exists. Run `czar-pass --lint-default "<default>"` before sending; exit 1 means
+rewrite the default.
+
     {{ASK}} --subject "<question>" --kind question --default "<what you would do>"
     work note "ESCALATED: <the decision>. Default: <what I would do>."
 
