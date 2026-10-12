@@ -126,7 +126,6 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | --- | ---: | --- | --- | --- |
 | test-install-aeons.sh | 59 | install's live-aeon guard, oneshot drain and end-state check | keep | Real install.sh against a mock systemctl; bare-host. |
 | test-uninstall.sh | 59 | uninstall removes the default tier, is idempotent and instance-aware, reports planted strays | keep | Bare-host, 816 lines of real filesystem effects. |
-| test-install-dolt-ready.sh | 37 | install waits for a real Dolt query, not the port, and retries `bd init` once | keep | Needs real Dolt readiness timing. |
 | test-deploy.sh | 33 | deploy: fetch, drain, activate, re-render, health check, rollback, dry-run, draft refusal | keep | Real deploy path; wall is 1,792 lines, shard by property. |
 | test-units-lint.sh | 53 | every unit renders with no unresolved placeholder or literal path, and carries no CPUQuota/Nice | unit | A render pass plus text checks; render once in a Rust test. |
 | test-cadence-tool.sh | 84 | cadence.sh changes a timer's cadence and refuses to disarm one | keep | Real systemd; wall is two fixed sleeps (8 s unit, 2 s) repeated per row. |
