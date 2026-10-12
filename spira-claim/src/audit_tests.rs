@@ -102,6 +102,8 @@ fn poisoned_reads_the_lifecycle_snapshot_never_the_label() {
             tip: None,
             snoozed_until: None,
             stack_conflict: false,
+            stack: Default::default(),
+            reason: None,
         },
     );
     let out = run(
@@ -121,6 +123,8 @@ fn poisoned_reads_the_lifecycle_snapshot_never_the_label() {
             tip: None,
             snoozed_until: None,
             stack_conflict: false,
+            stack: Default::default(),
+            reason: None,
         },
     );
     let out2 = run(

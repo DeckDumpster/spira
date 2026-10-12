@@ -229,6 +229,10 @@ pub struct LifecycleRow {
     pub snoozed_until: Option<i64>,
     /// A dependent's stacked base failed to merge this row's tip; set by [`mark_stack_conflicts`].
     pub stack_conflict: bool,
+    /// The stack recorded on the row at its last claim, and the reason it last left the
+    /// queue — what the machine's REWORK `Claim` compares a proposal against.
+    pub stack: Stack,
+    pub reason: Option<String>,
 }
 
 /// The beads whose lifecycle row carries Express (`spira-lc list`'s `express` column,
@@ -292,7 +296,16 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
             }
             _ => None,
         };
-        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until, stack_conflict: false });
+        let stack: Stack = match r.get("stack") {
+            Some(Value::String(s)) if !s.trim().is_empty() => serde_json::from_str(s).map_err(|e| format!("lifecycle row {id}: stack: {e}"))?,
+            Some(v @ Value::Object(_)) => serde_json::from_value(v.clone()).map_err(|e| format!("lifecycle row {id}: stack: {e}"))?,
+            _ => Stack::new(),
+        };
+        let reason = match r.get("reason") {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            _ => None,
+        };
+        out.insert(id.to_string(), LifecycleRow { bead_id: id.to_string(), state, holds, stack_depth, tip, snoozed_until, stack_conflict: false, stack, reason });
     }
     Ok(out)
 }
@@ -339,6 +352,8 @@ pub enum Verdict {
     Snoozed(i64),
     Blocked(String),
     TooDeep { depth: u32, max: u32 },
+    /// A REWORK row whose gate-red stack the claim would repeat: the machine refuses it.
+    StackUnchanged,
 }
 
 /// An incident waits for its fix to land: a certified-only fix is not a reason to summon Ops,
@@ -418,6 +433,9 @@ pub fn stack_plan(
     let depth = stacked_max.map_or(0, |d| d + 1);
     if depth > stack_max_depth {
         return Err(Verdict::TooDeep { depth, max: stack_max_depth });
+    }
+    if own.state == BeadState::Rework && lifecycle::bead::rework_claim_stack_unchanged(&own.stack, own.reason.as_deref(), &stack) {
+        return Err(Verdict::StackUnchanged);
     }
     Ok((stack, depth))
 }
@@ -583,7 +601,7 @@ mod tests {
     fn epic_started_rule() {
         let mut c = row("c", 1, None, "t");
         c.status = Some("in_progress".into());
-        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false })]);
+        let at = |st: BeadState| HashMap::from([("c".to_string(), LifecycleRow { bead_id: "c".into(), state: st, holds: BTreeSet::new(), stack_depth: 0, tip: None, snoozed_until: None, stack_conflict: false, stack: Stack::new(), reason: None })]);
         assert!(!epic_started(&[c.clone()], &HashMap::new()), "no row: nothing started, though bd says in_progress");
         assert!(!epic_started(&[c.clone()], &at(BeadState::Ready)));
         assert!(!epic_started(&[c.clone()], &at(BeadState::Rework)));
@@ -631,7 +649,7 @@ mod tests {
     // ---- machine mode ----
 
     fn lcrow(id: &str, st: BeadState, holds: &[HoldKind], depth: u32) -> (String, LifecycleRow) {
-        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None, stack_conflict: false })
+        (id.into(), LifecycleRow { bead_id: id.into(), state: st, holds: holds.iter().copied().collect(), stack_depth: depth, tip: Some(format!("tip-{id}")), snoozed_until: None, stack_conflict: false, stack: Stack::new(), reason: None })
     }
 
     fn blocked_on(id: &str, blocker: &str) -> ReadyRow {
@@ -666,6 +684,21 @@ mod tests {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[HoldKind::Wait], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
         assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Claimable { depth: 1 });
+    }
+
+    #[test]
+    fn a_rework_on_the_stack_the_gate_went_red_on_is_not_claimable_until_the_tip_moves() {
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let mut lc: HashMap<_, _> = [lcrow("B", BeadState::Rework, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
+        let b = lc.get_mut("B").unwrap();
+        b.stack = Stack::from([("A".to_string(), "tip-A".to_string())]);
+        b.reason = Some("suites-failed".into());
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::StackUnchanged);
+        lc.get_mut("A").unwrap().tip = Some("moved".into());
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Claimable { depth: 1 });
+        lc.get_mut("A").unwrap().tip = Some("tip-A".into());
+        lc.get_mut("B").unwrap().reason = Some("base_withdrawn: A x".into());
+        assert_eq!(claimable(&blocked_on("B", "A"), &lc, &bd, 4), Verdict::Claimable { depth: 1 }, "only a gate-red reason repeats");
     }
 
     #[test]
