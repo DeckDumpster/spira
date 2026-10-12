@@ -8,9 +8,7 @@
 #   NO_URL | WRONG_BRANCH:<b> | SHA_NOT_ANCESTOR:<sha> | WRONG_WORKFLOW:<path>
 #   RUN_NOT_FOUND:<code> | API_FAIL:<msg>                -> exit 1
 #
-# Called from aeon.sh's close-time teardown fence, and directly by
-# test-workflow-run-check.sh — the one script both sides trust, so they cannot disagree
-# about which branch/URL pairing counts as evidence.
+# Called from aeon.sh's close-time teardown fence.
 import json, os, re, subprocess, sys
 
 try:

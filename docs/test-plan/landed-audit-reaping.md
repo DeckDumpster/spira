@@ -348,3 +348,5 @@ touched beyond what already stood (KEEP, per the coverage map). Cluster 7 (the c
 self-check duplicates) resolves automatically: four of its five sources are deleted outright
 and the fifth, `test-content-landed-empty-branch.sh`, keeps only its content_landed-direct
 cases now that its sending.sh half moved into `test-sending.sh`.
+
+> **2026-10-12 (sp-5knxx0): `test-reclaim-slay-branch-guard.sh` deleted** (law-a-test-that-flips-is-deleted): green on the unchanged base in r-auto-26, red with no output in r-auto-27 pass 4. Coverage left: the `spira_destroy_branch` gate rows (bypass deletes, no-bypass refuses with REFUSED, landed allowed) in `test-destroy-branch.sh`, which the suite repeated case for case (duplicate cluster 5). Coverage lost: the end-to-end slay path against a real slay binary (the commit surviving at `refs/slain/<id>` before the branch is removed). A root-cause bead may re-add it.

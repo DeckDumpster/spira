@@ -276,7 +276,6 @@ test-queue-watch.sh	T1	61.5
 test-rebase-escalation.sh	T1	8.0
 # literal-ok: a real suite filename, not a use of the configured label it happens to contain
 test-reclaim-needs-ryan.sh	T1	2.0
-test-reclaim-slay-branch-guard.sh	T1	15.5
 test-ref-guard.sh	T1	3.0
 test-release-acceptance.sh	T1	2.0
 test-release-workflow.sh	T1	1.5
