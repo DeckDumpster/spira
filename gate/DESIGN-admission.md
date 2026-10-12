@@ -129,6 +129,12 @@ The wrapper adds no `CARGO_*` variable, so sccache's keys are unchanged
 compiler's own. The gate and testenv keep the **plain** `Wrapper::env()`, because each of them
 takes its slot in-process.
 
+**Yield to a round's suites.** Before an aeon's compile (step 3) takes its lease, it waits
+while `spira-lc list --batches` shows a batch in `CI_RUNNING` with phase `suites`, for at most
+`SPIRA_ADMIT_ROUND_HOLD_SECS` (default 900, the round's own cap; 0 disables). A compile already
+running finishes; the hold says `compile held Ns for round <id> suite phase` every 30 s. A store
+that cannot answer holds nothing. Gate (`TakeNow`), inherited and testenv admissions never yield.
+
 `spira-admit` is absent from the aeon's PATH on an old release. The aeon then hands out the
 plain wrapper and logs `aeon: spira-admit not on PATH — this session's builds are not
 admitted`, the same way it already falls back when sccache is missing. A session is not a
