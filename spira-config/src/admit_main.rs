@@ -70,7 +70,7 @@ fn wrapper(args: Vec<OsString>) -> ExitCode {
         admission::WrapperAction::Wait => {
             if let Some(run) = run_dir() {
                 let who = who();
-                admission::yield_to_round_real(&mut |l: &str| say(l));
+                admission::yield_to_round_real(&run, &mut |l: &str| say(l));
                 let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };
                 let g = admission::acquire_real(&q, &mut |l: &str| say(l));
                 // The lease is the cargo's, not ours: it ends when the cargo does.

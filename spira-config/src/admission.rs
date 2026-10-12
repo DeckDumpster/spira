@@ -1077,9 +1077,43 @@ pub fn yield_to_round(cap: u64, probe: &dyn Fn() -> Option<String>, now: &dyn Fn
     held
 }
 
-/// [`yield_to_round`] against the real lifecycle store.
-pub fn yield_to_round_real(say: &mut dyn FnMut(&str)) -> u64 {
-    let probe = || {
+/// The round-phase answer shared by every compiler on the host: `<epoch>\n<round or empty>`.
+/// A reader inside [`ROUND_POLL_SECS`] of the stamp uses it; one prober at a time refreshes it.
+pub fn shared_round_probe(dir: &Path, now: u64, probe: &dyn Fn() -> Option<String>) -> Option<String> {
+    let file = dir.join("round-phase");
+    let claim = dir.join("round-phase.probing");
+    let read = || {
+        let text = fs::read_to_string(&file).ok()?;
+        let (stamp, round) = text.split_once('\n')?;
+        Some((stamp.trim().parse::<u64>().ok()?, round.trim().to_string()))
+    };
+    let answer = |round: String| if round.is_empty() { None } else { Some(round) };
+    let cached = read();
+    if let Some((stamp, round)) = &cached {
+        if now.saturating_sub(*stamp) < ROUND_POLL_SECS {
+            return answer(round.clone());
+        }
+    }
+    let _ = fs::create_dir_all(dir);
+    let stale_claim = fs::metadata(&claim).and_then(|m| m.modified()).ok().and_then(|m| m.elapsed().ok()).is_some_and(|e| e.as_secs() > 15);
+    if stale_claim {
+        let _ = fs::remove_file(&claim);
+    }
+    if OpenOptions::new().write(true).create_new(true).open(&claim).is_err() {
+        if let Some((_, round)) = cached {
+            return answer(round);
+        }
+    }
+    let round = probe();
+    let _ = write_atomic(&file, &format!("{now}\n{}\n", round.as_deref().unwrap_or("")));
+    let _ = fs::remove_file(&claim);
+    round
+}
+
+/// [`yield_to_round`] against the real lifecycle store, probed at most once per poll interval
+/// host-wide through `<run>/admission/round-phase`.
+pub fn yield_to_round_real(run: &Path, say: &mut dyn FnMut(&str)) -> u64 {
+    let lc = || {
         let bin = crate::lifecycle_row::lc_bin();
         let (code, out) = crate::lc_call::run_bounded({
             let mut c = std::process::Command::new(bin);
@@ -1088,5 +1122,7 @@ pub fn yield_to_round_real(say: &mut dyn FnMut(&str)) -> u64 {
         }, Duration::from_secs(10));
         if code == 0 { suites_round(&out) } else { None }
     };
+    let dir = run.join("admission");
+    let probe = || shared_round_probe(&dir, now_epoch(), &lc);
     yield_to_round(round_hold_cap(), &probe, &now_epoch, &real_sleep, say)
 }

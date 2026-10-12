@@ -722,3 +722,23 @@ fn no_round_in_suites_admits_at_once_and_a_zero_cap_disables_the_yield() {
     assert_eq!((held, said.len()), (0, 0));
     assert_eq!(yield_run(0, None).0, 0);
 }
+
+#[test]
+fn concurrent_compilers_share_one_round_probe_per_ttl_window() {
+    let tmp = testkit::TempDir::new("round-phase");
+    let dir = tmp.path().join("admission");
+    let calls = std::sync::atomic::AtomicU64::new(0);
+    let probe = || {
+        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Some("r-auto-9".to_string())
+    };
+    for _ in 0..200 {
+        assert_eq!(shared_round_probe(&dir, 5000, &probe).as_deref(), Some("r-auto-9"));
+    }
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    shared_round_probe(&dir, 5000 + ROUND_POLL_SECS, &probe);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let none = || None;
+    assert_eq!(shared_round_probe(&dir, 5000 + 2 * ROUND_POLL_SECS, &none), None);
+    assert_eq!(shared_round_probe(&dir, 5000 + 2 * ROUND_POLL_SECS, &probe), None);
+}
