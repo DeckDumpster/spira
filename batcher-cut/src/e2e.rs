@@ -189,7 +189,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         rebase_stale_bin: root.join("rebase-stale"),
         round_slots: Some(4),
         hypervisor: crate::io::Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
-        poll_secs: 1,
+        poll: std::time::Duration::from_secs(1),
         maxpar: 2,
         wall_secs: 600,
         rust_toolchain: "1.82.0".into(),
