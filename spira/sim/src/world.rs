@@ -651,7 +651,9 @@ fn copy_repo(from: &Path, to: &Path) -> std::io::Result<()> {
 
 fn build_seed(repo: &Path, tree: &str, cache: &Path, seed: &Path) -> Result<(), String> {
     let name = seed.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let tmp = cache.join(format!("{name}.build-{}", std::process::id()));
+    static BUILDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = cache.join(format!("{name}.build-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let (origin, work) = (tmp.join("origin.git"), tmp.join("work"));
     let p = |x: &Path| x.to_string_lossy().to_string();
