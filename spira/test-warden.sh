@@ -23,7 +23,7 @@ cat > "$STUB" <<'STUB'
 printf '%s\n' "$*" >> "$BD_LOG_PATH"
 [ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
-    list) printf '%s\n' "${BD_LIST_OUTPUT:-[]}" ;;
+    list) [ -n "${BD_LIST_FAIL:-}" ] && exit 124; printf '%s\n' "${BD_LIST_OUTPUT:-[]}" ;;
     create) [ -n "${BD_CREATE_FAIL:-}" ] && exit 1; echo sp-new1 ;;
 esac
 exit 0
@@ -47,8 +47,9 @@ run_trigger() {
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_CONF="$T/none.conf" BD_LOG_PATH="$LOG" \
-        BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" BD_CREATE_FAIL="${BD_CREATE_FAIL:-}" \
+        BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" BD_CREATE_FAIL="${BD_CREATE_FAIL:-}" BD_LIST_FAIL="${BD_LIST_FAIL:-}" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
+        SPIRA_WARDEN_ATTEMPTS="${SPIRA_WARDEN_ATTEMPTS:-3}" SPIRA_WARDEN_BACKOFF=0 \
         "${extra_env[@]}" warden-trigger.sh 2>&1
 }
 
@@ -106,6 +107,19 @@ rm -f "$LC_FIX"/bead/*/sp-x "$LC_FIX/show/sp-x"
 echo; echo "FAILURE: a create that fails exits 1"
 out="$(BD_CREATE_FAIL=1 run_trigger)"; rc=$?
 is "create failure exits 1" 1 "$rc"
+
+echo; echo "RETRY: a failed create is retried before giving up"
+: > "$LOG"
+out="$(BD_CREATE_FAIL=1 run_trigger)"
+is "create attempted on every attempt" 3 "$(grep -c '^-C .* create\|^create' "$LOG")"
+want "attempts are logged" "attempt 2/3" "$out"
+
+echo; echo "RETRY: an unreadable count is retried, then refuses to file"
+: > "$LOG"
+out="$(BD_LIST_FAIL=1 run_trigger)"; rc=$?
+is "count failure exits 0" 0 "$rc"
+want "count retried" "attempt 3/3" "$out"
+lack "nothing filed" "create" "$(cat "$LOG")"
 
 echo; echo "LABEL: configured non-default label is used"
 : > "$LOG"
