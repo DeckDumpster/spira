@@ -80,7 +80,7 @@ pub fn sending_skip(
 }
 
 impl<'a> Sentinel<'a> {
-    fn landref_sha(&self, r: &Repo) -> Option<String> {
+    pub(crate) fn landref_sha(&self, r: &Repo) -> Option<String> {
         let (root, base) = (r.root.as_ref()?, r.base()?);
         let o = self.git(root, &["rev-parse", base]);
         o.ok()

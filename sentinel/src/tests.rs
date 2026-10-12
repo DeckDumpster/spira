@@ -2862,3 +2862,51 @@ fn two_beads_touching_one_file_are_both_left_claimable() {
     assert_eq!(r.count(|s| is_bd(s, "label")), 0, "{}", sink.text());
     assert!(!sink.has("OVERLAP") && !sink.has("DEFERRED"), "{}", sink.text());
 }
+
+fn audit_gate_world(tag: &str, seq: &'static str) -> (World, FakeRunner, FakeSink, FakeClock) {
+    let (w, r, sink, clock) = audit_world(tag);
+    r.on(|s| (is_bd(s, "sql")).then(|| ok("0123456789abcdef0123")).flatten());
+    r.on(move |s| (s.prog == "spira-lc" && s.args[0] == "event-seq").then(|| ok(seq)).flatten());
+    (w, r, sink, clock)
+}
+
+#[test]
+fn audit_reads_no_bodies_and_writes_no_store_snapshot() {
+    let (w, r, sink, clock) = audit_gate_world("audit-slim", "41");
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(&["spira\t/src/spira\torigin/main\t0"])), 0);
+    let lists = r.count(|s| is_bd(s, "list") || is_bd(s, "ready"));
+    let brief = r.count(|s| (is_bd(s, "list") || is_bd(s, "ready")) && s.args.iter().any(|a| a == "--brief"));
+    assert!(lists >= 2 && lists == brief, "{lists} bulk reads, {brief} brief");
+    assert!(r.find(|s| env_of(s, "SPIRA_LIST_SNAPSHOT").is_some()).is_none());
+    let snaps = std::fs::read_dir(&w.run).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("list-snapshot")).count();
+    assert_eq!(snaps, 0, "the audit writes no store-sized file");
+}
+
+#[test]
+fn audit_skips_while_store_and_events_are_unchanged_and_reruns_when_either_moves() {
+    let repos: &[&str] = &["spira\t/src/spira\torigin/main\t0"];
+    let (w, r, sink, clock) = audit_gate_world("audit-gate", "41");
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(repos)), 0);
+    let first = r.count(|s| is_bd(s, "list"));
+    assert!(first > 0);
+
+    clock.0.set(NOW + 60);
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Audit, &[], Some(repos)), 0);
+    assert_eq!(r.count(|s| is_bd(s, "list")), first, "nothing moved: no bead read");
+    assert!(sink.has("audit: store, lifecycle events and landing refs unchanged — skipped"));
+    assert!(std::fs::read_to_string(w.run.join("audit.status")).unwrap().contains(&format!("SP_AUDIT_AT={}", NOW + 60)));
+
+    let (w2, r2, sink2, clock2) = audit_gate_world("audit-gate-seq", "41");
+    run_mode(&w2, &r2, &sink2, &clock2, Mode::Audit, &[], Some(repos));
+    let seen = std::fs::read_to_string(w2.run.join("audit.seen")).unwrap();
+    let (w3, r3, sink3, clock3) = audit_gate_world("audit-gate-seq2", "42");
+    std::fs::write(w3.run.join("audit.seen"), &seen).unwrap();
+    run_mode(&w3, &r3, &sink3, &clock3, Mode::Audit, &[], Some(repos));
+    assert!(r3.count(|s| is_bd(s, "list")) > 0, "the event seq moved: the audit runs");
+
+    let (w4, r4, sink4, clock4) = audit_gate_world("audit-gate-idle", "41");
+    std::fs::write(w4.run.join("audit.seen"), &seen).unwrap();
+    clock4.0.set(NOW + 1801);
+    run_mode(&w4, &r4, &sink4, &clock4, Mode::Audit, &[], Some(repos));
+    assert!(r4.count(|s| is_bd(s, "list")) > 0, "past the idle ceiling the audit runs regardless");
+}

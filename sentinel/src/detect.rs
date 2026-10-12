@@ -295,6 +295,7 @@ impl<'a> Sentinel<'a> {
             "0".into(),
             "--exclude-type".into(),
             "epic,event".into(),
+            "--brief".into(),
         ];
         let Ok(raw) = self.bd().json(self.h, &args) else {
             return Vec::new();
