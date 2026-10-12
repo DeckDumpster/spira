@@ -174,6 +174,18 @@ fn check_status_build_failure_extracts_deduped_capped_error_lines() {
     assert_eq!(errs.len(), 2, "the repeated E0433 line dedupes to one and the note line is excluded, got {errs:?}");
 }
 
+#[test]
+fn pr_merge_commit_prints_the_sha_and_fails_closed_when_there_is_none() {
+    let gh = FakeGh::default();
+    gh.on(&["pr", "view", "5", "--json", "mergeCommit", "-q", ".mergeCommit.oid"], 0, "abc123\n");
+    assert_eq!(pr_merge_commit(&gh, repo(), "5").lines, vec!["abc123"]);
+    let none = FakeGh::default();
+    let out = pr_merge_commit(&none, repo(), "5");
+    assert!(out.code != 0 && out.lines.is_empty());
+    none.on(&["pr", "view", "5", "--json", "mergeCommit", "-q", ".mergeCommit.oid"], 0, "null\n");
+    assert!(pr_merge_commit(&none, repo(), "5").lines.is_empty());
+}
+
 // ── pr-mergeability / pr-state ───────────────────────────────────────────────────────────
 
 #[test]

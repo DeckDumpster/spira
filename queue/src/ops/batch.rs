@@ -162,8 +162,8 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         w.out(format!("queue.sh eject: {} returned to CERTIFIED", m.id));
     }
     // The PR is closed and no rebuilt one is opened: the batch row must not outlive it, or its
-    // members stay IN_DELIVERY behind a PR that is gone.
-    if !batch_id.is_empty() && !survivors.is_empty() {
+    // members stay IN_DELIVERY behind a PR that is gone, or an emptied batch stays OPEN.
+    if !batch_id.is_empty() {
         let r = bounded_text(&format!("{id} ejected; the batch PR is closed and not rebuilt"));
         match lc_cas(w, &batch_id, |s, v| w.lc.abandon_batch(&batch_id, s, v, "queue.sh", &r)) {
             Ok(()) => w.out(format!("queue.sh eject: {batch_id} abandoned on spira-lc (survivors back to CERTIFIED)")),

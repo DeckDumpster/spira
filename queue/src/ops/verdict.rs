@@ -446,15 +446,18 @@ fn process(w: &World, c: &Ctx, path: &Path, file: &Path) -> i32 {
         _ => Kv::default(),
     };
     let g = |k: &str| kv.get(k).unwrap_or("").to_string();
-    let (pr, head, base_sha) = (g("pr"), g("head"), g("base"));
-    if pr.is_empty() || head.is_empty() || base_sha.is_empty() {
-        w.err(format!("verdict {name}: malformed batch record"));
-        return FAIL;
-    }
     // ONE WRITER PER OPEN BATCH (sp-91hb5): a concierge claim refuses the whole pass.
     let actor = w.var("SPIRA_QUEUE_ACTOR").unwrap_or_else(|| "verdict".into());
     if owner_refused(w, kv.get("owner").unwrap_or(""), &actor, &format!("verdict {name}")) {
         return OK;
+    }
+    if let Some(rc) = super::reconcile::step(w, c, path, file, &kv) {
+        return rc;
+    }
+    let (pr, head, base_sha) = (g("pr"), g("head"), g("base"));
+    if pr.is_empty() || head.is_empty() || base_sha.is_empty() {
+        w.err(format!("verdict {name}: malformed batch record"));
+        return FAIL;
     }
     let Some(base) = c.r.landref.clone() else {
         w.err(format!("verdict {name}: cannot resolve base ref"));
@@ -647,7 +650,11 @@ fn fast_forward(w: &World, c: &Ctx, b: &Batch, base: &str, remote: &str, base_br
         return FAIL;
     }
     w.out(format!("verdict {name}: PR {pr} landed by fast-forward ({})", b.head));
-    lc_land(w, b);
+    if !lc_land(w, b) {
+        // The base has moved but the lifecycle did not take the land: keep the record so the
+        // reconciler lands it once the PR reads merged.
+        return FAIL;
+    }
     w.lib.notify(
         &c.s.mailbox,
         name,
@@ -688,22 +695,28 @@ fn reap_stale_queue_refs(w: &World, c: &Ctx, path: &Path, base: &str) {
 }
 
 /// The lifecycle's GREEN → LANDED walk (D3); best-effort, never blocks.
-fn lc_land(w: &World, b: &Batch) {
+fn lc_land(w: &World, b: &Batch) -> bool {
     let (Some(id), Some(v)) = (b.kv.get("batch_id"), b.kv.get("version").and_then(|v| v.trim().parse::<u64>().ok())) else {
-        return;
+        return true;
     };
     let steps = [("OPEN", format!("{{\"CiStarted\":{{\"run\":\"{}\"}}}}", b.pr)), ("CI_RUNNING", "\"Green\"".to_string())];
     let mut v = v;
     for (expect, kind) in steps {
         if let Err((rc, e)) = w.lc.batch_event(id, expect, &v.to_string(), "verdict.sh", &kind) {
             w.err(format!("verdict: spira-lc event batch {id} ({kind}) refused (rc={rc}): {e}"));
-            return;
+            return false;
         }
         v += 1;
     }
     match w.lc.land_batch(id, &v.to_string(), "verdict.sh", &b.head) {
-        Ok(()) => w.out(format!("verdict: {id} landed on spira-lc (sha={})", b.head)),
-        Err((rc, e)) => w.err(format!("verdict: spira-lc land refused for {id} (rc={rc}): {e}")),
+        Ok(()) => {
+            w.out(format!("verdict: {id} landed on spira-lc (sha={})", b.head));
+            true
+        }
+        Err((rc, e)) => {
+            w.err(format!("verdict: spira-lc land refused for {id} (rc={rc}): {e}"));
+            false
+        }
     }
 }
 

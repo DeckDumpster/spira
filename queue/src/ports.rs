@@ -263,6 +263,8 @@ pub trait Forge {
     /// `pr-state <repo> <pr>` → `open`, `closed`, `merged` or `unknown`; None when the call failed.
     fn pr_state(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String>;
     /// `check-status <repo> <pr> <branch>` → stdout, or None when the call failed.
+    /// `pr-merge-commit`: the sha a merged PR landed as; None when the forge cannot say.
+    fn pr_merge_commit(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String>;
     fn check_status(&self, forge: &Path, repo: &Path, pr: &str, branch: &str) -> Option<String>;
     /// `run-id <repo> <branch>` → the latest run's id (None when empty or failed).
     fn run_id(&self, forge: &Path, repo: &Path, branch: &str) -> Option<String>;

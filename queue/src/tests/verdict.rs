@@ -751,12 +751,144 @@ fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
 fn each_pass_leaves_the_forge_state_the_pane_reads() {
     let t = T::new(LandMode::Queue);
     lc_batch(&t);
-    *t.forge.pr_state.borrow_mut() = Some("closed".into());
+    *t.forge.pr_state.borrow_mut() = Some("open".into());
     *t.forge.run.borrow_mut() = Some("77".into());
     *t.forge.meta.borrow_mut() = "started-at: 800\nlast-activity: 950\nrunning-step: unit / pytest\n".into();
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     let state = fs::read_to_string(t.qfile("forge-state")).unwrap();
-    for want in ["batch_id=spira-1\n", "pr=12\n", "pr_state=closed\n", "ci=pending\n", "run=77\n", "run_started=800\n", "last_activity=950\n", "step=unit / pytest\n"] {
+    for want in ["batch_id=spira-1\n", "pr=12\n", "pr_state=open\n", "ci=pending\n", "run=77\n", "run_started=800\n", "last_activity=950\n", "step=unit / pytest\n"] {
         assert!(state.contains(want), "{want:?} missing from {state}");
     }
+}
+
+// ------------------------------------------------------------------- forge batch reconciler
+
+fn archived(t: &T) -> bool {
+    fs::read_dir(t.qfile("")).map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().starts_with("closed-pr"))).unwrap_or(false)
+}
+
+#[test]
+fn a_merged_pr_lands_the_batch_with_the_merge_commit_and_a_second_pass_is_a_no_op() {
+    let t = T::new(LandMode::Queue);
+    t.submitted(&["sp-a", "sp-b"]);
+    lc_batch(&t);
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    *t.forge.merge_commit.borrow_mut() = Some("m1".into());
+    t.lc.batch_states.borrow_mut().insert("spira-1".into(), ("GREEN".into(), "5".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lc.has("land spira-1 5 m1"), "{:?}", t.lc.calls.borrow());
+    for id in ["sp-a", "sp-b"] {
+        assert!(t.lib.has(&format!("bead_close {id} m1")));
+    }
+    assert!(!t.qfile("open").exists());
+    assert!(!has_call(&t.forge.calls, "check-status"), "a merged PR's CI is not read");
+    let writes = |t: &T| (t.lc.calls.borrow().iter().filter(|c| c.starts_with("land ") || c.starts_with("abandon-batch") || c.starts_with("event")).count(), t.lib.calls.borrow().len());
+    let before = writes(&t);
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert_eq!(writes(&t), before);
+}
+
+#[test]
+fn a_merged_pr_on_a_batch_still_open_on_the_lifecycle_walks_it_to_landed() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    *t.forge.merge_commit.borrow_mut() = Some("m1".into());
+    t.lc.batch_states.borrow_mut().insert("spira-1".into(), ("OPEN".into(), "3".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    let lc = t.lc.calls.borrow().clone();
+    assert!(lc.contains(&"event batch spira-1 OPEN 3 {\"CiStarted\":{\"run\":\"12\"}}".to_string()), "{lc:?}");
+    assert!(lc.contains(&"event batch spira-1 CI_RUNNING 4 \"Green\"".to_string()), "{lc:?}");
+    assert!(lc.contains(&"land spira-1 5 m1".to_string()), "{lc:?}");
+}
+
+#[test]
+fn a_merged_pr_whose_batch_the_lifecycle_already_landed_only_retires_the_record() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    *t.forge.merge_commit.borrow_mut() = Some("m1".into());
+    t.lc.batch_states.borrow_mut().insert("spira-1".into(), ("LANDED".into(), "6".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(!t.lc.has("land "));
+    assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn a_merged_pr_falls_back_to_the_sealed_head_when_it_is_on_the_base() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    t.git.ancestor("h1", "origin/main");
+    t.lc.batch_states.borrow_mut().insert("spira-1".into(), ("GREEN".into(), "5".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lc.has("land spira-1 5 h1"));
+}
+
+#[test]
+fn a_land_the_lifecycle_refuses_keeps_the_record_and_alerts_once() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    *t.forge.merge_commit.borrow_mut() = Some("m1".into());
+    t.lc.batch_states.borrow_mut().insert("spira-1".into(), ("GREEN".into(), "5".into()));
+    t.lc.land_refused.set(Some("stale version"));
+    assert_eq!(t.run(&["verdict", "spira"]), 1);
+    assert_eq!(t.run(&["verdict", "spira"]), 1);
+    assert!(t.qfile("open").exists());
+    assert_eq!(t.lib.calls.borrow().iter().filter(|c| c.starts_with("notify spira forge batch cannot converge")).count(), 1);
+    t.lc.land_refused.set(None);
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn a_closed_unmerged_pr_abandons_the_batch_and_a_second_pass_is_a_no_op() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.pr_state.borrow_mut() = Some("closed".into());
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lc.has("abandon-batch spira-1"), "{:?}", t.lc.calls.borrow());
+    assert!(!t.lc.has("land "));
+    assert!(!has_call(&t.forge.calls, "pr-close"), "an already closed PR is not closed again");
+    assert!(!t.qfile("open").exists());
+    assert!(archived(&t));
+    let writes = |t: &T| (t.lc.calls.borrow().iter().filter(|c| c.starts_with("land ") || c.starts_with("abandon-batch") || c.starts_with("event")).count(), t.lib.calls.borrow().len());
+    let before = writes(&t);
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert_eq!(writes(&t), before);
+}
+
+#[test]
+fn a_batch_with_no_members_is_abandoned_and_its_open_pr_closed() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=\nopened=500\nbranch=spira/queue/x\nbatch_id=spira-1\nversion=3\n");
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lc.has("abandon-batch spira-1"));
+    assert!(has_call(&t.forge.calls, "pr-close 12"));
+    assert!(!t.qfile("open").exists());
+    assert!(archived(&t));
+}
+
+#[test]
+fn a_batch_with_no_pr_is_left_young_and_abandoned_past_the_grace() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("head=h1\nbase=b0\nmembers=sp-a:ta\nopened=500\nbatch_id=spira-1\nversion=3\n");
+    assert_eq!(t.run(&["verdict", "spira"]), 1);
+    assert!(t.err().contains("malformed batch record"));
+    assert!(!t.lc.has("abandon-batch"));
+    t.clock.now.set(500 + t.s().verdict.ci_maxsec + 1);
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lc.has("abandon-batch spira-1"));
+    assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn a_refused_land_in_the_verdict_keeps_the_record_for_the_reconciler() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    t.forge.status.borrow_mut().push(Some("green\nhead-sha: h1\n".into()));
+    t.lc.land_refused.set(Some("stale version"));
+    assert_eq!(t.run(&["verdict", "spira"]), 1);
+    assert!(t.qfile("open").exists());
 }

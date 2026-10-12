@@ -87,7 +87,7 @@ echo
 echo "step settles the open batch, then cuts the next — verdict before the batcher:"
 printf 'fixq | %s | queue | main | | |\n' "$TMP/repo" > "$RMAP"
 mkdir -p "$TMP/run/queue/fixq"
-printf 'pr=1\nhead=h\nbase=b\nmembers=\nopened=1\nbranch=spira/queue/x\n' > "$TMP/run/queue/fixq/open"
+printf 'pr=1\nhead=h\nbase=b\nmembers=sp-a:ta\nopened=1\nbranch=spira/queue/x\n' > "$TMP/run/queue/fixq/open"
 : > "$ORDER"
 out="$(run step fixq)"
 want "verdict settled the open batch (pending)" "verdict fixq: PR 1 pending" "$out"

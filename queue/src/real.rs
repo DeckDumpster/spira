@@ -802,6 +802,9 @@ impl Forge for RealForge {
     fn pr_state(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String> {
         stdout_of(Command::new(forge).arg("pr-state").arg(repo).arg(pr)).map(|s| s.trim().to_string())
     }
+    fn pr_merge_commit(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String> {
+        stdout_of(Command::new(forge).arg("pr-merge-commit").arg(repo).arg(pr)).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    }
     fn check_status(&self, forge: &Path, repo: &Path, pr: &str, branch: &str) -> Option<String> {
         stdout_of(Command::new(forge).arg("check-status").arg(repo).arg(pr).arg(branch))
     }
