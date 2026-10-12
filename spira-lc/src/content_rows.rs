@@ -71,7 +71,10 @@ pub fn cmd_content_rows(args: &[String], conn: &Conn) -> (i32, String) {
              FROM {CONTENT_DB}.issues WHERE id IN ({list}) ORDER BY id"
         ))?;
         let labels = q(format!("SELECT issue_id, label FROM {CONTENT_DB}.labels WHERE issue_id IN ({list}) ORDER BY issue_id, label"))?;
-        let deps = q(format!("SELECT issue_id, depends_on_id, `type` FROM {CONTENT_DB}.dependencies WHERE issue_id IN ({list}) ORDER BY issue_id, depends_on_id"))?;
+        // beads' column is depends_on_issue_id (beside depends_on_wisp_id / depends_on_external);
+        // the claim decision only follows issue-to-issue edges. sp-9j0937: the query named a
+        // depends_on_id column that no beads schema has, and every claim check failed in prod.
+        let deps = q(format!("SELECT issue_id, depends_on_issue_id AS depends_on_id, `type` FROM {CONTENT_DB}.dependencies WHERE issue_id IN ({list}) AND depends_on_issue_id IS NOT NULL ORDER BY issue_id, depends_on_issue_id"))?;
         Ok(assemble(&issues, &labels, &deps))
     };
     match run() {
