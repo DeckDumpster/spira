@@ -411,8 +411,9 @@ except Exception:
     local id
     id="$("$HERE/bead.sh" file "review finding: ${title}" \
         --for builder --repo "$name" --priority 2 \
-        --body-file "$tmpbody" 2>/dev/null | tr -d '[:space:]')"
-    rm -f "$tmpbody"
+        --body-file "$tmpbody" 2>"$tmpbody.err" | tr -d '[:space:]')"
+    [ -n "${id:-}" ] || log "review: bead.sh file refused: $(cat "$tmpbody.err" 2>/dev/null)"
+    rm -f "$tmpbody" "$tmpbody.err"
     [ -n "${id:-}" ] || return 1
     bdq label add "$id" "$REVIEW_LABEL" >/dev/null 2>&1 || true
     bdq update "$id" --type bug --external-ref "$ref" >/dev/null 2>&1 || true
