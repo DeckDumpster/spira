@@ -88,6 +88,37 @@ case "$out" in
 esac
 
 echo
+echo "the first podman call has its own deadline:"
+mkdir -p "$TMP/slowbin" "$TMP/errbin" "$TMP/hungbin"
+cat > "$TMP/slowbin/podman" <<FAKE
+#!/bin/sh
+case "\$1" in
+    --version) echo "podman version 0"; exit 0 ;;
+    info) if [ ! -e "$TMP/warm" ]; then : > "$TMP/warm"; sleep 6; fi
+          [ "\$2" = --format ] && echo true; exit 0 ;;
+esac
+exit 0
+FAKE
+printf '#!/bin/sh\necho "boom: storage broken" >&2\nexit 125\n' > "$TMP/errbin/podman"
+printf '#!/bin/sh\nsleep 5\n' > "$TMP/hungbin/podman"
+chmod +x "$TMP/slowbin/podman" "$TMP/errbin/podman" "$TMP/hungbin/podman"
+out="$(PATH="$TMP/slowbin:$PATH" runner-deps.sh --check 2>&1)"
+case "$out" in
+    *"podman info"*) bad "a slow first call is not read as a failure" "$out" ;;
+    *) ok "a slow first call is not read as a failure" ;;
+esac
+out="$(PATH="$TMP/errbin:$PATH" runner-deps.sh --check 2>&1)"
+case "$out" in
+    *"boom: storage broken"*) ok "a failing podman reports its own stderr" ;;
+    *) bad "a failing podman reports its own stderr" "$out" ;;
+esac
+out="$(RUNNER_DEPS_PODMAN_WARM_S=1 PATH="$TMP/hungbin:$PATH" runner-deps.sh --check 2>&1)"
+case "$out" in
+    *"podman info timed out after 1s"*) ok "a timeout is reported as a timeout" ;;
+    *) bad "a timeout is reported as a timeout" "$out" ;;
+esac
+
+echo
 echo "it accepts a machine that works:"
 # Only meaningful where the machine genuinely has a working rootless runtime. On
 # a box without one this asserts nothing and says so, rather than reporting a

@@ -177,15 +177,16 @@ fi
 # it. A check that finds nothing wrong must first prove it could have: if podman
 # cannot actually start a container here, the gaps above were the wrong gaps.
 if command -v podman >/dev/null 2>&1; then
-    _pi=0
-    # batch-job: first podman info on a fresh runner initialises storage and can take well over 5s
-    while ! timeout 15 podman info >/dev/null 2>&1; do
-        _pi=$((_pi+1))
-        [ "$_pi" -ge 3 ] && break
-        sleep 2
-    done
-    if [ "$_pi" -ge 3 ]; then
-        gap "podman info fails — the runtime is installed but cannot start"
+    # The first call on a fresh machine initialises rootless storage and can take far
+    # longer than the steady-state 5 s; it is a bounded setup step with its own deadline.
+    _warm_s="${RUNNER_DEPS_PODMAN_WARM_S:-120}"
+    _warm_t0=$SECONDS
+    _warm_err="$(timeout "$_warm_s" podman info 2>&1 >/dev/null)"; _warm_rc=$?
+    note "podman first call took $((SECONDS - _warm_t0))s"
+    if [ "$_warm_rc" -eq 124 ]; then
+        gap "podman info timed out after ${_warm_s}s — the runtime is installed but did not start"
+    elif [ "$_warm_rc" -ne 0 ]; then
+        gap "podman info fails (exit ${_warm_rc}) — the runtime is installed but cannot start: ${_warm_err}"
     elif [ "$(timeout 5 podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" != "true" ]; then
         gap "podman is not running rootless"
     else
