@@ -147,7 +147,7 @@ run_review() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_AGENT="$FAKE_CLAUDE" \
         SPIRA_REVIEWER_VERDICTS="$VERDICTS" SPIRA_REVIEWER_MODEL=claude-test-model \
-        SPIRA_REVIEWER_TIMEOUT=30
+        SPIRA_REVIEWER_TIMEOUT=30 SPIRA_CHAMBER="$SH/chamber"
     # round 5 fix (pattern 1/7): the repo registry reads SPIRA_HOME's own conf.d/config
     # registry now; env -i never carried SPIRA_HOME at all ("no config registry at ...").
     env -i PATH="$PATH" HOME="$HOME" \
@@ -230,7 +230,6 @@ want "block: stdout contains block"  "block"  "$block_stdout"
 vfile2="$VERDICTS/$TAG2.verdict"
 want "block: verdict=block"    "verdict: block"  "$(cat "$vfile2" 2>/dev/null)"
 want "block: findings > 0"     "findings: 1"     "$(cat "$vfile2" 2>/dev/null)"
-echo "DBG: $block_stdout" | head -20
 
 # A finding bead must have been filed in the database.
 db_count() {
