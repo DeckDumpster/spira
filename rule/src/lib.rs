@@ -18,6 +18,35 @@ pub fn word_count(text: &str) -> usize {
     text.split_whitespace().count()
 }
 
+fn normalized(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The key of a statute in force, other than `key`, whose text equals `text` up to whitespace.
+pub fn find_duplicate(
+    memories: &std::collections::BTreeMap<String, serde_json::Value>,
+    key: &str,
+    text: &str,
+) -> Option<String> {
+    let want = normalized(text);
+    memories
+        .iter()
+        .find(|(k, v)| k.as_str() != key && v.as_str().is_some_and(|t| normalized(t) == want))
+        .map(|(k, _)| k.clone())
+}
+
+/// Whether the book holds `text` under `key` — the only proof a write that reported an error landed.
+pub fn is_in_force(
+    memories: &std::collections::BTreeMap<String, serde_json::Value>,
+    key: &str,
+    text: &str,
+) -> bool {
+    memories
+        .get(key)
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| normalized(t) == normalized(text))
+}
+
 /// The result of parsing `enact`'s trailing arguments (everything after `<slug>`).
 #[derive(Debug, PartialEq, Eq)]
 pub struct EnactArgs {
@@ -118,7 +147,7 @@ impl CommitOutcome {
                 "Commit wiki/notes/common-law.md to replicate it off this box.".to_string()
             }
             CommitOutcome::Failed => {
-                "wiki/notes/common-law.md commit FAILED — commit it manually.".to_string()
+                format!("rule: {key} is in force, wiki sync failed — wiki/notes/common-law.md was not committed; commit it manually.")
             }
         }
     }
@@ -128,6 +157,26 @@ impl CommitOutcome {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn duplicate_text_under_another_key_is_named() {
+        let m: std::collections::BTreeMap<_, _> = [
+            ("law-a".to_string(), json!("same  text")),
+            ("law-b".to_string(), json!("other")),
+        ]
+        .into();
+        assert_eq!(find_duplicate(&m, "law-new", "same text"), Some("law-a".into()));
+        assert_eq!(find_duplicate(&m, "law-a", "same text"), None);
+        assert_eq!(find_duplicate(&m, "law-new", "novel"), None);
+    }
+
+    #[test]
+    fn in_force_requires_the_text_under_the_key() {
+        let m: std::collections::BTreeMap<_, _> = [("law-a".to_string(), json!("t x"))].into();
+        assert!(is_in_force(&m, "law-a", "t  x"));
+        assert!(!is_in_force(&m, "law-a", "other"));
+        assert!(!is_in_force(&m, "law-b", "t x"));
+    }
 
     #[test]
     fn slugify_adds_prefix_once() {
@@ -239,7 +288,7 @@ mod tests {
         );
         assert_eq!(
             CommitOutcome::Failed.message("enact", "law-x"),
-            "wiki/notes/common-law.md commit FAILED — commit it manually."
+            "rule: law-x is in force, wiki sync failed — wiki/notes/common-law.md was not committed; commit it manually."
         );
     }
 }
