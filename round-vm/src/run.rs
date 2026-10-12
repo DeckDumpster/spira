@@ -176,6 +176,14 @@ else
     git clone --quiet "$mirror" ~/round-work
 fi
 cd ~/round-work
+nix_bin=/nix/var/nix/profiles/default/bin
+if ! PATH="$nix_bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" nix --extra-experimental-features 'nix-command flakes' build "path:$HOME/round-work#spira-env" -o "$HOME/spira-env" >&2; then
+    echo "round-vm: cannot build spira-env from the round's flake.lock" >&2
+    exit 3
+fi
+env_path="$(readlink -f "$HOME/spira-env")"
+export PATH="$HOME/spira-env/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+echo "round-vm: spira-env $env_path ($(dolt version | head -n1); bd $(bd --version 2>&1 | head -n1))" >&2
 # sp-xjnzl-2: warm conf.sh's own generated fragments (conf.d.keys.generated.sh,
 # conf.d.defaults.generated.sh — gitignored, never present after a fresh clone) ONCE,
 # sequentially, before the suite batch starts. Every suite's own container sources
@@ -220,7 +228,7 @@ echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 # run below is the same command, which then compiles nothing. A scrubbed environment: the
 # launcher's SPIRA_RELEASE/SPIRA_REPO/PATH leak into tests that resolve configuration.
 unit_cargo() {
-    env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+    env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
         SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
@@ -265,7 +273,7 @@ export SPIRA_TOML
 rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_REPO="$HOME/round-work"
-export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 got="$(command -v spira-config || true)"
 if [ "$got" != "$SPIRA_RELEASE/bin/spira-config" ]; then
     echo "round-vm: spira-config resolves to ${got:-nothing}, not the staged release $SPIRA_RELEASE" >&2
@@ -1672,6 +1680,17 @@ mod tests {
         assert!(!REMOTE_SCRIPT.contains("cargo run"), "testenv runs from the staged release by name");
         assert!(REMOTE_SCRIPT.contains(LAUNCHER_ENV));
         assert!(REMOTE_SCRIPT.contains("exit 4"), "a failed workspace build is testenv's build-failure code");
+    }
+
+    #[test]
+    fn the_round_runs_with_spira_env_from_its_own_tree_first_in_path() {
+        let build = REMOTE_SCRIPT.find("build \"path:$HOME/round-work#spira-env\"").expect("spira-env is built from the round's own tree");
+        let path = REMOTE_SCRIPT.find("export PATH=\"$HOME/spira-env/bin:").expect("spira-env/bin first");
+        let first_build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        assert!(build < path && path < first_build);
+        assert!(REMOTE_SCRIPT.contains("round-vm: spira-env $env_path"), "the log prints the store path and versions");
+        assert!(REMOTE_SCRIPT.contains("PATH=\"$HOME/spira-env/bin:$CARGO_HOME/bin:"), "unit tests see it too");
+        assert!(REMOTE_SCRIPT.contains("$SPIRA_RELEASE/spira:$HOME/spira-env/bin:"), "the launcher PATH keeps it");
     }
 
     #[test]

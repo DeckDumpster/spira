@@ -4,10 +4,12 @@
 
 use sha2::{Digest, Sha256};
 
-const INPUTS: [(&str, &str); 4] = [
+const INPUTS: [(&str, &str); 6] = [
     ("template.sh", include_str!("template.sh")),
     ("ami-setup.sh", include_str!("../ami-setup.sh")),
     ("rust-toolchain.toml", include_str!("../../rust-toolchain.toml")),
+    ("flake.nix", include_str!("../../flake.nix")),
+    ("flake.lock", include_str!("../../flake.lock")),
     ("Containerfile", include_str!("../../spira/testenv/Containerfile")),
 ];
 
