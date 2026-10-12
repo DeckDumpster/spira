@@ -84,6 +84,8 @@ fn run_cfg(args: &[&str], stdin: &str, toml_declare: &[(&str, &str)], extra_env:
     let toml = toml_fixture(toml_declare);
     let mut edits: Vec<(&str, Option<&str>)> = vec![("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.as_str()))];
     edits.extend_from_slice(extra_env);
+    let bd_fixture = toml_declare.iter().find(|(k, _)| *k == "SPIRA_BD").map(|(_, v)| *v);
+    edits.push(("SPIRA_BD_FIXTURE", bd_fixture));
     let _env = testkit::env(&edits);
     exec_spira_claim(args, stdin)
 }
@@ -1070,7 +1072,7 @@ fn plan_rows(ids: &[&str]) -> String {
 /// A PATH directory holding a `spira-lc` that prints `lc`.
 fn fake_lc_path(lc: &str) -> Tmp {
     let dir = testkit::TempDir::new("spira-claim-lc");
-    testkit::write_exe(dir.join("spira-lc"), &format!("#!/bin/sh\ncat <<'EOF'\n{lc}\nEOF\n"));
+    testkit::write_exe(dir.join("spira-lc"), &format!("#!/bin/sh\n[ \"$1\" = content-rows ] && [ -n \"$SPIRA_BD_FIXTURE\" ] && exec \"$SPIRA_BD_FIXTURE\" list --id \"$3\" --status all --limit 0 --json\ncat <<'EOF'\n{lc}\nEOF\n"));
     // The system directories, never the process PATH: another test may hold a narrowed PATH
     // (an unreachable-machine fixture) while this one is built, outside the env lock.
     let path = format!("{}:/usr/bin:/bin", dir.to_string_lossy());

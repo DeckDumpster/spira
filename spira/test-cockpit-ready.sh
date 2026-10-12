@@ -33,6 +33,10 @@ if [ "$1" = content ]; then
     shift; bd="$(spira-config get spira.bd 2>/dev/null)"; db="$(spira-config get spira.db 2>/dev/null)"
     exec "${bd:-bd}" ${db:+-C "$db"} "$@"
 fi
+if [ "$1" = content-rows ]; then
+    bd="$(spira-config get spira.bd 2>/dev/null)"; db="$(spira-config get spira.db 2>/dev/null)"
+    exec "${bd:-bd}" ${db:+-C "$db"} list --id "$3" --status all --limit 0 --json
+fi
 [ "$1" = list ] && printf '[{"bead_id":"sp-ck-none","state":"READY","holder":null,"lease_until":null,"holds":[]}]\n'
 exit 0
 LC
@@ -131,6 +135,9 @@ echo "ready probe: the set is spira-claim's machine set:"
 LCBIN="$TMP/lcbin"; mkdir -p "$LCBIN"
 cat > "$LCBIN/spira-lc" <<'LC'
 #!/usr/bin/env bash
+if [ "$1" = content-rows ]; then
+    exec "$(spira-config get spira.bd 2>/dev/null)" list --id "$3" --json
+fi
 [ "$1" = list ] || exit 2
 printf '%s\n' '[{"bead_id":"sp-ck-held","state":"WORKING","holder":"aeon-1","holds":"[]"},{"bead_id":"sp-ck-take","state":"READY","holds":"[]"}]'
 LC

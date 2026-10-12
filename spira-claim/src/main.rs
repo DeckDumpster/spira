@@ -829,7 +829,7 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     let mut lc = st.lifecycle_in_states(&["READY", "REWORK"])?;
     let ids = ready::lifecycle_ready_ids(&lc);
     let want: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
-    let mut rows = if ids.is_empty() { Vec::new() } else { st.list_by_ids(&ids)? };
+    let mut rows = if ids.is_empty() { Vec::new() } else { st.content_by_ids(&ids)? };
     let mut bd = rank::index_rows(rows.clone());
     let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
     rows.retain(|r| want.contains(r.id.as_str()) && ready::in_scope(r, &scope, &no_loop));
@@ -845,7 +845,7 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
         .cloned()
         .collect();
     if !missing.is_empty() {
-        bd.extend(rank::index_rows(st.list_by_ids(&missing)?));
+        bd.extend(rank::index_rows(st.content_by_ids(&missing)?));
     }
     rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);

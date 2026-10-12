@@ -283,6 +283,7 @@ printf ']\n'
 /// incident and three spike beads, each READY with
 /// no holds.
 const FIXTURE_LC_SCRIPT: &str = r#"
+[ "$1" = content-rows ] && exec "$(dirname "$0")/bd" list --id "$3" --json
 printf '['
 sep=""
 for id in sp-p0 sp-p1 sp-p2 sp-p3 sp-p4 sp-p5 sp-p6 sp-i0 sp-i1 sp-i2 sp-i3 sp-i4 sp-s0 sp-s1 sp-s2; do

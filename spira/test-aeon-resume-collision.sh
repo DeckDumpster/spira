@@ -135,7 +135,7 @@ REAL_LC="$(PATH="${PATH//$TMP\/lcm:/}" command -v spira-lc)"
 cat > "$STEAL/spira-lc" <<STUB
 #!/usr/bin/env bash
 case "\${1:-}" in
-    show|list|event|create-bead|unclaim) ;;
+    show|list|event|create-bead|unclaim|content-rows) ;;
     *) exec "$REAL_LC" "\$@" ;;
 esac
 if [ "\$1" = event ] && [[ "\$*" == *Claim* ]] && [ ! -f "$STOLEN_MARK" ]; then

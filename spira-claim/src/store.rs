@@ -156,6 +156,18 @@ impl Store {
         Ok(out)
     }
 
+    /// The same rows as [`Store::list_by_ids`], read over the lifecycle connection
+    /// (`spira-lc content-rows`): no bd, no git.
+    pub fn content_by_ids(&self, ids: &[String]) -> Result<Vec<ReadyRow>, String> {
+        let mut out = Vec::new();
+        for chunk in ids.chunks(LIST_CHUNK) {
+            let args = ["content-rows".to_string(), "--ids".into(), chunk.join(",")];
+            let text = run(self.lc_cmd(&args), self.timeout).map_err(|e| format!("spira-lc content-rows: {e}"))?;
+            out.extend(rank::parse_ready(&text)?);
+        }
+        Ok(out)
+    }
+
     pub fn children(&self, epic: &str) -> Result<Vec<ReadyRow>, String> {
         let text = self.bd(&["children", epic, "--json"])?;
         rank::parse_ready(&text)

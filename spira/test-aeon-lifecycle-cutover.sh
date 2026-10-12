@@ -148,6 +148,7 @@ for _ in $(seq 1 50); do
     sleep 0.1
 done
 [ -S "$SOCK" ] || bail "spira-lc serve never created its socket: $(cat "$TMP/serve.log")"
+lc_content_shim "$TMP/lcshim"; export PATH="$TMP/lcshim:$PATH"
 
 seed_bead() {   # seed_bead <bead-id> <state> [holder] [lease_until]
     local holder_sql="NULL" lease_sql="NULL"

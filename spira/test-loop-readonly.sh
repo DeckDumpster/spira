@@ -150,6 +150,7 @@ LC_STUBS="$SCRATCH/lc-stubs"
 mkdir -p "$LC_STUBS"
 cat > "$LC_STUBS/spira-lc" <<'LCSTUB'
 #!/bin/sh
+[ "$1" = content-rows ] && exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$3" --status all --limit 0 --json
 [ "$1" = list ] && printf '[{"bead_id":"sp-lr-work","state":"READY","holder":null,"lease_until":null,"holds":[]}]\n'
 exit 0
 LCSTUB

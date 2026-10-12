@@ -158,6 +158,17 @@ want "spira_lc cannot DELETE event" "denied" "$out"
 out="$(as_user spira_lc "$PASS" --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event" -r json 2>&1)"
 want "POSITIVE CONTROL: spira_lc CAN insert+select event (already has rows from schema/grant application's own transitions)" "rows" "$out"
 
+# ── the content store: spira_lc reads it, and cannot write it ─────────────────────────
+root_sql sql -q "CREATE DATABASE IF NOT EXISTS spira; CREATE TABLE IF NOT EXISTS spira.issues (id VARCHAR(64) PRIMARY KEY, title TEXT); CREATE TABLE IF NOT EXISTS spira.labels (issue_id VARCHAR(64), label VARCHAR(64), PRIMARY KEY (issue_id, label)); CREATE TABLE IF NOT EXISTS spira.dependencies (issue_id VARCHAR(64), depends_on_id VARCHAR(64), type VARCHAR(32), PRIMARY KEY (issue_id, depends_on_id))" >/dev/null 2>&1
+for tbl in issues labels dependencies; do
+    out="$(as_user spira_lc "$PASS" sql -q "SELECT COUNT(*) AS n FROM spira.$tbl" -r json 2>&1)"
+    want "POSITIVE CONTROL: spira_lc CAN select spira.$tbl" "rows" "$out"
+done
+out="$(as_user spira_lc "$PASS" sql -q "INSERT INTO spira.labels (issue_id, label) VALUES ('x','y')" 2>&1)"
+want "spira_lc cannot INSERT into the content store" "denied" "$out"
+out="$(as_user spira_lc "$PASS" sql -q "UPDATE spira.issues SET title='hack'" 2>&1)"
+want "spira_lc cannot UPDATE the content store" "denied" "$out"
+
 # ── spira_lc_ro: SELECT everywhere, refused every write (sp-dz438) ────────────────────
 seed_bead sp-ro-hist
 root_sql --use-db spira_lifecycle sql -q \

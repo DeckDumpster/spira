@@ -600,6 +600,10 @@ if [ "$1" = reopen ]; then
     [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" label remove "$2" "$SPIRA_SUBMITTED_LABEL" >/dev/null 2>&1
     exit 0
 fi
+if [ "$1" = content-rows ]; then
+    bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
+    exec "${bd:-bd}" ${db:+-C "$db"} list --id "$3" --status all --limit 0 --json
+fi
 if [ "$1" = content ]; then
     shift; bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
     exec "${bd:-bd}" ${db:+-C "$db"} "$@"
@@ -757,6 +761,24 @@ try: print(json.load(sys.stdin)["bead"]["state"])
 except Exception: print("")' 2>/dev/null
 }
 
+# lc_content_shim <dir> — a spira-lc ahead of the real one on PATH that answers `content-rows`
+# from the suite's bd fixture (a lifecycle fixture server holds no content store) and hands every
+# other verb to the next spira-lc on PATH.
+lc_content_shim() {
+    local dir="${1:?lc_content_shim needs a directory}"
+    mkdir -p "$dir"
+    cat > "$dir/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = content-rows ]; then
+    bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
+    BD_IGNORE_SCHEMA_SKEW=1 exec "${bd:-bd}" ${db:+-C "$db"} list --id "$3" --status all --limit 0 --json
+fi
+for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done
+exit 2
+STUB
+    chmod +x "$dir/spira-lc"
+}
+
 # lc_aeon_mirror <dir> — a spira-lc, installed by name into <dir> (put <dir> first on the
 # aeon's PATH), for the legacy aeon suites whose model shim closes its bead in bd. The aeon
 # reads a bead's state from its lifecycle row, never bd status (sp-mve9i), and since sp-v62vn
@@ -786,6 +808,7 @@ lc_aeon_mirror() {
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
+    content-rows) BD_IGNORE_SCHEMA_SKEW=1 exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$3" --status all --limit 0 --json ;;
     phase) exit 0 ;;
     disposition) mkdir -p "${SPIRA_RUN:?}/lc-disposition"; printf '%s\t%s\n' "${3:-}" "${4:-}" > "$SPIRA_RUN/lc-disposition/${2:?}"; exit 0 ;;
     express) mkdir -p "${SPIRA_RUN:?}/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; exit 0 ;;
