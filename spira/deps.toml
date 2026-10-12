@@ -7,6 +7,8 @@
 #   version_min   minimum acceptable version string (empty = any)
 #   version_probe shell command that emits the program's version on stdout
 # Optional:
+#   provider      "spira-env" when the pinned tool environment (flake.nix) supplies it;
+#                 doctor flags one that resolves from anywhere else
 #   absent        what actually happens when the program is missing, if more
 #                 than one named feature going off — doctor.sh prints this
 #
@@ -24,6 +26,7 @@
 [[dep]]
 name = "bd"
 tier = "runtime"
+provider = "spira-env"
 purpose = "the beads issue tracker — the substrate; nothing runs without it. Provided by spira-env (flake.nix), built by install into ~/.local/lib/spira-env"
 version_min = ""
 version_probe = "bd --version"
@@ -80,6 +83,7 @@ version_probe = "flock --version"
 [[dep]]
 name = "dolt"
 tier = "runtime"
+provider = "spira-env"
 purpose = "the SQL server beads stores its database in. Provided by spira-env (flake.nix), built by install into ~/.local/lib/spira-env; dolt-beads.service execs it from there"
 version_min = ""
 version_probe = "dolt version"
