@@ -109,4 +109,19 @@ out="$(bash "$HARNESS/spira/boundary.sh" check 2>&1)"; rc=$?
 is     "SEEN RED: an added shipped path with an unregenerated README fails check" "1" "$rc"
 nowant "a failing check prints no fence line" "fence: boundary checked" "$out"
 want   "gate.steps runs boundary.sh check" "step bash spira/boundary.sh check" "$(cat "$HERE/../gate.steps")"
+
+# A stale wiki page is not fenced; sync regenerates and commits it.
+WIKIDIR="$TMP/wiki"; mkdir -p "$WIKIDIR"
+printf '# page\n<!-- BOUNDARY:BEGIN -->\nstale\n<!-- BOUNDARY:END -->\n' > "$WIKIDIR/repo-boundary.md"
+git -C "$WIKIDIR" init -q && git -C "$WIKIDIR" add . && git -C "$WIKIDIR" -c user.email=t@t -c user.name=t commit -q -m seed
+printf 'spira | spira/boundary.sh | the renderer\n' > "$HARNESS/spira/boundary"
+printf 'SPIRA_WIKI="%s"\nSPIRA_WIKI_BOUNDARY_REL="repo-boundary.md"\n' "$WIKIDIR" > "$HARNESS/spira/conf.sh"
+bash "$HARNESS/spira/boundary.sh" write >/dev/null 2>&1
+printf '# page\n<!-- BOUNDARY:BEGIN -->\nstale\n<!-- BOUNDARY:END -->\n' > "$WIKIDIR/repo-boundary.md"
+out="$(bash "$HARNESS/spira/boundary.sh" check 2>&1)"; rc=$?
+is     "a stale wiki page does not fail check" "0" "$rc"
+out="$(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$HARNESS/spira/boundary.sh" sync 2>&1)"; rc=$?
+is     "sync succeeds" "0" "$rc"
+nowant "sync leaves the wiki page current" "stale" "$(cat "$WIKIDIR/repo-boundary.md")"
+want   "sync committed the page" "boundary: regenerate" "$(git -C "$WIKIDIR" log --oneline -1)"
 tl_summary

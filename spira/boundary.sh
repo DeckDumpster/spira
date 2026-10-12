@@ -4,7 +4,8 @@
 #
 #   boundary.sh render          the table, to stdout
 #   boundary.sh write           into each target's marker region; prints what moved
-#   boundary.sh check           exit 1 if any target's region is stale
+#   boundary.sh check           exit 1 if the README's region is stale
+#   boundary.sh sync            regenerate the wiki page and commit it in the wiki repo if it moved
 #
 # WHY A RENDERER AND NOT TWO HAND-KEPT TABLES. A boundary documented on only one side of
 # itself is not a boundary. The shape of the failure is already on the record here: the
@@ -177,21 +178,32 @@ check)
     render > "$BODY" || exit 1
     rc=0
     N="$(fscheck)" || rc=1
-    for f in "$README" "$WIKI"; do
-        [ -f "$f" ] || continue
-        cp "$f" "$TMP/copy"
+    if [ -f "$README" ]; then
+        cp "$README" "$TMP/copy"
         if [ "$(apply "$TMP/copy" "$BODY")" = "changed" ]; then
-            echo "boundary: $f is stale — run spira/boundary.sh write" >&2
+            echo "boundary: $README is stale — run spira/boundary.sh write" >&2
             rc=1
         fi
-    done
+    fi
     [ -f "$README" ] || { echo "boundary: no README at $README" >&2; rc=1; }
-    [ "$rc" = 0 ] && echo "fence: boundary checked $N shipped paths and every target"
+    [ "$rc" = 0 ] && echo "fence: boundary checked $N shipped paths and the README"
     exit $rc
     ;;
 
+sync)
+    [ -n "$WIKI" ] && [ -f "$WIKI" ] || { echo "boundary: no wiki page configured — nothing to sync"; exit 0; }
+    render > "$BODY" || exit 1
+    res="$(apply "$WIKI" "$BODY")" || exit 1
+    echo "boundary: wiki page $res"
+    if [ "$res" = changed ]; then
+        wd="$(dirname "$WIKI")"
+        git -C "$wd" add -- "$WIKI" &&
+            git -C "$wd" commit -q -m "boundary: regenerate repo-boundary from the landed manifest" -- "$WIKI" || exit 1
+    fi
+    ;;
+
 *)
-    echo "usage: boundary.sh {render|write|check}" >&2
+    echo "usage: boundary.sh {render|write|check|sync}" >&2
     exit 2
     ;;
 esac
