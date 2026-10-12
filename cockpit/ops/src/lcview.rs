@@ -317,6 +317,9 @@ pub struct Item {
     pub who: String,
     pub age: String,
     pub note: String,
+    /// READY only: `#n` in the claimer's order, or why the claim tool will not take it.
+    #[serde(default)]
+    pub claim: String,
     pub state: String,
     pub persona: String,
     pub rework: bool,
@@ -1117,6 +1120,38 @@ pub fn view(s: &Snapshot) -> View {
     v.next_unknown = s.claimable.is_none();
     v.next = nx.iter().take(12).map(|r| item(r, r.since, String::new())).collect();
 
+    let claim_of = |r: &Row| -> String {
+        if is_ask(&r.id) {
+            return "ask: see DECIDE".into();
+        }
+        if let Some(b) = r.blocker.as_deref().filter(|b| !b.is_empty()) {
+            return format!("blocked: {b}");
+        }
+        if r.holds.iter().any(|h| h == "wait") {
+            let ids = bead_ids_in(r.reason.as_deref().unwrap_or(""));
+            return if ids.is_empty() { "blocked".into() } else { format!("blocked: {}", ids.join(" ")) };
+        }
+        if let Some(h) = r.holds.first() {
+            return format!("held: {h}");
+        }
+        if s.on_base.contains_key(&r.id) {
+            return "drift: already on the base".into();
+        }
+        match (&s.claimable, nx.iter().position(|n| n.id == r.id)) {
+            (None, _) => "?".into(),
+            (Some(_), Some(k)) => format!("#{}", k + 1),
+            (Some(_), None) => "no persona lane".into(),
+        }
+    };
+    for st in v.machine.iter_mut().filter(|st| st.name == "READY") {
+        let by_id: HashMap<&str, &Row> = ready.iter().map(|r| (r.id.as_str(), *r)).collect();
+        for it in st.beads.iter_mut() {
+            if let Some(r) = by_id.get(it.id.as_str()) {
+                it.claim = claim_of(r);
+            }
+        }
+    }
+
     let mut rc: Vec<&Row> = s.rows.iter().collect();
     rc.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
     v.recent = rc.iter().take(10).map(|r| item(r, r.updated_at, String::new())).collect();
@@ -1348,6 +1383,51 @@ mod tests {
         // READY/REWORK bead is claimable.
         let claimable = rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK") && r.holds.is_empty()).map(|r| r.id.clone()).collect();
         Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, claimable: Some(claimable), ..Default::default() }
+    }
+
+    fn ready_fixture() -> Snapshot {
+        let a = row("sp-first", "READY", 10);
+        let b = row("sp-second", "READY", 20);
+        let mut blk = row("sp-blk", "READY", 30);
+        blk.blocker = Some("sp-dep".into());
+        let mut held = row("sp-held", "READY", 40);
+        held.holds = vec!["deferred".into()];
+        let lane = row("sp-nolane", "READY", 50);
+        let mut s = snap(vec![a, b, blk, held, lane]);
+        s.meta.insert("sp-first".into(), Meta { title: "first".into(), priority: Some(1), ..Default::default() });
+        s.meta.insert("sp-second".into(), Meta { title: "second".into(), priority: Some(2), ..Default::default() });
+        s.claimable = Some(vec!["sp-second".into(), "sp-first".into()]);
+        s
+    }
+
+    fn ready_pane(v: &View) -> Vec<String> {
+        let f = crate::lctui::layout(v, &crate::lctui::Ui::default(), 120, 80);
+        f.lines.iter().map(|l| crate::lctui::strip_for_test(l)).collect()
+    }
+
+    #[test]
+    fn ready_rows_carry_claim_position_or_reason_and_the_header_counts() {
+        let v = view(&ready_fixture());
+        let claim = |id: &str| v.machine.iter().find(|s| s.name == "READY").unwrap().beads.iter().find(|b| b.id == id).unwrap().claim.clone();
+        assert_eq!(claim("sp-first"), "#1");
+        assert_eq!(claim("sp-second"), "#2");
+        assert_eq!(claim("sp-blk"), "blocked: sp-dep");
+        assert_eq!(claim("sp-held"), "held: deferred");
+        assert_eq!(claim("sp-nolane"), "no persona lane");
+        let t = ready_pane(&v);
+        assert!(t.iter().any(|l| l.contains("5 ready · 2 claimable")), "{t:#?}");
+        assert!(t.iter().any(|l| l.contains("#1") && l.contains("sp-first")), "{t:#?}");
+        assert!(!t.iter().any(|l| l.trim_start().starts_with("NEXT")), "NEXT is folded into READY: {t:#?}");
+    }
+
+    #[test]
+    fn a_claim_tool_failure_renders_unknown_claimable_never_zero() {
+        let mut s = ready_fixture();
+        s.claimable = None;
+        let v = view(&s);
+        let t = ready_pane(&v);
+        assert!(t.iter().any(|l| l.contains("5 ready · ? claimable")), "{t:#?}");
+        assert!(!t.iter().any(|l| l.contains("0 claimable")), "{t:#?}");
     }
 
     #[test]
