@@ -11,18 +11,9 @@
 # The fix: beads-push.sh calls bd dolt commit before every push; an empty working
 # set is a no-op and never produces an empty commit.
 #
-# POSITIVE CONTROL (law-absence-needs-a-positive-control)
-# -------------------------------------------------------
-# This suite would pass without the fix in embedded mode (where bd-embedded
-# auto-commits every write). The positive control defeats that: it writes a statute
-# with --dolt-auto-commit off to put the config table in a dirty state, then pushes
-# WITHOUT committing, and asserts the statute is NOT visible via a fresh clone. Only
-# then does it run beads-push.sh (which commits and pushes) and assert the statute IS
-# visible via a fresh clone.
-#
-# If the commit step is removed from beads-push.sh, the positive control passes (0
-# as expected) but the real test fails (clone still shows 0, expected 1) — so the
-# suite goes red whenever the fix is absent.
+# The positive control (push without commit, clone must lack the statute) was deleted:
+# it flipped under load, its probe answering '?' (law-a-test-that-flips-is-deleted).
+# Without it this suite can pass in embedded mode, where bd auto-commits every write.
 #
 # HOW CLONING IS VERIFIED (no dolt clone)
 # ----------------------------------------
@@ -113,22 +104,11 @@ timeout 5 bd -C "$SPIRA_DB" dolt push --remote beads >/dev/null 2>&1 || {
     bad "setup: seed push" "initial dolt push failed"; exit 1; }
 ok "setup: seed push"
 
-# ── POSITIVE CONTROL ──────────────────────────────────────────────────────────
-# Write a statute in dirty mode (--dolt-auto-commit off simulates server-mode
-# behaviour where bd writes config without creating a Dolt commit), then push
-# WITHOUT committing. The fresh bootstrap clone must NOT see the statute.
-echo
-echo "positive control — push without commit does not include dirty statute:"
-
+# ── DIRTY WRITE ───────────────────────────────────────────────────────────────
+# --dolt-auto-commit off leaves the statute dirty, as in server mode.
 timeout 5 bd -C "$SPIRA_DB" --dolt-auto-commit off \
     remember --key "law-push-test" "Push test statute." >/dev/null 2>&1 || {
-    bad "positive control: write statute" "bd remember failed"; exit 1; }
-
-# Simulate old beads-push.sh: push directly, skipping the commit step.
-timeout 5 bd -C "$SPIRA_DB" dolt push --remote beads >/dev/null 2>&1
-
-count_pc="$(_count_in_remote "law-push-test" "file://$REMOTE")"
-is "positive control: dirty statute absent from clone without commit" "0" "$count_pc"
+    bad "dirty write: write statute" "bd remember failed"; exit 1; }
 
 # ── REAL TEST ─────────────────────────────────────────────────────────────────
 # Run beads-push.sh (which now commits dirty tables). The statute must appear in
