@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use spira_sim::probe::{git_facts, landstate_of, names, parse_branches, probe, refuse_foreign, rows, GitFacts, Lineage};
+use spira_sim::probe::{git_facts, landstate_of, names, parse_branches, probe, read_refs, refuse_foreign, rows, GitFacts, Lineage, Observer};
 use spira_sim::trace::{bead_row, violations, Snapshot, Trace};
 use spira_sim::world::PRODUCTION_LOCATORS;
 use std::collections::BTreeMap;
@@ -258,4 +258,69 @@ fn probe_rows_trip_the_matching_views_and_a_clean_set_trips_none() {
             want("inv_tip_matches_branch", "sp-m"),
         ]
     );
+}
+
+fn for_each_ref(repo: &Path) -> Vec<(String, String)> {
+    git(repo, &["for-each-ref", "--format=%(refname) %(objectname)"]).lines().filter_map(|l| l.split_once(' ')).map(|(r, s)| (r.to_string(), s.to_string())).collect()
+}
+
+#[test]
+fn refs_read_from_files_are_the_refs_git_lists_loose_packed_and_symbolic() {
+    let (w, _) = world("[]");
+    let work = w.join("work");
+    git(&work, &["tag", "-a", "-m", "annotated", "spira-release-aaa", "main"]);
+    git(&work, &["tag", "light", "local/main"]);
+    git(&work, &["remote", "add", "up", &w.join("origin.git").display().to_string()]);
+    git(&work, &["fetch", "-q", "up"]);
+    git(&work, &["symbolic-ref", "refs/remotes/up/HEAD", "refs/remotes/up/main"]);
+    let loose = for_each_ref(&work);
+    assert!(loose.len() > 8 && loose.iter().any(|(r, _)| r == "refs/remotes/up/HEAD") && loose.iter().any(|(r, _)| r == "refs/tags/spira-release-aaa"), "positive control: {loose:?}");
+    assert_eq!(read_refs(&work.join(".git")).into_iter().collect::<Vec<_>>(), loose);
+    git(&work, &["pack-refs", "--all"]);
+    git(&work, &["branch", "spira/after-pack", "main"]);
+    assert_eq!(read_refs(&work.join(".git")).into_iter().collect::<Vec<_>>(), for_each_ref(&work));
+    assert_eq!(read_refs(&w.join("origin.git")).into_iter().collect::<Vec<_>>(), for_each_ref(&w.join("origin.git")));
+}
+
+fn serve_list(socket: &Path, body: String) {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            assert_eq!(line.trim(), r#"["list"]"#);
+            writeln!(&stream, "{}", json!({"exit_code": 0, "len": body.len()})).unwrap();
+            (&stream).write_all(body.as_bytes()).unwrap();
+        }
+    });
+}
+
+#[test]
+fn the_observer_sees_what_the_probe_command_prints_without_running_anything() {
+    let (w, s) = world("[]");
+    let env = |k: &str| (k == "SPIRA_RUN").then(|| w.join("run").display().to_string());
+    std::fs::remove_file(w.join("release/bin/spira-lc")).unwrap();
+    serve_list(&spira_sim::world::lc_socket(&w), clean_list(&s));
+    let mut o = Observer::new(&w, &env).unwrap();
+    let seen = o.observe().unwrap();
+    let rows: BTreeMap<String, Value> = seen.rows.iter().map(|r| (r["bead"].as_str().unwrap().to_string(), bead_row(r).unwrap())).collect();
+    assert_eq!(rows.keys().cloned().collect::<Vec<_>>(), ["sp-c", "sp-l", "sp-m", "sp-r", "sp-u"]);
+    assert_eq!(rows["sp-l"]["on_local_main"], true);
+    assert_eq!(rows["sp-l"]["on_origin_main"], false);
+    assert_eq!(rows["sp-u"]["branch_tip"], s.unpublished);
+    assert!(seen.refs.iter().any(|(r, sha)| r == "refs/heads/spira/sp-c" && *sha == s.certified));
+    git(&w.join("work"), &["push", "-q", "origin", "local/main:main"]);
+    git(&w.join("work"), &["tag", "spira-release-1"]);
+    let again = o.observe().unwrap();
+    let rows: BTreeMap<String, Value> = again.rows.iter().map(|r| (r["bead"].as_str().unwrap().to_string(), r.clone())).collect();
+    assert_eq!(rows["sp-l"]["on_origin_main"], true, "a moved origin tip is read again, not served from the first look");
+    assert_eq!(again.tags, ["spira-release-1"]);
+}
+
+#[test]
+fn the_observer_refuses_a_foreign_locator_like_the_probe_command() {
+    let (w, _) = world("[]");
+    let env = |k: &str| (k == "SPIRA_RUN").then(|| "/prod/run".to_string());
+    assert!(Observer::new(&w, &env).is_err());
 }

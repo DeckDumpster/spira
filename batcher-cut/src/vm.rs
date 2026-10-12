@@ -480,7 +480,7 @@ impl RoundRunner for VmRunner<'_> {
     }
 
     fn wait(&mut self) {
-        std::thread::sleep(Duration::from_secs(self.env.poll_secs.max(1)));
+        std::thread::sleep(self.env.poll);
     }
 }
 

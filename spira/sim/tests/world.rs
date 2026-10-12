@@ -1,5 +1,5 @@
 use spira_sim::world::{
-    check_socket_path, db_root, down, is_world_serve, lc_pid_file, lc_socket, prebuilt_release, release_source, serve_argv, up, ProcessSteps,
+    up_resolving, check_socket_path, db_root, down, is_world_serve, lc_pid_file, lc_socket, prebuilt_release, release_source, serve_argv, up, ProcessSteps,
     ReleaseSource, Steps, PRODUCTION_LOCATORS, RELEASE_ENV, TESTENV_ENV,
 };
 use std::path::{Path, PathBuf};
@@ -91,6 +91,7 @@ fn up_then_down_leaves_nothing_behind() {
     assert!(cfg.contains(&format!("spira.gh={}", dir.join("bin/gh").display())));
     let env = std::fs::read_to_string(dir.join("config/sim.env")).unwrap();
     assert!(env.contains("SIM_GH_DIR="));
+    assert!(env.contains("\nGOGC=off\n") && env.contains("\nSPIRA_BATCHER_POLL_SECS=0.1\n"), "a world's tools are told to start light and a batcher to poll fast: {env}");
     let probe = env.lines().find_map(|l| l.strip_prefix("SIM_PROBE=")).expect("world up writes SIM_PROBE");
     assert_eq!(probe, spira_sim::world::probe_command(&std::env::current_exe().unwrap(), &dir.canonicalize().unwrap()));
     assert!(probe.ends_with(&format!(" probe '{}'", dir.canonicalize().unwrap().display())), "{probe}");
@@ -363,4 +364,146 @@ fn fixture_repo() -> testkit::TempDir {
         assert!(st.success());
     }
     d
+}
+
+fn git_out(repo: &Path, args: &[&str]) -> String {
+    let o = std::process::Command::new("git").arg("-C").arg(repo).args(args).output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8(o.stdout).unwrap()
+}
+
+fn tree_repo(files: &[&str]) -> testkit::TempDir {
+    let d = testkit::TempDir::new("simsrc");
+    for f in files {
+        let p = d.join(f);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, format!("{f} {}", d.path().display())).unwrap();
+    }
+    for args in [vec!["init", "-q"], vec!["add", "-A"], vec!["commit", "-q", "-m", "s"]] {
+        let st = std::process::Command::new("git")
+            .arg("-C").arg(d.path()).args(args)
+            .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t.invalid")
+            .env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t.invalid")
+            .status().unwrap();
+        assert!(st.success());
+    }
+    d
+}
+
+#[test]
+fn a_worlds_repo_is_the_seed_copied_with_its_own_gate_steps_and_a_sparse_checkout() {
+    let repo = tree_repo(&["Cargo.toml", "docs/a.md", "crate/src/lib.rs", "spira/run.sh", "spira/test-x.sh", "spira/conf.d/K", "sim/actors.toml", "systemd/u.timer", ".github/workflows/g.yml", "lifecycle/schema.sql"]);
+    let t = testkit::TempDir::new("simw");
+    let (a, b) = (t.join("a"), t.join("b"));
+    let fake = Fake::default();
+    up(repo.path(), &a, "HEAD", &clean, &fake).unwrap();
+    up(repo.path(), &b, "HEAD", &clean, &fake).unwrap();
+    for w in [&a, &b] {
+        let work = w.join("work");
+        for kept in ["Cargo.toml", "spira/run.sh", "sim/actors.toml", "systemd/u.timer", ".github/workflows/g.yml", "lifecycle/schema.sql", "gate.steps"] {
+            assert!(work.join(kept).is_file(), "{kept} is checked out");
+        }
+        for pruned in ["docs", "crate", "spira/test-x.sh", "spira/conf.d"] {
+            assert!(!work.join(pruned).exists(), "{pruned} is not checked out");
+        }
+        assert!(git_out(&work, &["ls-files"]).contains("docs/a.md"), "the index still holds what the checkout does not");
+        let steps = std::fs::read_to_string(work.join("gate.steps")).unwrap();
+        assert!(steps.contains(&w.canonicalize().unwrap().join("config/suite-runner").display().to_string()), "each world's gate.steps names its own runner: {steps}");
+        assert_eq!(git_out(&work, &["remote", "get-url", "origin"]).trim(), w.canonicalize().unwrap().join("origin.git").display().to_string());
+        assert_eq!(git_out(&work, &["rev-parse", "main"]), git_out(w.join("origin.git").as_path(), &["rev-parse", "refs/heads/main"]));
+        assert_eq!(git_out(&work, &["rev-parse", "main"]), git_out(&work, &["rev-parse", "local/main"]));
+        assert_eq!(git_out(&work, &["log", "--format=%s", "-n", "2"]).lines().collect::<Vec<_>>(), ["sim gate steps", "sim seed"]);
+    }
+    // Packs are shared with the seed, everything a world writes to is its own.
+    {
+        use std::os::unix::fs::MetadataExt;
+        let seed = spira_sim::world::ensure_seed(repo.path(), "HEAD").unwrap();
+        let pack = |root: &Path| std::fs::read_dir(root.join("objects/pack")).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "pack")).unwrap();
+        assert_eq!(std::fs::metadata(pack(&seed.join("origin.git"))).unwrap().ino(), std::fs::metadata(pack(&a.join("origin.git"))).unwrap().ino());
+        assert_ne!(std::fs::metadata(seed.join("work/.git/index")).unwrap().ino(), std::fs::metadata(a.join("work/.git/index")).unwrap().ino());
+        assert_ne!(std::fs::metadata(seed.join("work/.git/HEAD")).unwrap().ino(), std::fs::metadata(a.join("work/.git/HEAD")).unwrap().ino());
+    }
+    // Worktrees the landing code adds inherit the pruned checkout.
+    git_out(&a.join("work"), &["worktree", "add", "-q", "--detach", &t.join("wt").display().to_string()]);
+    assert!(t.join("wt/spira/run.sh").is_file() && !t.join("wt/docs").exists());
+    // Each world's repo is its own: a commit in one is not in the other.
+    std::fs::write(a.join("work/new.txt"), "x").unwrap();
+    git_out(&a.join("work"), &["add", "new.txt"]);
+    git_out(&a.join("work"), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a only"]);
+    assert_ne!(git_out(&a.join("work"), &["rev-parse", "main"]), git_out(&b.join("work"), &["rev-parse", "main"]));
+}
+
+#[test]
+fn the_seed_is_built_once_per_tree() {
+    let repo = tree_repo(&["a", "spira/b"]);
+    let first = spira_sim::world::ensure_seed(repo.path(), "HEAD").unwrap();
+    let built = std::fs::metadata(first.join(".complete")).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let again = spira_sim::world::ensure_seed(repo.path(), "HEAD").unwrap();
+    assert_eq!(first, again);
+    assert_eq!(std::fs::metadata(again.join(".complete")).unwrap().modified().unwrap(), built, "a seed that exists is not rebuilt");
+    let packs = std::fs::read_dir(first.join("work/.git/objects/pack")).unwrap().count();
+    assert!(packs >= 2 && !first.join("work/.git/objects").read_dir().unwrap().flatten().any(|e| e.file_name().len() == 2 && e.path().is_dir() && e.path().read_dir().unwrap().count() > 0), "the seed's objects are packed, not thousands of loose files");
+    let other = tree_repo(&["a", "spira/c"]);
+    assert_ne!(spira_sim::world::ensure_seed(other.path(), "HEAD").unwrap(), first, "a different tree is a different seed");
+}
+
+#[test]
+fn up_hands_the_world_to_its_caller_once_its_files_and_repo_are_in_place() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("world");
+    let seen = Mutex::new(Vec::new());
+    up_resolving(fixture_repo().path(), &dir, "HEAD", &clean, &Fake::default(), &|w| {
+        seen.lock().unwrap().push((w.join("config/sim.toml").is_file(), w.join("config/sim.env").is_file(), w.join("work/.git").is_dir(), w.join("work/gate.steps").is_file()));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![(true, true, true, true)]);
+}
+
+#[test]
+fn a_caller_that_refuses_the_world_fails_up_and_leaves_nothing() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("world");
+    let fake = Fake::default();
+    let e = up_resolving(fixture_repo().path(), &dir, "HEAD", &clean, &fake, &|_| Err("refused here".to_string())).unwrap_err();
+    assert!(e.contains("refused here"), "{e}");
+    assert!(!dir.exists());
+    assert_eq!(fake.downs.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_store_that_fails_up_does_not_leave_the_caller_waiting() {
+    struct NoDb;
+    impl Steps for NoDb {
+        fn release(&self, _: &Path, _: &str, cache: &Path) -> Result<PathBuf, String> {
+            std::fs::create_dir_all(cache.join("rel")).map_err(|e| e.to_string())?;
+            Ok(cache.join("rel"))
+        }
+        fn db_up(&self, _: &Path) -> Result<String, String> {
+            Err("no store".into())
+        }
+        fn lifecycle(&self, _: &Path, _: &str, _: &Path, _: &Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn bd(&self) -> Result<PathBuf, String> {
+            Ok(PathBuf::from("/fake/bd"))
+        }
+        fn db_down(&self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn config_set(&self, _: &Path, _: &Path, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn lc_serve(&self, _: &Path, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn lc_stop(&self, _: &Path, _: u32) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("world");
+    let e = up(fixture_repo().path(), &dir, "HEAD", &clean, &NoDb).unwrap_err();
+    assert!(e.contains("no store"), "{e}");
 }

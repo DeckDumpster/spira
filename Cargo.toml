@@ -138,3 +138,19 @@ opt-level = 2
 opt-level = 2
 [profile.aeon.package.memchr]
 opt-level = 2
+
+# Every dependency optimised, as the unittest profile does: they are compiled once and cached,
+# while at opt-level 0 each process of a sim world paid for toml/serde parsing its config and the
+# gate for sha2 over its own binaries (~10 MB/s).
+[profile.aeon.package."*"]
+opt-level = 2
+
+# Every Rust binary resolves its config at start (13 ms here at opt-level 0, 3 ms optimised), and
+# a sim world starts a few hundred of them; the sim is the stand-in for the forge and the probes
+# those worlds call on every step.
+[profile.aeon.package.spira-config]
+opt-level = 2
+[profile.aeon.package.spira-sim]
+opt-level = 2
+[profile.aeon.package.sim]
+opt-level = 2

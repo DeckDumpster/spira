@@ -73,8 +73,8 @@ pub struct Env {
     /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
     pub round_slots: Option<u32>,
     pub hypervisor: Hypervisor,
-    /// How often the attribution loop polls the corpus and its reruns (seconds).
-    pub poll_secs: u64,
+    /// How often the attribution loop polls the corpus and its reruns.
+    pub poll: std::time::Duration,
     /// The Concierge's own proven parallelism (round.sh: SPIRA_BATCH_MAXPAR=16) — set
     /// explicitly on every corpus invocation rather than left for testenv-batch.sh's own
     /// hardware formula, which a bare guest may resolve far below what CI proved green under.
@@ -412,6 +412,10 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
 /// depends on, one citing it by id, or one carrying the basefail external ref itself. A
 /// failed lookup yields none — the lane is an acceleration, never a gate on the round.
 fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>) -> std::collections::BTreeSet<String> {
+    // Only a member of the pool can be a fix, so an empty pool has nothing to ask bd about.
+    if texts.is_empty() {
+        return Default::default();
+    }
     let mut fixes: std::collections::BTreeSet<String> = texts.iter().filter(|(_, (own, _))| *own).map(|(id, _)| id.clone()).collect();
     let mut cmd = Command::new(&env.bd);
     if let Some(db) = &env.db {
@@ -2333,6 +2337,15 @@ mod pool_parity_tests {
         (d, stubs, env, repo)
     }
 
+    /// An idle tick has no certified bead, and asks bd nothing: no member can be a base fix.
+    #[test]
+    fn an_empty_pool_asks_bd_for_nothing() {
+        let (_d, stubs, env, repo) = pool_fixture("lc-empty", &[], &[], &[("sp-b1", "open", "basefail:r:x", "")]);
+        testkit::write_exe(stubs.join("bd"), &format!("#!/bin/bash\ntouch {}/bd-called\necho '[]'\n", stubs.display()));
+        assert!(certified_pool(&env, &repo).unwrap().is_empty());
+        assert!(!stubs.join("bd-called").exists(), "bd was run for an empty pool");
+    }
+
     /// sp-mve9i: the pool is the lifecycle machine's CERTIFIED rows. bd's status — here a
     /// bd row someone closed by hand, carrying no submitted label — decides nothing.
     #[test]
@@ -3152,7 +3165,7 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         rebase_stale_bin: dir.join("rebase-stale"),
         round_slots: None,
         hypervisor: Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
-        poll_secs: 1,
+        poll: std::time::Duration::from_secs(1),
         maxpar: 1,
         wall_secs: 1,
         rust_toolchain: "1.82.0".into(),

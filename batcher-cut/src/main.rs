@@ -187,7 +187,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
             round_vm_mib: cfg_parse::<u64>("SPIRA_ROUND_VM_MEM_MIB")?,
             runner_mib: cfg_parse::<u64>("SPIRA_CI_RUNNER_MEM_MIB")?,
         },
-        poll_secs: env::var("SPIRA_BATCHER_POLL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2),
+        poll: poll_interval(env::var("SPIRA_BATCHER_POLL_SECS").ok().as_deref()),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
         // own hardware-derived or unpinned defaults — see io::run_suites.
         maxpar: cfg_parse::<u32>("SPIRA_BATCH_MAXPAR")?,
@@ -1503,5 +1503,29 @@ mod vtime_tests {
     fn now_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || now());
         assert_eq!(got, 1_900_000_000);
+    }
+}
+
+/// `SPIRA_BATCHER_POLL_SECS` as the gap between polls: seconds, fractions allowed so a world
+/// whose jobs finish in milliseconds is not held to a whole second; 2 s when unset or unreadable.
+fn poll_interval(secs: Option<&str>) -> std::time::Duration {
+    let s = secs.and_then(|v| v.trim().parse::<f64>().ok()).filter(|s| s.is_finite()).unwrap_or(2.0);
+    std::time::Duration::from_secs_f64(s.clamp(0.05, 3600.0))
+}
+
+#[cfg(test)]
+mod poll_tests {
+    use super::poll_interval;
+    use std::time::Duration;
+
+    #[test]
+    fn the_poll_gap_takes_fractions_and_bounds_what_it_is_given() {
+        assert_eq!(poll_interval(None), Duration::from_secs(2));
+        assert_eq!(poll_interval(Some("junk")), Duration::from_secs(2));
+        assert_eq!(poll_interval(Some("1")), Duration::from_secs(1));
+        assert_eq!(poll_interval(Some(" 0.2 ")), Duration::from_millis(200));
+        assert_eq!(poll_interval(Some("0")), Duration::from_millis(50), "never a busy loop");
+        assert_eq!(poll_interval(Some("-3")), Duration::from_millis(50));
+        assert_eq!(poll_interval(Some("NaN")), Duration::from_secs(2));
     }
 }

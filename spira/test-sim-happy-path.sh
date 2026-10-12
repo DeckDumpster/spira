@@ -44,7 +44,7 @@ NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u 
 sim_in_repo() {  # sim_in_repo <seconds> <args...> — sim from the fixture repo, no production locator, a prebuilt release
     local limit="$1"; shift
     # batch-job: a whole simulated run, world up included; the caller names its wall-time limit
-    (cd "$REPO" && timeout "$limit" env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" "$@")
+    (cd "$REPO" && timeout "$limit" env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 ${SIM_PROC_TRACE:+SIM_PROC_TRACE=$SIM_PROC_TRACE} "$SIM" "$@")
 }
 
 dump() {  # dump — what the world did, for a red run (exec.log was copied out before the world went down)
@@ -57,9 +57,14 @@ dump() {  # dump — what the world did, for a red run (exec.log was copied out 
 }
 
 # --- 1. the happy path, timed ----------------------------------------------------------------
+export SPIRA_SIM_CACHE="${SPIRA_SIM_CACHE:-/tmp/sim-seed-cache}"
+START=$SECONDS
+sim_in_repo "$RUN_LIMIT" world seed || bail "sim world seed failed"
+echo "# seed repo built in $((SECONDS - START))s (the world below copies it)"
 START=$SECONDS
 out="$(sim_in_repo "$RUN_LIMIT" run happy-path --seed "$SEED" --keep 2>&1)"; rc=$?
 echo "# sim run took $((SECONDS - START))s"
+printf '%s\n' "$out" | grep '^sim: profile' | cut -c1-600 | sed 's/^/# /'
 W="$(ls -d "$T"/sim-run-*-"$SEED" 2>/dev/null | head -1)"
 wantrc "sim run happy-path exits 0 (killed at ${RUN_LIMIT}s if it hangs: rc 124)" 0 "$rc"
 [ "$rc" = 0 ] || RUN_OUT="$out"
@@ -85,6 +90,7 @@ wantrc "sim replay of the same seed reports no divergence" 0 "$rc"
 cmp -s "$T/events.first" "$W/trace/events.jsonl" && ok "replay leaves the events table byte-identical" || bad "replay leaves the events table byte-identical" "differs"
 
 cp "$W/exec.log" "$T/exec.log" 2>/dev/null
+cp "$W/proc-trace.log" "$T/proc-trace.log" 2>/dev/null
 sim_in_repo 60 world down "$W" >/dev/null 2>&1
 
 # --- 4. CONTROL: an unreachable goal fails, naming the seed ------------------------------------
@@ -95,4 +101,6 @@ want "control: the failure names the unreached goal and the seed" "goal sp-hp01:
 for w in "$T"/sim-run-*-3; do [ -d "$w" ] && sim_in_repo 60 world down "$w" >/dev/null 2>&1; done
 
 [ "$_TL_FAIL" -gt 0 ] && dump
+# SIM_PROC_TRACE=1 in the suite's environment records every process the world started
+[ -s "$T/proc-trace.log" ] && sim_in_repo 30 proc-summary "$T/proc-trace.log" | head -24 | cut -c1-150 | sed 's/^/# proc: /'
 tl_summary

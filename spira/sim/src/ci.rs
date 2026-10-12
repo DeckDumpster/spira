@@ -129,6 +129,52 @@ pub struct Job<'a> {
     pub env: &'a [(String, String)],
 }
 
+const LOCK_WAIT: Duration = Duration::from_secs(600); // batch-job: another world's cut job holds the host's /tmp
+
+/// A hosted runner owns its `/tmp`, and some workflow steps name paths in it; the steps of two
+/// worlds' jobs on one host take turns, and a holder that is gone is taken over.
+pub struct HostLock(PathBuf);
+
+impl HostLock {
+    pub fn acquire(dir: &Path) -> Result<HostLock, String> {
+        let lock = dir.join("sim-ci.lock");
+        let started = std::time::Instant::now();
+        loop {
+            match std::fs::create_dir(&lock) {
+                Ok(()) => {
+                    std::fs::write(lock.join("pid"), std::process::id().to_string()).map_err(|e| e.to_string())?;
+                    return Ok(HostLock(lock));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if Self::abandoned(&lock) {
+                        let _ = std::fs::remove_dir_all(&lock);
+                        continue;
+                    }
+                    if started.elapsed() > LOCK_WAIT {
+                        return Err(format!("{} is still held after {}s", lock.display(), LOCK_WAIT.as_secs()));
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => return Err(format!("{}: {e}", lock.display())),
+            }
+        }
+    }
+
+    fn abandoned(lock: &Path) -> bool {
+        match std::fs::read_to_string(lock.join("pid")).ok().and_then(|p| p.trim().parse::<u32>().ok()) {
+            Some(pid) => !Path::new(&format!("/proc/{pid}")).exists(),
+            // No pid yet: its taker is between create and write, unless it died there.
+            None => std::fs::metadata(lock).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > Duration::from_secs(10)),
+        }
+    }
+}
+
+impl Drop for HostLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Runs each script step in order, stopping at the first that fails; its exit code, or 0.
 pub fn run_job(job: &Job, sim: &Path, mut log: impl FnMut(&str)) -> Result<i32, String> {
     let shim = job.scratch.join("shim");
@@ -172,6 +218,11 @@ pub fn run_job(job: &Job, sim: &Path, mut log: impl FnMut(&str)) -> Result<i32, 
             cmd.env(k, v);
         }
         log(&format!("--- step: {}\n", step.name));
+        // Only a step that names the host's /tmp needs its turn; the rest run beside another world's.
+        let _turn = match run.contains("/tmp/") {
+            true => Some(HostLock::acquire(Path::new("/tmp"))?),
+            false => None,
+        };
         let started = std::time::Instant::now();
         let (status, out, err) = run_capture(&mut cmd, STEP_DEADLINE)?;
         log(&format!("{out}{err}--- {}: {status} in {}ms\n", step.name, started.elapsed().as_millis()));
@@ -221,6 +272,10 @@ pub fn cargo_shim(args: &[String], cwd: &Path, env: &dyn Fn(&str) -> Option<Stri
     let src = PathBuf::from(from).join("spira-config");
     let dest = cwd.join("target/release");
     std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-    std::fs::copy(&src, dest.join("spira-config")).map_err(|e| format!("{}: {e}", src.display()))?;
+    let out = dest.join("spira-config");
+    let _ = std::fs::remove_file(&out);
+    if std::fs::hard_link(&src, &out).is_err() {
+        std::fs::copy(&src, &out).map_err(|e| format!("{}: {e}", src.display()))?;
+    }
     Ok(())
 }

@@ -106,6 +106,9 @@ pub trait Steps {
     fn bd(&self) -> Result<PathBuf, String>;
     fn lifecycle(&self, release: &Path, fixture: &str, lifecycle: &Path, config: &Path) -> Result<(), String>;
     fn config_set(&self, release: &Path, file: &Path, key: &str, value: &str) -> Result<(), String>;
+    fn config_set_all(&self, release: &Path, file: &Path, pairs: &[(String, String)]) -> Result<(), String> {
+        pairs.iter().try_for_each(|(k, v)| self.config_set(release, file, k, v))
+    }
     /// Start the world's `spira-lc serve` on [`lc_socket`], write its PID to [`lc_pid_file`]
     /// as soon as it exists, and return once it answers a request.
     fn lc_serve(&self, world: &Path, fixture: &str) -> Result<(), String>;
@@ -177,14 +180,24 @@ fn signal(pid: u32, sig: i32) {
 
 /// Send one request to the serve and read its reply: `Some(exit_code)` when it answered.
 fn ask(socket: &Path, argv: &[&str]) -> Option<i64> {
-    use std::io::{BufRead, BufReader, Write};
+    ask_body(socket, argv).map(|(code, _)| i64::from(code))
+}
+
+/// One request to a lifecycle serve, as the CLI's own socket client makes it: `(exit code, stdout)`.
+pub fn ask_body(socket: &Path, argv: &[&str]) -> Option<(i32, String)> {
+    use std::io::{BufRead, BufReader, Read, Write};
     let stream = std::os::unix::net::UnixStream::connect(socket).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
     stream.set_write_timeout(Some(Duration::from_secs(5))).ok()?;
     writeln!(&stream, "{}", serde_json::to_string(argv).ok()?).ok()?;
+    let mut reader = BufReader::new(&stream);
     let mut line = String::new();
-    BufReader::new(&stream).read_line(&mut line).ok()?;
-    serde_json::from_str::<serde_json::Value>(line.trim()).ok()?.get("exit_code")?.as_i64()
+    reader.read_line(&mut line).ok()?;
+    let resp: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    let code = i32::try_from(resp.get("exit_code")?.as_i64()?).ok()?;
+    let mut body = vec![0u8; usize::try_from(resp.get("len")?.as_u64()?).ok()?];
+    reader.read_exact(&mut body).ok()?;
+    Some((code, String::from_utf8(body).ok()?))
 }
 
 #[derive(Default)]
@@ -201,9 +214,15 @@ pub fn run(cmd: &mut Command, deadline: Duration) -> Result<String, String> {
 }
 
 pub fn run_capture(cmd: &mut Command, deadline: Duration) -> Result<(std::process::ExitStatus, String, String), String> {
+    run_capture_traced(cmd, deadline, None)
+}
+
+/// `run_capture`, and with `trace` set, the process tree the command spawned (`proctrace`).
+pub fn run_capture_traced(cmd: &mut Command, deadline: Duration, trace: Option<(&Path, &str)>) -> Result<(std::process::ExitStatus, String, String), String> {
     let name = format!("{:?}", cmd.get_program());
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     let mut child = cmd.spawn().map_err(|e| format!("{name}: {e}"))?;
+    let tracer = trace.map(|_| crate::proctrace::start(child.id()));
     let mut out = child.stdout.take().ok_or("no stdout")?;
     let mut err = child.stderr.take().ok_or("no stderr")?;
     let t_out = std::thread::spawn(move || {
@@ -230,6 +249,13 @@ pub fn run_capture(cmd: &mut Command, deadline: Duration) -> Result<(std::proces
     };
     let stdout = t_out.join().unwrap_or_default();
     let stderr = t_err.join().unwrap_or_default();
+    if let (Some(t), Some((dir, label))) = (tracer, trace) {
+        use std::io::Write;
+        let text = crate::proctrace::render(label, &t.finish());
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(crate::proctrace::TRACE_FILE)) {
+            let _ = f.write_all(text.as_bytes());
+        }
+    }
     Ok((status, stdout, stderr))
 }
 
@@ -286,7 +312,15 @@ impl Steps for ProcessSteps {
     }
 
     fn config_set(&self, release: &Path, file: &Path, key: &str, value: &str) -> Result<(), String> {
-        run(Command::new(release.join("bin/spira-config")).args(["set", key, value]).arg(file), CALL_DEADLINE).map(|_| ())
+        self.config_set_all(release, file, &[(key.to_string(), value.to_string())])
+    }
+
+    fn config_set_all(&self, _release: &Path, file: &Path, pairs: &[(String, String)]) -> Result<(), String> {
+        if !file.exists() {
+            std::fs::write(file, "").map_err(|e| format!("{}: {e}", file.display()))?;
+        }
+        let pairs: Vec<(&str, &str)> = pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        spira_config::set_paths_in_file(file, &pairs)
     }
 
     fn lifecycle(&self, release: &Path, fixture: &str, lifecycle: &Path, config: &Path) -> Result<(), String> {
@@ -298,8 +332,13 @@ impl Steps for ProcessSteps {
         let world = config.parent().ok_or("config dir has no parent")?;
         self.config_set(release, &toml, "spira.lc_socket", &lc_socket(world).display().to_string())?;
         let lc = |verb: &str, arg: PathBuf| run(lc_command(release, config, &port).arg(verb).arg(arg), CALL_DEADLINE).map(|_| ());
+        let t = Instant::now();
         lc("admin-apply-ddl", lifecycle.join("schema.sql"))?;
-        lc("admin-migrate", lifecycle.join("migrations"))
+        mark(world, "up.lifecycle-schema.apply-ddl", t);
+        let t = Instant::now();
+        lc("admin-migrate", lifecycle.join("migrations"))?;
+        mark(world, "up.lifecycle-schema.migrate", t);
+        Ok(())
     }
 
     fn bd(&self) -> Result<PathBuf, String> {
@@ -344,7 +383,7 @@ impl Steps for ProcessSteps {
                 let log = std::fs::read_to_string(world.join(LC_LOG)).unwrap_or_default();
                 return Err(format!("spira-lc serve on {} did not answer within {}s: {}", socket.display(), LC_READY_DEADLINE.as_secs(), log.trim()));
             }
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -382,6 +421,13 @@ pub fn lc_command(release: &Path, config: &Path, port: &str) -> Command {
     cmd
 }
 
+/// How often the batcher polls a round's jobs inside a world: they finish in milliseconds.
+const BATCHER_POLL_SECS: &str = "0.1";
+
+/// A world's `bd` is a Go binary started dozens of times for one short call each: its collector
+/// and extra threads are most of the CPU a call spends beyond the work.
+const GO_RUNTIME_ENV: &str = "GOGC=off\nGOMAXPROCS=2\n";
+
 pub const PROFILE: &str = "profile.tsv";
 
 /// Appends `<phase>\t<ms since start>` to the world's profile; the phase costs of a run.
@@ -397,6 +443,12 @@ pub fn is_world(dir: &Path) -> bool {
 }
 
 pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<String>, steps: &dyn Steps) -> Result<(), String> {
+    up_resolving(repo, dir, tree, env, steps, &|_| Ok(()))
+}
+
+/// [`up`], and `resolved` runs once the world's files and seed are in place, beside the store's
+/// schema: what a caller does to the world that does not need the store.
+pub fn up_resolving(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<String>, steps: &dyn Steps, resolved: &(dyn Fn(&Path) -> Result<(), String> + Sync)) -> Result<(), String> {
     refuse_production(env)?;
     let source = release_source(env)?;
     if let Ok(abs) = std::path::absolute(dir) {
@@ -409,7 +461,7 @@ pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<Stri
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let dir = dir.canonicalize().map_err(|e| e.to_string())?;
     std::fs::write(dir.join(MARKER), "").map_err(|e| e.to_string())?;
-    match build(&dir, &repo, tree, &source, steps) {
+    match build(&dir, &repo, tree, &source, steps, resolved) {
         Ok(()) => Ok(()),
         Err(e) => {
             let _ = down(&dir, steps);
@@ -418,7 +470,7 @@ pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<Stri
     }
 }
 
-fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dyn Steps) -> Result<(), String> {
+fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dyn Steps, resolved: &(dyn Fn(&Path) -> Result<(), String> + Sync)) -> Result<(), String> {
     check_socket_path(dir)?;
     let release = match source {
         ReleaseSource::Prebuilt(p) => p.clone(),
@@ -430,99 +482,225 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     };
     link(&release, &dir.join("release"))?;
 
-    let t = Instant::now();
-    let fixture = steps.db_up(dir)?;
-    std::fs::write(dir.join("db.fixture"), &fixture).map_err(|e| e.to_string())?;
-    mark(dir, "up.db", t);
-
-    let t = Instant::now();
     let origin = dir.join("origin.git");
     let work = dir.join("work");
-    let p = |x: &Path| x.to_string_lossy().to_string();
-    git(dir, &["init", "--bare", "--initial-branch=main", &p(&origin)])?;
-    git(dir, &["init", "--initial-branch=main", &p(&work)])?;
-    let tarball = dir.join("seed.tar");
-    run(
-        Command::new("git").arg("-C").arg(repo).args(["archive", "--format=tar", "-o"]).arg(&tarball).arg(tree),
-        BUILD_DEADLINE,
-    )?;
-    run(Command::new("tar").arg("-xf").arg(&tarball).arg("-C").arg(&work), CALL_DEADLINE)?;
-    std::fs::remove_file(&tarball).map_err(|e| e.to_string())?;
     let runner = dir.join("config/suite-runner");
-    std::fs::write(work.join("gate.steps"), stub_gate_steps(&runner)).map_err(|e| e.to_string())?;
-    git(&work, &["add", "-A"])?;
-    git(&work, &["commit", "-q", "-m", "sim seed"])?;
-    git(&work, &["remote", "add", "origin", &p(&origin)])?;
-    git(&work, &["push", "-q", "origin", "main"])?;
-    git(&work, &["branch", LANDING_BASE, "main"])?;
-    git(&work, &["branch", "--set-upstream-to=origin/main", "main"])?;
-    mark(dir, "up.seed-repo", t);
-
     let run_dir = dir.join("run");
     let config = dir.join("config");
     std::fs::create_dir_all(&run_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&config).map_err(|e| e.to_string())?;
-    let t = Instant::now();
-    steps.lifecycle(&release, &fixture, &work.join("lifecycle"), &config)?;
-    mark(dir, "up.lifecycle-schema", t);
-    let runner = config.join("suite-runner");
-    std::fs::write(&runner, "#!/bin/sh\nexit 0\n").map_err(|e| e.to_string())?;
-    set_exec(&runner)?;
-    let file = config.join("sim.toml");
-    let gh_state = dir.join("gh");
-    let bin = dir.join("bin");
-    std::fs::create_dir_all(&gh_state).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
-    let gh_bin = bin.join("gh");
-    let sim_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    link(&sim_exe, &gh_bin)?;
-    link(&sim_exe, &bin.join("round-vm"))?;
-    link(&sim_exe, &bin.join("sim"))?;
-    for tool in INERT_TOOLS {
-        link(&sim_exe, &bin.join(tool))?;
-    }
-    crate::roundvm::write_verdict(dir, &crate::roundvm::Verdict::Green)?;
-    let home = dir.join(HOME);
-    std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
-    std::fs::write(home.join(REGISTRY_ROWS), registry_rows(&work)).map_err(|e| e.to_string())?;
-    std::fs::write(&file, base_config(&home)).map_err(|e| e.to_string())?;
-    let t = Instant::now();
-    let bd = steps.bd()?;
-    for (k, v) in config_settings(&work, &gh_bin).into_iter().chain(home_settings(dir, &fixture, &bd)) {
-        steps.config_set(&release, &file, &k, &v)?;
-    }
-    for (k, v) in lc_settings(dir) {
-        steps.config_set(&release, &file, &k, &v)?;
-    }
-    mark(dir, "up.config-set", t);
-    let port = std::fs::read_to_string(Path::new(&fixture).join("server.port")).unwrap_or_default();
-    std::fs::write(
-        config.join("sim.env"),
-        format!(
-            "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\n",
-            run_dir.display(),
-            dir.join("release/spira").display(),
-            runner.display(),
-            gh_state.display(),
-            bin.display(),
-            probe_command(&std::env::current_exe().map_err(|e| e.to_string())?, dir),
-            crate::roundvm::WORLD_ENV,
-            dir.display(),
-            dir.join("release").display(),
-            lc_socket(dir).display(),
-            port.trim(),
-            bead_db(&fixture).display(),
-            crate::agent::SCENARIO_VAR,
-            dir.join("agent.scenario").display(),
-            crate::agent::STATE_VAR,
-            dir.join("agent-state").display()
-        ),
-    )
-    .map_err(|e| e.to_string())?;
+    let seed = ensure_seed(repo, tree)?;
+    let write_files = |fixture: &str| -> Result<(), String> {
+        let runner = config.join("suite-runner");
+        std::fs::write(&runner, "#!/bin/sh\nexit 0\n").map_err(|e| e.to_string())?;
+        set_exec(&runner)?;
+        let file = config.join("sim.toml");
+        let gh_state = dir.join("gh");
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&gh_state).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+        let gh_bin = bin.join("gh");
+        let sim_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        link(&sim_exe, &gh_bin)?;
+        link(&sim_exe, &bin.join("round-vm"))?;
+        link(&sim_exe, &bin.join("sim"))?;
+        for tool in INERT_TOOLS {
+            link(&sim_exe, &bin.join(tool))?;
+        }
+        crate::roundvm::write_verdict(dir, &crate::roundvm::Verdict::Green)?;
+        let home = dir.join(HOME);
+        std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
+        std::fs::write(home.join(REGISTRY_ROWS), registry_rows(&work)).map_err(|e| e.to_string())?;
+        std::fs::write(&file, base_config(&home)).map_err(|e| e.to_string())?;
+        let t = Instant::now();
+        let bd = steps.bd()?;
+        let settings: Vec<(String, String)> = config_settings(&work, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).collect();
+        steps.config_set_all(&release, &file, &settings)?;
+        mark(dir, "up.config-set", t);
+        let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).unwrap_or_default();
+        std::fs::write(
+            config.join("sim.env"),
+            format!(
+                "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\nSPIRA_BATCHER_POLL_SECS={}\n{}",
+                run_dir.display(),
+                dir.join("release/spira").display(),
+                runner.display(),
+                gh_state.display(),
+                bin.display(),
+                probe_command(&std::env::current_exe().map_err(|e| e.to_string())?, dir),
+                crate::roundvm::WORLD_ENV,
+                dir.display(),
+                dir.join("release").display(),
+                lc_socket(dir).display(),
+                port.trim(),
+                bead_db(fixture).display(),
+                crate::agent::SCENARIO_VAR,
+                dir.join("agent.scenario").display(),
+                crate::agent::STATE_VAR,
+                dir.join("agent-state").display(),
+                BATCHER_POLL_SECS,
+                GO_RUNTIME_ENV
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    };
+    // The seed copy and the store's schema do not meet until the config names the repo; the
+    // resolved config needs only the seed and the written files, so it runs beside the schema.
+    let fixture = std::thread::scope(|scope| -> Result<String, String> {
+        // `written` drops with this closure, so a failure here releases the thread that waits on it.
+        let (written, ready) = std::sync::mpsc::channel::<()>();
+        let (seed_ref, origin_ref, work_ref, runner_ref) = (&seed, &origin, &work, &runner);
+        let placed = scope.spawn(move || {
+            let t = Instant::now();
+            let r = place_seed(seed_ref, origin_ref, work_ref, runner_ref);
+            mark(dir, "up.seed-repo", t);
+            r?;
+            ready.recv().map_err(|_| "the world's files were not written".to_string())?;
+            let t = Instant::now();
+            let r = resolved(dir);
+            mark(dir, "up.conf-resolve", t);
+            r
+        });
+        let t = Instant::now();
+        let fixture = steps.db_up(dir)?;
+        std::fs::write(dir.join("db.fixture"), &fixture).map_err(|e| e.to_string())?;
+        mark(dir, "up.db", t);
+        write_files(&fixture)?;
+        let _ = written.send(());
+        let t = Instant::now();
+        steps.lifecycle(&release, &fixture, &seed.join("work/lifecycle"), &config)?;
+        mark(dir, "up.lifecycle-schema", t);
+        placed.join().map_err(|_| "the seed copy panicked".to_string())??;
+        Ok(fixture)
+    })?;
     let t = Instant::now();
     let served = steps.lc_serve(dir, &fixture);
     mark(dir, "up.lc-serve", t);
     served
+}
+
+const SEED_KEEP: usize = 4;
+const SEED_IDLE: Duration = Duration::from_secs(3600);
+
+/// Where seed repos are kept between worlds: `SPIRA_SIM_CACHE`, else a directory of the
+/// temp dir, so every world of a run (and of a suite's TMPDIR) shares one.
+fn seed_cache_dir() -> PathBuf {
+    match std::env::var_os("SPIRA_SIM_CACHE") {
+        Some(c) if !c.is_empty() => PathBuf::from(c),
+        _ => std::env::temp_dir().join("sim-cache"),
+    }
+}
+
+/// A world's landing repository: the seed copied in, plus the world's own `gate.steps` as one
+/// commit, since that names the world's runner.
+fn place_seed(seed: &Path, origin: &Path, work: &Path, runner: &Path) -> Result<(), String> {
+    let p = |x: &Path| x.to_string_lossy().to_string();
+    let _ = std::fs::File::open(seed).and_then(|d| d.set_modified(std::time::SystemTime::now()));
+    copy_repo(&seed.join("origin.git"), origin).map_err(|e| format!("{}: {e}", origin.display()))?;
+    copy_repo(&seed.join("work"), work).map_err(|e| format!("{}: {e}", work.display()))?;
+    git(work, &["remote", "set-url", "origin", &p(origin)])?;
+    std::fs::write(work.join("gate.steps"), stub_gate_steps(runner)).map_err(|e| e.to_string())?;
+    git(work, &["add", "gate.steps"])?;
+    git(work, &["commit", "-q", "-m", "sim gate steps"])?;
+    git(work, &["push", "-q", "origin", "main"])?;
+    git(work, &["branch", LANDING_BASE, "main"])?;
+    Ok(())
+}
+
+/// The landing repository's seed: the tree under test committed once with an origin it is
+/// pushed to, built the first time a tree is seen. `sim world seed` builds it if no world has yet, so the worlds that
+/// follow (side by side, or in a timed run) only copy it.
+pub fn ensure_seed(repo: &Path, tree: &str) -> Result<PathBuf, String> {
+    let repo = PathBuf::from(git(repo, &["rev-parse", "--show-toplevel"])?.trim());
+    let hash = git(&repo, &["rev-parse", &format!("{tree}^{{tree}}")])?.trim().to_string();
+    let cache = seed_cache_dir();
+    std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
+    let seed = cache.join(format!("seed-{hash}"));
+    if !seed.join(".complete").is_file() {
+        build_seed(&repo, tree, &cache, &seed)?;
+    }
+    Ok(seed)
+}
+
+/// What a world's checkouts hold: the root files and the directories a world path reads from a
+/// worktree (workflows, lifecycle schema, the agent's `out/`, the sim's tables, timer units,
+/// harness scripts), not crate sources, docs, test suites or the config registry. A new
+/// worktree inherits the patterns, so every checkout the landing code makes is a fraction of the tree.
+const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n";
+
+/// A copy of a seed repo, its pack files linked rather than copied: a pack is never written to
+/// again, where refs, the index and the reflogs are, and those are copied.
+fn copy_repo(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            copy_repo(&src, &dst)?;
+        } else if kind.is_symlink() {
+            std::os::unix::fs::symlink(std::fs::read_link(&src)?, &dst)?;
+        } else if src.parent().is_some_and(|d| d.ends_with("objects/pack")) && std::fs::hard_link(&src, &dst).is_ok() {
+        } else {
+            std::fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
+fn build_seed(repo: &Path, tree: &str, cache: &Path, seed: &Path) -> Result<(), String> {
+    let name = seed.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    static BUILDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = cache.join(format!("{name}.build-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let (origin, work) = (tmp.join("origin.git"), tmp.join("work"));
+    let p = |x: &Path| x.to_string_lossy().to_string();
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    git(&tmp, &["init", "--bare", "--initial-branch=main", &p(&origin)])?;
+    git(&tmp, &["init", "--initial-branch=main", &p(&work)])?;
+    let tarball = tmp.join("seed.tar");
+    run(Command::new("git").arg("-C").arg(repo).args(["archive", "--format=tar", "-o"]).arg(&tarball).arg(tree), BUILD_DEADLINE)?;
+    run(Command::new("tar").arg("-xf").arg(&tarball).arg("-C").arg(&work), CALL_DEADLINE)?;
+    std::fs::remove_file(&tarball).map_err(|e| e.to_string())?;
+    git(&work, &["add", "-A"])?;
+    git(&work, &["commit", "-q", "-m", "sim seed"])?;
+    git(&work, &["remote", "add", "origin", &p(&origin)])?;
+    git(&work, &["push", "-q", "origin", "main"])?;
+    git(&work, &["branch", "--set-upstream-to=origin/main", "main"])?;
+    git(&work, &["config", "core.sparseCheckout", "true"])?;
+    std::fs::write(work.join(".git/info/sparse-checkout"), SPARSE_PATTERNS).map_err(|e| e.to_string())?;
+    git(&work, &["read-tree", "-mu", "HEAD"])?;
+    // A pack is a file to copy where the loose objects were thousands.
+    git(&work, &["repack", "-adq"])?;
+    git(&origin, &["repack", "-adq"])?;
+    std::fs::write(tmp.join(".complete"), "").map_err(|e| e.to_string())?;
+    // A world that finished first already put the seed there: keep that one.
+    if std::fs::rename(&tmp, seed).is_err() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        if !seed.join(".complete").is_file() {
+            return Err(format!("{}: could not be created", seed.display()));
+        }
+    }
+    prune_seeds(cache, seed);
+    Ok(())
+}
+
+fn prune_seeds(cache: &Path, keep: &Path) {
+    let mut seeds: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(cache)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("seed-") && !e.file_name().to_string_lossy().contains(".build-"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    seeds.sort();
+    let excess = seeds.len().saturating_sub(SEED_KEEP);
+    let idle = std::time::SystemTime::now() - SEED_IDLE;
+    for (_, path) in seeds.into_iter().take(excess).filter(|(used, p)| p != keep && *used < idle) {
+        let _ = std::fs::remove_dir_all(path);
+    }
 }
 
 /// The gate string the tree under test carries inside a world: the stub suite runner alone, whose
