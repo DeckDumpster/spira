@@ -1036,7 +1036,13 @@ pub fn view(s: &Snapshot) -> View {
             .iter()
             .take(40)
             .map(|r| {
-                let note = if PLACED.contains(&st.name.as_str()) { place(r, &idx).1 } else { r.reason.clone().unwrap_or_default() };
+                let note = if PLACED.contains(&st.name.as_str()) {
+                    place(r, &idx).1
+                } else if st.name == "LANDED" {
+                    s.batches.iter().find(|b| b.members.contains(&r.id)).map(|b| format!("{} · {}", b.repo, b.id)).unwrap_or_default()
+                } else {
+                    r.reason.clone().unwrap_or_default()
+                };
                 let mut it = item(r, if st.name == "LANDED" { r.updated_at } else { r.since }, note);
                 if st.name == "REWORK" {
                     it.why = rework_why(s, &r.id);
@@ -2106,6 +2112,23 @@ BATCH
         let f = squash(&plain(&render(&view(&s), 120)));
         assert!(f.contains("GREEN 1 stuck 4h ●"), "{f}");
         assert!(f.contains("LANDED 1 last 24h"), "{f}");
+    }
+
+    #[test]
+    fn landed_24h_counts_the_landed_rows_and_lists_them_newest_first_with_their_round() {
+        let mut s = healthy();
+        let now = s.now;
+        for (i, id) in ["sp-l0", "sp-l1", "sp-l2"].iter().enumerate() {
+            s.rows.push(row(id, "LANDED", now - 100 * (i as i64 + 1)));
+        }
+        s.rows.push(row("sp-old", "LANDED", now - 2 * 86_400));
+        s.batches = vec![BatchRow { id: "r-9".into(), repo: "spira".into(), state: "LANDED".into(), members: vec!["sp-l1".into()], ..Default::default() }];
+        let v = view(&s);
+        let landed = v.machine.iter().find(|m| m.name == "LANDED").unwrap();
+        assert_eq!(landed.count, 3);
+        assert_eq!(landed.beads.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["sp-l0", "sp-l1", "sp-l2"]);
+        assert_eq!(landed.beads[1].note, "spira · r-9");
+        assert!(v.flow.contains(&("LANDED/24h".to_string(), 3)));
     }
 
     #[test]

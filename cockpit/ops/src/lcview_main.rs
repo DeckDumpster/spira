@@ -310,6 +310,18 @@ fn gather() -> Snapshot {
         }
         Err(e) => s.errors.push(e),
     }
+    // `list --live` carries no terminal rows, so LANDED 24h is gathered from its own windowed view.
+    match lc_json(&["ops-view", "ops_recent"]) {
+        Ok(rows) => {
+            for r in rows {
+                let id = text(&r["bead_id"]);
+                let updated_at = num(&r["updated_at"]).unwrap_or(0);
+                s.meta.entry(id.clone()).or_insert_with(|| Meta { title: text(&r["title"]), priority: num(&r["priority"]), ..Default::default() });
+                s.rows.push(Row { id, state: "LANDED".into(), updated_at, since: num(&r["since"]).unwrap_or(updated_at), ..Default::default() });
+            }
+        }
+        Err(e) => s.errors.push(e),
+    }
     match lc_json(&["list-asks"]) {
         Ok(asks) => {
             let label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
