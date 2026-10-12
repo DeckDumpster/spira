@@ -139,7 +139,15 @@ pub fn sendmail(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, home: &Path, mail
         first_para = format!("answered by mail <{in_reply_to}> \"{orig_subject}\" (reply body empty)");
     }
 
-    if !orig_bead.is_empty() {
+    let tracked = matches!(orig_kind.as_str(), "question" | "decision" | "suit");
+    if !orig_bead.is_empty() && !tracked {
+        if db_configured {
+            let actor = lc::actor_of(&message::header_ci_before_blank(raw, "from"), "operator");
+            if let Err(e) = bead::note(bd, &orig_bead, &format!("Reply from {actor} to \"{orig_subject}\": {first_para}")) {
+                eprintln!("mail: could not note the reply on {orig_bead}: {e}");
+            }
+        }
+    } else if !orig_bead.is_empty() {
         let warnings = bead::sendmail_close_bead(bd, db_configured, &orig_bead, &orig_kind, &first_para)?;
         for w in warnings {
             eprintln!("{w}");
@@ -413,6 +421,27 @@ mod tests {
         assert_eq!(lcc.len(), 1);
         assert_eq!(lcc[0][..2], ["reply".to_string(), "sp-work1".to_string()]);
         assert_eq!(lcc[0][3], "concierge");
+    }
+
+    /// A watcher notice names the WORK bead in X-Spira-Bead; the reply is a note on it, never a close.
+    #[test]
+    fn a_reply_to_a_watcher_notice_notes_the_work_bead_and_closes_nothing() {
+        let d = testkit::TempDir::new("mail-sendmail-notice");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("chamber")).unwrap();
+        maildir::mail_ensure(&d.path().join("concierge")).unwrap();
+        let msgid = maildir::mint_msgid();
+        let orig = format!("From: Sentinel <sentinel@spira>\nSubject: Spira bead sp-work1 — poisoned\nX-Spira-Kind: alert\nX-Spira-Bead: sp-work1\nMessage-ID: <{msgid}@spira>\n\nchange the approach or drop it?\n");
+        fs::write(d.path().join("concierge/tmp").join(&msgid), &orig).unwrap();
+        maildir::mail_deliver(&d.path().join("concierge"), &msgid, false).unwrap();
+        let bd = FakeBd::new(vec![BdOut::ok("")]);
+        let lc = FakeLc::new(0);
+        let raw = format!("From: Concierge <concierge@spira>\nSubject: Re: poisoned\nIn-Reply-To: <{msgid}@spira>\n\nKeep going.\n");
+        sendmail(&bd, &lc, true, &home, d.path(), false, &raw).unwrap();
+        let calls = bd.calls();
+        assert!(!calls.iter().any(|c| c.0[0] == "close"), "{calls:?}");
+        assert_eq!(calls[0].0[..2], ["note".to_string(), "sp-work1".to_string()]);
+        assert!(lc.calls().is_empty(), "{:?}", lc.calls());
     }
 
     /// No X-Spira-Work-Bead (a note, an old question): nothing to lift.

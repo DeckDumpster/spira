@@ -271,7 +271,7 @@ compose_reply "$MSGID_NB" "Yes, refactor the parser." | run sendmail >/dev/null 
 is "no-bead decision bead is closed after reply" "closed" "$(bead_status "$x_bead_nb")"
 
 echo
-echo "UC-15: a reply to a bare tracking bead (no kind) closes that bead directly"
+echo "UC-15: a reply to a notice citing a work bead leaves it open with a note"
 
 BEAD_T="sp-vf-track"
 seed_bead "$BEAD_T"
@@ -281,7 +281,8 @@ SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" run send
 MSGID_T="$(msgid_of operator)"
 compose_reply "$MSGID_T" "All looks good." "Re: Test message" | run sendmail >/dev/null 2>&1; rc=$?
 isz "sendmail exits 0 on reply" "$rc"
-is "reply closes the cited bead directly (no decision bead in the way)" "closed" "$(bead_status "$BEAD_T")"
+is "reply leaves the cited work bead open" "open" "$(bead_status "$BEAD_T")"
+want "reply is recorded as a note on the work bead" "All looks good." "$(bead_notes "$BEAD_T")"
 
 echo
 echo "UC-15/G-01d: SPIRA_MAIL_ALLOW_BLOCKING=1 blocks the work bead; reply unblocks it"
