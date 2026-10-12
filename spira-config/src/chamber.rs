@@ -154,16 +154,15 @@ pub fn fayth_names(home: &Path) -> Vec<String> {
 }
 
 /// `fayth_get <fayth> <var> [default]` — one field of a fayth: `<home>/chamber/<fayth>.fayth`
-/// sourced as bash in a subshell, then `$var` evaluated (falling back to `default`). A
-/// missing fayth file, or any failure of the bridge itself, returns `default` — exactly
-/// what the bash form prints (its own `return 1` on a missing file is a status nothing here
-/// reads: every caller, bash and Rust alike, only ever consumes the value on stdout).
+/// read in-process (see [`crate::fayth_file`]), `default` when the field is unset or empty.
+/// A missing file returns `default`; a file with a construct outside the supported subset is
+/// refused on stderr, naming file and line, and also returns `default`.
 pub fn fayth_get(home: &Path, fayth: &str, var: &str, default: &str) -> String {
     let f = chamber_dir(home).join(format!("{fayth}.fayth"));
     if !f.is_file() {
         return default.to_string();
     }
-    // ONE bash per (file as it stands, var, default, overlay) per process: a summon asked the
+    // ONE read per (file as it stands, var, default, overlay) per process: a summon asked the
     // same few fields of the same six fayths ~200 times. The file's mtime is in the key, so an
     // edited fayth is read again.
     static GOT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(PathBuf, Option<std::time::SystemTime>, String, String, BTreeMap<String, String>), String>>> = std::sync::OnceLock::new();
@@ -174,20 +173,19 @@ pub fn fayth_get(home: &Path, fayth: &str, var: &str, default: &str) -> String {
     if let Some(v) = got.lock().ok().and_then(|g| g.get(&key).cloned()) {
         return v;
     }
-    let script =
-        r#"f="$1"; var="$2"; def="$3"; . "$f" 2>/dev/null; eval "printf '%s' \"\${$var:-\$def}\"""#;
-    let out = crate::bounded::bounded("bash")
-        .arg("-c")
-        .arg(script)
-        .arg("fayth_get")
-        .arg(&f)
-        .arg(var)
-        .arg(default)
-        .envs(overlay)
-        .output();
-    let v = match out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-        _ => default.to_string(),
+    let ambient = process_env();
+    let lookup = |n: &str| overlay.get(n).or_else(|| ambient.get(n)).cloned();
+    let v = match std::fs::read_to_string(&f).map_err(|e| e.to_string()).and_then(|t| crate::fayth_file::parse(&f.to_string_lossy(), &t, &lookup)) {
+        Ok(vars) => vars
+            .get(var)
+            .cloned()
+            .or_else(|| lookup(var))
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| default.to_string()),
+        Err(e) => {
+            eprintln!("fayth_get: refusing {e}");
+            default.to_string()
+        }
     };
     if let Ok(mut g) = got.lock() {
         g.insert(key, v.clone());
@@ -536,6 +534,58 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-chamber-get-expansion");
         write_fayth(&ws, "scoped", "FAYTH_LABELS=\"${SPIRA_SCOPE_LABEL:-spira},plan\"\n");
         assert_eq!(fayth_get(&ws, "scoped", "FAYTH_LABELS", ""), "spira,plan");
+    }
+
+    #[test]
+    fn every_real_fayth_reads_as_the_bash_source_did() {
+        let chamber = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
+        let env: BTreeMap<String, String> = [
+            ("SPIRA_SCOPE_LABEL", "scope"),
+            ("SPIRA_CI_LABEL", "ci"),
+            ("SPIRA_MENDER_DEADLINE_SECS", "77"),
+        ]
+        .into_iter()
+        .chain(["BATCH_JUDGEMENT", "PLAN", "CZAR", "GROOMER", "MAECHEN", "MENDER", "INCIDENT", "SPIKE", "WARDEN"].map(|n| (Box::leak(format!("SPIRA_{n}_LABEL").into_boxed_str()) as &str, "lbl")))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let lookup = |n: &str| env.get(n).cloned();
+        let mut checked = 0;
+        for e in std::fs::read_dir(&chamber).unwrap() {
+            let p = e.unwrap().path();
+            if p.extension().and_then(|x| x.to_str()) != Some("fayth") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap();
+            let vars = crate::fayth_file::parse(&p.to_string_lossy(), &text, &lookup).unwrap();
+            let out = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(r#". "$1"; for v in $(compgen -A variable FAYTH_); do printf '%s=%s\0' "$v" "${!v}"; done"#)
+                .arg("x")
+                .arg(&p)
+                .env_clear()
+                .envs(&env)
+                .output()
+                .unwrap();
+            let mut want: Vec<(String, String)> = String::from_utf8(out.stdout)
+                .unwrap()
+                .split('\0')
+                .filter(|r| !r.is_empty())
+                .map(|r| r.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())).unwrap())
+                .collect();
+            want.sort();
+            let mut got: Vec<(String, String)> = vars.into_iter().collect();
+            got.sort();
+            assert_eq!(got, want, "{}", p.display());
+            checked += 1;
+        }
+        assert!(checked >= 10, "{checked}");
+    }
+
+    #[test]
+    fn fayth_get_spawns_no_process_for_a_plain_read_and_refuses_a_command_substitution() {
+        let ws = testkit::TempDir::new("spira-config-chamber-get-refuse");
+        write_fayth(&ws, "bad", "FAYTH_LABELS=$(echo hi)\n");
+        assert_eq!(fayth_get(&ws, "bad", "FAYTH_LABELS", "dflt"), "dflt");
     }
 
     #[test]
