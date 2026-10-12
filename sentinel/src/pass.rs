@@ -440,9 +440,6 @@ impl<'a> Sentinel<'a> {
     }
 
     fn full(&self) -> i32 {
-        if self.mode == Mode::Audit {
-            return self.audit_run();
-        }
         let snap = match self.read_store() {
             Ok(s) => s,
             Err(rc) => return rc,
