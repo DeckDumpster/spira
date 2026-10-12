@@ -92,6 +92,7 @@ ln -s "$HERE/conf.sh" "$SH/conf.sh"
 # readlink-to-the-real-file trick), so $SH needs its own registry symlink too
 # (pattern 1, per Ryan 2026-10-05).
 ln -s "$HERE/conf.d" "$SH/conf.d"
+for f in bead.sh schema.sh chamber; do ln -s "$HERE/$f" "$SH/$f"; done
 chmod +x "$SH/review.sh" "$SH/release.sh"
 
 REPO_MAP="$TMP/repo-map"
@@ -146,7 +147,7 @@ run_review() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_AGENT="$FAKE_CLAUDE" \
         SPIRA_REVIEWER_VERDICTS="$VERDICTS" SPIRA_REVIEWER_MODEL=claude-test-model \
-        SPIRA_REVIEWER_TIMEOUT=30
+        SPIRA_REVIEWER_TIMEOUT=30 SPIRA_CHAMBER="$SH/chamber"
     # round 5 fix (pattern 1/7): the repo registry reads SPIRA_HOME's own conf.d/config
     # registry now; env -i never carried SPIRA_HOME at all ("no config registry at ...").
     env -i PATH="$PATH" HOME="$HOME" \
