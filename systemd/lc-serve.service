@@ -21,7 +21,7 @@ StartLimitBurst=5
 # dolt and bd: `work blocked` and friends shell out to bead.sh/mail from this process.
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_TOML=@SPIRA_TOML@
-Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Environment=SPIRA_HOME=@SPIRA_HOME@
 Environment=SPIRA_REPO=@SPIRA_REPO@
 Environment=SPIRA_DB=@SPIRA_DB@

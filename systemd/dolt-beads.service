@@ -32,7 +32,7 @@ RefuseManualStop=yes
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
-Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 # git runs inside this server for every git+ssh remote push. Table files are already
 # compressed, so git's zlib pass and delta search over them only burn CPU: packing one push
 # took 6m50s of wall time at defaults and 40s with these.

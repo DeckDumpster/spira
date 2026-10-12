@@ -6,7 +6,7 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_HOME=@SPIRA_PROD@
-Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_HOME=@SPIRA_HOME@
 Type=oneshot

@@ -23,7 +23,7 @@ StartLimitBurst=5
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
-Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 # Type=notify: spira-supervise sends READY=1 once cockpit-collect is up, then WATCHDOG=1
 # while the snapshot is fresh.  The supervisor is the main PID so its datagrams are credited
 # by the manager (sp-3az9w established that bash cannot satisfy this; sp-mplcb fixes it).
