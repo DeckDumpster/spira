@@ -114,18 +114,31 @@ pub fn czar_ok(w: &World) -> bool {
     true
 }
 
-/// Take the repo's queue lock, or print queue.sh's refusal. `held_by_caller` is
-/// SPIRA_QUEUE_LOCK_HELD=1 (land-local, publish, rollback-local only).
+/// Take the repo's queue lock, waiting up to SPIRA_QUEUE_LOCK_WAIT seconds, or print queue.sh's
+/// refusal naming the recorded holder. `held_by_caller` is SPIRA_QUEUE_LOCK_HELD=1 (land-local,
+/// publish, rollback-local only).
 pub fn take_lock(w: &World, label: &str, c: &Ctx, busy_suffix: &str) -> Result<Option<Guard>, i32> {
-    match lock::try_lock(&c.s.queue_dir, &c.r.name) {
-        Acquire::Held(g) => Ok(Some(g)),
-        Acquire::Busy => {
-            w.err(format!("queue.sh {label}: another queue operation holds the lock for {}{busy_suffix}", c.r.name));
-            Err(FAIL)
-        }
-        Acquire::Unopenable => {
-            w.err(format!("queue.sh {label}: cannot open lock file for {}", c.r.name));
-            Err(FAIL)
+    let mut waited = 0;
+    loop {
+        match lock::try_lock_as(&c.s.queue_dir, &c.r.name, label) {
+            Acquire::Held(g) => return Ok(Some(g)),
+            Acquire::Busy if waited < c.s.verdict.lock_wait => {
+                w.clock.sleep(1);
+                waited += 1;
+            }
+            Acquire::Busy => {
+                let held = lock::holder(&c.s.queue_dir, &c.r.name);
+                let held = if held.is_empty() { "holder not recorded".to_string() } else { held };
+                w.err(format!(
+                    "queue.sh {label}: another queue operation holds the lock for {}{busy_suffix} (waited {waited}s; {held})",
+                    c.r.name
+                ));
+                return Err(FAIL);
+            }
+            Acquire::Unopenable => {
+                w.err(format!("queue.sh {label}: cannot open lock file for {}", c.r.name));
+                return Err(FAIL);
+            }
         }
     }
 }

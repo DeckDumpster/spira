@@ -1373,6 +1373,21 @@ fn eject_of_a_certified_unbatched_bead_delivers_then_returns_on_spira_lc() {
 }
 
 #[test]
+fn a_lock_held_past_the_deadline_refuses_naming_its_recorded_holder() {
+    let t = T::new(LandMode::Queue);
+    open_batch_record(&t);
+    let _g = match crate::lock::try_lock_as(&t.s().queue_dir, "spira", "round certify") {
+        crate::lock::Acquire::Held(g) => g,
+        _ => panic!("lock"),
+    };
+    let start = t.clock.now();
+    assert_eq!(t.run(&["eject", "sp-a"]), 1);
+    let want = format!("verb=round certify");
+    assert!(t.err().contains(&want) && t.err().contains("pid="), "{}", t.err());
+    assert_eq!(t.clock.now() - start, t.s().verdict.lock_wait, "waited the whole deadline");
+}
+
+#[test]
 fn eject_refuses_while_another_queue_operation_holds_the_lock() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);

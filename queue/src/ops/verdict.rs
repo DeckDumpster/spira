@@ -46,7 +46,7 @@ pub fn pass(w: &World, c: &Ctx) -> i32 {
 
 fn local_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
     let name = c.r.name.as_str();
-    let (rc, out) = match lock::try_lock(&c.s.queue_dir, name) {
+    let (rc, out) = match lock::try_lock_as(&c.s.queue_dir, name, "verdict") {
         Acquire::Held(g) => {
             let r = settle_locked(w, c, path);
             drop(g);
@@ -306,7 +306,7 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
 fn lock_waiting(w: &World, c: &Ctx) -> Result<Guard, bool> {
     let mut waited = 0;
     loop {
-        match lock::try_lock(&c.s.queue_dir, &c.r.name) {
+        match lock::try_lock_as(&c.s.queue_dir, &c.r.name, "verdict") {
             Acquire::Held(g) => return Ok(g),
             Acquire::Unopenable => return Err(false),
             Acquire::Busy if waited >= c.s.verdict.lock_wait => return Err(true),
