@@ -177,7 +177,14 @@ fi
 # it. A check that finds nothing wrong must first prove it could have: if podman
 # cannot actually start a container here, the gaps above were the wrong gaps.
 if command -v podman >/dev/null 2>&1; then
-    if ! timeout 5 podman info >/dev/null 2>&1; then
+    _pi=0
+    # batch-job: first podman info on a fresh runner initialises storage and can take well over 5s
+    while ! timeout 15 podman info >/dev/null 2>&1; do
+        _pi=$((_pi+1))
+        [ "$_pi" -ge 3 ] && break
+        sleep 2
+    done
+    if [ "$_pi" -ge 3 ]; then
         gap "podman info fails — the runtime is installed but cannot start"
     elif [ "$(timeout 5 podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" != "true" ]; then
         gap "podman is not running rootless"
