@@ -261,6 +261,23 @@ fi
 
 # ============================================================================
 echo
+echo "The reconciler service: TimeoutStartSec outlasts a loaded pass (killed pass writes no stamp):"
+# ============================================================================
+_rc_svc="$UNIT_DIR/spira-reconciler.service"
+if grep -q '^Type=oneshot' "$_rc_svc" 2>/dev/null; then
+    ok "positive control: spira-reconciler.service Type=oneshot is readable"
+else
+    bad "positive control: spira-reconciler.service Type=oneshot is readable" "not found in $_rc_svc"
+fi
+_rc_t="$(sed -n 's/^TimeoutStartSec=//p' "$_rc_svc" 2>/dev/null | head -1)"
+if [ "${_rc_t:-0}" -ge 180 ] 2>/dev/null; then
+    ok "spira-reconciler.service TimeoutStartSec >= 180s (a pass over 60s is not killed)"
+else
+    bad "spira-reconciler.service TimeoutStartSec >= 180s" "got '${_rc_t}'"
+fi
+
+# ============================================================================
+echo
 echo "The verdict service: driver wiring, TimeoutStartSec>=3600, no CPUQuota:"
 # ============================================================================
 # defect sp-tv7ue: nothing proved the service called queue step (which settles the open

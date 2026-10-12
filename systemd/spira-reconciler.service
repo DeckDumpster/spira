@@ -16,9 +16,9 @@ Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/reconciler --pass
-# A pass reads local files and runs a handful of read-mostly tools (systemctl, tmux, git,
-# df); 60 s is generous for all of them together.
-TimeoutStartSec=60
+# A loaded pass runs past 60 s and was killed before it wrote reconciler-pass.stamp; the
+# flock in --pass stops overlap, so the budget need only exceed the longest observed pass.
+TimeoutStartSec=300
 Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 StandardOutput=append:@SPIRA_RUN@/reconciler.log
