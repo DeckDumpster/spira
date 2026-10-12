@@ -323,6 +323,31 @@ fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
     Ok(pool)
 }
 
+/// Beads that carry their commits into whatever stacks on them yet may not be batched
+/// themselves: held, or ejected at their current tip.
+fn barred_ids(env: &Env) -> Result<std::collections::BTreeSet<String>, String> {
+    let out = lcq(env, &["list"])?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
+    Ok(rows
+        .iter()
+        .filter(|r| !holds_empty(r) || (r.get("ejected_red_tip").and_then(|t| t.as_str()).is_some() && r.get("ejected_red_tip") == r.get("tip")))
+        .filter_map(|r| r.get("bead_id")?.as_str().map(str::to_string))
+        .collect())
+}
+
+/// Drops every member whose recorded stack names a barred bead, or a member dropped for that
+/// reason, and says why on stderr.
+fn drop_stacked_on_barred(members: Vec<Member>, mut barred: std::collections::BTreeSet<String>) -> Vec<Member> {
+    let mut kept = members;
+    loop {
+        let Some(i) = kept.iter().position(|m| m.stack.keys().any(|p| barred.contains(p))) else { return kept };
+        let m = kept.remove(i);
+        let p = m.stack.keys().find(|p| barred.contains(*p)).cloned().unwrap_or_default();
+        eprintln!("batcher: skipped {}: stacked on held {p}", m.id);
+        barred.insert(m.id);
+    }
+}
+
 /// `bd show <id>` as text: the description and notes, where a target and its verdict live.
 pub fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
     let mut cmd = Command::new(&env.bd);
@@ -388,6 +413,8 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let certified = read_pool(env)?;
     let branches = repo_branch_tips(repo)?;
+    let mut barred = barred_ids(env)?;
+    barred.extend(certified.iter().filter(|(id, tip, ..)| !tip_current(tip, id, &branches)).map(|(id, ..)| id.clone()));
     let certified: Vec<_> = certified.into_iter().filter(|(id, tip, ..)| tip_current(tip, id, &branches)).collect();
     let ids: Vec<String> = certified.iter().map(|(id, ..)| id.clone()).collect();
     let v = bd_show(env, &ids)?;
@@ -415,7 +442,7 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
         let priority = if base_fix { Some(0) } else { *priority };
         out.push(Member { id, tip, title: title.clone(), priority, express, base_fix, certified_at: epoch, stack, blocked_by });
     }
-    Ok(out)
+    Ok(drop_stacked_on_barred(out, barred))
 }
 
 /// The certified ids that fix an open base-red bead of `repo`: a bead the basefail bead
@@ -2345,6 +2372,27 @@ mod pool_parity_tests {
         env.bd = stubs.join("bd").display().to_string();
         let repo = Repo { name: "r".into(), path: d.path().to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
         (d, stubs, env, repo)
+    }
+
+    #[test]
+    fn a_member_stacked_on_a_held_bead_is_left_out_of_the_pool_and_returns_when_the_hold_lifts() {
+        let member = |id: &str, prereq: Option<&str>| Member {
+            id: id.into(),
+            tip: format!("{id}-tip"),
+            title: String::new(),
+            priority: None,
+            express: false,
+            base_fix: false,
+            certified_at: 0,
+            stack: prereq.map(|p| (p.to_string(), format!("{p}-tip"))).into_iter().collect(),
+            blocked_by: vec![],
+        };
+        let pool = || vec![member("sp-q", Some("sp-p")), member("sp-r", Some("sp-q")), member("sp-s", None)];
+        let held: std::collections::BTreeSet<String> = ["sp-p".to_string()].into();
+        let kept: Vec<String> = drop_stacked_on_barred(pool(), held).into_iter().map(|m| m.id).collect();
+        assert_eq!(kept, ["sp-s"]);
+        let lifted = drop_stacked_on_barred(pool(), Default::default());
+        assert_eq!(lifted.len(), 3);
     }
 
     /// An idle tick has no certified bead, and asks bd nothing: no member can be a base fix.
