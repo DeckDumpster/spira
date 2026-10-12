@@ -187,8 +187,8 @@ fn ask(socket: &Path, argv: &[&str]) -> Option<i64> {
 pub fn ask_body(socket: &Path, argv: &[&str]) -> Option<(i32, String)> {
     use std::io::{BufRead, BufReader, Read, Write};
     let stream = std::os::unix::net::UnixStream::connect(socket).ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(12))).ok()?;
-    stream.set_write_timeout(Some(Duration::from_secs(12))).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    stream.set_write_timeout(Some(Duration::from_secs(5))).ok()?;
     writeln!(&stream, "{}", serde_json::to_string(argv).ok()?).ok()?;
     let mut reader = BufReader::new(&stream);
     let mut line = String::new();
