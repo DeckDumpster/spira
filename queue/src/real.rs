@@ -723,6 +723,17 @@ impl Scripts for RealScripts {
         });
         ids.iter().cloned().zip(slots.into_iter().map(|s| s.into_inner().unwrap_or_else(|p| p.into_inner()).unwrap_or_default())).collect()
     }
+    fn boundary_sync(&self, tree: &Path) -> RunOut {
+        // batch-job: a git commit in the wiki repo, bounded by git itself
+        match Command::new("bash").arg(tree.join("spira").join("boundary.sh")).arg("sync").stdin(Stdio::null()).output() {
+            Ok(o) => RunOut {
+                rc: o.status.code().unwrap_or(127),
+                out: String::from_utf8_lossy(&o.stdout).to_string(),
+                err: String::from_utf8_lossy(&o.stderr).to_string(),
+            },
+            Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run boundary.sh: {e}") },
+        }
+    }
     fn rebase_waiting_start(&self, repo: &str) -> bool {
         let Ok(exe) = std::env::current_exe() else { return false };
         // batch-job: the rebase pass runs as long as its gates take, detached from the landing

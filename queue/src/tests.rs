@@ -382,6 +382,10 @@ impl Scripts for FScripts {
             })
             .collect()
     }
+    fn boundary_sync(&self, tree: &Path) -> RunOut {
+        self.calls.borrow_mut().push(format!("boundary-sync {}", tree.display()));
+        RunOut::default()
+    }
     fn rebase_waiting_start(&self, repo: &str) -> bool {
         self.calls.borrow_mut().push(format!("rebase-waiting-start {repo}"));
         true
@@ -1595,6 +1599,19 @@ fn land_local_accepts_a_round_green_for_the_head_tree() {
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     assert!(t.err().contains(&format!("tree {T1} certified by round GREEN")), "{}", t.err());
     assert!(t.scripts.calls.borrow().contains(&"rebase-waiting-start spira".to_string()), "a landing starts the rebase of the waiting queue: {:?}", t.scripts.calls.borrow());
+}
+
+#[test]
+fn land_local_syncs_the_boundary_wiki_page_only_for_the_home_repo() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("boundary-sync")), "{:?}", t.scripts.calls.borrow());
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.home_repo = "spira".into();
+    local_repo(&t);
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("boundary-sync")), "{:?}", t.scripts.calls.borrow());
 }
 
 #[test]

@@ -286,6 +286,13 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
         ),
     );
     w.out(format!("queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"));
+    if name == c.s.home_repo {
+        let tree = worktree.unwrap_or(&path);
+        let r = w.scripts.boundary_sync(tree);
+        if r.rc != 0 {
+            w.err(format!("queue.sh land-local: boundary.sh sync failed (rc={}): {}; run `spira/boundary.sh sync`", r.rc, r.err.trim()));
+        }
+    }
     if !w.scripts.rebase_waiting_start(&name) {
         w.err(format!("queue.sh land-local: could not start the rebase of the waiting beads; run `queue.sh rebase-waiting {name}`"));
     }

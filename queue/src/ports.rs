@@ -243,6 +243,8 @@ pub trait Scripts {
     fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)>;
     /// Start `queue rebase-waiting <repo>` detached, so the landing never waits on it.
     fn rebase_waiting_start(&self, repo: &str) -> bool;
+    /// `bash <tree>/spira/boundary.sh sync`: regenerate the wiki page from the landed manifest.
+    fn boundary_sync(&self, tree: &Path) -> RunOut;
 }
 
 /// A finished child: its exit status (127 when it could not run), stdout and stderr.
