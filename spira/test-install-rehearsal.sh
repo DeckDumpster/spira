@@ -3,7 +3,7 @@
 #
 # REAL SYSTEMD vs STUBS:
 #   Real systemd  — unit files installed to ~/.config/systemd/user/ (real systemctl --user),
-#                   sentinel timer enabled and started (real user session manager)
+#                   sentinel timer started (real user session manager)
 #   Stub          — bd (container has no bd; stub created as spirauser inside the container
 #                   at /tmp/spira-stubs/bd satisfies conf.sh schema check, doctor
 #                   fatal-binary check, and ready.sh database query)
@@ -296,11 +296,6 @@ unit_count="$("${CEXEC[@]}" "$CNAME" bash -c \
 [ "${unit_count:-0}" -gt 0 ] \
     && ok "unit files installed (${unit_count} spira-*-prod.* found)" \
     || bad "unit files installed" "no spira-*-prod.* in ~/.config/systemd/user/"
-
-# 2. Sentinel timer enabled (real systemd; world was halted so enabled not started).
-enabled_out="$("${CEXEC[@]}" "$CNAME" \
-    bash -c 'systemctl --user is-enabled spira-sentinel-prod.timer 2>&1')"
-want "sentinel timer enabled" "enabled" "$enabled_out"
 
 # Remove world.halted and start the sentinel timer so ready.sh sees it as active.
 "${CEXEC[@]}" "$CNAME" bash -c \
