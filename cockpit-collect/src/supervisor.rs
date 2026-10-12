@@ -387,6 +387,19 @@ pub fn merge_fragments(cfg: &Config) -> bool {
     std::fs::rename(&tmp, &cfg.snap).is_ok()
 }
 
+/// The snapshot is merged once per tick and the unit's watchdog pings only while it is
+/// younger than the stale threshold, so a tick of half the threshold or more cannot stay
+/// fresh. Refused rather than clamped: a quiet clamp hides the setting that is wrong.
+pub fn check_tick(tick: Duration, stale_s: u64) -> Result<(), String> {
+    if tick.as_secs() * 2 >= stale_s {
+        return Err(format!(
+            "SPIRA_COCKPIT_TICK={}s cannot keep the snapshot under SPIRA_SNAP_STALE_S={stale_s}s; the tick must be below half the threshold",
+            tick.as_secs()
+        ));
+    }
+    Ok(())
+}
+
 /// `collect_may_write` / `cockpit_may_write`: only the process systemd started for the
 /// cockpit service may write the shared snapshot — the fence is `INVOCATION_ID`, which
 /// systemd sets once per unit invocation. `SPIRA_COCKPIT_FORCE=1` names the override.
@@ -596,6 +609,15 @@ mod tests {
     // timeout-shorter-than-interval case" — the bash extracted the `PROBES=()` array literal
     // at runtime and checked its shape; here the array is a real Rust `const`, so the same
     // properties are asserted directly against it, no extraction needed.
+    #[test]
+    fn a_tick_that_cannot_keep_the_snapshot_fresh_is_refused() {
+        assert!(check_tick(Duration::from_secs(300), 60).is_err());
+        assert!(check_tick(Duration::from_secs(30), 60).is_err());
+        assert!(check_tick(Duration::from_secs(29), 60).is_ok());
+        assert!(check_tick(Duration::from_secs(5), 60).is_ok());
+        assert!(check_tick(Duration::from_secs(5), 7).is_err());
+    }
+
     #[test]
     fn probes_registry_is_well_formed() {
         assert_eq!(PROBES.len(), 22, "22 probes registered");

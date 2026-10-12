@@ -260,6 +260,17 @@ fn cmd_collect() -> i32 {
     }
     sweep_stale_snapshot_tmps(&io::run_dir());
     let cfg = supervisor::Config::from_env(io::run_dir());
+    let stale_s = match spira_config::process::cfg_parse::<u64>("SPIRA_SNAP_STALE_S") {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("cockpit-collect collect: {e}");
+            return 2;
+        }
+    };
+    if let Err(e) = supervisor::check_tick(cfg.tick, stale_s) {
+        eprintln!("cockpit-collect collect: {e}");
+        return 2;
+    }
     supervisor::run_loop(&cfg, |msg| eprintln!("{msg}"))
 }
 
