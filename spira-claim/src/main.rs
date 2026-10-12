@@ -65,7 +65,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
        spira-claim fayth-ready <fayth> [--json] [--express]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
        spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; the machine's claimable set)
-       spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
+       spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
        spira-claim audit --candidates F [--events F] [--lifecycle F]        (every partition's own bd list, exclusions dropped)
        spira-claim deadlocked [--apply] --merge-status F [--actor NAME]     (§9; the git check is groomer's)
@@ -99,7 +99,7 @@ struct Args {
     all: Vec<(String, String)>,
 }
 
-const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run", "--apply", "--raw", "--express"];
+const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--dry-run", "--apply", "--raw", "--express"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Args, String> {
@@ -988,7 +988,7 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
 
 /// `unpoison`'s arguments, validated, before anything is read (DESIGN.md §8.2).
 fn unpoison_opts(a: &Args) -> Result<unpoison::Opts, String> {
-    let known = ["--bead", "--cause", "--watch", "--watch-timeout-s", "--dry-run", "--credit", "--actor", "--poison-at"];
+    let known = ["--bead", "--cause", "--dry-run", "--credit", "--actor", "--poison-at"];
     a.check_known(&known)?;
     if let Some(p) = a.pos.first() {
         return Err(format!("unexpected argument {p:?} — named arguments only (--bead, --cause)"));
@@ -1016,8 +1016,6 @@ fn unpoison_opts(a: &Args) -> Result<unpoison::Opts, String> {
     Ok(unpoison::Opts {
         beads,
         cause,
-        watch: a.has("--watch"),
-        watch_timeout_s: a.num("--watch-timeout-s", unpoison::WATCH_TIMEOUT_S as u32)? as u64,
         dry_run: a.has("--dry-run"),
         credit,
         actor,
