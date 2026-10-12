@@ -428,15 +428,6 @@ fn cfg_label(key: &str) -> String {
 // file
 // =========================================================================================
 
-fn title_leads_with_repo(title: &str, repo: &str) -> bool {
-    let t = title.trim_start().to_lowercase();
-    let r = repo.to_lowercase();
-    match t.strip_prefix(&r) {
-        Some(rest) => rest.chars().next().map_or(true, |c| !(c.is_alphanumeric() || c == '_')),
-        None => false,
-    }
-}
-
 fn cmd_file(home: &str, args: &[String]) -> i32 {
     if args.is_empty() {
         eprintln!("bead: title required");
@@ -453,7 +444,6 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut submitted = false;
     let mut tip: Option<String> = None;
     let mut json = false;
-    let mut harness_title = false;
     let mut parent: Option<String> = None;
 
     let mut i = 1;
@@ -490,7 +480,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
                 tip = args.get(i).cloned();
             }
             "--json" => json = true,
-            "--harness-title" => harness_title = true,
+            "--harness-title" => {}
             other => {
                 eprintln!("bead: unknown option: {other}");
                 return 2;
@@ -514,13 +504,6 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
                 valid
             };
             eprintln!("bead: repo:{r} is not in the repo map; valid keys: {valid}");
-            return 2;
-        }
-    }
-
-    if let Some(r) = repo.as_ref().filter(|_| !harness_title && incident_parent.is_none()) {
-        if title_leads_with_repo(&title, r) {
-            eprintln!("bead: title begins with the repo name \"{r}\"; the repo is already the bead's repo: label and the pane shows it. Drop the prefix and re-file (exit 2).");
             return 2;
         }
     }
