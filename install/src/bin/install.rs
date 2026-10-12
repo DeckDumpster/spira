@@ -2003,7 +2003,7 @@ mod dependency_fetch_tests {
     /// from a plain tree has no release at all to resolve, let alone one carrying
     /// AERC_VENDORED_REL — without this escape hatch the fail-closed refusal above stops
     /// every such suite dead in phase -1, long before the phase it actually means to test
-    /// (test-install-hooks-artifact.sh and 7 siblings, caught by the landing gate). Named
+    /// (eight install suites, caught by the landing gate). Named
     /// and loud: Ok(()), but only after printing why aerc was not installed — never a
     /// silent skip, and no caller with a real release has reason to set it.
     #[test]
