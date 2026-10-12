@@ -322,11 +322,24 @@ pub fn bulk(bd: &Bd, h: &Host, ready_args: &[String]) -> Reads {
     }
 }
 
+/// The audit's read: every row without its free text, uncached (the cache holds the
+/// full list the main pass parses), so no body is read, parsed or written to disk.
+pub fn bulk_brief(bd: &Bd, h: &Host, ready_args: &[String]) -> Reads {
+    let mut list = list_all_args();
+    list.push("--brief".into());
+    let mut ready = ready_args.to_vec();
+    ready.push("--brief".into());
+    Reads {
+        list: read_json(bd, h, &list),
+        ready: read_json(bd, h, &ready),
+    }
+}
+
 const FINGERPRINT_SQL: &str = "select dolt_hashof_db() as h";
 
 /// The store's content hash, working set included; None when it cannot be read, which
 /// means "re-read everything".
-fn fingerprint(bd: &Bd, h: &Host) -> Option<String> {
+pub fn fingerprint(bd: &Bd, h: &Host) -> Option<String> {
     if bd.cfg.bd_fixture.is_some() {
         return None;
     }

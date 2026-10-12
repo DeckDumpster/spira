@@ -424,9 +424,10 @@ impl<'a> Sentinel<'a> {
     }
 
     /// The bulk reads and the DB check (every mode but --summon-only).
-    fn read_store(&self) -> Result<Snapshot, i32> {
+    fn read_store(&self, brief: bool) -> Result<Snapshot, i32> {
         let bd = self.bd();
-        let r = store::bulk(&bd, self.h, &store::ready_raw_args(&self.cfg));
+        let args = store::ready_raw_args(&self.cfg);
+        let r = if brief { store::bulk_brief(&bd, self.h, &args) } else { store::bulk(&bd, self.h, &args) };
         let (list_raw, list) = match r.list {
             Ok(x) => x,
             Err(e) => {
@@ -467,14 +468,13 @@ impl<'a> Sentinel<'a> {
     }
 
     fn full(&self) -> i32 {
-        let snap = match self.read_store() {
+        if self.mode == Mode::Audit {
+            return self.audit_run();
+        }
+        let snap = match self.read_store(false) {
             Ok(s) => s,
             Err(rc) => return rc,
         };
-        if self.mode == Mode::Audit {
-            self.export_snapshot(&snap);
-            return self.audit(&snap);
-        }
 
         // STATE — the open plan backlog. There is no goal epic: Spira works the whole
         // backlog continuously (sp-2f9sa, sp-k6m1m).
@@ -565,6 +565,60 @@ impl<'a> Sentinel<'a> {
         i32::from(self.lc_failed.get())
     }
 
+    /// What the audit's checks decide from: the content store's hash, the lifecycle event
+    /// seq and every swept repo's landing sha. None when any part cannot be read — then the
+    /// audit runs.
+    fn audit_key(&self) -> Option<String> {
+        let content = store::fingerprint(&self.bd(), self.h)?;
+        let o = self.h.run(Spec::args_owned(self.cfg.lc_bin.clone(), vec!["event-seq".into()]));
+        let seq = o.ok().then(|| o.stdout.trim().to_string()).filter(|s| !s.is_empty())?;
+        let mut key = format!("{content}\n{seq}\n");
+        for r in self.ctx.repos.iter().filter(|r| !r.forge_queued) {
+            key.push_str(&format!("{}={}\n", r.name, self.landref_sha(r).unwrap_or_default()));
+        }
+        Some(key)
+    }
+
+    fn audit_unchanged(&self, key: &str) -> bool {
+        let Ok(stamp) = std::fs::read_to_string(self.cfg.run.join("audit.seen")) else {
+            return false;
+        };
+        let Some((at, seen)) = stamp.split_once('\n') else {
+            return false;
+        };
+        let age = at.parse::<i64>().map_or(i64::MAX, |t| self.h.now() - t);
+        seen == key && (0..self.cfg.audit_max_idle).contains(&age)
+    }
+
+    fn audit_status(&self) {
+        let _ = std::fs::write(
+            self.cfg.run.join("audit.status"),
+            format!("SP_AUDIT_AT={}\nSP_AUDIT_RC=0\n", self.h.now()),
+        );
+    }
+
+    /// The audit, run only when its inputs moved since the last clean run (or the idle
+    /// ceiling passed), over a body-free read that is never written out.
+    fn audit_run(&self) -> i32 {
+        let key = self.audit_key();
+        if let Some(k) = &key {
+            if self.audit_unchanged(k) {
+                self.audit_status();
+                self.log("audit: store, lifecycle events and landing refs unchanged — skipped");
+                return 0;
+            }
+        }
+        let snap = match self.read_store(true) {
+            Ok(s) => s,
+            Err(rc) => return rc,
+        };
+        let rc = self.audit(&snap);
+        if let (0, Some(k)) = (rc, key) {
+            let _ = std::fs::write(self.cfg.run.join("audit.seen"), format!("{}\n{k}", self.h.now()));
+        }
+        rc
+    }
+
     fn audit(&self, snap: &Snapshot) -> i32 {
         self.check4(snap);
         if let Some(rows) = self.lc_rows() {
@@ -575,10 +629,7 @@ impl<'a> Sentinel<'a> {
             self.check7c(snap);
             self.check7d();
         }
-        let _ = std::fs::write(
-            self.cfg.run.join("audit.status"),
-            format!("SP_AUDIT_AT={}\nSP_AUDIT_RC=0\n", self.h.now()),
-        );
+        self.audit_status();
         self.log(&format!(
             "audit pass complete — {} action(s), {} progress",
             self.acted.get(),
