@@ -240,5 +240,11 @@ want   "cut requires an explicit workflow_dispatch"                     "github.
 want   "cut requires the cut input to be true"                         "inputs.cut == true"                        "$_cut_if"
 nowant "a push event cannot reach gate.yml's cut job (must fail pre-fix)" "github.event_name == 'push'"             "$_cut_if"
 
+_g="$(cat "$GATE_WORKFLOW")"
+_fs="$(awk '/^      force_spill:$/{f=1;next} f&&/^      [a-z_]+:$/{exit} f' "$GATE_WORKFLOW")"
+want "gate.yml force_spill input exists (positive control)" "type: boolean" "$_fs"
+want "force_spill defaults false" "default: false" "$_fs"
+want "provision spill is ec2-only only for a true force_spill" "spill:              \${{ inputs.force_spill && 'ec2-only' || 'ec2' }}" "$_g"
+
 # ============================================================================
 tl_summary

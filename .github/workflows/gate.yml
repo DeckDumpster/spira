@@ -32,6 +32,10 @@
 #   gate check" step gets its positive control (law-absence-needs-a-positive-
 #   control) from the queue PR's own run instead of a fresh one.
 #
+# force_spill (workflow_dispatch, default false) sends provision straight to EC2.
+# Used by the Concierge and the spill probe proof after a runner/AMI change;
+# every other run keeps spilling only when the hypervisor is full.
+#
 # EXIT 75 IS NOT A BRANCH FAILURE. testenv-batch exits 2 when the container never
 # came up and 3 when the install inside it failed. In both cases the branch was
 # never tested, so reporting it as tested-and-bad is a lie in the expensive
@@ -85,6 +89,11 @@ on:
         default: ''
       cut:
         description: 'Cut a release from this ref (must already hold a green gate check)'
+        type: boolean
+        required: false
+        default: false
+      force_spill:
+        description: 'Run the job on EC2 now (spill: ec2-only), skipping Proxmox'
         type: boolean
         required: false
         default: false
@@ -298,7 +307,7 @@ jobs:
           pve-ca-cert:        ${{ vars.PVE_CA_CERT }}
           pve-node:           ${{ vars.PVE_NODE }}
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
-          spill:              ec2
+          spill:              ${{ inputs.force_spill && 'ec2-only' || 'ec2' }}
           spill-after-seconds: 600
           spill-max-instances: 2
           aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
