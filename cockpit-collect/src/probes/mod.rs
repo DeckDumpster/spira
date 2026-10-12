@@ -660,8 +660,9 @@ pub fn core_counts_keys() -> Kv {
     let mut out = Kv::new();
     let ask_label = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     // Asks are not work beads: bd status is their only state (spira_config::nonwork).
-    let [flag, open] = nonwork::status_args(Kind::Ask, Which::Open);
-    let rows = io::json_rows(io::contentjson(&["list", &flag, &open, "--limit", "0", "--label", &ask_label]));
+    let [_, open] = nonwork::status_args(Kind::Ask, Which::Open);
+    let open: Vec<&str> = open.split(',').collect();
+    let rows = io::json_rows(io::pane_beads(&ask_label)).map(|r| r.into_iter().filter(|b| b.get("status").and_then(Value::as_str).is_some_and(|s| open.contains(&s))).collect::<Vec<_>>());
     match rows {
         None => push(&mut out, "SP_WAITING", "?"),
         Some(rows) => push(&mut out, "SP_WAITING", rows.len().to_string()),
@@ -741,7 +742,7 @@ pub fn sphere_keys(cfg: &Cfg) -> Kv {
 
     let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let rows = io::json_rows(io::contentjson(&["list", "--limit", "0", "--label", &label]));
+    let rows = io::json_rows(io::live_beads(&label));
     match rows.zip(lc_rows.as_ref()) {
         None => {
             push(&mut out, "SP_OPEN", "?");
@@ -793,7 +794,7 @@ pub fn repo_label_keys(cfg: &Cfg) -> Kv {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let rows = io::json_rows(io::contentjson(&["list", "--limit", "0"]));
+    let rows = io::json_rows(io::live_beads(""));
     match rows {
         None => {
             push(&mut out, "SP_REPO_UNMAPPED", "?");
@@ -824,7 +825,7 @@ pub fn repo_label_keys(cfg: &Cfg) -> Kv {
 
 pub fn dup_refs_keys() -> Kv {
     let mut out = Kv::new();
-    let rows = io::json_rows(io::contentjson(&["list", "--all", "--limit", "0", "--label", "spira,incident"]));
+    let rows = io::json_rows(io::pane_beads("spira,incident"));
     // An incident bead is a work bead (sp-jgjvh): whether it is over is its lifecycle row's.
     let Some((rows, lc)) = rows.zip(lc::state_index()) else {
         push(&mut out, "SP_DUP_REFS", "?");
@@ -995,7 +996,7 @@ const CZAR_CLASSES: &[(&str, &str)] = &[
 pub fn czar_triggers_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let label = cfg.czar_label.as_str();
-    let raw = io::contentjson(&["list", "--label", label, "--all", "--limit", "0", "--brief"]);
+    let raw = io::history_beads(label);
     let rows = match &raw {
         Some(s) if !s.trim().is_empty() => serde_json::from_str::<Value>(s.trim()).ok().map(|v| match v {
             Value::Array(a) => a,

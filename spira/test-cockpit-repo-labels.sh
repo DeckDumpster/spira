@@ -52,7 +52,7 @@ run_repo_labels() {    # run_repo_labels <fixture-file> [KEY=val ...]
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" \
         SPIRA_FAYTHS=t SPIRA_ASK_LABEL=needs-ryan
     [ "$#" -gt 0 ] && tl_config "$@"
-    env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_BDJSON_FIXTURE="$fixture" \
         SPIRA_TOML="$SPIRA_TOML" \

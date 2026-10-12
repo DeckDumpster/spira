@@ -30,6 +30,10 @@ fn forge_state(queue_dir: &Path, repo: &str, batch: &str) -> Option<Vec<(String,
 }
 
 fn list_batches() -> Option<String> {
+    super::lc::shared_live("batches", list_batches_live)
+}
+
+fn list_batches_live() -> Option<String> {
     let bin = spira_config::lifecycle_row::lc_bin();
     let o = Command::new("timeout").arg("5").arg(bin).args(["list", "--batches"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())

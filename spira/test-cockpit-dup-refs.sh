@@ -45,7 +45,7 @@ lc_mirror_bd "$TMP/lc"
 # answered from a canned-JSON fixture rather than a live store.
 dup_refs() {    # dup_refs <fixture-file>
     tl_config SPIRA_DB="$TMP/nodb" SPIRA_RUN="$TMP"
-    env -i PATH="$PATH" HOME="$HOME" \
+    env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$PATH" HOME="$HOME" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         SPIRA_CONF=/nonexistent \
         SPIRA_BDJSON_FIXTURE="$1" \

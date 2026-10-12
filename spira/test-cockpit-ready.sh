@@ -40,6 +40,7 @@ chmod +x "$PROBE_LC/spira-lc"
 
 run_probe() {   # run_probe <SPIRA_BD=path> -> stdout of probe()
     local bd_path="$1"
+    rm -rf "$RUN/pane-read"
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
         SPIRA_FAYTHS=builder SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_BD="$bd_path" SPIRA_CHAMBER="$HERE/chamber"
@@ -82,6 +83,7 @@ echo "partition map: an unresolvable persona is a REFUSAL, not an empty queue"
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
     SPIRA_FAYTHS=no-such-persona SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
     SPIRA_BD="$BD_EMPTY" SPIRA_CHAMBER="$HERE/chamber"
+rm -rf "$RUN/pane-read"
 _unres_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_TOML="$SPIRA_TOML" \

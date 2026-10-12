@@ -88,7 +88,13 @@ pub fn stale_age() -> i64 {
 /// Rows in `state`, or every row when `state` is `None`.
 pub fn list(state: Option<&str>) -> Option<Vec<LcRow>> {
     let key = format!("list-{}", state.unwrap_or("all"));
-    parse_rows(&last_good(&cache_dir(), &key, io::now(), || list_live(state))?)
+    parse_rows(&last_good(&cache_dir(), &key, io::now(), || shared_live(&key, || list_live(state)))?)
+}
+
+/// One lifecycle read per `SPIRA_PANE_READ_TTL` across every probe process.
+pub fn shared_live(key: &str, fetch: impl FnOnce() -> Option<String>) -> Option<String> {
+    let ttl = io::ttl_from_env("SPIRA_PANE_READ_TTL", io::PANE_TTL_SECS);
+    io::shared_read(&cache_dir().join("live"), key, ttl, io::now(), fetch)
 }
 
 fn list_live(state: Option<&str>) -> Option<String> {
@@ -111,7 +117,7 @@ fn list_live(state: Option<&str>) -> Option<String> {
 /// state, holder and holds for the probes that used to read bd `status` (sp-mve9i, design
 /// §3.4: "people and the cockpit read state from spira-lc"). `None` is CANNOT TELL.
 pub fn state_index() -> Option<HashMap<String, Row>> {
-    let raw = last_good(&cache_dir(), "state-index", io::now(), || lc_state::list_raw().ok().filter(|r| lc_state::parse_rows(r).is_ok()))?;
+    let raw = last_good(&cache_dir(), "state-index", io::now(), || shared_live("state-index", || lc_state::list_raw().ok().filter(|r| lc_state::parse_rows(r).is_ok())))?;
     lc_state::parse_rows(&raw).ok().map(lc_state::index)
 }
 

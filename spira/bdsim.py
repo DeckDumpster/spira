@@ -24,8 +24,11 @@ import json
 import sys
 
 
-def bd_list(beads, status, labels, all_, limit):
+def bd_list(beads, status, labels, all_, limit, closed_after=None):
     def keep(b):
+        if closed_after is not None:
+            if b.get("status") != "closed" or (b.get("closed_at") or closed_after) < closed_after:
+                return False
         if status is not None:
             if b.get("status") not in status:
                 return False
@@ -45,7 +48,7 @@ def bd_show(pool, ids):
 
 
 def _parse_list_args(args):
-    status, labels, all_, limit = None, [], False, 0
+    status, labels, all_, limit, closed_after = None, [], False, 0, None
     i = 0
     while i < len(args):
         a = args[i]
@@ -59,13 +62,16 @@ def _parse_list_args(args):
         elif a in ("--label", "-l"):
             i += 1
             labels.extend(x for x in args[i].split(",") if x)
+        elif a == "--closed-after":
+            i += 1
+            closed_after = args[i]
         elif a in ("--limit", "-n"):
             i += 1
             limit = int(args[i])
         else:
             sys.exit("bdsim: list %r is not simulated" % (a,))
         i += 1
-    return status, labels, all_, limit
+    return status, labels, all_, limit, closed_after
 
 
 def main(argv):
@@ -86,8 +92,8 @@ def main(argv):
         sys.exit(1)
 
     if sub == "list":
-        status, labels, all_, limit = _parse_list_args(rest)
-        print(json.dumps(bd_list(top_list, status, labels, all_, limit)))
+        status, labels, all_, limit, closed_after = _parse_list_args(rest)
+        print(json.dumps(bd_list(top_list, status, labels, all_, limit, closed_after)))
     elif sub == "show":
         ids = [a for a in rest if not a.startswith("-")]
         show_src = top.get("show", top_list)

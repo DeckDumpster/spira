@@ -38,7 +38,7 @@ run_reachable() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
         SPIRA_FAYTHS=builder SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SCOPE_LABEL=spira SPIRA_BD="$bd_path" SPIRA_CHAMBER="$HERE/chamber"
-    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         cockpit-collect probe reachable 2>/dev/null
@@ -50,7 +50,7 @@ run_reachable_scoped() {
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
         SPIRA_FAYTHS=builder SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SCOPE_LABEL="$scope" SPIRA_BD="$bd_path" SPIRA_CHAMBER="$HERE/chamber"
-    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         cockpit-collect probe reachable 2>/dev/null
