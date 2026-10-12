@@ -230,6 +230,7 @@ want "block: stdout contains block"  "block"  "$block_stdout"
 vfile2="$VERDICTS/$TAG2.verdict"
 want "block: verdict=block"    "verdict: block"  "$(cat "$vfile2" 2>/dev/null)"
 want "block: findings > 0"     "findings: 1"     "$(cat "$vfile2" 2>/dev/null)"
+echo "DBG: $block_stdout" | head -20
 
 # A finding bead must have been filed in the database.
 db_count() {
