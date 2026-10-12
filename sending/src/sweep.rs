@@ -128,9 +128,6 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     // this would delete work under a LANDED that is true about the past.
     if b.is_some() && c.w.lc_landed(id) {
         if g.cherry_unapplied(lr, br) && !g.landed_by_subject(lr, br, id, 2000) {
-            if c.w.lc_terminal(id) {
-                return Disp::ArchiveTerminal;
-            }
             return Disp::KeepCherryUnapplied;
         }
         return Disp::SendOtherPr;
