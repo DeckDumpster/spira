@@ -244,7 +244,10 @@ impl Config {
         m.insert("SPIRA_SNAP_STALE_S".into(), self.snap_stale_s.clone());
         m.insert("SPIRA_WATCHTOWER_START_TIMEOUT_S".into(), self.watchtower_start_timeout_s.clone());
         // DOLT is not a registered config key (spira/conf.d) — ambient env, else a PATH lookup.
-        m.insert("DOLT".into(), self.env("DOLT").or_else(|| self.which("dolt")).unwrap_or_default());
+        let env_bin = self.env("HOME").map(|h| spira_config::spira_env_bin(&h)).unwrap_or_default();
+        let env_dolt = PathBuf::from(&env_bin).join("dolt");
+        m.insert("SPIRA_ENV_PATH".into(), env_bin);
+        m.insert("DOLT".into(), self.env("DOLT").or_else(|| crate::fsutil::is_executable(&env_dolt).then(|| env_dolt.display().to_string())).or_else(|| self.which("dolt")).unwrap_or_default());
         m.insert(crate::units::SCCACHE_DAV_ADDR_KEY.into(), self.sccache_dav_addr.clone());
         m.insert("SPIRA_LC_PASSWORD_FILE".into(), self.lc_password_file.clone());
         // The spec every unit runs under (the one source); empty refuses any template using it.

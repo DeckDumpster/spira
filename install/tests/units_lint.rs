@@ -27,7 +27,7 @@ fn host() -> HostValues {
         testdb_port: "3308".into(),
         snap_stale_s: "600".into(),
         watchtower_start_timeout_s: "360".into(),
-        path_tail: "".into(),
+        path_tail: "".into(), env_bin: "/rel/env/bin".into(),
         sccache_dav_addr: "127.0.0.1:1".into(),
         repo_map: "/rel/repomap".into(),
         lc_password_file: "/rel/run/lc.credential".into(),

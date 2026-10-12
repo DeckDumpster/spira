@@ -118,7 +118,9 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     });
     let cockpit = spira_config::process::cfg("SPIRA_COCKPIT")?;
     let dav_addr = sccache_dav_addr()?;
-    let dolt = nonempty_env("DOLT").or_else(|| which("dolt")).unwrap_or_default();
+    let env_bin = nonempty_env("HOME").map(|h| spira_config::spira_env_bin(&h)).unwrap_or_default();
+    let env_dolt = Path::new(&env_bin).join("dolt");
+    let dolt = nonempty_env("DOLT").or_else(|| env_dolt.is_file().then(|| env_dolt.to_string_lossy().into_owned())).or_else(|| which("dolt")).unwrap_or_default();
     // SPIRA_LC_PASSWORD_FILE is PROCEDURAL (spira/conf.d): its default depends on whether
     // the same-user credential file exists RIGHT NOW, which a value baked into `$SPIRA_TOML`
     // at generation time could not track — `spira_config::resolve::lc_credential_default`
@@ -157,6 +159,7 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
         snap_stale_s: spira_config::process::cfg("SPIRA_SNAP_STALE_S")?,
         watchtower_start_timeout_s: spira_config::process::cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
         path_tail: crate::orchestrate::path_tail().unwrap_or_default(),
+        env_bin,
         // sp-xtdqi-2: the key name lives once, in `release::units` — `release`'s own
         // activate/render gate reads the same constant, never a second hand-written literal.
         sccache_dav_addr: dav_addr,

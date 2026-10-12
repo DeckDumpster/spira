@@ -175,6 +175,7 @@ impl World {
     fn with_git_and_reg(git: FakeGit, reg: Registered) -> World {
         let sb = Sandbox::new();
         let mut env = Env::new();
+        env.insert("HOME".into(), sb.p().join("home").display().to_string());
         env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
         env.insert("SPIRA_TOML".into(), sb.p().join("cfg.toml").display().to_string());
         let reg = Registered { instance: "prod".into(), ..reg };
@@ -778,7 +779,7 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
     let r = rel.display().to_string();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
     let mut host = BTreeMap::new();
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE", "SPIRA_TOML"] {
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_ENV_PATH", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE", "SPIRA_TOML"] {
         host.insert(k.to_string(), format!("/host/{k}"));
     }
     host.insert("SPIRA_PATH_TAIL".to_string(), tail.to_string());
@@ -797,7 +798,7 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
         let path_lines: Vec<&str> = out.lines().filter(|l| l.starts_with("Environment=PATH=")).collect();
         assert_eq!(
             path_lines,
-            [format!("Environment=PATH={r}/bin:{r}/spira:/usr/local/bin:/usr/bin:/bin{want_tail}").as_str()],
+            [format!("Environment=PATH={r}/bin:{r}/spira:/host/SPIRA_ENV_PATH:/usr/local/bin:/usr/bin:/bin{want_tail}").as_str()],
             "{name}"
         );
         assert!(out.contains(&format!("\nEnvironment=SPIRA_RELEASE={r}\n")), "{name}");
