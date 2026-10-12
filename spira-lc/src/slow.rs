@@ -34,6 +34,17 @@ fn clean(s: &str) -> String {
 
 const CLIENT: &str = "spira-lc";
 const INTERPRETERS: [&str; 6] = ["bash", "sh", "dash", "python3", "python", "env"];
+const WRAPPERS: [&str; 10] = ["timeout", "env", "nice", "ionice", "nohup", "setsid", "stdbuf", "flock", "chrt", "spira-supervise"];
+const MAX_ANCESTORS: usize = 8;
+
+/// A process that only launches another: a known wrapper program, or an interpreter run with
+/// `-c` (no script of its own to name).
+fn is_wrapper(cmdline: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(cmdline);
+    let mut args = text.split('\0').filter(|a| !a.is_empty());
+    let Some(prog) = args.next().map(basename) else { return false };
+    WRAPPERS.contains(&prog) || (INTERPRETERS.contains(&prog) && args.any(|a| a == "-c" || (a.starts_with('-') && !a.starts_with("--") && a.contains('c'))))
+}
 
 fn basename(s: &str) -> &str {
     s.rsplit('/').next().unwrap_or(s)
@@ -74,7 +85,17 @@ pub fn caller_of_pid(pid: i32) -> String {
         return clean(&comm);
     }
     let named = std::fs::read(format!("/proc/{pid}/environ")).ok().and_then(|e| env_caller(&e));
-    let parent = || parent_pid(pid).and_then(|pp| cmdline_caller(&std::fs::read(format!("/proc/{pp}/cmdline")).ok()?));
+    let parent = || {
+        let mut at = parent_pid(pid)?;
+        for _ in 0..MAX_ANCESTORS {
+            let cmdline = std::fs::read(format!("/proc/{at}/cmdline")).ok()?;
+            if !is_wrapper(&cmdline) {
+                return cmdline_caller(&cmdline);
+            }
+            at = parent_pid(at).filter(|p| *p > 1)?;
+        }
+        None
+    };
     clean(&named.or_else(parent).unwrap_or(comm))
 }
 
@@ -219,6 +240,41 @@ mod tests {
         assert_eq!(run(Some("wrapper-x")), "wrapper-x");
         let unnamed = run(None);
         assert_ne!(unnamed, CLIENT, "the parent stands in when nothing is declared");
+    }
+
+    #[test]
+    fn wrappers_are_recognised_and_programs_are_not() {
+        for w in [&b"timeout\x0030\0spira-lc\0show\0"[..], b"/usr/bin/env\0X=1\0y\0", b"nice\0-n\x0010\0z\0", b"bash\0-c\0. lib; f\0", b"spira-supervise\0x\0"] {
+            assert!(is_wrapper(w), "{:?}", String::from_utf8_lossy(w));
+        }
+        for p in [&b"gate-worker\0run\0"[..], b"bash\0-e\0/x/bead-sweep.sh\0watch\0", b"batcher\0sifts\0", b""] {
+            assert!(!is_wrapper(p), "{:?}", String::from_utf8_lossy(p));
+        }
+    }
+
+    #[test]
+    fn a_call_through_timeout_is_counted_under_the_program_that_made_it() {
+        let dir = testkit::TempDir::new("slow-ancestor");
+        let client = dir.path().join(CLIENT);
+        let parent = dir.path().join("gate-worker");
+        std::os::unix::fs::symlink("/bin/dash", &client).unwrap();
+        std::os::unix::fs::symlink("/bin/dash", &parent).unwrap();
+        let script = format!("timeout 30 {} -c 'read x'; true", client.display());
+        let mut child = std::process::Command::new(&parent)
+            .args(["-c", &script])
+            .env_remove("SPIRA_CALLER")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let leaf = std::fs::read_dir("/proc")
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<i32>().ok())
+            .find(|p| std::fs::read_to_string(format!("/proc/{p}/comm")).is_ok_and(|c| c.trim() == CLIENT) && parent_pid(parent_pid(*p).unwrap_or(0)) == Some(child.id() as i32));
+        let who = leaf.map(caller_of_pid);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(who.as_deref().is_some_and(|w| w.starts_with("gate-worker")), "{who:?}");
     }
 
     #[test]
