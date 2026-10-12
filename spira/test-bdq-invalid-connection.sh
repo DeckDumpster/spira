@@ -13,7 +13,7 @@
 #
 # WHAT THIS SUITE DOES NOT USE. No real bd, no testdb: the defect is entirely about how bdq
 # threads a specific error string through the shell, which a real database cannot be made to
-# produce on demand — the same reasoning test-claim-retry.sh and test-install-dolt-ready.sh
+# produce on demand — the same reasoning test-claim-retry.sh
 # give for stubbing bd directly.
 #
 # PROPERTIES UNDER TEST

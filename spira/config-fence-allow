@@ -124,7 +124,6 @@ spira/test-hold.sh
 spira/test-incident.sh
 spira/test-install-conf-seed.sh
 spira/test-install-dolt-port-wait.sh
-spira/test-install-dolt-ready.sh
 spira/test-install-exec.sh
 spira/test-landing-base-fail.sh
 spira/test-landing-cutover-round.sh
