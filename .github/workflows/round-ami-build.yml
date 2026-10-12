@@ -92,7 +92,8 @@ jobs:
           aws ec2 wait instance-status-ok --instance-ids "$id"
 
           toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
-          cmds="$(jq -nc --arg b "${{ vars.ROUND_AMI_STAGING_BUCKET }}" --arg r "${{ github.run_id }}" --arg t "$toolchain" \
+          url="$(aws s3 presign "s3://${{ vars.ROUND_AMI_STAGING_BUCKET }}/round-ami/${{ github.run_id }}.tgz" --expires-in 14400)"
+          cmds="$(jq -nc --arg u "$url" --arg t "$toolchain" \
             -f round-vm/ssm-commands.jq)"
           cid="$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript \
             --timeout-seconds 3600 --parameters "$cmds" --query Command.CommandId --output text)"
