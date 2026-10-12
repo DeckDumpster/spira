@@ -42,17 +42,31 @@ pub fn parse_probes(text: &str) -> Result<Vec<Probe>, String> {
     Ok(out)
 }
 
-/// `caller/verb=count`, busiest first, from `spira-lc stats`; empty when the answer is unreadable.
-pub fn top_callers(stats: &str, n: usize) -> Vec<String> {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(stats) else { return vec![] };
+/// Cumulative `caller/verb -> count` from `spira-lc stats`; empty when the answer is unreadable.
+pub fn caller_counts(stats: &str) -> BTreeMap<String, u64> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(stats) else { return BTreeMap::new() };
     let mut by: BTreeMap<String, u64> = BTreeMap::new();
     for c in v["callers"].as_array().into_iter().flatten() {
         let (Some(who), Some(verb), Some(k)) = (c["caller"].as_str(), c["verb"].as_str(), c["count"].as_u64()) else { continue };
         *by.entry(format!("{who}/{verb}")).or_default() += k;
     }
-    let mut v: Vec<(String, u64)> = by.into_iter().collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    v.into_iter().take(n).map(|(k, c)| format!("{k}={c}")).collect()
+    by
+}
+
+/// `caller/verb=N/min` over the window between two samples, busiest first. A counter that went
+/// down means the server restarted, so its whole current count belongs to the window.
+pub fn top_callers(prev: &BTreeMap<String, u64>, prev_at: u64, cur: &BTreeMap<String, u64>, now: u64, n: usize) -> Vec<String> {
+    let secs = now.saturating_sub(prev_at).max(1) as f64;
+    let mut v: Vec<(String, f64)> = cur
+        .iter()
+        .map(|(k, &c)| {
+            let p = prev.get(k).copied().unwrap_or(0);
+            (k.clone(), (if c >= p { c - p } else { c }) as f64 * 60.0 / secs)
+        })
+        .filter(|(_, r)| *r > 0.0)
+        .collect();
+    v.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.into_iter().take(n).map(|(k, r)| format!("{k}={r:.1}/min")).collect()
 }
 
 pub struct Timing {
@@ -84,13 +98,25 @@ pub fn alarms(timings: &[Timing], limit_ms: u64, callers: &[String]) -> Vec<Stri
         .collect()
 }
 
-/// Every alarm line for one pass; `stats` is asked only when something is slow.
-pub fn pass(probes: &[Probe], limit_ms: u64, stats_argv: &[String], clock: &dyn Clock, runner: &mut dyn Runner) -> (Vec<Timing>, Vec<String>) {
+/// Every alarm line for one pass, and the stats sample to diff the next pass against (`None`
+/// when stats were unreadable, so the older baseline stays).
+pub fn pass(
+    probes: &[Probe],
+    limit_ms: u64,
+    stats_argv: &[String],
+    prior: &Health,
+    clock: &dyn Clock,
+    runner: &mut dyn Runner,
+) -> (Vec<Timing>, Vec<String>, Option<BTreeMap<String, u64>>) {
     let timings = time_probes(probes, clock, runner);
-    let any = timings.iter().any(|t| t.error.is_none() && t.millis > limit_ms);
-    let callers = if any { top_callers(&runner.run(stats_argv).unwrap_or_default(), 3) } else { vec![] };
+    let cur = caller_counts(&runner.run(stats_argv).unwrap_or_default());
+    let cur = (!cur.is_empty()).then_some(cur);
+    let callers = match (&cur, prior.sample_at) {
+        (Some(c), Some(at)) => top_callers(&prior.sample, at, c, clock.epoch_secs(), 3),
+        _ => vec![],
+    };
     let lines = alarms(&timings, limit_ms, &callers);
-    (timings, lines)
+    (timings, lines, cur)
 }
 
 pub struct Settings {
@@ -104,6 +130,8 @@ pub struct Settings {
 pub struct Health {
     pub last_pass: Option<u64>,
     pub alarms: BTreeMap<String, u64>,
+    pub sample_at: Option<u64>,
+    pub sample: BTreeMap<String, u64>,
 }
 
 impl Health {
@@ -112,6 +140,14 @@ impl Health {
         for l in text.lines() {
             if let Some(n) = l.strip_prefix("pass ") {
                 h.last_pass = n.trim().parse().ok();
+            } else if let Some(n) = l.strip_prefix("sample ") {
+                h.sample_at = n.trim().parse().ok();
+            } else if let Some(r) = l.strip_prefix("count ") {
+                if let Some((n, key)) = r.split_once('\t') {
+                    if let Ok(n) = n.trim().parse() {
+                        h.sample.insert(key.to_string(), n);
+                    }
+                }
             } else if let Some(r) = l.strip_prefix("alarm ") {
                 if let Some((n, key)) = r.split_once('\t') {
                     if let Ok(n) = n.trim().parse() {
@@ -127,6 +163,12 @@ impl Health {
         let mut out = String::new();
         if let Some(n) = self.last_pass {
             out.push_str(&format!("pass {n}\n"));
+        }
+        if let Some(n) = self.sample_at {
+            out.push_str(&format!("sample {n}\n"));
+        }
+        for (k, n) in &self.sample {
+            out.push_str(&format!("count {n}\t{k}\n"));
         }
         for (k, n) in &self.alarms {
             out.push_str(&format!("alarm {n}\t{k}\n"));
@@ -188,8 +230,12 @@ pub fn run_pass(
             return None;
         }
     }
-    let (timings, all) = pass(probes, cfg.budget_ms, stats_argv, clock, runner);
-    let mut health = Health { last_pass: Some(now), alarms: BTreeMap::new() };
+    let (timings, all, cur) = pass(probes, cfg.budget_ms, stats_argv, prior, clock, runner);
+    let mut health = Health { last_pass: Some(now), ..Health::default() };
+    match cur {
+        Some(c) => (health.sample_at, health.sample) = (Some(now), c),
+        None => (health.sample_at, health.sample) = (prior.sample_at, prior.sample.clone()),
+    }
     let mut lines = Vec::new();
     for l in all {
         let key = alarm_key(&l);
@@ -249,9 +295,10 @@ mod tests {
     const STATS: &str = r#"{"callers":[{"verb":"list","caller":"watcher","count":28},{"verb":"list","caller":"cockpit","count":5},{"verb":"show","caller":"watcher","count":2},{"verb":"event","caller":"sentinel","count":1}]}"#;
 
     fn run(costs: &[(&str, u64)], limit: u64) -> (Vec<String>, bool) {
-        let clock = Stub { now: Cell::new(0), epoch: Cell::new(0) };
+        let clock = Stub { now: Cell::new(0), epoch: Cell::new(60) };
         let mut r = Scripted { clock: &clock, costs: costs.iter().map(|(k, v)| (k.to_string(), *v)).collect(), stats: STATS.into(), asked_stats: false };
-        let (_, lines) = pass(&parse_probes(PROBES).unwrap(), limit, &["stats".to_string()], &clock, &mut r);
+        let prior = Health { sample_at: Some(0), ..Health::default() };
+        let (_, lines, _) = pass(&parse_probes(PROBES).unwrap(), limit, &["stats".to_string()], &prior, &clock, &mut r);
         (lines, r.asked_stats)
     }
 
@@ -290,15 +337,40 @@ mod tests {
     fn a_probe_past_the_limit_alarms_with_its_time_and_the_top_callers() {
         let (lines, asked) = run(&[("list", 730), ("show", 120), ("gone", 0)], 500);
         assert!(asked);
-        assert!(lines.contains(&"PERF SLOW list 730ms (limit 500ms) top callers: watcher/list=28, cockpit/list=5, watcher/show=2".to_string()), "{lines:?}");
+        assert!(lines.contains(&"PERF SLOW list 730ms (limit 500ms) top callers: watcher/list=28.0/min, cockpit/list=5.0/min, watcher/show=2.0/min".to_string()), "{lines:?}");
         assert!(lines.iter().all(|l| !l.contains(" show ")), "{lines:?}");
     }
 
     #[test]
-    fn exactly_the_limit_is_not_slow_and_a_quiet_pass_never_asks_for_callers() {
-        let (lines, asked) = run(&[("list", 500), ("show", 1), ("gone", 0)], 500);
+    fn exactly_the_limit_is_not_slow() {
+        let (lines, _) = run(&[("list", 500), ("show", 1), ("gone", 0)], 500);
         assert!(lines.is_empty(), "{lines:?}");
-        assert!(!asked);
+    }
+
+    fn counts(rows: &[(&str, u64)]) -> BTreeMap<String, u64> {
+        rows.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn a_steady_caller_outranks_a_historical_burst_whose_live_rate_is_zero() {
+        let prev = counts(&[("gh-intake/show", 12_430), ("batcher/rounds", 100), ("idle/x", 5)]);
+        let cur = counts(&[("gh-intake/show", 12_430), ("batcher/rounds", 126), ("idle/x", 5)]);
+        assert_eq!(top_callers(&prev, 1000, &cur, 1060, 3), vec!["batcher/rounds=26.0/min".to_string()]);
+    }
+
+    #[test]
+    fn a_restarted_counter_counts_from_zero_and_a_window_scales_to_minutes() {
+        let prev = counts(&[("a/x", 900)]);
+        let cur = counts(&[("a/x", 30), ("b/y", 60)]);
+        assert_eq!(top_callers(&prev, 0, &cur, 300, 3), vec!["b/y=12.0/min".to_string(), "a/x=6.0/min".to_string()]);
+    }
+
+    #[test]
+    fn with_no_baseline_the_callers_are_unknown_and_the_pass_stores_a_baseline() {
+        let first = stepped(1000, &Health::default(), 900).unwrap();
+        assert!(first.lines[0].ends_with("top callers: unknown"), "{:?}", first.lines);
+        assert_eq!(first.health.sample_at, Some(1000));
+        assert_eq!(first.health.sample.get("watcher/list"), Some(&28));
     }
 
     #[test]
@@ -322,7 +394,7 @@ mod tests {
 
     #[test]
     fn a_pass_younger_than_the_interval_does_not_probe() {
-        let h = Health { last_pass: Some(1000), alarms: BTreeMap::new() };
+        let h = Health { last_pass: Some(1000), ..Health::default() };
         assert!(stepped(1059, &h, 900).is_none());
         assert_eq!(stepped(1060, &h, 900).unwrap().health.last_pass, Some(1060));
     }
