@@ -139,6 +139,33 @@ fn alarm_key(line: &str) -> String {
     line.split_whitespace().take(3).collect::<Vec<_>>().join(" ").trim_end_matches(':').to_string()
 }
 
+/// The Concierge inbox line for one alarm: `<UTC ISO time> [watch:perf-watch] <alarm>`.
+pub fn inbox_line(epoch: u64, alarm: &str) -> String {
+    let (days, rem) = (epoch / 86400, epoch % 86400);
+    let z = days as i64 + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z [watch:perf-watch] {alarm}\n", rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+pub fn append_inbox(path: &str, line: &str) {
+    if path.is_empty() {
+        return;
+    }
+    if let Some(dir) = std::path::Path::new(path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = std::io::Write::write_all(&mut f, line.as_bytes());
+    }
+}
+
 pub struct Pass {
     pub lines: Vec<String>,
     pub timings: Vec<Timing>,
@@ -226,6 +253,37 @@ mod tests {
         let mut r = Scripted { clock: &clock, costs: costs.iter().map(|(k, v)| (k.to_string(), *v)).collect(), stats: STATS.into(), asked_stats: false };
         let (_, lines) = pass(&parse_probes(PROBES).unwrap(), limit, &["stats".to_string()], &clock, &mut r);
         (lines, r.asked_stats)
+    }
+
+    #[test]
+    fn inbox_line_stamps_utc_and_tags_the_watcher() {
+        assert_eq!(inbox_line(1_791_748_794, "PERF SLOW x 9ms"), "2026-10-11T19:59:54Z [watch:perf-watch] PERF SLOW x 9ms\n");
+        assert_eq!(inbox_line(0, "a"), "1970-01-01T00:00:00Z [watch:perf-watch] a\n");
+    }
+
+    #[test]
+    fn a_standing_alarm_is_one_inbox_row_and_returns_after_the_remind_interval() {
+        let clock = Stub { now: Cell::new(0), epoch: Cell::new(1_000_000) };
+        let probes = parse_probes(PROBES).unwrap();
+        let cfg = Settings { budget_ms: 500, interval_secs: 0, remind_secs: 1800 };
+        let dir = testkit::TempDir::new("perf-inbox");
+        let inbox = dir.path().join("inbox");
+        let mut health = Health::default();
+        let mut pass_at = |epoch: u64, health: &mut Health| {
+            clock.epoch.set(epoch);
+            let mut r = Scripted { clock: &clock, costs: [("list".to_string(), 730), ("show".to_string(), 1), ("gone".to_string(), 0)].into(), stats: STATS.into(), asked_stats: false };
+            let out = run_pass(&cfg, &probes, &["stats".to_string()], health, &clock, &mut r).unwrap();
+            for l in &out.lines {
+                append_inbox(&inbox.to_string_lossy(), &inbox_line(epoch, l));
+            }
+            *health = out.health;
+        };
+        let rows = || std::fs::read_to_string(&inbox).unwrap_or_default().lines().count();
+        pass_at(1_000_000, &mut health);
+        pass_at(1_000_300, &mut health);
+        assert_eq!(rows(), 1, "a standing alarm is one row, not one per pass");
+        pass_at(1_001_900, &mut health);
+        assert_eq!(rows(), 2, "still over the limit 30 minutes on, it is raised again");
     }
 
     #[test]

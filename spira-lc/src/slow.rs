@@ -32,8 +32,50 @@ fn clean(s: &str) -> String {
     if s.is_empty() { "-".to_string() } else { s }
 }
 
+const CLIENT: &str = "spira-lc";
+const INTERPRETERS: [&str; 6] = ["bash", "sh", "dash", "python3", "python", "env"];
+
+fn basename(s: &str) -> &str {
+    s.rsplit('/').next().unwrap_or(s)
+}
+
+/// `SPIRA_CALLER` from a NUL-separated environment block.
+fn env_caller(environ: &[u8]) -> Option<String> {
+    environ.split(|b| *b == 0).find_map(|kv| kv.strip_prefix(b"SPIRA_CALLER=")).map(|v| String::from_utf8_lossy(v).into_owned()).filter(|v| !v.is_empty())
+}
+
+/// `<program>/<subcommand>` from a NUL-separated cmdline; an interpreter names its script.
+fn cmdline_caller(cmdline: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(cmdline);
+    let mut args = text.split('\0').filter(|a| !a.is_empty());
+    let mut prog = basename(args.next()?);
+    if INTERPRETERS.contains(&prog) {
+        match args.by_ref().find(|a| !a.starts_with('-')) {
+            Some(script) => prog = basename(script),
+            None => return Some(prog.to_string()),
+        }
+    }
+    Some(match args.find(|a| !a.starts_with('-')) {
+        Some(sub) => format!("{prog}/{sub}"),
+        None => prog.to_string(),
+    })
+}
+
+fn parent_pid(pid: i32) -> Option<i32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Who a served request is for. The peer is almost always the `spira-lc` client, which names
+/// nobody, so its `SPIRA_CALLER` or else its parent process stands in; any other peer is itself.
 pub fn caller_of_pid(pid: i32) -> String {
-    std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| clean(c.trim())).unwrap_or_else(|_| "-".to_string())
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| c.trim().to_string()).unwrap_or_default();
+    if comm != CLIENT {
+        return clean(&comm);
+    }
+    let named = std::fs::read(format!("/proc/{pid}/environ")).ok().and_then(|e| env_caller(&e));
+    let parent = || parent_pid(pid).and_then(|pp| cmdline_caller(&std::fs::read(format!("/proc/{pp}/cmdline")).ok()?));
+    clean(&named.or_else(parent).unwrap_or(comm))
 }
 
 pub fn request_done(verb: &str, caller: &str, took: Duration) {
@@ -138,6 +180,46 @@ fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spira_caller_is_read_from_the_environment_block() {
+        assert_eq!(env_caller(b"A=1\0SPIRA_CALLER=batcher\0B=2\0").as_deref(), Some("batcher"));
+        assert_eq!(env_caller(b"A=1\0SPIRA_CALLER=\0"), None);
+        assert_eq!(env_caller(b"XSPIRA_CALLER=y\0"), None);
+    }
+
+    #[test]
+    fn a_parent_is_named_by_program_and_subcommand() {
+        assert_eq!(cmdline_caller(b"cockpit-collect\0core\0--x\0").as_deref(), Some("cockpit-collect/core"));
+        assert_eq!(cmdline_caller(b"/usr/bin/batcher\0sifts\0").as_deref(), Some("batcher/sifts"));
+        assert_eq!(cmdline_caller(b"/bin/bash\0-e\0/x/bead-sweep.sh\0watch\0").as_deref(), Some("bead-sweep.sh/watch"));
+        assert_eq!(cmdline_caller(b"queue\0").as_deref(), Some("queue"));
+        assert_eq!(cmdline_caller(b""), None);
+    }
+
+    #[test]
+    fn a_wrapper_with_spira_caller_is_counted_under_it() {
+        let dir = testkit::TempDir::new("slow-caller");
+        let client = dir.path().join(CLIENT);
+        std::os::unix::fs::symlink("/bin/dash", &client).unwrap();
+        let run = |name: Option<&str>| {
+            let mut c = std::process::Command::new(&client);
+            c.args(["-c", "read x"]).stdin(std::process::Stdio::piped());
+            match name {
+                Some(n) => c.env("SPIRA_CALLER", n),
+                None => c.env_remove("SPIRA_CALLER"),
+            };
+            let mut child = c.spawn().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let who = caller_of_pid(child.id() as i32);
+            let _ = child.kill();
+            let _ = child.wait();
+            who
+        };
+        assert_eq!(run(Some("wrapper-x")), "wrapper-x");
+        let unnamed = run(None);
+        assert_ne!(unnamed, CLIENT, "the parent stands in when nothing is declared");
+    }
 
     #[test]
     fn shape_drops_values_and_folds_lists() {
