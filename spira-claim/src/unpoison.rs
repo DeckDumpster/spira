@@ -5,7 +5,6 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::Duration;
 
 use lifecycle::bead::{BeadState, HoldKind};
 use serde_json::Value;
@@ -20,8 +19,6 @@ pub const EXIT_FAILED: i32 = 3;
 pub const POISON_LABEL: &str = "spira-poison";
 pub const ASK_SUFFIX: &str = "— change the approach or drop it?";
 pub const CAUSE_EVENT_MAX: usize = 200;
-pub const WATCH_POLL_S: u64 = 10;
-pub const WATCH_TIMEOUT_S: u64 = 2400;
 
 // ---------------------------------------------------------------------------------------
 // Schema (DESIGN.md §8.3)
@@ -71,15 +68,6 @@ pub struct AskRow {
     pub title: String,
 }
 
-/// One parsed audit.log line.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AuditLine {
-    Examining { at: i64, poison_at: Option<u32> },
-    CountsFailed { at: i64 },
-    Complete { at: i64 },
-    Other,
-}
-
 // ---------------------------------------------------------------------------------------
 // The world
 
@@ -102,12 +90,6 @@ pub trait World {
     /// `unpoison` never calls this — its own floor (`poison.cleared`) is what keeps it lifted; `deadlocked` does,
     /// since it deliberately never floors the count (DESIGN.md §9).
     fn mark_poison_lifted(&mut self, id: &str, attempts: u32) -> Result<(), String>;
-    /// Current length of the audit log in bytes (0 when absent).
-    fn audit_len(&mut self) -> u64;
-    /// The audit log's bytes from `offset` to its end.
-    fn audit_read_from(&mut self, offset: u64) -> Result<Vec<u8>, String>;
-    fn now(&mut self) -> i64;
-    fn sleep(&mut self, secs: u64);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -117,8 +99,6 @@ pub trait World {
 pub struct Opts {
     pub beads: Vec<String>,
     pub cause: String,
-    pub watch: bool,
-    pub watch_timeout_s: u64,
     pub dry_run: bool,
     pub credit: Option<String>,
     pub actor: String,
@@ -150,27 +130,16 @@ pub fn is_poison_ask(title: &str, id: &str) -> bool {
 // ---------------------------------------------------------------------------------------
 // The flow
 
-struct Cleared {
-    id: String,
-}
-
 /// Run unpoison. Returns (exit code, stdout).
 pub fn run(o: &Opts, w: &mut dyn World) -> (i32, String) {
     let mut out = String::new();
     let mut failed = false;
-    let mut cleared: Vec<Cleared> = Vec::new();
     let t = Thresholds { poison_at: o.poison_at, ..Thresholds::default() };
 
     for id in &o.beads {
-        match one(o, t, w, id, &mut out) {
-            Some(true) => cleared.push(Cleared { id: id.clone() }),
-            Some(false) => {}
-            None => failed = true,
+        if one(o, t, w, id, &mut out).is_none() {
+            failed = true;
         }
-    }
-
-    if o.watch && !o.dry_run && !failed && !cleared.is_empty() && !watch(o, w, &cleared, &mut out) {
-        failed = true;
     }
     (if failed { EXIT_FAILED } else { EXIT_OK }, out)
 }
@@ -359,159 +328,6 @@ fn one(o: &Opts, t: Thresholds, w: &mut dyn World, id: &str, out: &mut String) -
 }
 
 // ---------------------------------------------------------------------------------------
-// Watch
-
-/// Parse one audit.log line: `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>`.
-pub fn parse_audit_line(line: &str) -> AuditLine {
-    let Some((ts, rest)) = line.split_once(' ') else { return AuditLine::Other };
-    if ts.len() != 20 || !ts.ends_with('Z') || ts.as_bytes()[10] != b'T' {
-        return AuditLine::Other;
-    }
-    let Some(at) = events::epoch_s(&events::norm_ts(ts)) else { return AuditLine::Other };
-    let Some(msg) = rest.strip_prefix("spira: ") else { return AuditLine::Other };
-    if msg.starts_with("CHECK4 examining ") {
-        let poison_at = msg
-            .split_whitespace()
-            .find_map(|w| w.strip_prefix("poison="))
-            .and_then(|v| v.trim_end_matches(',').parse().ok());
-        AuditLine::Examining { at, poison_at }
-    } else if msg.starts_with("CHECK4 bulk attempts query failed") {
-        AuditLine::CountsFailed { at }
-    } else if msg.starts_with("audit pass complete") {
-        AuditLine::Complete { at }
-    } else {
-        AuditLine::Other
-    }
-}
-
-/// Tracks audit passes that started strictly after `start`.
-#[derive(Debug, Default)]
-pub struct PassTracker {
-    pub start: i64,
-    in_pass: Option<Option<u32>>,
-    disqualified: bool,
-    /// The poison threshold the first qualifying pass reported, once one completed.
-    pub done: Option<Option<u32>>,
-}
-
-impl PassTracker {
-    pub fn new(start: i64) -> Self {
-        PassTracker { start, ..Default::default() }
-    }
-
-    pub fn feed(&mut self, l: &AuditLine) {
-        if self.done.is_some() {
-            return;
-        }
-        match *l {
-            AuditLine::Examining { at, poison_at } => {
-                self.in_pass = (at > self.start).then_some(poison_at);
-                self.disqualified = false;
-            }
-            AuditLine::CountsFailed { .. } => self.disqualified = true,
-            AuditLine::Complete { .. } => {
-                if let Some(p) = self.in_pass.take() {
-                    if !self.disqualified {
-                        self.done = Some(p);
-                    }
-                }
-                self.disqualified = false;
-            }
-            AuditLine::Other => {}
-        }
-    }
-}
-
-fn fmt_utc(epoch: i64) -> String {
-    let days = epoch.div_euclid(86400);
-    let secs = epoch.rem_euclid(86400);
-    // Howard Hinnant's civil_from_days.
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs % 3600 / 60, secs % 60)
-}
-
-/// Is the bead poisoned now — the lifecycle row's poison hold? Err: cannot tell.
-fn poisoned_now(w: &mut dyn World, id: &str) -> Result<bool, String> {
-    w.lc_row(id).map(|r| r.as_ref().is_some_and(LcRow::poisoned))
-}
-
-fn watch(o: &Opts, w: &mut dyn World, cleared: &[Cleared], out: &mut String) -> bool {
-    let start = w.now();
-    let mut offset = w.audit_len();
-    let mut carry: Vec<u8> = Vec::new();
-    let mut tracker = PassTracker::new(start);
-    let deadline = start + o.watch_timeout_s as i64;
-    out.push_str(&format!(
-        "watch: waiting for an audit pass that starts after {} (up to {}s)...\n",
-        fmt_utc(start),
-        o.watch_timeout_s
-    ));
-    loop {
-        let len = w.audit_len();
-        if len < offset {
-            offset = 0; // rotated or truncated: read the new file from its start
-            carry.clear();
-        }
-        if len > offset {
-            if let Ok(bytes) = w.audit_read_from(offset) {
-                offset += bytes.len() as u64;
-                carry.extend_from_slice(&bytes);
-                while let Some(nl) = carry.iter().position(|b| *b == b'\n') {
-                    let line: Vec<u8> = carry.drain(..=nl).collect();
-                    tracker.feed(&parse_audit_line(String::from_utf8_lossy(&line).trim_end()));
-                }
-            }
-        }
-        // A hold back mid-watch is a failure at once.
-        for c in cleared {
-            if let Ok(true) = poisoned_now(w, &c.id) {
-                out.push_str(&format!("FAIL watch {}: re-poisoned by the pass\n", c.id));
-                return false;
-            }
-        }
-        if tracker.done.is_some() {
-            break;
-        }
-        if w.now() >= deadline {
-            out.push_str(&format!("FAIL watch: no audit pass completed in {}s\n", o.watch_timeout_s));
-            return false;
-        }
-        w.sleep(WATCH_POLL_S);
-    }
-    if let Some(Some(p)) = tracker.done {
-        if p != o.poison_at {
-            out.push_str(&format!(
-                "watch: note — the audit pass ran with poison={p}, this clear verified against {}\n",
-                o.poison_at
-            ));
-        }
-    }
-    let mut ok = true;
-    for c in cleared {
-        match poisoned_now(w, &c.id) {
-            Ok(true) => {
-                out.push_str(&format!("FAIL watch {}: re-poisoned by the pass\n", c.id));
-                ok = false;
-            }
-            Ok(false) => out.push_str(&format!("OK   watch {}: still clear after a full audit pass\n", c.id)),
-            Err(e) => {
-                out.push_str(&format!("FAIL watch {}: cannot tell whether the poison came back ({e})\n", c.id));
-                ok = false;
-            }
-        }
-    }
-    ok
-}
-
-// ---------------------------------------------------------------------------------------
 // Parsing the stores' JSON
 
 /// bd prints warnings before the payload sometimes; start at the first JSON token line.
@@ -634,10 +450,6 @@ impl Live {
         store::run_full(c, self.store.timeout, None)
     }
 
-    fn audit_log(&self) -> PathBuf {
-        self.run_dir.join("audit.log")
-    }
-
     /// `$SPIRA_RUN/ejected` — the withdrawn-suites sidecars' own directory (sp-2c1n0: no
     /// longer under the retired landstate ledger). `None` when `run_dir` was never resolved;
     /// the sidecar write is best-effort either way.
@@ -743,27 +555,6 @@ impl World for Live {
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
         // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
         spira_config::lifecycle_row::close_with(&self.store.lc, id, reason, "spira-claim", None)
-    }
-
-    fn audit_len(&mut self) -> u64 {
-        std::fs::metadata(self.audit_log()).map(|m| m.len()).unwrap_or(0)
-    }
-
-    fn audit_read_from(&mut self, offset: u64) -> Result<Vec<u8>, String> {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut f = std::fs::File::open(self.audit_log()).map_err(|e| e.to_string())?;
-        f.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
-        let mut b = Vec::new();
-        f.read_to_end(&mut b).map_err(|e| e.to_string())?;
-        Ok(b)
-    }
-
-    fn now(&mut self) -> i64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
-    }
-
-    fn sleep(&mut self, secs: u64) {
-        std::thread::sleep(Duration::from_secs(secs));
     }
 
     fn mark_poison_lifted(&mut self, id: &str, attempts: u32) -> Result<(), String> {

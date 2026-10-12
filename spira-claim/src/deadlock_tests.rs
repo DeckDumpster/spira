@@ -116,18 +116,6 @@ impl World for Fake {
     fn close(&mut self, _id: &str, _reason: &str) -> Result<(), String> {
         unreachable!("deadlocked never closes an ask")
     }
-    fn audit_len(&mut self) -> u64 {
-        unreachable!("deadlocked never watches the audit log")
-    }
-    fn audit_read_from(&mut self, _offset: u64) -> Result<Vec<u8>, String> {
-        unreachable!("deadlocked never watches the audit log")
-    }
-    fn now(&mut self) -> i64 {
-        0
-    }
-    fn sleep(&mut self, _secs: u64) {
-        unreachable!("deadlocked never sleeps")
-    }
     fn mark_poison_lifted(&mut self, id: &str, attempts: u32) -> Result<(), String> {
         self.lifted.insert(id.to_string(), attempts);
         Ok(())
@@ -332,18 +320,6 @@ fn still_poisoned_after_apply_is_refused() {
         }
         fn close(&mut self, id: &str, r: &str) -> Result<(), String> {
             World::close(&mut self.0, id, r)
-        }
-        fn audit_len(&mut self) -> u64 {
-            World::audit_len(&mut self.0)
-        }
-        fn audit_read_from(&mut self, o: u64) -> Result<Vec<u8>, String> {
-            World::audit_read_from(&mut self.0, o)
-        }
-        fn now(&mut self) -> i64 {
-            World::now(&mut self.0)
-        }
-        fn sleep(&mut self, s: u64) {
-            World::sleep(&mut self.0, s)
         }
         fn mark_poison_lifted(&mut self, id: &str, attempts: u32) -> Result<(), String> {
             World::mark_poison_lifted(&mut self.0, id, attempts)

@@ -2,11 +2,9 @@
 
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 const T0: i64 = 1_790_596_800; // 2026-09-28T12:00:00Z
-
-/// What the audit worker does while the watch sleeps.
-type Sentinel = Box<dyn FnMut(&mut Fake)>;
 
 #[derive(Default)]
 struct Fake {
@@ -18,7 +16,6 @@ struct Fake {
     closed: Vec<(String, String)>,
     notes: Vec<(String, String)>,
     removed_labels: Vec<(String, String)>,
-    audit: Vec<u8>,
     now: i64,
     /// Every mutating call, in order: "event:<type>", "unhold", "note", "close", "rm-asked", "label".
     trail: Vec<String>,
@@ -26,9 +23,6 @@ struct Fake {
     fail_lc_read: bool,
     fail_event_write: bool,
     refuse_unhold_times: u32,
-    /// Called on each sleep with the fake: the "sentinel" running meanwhile.
-    on_sleep: Option<Sentinel>,
-    sleeps: u32,
 }
 
 impl Fake {
@@ -63,9 +57,6 @@ impl Fake {
     fn ask(mut self, id: &str, title: &str) -> Self {
         self.asks.push(AskRow { id: id.into(), title: title.into() });
         self
-    }
-    fn log(&mut self, at: i64, msg: &str) {
-        self.audit.extend_from_slice(format!("{} spira: {msg}\n", fmt_utc(at)).as_bytes());
     }
     fn writes(&self) -> usize {
         self.trail.len()
@@ -141,23 +132,6 @@ impl World for Fake {
         self.trail.push("close".into());
         Ok(())
     }
-    fn audit_len(&mut self) -> u64 {
-        self.audit.len() as u64
-    }
-    fn audit_read_from(&mut self, offset: u64) -> Result<Vec<u8>, String> {
-        Ok(self.audit[offset as usize..].to_vec())
-    }
-    fn now(&mut self) -> i64 {
-        self.now
-    }
-    fn sleep(&mut self, secs: u64) {
-        self.now += secs as i64;
-        self.sleeps += 1;
-        if let Some(mut f) = self.on_sleep.take() {
-            f(self);
-            self.on_sleep = Some(f);
-        }
-    }
     fn mark_poison_lifted(&mut self, _id: &str, _attempts: u32) -> Result<(), String> {
         unreachable!("unpoison never marks a lift — its own floor is poison.cleared")
     }
@@ -167,8 +141,6 @@ fn opts(beads: &[&str]) -> Opts {
     Opts {
         beads: beads.iter().map(|s| s.to_string()).collect(),
         cause: "every charged session ended waiting for a background batch — yield-headless".into(),
-        watch: false,
-        watch_timeout_s: WATCH_TIMEOUT_S,
         dry_run: false,
         credit: None,
         actor: "unpoison".into(),
@@ -374,12 +346,10 @@ fn dry_run_writes_nothing() {
     let mut f = poisoned_a();
     let mut o = opts(&["sp-a"]);
     o.dry_run = true;
-    o.watch = true;
     let (code, out) = run(&o, &mut f);
     assert_eq!(code, EXIT_OK);
     assert!(out.starts_with("WOULD sp-a: attempts 3, poisoned=1 — write poison.cleared"), "{out}");
     assert_eq!(f.writes(), 0);
-    assert_eq!(f.sleeps, 0, "no watch on a dry run");
 }
 
 #[test]
@@ -425,153 +395,26 @@ fn bounded_cause_strips_quotes_and_bounds() {
     assert!(c.starts_with("its quoted  andnew x"));
 }
 
-// ---------------------------------------------------------------------------------------
-// watch
-
-fn watching() -> (Fake, Opts) {
-    let mut f = poisoned_a();
-    // History from before the clear: a whole pass, plus bash noise.
-    f.log(T0 - 600, "CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5");
-    f.audit.extend_from_slice(b"/srv/harness/spira/sentinel.sh: line 705: _phase: command not found\n");
-    f.log(T0 - 500, "audit pass complete — 2 action(s), 2 progress");
-    let mut o = opts(&["sp-a"]);
-    o.watch = true;
-    (f, o)
-}
-
 #[test]
-fn watch_reads_audit_log_line() {
-    let (mut f, o) = watching();
-    f.on_sleep = Some(Box::new(|f: &mut Fake| match f.sleeps {
-        2 => {
-            let t = f.now;
-            f.log(t, "CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5");
-            f.audit.extend_from_slice(b"/srv/harness/spira/sentinel.sh: line 894: _phase: command not found\n");
-        }
-        4 => {
-            let t = f.now;
-            f.log(t, "CHECK5: repo:ephemeral-ci is not in repo-map — skipping its closed beads");
-            // half a line first: must not be parsed until complete
-            f.audit.extend_from_slice(format!("{} spira: audit pass comp", fmt_utc(t)).as_bytes());
-        }
-        5 => f.audit.extend_from_slice(b"lete \xe2\x80\x94 1 action(s), 1 progress\n"),
-        _ => {}
-    }));
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_OK, "{out}");
-    assert!(out.contains("watch: waiting for an audit pass that starts after 2026-09-28T12:00:00Z (up to 2400s)..."), "{out}");
-    assert!(out.contains("OK   watch sp-a: still clear after a full audit pass"), "{out}");
-    assert_eq!(f.sleeps, 5, "completed on the poll after the line was whole");
-}
-
-#[test]
-fn watch_ignores_pass_started_before_clear() {
-    let (mut f, o) = watching();
-    // A pass already running when the clear happened (its CHECK 4 read predates the clear).
-    f.log(T0 - 30, "CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5");
-    f.on_sleep = Some(Box::new(|f: &mut Fake| {
-        let t = f.now;
-        match f.sleeps {
-            1 => f.log(t, "audit pass complete — 0 action(s), 0 progress"), // the old pass ends
-            3 => f.log(t, "CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5"),
-            6 => f.log(t, "audit pass complete — 0 action(s), 0 progress"),
-            _ => {}
-        }
-    }));
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_OK, "{out}");
-    assert_eq!(f.sleeps, 6, "the pass that started before the clear proved nothing: {out}");
-}
-
-#[test]
-fn watch_disqualifies_failed_counts_pass() {
-    let (mut f, o) = watching();
-    f.on_sleep = Some(Box::new(|f: &mut Fake| {
-        let t = f.now;
-        match f.sleeps {
-            1 => f.log(t, "CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5"),
-            2 => f.log(t, "CHECK4 bulk attempts query failed (rc=2) — making no poison/requeue/reclaim decision this pass"),
-            3 => f.log(t, "audit pass complete — 0 action(s), 0 progress"),
-            4 => f.log(t, "CHECK4 examining 205 dispatchable bead(s), poison=4 requeue=5 reclaim=5"),
-            5 => f.log(t, "audit pass complete — 0 action(s), 0 progress"),
-            _ => {}
-        }
-    }));
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_OK, "{out}");
-    assert_eq!(f.sleeps, 5, "{out}");
-    assert!(out.contains("watch: note — the audit pass ran with poison=4, this clear verified against 3"), "{out}");
-}
-
-#[test]
-fn watch_fails_when_repoisoned() {
-    let (mut f, o) = watching();
-    f.on_sleep = Some(Box::new(|f: &mut Fake| {
-        let t = f.now;
-        if f.sleeps == 1 {
-            f.log(t, "CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5");
-            f.lc.get_mut("sp-a").unwrap().holds.insert(HoldKind::Poison);
-        }
-    }));
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_FAILED);
-    assert!(out.contains("FAIL watch sp-a: re-poisoned by the pass"), "{out}");
-    assert_eq!(f.sleeps, 1, "fails at once, without waiting for the pass to end");
-}
-
-#[test]
-fn watch_times_out() {
-    let (mut f, mut o) = watching();
-    o.watch_timeout_s = 60;
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_FAILED);
-    assert!(out.contains("FAIL watch: no audit pass completed in 60s"), "{out}");
-    assert_eq!(f.sleeps, 6);
-}
-
-#[test]
-fn watch_survives_rotation() {
-    let (mut f, o) = watching();
-    f.on_sleep = Some(Box::new(|f: &mut Fake| {
-        if f.sleeps == 1 {
-            f.audit.clear(); // logrotate truncated it
-            let t = f.now;
-            f.log(t, "CHECK4 examining 1 dispatchable bead(s), poison=3 requeue=5 reclaim=5");
-            f.log(t + 1, "audit pass complete — 0 action(s), 0 progress");
-        }
-    }));
-    // the rotated file is shorter than the recorded offset
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_OK, "{out}");
-}
-
-#[test]
-fn watch_not_started_when_a_bead_failed() {
-    let (mut f, mut o) = watching();
-    f = f.bead("pz3", "in_progress", Some("aeon-test"), &[]).claims("pz3", 3).lc("pz3", BeadState::Working, &[], Some("aeon-test"));
-    o.beads.push("pz3".into());
-    let (code, out) = run(&o, &mut f);
-    assert_eq!(code, EXIT_FAILED);
-    assert!(!out.contains("watch:"), "{out}");
-}
-
-#[test]
-fn audit_line_parsing() {
-    assert_eq!(
-        parse_audit_line("2026-09-29T03:56:00Z spira: CHECK4 examining 205 dispatchable bead(s), poison=3 requeue=5 reclaim=5"),
-        AuditLine::Examining { at: events::epoch_s("2026-09-29T03:56:00").unwrap(), poison_at: Some(3) }
-    );
-    assert!(matches!(parse_audit_line("2026-09-29T03:52:00Z spira: audit pass complete — 2 action(s), 2 progress"), AuditLine::Complete { .. }));
-    assert!(matches!(
-        parse_audit_line("2026-09-29T03:52:00Z spira: CHECK4 bulk attempts query failed (rc=2) — making no poison/requeue/reclaim decision this pass"),
-        AuditLine::CountsFailed { .. }
-    ));
-    assert_eq!(parse_audit_line("/srv/harness/spira/sentinel.sh: line 705: _phase: command not found"), AuditLine::Other);
-    assert_eq!(parse_audit_line("2026-09-29T03:52:00Z spira: CHECK5: resolved 1 incident(s)"), AuditLine::Other);
-    assert_eq!(parse_audit_line(""), AuditLine::Other);
+fn fmt_utc_formats_epoch() {
     assert_eq!(fmt_utc(T0), "2026-09-28T12:00:00Z");
     assert_eq!(fmt_utc(0), "1970-01-01T00:00:00Z");
-    assert_eq!(events::epoch_s("2026-09-28T12:00:00"), Some(T0));
+}
+
+fn fmt_utc(epoch: i64) -> String {
+    let days = epoch.div_euclid(86400);
+    let secs = epoch.rem_euclid(86400);
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs % 3600 / 60, secs % 60)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -708,18 +551,13 @@ esac"#,
 }
 
 #[test]
-fn live_ask_history_and_audit_log() {
+fn live_ask_history() {
     let (mut w, dir) = live("files", "exit 0", "exit 0");
     std::fs::write(dir.join("run/poison-asked/sp-a"), "3\n").unwrap();
     assert!(w.ask_history_exists("sp-a"));
     w.clear_ask_history("sp-a").unwrap();
     assert!(!w.ask_history_exists("sp-a"));
     w.clear_ask_history("sp-a").unwrap(); // absent is fine
-    assert_eq!(w.audit_len(), 0, "absent log is length 0");
-    std::fs::write(dir.join("run/audit.log"), "abc\ndef\n").unwrap();
-    assert_eq!(w.audit_len(), 8);
-    assert_eq!(w.audit_read_from(4).unwrap(), b"def\n");
-    assert!(dir.join("run/sentinel.log").metadata().is_err(), "watch never needs sentinel.log");
 }
 
 #[test]
