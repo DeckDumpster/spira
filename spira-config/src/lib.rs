@@ -223,6 +223,15 @@ fn tail_segment_refusal(seg: &str) -> Option<String> {
     None
 }
 
+/// Where install builds the pinned tool environment (`nix build .#spira-env`), under `$HOME`.
+pub const SPIRA_ENV_REL: &str = ".local/lib/spira-env";
+
+/// The `bin/` of the pinned tool environment for `home` — what unit PATHs put ahead of the
+/// hand-installed directories.
+pub fn spira_env_bin(home: &str) -> String {
+    format!("{}/{SPIRA_ENV_REL}/bin", home.trim_end_matches('/'))
+}
+
 /// Every colon-separated entry of `tail` that [`tail_segment_refusal`] flags, in order — the
 /// pure check [`release_path_with_tail`] applies before it will append anything.
 pub fn tail_refusals(tail: &str) -> Vec<String> {

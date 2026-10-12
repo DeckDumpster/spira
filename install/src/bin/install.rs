@@ -180,6 +180,12 @@ fn dependencies(dry: bool) -> Result<(), String> {
         std::env::set_var("PATH", format!("{}:{path}", bin.display()));
     }
 
+    let release_root = spira_config::release_env::own_release_root_for_process();
+    build_spira_env(dry, &home, release_root.as_deref())?;
+    let env_bin = spira_config::spira_env_bin(&home);
+    let path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var("PATH", format!("{env_bin}:{path}"));
+
     let metrics_off = Command::new("timeout")
         .args(["5", "dolt", "config", "--global", "--get", "metrics.disabled"])
         .output()
@@ -202,6 +208,29 @@ fn dependencies(dry: bool) -> Result<(), String> {
     fetch_inotifywait(dry, &bin)?;
     install_aerc(dry, &bin, spira_config::release_env::own_release_root_for_process().as_deref())?;
     install_sendmail(dry, &home, &bin)?;
+    Ok(())
+}
+
+/// Builds the pinned tool environment (`flake.nix` at the release root) into
+/// `~/.local/lib/spira-env`; every unit's PATH and `dolt-beads.service`'s ExecStart resolve
+/// dolt and bd from it. Idempotent: an unchanged lock rebuilds to the same store path.
+fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result<(), String> {
+    let root = release_root.ok_or("cannot find the release root holding flake.nix; run install from an installed release")?;
+    if !root.join("flake.nix").is_file() || !root.join("flake.lock").is_file() {
+        return Err(format!("{} has no flake.nix/flake.lock", root.display()));
+    }
+    let out = Path::new(home).join(spira_config::SPIRA_ENV_REL);
+    let target = format!("path:{}#spira-env", root.display());
+    if dry {
+        would(&format!("run: nix build {target} -o {}", out.display()));
+        return Ok(());
+    }
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    run_ok("nix", &["--extra-experimental-features", "nix-command flakes", "build", &target, "-o", &out.display().to_string()])
+        .map_err(|e| format!("cannot build spira-env (is nix installed?): {e}"))?;
+    info(&format!("built spira-env at {}", out.display()));
     Ok(())
 }
 

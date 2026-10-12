@@ -32,6 +32,8 @@ pub struct HostValues {
     pub snap_stale_s: String,
     pub watchtower_start_timeout_s: String,
     pub path_tail: String,
+    /// `bin/` of the pinned spira-env, ahead of the system directories on every unit's PATH.
+    pub env_bin: String,
     /// `SPIRA_SCCACHE_DAV_ADDR` (sp-xtdqi) — this box's own LAN address for the shared
     /// compilation cache, if any. Empty is a legal value (the template is never installed
     /// when it is, per `manifest::Inputs::sccache_dav_addr_set`), substituted as empty like
@@ -69,6 +71,7 @@ impl HostValues {
         m.insert("SPIRA_SNAP_STALE_S".into(), self.snap_stale_s.clone());
         m.insert("SPIRA_WATCHTOWER_START_TIMEOUT_S".into(), self.watchtower_start_timeout_s.clone());
         m.insert("SPIRA_PATH_TAIL".into(), if self.path_tail.is_empty() { String::new() } else { format!(":{}", self.path_tail) });
+        m.insert("SPIRA_ENV_PATH".into(), self.env_bin.clone());
         m.insert("SPIRA_PROD_COCK".into(), format!("{prod_root}/cockpit"));
         m.insert("SPIRA_PROD_ROOT".into(), prod_root.clone());
         m.insert("SPIRA_RELEASE".into(), prod_root);
@@ -150,7 +153,7 @@ mod tests {
             testdb_port: "3308".into(),
             snap_stale_s: "600".into(),
             watchtower_start_timeout_s: "360".into(),
-            path_tail: "".into(),
+            path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(),
             lc_password_file: "/h/lc.credential".into(),
             toml: "/h/cfg.toml".into(),
             sccache_dav_addr: "".into(),
@@ -178,7 +181,7 @@ mod tests {
         }
         // PATH is the standard unit form (release, system dirs, then the configured tail, which
         // is where ~/.local/bin — dolt and bd — comes from); the release crate enforces the shape.
-        assert!(out.lines().any(|l| l.starts_with("Environment=PATH=/h/bin:/h/spira:/usr/local/bin:/usr/bin:/bin")), "standard unit PATH:\n{out}");
+        assert!(out.lines().any(|l| l.starts_with("Environment=PATH=/h/bin:/h/spira:/h/.local/lib/spira-env/bin:/usr/local/bin:/usr/bin:/bin")), "standard unit PATH:\n{out}");
         assert!(!out.contains("\nUser="), "a user unit runs as the operator");
     }
 

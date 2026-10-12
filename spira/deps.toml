@@ -24,7 +24,7 @@
 [[dep]]
 name = "bd"
 tier = "runtime"
-purpose = "the beads issue tracker — the substrate; nothing runs without it"
+purpose = "the beads issue tracker — the substrate; nothing runs without it. Provided by spira-env (flake.nix), built by install into ~/.local/lib/spira-env"
 version_min = ""
 version_probe = "bd --version"
 
@@ -79,8 +79,8 @@ version_probe = "flock --version"
 
 [[dep]]
 name = "dolt"
-tier = "optional"
-purpose = "the SQL server beads stores its database in"
+tier = "runtime"
+purpose = "the SQL server beads stores its database in. Provided by spira-env (flake.nix), built by install into ~/.local/lib/spira-env; dolt-beads.service execs it from there"
 version_min = ""
 version_probe = "dolt version"
 
