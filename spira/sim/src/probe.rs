@@ -7,7 +7,7 @@
 
 use crate::world::{is_world, lc_command, run, LANDING_BASE, PRODUCTION_LOCATORS};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -16,7 +16,7 @@ const CALL_DEADLINE: Duration = Duration::from_secs(60); // batch-job: one spira
 const BRANCH_PREFIX: &str = "spira/";
 
 /// The commits reachable from one ref, and their messages.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Lineage {
     pub shas: HashSet<String>,
     pub messages: Vec<String>,
@@ -226,4 +226,93 @@ pub fn probe(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<Strin
         out.push('\n');
     }
     Ok(out)
+}
+
+/// Every ref of a repository's git dir, as `git for-each-ref` lists them (name order, a
+/// symbolic ref as what it points at), read from the files git keeps them in.
+pub fn read_refs(git_dir: &Path) -> BTreeMap<String, String> {
+    fn walk(dir: &Path, prefix: &str, out: &mut BTreeMap<String, String>, symbolic: &mut Vec<(String, String)>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let name = format!("{prefix}{}", e.file_name().to_string_lossy());
+            let path = e.path();
+            if path.is_dir() {
+                walk(&path, &format!("{name}/"), out, symbolic);
+            } else if let Ok(text) = std::fs::read_to_string(&path) {
+                let text = text.trim();
+                match text.strip_prefix("ref: ") {
+                    Some(target) => symbolic.push((name, target.to_string())),
+                    None if !text.is_empty() && !name.ends_with(".lock") => {
+                        out.insert(name, text.to_string());
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+    let mut refs = BTreeMap::new();
+    let mut symbolic = Vec::new();
+    for l in std::fs::read_to_string(git_dir.join("packed-refs")).unwrap_or_default().lines() {
+        if let Some((sha, name)) = l.split_once(' ').filter(|(_, n)| n.starts_with("refs/")) {
+            refs.insert(name.to_string(), sha.to_string());
+        }
+    }
+    walk(&git_dir.join("refs"), "refs/", &mut refs, &mut symbolic);
+    for (name, target) in symbolic {
+        if let Some(sha) = refs.get(&target).cloned() {
+            refs.insert(name, sha);
+        }
+    }
+    refs
+}
+
+/// The probe without its processes: refs read from git's files, the lifecycle asked over its
+/// socket, and a commit's history read once however many snapshots see it.
+pub struct Observer {
+    world: PathBuf,
+    lineages: HashMap<(bool, String), Lineage>,
+}
+
+pub struct Observed {
+    pub refs: Vec<(String, String)>,
+    pub tags: Vec<String>,
+    pub rows: Vec<Value>,
+}
+
+impl Observer {
+    pub fn new(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<Self, String> {
+        Ok(Observer { world: refuse_foreign(world, env)?, lineages: HashMap::new() })
+    }
+
+    fn lineage(&mut self, origin: bool, sha: Option<&String>) -> Result<Lineage, String> {
+        let Some(sha) = sha else { return Err(format!("the world's {} has no ref to read", if origin { "origin" } else { "landing branch" })) };
+        if !self.lineages.contains_key(&(origin, sha.clone())) {
+            let repo = if origin { self.world.join("origin.git") } else { self.world.join("work") };
+            self.lineages.insert((origin, sha.clone()), lineage(&repo, sha)?);
+        }
+        Ok(self.lineages[&(origin, sha.clone())].clone())
+    }
+
+    pub fn observe(&mut self) -> Result<Observed, String> {
+        let work = read_refs(&self.world.join("work/.git"));
+        let origin = read_refs(&self.world.join("origin.git"));
+        let git = GitFacts {
+            branches: work.iter().filter_map(|(r, sha)| r.strip_prefix(&format!("refs/heads/{BRANCH_PREFIX}")).map(|id| (id.to_string(), sha.clone()))).collect(),
+            local_main: self.lineage(false, work.get(&format!("refs/heads/{LANDING_BASE}")))?,
+            origin_main: self.lineage(true, origin.get("refs/heads/main"))?,
+        };
+        let socket = crate::world::lc_socket(&self.world);
+        let (code, list) = crate::world::ask_body(&socket, &["list"]).ok_or_else(|| format!("spira-lc list: no answer on {}", socket.display()))?;
+        if code != 0 {
+            return Err(format!("spira-lc list: exit {code}: {}", list.trim()));
+        }
+        let tags = |refs: &BTreeMap<String, String>| refs.keys().filter_map(|r| r.strip_prefix("refs/tags/").map(str::to_string)).collect::<Vec<_>>();
+        let mut all_tags = tags(&work);
+        all_tags.extend(tags(&origin));
+        Ok(Observed {
+            refs: work.into_iter().collect(),
+            tags: all_tags,
+            rows: rows(&list, &landstate_of(&self.world), &git)?,
+        })
+    }
 }

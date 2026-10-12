@@ -27,6 +27,12 @@ sim_scenario_shard() {  # sim_scenario_shard <scenario name>
     repo="$t/repo"
     sim_fixture_repo "$repo"
     local noloc=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
+    # The seed repo of this tree is built once for every world of the container, here or in a sibling shard.
+    export SPIRA_SIM_CACHE="${SPIRA_SIM_CACHE:-/tmp/sim-seed-cache}"
+    start=$SECONDS
+    # batch-job: the seed repo every world copies
+    (cd "$repo" && timeout 280 env "${noloc[@]}" TMPDIR="$t" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$sim" world seed) >"$t/seed.out" 2>&1 || bail "sim world seed failed: $(cat "$t/seed.out")"
+    echo "# seed repo ready in $((SECONDS - start))s (the worlds copy it)"
     for seed in $seeds $fresh; do
         label="$name.$seed"
         start=$SECONDS

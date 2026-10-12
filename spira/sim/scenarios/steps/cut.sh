@@ -11,7 +11,8 @@ sha=$(timeout 5 gh pr view "$pr" --json headRefOid -q .headRefOid) || exit 9
 branch=$(timeout 5 gh pr view "$pr" --json headRefName -q .headRefName) || exit 9
 ws="$SIM_WORLD/ci-ws"
 rm -rf "$ws"
-timeout 5 git clone -q "$SIM_WORLD/origin.git" "$ws" || exit 9
+timeout 5 git clone -q --no-checkout "$SIM_WORLD/origin.git" "$ws" || exit 9
+git -C "$ws" sparse-checkout set --no-cone '/*' '!/*/' /.github/ /spira/ /spira-config/ || exit 9
 timeout 5 git -C "$ws" checkout -q -B main "$sha" || exit 9
 results=$(ls "$ws"/spira/test-*.sh | sed 's|.*/||; s|$|.result|' | paste -sd, -)
 sim ghctl "$SIM_GH_DIR" check-run "$sha" gate completed success || exit 9

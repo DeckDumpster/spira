@@ -1,4 +1,4 @@
-use spira_sim::ci::{cargo_shim, expand, run_job, steps, Context, Job, CARGO_FROM_ENV};
+use spira_sim::ci::{cargo_shim, expand, run_job, steps, Context, HostLock, Job, CARGO_FROM_ENV};
 use std::path::Path;
 
 const TOY: &str = "name: t
@@ -89,7 +89,7 @@ fn a_job_runs_its_steps_in_a_clean_env_and_stops_at_the_first_failure() {
 }
 
 #[test]
-fn the_cargo_shim_builds_only_spira_config_by_copying_the_worlds_release() {
+fn the_cargo_shim_builds_only_spira_config_by_placing_the_worlds_release() {
     let t = scratch("simcargo");
     let rel = t.join("rel");
     std::fs::create_dir_all(&rel).unwrap();
@@ -101,8 +101,32 @@ fn the_cargo_shim_builds_only_spira_config_by_copying_the_worlds_release() {
     let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     cargo_shim(&a(&["build", "--release", "--locked", "-p", "spira-config"]), &ws, &env).unwrap();
     assert!(ws.join("target/release/spira-config").is_file());
+    cargo_shim(&a(&["build", "--release", "--locked", "-p", "spira-config"]), &ws, &env).unwrap();
+    assert_eq!(std::fs::read(ws.join("target/release/spira-config")).unwrap(), std::fs::read(rel.join("spira-config")).unwrap(), "a second build replaces the first");
     for bad in [&["build", "-p", "other"][..], &["test"], &["build", "--workspace"], &["build"]] {
         assert!(cargo_shim(&a(bad), &ws, &env).is_err(), "{bad:?}");
     }
     assert!(cargo_shim(&a(&["build", "-p", "spira-config"]), &ws, &|_| None).is_err());
+}
+
+#[test]
+fn two_jobs_on_one_host_take_turns_and_a_dead_holder_is_taken_over() {
+    let t = scratch("simlock");
+    let first = HostLock::acquire(t.path()).unwrap();
+    let dir = t.path().to_path_buf();
+    let waiter = std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let _second = HostLock::acquire(&dir).unwrap();
+        started.elapsed()
+    });
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    assert!(!waiter.is_finished(), "the second job waits for the first");
+    drop(first);
+    assert!(waiter.join().unwrap() >= std::time::Duration::from_millis(300));
+    assert!(!t.join("sim-ci.lock").exists(), "a finished job leaves no lock");
+
+    std::fs::create_dir(t.join("sim-ci.lock")).unwrap();
+    std::fs::write(t.join("sim-ci.lock/pid"), "4194303").unwrap();
+    assert!(!Path::new("/proc/4194303").exists(), "positive control: that pid is not running");
+    let _taken = HostLock::acquire(t.path()).unwrap();
 }

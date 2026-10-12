@@ -1,5 +1,5 @@
 use crate::trace::{bead_row, Event, Snapshot, Trace};
-use crate::world::{run, run_capture};
+use crate::world::run;
 use serde::Deserialize;
 use serde_json::Value;
 use sim::{EventKind, Outcome, Sim};
@@ -338,7 +338,8 @@ impl ProcessExec {
 impl Exec for ProcessExec {
     fn run(&mut self, command: &str, now_ms: u64) -> Result<i32, String> {
         let started = std::time::Instant::now();
-        let (status, out, err) = run_capture(&mut self.command(command, now_ms)?, COMMAND_DEADLINE)?;
+        let trace = std::env::var_os(crate::proctrace::TRACE_ENV).is_some().then(|| (self.world.as_path(), command));
+        let (status, out, err) = crate::world::run_capture_traced(&mut self.command(command, now_ms)?, COMMAND_DEADLINE, trace)?;
         self.log(command, now_ms, &format!("{status} in {}ms", started.elapsed().as_millis()), &out, &err);
         // conf.env freezes the config; a step that changes it sends later commands back through conf.sh
         if status.success() && (command.contains("spira-config set") || command.contains("spira-config unset")) {
@@ -346,6 +347,14 @@ impl Exec for ProcessExec {
         }
         status.code().ok_or_else(|| format!("{command}: {status}"))
     }
+}
+
+/// CPU (user and system) of every process this one has run and reaped, from `/proc/self/stat`:
+/// the part of a world's cost that does not depend on how loaded the box was.
+pub fn children_cpu_ms() -> u64 {
+    let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
+    let fields: Vec<u64> = stat.rsplit_once(')').map(|(_, rest)| rest.split_whitespace().skip(13).take(2).filter_map(|f| f.parse().ok()).collect()).unwrap_or_default();
+    fields.iter().sum::<u64>() * 10
 }
 
 /// One line of where a run's wall time went: world-up phases from `profile.tsv`, and the
@@ -373,18 +382,30 @@ pub fn profile_line(world: &Path) -> String {
     }
     timed_cmds.sort_by(|a, b| b.0.cmp(&a.0));
     let slowest: Vec<String> = timed_cmds.iter().take(4).map(|(ms, c)| format!("{ms}ms {c}")).collect();
-    format!("{} commands={cmds}/{cmd_ms}ms probes={probes}/{probe_ms}ms slowest: {}", phases.join(" "), slowest.join(" | "))
+    format!("{} cpu={}ms commands={cmds}/{cmd_ms}ms probes={probes}/{probe_ms}ms slowest: {}", phases.join(" "), children_cpu_ms(), slowest.join(" | "))
 }
 
 pub struct ProcessProbe {
     pub exec: ProcessExec,
     pub probe: Option<String>,
+    /// Set when the world's `SIM_PROBE` is this binary's own `sim probe`: read in-process, with
+    /// the world's locators, instead of through a shell and a second `sim`.
+    observer: Option<crate::probe::Observer>,
 }
 
 impl ProcessProbe {
     pub fn for_world(world: &Path, epoch: u64) -> Result<Self, String> {
-        let probe = read_env_file(&world.join("config/sim.env"))?.into_iter().find(|(k, _)| k == PROBE_KEY).map(|(_, v)| v);
-        Ok(ProcessProbe { exec: ProcessExec { world: world.to_path_buf(), epoch }, probe })
+        let sim_env = read_env_file(&world.join("config/sim.env"))?;
+        let probe = sim_env.iter().find(|(k, _)| k == PROBE_KEY).map(|(_, v)| v.clone());
+        let own = world.canonicalize().ok().zip(std::env::current_exe().ok()).map(|(w, exe)| crate::world::probe_command(&exe, &w));
+        let observer = match (&probe, own) {
+            (Some(p), Some(own)) if *p == own => {
+                let locator = |k: &str| sim_env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+                Some(crate::probe::Observer::new(world, &locator)?)
+            }
+            _ => None,
+        };
+        Ok(ProcessProbe { exec: ProcessExec { world: world.to_path_buf(), epoch }, probe, observer })
     }
 }
 
@@ -399,6 +420,19 @@ impl Probe for ProcessProbe {
 
 impl ProcessProbe {
     fn take(&mut self) -> Result<Snapshot, String> {
+        if let Some(o) = self.observer.as_mut() {
+            let seen = o.observe()?;
+            let mut snap = Snapshot { refs: seen.refs, ..Snapshot::default() };
+            for t in seen.tags.into_iter().chain(crate::gh::tag_names(&self.exec.world.join("gh"))?) {
+                if !snap.tags.contains(&t) {
+                    snap.tags.push(t);
+                }
+            }
+            for row in &seen.rows {
+                snap.beads.push(bead_row(row)?);
+            }
+            return Ok(snap);
+        }
         let work = self.exec.world.join("work");
         let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(&work).args(args), COMMAND_DEADLINE);
         let mut snap = Snapshot::default();

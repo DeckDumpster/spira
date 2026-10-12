@@ -2,7 +2,8 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
+       sim proc-summary <world|proc-trace.log>
        sim summon
        sim ci run <workflow.yml> <job> --sha <sha> --workspace <dir> [--skip <step name>]... [--path <dir>]... [--env KEY=VALUE]...";
 
@@ -44,6 +45,14 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("step") => return step_main(&args[1..]),
         Some("replay") => return replay_main(&args[1..]),
         Some("summon") => return summon_main(&env),
+        Some("proc-summary") => {
+            let [target] = &args[1..] else { return Err(USAGE.to_string()) };
+            let path = PathBuf::from(target);
+            let path = if path.is_dir() { path.join(spira_sim::proctrace::TRACE_FILE) } else { path };
+            let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e} (run with {}=1)", path.display(), spira_sim::proctrace::TRACE_ENV))?;
+            print!("{}", spira_sim::proctrace::summarize(&text));
+            return Ok(());
+        }
         Some("probe") => {
             let [dir] = &args[1..] else { return Err(USAGE.to_string()) };
             print!("{}", spira_sim::probe::probe(&PathBuf::from(dir), &env)?);
@@ -54,6 +63,8 @@ fn run(args: &[String]) -> Result<(), String> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["world", "up", dir] => world::up(&cwd, &PathBuf::from(dir), "HEAD", &env, &ProcessSteps::default()),
         ["world", "up", dir, "--tree", rev] => world::up(&cwd, &PathBuf::from(dir), rev, &env, &ProcessSteps::default()),
+        ["world", "seed"] => world::ensure_seed(&cwd, "HEAD").map(|_| ()),
+        ["world", "seed", "--tree", rev] => world::ensure_seed(&cwd, rev).map(|_| ()),
         ["world", "down", dir] => world::down(&PathBuf::from(dir), &ProcessSteps::default()),
         _ => Err(USAGE.to_string()),
     }
@@ -182,14 +193,16 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         None => {
             let d = std::env::temp_dir().join(format!("sim-run-{}-{seed}", std::process::id()));
             let t = std::time::Instant::now();
-            world::up(cwd, &d, "HEAD", env, &ProcessSteps::default())?;
+            world::up_resolving(cwd, &d, "HEAD", env, &ProcessSteps::default(), &|w| spira_sim::drive::resolve_conf(w, sc.epoch))?;
             world::mark(&d, "up", t);
             (d, true)
         }
     };
-    let t = std::time::Instant::now();
-    spira_sim::drive::resolve_conf(&dir, sc.epoch)?;
-    world::mark(&dir, "up.conf-resolve", t);
+    if !dir.join(spira_sim::drive::CONF_ENV).exists() {
+        let t = std::time::Instant::now();
+        spira_sim::drive::resolve_conf(&dir, sc.epoch)?;
+        world::mark(&dir, "up.conf-resolve", t);
+    }
     let probe = ProcessProbe::for_world(&dir, sc.epoch)?;
     if sc.goal.is_some() && probe.probe.is_none() {
         return Err(format!("the world configures no SIM_PROBE, so goal {:?} cannot be observed", sc.goal.unwrap_or_default()));
@@ -205,6 +218,9 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         world::down(&dir, &ProcessSteps::default())?;
         eprintln!("sim: profile {profile} down={}ms", t.elapsed().as_millis());
     } else {
+        if outcome.is_ok() {
+            eprintln!("sim: profile {}", spira_sim::drive::profile_line(&dir));
+        }
         eprintln!("sim: world kept at {}", dir.display());
     }
     outcome
