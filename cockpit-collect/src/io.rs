@@ -383,6 +383,13 @@ pub fn pane_beads(labels: &str) -> Option<String> {
     with_labels(raw, labels)
 }
 
+/// `pane_beads` without the closed rows: what a default `list` (live beads only) answered.
+pub fn live_beads(labels: &str) -> Option<String> {
+    let rows = json_rows(pane_beads(labels))?;
+    let kept: Vec<_> = rows.into_iter().filter(|r| r.get("status").and_then(|s| s.as_str()) != Some("closed")).collect();
+    serde_json::to_string(&kept).ok()
+}
+
 /// Every bead carrying `labels`, closed ones included, for the probes that count history. Read
 /// at most once per `SPIRA_HISTORY_READ_TTL` across all probes.
 pub fn history_beads(labels: &str) -> Option<String> {

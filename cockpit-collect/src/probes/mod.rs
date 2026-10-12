@@ -742,7 +742,7 @@ pub fn sphere_keys(cfg: &Cfg) -> Kv {
 
     let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let rows = io::json_rows(io::pane_beads(&label));
+    let rows = io::json_rows(io::live_beads(&label));
     match rows.zip(lc_rows.as_ref()) {
         None => {
             push(&mut out, "SP_OPEN", "?");
@@ -794,7 +794,7 @@ pub fn repo_label_keys(cfg: &Cfg) -> Kv {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let rows = io::json_rows(io::pane_beads(""));
+    let rows = io::json_rows(io::live_beads(""));
     match rows {
         None => {
             push(&mut out, "SP_REPO_UNMAPPED", "?");
@@ -996,7 +996,7 @@ const CZAR_CLASSES: &[(&str, &str)] = &[
 pub fn czar_triggers_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let label = cfg.czar_label.as_str();
-    let raw = io::pane_beads(label);
+    let raw = io::history_beads(label);
     let rows = match &raw {
         Some(s) if !s.trim().is_empty() => serde_json::from_str::<Value>(s.trim()).ok().map(|v| match v {
             Value::Array(a) => a,
