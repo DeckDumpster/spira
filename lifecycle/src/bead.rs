@@ -947,7 +947,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 if *stack_depth > *stack_max_depth {
                     return depth_exceeded(row, *stack_depth, *stack_max_depth);
                 }
-                if !stack.is_empty() && *stack == row.stack && row.reason.as_deref().is_some_and(|r| GateRedReason::from_str(r).is_some()) {
+                if rework_claim_stack_unchanged(&row.stack, row.reason.as_deref(), stack) {
                     return Outcome::refuse(row.clone(), Refusal::StackUnchanged { prereqs: stack.keys().cloned().collect() });
                 }
                 let mut new = row.clone();
@@ -1053,6 +1053,12 @@ pub fn submit_refusal_for_stale_stack(row: &BeadRow, prereqs: &[BeadRow]) -> Opt
 /// against `stack_max_depth` and has no way to see the prerequisite's row.
 pub fn claim_refusal_for_stale_stack(stack: &Stack, prereqs: &[BeadRow]) -> Option<Refusal> {
     stale_stack_refusal(stack, prereqs)
+}
+
+/// A REWORK claim on the stack the gate already went red on repeats the red; the `Claim`
+/// arm refuses it and every counter of claimable work must agree.
+pub fn rework_claim_stack_unchanged(recorded: &Stack, reason: Option<&str>, proposed: &Stack) -> bool {
+    !proposed.is_empty() && proposed == recorded && reason.is_some_and(|r| GateRedReason::from_str(r).is_some())
 }
 
 /// The hold-release rule (design §1) for a blocker that is a work bead in the *same
