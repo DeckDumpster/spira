@@ -42,10 +42,10 @@ out="$(LOCALOK=0 lcb run)"; rc=$?; wantrc "same-disk file:// destination refused
 echo; echo "age — stale and fresh fixtures:"
 out="$(lcb age)"; rc=$?; wantrc "never backed up is red" 1 $rc; want "never is named" never "$out"
 printf '%s deadbeef\n' "$(( $(date +%s) - 5000 ))" > "$RUN/lc-backup.spira_lifecycle.ok"
-out="$(lcb age)"; rc=$?; wantrc "stale stamp is red" 1 $rc; want "stale is named" stale "$out"
+out="$(DBS=spira_lifecycle lcb age)"; rc=$?; wantrc "stale stamp is red" 1 $rc; want "stale is named" stale "$out"
 printf '%s deadbeef\n' "$(( $(date +%s) - 10 ))" > "$RUN/lc-backup.spira_lifecycle.ok"
-out="$(lcb age)"; rc=$?; wantrc "fresh stamp is green" 0 $rc; want "fresh is named" ok "$out"
-printf 'junk\n' > "$RUN/lc-backup.spira_lifecycle.ok"; lcb age >/dev/null; wantrc "unreadable stamp cannot check (2)" 2 $?
+out="$(DBS=spira_lifecycle lcb age)"; rc=$?; wantrc "fresh stamp is green" 0 $rc; want "fresh is named" ok "$out"
+printf 'junk\n' > "$RUN/lc-backup.spira_lifecycle.ok"; DBS=spira_lifecycle lcb age >/dev/null; wantrc "unreadable stamp cannot check (2)" 2 $?
 rm -f "$RUN/lc-backup.spira_lifecycle.ok"
 printf '%s deadbeef\n' "$(( $(date +%s) - 10 ))" > "$RUN/lc-backup.spira_lifecycle.ok"
 out="$(lcb age)"; rc=$?; wantrc "one fresh database does not mask a never-backed-up one" 1 $rc; want "the missing one is named" "spira: never" "$out"
