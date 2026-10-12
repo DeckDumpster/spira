@@ -82,9 +82,9 @@ Timers, each doing one thing, none waiting on another.
 | `spira-groom.timer` | 6 h | graph hygiene: split, merge, close beads whose premises are gone |
 
 `spira-archive`, `spira-refresh`, `spira-notify`, `spira-moot-sweep`,
-`spira-verify-asks`, `spira-promote`, `cockpit-ensure` and `beads-push` keep the surrounding
+`spira-verify-asks`, `spira-promote`, and `cockpit-ensure` keep the surrounding
 machinery honest — transcripts archived, watchers running current code, unread events
-escalated, panes repaired, databases pushed to their remotes.
+escalated, panes repaired.
 
 ### The sentinel's checks
 
@@ -578,7 +578,6 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `concierge.sh` | one named Remote Control session, so a phone can reach the harness |
 | `rule.sh` | enacting a statute writes the beads KV store, which is the harness's substrate |
 | `spira/archive.sh` | keeps every session transcript and indexes it by time range and by the lineage id that survives a clear. The mechanism ships; the transcripts and the store they land in are the operator's own and stay out of every repository |
-| `beads-push.sh` | pushes the beads database to its configured Dolt remote. The mechanism ships; the remote it is pointed at is the operator's own and is private |
 | `spira.conf.example` | the annotated template an operator copies to spira.conf. Every key but SPIRA_ID_PREFIX optional, every other default derived from where the harness is installed |
 | `README.md` | the harness's own entry point, carrying this table |
 | `AGENTS.md`, `CLAUDE.md` | how an agent works ON the harness. Distinct from the wiki repository's own agent instructions, which are how an overseer works WITH it |

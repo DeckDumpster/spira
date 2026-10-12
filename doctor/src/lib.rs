@@ -740,7 +740,7 @@ pub fn check_prod_checkout(w: &dyn World) -> Vec<Line> {
         ));
     }
     if out.is_empty() {
-        out.push(ok(format!("every installed spira-*/beads-push unit runs from {releases}")));
+        out.push(ok(format!("every installed spira-* unit runs from {releases}")));
     }
     out
 }

@@ -152,7 +152,7 @@ for _s in moot-sweep.sh verify-asks.sh; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$COCKPIT_DIR/$_s"
     chmod +x "$COCKPIT_DIR/$_s"
 done
-for _s in beads-push.sh concierge.sh; do
+for _s in concierge.sh; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$FIXTURE/$_s"
     chmod +x "$FIXTURE/$_s"
 done

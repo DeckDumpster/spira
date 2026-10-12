@@ -183,7 +183,7 @@ it is the meter's link, so calls stay metered), and `testdb.sh` exports it as `S
 with `spira_bin testenv`, which a suite that points `SPIRA_REPO`/`SPIRA_HOME` at a fixture
 tree cannot satisfy; the server tier therefore exports `TESTDB_TESTENV=<artifacts>/testenv`,
 which `_testdb_testenv` already prefers. Three suites that test the embedded path itself
-(`test-testdb-failsafe`, `test-testdb-concurrent`, and `test-beads-push-commit`, whose remote
+(`test-testdb-failsafe`, `test-testdb-concurrent`, and a suite whose remote
 is written and read through the embedded library) unset `SPIRA_TESTDB_MODE`.
 
 **Measured (testenv, maxpar 8, same host, 2026-09-29).** The six bd-heavy suites (certify,

@@ -420,7 +420,7 @@ impl World for Real {
     fn systemd_installed_unit_execs(&self) -> Result<Vec<(String, String, String)>, String> {
         let sc = self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string());
         let out = spira_config::bounded::bounded(&sc)
-            .args(["--user", "list-unit-files", "--no-legend", "--plain", "spira-*.service", "beads-push.service"])
+            .args(["--user", "list-unit-files", "--no-legend", "--plain", "spira-*.service"])
             .stdin(Stdio::null())
             .output()
             .map_err(|e| e.to_string())?;

@@ -16,7 +16,7 @@ Every harness process resolves each setting with the precedence environment > sp
 | B. Store binding and schema guard | 09–11 | T1 | test-bd-resolve, test-bd-lock-retry, test-bd-schema-stamp |
 | C. Repo-map, labels, partitions, containment | 12–18 | T0–T1 | test-repo-map, test-chamber-repo-labels, test-builder-qa-proposed, test-czar-partition, test-containment, test-id-prefix |
 | D. Schema declaration and application | 19–22 | T1–T3 | test-schema, test-schema-apply |
-| E. Store provisioning and push | 23–26 | T1–T2 | test-install-dolt-port-wait, test-install-dolt-breaker, test-beads-push-verify, test-beads-push-commit |
+| E. Store provisioning and push | 23–26 | T1–T2 | test-install-dolt-port-wait, test-install-dolt-breaker |
 | F. Health (formerly preflight) | 27–34 | T0–T2 | test-freshclone (33); the rest are the Rust doctor crate |
 
 ## Verdicts applied and not applied
@@ -35,10 +35,3 @@ This page lands the catalogue and the `# tier:` / `# covers:` tags on the surviv
 - **Superseded by the Rust cutover:** G3 and G4 (the schema guard and config-file search moved to `spira-config`), G5–G7 (doctor is a Rust crate), and G11 (the answer-cursor consumers were deleted). Their tests belong in those crates; UC-02, 27–32 and 34 stay marked uncovered.
 - **Left as stated:** G10 — test-schema-apply's server half still reports "NOT COVERED HERE" on stderr when no server fixture exists; the suite does not yet emit a TAP skip for it.
 
-## Deleted case: test-beads-push-commit positive control
-
-Case 2 ("positive control: dirty statute absent from clone without commit") is deleted: it flipped between rounds, its bootstrap-clone probe answering `?` under load. Coverage left: UC-26 still asserts that `beads-push.sh` exits 0, reports the committed dirty tables, lands the statute in a fresh clone, and makes no commit on a clean set. Lost: the proof that the statute is absent without the commit step, so in embedded mode (auto-commit) the suite no longer goes red if that step is removed. A follow-on may re-add it with a probe that answers under load.
-
-## Cost
-
-No suite-seconds were measured: the old 640 s baseline predates the cutover and this change only edits header comments, so the after figure equals the before.
