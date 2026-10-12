@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Seconds the newest good lifecycle backup may be before lc-backup.sh age is red (timer interval plus slack).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_BACKUP_MAX_AGE:=25200}"
+SPIRA_CONF_DEFAULT_EOF

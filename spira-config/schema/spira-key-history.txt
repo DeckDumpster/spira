@@ -414,3 +414,7 @@ round_vm_spill_wait_secs
 rounds_pacing
 pass_rate_max_pct
 pass_rate_window
+lc_backup_allow_local
+lc_backup_db
+lc_backup_max_age
+lc_backup_url

@@ -61,3 +61,7 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.rounds_pacing" = "0"
 "spira.pass_rate_max_pct" = 150
 "spira.pass_rate_window" = 86400
+"spira.lc_backup_url" = ""
+"spira.lc_backup_db" = "spira_lifecycle"
+"spira.lc_backup_max_age" = 25200
+"spira.lc_backup_allow_local" = false
