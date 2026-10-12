@@ -1133,7 +1133,8 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     let keep = AtomicBool::new(false);
     let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, progress, results_dir, &keep);
     if keep.load(Ordering::SeqCst) {
-        eprintln!("round-vm run: INCOMPLETE: results not fully pulled; keeping VM {} at {} for a re-pull (release it with `round-vm release {}`)", vm.handle, vm.addr, vm.handle);
+        let pulled = fs::read_dir(&args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"))).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "result")).count()).unwrap_or(0);
+        eprintln!("round-vm run: INCOMPLETE: {pulled} results pulled; results not fully pulled; keeping VM {} at {} for a re-pull (release it with `round-vm release {}`)", vm.handle, vm.addr, vm.handle);
         if let Err(e) = env.pool.hold(&vm.handle) {
             eprintln!("round-vm run: warning: could not hold {}: {e}", vm.handle);
         }
@@ -1408,9 +1409,18 @@ fn record_incomplete(env: &RunEnv, args: &RunArgs, why: &str) {
     }
 }
 
+/// Marks the VM kept and takes it off this process's lease at once, so a signal arriving
+/// before `run` returns cannot release a VM that `run` has said it is keeping.
+fn keep_vm(env: &RunEnv, vm: &Vm, keep: &AtomicBool) {
+    keep.store(true, Ordering::SeqCst);
+    if let Err(e) = env.pool.hold(&vm.handle) {
+        eprintln!("round-vm run: warning: could not hold {}: {e}", vm.handle);
+    }
+}
+
 /// The batch's ssh dropped, so what the VM holds is unknown: take what it has and keep the VM.
 fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, keep: &AtomicBool) {
-    keep.store(true, Ordering::SeqCst);
+    keep_vm(env, vm, keep);
     let scratch = env.cfg.state_dir.join(format!(".pulled-lost.{}", std::process::id()));
     let _ = fs::remove_dir_all(&scratch);
     if pull_retry(env.remote, env.cfg, &vm.addr, REMOTE_RESULTS, &scratch) {
@@ -1424,8 +1434,8 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, keep: &AtomicB
 
 /// A run cut by a signal still holds the verdicts its VM produced: pulls them into
 /// `results_dir` (results already there are kept) before the VM is released. Bounded by
-/// `within`, because the caller's kill-after is seconds away. Returns how many were new.
-pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> usize {
+/// `within`, because the caller's kill-after is seconds away. Returns how many were new, or `None` when the pull itself failed or timed out.
+pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> Option<usize> {
     let pulled = std::thread::scope(|sc| {
         let (tx, rx) = std::sync::mpsc::channel();
         sc.spawn(move || {
@@ -1435,7 +1445,7 @@ pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scra
         });
         rx.recv_timeout(within).unwrap_or(false)
     });
-    let n = if pulled { stream_into(scratch, results_dir).unwrap_or(0) } else { 0 };
+    let n = pulled.then(|| stream_into(scratch, results_dir).unwrap_or(0));
     let _ = fs::remove_dir_all(scratch);
     n
 }
@@ -1492,16 +1502,16 @@ fn after_batch(
         if let Err(e) = copy_tree(leaf, &results_dir) {
             eprintln!("round-vm run: {e}");
             own_fault = true;
-            keep.store(true, Ordering::SeqCst);
+            keep_vm(env, vm, keep);
         }
     } else if !pulled_ok || remote_rc == 0 {
         eprintln!("round-vm run: no suite results came back from {}", vm.handle);
         own_fault = true;
-        keep.store(true, Ordering::SeqCst);
+        keep_vm(env, vm, keep);
     }
     if !pulled_ok {
         eprintln!("round-vm run: INCOMPLETE: the results pull from {} failed after retries; this is not a verdict", vm.handle);
-        keep.store(true, Ordering::SeqCst);
+        keep_vm(env, vm, keep);
         record_incomplete(env, args, "the results pull failed after retries");
         return 2;
     }
@@ -2422,12 +2432,12 @@ mod tests {
         let dest = fx.cfg.run_dir.join("salvaged");
         let scratch = fx.cfg.state_dir.join(".salvage-test");
         let n = salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5));
-        assert_eq!(n, 2);
+        assert_eq!(n, Some(2));
         assert!(dest.join("test-a.sh.result").is_file());
         assert!(!scratch.exists(), "scratch is removed");
         let mut none = FakeRemote::green();
         none.files.clear();
-        assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5)), 0, "an unreachable VM salvages nothing and does not fail");
+        assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5)), None, "an unreachable VM salvages nothing and says the pull failed");
     }
 
     #[test]
@@ -2641,6 +2651,28 @@ mod tests {
         assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
         assert!(fx.cfg.run_dir.join("batch-results/test-a.sh.result").is_file());
         assert_eq!(fx.fp.live_vms().len(), 1);
+    }
+
+    #[test]
+    fn a_kept_vm_is_off_this_runs_lease_so_a_signal_cannot_release_it() {
+        let fx = fixture();
+        let mut remote = FakeRemote::green();
+        remote.rc = Ok(255);
+        assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
+        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
+        assert!(pool.leased_to(ProcId::current()).is_empty(), "release_owned_by finds nothing to stop");
+        assert_eq!(fx.fp.live_vms().len(), 1);
+    }
+
+    #[test]
+    fn a_salvage_whose_pull_fails_is_none_not_zero() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        remote.fail_result_pulls.store(1, std::sync::atomic::Ordering::SeqCst);
+        let dest = fx.cfg.run_dir.join("salvaged");
+        let scratch = fx.cfg.state_dir.join(".salvage-fail");
+        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), None);
+        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), Some(2), "the re-pull recovers every result");
     }
 
     #[test]
