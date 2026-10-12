@@ -62,6 +62,13 @@ pub const FACTS_QUERY_IO_TIMEOUT: std::time::Duration = std::time::Duration::fro
 /// retry cannot double a write.
 const CONNECT_ATTEMPTS: u32 = 3;
 
+/// The server answered and said no (no such database, bad credentials): asking again, after a
+/// backoff, gets the same answer, and a fresh store's first DDL connect asks for a database
+/// that does not exist yet.
+fn refused_for_good(e: &ScriptFailure) -> bool {
+    matches!(e, ScriptFailure::CannotTell(m) if m.starts_with("Error 1049 ") || m.starts_with("Error 1045 "))
+}
+
 fn connect_backoff(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_millis(200u64 << (attempt - 1).min(6))
 }
@@ -187,6 +194,7 @@ impl Conn {
             }
             match Wire::connect_with(&self.host, self.port, &self.user, &self.password, database, self.io_timeout) {
                 Ok(w) => return Ok(w),
+                Err(e) if refused_for_good(&e) => return Err(e),
                 Err(e) => failure = Some(e),
             }
         }
@@ -718,6 +726,16 @@ mod password_tests {
 
 #[cfg(test)]
 mod io_timeout_tests {
+    #[test]
+    fn a_refusal_from_the_server_is_not_retried_but_a_dead_socket_is() {
+        let no_db = ScriptFailure::CannotTell("Error 1049 (42000): Unknown database 'spira_lifecycle'".into());
+        let denied = ScriptFailure::CannotTell("Error 1045 (28000): Access denied for user 'spira_lc'".into());
+        let refused = ScriptFailure::CannotTell("connecting to 127.0.0.1:1: Connection refused (os error 111)".into());
+        assert!(refused_for_good(&no_db) && refused_for_good(&denied));
+        assert!(!refused_for_good(&refused), "positive control: a transport failure is still retried");
+        assert!(!refused_for_good(&ScriptFailure::LostRace));
+    }
+
     #[test]
     fn connect_backoff_doubles_from_200ms() {
         assert_eq!(super::connect_backoff(1), std::time::Duration::from_millis(200));
