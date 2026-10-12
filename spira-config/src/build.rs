@@ -594,20 +594,4 @@ mod from_env_tests {
         let unset = with_env(&[("SPIRA_TOML", Some("/nonexistent-sp-ei6jt/spira.toml")), (STORE_ADDR_ENV, None)], || addr_for_home(&home));
         assert_eq!(unset, None, "an unconfigured store stays None");
     }
-
-    #[test]
-    fn warm_slots_are_exclusive_and_reaped_by_size() {
-        let d = testkit::TempDir::new("spira-config-aeon-warm");
-        let (a, la) = acquire_warm(d.path(), 2).unwrap();
-        let (b, _lb) = acquire_warm(d.path(), 2).unwrap();
-        assert_ne!(a, b);
-        assert!(acquire_warm(d.path(), 2).is_none());
-        drop(la);
-        assert_eq!(acquire_warm(d.path(), 2).unwrap().0, a);
-        std::fs::write(a.join("big"), vec![1u8; 2 * 1024 * 1024]).unwrap();
-        assert!(!reap_over_cap(&a, 100));
-        assert!(a.join("big").exists());
-        assert!(reap_over_cap(&a, 1));
-        assert!(a.is_dir() && !a.join("big").exists());
-    }
 }

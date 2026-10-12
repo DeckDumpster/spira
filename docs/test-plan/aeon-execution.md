@@ -674,3 +674,20 @@ replacing the whole `aeon_fuse_minutes` bash function it used to call).
 
 `cargo test -p aeon -p cockpit-collect -p sentinel`: 154 + 50 + 89 tests, all green (19 new
 in `aeon::trace`).
+
+## 17. warm_slots_are_exclusive_and_reaped_by_size deleted as a flip (sp-zv8tfa, 2026-10-12)
+
+`spira-config` `build::from_env_tests::warm_slots_are_exclusive_and_reaped_by_size` was green
+when it landed and failed in a later round whose members did not touch `spira-config`: the
+re-acquire after `drop(la)` returned `None` once. `acquire_warm` takes a non-blocking `flock`
+on a descriptor it owns, and `flock` belongs to the open file description, so a sibling test
+forking a child (pre-exec) under the parallel runner briefly holds a duplicate and keeps the
+lock alive past the drop. The defect is the test's assumption of synchronous release in a
+multi-threaded process, not `acquire_warm`; no fix inside the function can close it.
+Per law-a-test-that-flips-is-deleted, deleted rather than loosened.
+
+Coverage left: none in unit form for slot exclusivity (two live guards get distinct slots,
+a third gets `None`) or `reap_over_cap` (empties an over-cap slot, keeps the directory).
+Both are exercised end to end whenever an aeon session is summoned with a warm
+`CARGO_TARGET_DIR`. A replacement must run the lock holder in a separate process rather than
+rely on in-process drop.
