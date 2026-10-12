@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rule::{
-    list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
+    find_duplicate, is_in_force, list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
     CommitOutcome, EnactError, USAGE,
 };
 
@@ -284,17 +284,37 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         return 0;
     }
 
-    let prior = match memories_json(db) {
-        Ok(m) => m.get(&key).and_then(|v| v.as_str()).map(str::to_string),
+    let before = match memories_json(db) {
+        Ok(m) => m,
         Err(e) => {
             eprintln!("{e}");
             return 1;
         }
     };
+    if let Some(existing) = find_duplicate(&before, &key, &text) {
+        eprintln!("rule: this text is already in force as {existing} — refused, nothing written. Retire or amend {existing} instead.");
+        return 1;
+    }
+    let prior = before.get(&key).and_then(|v| v.as_str()).map(str::to_string);
     let (code, _, stderr) = run_bd(db, &["remember", "--key", &key, &text]);
     if code != 0 {
-        eprintln!("rule: failed to write {key} to the statute book at {db}: {stderr}");
-        return 1;
+        let landed = memories_json(db).map(|m| is_in_force(&m, &key, &text));
+        match landed {
+            Ok(false) => {
+                eprintln!("rule: failed to write {key} to the statute book at {db}: {stderr}");
+                eprintln!("rule: verified against the book — nothing written, {key} is not in force.");
+                return 1;
+            }
+            Ok(true) => {
+                eprintln!("rule: bd reported an error but {key} IS in force (verified against the book): {stderr}");
+            }
+            Err(e) => {
+                eprintln!("rule: bd reported an error writing {key} and the book cannot be read back to say whether it landed: {stderr}");
+                eprintln!("{e}");
+                eprintln!("rule: run `rule.sh show {key}` before retrying; do not enact it again under another slug.");
+                return 1;
+            }
+        }
     }
     rm_memories_cache();
     println!("enacted {key} ({words} words)");
