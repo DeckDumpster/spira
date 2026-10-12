@@ -42,7 +42,7 @@ echo "test-install-dolt-ready.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# Fixture layout (mirrors test-install-dolt-breaker.sh).
+# Fixture layout.
 # ---------------------------------------------------------------------------
 . "$HERE/lib-test-install.sh"
 FIXTURE="$TMP/harness"
