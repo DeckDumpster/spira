@@ -181,6 +181,7 @@ mod tests {
         ];
         let expected = [
             "spira-watch-answers-prod.service",
+            "dolt-beads.service",
             "another-unit.service",
         ];
         for (line, want) in lines.iter().zip(expected.iter()) {
