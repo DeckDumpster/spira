@@ -27,6 +27,14 @@ const LOCK_NB: i32 = 4;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--lint-default") {
+        let text = args.get(2).map(String::as_str).unwrap_or("");
+        if default_relaxes_a_check(text) {
+            eprintln!("czar-pass: refused — a default may not disable or relax a check; restore the component, or escalate the restoration as the operator's order");
+            return ExitCode::FAILURE;
+        }
+        return ExitCode::SUCCESS;
+    }
     if args.get(1).map(String::as_str) != Some("--pass") {
         eprintln!("usage: czar-pass --pass");
         return ExitCode::from(2);
@@ -84,6 +92,7 @@ struct Config {
     reconciler_status_log: PathBuf,
     reconciler_stamp: PathBuf,
     reconciler_grace_secs: u64,
+    reconciler_timer: String,
     round_min_n: u32,
     round_stall_secs: u64,
     spira_db: String,
@@ -167,6 +176,7 @@ impl Config {
             reconciler_status_log: paths::status_log(&spira_run),
             reconciler_stamp: paths::pass_stamp(&spira_run),
             reconciler_grace_secs: must_cfg_parse("SPIRA_RECONCILER_GRACE_SECS"),
+            reconciler_timer: format!("spira-reconciler-{}.timer", must_cfg("SPIRA_INSTANCE")),
             // Batcher's own adaptive_n floor (batcher/src/core.rs: raw.clamp(4.0, 30.0)) — a
             // pool below this can never be a PoolFull trigger, whatever the adaptive ceiling
             // turns out to be, so it is the one threshold this detector can check without
@@ -1300,13 +1310,71 @@ fn detect_reconciler_stale(cfg: &Config, state: &mut StateMap) -> (Verdict, &'st
         return (verdict, "none", "det");
     }
     let body = format!(
-        "The reconciler has not completed a pass within {}s.\n\nCheck: spira-reconciler.timer is enabled and active, \
+        "The reconciler has not completed a pass within {}s.\n\nTimer: {}\nCheck: the timer is enabled and active, \
          and {} is being written.\n",
         cfg.reconciler_grace_secs,
+        timer_state(&cfg.seams.systemctl, &cfg.reconciler_timer),
         cfg.reconciler_stamp.display()
     );
     infer(cfg, "reconciler-stale", "reconciler-stale", "RECONCILER: no pass completed — reconciler is not running", &body);
     (verdict, "inference", "inf")
+}
+
+const RELAXING_VERBS: [&str; 17] = [
+    "disable", "disarm", "silence", "mute", "suppress", "relax", "loosen", "lower", "raise", "bypass", "skip",
+    "turn off", "switch off", "stop running", "remove", "delete", "drop",
+];
+const CHECK_NOUNS: [&str; 9] = ["check", "detector", "alarm", "alert", "watcher", "gate", "threshold", "grace", "guard"];
+
+/// A czar default that disarms or relaxes a check (law-never-disarm-a-check-to-proceed).
+fn default_relaxes_a_check(text: &str) -> bool {
+    let t = text.to_lowercase();
+    RELAXING_VERBS.iter().any(|v| {
+        t.match_indices(v).any(|(i, _)| {
+            let rest: String = t[i + v.len()..].chars().take_while(|c| !".;".contains(*c)).take(40).collect();
+            CHECK_NOUNS.iter().any(|n| rest.contains(n))
+        })
+    })
+}
+
+/// What `systemctl show` says about a unit, as the advice the czar acts on. "not installed"
+/// is reserved for a unit systemd has no file for.
+fn timer_advice(unit: &str, load_state: &str, unit_file_state: &str, active_state: &str) -> String {
+    if load_state == "not-found" || load_state.is_empty() {
+        return format!("{unit}: not installed (no unit file)");
+    }
+    if load_state == "masked" {
+        return format!("{unit}: masked — unmask and enable {unit}");
+    }
+    if unit_file_state != "enabled" {
+        return format!("{unit}: disabled: enable {unit}");
+    }
+    if active_state != "active" {
+        return format!("{unit}: enabled but {active_state}: start {unit}");
+    }
+    format!("{unit}: enabled and active")
+}
+
+fn show_value<'a>(out: &'a str, key: &str) -> &'a str {
+    out.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('='))).unwrap_or("").trim()
+}
+
+fn timer_state(systemctl: &str, unit: &str) -> String {
+    let out = spira_config::bounded::bounded(systemctl)
+        .args(["--user", "show", unit, "-p", "LoadState", "-p", "UnitFileState", "-p", "ActiveState"])
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok());
+    let Some(out) = out else {
+        return format!("{unit}: state unobservable (systemctl failed)");
+    };
+    timer_advice(
+        unit,
+        show_value(&out, "LoadState"),
+        show_value(&out, "UnitFileState"),
+        show_value(&out, "ActiveState"),
+    )
 }
 
 fn detect_pool_idle(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str) {
@@ -1597,6 +1665,7 @@ mod tests {
             reconciler_status_log: dir.join("reconciler-status.jsonl"),
             reconciler_stamp: dir.join("reconciler-pass.stamp"),
             reconciler_grace_secs: 300,
+            reconciler_timer: "spira-reconciler-prod.timer".to_string(),
             round_min_n: 4,
             round_stall_secs: 900,
             spira_db: String::new(),
@@ -1948,6 +2017,37 @@ mod tests {
         let (v, _, _) = detect_reconciler_stale(&cfg, &mut StateMap::new());
         assert!(v.is_gap, "a stamp older than the grace must be a gap");
         assert!(matches!(v.status, RawStatus::Gap { .. }));
+    }
+
+    #[test]
+    fn a_default_that_disables_or_relaxes_a_check_is_refused_and_a_restoring_one_is_not() {
+        for bad in [
+            "disable the queue-reconciler-stale check until spira-reconciler.timer is installed",
+            "relax the grace threshold to 900s",
+            "Silence the alarm",
+        ] {
+            assert!(default_relaxes_a_check(bad), "{bad}");
+        }
+        assert!(!default_relaxes_a_check("enable spira-reconciler-prod.timer"));
+    }
+
+    #[test]
+    fn a_disabled_scoped_timer_is_reported_disabled_with_its_scoped_name_never_not_installed() {
+        let a = timer_advice("spira-reconciler-prod.timer", "loaded", "disabled", "inactive");
+        assert_eq!(a, "spira-reconciler-prod.timer: disabled: enable spira-reconciler-prod.timer");
+        assert!(!a.contains("not installed"));
+        assert!(timer_advice("spira-reconciler-prod.timer", "not-found", "", "inactive").contains("not installed"));
+        assert!(timer_advice("t.timer", "loaded", "enabled", "inactive").contains("start t.timer"));
+        assert!(timer_advice("t.timer", "loaded", "enabled", "active").ends_with("enabled and active"));
+    }
+
+    #[test]
+    fn timer_state_reads_a_stub_systemctl_for_the_configured_unit() {
+        let dir = scratch_dir("timer-state");
+        let sc = dir.join("systemctl");
+        testkit::write_exe(&sc, "#!/bin/sh\necho \"args: $*\" >&2\ncase \"$*\" in *spira-reconciler-prod.timer*) printf 'LoadState=loaded\\nUnitFileState=disabled\\nActiveState=inactive\\n';; esac\n");
+        let got = timer_state(&sc.to_string_lossy(), "spira-reconciler-prod.timer");
+        assert_eq!(got, "spira-reconciler-prod.timer: disabled: enable spira-reconciler-prod.timer");
     }
 
     #[test]
