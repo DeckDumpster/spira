@@ -68,7 +68,7 @@ out="$(lcb drill)"; rc=$?; wantrc "drill ok on identical stores" 0 $rc; want "dr
 lcb drill >/dev/null; wantrc "drill compares AS OF the backed-up commit, so later live writes are not drift" 0 $?
 lcb drill "$obj" >/dev/null; wantrc "drill restores a given object" 0 $?
 lcb drill --db spira >/dev/null; wantrc "drill restores one named database" 0 $?
-( cd "$DATA/spira" && dlt sql -q "DROP TABLE bead; CALL DOLT_COMMIT('-Am','x')" >/dev/null )
+( cd "$DATA/spira" && dlt sql -q "INSERT INTO bead VALUES (9); CALL DOLT_COMMIT('-Am','x')" >/dev/null )
 out="$(lcb drill)"; rc=$?; wantrc "a later live change to one database is not drift" 0 $rc
 
 echo; echo "drill — positive control: a snapshot of another store is red:"
