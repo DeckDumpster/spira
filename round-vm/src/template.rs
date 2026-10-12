@@ -514,7 +514,7 @@ mod tests {
         // byte-identical.
         let cargo_home = TEMPLATE_SCRIPT.find("export CARGO_HOME=\"${cache_home:-$HOME/.cargo}\"").expect("CARGO_HOME comes from the operator's own env (cache_home), never a hardcoded literal — a literal names one operator's box");
         let toolchain = TEMPLATE_SCRIPT.find("static.rust-lang.org/dist/rust-${toolchain}-").expect("a standalone toolchain, not rustup (its own toolchain-install is broken on this template)");
-        let install = TEMPLATE_SCRIPT.find("cargo install sccache --locked --no-default-features --features webdav").expect("the exact install command, same as deps.toml's and doctor's");
+        let install = TEMPLATE_SCRIPT.find("build \"path:$work#spira-env\"").expect("sccache comes from spira-env, built from the tree's own flake.lock");
         let endpoint = TEMPLATE_SCRIPT.find("export SCCACHE_WEBDAV_ENDPOINT=\"http://${host_addr}:9431\"").expect("the cache endpoint is this box's own address, empty host_addr skips it");
         let spira_config_build = TEMPLATE_SCRIPT.find("cargo build -q --locked --release -p testenv -p spira-config").expect("spira-config must be built explicitly: `cargo run -p testenv` alone never builds it, and the image's doctor-check step needs the sibling binary sp-xjnzl's container.rs stages");
         let image = TEMPLATE_SCRIPT.find("-p testenv -- container image").unwrap();

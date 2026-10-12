@@ -18,6 +18,8 @@ on:
       - round-vm/src/template.sh
       - round-vm/src/recipe.rs
       - rust-toolchain.toml
+      - flake.nix
+      - flake.lock
       - spira/testenv/Containerfile
       - .github/workflows/round-ami-build.yml
   schedule:

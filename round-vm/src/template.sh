@@ -21,10 +21,15 @@ releases = "$work/.runtime/releases"
 home_repo = "$work"
 TEMPLATECFG
 export SPIRA_TOML="$work/spira-config/tests/fixtures/complete.toml:$work/template-config.toml"
-if [ ! -x "$CARGO_HOME/bin/sccache" ]; then
-    echo "round-vm template: installing sccache (webdav backend) into $CARGO_HOME/bin" >&2
-    cargo install sccache --locked --no-default-features --features webdav --quiet
+nix_bin=/nix/var/nix/profiles/default/bin
+if [ ! -x "$nix_bin/nix" ]; then
+    echo "round-vm template: installing nix (multi-user)" >&2
+    curl -fsSL https://nixos.org/nix/install | sh -s -- --daemon --yes >&2
 fi
+export PATH="$nix_bin:$PATH"
+echo "round-vm template: building spira-env from this tree's flake.lock" >&2
+nix --extra-experimental-features 'nix-command flakes' build "path:$work#spira-env" -o "$HOME/spira-env" >&2
+ln -sfn "$(readlink -f "$HOME/spira-env")/bin/sccache" "$CARGO_HOME/bin/sccache"
 export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
 export SCCACHE_IGNORE_SERVER_IO_ERROR=1
 if [ -n "$host_addr" ]; then
