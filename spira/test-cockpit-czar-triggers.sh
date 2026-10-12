@@ -32,7 +32,7 @@ run_czar() {
     local bd_path="$1"
     # SPIRA_RUN/SPIRA_DB/SPIRA_BD are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
     # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_BD="$bd_path"
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_BD="$bd_path" SPIRA_CZAR_LABEL=czar-fixture
     env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -128,7 +128,7 @@ echo "one fired, open -> pending"
 BD_PENDING="$TMP/bd-pending"
 cat > "$BD_PENDING" <<'EOF'
 #!/usr/bin/env bash
-printf '[{"id":"sp-p1","status":"open","assignee":"aeon-fake","external_ref":"incident:queue-deadlock-batch-open","created_at":"2026-09-20T10:00:00Z","closed_at":null}]'
+printf '[{"id":"sp-p1","labels":["czar-fixture"],"status":"open","assignee":"aeon-fake","external_ref":"incident:queue-deadlock-batch-open","created_at":"2026-09-20T10:00:00Z","closed_at":null}]'
 EOF
 chmod +x "$BD_PENDING"
 
@@ -148,7 +148,7 @@ echo "one fired, closed, nothing created after -> outcome yes (the fix held)"
 BD_HELD="$TMP/bd-held"
 cat > "$BD_HELD" <<'EOF'
 #!/usr/bin/env bash
-printf '[{"id":"sp-h1","status":"closed","assignee":"aeon-fake","external_ref":"incident:queue-sort-failed-ranking","created_at":"2026-09-20T10:00:00Z","closed_at":"2026-09-20T11:00:00Z"}]'
+printf '[{"id":"sp-h1","labels":["czar-fixture"],"status":"closed","assignee":"aeon-fake","external_ref":"incident:queue-sort-failed-ranking","created_at":"2026-09-20T10:00:00Z","closed_at":"2026-09-20T11:00:00Z"}]'
 EOF
 chmod +x "$BD_HELD"
 
@@ -166,8 +166,8 @@ BD_RECUR="$TMP/bd-recur"
 cat > "$BD_RECUR" <<'EOF'
 #!/usr/bin/env bash
 printf '[
-  {"id":"sp-r1","status":"closed","assignee":"aeon-one","external_ref":"incident:queue-loop-stalled","created_at":"2026-09-20T10:00:00Z","closed_at":"2026-09-20T11:00:00Z"},
-  {"id":"sp-r2","status":"closed","assignee":"aeon-two","external_ref":"incident:queue-loop-stalled","created_at":"2026-09-21T09:00:00Z","closed_at":"2026-09-21T10:00:00Z"}
+  {"id":"sp-r1","labels":["czar-fixture"],"status":"closed","assignee":"aeon-one","external_ref":"incident:queue-loop-stalled","created_at":"2026-09-20T10:00:00Z","closed_at":"2026-09-20T11:00:00Z"},
+  {"id":"sp-r2","labels":["czar-fixture"],"status":"closed","assignee":"aeon-two","external_ref":"incident:queue-loop-stalled","created_at":"2026-09-21T09:00:00Z","closed_at":"2026-09-21T10:00:00Z"}
 ]'
 EOF
 chmod +x "$BD_RECUR"
