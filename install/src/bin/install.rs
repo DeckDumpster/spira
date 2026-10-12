@@ -215,9 +215,13 @@ fn dependencies(dry: bool) -> Result<(), String> {
 /// `~/.local/lib/spira-env`; every unit's PATH and `dolt-beads.service`'s ExecStart resolve
 /// dolt and bd from it. Idempotent: an unchanged lock rebuilds to the same store path.
 fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result<(), String> {
-    let root = release_root.ok_or("cannot find the release root holding flake.nix; run install from an installed release")?;
-    if !root.join("flake.nix").is_file() || !root.join("flake.lock").is_file() {
-        return Err(format!("{} has no flake.nix/flake.lock", root.display()));
+    let Some(root) = release_root.filter(|r| r.join("flake.nix").is_file() && r.join("flake.lock").is_file()) else {
+        info("skipping spira-env: no flake.nix/flake.lock in this release");
+        return Ok(());
+    };
+    if which_prog("nix").is_none() {
+        info("skipping spira-env: nix is not installed (doctor reports tools resolved outside it)");
+        return Ok(());
     }
     let out = Path::new(home).join(spira_config::SPIRA_ENV_REL);
     let target = format!("path:{}#spira-env", root.display());
