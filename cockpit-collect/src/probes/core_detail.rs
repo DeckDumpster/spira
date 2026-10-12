@@ -37,6 +37,13 @@ pub fn core_detail_keys(cfg: &Cfg) -> Kv {
     out
 }
 
+fn repo_tag(labels: Option<&Vec<Value>>) -> String {
+    labels
+        .and_then(|a| a.iter().filter_map(Value::as_str).find_map(|l| l.strip_prefix("repo:")))
+        .map(|r| r.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect())
+        .unwrap_or_default()
+}
+
 // ---------------------------------------------------------------------------------------
 // NEXT
 // ---------------------------------------------------------------------------------------
@@ -104,6 +111,7 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
         let title = sanitize_title(i.get("title").and_then(Value::as_str).unwrap_or(""), 80);
         let id = i.get("id").and_then(Value::as_str).unwrap_or("");
         push(out, &format!("SP_NEXT{n}"), format!("P{pri} {part} {id} {title}"));
+        push(out, &format!("SP_NEXT{n}_REPO"), repo_tag(i.get("labels").and_then(Value::as_array)));
     }
     push(out, "SP_NEXT_N", rows.len().to_string());
     push(out, "SP_READY", rows.len().to_string());
@@ -115,6 +123,7 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
 
 fn recent_section(out: &mut Kv, run: &std::path::Path) {
     let titles = title_map();
+    let repos = repo_map();
 
     let mut candidates: Vec<String> = Vec::new();
 
@@ -227,6 +236,7 @@ fn recent_section(out: &mut Kv, run: &std::path::Path) {
         body_display = body_display.replace('=', "-");
         let actor_disp: String = actor.chars().take(8).collect();
         push(out, &format!("SP_EVENT{n}"), format!("{rel:<4} {actor_disp:<8} {body_display}"));
+        push(out, &format!("SP_EVENT{n}_REPO"), repos.get(bead).cloned().unwrap_or_default());
     }
 }
 
@@ -252,6 +262,17 @@ fn leading_timestamp(line: &str) -> Option<&str> {
     } else {
         None
     }
+}
+
+fn repo_map() -> HashMap<String, String> {
+    let raw = io::contentjson_shared(&["list", "--all", "--limit", "0"]);
+    let Some(rows) = io::json_rows(raw) else { return HashMap::new() };
+    rows.iter()
+        .filter_map(|i| {
+            let id = i.get("id").and_then(Value::as_str)?.to_string();
+            Some((id, repo_tag(i.get("labels").and_then(Value::as_array))))
+        })
+        .collect()
 }
 
 fn title_map() -> HashMap<String, String> {
@@ -326,6 +347,7 @@ fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
         let id = i.get("id").and_then(Value::as_str).unwrap_or("");
         let rel = rel_age(now - t);
         push(out, &format!("SP_INFLOW{n}"), format!("{rel:<4} {k:<8} P{pri} {id} {title}"));
+        push(out, &format!("SP_INFLOW{n}_REPO"), repo_tag(i.get("labels").and_then(Value::as_array)));
     }
 }
 
