@@ -230,7 +230,7 @@ The **ci_secs** column is per file, from signals.tsv. Where one file covers seve
 - **G10. ~~The source-changed trigger in `land-build-ensure.sh`~~** — closed by deletion (sp-z61hj): the script and its post-landing rebuild are gone.
 - **G11. The Rust crates `broker`, `czar-pass` and `supervise` have zero `#[test]`**, and no workflow runs `cargo test`. The broker's refusal of czar-only verbs is a security fence tested only through a bash suite that contains a tautology ("FAILS OPEN"). *(Deferred — see the follow-up beads filed by sp-ulr4e.)*
 - **G12. The queue-mode repo map is missing in test-landing-race's early cases.** They never write `$SH/repo-map`, so they pass through the `SPIRA_REPO` fallback. The explicit-map path of push-mode races is untested.
-- **G13. Concurrency between landing and a queue operation on one repo.** Each lock is tested alone (batch, verdict, eject, abandon). Nothing runs a landing pass's `queue.sh step` against an operator `eject` at the same moment to show that exactly one wins with a consistent landstate. Propose one T3 nightly row.
+- **G13. Concurrency between landing and a queue operation on one repo.** *(The row `test-queue-step-eject-race.sh` was deleted: it flipped green/red on one commit under load, law-a-test-that-flips-is-deleted; the step-vs-eject race is uncovered again until a deterministic check replaces it.)* Each lock is tested alone (batch, verdict, eject, abandon). Nothing runs a landing pass's `queue.sh step` against an operator `eject` at the same moment to show that exactly one wins with a consistent landstate. Propose one T3 nightly row.
 - **G14. No test uses a standard reporting format.** Five or more summary wordings appear in this area: `N passed, M failed`, `results:`, `<file>: …`, the em-dash variant in test-broker and test-landing-mode-map, and `ASSERTIONS N` in test-submit. Skip handling also varies: six server-Dolt files exit 77, others exit 1 on a testdb failure. This is a cross-area gap, but it hides this area's largest suites. *(Cross-area; unaddressed by this slice — the two new T1 files source testlib.sh from the start, but the pre-existing suites in this area are untouched.)*
 
 ## 7. Cost
@@ -394,8 +394,7 @@ sp-wmn0w) — is now structurally true of the current landing path (`queue land-
 
 - The `main-gate-status` forge verb the old suite stubbed does not exist anywhere in the
   tree any more (`forge::Forge`'s trait in `queue/src/ports.rs` has no such method, and
-  `grep -r main-gate-status` outside this suite and `test-queue-step-eject-race.sh`'s inert
-  fixture stub turns up nothing) — there is no call a regression could add back.
+  `grep -r main-gate-status` outside this suite turns up nothing) — there is no call a regression could add back.
 - `land-local`'s only forge-derived check is the cached-ref divergence alarm (`land.rs` row
   4), which is documented and unit-tested to **never refuse**:
   `queue/src/tests.rs::land_local_lands_marks_and_archives` asserts

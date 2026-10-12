@@ -159,7 +159,6 @@ spira/test-queue-ops.sh
 spira/test-queue-owner-mail.sh
 spira/test-queue-owner-refuse.sh
 spira/test-queue-protect.sh
-spira/test-queue-step-eject-race.sh
 spira/test-queue-submit.sh
 spira/test-queue-watch.sh
 spira/test-rebase-branch.sh
