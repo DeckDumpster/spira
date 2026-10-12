@@ -39,6 +39,11 @@ pub const STALL_DEFAULT_MINS: u64 = 30;
 /// Seconds a fresh compile or test admission waits after the pool's previous one began, while
 /// other leases are held (0 or unset: no stagger). Admission only; an admitted job is unlimited.
 pub const STAGGER_ENV: &str = "SPIRA_ADMIT_STAGGER_SECS";
+/// Longest an aeon's compile yields to a round's suite phase (0 disables the yield).
+pub const ROUND_HOLD_ENV: &str = "SPIRA_ADMIT_ROUND_HOLD_SECS";
+pub const ROUND_HOLD_DEFAULT: u64 = 900;
+/// Seconds between looks at the round's phase while a compile yields.
+pub const ROUND_POLL_SECS: u64 = 5;
 /// How often a waiter repeats its waiting line.
 pub const SAY_EVERY: u64 = 30;
 
@@ -1025,3 +1030,63 @@ pub fn is_compile(args: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The batch id of a round whose pass is between SuitesStarted and its verdict, from
+/// `spira-lc list --batches`. Unreadable output names no round: a yield that cannot check must
+/// not hold a compile.
+pub fn suites_round(batches_json: &str) -> Option<String> {
+    let rows: serde_json::Value = serde_json::from_str(batches_json).ok()?;
+    rows.as_array()?
+        .iter()
+        .find(|b| b.get("state").and_then(|v| v.as_str()) == Some("CI_RUNNING") && b.get("phase").and_then(|v| v.as_str()) == Some("suites"))
+        .and_then(|b| b.get("batch_id").and_then(|v| v.as_str()).map(str::to_string))
+}
+
+pub fn round_hold_cap() -> u64 {
+    std::env::var(ROUND_HOLD_ENV).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(ROUND_HOLD_DEFAULT)
+}
+
+/// Hold an aeon's compile while `probe` names a round in its suite phase, for at most `cap`
+/// seconds. Returns the seconds held. Gates and testenv never call this.
+pub fn yield_to_round(cap: u64, probe: &dyn Fn() -> Option<String>, now: &dyn Fn() -> u64, sleep: &dyn Fn(Duration), say: &mut dyn FnMut(&str)) -> u64 {
+    if cap == 0 {
+        return 0;
+    }
+    let t0 = now();
+    let mut said_at: Option<u64> = None;
+    let mut last = String::new();
+    loop {
+        let Some(round) = probe() else { break };
+        let t = now();
+        let held = t.saturating_sub(t0);
+        if held >= cap {
+            say(&format!("admission: round {round} suites still running after {held}s — compile no longer yields"));
+            return held;
+        }
+        if due(said_at, t) {
+            say(&format!("admission: compile held {held}s for round {round} suite phase (cap {cap}s)"));
+            said_at = Some(t);
+        }
+        last = round;
+        sleep(Duration::from_secs(ROUND_POLL_SECS));
+    }
+    let held = now().saturating_sub(t0);
+    if !last.is_empty() {
+        say(&format!("admission: round {last} suite phase ended — compile released after {held}s"));
+    }
+    held
+}
+
+/// [`yield_to_round`] against the real lifecycle store.
+pub fn yield_to_round_real(say: &mut dyn FnMut(&str)) -> u64 {
+    let probe = || {
+        let bin = crate::lifecycle_row::lc_bin();
+        let (code, out) = crate::lc_call::run_bounded({
+            let mut c = std::process::Command::new(bin);
+            c.args(["list", "--batches"]);
+            c
+        }, Duration::from_secs(10));
+        if code == 0 { suites_round(&out) } else { None }
+    };
+    yield_to_round(round_hold_cap(), &probe, &now_epoch, &real_sleep, say)
+}

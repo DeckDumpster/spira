@@ -675,3 +675,50 @@ fn the_stagger_never_holds_an_empty_pool_or_a_disabled_one() {
     let (t, _) = try_take_staggered(&d, Pool::Compile, 2, &h(20, 2, "b"), 0, 101, &p, 0).unwrap();
     assert_eq!(t, Take::Admitted { slot: 2, fresh: true });
 }
+
+fn batches(state: &str, phase: &str) -> String {
+    format!(r#"[{{"batch_id":"r-auto-9","state":"{state}","phase":"{phase}"}},{{"batch_id":"r-old","state":"LANDED","phase":null}}]"#)
+}
+
+#[test]
+fn suites_round_names_only_a_round_in_its_suite_phase() {
+    assert_eq!(suites_round(&batches("CI_RUNNING", "suites")).as_deref(), Some("r-auto-9"));
+    assert_eq!(suites_round(&batches("CI_RUNNING", "build")), None);
+    assert_eq!(suites_round(&batches("GREEN", "suites")), None);
+    assert_eq!(suites_round("cannot tell: store down"), None);
+}
+
+fn yield_run(cap: u64, ends_after: Option<u64>) -> (u64, Vec<String>) {
+    let clock = std::cell::Cell::new(1000u64);
+    let probe = || match ends_after {
+        Some(n) if clock.get() >= 1000 + n => None,
+        _ => Some("r-auto-9".to_string()),
+    };
+    let now = || clock.get();
+    let sleep = |d: Duration| clock.set(clock.get() + d.as_secs());
+    let mut said = Vec::new();
+    let held = yield_to_round(cap, &probe, &now, &sleep, &mut |l: &str| said.push(l.to_string()));
+    (held, said)
+}
+
+#[test]
+fn a_compile_waits_out_the_suite_phase_and_names_the_round() {
+    let (held, said) = yield_run(900, Some(100));
+    assert!((100..110).contains(&held), "{held}");
+    assert!(said.first().unwrap().contains("r-auto-9"), "{said:?}");
+    assert!(said.last().unwrap().contains("released"), "{said:?}");
+}
+
+#[test]
+fn a_compile_stops_yielding_at_the_cap() {
+    let (held, said) = yield_run(60, None);
+    assert!((60..70).contains(&held), "{held}");
+    assert!(said.last().unwrap().contains("no longer yields"), "{said:?}");
+}
+
+#[test]
+fn no_round_in_suites_admits_at_once_and_a_zero_cap_disables_the_yield() {
+    let (held, said) = yield_run(900, Some(0));
+    assert_eq!((held, said.len()), (0, 0));
+    assert_eq!(yield_run(0, None).0, 0);
+}
