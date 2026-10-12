@@ -13,7 +13,11 @@ const MAX_ROUNDS: usize = 4;
 pub fn round_keys(cap_secs: i64, queue_dir: &str) -> Kv {
     let batches = list_batches().and_then(|raw| parse_batches(&raw));
     let pool = spira_config::lc_state::list().ok().map(|rows| pool_waiting(&rows));
-    round_keys_from(batches.as_deref(), pool, cap_secs, Path::new(queue_dir))
+    let mut kv = round_keys_from(batches.as_deref(), pool, cap_secs, Path::new(queue_dir));
+    if let Some(batches) = batches.as_deref() {
+        progress_keys(&mut kv, batches);
+    }
+    kv
 }
 
 /// The verdict's last look at the forge for `batch`, read from the file it leaves beside the
@@ -31,9 +35,16 @@ fn list_batches() -> Option<String> {
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
+pub struct Progress {
+    pub done: usize,
+    pub total: Option<usize>,
+    pub reds: Vec<String>,
+}
+
 pub struct Batch {
     pub id: String,
     pub repo: String,
+    pub progress: Option<Progress>,
     pub state: String,
     pub reason: String,
     pub parent: String,
@@ -59,6 +70,34 @@ fn pairs(v: &Value, k: &str, a: &str, b: &str) -> Vec<(String, String)> {
     v.get(k).and_then(Value::as_array).map(|rows| rows.iter().map(|r| (text(r, a), text(r, b))).collect()).unwrap_or_default()
 }
 
+/// The pass's live counts as `round-vm` publishes them onto the batch row: `done`, `total`, `red`.
+fn progress_of(p: &Value) -> Option<Progress> {
+    let done = p.get("done")?.as_u64()? as usize;
+    let total = p.get("total").and_then(Value::as_u64).map(|t| t as usize);
+    let reds = p.get("red").and_then(Value::as_array).map(|a| a.iter().filter_map(|n| n.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    Some(Progress { done, total, reds })
+}
+
+fn progress_keys(kv: &mut Kv, batches: &[Batch]) {
+    let live = children_after_parents(batches.iter().filter(|b| !terminal(&b.state) && b.state != "DISCARDED").collect());
+    for (r, b) in live.iter().take(MAX_ROUNDS).enumerate() {
+        if phase(&b.state) != "certifying" {
+            continue;
+        }
+        let k = format!("SP_ROUNDS{r}");
+        let (done, total, reds) = match &b.progress {
+            Some(p) => (p.done.to_string(), p.total.map_or("?".to_string(), |t| t.to_string()), p.reds.as_slice()),
+            None => ("0".to_string(), "?".to_string(), &[][..]),
+        };
+        push(kv, &format!("{k}_SUITES_DONE"), done);
+        push(kv, &format!("{k}_SUITES_TOTAL"), total);
+        push(kv, &format!("{k}_REDS_N"), reds.len().to_string());
+        for (i, n) in reds.iter().take(MAX_ROWS).enumerate() {
+            push(kv, &format!("{k}_RED{i}"), sanitize(n));
+        }
+    }
+}
+
 pub fn parse_batches(raw: &str) -> Option<Vec<Batch>> {
     let Value::Array(rows) = serde_json::from_str::<Value>(raw).ok()? else { return None };
     Some(
@@ -66,6 +105,7 @@ pub fn parse_batches(raw: &str) -> Option<Vec<Batch>> {
             .map(|r| Batch {
                 id: text(r, "batch_id"),
                 repo: text(r, "repo"),
+                progress: r.get("progress").and_then(progress_of),
                 state: text(r, "state"),
                 reason: text(r, "reason"),
                 parent: text(r, "parent"),
@@ -317,5 +357,21 @@ mod tests {
         let row = |state: &str, holds: &[&str]| Row { bead_id: "x".into(), state: state.into(), holds: holds.iter().map(|s| s.to_string()).collect(), ..Default::default() };
         let rows = [row("SUBMITTED", &[]), row("CERTIFIED", &[]), row("CERTIFIED", &["wait"]), row("WORKING", &[]), row("LANDED", &[])];
         assert_eq!(pool_waiting(&rows), 2);
+    }
+
+    #[test]
+    fn a_certifying_round_reports_suites_done_total_and_reds_and_no_progress_is_zero() {
+        let with = RAW.replace(r#""reason":null,"opened_at":"1000""#, r#""reason":null,"progress":"{}","opened_at":"1000""#);
+        let with = with.replace(r#""progress":"{}""#, r#""progress":{"done":4,"total":10,"red":["b.sh","d.sh"]}"#);
+        let mut kv = Kv::new();
+        progress_keys(&mut kv, &parse_batches(&with).unwrap());
+        assert_eq!(get(&kv, "SP_ROUNDS0_SUITES_DONE"), Some("4"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_SUITES_TOTAL"), Some("10"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_REDS_N"), Some("2"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_RED1"), Some("d.sh"));
+        let mut kv = Kv::new();
+        progress_keys(&mut kv, &parse_batches(RAW).unwrap());
+        assert_eq!(get(&kv, "SP_ROUNDS0_SUITES_DONE"), Some("0"));
+        assert_eq!(get(&kv, "SP_ROUNDS0_SUITES_TOTAL"), Some("?"));
     }
 }

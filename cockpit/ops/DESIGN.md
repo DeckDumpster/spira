@@ -41,7 +41,7 @@ derived from it.
 
 - ROUNDS section (`health/round.rs`): every live (non-terminal) batch from the collector's `round`
   probe, which reads `spira-lc list --batches` and the bead rows for the pool — no `bd`, no logs.
-  Keys are `SP_ROUNDS_N` and `SP_ROUNDS<i>_{NAME,PHASE,OPENED,N,MEMBER<j>,EJECT_N,EJECT<j>}`; at
+  Keys are `SP_ROUNDS_N` and `SP_ROUNDS<i>_{NAME,PHASE,OPENED,N,MEMBER<j>,EJECT_N,EJECT<j>}` (a certifying round adds `SUITES_DONE`, `SUITES_TOTAL`, `REDS_N`, `RED<j>`); at
   most four are listed, the rest counted. Each round is one collapsed row (name, phase, member
   count, ejection count); the round certifying on the VM expands to its members and ejections
   when the pane has room. Landed and abandoned rounds leave the section. Wall time is computed at
