@@ -29,6 +29,7 @@ pub mod deps;
 pub mod env_bootstrap;
 pub mod hostaddr;
 pub mod eval;
+pub mod fayth_file;
 pub mod init;
 pub mod legacy_map;
 pub mod lc_state;
