@@ -429,8 +429,10 @@ fn main() {
                 lc_bin: spira_config::lifecycle_row::lc_bin(),
                 cap: getenv_i64("SPIRA_ROWLESS_CAP", 20).max(1) as usize,
                 sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
+                state: run.join("conditions").join("rowless.state"),
+                full_secs: getenv_i64("SPIRA_ROWLESS_FULL_SWEEP_SECS", 3600).max(1),
             };
-            conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg));
+            conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg, n));
             let drift_cfg = probes::ContentDriftCfg {
                 lc_bin: spira_config::lifecycle_row::lc_bin(),
                 slack: getenv_i64("SPIRA_CONTENT_DRIFT_SLACK", 10).max(0) as usize,

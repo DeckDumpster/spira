@@ -309,6 +309,8 @@ pub struct RowlessCfg {
     pub lc_bin: String,
     pub cap: usize,
     pub sustain_secs: i64,
+    pub state: std::path::PathBuf,
+    pub full_secs: i64,
 }
 
 pub fn rowless(open: &[String], rows: &[String]) -> Vec<String> {
@@ -351,20 +353,84 @@ fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
 /// way to find one is to ask bd which beads it considers live and look for each in the
 /// machine; reading bd status here audits the machine's coverage and decides nothing about a
 /// bead the machine holds. The rule names this function; nothing else may do this.
-pub fn rowless_beads(cfg: &RowlessCfg) -> Reading {
-    let open = crate::deadline::output(
-        "rowless open beads",
-        Command::new(&cfg.bd).args(["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", "epic,event", "--json", "--limit", "0", "--brief"]),
-    )
-    .ok()
-    .filter(|o| o.status.success())
-    .and_then(|o| ids_of(&o.stdout, "id"));
-    let rows = crate::deadline::output("rowless lifecycle rows", Command::new(&cfg.lc_bin).arg("list"))
+pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
+    let prior = load_rowless_state(&cfg.state);
+    let plan = rowless_plan(prior.as_ref(), now, cfg.full_secs);
+    let mut args: Vec<String> = ["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", "epic,event", "--json", "--limit", "0", "--brief"]
+        .iter().map(|s| s.to_string()).collect();
+    if let Some(since) = plan.created_after {
+        args.extend(["--created-after".to_string(), crate::log::fmt_iso(since)]);
+    }
+    let open = crate::deadline::output("rowless open beads", Command::new(&cfg.bd).args(&args))
         .ok()
         .filter(|o| o.status.success())
-        .and_then(|o| ids_of(&o.stdout, "bead_id"));
-    let (Some(open), Some(rows)) = (open, rows) else { return Reading::Unknown };
-    Reading::Standing(rowless_cond(&rowless(&open, &rows), cfg.cap, cfg.sustain_secs).into_iter().collect())
+        .and_then(|o| ids_of(&o.stdout, "id"));
+    let Some(mut candidates) = open else { return Reading::Unknown };
+    candidates.extend(plan.carried);
+    candidates.sort();
+    candidates.dedup();
+    let missing = if candidates.is_empty() {
+        Vec::new()
+    } else {
+        let rows = crate::deadline::output("rowless lifecycle rows", Command::new(&cfg.lc_bin).arg("list"))
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| ids_of(&o.stdout, "bead_id"));
+        let Some(rows) = rows else { return Reading::Unknown };
+        rowless(&candidates, &rows)
+    };
+    save_rowless_state(&cfg.state, &RowlessState { last_full: if plan.created_after.is_none() { now } else { prior.map_or(now, |p| p.last_full) }, last_check: now, missing: missing.clone() });
+    Reading::Standing(rowless_cond(&missing, cfg.cap, cfg.sustain_secs).into_iter().collect())
+}
+
+#[derive(Debug, PartialEq)]
+pub struct RowlessState {
+    pub last_full: i64,
+    pub last_check: i64,
+    pub missing: Vec<String>,
+}
+
+pub struct RowlessPlan {
+    /// `None`: a full sweep of every live bead; `Some(t)`: only beads created after `t`.
+    pub created_after: Option<i64>,
+    pub carried: Vec<String>,
+}
+
+/// A rowless bead is a creation-path miss, so between full sweeps only beads created since
+/// the last check (with an overlap for clock skew) plus those already flagged need a look.
+const ROWLESS_OVERLAP_SECS: i64 = 120;
+
+pub fn rowless_plan(prior: Option<&RowlessState>, now: i64, full_secs: i64) -> RowlessPlan {
+    match prior {
+        Some(p) if now >= p.last_full && now - p.last_full < full_secs && now >= p.last_check => RowlessPlan {
+            created_after: Some(p.last_check - ROWLESS_OVERLAP_SECS),
+            carried: p.missing.clone(),
+        },
+        _ => RowlessPlan { created_after: None, carried: Vec::new() },
+    }
+}
+
+fn load_rowless_state(path: &Path) -> Option<RowlessState> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut lines = text.lines();
+    let last_full = lines.next()?.parse().ok()?;
+    let last_check = lines.next()?.parse().ok()?;
+    Some(RowlessState { last_full, last_check, missing: lines.filter(|l| !l.is_empty()).map(String::from).collect() })
+}
+
+fn save_rowless_state(path: &Path, st: &RowlessState) {
+    let mut text = format!("{}\n{}\n", st.last_full, st.last_check);
+    for id in &st.missing {
+        text.push_str(id);
+        text.push('\n');
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
 }
 
 // ---- (f) content store open beads outrun the lifecycle's live rows ---------------------
@@ -421,6 +487,26 @@ mod tests {
     }
 
     #[test]
+    fn rowless_plan_is_incremental_between_full_sweeps_and_full_after() {
+        let st = RowlessState { last_full: 1000, last_check: 1500, missing: vec!["sp-m".into()] };
+        let p = rowless_plan(Some(&st), 1600, 3600);
+        assert_eq!(p.created_after, Some(1500 - ROWLESS_OVERLAP_SECS));
+        assert_eq!(p.carried, vec!["sp-m".to_string()]);
+        assert_eq!(rowless_plan(Some(&st), 1000 + 3600, 3600).created_after, None, "an hour on: full sweep");
+        assert_eq!(rowless_plan(None, 1600, 3600).created_after, None);
+        assert_eq!(rowless_plan(Some(&st), 900, 3600).created_after, None, "a clock gone backwards: full sweep");
+    }
+
+    #[test]
+    fn rowless_state_round_trips() {
+        let t = testkit::TempDir::new("rowless-state");
+        let f = t.path().join("sub").join("rowless.state");
+        let st = RowlessState { last_full: 5, last_check: 9, missing: vec!["sp-a".into(), "sp-b".into()] };
+        save_rowless_state(&f, &st);
+        assert_eq!(load_rowless_state(&f), Some(st));
+    }
+
+    #[test]
     fn rowless_finds_an_injected_rowless_bead_and_caps_the_list() {
         let open: Vec<String> = ["sp-a", "sp-b", "sp-c"].iter().map(|s| s.to_string()).collect();
         let rows: Vec<String> = ["sp-a", "sp-c", "sp-gone"].iter().map(|s| s.to_string()).collect();
@@ -444,8 +530,9 @@ mod tests {
         };
         let bd = write("bd", "echo '[{\"id\":\"sp-a\"},{\"id\":\"sp-b\"}]'");
         let lc = write("lc", "echo '[{\"bead_id\":\"sp-a\"}]'");
-        let mut cfg = RowlessCfg { bd: bd.clone(), db: "x".into(), lc_bin: lc.clone(), cap: 20, sustain_secs: 0 };
-        match rowless_beads(&cfg) {
+        let mut cfg = RowlessCfg { bd: bd.clone(), db: "x".into(), lc_bin: lc.clone(), cap: 20, sustain_secs: 0, state: t.path().join("rowless.state"), full_secs: 3600 };
+        let now = 1_000_000;
+        match rowless_beads(&cfg, now) {
             Reading::Standing(v) => {
                 assert_eq!(v.len(), 1);
                 assert!(v[0].body.contains("sp-b") && !v[0].body.contains("sp-a,"), "{}", v[0].body);
@@ -454,11 +541,21 @@ mod tests {
         }
         let argv = t.path().join("argv");
         cfg.bd = write("bd-rec", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
-        let _ = rowless_beads(&cfg);
+        let _ = rowless_beads(&cfg, now + 60);
         let seen = std::fs::read_to_string(&argv).unwrap();
         assert!(seen.contains("--exclude-type epic,event"), "epics are out of scope: {seen}");
+        assert!(seen.contains("--created-after"), "between full sweeps only new beads are listed: {seen}");
+        cfg.bd = write("bd-new", "echo '[{\"id\":\"sp-c\"}]'");
+        match rowless_beads(&cfg, now + 120) {
+            Reading::Standing(v) => assert!(v[0].body.contains("sp-b") && v[0].body.contains("sp-c"), "{}", v[0].body),
+            Reading::Unknown => panic!("both stores answered"),
+        }
+        cfg.bd = write("bd-rec2", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
+        let _ = rowless_beads(&cfg, now + 3600);
+        assert!(!std::fs::read_to_string(&argv).unwrap().contains("--created-after"), "an hour on, the sweep is full");
+        cfg.bd = write("bd-b", "echo '[{\"id\":\"sp-b\"}]'");
         cfg.lc_bin = write("lc-down", "exit 1");
-        assert!(matches!(rowless_beads(&cfg), Reading::Unknown), "an unanswering store neither files nor clears");
+        assert!(matches!(rowless_beads(&cfg, now + 3660), Reading::Unknown), "an unanswering store neither files nor clears");
     }
 
     #[test]
