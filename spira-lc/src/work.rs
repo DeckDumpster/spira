@@ -154,6 +154,10 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
 /// A bead that declares a target closes only with a verdict (MET, CONTRADICTED, or SHORT with a
 /// follow-on or escalation). The verdict is written to the bead as a note, where Sift reads it.
 fn record_target_verdict(bead_id: &str, verb: &str, args: &[String]) -> Result<(), (i32, String)> {
+    let db = spira_config::process::cfg("SPIRA_DB").map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}")))?;
+    if db.is_empty() {
+        return Ok(());
+    }
     let text = crate::bd::show(bead_id).map_err(|e| (CANNOT_TELL, format!("cannot tell: {e}")))?;
     let lookup = |id: &str| -> Result<Option<spira_config::target::Named>, String> {
         let Ok(shown) = crate::bd::show(id) else { return Ok(None) };
