@@ -830,11 +830,14 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     let ids = ready::lifecycle_ready_ids(&lc);
     let want: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
     let mut rows = if ids.is_empty() { Vec::new() } else { st.list_by_ids(&ids)? };
+    let mut bd = rank::index_rows(rows.clone());
     let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
     rows.retain(|r| want.contains(r.id.as_str()) && ready::in_scope(r, &scope, &no_loop));
     let wanted = rank::all_blockers(&rows);
-    let recs = if wanted.is_empty() { Vec::new() } else { st.list_by_ids(&wanted)? };
-    let bd = rank::index_rows(recs);
+    let missing: Vec<String> = wanted.iter().filter(|b| !bd.contains_key(*b)).cloned().collect();
+    if !missing.is_empty() {
+        bd.extend(rank::index_rows(st.list_by_ids(&missing)?));
+    }
     let blocker_rows: Vec<String> = wanted.iter().filter(|b| !lc.contains_key(*b)).cloned().collect();
     lc.extend(st.lifecycle_of(&blocker_rows)?);
     rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
