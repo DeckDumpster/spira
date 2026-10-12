@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# lc-backup.sh — off-box backup of the lifecycle store, its age alarm and its restore drill.
+# lc-backup.sh — off-box backup of every database the harness owns, its age alarm and its restore drill.
 #
-#   lc-backup.sh run                 snapshot the store locally, tar it, upload ONE object, stamp it
-#   lc-backup.sh age [--now EPOCH]   exit 0 when the newest good backup is younger than SPIRA_LC_BACKUP_MAX_AGE
-#   lc-backup.sh drill [TARBALL]     restore a snapshot into a scratch dir; row counts must equal live
+#   lc-backup.sh run                 per database: snapshot locally, tar it, upload ONE object, stamp it
+#   lc-backup.sh age [--now EPOCH]   exit 0 when every database's newest good backup is younger than SPIRA_LC_BACKUP_MAX_AGE
+#   lc-backup.sh drill [--db NAME] [TARBALL]   per database: restore a snapshot into a scratch dir; row counts must equal live
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
 #
@@ -18,6 +18,9 @@
 # one consistent commit however busy the store is. Only committed history snapshots, so the
 # working set is committed first.
 #
+# SPIRA_LC_BACKUP_DB is a space-separated list of databases. Each has its own stamp
+# (lc-backup.<db>.ok) and local tarball, so one database's fresh backup cannot mask another's.
+#
 # A stamp is written only after the upload exits clean, and carries the commit it holds. The
 # drill restores that tarball and compares every table's count with live AS OF the same commit.
 #
@@ -29,16 +32,21 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 
-STAMP="$SPIRA_RUN/lc-backup.ok"
 STATE_FILE="$SPIRA_RUN/watchd/lc-backup.state"
 HEALTH_FILE="$SPIRA_RUN/watchd/lc-backup.health"
 
-_lcb_db_dir() { printf '%s/%s' "$SPIRA_DOLT_DATA" "$SPIRA_LC_BACKUP_DB"; }
+_lcb_dbs() { printf '%s\n' $SPIRA_LC_BACKUP_DB; }
+_lcb_db_dir() { printf '%s/%s' "$SPIRA_DOLT_DATA" "$1"; }
+_lcb_stamp() { printf '%s/lc-backup.%s.ok' "$SPIRA_RUN" "$1"; }
 
 _lcb_refuse_unconfigured() {
-    [ -n "$SPIRA_LC_BACKUP_URL" ] || { echo "lc-backup: SPIRA_LC_BACKUP_URL is empty — the lifecycle store has no backup destination" >&2; return 1; }
-    [ -n "$SPIRA_DOLT_DATA" ] && [ -d "$(_lcb_db_dir)/.dolt" ] \
-        || { echo "lc-backup: no dolt database at $(_lcb_db_dir)" >&2; return 1; }
+    [ -n "$SPIRA_LC_BACKUP_URL" ] || { echo "lc-backup: SPIRA_LC_BACKUP_URL is empty — the stores have no backup destination" >&2; return 1; }
+    [ -n "$(_lcb_dbs)" ] || { echo "lc-backup: SPIRA_LC_BACKUP_DB names no database" >&2; return 1; }
+}
+
+_lcb_require_db() {
+    [ -n "$SPIRA_DOLT_DATA" ] && [ -d "$(_lcb_db_dir "$1")/.dolt" ] \
+        || { echo "lc-backup: no dolt database at $(_lcb_db_dir "$1")" >&2; return 1; }
 }
 
 # A file:// destination on the data directory's own filesystem dies with the disk it protects.
@@ -56,9 +64,9 @@ _lcb_refuse_same_disk() {
 }
 
 # batch-job: snapshot and restore of the whole store run for as long as the store is large
-_lcb_sql() { ( cd "$(_lcb_db_dir)" && dolt sql "$@" ); }
+_lcb_sql() { local db="$1"; shift; ( cd "$(_lcb_db_dir "$db")" && dolt sql "$@" ); }
 
-_lcb_head() { _lcb_sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null | tail -n +2; }
+_lcb_head() { _lcb_sql "$1" -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null | tail -n +2; }
 
 _lcb_upload() {
     local file="$1" key="$2" url="$SPIRA_LC_BACKUP_URL" bucket rest region host sum
@@ -83,42 +91,65 @@ _lcb_upload() {
         "$host/$key" >/dev/null
 }
 
-cmd_run() {
-    _lcb_refuse_unconfigured || return 1
-    _lcb_refuse_same_disk || return 1
-    local out head work stage tarball prefix stamp key ext
-    out="$(_lcb_sql -q "CALL DOLT_COMMIT('-Am', 'lc-backup $(date -u +%Y-%m-%dT%H:%M:%SZ)')" 2>&1)" \
+_lcb_run_db() {
+    local db="$1" out head work stage tarball prefix stamp key ext
+    _lcb_require_db "$db" || return 1
+    out="$(_lcb_sql "$db" -q "CALL DOLT_COMMIT('-Am', 'lc-backup $(date -u +%Y-%m-%dT%H:%M:%SZ)')" 2>&1)" \
         || case "$out" in *"nothing to commit"*) ;; *) echo "lc-backup: commit failed: $out" >&2; return 1 ;; esac
-    work="$SPIRA_RUN/lc-backup"; stage="$work/stage"
+    work="$SPIRA_RUN/lc-backup/$db"; stage="$work/stage"
     if command -v zstd >/dev/null 2>&1; then ext=zst; else ext=gz; fi
     tarball="$work/latest.tar.$ext"
     rm -rf "$stage" && mkdir -p "$stage" || return 1
-    out="$(_lcb_sql -q "CALL DOLT_BACKUP('sync-url', 'file://$stage')" 2>&1)" \
-        || { echo "lc-backup: local snapshot failed: $out" >&2; return 1; }
-    head="$(_lcb_head)"
-    [ -n "$head" ] || { echo "lc-backup: snapshot taken but cannot read the store's head commit" >&2; return 1; }
+    out="$(_lcb_sql "$db" -q "CALL DOLT_BACKUP('sync-url', 'file://$stage')" 2>&1)" \
+        || { echo "lc-backup: local snapshot of $db failed: $out" >&2; return 1; }
+    head="$(_lcb_head "$db")"
+    [ -n "$head" ] || { echo "lc-backup: snapshot taken but cannot read $db's head commit" >&2; return 1; }
     rm -f "$work"/latest.tar.* && tar -C "$stage" -caf "$tarball.tmp" --format=posix . 2>/dev/null && mv "$tarball.tmp" "$tarball" \
         || { echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
     rm -rf "$stage"
     prefix=""
     case "$SPIRA_LC_BACKUP_URL" in s3://*/*) prefix="${SPIRA_LC_BACKUP_URL#s3://*/}"; prefix="${prefix%/}"; [ -z "$prefix" ] || prefix="$prefix/" ;; esac
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    key="$prefix$SPIRA_LC_BACKUP_DB/$stamp.tar.$ext"
+    key="$prefix$db/$stamp.tar.$ext"
     _lcb_upload "$tarball" "$key" || { echo "lc-backup: upload of $key failed" >&2; return 1; }
-    printf '%s %s\n' "$(date +%s)" "$head" > "$STAMP.tmp" && mv "$STAMP.tmp" "$STAMP"
-    echo "lc-backup: uploaded $SPIRA_LC_BACKUP_DB at $head as $key to $SPIRA_LC_BACKUP_URL"
+    printf '%s %s\n' "$(date +%s)" "$head" > "$(_lcb_stamp "$db").tmp" && mv "$(_lcb_stamp "$db").tmp" "$(_lcb_stamp "$db")"
+    echo "lc-backup: uploaded $db at $head as $key to $SPIRA_LC_BACKUP_URL"
 }
 
-# _lcb_measure [now] -> "ok <age>" | "stale <age>" | "never"; non-zero when the stamp cannot be read
-_lcb_measure() {
-    local now="${1:-$(date +%s)}" t head age
-    [ -n "$SPIRA_LC_BACKUP_URL" ] || { echo "no-destination"; return 0; }
-    [ -r "$STAMP" ] || { echo "never"; return 0; }
-    read -r t head < "$STAMP" 2>/dev/null
+cmd_run() {
+    _lcb_refuse_unconfigured || return 1
+    _lcb_refuse_same_disk || return 1
+    local db rc=0
+    for db in $(_lcb_dbs); do _lcb_run_db "$db" || rc=1; done
+    return "$rc"
+}
+
+# _lcb_measure_db db [now] -> "ok <age>" | "stale <age>" | "never"; non-zero when the stamp cannot be read
+_lcb_measure_db() {
+    local db="$1" now="${2:-$(date +%s)}" t head age stamp
+    stamp="$(_lcb_stamp "$db")"
+    [ -r "$stamp" ] || { echo "never"; return 0; }
+    read -r t head < "$stamp" 2>/dev/null
     case "$t" in ''|*[!0-9]*) return 1 ;; esac
     age=$((now - t))
     if [ "$age" -gt "$SPIRA_LC_BACKUP_MAX_AGE" ]; then echo "stale $age"; else echo "ok $age"; fi
 }
+
+# _lcb_measure [now] -> one "<db>: <state>" line per database; "no-destination" when unconfigured.
+# Non-zero when any stamp cannot be read; the aggregate is ok only when every database is.
+_lcb_measure() {
+    local now="${1:-}" db out rc=0
+    [ -n "$SPIRA_LC_BACKUP_URL" ] || { echo "no-destination"; return 0; }
+    [ -n "$(_lcb_dbs)" ] || { echo "no-database"; return 0; }
+    for db in $(_lcb_dbs); do
+        out="$(_lcb_measure_db "$db" ${now:+"$now"})" || { echo "$db: unreadable"; rc=1; continue; }
+        echo "$db: $out"
+    done
+    [ "$rc" = 0 ] || return 1
+    return 0
+}
+
+_lcb_all_ok() { ! printf '%s\n' "$1" | grep -qv '^[^ ]*: ok '; }
 
 cmd_age() {
     local now=""
@@ -129,41 +160,55 @@ cmd_age() {
         esac
     done
     local out
-    out="$(_lcb_measure "$now")" || { echo "lc-backup: unreadable stamp $STAMP" >&2; return 2; }
+    out="$(_lcb_measure "$now")" || { printf '%s\n' "$out"; echo "lc-backup: unreadable stamp under $SPIRA_RUN" >&2; return 2; }
     printf '%s\n' "$out"
-    [ "${out%% *}" = ok ]
+    _lcb_all_ok "$out"
 }
 
-cmd_drill() {
-    [ -n "$SPIRA_DOLT_DATA" ] && [ -d "$(_lcb_db_dir)/.dolt" ] \
-        || { echo "lc-backup: no dolt database at $(_lcb_db_dir)" >&2; return 1; }
-    local tarball="${1:-$(ls "$SPIRA_RUN"/lc-backup/latest.tar.* 2>/dev/null | head -1)}"
+_lcb_drill_db() {
+    local db="$1" tarball="$2" stamp
+    stamp="$(_lcb_stamp "$db")"
+    _lcb_require_db "$db" || return 1
+    [ -n "$tarball" ] || tarball="$(ls "$SPIRA_RUN/lc-backup/$db"/latest.tar.* 2>/dev/null | head -1)"
     local t head scratch rc=0 tables tbl live restored live_head
     [ -r "$tarball" ] || { echo "lc-backup: drill: no snapshot at $tarball" >&2; return 1; }
-    [ -r "$STAMP" ] || { echo "lc-backup: drill: no stamp — nothing has been backed up" >&2; return 1; }
-    read -r t head < "$STAMP"
+    [ -r "$stamp" ] || { echo "lc-backup: drill: $db: no stamp — nothing has been backed up" >&2; return 1; }
+    read -r t head < "$stamp"
     scratch="$(mktemp -d "${TMPDIR:-/tmp}/lc-backup-drill.XXXXXX")" || return 1
     mkdir "$scratch/snap" && tar -C "$scratch/snap" -xaf "$tarball" \
         || { echo "lc-backup: drill: cannot unpack $tarball" >&2; rm -rf "$scratch"; return 1; }
     # batch-job: restoring a snapshot into the scratch dir
-    ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$SPIRA_LC_BACKUP_DB" ) >"$scratch/restore.log" 2>&1 \
+    ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$db" ) >"$scratch/restore.log" 2>&1 \
         || { echo "lc-backup: drill: restore failed: $(cat "$scratch/restore.log")" >&2; rm -rf "$scratch"; return 1; }
     # batch-job: reads of the restored scratch copy
-    live_head="$( cd "$scratch/$SPIRA_LC_BACKUP_DB" && dolt sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" | tail -n +2 )"
+    live_head="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" | tail -n +2 )"
     [ "$live_head" = "$head" ] \
         || { echo "lc-backup: drill: restored head ${live_head:-?} is not the stamped head $head" >&2; rm -rf "$scratch"; return 1; }
-    tables="$(_lcb_sql -r csv -q "SELECT table_name FROM information_schema.tables WHERE table_schema='$SPIRA_LC_BACKUP_DB' AND table_type='BASE TABLE' ORDER BY 1" | tail -n +2)"
+    tables="$(_lcb_sql "$db" -r csv -q "SELECT table_name FROM information_schema.tables WHERE table_schema='$db' AND table_type='BASE TABLE' ORDER BY 1" | tail -n +2)"
     [ -n "$tables" ] || { echo "lc-backup: drill: live store lists no tables" >&2; rm -rf "$scratch"; return 1; }
     for tbl in $tables; do
-        live="$(_lcb_sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" | tail -n +2)"
+        live="$(_lcb_sql "$db" -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" | tail -n +2)"
         # batch-job: reads of the restored scratch copy
-        restored="$( cd "$scratch/$SPIRA_LC_BACKUP_DB" && dolt sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\`" | tail -n +2 )"
+        restored="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\`" | tail -n +2 )"
         if [ -z "$live" ] || [ "$live" != "$restored" ]; then
             echo "lc-backup: drill: $tbl live ${live:-?} != restored ${restored:-?}" >&2; rc=1
         fi
     done
     rm -rf "$scratch"
-    [ "$rc" = 0 ] && echo "lc-backup: drill ok — $(printf '%s\n' "$tables" | wc -l) table(s) identical at $head"
+    [ "$rc" = 0 ] && echo "lc-backup: drill ok — $db: $(printf '%s\n' "$tables" | wc -l) table(s) identical at $head"
+    return "$rc"
+}
+
+cmd_drill() {
+    local only="" tarball="" db rc=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --db) only="${2:?--db needs a value}"; shift 2 ;;
+            *) tarball="$1"; shift ;;
+        esac
+    done
+    [ -z "$tarball" ] || [ -n "$only" ] || only="$(_lcb_dbs | head -1)"
+    for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" "$tarball" || rc=1; done
     return "$rc"
 }
 
@@ -181,13 +226,13 @@ MAILEOF
 _lcb_tick() {
     local out state prev=ok
     out="$(_lcb_measure)" || out="unreadable"
-    state="${out%% *}"
-    [ "$state" = ok ] || state=red
+    if _lcb_all_ok "$out"; then state=ok; else state=red; fi
+    out="$(printf '%s' "$out" | tr '\n' ';')"
     [ -r "$STATE_FILE" ] && read -r prev < "$STATE_FILE"
     if [ "$state" = red ] && [ "$prev" != red ]; then
-        _lcb_report "RED: the lifecycle store has no good backup within ${SPIRA_LC_BACKUP_MAX_AGE}s ($out) — losing its disk now loses every bead's state and history"
+        _lcb_report "RED: a store has no good backup within ${SPIRA_LC_BACKUP_MAX_AGE}s ($out) — losing its disk now loses its data and history"
     elif [ "$state" = ok ] && [ "$prev" = red ]; then
-        _lcb_report "CLEAR: the lifecycle store has a fresh backup again ($out)"
+        _lcb_report "CLEAR: every store has a fresh backup again ($out)"
     fi
     mkdir -p "$(dirname "$STATE_FILE")"
     printf '%s\n' "$state" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
@@ -232,7 +277,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         drill)  shift; cmd_drill "$@"; exit $? ;;
         watch)  shift; cmd_watch "$@" ;;
         health) cmd_health; exit $? ;;
-        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [TARBALL] | watch [--interval S] [--ticks N] | health" >&2
+        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [--db NAME] [TARBALL] | watch [--interval S] [--ticks N] | health" >&2
            exit 2 ;;
     esac
 fi
