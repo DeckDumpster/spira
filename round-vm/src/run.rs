@@ -1416,8 +1416,8 @@ fn keep_vm(env: &RunEnv, vm: &Vm, keep: &AtomicBool) {
     if let Err(e) = env.pool.hold(&vm.handle) {
         eprintln!("round-vm run: warning: could not hold {}: {e}", vm.handle);
     }
-    }
 }
+
 /// The batch's ssh dropped, so what the VM holds is unknown: take what it has and keep the VM.
 fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, keep: &AtomicBool) {
     keep_vm(env, vm, keep);
