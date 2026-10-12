@@ -409,19 +409,13 @@ except Exception:
     printf 'Review finding in release unit %s\n\n%s\n' "$tag" "$body" > "$tmpbody"
 
     local id
-    id="$(bdq create \
-        "review finding: ${title}" \
-        --type bug \
-        --priority 2 \
-        --labels "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL},${REVIEW_LABEL}" \
-        --external-ref "$ref" \
-        --body-file "$tmpbody" \
-        --silent 2>/dev/null | tr -d '[:space:]')"
+    id="$("$HERE/bead.sh" file "review finding: ${title}" \
+        --for builder --repo "$name" --priority 2 \
+        --body-file "$tmpbody" 2>/dev/null | tr -d '[:space:]')"
     rm -f "$tmpbody"
     [ -n "${id:-}" ] || return 1
-    # THE REPO DIMENSION IS WRITTEN WITH SET-STATE — not embedded in --labels at creation.
-    # This enforces single-valuedness at the substrate level.
-    bdq set-state "$id" "repo=${name}" >/dev/null 2>&1 || true
+    bdq label add "$id" "$REVIEW_LABEL" >/dev/null 2>&1 || true
+    bdq update "$id" --type bug --external-ref "$ref" >/dev/null 2>&1 || true
     log "review: filed finding $id — $title"
     bdq note "$id" "review-unit: $tag" >/dev/null 2>&1 || true
     printf '%s\n' "$id"
