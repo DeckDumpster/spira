@@ -32,6 +32,8 @@ lcb() {
 echo; echo "refusals — no destination, same disk:"
 URL="" lcb run >/dev/null; wantrc "run with no destination refuses" 1 $?
 out="$(URL="" lcb age)"; rc=$?; wantrc "age with no destination is red" 1 $rc; want "age names the gap" no-destination "$out"
+out="$(URL="" lcb watch --ticks 1)"; want "watcher fires RED on no destination" "RED:" "$out"; want "watcher row records red" red "$(cat "$RUN/watchd/lc-backup.state" 2>/dev/null)"
+rm -rf "$RUN/watchd"
 out="$(LOCALOK=0 lcb run)"; rc=$?; wantrc "same-disk file:// destination refused" 1 $rc; want "refusal names the exit" ALLOW_LOCAL "$out"
 
 echo; echo "age — stale and fresh fixtures:"
