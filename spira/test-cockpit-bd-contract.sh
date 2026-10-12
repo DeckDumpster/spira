@@ -66,7 +66,7 @@ run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     # SPIRA_DB/SPIRA_BD ALSO AS PLAIN ENV: lc_mirror_bd's spira-lc stub (on PATH ahead of
     # the real one) is exec'd as cockpit-collect's own child for SP_READY and reads them as
     # raw shell variables, never through spira-config — tl_config's declaration never reaches it.
-    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$TMP/lc:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$TMP/lc:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd-embedded}" \

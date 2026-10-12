@@ -184,7 +184,7 @@ unlanded() {    # unlanded <fixture-file>
     # and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_RUN="$RUN" \
         SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" \
         SPIRA_BDJSON_FIXTURE="$1" \
@@ -242,7 +242,7 @@ REAL_BD="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null)"
 # env -i, which clears it.
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_BD="${REAL_BD:-bd}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t
-pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+pane="$(env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$ALPHA" \
     SPIRA_TOML="$SPIRA_TOML" \
     "$PANE" once 0 120 2>/dev/null)"

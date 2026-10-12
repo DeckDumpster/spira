@@ -185,7 +185,7 @@ unsent() {    # unsent <fixture-file>
     tl_config SPIRA_HOME_REPO=alpha SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_QUEUE_BATCH_WAIT=1800
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" \
