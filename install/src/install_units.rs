@@ -51,6 +51,12 @@ fn ctrl_subject(unit: &str, instance: &str) -> String {
     s
 }
 
+/// Units whose absence disables the convergence that would re-enable them: a hand `disable`
+/// on one is not honoured, only `ctrl suspend` is.
+fn is_convergence_root(unit: &str, instance: &str) -> bool {
+    unit.ends_with(".timer") && ctrl_subject(unit, instance) == "spira-reconciler"
+}
+
 /// A mask is a symlink to `/dev/null` — detect without following it into a read that would
 /// fail (a character device fails a plain existence check the way a masked unit must not).
 pub fn is_masked(path: &Path) -> bool {
@@ -227,7 +233,7 @@ pub fn run(ctx: &Ctx) -> Report {
         let subject = ctrl_subject(u, &ctx.host.instance);
         let suspended = (ctx.suspended)(&subject);
         let enabled_str = ctx.systemctl.is_enabled(u);
-        let disabled = enabled_str.as_deref() == Some("disabled") && !new_by_inst.contains(u);
+        let disabled = enabled_str.as_deref() == Some("disabled") && !new_by_inst.contains(u) && !is_convergence_root(u, &ctx.host.instance);
         // A changed template (spira-watch@.service) counts as a change to every instance.
         let tmpl_of_u = rendered.iter().find(|(inst, _, _)| inst == u).map(|(_, t, _)| t.clone());
         let changed = tmpl_of_u.as_deref().map(|t| changed_templates.contains(t)).unwrap_or(false);
@@ -550,6 +556,39 @@ mod tests {
         assert_eq!(r2.unchanged, 2);
         // Already active and unchanged: Skip, no second enable/restart call recorded.
         assert!(matches!(r2.enabled_actions.iter().find(|(u, _)| u == "spira-sentinel-prod.timer").unwrap().1, Action::Skip));
+    }
+
+    #[test]
+    fn a_hand_disabled_reconciler_timer_is_re_enabled_but_other_timers_and_suspends_hold() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        fs::write(tmpl_dir.join("spira-reconciler.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        fs::write(tmpl_dir.join("spira-reconciler.timer"), "[Unit]\nUnit=spira-reconciler.service\n[Timer]\nOnCalendar=*:0/1\n").unwrap();
+
+        let mut manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        manifest.units.retain(|u| u.name.starts_with("spira-sentinel.") || u.name.starts_with("spira-reconciler."));
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        assert!(run(&ctx).errors.is_empty());
+
+        for t in ["spira-sentinel-prod.timer", "spira-reconciler-prod.timer"] {
+            sc.set(t, FakeUnit { active: false, enabled: Some("disabled".into()), kind: "oneshot".into(), file_listed: true });
+        }
+        let r = run(&ctx);
+        let act = |r: &Report, u: &str| r.enabled_actions.iter().find(|(n, _)| n == u).unwrap().1;
+        assert!(matches!(act(&r, "spira-reconciler-prod.timer"), Action::EnableNow));
+        assert!(matches!(act(&r, "spira-sentinel-prod.timer"), Action::OperatorDisabled));
+
+        let only_reconciler = |s: &str| s == "spira-reconciler";
+        let ctx2 = Ctx { suspended: &only_reconciler, ..ctx };
+        let r = run(&ctx2);
+        assert!(matches!(act(&r, "spira-reconciler-prod.timer"), Action::Suspended));
     }
 
     #[test]
