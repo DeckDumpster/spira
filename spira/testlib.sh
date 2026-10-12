@@ -790,6 +790,7 @@ lc_aeon_mirror() {
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
     show|state|list|event|create-bead|unclaim) ;;
+    content-rows) BD_IGNORE_SCHEMA_SKEW=1 exec "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --id "$3" --status all --limit 0 --json ;;
     phase) exit 0 ;;
     disposition) mkdir -p "${SPIRA_RUN:?}/lc-disposition"; printf '%s\t%s\n' "${3:-}" "${4:-}" > "$SPIRA_RUN/lc-disposition/${2:?}"; exit 0 ;;
     express) mkdir -p "${SPIRA_RUN:?}/lc-express"; : > "$SPIRA_RUN/lc-express/${2:?}"; exit 0 ;;
