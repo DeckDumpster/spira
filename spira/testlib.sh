@@ -600,6 +600,10 @@ if [ "$1" = reopen ]; then
     [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" label remove "$2" "$SPIRA_SUBMITTED_LABEL" >/dev/null 2>&1
     exit 0
 fi
+if [ "$1" = content-rows ]; then
+    bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
+    exec "${bd:-bd}" ${db:+-C "$db"} list --id "$3" --status all --limit 0 --json
+fi
 if [ "$1" = content ]; then
     shift; bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
     exec "${bd:-bd}" ${db:+-C "$db"} "$@"
