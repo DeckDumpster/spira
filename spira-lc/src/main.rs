@@ -19,6 +19,7 @@ mod callers;
 mod churn;
 mod classify_cmd;
 mod content;
+mod content_rows;
 mod client;
 mod close_on_land;
 mod cutover;
@@ -238,6 +239,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // The attempt and poison history (facts.rs): appended facts, never a transition.
         Some("fact") => facts::cmd_fact(&args[1..], conn),
         Some("facts") => facts::cmd_facts(&args[1..], conn),
+        Some("content-rows") => content_rows::cmd_content_rows(&args[1..], conn),
         Some("facts-query") => facts::cmd_facts_query(&args[1..], conn),
         // The aeon semantic layer (design §3.5): a `work` client binds one bead id and
         // forwards here over this same socket — see work.rs's module doc.

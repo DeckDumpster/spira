@@ -63,3 +63,10 @@ GRANT SELECT ON spira_lifecycle.ops_dwell_p95 TO 'spira_lc'@'%';
 GRANT SELECT ON spira_lifecycle.ops_dwell_p95 TO 'spira_lc_ro'@'%';
 GRANT SELECT ON spira_lifecycle.ops_dwell TO 'spira_lc'@'%';
 GRANT SELECT ON spira_lifecycle.ops_dwell TO 'spira_lc_ro'@'%';
+
+-- The bead-content store, read-only: spira-claim's claim decision reads labels, type,
+-- priority and blockers through the lifecycle connection (`spira-lc content-rows`) instead of
+-- spawning bd. SELECT only; no write grant exists on the content store.
+GRANT SELECT ON spira.issues TO 'spira_lc'@'%';
+GRANT SELECT ON spira.labels TO 'spira_lc'@'%';
+GRANT SELECT ON spira.dependencies TO 'spira_lc'@'%';
