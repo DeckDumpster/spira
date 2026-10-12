@@ -317,9 +317,58 @@ pub fn read_json(bd: &Bd, h: &Host, args: &[String]) -> Result<(String, Vec<Bead
 
 pub fn bulk(bd: &Bd, h: &Host, ready_args: &[String]) -> Reads {
     Reads {
-        list: read_json(bd, h, &list_all_args()),
+        list: read_list_cached(bd, h),
         ready: read_json(bd, h, ready_args),
     }
+}
+
+const FINGERPRINT_SQL: &str = "select dolt_hashof_db() as h";
+
+/// The store's content hash, working set included; None when it cannot be read, which
+/// means "re-read everything".
+fn fingerprint(bd: &Bd, h: &Host) -> Option<String> {
+    if bd.cfg.bd_fixture.is_some() {
+        return None;
+    }
+    let o = bd.call(h, &["sql", FINGERPRINT_SQL], None);
+    let out = o.stdout.trim();
+    (o.ok() && out.len() >= 16).then(|| out.to_string())
+}
+
+fn cache_path(cfg: &Cfg) -> std::path::PathBuf {
+    cfg.run.join("sentinel-list-cache")
+}
+
+/// The cache is `fingerprint\n` then the raw list JSON.
+fn cache_load(path: &std::path::Path, fp: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let (head, body) = text.split_once('\n')?;
+    (head == fp && !body.is_empty()).then(|| body.to_string())
+}
+
+fn cache_store(path: &std::path::Path, fp: &str, body: &str) {
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+    if std::fs::write(&tmp, format!("{fp}\n{body}")).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// The whole-store list, re-read only when the store's fingerprint moved since the last
+/// pass. The fingerprint is taken before the read, so a write landing mid-read leaves a
+/// stale fingerprint on a fresh body and the next pass re-reads: never the reverse.
+pub fn read_list_cached(bd: &Bd, h: &Host) -> Result<(String, Vec<Bead>), String> {
+    let Some(fp) = fingerprint(bd, h) else {
+        return read_json(bd, h, &list_all_args());
+    };
+    let path = cache_path(bd.cfg);
+    if let Some(body) = cache_load(&path, &fp) {
+        if let Ok(v) = parse_beads(&body) {
+            return Ok((body, v));
+        }
+    }
+    let r = read_json(bd, h, &list_all_args())?;
+    cache_store(&path, &fp, &r.0);
+    Ok(r)
 }
 
 #[cfg(test)]
@@ -434,6 +483,20 @@ mod tests {
                 "spira,plan,branch:spira/b,repo:other".to_string()
             )]
         );
+    }
+
+    #[test]
+    fn cache_serves_only_the_fingerprint_it_was_written_under() {
+        let d = testkit::TempDir::new("list-cache");
+        let p = d.path().join("c");
+        assert_eq!(cache_load(&p, "f1"), None, "no file, no hit");
+        cache_store(&p, "f1", "[{\"id\":\"a\"}]");
+        assert_eq!(cache_load(&p, "f1").as_deref(), Some("[{\"id\":\"a\"}]"));
+        assert_eq!(cache_load(&p, "f2"), None, "a changed store is re-read");
+        cache_store(&p, "f2", "");
+        assert_eq!(cache_load(&p, "f2"), None, "an empty body is never a hit");
+        std::fs::write(&p, "f3").unwrap();
+        assert_eq!(cache_load(&p, "f3"), None, "a truncated file is never a hit");
     }
 
     #[test]
