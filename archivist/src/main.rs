@@ -9,6 +9,8 @@
 //!   archivist digest <t> [<from-turn>] [--full]
 //!                              the transcript rendered small enough for an agent to read
 //!   archivist record <line>    register one durably-filed finding for today's digest
+//!   archivist claim <s> <key>  take the right to file one item (exit 3: already filed)
+//!   archivist progress <s> <turn>   advance the covered mark: everything to <turn> is handled
 //!   archivist digest-send      mail today's digest (at most once a day) and empty the queue
 
 use std::path::{Path, PathBuf};
@@ -19,7 +21,7 @@ use archivist::run;
 use archivist::seam::{locate_home, RealSeam};
 
 fn usage() -> ! {
-    eprintln!("usage: archivist sweep|list|now|mark|state|digest|record|digest-send ...");
+    eprintln!("usage: archivist sweep|list|now|mark|state|digest|record|claim|progress|digest-send ...");
     std::process::exit(2);
 }
 
@@ -96,6 +98,25 @@ fn dispatch(cmd: &str, rest: &[String]) {
             let arc = run_arc_dir();
             if let Err(e) = run::digest_record(&arc, line) {
                 die(&e.to_string());
+            }
+        }
+        "claim" => {
+            let sid = rest.first().unwrap_or_else(|| die("claim needs a session"));
+            let key = rest.get(1).unwrap_or_else(|| die("claim needs a key"));
+            match run::claim(&run_arc_dir(), sid, key) {
+                Ok(true) => {}
+                Ok(false) => {
+                    eprintln!("archivist: already filed: {key}");
+                    std::process::exit(3);
+                }
+                Err(e) => die(&e),
+            }
+        }
+        "progress" => {
+            let sid = rest.first().unwrap_or_else(|| die("progress needs a session"));
+            let turn: u64 = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or_else(|| die("progress needs a turn number"));
+            if let Err(e) = run::progress(&run_arc_dir(), sid, turn) {
+                die(&e);
             }
         }
         "digest-send" => {
