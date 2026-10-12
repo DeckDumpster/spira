@@ -1289,3 +1289,22 @@ fn express_is_a_bool_flag_and_never_swallows_what_follows() {
     assert!(a.has("--express"));
     assert_eq!(a.pos, vec!["labels".to_string(), String::new()]);
 }
+
+#[test]
+fn a_blocker_the_lifecycle_has_landed_costs_no_second_bd_call() {
+    let home = chamber_home(&[("probe", "plan", "")]);
+    let chamber = chamber_path(&home);
+    let calls = testkit::TempDir::new("spira-claim-bd-calls");
+    let log = calls.join("calls");
+    let bd = sh(&format!("echo x >> '{}'; echo '{ENFORCE_RECS}'", log.display()));
+    let lc = r#"[{"bead_id":"S","state":"LANDED","holds":"[]"},{"bead_id":"D","state":"READY","holds":"[]"},{"bead_id":"R","state":"READY","holds":"[]"}]"#;
+    let path = fake_lc_path(lc);
+    let o = run_cfg(
+        &["bulk-ready-by-fayth"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
+        &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
+    );
+    assert_eq!((o.code, o.out.as_str()), (0, "probe 2\n"), "{}", o.err);
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1, "one content read, not one per blocker");
+}
