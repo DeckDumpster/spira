@@ -606,6 +606,21 @@ fn a_pass_verb_out_of_phase_is_sent_so_the_machine_can_refuse_it_by_name() {
     assert_eq!(t.run(&["round", "pass-verdict", &batch, "--verdict", "incomplete"]), 2, "an incomplete pass names why");
 }
 
+#[test]
+fn a_pass_left_open_is_closed_incomplete_so_the_next_certify_starts_cleanly() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.lc.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), 2, 1, "suites".into()));
+    t.scripts.pass_alive.set(false);
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    t.run(&["round", "certify", &batch]);
+    let events = events_of(&t, &batch);
+    let at = |p: &str| events.iter().position(|e| e.starts_with(p));
+    assert!(at("{\"PassIncomplete\":{\"n\":1").is_some() && at("{\"PassIncomplete\"") < at("{\"PassStarted\""), "{events:?}");
+}
+
 fn preempt_world() -> (T, String) {
     let t = round_world();
     t.git.anc.borrow_mut().remove(&("tb".to_string(), "merged-tc".to_string()));

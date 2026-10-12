@@ -44,7 +44,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
         Round::Abandon { batch, repo, reason } => abandon(w, batch, repo.as_deref(), reason),
         Round::Preempt { batch, repo, eject, reason, suites } => preempt(w, batch, repo.as_deref(), eject, reason, suites),
         Round::Status { repo } => status(w, repo.as_deref()),
-        Round::PassStart { batch, repo } => pass_start(w, batch, repo.as_deref()),
+        Round::PassStart { batch, repo, resume } => pass_start(w, batch, repo.as_deref(), *resume),
         Round::SuitesStarted { batch, repo } => suites_started_verb(w, batch, repo.as_deref()),
         Round::Failed { batch, repo, suite } => failed_verb(w, batch, repo.as_deref(), suite),
         Round::Mend { outcome, batch, suite, repo, tips, checked, ask, reason } => super::mend::run(w, outcome, batch, suite, repo.as_deref(), tips, checked, ask.as_deref(), reason),
@@ -85,7 +85,7 @@ where
 }
 
 /// `strict` is a hand verb: it always sends the event, so the machine refuses a wrong-phase call
-/// and names the phase. certify is not strict: it resumes a pass already recorded.
+/// and names the phase. certify and `pass-start --resume` are not strict: they resume a pass already recorded.
 fn start_pass(w: &World, batch: &str, head: &str, strict: bool) -> Result<(), (i32, String)> {
     let rebuilt = serde_json::json!({"PassRebuilt": {"head": head}}).to_string();
     pass_event(w, batch, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt))?;
@@ -138,8 +138,8 @@ where
     }
 }
 
-fn pass_start(w: &World, batch: &str, repo: Option<&str>) -> i32 {
-    pass_verb(w, "round pass-start", batch, repo, |_, kv| start_pass(w, batch, kv.get("head").unwrap_or(""), true))
+fn pass_start(w: &World, batch: &str, repo: Option<&str>, resume: bool) -> i32 {
+    pass_verb(w, "round pass-start", batch, repo, |_, kv| start_pass(w, batch, kv.get("head").unwrap_or(""), !resume))
 }
 
 fn suites_started_verb(w: &World, batch: &str, repo: Option<&str>) -> i32 {
@@ -701,6 +701,11 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
             return finish_green(w, label, &c, &path, batch, &head, &who, "re-certify of a GREEN round");
         }
         let run_id = format!("{batch}-{}", w.clock.now());
+        let live = fs::read_to_string(handle_of(&c, batch)).ok().and_then(|t| t.trim().parse::<u32>().ok()).is_some_and(|p| w.scripts.pass_alive(p));
+        if phase_of(w, batch) == "certifying" && !live {
+            let left = Verdict::Incomplete("the pass was left open: no run holds it");
+            warn_unrecorded(w, label, batch, "the abandoned pass", pass_verdict_event(w, batch, &left, true));
+        }
         let started = start_pass(w, batch, &head, false);
         if let Err((rc, out)) = started {
             w.err(format!("queue.sh {label}: spira-lc refused to start the round {batch} (rc={rc}): {out}"));
