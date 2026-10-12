@@ -445,26 +445,26 @@ nowant "transient: not reported as a stray (it was handled, not missed)" \
     "STRAY  spira-landing" "$trans_out"
 MOCK_TRANSIENT_UNITS=""
 
-# A transient a sentinel pass starts AFTER the first sweep (sp-53own): only the second
+# A transient a sentinel pass starts AFTER the first sweep: only the second
 # sweep, after every timer is stopped, can catch it.
 _seed_units || { printf 'fixture: re-seed for late-transient failed\n'; exit 1; }
 export MOCK_LIST_COUNT="$TMP/list-count"; : > "$MOCK_LIST_COUNT"
-export MOCK_LATE_TRANSIENT="spira-audit.service loaded active running sentinel --audit"
+export MOCK_LATE_TRANSIENT="spira-landing.service loaded active running landing-pass land"
 : > "$MOCK_LOG"
 late_out="$(un)"
-want "late transient: the audit worker started mid-uninstall is stopped" "stop spira-audit.service" "$(cat "$MOCK_LOG")"
-want "late transient: and reported"                                      "stopping spira-audit.service" "$late_out"
+want "late transient: the landing worker started mid-uninstall is stopped" "stop spira-landing.service" "$(cat "$MOCK_LOG")"
+want "late transient: and reported"                                      "stopping spira-landing.service" "$late_out"
 unset MOCK_LIST_COUNT MOCK_LATE_TRANSIENT
 
-# A worker left deactivating by a lingering child (sp-kuwp6s: spira-audit held in stop-sigterm
+# A worker left deactivating by a lingering child (a worker held in stop-sigterm
 # by bd's detached send-metrics) is swept too, and what is left in it is killed outright.
 _seed_units || { printf 'fixture: re-seed for deactivating transient failed\n'; exit 1; }
-export MOCK_DEACTIVATING="spira-audit.service loaded deactivating stop-sigterm sentinel --audit"
+export MOCK_DEACTIVATING="spira-landing.service loaded deactivating stop-sigterm landing-pass land"
 : > "$MOCK_LOG"
 deact_out="$(un)"
-want "deactivating transient: what is left in it is killed" "kill --signal=SIGKILL spira-audit.service" "$(cat "$MOCK_LOG")"
-want "deactivating transient: then stopped"                 "stop spira-audit.service" "$(cat "$MOCK_LOG")"
-want "deactivating transient: and reported"                 "stopping spira-audit.service" "$deact_out"
+want "deactivating transient: what is left in it is killed" "kill --signal=SIGKILL spira-landing.service" "$(cat "$MOCK_LOG")"
+want "deactivating transient: then stopped"                 "stop spira-landing.service" "$(cat "$MOCK_LOG")"
+want "deactivating transient: and reported"                 "stopping spira-landing.service" "$deact_out"
 unset MOCK_DEACTIVATING
 
 # ==========================================================================

@@ -394,7 +394,7 @@ impl<'a> Sentinel<'a> {
     /// `sentinel --open-children`: one snapshot read, CHECK 3c over it, nothing else.
     fn open_children_only(&self, dry: bool) -> i32 {
         let r = store::bulk(&self.bd(), self.h, &store::ready_raw_args(&self.cfg));
-        let (list_raw, list) = match r.list {
+        let (_, list) = match r.list {
             Ok(x) => x,
             Err(e) => {
                 self.h
@@ -403,7 +403,7 @@ impl<'a> Sentinel<'a> {
             }
         };
         // A child's state is its lifecycle row (design §3.4): the one `spira-lc list`.
-        let snap = Snapshot::new(list_raw, list, r.ready.ok()).with_lc(self.state_rows().as_deref());
+        let snap = Snapshot::new(list, r.ready.ok()).with_lc(self.state_rows().as_deref());
         self.mark_open_children(&snap, dry);
         0
     }
@@ -412,7 +412,7 @@ impl<'a> Sentinel<'a> {
     fn read_store(&self) -> Result<Snapshot, i32> {
         let bd = self.bd();
         let r = store::bulk(&bd, self.h, &store::ready_raw_args(&self.cfg));
-        let (list_raw, list) = match r.list {
+        let (_, list) = match r.list {
             Ok(x) => x,
             Err(e) => {
                 if !self.cfg.skip_reclaim {
@@ -436,19 +436,7 @@ impl<'a> Sentinel<'a> {
         // Every state decision over this snapshot reads the bead's lifecycle row, never bd
         // status (design §3.4, sp-mve9i): the pass's one `spira-lc list`, read whatever
         // fail-closed (`state_rows`).
-        Ok(Snapshot::new(list_raw, list, ready).with_lc(self.state_rows().as_deref()))
-    }
-
-    /// Write the snapshots (and the ready cache) where every child reads them.
-    fn export_snapshot(&self, snap: &Snapshot) {
-        if !snap.list_raw.is_empty() {
-            if let Some(p) = self.temp_file("list-snapshot", &snap.list_raw) {
-                self.h.set_env("SPIRA_LIST_SNAPSHOT", &p.to_string_lossy());
-            }
-        }
-        if snap.ready.is_some() && self.mode == Mode::Pass {
-            self.export_ready_cache();
-        }
+        Ok(Snapshot::new(list, ready).with_lc(self.state_rows().as_deref()))
     }
 
     fn full(&self) -> i32 {
@@ -491,7 +479,9 @@ impl<'a> Sentinel<'a> {
             return 0;
         }
 
-        self.export_snapshot(&snap);
+        if snap.ready.is_some() {
+            self.export_ready_cache();
+        }
 
         self.phase("CHECK1");
         self.check1();

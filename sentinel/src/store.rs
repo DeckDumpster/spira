@@ -138,7 +138,6 @@ pub fn has_all(b: &Bead, need: &[String]) -> bool {
 #[derive(Debug, Default)]
 pub struct Snapshot {
     pub list: Vec<Bead>,
-    pub list_raw: String,
     pub ready: Option<Vec<Bead>>,
     index: HashMap<String, usize>,
     /// Each work bead's lifecycle state (`spira-lc list`), keyed by id: the pass's state
@@ -150,7 +149,7 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    pub fn new(list_raw: String, list: Vec<Bead>, ready: Option<(String, Vec<Bead>)>) -> Snapshot {
+    pub fn new(list: Vec<Bead>, ready: Option<(String, Vec<Bead>)>) -> Snapshot {
         let index = list
             .iter()
             .enumerate()
@@ -159,7 +158,6 @@ impl Snapshot {
         let ready = ready.map(|(_, v)| v);
         Snapshot {
             list,
-            list_raw,
             ready,
             index,
             lc: HashMap::new(),
@@ -216,7 +214,7 @@ impl Snapshot {
     pub fn from_json(list_json: &str, ready_json: Option<&str>) -> Snapshot {
         let list = parse_beads(list_json).unwrap_or_default();
         let ready = ready_json.and_then(|r| parse_beads(r).ok().map(|v| (r.to_string(), v)));
-        Snapshot::new(list_json.to_string(), list, ready)
+        Snapshot::new(list, ready)
     }
 
     pub fn get(&self, id: &str) -> Option<&Bead> {

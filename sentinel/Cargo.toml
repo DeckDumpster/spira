@@ -2,7 +2,7 @@
 name = "sentinel"
 version = "1.0.0"
 edition = "2021"
-description = "sentinel — the loop's heartbeat: one reconcile pass over the work graph (CHECK 1-8), the 15s summon fast path, and the decoupled audit worker. Replaces spira/sentinel.sh."
+description = "sentinel — the loop's heartbeat: one reconcile pass over the work graph (CHECK 1-8), the 15s summon fast path. Replaces spira/sentinel.sh."
 
 [dependencies]
 aeon = { path = "../aeon" }

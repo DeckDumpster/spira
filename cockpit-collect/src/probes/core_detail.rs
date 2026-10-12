@@ -127,8 +127,8 @@ fn recent_section(out: &mut Kv, run: &std::path::Path) {
 
     let mut candidates: Vec<String> = Vec::new();
 
-    // Source A: sentinel/audit ACT lines.
-    for log in ["sentinel.log", "audit.log"] {
+    // Source A: sentinel ACT lines.
+    for log in ["sentinel.log"] {
         if let Ok(content) = std::fs::read_to_string(run.join(log)) {
             for line in content.lines() {
                 if let Some(rest) = line.split_once(" spira: ACT ") {

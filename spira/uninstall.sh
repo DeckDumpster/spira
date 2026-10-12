@@ -238,19 +238,18 @@ _un_removed_names=()   # for sweep exclusion
 #    Left running, the next activate.sh's restart step can revive it under a
 #    release it was never launched against (sp-hvtdj).
 # ---------------------------------------------------------------------------
-# spira-audit* too (the sentinel's audit worker, `sentinel --audit`). Swept here AND again
-# after every timer is stopped below: a sentinel pass already running can start a new
-# transient after this first sweep, and acceptance found one alive after uninstall
-# (spira-audit.service, sp-53own). After the timers are gone nothing starts another.
-# EVERY STATE BUT GONE, not only active (sp-kuwp6s): a worker whose main process has exited
+# Swept here AND again after every timer is stopped below: a sentinel pass already running
+# can start a new transient after this first sweep. After the timers are gone nothing
+# starts another.
+# EVERY STATE BUT GONE, not only active: a worker whose main process has exited
 # but whose cgroup still holds a child (bd's detached `bd send-metrics`, seen holding
-# spira-audit in deactivating/stop-sigterm for TimeoutStopSec after uninstall returned) is
+# a worker in deactivating/stop-sigterm for TimeoutStopSec after uninstall returned) is
 # "deactivating", which --state=active never listed. These units are this installation's own
 # throwaway workers: whatever is left in one is killed outright, then the unit is stopped.
 _un_stop_transients() {
     local _un_transient _un_tline _un_tu
     _un_transient="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units --state=active,activating,deactivating,reloading \
-        --no-legend --plain 'spira-landing*' 'spira-aeon-*' 'spira-audit*' 2>/dev/null || true)"
+        --no-legend --plain 'spira-landing*' 'spira-aeon-*' 2>/dev/null || true)"
     [ -n "$_un_transient" ] || return 0
     printf '\nStopping live transient units...\n'
     while IFS= read -r _un_tline; do

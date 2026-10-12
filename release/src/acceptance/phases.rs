@@ -672,7 +672,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         r.follow("phase A", &id, &land_ref, &base, &landed);
         let mode = land_modes.iter().find(|(n, _)| *n == home_repo).map(|(_, m)| m.clone()).unwrap_or_else(|| "push".into());
         let want = expected_lifecycle(&mode);
-        // LANDED is recorded by the sending sweep inside the sentinel's audit worker, one pass
+        // LANDED is recorded by the sending sweep, one pass
         // after the push — never at the instant stage 5 sees the commit. Read history until it
         // holds the whole sequence or the bound runs out; the last read is what is judged
         // (sp-53own: a single immediate read saw [.., CERTIFIED], missing LANDED).

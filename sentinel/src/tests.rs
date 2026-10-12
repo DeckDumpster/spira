@@ -439,9 +439,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     });
     r.on(|s| {
         if s.prog == "strand" {
-            // the snapshot paths reached strand
-            assert!(env_of(s, "SPIRA_LIST_SNAPSHOT")
-                .is_some_and(|p| std::fs::read_to_string(p).unwrap().contains("sp-epic")));
+            assert!(env_of(s, "SPIRA_LIST_SNAPSHOT").is_none(), "the list snapshot is no longer written");
             assert!(env_of(s, "SPIRA_READY_SNAPSHOT").is_none());
             let cache = std::fs::read_to_string(env_of(s, "SPIRA_READY_CACHE").unwrap()).unwrap();
             assert_eq!(cache, "builder 1\nops 0\n");
@@ -743,7 +741,7 @@ fn summon_only_gates_then_reads_ready_once() {
     });
     r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-aeon-builder-1 loaded active\nspira-aeon-ops-2 loaded active\nspira-aeon-opsx-3 x\n") } else { None });
     // CK7 runs in-process now too: `fayth_ready` reaches `spira-claim fayth-ready`
-    // directly, reading the SAME SPIRA_READY_CACHE export_snapshot (above) already wrote.
+    // directly, reading the SAME SPIRA_READY_CACHE the pass already wrote.
     r.on(|s| {
         if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("fayth-ready") {
             let cache = std::fs::read_to_string(env_of(s, "SPIRA_READY_CACHE").unwrap()).unwrap();

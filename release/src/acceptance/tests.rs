@@ -777,7 +777,7 @@ fn lifecycle_states_reads_the_store_s_real_history_shape() {
 
 #[test]
 fn a_landed_event_recorded_a_pass_later_is_waited_for() {
-    // The audit worker records LANDED one sentinel pass after the push (sp-53own).
+    // LANDED is recorded one sentinel pass after the push (sp-53own).
     let b = Box_::new();
     let f = b.fake();
     f.history_late.set(3);
