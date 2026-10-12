@@ -877,6 +877,7 @@ jobs:
             exit 1
           }
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${_art}/zip" > /tmp/batch-assert.zip
+          rm -rf /tmp/batch-assert
           unzip -q /tmp/batch-assert.zip -d /tmp/batch-assert
           _count="$(find /tmp/batch-assert -name '*.result' | wc -l)"
           _want="$(ls spira/test-*.sh | wc -l)"

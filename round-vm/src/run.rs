@@ -925,6 +925,7 @@ pub struct RunEnv<'a> {
 pub trait Recorder: Sync {
     fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
     fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
+    fn pass_incomplete(&self, batch: &str, repo: Option<&str>, reason: &str) -> Result<(), String>;
     fn progress(&self, batch: &str, body: &str) -> Result<(), String>;
 }
 
@@ -949,12 +950,22 @@ impl Recorder for QueueRecorder {
 
     fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
         let mut cmd = command("timeout");
-        cmd.args(["-k", "5", "60", "queue", "round", "pass-start", batch]).args(repo).stdin(Stdio::null());
+        cmd.args(["-k", "5", "60", "queue", "round", "pass-start", "--resume", batch]).args(repo).stdin(Stdio::null());
         let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
         if out.status.success() {
             return Ok(());
         }
         Err(format!("queue round pass-start refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+
+    fn pass_incomplete(&self, batch: &str, repo: Option<&str>, reason: &str) -> Result<(), String> {
+        let mut cmd = command("timeout");
+        cmd.args(["-k", "5", "60", "queue", "round", "pass-verdict", "--verdict", "incomplete", "--reason", reason, batch]).args(repo).stdin(Stdio::null());
+        let out = cmd.output().map_err(|e| format!("cannot run queue: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(format!("queue round pass-verdict incomplete refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
     }
 
     fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
@@ -1066,9 +1077,9 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     let budgets = crate::progress::Budgets { vm: cfg.vm_budget_secs, build: cfg.build_budget_secs };
     let progress = Mutex::new(crate::progress::Progress::start(&cfg.run_dir, &results_dir, &commit_sha, &tree_sha, total, cfg.cap_secs, budgets).on_red(args.on_red.clone()));
     if let Some(batch) = args.round_batch.as_deref() {
-        // A pass already recorded by certify is refused here; only an unrecorded start needs the write.
         if let Err(e) = env.record.pass_started(batch, args.round_repo.as_deref()) {
-            eprintln!("round-vm run: {e}");
+            eprintln!("round-vm run: {e}; the pass is not run unrecorded");
+            return 2;
         }
     }
     let acquired = {
@@ -1260,6 +1271,7 @@ fn on_vm_run(
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 keep_after_lost_ssh(env, vm, &results_dir, keep);
+                record_incomplete(env, args, "the batch's ssh dropped");
                 progress.finish(&results_dir, 2);
                 return 2;
             }
@@ -1317,6 +1329,7 @@ fn on_vm_run(
             Ok(Ok(255)) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 keep_after_lost_ssh(env, vm, &results_dir, keep);
+                record_incomplete(env, args, "the batch's ssh dropped");
                 (2, false)
             }
             Ok(Ok(rc)) => {
@@ -1385,6 +1398,14 @@ fn pull_retry(remote: &dyn Remote, cfg: &Config, addr: &str, remote_path: &str, 
         }
     }
     false
+}
+
+/// An incomplete pass leaves the batch's CI_RUNNING so the next pass can start; a refusal is said aloud.
+fn record_incomplete(env: &RunEnv, args: &RunArgs, why: &str) {
+    let Some(batch) = args.round_batch.as_deref() else { return };
+    if let Err(e) = env.record.pass_incomplete(batch, args.round_repo.as_deref(), why) {
+        eprintln!("round-vm run: {e}");
+    }
 }
 
 /// The batch's ssh dropped, so what the VM holds is unknown: take what it has and keep the VM.
@@ -1481,6 +1502,7 @@ fn after_batch(
     if !pulled_ok {
         eprintln!("round-vm run: INCOMPLETE: the results pull from {} failed after retries; this is not a verdict", vm.handle);
         keep.store(true, Ordering::SeqCst);
+        record_incomplete(env, args, "the results pull failed after retries");
         return 2;
     }
     let _ = fs::remove_dir_all(&pulled);
@@ -2228,6 +2250,10 @@ mod tests {
             self.calls.lock().unwrap().push(format!("start {batch}"));
             Ok(())
         }
+        fn pass_incomplete(&self, batch: &str, _: Option<&str>, _: &str) -> Result<(), String> {
+            self.calls.lock().unwrap().push(format!("incomplete {batch}"));
+            Ok(())
+        }
         fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
             self.calls.lock().unwrap().push(format!("{batch} {}", repo.unwrap_or("-")));
             if self.refuse { Err("the batch is ATTRIBUTING, not CI_RUNNING".into()) } else { Ok(()) }
@@ -2659,6 +2685,16 @@ mod tests {
         assert_eq!(go(&fx, &remote, &a), 2);
         let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
         assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("fault")));
+    }
+
+    #[test]
+    fn a_pass_whose_ssh_drops_records_itself_incomplete_on_its_batch() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh".into()), round_batch: Some("r-9".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 2);
+        assert_eq!(*rec.calls.lock().unwrap().last().unwrap(), "incomplete r-9");
     }
 
     #[test]
