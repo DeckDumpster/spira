@@ -421,6 +421,19 @@ mod tests {
     }
 
     #[test]
+    fn a_blocker_conflict_wait_is_not_an_attempt() {
+        assert_eq!(classify("blocker-conflict"), ReturnClass::RebaseReturn);
+        assert_eq!(classify("fast-tier-red"), ReturnClass::Judged);
+        let r = [
+            EventRow::new(B, "claimed", "", "2026-09-01T00:00:00Z"),
+            EventRow::new(B, "reopen", "blocker-conflict", "2026-09-01T00:00:02Z"),
+            EventRow::new(B, "claimed", "", "2026-09-01T00:01:00Z"),
+            EventRow::new(B, "reopen", "blocker-conflict", "2026-09-01T00:01:02Z"),
+        ];
+        assert_eq!(fold(B, &r).attempts, 0);
+    }
+
+    #[test]
     fn a_no_rebase_after_a_clean_submit_is_not_an_attempt() {
         assert_eq!(classify("no-rebase"), ReturnClass::RebaseReturn);
         let r = rows(&[

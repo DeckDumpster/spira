@@ -861,6 +861,55 @@ fn a_stack_conflict_refuses_the_claim_and_notes_both_prerequisites() {
     assert!(notes.iter().all(|n| n.contains("stack conflict: sp-a x sp-b-prereq")), "{notes:?}");
 }
 
+
+fn conflicting_handoff(name: &str, blocker_file: &str, main_moved: bool) -> (Fx, Outcome, String) {
+    let f = fx(name);
+    git(&f.repo, &["checkout", "-qb", "spira/sp-a"]);
+    std::fs::write(f.repo.join(blocker_file), "from A\n").unwrap();
+    git(&f.repo, &["add", blocker_file]);
+    git(&f.repo, &["commit", "-qm", "sp-a work"]);
+    let tip_a = rev_parse(&f.repo, "HEAD");
+    git(&f.repo, &["checkout", "-q", "main"]);
+    if main_moved {
+        std::fs::write(f.repo.join("f"), "landed elsewhere\n").unwrap();
+        git(&f.repo, &["commit", "-qam", "landed work"]);
+    }
+    seed(&f, "sp-b");
+    f.w.lock().unwrap().stack_answer = Some(format!(r#"{{"claimable":true,"stack":{{"sp-a":"{tip_a}"}},"stack_depth":1,"stack_max_depth":4}}"#));
+    let reset_to = if main_moved { "main~1" } else { "main" };
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, _, _| {
+        git(&spec.cwd, &["reset", "-q", "--hard", reset_to]);
+        std::fs::write(spec.cwd.join("f"), "from B\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-b — the work"]);
+        crate::run::append(&spec.log, "{\"type\":\"result\",\"duration_ms\":3000,\"num_turns\":3,\"total_cost_usd\":0.5}\n");
+        0
+    });
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, act);
+    (f, o, tip_a)
+}
+
+#[test]
+fn a_rebase_conflict_with_an_unlanded_blocker_waits_uncharged_and_holds_the_bead_off() {
+    let (f, o, tip_a) = conflicting_handoff("blocker-wait", "f", false);
+    let w = o.w.lock().unwrap();
+    let reopens: Vec<_> = w.seam_calls.iter().filter(|c| c.0 == "bead_reopen").collect();
+    assert_eq!(reopens.len(), 1, "{:?}", w.seam_calls);
+    assert_eq!(reopens[0].1[1], "blocker-conflict", "{:?}", reopens);
+    assert!(spira_config::stack_conflict::holds(&f.run, "sp-a", &tip_a), "the blocker's marker keeps the bead unclaimable");
+}
+
+#[test]
+fn a_rebase_conflict_with_a_file_no_blocker_changed_reopens_as_a_fast_tier_red() {
+    let (f, o, tip_a) = conflicting_handoff("blocker-unrelated", "other.txt", true);
+    let w = o.w.lock().unwrap();
+    let reopens: Vec<_> = w.seam_calls.iter().filter(|c| c.0 == "bead_reopen").collect();
+    assert_eq!(reopens.len(), 1, "{:?}", w.seam_calls);
+    assert_eq!(reopens[0].1[1], "fast-tier-red", "{:?}", reopens);
+    assert!(!spira_config::stack_conflict::holds(&f.run, "sp-a", &tip_a));
+}
+
 // ---- fences before the workspace ------------------------------------------------------
 
 #[test]

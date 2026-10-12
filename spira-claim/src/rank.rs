@@ -711,6 +711,20 @@ mod tests {
     }
 
     #[test]
+    fn a_dependent_waiting_on_a_conflicting_blocker_is_released_when_the_blocker_lands() {
+        let tmp = testkit::TempDir::new("rank-sc-land");
+        let run = tmp.path().to_path_buf();
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let child = blocked_on("B", "A");
+        let mut lc: HashMap<_, _> = [lcrow("B", BeadState::Rework, &[], 0), lcrow("A", BeadState::Certified, &[], 0)].into();
+        spira_config::stack_conflict::record(&run, "A", "tip-A");
+        mark_stack_conflicts(&mut lc, &run);
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Blocked("A".into()));
+        lc.get_mut("A").unwrap().state = BeadState::Landed;
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 0 }, "landed: one rebase, no stack");
+    }
+
+    #[test]
     fn stacked_blocker_only_submitted_waits() {
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", BeadState::Submitted, &[], 0)].into();
         let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();

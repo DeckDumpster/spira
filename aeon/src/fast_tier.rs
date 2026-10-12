@@ -69,7 +69,28 @@ pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &st
     None
 }
 
+/// The paths a rebase-conflict red names; empty for any other red.
+pub fn conflict_paths(red: &str) -> Vec<String> {
+    if !red.contains(" does not rebase onto ") {
+        return Vec::new();
+    }
+    red.lines()
+        .filter(|l| l.starts_with("CONFLICT"))
+        .filter_map(|l| {
+            if let Some((_, p)) = l.split_once("Merge conflict in ") {
+                return Some(p.trim());
+            }
+            let rest = l.split_once("): ")?.1;
+            rest.split_once(" deleted in ").or_else(|| rest.split_once(" renamed ")).map(|(p, _)| p.trim())
+        })
+        .map(String::from)
+        .collect()
+}
+
 pub const KIND: &str = "fast-tier-red";
+/// The reopen cause of a handoff refused for a conflict with an unlanded blocker; its name
+/// carries "conflict", which the attempt census reads as a rebase return, never charged.
+pub const BLOCKER_CONFLICT_CAUSE: &str = "blocker-conflict";
 pub const DIGEST_MAX_LINES: usize = 60;
 
 /// The lines of a red that say what to fix: the failing step, compiler errors with their
@@ -219,6 +240,13 @@ mod tests {
         let w = tree("rebase", true);
         let r = red(&G(1), &E(0, Mutex::new(vec![])), &w.join("."), &w.join("."), "b", "base", false).unwrap();
         assert!(r.text.contains("does not rebase onto base cleanly"), "{r:?}");
+    }
+
+    #[test]
+    fn conflict_paths_are_read_from_conflict_lines_only() {
+        let red = "b does not rebase onto base cleanly:\nAuto-merging x\nCONFLICT (content): Merge conflict in deploy/ci.sh\nCONFLICT (add/add): Merge conflict in a/__init__.py\nCONFLICT (modify/delete): gone.rs deleted in HEAD and modified in b.\n";
+        assert_eq!(conflict_paths(red), ["deploy/ci.sh", "a/__init__.py", "gone.rs"]);
+        assert!(conflict_paths("spira-lint failed (rc=1):\nCONFLICT (content): Merge conflict in x\n").is_empty(), "a lint red is not a rebase conflict");
     }
 
     #[test]
