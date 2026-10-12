@@ -299,7 +299,8 @@ pub fn parse_lifecycle(text: &str) -> Result<HashMap<String, LifecycleRow>, Stri
 
 pub fn mark_stack_conflicts(lc: &mut HashMap<String, LifecycleRow>, run: &std::path::Path) {
     for r in lc.values_mut() {
-        r.stack_conflict = r.tip.as_deref().is_some_and(|t| spira_config::stack_conflict::holds(run, &r.bead_id, t));
+        r.stack_conflict = matches!(r.state, BeadState::Certified | BeadState::InDelivery)
+            && r.tip.as_deref().is_some_and(|t| spira_config::stack_conflict::holds(run, &r.bead_id, t));
     }
 }
 
@@ -708,6 +709,22 @@ mod tests {
         lc.get_mut("A").unwrap().tip = Some("tip-A-rebased".into());
         mark_stack_conflicts(&mut lc, &run);
         assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 1 }, "the parent's tip moved");
+    }
+
+    #[test]
+    fn an_old_marker_on_an_in_delivery_parent_does_not_block_its_dependent() {
+        let tmp = testkit::TempDir::new("rank-sc-old");
+        let run = tmp.path().to_path_buf();
+        let bd: HashMap<_, _> = [bdrec("A", "open", "task", "spira")].into();
+        let child = blocked_on("B", "A");
+        let mut lc: HashMap<_, _> = [lcrow("B", BeadState::Rework, &[], 0), lcrow("A", BeadState::InDelivery, &[], 0)].into();
+        spira_config::stack_conflict::record(&run, "A", "tip-A");
+        mark_stack_conflicts(&mut lc, &run);
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Blocked("A".into()), "a fresh marker blocks");
+        let old = std::time::SystemTime::now() - spira_config::stack_conflict::MAX_AGE - std::time::Duration::from_secs(60);
+        std::fs::File::options().write(true).open(run.join("stack-conflict").join("A")).unwrap().set_modified(old).unwrap();
+        mark_stack_conflicts(&mut lc, &run);
+        assert_eq!(claimable(&child, &lc, &bd, 4), Verdict::Claimable { depth: 1 });
     }
 
     #[test]

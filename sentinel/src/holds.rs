@@ -88,6 +88,24 @@ pub fn starvation(rows: &[LcRow]) -> (usize, usize, bool) {
     (held, ready.len(), held >= STARVED_MIN_HELD && held * 100 > ready.len() * STARVED_PCT)
 }
 
+/// `(dependent, prerequisite, age_secs)` for each open bead depending on a prerequisite whose
+/// stack-conflict marker is older than `report_age` yet still names the prerequisite's tip.
+pub fn stale_conflicts(rows: &[LcRow], snap: &Snapshot, run: &std::path::Path, report_age: std::time::Duration) -> Vec<(String, String, u64)> {
+    let mut out = Vec::new();
+    for p in rows.iter().filter(|r| matches!(r.state.as_str(), "CERTIFIED" | "IN_DELIVERY")) {
+        let Some((tip, age)) = spira_config::stack_conflict::recorded(run, &p.bead_id) else { continue };
+        if age < report_age || p.tip.as_deref() != Some(tip.as_str()) {
+            continue;
+        }
+        for b in snap.list.iter().filter(|b| b.dependencies.iter().any(|d| d.target() == Some(p.bead_id.as_str()))) {
+            if rows.iter().any(|r| r.bead_id == b.id && matches!(r.state.as_str(), "READY" | "REWORK")) {
+                out.push((b.id.clone(), p.bead_id.clone(), age.as_secs()));
+            }
+        }
+    }
+    out
+}
+
 impl<'a> Sentinel<'a> {
     pub fn check2d(&self, snap: &Snapshot, rows: &[LcRow]) {
         let ctx = &self.ctx;
@@ -110,6 +128,11 @@ impl<'a> Sentinel<'a> {
         }
         if withdrawn > 0 {
             self.progress(&format!("withdrew {withdrawn} ask hold(s) whose cause no longer holds"));
+        }
+        for (bead, prereq, age) in stale_conflicts(rows, snap, &self.cfg.run, spira_config::stack_conflict::REPORT_AGE) {
+            let title = format!("{bead} is excluded from the ready set by a stack-conflict marker on {prereq}, {age}s old");
+            self.log(&format!("CHECK2d STACK-CONFLICT: {title}"));
+            self.event("queue.starved", &bead, &title, "the marker lapses on its own; the next claim attempt re-records it if the conflict stands");
         }
         let (held, ready, starved) = starvation(rows);
         if starved {
@@ -141,6 +164,21 @@ mod tests {
 
     const NOW: i64 = 1_000_000;
     const GRACE: i64 = 1000;
+
+    #[test]
+    fn a_stale_marker_on_a_live_prerequisite_names_its_dependents() {
+        let d = testkit::TempDir::new("holds-sc");
+        let s = snap(r#"[{"id":"sp-p","status":"open"},{"id":"sp-d","status":"open","dependencies":[{"depends_on_id":"sp-p","type":"blocks"}]}]"#); // literal-ok: test fixture
+        let mut p = row("sp-p", "IN_DELIVERY", &[], None, NOW);
+        p.tip = Some("t1".into());
+        let rows = vec![p, row("sp-d", "REWORK", &[], None, NOW)];
+        let hour = std::time::Duration::from_secs(3600);
+        assert!(stale_conflicts(&rows, &s, d.path(), hour).is_empty(), "no marker");
+        spira_config::stack_conflict::record(d.path(), "sp-p", "t1");
+        assert!(stale_conflicts(&rows, &s, d.path(), hour).is_empty(), "a fresh marker is not stale");
+        let got = stale_conflicts(&rows, &s, d.path(), std::time::Duration::ZERO);
+        assert_eq!(got.iter().map(|g| (g.0.as_str(), g.1.as_str())).collect::<Vec<_>>(), vec![("sp-d", "sp-p")]);
+    }
 
     #[test]
     fn conditions_parse_the_producers_wording_and_nothing_else() {
