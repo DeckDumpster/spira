@@ -887,7 +887,7 @@ impl T {
     }
     /// A spira-lc bead row entered at `since`.
     fn lc_row(&self, id: &str, state: &str, tip: &str, since: u64) {
-        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None, holds: Vec::new() };
+        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Vec::new(), ejected_red_tip: None };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }
     fn open_record(&self, text: &str) {
@@ -1519,6 +1519,27 @@ fn open_batch_does_not_admit_when_the_lifecycle_row_cannot_be_read() {
     assert_eq!(t.run(&["open-batch", "--members", "sp-a"]), 1);
     assert!(t.out().contains("sp-a: no lifecycle row (spira-lc could not say) — not admitted"), "{}", t.out());
     assert!(t.out().contains("no cut — nothing admissible for spira"));
+}
+
+#[test]
+fn open_batch_skips_a_certified_bead_stacked_on_a_held_prerequisite_until_the_hold_lifts() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-q".into(), "tq".into())];
+    t.lc_row("sp-p", "CERTIFIED", "tp", 1);
+    t.lc_row("sp-q", "CERTIFIED", "tq", 2);
+    {
+        let mut rows = t.lc.rows.borrow_mut();
+        let rows = rows.as_mut().unwrap();
+        rows[0].holds = vec!["manual".into()];
+        rows[1].stack = vec!["sp-p".into()];
+    }
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-q".into(), status: Some("closed".into()), ..Default::default() });
+    assert_eq!(t.run(&["open-batch", "--members", "sp-q"]), 1);
+    assert!(t.out().contains("sp-q: stacked on held sp-p — not admitted"), "{}", t.out());
+    assert!(!t.qfile("open").exists());
+    t.lc.rows.borrow_mut().as_mut().unwrap()[0].holds.clear();
+    assert_eq!(t.run(&["open-batch", "--members", "sp-q", "--skip-pregate"]), 0, "{}{}", t.out(), t.err());
 }
 
 #[test]

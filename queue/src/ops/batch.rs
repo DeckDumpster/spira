@@ -324,6 +324,25 @@ fn certified(w: &World, path: &std::path::Path) -> Vec<(String, String, u64)> {
     super::helpers::certified_rows(w.lc, &w.git.branches(path, "refs/heads/spira/"))
 }
 
+/// The first prerequisite in `row`'s recorded stack, transitively, that is held, ejected at its
+/// current tip, or whose row cannot be read; its dependent would carry that prerequisite's
+/// commits into a batch.
+fn barred_prereq(w: &World, row: &crate::model::LcBeadRow) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut todo: Vec<String> = row.stack.clone();
+    while let Some(p) = todo.pop() {
+        if !seen.insert(p.clone()) {
+            continue;
+        }
+        match w.lc.bead_row(&p) {
+            None => return Some(p),
+            Some(pr) if !pr.holds.is_empty() || (pr.ejected_red_tip.is_some() && pr.ejected_red_tip == pr.tip) => return Some(p),
+            Some(pr) => todo.extend(pr.stack),
+        }
+    }
+    None
+}
+
 pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregate: bool, dry_run: bool) -> i32 {
     if !czar_ok(w) {
         return FAIL;
@@ -401,7 +420,10 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         match w.lc.bead_row(&id) {
             None => skips.push(format!("{id}: no lifecycle row (spira-lc could not say) — not admitted")),
             Some(r) if r.state == "CERTIFIED" && !r.holds.is_empty() => skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(","))),
-            Some(r) if r.state == "CERTIFIED" => admitted.push((id, tip)),
+            Some(r) if r.state == "CERTIFIED" => match barred_prereq(w, &r) {
+                Some(p) => skips.push(format!("{id}: stacked on held {p} — not admitted")),
+                None => admitted.push((id, tip)),
+            },
             Some(r) => skips.push(format!("{id}: lifecycle state={} (no longer CERTIFIED) — not admitted", r.state)),
         }
     }

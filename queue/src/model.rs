@@ -164,6 +164,18 @@ pub struct LcBeadRow {
     pub reason: Option<String>,
     #[serde(default, deserialize_with = "holds_any")]
     pub holds: Vec<String>,
+    #[serde(default, deserialize_with = "stack_keys_any")]
+    pub stack: Vec<String>,
+    #[serde(default)]
+    pub ejected_red_tip: Option<String>,
+}
+
+fn stack_keys_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let keys = |v: serde_json::Value| v.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(t) => serde_json::from_str(&t).map(keys).unwrap_or_default(),
+        other => keys(other),
+    })
 }
 
 fn holds_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
