@@ -114,17 +114,70 @@ pub fn verb(args: &[&str]) -> Option<String> {
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
-/// Every lifecycle row as `spira_config::lc_state` reads it, keyed by bead id: a work bead's
-/// state, holder and holds for the probes that used to read bd `status` (sp-mve9i, design
-/// §3.4: "people and the cockpit read state from spira-lc"). `None` is CANNOT TELL.
-pub fn state_index() -> Option<HashMap<String, Row>> {
-    let raw = last_good(&cache_dir(), "state-index", io::now(), || shared_live("state-index", || lc_state::list_raw().ok().filter(|r| lc_state::parse_rows(r).is_ok())))?;
+/// Ids per `list --ids` read: keeps each answer far under the 64 KiB a probe may draw.
+pub const IDS_PER_READ: usize = 40;
+
+pub fn id_chunks(ids: &[String]) -> Vec<String> {
+    let mut sorted: Vec<&str> = ids.iter().map(String::as_str).filter(|i| !i.is_empty()).collect();
+    sorted.sort_unstable();
+    sorted.dedup();
+    sorted.chunks(IDS_PER_READ).map(|c| c.join(",")).collect()
+}
+
+fn digest(s: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+fn forget_old_reads(prefix: &str) {
+    for dir in [cache_dir(), cache_dir().join("live")] {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let old = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|a| a.as_secs() > 600);
+            if old && e.file_name().to_string_lossy().starts_with(prefix) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
+fn read_rows(key: &str, args: &[&str]) -> Option<HashMap<String, Row>> {
+    let raw = last_good(&cache_dir(), key, io::now(), || shared_live(key, || verb(args).filter(|r| lc_state::parse_rows(r).is_ok())))?;
     lc_state::parse_rows(&raw).ok().map(lc_state::index)
+}
+
+/// The lifecycle rows of `ids` only, keyed by bead id: a work bead's state, holder and holds
+/// for the probes that used to read bd `status` (design §3.4: "people and the cockpit read state
+/// from spira-lc"). A bead with no row is absent. `None` is CANNOT TELL.
+pub fn state_index_of(ids: &[String]) -> Option<HashMap<String, Row>> {
+    let mut all = HashMap::new();
+    for csv in id_chunks(ids) {
+        all.extend(read_rows(&format!("ids-{}", digest(&csv)), &["list", "--ids", &csv])?);
+    }
+    forget_old_reads("ids-");
+    Some(all)
+}
+
+/// Rows carrying hold `kind` that are not long terminal (`list --hold <kind> --live`).
+pub fn held_rows(kind: &str) -> Option<HashMap<String, Row>> {
+    read_rows(&format!("hold-{kind}"), &["list", "--hold", kind, "--live"])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ids_are_read_in_bounded_sorted_deduplicated_chunks() {
+        let ids: Vec<String> = (0..IDS_PER_READ * 2 + 1).rev().map(|n| format!("sp-{n:04}")).chain(["sp-0000".to_string(), String::new()]).collect();
+        let chunks = id_chunks(&ids);
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks.iter().all(|c| c.split(',').count() <= IDS_PER_READ));
+        assert!(chunks[0].starts_with("sp-0000,sp-0001"));
+        assert_eq!(chunks.iter().map(|c| c.split(',').count()).sum::<usize>(), IDS_PER_READ * 2 + 1);
+        assert!(id_chunks(&[]).is_empty());
+    }
 
     #[test]
     fn parses_rows_with_null_reason_and_string_or_numeric_time() {

@@ -110,7 +110,9 @@ pub fn reachable_keys(cfg: &Cfg) -> Kv {
     // The universe is every work bead the machine has as claimable or WORKING (what bd's
     // `open,in_progress` meant); bd supplies only its labels and edges.
     let raw = io::pane_beads(scope);
-    let Some((rows, lc)) = io::json_rows(raw).zip(super::lc::state_index()) else {
+    let rows = io::json_rows(raw);
+    let lc = rows.as_deref().and_then(|r| super::lc::state_index_of(&super::ids_of(r)));
+    let Some((rows, lc)) = rows.zip(lc) else {
         push(&mut out, "SP_REACHABLE", "?");
         push(&mut out, "SP_STRANDED", "?");
         return out;

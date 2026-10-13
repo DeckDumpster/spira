@@ -728,22 +728,22 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
 pub fn sphere_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     // A work bead's state is the lifecycle row's (design §3.4); `None` renders `?`.
-    let lc_rows = lc::state_index();
-    match &lc_rows {
-        None => {
+    match (lc::held_rows("poison"), lc::held_rows("ask")) {
+        (Some(poison), Some(ask)) => {
+            push(&mut out, "SP_POISON", poison_count(&poison).to_string());
+            push(&mut out, "SP_HOLD_ASK", ask_hold_count(&ask).to_string());
+        }
+        _ => {
             push(&mut out, "SP_POISON", "?");
             push(&mut out, "SP_HOLD_ASK", "?");
-        }
-        Some(lc) => {
-            push(&mut out, "SP_POISON", poison_count(lc).to_string());
-            push(&mut out, "SP_HOLD_ASK", ask_hold_count(lc).to_string());
         }
     }
 
     let scope = &cfg.scope_label;
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let rows = io::json_rows(io::live_beads(&label));
-    match rows.zip(lc_rows.as_ref()) {
+    let lc_rows = rows.as_deref().and_then(|r| lc::state_index_of(&ids_of(r)));
+    match rows.zip(lc_rows) {
         None => {
             push(&mut out, "SP_OPEN", "?");
             push(&mut out, "SP_INPROG", "?");
@@ -766,7 +766,7 @@ pub fn sphere_keys(cfg: &Cfg) -> Kv {
                     }
                 })
                 .collect();
-            let (open_n, inprog_n, needsop_n) = sphere_counts(&work, lc);
+            let (open_n, inprog_n, needsop_n) = sphere_counts(&work, &lc);
             push(&mut out, "SP_OPEN", open_n.to_string());
             push(&mut out, "SP_INPROG", inprog_n.to_string());
             push(&mut out, "SP_NEEDSOP", needsop_n.to_string());
@@ -840,7 +840,8 @@ pub fn dup_refs_keys() -> Kv {
     let mut out = Kv::new();
     let rows = io::json_rows(io::pane_beads("spira,incident"));
     // An incident bead is a work bead (sp-jgjvh): whether it is over is its lifecycle row's.
-    let Some((rows, lc)) = rows.zip(lc::state_index()) else {
+    let lc_rows = rows.as_deref().and_then(|r| lc::state_index_of(&ids_of(r)));
+    let Some((rows, lc)) = rows.zip(lc_rows) else {
         push(&mut out, "SP_DUP_REFS", "?");
         push(&mut out, "SP_DUP_BEADS", "?");
         push(&mut out, "SP_DUP_N", "0");
@@ -1027,12 +1028,17 @@ pub fn czar_triggers_keys(cfg: &Cfg) -> Kv {
         return out;
     }
     let rows = rows.unwrap();
-    let lc_rows = lc::state_index();
     let mut by_ref: std::collections::HashMap<String, Vec<&Value>> = std::collections::HashMap::new();
     for b in &rows {
         let r = b.get("external_ref").and_then(Value::as_str).unwrap_or("").to_string();
         by_ref.entry(r).or_default().push(b);
     }
+    let newest_ids: Vec<String> = CZAR_CLASSES
+        .iter()
+        .filter_map(|(r, _)| by_ref.get(*r)?.iter().max_by_key(|b| b.get("created_at").and_then(Value::as_str).and_then(crate::quoting::parse_iso8601).unwrap_or(0)))
+        .filter_map(|b| b.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    let lc_rows = lc::state_index_of(&newest_ids);
     for (r, tag) in CZAR_CLASSES {
         let mut beads: Vec<&&Value> = by_ref.get(*r).map(|v| v.iter().collect()).unwrap_or_default();
         beads.sort_by_key(|b| b.get("created_at").and_then(Value::as_str).and_then(crate::quoting::parse_iso8601).unwrap_or(0));
@@ -1337,6 +1343,10 @@ pub fn sending_keys() -> Kv {
 /// read from each bead's lifecycle row, never bd status. A terminal bead is a predecessor
 /// of a recurrence, never surplus; a bead with no lifecycle row is not live work; a
 /// `duplicate-of:` bead is already accounted for.
+pub fn ids_of(rows: &[Value]) -> Vec<String> {
+    rows.iter().filter_map(|r| r.get("id").and_then(Value::as_str)).map(str::to_string).collect()
+}
+
 pub fn incidents_by_ref(rows: &[Value], lc: &HashMap<String, lc::Row>) -> std::collections::BTreeMap<String, Vec<String>> {
     let mut grouped: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
     for i in rows {
