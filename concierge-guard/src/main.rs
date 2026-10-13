@@ -48,8 +48,8 @@ impl World for Real {
 
     fn send_keys(&mut self, pane: &Pane, text: &str) -> Result<(), String> {
         let run = |args: &[&str]| -> Result<(), String> {
-            let st = Command::new(&self.tmux)
-                .args(["-S", &pane.socket, "send-keys", "-t", &pane.pane])
+            let st = Command::new("timeout")
+                .args(["5", &self.tmux, "-S", &pane.socket, "send-keys", "-t", &pane.pane])
                 .args(args)
                 .stdin(Stdio::null())
                 .status()
@@ -61,8 +61,8 @@ impl World for Real {
     }
 
     fn send_mail(&mut self, subject: &str, body: &str) -> Result<(), String> {
-        let mut child = Command::new(&self.mail)
-            .args(["send", "operator", "--from", &self.from, "--subject", subject, "--kind", "note", "--urgent"])
+        let mut child = Command::new("timeout")
+            .args(["5", &self.mail, "send", "operator", "--from", &self.from, "--subject", subject, "--kind", "note", "--urgent"])
             .env("SPIRA_MAIL_OPERATOR_CONSIDERED", "concierge-guard: the Concierge is the party that is not answering")
             .stdin(Stdio::piped())
             .spawn()

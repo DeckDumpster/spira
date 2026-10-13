@@ -87,7 +87,7 @@ pub fn find_session(procs: &[Proc], name: &str) -> Option<u32> {
 }
 
 fn is_waiter(p: &Proc, waiters: &[Vec<String>]) -> bool {
-    let head: Vec<&str> = p.argv.iter().take(4).map(|a| base(a)).collect();
+    let head: Vec<&str> = p.argv.iter().take(4).map(|a| base(a)).map(|a| a.strip_suffix(".sh").unwrap_or(a)).collect();
     waiters.iter().any(|w| !w.is_empty() && head.windows(w.len()).any(|h| h.iter().zip(w).all(|(a, b)| a == b)))
 }
 
@@ -236,7 +236,7 @@ mod tests {
     fn cfg() -> Settings {
         Settings {
             session_name: "concierge".into(),
-            waiters: vec![argv(&["inbox-next.sh"]), argv(&["watchd", "next", "concierge-inbox"])],
+            waiters: vec![argv(&["inbox-next"]), argv(&["watchd", "next", "concierge-inbox"])],
             min_gap: 600,
             mail_after: 600,
             wake_text: "wake".into(),

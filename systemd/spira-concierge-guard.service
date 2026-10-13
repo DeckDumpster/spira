@@ -8,7 +8,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 CPUQuota=10%
-ExecStart=@SPIRA_PROD_ROOT@/bin/concierge-guard check --state @SPIRA_RUN@/concierge-guard.state --session concierge --waiter inbox-next.sh --waiter "watchd next concierge-inbox" --rearm "CONCIERGE GUARD (timer, not the operator): no inbox waiter is running under this session. Run watchd next concierge-inbox with Bash run_in_background NOW, then read the recent lines of the Concierge inbox and your mailbox and act on what you missed." --min-gap 600 --mail-after 600 --tmux tmux --mail mail --from "Concierge guard <concierge-guard@spira>"
+ExecStart=@SPIRA_PROD_ROOT@/bin/concierge-guard check --state @SPIRA_RUN@/concierge-guard.state --session concierge --waiter inbox-next --waiter "watchd next concierge-inbox" --rearm "CONCIERGE GUARD (timer, not the operator): no inbox waiter is running under this session. Run watchd next concierge-inbox with Bash run_in_background NOW, then read the recent lines of the Concierge inbox and your mailbox and act on what you missed." --min-gap 600 --mail-after 600 --tmux tmux --mail mail --from "Concierge guard <concierge-guard@spira>"
 TimeoutStartSec=60
 StandardOutput=append:@SPIRA_RUN@/concierge-guard.log
 StandardError=append:@SPIRA_RUN@/concierge-guard.log

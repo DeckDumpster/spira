@@ -57,7 +57,7 @@ session() {  # session <name>
     printf 'TMUX=%s,4242,0\0TMUX_PANE=%%9\0' "$T/tmux.sock" > "$PROC/100/environ"
 }
 guard() {
-    "$BIN" check --proc-root "$PROC" --state "$ST" --session concierge --waiter inbox-next.sh --waiter "watchd next concierge-inbox" \
+    "$BIN" check --proc-root "$PROC" --state "$ST" --session concierge --waiter inbox-next --waiter "watchd next concierge-inbox" \
         --rearm "re-arm now" --min-gap 600 --mail-after 600 --inbox "$T/inbox.log" --tmux "$T/tmux" --mail "$T/mail" --from "Guard <g@spira>"
 }
 sets() { sed -i "s/^$1=.*/$1=$2/" "$ST"; }
