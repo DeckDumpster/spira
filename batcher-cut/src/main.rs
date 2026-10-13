@@ -1035,6 +1035,9 @@ fn open_round_pr(
     if !foreign.is_empty() {
         return Err(format!("round head carries commits of non-member bead(s) {} — refusing to open", foreign.join(", ")));
     }
+    if let Some(ob) = io::read_open_batch(env_, &repo.name)? {
+        return Err(format!("batch PR {} ({}) is already recorded open — not cutting a second", ob.pr, ob.branch));
+    }
     let stamp = io::utc_stamp(round_start);
     let batch_br = format!("spira/queue/{stamp}");
     io::set_branch(repo, &batch_br, batch_head);

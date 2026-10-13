@@ -423,6 +423,8 @@ impl Scripts for FScripts {
 #[derive(Default)]
 struct FForge {
     pr: RefCell<Option<String>>,
+    /// Open `spira/queue/*` PRs as `(number, branch)`.
+    queue_prs: RefCell<Vec<(String, String)>>,
     calls: RefCell<Vec<String>>,
     /// check-status answers in order; when none is left the answer is `pending`. A `None`
     /// entry is a failed call.
@@ -444,6 +446,9 @@ impl Forge for FForge {
     }
     fn pr_close(&self, _: &Path, _: &Path, pr: &str) {
         self.calls.borrow_mut().push(format!("pr-close {pr}"));
+    }
+    fn queue_prs(&self, _: &Path, _: &Path) -> Option<Vec<(String, String)>> {
+        Some(self.queue_prs.borrow().clone())
     }
     fn pr_comment(&self, _: &Path, _: &Path, pr: &str, line: &str) {
         self.calls.borrow_mut().push(format!("pr-comment {pr} {line}"));

@@ -891,3 +891,32 @@ fn a_refused_land_in_the_verdict_keeps_the_record_for_the_reconciler() {
     assert_eq!(t.run(&["verdict", "spira"]), 1);
     assert!(t.qfile("open").exists());
 }
+
+#[test]
+fn a_queue_pr_that_is_not_the_recorded_batch_is_closed_and_its_runs_cancelled() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=501\nhead=h1\nbase=b0\nmembers=sp-a:ta\nopened=500\nbranch=spira/queue/B\nbatch_id=spira-1\nversion=3\n");
+    *t.forge.queue_prs.borrow_mut() = vec![("500".into(), "spira/queue/A".into()), ("501".into(), "spira/queue/B".into())];
+    t.run(&["verdict", "spira"]);
+    assert!(has_call(&t.forge.calls, "pr-close 500"), "{:?}", t.forge.calls.borrow());
+    assert!(!has_call(&t.forge.calls, "pr-close 501"));
+    assert!(t.lib.has("cancel_runs spira/queue/A"));
+    assert!(!t.lib.has("cancel_runs spira/queue/B"));
+}
+
+#[test]
+fn with_no_recorded_batch_every_open_queue_pr_is_stray() {
+    let t = T::new(LandMode::Queue);
+    *t.forge.queue_prs.borrow_mut() = vec![("500".into(), "spira/queue/A".into())];
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(has_call(&t.forge.calls, "pr-close 500"));
+}
+
+#[test]
+fn a_record_naming_no_branch_closes_nothing() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=501\nhead=h1\nbase=b0\nmembers=sp-a:ta\nopened=500\nbatch_id=spira-1\nversion=3\n");
+    *t.forge.queue_prs.borrow_mut() = vec![("500".into(), "spira/queue/A".into())];
+    t.run(&["verdict", "spira"]);
+    assert!(!has_call(&t.forge.calls, "pr-close 500"));
+}
