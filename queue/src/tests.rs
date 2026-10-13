@@ -359,6 +359,9 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("cut {repo} wait0={wz}"));
         0
     }
+    fn path_attribution(&self, _: &Path, _: &str, _: &str, _: &Path) -> String {
+        "verdict=ambiguous".into()
+    }
     fn czar_fence(&self, class: &str) -> bool {
         self.calls.borrow_mut().push(format!("czar {class}"));
         self.fence_ok.get()
