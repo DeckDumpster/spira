@@ -149,6 +149,8 @@ pub struct Check {
     pub dolt_hash: String,
     pub rows: usize,
     pub divergent: Vec<String>,
+    /// An ambiguous write unloaded memory since the last check, so a late commit it left behind is expected.
+    pub explained: bool,
 }
 
 fn hash_all(digests: &BTreeMap<String, String>) -> String {
@@ -161,6 +163,7 @@ fn hash_all(digests: &BTreeMap<String, String>) -> String {
 pub struct Live {
     state: Mutex<State>,
     unloaded_at: Mutex<Option<std::time::Instant>>,
+    ambiguous: std::sync::atomic::AtomicBool,
 }
 
 type Sets = Vec<Vec<Value>>;
@@ -175,6 +178,7 @@ impl Live {
     }
 
     pub fn invalidate(&self) {
+        self.ambiguous.store(true, std::sync::atomic::Ordering::SeqCst);
         self.lock().loaded = false;
         *self.unloaded_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
     }
@@ -255,7 +259,7 @@ impl Live {
         };
         let ids: BTreeSet<&String> = mine.keys().chain(dolt_digests.keys()).collect();
         let divergent: Vec<String> = if loaded { ids.into_iter().filter(|id| mine.get(*id) != dolt_digests.get(*id)).cloned().collect() } else { Vec::new() };
-        let check = Check { memory_hash: hash_all(&mine), dolt_hash: hash_all(&dolt_digests), rows: dolt_digests.len(), divergent };
+        let check = Check { memory_hash: hash_all(&mine), dolt_hash: hash_all(&dolt_digests), rows: dolt_digests.len(), divergent, explained: self.ambiguous.swap(false, std::sync::atomic::Ordering::SeqCst) };
         *self.lock() = State { loaded: true, ..dolt };
         Ok(check)
     }
@@ -505,6 +509,18 @@ mod tests {
         assert_eq!(text(&live.show("sp-b").unwrap().0, "state"), "WORKING", "memory was reloaded to Dolt's rows");
         let again = live.check(NOW, |_| dolt()).unwrap();
         assert_eq!((again.divergent.is_empty(), again.memory_hash == again.dolt_hash), (true, true));
+        assert!(!c.explained && !again.explained, "no write was ambiguous");
+    }
+
+    #[test]
+    fn a_divergence_after_an_ambiguous_write_is_explained_once() {
+        let live = loaded(vec![bead("sp-a", "READY", 0, NOW)], vec![]);
+        live.invalidate();
+        live.replace(sets(vec![bead("sp-a", "READY", 0, NOW)], vec![])).unwrap();
+        let late = || -> Result<Sets, ()> { Ok(sets(vec![bead("sp-a", "WORKING", 1, NOW)], vec![])) };
+        let c = live.check(NOW, |_| late()).unwrap();
+        assert_eq!((c.divergent.as_slice(), c.explained), (["sp-a".to_string()].as_slice(), true));
+        assert!(!live.check(NOW, |_| late()).unwrap().explained, "the allowance is spent by one check");
     }
 
     #[test]
