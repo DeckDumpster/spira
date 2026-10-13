@@ -482,6 +482,17 @@ mod tests {
     }
 
     #[test]
+    fn the_script_survives_an_environment_with_no_home() {
+        let dir = crate::testutil::TempDir::new();
+        let script = dir.path().join("t.sh");
+        let head: String = TEMPLATE_SCRIPT.lines().take_while(|l| !l.starts_with("work=")).collect::<Vec<_>>().join("\n");
+        std::fs::write(&script, format!("{head}\n[ -n \"$HOME\" ] && [ -n \"$USER\" ] && echo ok:$HOME\n")).unwrap();
+        let out = std::process::Command::new("/bin/bash").arg(&script).env_clear().output().unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).starts_with("ok:/"), "{out:?}");
+        assert!(TEMPLATE_SCRIPT.find("export HOME USER").unwrap() < TEMPLATE_SCRIPT.find("installing nix").unwrap());
+    }
+
+    #[test]
     fn the_script_names_the_harness_home_before_testenv_runs() {
         let home = TEMPLATE_SCRIPT.find("export SPIRA_HOME=\"$work/spira\"").expect("testenv refuses without SPIRA_HOME");
         assert!(home < TEMPLATE_SCRIPT.find("-p testenv -- container image").unwrap());
