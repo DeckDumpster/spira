@@ -1158,7 +1158,7 @@ pub fn close_epic(args: &[String], bd: &mut dyn Bd) -> Answer {
     }
 }
 
-/// `close <id> (--reason R | --reason-file F|-) [--superseded-by X | --landing] [--actor A]` — the one
+/// `close <id> (--reason R | --reason-file F|-) [--superseded-by X | --landing | --delivered] [--actor A]` — the one
 /// door for closing a bead (sp-3fue0j). The lifecycle machine records the end FIRST — an open
 /// ask is withdrawn, then SUPERSEDED (a successor named by `--superseded-by` or in the reason)
 /// or DROPPED — and only then is the store closed, so a closed bead can never sit READY on
@@ -1167,7 +1167,8 @@ pub fn close_epic(args: &[String], bd: &mut dyn Bd) -> Answer {
 /// no row has no state to diverge, and is closed in the store alone. `--landing` is the landing
 /// path's close: the delivery records LANDED itself (it may close first), so the row gets no
 /// event — and a row that is not in delivery or LANDED is refused, so no other caller can use it
-/// to close around the machine. `reason_file` reads
+/// to close around the machine. `--delivered` ends work delivered by hand as DONE carrying the
+/// reason (a READY or WORKING bead; a DROPPED one is corrected to DONE). `reason_file` reads
 /// `--reason-file`'s argument (`-` is stdin) — injected so the composition is testable.
 ///
 /// Exit: 0 closed · 2 cannot tell (usage, the machine unreadable, or the store close failed
@@ -1179,15 +1180,20 @@ pub fn close(
     bd: &mut dyn Bd,
     reason_file: &mut dyn FnMut(&str) -> Result<String, String>,
 ) -> Answer {
-    const USE: &str = "close <bead-id> (--reason <text> | --reason-file <file|->) [--superseded-by <id> | --landing] [--actor <name>]";
+    const USE: &str = "close <bead-id> (--reason <text> | --reason-file <file|->) [--superseded-by <id> | --landing | --delivered] [--actor <name>]";
     let mut id = None;
-    let (mut reason, mut by, mut actor, mut landing) = (None, None, "close".to_string(), false);
+    let (mut reason, mut by, mut actor, mut landing, mut delivered) = (None, None, "close".to_string(), false, false);
     let mut i = 0;
     while i < args.len() {
         let val = args.get(i + 1).cloned();
         match args[i].as_str() {
             "--landing" => {
                 landing = true;
+                i += 1;
+                continue;
+            }
+            "--delivered" => {
+                delivered = true;
                 i += 1;
                 continue;
             }
@@ -1211,7 +1217,7 @@ pub fn close(
     let (Some(id), Some(reason)) = (id.filter(|s| !s.is_empty()), reason.map(|r| r.trim_end().to_string()).filter(|r| !r.is_empty())) else {
         return usage(USE);
     };
-    if actor.is_empty() || (landing && by.is_some()) {
+    if actor.is_empty() || (landing && by.is_some()) || (delivered && (landing || by.is_some())) {
         return usage(USE);
     }
     let asked_about = match bd.work_beads(&id) {
@@ -1228,7 +1234,15 @@ pub fn close(
                 return Answer { code: CANNOT_TELL, stderr: format!("spira-lc close: {id}: unreadable row\n"), ..Default::default() };
             }
             let terminal = matches!(state.as_str(), "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE");
-            if landing {
+            if delivered && state == "DROPPED" {
+                let ev = serde_json::to_string(&BeadEventKind::Done { delivers: reason.clone() }).unwrap_or_default();
+                match event(m, "bead", &id, &state, &version, lifecycle::bead::DELIVERED_CORRECTION_ACTOR, &ev) {
+                    (APPLIED, _) => {}
+                    (rc, out) => {
+                        return Answer { code: rc, stderr: format!("spira-lc close: {id}: DROPPED -> DONE refused ({}) — nothing closed\n", out.trim()), ..Default::default() }
+                    }
+                }
+            } else if landing {
                 if !matches!(state.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY" | "LANDED") {
                     return Answer {
                         code: REFUSED,
@@ -1246,6 +1260,7 @@ pub fn close(
                 }
                 let kind = match by.as_deref().filter(|b| !b.is_empty()) {
                     Some(b) => BeadEventKind::Supersede { by: b.to_string() },
+                    None if delivered => BeadEventKind::Done { delivers: reason.clone() },
                     None => terminal_event_for(&reason),
                 };
                 if let Some(a) = external_refusal(bd, &id, &kind, &reason, "close") {
