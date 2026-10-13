@@ -685,7 +685,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 Outcome::applied(new)
             }
             Done { .. } if holds_ask(row) => awaiting_reply(row, kind),
-            // Work delivered by hand: no aeon was bound, so there is no WORKING to pass through.
+            // Hand-delivered work has no WORKING stage.
             Done { delivers } => {
                 let mut new = row.clone();
                 new.state = BeadState::Done;
