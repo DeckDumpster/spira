@@ -183,6 +183,7 @@ fn prune_podman(bin: &Path, why: &str, dry: bool, say: &mut dyn FnMut(String)) {
         say(format!("podman: {why}: would run system prune -f (dry)"));
         return;
     }
+    // batch-job: a prune of tens of GB of images runs as long as its work, under the unit's CPUQuota
     match std::process::Command::new(bin).args(["system", "prune", "-f"]).output() {
         Ok(o) if o.status.success() => {
             let out = String::from_utf8_lossy(&o.stdout);
