@@ -12,7 +12,7 @@ const MAX_ROUNDS: usize = 4;
 
 pub fn round_keys(cap_secs: i64, queue_dir: &str) -> Kv {
     let batches = list_batches().and_then(|raw| parse_batches(&raw));
-    let pool = super::lc::verb(&["list", "--state", "SUBMITTED,CERTIFIED"]).and_then(|raw| spira_config::lc_state::parse_rows(&raw).ok()).map(|rows| pool_waiting(&rows));
+    let pool = super::lc::funnel_raw().and_then(|raw| spira_config::lc_state::parse_rows(&raw).ok()).map(|rows| pool_waiting(&rows));
     let mut kv = round_keys_from(batches.as_deref(), pool, cap_secs, Path::new(queue_dir));
     if let Some(batches) = batches.as_deref() {
         progress_keys(&mut kv, batches);

@@ -85,10 +85,20 @@ pub fn stale_age() -> i64 {
         .unwrap_or(0)
 }
 
-/// Rows in `state`, or every row when `state` is `None`.
+const FUNNEL_STATES: &str = "SUBMITTED,CERTIFIED,REWORK,IN_DELIVERY";
+
+/// Rows in `state` (one of the funnel states), filtered from the single shared funnel read.
 pub fn list(state: Option<&str>) -> Option<Vec<LcRow>> {
-    let key = format!("list-{}", state.unwrap_or("all"));
-    parse_rows(&last_good(&cache_dir(), &key, io::now(), || shared_live(&key, || list_live(state)))?)
+    let rows = funnel_rows()?;
+    Some(rows.into_iter().filter(|r| state.is_none_or(|s| r.state == s)).collect())
+}
+
+pub fn funnel_raw() -> Option<String> {
+    last_good(&cache_dir(), "list-funnel", io::now(), || shared_live("list-funnel", || list_live(FUNNEL_STATES)))
+}
+
+fn funnel_rows() -> Option<Vec<LcRow>> {
+    parse_rows(&funnel_raw()?)
 }
 
 /// One lifecycle read per `SPIRA_PANE_READ_TTL` across every probe process.
@@ -97,12 +107,8 @@ pub fn shared_live(key: &str, fetch: impl FnOnce() -> Option<String>) -> Option<
     io::shared_read(&cache_dir().join("live"), key, ttl, io::now(), fetch)
 }
 
-fn list_live(state: Option<&str>) -> Option<String> {
-    let mut args = vec!["list"];
-    if let Some(s) = state {
-        args.extend(["--state", s]);
-    }
-    let raw = verb(&args)?;
+fn list_live(states: &str) -> Option<String> {
+    let raw = verb(&["list", "--state", states])?;
     parse_rows(&raw).map(|_| raw)
 }
 

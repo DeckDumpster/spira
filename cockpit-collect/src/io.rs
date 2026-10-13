@@ -272,7 +272,8 @@ pub fn fixture_mode() -> bool {
     std::env::var("SPIRA_BDJSON_FIXTURE").is_ok_and(|f| !f.is_empty())
 }
 
-pub const PANE_TTL_SECS: i64 = 30;
+pub const PANE_TTL_SECS: i64 = 60;
+const CLOSED_TTL_FACTOR: i64 = 2;
 const PANE_WINDOW_SECS: i64 = 86_400;
 const HISTORY_TTL_SECS: i64 = 600;
 const LOCK_WAIT_MS: u64 = 20_000;
@@ -358,36 +359,11 @@ fn with_labels(raw: Option<String>, labels: &str) -> Option<String> {
     serde_json::to_string(&kept).ok()
 }
 
-/// The label the server filters on (the first requested; the rest are applied by `with_labels`),
-/// and the cache key that keeps one scope's answer from serving another's.
-fn scope_of(base: &str, labels: &str) -> (Option<String>, String) {
-    match labels.split(',').find(|l| !l.is_empty()) {
-        Some(first) => (Some(first.to_string()), format!("{base}-{}", first.replace(|c: char| !c.is_ascii_alphanumeric(), "_"))),
-        None => (None, base.to_string()),
-    }
-}
+const LIVE_ARGS: [&str; 4] = ["list", "--limit", "0", "--json"];
 
-fn scoped<'a>(label: &'a Option<String>, args: &[&'a str]) -> Vec<&'a str> {
-    let mut v: Vec<&str> = args.to_vec();
-    if let Some(l) = label {
-        v.extend(["--label", l.as_str()]);
-    }
-    v
-}
-
-fn pane_fetch(read: &dyn Fn(&[&str]) -> Option<String>, now: i64, label: &Option<String>) -> Option<String> {
+fn closed_fetch(read: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Option<String> {
     let since = utc_stamp(now - PANE_WINDOW_SECS);
-    merge_rows(&[
-        read(&scoped(label, &["list", "--limit", "0", "--json"])),
-        read(&scoped(label, &["list", "--all", "--closed-after", &since, "--limit", "100000", "--json"])),
-    ])
-}
-
-fn history_fetch(read: &dyn Fn(&[&str]) -> Option<String>, label: &Option<String>) -> Option<String> {
-    merge_rows(&[
-        read(&scoped(label, &["list", "--limit", "0", "--json"])),
-        read(&scoped(label, &["list", "--all", "--limit", "100000", "--json"])),
-    ])
+    read(&["list", "--all", "--closed-after", &since, "--limit", "100000", "--json"])
 }
 
 fn read_json(args: &[&str]) -> Option<String> {
@@ -398,32 +374,41 @@ pub fn ttl_from_env(key: &str, default: i64) -> i64 {
     env_or(key, &default.to_string()).parse().unwrap_or(default)
 }
 
+fn base_read(key: &str, ttl: i64, fetch: impl FnOnce() -> Option<String>) -> Option<String> {
+    shared_read(&run_dir().join("pane-read"), key, ttl, now(), fetch)
+}
+
+fn pane_ttl() -> i64 {
+    ttl_from_env("SPIRA_PANE_READ_TTL", PANE_TTL_SECS)
+}
+
+/// The one unscoped read of live beads every label-scoped view is filtered from.
+fn live_base() -> Option<String> {
+    base_read("live", pane_ttl(), || read_json(&LIVE_ARGS))
+}
+
+fn closed_base() -> Option<String> {
+    base_read("closed", pane_ttl() * CLOSED_TTL_FACTOR, || closed_fetch(&read_json, now()))
+}
+
 /// The beads the pane shows — live ones plus the last day's closures — that carry every label
-/// in `labels` (comma-separated, may be empty). One lifecycle-store read serves every probe in a
-/// refresh; never `--all --limit 0`.
+/// in `labels` (comma-separated, may be empty). Two shared store reads serve every probe in a
+/// refresh whatever labels they ask for; never `--all --limit 0`.
 pub fn pane_beads(labels: &str) -> Option<String> {
-    let now = now();
-    let ttl = ttl_from_env("SPIRA_PANE_READ_TTL", PANE_TTL_SECS);
-    let (label, key) = scope_of("pane", labels);
-    let raw = shared_read(&run_dir().join("pane-read"), &key, ttl, now, || pane_fetch(&read_json, now, &label));
-    with_labels(raw, labels)
+    with_labels(merge_rows(&[live_base(), closed_base()]), labels)
 }
 
 /// Live beads only, what a default `list` answers; its own shared read, so no row's status is compared.
 pub fn live_beads(labels: &str) -> Option<String> {
-    let ttl = ttl_from_env("SPIRA_PANE_READ_TTL", PANE_TTL_SECS);
-    let (label, key) = scope_of("live", labels);
-    let raw = shared_read(&run_dir().join("pane-read"), &key, ttl, now(), || read_json(&scoped(&label, &["list", "--limit", "0", "--json"])));
-    with_labels(raw, labels)
+    with_labels(live_base(), labels)
 }
 
 /// Every bead carrying `labels`, closed ones included, for the probes that count history. Read
 /// at most once per `SPIRA_HISTORY_READ_TTL` across all probes.
 pub fn history_beads(labels: &str) -> Option<String> {
     let ttl = ttl_from_env("SPIRA_HISTORY_READ_TTL", HISTORY_TTL_SECS);
-    let (label, key) = scope_of("history", labels);
-    let raw = shared_read(&run_dir().join("pane-read"), &key, ttl, now(), || history_fetch(&read_json, &label));
-    with_labels(raw, labels)
+    let all = base_read("history", ttl, || read_json(&["list", "--all", "--limit", "100000", "--json"]));
+    with_labels(merge_rows(&[live_base(), all]), labels)
 }
 
 /// Parse a `contentjson` response into a `Vec<Value>`, the shape every probe needs:
@@ -674,15 +659,6 @@ pub fn sleep(d: Duration) {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_label_scopes_the_read_and_its_cache_key() {
-        let (l, k) = super::scope_of("pane", "spira,incident");
-        assert_eq!((l.as_deref(), k.as_str()), (Some("spira"), "pane-spira"));
-        assert_eq!(super::scope_of("pane", ""), (None, "pane".to_string()));
-        let l = Some("a:b".to_string());
-        assert_eq!(super::scoped(&l, &["list"]), ["list", "--label", "a:b"]);
-    }
-
     use super::*;
 
     #[test]
@@ -778,7 +754,7 @@ mod pane_read_tests {
     }
 
     #[test]
-    fn a_pane_pass_is_two_scoped_reads_shared_by_every_probe_and_never_all_history() {
+    fn a_pane_pass_is_one_live_and_one_closed_read_whatever_labels_probes_ask() {
         let t = testkit::TempDir::new("pane-read");
         let calls: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
         let read = |a: &[&str]| {
@@ -786,14 +762,12 @@ mod pane_read_tests {
             Some(r#"[{"id":"a","labels":["plan","spira"]}]"#.to_string())
         };
         for probe in 0..12 {
-            let got = shared_read(&t.join("d"), "pane", 30, 1000 + probe, || pane_fetch(&read, 1000, &None));
+            let got = shared_read(&t.join("d"), "closed", 30, 1000 + probe, || closed_fetch(&read, 1000));
             assert!(got.is_some());
         }
         let calls = calls.borrow();
-        assert_eq!(calls.len(), 2, "twelve probes, one fetch: {calls:?}");
-        for c in calls.iter() {
-            assert!(!(c.iter().any(|a| a == "--all") && c.windows(2).any(|w| w == ["--limit", "0"])), "{c:?}");
-        }
+        assert_eq!(calls.len(), 1, "twelve probes, one fetch: {calls:?}");
+        assert!(calls[0].iter().all(|a| a != "--label") && calls[0].iter().any(|a| a == "--closed-after"), "{calls:?}");
     }
 
     #[test]
