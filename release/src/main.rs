@@ -486,6 +486,15 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         let tb = rest.first().ok_or_else(|| usage("install-tarball takes 1 argument(s)".into()))?;
         _home = ensure_install_env(&env, Path::new(tb), a.answers.as_deref()).map_err(fail)?;
     }
+    if cmd == "activate" {
+        if let (Some(sha), Ok(plain), Ok(me)) = (rest.first(), Config::resolve(&a.flags, &env), std::env::current_exe()) {
+            if let Some(target) = activate::delegate_target(&plain, sha, &me).map_err(fail)? {
+                use std::os::unix::process::CommandExt;
+                let e = std::process::Command::new(&target).args(argv).exec();
+                return Err(fail(format!("cannot exec {}: {e}", target.display())));
+            }
+        }
+    }
     let cfg = resolve_config(&a, &env, &cmd, rest).map_err(|e| (1, e))?;
     let repo = || release::repo::resolve(a.repo.as_deref().map(Path::new), &env).or_else(|| a.repo.clone().map(PathBuf::from)).or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from));
     match cmd.as_str() {
