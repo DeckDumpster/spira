@@ -27,7 +27,19 @@ git -C "$TMP/t" add -A
 out="$(lint "$TMP/t")"; rc=$?
 is "a declared cause beside the ref is clean" 0 "$rc"
 
-out="$(lint "$ROOT")"; rc=$?
+# The rule scans spira/*.sh only. Lint a fresh repository holding exactly those files rather
+# than $ROOT itself: in testenv the checkout is a git worktree bind-mounted alone, its `.git`
+# file names a host gitdir the container cannot see, so `git ls-files` fails, spira-lint exits
+# 4 ("not a git repository") and this case was red on every host gate (79 of 79) while green on
+# every round VM (a full clone). .gitignore comes along so ignored generated files stay ignored.
+mkdir -p "$TMP/tree" && git init -q "$TMP/tree"
+cp "$ROOT/.gitignore" "$TMP/tree/" 2>/dev/null
+(cd "$ROOT" && find spira -name '*.sh' -type f -print0 | tar --null -T - -cf -) | tar -xf - -C "$TMP/tree" \
+    || bail "could not copy spira/*.sh from $ROOT"
+n="$(find "$TMP/tree/spira" -name '*.sh' -type f | wc -l)"
+[ "$n" -gt 100 ] || bail "copied only $n spira/*.sh files from $ROOT — the copy, not the tree, is broken"
+git -C "$TMP/tree" add -A
+out="$(lint "$TMP/tree")"; rc=$?
 is "the tree declares a cause at every ref site" 0 "$rc"
 [ "$rc" = 0 ] || printf '%s\n' "$out"
 
