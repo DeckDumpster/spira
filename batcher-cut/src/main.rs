@@ -185,6 +185,7 @@ fn default_round_vm() -> PathBuf {
 /// migration.
 fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
     Ok(Env {
+        lc_rows: Default::default(),
         home: home.clone(),
         run: run.clone(),
         queue_dir: PathBuf::from(cfg("SPIRA_QUEUE_DIR")?),
@@ -226,6 +227,7 @@ fn cut(o: &Opts) -> Result<(), String> {
         return Err("repo name required".into());
     }
     let env_ = env_for(o, home, run)?;
+    io::lc_forget(&env_);
     let repo = find_repo(&env_, &o.repo)?;
 
     // The machine must answer before anything changes.
@@ -1288,6 +1290,7 @@ fn sift_one(o: &Opts) -> Result<(), String> {
     }
     let env_ = env_for(o, home, run)?;
     let repo = find_repo(&env_, &o.repo)?;
+    io::lc_forget(&env_);
     let open = io::read_open_batch(&env_, &repo.name)?;
     let out = screen::sift_repo(&env_, &repo, open.as_ref())?;
     println!("batcher {}: sift: {} sifted, {} sent back, {} superseded, {} held", repo.name, out.sifted.len(), out.sent_back.len(), out.superseded.len(), out.capped.len() + out.held.len());

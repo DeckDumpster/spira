@@ -55,6 +55,8 @@ impl Hypervisor {
 
 #[derive(Clone, Debug)]
 pub struct Env {
+    /// The lifecycle rows one repo step reads: fetched once by `lc_rows`, dropped by `lc_forget`.
+    pub lc_rows: std::sync::Arc<std::sync::Mutex<Option<Vec<serde_json::Value>>>>,
     pub home: PathBuf,
     pub run: PathBuf,
     pub queue_dir: PathBuf,
@@ -200,11 +202,30 @@ pub fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
     run(&mut cmd, "spira-lc")
 }
 
-/// Is the machine there to answer? `spira-lc list --state IN_DELIVERY`, parsed — the same
+/// Every lifecycle row, from one `spira-lc list` per repo step: the pool, the barred set and the
+/// sifted tips are all filters of it, so a step costs one read however many it makes.
+pub fn lc_rows(env: &Env) -> Result<Vec<serde_json::Value>, String> {
+    let mut held = env.lc_rows.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(rows) = held.as_ref() {
+        return Ok(rows.clone());
+    }
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&lcq(env, &["list"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
+    *held = Some(rows.clone());
+    Ok(rows)
+}
+
+pub fn lc_forget(env: &Env) {
+    *env.lc_rows.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+fn in_pool_states(r: &serde_json::Value) -> bool {
+    matches!(r.get("state").and_then(|s| s.as_str()), Some("CERTIFIED" | "SUBMITTED"))
+}
+
+/// Is the machine there to answer? `spira-lc list`, parsed — the same
 /// probe the queue crate makes.
 pub fn lc_probe(env: &Env) -> Result<(), String> {
-    let out = lcq(env, &["list", "--state", "IN_DELIVERY"])?;
-    serde_json::from_str::<serde_json::Value>(&out).map(|_| ()).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))
+    lc_rows(env).map(|_| ())
 }
 
 /// Ensure a bead row exists for every member (never a shortcut to CERTIFIED — that
@@ -286,10 +307,9 @@ type PoolRow = (String, String, u64, bool, Vec<String>);
 
 fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
     let mut pool: Vec<PoolRow> = Vec::new();
-    for state in ["CERTIFIED", "SUBMITTED"] {
-        let out = lcq(env, &["list", "--state", state])?;
-        let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
-        pool.extend(rows.iter().filter(|r| holds_empty(r)).filter_map(|r| {
+    {
+        let rows = lc_rows(env)?;
+        pool.extend(rows.iter().filter(|r| in_pool_states(r)).filter(|r| holds_empty(r)).filter_map(|r| {
             let id = r.get("bead_id")?.as_str()?.to_string();
             let tip = r.get("tip").and_then(|t| t.as_str()).unwrap_or("none").to_string();
             if r.get("ejected_red_tip").and_then(|t| t.as_str()) == Some(tip.as_str()) {
@@ -326,8 +346,7 @@ fn read_pool(env: &Env) -> Result<Vec<PoolRow>, String> {
 /// Beads that carry their commits into whatever stacks on them yet may not be batched
 /// themselves: held, or ejected at their current tip.
 fn barred_ids(env: &Env) -> Result<std::collections::BTreeSet<String>, String> {
-    let out = lcq(env, &["list"])?;
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
+    let rows = lc_rows(env)?;
     Ok(rows
         .iter()
         .filter(|r| !holds_empty(r) || (r.get("ejected_red_tip").and_then(|t| t.as_str()).is_some() && r.get("ejected_red_tip") == r.get("tip")))
@@ -464,7 +483,7 @@ fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>
     cmd.args(["list", "--json", "--limit", "0", "--all", "--external-contains"]).arg(format!("basefail:{}:", repo.name));
     let Ok(text) = run(&mut cmd, "bd list basefail") else { return fixes };
     let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(&text) else { return fixes };
-    let Ok(lc) = lcq(env, &["list"]).and_then(|o| spira_config::lc_state::parse_rows(&o)) else { return fixes };
+    let Ok(lc) = lc_rows(env).and_then(|r| spira_config::lc_state::parse_rows(&serde_json::Value::Array(r).to_string())) else { return fixes };
     let lc = spira_config::lc_state::index(lc);
     let open: Vec<String> = rows
         .iter()
@@ -941,9 +960,8 @@ pub fn lc_sifted(env: &Env, id: &str, tip: &str) -> Result<(), String> {
 /// Bead id -> the tip the screen last passed, for every SUBMITTED and CERTIFIED bead that has one.
 pub fn sifted_tips(env: &Env) -> Result<BTreeMap<String, String>, String> {
     let mut out = BTreeMap::new();
-    for state in ["CERTIFIED", "SUBMITTED"] {
-        let rows: Vec<serde_json::Value> = serde_json::from_str(&lcq(env, &["list", "--state", state])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
-        for r in rows {
+    {
+        for r in lc_rows(env)?.into_iter().filter(in_pool_states) {
             let (Some(id), Some(tip)) = (r.get("bead_id").and_then(|x| x.as_str()), r.get("sifted_tip").and_then(|x| x.as_str())) else { continue };
             out.insert(id.to_string(), tip.to_string());
         }
@@ -2331,7 +2349,7 @@ mod pool_parity_tests {
         let _ = fs::remove_dir_all(&d);
     }
     /// A pool fixture: a repo with `spira/<id>` branches, a spira-lc stand-in answering
-    /// `list --state CERTIFIED` (the given certified ids at their live tips), `list` (every
+    /// `list` (the given certified ids at their live tips, then every
     /// row in `lc_rows`) and `show`, and a bd stand-in whose `list` honours `--status` the way
     /// bd does — so a reader that still filtered on bd status would see bd's answer.
     fn pool_fixture(tag: &str, certified: &[&str], lc_rows: &[(&str, &str)], bd_rows: &[(&str, &str, &str, &str)]) -> (testkit::TempDir, testkit::TempDir, Env, Repo) {
@@ -2343,8 +2361,8 @@ mod pool_parity_tests {
             cert.push(format!(r#"{{"bead_id":"{id}","state":"CERTIFIED","tip":"{tip}","updated_at":5}}"#));
         }
         let all: Vec<String> = lc_rows.iter().map(|(id, st)| format!(r#"{{"bead_id":"{id}","state":"{st}","holds":[]}}"#)).collect();
-        fs::write(stubs.join("lc-certified"), format!("[{}]", cert.join(","))).unwrap();
-        fs::write(stubs.join("lc-all"), format!("[{}]", all.join(","))).unwrap();
+        let every_row: Vec<String> = cert.iter().cloned().chain(all).collect();
+        fs::write(stubs.join("lc-all"), format!("[{}]", every_row.join(","))).unwrap();
         let row = |(id, status, ext, body): &(&str, &str, &str, &str)| {
             format!(r#"{{"id":"{id}","status":"{status}","title":"t {id}","priority":2,"labels":["repo:r"],"external_ref":"{ext}","description":"{body}"}}"#)
         };
@@ -2359,7 +2377,7 @@ mod pool_parity_tests {
         let sd = stubs.path().display().to_string();
         testkit::write_exe(
             stubs.join("spira-lc"),
-            &format!("#!/bin/bash\ncase \"$1 $2\" in \"list --state\") cat {sd}/lc-certified ;; \"list \") cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; esac\n"),
+            &format!("#!/bin/bash\ncase \"$1\" in list) cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; esac\n"),
         );
         testkit::write_exe(
             stubs.join("bd"),
@@ -2558,14 +2576,14 @@ mod lifecycle_tests {
     #[test]
     fn the_round_pool_is_the_machines_unheld_submitted_and_certified_beads() {
         let d = scratch("certified");
-        let reply = r#"[{"bead_id":"sp-b","tip":"bbbb","updated_at":1790000002,"express":"1"},{"bead_id":"sp-a","tip":"aaaa","updated_at":"1790000001"},{"bead_id":"sp-n","tip":null,"updated_at":null}]"#;
+        let reply = r#"[{"bead_id":"sp-b","state":"CERTIFIED","tip":"bbbb","updated_at":1790000002,"express":"1"},{"bead_id":"sp-a","state":"SUBMITTED","tip":"aaaa","updated_at":"1790000001"},{"bead_id":"sp-n","state":"CERTIFIED","tip":null,"updated_at":null},{"bead_id":"sp-x","state":"OPEN","tip":"xxxx"}]"#;
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
             read_pool(&e).unwrap(),
             vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001, false, vec![]), ("sp-b".into(), "bbbb".into(), 1790000002, true, vec![]), ("sp-n".into(), "none".into(), 0, false, vec![])]
         );
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
-        assert!(log.contains("list --state CERTIFIED") && log.contains("list --state SUBMITTED"), "{log}");
+        assert_eq!(log.lines().collect::<Vec<_>>(), vec!["list"], "{log}");
         assert!(read_pool(&env(&d, Some(fake_lc(&d, "not json")))).unwrap_err().contains("unparsed"));
         assert!(read_pool(&env(&d, None)).is_err());
     }
@@ -2573,7 +2591,7 @@ mod lifecycle_tests {
     #[test]
     fn a_tip_a_round_ejected_red_is_not_in_the_round_pool_but_a_new_one_is() {
         let d = scratch("ejected-red");
-        let reply = r#"[{"bead_id":"sp-r","tip":"rrrr","ejected_red_tip":"rrrr","updated_at":4},{"bead_id":"sp-n","tip":"nnnn","ejected_red_tip":"oooo","updated_at":5},{"bead_id":"sp-c","tip":"cccc","ejected_red_tip":null,"updated_at":6}]"#;
+        let reply = r#"[{"bead_id":"sp-r","state":"CERTIFIED","tip":"rrrr","ejected_red_tip":"rrrr","updated_at":4},{"bead_id":"sp-n","state":"CERTIFIED","tip":"nnnn","ejected_red_tip":"oooo","updated_at":5},{"bead_id":"sp-c","state":"CERTIFIED","tip":"cccc","ejected_red_tip":null,"updated_at":6}]"#;
         let e = env(&d, Some(fake_lc(&d, reply)));
         let ids: Vec<String> = read_pool(&e).unwrap().into_iter().map(|r| r.0).collect();
         assert_eq!(ids, vec!["sp-c".to_string(), "sp-n".to_string()]);
@@ -2582,7 +2600,7 @@ mod lifecycle_tests {
     #[test]
     fn a_held_row_is_not_in_the_round_pool() {
         let d = scratch("held");
-        let reply = r#"[{"bead_id":"sp-h","tip":"hhhh","since":5,"updated_at":9,"holds":["ask"]},{"bead_id":"sp-s","tip":"ssss","since":3,"updated_at":9,"holds":"[]"},{"bead_id":"sp-j","tip":"jjjj","updated_at":4,"holds":[]},{"bead_id":"sp-t","tip":"tttt","updated_at":4,"holds":"[\"wait\"]"}]"#;
+        let reply = r#"[{"bead_id":"sp-h","state":"CERTIFIED","tip":"hhhh","since":5,"updated_at":9,"holds":["ask"]},{"bead_id":"sp-s","state":"CERTIFIED","tip":"ssss","since":3,"updated_at":9,"holds":"[]"},{"bead_id":"sp-j","state":"CERTIFIED","tip":"jjjj","updated_at":4,"holds":[]},{"bead_id":"sp-t","state":"CERTIFIED","tip":"tttt","updated_at":4,"holds":"[\"wait\"]"}]"#;
         let e = env(&d, Some(fake_lc(&d, reply)));
         assert_eq!(
             read_pool(&e).unwrap(),
@@ -2597,7 +2615,7 @@ mod lifecycle_tests {
         assert_eq!(lc_probe(&e), Ok(()));
         assert_eq!(lc_cut_batch(&e, "r", "spira/queue/1", "h", "b", &members()), Some("2".into()));
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
-        assert!(log.contains("list --state IN_DELIVERY"), "{log}");
+        assert!(log.starts_with("list\n"), "{log}");
         assert!(log.contains("cut spira/queue/1 --repo r --head h --base b --members sp-a:aaaa,sp-b:bbbb"), "{log}");
     }
 
@@ -3229,6 +3247,7 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         rust_toolchain: "1.82.0".into(),
         git_name: "t".into(),
         git_email: "t@t".into(),
+        lc_rows: Default::default(),
         lc_bin: None,
         lc_timeout: 5,
         verdicts: dir.join("verdicts"),

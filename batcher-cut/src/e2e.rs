@@ -177,6 +177,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
     testkit::write_exe(&stub, STUB);
     let run = root.join("run");
     let env = Env {
+        lc_rows: Default::default(),
         home: root.join("no-home"),
         run: run.clone(),
         queue_dir: run.join("queue"),

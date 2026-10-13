@@ -28,12 +28,12 @@ _sd_say() {
 }
 
 # Prints the successor id of the bead's standing supersede-request; non-zero when the
-# bead's latest operator hold is anything else.
+# bead's latest operator hold is anything else (1), or the history could not be read (2).
 _sd_request_of() {
     timeout 5 spira-lc history "$1" --machine bead 2>/dev/null | python3 -c '
 import sys, json
 try: rows = json.load(sys.stdin)
-except Exception: sys.exit(1)
+except Exception: sys.exit(2)
 by = None
 for r in rows:
     if str(r.get("applied")) not in ("1", "true"): continue
@@ -94,13 +94,30 @@ _sd_adjudicate() {
     fi
 }
 
+declare -A _SD_NOT_A_REQUEST=()
+
+# A hold changes the bead's version, so a bead already read at its current version as holding
+# something other than a request is not read again until it moves.
+_sd_held() {
+    timeout 5 spira-lc list --live --hold manual 2>/dev/null | python3 -c '
+import sys, json
+try: rows = json.load(sys.stdin)
+except Exception: sys.exit(1)
+for r in rows: print("%s\t%s" % (r.get("bead_id"), r.get("version")))'
+}
+
 cmd_pass() {
-    local id succ
-    while IFS= read -r id; do
+    local id ver succ held
+    held="$(_sd_held)" || return 0
+    while IFS=$'\t' read -r id ver; do
         [ -n "$id" ] || continue
-        succ="$(_sd_request_of "$id")" || continue
-        _sd_adjudicate "$id" "$succ"
-    done < <(timeout 5 spira-lc list-held manual 2>/dev/null)
+        [ "${_SD_NOT_A_REQUEST[$id]:-}" = "$ver" ] && continue
+        succ="$(_sd_request_of "$id")"
+        case $? in
+            0) _sd_adjudicate "$id" "$succ" ;;
+            1) _SD_NOT_A_REQUEST[$id]="$ver" ;;
+        esac
+    done <<< "$held"
 }
 
 _sd_write_health() {
