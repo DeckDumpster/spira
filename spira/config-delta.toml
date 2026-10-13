@@ -66,3 +66,4 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.lc_backup_max_age" = 25200
 "spira.lc_backup_allow_local" = false
 "spira.otel_keep_days" = 14
+"spira.ready_ttl_s" = 60

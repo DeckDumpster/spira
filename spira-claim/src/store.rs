@@ -64,6 +64,8 @@ pub struct Config {
     pub fayths: String,
     /// `SPIRA_INCIDENT_LABEL` — an incident never stacks on a fix that has not landed.
     pub incident_label: String,
+    /// `SPIRA_READY_TTL_S` — how long `ready-count` shares one computed ready set; 0 = never.
+    pub ready_ttl_s: u32,
 }
 
 /// Every field of [`Config`], each its own `cfg`/`cfg_parse` call — `Err` names the first
@@ -86,6 +88,7 @@ pub fn load_config() -> Result<Config, String> {
         claim_retry_delay_s: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRY_DELAY_S")?,
         fayths: spira_config::process::cfg("SPIRA_FAYTHS")?,
         incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
+        ready_ttl_s: spira_config::process::cfg_parse("SPIRA_READY_TTL_S")?,
     })
 }
 

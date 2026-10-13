@@ -419,3 +419,4 @@ lc_backup_db
 lc_backup_max_age
 lc_backup_url
 otel_keep_days
+ready_ttl_s
