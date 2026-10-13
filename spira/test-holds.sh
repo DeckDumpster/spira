@@ -82,18 +82,30 @@ JSONL
 LCBIN="$TMP/lcbin"; mkdir -p "$LCBIN" "$TMP/lcstate"
 cat > "$LCBIN/spira-lc" <<'LC'
 #!/usr/bin/env bash
-[ "${1:-}" = state ] || exit 2
-[ "${SPIRA_TEST_LC_FAIL:-}" = "$2" ] && { printf 'lc-stub: simulated machine failure\n' >&2; exit 2; }
-[ -f "$SPIRA_TEST_LC_STATE/$2" ] || exit 1
-cat "$SPIRA_TEST_LC_STATE/$2"
+[ "${1:-}" = list ] && [ "${2:-}" = --ids ] || exit 2
+printf '%s\n' "$*" >> "$SPIRA_TEST_LC_CALLS"
+case ",$3," in *",${SPIRA_TEST_LC_FAIL:-@},"*) printf 'lc-stub: simulated machine failure\n' >&2; exit 2 ;; esac
+sep=""; printf '['
+for id in ${3//,/ }; do
+    [ -f "$SPIRA_TEST_LC_STATE/$id" ] || continue
+    printf '%s{"bead_id":"%s","state":"%s"}' "$sep" "$id" "$(cat "$SPIRA_TEST_LC_STATE/$id")"; sep=","
+done
+printf ']\n'
 LC
 chmod +x "$LCBIN/spira-lc"
 export SPIRA_TEST_LC_STATE="$TMP/lcstate"
+export SPIRA_TEST_LC_CALLS="$TMP/lccalls"; : > "$SPIRA_TEST_LC_CALLS"
 printf 'WORKING\n' > "$TMP/lcstate/tst-holder"
 printf 'LANDED\n' > "$TMP/lcstate/tst-closed"
 PATH="$LCBIN:$PATH"
 
+for n in 1 2 3 4 5 6; do
+    git -C "$REPO" branch "spira/tst-many$n" "$BASE_BR"
+    printf 'WORKING\n' > "$TMP/lcstate/tst-many$n"
+done
+
 out="$(holds.sh --repo fixture spira/batch.sh)"; rc=$?
+is     "one store read per pass however many beads are held" "1" "$(wc -l < "$SPIRA_TEST_LC_CALLS" | tr -d ' ')"
 wantrc "holder case exits 0"                     0 "$rc"
 want   "holder case names the open holder"       "$(printf 'tst-holder\tspira/batch.sh')" "$out"
 nowant "closed bead's branch is never reported"  "tst-closed" "$out"
