@@ -1310,3 +1310,47 @@ fn a_blocker_the_lifecycle_has_landed_costs_no_second_bd_call() {
     assert_eq!((o.code, o.out.as_str()), (0, "probe 2\n"), "{}", o.err);
     assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1, "one content read, not one per blocker");
 }
+
+// ---- ready-count shares one computation per ready_ttl_s (sp-su318h) ----------------------
+
+fn ready_count_twice(ttl: &str) -> (Outcome, Outcome) {
+    let home = chamber_home(&[("probe", "plan", "")]);
+    let chamber = chamber_path(&home);
+    let run = testkit::TempDir::new("spira-claim-ready-run");
+    let run_s = run.to_string_lossy().into_owned();
+    let bd = sh(&format!("case \"$*\" in *--id*) echo '{BD_BOTH}';; *) echo '{BD_OPEN_UNASSIGNED}';; esac"));
+    let one = r#"[{"bead_id":"P","state":"READY","holds":"[]"}]"#;
+    let none = r#"[{"bead_id":"P","state":"WORKING","holder":"aeon-live","holds":"[]"}]"#;
+    let mut call = |lc: &str| {
+        let path = fake_lc_path(lc);
+        run_cfg(
+            &["ready-count", "plan", ""],
+            "",
+            &[
+                ("SPIRA_BD", bd.as_str()),
+                ("SPIRA_DB", ""),
+                ("SPIRA_FAYTHS", "[]"),
+                ("SPIRA_CHAMBER", &chamber),
+                ("SPIRA_SCOPE_LABEL", ""),
+                ("SPIRA_RUN", run_s.as_str()),
+                ("SPIRA_READY_TTL_S", ttl),
+            ],
+            &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
+        )
+    };
+    (call(one), call(none))
+}
+
+#[test]
+fn ready_count_inside_the_ttl_answers_from_the_shared_computation() {
+    let (first, second) = ready_count_twice("600");
+    assert_eq!((first.code, first.out.as_str()), (0, "1"), "{}", first.err);
+    assert_eq!((second.code, second.out.as_str()), (0, "1"), "inside the ttl the second reader must not recompute: {}", second.err);
+}
+
+#[test]
+fn ready_count_with_a_zero_ttl_recomputes_every_call() {
+    let (first, second) = ready_count_twice("0");
+    assert_eq!(first.out, "1", "{}", first.err);
+    assert_eq!((second.code, second.out.as_str()), (0, "0"), "{}", second.err);
+}

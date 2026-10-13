@@ -442,6 +442,7 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_PATH",
     "SPIRA_PLAN_LABEL",
     "SPIRA_PROD",
+    "SPIRA_READY_TTL_S",
     "SPIRA_RECLAIM_GRACE_SECS",
     "SPIRA_RELEASES",
     "SPIRA_RELEASE_REPO",

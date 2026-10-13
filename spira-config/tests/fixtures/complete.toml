@@ -271,6 +271,7 @@ reconciler_shadow_kinds = ""
 read_watch_budget_ms = 500
 read_watch_interval = 300
 read_watch_remind = 3600
+ready_ttl_s = 0
 reflect_model = "claude-opus-5"
 releases = "/fixture/userhome/spira/spira-releases"
 releases_keep = "10"

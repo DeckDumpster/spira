@@ -8,6 +8,7 @@ mod decide;
 mod events;
 mod rank;
 mod ready;
+mod ready_cache;
 mod reopen;
 mod store;
 mod unpoison;
@@ -717,7 +718,7 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
     if a.has("--json") {
         return ready_rows_json(a, env, labels, exclude);
     }
-    match machine_claimable(a, env) {
+    match machine_claimable_shared(a, env) {
         Ok(rows) => Outcome::ok(ready::count_matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude)).to_string()),
         Err(e) => Outcome { code: 1, out: "0".into(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
     }
@@ -726,7 +727,7 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
 /// `ready-count --json`: [`machine_claimable`]'s rows matching the labels. A machine that
 /// cannot answer is a refusal, never an empty queue.
 fn ready_rows_json(a: &Args, env: &Env, labels: &str, exclude: &str) -> Outcome {
-    let rows = match machine_claimable(a, env) {
+    let rows = match machine_claimable_shared(a, env) {
         Ok(rows) => rows,
         Err(e) => return Outcome { code: 1, out: String::new(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
     };
@@ -826,6 +827,26 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
     let st = store(a, &env.config)?;
+    let rows = claimable_base(a, env, &st)?;
+    let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
+    Ok(rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect())
+}
+
+/// [`machine_claimable`] for the counting readers (`ready-count`): one computation per
+/// `ready_ttl_s` shared by every process, so a tick of watchers does not each recompute the
+/// whole set. Claiming never reads this.
+fn machine_claimable_shared(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
+    let st = store(a, &env.config)?;
+    let rows = ready_cache::read_or(&env.config, &ready_cache_key(a, env), || claimable_base(a, env, &st))?;
+    let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
+    Ok(rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect())
+}
+
+fn ready_cache_key(a: &Args, env: &Env) -> String {
+    [env.config.bd.as_str(), a.get("--db").or(env.config.db.as_deref()).unwrap_or(""), &scope_label(a, env), &no_loop_label(a, env)].join("\x1f")
+}
+
+fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
     let mut lc = st.lifecycle_in_states(&["READY", "REWORK"])?;
     let ids = ready::lifecycle_ready_ids(&lc);
     let want: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
@@ -849,11 +870,9 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
     }
     rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
-    let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
     Ok(rows
         .into_iter()
         .filter(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }))
-        .filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id)))
         .collect())
 }
 
