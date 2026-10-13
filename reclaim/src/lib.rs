@@ -171,7 +171,27 @@ pub struct Config {
     pub target_free_mib: u64,
     pub cache_dir: Option<PathBuf>,
     pub cache_cap_bytes: u64,
+    pub podman: Option<PathBuf>,
+    pub podman_dir: Option<PathBuf>,
+    pub podman_cap_bytes: u64,
     pub dry: bool,
+}
+
+/// Lossless only: `system prune -f` without `-a` or `--volumes` removes dangling images, stopped containers and build cache.
+fn prune_podman(bin: &Path, why: &str, dry: bool, say: &mut dyn FnMut(String)) {
+    if dry {
+        say(format!("podman: {why}: would run system prune -f (dry)"));
+        return;
+    }
+    match std::process::Command::new(bin).args(["system", "prune", "-f"]).output() {
+        Ok(o) if o.status.success() => {
+            let out = String::from_utf8_lossy(&o.stdout);
+            let line = out.lines().rev().find(|l| l.contains("reclaimed")).unwrap_or("reclaimed size not reported");
+            say(format!("podman: {why}: system prune -f: {}", line.trim()));
+        }
+        Ok(o) => say(format!("podman: system prune -f failed ({}): {}", o.status, String::from_utf8_lossy(&o.stderr).trim())),
+        Err(e) => say(format!("podman: cannot run {}: {e}", bin.display())),
+    }
 }
 
 /// Err is the failed positive control: nothing has been removed.
@@ -186,6 +206,9 @@ pub fn run(cfg: &Config, now: u64, held: &[PathBuf], free_mib: &dyn Fn() -> Opti
     if free >= cfg.min_free_mib {
         say(format!("free {free} MiB >= trigger {} MiB: no target directory is touched", cfg.min_free_mib));
     } else {
+        if let Some(bin) = &cfg.podman {
+            prune_podman(bin, "root under the floor", cfg.dry, say);
+        }
         let cands = plan(&cfg.patterns, now, cfg.idle_secs, held, cfg.lease_dir.as_deref());
         say(format!("free {free} MiB < trigger {} MiB: {} candidate(s)", cfg.min_free_mib, cands.len()));
         for c in cands {
@@ -202,6 +225,14 @@ pub fn run(cfg: &Config, now: u64, held: &[PathBuf], free_mib: &dyn Fn() -> Opti
                 say(format!("reclaimed {} {} MiB age {}s{}", c.path.display(), c.bytes >> 20, c.age, if cfg.dry { " (dry)" } else { "" }));
             } else {
                 say(format!("failed to remove {}", c.path.display()));
+            }
+        }
+    }
+    if let (Some(bin), Some(dir)) = (&cfg.podman, &cfg.podman_dir) {
+        if free >= cfg.min_free_mib {
+            let size = usage(dir).bytes;
+            if size > cfg.podman_cap_bytes {
+                prune_podman(bin, &format!("storage {} MiB over cap {} MiB", size >> 20, cfg.podman_cap_bytes >> 20), cfg.dry, say);
             }
         }
     }

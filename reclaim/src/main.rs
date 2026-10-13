@@ -1,12 +1,12 @@
 //! reclaim pass [--glob PATTERN]... [--require PATTERN]... [--lease-dir DIR] [--idle-days N]
-//!              [--min-free-gib N] [--target-free-gib N] [--cache-dir DIR] [--cache-cap-gib N] [--dry-run]
+//!              [--min-free-gib N] [--target-free-gib N] [--cache-dir DIR] [--cache-cap-gib N] [--podman BIN] [--podman-dir DIR] [--podman-cap-gib N] [--dry-run]
 
 use reclaim::{held_paths, run, Config};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const USAGE: &str = "usage: reclaim pass --glob PATTERN [--glob PATTERN]... [--require PATTERN]... [--lease-dir DIR] [--idle-days N] [--min-free-gib N] [--target-free-gib N] [--cache-dir DIR] [--cache-cap-gib N] [--dry-run]";
+const USAGE: &str = "usage: reclaim pass --glob PATTERN [--glob PATTERN]... [--require PATTERN]... [--lease-dir DIR] [--idle-days N] [--min-free-gib N] [--target-free-gib N] [--cache-dir DIR] [--cache-cap-gib N] [--podman BIN] [--podman-dir DIR] [--podman-cap-gib N] [--dry-run]";
 
 fn parse(args: &[String]) -> Result<Config, String> {
     let mut cfg = Config {
@@ -18,6 +18,9 @@ fn parse(args: &[String]) -> Result<Config, String> {
         target_free_mib: 100 << 10,
         cache_dir: None,
         cache_cap_bytes: 40 << 30,
+        podman: None,
+        podman_dir: None,
+        podman_cap_bytes: 40 << 30,
         dry: false,
     };
     let mut it = args.iter();
@@ -37,6 +40,9 @@ fn parse(args: &[String]) -> Result<Config, String> {
             "--target-free-gib" => cfg.target_free_mib = n()? << 10,
             "--cache-dir" => cfg.cache_dir = Some(PathBuf::from(v)),
             "--cache-cap-gib" => cfg.cache_cap_bytes = n()? << 30,
+            "--podman" => cfg.podman = Some(PathBuf::from(v)),
+            "--podman-dir" => cfg.podman_dir = Some(PathBuf::from(v)),
+            "--podman-cap-gib" => cfg.podman_cap_bytes = n()? << 30,
             _ => return Err(format!("unknown argument {a}")),
         }
     }
