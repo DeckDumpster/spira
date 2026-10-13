@@ -43,32 +43,22 @@ REPO_PATH="$(repo_root "$REPO_NAME" 2>/dev/null)" \
 BASE_REF="$(spira_landref "$REPO_PATH" 2>/dev/null)" \
     || { printf 'holds.sh: could not resolve landref for %s\n' "$REPO_NAME" >&2; exit 1; }
 
-# _bead_state <id> -> its lifecycle state, "(none)" when the machine was read but has no row
-# for the bead, or "(unknown)" when the machine itself could not be read. The two must never
-# be confused: "(none)" is a bead that is confirmed gone, "(unknown)" is a read that failed
-# and proves nothing (law-absence-needs-a-positive-control).
-_bead_state() {
-    local s rc
-    s="$(spira-lc state "$1" 2>/dev/null)"; rc=$?
-    case "$rc" in
-        0) printf '%s\n' "$s" ;;
-        1) printf '(none)\n' ;;
-        *) printf '(unknown)\n' ;;
-    esac
-}
+branches="$(git -C "$REPO_PATH" for-each-ref --format='%(refname:short)' 'refs/heads/spira/' 2>/dev/null | sort)"
+[ -n "$branches" ] || exit 0
+ids="$(sed 's#^spira/##' <<<"$branches" | paste -sd, -)"
+
+# One listing per pass for every branch's bead; a bead absent from it is confirmed gone,
+# while a listing that fails proves nothing and refuses (law-absence-needs-a-positive-control).
+states="$(timeout 10 spira-lc list --ids "$ids" 2>/dev/null | jq -r '.[] | "\(.bead_id)\t\(.state)"' 2>/dev/null; exit "${PIPESTATUS[0]}")" \
+    || { printf 'holds.sh: bead states unreadable\n' >&2; exit 1; }
 
 rc=0
 while IFS= read -r branch; do
     [ -n "$branch" ] || continue
     bead_id="${branch#spira/}"
-    state="$(_bead_state "$bead_id")"
+    state="$(awk -F'\t' -v id="$bead_id" '$1 == id { print $2; exit }' <<<"$states")"
     case "$state" in
-        "(unknown)")
-            printf 'holds.sh: %s: bead state unreadable\n' "$bead_id" >&2
-            rc=1
-            continue
-            ;;
-        "(none)"|LANDED|SUPERSEDED|DROPPED|DONE) continue ;;
+        ""|LANDED|SUPERSEDED|DROPPED|DONE) continue ;;
     esac
     touched="$(git -C "$REPO_PATH" diff --name-only "$BASE_REF...$branch" -- 2>/dev/null)" \
         || continue
@@ -76,6 +66,6 @@ while IFS= read -r branch; do
     for p in "$@"; do
         grep -qxF "$p" <<<"$touched" && printf '%s\t%s\n' "$bead_id" "$p"
     done
-done < <(git -C "$REPO_PATH" for-each-ref --format='%(refname:short)' 'refs/heads/spira/' 2>/dev/null | sort)
+done <<<"$branches"
 
 exit "$rc"
