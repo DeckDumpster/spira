@@ -122,9 +122,6 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
 // ---------------------------------------------------------------------------------------
 
 fn recent_section(out: &mut Kv, run: &std::path::Path) {
-    let titles = title_map();
-    let repos = repo_map();
-
     let mut candidates: Vec<String> = Vec::new();
 
     // Source A: sentinel ACT lines.
@@ -216,6 +213,8 @@ fn recent_section(out: &mut Kv, run: &std::path::Path) {
         rows.push((ts.to_string(), actor.to_string(), body.to_string(), verb, bead));
     }
 
+    let shown: Vec<&str> = rows.iter().take(5).map(|r| r.4.as_str()).filter(|b| !b.is_empty() && b.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'))).collect();
+    let (titles, repos) = shown_facts(&shown);
     for (n, (ts_str, actor, body, verb, bead)) in rows.iter().take(5).enumerate() {
         let Some(t) = parse_iso8601(ts_str) else { continue };
         let secs = (io::now() - t).max(0);
@@ -264,82 +263,97 @@ fn leading_timestamp(line: &str) -> Option<&str> {
     }
 }
 
-fn repo_map() -> HashMap<String, String> {
-    let raw = io::pane_beads("");
-    let Some(rows) = io::json_rows(raw) else { return HashMap::new() };
-    rows.iter()
-        .filter_map(|i| {
-            let id = i.get("id").and_then(Value::as_str)?.to_string();
-            Some((id, repo_tag(i.get("labels").and_then(Value::as_array))))
-        })
-        .collect()
-}
-
-fn title_map() -> HashMap<String, String> {
-    let raw = io::pane_beads("");
-    let Some(rows) = io::json_rows(raw) else { return HashMap::new() };
-    rows.iter()
-        .filter_map(|i| {
-            let id = i.get("id").and_then(Value::as_str)?.to_string();
-            let title = sanitize(i.get("title").and_then(Value::as_str).unwrap_or(""));
-            Some((id, title))
-        })
-        .collect()
+/// Title and repo tag of just the beads the section shows, by id: never the whole store.
+fn shown_facts(ids: &[&str]) -> (HashMap<String, String>, HashMap<String, String>) {
+    let (mut titles, mut repos) = (HashMap::new(), HashMap::new());
+    if ids.is_empty() {
+        return (titles, repos);
+    }
+    let mut args = vec!["show"];
+    args.extend(ids);
+    let Some(rows) = io::json_rows(io::contentjson(&args)) else { return (titles, repos) };
+    for i in &rows {
+        let Some(id) = i.get("id").and_then(Value::as_str) else { continue };
+        titles.insert(id.to_string(), sanitize(i.get("title").and_then(Value::as_str).unwrap_or("")));
+        repos.insert(id.to_string(), repo_tag(i.get("labels").and_then(Value::as_array)));
+    }
+    (titles, repos)
 }
 
 // ---------------------------------------------------------------------------------------
 // INFLOW
 // ---------------------------------------------------------------------------------------
 
+/// The inflow section's numbers: counts over the window and the newest rows.
+struct Inflow {
+    n: usize,
+    defect: usize,
+    kinds: Vec<(String, usize)>,
+    rows: Vec<Value>,
+}
+
+/// From a full row set, the shape the server's `pane-facets inflow` answers directly.
+fn inflow_from_rows(rows: &[Value], cut: i64) -> Inflow {
+    let mut aged: Vec<(i64, &Value)> = rows
+        .iter()
+        .filter(|i| i.get("issue_type").and_then(Value::as_str).unwrap_or("task") != "event")
+        .filter_map(|i| Some((i.get("created_at").and_then(Value::as_str).and_then(parse_iso8601)?, i)))
+        .collect();
+    aged.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut kinds: HashMap<String, usize> = HashMap::new();
+    let (mut n, mut defect) = (0, 0);
+    for (_, i) in aged.iter().filter(|(t, _)| *t >= cut) {
+        let kind = i.get("issue_type").and_then(Value::as_str).unwrap_or("task").to_string();
+        let is_incident = i.get("labels").and_then(Value::as_array).map(|a| a.iter().any(|l| l.as_str() == Some("incident"))).unwrap_or(false);
+        if kind == "bug" || is_incident {
+            defect += 1;
+        }
+        *kinds.entry(kind).or_insert(0) += 1;
+        n += 1;
+    }
+    let mut kinds: Vec<(String, usize)> = kinds.into_iter().collect();
+    kinds.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Inflow { n, defect, kinds, rows: aged.into_iter().take(40).map(|(_, i)| i.clone()).collect() }
+}
+
+fn inflow_from_server(raw: &str) -> Option<Inflow> {
+    let v: Value = serde_json::from_str(raw).ok()?;
+    Some(Inflow {
+        n: v.get("n")?.as_u64()? as usize,
+        defect: v.get("defect")?.as_u64()? as usize,
+        kinds: v.get("kinds")?.as_array()?.iter().filter_map(|k| Some((k.get(0)?.as_str()?.to_string(), k.get(1)?.as_u64()? as usize))).collect(),
+        rows: v.get("rows")?.as_array()?.clone(),
+    })
+}
+
 fn inflow_section(out: &mut Kv, _run: &std::path::Path) {
-    let raw = io::pane_beads("");
-    let Some(rows) = io::json_rows(raw) else {
+    let win: i64 = std::env::var("SPIRA_INFLOW_WINDOW_MIN").ok().and_then(|v| v.parse().ok()).filter(|w| *w > 0).unwrap_or(60);
+    let now = io::now();
+    let found = if io::fixture_mode() {
+        io::json_rows(io::pane_beads("")).map(|rows| inflow_from_rows(&rows, now - win * 60))
+    } else {
+        super::lc::verb(&["pane-facets", "inflow", "--window-secs", &(win * 60).to_string()]).and_then(|raw| inflow_from_server(&raw))
+    };
+    let Some(flow) = found else {
         push(out, "SP_INFLOW_WIN", "?");
         push(out, "SP_INFLOW_N", "?");
         push(out, "SP_INFLOW_DEFECT", "?");
         push(out, "SP_INFLOW_KINDS", "?");
         return;
     };
-    let win: i64 = std::env::var("SPIRA_INFLOW_WINDOW_MIN").ok().and_then(|v| v.parse().ok()).filter(|w| *w > 0).unwrap_or(60);
-    let now = io::now();
-    let cut = now - win * 60;
-
-    let mut aged: Vec<(i64, String, &Value)> = rows
-        .iter()
-        .filter_map(|i| {
-            let kind = i.get("issue_type").and_then(Value::as_str).unwrap_or("task").to_string();
-            if kind == "event" {
-                return None;
-            }
-            let t = i.get("created_at").and_then(Value::as_str).and_then(parse_iso8601)?;
-            Some((t, kind, i))
-        })
-        .collect();
-    aged.sort_by(|a, b| b.0.cmp(&a.0));
-
-    let fresh: Vec<&(i64, String, &Value)> = aged.iter().filter(|(t, _, _)| *t >= cut).collect();
-    let mut kinds: HashMap<String, usize> = HashMap::new();
-    let mut defect = 0;
-    for (_, kind, i) in &fresh {
-        *kinds.entry(kind.clone()).or_insert(0) += 1;
-        let is_incident = i.get("labels").and_then(Value::as_array).map(|a| a.iter().any(|l| l.as_str() == Some("incident"))).unwrap_or(false);
-        if kind == "bug" || is_incident {
-            defect += 1;
-        }
-    }
     push(out, "SP_INFLOW_WIN", win.to_string());
-    push(out, "SP_INFLOW_N", fresh.len().to_string());
-    push(out, "SP_INFLOW_DEFECT", defect.to_string());
-    let mut kind_rows: Vec<(String, usize)> = kinds.into_iter().collect();
-    kind_rows.sort_by(|a, b| b.1.cmp(&a.1));
-    let kinds_str = if kind_rows.is_empty() {
+    push(out, "SP_INFLOW_N", flow.n.to_string());
+    push(out, "SP_INFLOW_DEFECT", flow.defect.to_string());
+    let kinds_str = if flow.kinds.is_empty() {
         "-".to_string()
     } else {
-        kind_rows.iter().take(4).map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ")
+        flow.kinds.iter().take(4).map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ")
     };
     push(out, "SP_INFLOW_KINDS", kinds_str);
 
-    for (n, (t, kind, i)) in aged.iter().take(40).enumerate() {
+    for (n, i) in flow.rows.iter().take(40).enumerate() {
+        let Some(t) = i.get("created_at").and_then(Value::as_str).and_then(parse_iso8601) else { continue };
+        let kind = i.get("issue_type").and_then(Value::as_str).unwrap_or("task");
         let title = sanitize_title(i.get("title").and_then(Value::as_str).unwrap_or(""), 80);
         let k: String = kind.to_lowercase().chars().filter(|c| c.is_ascii_lowercase()).take(8).collect();
         let k = if k.is_empty() { "task".to_string() } else { k };
@@ -472,6 +486,16 @@ fn tokens_section(out: &mut Kv) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_server_inflow_reply_parses_to_the_same_shape_as_the_row_aggregate() {
+        let f = inflow_from_server(r#"{"n":3,"defect":1,"kinds":[["task",2],["bug",1]],"rows":[{"id":"sp-a"}]}"#).unwrap();
+        assert_eq!((f.n, f.defect, f.kinds.len(), f.rows.len()), (3, 1, 2, 1));
+        assert!(inflow_from_server(r#"{"n":3}"#).is_none(), "a partial reply is cannot-tell, not zero");
+        let rows: Vec<Value> = serde_json::from_str(r#"[{"id":"a","issue_type":"bug","created_at":"2026-01-01T00:10:00Z"},{"id":"b","issue_type":"event","created_at":"2026-01-01T00:11:00Z"},{"id":"c","created_at":"2026-01-01T00:00:00Z"}]"#).unwrap();
+        let f = inflow_from_rows(&rows, parse_iso8601("2026-01-01T00:05:00Z").unwrap());
+        assert_eq!((f.n, f.defect, f.rows.len()), (1, 1, 2));
+    }
 
     #[test]
     fn inflow_defect_counts_bugs_and_incidents() {

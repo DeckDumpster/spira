@@ -159,7 +159,7 @@ out="$(as_user spira_lc "$PASS" --use-db spira_lifecycle sql -q "SELECT COUNT(*)
 want "POSITIVE CONTROL: spira_lc CAN insert+select event (already has rows from schema/grant application's own transitions)" "rows" "$out"
 
 # ── the content store: spira_lc reads it, and cannot write it ─────────────────────────
-root_sql sql -q "CREATE DATABASE IF NOT EXISTS spira; CREATE TABLE IF NOT EXISTS spira.issues (id VARCHAR(64) PRIMARY KEY, title TEXT, priority INT, issue_type VARCHAR(32), status VARCHAR(32), defer_until DATETIME, created_at DATETIME, updated_at DATETIME); CREATE TABLE IF NOT EXISTS spira.labels (issue_id VARCHAR(64), label VARCHAR(64), PRIMARY KEY (issue_id, label)); CREATE TABLE IF NOT EXISTS spira.dependencies (id CHAR(36) PRIMARY KEY, issue_id VARCHAR(255) NOT NULL, type VARCHAR(32) NOT NULL DEFAULT 'blocks', depends_on_issue_id VARCHAR(255), depends_on_wisp_id VARCHAR(255), depends_on_external VARCHAR(255))"
+root_sql sql -q "CREATE DATABASE IF NOT EXISTS spira; CREATE TABLE IF NOT EXISTS spira.issues (id VARCHAR(64) PRIMARY KEY, title TEXT, priority INT, issue_type VARCHAR(32), status VARCHAR(32), defer_until DATETIME, created_at DATETIME, updated_at DATETIME, closed_at DATETIME); CREATE TABLE IF NOT EXISTS spira.labels (issue_id VARCHAR(64), label VARCHAR(64), PRIMARY KEY (issue_id, label)); CREATE TABLE IF NOT EXISTS spira.dependencies (id CHAR(36) PRIMARY KEY, issue_id VARCHAR(255) NOT NULL, type VARCHAR(32) NOT NULL DEFAULT 'blocks', depends_on_issue_id VARCHAR(255), depends_on_wisp_id VARCHAR(255), depends_on_external VARCHAR(255))"
 for tbl in issues labels dependencies; do
     out="$(as_user spira_lc "$PASS" sql -q "SELECT COUNT(*) AS n FROM spira.$tbl" -r json 2>&1)"
     want "POSITIVE CONTROL: spira_lc CAN select spira.$tbl" "rows" "$out"
@@ -175,10 +175,20 @@ want "spira_lc cannot UPDATE the content store" "denied" "$out"
 # while every suite passed: this fixture invented the column and the suites read content
 # through a bd shim, never this query. The fixture above now carries beads' real column names,
 # and this runs the query itself against them.
-root_sql sql -q "INSERT INTO spira.issues VALUES ('sp-row-a','a',1,'task','open',NULL,NOW(),NOW()),('sp-row-b','b',1,'task','open',NULL,NOW(),NOW()); INSERT INTO spira.dependencies (id, issue_id, type, depends_on_issue_id) VALUES ('d1','sp-row-a','blocks','sp-row-b'); INSERT INTO spira.dependencies (id, issue_id, type, depends_on_external) VALUES ('d2','sp-row-a','blocks','ext:x')" >/dev/null 2>&1
+root_sql sql -q "INSERT INTO spira.issues VALUES ('sp-row-a','a',1,'task','open',NULL,NOW(),NOW(),NULL),('sp-row-b','b',1,'task','open',NULL,NOW(),NOW(),NULL),('sp-row-bug','c',0,'bug','open',NULL,NOW(),NOW(),NULL),('sp-row-ev','e',2,'event','open',NULL,NOW(),NOW(),NULL),('sp-row-old','o',2,'task','closed',NULL,NOW() - INTERVAL 3 DAY,NOW(),NOW() - INTERVAL 2 DAY); INSERT INTO spira.labels (issue_id, label) VALUES ('sp-row-a','repo:known'),('sp-row-b','repo:stray'),('sp-row-bug','incident'); INSERT INTO spira.dependencies (id, issue_id, type, depends_on_issue_id) VALUES ('d1','sp-row-a','blocks','sp-row-b'); INSERT INTO spira.dependencies (id, issue_id, type, depends_on_external) VALUES ('d2','sp-row-a','blocks','ext:x')" >/dev/null 2>&1
 out="$("$BIN" content-rows --ids sp-row-a 2>&1)"
 want "content-rows reads depends_on_issue_id (beads' real column)" '"depends_on_id":"sp-row-b"' "$out"
 case "$out" in *ext:x*) want "content-rows ignores non-issue edges (depends_on_external)" "absent" "present: $out" ;; *) want "content-rows ignores non-issue edges (depends_on_external)" "absent" "absent" ;; esac
+
+# ── pane-facets answers aggregates, never the table ───────────────────────────────────
+out="$("$BIN" pane-facets inflow --window-secs 3600 2>&1)"
+want "pane-facets inflow counts the window's work beads, not events or old closures" '"n":3' "$out"
+want "pane-facets inflow counts a bug or incident as a defect" '"defect":1' "$out"
+want "pane-facets inflow groups by kind" '["task",2]' "$out"
+case "$out" in *sp-row-old*|*sp-row-ev*) want "pane-facets inflow rows omit events and old closures" "absent" "present: $out" ;; *) want "pane-facets inflow rows omit events and old closures" "absent" "absent" ;; esac
+out="$("$BIN" pane-facets repo-labels --valid known 2>&1)"
+want "pane-facets repo-labels counts a repo outside the valid set as unmapped" '"unmapped":1' "$out"
+want "pane-facets repo-labels counts a bead with no repo label as absent" '"absent":2' "$out"
 
 # ── spira_lc_ro: SELECT everywhere, refused every write (sp-dz438) ────────────────────
 seed_bead sp-ro-hist

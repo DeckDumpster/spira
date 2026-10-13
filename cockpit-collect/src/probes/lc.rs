@@ -98,19 +98,20 @@ pub fn shared_live(key: &str, fetch: impl FnOnce() -> Option<String>) -> Option<
 }
 
 fn list_live(state: Option<&str>) -> Option<String> {
+    let mut args = vec!["list"];
+    if let Some(s) = state {
+        args.extend(["--state", s]);
+    }
+    let raw = verb(&args)?;
+    parse_rows(&raw).map(|_| raw)
+}
+
+/// `spira-lc <args>` under the configured timeout; `None` when it failed.
+pub fn verb(args: &[&str]) -> Option<String> {
     let bin = std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into());
     let timeout = spira_config::process::cfg("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty())?;
-    let mut cmd = Command::new("timeout");
-    cmd.arg(timeout).arg(bin).arg("list");
-    if let Some(s) = state {
-        cmd.args(["--state", s]);
-    }
-    let o = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    if !o.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&o.stdout).into_owned();
-    parse_rows(&raw).map(|_| raw)
+    let o = Command::new("timeout").arg(timeout).arg(bin).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
 /// Every lifecycle row as `spira_config::lc_state` reads it, keyed by bead id: a work bead's
