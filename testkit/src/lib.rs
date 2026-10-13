@@ -159,6 +159,22 @@ pub fn write_exe(path: impl AsRef<Path>, body: &str) {
         .unwrap_or_else(|e| panic!("chmod 755 {}: {e}", path.display()));
 }
 
+/// Run `attempt` again while it fails with ETXTBSY, up to a bounded backoff. For executing a
+/// file this process's own code wrote: another thread's fork may hold the write descriptor
+/// until its exec, and no rename removes that from the inode.
+pub fn retry_busy<T>(mut attempt: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut tries = 0;
+    loop {
+        match attempt() {
+            Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) && tries < 100 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            r => return r,
+        }
+    }
+}
+
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 thread_local! {
@@ -305,6 +321,22 @@ mod tests {
         drop(a);
         assert!(!p.exists(), "{} survived its drop", p.display());
         assert!(b.is_dir());
+    }
+
+    #[test]
+    fn retry_busy_outlasts_a_write_descriptor_held_open_on_the_exec_target() {
+        let d = dir("busy");
+        let p = d.join("x");
+        write_exe(&p, "#!/bin/sh\n");
+        let held = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
+        let first = Command::new(&p).status().unwrap_err();
+        assert_eq!(first.raw_os_error(), Some(libc::ETXTBSY), "control: an open write fd makes exec fail");
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(held);
+        });
+        assert!(retry_busy(|| Command::new(&p).status()).unwrap().success());
+        release.join().unwrap();
     }
 
     #[test]
