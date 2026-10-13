@@ -9,7 +9,7 @@ use crate::model::{EjectCause, LandMode, Member};
 use crate::ports::ref_branch;
 use crate::records::{self, one_line, write_atomic, Kv};
 
-/// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED (Returned is
+/// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED or SUBMITTED (a requeue of a member delivered from SUBMITTED lands there; Returned is
 /// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK; a row already in REWORK is the target state, not a refusal. The refusal is
 /// reported here and handed back: an eject that leaves the row where it was must exit non-zero.
 pub fn lc_return(w: &World, id: &str) -> Result<(), ()> {
@@ -23,7 +23,7 @@ pub fn lc_return(w: &World, id: &str) -> Result<(), ()> {
         return Ok(());
     }
     let who = "queue.sh";
-    if state == "CERTIFIED" {
+    if state == "CERTIFIED" || state == "SUBMITTED" {
         if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "\"Deliver\"") {
             return fail(format!("Deliver refused (rc={rc}): {e}"));
         }
@@ -31,7 +31,7 @@ pub fn lc_return(w: &World, id: &str) -> Result<(), ()> {
         v += 1;
     }
     if state != "IN_DELIVERY" {
-        return fail(format!("in state {state}, not CERTIFIED or IN_DELIVERY"));
+        return fail(format!("in state {state}, not SUBMITTED, CERTIFIED or IN_DELIVERY"));
     }
     if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "{\"Returned\":{\"reason\":\"batch-ejected\"}}") {
         return fail(format!("Returned refused (rc={rc}): {e}"));
