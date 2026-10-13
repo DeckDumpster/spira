@@ -453,9 +453,9 @@ fn a_hand_cut_batch_red_goes_to_judgement_too() {
 }
 
 #[test]
-fn a_setup_red_is_rerun_once_then_raises_one_incident_never_an_endless_defer() {
+fn a_setup_red_is_rerun_once_then_abandoned_with_evidence_never_an_endless_defer() {
     let t = T::new(LandMode::Queue);
-    batch(&t);
+    lc_batch(&t);
     *t.forge.run.borrow_mut() = Some("77".into());
     let red = "red\nfailed-step: gate / Set up runner\nstep-log: no space left\n";
     let tick = |t: &T| {
@@ -475,12 +475,10 @@ fn a_setup_red_is_rerun_once_then_raises_one_incident_never_an_endless_defer() {
     assert_eq!(mails(&t), 1);
     let calls = t.scripts.calls.borrow().join("\n");
     assert!(calls.contains("Failed step: gate / Set up runner") && calls.contains("no space left"), "{calls}");
-    for _ in 0..3 {
-        t.clock.now.set(t.clock.now.get() + 10_000);
-        tick(&t);
-    }
+    assert!(t.lc.calls.borrow().iter().any(|c| c.starts_with("abandon-batch spira-1 CI_RUNNING 4 setup red") && c.contains("no space left")), "{:?}", t.lc.calls.borrow());
+    assert!(has_call(&t.forge.calls, "pr-close 12"), "{:?}", t.forge.calls.borrow());
+    assert!(!t.qfile("open").exists(), "the record goes so the next batch can be cut");
     assert_eq!(count(&t, "workflow-rerun 77"), 1);
-    assert_eq!(mails(&t), 1);
 }
 
 #[test]
