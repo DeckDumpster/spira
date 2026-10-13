@@ -16,6 +16,14 @@
 //! — the suites CSV and a CI run link/evidence line come straight off queue verdict's own read
 //! of the forge's check-status.
 //!
+//!   batcher path-attribute <repo> --members id:tip,... --reds FILE [--record FILE]
+//!
+//! path-attribute is the deterministic attributor a red round runs before pausing: it reads
+//! the reds file (`@@ <suite>` blocks of failure output), intersects the paths each red names
+//! (else the suite's own source and `# covers:`) with each member's merge-base..tip diff, and
+//! prints `verdict=auto-eject` with `eject=<id>\t<reason>` lines (exit 0), or
+//! `verdict=ambiguous` with the candidate table (exit 3). `--record` appends the verdict.
+//!
 //! NOT COVERED (left to later beads): a main-red trigger has no producer wired here yet
 //! (always false); test_ahead_of_code (E) is not re-run here — the pure core exposes it, and
 //! it is the summoned batcher persona (sp-47kq1, see summon_judgement below) that reads a
@@ -55,6 +63,8 @@ struct Opts {
     suites: Option<String>,
     members: Option<String>,
     evidence: Option<String>,
+    reds: Option<PathBuf>,
+    record: Option<PathBuf>,
 }
 
 fn usage() -> ExitCode {
@@ -63,6 +73,7 @@ fn usage() -> ExitCode {
     eprintln!("       batcher sift <repo> [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher sifts [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
+    eprintln!("       batcher path-attribute <repo> --members id:tip,... --reds FILE [--record FILE] [--run DIR] [--db DIR] [--home DIR]");
     ExitCode::from(2)
 }
 
@@ -84,6 +95,8 @@ fn parse() -> Result<Opts, String> {
         suites: None,
         members: None,
         evidence: None,
+        reds: None,
+        record: None,
     };
     while let Some(f) = a.next() {
         let mut val = || a.next().ok_or(format!("{f} needs a value"));
@@ -95,6 +108,8 @@ fn parse() -> Result<Opts, String> {
             "--suites" => o.suites = Some(val()?),
             "--members" => o.members = Some(val()?),
             "--evidence" => o.evidence = Some(val()?),
+            "--reds" => o.reds = Some(val()?.into()),
+            "--record" => o.record = Some(val()?.into()),
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -1250,7 +1265,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
     let failed = drive_pass(&repos, pass, local_enabled, |name, step| match step {
         Step::Verdict => settle_batch(&env_, name),
         Step::Cut => {
-            let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
+            let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None, reds: None, record: None };
             if paced && reg.land(name) == "queue.local" {
                 paced_cut(&env_, name, &one)
             } else {
@@ -1289,7 +1304,7 @@ fn sifts(o: &Opts) -> Result<(), String> {
         if !matches!(reg.land(&name).as_str(), "queue" | "queue.local") {
             continue;
         }
-        let one = Opts { cmd: "sift".into(), repo: name.clone(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None };
+        let one = Opts { cmd: "sift".into(), repo: name.clone(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None, reds: None, record: None };
         if let Err(e) = sift_one(&one) {
             eprintln!("batcher sifts: {name}: {e}");
             failed.push(name);
@@ -1323,6 +1338,80 @@ fn judgement_ci(o: &Opts) -> Result<(), String> {
     Ok(())
 }
 
+fn changed_paths(repo: &Repo, tip: &str) -> Result<Vec<String>, String> {
+    let git = |args: &[&str]| {
+        let o = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(args).output().map_err(|e| format!("git: {e}"))?;
+        if o.status.success() {
+            Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+        } else {
+            Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim()))
+        }
+    };
+    let mb = git(&["merge-base", &repo.base, tip])?;
+    let diff = git(&["diff", "--name-only", mb.trim(), tip])?;
+    Ok(diff.lines().map(str::to_string).collect())
+}
+
+fn suite_own(repo: &Repo, suite: &str) -> Vec<String> {
+    let path = format!("spira/{suite}");
+    let text = spira_config::bounded::bounded("git")
+        .arg("-C")
+        .arg(&repo.path)
+        .args(["show", &format!("{}:{path}", repo.base)])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let mut own = vec![path];
+    own.extend(suite_select::header::covers_of(&text).unwrap_or_default());
+    own
+}
+
+fn path_attribute(o: &Opts) -> Result<ExitCode, String> {
+    use batcher::pathattr::{attribute, parse_reds, MemberPaths, Verdict};
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    let reds_file = o.reds.as_ref().ok_or("--reds FILE required")?;
+    let mut reds = parse_reds(&std::fs::read_to_string(reds_file).map_err(|e| format!("{}: {e}", reds_file.display()))?)?;
+    let env_ = env_for(o, home, run)?;
+    let repo = find_repo(&env_, &o.repo)?;
+    for r in &mut reds {
+        if r.own.is_empty() {
+            r.own = suite_own(&repo, &r.suite);
+        }
+    }
+    let mut members = Vec::new();
+    for spec in o.members.as_deref().unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let (id, tip) = spec.split_once(':').ok_or_else(|| format!("--members: {spec:?} is not id:tip"))?;
+        members.push(MemberPaths { id: id.to_string(), paths: changed_paths(&repo, tip)? });
+    }
+    let verdict = attribute(&reds, &members);
+    let (code, line) = match &verdict {
+        Verdict::Eject(owners) => {
+            println!("verdict=auto-eject");
+            for (id, why) in owners {
+                println!("eject={id}\t{why}");
+            }
+            (0, format!("auto-eject {}", owners.iter().map(|(i, _)| i.as_str()).collect::<Vec<_>>().join(",")))
+        }
+        Verdict::Ambiguous(rows) => {
+            println!("verdict=ambiguous");
+            for r in rows {
+                let c: Vec<String> = r.candidates.iter().map(|(id, p)| format!("{id} [{}]", p.join(", "))).collect();
+                println!("red={}\tcandidates={}", r.suite, if c.is_empty() { "none".into() } else { c.join(" | ") });
+            }
+            (3, format!("ambiguous {}", rows.iter().map(|r| r.suite.as_str()).collect::<Vec<_>>().join(",")))
+        }
+    };
+    if let Some(rec) = &o.record {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(rec).map_err(|e| format!("{}: {e}", rec.display()))?;
+        writeln!(f, "{}\t{}\t{line}", now(), repo.name).map_err(|e| format!("{}: {e}", rec.display()))?;
+    }
+    Ok(ExitCode::from(code))
+}
+
 fn main() -> ExitCode {
     let o = match parse() {
         Ok(o) => o,
@@ -1331,6 +1420,15 @@ fn main() -> ExitCode {
             return usage();
         }
     };
+    if o.cmd == "path-attribute" {
+        return match path_attribute(&o) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("batcher: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let r = match o.cmd.as_str() {
         "cut" => cut(&o),
         "rounds" => rounds(&o, Pass::All),
@@ -1416,7 +1514,7 @@ mod tests {
         let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
         let g = testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", home.to_str())]);
 
-        let o = Opts { cmd: "cut".into(), repo: "r".into(), run: None, db: None, home: None, round_vm: None, suites: None, members: None, evidence: None };
+        let o = Opts { cmd: "cut".into(), repo: "r".into(), run: None, db: None, home: None, round_vm: None, suites: None, members: None, evidence: None, reds: None, record: None };
         let env_ = env_for(&o, dir.join("home"), dir.join("run"));
 
         drop(g);
