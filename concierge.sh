@@ -292,6 +292,12 @@ concierge_fd_holders() {
 # process ever sees a different `tmux` than the one already installed.
 tmux_shim_dir() { printf '%s' "$SPIRA_RUN/concierge-tmux-shim"; }
 
+# The Stop hook that refuses idle without a live inbox waiter (hooks/concierge-waiter-stop.sh).
+stop_settings() {
+    python3 -c 'import json,sys; print(json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": sys.argv[1], "timeout": 10}]}]}}))' \
+        "$SPIRA_HOME/hooks/concierge-waiter-stop.sh"
+}
+
 write_tmux_shim() {
     local dir real
     dir="$(tmux_shim_dir)"
@@ -458,7 +464,8 @@ start)
         printf '#!/usr/bin/env bash\n'
         printf 'export SPIRA_CONCIERGE=1\n'
         printf 'export PATH=%q:$PATH\n' "$SHIM_DIR"
-        printf 'exec claude --remote-control %q --dangerously-skip-permissions ' "$SESSION"
+        printf 'export SPIRA_RUN=%q\n' "$SPIRA_RUN"
+        printf 'exec claude --remote-control %q --dangerously-skip-permissions --settings %q ' "$SESSION" "$(stop_settings)"
         [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
         [ -n "$RESUME_ID" ] && printf -- '--resume %q ' "$RESUME_ID"
         printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
@@ -498,7 +505,8 @@ start)
             printf '#!/usr/bin/env bash\n'
             printf 'export SPIRA_CONCIERGE=1\n'
             printf 'export PATH=%q:$PATH\n' "$SHIM_DIR"
-            printf 'exec claude --remote-control %q --dangerously-skip-permissions ' "$SESSION"
+            printf 'export SPIRA_RUN=%q\n' "$SPIRA_RUN"
+            printf 'exec claude --remote-control %q --dangerously-skip-permissions --settings %q ' "$SESSION" "$(stop_settings)"
             [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
             printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
         } > "$LAUNCHER"
