@@ -54,6 +54,7 @@ else
     want "empty body refused before tar" "-s /root/tree.tgz" "$doc"
     want "toolchain passed to setup" "ami-setup.sh /root/tree 1.90.0" "$doc"
 fi
+want "prefetch skips other targets' manifests (wasm-only deps need a newer cargo)" "cargo fetch --locked --target x86_64-unknown-linux-gnu" "$(cat "$ROOT/round-vm/src/template.sh")"
 grep -q 'ssm-commands.jq' "$ROOT/.github/workflows/round-ami-build.yml" \
     && ok "workflow uses the filter" || bad "workflow uses the filter" "not referenced"
 
