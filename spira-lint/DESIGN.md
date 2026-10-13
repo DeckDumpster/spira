@@ -374,7 +374,7 @@ every call site against it at the gate is the difference between a taxonomy and 
 - A declared kind that is not lowercase dotted segments of `[a-z0-9]` or is over 32
   characters (the events table's column).
 - A wired call site that no suite can drive and has gone: `spira/gate-check.sh` must contain
-  `spira_event ci.failed `; `sentinel/src/check4.rs`, `strand/src/check.rs` and
+  `spira_event ci.failed `; `strand/src/check.rs` and
   `landing-pass/src/push.rs` must contain their kinds as string literals.
 
 **Declared kinds.** `spira-lint/event-kinds`, one per line, allow-file syntax. It moved out

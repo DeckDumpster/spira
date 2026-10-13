@@ -6,7 +6,6 @@
 # lowercase dotted segments of [a-z0-9], at most 32 characters (the events table column).
 aeon.claimed
 bead.landed
-bead.poisoned
 bead.reopened
 branch.reclaimed
 ci.failed

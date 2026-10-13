@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-sentinel-pass.sh — real end-to-end sentinel.sh passes: a normal pass never runs
-#   CHECK 4/5/6b/7c/7d inline any more (sp-994y9) — it dispatches them as `sentinel.sh
-#   --audit` and moves straight to summon; `--audit` is where those checks actually run,
-#   and it never lands or summons. Also covers the base-unchanged stamp and a database
-#   sentinel that cannot reach exits 1 without ever reporting a state or a completed pass.
+# test-sentinel-pass.sh — real end-to-end sentinel passes: fill, the landing dispatch, no
+#   audit worker, and a database sentinel cannot reach exits 1 without ever reporting a
+#   state or a completed pass.
 #
 #   ./test-sentinel-pass.sh
 #
@@ -18,17 +16,8 @@
 #     bash, where test-watchtower-throttle.sh used to call them)
 #   - lane rotation order                            -> lane_rotate (G1),
 #     tested directly in sentinel's own summon::tests, ditto
-#   - CHECK 8's firing predicate                      -> sentinel's audit::tests::judgement_table
+#   - CHECK 8's firing predicate                      -> sentinel's judge::tests::judgement_table
 #     (G15; check8_should_judge/test-check8-progressed.sh retired at sp-8itaf, zero live callers)
-#
-# SP-994Y9: A NORMAL PASS TOOK 4-5 MINUTES against a 2-minute timer because CHECK 4 (poison,
-# walks every dispatchable bead), CHECK 5 (closed-not-landed) and CHECK 6b (the Sending,
-# walks every branch) ran inline, ahead of or beside CHECK 7 (summon) — so a fleet slot
-# that freed up mid-walk sat empty until the WHOLE pass finished. Those checks now run only
-# under `sentinel.sh --audit`, dispatched as a transient unit the same way CHECK 6 already
-# dispatches landing; a normal pass never calls sending.sh or walks the poison set at all.
-# The regression here is TIMING: sending.sh is stubbed to sleep past the old inline cost,
-# and a normal pass must still return near-instantly and still summon every ready bead.
 #
 # ONE NO-DATABASE CHECK: SPIRA_BD points at a shim that always fails, so `bdq list` fails
 # the way a real outage would without paying for a Dolt fixture at all (UC-dispatch-19).
@@ -89,9 +78,7 @@ for _s in lib.sh conf.sh suite-covers.sh conf.d; do
 done
 printf '#!/bin/sh\necho inactive\n'  > "$STUBS/mock-systemctl"; chmod +x "$STUBS/mock-systemctl"
 LAUNCH_ARGV="$TMP/launch-argv"
-# mock-launch stands in for systemd-run: it records every dispatch's own argv (CHECK 6's
-# land dispatch AND the new CHECK 4/5 audit dispatch both go through SPIRA_LAUNCH, so
-# assertions on one unit's properties must grep the line naming its own --unit=).
+# mock-launch stands in for systemd-run: it records every dispatch's own argv.
 printf '#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' "$LAUNCH_ARGV" > "$STUBS/mock-launch"; chmod +x "$STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'         > "$STUBS/mock-notify";    chmod +x "$STUBS/mock-notify"
 touch "$STUBS/repo-map"   # empty: no repos, Sending finds nothing to walk
@@ -118,7 +105,6 @@ out_unreadable="$(env -i \
     SPIRA_HOME="$STUBS" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_LAND_STALE=999999 \
-    SPIRA_AUDIT_STALE=999999 \
     SPIRA_SYSTEMCTL="$STUBS/mock-systemctl" \
     SPIRA_LAUNCH="$STUBS/mock-launch" \
     sentinel 2>&1)"
@@ -130,7 +116,7 @@ lack "does NOT report a completed pass"            "pass complete" "$out_unreada
 
 # ======================================================================================
 echo
-echo "real passes — fill, dispatch and the audit worker (needs a Dolt fixture):"
+echo "real passes — fill and dispatch (needs a Dolt fixture):"
 # ======================================================================================
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -148,19 +134,15 @@ JSONL
 
 SUMMON_LOG="$TMP/summon.log"
 SENDING_LOG="$TMP/sending.log"
-# sending.sh SLEEPS before it records itself — this is the old inline cost (CHECK 6b's
-# per-branch walk) that used to sit between the pass starting and CHECK 7 running. A
-# normal pass must never pay this; only `--audit` may.
-printf '#!/bin/sh\nsleep 2\necho "called $*" >> "%s"\n' "$SENDING_LOG" > "$STUBS/sending"
+printf '#!/bin/sh\necho "called $*" >> "%s"\n' "$SENDING_LOG" > "$STUBS/sending"
 chmod +x "$STUBS/sending"
 # mock-summon records each summon so the fill assertion can count them.
 printf '#!/bin/sh\necho summoned >> "$SUMMON_LOG"\n' > "$STUBS/mock-summon"; chmod +x "$STUBS/mock-summon"
 
 # run_pass <run-dir> [script-arg] [KEY=VAL ...] → combined stdout+stderr of one sentinel
 # pass. SPIRA_RUN is the caller-supplied dir (allows pre-populating and reusing stamp
-# files). The first positional argument after run-dir is sentinel.sh's OWN argv (empty
-# string for a normal pass, "--audit" for the decoupled worker); everything after that is
-# an extra env-var override.
+# files). The first positional argument after run-dir is sentinel's OWN argv (empty string
+# for a normal pass); everything after that is an extra env-var override.
 run_pass() {
     local run="$1" arg="$2"; shift 2
     mkdir -p "$run"
@@ -174,8 +156,7 @@ run_pass() {
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_SKIP_RECLAIM=1 \
         SPIRA_LAND_STALE=999999 \
-        SPIRA_AUDIT_STALE=999999 \
-        SPIRA_SYSTEMCTL="$STUBS/mock-systemctl" \
+            SPIRA_SYSTEMCTL="$STUBS/mock-systemctl" \
         SPIRA_LAUNCH="$STUBS/mock-launch" \
         SPIRA_SUMMON="$STUBS/mock-summon" \
         SUMMON_LOG="$SUMMON_LOG" \
@@ -193,32 +174,21 @@ is   "pass 1 fill: pool=3 + 5 ready beads -> 3 summons" \
 want "pass 1 order: CHECK7 line appears in log" "CHECK7" "$pass1_out"
 lack "pass 1: does NOT report DATABASE UNREADABLE (positive control: DB is readable)" \
      "DATABASE UNREADABLE" "$pass1_out"
-# THE REGRESSION (sp-994y9): sending.sh sleeps 2s; a pass that still called it inline (the
-# pre-fix shape) would take at least 2s. A wall-clock "<2s" assertion here flipped under
-# load (law-a-test-that-flips-is-deleted); the deterministic assertion below — sending.sh
-# never called inline — covers the same property without a timing race.
-is   "pass 1: sending.sh NOT called inline by a normal pass" \
+is   "pass 1: sending is not called by the sentinel" \
      "0" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
-want "pass 1: dispatches the audit worker (--unit=spira-audit line in launch argv)" \
-     "--unit=spira-audit" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
-want "pass 1: audit dispatch's own argv names the sentinel binary --audit" \
-     "/sentinel --audit" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
+nowant "pass 1: no audit worker is dispatched" \
+     "spira-audit" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
 
 # ======================================================================================
 echo
-echo "CHECK6/audit dispatch — no CPUQuota and no Nice on either worker (sp-b4oct):"
+echo "CHECK6 dispatch — no CPUQuota and no Nice on the landing worker:"
 # ======================================================================================
-# law-isolate-greedy-work-in-vms: the OS schedules the landing and audit workers. Each check
-# is on the worker's own argv line, and each line's presence is asserted first so an absent
-# dispatch cannot pass the absence check (law-absence-needs-a-positive-control).
+# The line's presence is asserted first so an absent dispatch cannot pass the absence
+# check (law-absence-needs-a-positive-control).
 _land_argv="$(grep -- '--unit=spira-landing' "$LAUNCH_ARGV" 2>/dev/null)"
-_audit_argv="$(grep -- '--unit=spira-audit' "$LAUNCH_ARGV" 2>/dev/null)"
 want   "land dispatch argv was captured"  "--unit=spira-landing" "$_land_argv"
-want   "audit dispatch argv was captured" "--unit=spira-audit"   "$_audit_argv"
 nowant "land dispatch carries no CPUQuota"  "CPUQuota" "$_land_argv"
 nowant "land dispatch carries no Nice"      "Nice="    "$_land_argv"
-nowant "audit dispatch carries no CPUQuota" "CPUQuota" "$_audit_argv"
-nowant "audit dispatch carries no Nice"     "Nice="    "$_audit_argv"
 
 # The retired knob is inert: setting it in the environment adds no quota.
 rm -f "$LAUNCH_ARGV" "$SUMMON_LOG" "$SENDING_LOG"
@@ -228,25 +198,5 @@ want   "retired SPIRA_LAND_CPU_QUOTA: the land dispatch still happens" \
        "--unit=spira-landing" "$_land_argv"
 nowant "retired SPIRA_LAND_CPU_QUOTA=55 adds no CPUQuota" "CPUQuota" "$_land_argv"
 lack "retired quota knob: pass still runs cleanly" "DATABASE UNREADABLE" "$out_customquota"
-
-# ======================================================================================
-echo
-echo "--audit — the decoupled worker actually does the walk, and never lands or summons:"
-# ======================================================================================
-rm -f "$SUMMON_LOG" "$SENDING_LOG" "$LAUNCH_ARGV"
-audit_out="$(run_pass "$_run" "--audit")"
-is   "audit: sending.sh IS called (with --skip-queue, sp-jci6o)" \
-     "1" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
-want "audit: sending.sh called with --skip-queue" \
-     "--skip-queue" "$(cat "$SENDING_LOG" 2>/dev/null)"
-want "audit: CHECK4 runs" "CHECK4" "$audit_out"
-is   "audit: never summons (CHECK 7 is normal-pass only)" \
-     "0" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
-is   "audit: never dispatches landing (CHECK 6 is normal-pass only)" \
-     "0" "$(grep -c -- '--unit=spira-landing' "$LAUNCH_ARGV" 2>/dev/null || echo 0)"
-is   "audit: writes its own status file (the next pass's positive control)" \
-     "1" "$([ -f "$_run/audit.status" ] && echo 1 || echo 0)"
-want "audit: status file records a completion timestamp" \
-     "SP_AUDIT_AT=" "$(cat "$_run/audit.status" 2>/dev/null)"
 
 tl_summary

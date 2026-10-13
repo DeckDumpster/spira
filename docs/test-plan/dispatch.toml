@@ -96,6 +96,11 @@ id = "UC-dispatch-16"
 tier = "T1"
 statement = "CHECK 7c reports an unclaimable ready bead once, naming the rejection reason"
 
+[use_case.uncovered]
+reason = "the sentinel audit worker (spira-audit) was retired and CHECK 4/rowless/6b/7c/7d with it; their sentinel unit tests (check4_*, rowless_*, sending_7c_7d_*, on_check4_note_*, the tip-moved poison lift, two_beads_touching_one_file_*) were deleted, not ported. A need for any of them is re-added elsewhere only when shown."
+date = "2026-10-12"
+bead = "sp-2yclhz"
+
 [[use_case]]
 id = "UC-dispatch-17"
 tier = "T1"
@@ -107,7 +112,7 @@ tier = "T1"
 statement = "CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown"
 
 [use_case.uncovered]
-reason = "lib.sh check8_should_judge had zero live callers (no Rust seam, no bash sourcer outside its own suite) and was deleted outright, not ported, at sp-8itaf; test-check8-progressed.sh, its sole cover, was retired with it. The equivalent decision is now sentinel's audit::tests::judgement_table (cargo test -p sentinel)."
+reason = "lib.sh check8_should_judge had zero live callers (no Rust seam, no bash sourcer outside its own suite) and was deleted outright, not ported, at sp-8itaf; test-check8-progressed.sh, its sole cover, was retired with it. The equivalent decision is now sentinel's judge::tests::judgement_table (cargo test -p sentinel)."
 date = "2026-09-30"
 bead = "sp-8itaf"
 

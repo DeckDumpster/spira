@@ -39,7 +39,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "test-wire-token.sh"
 
 SENDING="$HERE/../sending/src/sweep.rs"   # the Sending is Rust (was sending.sh, sp-arpjt)
-SENTINEL="$HERE/../sentinel/src/audit.rs"   # the sentinel is Rust (was sentinel.sh)
 METRICS="$HERE/cockpit-metrics.py"
 
 # ---------------------------------------------------------------------------------------
@@ -60,23 +59,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------
-# PARSER 1 — the sentinel (sentinel/src/audit.rs) matches lines starting with SENT.
-# ---------------------------------------------------------------------------------------
-if grep -qF 'starts_with("SENT")' "$SENTINEL"; then
-    ok "sentinel matches ^SENT"
-else
-    bad "sentinel matches ^SENT" "starts_with(\"SENT\") not found — sentinel is out of sync with emitter"
-fi
-
-# NEGATIVE: old match pattern must be gone.
-if grep -q 'REAPED' "$SENTINEL"; then
-    bad "sentinel no longer matches REAPED" "REAPED still present — old pattern survives"
-else
-    ok "sentinel does not match REAPED"
-fi
-
-# ---------------------------------------------------------------------------------------
-# PARSER 2 — cockpit-metrics.py startswith the emitter's token.
+# PARSER — cockpit-metrics.py startswith the emitter's token.
 # ---------------------------------------------------------------------------------------
 if grep -q 'startswith("SENT")' "$METRICS"; then
     ok "cockpit-metrics.py startswith(\"SENT\")"
@@ -92,7 +75,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------
-# CONTRACT ROW — one canned SENT line, piped through both real parsers.
+# CONTRACT ROW — one canned SENT line, piped through the real parser.
 # ---------------------------------------------------------------------------------------
 FIXTURE_LINE='SENT sp-test1  myrepo mybranch  orphaned worktree (branch was already gone)'
 
@@ -113,15 +96,5 @@ d = m.sending_metrics(lines, since, now)
 print(d["SP_SENT"])
 ' 2>/dev/null)"
 is "cockpit-metrics.py's sending_metrics() counts the fixture SENT line" "1" "$py_out"
-
-# sentinel.sh's own idiom, copied verbatim rather than hand-typed:
-# `grep -c '^SENT' <<< "$sent"` and `while read -r _ rid rrepo rbr _; do ...; done < <(grep '^SENT' <<< "$sent")`.
-sent="$FIXTURE_LINE"
-sh_count="$(grep -c '^SENT' <<< "$sent" || true)"
-is "sentinel.sh's grep -c '^SENT' counts the fixture line" "1" "$sh_count"
-read -r _ rid rrepo rbr _ < <(grep '^SENT' <<< "$sent")
-is "sentinel.sh's field-split extracts the bead id"   "sp-test1" "$rid"
-is "sentinel.sh's field-split extracts the repo name" "myrepo"   "$rrepo"
-is "sentinel.sh's field-split extracts the branch"    "mybranch" "$rbr"
 
 tl_summary

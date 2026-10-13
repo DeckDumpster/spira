@@ -7,8 +7,10 @@
 //! beads are a large share of READY the builder partition reads "nothing ready", so that is
 //! announced rather than left to be noticed (law-total-blockage-announces-itself).
 
+use crate::host::Io;
 use crate::model::LcRow;
 use crate::pass::Sentinel;
+use crate::seams;
 use crate::store::Snapshot;
 
 pub const WORK_BEAD_LABEL: &str = "work-bead:";
@@ -107,6 +109,16 @@ pub fn stale_conflicts(rows: &[LcRow], snap: &Snapshot, run: &std::path::Path, r
 }
 
 impl<'a> Sentinel<'a> {
+    /// lib.sh `spira_event`, through its seam.
+    fn event(&self, kind: &str, target: &str, title: &str, detail: &str) {
+        let mut b = Vec::new();
+        for f in [kind, target, title, detail] {
+            b.extend_from_slice(f.as_bytes());
+            b.push(0);
+        }
+        self.seam("event", seams::EVENT, Some(b), Io::Null, Io::Null, false);
+    }
+
     pub fn check2d(&self, snap: &Snapshot, rows: &[LcRow]) {
         let ctx = &self.ctx;
         let resolves = |name: &str| {

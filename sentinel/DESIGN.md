@@ -21,14 +21,7 @@ The pass has four jobs, in order of how much stalls when each is late:
 2. **Keep work moving.** Reap dead holders (CHECK 2, 2b, 2c), fix stale blocked flags
    (CHECK 3), gate queue-mode dependents (CHECK 3b/3c), and dispatch the landing worker
    (CHECK 6).
-3. **Stop waste and surface lies.** These walks are decoupled into the audit worker:
-   - poison a bead that keeps failing, and ask about beads that keep being requeued or
-     keep losing their holder (CHECK 4);
-   - report beads that are closed but not landed (CHECK 5);
-   - reap landed branches (CHECK 6b);
-   - name ready beads that no persona can claim (CHECK 7c);
-   - un-jam branch collisions (CHECK 7d).
-4. **Know when rules have run out.** If the plan is starved and nothing moved, ask for
+3. **Know when rules have run out.** If the plan is starved and nothing moved, ask for
    inference, rate-limited to once an hour (CHECK 8). Inference is a cost centre. Adding a
    deterministic check is how the system learns.
 
@@ -78,8 +71,6 @@ sentinel                 one full pass                                  (spira-s
 sentinel --report        STATE only: print the open plan beads, change nothing
 sentinel --summon-only   CHECK 7 alone                                  (spira-summon.service;
                          every aeon unit's ExecStopPost via lib.sh summon_refill_argv)
-sentinel --audit         the decoupled audit worker (CHECK 4/5/6b/7c/7d), started by the
-                         full pass as the transient unit `spira-audit`
 sentinel --open-children [--dry-run]
                          CHECK 3c alone over a fresh snapshot (the suites' entry point).
                          --dry-run prints `would add|remove <label> to|from <id>` and
@@ -92,12 +83,11 @@ other first argument, or none, means a full pass. The one second argument read i
 
 | exit | when |
 |---|---|
-| 0 | the pass ran to its end. That includes every `--summon-only` pass whether it summoned or declined, `--report`, and `--audit` |
-| 1 | `DATABASE UNREADABLE` (the bulk store read failed), skipped under `SPIRA_SKIP_RECLAIM=1`. Also any mode when the harness itself cannot be found: the context probe failed, or lib.sh was not found (new, `FATAL` line). Also a full pass or audit run in which the lifecycle machine could not be read or written (`LIFECYCLE UNREACHABLE`); that pass still runs every other check first |
+| 0 | the pass ran to its end. That includes every `--summon-only` pass whether it summoned or declined, and `--report` |
+| 1 | `DATABASE UNREADABLE` (the bulk store read failed), skipped under `SPIRA_SKIP_RECLAIM=1`. Also any mode when the harness itself cannot be found: the context probe failed, or lib.sh was not found (new, `FATAL` line). Also a full pass in which the lifecycle machine could not be read or written (`LIFECYCLE UNREACHABLE`); that pass still runs every other check first |
 
 Nothing is printed on stdout except log lines, the verbatim output of the scripts it calls,
-and `--report`'s listing. The units append stdout and stderr to `$SPIRA_RUN/sentinel.log`,
-and the audit worker appends them to `$SPIRA_RUN/audit.log`.
+and `--report`'s listing. The units append stdout and stderr to `$SPIRA_RUN/sentinel.log`.
 
 ### 2.2 Log lines other programs parse (byte-identical)
 
@@ -109,25 +99,22 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 | `CHECK7 <fayth>: not evaluated (pass budget exhausted)` (the seam emits it) | strand probe.rs:363, strand.sh:369 |
 | `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-metrics.py:65,69, cockpit.sh:626 |
 | `pass complete — <a> action(s), <p> progress` | auron-classify.py:110 |
-| `summon-only pass complete — <a> action(s)`, `audit pass complete — <a> action(s), <p> progress` | nothing outside tests |
+| `summon-only pass complete — <a> action(s)` | nothing outside tests |
 | untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending | cockpit.sh:637, cockpit-metrics.py:236 |
 
 Every other message is kept word for word as well, because the bash suites and the operator
 grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the parsed ones
-(`state:`, `ACT`, `pass complete`, the CHECK 4/5/6 lines).
+(`state:`, `ACT`, `pass complete`, the CHECK 6 lines).
 
 ### 2.3 Files
 
 | path (under `$SPIRA_RUN`) | r/w | shape | who else |
 |---|---|---|---|
-| `list-snapshot.XXXXXX`, `ready-cache.XXXXXX` | w, removed at exit | bd JSON; the cache is `<fayth> <count>` lines | exported as `SPIRA_LIST_SNAPSHOT`, `SPIRA_READY_CACHE` to every child (strand, the seams) |
-| `audit.status` | w (audit), r (pass) | `SP_AUDIT_AT=<epoch>\nSP_AUDIT_RC=0\n` | tests only |
-| `audit.progress`, `audit.progress.drain.<pid>` | append (audit), drain-by-rename (pass) | one progress message per line | — |
-| `audit.dispatched`, `landing.dispatched` | w once, never overwritten | `<epoch>\n` | cockpit.sh reads landing.* |
+| `ready-cache.XXXXXX` | w, removed at exit | the cache is `<fayth> <count>` lines | exported as `SPIRA_READY_CACHE` to every child (strand, the seams) |
+| `landing.dispatched` | w once, never overwritten | `<epoch>\n` | cockpit.sh reads landing.* |
 | `landing.status` | r | `SP_LAND_AT= SP_LAND_RC= SP_LAND_BRANCHES= SP_LAND_MOVED=` lines | written by `landing-pass land` |
 | `landing.progress`, `landing.progress.drain.<pid>` | drain-by-rename | one line per movement | written by `landing-pass land`/stage.sh |
 | `inference.cooldown` | r/w | `<epoch>` | — |
-| `sending.base` | r/w (audit) | `<repo>=<sha>` lines | — |
 | `poison-asked/<id>`, `requeue-asked/<id>`, `reclaim-asked/<id>` | r, append | one count per line | lib.sh (`spira-claim unpoison` clears `poison-asked`) |
 | `poison-lifted/<id>` | r | last line = count lifted at | written by `spira-claim deadlocked` (via `groomer deadlocked`, spira-claim/DESIGN.md §9) |
 | `landstate/<id>` | r | `<STATE> <tip> …` | the landing pass |
@@ -166,7 +153,7 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 | CHECK 2 | spira-lc Hold/Unhold `wait`, HolderDead; an events row `reclaimed stale-lease` (bd sql); `bd note` |
 | CHECK 3 | `bd recompute-blocked` |
 | CHECK 4 | spira-lc Hold/Unhold `poison`; `bd note`; `events.log` (spira_event seam); mail |
-| seams | whatever lib.sh does in CHECK 3b, 3c, 7, 7c and 7d, unchanged |
+| seams | whatever lib.sh does in CHECK 3b, 3c and 7, unchanged |
 
 ### 2.5 Processes it runs
 
@@ -180,25 +167,14 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
   --summon-only`. This is lib.sh `summon_refill_argv`, and it runs **with no `--setenv`**,
   so the binary must find its harness from its own path (§2.7).
 
-**Transient units it starts.** In each case the unit name is the mutex and `--collect` is
+**Transient unit it starts.** The unit name is the mutex and `--collect` is
 mandatory.
 
 **No explicit CPU quota and no niceness** — on these transient units, on the sentinel's own
 units, or anywhere else (sp-b4oct, law-isolate-greedy-work-in-vms, operator 2026-09-29): the OS
 time-shares the host, and greedy work is isolated in a VM rather than throttled in place. The
-former `SPIRA_AUDIT_CPU_QUOTA` / `SPIRA_LAND_CPU_QUOTA` knobs are gone; setting either in the
+former `SPIRA_LAND_CPU_QUOTA` knob is gone; setting it in the
 environment has no effect.
-
-`spira-audit` runs `<this exe> --audit`. It is launched through
-`${SPIRA_LAUNCH:-systemd-run} --user --collect --quiet` with:
-
-- `--unit=${SPIRA_AUDIT_UNIT:-spira-audit}`
-- `--property=RuntimeMaxSec=${SPIRA_AUDIT_MAXSEC:-1800}`
-- stdout and stderr as `append:$SPIRA_RUN/audit.log`
-- `--setenv` for `PATH HOME SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_REPO_MAP
-  SPIRA_HOME_REPO SPIRA_BD SPIRA_GH SPIRA_POISON_AT SPIRA_REQUEUE_AT SPIRA_RECLAIM_AT
-  SPIRA_ASK_LABEL SPIRA_SCOPE_LABEL SPIRA_WORK_CLOSE_TYPES`, in that order, plus **new**
-  `SPIRA_SKIP_RECLAIM` when it is set (§9, B1).
 
 `spira-landing` runs `landing-pass land` (the PATH-resolved program: a transient unit has no launcher PATH). It is launched the same way with:
 
@@ -226,7 +202,6 @@ Dead ones are deleted, as `aeon_count` does.
 | CHECK 2b | `strand check` | output passed through; `^RECLAIMED` → progress, `^STRANDED` → act |
 | CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
 | CHECK 6 | `watchtower --throttle-check`, `--czar-outcome-check`, `--pr-stall-check` (bare name on the release PATH, each 2>/dev/null; sp-lnmbq) | ignored |
-| CHECK 6b | `sending --skip-queue` (sending/DESIGN.md; sending.sh until sp-arpjt) | output passed through; `^SENT <id> <repo> <branch>` → act; `^FAILED` → log |
 | CHECK 8 | `$SPIRA_HOME/reflect.sh "<open children, newline-separated>"` >> `reflect.log` | — |
 | tsd | `tsd-write --family sentinel-phase --root $SPIRA_RUN --field-str pass=<id> --field-str check=<name> --field secs=<n>` | best-effort |
 
@@ -252,15 +227,11 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | `SPIRA_RECLAIM_AT` | 5 | CHECK 4 |
 | `SPIRA_RECLAIM_GRACE_SECS` | 10800 | CHECK 2 |
 | `SPIRA_INFERENCE_EVERY` | 3600 | CHECK 8 |
-| `SPIRA_AUDIT_UNIT` | `spira-audit` | audit |
-| `SPIRA_AUDIT_MAXSEC` | 1800 | audit |
-| `SPIRA_AUDIT_STALE` | 1800 | audit |
-| `SPIRA_AUDIT_MAILBOX` | `$SPIRA_RUN/audit.progress` | audit |
 | `SPIRA_LAND_UNIT` | `spira-landing` | CHECK 6 |
 | `SPIRA_LAND_MAXSEC` | 3600 | CHECK 6 |
 | `SPIRA_LAND_STALE` | 1800 | CHECK 6 |
 | `SPIRA_LAUNCH`, `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON` | `systemd-run`, `systemctl`, `systemd-run` | test seams |
-| `SPIRA_SKIP_RECLAIM` | 0 | fixture fast path (skips the DB check, STATE, CHECK 2/2c/3/7c/7d) |
+| `SPIRA_SKIP_RECLAIM` | 0 | fixture fast path (skips the DB check, STATE, CHECK 2/2c/3) |
 | `SPIRA_LIFECYCLE_ENFORCE` | — | **retired** (sp-v62vn). Unset or on: nothing (on prints a deprecation warning). Anything else: the sentinel refuses to start, naming the exit (remove it) |
 | `SPIRA_FAYTHS` | the chamber | the roster (lib.sh `spira_fayths`, via the probe) |
 | `SPIRA_SENTINEL_PASS_TARGET_SECS` | 60 | **new**: the full-pass budget WARN (§5) |
@@ -282,7 +253,7 @@ table used to carry).
 | **4 (poison)** | Hold poison (`spira-lc event`). The note ends `… while the hold stands.` No bd label |
 | **4 (stale clear)** | Beads the lifecycle rows hold `poison` on. `clear` means Unhold poison |
 | **4 (counts, asks)** | spira-claim over the bd events trail, the asked stamps, mail |
-| **5, 6, 6b, 7, 7c, 7d, 8** | No lifecycle read or write of their own |
+| **5, 6, 7, 8** | No lifecycle read or write of their own |
 
 **Children.** No child is handed a switch or a tool path (sp-gypjk); every `spira-lc`
 caller verb acts on the machine unconditionally.
@@ -325,9 +296,9 @@ lets the refill ExecStopPost, is handed SPIRA_TOML, SPIRA_RELEASE and PATH by it
   never `acted`.
 - **G5. One pass per summon slot.** CHECK 7 only ever runs inside `ck7_summon_pass`'s flock,
   shared by the full pass and `--summon-only`.
-- **G6. The audit worker and the landing worker never run twice.** The unit name is the
+- **G6. The landing worker never runs twice.** The unit name is the
   mutex, and `--collect` is always passed.
-- **G7. Positive controls.** `audit.status`, `landing.status`, `*.dispatched` and the stale
+- **G7. Positive controls.** `landing.status`, `*.dispatched` and the stale
   WARN lines make "never ran" visible.
 - **G8. Temp files never outlive the process.** The snapshots and the cache are removed on
   every exit path, including the early exits: RAII guard plus a SIGTERM handler.
@@ -376,7 +347,7 @@ struct Context {
     fayths: Vec<Fayth>,                  // spira_fayths order
     partitions: Vec<Partition>,          // fayth_partitions (deduplicated by labels)
     chamber: Vec<String>,                // fayth_names (for roster_warnings)
-    repos: Vec<Repo>,                    // audit only: spira_repos with their resolution
+    repos: Vec<Repo>,                    // spira_repos with their resolution (CHECK 2d)
 }
 struct Fayth { name: String, labels: Vec<String>, exclude: Vec<String> }
 struct Partition { labels: Vec<String>, exclude: Vec<String> }
@@ -386,20 +357,15 @@ struct Repo { name: String, root: Option<PathBuf>, landrefs: Vec<String> /* [0] 
 /// A landstate record's first two fields.
 struct LandState { state: String, tip: String }
 
-/// The two status files, read by `KEY=<digits or ->` lines only (as the old sed/eval did).
-struct AuditStatus { at: Option<i64>, rc: Option<String> }
+/// The status file, read by `KEY=<digits or ->` lines only (as the old sed/eval did).
 struct LandStatus  { at: Option<i64>, rc: Option<String>, branches: Option<String>, moved: Option<String> }
 
-/// CHECK 4's per-bead inputs.
-struct Counts { attempts: u32, requeues: u32, reclaims: u32 }
-struct Stamp { requeue: bool, reclaim: bool, poison_at_n: bool, lifted_at_or_above_n: bool }
-enum Token { RequeueMail, ReclaimMail, Poison, Clear, Ask }
 /// CHECK 8's pure decision (lib.sh check8_should_judge).
 enum Judge { Yes, Cooldown, No }
 
 /// The pass's bookkeeping.
 struct Tally { acted: u32, progressed: u32 }
-enum Mode { Pass, Report, SummonOnly, Audit, OpenChildren { dry: bool } }
+enum Mode { Pass, Report, SummonOnly, OpenChildren { dry: bool } }
 ```
 
 ## 4. The pass, check by check
@@ -408,14 +374,12 @@ All numbered checks keep their names in the tsd phase rows (`setup`, `CHECK1`, `
 `CHECK2b`, `CHECK2c`, `CHECK2d`, `CHECK3`, `CHECK6`, `CHECK3b`, `CHECK3c`, `CHECK7`, `CHECK8`, `end`).
 These rows are the per-check timing; the `end` phase is never flushed, so a complete pass is
 one with a `CHECK8` row. The full
-pass writes them. The audit worker writes none: the old one crashed with
-`_phase: command not found`.
+pass writes them.
 
 **Bootstrap (every mode).**
 
 1. Locate SPIRA_HOME (§2.7).
-2. Run the context probe (S0), which gives the environment, the roster and (for audit)
-   the repos.
+2. Run the context probe (S0), which gives the environment, the roster and the repos.
 3. Every child process then runs with exactly that environment, plus the snapshot paths.
 
 **--summon-only.**
@@ -428,7 +392,7 @@ pass writes them. The audit worker writes none: the old one crashed with
 4. S2 (`ck7_summon_pass`).
 5. Log `summon-only pass complete — <a> action(s)` and exit 0.
 
-**Full pass, --report and --audit.**
+**Full pass and --report.**
 
 1. **Bulk read.**
    - Under `SPIRA_SKIP_RECLAIM≠1`, a failed `bd list --all` logs
@@ -510,19 +474,6 @@ announces `queue.starved` when held beads exceed 25% of READY (at least three).
 3. Log `recomputed is_blocked`.
 4. If the count changed, progress `recompute-blocked freed <n> bead(s)`.
 
-**Audit dispatch** (full pass).
-
-1. Drain the audit mailbox.
-2. If `audit.status` exists, log `CHECK4/5 audit: last run <age>s ago — rc=<rc>`.
-3. Dispatch, and log whichever holds:
-   - `CHECK4/5 audit: already running — this pass does not start another`
-   - `CHECK4/5 audit: dispatched as <unit>`, then write `audit.dispatched` if absent
-   - `CHECK4/5 audit: started underneath this pass — not starting another`
-   - `CHECK4/5 audit WARN: could not dispatch the audit worker; poison, closed-not-landed, sending and collision checks will not run until this is fixed`
-4. If nothing ran within the stale window and none is running, log
-   `CHECK4/5 audit WARN: no audit pass has completed in <age>s and none is running`.
-5. Drain the mailbox again.
-
 **CHECK 6 — land dispatch.**
 
 1. Drain the landing mailbox.
@@ -565,87 +516,6 @@ cost 302 s against a 60 s pass budget (§5).
 
 **CHECK 7.** S2.
 
-**CHECK 4 — the poison valve** (audit). The poisoned set, the poison write and the stale-clear lift are lifecycle holds (§2.9).
-
-1. **Build the set.** `dispatchable` is every snapshot row, per partition in roster order,
-   with:
-   - `status ≠ closed`;
-   - type not `epic` or `event`;
-   - labels ⊇ the partition's labels and disjoint from its exclusions.
-
-   Rows are deduplicated by id, first occurrence wins. If no partition exists, log to
-   stderr `WARN no persona in the chamber declares a partition — …`.
-2. **Log the set.**
-   `CHECK4 examining <n> dispatchable bead(s), poison=<P> requeue=<R> reclaim=<C>`.
-3. **Count.** One `spira-claim counts`. A non-zero exit logs
-   `CHECK4 bulk attempts query failed (rc=<rc>) — making no poison/requeue/reclaim decision this pass`
-   and the loop is skipped.
-4. **Poisoned set.** Read from the lifecycle rows (holds ∋ `poison`).
-5. **Decide, per bead, in order.** The stamp is `rq:rc:po:pl`, read from the four asked or
-   lifted files. Then `decide n rq rc labels stamp poisoned`, and the tokens act:
-   - **`requeue-mail`.** Causes come from the legacy `sp-requeue-N[-cause]` labels, as
-     `<cause> x<N>` joined by `, `, else `unrecorded`. Subject:
-     `Spira bead <id> — completed and requeued <rq> times, never landed (<causes>) — the harness cannot land it`.
-     The evidence is bead_context + `REQUEUES`/`ATTEMPTS` lines. It is mailed with
-     `SPIRA_MAIL_REPEAT_CONSIDERED=sentinel-own-dedup`. It is marked only on success, else
-     logged `CHECK4 <id>: requeue escalation path refused the ask — retries next pass`.
-   - **`reclaim-mail`.** The same shape, with the reclaim wording and caps.
-   - **`poison` or `ask`.**
-     - First re-read the bead with `bd show <id>` (G11). If it is now `closed`, log
-       `CHECK4 <id>: <n> attempts, but it closed while this pass ran — not poisoned, not asked`.
-       If its status is otherwise not the snapshot's, or the re-read failed, log the G11 skip
-       line. Either way, nothing is written.
-     - For `poison`: Hold poison `poisoned after <n> in_progress transition(s) without landing`
-       (actor `sentinel`), then `bd note` (fixed text), then progress
-       `poisoned <id> after <n> attempts`, then the spira_event `bead.poisoned` (S5).
-     - For `ask`: the evidence is bead_context from that show, plus `REPO`, `ATTEMPTS`,
-       `BRANCH` (commit count and diffstat against the bead repo's landref), and the
-       25-line trace tail (S6). It is mailed without the repeat override, and
-       `poison_asked_mark` is written only on success, else the log line
-       `CHECK4 <id>: the escalation path refused the ask — it stands, and the next pass retries it`.
-6. **CHECK 4 supplement (closed but unlanded).**
-   - The set is snapshot rows per partition that are closed, not an epic or event, carry a
-     `branch:` label, and match the partition's labels and exclusions.
-   - Count the set; failure logs `CHECK4-closed bulk attempts query failed (rc=…) — making no requeue decision this pass`.
-   - Per bead: `decide 0 rq 0 labels rq:1:1`; only `requeue-mail` acts.
-   - Skip, with a log, when `landed()` holds:
-     `CHECK4-closed <id>: reopens=<rq> but already landed — no escalation`.
-   - Skip when the LANDED landstate tip is an ancestor of the base:
-     `CHECK4-closed <id>: landed by ancestry (landstate tip on <repo>) — no escalation`.
-   - Otherwise mail, with the `STATUS    closed (not landed in <repo>)` evidence.
-7. **Stale poison clear.**
-   - Walk the lifecycle rows holding `poison`.
-   - Skip a bead that is closed in the snapshot, or is an epic or event.
-   - One `spira-claim counts` for the set. On failure, log per bead
-     `CHECK4 <id>: attempts query failed — stale-poison-clear makes no decision this pass`.
-   - `decide n 0 0 "" 1:1:1 1`. If it says `clear`, Unhold poison and progress
-     `CHECK4 <id>: stale poison cleared — <n> attempt(s), below threshold <P>`.
-
-**CHECK 5 — closed but not landed** (audit — DELETED; lifecycle LANDED supersedes it).
-
-1. **Incidents.** Open or in-progress snapshot rows carrying `$SPIRA_INCIDENT_LABEL`,
-   keyed by their `ref:<hash>` label.
-2. **Candidates.** Closed rows of a work type, per partition (labels ⊇ partition; no
-   exclusions, as today). Each carries: repo (`repo:` else the home repo), superseded (any
-   `supersedes` edge), `spira-dropped`, `delivers:*`, `content-landed`, subsumed (the
-   close_reason matches `SUBSUMED|DUPLICATE|tracked in epic`, case-insensitive), and
-   `branch:`. They are sorted and deduplicated by (repo, id).
-3. **Per bead, skip when:** it has no `<run>/<id>.log`, or any exemption flag is set.
-4. **Resolve the repo.** A repo absent from the map logs once:
-   `CHECK5: repo:<r> is not in repo-map — skipping its closed beads`.
-5. **One `git log --format=%s <base>` per repo** builds the landed-id set from three
-   subject shapes:
-   - `spira: land <id>…`
-   - `Merge branch 'spira/<id>'…` (neither `round-*` nor anything containing a space)
-   - `<token>:` (the awk port)
-6. **No base.** Log `CHECK5 <id>: cannot resolve the ref <r> lands on — not judging whether it landed`.
-7. **Prove landed**, by the landed set, the branch ancestry, or the landstate LANDED tip
-   ancestry. Proof means resolving its incident (`bd close --force … --reason-file -`, with
-   evidence text identical to today's), within `MAX_RESOLVE` and the budget.
-8. **Otherwise file**, within `MAX_FILE` and the budget, through incident.sh with the same
-   env and body.
-9. **Summary lines**, identical to today's.
-
 **CHECK5-LC is deleted (sp-mve9i).** Its three shapes — landed-but-open, closed-unlanded,
 blocked-by-unlanded — were each bd's `status` disagreeing with the `spira-lc` row. Design
 bead-lifecycle-state-machine §3.4 makes bd status inert for work beads ("bd holds content,
@@ -660,34 +530,6 @@ past WORKING, CHECK 2's candidates are WORKING rows, CHECK 3c's open child is a 
 row, branch collisions are claimable rows, and CHECK-ROWLESS searches the ready set for a
 work bead with no row. Non-work beads (asks, epics) keep bd status as their only state and
 are read through `spira_config::nonwork`.
-
-**CHECK 6b — the Sending** (audit).
-
-1. **Skip test.** Skip only when the `sending.base` stamp matches every swept repository's
-   current landref sha, and every swept repo is in the stamp. Swept means not queue-mode,
-   with a root and a landref. On a skip, log `sending: base unchanged — skipped`.
-2. **Otherwise** run `sending --skip-queue` and act on each `SENT` line:
-   `act "sent <repo> <branch> <id>"`.
-3. **Failures.** A `FAILED` line logs `sending reported a branch it could not delete`.
-4. **Stamp.** Rewrite the stamp.
-
-**CHECK 7c / 7d** (audit; skipped under SKIP_RECLAIM).
-
-- S7 runs `detect_unclaimable_ready`. For each result:
-  1. print it;
-  2. log `CHECK7c: <n> ready bead(s) no persona can claim — fix each by adding or removing the label named above`;
-  3. act `surfaced <n> unclaimable ready bead(s)`;
-  4. S8 `file_unclaimable_incidents`, with the output on stdin.
-- S9 runs `detect_branch_collisions`. For each result:
-  1. print it;
-  2. S10 `park_branch_collisions`, on stdin;
-  3. count `FREED`, `UNLABELED` and the parked remainder;
-  4. log and act with the three messages from today.
-
-**End.**
-
-- Audit: write `audit.status` (`SP_AUDIT_AT=<now>`, `SP_AUDIT_RC=0`), log
-  `audit pass complete — <a> action(s), <p> progress`, exit 0.
 
 **CHECK 8 — judgement.** `check8_should_judge(plan_ready, plan_inprog, n_open, progressed,
 last, now, every)` decides:
@@ -711,7 +553,7 @@ Then log `pass complete — <a> action(s), <p> progress`.
 ## 5. Performance — the pass-time budget
 
 **History.** The bash full pass took a median 213 s (max 537 s, 2026-09-28) against a
-2-minute timer, before sp-bo67y (the snapshots) and sp-994y9 (the audit split). After them
+2-minute timer, before sp-bo67y (the snapshots) and sp-994y9 (the checks moved out of the pass). After them
 it took about 20 s.
 
 The Rust pass regressed to a median 198 s (106–375 s over the last 30 production passes,
@@ -729,19 +571,13 @@ itself takes milliseconds.
 |---|---|---|---|
 | full pass | ≤ 20 s (Rust aims under 10 s: the snapshot reads are ~1.2 s + ~1 s, and the seams are ~0.2 s each plus their own work) | `WARN pass took <s>s — over the <T>s pass budget (SPIRA_SENTINEL_PASS_TARGET_SECS)`, logged when wall > T (default 60) | TimeoutStartSec=900 |
 | --summon-only | ≤ 2 s | — | TimeoutStartSec=60 |
-| --audit | minutes; it is off the critical path | the stale WARN at 1800 s | RuntimeMaxSec=1800 |
 | CHECK 7 inside a pass | — | `not evaluated (pass budget exhausted)` | `SPIRA_SENTINEL_PASS_BUDGET_SECS=90` (in the seam) |
 
-**Store reads per full pass: exactly one of each**, and the audit worker makes the same
-three:
+**Store reads per full pass: exactly one of each:**
 
 - `bd list --all` (~25 MB, ~1.1 s on the live store, 2026-09-29),
 - `bd ready` (raw),
 - `spira-lc list`.
-
-The bash worker made one `bd list` per partition (seven) for dispatchable_open, seven more
-for check4_closed_branched (~10.5 MB each), and seven for CHECK 5, because it never took
-the snapshot.
 
 **Other processes per full pass:**
 
@@ -751,7 +587,6 @@ the snapshot.
 
 The per-bead subprocesses are:
 
-- `spira-claim decide` in the audit, a few ms each, ~240 beads;
 - `bd show`, and the lifecycle `show` plus event, only when a decision acts.
 
 ## 6. The lib.sh seams
@@ -774,8 +609,7 @@ progress() { printf 'progress\t%s\n' "$*" >> "$SENTINEL_TALLY"; log "ACT $*"; }
 ```
 
 After each seam, the sentinel reads the tally and adds it to its counters. Each `progress`
-line counts as both acted and progressed, since the old `progress` called `act`. In audit
-mode each progress line is also appended to the audit mailbox. This preserves the exact
+line counts as both acted and progressed, since the old `progress` called `act`. This preserves the exact
 counter semantics lib.sh functions had when they ran in-process.
 
 | id | name | script body (after the prelude) | stdin | stdout |
@@ -877,26 +711,24 @@ named unit tests.
 
 | # | test | action |
 |---|---|---|
-| 21 | `test-sentinel-pass.sh` | repoint. The `--unit=spira-audit … sentinel.sh --audit` assertion becomes `… <binary> --audit`. The rest are `tests::*` (whole passes against the fake runner) |
+| 21 | `test-sentinel-pass.sh` | repoint. The rest are `tests::*` (whole passes against the fake runner) |
 | 22 | `test-summon-fast-path.sh:342` | `*"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $T/sentinel.sh --summon-only"*)` → `… --quiet $SPIRA_SENTINEL_BIN --summon-only"*)` |
 | 23 | `test-poison.sh` | reduce to the "stays end-to-end" rows of spira-claim/DESIGN.md §4, run against the binary |
-| 24 | `test-check5-invariant.sh` | repoint `--audit` (deleted with CHECK 5, sp-jnwbn) |
-| 25 | `test-sentinel-check5-subsumed.sh` | repoint `--audit` (deleted with CHECK 5, sp-jnwbn) |
 | 26 | `test-closed-strand.sh` | repoint |
 | 27 | `test-loop-readonly.sh` | repoint: run `$CURRENT/bin/sentinel` |
 | 28 | `test-strand-truncated.sh` | repoint |
 | 29 | `test-canary.sh` | follows canary.sh |
 | 30 | `test-tsd-producers.sh` | repoint; the phase names are unchanged |
-| 31 | `test-sentinel-store-reads.sh` case 8 | repoint. The bd-call counter should now see exactly 1 `list` + 1 `ready` from the sentinel itself (the audit worker makes the same two) |
+| 31 | `test-sentinel-store-reads.sh` case 8 | repoint. The bd-call counter should now see exactly 1 `list` + 1 `ready` from the sentinel itself |
 | 32 | `test-check4-unit.sh` | drives lib.sh `check4_decide`; it follows spira-claim's cutover item 7, not this one |
-| 33 | `test-check8-progressed.sh` | drives lib.sh `check8_should_judge`, which has no caller once sentinel.sh is gone; retire together with the function (row 38). Its table is `audit::tests::judgement_table` |
+| 33 | `test-check8-progressed.sh` | drives lib.sh `check8_should_judge`, which has no caller once sentinel.sh is gone; retire together with the function (row 38). Its table is `judge::tests::judgement_table` |
 | 34 | `test-ready-timers.sh:88` | mocks `sentinel.sh --report`; mock `SPIRA_SENTINEL_BIN` instead |
 | 35 | `test-install-exec.sh:146,207` | drop `sentinel.sh` from the executable list; the render-fallback assertion becomes `ExecStart=$(dirname "$HERE")/bin/sentinel` |
 | 36 | `test-install-conflicts.sh:57` | the fake foreign unit becomes `ExecStart=$FOREIGN_HOME/../bin/sentinel` |
 | 37 | `test-deploy.sh:140,433` | the stub moves to `current/bin/sentinel` |
 | 39 | `spira/sending.sh:488` | `lc_content_on_base …` | the `sending` binary writes the ContentOnBase event (sending/DESIGN.md §2); the OFF-mode `content-landed` label went with the switch (sp-v62vn) |
 | 40 | `strand` crate (`check.rs` `act_ghost`; the wait-held exemption in `probe.rs`) | spira-lc only | deleted with the OFF mode (sp-v62vn): a dead holder is CHECK 2's stale-lease reaper's |
-| 38 | lib.sh functions left with no production caller | **DONE at sp-8itaf.** `check2_protect_waiting` (was 1363), `check2c_lc_consistency` (was 2335), `check2_reclaim_stale` (was 2348) — ported to `lifecycle.rs`; `check8_should_judge` (was 1697, → `audit::tests::judgement_table`); `check4_closed_branched` (was 5600); `ready_cache_populate` (was 1563); `roster_warnings` (was 1051, Rust port already in `pass.rs`) all deleted outright, along with `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-check8-progressed.sh`, `test-roster-warn.sh` and the `test-poison.sh`/`test-sentinel-store-reads.sh` references to them. **Correction:** this row's earlier note said `dispatchable_open` stays — re-grepped at sp-8itaf (whole tree, including Rust string literals), it had zero live callers too (`all_partition_members` already covers `groomer deadlocked`, as this row said before `groomer.sh` itself moved to Rust) and was deleted with the rest. |
+| 38 | lib.sh functions left with no production caller | **DONE at sp-8itaf.** `check2_protect_waiting` (was 1363), `check2c_lc_consistency` (was 2335), `check2_reclaim_stale` (was 2348) — ported to `lifecycle.rs`; `check8_should_judge` (was 1697, → `judge::tests::judgement_table`); `check4_closed_branched` (was 5600); `ready_cache_populate` (was 1563); `roster_warnings` (was 1051, Rust port already in `pass.rs`) all deleted outright, along with `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-check8-progressed.sh`, `test-roster-warn.sh` and the `test-poison.sh`/`test-sentinel-store-reads.sh` references to them. **Correction:** this row's earlier note said `dispatchable_open` stays — re-grepped at sp-8itaf (whole tree, including Rust string literals), it had zero live callers too (`all_partition_members` already covers `groomer deadlocked`, as this row said before `groomer.sh` itself moved to Rust) and was deleted with the rest. |
 
 **Source greps that break when the file goes.** Each greps sentinel.sh's text; point it at
 `sentinel/src/*.rs`, or at lib.sh where the text now lives:
@@ -913,22 +745,12 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
 
 ## 9. Behaviour deliberately changed
 
-- **B1. The audit worker inherits `SPIRA_SKIP_CLOSED_CHECK` and `SPIRA_SKIP_RECLAIM`.**
-  - The old `--setenv` list dropped both. The drop-in the operator installed on 2026-09-26
-    to turn CHECK 5 off never reached the only process that runs CHECK 5 (since sp-994y9).
-    It filed and resolved incidents all along: 979 CHECK5 lines in the live audit.log.
-  - With this binary CHECK 5 really stops while the drop-in stands.
-  - If the operator wants CHECK 5 running until the cutover, delete the drop-in.
-  - Superseded by sp-jnwbn: a unit re-render deleted the drop-in on 2026-10-04 and CHECK 5
-    resumed, so CHECK 5 and `SPIRA_SKIP_CLOSED_CHECK` are deleted outright.
 - **B2. STATE and every CHECK 2, 4 and 5 input come from the pass's one snapshot, not from
   live per-check queries.**
   - The values are as of pass start, seconds older than before.
   - The two reads that decide a write stay live, so no race widens:
     - the poison and ask status re-read (`bd show`);
     - the lifecycle CAS version (`spira-lc show`).
-  - The audit worker now also takes the snapshot. The bash worker never did, and paid
-    twenty-odd per-partition `bd list` calls.
   - CHECK 2's dependency facts come from the snapshot join instead of a batch `bd show`.
 - **B3. `--report` with no open children prints no indented line.** It used to print one
   line of two spaces, which `ready.sh:196` counted as "1 open bead".
@@ -938,8 +760,6 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
   - The stale-poison-clear sweep reads its counts in one call instead of one per bead.
   - A failed poison-set read (spira-lc present but erroring) makes no CHECK 4 decision. It
     used to read as "not poisoned", which could re-hold a held bead and never clear one.
-- **B5. The audit worker writes no tsd phase rows.** It never did successfully, and its
-  `_phase: command not found` stderr noise is gone.
 - **B6. `bd note` text goes on stdin (`--stdin`), not argv** (law-payloads-go-on-stdin).
   The text is unchanged.
 - **B7. New WARN when a full pass exceeds `SPIRA_SENTINEL_PASS_TARGET_SECS`** (default 60),
@@ -965,13 +785,6 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
 - **B10. The Sending's "every swept repo is stamped" test matches `<name>=` at the start of
   a stamp line.** The bash `grep -qF "<name>="` matched it anywhere, so `a=` was satisfied
   by `ba=…`.
-
-**Pre-existing defects, not fixed here and not caused by the split:**
-
-- `unpoison.sh:145`, `cockpit.sh:626` (poisoned ACT) and cockpit-metrics.py's
-  SENT/HELD/KEEP/FAILED all look in `sentinel.log` for lines the audit worker writes to
-  `audit.log`. Cutover row 18 fixes the first. The other two want a decision: read both
-  logs, or have the audit unit append to sentinel.log.
 
 ## 10. Decisions — the goal is retired (sp-k6m1m)
 

@@ -18,24 +18,14 @@ pub struct Bead {
     pub id: String,
     #[serde(default)]
     pub title: Option<String>,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub notes: Option<Value>,
     #[serde(default, deserialize_with = "nullable")]
     pub status: String,
-    #[serde(default)]
-    pub priority: Option<Value>,
     #[serde(default)]
     pub issue_type: Option<String>,
     #[serde(default, deserialize_with = "nullable")]
     pub labels: Vec<String>,
     #[serde(default)]
     pub parent: Option<String>,
-    #[serde(default)]
-    pub created_at: Option<String>,
-    #[serde(default)]
-    pub close_reason: Option<String>,
     #[serde(default, deserialize_with = "nullable")]
     pub dependency_count: u64,
     #[serde(default, deserialize_with = "nullable")]
@@ -73,9 +63,6 @@ impl Bead {
     }
     pub fn typ(&self) -> &str {
         self.issue_type.as_deref().unwrap_or("")
-    }
-    pub fn labels_csv(&self) -> String {
-        self.labels.join(",")
     }
 }
 
@@ -182,17 +169,6 @@ pub fn parse_lc_rows(s: &str) -> Result<Vec<LcRow>, String> {
         })
         .filter(|r| !r.bead_id.is_empty())
         .collect())
-}
-
-/// Python's `str()` of a JSON scalar, for the bead_context header ("P0", "PNone").
-pub fn py_str(v: Option<&Value>) -> String {
-    match v {
-        None | Some(Value::Null) => "None".into(),
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Bool(true)) => "True".into(),
-        Some(Value::Bool(false)) => "False".into(),
-        Some(o) => o.to_string(),
-    }
 }
 
 /// `KEY=<digits or ->` lines of a status file (the old `sed -n … | eval`).

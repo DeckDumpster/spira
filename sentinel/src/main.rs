@@ -4,7 +4,6 @@
 //!   sentinel --report        print the open plan beads, change nothing
 //!   sentinel --summon-only   CHECK 7 alone                     (spira-summon.service, and
 //!                            every aeon unit's ExecStopPost)
-//!   sentinel --audit         the decoupled audit worker        (the spira-audit unit)
 //!   sentinel --open-children [--dry-run]
 //!                            CHECK 3c alone over a fresh snapshot (suites; a read-only
 //!                            production probe with --dry-run)
@@ -20,20 +19,18 @@
 //!                            CHECK 7d alone; --park-collisions reads detect's output
 //!                            on stdin (wave 4.28, sp-fbqsv)
 
-mod audit;
 mod cfg;
-mod check4;
 mod detect;
 mod dispatch;
 mod fresh;
 mod holds;
 mod host;
+mod judge;
 mod lifecycle;
 mod model;
 mod open_children;
 mod red_trackers;
 mod pass;
-mod render;
 mod seams;
 mod store;
 mod summon;
@@ -65,11 +62,9 @@ pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
     .map(|c| c.canonicalize().unwrap_or(c))
 }
 
-/// S0 — the context probe, run with this process's own environment. `repos` (audit's own
-/// need, CHECK5) no longer widens the bash script (sp-k6lku, "wave 4.13") — it now gates
-/// [`resolve_repos`], which reads the probe's own `@vars` section (already every `SPIRA_*`
+/// S0 — the context probe, run with this process's own environment. [`resolve_repos`] reads the probe's own `@vars` section (already every `SPIRA_*`
 /// key, exported or not) to build a `spira_config::repos::Registry` in-process.
-pub fn probe(r: &dyn Runner, home: &Path, repos: bool) -> Result<Context, String> {
+pub fn probe(r: &dyn Runner, home: &Path) -> Result<Context, String> {
     let mut s = Spec::args_owned(
         "bash",
         vec!["-c".into(), seams::PROBE.into(), "sentinel-probe".into()],
@@ -92,9 +87,7 @@ pub fn probe(r: &dyn Runner, home: &Path, repos: bool) -> Result<Context, String
     }
     let mut ctx = Context::parse(o.stdout.as_bytes())?;
     merge_resolved_config(&mut ctx, home)?;
-    if repos {
-        ctx.repos = resolve_repos(&ctx.vars, home);
-    }
+    ctx.repos = resolve_repos(&ctx.vars, home);
     Ok(ctx)
 }
 
@@ -179,7 +172,7 @@ fn main() {
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
         std::process::exit(fatal("cannot find lib.sh (set SPIRA_HOME)"));
     };
-    let ctx = match probe(&RealRunner { base_env: None }, &home, mode == Mode::Audit) {
+    let ctx = match probe(&RealRunner { base_env: None }, &home) {
         Ok(c) => c,
         Err(e) => std::process::exit(fatal(&e)),
     };
@@ -208,7 +201,6 @@ fn main() {
         declared,
         &home,
         mode,
-        exe.to_string_lossy().into_owned(),
         pass_id,
     );
     let code = s.run();

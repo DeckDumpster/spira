@@ -280,7 +280,6 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("ops-view") => ops::cmd_ops_view(&args[1..], conn),
         Some("ops-refusals") => ops::cmd_ops_refusals(&args[1..], conn),
         Some("live-check") => ops::cmd_live_check(conn),
-        Some("event-seq") => cmd_event_seq(conn),
         Some("dep-add") => deps::cmd_dep_add(&args[1..], conn),
         Some("dep-remove") => deps::cmd_dep_remove(&args[1..], conn),
         Some("backfill-deps") => deps::cmd_backfill_deps(&args[1..], conn),
@@ -384,18 +383,6 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
         "delivery": delivery_rows.first(),
     });
     (0, serde_json::to_string_pretty(&out).unwrap())
-}
-
-/// The highest event seq: moves whenever the machine records anything, so a caller that
-/// remembers it can tell the lifecycle store is unchanged without reading a row.
-fn cmd_event_seq(conn: &Conn) -> (i32, String) {
-    match conn.query("SELECT COALESCE(MAX(seq), 0) AS seq FROM event") {
-        Ok(rows) => match rows.first().and_then(|r| r.get("seq")) {
-            Some(v) => (0, v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())),
-            None => (2, "cannot tell: no seq".into()),
-        },
-        Err(e) => (2, format!("cannot tell: {e:?}")),
-    }
 }
 
 const LIVE_WINDOW_SECS: i64 = 24 * 3600;
