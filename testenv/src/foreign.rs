@@ -50,7 +50,7 @@ fn plausible_tier(n: &str) -> bool {
 
 impl Decl {
     pub fn parse(text: &str) -> Result<Decl, String> {
-        let d: Decl = toml::from_str(text).map_err(|e| format!("{DECL}: {e}"))?;
+        let d: Decl = spira_config::parse_foreign(text).map_err(|e| format!("{DECL}: {e}"))?;
         if d.image.trim().is_empty() {
             return Err(format!("{DECL}: image is empty"));
         }
