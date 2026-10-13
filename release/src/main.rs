@@ -487,8 +487,9 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
         _home = ensure_install_env(&env, Path::new(tb), a.answers.as_deref()).map_err(fail)?;
     }
     if cmd == "activate" {
-        if let (Some(sha), Ok(plain), Ok(me)) = (rest.first(), Config::resolve(&a.flags, &env), std::env::current_exe()) {
-            if let Some(target) = activate::delegate_target(&plain, sha, &me).map_err(fail)? {
+        let releases = env.get("SPIRA_TOML").filter(|s| !s.is_empty()).and_then(|spec| release::config_delta::releases_for_spec(spec, a.flags.releases.as_deref()).ok().flatten());
+        if let (Some(sha), Some(releases), Ok(me)) = (rest.first(), releases, std::env::current_exe()) {
+            if let Some(target) = activate::delegate_target_in(&releases, sha, &me).map_err(fail)? {
                 use std::os::unix::process::CommandExt;
                 let e = std::process::Command::new(&target).args(argv).exec();
                 return Err(fail(format!("cannot exec {}: {e}", target.display())));

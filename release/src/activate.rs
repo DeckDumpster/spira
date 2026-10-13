@@ -525,7 +525,20 @@ fn restart_unit(sc: &dyn Systemctl, unit: &str) -> Result<(), String> {
 /// older activator never renders templates it predates. `None` when `me` already is that
 /// binary or the release carries none; an error when its files fail the manifest check.
 pub fn delegate_target(cfg: &Config, sha: &str, me: &Path) -> Result<Option<PathBuf>, String> {
-    let rel = verify::release_dir(cfg, sha)?;
+    delegate_target_in(&cfg.releases, sha, me)
+}
+
+/// [`delegate_target`] from the releases directory alone: deciding whether to hand over must not
+/// resolve config, because the process-wide config resolves once and a resolution before the
+/// release's delta is staged caches its refusal of every key the delta adds.
+pub fn delegate_target_in(releases: &Path, sha: &str, me: &Path) -> Result<Option<PathBuf>, String> {
+    if !crate::is_sha(sha) {
+        return Err(format!("{sha:?} is not a full commit sha (40 hex digits); releases are named by exactly that"));
+    }
+    let rel = releases.join(sha);
+    if !rel.is_dir() {
+        return Err(format!("no release {sha} in {}", releases.display()));
+    }
     let bin = rel.join("bin").join("release");
     let (Ok(bin_real), Ok(me_real)) = (fs::canonicalize(&bin), fs::canonicalize(me)) else {
         return Ok(None);

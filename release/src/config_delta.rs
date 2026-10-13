@@ -219,9 +219,19 @@ fn read_layers(spec: &str) -> Result<(Vec<PathBuf>, Vec<u32>, Vec<String>, Vec<T
 /// the caller's plain resolution then reports whatever is wrong.
 pub fn staged_for_resolution(spec: &str, releases: Option<&Path>, sha: &str) -> Result<Option<(PathBuf, String)>, String> {
     let (_, _, _, original) = read_layers(spec)?;
-    let from_layers = original.iter().rev().find_map(|t| get(t, "spira.releases").and_then(Value::as_str)).filter(|s| !s.is_empty()).map(PathBuf::from);
-    let Some(releases) = releases.map(Path::to_path_buf).or(from_layers) else { return Ok(None) };
+    let Some(releases) = releases_of(&original, releases) else { return Ok(None) };
     stage_tree_delta(&original, &releases.join(sha))
+}
+
+fn releases_of(original: &[Table], flag: Option<&Path>) -> Option<PathBuf> {
+    let from_layers = original.iter().rev().find_map(|t| get(t, "spira.releases").and_then(Value::as_str)).filter(|s| !s.is_empty()).map(PathBuf::from);
+    flag.map(Path::to_path_buf).or(from_layers)
+}
+
+/// The releases directory the layers `spec` name (or the `releases` flag) give, read from the
+/// TOML itself so no registry resolution — and no process-wide config cache — is touched.
+pub fn releases_for_spec(spec: &str, flag: Option<&Path>) -> Result<Option<PathBuf>, String> {
+    Ok(releases_of(&read_layers(spec)?.3, flag))
 }
 
 /// [`staged_for_resolution`] for a source tree (or release) at `tree`: the round VM stages
