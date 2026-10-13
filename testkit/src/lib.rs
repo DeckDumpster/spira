@@ -159,6 +159,22 @@ pub fn write_exe(path: impl AsRef<Path>, body: &str) {
         .unwrap_or_else(|e| panic!("chmod 755 {}: {e}", path.display()));
 }
 
+/// Run `attempt` again while it fails with ETXTBSY, up to a bounded backoff. For executing a
+/// file this process's own code wrote: another thread's fork may hold the write descriptor
+/// until its exec, and no rename removes that from the inode.
+pub fn retry_busy<T>(mut attempt: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut tries = 0;
+    loop {
+        match attempt() {
+            Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) && tries < 100 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            r => return r,
+        }
+    }
+}
+
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 thread_local! {

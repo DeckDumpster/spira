@@ -924,9 +924,7 @@ fn path_shadows_names_a_dropin_dir_that_carries_a_binary_the_release_ships() {
     std::fs::write(d.join("50.conf"), format!("[Service]\nEnvironment=PATH={}:{}/current/bin\n", shim.display(), w.cfg.releases.display())).unwrap();
     assert!(units::path_shadows(&ud, &rel, &w.cfg.releases).is_empty(), "control: empty shim dir shadows nothing");
     let f = shim.join(&shipped);
-    std::fs::write(&f, "#!/bin/sh\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    exe(&f, "#!/bin/sh\n");
     let got = units::path_shadows(&ud, &rel, &w.cfg.releases);
     assert_eq!(got.len(), 1, "{got:?}");
     assert!(got[0].starts_with("PATH-SHADOW"));
@@ -1784,7 +1782,7 @@ fn build_with_schema(w: &World, sha: &str, needs: &[&str], refuses: &[&str]) {
 }
 
 fn loads(w: &World, sha: &str) -> bool {
-    std::process::Command::new(w.rel(sha).join("bin/spira-config")).arg("validate").env("SPIRA_TOML", w.cfg.toml_spec().unwrap()).status().unwrap().success()
+    testkit::retry_busy(|| std::process::Command::new(w.rel(sha).join("bin/spira-config")).arg("validate").env("SPIRA_TOML", w.cfg.toml_spec().unwrap()).status()).unwrap().success()
 }
 
 fn cfg_text(w: &World) -> String {
@@ -1803,7 +1801,7 @@ fn a_release_that_adds_and_drops_a_key_activates_over_the_other_with_no_hand_edi
     let (a, b) = (w.rel(A).join("bin/spira-config"), w.rel(B).join("bin/spira-config"));
     let spec = w.cfg.toml_spec().unwrap();
     sc.probe = Some(Box::new(move || {
-        let ok = |p: &Path| std::process::Command::new(p).arg("validate").env("SPIRA_TOML", &spec).status().map(|s| s.success()).unwrap_or(false);
+        let ok = |p: &Path| testkit::retry_busy(|| std::process::Command::new(p).arg("validate").env("SPIRA_TOML", &spec).status()).map(|s| s.success()).unwrap_or(false);
         format!("a={} b={}", ok(&a), ok(&b))
     }));
     let c = ctx(&w, &sc);
@@ -2091,14 +2089,12 @@ fn config_for_resolution_has_the_delta_applied_without_touching_the_files_in_for
 
 #[test]
 fn dolt_renders_from_the_install_locations_when_path_omits_it() {
-    use std::os::unix::fs::PermissionsExt;
     let tmp = TempDir::new("dolt-home");
     let home = tmp.path().to_path_buf();
     let bin = home.join(".local/bin");
     std::fs::create_dir_all(&bin).unwrap();
     let dolt = bin.join("dolt");
-    std::fs::write(&dolt, "#!/bin/sh\n").unwrap();
-    std::fs::set_permissions(&dolt, std::fs::Permissions::from_mode(0o755)).unwrap();
+    exe(&dolt, "#!/bin/sh\n");
     let mut env = Env::new();
     env.insert("SPIRA_UNIT_DIR".into(), "/units".into());
     env.insert("PATH".into(), "/nonexistent-scrubbed".into());
