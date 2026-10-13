@@ -147,6 +147,14 @@ fn lc(bin: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+fn lift_wait_result(unhold: Result<String, String>, until: impl std::fmt::Display) -> Result<(), String> {
+    match unhold {
+        Ok(_) => Ok(()),
+        Err(e) if e.contains("Terminal") => Ok(()),
+        Err(e) => Err(format!("{e} (snooze expired at {until})")),
+    }
+}
+
 fn history_tail(history_json: &str) -> String {
     let Ok(Value::Array(events)) = serde_json::from_str::<Value>(history_json.trim()) else { return "(history unreadable)\n".into() };
     let start = events.len().saturating_sub(HISTORY_TAIL);
@@ -220,7 +228,7 @@ impl Env for Live {
         let age_h = |t: Option<u64>, now: u64| t.map(|s| format!("{}h", now.saturating_sub(s) / 3600)).unwrap_or_else(|| "unknown".into());
         let now = self.now;
         match action {
-            Action::LiftWait { until } => lc(&self.lc_bin, &["unhold", bead, "wait", &self.actor]).map(|_| ()).map_err(|e| format!("{e} (snooze expired at {until})")),
+            Action::LiftWait { until } => lift_wait_result(lc(&self.lc_bin, &["unhold", bead, "wait", &self.actor]), *until),
             Action::RaiseAsk => self.send(
                 "concierge",
                 &format!("HOLD SWEEP: {bead} is held on an ask that was never delivered"),
@@ -296,6 +304,15 @@ mod tests {
         ]"#;
         assert_eq!(live_hold_from_history(h, Kind::Poison).unwrap(), None);
         assert_eq!(live_hold_from_history(h, Kind::Ask).unwrap(), None);
+    }
+
+    #[test]
+    fn a_wait_on_a_finished_bead_is_not_a_failure_to_lift() {
+        let refused = Err("spira-lc unhold sp-a wait reconciler: exit 3: refused: Terminal".to_string());
+        assert_eq!(lift_wait_result(refused, 5), Ok(()));
+        assert_eq!(lift_wait_result(Ok(String::new()), 5), Ok(()));
+        let other = lift_wait_result(Err("refused: StaleVersion".to_string()), 5).unwrap_err();
+        assert!(other.contains("StaleVersion") && other.contains("snooze expired at 5"));
     }
 
     #[test]
