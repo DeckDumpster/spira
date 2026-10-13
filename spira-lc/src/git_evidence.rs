@@ -28,6 +28,10 @@ pub fn is_ancestor(repo: &Path, candidate: &str, base: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub fn ref_resolves(repo: &Path, name: &str) -> bool {
+    git_output(repo, &["rev-parse", "--verify", "--quiet", &format!("{name}^{{commit}}")]).is_some()
+}
+
 /// The commits reachable from `tip` and not from `base`; `None` when git cannot resolve either.
 pub fn commits_above(repo: &Path, base: &str, tip: &str) -> Option<std::collections::BTreeSet<String>> {
     let out = git_output(repo, &["rev-list", tip, &format!("^{base}")])?;

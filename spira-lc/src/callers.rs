@@ -530,8 +530,19 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
         // proof from the landing ref: a merge since reverted proves nothing.
         if sub == "pr-merged" {
             let waiting = show(m, &id).ok().is_some_and(|v| matches!(bead_field(&v, "state").as_str(), "SUBMITTED" | "CERTIFIED"));
-            if waiting && crate::git_evidence::change_in_force(std::path::Path::new(&a(1)), &a(3), &a(4)) {
-                let proof = format!("merge-tree:{}", a(4));
+            let repo_arg = a(1);
+            let repo = std::path::Path::new(&repo_arg);
+            // A deleted branch leaves no patch to test; the merge commit's place in the landing ref is the proof.
+            let proof = if !waiting {
+                None
+            } else if crate::git_evidence::change_in_force(repo, &a(3), &a(4)) {
+                Some(format!("merge-tree:{}", a(4)))
+            } else if !crate::git_evidence::ref_resolves(repo, &a(3)) && crate::git_evidence::is_ancestor(repo, &a(4), "HEAD") {
+                Some(format!("ancestry:{}", a(4)))
+            } else {
+                None
+            };
+            if let Some(proof) = proof {
                 let ans = with_row(m, &id, actor, |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }));
                 let line = if ans.code == 0 {
                     format!("lc: {id} landed by merged pull request — LANDED (no delivery round; {actor}, {proof})")
