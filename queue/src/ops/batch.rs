@@ -223,15 +223,20 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
         return FAIL;
     }
     let Ok(_g) = take_lock(w, "abandon", &c, "") else { return FAIL };
+    abandon_locked(w, &c, &path, &reason, &actor, dry_run, "abandon")
+}
+
+/// The abandon itself, with the repo's queue lock already held by the caller.
+fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &str, actor: &str, dry_run: bool, label: &str) -> i32 {
     let open = c.queue_file("open");
     let kv = match records::read_kv(&open) {
         Ok(Some(kv)) => kv,
         _ => {
-            w.err(format!("queue.sh abandon: no open batch for {}", c.r.name));
+            w.err(format!("queue.sh {label}: no open batch for {}", c.r.name));
             return FAIL;
         }
     };
-    if owner_refused(w, kv.get("owner").unwrap_or(""), &actor, "queue.sh abandon") {
+    if owner_refused(w, kv.get("owner").unwrap_or(""), actor, &format!("queue.sh {label}")) {
         return FAIL;
     }
     let pr = kv.get_first("pr").unwrap_or("").to_string();
@@ -240,7 +245,7 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
     let members = kv.members();
     let stamp = w.clock.stamp();
     let archive = c.queue_file(&format!("closed-pr{pr}-{stamp}"));
-    let reason_clean = one_line(&reason);
+    let reason_clean = one_line(reason);
 
     // A member already returned to REWORK is a verdict an abandon never overturns.
     let kept = |id: &str| -> Option<String> { w.lc.bead_row(id).map(|r| r.state).filter(|s| s == "REWORK") };
@@ -272,28 +277,28 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
     }
 
     if !batch_id.is_empty() {
-        let r = bounded_text(&reason);
+        let r = bounded_text(reason);
         match lc_cas(w, &batch_id, |s, v| w.lc.abandon_batch(&batch_id, s, v, "queue.sh", &r)) {
-            Ok(()) => w.out(format!("queue.sh abandon: {batch_id} abandoned on spira-lc")),
-            Err((rc, out)) => w.err(format!("queue.sh abandon: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}")),
+            Ok(()) => w.out(format!("queue.sh {label}: {batch_id} abandoned on spira-lc")),
+            Err((rc, out)) => w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}")),
         }
     }
-    if !branch.is_empty() && idents(w, "abandon", &[("branch", &branch)]).is_ok() {
-        w.lib.cancel_runs(&c.s.forge, &path, &branch);
+    if !branch.is_empty() && idents(w, label, &[("branch", &branch)]).is_ok() {
+        w.lib.cancel_runs(&c.s.forge, path, &branch);
     }
-    if !pr.is_empty() && idents(w, "abandon", &[("pr", &pr)]).is_ok() {
-        w.forge.pr_comment(&c.s.forge, &path, &pr, &bounded_text(&format!("Batch abandoned. Reason: {reason}")));
-        w.forge.pr_close(&c.s.forge, &path, &pr);
+    if !pr.is_empty() && idents(w, label, &[("pr", &pr)]).is_ok() {
+        w.forge.pr_comment(&c.s.forge, path, &pr, &bounded_text(&format!("Batch abandoned. Reason: {reason}")));
+        w.forge.pr_close(&c.s.forge, path, &pr);
     }
     let mut audit = Vec::new();
     for m in &members {
         match kept(&m.id) {
             Some(st) => {
-                w.out(format!("queue.sh abandon: {}: left as {st}", m.id));
+                w.out(format!("queue.sh {label}: {}: left as {st}", m.id));
                 audit.push(format!("{}:{st}", m.id));
             }
             None => {
-                w.out(format!("queue.sh abandon: {}: returned to CERTIFIED", m.id));
+                w.out(format!("queue.sh {label}: {}: returned to CERTIFIED", m.id));
                 audit.push(format!("{}:CERTIFIED", m.id));
             }
         }
@@ -305,7 +310,7 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
     archived.push("reason", &reason_clean);
     archived.push("actor", &actor);
     if write_atomic(&open, &archived.render()).is_err() || fs::rename(&open, &archive).is_err() {
-        w.err("queue.sh abandon: failed to archive open record");
+        w.err(format!("queue.sh {label}: failed to archive open record"));
         return FAIL;
     }
     landing_log(
@@ -318,7 +323,7 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
         &format!("members={audit} reason={reason_clean}"),
     );
     w.lib.notify(&c.s.mailbox, &c.r.name, "batch abandoned (queue.sh abandon)", &format!("PR {pr} abandoned by {actor}. Reason: {reason_clean}\nMembers: {audit}"));
-    w.out(format!("queue.sh abandon: PR {pr} closed, batch abandoned for {}", c.r.name));
+    w.out(format!("queue.sh {label}: PR {pr} closed, batch abandoned for {}", c.r.name));
     OK
 }
 
@@ -347,10 +352,21 @@ fn barred_prereq(w: &World, row: &crate::model::LcBeadRow) -> Option<String> {
     None
 }
 
-pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregate: bool, dry_run: bool) -> i32 {
+pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregate: bool, dry_run: bool, replace: Option<&Text>) -> i32 {
     if !czar_ok(w) {
         return FAIL;
     }
+    let replace_reason = match replace {
+        None => None,
+        Some(t) => {
+            let r = read_text(w, t).unwrap_or_default();
+            if r.trim().is_empty() {
+                w.err("queue.sh open-batch: --replace requires --reason \"<why>\" so the abandon is auditable");
+                return USAGE;
+            }
+            Some(r)
+        }
+    };
     let members_arg = match read_text(w, members_arg) {
         Ok(m) => m,
         Err(e) => {
@@ -371,10 +387,16 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     }
     let Ok(_g) = take_lock(w, "open-batch", &c, "") else { return FAIL };
     let open = c.queue_file("open");
-    if open.exists() {
+    if open.exists() && replace_reason.is_some() && !dry_run {
+        let r = replace_reason.as_deref().unwrap_or_default();
+        if abandon_locked(w, &c, &path, r, &actor, false, "open-batch --replace") != OK {
+            return FAIL;
+        }
+    }
+    if open.exists() && !(dry_run && replace_reason.is_some()) {
         let owner = records::read_kv(&open).ok().flatten().and_then(|k| k.get("owner").map(String::from)).unwrap_or_default();
         let owner = if owner.is_empty() { "batcher".into() } else { owner };
-        w.err(format!("queue.sh open-batch: a batch is already open for {name} (owner={owner}) — no override; abandon it first (queue.sh abandon)"));
+        w.err(format!("queue.sh open-batch: a batch is already open for {name} (owner={owner}) — abandon it first (queue.sh abandon) or pass --replace --reason"));
         return FAIL;
     }
     let Some(base) = c.r.landref.clone() else {

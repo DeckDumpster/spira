@@ -1556,6 +1556,40 @@ fn open_batch_refuses_while_a_batch_is_open() {
 }
 
 #[test]
+fn open_batch_replace_abandons_the_open_batch_and_cuts_the_named_members_in_one_step() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
+    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.open_record("pr=463\nbranch=spira/queue/old\nbatch_id=spira-old\nversion=1\nowner=batcher\n");
+    assert_eq!(t.run(&["open-batch", "--members", "sp-a", "--skip-pregate", "--replace", "--reason", "recut"]), 0, "{}{}", t.out(), t.err());
+    let calls = t.lc.calls.borrow().clone();
+    let abandon = calls.iter().position(|c| c.starts_with("abandon-batch spira-old")).expect("old batch abandoned");
+    let cut = calls.iter().position(|c| c.starts_with("cut spira-20260929T010203Z sp-a:ta")).expect("new batch cut");
+    assert!(abandon < cut, "{calls:?}");
+    let open = fs::read_to_string(t.qfile("open")).unwrap();
+    assert!(open.contains("batch_id=spira-20260929T010203Z"), "{open}");
+    assert!(!open.contains("spira-old"), "{open}");
+    let archived = fs::read_dir(t.qfile("open").parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("closed-pr463-"))
+        .expect("replaced batch archived");
+    assert!(fs::read_to_string(archived).unwrap().contains("reason=recut"));
+}
+
+#[test]
+fn open_batch_replace_requires_a_reason_and_leaves_the_open_batch_alone() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=1\n");
+    assert_eq!(t.run(&["open-batch", "--replace"]), 2);
+    assert!(t.err().contains("--replace requires --reason"), "{}", t.err());
+    assert!(t.qfile("open").exists());
+}
+
+#[test]
 fn open_batch_does_not_admit_when_the_lifecycle_row_cannot_be_read() {
     let t = T::new(LandMode::Queue);
     t.git.set("origin/main", "b0");
