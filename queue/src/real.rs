@@ -806,6 +806,9 @@ impl Forge for RealForge {
         }
         Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
     }
+    fn pr_automerge(&self, forge: &Path, repo: &Path, pr: &str) -> bool {
+        ok(Command::new(forge).arg("pr-automerge").arg(repo).arg(pr).arg("merge").stderr(Stdio::null()))
+    }
     fn pr_close(&self, forge: &Path, repo: &Path, pr: &str) {
         let _ = ok(Command::new(forge).arg("pr-close").arg(repo).arg(pr).stderr(Stdio::null()));
     }

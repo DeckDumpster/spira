@@ -311,9 +311,13 @@ fn pr_list_open_lists_every_open_pr_with_its_branch() {
 fn pr_automerge_arms_squash_and_reports_gh_s_exit() {
     let gh = FakeGh::default();
     gh.on(&["pr", "merge", "--auto", "--squash", "spira/sp-a"], 0, "");
-    assert_eq!(pr_automerge(&gh, repo(), "spira/sp-a").code, 0);
+    assert_eq!(pr_automerge(&gh, repo(), "spira/sp-a", "").code, 0);
     let gh2 = FakeGh::default();
-    assert_eq!(pr_automerge(&gh2, repo(), "spira/sp-a").code, 1);
+    assert_eq!(pr_automerge(&gh2, repo(), "spira/sp-a", "").code, 1);
+    let gh3 = FakeGh::default();
+    gh3.on(&["pr", "merge", "--auto", "--merge", "7"], 0, "");
+    assert_eq!(pr_automerge(&gh3, repo(), "7", "merge").code, 0);
+    assert_eq!(pr_automerge(&gh3, repo(), "7", "bogus").code, 1);
 }
 
 // ── run-metadata: both last-activity lines, per forge.sh's own double-print ─────────────
