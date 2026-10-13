@@ -194,7 +194,7 @@ impl Env for Live {
     fn holds(&mut self) -> Result<Vec<Hold>, String> {
         let mut out = Vec::new();
         for kind in Kind::ALL {
-            let ids = bead_ids(&lc(&self.lc_bin, &["list", "--hold", kind.as_str()])?)?;
+            let ids = bead_ids(&lc(&self.lc_bin, &["list", "--hold", kind.as_str(), "--live"])?)?;
             for id in ids {
                 let history = lc(&self.lc_bin, &["history", &id, "--machine", "bead"])?;
                 let placed = live_hold_from_history(&history, kind)?;
@@ -333,5 +333,18 @@ mod tests {
     fn no_readable_mailbox_is_cannot_tell() {
         let dir = testkit::TempDir::new("hold-sweep-nomail");
         assert!(scan_asks(&dir, &ASK_MAILBOXES).is_err());
+    }
+
+    #[test]
+    fn the_sweep_lists_only_live_beads_so_a_terminal_row_is_never_unheld() {
+        let dir = testkit::TempDir::new("hold-sweep-live");
+        let log = dir.join("calls");
+        let bin = dir.join("fake-lc");
+        testkit::write_exe(&bin, &format!("#!/bin/sh\necho \"$@\" >> {}\necho '[]'\n", log.display()));
+        let mut live = Live { lc_bin: bin.display().to_string(), mail_sh: String::new(), mail_root: dir.to_path_buf(), actor: "reconciler".into(), now: 0 };
+        assert!(live.holds().unwrap().is_empty());
+        let calls = fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().count(), Kind::ALL.len());
+        assert!(calls.lines().all(|l| l.starts_with("list --hold ") && l.ends_with(" --live")), "{calls}");
     }
 }
