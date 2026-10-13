@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn the_checked_in_fixture_still_deserializes() {
-        let text = include_str!("../tests/fixtures/spira-lc.jsonl");
+        let text = include_str!("../tests/fixtures/spira-lc.ndjson");
         assert!(text.lines().count() >= 3);
         for l in text.lines() {
             let r: ExportTraceServiceRequest = serde_json::from_str(l).unwrap();
@@ -315,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "rewrites tests/fixtures/spira-lc.jsonl from freshly emitted spans"]
+    #[ignore = "rewrites tests/fixtures/spira-lc.ndjson from freshly emitted spans"]
     fn regenerate_fixture() {
         let dir = tmp("fixture");
         let sink = Sink::new(dir.path(), "spira-lc", 14);
@@ -326,7 +326,7 @@ mod tests {
             let c = Call { method: m, caller: who, request_size: rq, response_size: rs, exit_code: code, start, end: start + Duration::from_millis(ms) };
             sink.write(&c, start).unwrap();
         }
-        fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/spira-lc.jsonl")).unwrap();
+        fs::copy(dir.join("spira-lc.2023-11-14.jsonl"), concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/spira-lc.ndjson")).unwrap();
     }
 
     #[test]
