@@ -276,14 +276,23 @@ fn github_rows(v: &serde_json::Value) -> Vec<ClosedGhRow> {
 // ────────────────────────────────────────────────────────────────────────────────────────
 
 /// The trail from `id` to what settles it, over the machine's rows and the store's close
-/// reasons.
-pub fn trail_of(d: &Deps, id: &str) -> Trail {
+/// reasons. `all` is the pass's one bulk list; only a DROPPED bead's close reason is read, from
+/// that list, and a per-bead show is the fallback for a bead the list does not carry.
+pub fn trail_of(d: &Deps, all: &serde_json::Value, id: &str) -> Trail {
     let lookup = |b: &str| -> Option<TrailRow> {
         let lc = d.lc.bead(b).ok().flatten()?;
-        let close_reason = d.bd.show_json(b).and_then(|v| show_row(&v).and_then(|r| r.get("close_reason")).and_then(|x| x.as_str()).map(String::from));
+        let close_reason = if lc.state == "DROPPED" { close_reason_of(d, all, b) } else { None };
         Some(TrailRow { state: lc.state, reason: Some(lc.reason).filter(|r| !r.is_empty()), close_reason })
     };
     provenance::trace(id, &lookup)
+}
+
+fn close_reason_of(d: &Deps, all: &serde_json::Value, id: &str) -> Option<String> {
+    let text = |r: &serde_json::Value| r.get("close_reason").and_then(|x| x.as_str()).map(String::from);
+    match list_rows(all).into_iter().find(|r| r.get("id").and_then(|x| x.as_str()) == Some(id)).and_then(text) {
+        Some(t) => Some(t),
+        None => d.bd.show_json(id).and_then(|v| show_row(&v).and_then(text)),
+    }
 }
 
 /// The public comment for a settled outcome. A landing's comment is [`comment_body`], which
@@ -365,7 +374,7 @@ pub fn provenance_read(d: &Deps) -> Result<Vec<ProvRow>, String> {
                 continue;
             }
         };
-        let verdict = match trail_of(d, &row.id) {
+        let verdict = match trail_of(d, &all, &row.id) {
             Trail::Pending(_) => ProvVerdict::Open,
             Trail::Broken(why) => ProvVerdict::Broken(why),
             Trail::Settled { outcome, via } => match settled_text(d, &outcome, &via) {
@@ -554,7 +563,7 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
             continue;
         }
 
-        if let Trail::Settled { outcome, via } = trail_of(d, &row.id) {
+        if let Trail::Settled { outcome, via } = trail_of(d, &all, &row.id) {
             if outcome != ExternalOutcome::Landed {
                 log.extend(report_outcome(d, ctx, &row.id, &row.ext, &outcome, &via));
                 continue;
@@ -779,6 +788,7 @@ mod tests {
         dep_removes: RefCell<Vec<(String, String)>>,
         dep_relates: RefCell<Vec<(String, String)>>,
         closes: RefCell<Vec<(String, String)>>,
+        shows: std::cell::Cell<usize>,
     }
 
     impl Bd for FakeBd {
@@ -797,6 +807,7 @@ mod tests {
             true
         }
         fn show_json(&self, id: &str) -> Option<serde_json::Value> {
+            self.shows.set(self.shows.get() + 1);
             self.show.borrow().get(id).cloned()
         }
         fn list_asks(&self, which: Which, _label: &str) -> Option<serde_json::Value> {
@@ -1466,6 +1477,27 @@ mod tests {
         assert!(matches!(&by("sp-a").verdict, ProvVerdict::Settled(t) if t.contains("cafebabe") && t.contains("sp-a -> sp-x")), "{:?}", by("sp-a"));
         assert!(by("sp-b").is_broken(), "superseded by a bead that never landed");
         assert!(by("sp-c").is_broken(), "no lifecycle row at all");
+    }
+
+    #[test]
+    fn the_provenance_read_makes_no_per_bead_store_reads() {
+        let bd = FakeBd::default();
+        let mut rows = Vec::new();
+        let mut lc = FakeLc::default();
+        for i in 0..25 {
+            let id = format!("sp-l{i}");
+            rows.push(serde_json::json!({"id":id,"status":"closed","external_ref":format!("github:fixture/testrepo#{i}"),"labels":[]}));
+            lc = lc.and(&id, "LANDED", "cafebabe1234");
+        }
+        rows.push(serde_json::json!({"id":"sp-d","status":"closed","external_ref":"github:fixture/testrepo#99","labels":[],"close_reason":"moot: gone"}));
+        lc = lc.and("sp-d", "DROPPED", "");
+        seed_closed_github(&bd, rows);
+        let (gh, git, repo, mail) = (FakeGh::default(), FakeGit::default(), FakeRepo::default(), FakeMail::default());
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let out = provenance_read(&d).unwrap();
+        assert_eq!(out.len(), 26);
+        assert!(matches!(&out.iter().find(|r| r.bead == "sp-d").unwrap().verdict, ProvVerdict::Settled(_)));
+        assert_eq!(bd.shows.get(), 0);
     }
 
     #[test]
