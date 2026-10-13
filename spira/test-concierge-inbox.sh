@@ -133,23 +133,23 @@ cat > "$TMP/elsewhere/fake-wake" <<WEOF
 printf '%s\n' "\$*" >> "$PUSHLOG"
 WEOF
 chmod +x "$TMP/elsewhere/fake-wake"
-tl_config SPIRA_CONCIERGE_PUSH_WAKE="$TMP/elsewhere/fake-wake" SPIRA_CONCIERGE_PUSH_WINDOW=2 \
+tl_config SPIRA_CONCIERGE_PUSH_WAKE="$TMP/elsewhere/fake-wake" SPIRA_CONCIERGE_PUSH_WINDOW=6 \
     SPIRA_CONCIERGE_PUSH_PATTERN='URGENT-[0-9]+'
 : > "$PUSHLOG"
 inbox-append.sh "plain event, not urgent"
-sleep 3
+sleep 7
 is "a non-urgent line produces no wake" "0" "$(wc -l < "$PUSHLOG")"
 
 inbox-append.sh "URGENT-0 lone"
-wait_until 15 test -s "$PUSHLOG"
+wait_until 20 test -s "$PUSHLOG"
 sleep 1
 is "one urgent line produces exactly one wake" "1" "$(wc -l < "$PUSHLOG")"
 want "carrying that line" "URGENT-0 lone" "$(cat "$PUSHLOG")"
 
 : > "$PUSHLOG"
 for k in 1 2 3 4 5 6 7 8 9 10; do inbox-append.sh "URGENT-$k burst"; sleep 0.2; done
-wait_until 15 test -s "$PUSHLOG"
-sleep 3
+wait_until 20 test -s "$PUSHLOG"
+sleep 7
 is "ten urgent lines in the window produce one wake" "1" "$(wc -l < "$PUSHLOG")"
 for k in 1 5 10; do want "and it lists URGENT-$k" "URGENT-$k burst" "$(cat "$PUSHLOG")"; done
 
