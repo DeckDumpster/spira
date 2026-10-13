@@ -54,6 +54,10 @@ pub struct Fake {
     pub sccache_dav_addr: RefCell<Option<String>>,
     pub daemon_bases: RefCell<Vec<String>>,
     pub hooks_path: RefCell<Option<String>>,
+    pub env_provided: RefCell<Vec<String>>,
+    pub env_installed: RefCell<Option<String>>,
+    pub env_locked: RefCell<Result<String, String>>,
+    pub tool_versions: RefCell<BTreeMap<PathBuf, String>>,
 }
 
 impl Default for Fake {
@@ -101,6 +105,10 @@ impl Default for Fake {
             sccache_dav_addr: RefCell::new(None),
             daemon_bases: RefCell::new(Vec::new()),
             hooks_path: RefCell::new(None),
+            env_provided: RefCell::new(Vec::new()),
+            env_installed: RefCell::new(None),
+            env_locked: RefCell::new(Err(String::new())),
+            tool_versions: RefCell::new(BTreeMap::new()),
         }
     }
 }
@@ -231,6 +239,18 @@ impl World for Fake {
     }
     fn sccache_dav_addr(&self) -> Option<String> {
         self.sccache_dav_addr.borrow().clone()
+    }
+    fn deps_provided_by_spira_env(&self) -> Vec<String> {
+        self.env_provided.borrow().clone()
+    }
+    fn spira_env_installed(&self) -> Option<String> {
+        self.env_installed.borrow().clone()
+    }
+    fn spira_env_locked(&self) -> Result<String, String> {
+        self.env_locked.borrow().clone()
+    }
+    fn tool_version_line(&self, path: &Path) -> Option<String> {
+        self.tool_versions.borrow().get(path).cloned()
     }
     fn git_hooks_path(&self, _repo: &Path) -> Option<String> {
         self.hooks_path.borrow().clone()
@@ -1209,4 +1229,55 @@ fn hooks_path_fails_when_unset() {
 fn hooks_path_passes_relative_and_absolute_forms() {
     assert_eq!(levels(&check_hooks_path(&hooks_fixture(Some("spira/hooks")))), vec![Level::Ok]);
     assert_eq!(levels(&check_hooks_path(&hooks_fixture(Some("/repo/spira/hooks/")))), vec![Level::Ok]);
+}
+
+const STORE_A: &str = "/nix/store/aaa-spira-env";
+const STORE_B: &str = "/nix/store/bbb-spira-env";
+
+fn env_fixture(installed: &str, locked: &str, bd: &str) -> Fake {
+    let f = Fake::default();
+    f.set("HOME", "/h");
+    *f.env_provided.borrow_mut() = vec!["bd".into()];
+    *f.env_installed.borrow_mut() = Some(installed.into());
+    *f.env_locked.borrow_mut() = Ok(locked.into());
+    f.which.borrow_mut().insert("bd".into(), PathBuf::from(bd));
+    f
+}
+
+#[test]
+fn spira_env_clean_when_installed_matches_locked_and_tool_resolves_inside() {
+    let f = env_fixture(STORE_A, STORE_A, "/h/.local/lib/spira-env/bin/bd");
+    assert_eq!(levels(&check_spira_env(&f)), vec![Level::Ok]);
+}
+
+#[test]
+fn spira_env_names_both_paths_when_stale() {
+    let f = env_fixture(STORE_A, STORE_B, "/h/.local/lib/spira-env/bin/bd");
+    let out = check_spira_env(&f);
+    assert_eq!(levels(&out), vec![Level::Warn]);
+    let d = out[0].detail.as_deref().unwrap();
+    assert!(d.contains(STORE_A) && d.contains(STORE_B), "{d}");
+}
+
+#[test]
+fn spira_env_flags_a_stray_binary_ahead_of_the_env() {
+    let f = env_fixture(STORE_A, STORE_A, "/h/.local/bin/bd");
+    let out = check_spira_env(&f);
+    assert_eq!(levels(&out), vec![Level::Ok, Level::Warn]);
+    assert!(out[1].msg.contains("/h/.local/bin/bd"), "{:?}", out[1].msg);
+}
+
+#[test]
+fn spira_env_flags_a_commit_stamped_dev_build() {
+    let f = env_fixture(STORE_A, STORE_A, "/h/.local/bin/bd");
+    f.tool_versions.borrow_mut().insert(PathBuf::from("/h/.local/bin/bd"), "bd version 1.3.1 (dev: abc1234)".into());
+    let out = check_spira_env(&f);
+    assert!(out.iter().any(|l| l.msg.contains("dev build")), "{out:?}");
+}
+
+#[test]
+fn spira_env_warns_when_not_installed() {
+    let f = env_fixture(STORE_A, STORE_A, "/h/.local/lib/spira-env/bin/bd");
+    *f.env_installed.borrow_mut() = None;
+    assert_eq!(levels(&check_spira_env(&f)), vec![Level::Warn]);
 }

@@ -544,6 +544,35 @@ impl World for Real {
         (o.status.success() && !v.is_empty()).then_some(v)
     }
 
+    fn deps_provided_by_spira_env(&self) -> Vec<String> {
+        self.seam("spira-config deps provided spira-env", &[]).lines().map(str::to_string).filter(|l| !l.is_empty()).collect()
+    }
+
+    fn spira_env_installed(&self) -> Option<String> {
+        let home = self.env("HOME").filter(|h| !h.is_empty())?;
+        std::fs::canonicalize(Path::new(&home).join(spira_config::SPIRA_ENV_REL)).ok().map(|p| p.display().to_string())
+    }
+
+    fn spira_env_locked(&self) -> Result<String, String> {
+        let root = self.home.parent().ok_or("no release root above SPIRA_HOME")?;
+        let target = format!("path:{}#spira-env.outPath", root.display());
+        let o = spira_config::bounded::bounded("nix")
+            .args(["--extra-experimental-features", "nix-command flakes", "eval", "--raw", &target])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+        if o.status.success() {
+            Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&o.stderr).lines().next().unwrap_or("nix eval failed").to_string())
+        }
+    }
+
+    fn tool_version_line(&self, path: &Path) -> Option<String> {
+        let o = spira_config::bounded::bounded(path).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        String::from_utf8_lossy(&o.stdout).lines().next().map(str::to_string)
+    }
+
     fn out(&self, s: &str) {
         println!("{s}");
     }

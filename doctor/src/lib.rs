@@ -93,6 +93,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "operator channel", lines: check_operator_channel(w) },
         Section { title: "concierge", lines: check_concierge_singleton(w) },
         Section { title: "git hooks", lines: check_hooks_path(w) },
+        Section { title: "spira-env", lines: check_spira_env(w) },
     ];
 
     let mut fatal = 0u32;
@@ -901,4 +902,34 @@ pub fn check_hooks_path(w: &dyn World) -> Vec<Line> {
             "The harness hooks do not run. Re-run: exclude.sh install",
         )]
     }
+}
+
+/// Reports, never builds (`law-detect-drift-never-install`): the installed spira-env against
+/// the store path the locked flake evaluates to, and any tool `deps.toml` marks as provided
+/// by it that resolves from outside it or carries a `dev:` commit-stamped version.
+pub fn check_spira_env(w: &dyn World) -> Vec<Line> {
+    let mut out = Vec::new();
+    match (w.spira_env_installed(), w.spira_env_locked()) {
+        (None, _) => out.push(warn("spira-env is not installed", "Re-run install to build it from the locked flake.")),
+        (Some(_), Err(e)) => out.push(warn("cannot evaluate the locked spira-env", e)),
+        (Some(have), Ok(want)) if have == want => out.push(ok(format!("spira-env matches the locked flake ({want})"))),
+        (Some(have), Ok(want)) => out.push(warn(
+            "spira-env has drifted from the locked flake",
+            format!("installed {have}\nlocked    {want}\nRe-run install to rebuild it."),
+        )),
+    }
+    let env_bin = spira_config::spira_env_bin(&w.env("HOME").unwrap_or_default());
+    for name in w.deps_provided_by_spira_env() {
+        let Some(found) = w.which(&name) else { continue };
+        if !found.starts_with(&env_bin) {
+            out.push(warn(
+                format!("{name} resolves to {}, outside spira-env", found.display()),
+                format!("spira-env's {env_bin}/{name} is shadowed on PATH; remove the stray binary or put {env_bin} first."),
+            ));
+        }
+        if w.tool_version_line(&found).is_some_and(|v| v.contains("dev:")) {
+            out.push(warn(format!("{name} at {} reports a commit-stamped dev build", found.display()), "It is not the pinned release."));
+        }
+    }
+    out
 }

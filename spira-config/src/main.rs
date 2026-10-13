@@ -473,6 +473,18 @@ fn cmd_deps(args: &[String]) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("provided") => match args.get(1) {
+            Some(provider) => {
+                for name in spira_config::deps::provided_by(&deps, provider) {
+                    println!("{name}");
+                }
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config deps provided <provider>");
+                ExitCode::FAILURE
+            }
+        },
         Some("absent") => match args.get(1) {
             Some(bin) => {
                 println!("{}", spira_config::deps::absent_of(&deps, bin));

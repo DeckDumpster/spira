@@ -147,5 +147,15 @@ pub trait World {
     /// `git -C <repo> config --get core.hooksPath`, verbatim; `None` when unset or git cannot run.
     fn git_hooks_path(&self, repo: &Path) -> Option<String>;
 
+    // ---- spira-env ----
+    /// Programs `deps.toml` marks `provider = "spira-env"`.
+    fn deps_provided_by_spira_env(&self) -> Vec<String>;
+    /// The store path `~/.local/lib/spira-env` resolves to; `None` when it is absent.
+    fn spira_env_installed(&self) -> Option<String>;
+    /// `nix eval --raw <release>#spira-env.outPath` — the store path the locked flake yields.
+    fn spira_env_locked(&self) -> Result<String, String>;
+    /// First line of `<path> --version`; `None` when it could not be run.
+    fn tool_version_line(&self, path: &Path) -> Option<String>;
+
     fn out(&self, s: &str);
 }

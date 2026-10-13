@@ -31,6 +31,8 @@ struct RawDep {
     purpose: Option<String>,
     #[serde(default)]
     absent: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -68,6 +70,7 @@ pub struct Dep {
     pub tier: String,
     pub purpose: String,
     pub absent: String,
+    pub provider: String,
 }
 
 /// Every `[[dep]]` in `deps.toml`, in file order — `toml`'s array-of-tables parse keeps the
@@ -93,6 +96,7 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
                 tier: d.tier.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_TIER.to_string()),
                 purpose: d.purpose.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_PURPOSE.to_string()),
                 absent: d.absent.unwrap_or_default(),
+                provider: d.provider.unwrap_or_default(),
             })
             .collect(),
         compat: raw.compat.into_iter().map(|c| Compat { name: c.name, alias: c.alias }).collect(),
@@ -127,6 +131,11 @@ pub fn purpose_of(deps: &[Dep], name: &str) -> String {
 /// `deps.toml` never said (most programs: absence just means the feature is off).
 pub fn absent_of(deps: &[Dep], name: &str) -> String {
     deps.iter().find(|d| d.name == name).map(|d| d.absent.clone()).unwrap_or_default()
+}
+
+/// Every program `deps.toml` marks `provider = "<provider>"`, in file order.
+pub fn provided_by(deps: &[Dep], provider: &str) -> Vec<String> {
+    deps.iter().filter(|d| d.provider == provider).map(|d| d.name.clone()).collect()
 }
 
 fn is_executable_file(p: &Path) -> bool {
@@ -194,6 +203,13 @@ version_probe = ""
         let p = dir.join("deps.toml");
         std::fs::write(&p, SAMPLE).unwrap();
         p
+    }
+
+    #[test]
+    fn provided_by_lists_only_the_marked_programs() {
+        let m = parse("[[dep]]\nname = \"bd\"\nprovider = \"spira-env\"\n[[dep]]\nname = \"git\"\n[[dep]]\nname = \"dolt\"\nprovider = \"spira-env\"\n").unwrap();
+        assert_eq!(provided_by(&m.deps, "spira-env"), vec!["bd", "dolt"]);
+        assert!(provided_by(&m.deps, "other").is_empty());
     }
 
     #[test]
