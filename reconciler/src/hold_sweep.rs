@@ -85,6 +85,17 @@ pub fn live_hold_from_history(history_json: &str, kind: Kind) -> Result<Option<H
     Ok(live)
 }
 
+/// True when the last applied event left the bead in a terminal state: the machine refuses
+/// every Unhold there, so a hold it still lists is not the sweep's to lift.
+pub fn ends_terminal(history_json: &str) -> Result<bool, String> {
+    let v: Value = serde_json::from_str(history_json.trim()).map_err(|e| format!("spira-lc history: not JSON: {e}"))?;
+    let events = v.as_array().ok_or("spira-lc history: not a JSON array")?;
+    let last = events.iter().rev().find(|e| !text(e, "applied").is_some_and(|a| a == "0" || a == "false"));
+    Ok(last.and_then(|e| text(e, "to_state")).is_some_and(|s| TERMINAL_STATES.iter().any(|t| s.eq_ignore_ascii_case(t))))
+}
+
+const TERMINAL_STATES: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
+
 /// The newest delivered question per work bead in `mailboxes`. `Err` when no mailbox could be
 /// read at all: that is "cannot tell", never "no questions".
 pub fn scan_asks(mail_root: &Path, mailboxes: &[&str]) -> Result<BTreeMap<String, AskMail>, String> {
@@ -197,6 +208,9 @@ impl Env for Live {
             let ids = bead_ids(&lc(&self.lc_bin, &["list", "--hold", kind.as_str()])?)?;
             for id in ids {
                 let history = lc(&self.lc_bin, &["history", &id, "--machine", "bead"])?;
+                if ends_terminal(&history)? {
+                    continue;
+                }
                 let placed = live_hold_from_history(&history, kind)?;
                 out.push(placed.map(|h| Hold { bead: id.clone(), ..h }).unwrap_or(Hold {
                     bead: id,
@@ -284,6 +298,18 @@ mod tests {
     fn a_refused_hold_event_is_not_a_hold_and_a_kind_never_placed_is_none() {
         assert_eq!(live_hold_from_history(HISTORY, Kind::Wait).unwrap(), None);
         assert_eq!(live_hold_from_history(HISTORY, Kind::Ask).unwrap(), None);
+    }
+
+    #[test]
+    fn a_dropped_bead_still_holding_wait_is_terminal_and_a_live_one_is_not() {
+        let dropped = r#"[
+          {"seq":1,"event":"Hold","applied":1,"to_state":"READY","evidence":{"Hold":{"kind":"Wait"}}},
+          {"seq":2,"event":"Reclassify","applied":1,"to_state":"DROPPED","evidence":{}},
+          {"seq":3,"event":"Unhold","applied":0,"to_state":"DROPPED","refusal":"Terminal","evidence":{}}
+        ]"#;
+        assert!(ends_terminal(dropped).unwrap());
+        assert!(!ends_terminal(HISTORY).unwrap());
+        assert!(!ends_terminal(r#"[{"seq":1,"event":"Hold","applied":1,"to_state":"READY","evidence":{}}]"#).unwrap());
     }
 
     #[test]
