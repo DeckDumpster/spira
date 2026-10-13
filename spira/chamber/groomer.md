@@ -148,7 +148,7 @@ reason — use them, not a file you `git add`.
 
 **Your scan is the whole graph, not the partition you own.** A bead's STATE — its
 `spira-lc` state and holds (poisoned, waiting, asked) — does not depend on which partition it
-carries. Read every open bead in every partition (`work list --json`). For each open bead:
+carries. Read every open bead in every partition (`work list --json`; it carries no descriptions, so `work read <id>` for one you judge, or `--full` for the whole dump). For each open bead:
 
 1. Read the title, description, and labels
 2. Check for duplicates (`work search "<the title's key terms>"`)

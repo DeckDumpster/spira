@@ -556,7 +556,7 @@ pub enum Step {
     Bd { args: Vec<String>, stdin: Option<String> },
     /// `work list`: the lifecycle rows in these states (every non-terminal state when empty,
     /// every state with `all`), joined to bd's content rows filtered by `bd_args`.
-    LcList { states: Vec<String>, all: bool, bd_args: Vec<String>, json: bool, limit: Option<usize> },
+    LcList { states: Vec<String>, all: bool, bd_args: Vec<String>, json: bool, full: bool, limit: Option<usize> },
     Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
     CreateRow,
     /// `Hold { Ask, OperatorQuestion }` on `bead`: the bead waits on the operator's answer
@@ -654,7 +654,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             if a.iter().any(|x| x == "--status") {
                 return Err(usage(verb, "--status is bd's status; a bead's state is the lifecycle's — use --state <STATE[,STATE]>"));
             }
-            let f = parse_flags(verb, a, 0, &["--state", "--label", "--title-contains", "--limit"], &["--json", "--all"])?;
+            let f = parse_flags(verb, a, 0, &["--state", "--label", "--title-contains", "--limit"], &["--json", "--all", "--full"])?;
             let mut states = Vec::new();
             for st in get(&f, "--state").into_iter().flat_map(|v| v.split(',')) {
                 let up = st.to_ascii_uppercase();
@@ -673,7 +673,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
                     bd_args.extend([s(k), v.to_string()]);
                 }
             }
-            Ok(vec![Step::LcList { states, all: f.iter().any(|(k, _)| k == "--all"), bd_args, json: f.iter().any(|(k, _)| k == "--json"), limit }])
+            Ok(vec![Step::LcList { states, all: f.iter().any(|(k, _)| k == "--all"), bd_args, json: f.iter().any(|(k, _)| k == "--json"), full: f.iter().any(|(k, _)| k == "--full"), limit }])
         }
         "search" => {
             let Some(q) = a.first().filter(|q| !q.is_empty() && !q.starts_with('-')) else {
@@ -914,7 +914,7 @@ fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
 /// `work list`: lifecycle state decides which beads, bd supplies what they say. A state filter
 /// is the machine's; `--label`/`--title-contains` narrow by content through bd, and the two are
 /// intersected here so neither side's idea of "open" is consulted.
-fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[String], json: bool, limit: Option<usize>) -> (i32, String) {
+fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[String], json: bool, full: bool, limit: Option<usize>) -> (i32, String) {
     let (rc, rows) = crate::cmd_list(&[], conn);
     if rc != 0 {
         return (rc, rows);
@@ -946,11 +946,24 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
         out.truncate(n);
     }
     if json {
-        return (0, serde_json::to_string_pretty(&out).unwrap_or_default());
+        if full {
+            return (0, serde_json::to_string_pretty(&out).unwrap_or_default());
+        }
+        let rows: Vec<serde_json::Value> = out.iter().map(project_row).collect();
+        return (0, serde_json::to_string(&rows).unwrap_or_default());
     }
     let lines: Vec<String> =
         out.iter().map(|c| format!("{} {} {}", c["id"].as_str().unwrap_or("?"), c["lifecycle_state"].as_str().unwrap_or("?"), c["title"].as_str().unwrap_or(""))).collect();
     (0, lines.join("\n"))
+}
+
+/// What `work list --json` carries per bead unless `--full`: the fields a lister decides on.
+/// Descriptions, notes and comments are `work read`'s; a whole-store dump of them is what
+/// made the reply cost dolt time for every caller.
+const LIST_PROJECTION: &[&str] = &["id", "title", "priority", "issue_type", "labels", "assignee", "lifecycle_state", "lifecycle_holds"];
+
+fn project_row(row: &serde_json::Value) -> serde_json::Value {
+    LIST_PROJECTION.iter().filter_map(|k| row.get(*k).map(|v| (k.to_string(), v.clone()))).collect::<serde_json::Map<_, _>>().into()
 }
 
 /// Ids per `bd list --id`: bd is asked only for the beads the lifecycle kept, never the whole store.
@@ -1009,7 +1022,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 Ok(t) => (0, t),
                 Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
             },
-            Step::LcList { states, all, bd_args, json, limit } => list_with_content(conn, &states, all, &bd_args, json, limit),
+            Step::LcList { states, all, bd_args, json, full, limit } => list_with_content(conn, &states, all, &bd_args, json, full, limit),
             Step::Tool { program, args, stdin } => {
                 // mail, by name; SPIRA_MAIL_SH is the harness-wide binary-override seam.
                 let prog = if program == "mail" { std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail")) } else { s(program) };
@@ -1190,11 +1203,25 @@ mod tests {
     fn list_filters_by_lifecycle_state_and_content() {
         assert_eq!(
             plan("list", "-", &call(&["--state", "ready,rework", "--label", "plan", "--json"], "warden")).unwrap(),
-            vec![Step::LcList { states: v(&["READY", "REWORK"]), all: false, bd_args: v(&["--label", "plan"]), json: true, limit: None }]
+            vec![Step::LcList { states: v(&["READY", "REWORK"]), all: false, bd_args: v(&["--label", "plan"]), json: true, full: false, limit: None }]
         );
         assert!(plan("list", "-", &call(&["--db", "/x"], "warden")).is_err());
         assert!(plan("list", "-", &call(&["--state", "closed"], "warden")).is_err(), "a bd status word is not a lifecycle state");
         assert!(plan("list", "-", &call(&["--limit", "many"], "warden")).is_err());
+    }
+
+    #[test]
+    fn list_json_projects_unless_full() {
+        let Ok(Step::LcList { full, .. }) = plan("list", "-", &call(&["--json", "--full"], "groomer")).map(|mut p| p.remove(0)) else { panic!("not a list") };
+        assert!(full);
+        let row = serde_json::json!({"id": "sp-a", "title": "t", "description": "d".repeat(5000), "notes": "n", "labels": ["x"], "lifecycle_state": "READY", "lifecycle_holds": []});
+        let p = project_row(&row);
+        assert_eq!(p["title"], "t");
+        assert_eq!(p["lifecycle_state"], "READY");
+        assert!(p.get("description").is_none() && p.get("notes").is_none());
+        let many: Vec<_> = (0..400).map(|_| project_row(&row)).collect();
+        assert!(serde_json::to_string(&many).unwrap().len() <= 64 * 1024, "four hundred open beads must still fit the 64 KiB reply bound");
+        assert!(serde_json::to_string(&row).unwrap().len() * 400 > 64 * 1024, "the fixture's full list must exceed the bound");
     }
 
     #[test]
