@@ -49,7 +49,7 @@ ids="$(sed 's#^spira/##' <<<"$branches" | paste -sd, -)"
 
 # One listing per pass for every branch's bead; a bead absent from it is confirmed gone,
 # while a listing that fails proves nothing and refuses (law-absence-needs-a-positive-control).
-rows="$(timeout 10 spira-lc list --ids "$ids" 2>/dev/null)" \
+rows="$(timeout 5 spira-lc list --ids "$ids" 2>/dev/null)" \
     && states="$(python3 -I -c 'import json, sys
 for r in json.load(sys.stdin): print(r["bead_id"] + "\t" + r["state"])' <<<"$rows" 2>&1)" \
     || { printf 'holds.sh: bead states unreadable: %s\n' "${states:-$rows}" >&2; exit 1; }
