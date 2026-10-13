@@ -43,12 +43,12 @@ WITH rs AS (SELECT unnest(resourceSpans) AS r FROM otel_raw),
 ss AS (SELECT r.resource AS resource, unnest(r.scopeSpans) AS s FROM rs),
 sp AS (SELECT resource, unnest(s.spans) AS span FROM ss)
 SELECT
-  list_filter(resource.attributes, a -> a."key" = 'service.name')[1]."value".stringValue AS service,
-  list_filter(span.attributes, a -> a."key" = 'rpc.method')[1]."value".stringValue AS verb,
-  list_filter(span.attributes, a -> a."key" = 'spira.caller')[1]."value".stringValue AS caller,
-  TRY_CAST(list_filter(span.attributes, a -> a."key" = 'rpc.request.size')[1]."value".intValue AS BIGINT) AS request_bytes,
-  TRY_CAST(list_filter(span.attributes, a -> a."key" = 'rpc.response.size')[1]."value".intValue AS BIGINT) AS response_bytes,
-  TRY_CAST(list_filter(span.attributes, a -> a."key" = 'spira.exit_code')[1]."value".intValue AS BIGINT) AS exit_code,
+  list_filter(resource.attributes, lambda a: a."key" = 'service.name')[1]."value".stringValue AS service,
+  list_filter(span.attributes, lambda a: a."key" = 'rpc.method')[1]."value".stringValue AS verb,
+  list_filter(span.attributes, lambda a: a."key" = 'spira.caller')[1]."value".stringValue AS caller,
+  TRY_CAST(list_filter(span.attributes, lambda a: a."key" = 'rpc.request.size')[1]."value".intValue AS BIGINT) AS request_bytes,
+  TRY_CAST(list_filter(span.attributes, lambda a: a."key" = 'rpc.response.size')[1]."value".intValue AS BIGINT) AS response_bytes,
+  TRY_CAST(list_filter(span.attributes, lambda a: a."key" = 'spira.exit_code')[1]."value".intValue AS BIGINT) AS exit_code,
   to_timestamp(TRY_CAST(span.startTimeUnixNano AS HUGEINT) / 1e9) AS start_ts,
   (TRY_CAST(span.endTimeUnixNano AS HUGEINT) - TRY_CAST(span.startTimeUnixNano AS HUGEINT)) / 1e6 AS latency_ms,
   coalesce(span.status.code, 0) = 2 AS is_error
