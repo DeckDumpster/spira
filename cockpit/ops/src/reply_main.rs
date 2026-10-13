@@ -1,12 +1,12 @@
 //! `reply <bead-id> "<text>"` — answer the operator inside a bead's own comment thread.
 //! See cockpit-ops's DESIGN.md and src/reply.rs.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{ExitCode, Stdio};
 
 use cockpit_ops::db;
-use cockpit_ops::reply::{run, usage_error, BdResult, Commenter, Follow, Outcome, USAGE};
+use cockpit_ops::reply::{answer_message, find_open_ask, run, usage_error, BdResult, Commenter, Follow, Outcome, USAGE};
 
 struct RealBd;
 
@@ -54,6 +54,35 @@ impl Follow for RealFollow {
             Ok(())
         } else {
             Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+
+    fn answer_ask(&self, id: &str, text: &str) -> bool {
+        let mail_root = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
+        let Some(ask) = find_open_ask(Path::new(&mail_root), id) else { return false };
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let raw = answer_message(&ask, text, &format!("ans-{id}-{nanos}"));
+        let Ok(mut child) = spira_config::bounded::bounded("mail")
+            .arg("sendmail")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+        else {
+            return false;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            if stdin.write_all(raw.as_bytes()).is_err() {
+                return false;
+            }
+        }
+        match child.wait_with_output() {
+            Ok(o) if o.status.success() => true,
+            Ok(o) => {
+                eprintln!("reply: mail sendmail failed: {}", String::from_utf8_lossy(&o.stderr).trim());
+                false
+            }
+            Err(_) => false,
         }
     }
 
