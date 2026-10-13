@@ -164,6 +164,7 @@ pub struct Live {
     state: Mutex<State>,
     unloaded_at: Mutex<Option<std::time::Instant>>,
     ambiguous: std::sync::atomic::AtomicBool,
+    verify_from: Mutex<Option<std::time::Instant>>,
 }
 
 type Sets = Vec<Vec<Value>>;
@@ -201,7 +202,22 @@ impl Live {
 
     pub fn load<E: std::fmt::Debug>(&self, now: i64, mut run: impl FnMut(&str) -> Result<Sets, E>) -> Result<usize, String> {
         let sets = run(&load_sql(now)).map_err(|e| format!("{e:?}"))?;
-        self.replace(sets)
+        let n = self.replace(sets)?;
+        if self.unloaded_at.lock().unwrap_or_else(|e| e.into_inner()).take().is_some() {
+            *self.verify_from.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+        }
+        Ok(n)
+    }
+
+    /// True once, `wait` after a reload that followed an ambiguous write: an abandoned statement
+    /// can commit after that reload read the row, so memory is verified once more against Dolt.
+    pub fn verify_due(&self, wait: std::time::Duration) -> bool {
+        let mut pending = self.verify_from.lock().unwrap_or_else(|e| e.into_inner());
+        if pending.is_some_and(|t| t.elapsed() >= wait) {
+            *pending = None;
+            return true;
+        }
+        false
     }
 
     /// Runs `script`, then re-reads what `touch` names through the same `run`. Only a script
@@ -459,6 +475,18 @@ mod tests {
         live.invalidate();
         assert!(!live.settled(std::time::Duration::from_secs(60)));
         assert!(live.settled(std::time::Duration::ZERO));
+    }
+
+    #[test]
+    fn a_reload_after_an_ambiguous_write_is_verified_once_more() {
+        let live = loaded(vec![bead("sp-a", "READY", 0, NOW)], vec![]);
+        assert!(!live.verify_due(std::time::Duration::ZERO), "nothing ambiguous yet");
+        live.invalidate();
+        live.load(NOW, |_: &str| -> Result<Sets, ()> { Ok(sets(vec![bead("sp-a", "READY", 0, NOW)], vec![])) }).unwrap();
+        assert!(!live.verify_due(std::time::Duration::from_secs(60)), "not before the wait");
+        assert!(live.verify_due(std::time::Duration::ZERO));
+        assert!(!live.verify_due(std::time::Duration::ZERO), "once");
+        assert!(live.settled(std::time::Duration::from_secs(60)), "a completed reload no longer holds the settle");
     }
 
     #[test]
