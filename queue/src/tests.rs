@@ -1268,6 +1268,20 @@ fn eject_of_a_certified_unbatched_bead_is_not_blocked_by_an_unrelated_open_batch
 }
 
 #[test]
+fn ejecting_a_non_member_returns_it_to_rework_and_leaves_the_open_batch_and_its_pr_alone() {
+    let t = T::new(LandMode::Queue);
+    let rec = "pr=460\nmembers=sp-a:ta,sp-b:tb\nbatch_id=spira-1\nversion=3\n";
+    t.open_record(rec);
+    t.lc_row("sp-c", "CERTIFIED", "tc", 5);
+    assert_eq!(t.run(&["eject", "sp-c", "--red", "--reason", "withdrawn"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().join("\n");
+    assert!(calls.contains("event bead sp-c") && calls.contains("Returned"), "{calls}");
+    assert!(!calls.contains("abandon-batch") && !calls.contains("eject-member"), "{calls}");
+    assert_eq!(fs::read_to_string(t.qfile("open")).unwrap(), rec);
+    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-close")), "{:?}", t.forge.calls.borrow());
+}
+
+#[test]
 fn eject_takes_a_comma_separated_suites_list_and_still_refuses_a_bad_name_in_it() {
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
