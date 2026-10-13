@@ -18,7 +18,7 @@
 //! the public tracker (law-beads-is-never-public): every string sent to GitHub below is
 //! built from a commit sha/subject (already public) or a fixed sentence.
 
-use crate::ports::{Bd, Gh, Git, LcBead, Lifecycle, Mail, Repo};
+use crate::ports::{Bd, Gh, Git, LcBead, Lifecycle, Mail, Repo, Snapshot};
 use lifecycle::provenance::{self, ExternalOutcome, Trail, TrailRow};
 use spira_config::nonwork::Which;
 use std::path::{Path, PathBuf};
@@ -364,6 +364,8 @@ fn settled_text(d: &Deps, outcome: &ExternalOutcome, via: &[String]) -> Result<S
 /// row for is broken, not open: its origin has no recorded fate. A machine that cannot answer
 /// is an error, never a clean read.
 pub fn provenance_read(d: &Deps) -> Result<Vec<ProvRow>, String> {
+    let snap = Snapshot::of(d.lc);
+    let d = &Deps { lc: &snap, bd: d.bd, gh: d.gh, git: d.git, repo: d.repo, mail: d.mail };
     let all = d.bd.list_all_json().ok_or("could not read the store")?;
     let mut out = Vec::new();
     for row in github_rows(&all) {
@@ -529,6 +531,8 @@ fn handed_on(d: &Deps, id: &str) -> Result<Option<LcBead>, String> {
 
 /// lib.sh `_gh_unlanded_scan`.
 pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
+    let snap = Snapshot::of(d.lc);
+    let d = &Deps { lc: &snap, bd: d.bd, gh: d.gh, git: d.git, repo: d.repo, mail: d.mail };
     let mut log = gh_resolve_stale_asks(d, ctx);
 
     let Some(all) = d.bd.list_all_json() else { return log };
@@ -604,6 +608,8 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
 /// why this is deliberately not `gh_unlanded_scan`'s `landing_commit`. Returns the report lines
 /// plus (found, closed, skipped, would-close) for the summary line's counts.
 pub fn backfill(d: &Deps, ctx: &Ctx, dry_run: bool) -> (Vec<String>, u32, u32, u32, u32) {
+    let snap = Snapshot::of(d.lc);
+    let d = &Deps { lc: &snap, bd: d.bd, gh: d.gh, git: d.git, repo: d.repo, mail: d.mail };
     let mut out = Vec::new();
     let (mut n_found, mut n_closed, mut n_skipped, mut n_dry) = (0u32, 0u32, 0u32, 0u32);
 
@@ -863,6 +869,7 @@ mod tests {
     struct FakeLc {
         beads: BTreeMap<String, LcBead>,
         down: bool,
+        reads: std::cell::Cell<usize>,
     }
 
     impl FakeLc {
@@ -879,10 +886,18 @@ mod tests {
 
     impl Lifecycle for FakeLc {
         fn bead(&self, id: &str) -> Result<Option<LcBead>, String> {
+            self.reads.set(self.reads.get() + 1);
             if self.down {
                 return Err("down".to_string());
             }
             Ok(self.beads.get(id).cloned())
+        }
+        fn all(&self) -> Result<BTreeMap<String, LcBead>, String> {
+            self.reads.set(self.reads.get() + 1);
+            if self.down {
+                return Err("down".to_string());
+            }
+            Ok(self.beads.clone())
         }
     }
 
@@ -1498,6 +1513,7 @@ mod tests {
         assert_eq!(out.len(), 26);
         assert!(matches!(&out.iter().find(|r| r.bead == "sp-d").unwrap().verdict, ProvVerdict::Settled(_)));
         assert_eq!(bd.shows.get(), 0);
+        assert_eq!(lc.reads.get(), 1, "one lifecycle read for the whole pass");
     }
 
     #[test]

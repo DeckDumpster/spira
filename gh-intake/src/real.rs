@@ -52,6 +52,39 @@ impl Lifecycle for RealLifecycle {
             .map_err(|e| format!("{}: {e}", self.bin))?;
         parse_show(o.status.code(), &o.stdout)
     }
+
+    fn all(&self) -> Result<std::collections::BTreeMap<String, LcBead>, String> {
+        let read = |extra: &[&str]| -> Result<serde_json::Value, String> {
+            let o = spira_config::bounded::bounded(&self.bin)
+                .arg("list")
+                .args(extra)
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()
+                .map_err(|e| format!("{}: {e}", self.bin))?;
+            if o.status.code() != Some(0) {
+                return Err(format!("spira-lc list exited {:?}", o.status.code()));
+            }
+            serde_json::from_slice(&o.stdout).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))
+        };
+        parse_list(&read(&[])?, &read(&["--delivery"])?)
+    }
+}
+
+/// `spira-lc list` rows joined with `spira-lc list --delivery` rows: a landed bead's sha is its
+/// delivery's merge sha, else its tip, exactly as [`parse_show`] reads it.
+pub fn parse_list(beads: &serde_json::Value, deliveries: &serde_json::Value) -> Result<std::collections::BTreeMap<String, LcBead>, String> {
+    let text = |r: &serde_json::Value, k: &str| r.get(k).and_then(|t| t.as_str()).unwrap_or("").to_string();
+    let rows = |v: &serde_json::Value, what: &str| v.as_array().cloned().ok_or(format!("spira-lc list: {what} is not an array"));
+    let merges: std::collections::BTreeMap<String, String> =
+        rows(deliveries, "delivery reply")?.iter().map(|r| (text(r, "bead_id"), text(r, "merge_sha"))).filter(|(_, m)| !m.is_empty()).collect();
+    let mut out = std::collections::BTreeMap::new();
+    for r in rows(beads, "reply")? {
+        let id = text(&r, "bead_id");
+        let sha = merges.get(&id).cloned().unwrap_or_else(|| text(&r, "tip"));
+        out.insert(id, LcBead { state: text(&r, "state"), sha, reason: text(&r, "reason") });
+    }
+    Ok(out)
 }
 
 /// `spira-lc show`: exit 0 with the row, exit 1 with `{}` when the machine has no such bead,
@@ -426,6 +459,16 @@ mod lifecycle_tests {
         assert_eq!((b.state.as_str(), b.sha.as_str()), ("LANDED", "mm"));
         let certified = br#"{"bead":{"state":"CERTIFIED","tip":"tt"},"delivery":null}"#;
         assert_eq!(parse_show(Some(0), certified).unwrap().unwrap().sha, "tt");
+    }
+
+    #[test]
+    fn list_rows_read_as_show_reads_them() {
+        let beads = serde_json::json!([{"bead_id":"a","state":"LANDED","tip":"tt","reason":""},{"bead_id":"b","state":"SUPERSEDED","tip":"","reason":"a"}]);
+        let dels = serde_json::json!([{"bead_id":"a","merge_sha":"mm"}]);
+        let m = parse_list(&beads, &dels).unwrap();
+        assert_eq!((m["a"].state.as_str(), m["a"].sha.as_str()), ("LANDED", "mm"));
+        assert_eq!(m["b"].reason, "a");
+        assert!(parse_list(&serde_json::json!({}), &dels).is_err());
     }
 
     #[test]
