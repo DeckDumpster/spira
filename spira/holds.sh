@@ -49,8 +49,9 @@ ids="$(sed 's#^spira/##' <<<"$branches" | paste -sd, -)"
 
 # One listing per pass for every branch's bead; a bead absent from it is confirmed gone,
 # while a listing that fails proves nothing and refuses (law-absence-needs-a-positive-control).
-states="$(timeout 10 spira-lc list --ids "$ids" 2>/dev/null | jq -r '.[] | "\(.bead_id)\t\(.state)"' 2>/dev/null; exit "${PIPESTATUS[0]}")" \
-    || { printf 'holds.sh: bead states unreadable\n' >&2; exit 1; }
+rows="$(timeout 10 spira-lc list --ids "$ids" 2>/dev/null)" \
+    && states="$(jq -r '.[] | "\(.bead_id)\t\(.state)"' <<<"$rows" 2>&1)" \
+    || { printf 'holds.sh: bead states unreadable: %s\n' "${states:-$rows}" >&2; exit 1; }
 
 rc=0
 while IFS= read -r branch; do
