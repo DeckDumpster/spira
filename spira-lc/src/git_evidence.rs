@@ -75,7 +75,9 @@ pub fn change_in_force(repo: &Path, branch: &str, base: &str) -> bool {
     if patch.trim().is_empty() {
         return true;
     }
-    let index = std::env::temp_dir().join(format!("spira-lc-in-force-{}-{}", std::process::id(), base.len()));
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let index = std::env::temp_dir().join(format!("spira-lc-in-force-{}-{seq}", std::process::id()));
     let with_index = |args: &[&str]| {
         let mut c = spira_config::bounded::bounded("git");
         c.arg("-C").arg(repo).env("GIT_INDEX_FILE", &index).args(args);
