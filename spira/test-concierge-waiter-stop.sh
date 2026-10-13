@@ -22,9 +22,9 @@ chmod +x "$TMP/run/concierge-notes/inbox-next.sh"
 W="$TMP/run/concierge-notes/inbox-next.sh"
 
 # A stand-in session: a bash that optionally starts the waiter as its child.
-session() {   # session <with-waiter 0|1> -> prints pid
-    if [ "$1" = 1 ]; then bash -c "$W & wait" & else bash -c 'sleep 300 & wait' & fi
-    PIDS+=("$!"); echo "$!"
+session() {   # session <with-waiter 0|1> -> sets SESS (no command substitution: the child holds the pipe)
+    if [ "$1" = 1 ]; then bash -c "$W & wait" </dev/null >/dev/null 2>&1 & else bash -c 'sleep 300 & wait' </dev/null >/dev/null 2>&1 & fi
+    SESS=$!; PIDS+=("$SESS")
 }
 run_hook() {  # run_hook <session pid> [extra env...]
     local sp="$1"; shift
@@ -32,7 +32,7 @@ run_hook() {  # run_hook <session pid> [extra env...]
         bash "$HOOK" </dev/null
 }
 
-bare="$(session 0)"; armed="$(session 1)"; sleep 1
+session 0; bare=$SESS; session 1; armed=$SESS; sleep 1
 
 out="$(run_hook "$bare")"
 want "no waiter: blocks" '"decision": "block"' "$out"
