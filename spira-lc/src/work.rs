@@ -923,13 +923,17 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
     let keep = |st: &str| if !states.is_empty() { states.iter().any(|x| x == st) } else { all || !bead::BeadState::from_str(st).is_some_and(|b| b.is_terminal()) };
     let by_id: std::collections::HashMap<String, serde_json::Value> =
         rows.into_iter().filter(|r| keep(r["state"].as_str().unwrap_or(""))).filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r))).collect();
-    let mut args = vec![s("list"), s("--status"), s("all"), s("--limit"), s("0"), s("--json")];
-    args.extend(bd_args.iter().cloned());
-    let content = match crate::bd::run_stdin(&args, None) {
-        Ok(t) => t,
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
-    };
-    let content: Vec<serde_json::Value> = serde_json::from_str(content.trim()).unwrap_or_default();
+    let mut ids: Vec<&str> = by_id.keys().map(String::as_str).collect();
+    ids.sort_unstable();
+    let mut content: Vec<serde_json::Value> = Vec::new();
+    for chunk in ids.chunks(LIST_ID_CHUNK) {
+        let mut args = vec![s("list"), s("--id"), chunk.join(","), s("--status"), s("all"), s("--limit"), s("0"), s("--json")];
+        args.extend(bd_args.iter().cloned());
+        match crate::bd::run_stdin(&args, None) {
+            Ok(t) => content.extend(serde_json::from_str::<Vec<serde_json::Value>>(t.trim()).unwrap_or_default()),
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+        }
+    }
     let mut out = Vec::new();
     for mut c in content {
         let Some(lc) = c["id"].as_str().and_then(|id| by_id.get(id)).cloned() else { continue };
@@ -948,6 +952,9 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
         out.iter().map(|c| format!("{} {} {}", c["id"].as_str().unwrap_or("?"), c["lifecycle_state"].as_str().unwrap_or("?"), c["title"].as_str().unwrap_or(""))).collect();
     (0, lines.join("\n"))
 }
+
+/// Ids per `bd list --id`: bd is asked only for the beads the lifecycle kept, never the whole store.
+const LIST_ID_CHUNK: usize = 400;
 
 const MAIL_KINDS: &[&str] = &["alert", "decision", "event", "note", "question", "suit"];
 
