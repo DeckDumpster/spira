@@ -2143,6 +2143,21 @@ fn activating_a_release_that_changes_dolt_beads_restarts_it_by_kill_never_a_rest
 }
 
 #[test]
+fn deciding_to_hand_activation_over_reads_the_releases_dir_from_the_layers_not_from_resolved_config() {
+    let w = World::new();
+    w.build(B).unwrap();
+    let spec = w.cfg.toml_spec().unwrap();
+    let rel = w.cfg.releases.display().to_string();
+    file(Path::new(&spec), &format!("[spira]\nreleases = {rel:?}\n"));
+    assert_eq!(config_delta::releases_for_spec(&spec, None).unwrap(), Some(w.cfg.releases.clone()));
+    let flag = Path::new("/flag/releases");
+    assert_eq!(config_delta::releases_for_spec(&spec, Some(flag)).unwrap(), Some(flag.to_path_buf()), "the flag wins");
+    file(Path::new(&spec), "[spira]\nid_prefix = \"sp\"\n");
+    assert_eq!(config_delta::releases_for_spec(&spec, None).unwrap(), None, "control: a layer naming no releases dir yields none");
+    assert_eq!(activate::delegate_target_in(&w.cfg.releases, B, Path::new("/nowhere")).unwrap(), None);
+}
+
+#[test]
 fn activation_is_handed_to_the_target_releases_own_binary_after_verifying_it() {
     let w = World::new();
     w.build(B).unwrap();
