@@ -196,12 +196,18 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let registry = spira_config::repos::Registry::from_env(
+        std::env::vars().collect(),
+        &harness.root,
+    );
+    let repo_root = |name: &str| registry.root(name).map(std::path::PathBuf::from);
     let deps = Deps {
         rt: &rt,
         builder: &Cargo,
         harness,
         env: &env,
         config: config.as_ref(),
+        repo_root: &repo_root,
         settings,
         stdin: &stdin,
         out: &out,

@@ -7,6 +7,7 @@ pub mod busy;
 pub mod cli;
 pub mod container;
 pub mod fixture;
+pub mod foreign;
 pub mod landed;
 pub mod phase;
 pub mod plan;

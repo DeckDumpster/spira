@@ -109,6 +109,11 @@ pub fn discover(explicit: Option<PathBuf>) -> Option<PathBuf> {
 
 /// Reads and [`validate`]s the document at `path` — the one place a caller turns a resolved
 /// path into a [`SpiraToml`], instead of pairing its own `fs::read_to_string` with `validate`.
+/// Parse a TOML document that is not spira.toml (a repository's own declaration).
+pub fn parse_foreign<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, String> {
+    toml::from_str(text).map_err(|e| e.to_string())
+}
+
 pub fn load(path: &Path) -> Result<SpiraToml, String> {
     load_layered(&path.to_string_lossy()).map(|(doc, _)| doc)
 }
