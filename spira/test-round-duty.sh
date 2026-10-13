@@ -15,14 +15,17 @@ git init -q "$TMP/repo"; git -C "$TMP/repo" -c user.name=t -c user.email=t@t com
 tip="$(git -C "$TMP/repo" rev-parse HEAD)"
 git -C "$TMP/repo" branch spira/sp-aaa
 mkdir -p "$TMP/run/rounds" "$TMP/bin"
-printf '#!/usr/bin/env bash\n[ "$1 $2" = "list-state CERTIFIED" ] && printf "sp-aaa\\t\\t\\n"\nexit 0\n' > "$TMP/bin/spira-lc"
+printf '#!/usr/bin/env bash\n[ "$1 $2 $3 $4" = "list --state CERTIFIED --repo" ] || exit 0\ncase "$5" in spira) [ -e SPIRAON ] && printf "[{\\"bead_id\\": \\"sp-aaa\\"}]\\n" ;; deckdumpster) printf "[{\\"bead_id\\": \\"dd-1\\"},\\n{\\"bead_id\\": \\"dd-2\\"}]\\n" ;; esac\nexit 0\n' > "$TMP/bin/spira-lc"
+sed -i "s|SPIRAON|$TMP/spiraon|" "$TMP/bin/spira-lc"
+printf 'spira | %s | queue.local | local/main | |\ndeckdumpster | %s | queue.forge | origin/main | |\n' "$TMP/repo" "$TMP/repo" > "$TMP/rows"
+: > "$TMP/spiraon"
 printf '#!/usr/bin/env bash\n[ "$1 $2" = "round status" ] || exit 2\ncase "$(cat QMODE)" in\n open) printf "round=open\\nbatch_id=r-1\\n" ;;\n none) echo round=none ;;\n garbage) echo hello ;;\n fail) echo boom >&2; exit 1 ;;\nesac\n' > "$TMP/bin/queue"
 sed -i "s|QMODE|$TMP/qmode|" "$TMP/bin/queue"
 chmod +x "$TMP/bin/spira-lc" "$TMP/bin/queue"
 PATH="$TMP/bin:$PATH"
 
 run() {
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 SPIRA_REPO_MAP="$TMP/rows"
     env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/repo" \
         bash "$HERE/round-duty.sh" "$@" 2>&1
 }
@@ -32,8 +35,13 @@ nowant "an open round suppresses ROUND DUE (no marker written)" "ROUND DUE" "$(r
 
 echo none > "$TMP/qmode"
 M="$TMP/run/rounds/100.running"; : > "$M"
-want "no round pages ROUND DUE even past a leftover marker" "ROUND DUE: 1 certified" "$(run watch --interval 1 --ticks 1)"
-rm -f "$M"
+out="$(run watch --interval 1 --ticks 1)"
+want "no round pages ROUND DUE even past a leftover marker" "ROUND DUE: 1 certified" "$out"
+want "ROUND DUE names the local-round repo" "[spira=1]" "$out"
+nowant "ROUND DUE does not count the forge repo" "deckdumpster" "$out"
+rm -f "$M" "$TMP/spiraon"
+nowant "certified forge beads alone raise nothing" "ROUND DUE" "$(run watch --interval 1 --ticks 1)"
+: > "$TMP/spiraon"
 
 for m in fail garbage; do
     echo "$m" > "$TMP/qmode"
@@ -59,7 +67,7 @@ run health >/dev/null; is "health fails once the last poll is stale" "1" "$?"
 INBOX="$TMP/inbox.log"
 echo open > "$TMP/qmode"
 wrun() {
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 \
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 SPIRA_REPO_MAP="$TMP/rows" \
         SPIRA_CONCIERGE_INBOX="${WINBOX:-$INBOX}"
     env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/repo" \
         bash "$HERE/round-duty.sh" "$@" 2>&1
