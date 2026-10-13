@@ -1,0 +1,13 @@
+[package]
+name = "spira-otel"
+version = "1.0.0"
+edition = "2021"
+description = "spira-otel — one OTLP/JSON span per call, appended as a line to a daily-rotated file in the OpenTelemetry Collector file-exporter format."
+
+[dependencies]
+opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "gen-tonic-messages", "with-serde"] }
+serde = "1"
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

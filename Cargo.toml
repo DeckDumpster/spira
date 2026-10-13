@@ -31,6 +31,7 @@ members = [
     "lifecycle-guard",
     "lifecycle",
     "spira-lc",
+    "spira-otel",
     "sending",
     "tsd-lifecycle-export",
     "work",

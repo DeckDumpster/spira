@@ -9,6 +9,7 @@ lifecycle = { path = "../lifecycle" }
 spira-config = { path = "../spira-config" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+spira-otel = { path = "../spira-otel" }
 
 [[bin]]
 name = "spira-lc"
@@ -21,4 +22,5 @@ codegen-units = 1
 strip = true
 
 [dev-dependencies]
+opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "gen-tonic-messages", "with-serde"] }
 testkit = { path = "../testkit" }

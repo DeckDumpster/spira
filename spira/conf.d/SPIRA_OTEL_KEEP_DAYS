@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lifecycle
+DOC=Days of per-service OTLP/JSON span files (<run>/otel/<service>.<UTC date>.jsonl) to keep; older files are removed on write.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_OTEL_KEEP_DAYS:=14}"
+SPIRA_CONF_DEFAULT_EOF
