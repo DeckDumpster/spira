@@ -772,19 +772,16 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
     OK
 }
 
-/// A red with no suite annotations is a setup red: re-run it once in full, then raise one
-/// incident if it is red again. The batcher never acts on it, so it must not wait silently.
+/// A red with no suite annotations is a setup red: re-run it once in full, then abandon the
+/// batch with the evidence if it is still red. The re-run may be refused (no input changed),
+/// so the grace is a clock, not a verdict; the next batch is what changes the input.
 fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     let now = w.clock.now();
     let step = tagged(out, "failed-step: ").first().map(|s| s.trim().to_string()).unwrap_or_default();
     let rerun_at: Option<u64> = b.kv.get("setup_rerun").and_then(|t| t.trim().parse().ok());
-    if b.kv.get("setup_incident").is_some() {
-        w.out(format!("verdict {name}: PR {pr} red — {bo}setup red, incident already raised"));
-        return OK;
-    }
     if let Some(t) = rerun_at {
-        if now.saturating_sub(t) < c.s.verdict.ci_idle_sec {
+        if b.kv.get("setup_incident").is_none() && now.saturating_sub(t) < c.s.verdict.ci_idle_sec {
             w.out(format!("verdict {name}: PR {pr} red — {bo}setup red, re-run in flight"));
             return OK;
         }
@@ -801,6 +798,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
     }
     let first = b.kv.get("setup_step").unwrap_or("").to_string();
     let log = tagged(out, "step-log: ").join("\n");
+    let shown = if step.is_empty() { "unknown" } else { step.as_str() };
     let same = if rerun_at.is_none() {
         "no run id to re-run"
     } else if first == step {
@@ -808,23 +806,21 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
     } else {
         "a different failing step on the re-run"
     };
+    let evidence = format!("no suite annotations ({same}); failed step: {shown}; log tail:\n{log}");
+    w.forge.pr_comment(&c.s.forge, b.path, &b.pr, &crate::ident::bounded_text(&format!("Batch abandoned: {evidence}")));
     w.scripts.mail_operator(
-        &format!("Merge queue: {name} PR {pr} red in setup, no suite ran"),
+        &format!("Merge queue: {name} PR {pr} red in setup, abandoned"),
         &format!(
-            "## Incident\nBatch PR {pr} for {name} (head {}) is red with no suite annotations ({same}).\n\nFailed step: {}\nFirst failed step: {}\n\nLog tail:\n{log}\n\nThe PR is left open; members are untouched.\n",
+            "## Batch abandoned\nBatch PR {pr} for {name} (head {}) is red with no suite annotations ({same}); members are back to CERTIFIED and the next batch is cut.\n\nFailed step: {shown}\nFirst failed step: {}\n\nLog tail:\n{log}\n",
             b.head,
-            if step.is_empty() { "unknown" } else { &step },
             if first.is_empty() { "unknown" } else { &first }
         ),
     );
-    w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations, {same}; incident raised"));
-    match rewrite(b.file, &["setup_incident"], &[("setup_incident", &now.to_string())]) {
-        Ok(()) => OK,
-        Err(e) => {
-            w.err(format!("verdict {name}: PR {pr} incident raised but not recorded: {e}"));
-            FAIL
-        }
-    }
+    w.forge.pr_close(&c.s.forge, b.path, &b.pr);
+    lc_requeue(w, b, &format!("setup red, {same}: {shown}: {}", log.lines().last().unwrap_or("")));
+    let _ = std::fs::remove_file(b.file);
+    w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations, {same}; batch abandoned, members requeued"));
+    OK
 }
 
 /// A red batch PR goes to the batcher persona (D1): the suites and a run link, nothing else
