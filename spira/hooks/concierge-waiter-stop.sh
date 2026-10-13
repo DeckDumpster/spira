@@ -32,7 +32,7 @@ if [ -n "$session" ]; then
         pid="${d#/proc/}"
         [ "$pid" = "$$" ] && continue
         argv=()
-        while IFS= read -r -d '' a; do argv+=("$a"); done < "$d/cmdline" 2>/dev/null
+        { while IFS= read -r -d '' a; do argv+=("$a"); done < "$d/cmdline"; } 2>/dev/null
         hit=0
         for a in "${argv[@]:0:2}"; do [ "${a##*/}" = "$WNAME" ] && hit=1; done
         [ "$hit" = 1 ] || continue
