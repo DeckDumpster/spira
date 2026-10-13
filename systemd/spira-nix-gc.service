@@ -7,7 +7,7 @@ Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_HOME@/nix-gc.sh
+ExecStart=@SPIRA_PROD@/nix-gc.sh
 TimeoutStartSec=1800
 CPUQuota=20%
 Nice=10
@@ -17,3 +17,6 @@ StandardError=append:@SPIRA_RUN@/nix-gc.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance
