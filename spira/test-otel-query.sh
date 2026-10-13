@@ -3,6 +3,7 @@
 # test-otel-query.sh — otel-query.sh's DuckDB views over spira-otel's OTLP/JSON span files:
 # counts, percentiles, error rate and size per (service, verb, caller), and large_responses.
 #
+# tier: T1
 # covers: spira/otel-query.sh spira-otel/src/* spira-otel/tests/fixtures/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
