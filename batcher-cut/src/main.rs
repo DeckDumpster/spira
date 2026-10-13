@@ -575,6 +575,11 @@ fn stabilize_round(
         println!("batcher {}: ALARM no recorded wall time for {} — scheduled first", repo.name, ordered.unmeasured.join(","));
     }
     let suites = ordered.list;
+    if suites.is_empty() && repo.land == Land::Forge {
+        println!("batcher {}: no test-*.sh corpus — CI is the gate; opening on the merged tree", repo.name);
+        let head = io::head_of(wt)?;
+        return Ok(Some(StableRound { members, head, green_branch: round_branch, attribution_seconds: None, regreen_seconds: None, staged: None }));
+    }
     if suites.is_empty() {
         println!("batcher {}: round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing", repo.name);
         return Ok(None);
@@ -1460,6 +1465,38 @@ mod base_conflict_handling {
     /// CERTIFIED rows alone — so the batcher takes the member out of CERTIFIED there too, or
     /// the next round batches the very tip that cannot rebase. Exit 3 (not attempted) leaves
     /// it CERTIFIED, as before.
+    #[test]
+    fn a_forge_round_with_no_test_corpus_is_stable_on_its_merged_tree_and_a_local_one_is_blocked() {
+        for (land, opens) in [(Land::Forge, true), (Land::Local, false)] {
+            let d = testkit::TempDir::new("batcher-cut-nocorpus");
+            let [base, _a, _b, _c, _root] = fixture(&d);
+            git(&d, &["checkout", "-q", "-b", "m1", &base]);
+            fs::write(d.join("one"), "1\n").unwrap();
+            git(&d, &["add", "one"]);
+            git(&d, &["commit", "-qm", "m1"]);
+            let t1 = git(&d, &["rev-parse", "HEAD"]);
+            git(&d, &["checkout", "-q", "-b", "m2", &base]);
+            fs::write(d.join("two"), "2\n").unwrap();
+            git(&d, &["add", "two"]);
+            git(&d, &["commit", "-qm", "m2"]);
+            let t2 = git(&d, &["rev-parse", "HEAD"]);
+            git(&d, &["checkout", "-q", "--detach", &base]);
+            let mut e = io::lifecycle_tests_env(&d);
+            fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
+            e.run = d.to_path_buf();
+            e.home = d.to_path_buf();
+            let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land };
+            let wt = d.join("wt");
+            let r = stabilize_round(&e, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap();
+            assert_eq!(r.is_some(), opens, "land={land:?}");
+            if let Some(s) = r {
+                let ids: Vec<&str> = s.members.iter().map(|m| m.id.as_str()).collect();
+                assert_eq!(ids, ["sp-1", "sp-2"]);
+                assert_eq!(s.head, io::head_of(&wt).unwrap());
+            }
+        }
+    }
+
     #[test]
     fn a_member_the_rebase_path_returns_to_an_aeon_leaves_certified_on_the_machine() {
         for (rc, withdrawn) in [(1, true), (2, true), (3, false)] {
