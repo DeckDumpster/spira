@@ -306,6 +306,9 @@ fn main() -> ExitCode {
     if !report.errors.is_empty() {
         return ExitCode::from(1);
     }
+    for u in &report.retired {
+        println!("retired   {u} (a previous release installed it; this one does not ship it)");
+    }
     for u in &report.written {
         println!("installed {u}");
     }

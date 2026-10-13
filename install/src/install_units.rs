@@ -36,6 +36,7 @@ pub struct Report {
     pub migrated_legacy: Vec<String>,
     pub migrated_cockpit_state: Vec<String>,
     pub pruned: Vec<String>,
+    pub retired: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -217,6 +218,7 @@ pub fn run(ctx: &Ctx) -> Report {
     }
 
     migrate_legacy(ctx, &mut r);
+    retire_dropped_units(ctx, &rendered, &mut r);
     // Cockpit `.runtime` state migration is a filesystem concern the caller resolves paths
     // for; left to the orchestrator (root installer) since it needs SPIRA_COCKPIT/SPIRA_RUN
     // as real directories, not just the host-values map.
@@ -368,6 +370,38 @@ const RENAMED_OUT_OF_WATCHER_NAMESPACE: [&str; 2] = ["refresh", "notify"];
 /// Disable and delete any surviving un-suffixed `spira-*` unit — the naming scheme that
 /// predates per-instance suffixes. Enumerated from the manifest's own templates, so a
 /// template added here is automatically covered without a second edit.
+const LEDGER: &str = ".spira-installed-units";
+
+/// Units a previous run installed and this release no longer ships. The ledger, not a name
+/// pattern, decides what is Spira's to remove.
+fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, String)], r: &mut Report) {
+    let ledger = ctx.unit_dir.join(LEDGER);
+    let now: std::collections::BTreeSet<String> = rendered.iter().map(|(inst, _, _)| inst.clone()).collect();
+    let mut keep = now.clone();
+    if let Ok(prev) = fs::read_to_string(&ledger) {
+        for u in prev.lines().map(str::trim).filter(|u| !u.is_empty() && !u.contains('/') && !now.contains(*u)) {
+            if is_masked(&ctx.unit_dir.join(u)) {
+                continue;
+            }
+            let _ = ctx.systemctl.disable_now(u);
+            match fs::remove_file(ctx.unit_dir.join(u)) {
+                Ok(()) => r.retired.push(u.to_string()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => r.retired.push(u.to_string()),
+                Err(_) => {
+                    keep.insert(u.to_string());
+                }
+            }
+        }
+    }
+    if !r.retired.is_empty() {
+        let _ = ctx.systemctl.daemon_reload();
+    }
+    let body: String = keep.iter().map(|u| format!("{u}\n")).collect();
+    if fs::read_to_string(&ledger).ok().as_deref() != Some(body.as_str()) {
+        let _ = fs::write(&ledger, body);
+    }
+}
+
 fn migrate_legacy(ctx: &Ctx, r: &mut Report) {
     for name in ctx.manifest.template_names() {
         if name == "spira-watch@.service" {
@@ -527,6 +561,37 @@ mod tests {
         assert!(execstart_target_ok("ExecStart=/usr/bin/true\n").is_ok());
         assert!(execstart_target_ok("ExecStart=-/does/not/exist\n").is_ok()); // "-" ignores failure
         assert!(execstart_target_ok("ExecStart=/does/not/exist\n").is_err());
+    }
+
+    #[test]
+    fn a_unit_a_previous_release_installed_and_this_one_drops_is_stopped_and_removed() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        fs::write(unit_dir.join("beads-push.service"), "x").unwrap();
+        fs::write(unit_dir.join("beads-push.timer"), "x").unwrap();
+        fs::write(unit_dir.join("unrelated.service"), "x").unwrap();
+        fs::write(unit_dir.join(LEDGER), "beads-push.service\nbeads-push.timer\n").unwrap();
+
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert_eq!(r.retired, vec!["beads-push.service".to_string(), "beads-push.timer".to_string()]);
+        assert!(!unit_dir.join("beads-push.service").exists());
+        assert!(!unit_dir.join("beads-push.timer").exists());
+        assert!(sc.disabled_now.borrow().contains(&"beads-push.timer".to_string()));
+        assert!(unit_dir.join("unrelated.service").exists());
+        assert!(!sc.disabled_now.borrow().contains(&"unrelated.service".to_string()));
+        let ledger = fs::read_to_string(unit_dir.join(LEDGER)).unwrap();
+        assert!(ledger.contains("spira-sentinel-prod.timer") && !ledger.contains("beads-push"));
+        assert!(run(&ctx).retired.is_empty());
     }
 
     #[test]
