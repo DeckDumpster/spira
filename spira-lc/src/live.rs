@@ -160,6 +160,7 @@ fn hash_all(digests: &BTreeMap<String, String>) -> String {
 #[derive(Default)]
 pub struct Live {
     state: Mutex<State>,
+    unloaded_at: Mutex<Option<std::time::Instant>>,
 }
 
 type Sets = Vec<Vec<Value>>;
@@ -175,6 +176,14 @@ impl Live {
 
     pub fn invalidate(&self) {
         self.lock().loaded = false;
+        *self.unloaded_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+    }
+
+    /// True once `settle` has passed since memory was last unloaded. A statement the client
+    /// abandoned on a deadline can still commit on the server, so a reload before then can
+    /// read the row as it was and keep it that way.
+    pub fn settled(&self, settle: std::time::Duration) -> bool {
+        self.unloaded_at.lock().unwrap_or_else(|e| e.into_inner()).map_or(true, |t| t.elapsed() >= settle)
     }
 
     pub fn replace(&self, sets: Sets) -> Result<usize, String> {
@@ -437,6 +446,15 @@ mod tests {
         assert!(r.is_err());
         assert_eq!(*calls.borrow(), 1, "no re-read on the failed connection");
         assert!(!live.is_loaded() && live.list(&ListFilter::default()).is_none(), "the write may have committed");
+    }
+
+    #[test]
+    fn an_unloaded_memory_is_not_settled_until_the_abandoned_write_could_have_committed() {
+        let live = loaded(vec![bead("sp-a", "READY", 0, NOW)], vec![]);
+        assert!(live.settled(std::time::Duration::from_secs(60)), "never unloaded");
+        live.invalidate();
+        assert!(!live.settled(std::time::Duration::from_secs(60)));
+        assert!(live.settled(std::time::Duration::ZERO));
     }
 
     #[test]

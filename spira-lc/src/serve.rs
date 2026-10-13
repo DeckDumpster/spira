@@ -123,9 +123,14 @@ pub fn run(args: &[String]) -> i32 {
     0
 }
 
+const LIVE_SETTLE_MARGIN: Duration = Duration::from_secs(2);
+
 /// One pass of the timer: load the rows if they are not in memory, else check them against Dolt.
 fn live_tick(conn: &Conn) {
-    if conn.live.as_ref().is_some_and(|l| !l.is_loaded()) {
+    if let Some(live) = conn.live.as_ref().filter(|l| !l.is_loaded()) {
+        if !live.settled(crate::db::QUERY_DEADLINE + LIVE_SETTLE_MARGIN) {
+            return;
+        }
         if let Err(e) = conn.live_load() {
             eprintln!("spira-lc serve: live rows still not loaded: {e}");
         }
