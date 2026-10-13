@@ -33,8 +33,9 @@ span spira-lc list callerB 1600000000 99 900000 1 > "$SYN/spira-lc.2020-09-13.js
 
 q() { # dir hours sql
     local sql
-    sql="$(env -i PATH="$PATH" HOME="$T" SPIRA_OTEL_DIR="$1" SPIRA_OTEL_NOW="$NOW" SPIRA_RUN="$T" \
-        SPIRA_HOME="$T" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent "$HERE/otel-query.sh" sql "$2" 2>&1)" || { printf '%s\n' "$sql"; return 1; }
+    tl_config SPIRA_RUN="$T"
+    sql="$(SPIRA_OTEL_DIR="$1" SPIRA_OTEL_NOW="$NOW" SPIRA_HOME="$T" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
+        "$HERE/otel-query.sh" sql "$2" 2>&1)" || { printf '%s\n' "$sql"; return 1; }
     duckdb -csv -noheader -c "$sql $3" 2>&1
 }
 
