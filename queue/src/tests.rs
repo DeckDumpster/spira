@@ -1325,6 +1325,27 @@ fn a_forge_eject_returns_the_member_to_rework_only_after_eject_member_requeues_i
 }
 
 #[test]
+fn a_forge_eject_of_a_red_member_requeued_to_submitted_still_ends_in_rework() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
+    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("SUBMITTED".into(), "7".into()));
+    assert_eq!(t.run(&["eject", "sp-a", "--red", "--reason", "PR red"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    assert!(calls.contains(&"event bead sp-a SUBMITTED 7 \"Deliver\"".to_string()), "{calls:?}");
+    assert!(calls.contains(&"event bead sp-a IN_DELIVERY 8 {\"Returned\":{\"reason\":\"batch-ejected\"}}".to_string()), "{calls:?}");
+}
+
+#[test]
+fn a_forge_eject_whose_return_write_is_refused_exits_nonzero_naming_the_write() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
+    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    t.lc.event_refused.set(Some("stale version"));
+    assert_ne!(t.run(&["eject", "sp-a", "--red", "--reason", "PR red"]), 0);
+    assert!(t.err().contains("Returned refused"), "{}", t.err());
+}
+
+#[test]
 fn a_forge_harness_fault_eject_leaves_the_member_certified() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
