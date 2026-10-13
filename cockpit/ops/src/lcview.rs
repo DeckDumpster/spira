@@ -192,6 +192,34 @@ pub struct MenderRow {
     pub deadline: Option<i64>,
 }
 
+/// One open epic (a title series) as `spira-lc ops-view ... --epics` rolls it up server-side:
+/// counts by state, and why its held members are held (per Ryan 2026-10-13).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct EpicRow {
+    pub repo: String,
+    pub epic: String,
+    pub landed: i64,
+    pub certified: i64,
+    pub rework: i64,
+    pub building: i64,
+    pub waiting: i64,
+    pub held_since: Option<i64>,
+    #[serde(default)]
+    pub holds: Vec<EpicHold>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct EpicHold {
+    pub label: String,
+    pub n: i64,
+}
+
+impl EpicRow {
+    pub fn total(&self) -> i64 {
+        self.landed + self.certified + self.rework + self.building + self.waiting
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub now: i64,
@@ -243,6 +271,8 @@ pub struct Snapshot {
     pub batches: Vec<BatchRow>,
     #[serde(default)]
     pub menders: Vec<MenderRow>,
+    #[serde(default)]
+    pub epics: Vec<EpicRow>,
 }
 
 /// A source that failed this pass keeps its last good read instead of drawing an empty
@@ -268,6 +298,7 @@ pub fn carry_forward(new: &mut Snapshot, last: &Snapshot) {
     keep!(edges);
     keep!(dwell);
     keep!(batches);
+    keep!(epics);
     if new.live.is_none() && last.live.is_some() {
         new.live = last.live.clone();
         kept = true;
@@ -602,6 +633,8 @@ pub struct View {
     /// Questions waiting on the operator (needs-ryan), oldest first. Never counted as work.
     pub decide: Vec<Item>,
     pub menders: Vec<SmMender>,
+    /// Open epics, as the server rolled them up, ordered by repo then name.
+    pub epics: Vec<EpicRow>,
 }
 
 const CHAIN: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"];
@@ -1011,6 +1044,7 @@ pub fn view(s: &Snapshot) -> View {
         superseded_24h: s.rows.iter().filter(|r| r.state == "SUPERSEDED" && day(r)).count(),
         landed_total: count("LANDED"),
         base: s.base.clone(),
+        epics: s.epics.clone(),
         ..Default::default()
     };
     v.flow = vec![

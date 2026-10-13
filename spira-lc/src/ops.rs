@@ -48,17 +48,125 @@ pub fn cmd_ops_snapshot(_args: &[String], conn: &Conn) -> (i32, String) {
     (0, Value::Object(out).to_string())
 }
 
+/// `ops-view <view> [--epics]`: one view as a JSON array; with `--epics`, an object
+/// `{"rows": [...], "epics": [...]}` so the pane gets the epic rollup on a call it already makes.
 pub fn cmd_ops_view(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(view) = args.first().and_then(|a| VIEWS.iter().find(|v| **v == a.as_str())) else {
         return (2, format!("ops-view: takes one of {}", VIEWS.join(" | ")));
     };
-    if let Some(rows) = conn.live().and_then(|l| l.ops_view(view, crate::db::now_epoch())) {
+    let rows = match conn.live().and_then(|l| l.ops_view(view, crate::db::now_epoch())) {
+        Some(rows) => rows,
+        None => match conn.query(&format!("SELECT * FROM {view}")) {
+            Ok(rows) => rows,
+            Err(e) => return (2, format!("cannot tell: {e:?}")),
+        },
+    };
+    if !args.iter().any(|a| a == "--epics") {
         return (0, Value::Array(rows).to_string());
     }
-    match conn.query(&format!("SELECT * FROM {view}")) {
-        Ok(rows) => (0, Value::Array(rows).to_string()),
-        Err(e) => (2, format!("cannot tell: {e:?}")),
+    match epics_cached(conn, crate::db::now_epoch()) {
+        Ok(epics) => (0, serde_json::json!({ "rows": rows, "epics": epics }).to_string()),
+        Err(e) => (2, format!("cannot tell: epics: {e}")),
     }
+}
+
+// ───────────────────────────── epics: open title series, rolled up (per Ryan 2026-10-13)
+
+/// An epic is a title series, `<name> <n>:` or `<name> <n>/<m>:`, the shape design
+/// decompositions file under. One aggregate over the bead table: a row per (repo, series,
+/// state, the hold reason of a manually held live bead), a few hundred at most.
+pub const EPICS_SQL: &str = "SELECT repo, REGEXP_REPLACE(title, '^(.+?) [0-9]+(/[0-9]+)?: .*$', '$1') AS series, state, \
+     CASE WHEN state NOT IN ('LANDED', 'DONE', 'DROPPED', 'SUPERSEDED') AND holds LIKE '%\"manual\"%' THEN reason END AS held_reason, \
+     COUNT(*) AS n, MIN(updated_at) AS since FROM bead WHERE title REGEXP '^.+ [0-9]+(/[0-9]+)?: ' \
+     GROUP BY repo, series, state, held_reason";
+
+/// The rollup is recomputed at most this often in a long-lived server; epics move in minutes.
+const EPICS_TTL_SECS: i64 = 60;
+
+static EPICS_CACHE: std::sync::Mutex<Option<(i64, Value)>> = std::sync::Mutex::new(None);
+
+fn epics_cached(conn: &Conn, now: i64) -> Result<Value, String> {
+    if let Some((at, v)) = EPICS_CACHE.lock().ok().and_then(|c| c.clone()) {
+        if now - at < EPICS_TTL_SECS {
+            return Ok(v);
+        }
+    }
+    let rows = conn.query(EPICS_SQL).map_err(|e| format!("{e:?}"))?;
+    let v = epics_rollup(&rows);
+    if let Ok(mut c) = EPICS_CACHE.lock() {
+        *c = Some((now, v.clone()));
+    }
+    Ok(v)
+}
+
+fn n_of(v: &Value) -> i64 {
+    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0)
+}
+
+/// Which count a state adds to; `None` for a terminal state that is not a delivery.
+fn epic_bucket(state: &str) -> Option<&'static str> {
+    match state {
+        "LANDED" | "DONE" => Some("landed"),
+        "DROPPED" | "SUPERSEDED" => None,
+        "CERTIFIED" => Some("certified"),
+        "REWORK" => Some("rework"),
+        "WORKING" | "SUBMITTED" | "IN_DELIVERY" => Some("building"),
+        _ => Some("waiting"),
+    }
+}
+
+/// The first clause of a manual hold's reason, without its review-by stamp.
+pub fn hold_label(reason: &str) -> String {
+    let r = reason.trim();
+    let r = match r.strip_prefix("review-by:") {
+        Some(rest) => rest.split_once(char::is_whitespace).map(|(_, t)| t).unwrap_or("").trim_start(),
+        None => r,
+    };
+    let r = r.split(" (").next().unwrap_or(r);
+    let r = r.split([':', ';', ',']).next().unwrap_or(r).trim();
+    if r.is_empty() { "no reason given".into() } else { r.to_string() }
+}
+
+/// Grouped rows in, one object per epic that still has a member to deliver out, ordered by
+/// repo then series: counts, the oldest manual hold's time, and the holds by label.
+pub fn epics_rollup(rows: &[Value]) -> Value {
+    use std::collections::BTreeMap;
+    #[derive(Default)]
+    struct Acc {
+        counts: BTreeMap<&'static str, i64>,
+        holds: BTreeMap<String, i64>,
+        held_since: Option<i64>,
+    }
+    let mut acc: BTreeMap<(String, String), Acc> = BTreeMap::new();
+    for r in rows {
+        let (Some(series), Some(state)) = (r["series"].as_str(), r["state"].as_str()) else { continue };
+        let Some(b) = epic_bucket(state) else { continue };
+        let repo = r["repo"].as_str().unwrap_or("").to_string();
+        let a = acc.entry((repo, series.to_string())).or_default();
+        let n = n_of(&r["n"]);
+        *a.counts.entry(b).or_default() += n;
+        if let Some(reason) = r["held_reason"].as_str() {
+            *a.holds.entry(hold_label(reason)).or_default() += n;
+            let since = n_of(&r["since"]);
+            a.held_since = Some(a.held_since.map_or(since, |s| s.min(since)));
+        }
+    }
+    let out = acc
+        .into_iter()
+        .filter(|(_, a)| a.counts.iter().any(|(k, n)| *k != "landed" && *n > 0))
+        .map(|((repo, series), a)| {
+            let mut holds: Vec<(String, i64)> = a.holds.into_iter().collect();
+            holds.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+            let c = |k: &str| a.counts.get(k).copied().unwrap_or(0);
+            serde_json::json!({
+                "repo": repo, "epic": series,
+                "landed": c("landed"), "certified": c("certified"), "rework": c("rework"), "building": c("building"), "waiting": c("waiting"),
+                "held_since": a.held_since,
+                "holds": holds.into_iter().map(|(label, n)| serde_json::json!({"label": label, "n": n})).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Value::Array(out)
 }
 
 /// `live-check`: compare the live rows with Dolt now. A mismatch reloads memory and raises an
@@ -220,6 +328,46 @@ pub fn cmd_backfill_repos(_args: &[String], conn: &Conn) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn grouped(repo: &str, series: &str, state: &str, held: Option<&str>, n: i64, since: i64) -> Value {
+        serde_json::json!({"repo": repo, "series": series, "state": state, "held_reason": held, "n": n.to_string(), "since": since})
+    }
+
+    #[test]
+    fn an_epic_counts_its_members_by_state_and_names_its_holds() {
+        let rows = vec![
+            grouped("deckdumpster", "deckdumpster multi-tenancy", "LANDED", None, 2, 10),
+            grouped("deckdumpster", "deckdumpster multi-tenancy", "CERTIFIED", Some("review-by:2026-10-13 stacked on sp-t5980r, held"), 3, 500),
+            grouped("deckdumpster", "deckdumpster multi-tenancy", "CERTIFIED", None, 1, 20),
+            grouped("deckdumpster", "deckdumpster multi-tenancy", "REWORK", Some("review-by:2026-10-13 stacked on sp-t5980r, held"), 5, 400),
+            grouped("deckdumpster", "deckdumpster multi-tenancy", "READY", Some("review-by:2026-10-19 prod cutover runbook (destructive)"), 1, 300),
+            grouped("deckdumpster", "deckdumpster multi-tenancy", "DROPPED", None, 4, 1),
+        ];
+        let e = epics_rollup(&rows);
+        let mt = &e[0];
+        assert_eq!((mt["landed"].as_i64(), mt["certified"].as_i64(), mt["rework"].as_i64(), mt["waiting"].as_i64()), (Some(2), Some(4), Some(5), Some(1)), "{e}");
+        assert_eq!(mt["held_since"], 300, "the oldest manual hold: {e}");
+        assert_eq!(mt["holds"][0], serde_json::json!({"label": "stacked on sp-t5980r", "n": 8}), "{e}");
+        assert_eq!(mt["holds"][1]["label"], "prod cutover runbook", "{e}");
+    }
+
+    #[test]
+    fn an_epic_with_every_member_delivered_is_not_shown() {
+        let rows = vec![grouped("spira", "round EC2 spill", "LANDED", None, 4, 1), grouped("spira", "round EC2 spill", "SUPERSEDED", None, 1, 1)];
+        assert_eq!(epics_rollup(&rows), serde_json::json!([]));
+    }
+
+    #[test]
+    fn a_hold_label_is_the_first_clause_without_its_stamp() {
+        assert_eq!(hold_label("review-by:2026-10-19 Ryan's ruling: deckdumpster lakehouse work"), "Ryan's ruling");
+        assert_eq!(hold_label("not dispatchable to aeons: the EC2 spill proof"), "not dispatchable to aeons");
+        assert_eq!(hold_label("review-by:2026-10-19 "), "no reason given");
+    }
+
+    #[test]
+    fn the_epic_rollup_is_one_grouped_query_over_title_series() {
+        assert!(EPICS_SQL.contains("GROUP BY repo, series, state, held_reason") && EPICS_SQL.matches("SELECT").count() == 1, "{EPICS_SQL}");
+    }
 
     #[test]
     fn the_repo_label_is_read_from_bd_show_json() {
