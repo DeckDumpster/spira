@@ -1303,3 +1303,32 @@ fn disposition_is_recorded_on_the_working_row_and_refused_elsewhere() {
     f.bead("sp-r", BeadState::Ready);
     assert_eq!(go(&mut f, "disposition", &["sp-r", "slain", "x"]).code, REFUSED);
 }
+
+#[test]
+fn close_delivered_ends_hand_delivered_work_done_with_its_reason_and_refuses_an_empty_one() {
+    let mut f = Fake::default();
+    f.bead("sp-h", BeadState::Ready);
+    let mut bd = FakeBd::default();
+    assert_eq!(close(&v(&["sp-h", "--delivered", "--reason", "  "]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL, "an empty reason is refused");
+    assert!(bd.closed.is_empty() && f.events.is_empty());
+    let a = close(&v(&["sp-h", "--delivered", "--reason", "live: dolt 2.4.2"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-h"), "DONE");
+    assert_eq!(f.beads["sp-h"].reason.as_deref(), Some("live: dolt 2.4.2"));
+    assert_eq!(bd.closed.len(), 1);
+    f.bead("sp-p", BeadState::Ready);
+    assert_eq!(close(&v(&["sp-p", "--reason", "abandoned"]), &mut f, &mut bd, &mut no_file).code, APPLIED);
+    assert_eq!(f.state("sp-p"), "DROPPED", "close without --delivered keeps its meaning");
+    assert_eq!(close(&v(&["sp-p", "--delivered", "--landing", "--reason", "x"]), &mut f, &mut bd, &mut no_file).code, CANNOT_TELL);
+}
+
+#[test]
+fn close_delivered_corrects_a_dropped_bead_to_done() {
+    let mut f = Fake::default();
+    f.bead("sp-x", BeadState::Dropped);
+    let mut bd = FakeBd::default();
+    let a = close(&v(&["sp-x", "--delivered", "--reason", "spira-env live"]), &mut f, &mut bd, &mut no_file);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.state("sp-x"), "DONE");
+    assert_eq!(f.beads["sp-x"].reason.as_deref(), Some("spira-env live"));
+}

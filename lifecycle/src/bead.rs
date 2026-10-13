@@ -311,6 +311,10 @@ pub enum BeadEventKind {
 /// [`BeadEventKind::Reclassify`] may overwrite.
 pub const RESIDUE_RULE: &str = "residue-closed-no-landing-evidence";
 
+/// The only actor whose `Done` may move a DROPPED row to DONE: the correction of hand-delivered
+/// work that was closed before a delivered close existed.
+pub const DELIVERED_CORRECTION_ACTOR: &str = "delivered-correction";
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BeadEvent {
     pub expect: BeadState,
@@ -474,6 +478,13 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             let mut new = row.clone();
             new.state = BeadState::Dropped;
             new.reason = Some(reason.as_str().to_string());
+            new.version += 1;
+            Outcome::applied(new)
+        }
+        BeadEventKind::Done { delivers } if row.state == BeadState::Dropped && ev.actor == DELIVERED_CORRECTION_ACTOR => {
+            let mut new = row.clone();
+            new.state = BeadState::Done;
+            new.reason = Some(delivers.clone());
             new.version += 1;
             Outcome::applied(new)
         }
@@ -673,7 +684,16 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
+            Done { .. } if holds_ask(row) => awaiting_reply(row, kind),
+            // Work delivered by hand: no aeon was bound, so there is no WORKING to pass through.
+            Done { delivers } => {
+                let mut new = row.clone();
+                new.state = BeadState::Done;
+                new.reason = Some(delivers.clone());
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            Release | HolderDead | Submit { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } => illegal(row, kind),
         },
