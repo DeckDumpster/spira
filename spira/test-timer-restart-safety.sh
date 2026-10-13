@@ -41,6 +41,19 @@ check_timer() {  # <file> -> prints FAIL if relative-form and missing OnActiveSe
     echo "FAIL"
 }
 
+cat > "$TMP/spira-active-only.timer" <<'EOF2'
+[Timer]
+OnUnitActiveSec=60s
+Unit=spira-active-only.service
+EOF2
+
+result="$(check_timer "$TMP/spira-active-only.timer")"
+if [ "$result" = "FAIL" ]; then
+    ok "positive control: OnUnitActiveSec-only timer (never-activated service) is caught"
+else
+    bad "positive control: OnUnitActiveSec-only timer is caught" "matcher cannot find a timer with no anchor"
+fi
+
 result="$(check_timer "$TMP/spira-offender.timer")"
 if [ "$result" = "FAIL" ]; then
     ok "positive control: offending fixture (no OnActiveSec) is caught"
@@ -64,6 +77,12 @@ for f in "$UNIT_DIR"/*.timer; do
         ok "$b: has OnActiveSec (or OnCalendar)"
     fi
 done
+
+if grep -q '^OnCalendar=' "$UNIT_DIR/spira-summon.timer" && ! grep -q '^OnUnitActiveSec=' "$UNIT_DIR/spira-summon.timer"; then
+    ok "spira-summon.timer is wall-clock (re-arms though its service never activates)"
+else
+    bad "spira-summon.timer is wall-clock" "OnUnitActiveSec re-arms only from a service activation; a stalled one stays elapsed forever"
+fi
 
 [ "$n" -gt 0 ] || bad "found timer templates to check" "no *.timer files under $UNIT_DIR"
 
