@@ -18,7 +18,6 @@ pub const KINDS_FILE: &str = "spira-lint/event-kinds";
 /// `spira_event <kind> `; a Rust site the literal `"<kind>"`.
 pub const WIRED: &[(&str, &str)] = &[
     ("gate-check/src/main.rs", "ci.failed"),
-    ("sentinel/src/check4.rs", "bead.poisoned"),
     ("landing-pass/src/push.rs", "bead.landed"),
     ("landing-pass/src/push.rs", "bead.reopened"),
 ];
@@ -142,7 +141,7 @@ mod tests {
     use super::*;
     use crate::testutil::TempDir;
 
-    const KINDS: &str = "# kinds\nci.failed\nbead.poisoned\nbranch.reclaimed\nbead.landed\nbead.reopened\n";
+    const KINDS: &str = "# kinds\nci.failed\nbranch.reclaimed\nbead.landed\nbead.reopened\n";
 
     fn wired(t: &TempDir) -> Vec<String> {
         // Every WIRED entry is a Rust site now (gate-check moved to Rust, sp-ubw2o), so this
@@ -151,13 +150,11 @@ mod tests {
         // fires, which is a fact about this fixture, not about the rule being exercised.
         t.write("spira/an-example.sh", "spira_event bead.landed \"$id\"\n");
         t.write("gate-check/src/main.rs", "world.spira_event(\"ci.failed\", &blocked, &summary, esc);\n");
-        t.write("sentinel/src/check4.rs", "emit(\"bead.poisoned\");\n");
         t.write("strand/src/check.rs", "emit(\"branch.reclaimed\");\n");
         t.write("landing-pass/src/push.rs", "emit(\"bead.landed\"); emit(\"bead.reopened\");\n");
         vec![
             "spira/an-example.sh".into(),
             "gate-check/src/main.rs".into(),
-            "sentinel/src/check4.rs".into(),
             "strand/src/check.rs".into(),
             "landing-pass/src/push.rs".into(),
         ]
@@ -195,7 +192,7 @@ mod tests {
         t.write(KINDS_FILE, &format!("{KINDS}Bad.Kind\n"));
         let files = wired(&t);
         let got = run(&t, files, &[]).unwrap();
-        assert_eq!(got, vec!["event-taxonomy: spira-lint/event-kinds:7: kind 'Bad.Kind': not lowercase dotted segments"]);
+        assert_eq!(got, vec!["event-taxonomy: spira-lint/event-kinds:6: kind 'Bad.Kind': not lowercase dotted segments"]);
     }
 
     #[test]
@@ -224,10 +221,9 @@ mod tests {
         // `spira_event` any more: the shell side of the taxonomy is fully retired.
         t.write("spira/unrelated.sh", "echo hi\n");
         t.write("gate-check/src/main.rs", "world.spira_event(\"ci.failed\", &blocked, &summary, esc);\n");
-        t.write("sentinel/src/check4.rs", "emit(\"bead.poisoned\");\n");
         t.write("strand/src/check.rs", "emit(\"branch.reclaimed\");\n");
         t.write("landing-pass/src/push.rs", "emit(\"bead.landed\"); emit(\"bead.reopened\");\n");
-        let files = vec!["spira/unrelated.sh".into(), "gate-check/src/main.rs".into(), "sentinel/src/check4.rs".into(), "strand/src/check.rs".into(), "landing-pass/src/push.rs".into()];
+        let files = vec!["spira/unrelated.sh".into(), "gate-check/src/main.rs".into(), "strand/src/check.rs".into(), "landing-pass/src/push.rs".into()];
         assert_eq!(run(&t, files, &[]), Ok(vec![]));
     }
 
