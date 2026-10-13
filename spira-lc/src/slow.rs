@@ -313,8 +313,10 @@ mod tests {
         let log = d.join("s.log");
         let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("0"))]);
         request_done("probe-verb", "probe\tcaller", Duration::from_millis(40));
+        request_done("other-verb", "other", Duration::from_millis(7));
         request_done("probe-verb", "probe\tcaller", Duration::from_millis(60));
-        let got = std::fs::read_to_string(&log).unwrap();
+        let got: String = std::fs::read_to_string(&log).unwrap().lines().filter(|l| l.contains("\tprobe-verb\t")).map(|l| format!("{l}\n")).collect();
+        assert_eq!(got.lines().count(), 2, "{got}");
         assert!(got.lines().all(|l| l.split('\t').collect::<Vec<_>>()[1..] == ["probe-verb", "probe_caller", l.split('\t').nth(3).unwrap(), "REQUEST"][..]), "{got}");
         let s: serde_json::Value = serde_json::from_str(&stats_json()).unwrap();
         assert_eq!(s["verbs"]["probe-verb"], serde_json::json!({"count": 2, "total_ms": 100}));
