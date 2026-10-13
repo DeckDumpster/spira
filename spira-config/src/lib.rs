@@ -225,6 +225,8 @@ fn tail_segment_refusal(seg: &str) -> Option<String> {
 
 /// Where install builds the pinned tool environment (`nix build .#spira-env`), under `$HOME`.
 pub const SPIRA_ENV_REL: &str = ".local/lib/spira-env";
+/// The spira-env the last rebuild replaced, rooted so `spira-nix-gc` keeps it for rollback.
+pub const SPIRA_ENV_PREV_REL: &str = ".local/lib/spira-env.prev";
 
 /// The `bin/` of the pinned tool environment for `home` — what unit PATHs put ahead of the
 /// hand-installed directories.

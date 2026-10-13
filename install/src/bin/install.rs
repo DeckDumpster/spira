@@ -232,8 +232,17 @@ fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
+    let before = std::fs::canonicalize(&out).ok();
     run_ok("nix", &["--extra-experimental-features", "nix-command flakes", "build", &target, "-o", &out.display().to_string()])
         .map_err(|e| format!("cannot build spira-env (is nix installed?): {e}"))?;
+    if let (Some(old), Ok(new)) = (before, std::fs::canonicalize(&out)) {
+        if old != new {
+            let prev = Path::new(home).join(spira_config::SPIRA_ENV_PREV_REL);
+            run_ok("nix-store", &["--add-root", &prev.display().to_string(), "--indirect", "--realise", &old.display().to_string()])
+                .map_err(|e| format!("cannot root the previous spira-env {}: {e}", old.display()))?;
+            info(&format!("kept previous spira-env {} as a GC root at {}", old.display(), prev.display()));
+        }
+    }
     info(&format!("built spira-env at {}", out.display()));
     Ok(())
 }
