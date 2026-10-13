@@ -203,6 +203,11 @@ pub fn main_with(args: Vec<String>) -> i32 {
     match verb.as_str() {
         "acquire" => match pool.acquire(&deps, None) {
             Ok((vm, mode)) => {
+                if let Some(parent) = ProcId::of(unsafe { libc::getppid() } as u32) {
+                    if let Err(e) = pool.set_holder(&vm.handle, parent) {
+                        eprintln!("round-vm acquire: could not record the holder of {}: {e}", vm.handle);
+                    }
+                }
                 println!("{} {} {}", vm.handle, vm.addr, mode.as_str());
                 0
             }
@@ -228,7 +233,12 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
-        "status" => match if rest.is_empty() { pool.status() } else { pool.status_json().map(|j| format!("{j}\n")) } {
+        "status" => match {
+            if let Ok(attempt) = factory() {
+                pool.reap_dead_holders(&attempt);
+            }
+            if rest.is_empty() { pool.status() } else { pool.status_json().map(|j| format!("{j}\n")) }
+        } {
             Ok(s) => {
                 print!("{s}");
                 0

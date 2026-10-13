@@ -41,6 +41,15 @@ pub struct Lease {
     pub vm: Vm,
     pub owner: Option<ProcId>,
     pub since: u64,
+    /// The process that called `round-vm acquire`; the lease is stale once it is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<ProcId>,
+}
+
+impl Lease {
+    pub fn stale(&self) -> bool {
+        self.owner.is_some_and(|o| !o.alive()) || self.holder.is_some_and(|h| !h.alive())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
