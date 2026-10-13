@@ -83,6 +83,70 @@ pub fn cmd_content_rows(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// The pane's window on the content store: live beads plus the last day's closures.
+const PANE_SCOPE: &str = "(status <> 'closed' OR closed_at >= UTC_TIMESTAMP() - INTERVAL 1 DAY)";
+const INFLOW_ROWS: usize = 40;
+
+fn count(conn: &Conn, sql: String) -> Result<i64, String> {
+    let rows = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
+    Ok(rows.first().and_then(|r| r.get("n")).and_then(|n| n.as_i64().or_else(|| n.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0))
+}
+
+/// `pane-facets inflow --window-secs N`: what the ops pane's inflow section draws, aggregated
+/// here so the reply is the newest rows plus counts, never the table.
+/// `pane-facets repo-labels --valid a,b`: live beads with no `repo:` label, and with only
+/// `repo:` labels outside the valid set.
+pub fn cmd_pane_facets(args: &[String], conn: &Conn) -> (i32, String) {
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+    let out = match args.first().map(String::as_str) {
+        Some("inflow") => flag("--window-secs").and_then(|w| w.parse::<u32>().ok()).ok_or_else(|| "pane-facets inflow: --window-secs <n> is required".to_string()).and_then(|w| inflow(conn, w)),
+        Some("repo-labels") => repo_labels(conn, flag("--valid").map_or("", String::as_str)),
+        _ => Err("usage: pane-facets inflow --window-secs N | repo-labels --valid a,b".to_string()),
+    };
+    match out {
+        Ok(v) => (0, v.to_string()),
+        Err(e) => (CANNOT_TELL, e),
+    }
+}
+
+fn inflow(conn: &Conn, window_secs: u32) -> Result<Value, String> {
+    let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
+    let work = "COALESCE(issue_type, 'task') <> 'event'";
+    let fresh = format!("{work} AND {PANE_SCOPE} AND created_at >= UTC_TIMESTAMP() - INTERVAL {window_secs} SECOND");
+    let issues = q(format!(
+        "SELECT id, title, priority, issue_type, status, DATE_FORMAT(created_at, '{RFC3339}') AS created_at FROM {CONTENT_DB}.issues \
+         WHERE {work} AND {PANE_SCOPE} AND created_at IS NOT NULL ORDER BY created_at DESC, id LIMIT {INFLOW_ROWS}"
+    ))?;
+    let ids: Vec<String> = issues.iter().filter_map(|i| s(i, "id")).map(|i| format!("'{}'", rows::escape(i))).collect();
+    let labels = if ids.is_empty() {
+        vec![]
+    } else {
+        q(format!("SELECT issue_id, label FROM {CONTENT_DB}.labels WHERE issue_id IN ({}) ORDER BY issue_id, label", ids.join(",")))?
+    };
+    let kinds = q(format!("SELECT COALESCE(issue_type, 'task') AS kind, COUNT(*) AS n FROM {CONTENT_DB}.issues WHERE {fresh} GROUP BY kind ORDER BY n DESC, kind"))?;
+    let n = count(conn, format!("SELECT COUNT(*) AS n FROM {CONTENT_DB}.issues WHERE {fresh}"))?;
+    let defect = count(
+        conn,
+        format!("SELECT COUNT(*) AS n FROM {CONTENT_DB}.issues WHERE {fresh} AND (issue_type = 'bug' OR id IN (SELECT issue_id FROM {CONTENT_DB}.labels WHERE label = 'incident'))"),
+    )?;
+    let kinds: Vec<Value> = kinds.iter().map(|k| json!([s(k, "kind").unwrap_or("task"), k.get("n").and_then(|n| n.as_i64().or_else(|| n.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0)])).collect();
+    Ok(json!({ "n": n, "defect": defect, "kinds": kinds, "rows": assemble(&issues, &labels, &[]) }))
+}
+
+fn repo_labels(conn: &Conn, valid: &str) -> Result<Value, String> {
+    let live = format!("{CONTENT_DB}.issues WHERE status <> 'closed'");
+    let with_repo = format!("{live} AND id IN (SELECT issue_id FROM {CONTENT_DB}.labels WHERE label LIKE 'repo:%')");
+    let valid: Vec<String> = valid.split(',').filter(|v| !v.is_empty()).map(|v| format!("'repo:{}'", rows::escape(v))).collect();
+    let mapped = if valid.is_empty() {
+        0
+    } else {
+        count(conn, format!("SELECT COUNT(*) AS n FROM {live} AND id IN (SELECT issue_id FROM {CONTENT_DB}.labels WHERE label IN ({}))", valid.join(",")))?
+    };
+    let total = count(conn, format!("SELECT COUNT(*) AS n FROM {live}"))?;
+    let repo = count(conn, format!("SELECT COUNT(*) AS n FROM {with_repo}"))?;
+    Ok(json!({ "unmapped": repo - mapped, "absent": total - repo }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

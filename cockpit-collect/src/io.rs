@@ -267,6 +267,11 @@ pub fn contentjson_shared(args: &[&str]) -> Option<String> {
     fresh
 }
 
+/// True when probes read the `SPIRA_BDJSON_FIXTURE` simulation rather than the live store.
+pub fn fixture_mode() -> bool {
+    std::env::var("SPIRA_BDJSON_FIXTURE").is_ok_and(|f| !f.is_empty())
+}
+
 pub const PANE_TTL_SECS: i64 = 30;
 const PANE_WINDOW_SECS: i64 = 86_400;
 const HISTORY_TTL_SECS: i64 = 600;

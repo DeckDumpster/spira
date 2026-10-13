@@ -779,6 +779,21 @@ pub fn sphere_keys(cfg: &Cfg) -> Kv {
 // repo_label_keys
 // ---------------------------------------------------------------------------------------
 
+/// (unmapped, absent) over a full row set: the answer the server's `pane-facets repo-labels` gives.
+fn repo_label_counts(rows: &[Value], valid: &std::collections::HashSet<String>) -> (usize, usize) {
+    let (mut unmapped, mut absent) = (0, 0);
+    for i in rows {
+        let labels: Vec<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+        let repo_labels: Vec<&str> = labels.iter().filter_map(|l| l.strip_prefix("repo:")).collect();
+        if repo_labels.is_empty() {
+            absent += 1;
+        } else if !repo_labels.iter().any(|r| valid.contains(*r)) {
+            unmapped += 1;
+        }
+    }
+    (unmapped, absent)
+}
+
 pub fn repo_label_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let Ok(map_content) = std::fs::read_to_string(&cfg.repo_map) else {
@@ -794,24 +809,22 @@ pub fn repo_label_keys(cfg: &Cfg) -> Kv {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let rows = io::json_rows(io::live_beads(""));
-    match rows {
+    let counts = if io::fixture_mode() {
+        io::json_rows(io::live_beads("")).map(|rows| repo_label_counts(&rows, &valid))
+    } else {
+        let mut names: Vec<&str> = valid.iter().map(String::as_str).collect();
+        names.sort_unstable();
+        lc::verb(&["pane-facets", "repo-labels", "--valid", &names.join(",")]).and_then(|raw| {
+            let v: Value = serde_json::from_str(&raw).ok()?;
+            Some((v.get("unmapped")?.as_u64()? as usize, v.get("absent")?.as_u64()? as usize))
+        })
+    };
+    match counts {
         None => {
             push(&mut out, "SP_REPO_UNMAPPED", "?");
             push(&mut out, "SP_REPO_ABSENT", "?");
         }
-        Some(rows) => {
-            let mut unmapped = 0;
-            let mut absent = 0;
-            for i in &rows {
-                let labels: Vec<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-                let repo_labels: Vec<&str> = labels.iter().filter_map(|l| l.strip_prefix("repo:")).collect();
-                if repo_labels.is_empty() {
-                    absent += 1;
-                } else if !repo_labels.iter().any(|r| valid.contains(*r)) {
-                    unmapped += 1;
-                }
-            }
+        Some((unmapped, absent)) => {
             push(&mut out, "SP_REPO_UNMAPPED", unmapped.to_string());
             push(&mut out, "SP_REPO_ABSENT", absent.to_string());
         }
