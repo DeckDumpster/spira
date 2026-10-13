@@ -388,7 +388,10 @@ lc_fix_init() {
 join() { local first=1 f; printf '['; for f in "$@"; do [ -f "$f" ] || continue; [ $first = 1 ] || printf ','; first=0; cat "$f"; done; printf ']\n'; }
 case "$1" in
     list)
-        if [ "$2" = "--delivery" ]; then join "$LC_FIX/delivery/${4:-}"/*; elif [ -n "${3:-}" ]; then join "$LC_FIX/bead/$3"/*; else join "$LC_FIX/bead"/*/*; fi ;;
+        if [ "$2" = "--delivery" ]; then join "$LC_FIX/delivery/${4:-}"/*
+        elif [ "$2" = "--ids" ]; then fs=(); for i in ${3//,/ }; do fs+=("$LC_FIX"/bead/*/"$i"); done; join "${fs[@]}"
+        elif [ "$2" = "--hold" ]; then join "$LC_FIX/bead"/*/*
+        elif [ -n "${3:-}" ]; then join "$LC_FIX/bead/$3"/*; else join "$LC_FIX/bead"/*/*; fi ;;
     show) [ -f "$LC_FIX/show/$2" ] && cat "$LC_FIX/show/$2" || exit 1 ;;
     event) printf '%s\n' "$*" >> "$LC_FIX/events.log"; [ -f "$LC_FIX/refuse" ] && exit 3; exit 0 ;;
     create-bead) printf '%s\n' "$*" >> "$LC_FIX/creates.log"; [ -f "$LC_FIX/refuse-create" ] && exit 2
@@ -480,7 +483,10 @@ fi
 join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
 case "\$1" in
     list)
-        if [ "\$2" = "--delivery" ]; then join "\$LC_FIX/delivery/\${4:-}"/*; elif [ -n "\${3:-}" ]; then join "\$LC_FIX/bead/\$3"/*; else join "\$LC_FIX/bead"/*/*; fi ;;
+        if [ "\$2" = "--delivery" ]; then join "\$LC_FIX/delivery/\${4:-}"/*
+        elif [ "\$2" = "--ids" ]; then fs=(); for i in \${3//,/ }; do fs+=("\$LC_FIX"/bead/*/"\$i"); done; join "\${fs[@]}"
+        elif [ "\$2" = "--hold" ]; then join "\$LC_FIX/bead"/*/*
+        elif [ -n "\${3:-}" ]; then join "\$LC_FIX/bead/\$3"/*; else join "\$LC_FIX/bead"/*/*; fi ;;
     show) [ -f "\$LC_FIX/show/\$2" ] && cat "\$LC_FIX/show/\$2" || exit 1 ;;
     *) [ -f "\$LC_FIX/refuse" ] && exit 3; exit 0 ;;
 esac
