@@ -421,6 +421,11 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         out.row.disposition = None;
         out.row.disposition_note = None;
     }
+    if out.applied && entered && out.row.state == BeadState::Rework {
+        out.row.holder = None;
+        out.row.persona = None;
+        out.row.lease_until = None;
+    }
     if out.applied && out.row.state.is_terminal() {
         out.row.holder = None;
         out.row.persona = None;
@@ -1835,6 +1840,30 @@ mod tests {
         let fresh = apply(&claimed.row, &ev(BeadState::Working, claimed.row.version, BeadEventKind::Submit { tip: "new2".into() }));
         assert!(fresh.applied);
         assert_eq!((fresh.row.state, fresh.row.tip.as_deref()), (BeadState::Submitted, Some("new2")));
+    }
+
+    #[test]
+    fn every_path_into_rework_clears_the_dead_holder_and_lease() {
+        let held = |state| {
+            let mut r = row(state);
+            r.tip = Some("t1".into());
+            r.holder = Some("aeon-x@1.2".into());
+            r.persona = Some("guardian".into());
+            r.lease_until = Some(9_999_999_999);
+            r
+        };
+        let cases = [
+            (BeadState::InDelivery, BeadEventKind::Returned { reason: ReturnedReason::BatchEjected }),
+            (BeadState::InDelivery, BeadEventKind::Returned { reason: ReturnedReason::BatchEjectedRed }),
+            (BeadState::Submitted, BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::NoRebase }),
+            (BeadState::Certified, BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::NoRebase }),
+        ];
+        for (state, kind) in cases {
+            let r = held(state);
+            let out = apply(&r, &ev(state, r.version, kind));
+            assert_eq!(out.row.state, BeadState::Rework);
+            assert_eq!((out.row.holder, out.row.persona, out.row.lease_until), (None, None, None));
+        }
     }
 
     #[test]
