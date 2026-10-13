@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=concierge
+DOC=PUSH COMMAND: run with the wake text as its last argument (word-split). Empty disables pushing.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PUSH COMMAND: run with the wake text as its last argument (word-split). Empty disables pushing.
+    : "${SPIRA_CONCIERGE_PUSH_WAKE:=$SPIRA_REPO/concierge.sh wake}"
+SPIRA_CONF_DEFAULT_EOF
