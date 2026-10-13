@@ -311,7 +311,17 @@ fn gather() -> Snapshot {
         Err(e) => s.errors.push(e),
     }
     // `list --live` carries no terminal rows, so LANDED 24h is gathered from its own windowed view.
-    match lc_json(&["ops-view", "ops_recent"]) {
+    // The same call carries the epic rollup (`--epics`), so EPICS costs the pane no store call; a
+    // server without it answers with the bare array, and EPICS is then simply absent.
+    match run("spira-lc", &["ops-view", "ops_recent", "--epics"])
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("spira-lc ops-view ops_recent: {e}")))
+        .map(|v| match v {
+            serde_json::Value::Array(rows) => rows,
+            mut o => {
+                s.epics = serde_json::from_value(o["epics"].take()).unwrap_or_default();
+                o["rows"].as_array().cloned().unwrap_or_default()
+            }
+        }) {
         Ok(rows) => {
             for r in rows {
                 let id = text(&r["bead_id"]);

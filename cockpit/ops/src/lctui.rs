@@ -33,6 +33,8 @@ const R_REFUSED_ALL: u16 = 15;
 const R_BLOCKED_SOME: u16 = 16;
 const R_BLOCKED_ALL: u16 = 17;
 const R_DRIFT: u16 = 18;
+// EPICS gives up its hold lines first, then folds each repo to its own line.
+const R_EPIC_HOLDS: u16 = 19;
 // The state machine gives up, in order (per Ryan 2026-10-09): idle transitions, beads past each
 // state's oldest three, empty states, the oldest three, then folds each state's transitions.
 const R_IDLE_EDGE: u16 = 20;
@@ -41,6 +43,7 @@ const R_EMPTY_STATE: u16 = 22;
 const R_STATE_BEADS: u16 = 23;
 const R_STATE_FOLD: u16 = 24;
 const R_TERMINAL: u16 = 25;
+const R_EPIC_FOLD: u16 = 26;
 const R_NOW_FOLD: u16 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -276,6 +279,10 @@ pub fn tree(v: &View) -> Vec<Node> {
         out.push(single);
     }
 
+    if let Some(epics) = epics_node(v) {
+        out.push(epics);
+    }
+
     let mut aeons: Vec<Node> = v
         .now_items
         .iter()
@@ -433,6 +440,68 @@ pub fn tree(v: &View) -> Vec<Node> {
 
 /// One line for a running pass: the round, the phase, and in suites a bar of suites done of
 /// total, the reds, and the time against the cap (yellow past the 12-minute goal, red past it).
+const EPIC_BAR: usize = 14;
+
+fn epic_bar(done: i64, total: i64) -> String {
+    let filled = if total > 0 { ((EPIC_BAR as i64 * done + total / 2) / total) as usize } else { 0 };
+    format!("{GRN}{}{R}{D}{}{R}", "█".repeat(filled), "░".repeat(EPIC_BAR - filled))
+}
+
+fn epic_counts(landed: i64, e: [(i64, &str); 4], total: i64) -> String {
+    let mut parts = vec![format!("{B}{landed}/{total}{R} landed")];
+    parts.extend(e.iter().filter(|(n, _)| *n > 0).map(|(n, l)| format!("{n} {l}")));
+    parts.join(" · ")
+}
+
+/// EPICS (per Ryan 2026-10-13): open epics by repo, each with its progress bar and, under it,
+/// why its held members are held. Drawn only from the rollup the server sends with ops_recent.
+fn epics_node(v: &View) -> Option<Node> {
+    if v.epics.is_empty() {
+        return None;
+    }
+    let mut repos: Vec<(String, Vec<&crate::lcview::EpicRow>)> = Vec::new();
+    for e in &v.epics {
+        let repo = if e.repo.is_empty() { "(no repo)".to_string() } else { e.repo.clone() };
+        match repos.iter_mut().find(|(r, _)| *r == repo) {
+            Some((_, list)) => list.push(e),
+            None => repos.push((repo, vec![e])),
+        }
+    }
+    let held = v.epics.iter().filter(|e| !e.holds.is_empty()).count();
+    let kids = repos
+        .into_iter()
+        .map(|(repo, list)| {
+            let sum = |f: fn(&crate::lcview::EpicRow) -> i64| list.iter().map(|e| f(e)).sum::<i64>();
+            let (landed, total) = (sum(|e| e.landed), sum(|e| e.total()));
+            let counts = [(sum(|e| e.certified), "certified"), (sum(|e| e.rework), "rework"), (sum(|e| e.building), "building"), (sum(|e| e.waiting), "waiting")];
+            let key = format!("epics/{repo}");
+            let epics = list
+                .iter()
+                .map(|e| {
+                    let name = e.epic.strip_prefix(&format!("{repo} ")).unwrap_or(&e.epic);
+                    let ekey = format!("{key}/{name}");
+                    let line = format!(
+                        "{:<24} {}  {}",
+                        cut(name, 24),
+                        epic_bar(e.landed, e.total()),
+                        epic_counts(e.landed, [(e.certified, "certified"), (e.rework, "rework"), (e.building, "building"), (e.waiting, "waiting")], e.total())
+                    );
+                    let holds = e.held_since.filter(|_| !e.holds.is_empty()).map(|since| {
+                        let why = e.holds.iter().map(|h| format!("{} {}", h.n, h.label)).collect::<Vec<_>>().join(" · ");
+                        Node::new(format!("{ekey}/held"), format!("{YEL}held {}{R}: {why}", crate::lcview::age(v.now - since))).elide(R_EPIC_HOLDS)
+                    });
+                    Node::new(ekey, line).kids(holds.into_iter().collect())
+                })
+                .collect();
+            Node::new(key, format!("{B}{:<26}{R} {}  {}", cut(&repo, 26), epic_bar(landed, total), epic_counts(landed, counts, total)))
+                .kids(epics)
+                .fold(R_EPIC_FOLD)
+        })
+        .collect();
+    let held = if held > 0 { format!(" · {YEL}{held} held{R}") } else { String::new() };
+    Some(Node::new("epics", format!("{B}EPICS{R}  {B}{}{R} open{held}", v.epics.len())).kids(kids))
+}
+
 fn pass_line(p: &crate::lcview::PassProgress, now: i64) -> String {
     let head = format!("{CYN}⟳{R} {B}{}{R} pass {}", p.round, p.pass);
     match p.phase.as_str() {
@@ -990,6 +1059,67 @@ mod tests {
 
     fn state_line(t: &[String], name: &str) -> bool {
         t.iter().any(|l| l.trim_start().trim_start_matches(['▿', '▹', '▸', '▼', ' ']).starts_with(name))
+    }
+
+    fn epics_view() -> View {
+        use crate::lcview::{EpicHold, EpicRow};
+        let e = |repo: &str, epic: &str, c: [i64; 5], held: Option<i64>, holds: &[(&str, i64)]| EpicRow {
+            repo: repo.into(),
+            epic: epic.into(),
+            landed: c[0],
+            certified: c[1],
+            rework: c[2],
+            building: c[3],
+            waiting: c[4],
+            held_since: held,
+            holds: holds.iter().map(|(l, n)| EpicHold { label: (*l).into(), n: *n }).collect(),
+        };
+        let mut v = busy_view();
+        v.now = 100_000;
+        v.epics = vec![
+            e("", "round EC2 spill", [3, 0, 0, 0, 1], Some(100_000 - 8 * 3600), &[("not dispatchable to aeons", 1)]),
+            e("deckdumpster", "deckdumpster lakehouse", [0, 3, 1, 0, 11], Some(100_000 - 9 * 3600), &[("Ryan's ruling", 4)]),
+            e("deckdumpster", "deckdumpster multi-tenancy", [2, 4, 5, 0, 3], Some(100_000 - 9 * 3600), &[("stacked on sp-t5980r", 8), ("prod cutover runbook", 1), ("suspect in the deckdumpster UI-tier DB hang", 1)]),
+            e("ephemeral-ci", "Nix phase", [0, 0, 0, 1, 0], None, &[]),
+        ];
+        v
+    }
+
+    #[test]
+    fn epics_sit_under_round_with_each_repo_expanding_to_its_epics_and_why_they_are_held() {
+        let t = text(&layout(&epics_view(), &Ui::default(), 120, 81));
+        let at = |needle: &str| t.iter().position(|l| l.contains(needle)).unwrap_or_else(|| panic!("{needle} missing: {t:#?}"));
+        assert!(at("ROUND") < at("EPICS") && at("EPICS") < at("sp-w0"), "EPICS is right after ROUND, before NOW: {t:#?}");
+        assert!(has(&t, "EPICS  4 open · 3 held"), "{t:#?}");
+        assert!(has(&t, "2/29 landed") && has(&t, "7 certified · 6 rework · 14 waiting"), "the repo line sums its epics: {t:#?}");
+        let mt = &t[at("multi-tenancy")];
+        assert!(!mt.contains("deckdumpster multi-tenancy") && mt.contains("2/14 landed · 4 certified · 5 rework · 3 waiting"), "the repo prefix is dropped under its repo: {mt}");
+        assert!(at("deckdumpster") < at("lakehouse") && at("lakehouse") < at("multi-tenancy"));
+        assert!(has(&t, "held 9h: 8 stacked on sp-t5980r · 1 prod cutover runbook · 1 suspect in the deckdumpster UI-tier DB hang"), "the hold line is whole at 120 columns: {t:#?}");
+        assert!(has(&t, "(no repo)") && has(&t, "round EC2 spill"), "{t:#?}");
+        assert!(!t.iter().any(|l| l.contains("Nix phase") && l.contains("held")), "an epic with no hold has no hold line");
+    }
+
+    #[test]
+    fn a_70x50_pane_with_epics_still_shows_round_and_every_aeon_and_never_wraps() {
+        let t = text(&layout(&epics_view(), &Ui::default(), 70, 50));
+        assert!(t.len() <= 50 && t.iter().all(|l| l.chars().count() <= 70), "{t:#?}");
+        assert!(has(&t, "r-auto-96") && has(&t, "EPICS"), "{t:#?}");
+        for k in 0..3 {
+            assert!(has(&t, &format!("sp-w{k}")), "aeon sp-w{k} missing: {t:#?}");
+        }
+    }
+
+    #[test]
+    fn no_open_epics_draws_no_epics_section() {
+        assert!(!has(&text(&layout(&busy_view(), &Ui::default(), 120, 81)), "EPICS"));
+    }
+
+    #[test]
+    fn the_web_page_draws_the_same_epics_tree() {
+        let page = render_page(&epics_view(), None, 10);
+        assert!(page.contains("data-key=\"epics/deckdumpster/multi-tenancy\""), "the page carries the epic nodes");
+        assert!(page.contains("stacked on") && page.contains("sp-t5980r"), "the hold line is on the page");
     }
 
     #[test]
