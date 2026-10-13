@@ -104,7 +104,7 @@ jobs:
             case "$st" in
               Success) break ;;
               Pending|InProgress|Delayed) sleep 30 ;;
-              *) aws ssm get-command-invocation --command-id "$cid" --instance-id "$id" --query '[StandardOutputContent,StandardErrorContent]' --output text | tail -n 60 >&2
+              *) aws ssm get-command-invocation --command-id "$cid" --instance-id "$id" --query '[StandardOutputContent,StandardErrorContent]' --output text | tail -n 100 >&2
                  echo "round image setup ended $st" >&2; exit 1 ;;
             esac
           done
