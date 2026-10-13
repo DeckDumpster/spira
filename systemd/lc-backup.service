@@ -1,5 +1,5 @@
 [Unit]
-Description=Back up the lifecycle store off-box, then prove the copy restores
+Description=Back up the lifecycle stores off-box
 Documentation=file://@SPIRA_HOME@/lc-backup.sh
 After=lc-serve.service dolt-beads.service
 
@@ -10,7 +10,6 @@ EnvironmentFile=-%h/.config/lc-backup.env
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_HOME@/lc-backup.sh run
-ExecStartPost=@SPIRA_HOME@/lc-backup.sh drill
 TimeoutStartSec=1800
 IOSchedulingClass=idle
 Nice=19

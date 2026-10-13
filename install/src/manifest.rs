@@ -110,6 +110,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("concierge.timer", true));
     m.units.push(t("lc-backup.service", false));
     m.units.push(t("lc-backup.timer", true));
+    m.units.push(t("lc-backup-drill.service", false));
+    m.units.push(t("lc-backup-drill.timer", true));
     m.units.push(t("spira-archive.service", false));
     m.units.push(t("spira-archive.timer", true));
     m.units.push(t("spira-groom.service", false));
