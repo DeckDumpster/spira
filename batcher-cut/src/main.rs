@@ -1030,6 +1030,11 @@ fn open_round_pr(
 ) -> Result<(), String> {
     let base_sha = io::confirm_base(repo, batch_head)?;
     let base_sha = base_sha.as_str();
+    let ids: Vec<String> = merged.iter().map(|m| m.id.clone()).collect();
+    let foreign = io::foreign_beads(repo, base_sha, batch_head, &ids)?;
+    if !foreign.is_empty() {
+        return Err(format!("round head carries commits of non-member bead(s) {} — refusing to open", foreign.join(", ")));
+    }
     let stamp = io::utc_stamp(round_start);
     let batch_br = format!("spira/queue/{stamp}");
     io::set_branch(repo, &batch_br, batch_head);
@@ -1156,6 +1161,15 @@ fn open_prepared(env_: &Env, repo: &Repo, pool: &[Member]) -> Result<bool, Strin
         return Ok(false);
     }
     let merged: Vec<Member> = p.members.iter().filter_map(|(id, _)| current.get(id.as_str()).map(|m| (*m).clone())).collect();
+    let ids: Vec<String> = merged.iter().map(|m| m.id.clone()).collect();
+    match io::foreign_beads(repo, &base_sha, &p.head, &ids) {
+        Ok(f) if f.is_empty() => {}
+        Ok(f) => {
+            println!("batcher {}: prepared round discarded (head carries non-member bead(s) {}) — cutting afresh", repo.name, f.join(", "));
+            return Ok(false);
+        }
+        Err(e) => return Err(e),
+    }
     open_round_pr(env_, repo, &merged, &p.head, now() - p.seconds, None, None)?;
     Ok(true)
 }

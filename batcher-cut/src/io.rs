@@ -683,6 +683,44 @@ pub fn is_ancestor(repo: &Repo, ancestor: &str, descendant: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn subject_bead(subject: &str) -> Option<&str> {
+    fn shaped(t: &str) -> Option<&str> {
+        let (stem, rest) = t.split_once('-')?;
+        let tail = rest.split('.').next()?;
+        let ok = stem.len() >= 2
+            && stem.bytes().all(|b| b.is_ascii_lowercase())
+            && tail.len() >= 3
+            && tail.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            && rest.split('.').skip(1).all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        ok.then_some(t)
+    }
+    let lead = subject.split_once(':').map(|(a, _)| a.trim()).and_then(shaped);
+    lead.or_else(|| subject.split_once("land ").and_then(|(_, r)| r.split_whitespace().next()).map(|t| t.trim_end_matches([':', ',', '.'])).and_then(shaped))
+}
+
+/// Bead ids named by commit subjects that are not in `members`, sorted and deduplicated.
+pub fn foreign_in(subjects: &[String], members: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = subjects
+        .iter()
+        .filter_map(|s| subject_bead(s))
+        .filter(|id| !members.iter().any(|m| m == id))
+        .map(str::to_string)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Beads other than `members` that have commits in `base..head`.
+pub fn foreign_beads(repo: &Repo, base: &str, head: &str, members: &[String]) -> Result<Vec<String>, String> {
+    let out = run(
+        Command::new("git").arg("-C").arg(&repo.path).args(["log", "--format=%s", &format!("{base}..{head}")]),
+        "git log base..head",
+    )?;
+    let subjects: Vec<String> = out.lines().map(str::to_string).collect();
+    Ok(foreign_in(&subjects, members))
+}
+
 // ---------------------------------------------------------------------------------------
 // Section F: when the base ref last moved, tracked across invocations. A batch merge
 // commit's own timestamp can predate a member certified moments before it, so "moved" is an
@@ -2182,6 +2220,39 @@ mod land_tests {
         git(&root, &["clone", "-q", remote.to_str().unwrap(), other.to_str().unwrap()]);
         let r = Repo { name: "r".into(), path: work.clone(), base: "origin/main".into(), forge: PathBuf::new(), land: Land::Forge };
         (root, other, r)
+    }
+
+    #[test]
+    fn foreign_in_names_only_non_members() {
+        let subj = |s: &str| s.to_string();
+        let subjects = vec![
+            subj("spira: land sp-lc1puh"),
+            subj("sp-lc1puh: parallel ui tier"),
+            subj("spira: land sp-94a87q"),
+            subj("sp-ffh07b.2: child work"),
+            subj("Merge branch 'x' into y"),
+        ];
+        let members = vec!["sp-94a87q".to_string(), "sp-ffh07b.2".to_string()];
+        assert_eq!(foreign_in(&subjects, &members), vec!["sp-lc1puh".to_string()]);
+        assert!(foreign_in(&subjects[2..4], &members).is_empty());
+    }
+
+    // Round N+1 prepared on batch N's head after N's member was ejected: the ejected
+    // member's commits are in base..head and must be named.
+    #[test]
+    fn foreign_beads_names_an_ejected_members_commits_in_the_head() {
+        let (_root, other, r) = fixture("foreign");
+        let base = git(&r.path, &["rev-parse", "origin/main"]);
+        git(&other, &["pull", "-q", "origin", "main"]);
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "spira: land sp-lc1puh"]);
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "spira: land sp-94a87q"]);
+        git(&other, &["push", "-q", "origin", "HEAD:refs/heads/next"]);
+        git(&r.path, &["fetch", "-q", "origin"]);
+        let head = git(&r.path, &["rev-parse", "origin/next"]);
+        let got = foreign_beads(&r, &base, &head, &["sp-94a87q".to_string()]).unwrap();
+        assert_eq!(got, vec!["sp-lc1puh".to_string()]);
+        let clean = foreign_beads(&r, &base, &head, &["sp-94a87q".to_string(), "sp-lc1puh".to_string()]).unwrap();
+        assert!(clean.is_empty());
     }
 
     // The remote advances after the round was built: confirm_base must refuse. Without the
