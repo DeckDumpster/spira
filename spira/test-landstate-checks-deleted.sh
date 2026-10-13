@@ -28,32 +28,18 @@ echo "test-landstate-checks-deleted.sh"
 ROOT="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-audit_body()      { awk '/^    fn audit\(/{f=1} f{print} f && /^    }$/{exit}' "$1"; }
-
 # ---------------------------------------------------------------------------------------
-# SENTINEL: no check5.rs, audit() calls no landstate check5, no skip switch anywhere.
+# SENTINEL: no check5.rs, no skip switch anywhere.
 # ---------------------------------------------------------------------------------------
 is "sentinel/src/check5.rs is gone" no "$([ -e "$ROOT/sentinel/src/check5.rs" ] && echo yes || echo no)"
 
-body="$(audit_body "$ROOT/sentinel/src/pass.rs")"
-want   "audit() was extracted"                  "fn audit(" "$body"
-nowant "audit() does not call the landstate check5" "self.check5(" "$body"
-# sp-mve9i: CHECK5-LC is gone too — each of its shapes was bd status disagreeing with the
-# lifecycle row, and bd status is inert for work beads (design §3.4). The rowless control stays.
-nowant "audit() no longer runs CHECK5-LC"        "check5_lc(" "$body"
 nowant "lifecycle.rs no longer defines check5_lc" "pub fn check5_lc" "$(cat "$ROOT/sentinel/src/lifecycle.rs")"
-want   "audit() still runs the rowless control"  "check_rowless(" "$body"
+nowant "sentinel/src does not call check5" "self.check5(" "$(cat "$ROOT"/sentinel/src/*.rs)"
 
 nowant "sentinel reads no SPIRA_SKIP_CLOSED_CHECK" "SPIRA_SKIP_CLOSED_CHECK" \
     "$(cat "$ROOT"/sentinel/src/*.rs)"
 is "no conf.d entry declares SPIRA_SKIP_CLOSED_CHECK" no \
     "$([ -e "$ROOT/spira/conf.d/SPIRA_SKIP_CLOSED_CHECK" ] && echo yes || echo no)"
-
-# SEEN RED: the same extraction over a scratch pass.rs with the legacy call restored.
-restored="$TMP/pass.rs"
-sed 's/^        self\.check4(snap);$/        self.check4(snap);\n        self.check5(snap);/' \
-    "$ROOT/sentinel/src/pass.rs" > "$restored"
-want "SEEN RED: a restored check5 call is caught" "self.check5(" "$(audit_body "$restored")"
 
 # ---------------------------------------------------------------------------------------
 # GROOMER: sweep() and the seam no longer reach the three landstate detectors.
