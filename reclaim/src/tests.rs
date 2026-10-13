@@ -32,6 +32,9 @@ fn cfg(root: &Path) -> Config {
         target_free_mib: 200,
         cache_dir: None,
         cache_cap_bytes: 0,
+        podman: None,
+        podman_dir: None,
+        podman_cap_bytes: 0,
         dry: false,
     }
 }
@@ -143,4 +146,44 @@ fn the_cache_is_trimmed_oldest_first_to_its_cap_and_fresh_tmp_survives() {
 fn glob_matches_wildcards_and_finds_nothing_for_a_missing_directory() {
     assert!(wild(".tgt-*", ".tgt-final") && !wild(".tgt-*", "tgt-final") && wild("a*c*e", "abcde"));
     assert!(glob("/nonexistent-reclaim/*/target").is_empty());
+}
+
+fn stub_podman(root: &Path) -> (PathBuf, PathBuf) {
+    let (bin, calls) = (root.join("podman"), root.join("calls"));
+    testkit::write_exe(&bin, &format!("#!/bin/sh\necho \"$@\" >> {}\necho 'Total reclaimed space: 11.76GB'\n", calls.display()));
+    (bin, calls)
+}
+
+#[test]
+fn podman_is_pruned_losslessly_only_under_the_floor() {
+    let t = testkit::TempDir::new("reclaim-podman");
+    let (bin, calls) = stub_podman(t.path());
+    let mut c = cfg(t.path());
+    c.podman = Some(bin);
+    let (r, log) = go(&c, &[], 10);
+    assert!(r.is_ok(), "{log:?}");
+    assert_eq!(fs::read_to_string(&calls).unwrap(), "system prune -f\n");
+    assert!(log.iter().any(|l| l.contains("11.76GB")), "{log:?}");
+    fs::remove_file(&calls).unwrap();
+    let (r, log) = go(&c, &[], 5000);
+    assert!(r.is_ok(), "{log:?}");
+    assert!(!calls.exists(), "above the floor nothing is issued: {log:?}");
+}
+
+#[test]
+fn podman_storage_over_its_cap_is_pruned_without_pressure() {
+    let t = testkit::TempDir::new("reclaim-podman-cap");
+    let (bin, calls) = stub_podman(t.path());
+    let store = t.path().join("store");
+    fs::create_dir_all(&store).unwrap();
+    fs::write(store.join("layer"), vec![1u8; 1 << 20]).unwrap();
+    let mut c = cfg(t.path());
+    c.podman = Some(bin);
+    c.podman_dir = Some(store);
+    c.podman_cap_bytes = 1 << 30;
+    go(&c, &[], 5000).0.unwrap();
+    assert!(!calls.exists());
+    c.podman_cap_bytes = 1 << 10;
+    go(&c, &[], 5000).0.unwrap();
+    assert_eq!(fs::read_to_string(&calls).unwrap(), "system prune -f\n");
 }
