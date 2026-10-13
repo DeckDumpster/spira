@@ -4,7 +4,7 @@
 #
 #   lc-backup.sh run                 per database: snapshot locally, tar it, upload ONE object, stamp it
 #   lc-backup.sh age [--now EPOCH]   exit 0 when every database's newest good backup is younger than SPIRA_LC_BACKUP_MAX_AGE
-#   lc-backup.sh drill [--db NAME] [TARBALL]   per database: restore a snapshot into a scratch dir; row counts must equal live
+#   lc-backup.sh drill [--db NAME] [TARBALL]   per database: restore a snapshot into a scratch dir under SPIRA_RUN; row counts must equal live
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
 #
@@ -22,7 +22,8 @@
 # (lc-backup.<db>.ok) and local tarball, so one database's fresh backup cannot mask another's.
 #
 # A stamp is written only after the upload exits clean, and carries the commit it holds. The
-# drill restores that tarball and compares every table's count with live AS OF the same commit.
+# drill restores that tarball and compares every table's count AS OF the stamped commit, live and restored alike, so
+# writes landing meanwhile cannot move either side.
 #
 # No destination, an unreadable stamp or an age beyond the limit is red, never a skip — a
 # store that was never backed up must look different from one that is.
@@ -174,7 +175,7 @@ _lcb_drill_db() {
     [ -r "$tarball" ] || { echo "lc-backup: drill: no snapshot at $tarball" >&2; return 1; }
     [ -r "$stamp" ] || { echo "lc-backup: drill: $db: no stamp — nothing has been backed up" >&2; return 1; }
     read -r t head < "$stamp"
-    scratch="$(mktemp -d "${TMPDIR:-/tmp}/lc-backup-drill.XXXXXX")" || return 1
+    mkdir -p "$SPIRA_RUN/lc-backup/drill" && scratch="$(mktemp -d "$SPIRA_RUN/lc-backup/drill/$db.XXXXXX")" || return 1
     mkdir "$scratch/snap" && tar -C "$scratch/snap" -xaf "$tarball" \
         || { echo "lc-backup: drill: cannot unpack $tarball" >&2; rm -rf "$scratch"; return 1; }
     # batch-job: restoring a snapshot into the scratch dir
@@ -189,7 +190,7 @@ _lcb_drill_db() {
     for tbl in $tables; do
         live="$(_lcb_sql "$db" -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" | tail -n +2)"
         # batch-job: reads of the restored scratch copy
-        restored="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\`" | tail -n +2 )"
+        restored="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" | tail -n +2 )"
         if [ -z "$live" ] || [ "$live" != "$restored" ]; then
             echo "lc-backup: drill: $tbl live ${live:-?} != restored ${restored:-?}" >&2; rc=1
         fi
