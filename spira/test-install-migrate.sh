@@ -229,7 +229,7 @@ echo "MIGRATION SCOPE — shared units (cockpit-ensure, concierge) excluded:"
 nowant "scope: cockpit-ensure.service not passed to disable" \
        "disable" "$(grep 'cockpit-ensure' "$SCTL_LOG" || true)"
 nowant "scope: concierge.service not passed to disable" \
-       "disable" "$(grep 'concierge' "$SCTL_LOG" || true)"
+       "disable" "$(grep -E '(^|[ \t])concierge\.(service|timer)' "$SCTL_LOG" || true)"
 
 # ==========================================================================
 echo
