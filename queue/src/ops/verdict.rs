@@ -342,6 +342,7 @@ fn forge_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
     let _ = std::fs::remove_file(&skips_file);
     let open = c.queue_file("open");
     let rc = if open.is_file() { process(w, c, path, &open) } else { OK };
+    close_stray_queue_prs(w, c, path, &open);
     drop(guard);
     // D2: the express-takeover stash had one writer (batch.sh, retired). Never silently skip one.
     let stashed = stashed_attributions(&c.s.queue_dir.join(name));
@@ -355,6 +356,25 @@ fn forge_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
         return FAIL;
     }
     rc
+}
+
+/// A queue PR whose branch is not the recorded batch is a duplicate cut: close it and cancel
+/// its runs. A record that exists but names no branch is unreadable, so nothing is closed.
+fn close_stray_queue_prs(w: &World, c: &Ctx, path: &Path, open: &Path) {
+    let recorded = if open.is_file() {
+        match records::read_kv(open).ok().flatten().and_then(|kv| kv.get("branch").map(String::from)).filter(|b| !b.is_empty()) {
+            Some(b) => b,
+            None => return,
+        }
+    } else {
+        String::new()
+    };
+    let Some(prs) = w.forge.queue_prs(&c.s.forge, path) else { return };
+    for (pr, branch) in prs.into_iter().filter(|(_, b)| *b != recorded) {
+        w.out(format!("verdict {}: closing stray queue PR {pr} ({branch}) — not the recorded batch", c.r.name));
+        w.forge.pr_close(&c.s.forge, path, &pr);
+        w.lib.cancel_runs(&c.s.forge, path, &branch);
+    }
 }
 
 fn stashed_attributions(dir: &Path) -> Vec<PathBuf> {

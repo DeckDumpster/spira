@@ -261,6 +261,8 @@ pub trait Forge {
     /// `pr-create <repo> <head> <base> <title>`, body on stdin → the PR number.
     fn pr_create(&self, forge: &Path, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<String>;
     fn pr_close(&self, forge: &Path, repo: &Path, pr: &str);
+    /// `(pr, head branch)` of every open `spira/queue/*` PR; None when the forge cannot say.
+    fn queue_prs(&self, forge: &Path, repo: &Path) -> Option<Vec<(String, String)>>;
     /// One bounded line (DESIGN.md §5).
     fn pr_comment(&self, forge: &Path, repo: &Path, pr: &str, line: &str);
     fn branch_protect(&self, forge: &Path, repo: &Path, branch: &str) -> bool;
