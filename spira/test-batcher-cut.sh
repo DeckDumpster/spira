@@ -271,7 +271,7 @@ certified_rows() {
         grep -qx "$(basename "$f")" "${SPIRA_RUN:-/nonexistent}/lc-taken" 2>/dev/null && continue
         ex=0; [ -f "${SPIRA_RUN:-/nonexistent}/lc-express/$(basename "$f")" ] && ex=1
         sf="$tip"; [ -f "${SPIRA_RUN:-/nonexistent}/lc-unsifted/$(basename "$f")" ] && sf=""
-        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s,"express":"%s","sifted_tip":"%s"}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}" "$ex" "$sf"; sep=','
+        printf '%s{"bead_id":"%s","state":"CERTIFIED","tip":"%s","updated_at":%s,"express":"%s","sifted_tip":"%s"}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}" "$ex" "$sf"; sep=','
     done
     printf ']\n'
 }
@@ -283,7 +283,7 @@ case "${1:-}" in
         for m in $(printf '%s' "$members" | tr ',' ' '); do printf '%s\n' "${m%%:*}" >> "${SPIRA_RUN:?}/lc-taken"; done
         exit "${SPIRA_LC_STUB_RC:-0}" ;;
     stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
-    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: the stub's CERTIFIED rows
+    list) certified_rows; exit 0 ;;   # one unfiltered read per repo step: the stub's CERTIFIED rows, each carrying its state
     # read_stack: a bead the machine holds, unstacked; its state and a version for the
     # batcher's own withdrawal (sp-mve9i: Deliver then Returned takes a member to REWORK).
     show) st=; tip=; [ -f "${SPIRA_RUN:-/nonexistent}/lc-stub/${2:-}" ] && read -r st tip _ < "${SPIRA_RUN}/lc-stub/$2"
