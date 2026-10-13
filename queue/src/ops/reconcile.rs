@@ -134,6 +134,7 @@ fn abandon(w: &World, c: &Ctx, path: &Path, file: &Path, kv: &Kv, pr: &str, memb
         }
     }
     if !pr.is_empty() && w.forge.pr_state(&c.s.forge, path, pr).as_deref().map(str::trim) == Some("open") {
+        w.lib.cancel_runs(&c.s.forge, path, kv.get("branch").unwrap_or(""));
         w.forge.pr_close(&c.s.forge, path, pr);
     }
     retire_branch(w, c, path, kv);

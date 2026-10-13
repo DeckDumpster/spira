@@ -233,6 +233,7 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
         w.forge.run_id(&c.s.forge, path, &field("branch")).map(|run| w.forge.fail_lines(&c.s.forge, path, &run, &suites.replace(',', " "))).unwrap_or_default()
     };
     let fail_lines = fail_lines.trim_end().to_string();
+    w.lib.cancel_runs(&c.s.forge, path, &field("branch"));
     w.forge.pr_close(&c.s.forge, path, &pr);
 
     let filed_marker = c.queue_file(&format!("publish-red-run-{run_id}"));
@@ -567,6 +568,7 @@ fn lc_requeue(w: &World, b: &Batch, reason: &str) {
 
 /// Close the PR and hand every member back CERTIFIED; the record goes.
 fn close_and_certify(w: &World, c: &Ctx, b: &Batch) {
+    w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, &b.pr);
     lc_requeue(w, b, "batch closed");
     let _ = std::fs::remove_file(b.file);
@@ -758,6 +760,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
             }
         }
     }
+    w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, pr);
     w.out(format!("verdict {name}: PR {pr} base moved ({}) — closed, members requeued", current.as_deref().unwrap_or("unknown")));
     lc_requeue(w, b, "base moved");
@@ -816,6 +819,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
             if first.is_empty() { "unknown" } else { &first }
         ),
     );
+    w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, &b.pr);
     lc_requeue(w, b, &format!("setup red, {same}: {shown}: {}", log.lines().last().unwrap_or("")));
     let _ = std::fs::remove_file(b.file);

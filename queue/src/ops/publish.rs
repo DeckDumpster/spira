@@ -310,6 +310,7 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
         Settle::Open => publish_with(w, Some(&name), true),
         Settle::Retire | Settle::Supersede => {
             if action == Settle::Supersede {
+                w.lib.cancel_runs(&c.s.forge, &path, kv.as_ref().and_then(|k| k.get("branch")).unwrap_or(""));
                 w.forge.pr_close(&c.s.forge, &path, &pr_no);
             }
             let _ = std::fs::remove_file(&pfile);

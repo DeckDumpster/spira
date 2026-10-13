@@ -864,6 +864,7 @@ fn a_batch_with_no_members_is_abandoned_and_its_open_pr_closed() {
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     assert!(t.lc.has("abandon-batch spira-1"));
     assert!(has_call(&t.forge.calls, "pr-close 12"));
+    assert!(t.lib.has("cancel_runs spira/queue/x"));
     assert!(!t.qfile("open").exists());
     assert!(archived(&t));
 }

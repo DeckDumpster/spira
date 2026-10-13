@@ -1313,6 +1313,23 @@ fn eject_with_a_batch_id_ejects_on_spira_lc_too() {
 }
 
 #[test]
+fn eject_cancels_the_closed_prs_runs_and_only_its_own_branch() {
+    let t = T::new(LandMode::Queue);
+    open_batch_record(&t);
+    assert_eq!(t.run(&["eject", "sp-a", "--reason", "x"]), 0, "{}", t.err());
+    let calls = t.lib.calls.borrow().clone();
+    assert_eq!(calls.iter().filter(|c| c.starts_with("cancel_runs")).collect::<Vec<_>>(), ["cancel_runs spira/queue/x"], "{calls:?}");
+}
+
+#[test]
+fn eject_of_a_record_with_no_branch_cancels_nothing() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
+    assert_eq!(t.run(&["eject", "sp-a", "--reason", "x"]), 0, "{}", t.err());
+    assert!(!t.lib.has("cancel_runs"));
+}
+
+#[test]
 fn a_forge_eject_returns_the_member_to_rework_only_after_eject_member_requeues_it() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
