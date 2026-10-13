@@ -322,7 +322,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
     for u in &out.restarted {
         eprintln!("release: restarting {u}");
         attempted.push(u.clone());
-        if let Err(e) = ctx.sc.reset_failed(u).and_then(|()| ctx.sc.restart(u)) {
+        if let Err(e) = ctx.sc.reset_failed(u).and_then(|()| restart_unit(ctx.sc, u)) {
             failed.push(format!("{u}: restart failed: {e}"));
             break;
         }
@@ -365,7 +365,7 @@ fn revive_failed(ctx: &Ctx, out: &mut Switched) {
             continue;
         }
         eprintln!("release: {u} is failed; resetting and starting it under the new release");
-        match ctx.sc.reset_failed(&u).and_then(|()| ctx.sc.restart(&u)) {
+        match ctx.sc.reset_failed(&u).and_then(|()| restart_unit(ctx.sc, &u)) {
             Ok(()) => out.revived.push(u),
             Err(e) => eprintln!("release: WARN: {u} is still failed: {e}"),
         }
@@ -430,7 +430,7 @@ fn undo(ctx: &Ctx, changes: &[Change], prev: Option<&str>, restarted: &[String])
         errs.push(format!("daemon-reload: {e}"));
     }
     for u in restarted {
-        if let Err(e) = ctx.sc.restart(u) {
+        if let Err(e) = restart_unit(ctx.sc, u) {
             errs.push(format!("restart {u} on the previous release: {e}"));
         }
     }
@@ -507,6 +507,37 @@ fn reconcile_epics(cfg: &Config, sha: &str) {
         Ok(o) => eprintln!("release: reconcile-epics did not finish ({}): {}", o.status, String::from_utf8_lossy(&o.stderr).trim()),
         Err(e) => eprintln!("release: cannot run {}: {e}", bin.display()),
     }
+}
+
+/// The unit whose `RefuseManualStop=yes` denies a restart job; `systemctl kill` plus its
+/// `Restart=always` is the sanctioned way to cycle it.
+const KILL_RESTARTED: &str = "dolt-beads.service";
+
+fn restart_unit(sc: &dyn Systemctl, unit: &str) -> Result<(), String> {
+    if unit == KILL_RESTARTED {
+        sc.kill(unit)
+    } else {
+        sc.restart(unit)
+    }
+}
+
+/// The binary that must perform `release activate <sha>`: the target release's own, so an
+/// older activator never renders templates it predates. `None` when `me` already is that
+/// binary or the release carries none; an error when its files fail the manifest check.
+pub fn delegate_target(cfg: &Config, sha: &str, me: &Path) -> Result<Option<PathBuf>, String> {
+    let rel = verify::release_dir(cfg, sha)?;
+    let bin = rel.join("bin").join("release");
+    let (Ok(bin_real), Ok(me_real)) = (fs::canonicalize(&bin), fs::canonicalize(me)) else {
+        return Ok(None);
+    };
+    if bin_real == me_real {
+        return Ok(None);
+    }
+    let problems = verify::check_files(&rel, sha);
+    if !problems.is_empty() {
+        return Err(format!("release {sha} fails verify; not handing activation to its binary:\n  {}", problems.join("\n  ")));
+    }
+    Ok(Some(bin))
 }
 
 /// `release activate <sha> [--hotfix <reason>]`.

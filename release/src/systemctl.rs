@@ -17,6 +17,8 @@ pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
     fn state(&self, unit: &str) -> Result<UnitState, String>;
     fn restart(&self, unit: &str) -> Result<(), String>;
+    /// `systemctl --user kill`: bypasses job control, for a unit that refuses a restart job.
+    fn kill(&self, unit: &str) -> Result<(), String>;
     /// Names of the active units matching `glob` (`systemctl --user list-units
     /// --state=active --no-legend <glob>`), excluding a transient one (a `systemd-run`
     /// unit with no file of its own — `install::install`'s restart-all step must never
@@ -93,6 +95,9 @@ impl Systemctl for RealSystemctl {
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.run(&["restart", unit]).map(|_| ())
+    }
+    fn kill(&self, unit: &str) -> Result<(), String> {
+        self.run(&["kill", unit]).map(|_| ())
     }
     fn cat(&self, unit: &str) -> Result<String, String> {
         self.run(&["cat", unit])

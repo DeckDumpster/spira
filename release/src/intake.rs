@@ -210,6 +210,9 @@ mod tests {
         fn restart(&self, _unit: &str) -> Result<(), String> {
             unimplemented!()
         }
+        fn kill(&self, _unit: &str) -> Result<(), String> {
+            unimplemented!()
+        }
         fn list_active(&self, _glob: &str) -> Result<Vec<String>, String> {
             unimplemented!()
         }

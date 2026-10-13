@@ -227,6 +227,7 @@ struct FakeSystemctl {
     unit_dir: PathBuf,
     states: RefCell<BTreeMap<String, UnitState>>,
     restarts: RefCell<Vec<String>>,
+    kills: RefCell<Vec<String>>,
     resets: RefCell<Vec<String>>,
     reloads: RefCell<usize>,
     poison: Option<String>,
@@ -258,6 +259,7 @@ impl FakeSystemctl {
             unit_dir,
             states: RefCell::new(s),
             restarts: RefCell::new(vec![]),
+            kills: RefCell::new(vec![]),
             resets: RefCell::new(vec![]),
             reloads: RefCell::new(0),
             poison: None,
@@ -308,7 +310,14 @@ impl Systemctl for FakeSystemctl {
         self.resets.borrow_mut().push(unit.into());
         Ok(())
     }
+    fn kill(&self, unit: &str) -> Result<(), String> {
+        self.kills.borrow_mut().push(unit.into());
+        Ok(())
+    }
     fn restart(&self, unit: &str) -> Result<(), String> {
+        if unit == "dolt-beads.service" {
+            return Err(format!("{unit}: RefuseManualStop=yes denies a restart job"));
+        }
         self.restarts.borrow_mut().push(unit.into());
         if self.restart_fails.contains(unit) {
             return Err(format!("{unit}: simulated restart failure"));
@@ -2112,4 +2121,51 @@ fn build_stages_the_candidates_delta_before_any_release_exists_and_without_one_s
     assert_eq!(cfg_text(&w), before, "staging writes nothing to the files in force");
     let _ = fs::remove_dir_all(dir);
     assert!(config_delta::staged_for_commit(&w.git, &spec, Path::new("/repo"), A).unwrap().is_none(), "control: a commit with no delta entry leaves production config as it is, so its missing key stays a refusal naming it");
+}
+
+#[test]
+fn activating_a_release_that_changes_dolt_beads_restarts_it_by_kill_never_a_restart_job() {
+    let dolt = "[Service]\nType=simple\nExecStart=@SPIRA_TOOL_BIN@ --dolt\n";
+    let w = World::with_git(FakeGit { extra: vec![("systemd/dolt-beads.service".into(), dolt.into(), false)], ..Default::default() });
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    w.install_units(A);
+    let rel = w.rel(A);
+    let text = fs::read_to_string(rel.join("systemd/dolt-beads.service")).unwrap();
+    let rendered = units::render("dolt-beads.service", &text, &rel, &w.cfg.host_values().unwrap(), None, "prod").unwrap();
+    fs::write(w.units().join("dolt-beads.service"), rendered).unwrap();
+    sc.states.borrow_mut().insert("dolt-beads.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+    sc.restarts.borrow_mut().clear();
+
+    let s = activate::activate(&c, B, None).unwrap();
+    assert!(s.restarted.contains(&"dolt-beads.service".to_string()), "{s:?}");
+    assert_eq!(*sc.kills.borrow(), vec!["dolt-beads.service".to_string()]);
+    assert!(!sc.restarts.borrow().contains(&"dolt-beads.service".to_string()));
+}
+
+#[test]
+fn activation_is_handed_to_the_target_releases_own_binary_after_verifying_it() {
+    let w = World::new();
+    w.build(B).unwrap();
+    w.build(A).unwrap();
+    let rel_b = w.rel(B);
+    fsutil::make_writable(&rel_b);
+    exe(&rel_b.join("bin/release"), "#!/bin/sh\n");
+    let mut m = crate::manifest::Manifest::load(&rel_b).unwrap();
+    m.entries = crate::manifest::Manifest::scan(&rel_b).unwrap();
+    fs::write(rel_b.join("MANIFEST"), m.render()).unwrap();
+    let target = w.rel(B).join("bin/release");
+    let old = w.rel(A).join("bin/tool");
+
+    assert_eq!(activate::delegate_target(&w.cfg, B, &old).unwrap(), Some(target.clone()), "an older activator hands over");
+    assert_eq!(activate::delegate_target(&w.cfg, B, &target).unwrap(), None, "the target itself does not re-exec");
+    assert_eq!(activate::delegate_target(&w.cfg, A, &old).unwrap(), None, "a release with no binary of its own is activated in place");
+
+    fsutil::make_writable(&w.rel(B));
+    fs::write(&target, "#!/bin/sh\necho tampered\n").unwrap();
+    let e = activate::delegate_target(&w.cfg, B, &old).unwrap_err();
+    assert!(e.contains("fails verify"), "{e}");
 }
