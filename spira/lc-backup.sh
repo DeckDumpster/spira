@@ -28,7 +28,7 @@
 # No destination, an unreadable stamp or an age beyond the limit is red, never a skip — a
 # store that was never backed up must look different from one that is.
 
-# covers: spira/lc-backup.sh spira/watchers spira/conf.d/SPIRA_LC_BACKUP_* systemd/lc-backup.service systemd/lc-backup.timer
+# covers: spira/lc-backup.sh spira/watchers spira/conf.d/SPIRA_LC_BACKUP_* systemd/lc-backup.service systemd/lc-backup.timer systemd/lc-backup-drill.*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"

@@ -5,7 +5,7 @@
 # dolt file:// backup. Nothing here touches a live server.
 #
 # tier: T1
-# covers: spira/lc-backup.sh spira/watchers spira/conf.d/SPIRA_LC_BACKUP_* systemd/lc-backup.service systemd/lc-backup.timer install/src/manifest.rs
+# covers: spira/lc-backup.sh spira/watchers spira/conf.d/SPIRA_LC_BACKUP_* systemd/lc-backup.service systemd/lc-backup.timer systemd/lc-backup-drill.* install/src/manifest.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -108,7 +108,10 @@ wantrc "s3 run without credentials fails" 1 $rc
 
 echo; echo "units and rows:"
 grep -q '^ExecStart=@SPIRA_HOME@/lc-backup.sh run' "$HERE/../systemd/lc-backup.service" && ok "service runs the backup" || bad "service runs the backup"
-grep -q '^ExecStartPost=@SPIRA_HOME@/lc-backup.sh drill' "$HERE/../systemd/lc-backup.service" && ok "service drills after the backup" || bad "service drills"
+! grep -q '^ExecStartPost=' "$HERE/../systemd/lc-backup.service" && ok "backup service carries no drill" || bad "backup service carries no drill"
+grep -q '^ExecStart=@SPIRA_HOME@/lc-backup.sh drill' "$HERE/../systemd/lc-backup-drill.service" && ok "drill is its own unit" || bad "drill is its own unit"
+grep -q '^IOWeight=' "$HERE/../systemd/lc-backup-drill.service" && ok "drill unit is I/O weighted" || bad "drill unit is I/O weighted"
+grep -q '^Unit=lc-backup-drill.service' "$HERE/../systemd/lc-backup-drill.timer" && grep -q 'lc-backup-drill.timer", true' "$HERE/../install/src/manifest.rs" && ok "drill has its own enabled timer" || bad "drill has its own enabled timer"
 grep -q '^Unit=lc-backup.service' "$HERE/../systemd/lc-backup.timer" && ok "timer starts the service" || bad "timer starts the service"
 grep -q 'lc-backup.timer", true' "$HERE/../install/src/manifest.rs" && ok "manifest enables the timer" || bad "manifest enables the timer"
 grep -q '^lc-backup|daemon|' "$HERE/watchers" && ok "age alarm has a watcher row" || bad "age alarm has a watcher row"

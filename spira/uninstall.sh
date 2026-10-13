@@ -490,6 +490,7 @@ for _un_uf in "$UNITDIR"/spira-*.service "$UNITDIR"/spira-*.timer \
               "$UNITDIR"/concierge.service "$UNITDIR"/concierge.timer \
               "$UNITDIR"/beads-push.service "$UNITDIR"/beads-push.timer \
               "$UNITDIR"/lc-backup.service "$UNITDIR"/lc-backup.timer \
+              "$UNITDIR"/lc-backup-drill.service "$UNITDIR"/lc-backup-drill.timer \
               "$UNITDIR"/dolt-beads.service "$UNITDIR"/dolt-beads.timer \
               "$UNITDIR"/dolt-tmp-prune.service "$UNITDIR"/dolt-tmp-prune.timer; do
     [ -e "$_un_uf" ] || continue

@@ -1,0 +1,12 @@
+[Unit]
+Description=Prove the off-box backups restore, once a day
+
+[Timer]
+OnCalendar=*-*-* 04:50:00
+Persistent=true
+AccuracySec=5min
+RandomizedDelaySec=300
+Unit=lc-backup-drill.service
+
+[Install]
+WantedBy=timers.target
