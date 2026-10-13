@@ -69,6 +69,32 @@ pub trait Lifecycle {
     /// `Ok(None)` when the machine has no row for `id`; `Err` when it could not answer —
     /// never confused with no row (law-absence-needs-a-positive-control).
     fn bead(&self, id: &str) -> Result<Option<LcBead>, String>;
+
+    /// Every row the machine has, in one read. `Err` when it could not answer.
+    fn all(&self) -> Result<std::collections::BTreeMap<String, LcBead>, String>;
+}
+
+/// The machine read once, on first use, then served from memory: a pass asks about every bead
+/// and must cost the store one read, not one per bead.
+pub struct Snapshot<'a> {
+    inner: &'a dyn Lifecycle,
+    rows: std::cell::OnceCell<Result<std::collections::BTreeMap<String, LcBead>, String>>,
+}
+
+impl<'a> Snapshot<'a> {
+    pub fn of(inner: &'a dyn Lifecycle) -> Snapshot<'a> {
+        Snapshot { inner, rows: std::cell::OnceCell::new() }
+    }
+}
+
+impl Lifecycle for Snapshot<'_> {
+    fn bead(&self, id: &str) -> Result<Option<LcBead>, String> {
+        self.all().map(|m| m.get(id).cloned())
+    }
+
+    fn all(&self) -> Result<std::collections::BTreeMap<String, LcBead>, String> {
+        self.rows.get_or_init(|| self.inner.all()).clone()
+    }
 }
 
 /// `repo_root <name>` (family U) and the base-ref families (U/W), resolved in-process
