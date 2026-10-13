@@ -129,4 +129,15 @@ run health >/dev/null; is "health fails once the last pass is stale" "1" "$?"
 grep -q '^bead-sweep|daemon|' "$HERE/watchers" && ok=0 || ok=1
 is "watchers manifest carries the bead-sweep row" "0" "$ok"
 
+
+printf 'prrepo | %s/pr | pr | origin/main | | |\n' "$TMP" > "$TMP/land-map"
+printf 'widgets | %s/widgets | queue | origin/main | | |\n' "$TMP" >> "$TMP/land-map"
+tl_config SPIRA_REPO_MAP="$TMP/land-map"
+board "$(row sp-prw SUBMITTED "$OLD" '[]')" "$(row sp-qw SUBMITTED "$OLD" '[]')" \
+    -- "$(cont sp-prw '["repo:prrepo"]')" "$(cont sp-qw '["repo:widgets"]')"
+out="$(run --show)"
+want "positive control: a queue-mode bead past the wait is still WAITING" "SUSPECT sp-qw SUBMITTED WAITING" "$out"
+case "$out" in *sp-prw*WAITING*) bad=1 ;; *) bad=0 ;; esac
+is "a pr-mode bead is not waiting for a round" "0" "$bad"
+
 tl_summary

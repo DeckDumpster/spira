@@ -614,6 +614,42 @@ fn a_push_landing_with_no_delivery_round_records_landed_on_a_certified_bead() {
     assert_eq!(f.events.len(), n, "no event for a bead that is not CERTIFIED");
 }
 
+#[test]
+fn a_merged_pr_with_no_delivery_round_lands_only_while_its_change_is_in_force() {
+    let g = |dir: &std::path::Path, a: &[&str]| {
+        let o = std::process::Command::new("git").arg("-C").arg(dir).args(a).output().unwrap();
+        assert!(o.status.success(), "git {a:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    let dir = testkit::TempDir::new("spira-lc-pr-merged");
+    g(&dir, &["init", "-q", "-b", "main"]);
+    g(&dir, &["config", "user.email", "t@example.invalid"]);
+    g(&dir, &["config", "user.name", "t"]);
+    g(&dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    g(&dir, &["checkout", "-q", "-b", "spira/sp-m"]);
+    std::fs::write(dir.join("f"), "x\n").unwrap();
+    g(&dir, &["add", "f"]);
+    g(&dir, &["commit", "-q", "-m", "work"]);
+    g(&dir, &["checkout", "-q", "main"]);
+    g(&dir, &["merge", "-q", "--no-ff", "-m", "merge", "spira/sp-m"]);
+    let merged = g(&dir, &["rev-parse", "HEAD"]);
+    let repo = dir.to_string_lossy().to_string();
+
+    let mut f = Fake::default();
+    f.bead("sp-m", BeadState::Submitted);
+    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-m", "spira/sp-m", &merged]);
+    assert_eq!(a.code, APPLIED, "{}", a.stdout);
+    assert_eq!(f.events.last().unwrap().5, format!(r#"{{"ContentOnBase":{{"proof":"merge-tree:{merged}"}}}}"#));
+
+    g(&dir, &["revert", "--no-edit", "-m", "1", "HEAD"]);
+    let reverted = g(&dir, &["rev-parse", "HEAD"]);
+    f.bead("sp-n", BeadState::Submitted);
+    let n = f.events.len();
+    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-n", "spira/sp-m", &reverted]);
+    assert_eq!(a.code, NO_ROW, "a reverted change is not landed: {}", a.stdout);
+    assert_eq!(f.events.len(), n);
+}
+
 // ---- unclaim / close-epic (sp-hyo5e) ---------------------------------------------------
 
 #[derive(Default)]

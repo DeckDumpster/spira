@@ -35,10 +35,13 @@ _bs_classify() {
     timeout 90 spira-lc content list --status open,in_progress,blocked,deferred --json --limit 0 > "$t/content.json" 2>/dev/null || return 1
     # batch-job: whole-store listing the sweep classifies; bounded by the daemon row cadence
     timeout 60 spira-lc list --state LANDED,DONE,DROPPED,SUPERSEDED > "$t/term.json" 2>/dev/null || return 1
-    python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" <<'PY'
+    local pr_labels="" n
+    for n in $(repo_names); do [ "$(repo_land "$n")" = pr ] && pr_labels="$pr_labels repo:$n"; done
+    python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" "$pr_labels" <<'PY'
 import calendar, json, re, sys, time
 T, ask, home = sys.argv[1:4]
 hold_min, rework_min, cert_min, wait_min = (int(x) for x in sys.argv[4:8])
+pr_labels = set(sys.argv[8].split())
 rows = {r["bead_id"]: r for r in json.load(open(T + "/rows.json"))}
 content = {b["id"]: b for b in json.load(open(T + "/content.json"))}
 term = {r["bead_id"]: r["state"] for r in json.load(open(T + "/term.json"))}
@@ -95,7 +98,7 @@ for i, r in sorted(rows.items()):
         put("SUSPECT", f"UNCLAIMED REWORK over {rework_min}m ({why})")
     elif st == "CERTIFIED" and home not in labels and age > cert_min:
         put("SUSPECT", f"CERTIFIED outside {home}, no batch opened")
-    elif st in ("SUBMITTED", "CERTIFIED") and age > wait_min:
+    elif st in ("SUBMITTED", "CERTIFIED") and age > wait_min and not pr_labels & set(labels):
         put("SUSPECT", f"WAITING over {wait_min}m for a round")
     elif st == "WORKING" and int(r.get("lease_until") or 0) and int(r["lease_until"]) < now:
         put("SUSPECT", f"LEASE EXPIRED holder {str(r.get('holder'))[:28]}")

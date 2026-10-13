@@ -1355,7 +1355,7 @@ struct FakePr {
     fail: RefCell<Option<String>>,
 }
 impl PrTools for FakePr {
-    fn deliver_by_content(&self, id: &str, sha: &str) -> Result<(), String> {
+    fn deliver_by_content(&self, _repo: &Path, id: &str, sha: &str) -> Result<(), String> {
         self.delivered.borrow_mut().push(format!("{id} {sha}"));
         match self.fail.borrow().clone() {
             Some(e) => Err(e),

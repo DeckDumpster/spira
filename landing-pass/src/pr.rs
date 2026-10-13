@@ -20,7 +20,7 @@ pub trait PrTools {
     /// Record pr mode's `merged` exit by content proof when the delivery row is PR_OPEN.
     /// Ok covers the quiet cases (delivered, no row, a row not in PR_OPEN); Err is a machine
     /// that could not be asked or refused the event. Called only with the switch ON.
-    fn deliver_by_content(&self, id: &str, merge_sha: &str) -> Result<(), String>;
+    fn deliver_by_content(&self, repo: &std::path::Path, id: &str, merge_sha: &str) -> Result<(), String>;
 }
 
 pub struct PrPass<'a> {
@@ -131,7 +131,7 @@ impl<'a> PrPass<'a> {
                 // The Delivered event, best-effort additive; a machine that cannot be asked or
                 // refuses is a loud LIFECYCLE: line and the pass goes on.
                 if let Some(sha) = self.git.rev_parse(&r.path, &base_fq) {
-                    if let Err(why) = self.tools.deliver_by_content(id, &sha) {
+                    if let Err(why) = self.tools.deliver_by_content(&r.path, id, &sha) {
                         self.lifecycle_loud(id, &why);
                     }
                 }
@@ -166,7 +166,7 @@ pub struct RealPrTools<'a> {
 }
 
 impl<'a> PrTools for RealPrTools<'a> {
-    fn deliver_by_content(&self, id: &str, merge_sha: &str) -> Result<(), String> {
+    fn deliver_by_content(&self, repo: &std::path::Path, id: &str, merge_sha: &str) -> Result<(), String> {
         let lc = self.s.lc_bin.as_ref().ok_or("no spira-lc program")?;
         let mut c = command(lc);
         c.arg("show").arg(id).stdin(Stdio::null());
@@ -177,7 +177,13 @@ impl<'a> PrTools for RealPrTools<'a> {
         }
         let v: serde_json::Value = serde_json::from_slice(&so).map_err(|e| format!("show: unparsed reply: {e}"))?;
         // No delivery row, or one not in PR_OPEN: the ordinary, quiet case.
-        let Some((state, version)) = delivery_of(v.to_string().as_bytes()) else { return Ok(()) };
+        let Some((state, version)) = delivery_of(v.to_string().as_bytes()) else {
+            // No delivery row: spira-lc lands the bead itself, on content proof, or declines.
+            let mut d = command(lc);
+            d.args(["deliver", "pr-merged"]).arg(repo).args([id, &format!("spira/{id}"), merge_sha]).stdin(Stdio::null());
+            let (rc, _, _) = run_capture(d);
+            return if rc == 0 || rc == 1 { Ok(()) } else { Err(format!("deliver pr-merged exited {rc}")) };
+        };
         if state != "PR_OPEN" {
             return Ok(());
         }

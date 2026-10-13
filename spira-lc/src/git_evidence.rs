@@ -62,6 +62,59 @@ pub fn content_on_base(repo: &Path, branch_or_tip: &str, base: &str) -> bool {
     merged_tree == base_tree.trim()
 }
 
+/// [`content_on_base`] that also asks whether the change is still in `base`'s tree: a branch
+/// that reached `base` and was later reverted is an ancestor, or merges clean, yet its change is
+/// gone. The branch's own patch must reverse-apply to `base`'s tree.
+pub fn change_in_force(repo: &Path, branch: &str, base: &str) -> bool {
+    if !content_on_base(repo, branch, base) {
+        return false;
+    }
+    let fork = if is_ancestor(repo, branch, base) { fork_of_merged(repo, branch, base) } else { git_output(repo, &["merge-base", branch, base]).map(|s| s.trim().to_string()) };
+    let Some(fork) = fork.filter(|f| !f.is_empty()) else { return false };
+    let Some(patch) = git_output(repo, &["diff", "--binary", &fork, branch]) else { return false };
+    if patch.trim().is_empty() {
+        return true;
+    }
+    let index = std::env::temp_dir().join(format!("spira-lc-in-force-{}-{}", std::process::id(), base.len()));
+    let with_index = |args: &[&str]| {
+        let mut c = spira_config::bounded::bounded("git");
+        c.arg("-C").arg(repo).env("GIT_INDEX_FILE", &index).args(args);
+        c
+    };
+    let read = with_index(&["read-tree", base]).status().map(|s| s.success()).unwrap_or(false);
+    let ok = read
+        && with_index(&["apply", "-R", "--check", "--cached"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut ch| {
+                use std::io::Write;
+                if let Some(mut si) = ch.stdin.take() {
+                    let _ = si.write_all(patch.as_bytes());
+                }
+                ch.wait()
+            })
+            .map(|s| s.success())
+            .unwrap_or(false);
+    let _ = std::fs::remove_file(&index);
+    ok
+}
+
+/// Where an already-merged `branch` forked: the merge-base of the merge commit that took it and
+/// that merge's first parent; a fast-forward or rebase merge has no such commit, so its tip's parent.
+fn fork_of_merged(repo: &Path, branch: &str, base: &str) -> Option<String> {
+    let merges = git_output(repo, &["rev-list", "--merges", "--reverse", "--ancestry-path", &format!("{branch}..{base}")])?;
+    for m in merges.lines() {
+        let parents = git_output(repo, &["rev-list", "--parents", "-n1", m])?;
+        let p: Vec<&str> = parents.split_whitespace().collect();
+        if p.len() >= 3 && is_ancestor(repo, branch, p[2]) {
+            return git_output(repo, &["merge-base", p[1], branch]).map(|s| s.trim().to_string());
+        }
+    }
+    git_output(repo, &["rev-parse", &format!("{branch}^")]).map(|s| s.trim().to_string())
+}
+
 /// Every bead a commit on `base` lands by a `spira: land <id>` line in its message, mapped to
 /// the first such commit (the one nearest base's tip). One log walk for the whole repository,
 /// not one per bead. A batch landing names its members this way after their branches are gone.
@@ -112,6 +165,34 @@ mod tests {
     fn run(dir: &Path, args: &[&str]) {
         let status = Command::new("git").arg("-C").arg(dir).args(args).status().unwrap();
         assert!(status.success(), "git {args:?} failed in {dir:?}");
+    }
+
+    #[test]
+    fn a_merged_change_is_in_force_until_it_is_reverted() {
+        let repo = ScratchRepo::new("inforce");
+        repo.commit("f.txt", "base\n", "base");
+        run(&repo.dir, &["checkout", "-q", "-b", "feat"]);
+        repo.commit("g.txt", "feature\n", "feature");
+        run(&repo.dir, &["checkout", "-q", "main"]);
+        run(&repo.dir, &["merge", "-q", "--no-ff", "-m", "merge", "feat"]);
+        assert!(change_in_force(&repo.dir, "feat", "main"), "merged and present");
+        run(&repo.dir, &["revert", "--no-edit", "-m", "1", "HEAD"]);
+        assert!(content_on_base(&repo.dir, "feat", "main"), "POSITIVE CONTROL: ancestry still says landed after the revert");
+        assert!(!change_in_force(&repo.dir, "feat", "main"), "reverted change is not in force");
+    }
+
+    #[test]
+    fn a_squash_merged_change_is_in_force_until_it_is_reverted() {
+        let repo = ScratchRepo::new("inforce-squash");
+        repo.commit("f.txt", "base\n", "base");
+        run(&repo.dir, &["checkout", "-q", "-b", "feat"]);
+        repo.commit("g.txt", "feature\n", "feature");
+        run(&repo.dir, &["checkout", "-q", "main"]);
+        run(&repo.dir, &["merge", "-q", "--squash", "feat"]);
+        run(&repo.dir, &["commit", "-q", "-m", "squash"]);
+        assert!(change_in_force(&repo.dir, "feat", "main"));
+        run(&repo.dir, &["revert", "--no-edit", "HEAD"]);
+        assert!(!change_in_force(&repo.dir, "feat", "main"));
     }
 
     #[test]
