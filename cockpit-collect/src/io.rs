@@ -353,16 +353,36 @@ fn with_labels(raw: Option<String>, labels: &str) -> Option<String> {
     serde_json::to_string(&kept).ok()
 }
 
-fn pane_fetch(read: &dyn Fn(&[&str]) -> Option<String>, now: i64) -> Option<String> {
+/// The label the server filters on (the first requested; the rest are applied by `with_labels`),
+/// and the cache key that keeps one scope's answer from serving another's.
+fn scope_of(base: &str, labels: &str) -> (Option<String>, String) {
+    match labels.split(',').find(|l| !l.is_empty()) {
+        Some(first) => (Some(first.to_string()), format!("{base}-{}", first.replace(|c: char| !c.is_ascii_alphanumeric(), "_"))),
+        None => (None, base.to_string()),
+    }
+}
+
+fn scoped<'a>(label: &'a Option<String>, args: &[&'a str]) -> Vec<&'a str> {
+    let mut v: Vec<&str> = args.to_vec();
+    if let Some(l) = label {
+        v.extend(["--label", l.as_str()]);
+    }
+    v
+}
+
+fn pane_fetch(read: &dyn Fn(&[&str]) -> Option<String>, now: i64, label: &Option<String>) -> Option<String> {
     let since = utc_stamp(now - PANE_WINDOW_SECS);
     merge_rows(&[
-        read(&["list", "--limit", "0", "--json"]),
-        read(&["list", "--all", "--closed-after", &since, "--limit", "100000", "--json"]),
+        read(&scoped(label, &["list", "--limit", "0", "--json"])),
+        read(&scoped(label, &["list", "--all", "--closed-after", &since, "--limit", "100000", "--json"])),
     ])
 }
 
-fn history_fetch(read: &dyn Fn(&[&str]) -> Option<String>) -> Option<String> {
-    merge_rows(&[read(&["list", "--limit", "0", "--json"]), read(&["list", "--all", "--limit", "100000", "--json"])])
+fn history_fetch(read: &dyn Fn(&[&str]) -> Option<String>, label: &Option<String>) -> Option<String> {
+    merge_rows(&[
+        read(&scoped(label, &["list", "--limit", "0", "--json"])),
+        read(&scoped(label, &["list", "--all", "--limit", "100000", "--json"])),
+    ])
 }
 
 fn read_json(args: &[&str]) -> Option<String> {
@@ -379,14 +399,16 @@ pub fn ttl_from_env(key: &str, default: i64) -> i64 {
 pub fn pane_beads(labels: &str) -> Option<String> {
     let now = now();
     let ttl = ttl_from_env("SPIRA_PANE_READ_TTL", PANE_TTL_SECS);
-    let raw = shared_read(&run_dir().join("pane-read"), "pane", ttl, now, || pane_fetch(&read_json, now));
+    let (label, key) = scope_of("pane", labels);
+    let raw = shared_read(&run_dir().join("pane-read"), &key, ttl, now, || pane_fetch(&read_json, now, &label));
     with_labels(raw, labels)
 }
 
 /// Live beads only, what a default `list` answers; its own shared read, so no row's status is compared.
 pub fn live_beads(labels: &str) -> Option<String> {
     let ttl = ttl_from_env("SPIRA_PANE_READ_TTL", PANE_TTL_SECS);
-    let raw = shared_read(&run_dir().join("pane-read"), "live", ttl, now(), || read_json(&["list", "--limit", "0", "--json"]));
+    let (label, key) = scope_of("live", labels);
+    let raw = shared_read(&run_dir().join("pane-read"), &key, ttl, now(), || read_json(&scoped(&label, &["list", "--limit", "0", "--json"])));
     with_labels(raw, labels)
 }
 
@@ -394,7 +416,8 @@ pub fn live_beads(labels: &str) -> Option<String> {
 /// at most once per `SPIRA_HISTORY_READ_TTL` across all probes.
 pub fn history_beads(labels: &str) -> Option<String> {
     let ttl = ttl_from_env("SPIRA_HISTORY_READ_TTL", HISTORY_TTL_SECS);
-    let raw = shared_read(&run_dir().join("pane-read"), "history", ttl, now(), || history_fetch(&read_json));
+    let (label, key) = scope_of("history", labels);
+    let raw = shared_read(&run_dir().join("pane-read"), &key, ttl, now(), || history_fetch(&read_json, &label));
     with_labels(raw, labels)
 }
 
@@ -646,6 +669,15 @@ pub fn sleep(d: Duration) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_label_scopes_the_read_and_its_cache_key() {
+        let (l, k) = super::scope_of("pane", "spira,incident");
+        assert_eq!((l.as_deref(), k.as_str()), (Some("spira"), "pane-spira"));
+        assert_eq!(super::scope_of("pane", ""), (None, "pane".to_string()));
+        let l = Some("a:b".to_string());
+        assert_eq!(super::scoped(&l, &["list"]), ["list", "--label", "a:b"]);
+    }
+
     use super::*;
 
     #[test]
@@ -749,7 +781,7 @@ mod pane_read_tests {
             Some(r#"[{"id":"a","labels":["plan","spira"]}]"#.to_string())
         };
         for probe in 0..12 {
-            let got = shared_read(&t.join("d"), "pane", 30, 1000 + probe, || pane_fetch(&read, 1000));
+            let got = shared_read(&t.join("d"), "pane", 30, 1000 + probe, || pane_fetch(&read, 1000, &None));
             assert!(got.is_some());
         }
         let calls = calls.borrow();
