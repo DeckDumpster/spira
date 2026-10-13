@@ -220,6 +220,8 @@ pub trait Scripts {
     /// `mail send operator --from "Spira Queue <queue@spira>" --subject S`, body on stdin.
     fn mail_operator(&self, subject: &str, body: &str);
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32;
+    /// `<bin> path-attribute <repo> --members M --reds FILE`: the verdict text, empty when it cannot run.
+    fn path_attribution(&self, bin: &Path, repo: &str, members: &str, reds: &Path) -> String;
     fn czar_fence(&self, class: &str) -> bool;
     /// `<bin> <args…>` — the release producer. `bin` is resolved by the caller
     /// (`deploy::release_bin`, §8 D14): the round's own `<bins>/release` when it exists,

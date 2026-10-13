@@ -648,6 +648,11 @@ impl Scripts for RealScripts {
         }
         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
     }
+    fn path_attribution(&self, bin: &Path, repo: &str, members: &str, reds: &Path) -> String {
+        // batch-job: path-attribute reads git diffs only
+        let out = Command::new(bin).args(["path-attribute", repo, "--home"]).arg(&self.home).args(["--members", members, "--reds"]).arg(reds).stdin(Stdio::null()).output();
+        out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    }
     fn czar_fence(&self, class: &str) -> bool {
         ok(Command::new("czar-fence.sh").arg(class))
     }

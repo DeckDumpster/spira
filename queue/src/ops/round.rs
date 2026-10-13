@@ -155,15 +155,45 @@ fn failed_verb(w: &World, batch: &str, repo: Option<&str>, suite: &str) -> i32 {
     pass_verb(w, "round failed", batch, repo, |c, _| {
         suites_started(w, batch, false)?;
         pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string()))?;
-        summon_mender(w, c, batch, suite);
+        summon_mender(w, c, batch, suite, "");
         Ok(())
     })
+}
+
+/// A red pass records its verdict whoever cut the round, so every red suite the on-red hook did not
+/// report gets its Failed event and mender here, carrying the path attributor's reading as evidence.
+fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[String]) {
+    let Some((pass, _)) = w.lc.batch_pass(batch) else { return };
+    let rd = rounds_dir(c);
+    let unreported: Vec<&String> = reds.iter().filter(|s| *s != BUILD_RED && !rd.join(format!("{batch}.mender-{pass}-{s}")).exists()).collect();
+    if unreported.is_empty() {
+        return;
+    }
+    let results = rd.join(format!("{batch}.results"));
+    let mut file = String::new();
+    for s in reds.iter().filter(|s| *s != BUILD_RED) {
+        let out = suite_output(&results, s, 0).map(|o| tail(&o, 80)).unwrap_or_default();
+        file.push_str(&format!("@@ {s}\n{out}\n"));
+    }
+    let reds_file = rd.join(format!("{batch}.reds-{pass}"));
+    let attribution = match (c.s.batcher_bin.as_ref(), write_atomic(&reds_file, &file)) {
+        (Some(bin), Ok(())) => w.scripts.path_attribution(bin, &c.r.name, &csv(&kv.members()), &reds_file),
+        _ => String::new(),
+    };
+    let _ = fs::remove_file(&reds_file);
+    for suite in unreported {
+        let sent = suites_started(w, batch, false).and_then(|()| pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())));
+        match sent {
+            Ok(()) => summon_mender(w, c, batch, suite, &attribution),
+            Err((rc, e)) => w.err(format!("queue.sh round certify: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}")),
+        }
+    }
 }
 
 /// File the mender-lane bead for a failure whose MENDING row the event just opened. A marker
 /// per (batch, pass, suite) keeps a repeated report from filing twice; a filing that fails is
 /// said aloud and leaves no marker, so the next report of the same failure files it.
-fn summon_mender(w: &World, c: &Ctx, batch: &str, suite: &str) {
+fn summon_mender(w: &World, c: &Ctx, batch: &str, suite: &str, attribution: &str) {
     let Some((pass, _)) = w.lc.batch_pass(batch) else {
         w.err(format!("queue.sh round failed: WARNING — no mender bead filed for {suite} of {batch}: spira-lc cannot say which pass it is on"));
         return;
@@ -178,6 +208,7 @@ fn summon_mender(w: &World, c: &Ctx, batch: &str, suite: &str) {
         "A suite went red in pass {pass} of round {batch} ({repo}): {suite}.\n\nBatch: {batch}\nPass: {pass}\nSuite: {suite}\nDeadline: the machine stamps it when you claim this failure; list it with `spira-lc mending list --batch {batch} --live`. Record your outcome with `queue round mended|return|environment|flaky|unsure {batch} {suite}` before it passes.\n\nSuite output (tail):\n{output}\n",
         repo = c.r.name,
     );
+    let body = if attribution.trim().is_empty() { body } else { format!("{body}\nPath attribution of the pass's reds (batcher path-attribute):\n{attribution}\n") };
     let mut labels = String::new();
     if let Some(scope) = w.var("SPIRA_SCOPE_LABEL").filter(|l| !l.is_empty()) {
         labels.push_str(&scope);
@@ -777,6 +808,7 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         return FAIL;
     }
     if !reds.is_empty() {
+        raise_unreported_reds(w, &c, batch, &kv, &reds);
         let recorded = (if reds != [BUILD_RED] { suites_started(w, batch, false) } else { Ok(()) }).and_then(|()| pass_verdict_event(w, batch, &Verdict::Red(&reds, timings), false));
         if let Err((rc, e)) = recorded {
             w.err(format!("queue.sh {label}: REFUSED — the red pass of round {batch} was not recorded on spira-lc (rc={rc}): {e}"));

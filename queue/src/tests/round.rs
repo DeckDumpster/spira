@@ -146,7 +146,7 @@ fn eject_then_land_rebuilds_the_head_without_the_member() {
     assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_reopen sp-b eject-red test-b.sh"));
     assert!(t.lc.has("event bead sp-b IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}") || t.lc.has("event bead sp-b CERTIFIED 3 \"Deliver\""));
-    assert!(t.lc.has(&format!("eject-member {batch} sp-b ATTRIBUTING 4 red on test-b.sh")));
+    assert!(t.lc.has(&format!("eject-member {batch} sp-b ATTRIBUTING 5 red on test-b.sh")));
     let rec = kv_of(&t, "round");
     assert_eq!((rec["members"].as_str(), rec["head"].as_str(), round_phase(&t).as_str()), ("sp-a:ta sp-c:tc", "merged-tc", "OPEN"));
     assert_eq!(rec["ejected"].trim(), "sp-b");
@@ -157,7 +157,7 @@ fn eject_then_land_rebuilds_the_head_without_the_member() {
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tc"));
     assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"") && t.lc.has("event bead sp-c CERTIFIED 3 \"Deliver\""));
-    assert!(t.lc.has(&format!("land {batch} 8 merged-tc")));
+    assert!(t.lc.has(&format!("land {batch} 9 merged-tc")));
 }
 
 #[test]
@@ -547,6 +547,7 @@ fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
         [
             "{\"PassStarted\":{\"n\":1,\"head\":\"merged-tc\"}}",
             "{\"SuitesStarted\":{\"n\":1}}",
+            "{\"Failed\":{\"suite\":\"test-b.sh\",\"n\":1}}",
             "{\"PassRed\":{\"n\":1,\"red_suites\":[\"test-b.sh\"],\"suites_s\":0,\"build_s\":30}}",
         ],
         "pass 1 is started, enters its suites and ends red, naming the suite"
@@ -962,6 +963,21 @@ fn a_suite_going_red_mid_pass_is_a_failed_event_in_the_order_it_failed_and_the_p
         "the suites phase opens on the first result, and no verdict is sent"
     );
     assert_eq!(t.run(&["round", "failed", &batch, "--suite", "bad suite"]), 1, "a suite name is an identifier");
+}
+
+#[test]
+fn a_red_certify_with_no_batcher_files_one_mender_per_red_suite_with_the_attribution() {
+    let mut t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.lib.s.batcher_bin = Some(std::path::PathBuf::from("batcher"));
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "red".into()), ("test-b.sh".into(), "red".into()), ("test-c.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    let calls = t.lib.calls.borrow();
+    let bugs: Vec<&String> = calls.iter().filter(|c| c.starts_with("create_bug")).collect();
+    assert_eq!(bugs.len(), 2, "one mender per red suite: {bugs:?}");
+    assert!(bugs.iter().all(|b| b.contains("verdict=ambiguous")), "{bugs:?}");
 }
 
 #[test]
