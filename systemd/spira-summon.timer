@@ -2,9 +2,7 @@
 Description=Refill a freed aeon slot on a fast path, between full sentinel passes
 
 [Timer]
-OnBootSec=15
-OnActiveSec=15
-OnUnitActiveSec=15s
+OnCalendar=*-*-* *:*:00
 AccuracySec=1s
 Unit=spira-summon.service
 
