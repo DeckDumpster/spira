@@ -650,6 +650,45 @@ fn a_merged_pr_with_no_delivery_round_lands_only_while_its_change_is_in_force() 
     assert_eq!(f.events.len(), n);
 }
 
+#[test]
+fn a_merged_pr_whose_branch_is_gone_lands_by_the_merge_commits_ancestry_only() {
+    let g = |dir: &std::path::Path, a: &[&str]| {
+        let o = std::process::Command::new("git").arg("-C").arg(dir).args(a).output().unwrap();
+        assert!(o.status.success(), "git {a:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    let dir = testkit::TempDir::new("spira-lc-pr-gone");
+    g(&dir, &["init", "-q", "-b", "main"]);
+    g(&dir, &["config", "user.email", "t@example.invalid"]);
+    g(&dir, &["config", "user.name", "t"]);
+    g(&dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    g(&dir, &["checkout", "-q", "-b", "side"]);
+    std::fs::write(dir.join("f"), "x\n").unwrap();
+    g(&dir, &["add", "f"]);
+    g(&dir, &["commit", "-q", "-m", "elsewhere"]);
+    let off_main = g(&dir, &["rev-parse", "HEAD"]);
+    g(&dir, &["checkout", "-q", "main"]);
+    std::fs::write(dir.join("g"), "y\n").unwrap();
+    g(&dir, &["add", "g"]);
+    g(&dir, &["commit", "-q", "-m", "squash (#2)"]);
+    let merged = g(&dir, &["rev-parse", "HEAD"]);
+    std::fs::write(dir.join("g"), "later\n").unwrap();
+    g(&dir, &["commit", "-q", "-am", "later edit"]);
+    let repo = dir.to_string_lossy().to_string();
+
+    let mut f = Fake::default();
+    f.bead("sp-g", BeadState::Submitted);
+    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-g", "spira/sp-g", &merged]);
+    assert_eq!(a.code, APPLIED, "{}", a.stdout);
+    assert_eq!(f.state("sp-g"), "LANDED");
+    assert_eq!(f.events.last().unwrap().5, format!(r#"{{"ContentOnBase":{{"proof":"ancestry:{merged}"}}}}"#));
+
+    f.bead("sp-h", BeadState::Submitted);
+    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-h", "spira/sp-h", &off_main]);
+    assert_eq!(a.code, NO_ROW, "a merge not on the landing ref stays SUBMITTED: {}", a.stdout);
+    assert_eq!(f.state("sp-h"), "SUBMITTED");
+}
+
 // ---- unclaim / close-epic (sp-hyo5e) ---------------------------------------------------
 
 #[derive(Default)]
