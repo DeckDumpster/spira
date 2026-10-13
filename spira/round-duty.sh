@@ -30,10 +30,17 @@ _rd_say() {
     return 0
 }
 
+# Sets _rd_total and _rd_by_repo ("name=N ..."), counting only repos that land through local
+# rounds: a forge repo's certified backlog belongs to the forge batcher.
 _rd_certified() {
-    local n
-    n="$(spira-lc list-state CERTIFIED 2>/dev/null | grep -c .)"
-    echo "${n:-0}"
+    local r n
+    _rd_total=0 _rd_by_repo=""
+    for r in $(repo_names 2>/dev/null); do
+        [ "$(repo_land "$r" 2>/dev/null)" = queue.local ] || continue
+        n="$(spira-lc list --state CERTIFIED --repo "$r" 2>/dev/null | grep -c '"bead_id"')"
+        [ "${n:-0}" -gt 0 ] || continue
+        _rd_total=$((_rd_total + n)); _rd_by_repo="${_rd_by_repo:+$_rd_by_repo }$r=$n"
+    done
 }
 
 # Sets _rd_state to open, none or unknown.
@@ -66,7 +73,7 @@ _rd_tick() {
             _rd_lines[$f]=$n
         fi
     done
-    c="$(_rd_certified)"; now="$(date +%s)"
+    _rd_certified; c="$_rd_total"; now="$(date +%s)"
     [ "$c" != "$_rd_last_c" ] && { _rd_last_c="$c"; _rd_last_change=$now; }
     idle=$(( now - _rd_last_change ))
     _rd_round_state
@@ -81,7 +88,7 @@ _rd_tick() {
     if [ "$_rd_state" = none ] && { [ "$c" -ge "$SPIRA_ROUND_MIN" ] \
             || { [ "$c" -ge 1 ] && [ "$idle" -ge "$SPIRA_ROUND_IDLE_CUT" ]; }; }; then
         if [ $((now - _rd_last_due)) -ge "$SPIRA_ROUND_DUE_REMIND" ]; then
-            _rd_say "ROUND DUE: $c certified waiting (idle ${idle}s), no round running — cut the next round"
+            _rd_say "ROUND DUE: $c certified waiting [$_rd_by_repo] (idle ${idle}s), no round running — cut the next round"
             _rd_last_due=$now
         fi
     else
