@@ -215,7 +215,7 @@ fn a_cached_stacked_verdict_is_judged_against_the_prerequisites_current_state() 
 #[test]
 fn after_three_send_backs_the_bead_is_excluded_and_the_concierge_told_once() {
     let mut f = fake();
-    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
+    f.target_gaps.insert("a".into(), "no verdict".into());
     let s = Mem::default();
     s.counts.borrow_mut().insert("a".into(), SEND_BACK_CAP);
     let mut r = Rec::default();
@@ -227,9 +227,23 @@ fn after_three_send_backs_the_bead_is_excluded_and_the_concierge_told_once() {
 }
 
 #[test]
+fn a_conflict_past_the_cap_still_goes_to_rework_naming_the_files_and_is_not_counted() {
+    let mut f = fake();
+    f.conflicts.insert("t-a".into(), vec!["x.rs".into(), "y.rs".into()]);
+    let s = Mem::default();
+    s.counts.borrow_mut().insert("a".into(), SEND_BACK_CAP);
+    let mut r = Rec::default();
+    let o = screen(&f, &s, &mut r, &[c("a")], &[]);
+    assert_eq!((o.sent_back, o.capped), (vec!["a".to_string()], vec![]));
+    assert_eq!(reds(&r), ["red a t-a no-rebase"]);
+    assert!(r.log.iter().any(|l| l.starts_with("note a:") && l.contains("x.rs, y.rs")));
+    assert_eq!(s.send_backs("a"), SEND_BACK_CAP);
+}
+
+#[test]
 fn each_send_back_counts_toward_the_cap() {
     let mut f = fake();
-    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
+    f.target_gaps.insert("a".into(), "no verdict".into());
     let s = Mem::default();
     let mut r = Rec::default();
     screen(&f, &s, &mut r, &[c("a")], &[]);

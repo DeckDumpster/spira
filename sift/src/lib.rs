@@ -1,6 +1,6 @@
 //! The screen runs on the proto-round (SUBMITTED and CERTIFIED beads), never inside a cut. A
 //! passing candidate has its pass recorded for its tip; a failing one is sent back (evidence note
-//! first, then the GateRed), superseded, or — once the cap is spent — held out and reported. A
+//! first, then the GateRed), superseded, or — once the cap is spent — held out and reported. A conflict is never capped or counted: the landing ref moves, so a rebased branch conflicts again and goes back to a builder each time. A
 //! candidate the screen cannot judge records nothing and stays unscreened.
 
 mod git;
@@ -206,8 +206,9 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
             }
             continue;
         }
+        let conflict = v.conflict.is_some();
         let prior = store.send_backs(&c.id);
-        if prior >= SEND_BACK_CAP {
+        if !conflict && prior >= SEND_BACK_CAP {
             if store.first_cap_report(&c.id, &c.tip) {
                 acts.tell(&format!("SIFT REPEAT {}: red after {prior} send-backs, left in place and excluded from cuts — {}", c.id, findings[0].text));
             }
@@ -226,8 +227,10 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
         match acts.gate_red(&c.id, &c.tip, findings[0].reason) {
             Ok(()) => {
                 out.sent_back.push(c.id.clone());
-                if let Err(e) = store.record_send_back(&c.id, &c.tip, findings[0].reason) {
-                    out.errors.push(format!("sift: {} send-back count not recorded ({e})", c.id));
+                if !conflict {
+                    if let Err(e) = store.record_send_back(&c.id, &c.tip, findings[0].reason) {
+                        out.errors.push(format!("sift: {} send-back count not recorded ({e})", c.id));
+                    }
                 }
                 acts.tell(&format!("SIFT sent {} to REWORK: {}", c.id, findings[0].text));
             }
