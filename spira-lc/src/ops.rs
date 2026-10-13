@@ -180,7 +180,7 @@ pub fn cmd_live_check(conn: &Conn) -> (i32, String) {
 
 pub fn run_live_check(conn: &Conn, raise: &dyn Fn(&[String])) -> Result<crate::live::Check, String> {
     let check = conn.live_check()?;
-    if !check.divergent.is_empty() {
+    if !check.divergent.is_empty() && !check.explained {
         raise(&check.divergent);
     }
     Ok(check)
