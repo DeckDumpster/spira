@@ -40,7 +40,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::Verdict { repo } => verdict::verdict(w, repo),
         Cmd::Eject { id, repo, reason, suites, red, harness_fault, dry_run } => batch::eject(w, id, repo.as_deref(), reason, suites, *red, *harness_fault, *dry_run),
         Cmd::Abandon { repo, reason, dry_run } => batch::abandon(w, repo.as_deref(), reason, *dry_run),
-        Cmd::OpenBatch { repo, members, skip_pregate, dry_run } => batch::open_batch(w, repo.as_deref(), members, *skip_pregate, *dry_run),
+        Cmd::OpenBatch { repo, members, skip_pregate, dry_run, replace, reason } => batch::open_batch(w, repo.as_deref(), members, *skip_pregate, *dry_run, replace.then_some(reason)),
         Cmd::Claim { repo, reason, force } => simple::claim(w, repo.as_deref(), reason, *force),
         Cmd::Release { repo } => simple::release(w, repo.as_deref()),
         Cmd::LandLocal { repo, head, members, worktree } => land::land_local(w, repo.as_deref(), head, members, worktree.as_deref()),
