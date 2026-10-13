@@ -438,6 +438,7 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_NO_LOOP_LABEL",
     "SPIRA_OPERATOR",
     "SPIRA_OPERATOR_ACTOR",
+    "SPIRA_OTEL_KEEP_DAYS",
     "SPIRA_PATH",
     "SPIRA_PLAN_LABEL",
     "SPIRA_PROD",

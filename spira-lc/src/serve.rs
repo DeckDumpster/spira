@@ -16,11 +16,13 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{mpsc, Arc};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::db::Conn;
 
 const SWEEP_EVERY: Duration = Duration::from_secs(5);
+
+static SPANS: std::sync::OnceLock<spira_otel::Sink> = std::sync::OnceLock::new();
 
 pub fn run(args: &[String]) -> i32 {
     // An explicit argv[0] (the launching unit's own ExecStart) wins outright; otherwise the
@@ -48,6 +50,18 @@ pub fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
+
+    let spans = spira_config::process::cfg("SPIRA_RUN")
+        .and_then(|run| spira_config::process::cfg_parse::<u32>("SPIRA_OTEL_KEEP_DAYS").map(|keep| (run, keep)));
+    match spans {
+        Ok((run, keep)) => {
+            let _ = SPANS.set(spira_otel::Sink::new(spira_otel::dir_of(std::path::Path::new(&run)), "spira-lc", keep));
+        }
+        Err(e) => {
+            eprintln!("spira-lc serve: {e}");
+            return 2;
+        }
+    }
 
     let conn = match Conn::from_env() {
         Ok(mut c) => {
@@ -152,7 +166,12 @@ fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
 }
 
 fn handle(stream: UnixStream, conn: &Arc<Conn>) {
+    serve_one(stream, conn, SPANS.get());
+}
+
+fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Sink>) {
     let received = Instant::now();
+    let started = SystemTime::now();
     let mut reader = BufReader::new(stream.try_clone().expect("clone unix stream"));
     let mut line = String::new();
     if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -161,7 +180,9 @@ fn handle(stream: UnixStream, conn: &Arc<Conn>) {
     let argv: Vec<String> = match serde_json::from_str(line.trim()) {
         Ok(v) => v,
         Err(e) => {
-            let _ = write_response(&stream, 2, &format!("bad request: {e}"));
+            let msg = format!("bad request: {e}");
+            let _ = write_response(&stream, 2, &msg);
+            record_span(spans, "-", "-", line.len(), msg.len(), 2, started, SystemTime::now());
             return;
         }
     };
@@ -182,6 +203,21 @@ fn handle(stream: UnixStream, conn: &Arc<Conn>) {
     };
     crate::slow::request_done(&verb, &caller, received.elapsed());
     let _ = write_response(&stream, code, &out);
+    record_span(spans, &verb, &caller, line.len(), out.len(), code, started, SystemTime::now());
+}
+
+fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, request_size: usize, response_size: usize, code: i32, start: SystemTime, end: SystemTime) {
+    if let Some(sink) = spans {
+        sink.emit(&spira_otel::Call {
+            method: verb,
+            caller,
+            request_size: request_size as u64,
+            response_size: response_size as u64,
+            exit_code: code,
+            start,
+            end,
+        });
+    }
 }
 
 /// `f`'s answer, or `None` once `deadline` passes; the abandoned work finishes unobserved.
@@ -228,6 +264,44 @@ fn peer_pid(stream: &UnixStream) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    fn ask(sink: Option<&spira_otel::Sink>, request: &str) -> (String, i32) {
+        use std::io::{Read, Write};
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        (&client).write_all(request.as_bytes()).unwrap();
+        let conn = std::sync::Arc::new(crate::db::Conn::unreachable());
+        super::serve_one(server, &conn, sink);
+        let mut got = String::new();
+        (&client).read_to_string(&mut got).unwrap();
+        let head: serde_json::Value = serde_json::from_str(got.lines().next().unwrap()).unwrap();
+        (got, head["exit_code"].as_i64().unwrap() as i32)
+    }
+
+    #[test]
+    fn a_served_request_writes_one_span_and_a_dead_sink_changes_nothing() {
+        let dir = testkit::TempDir::new("lc-serve-otel");
+        let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
+        let req = "[\"no-such-verb\"]\n";
+        let (reply, code) = ask(Some(&sink), req);
+        let files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1);
+        let text = std::fs::read_to_string(files[0].path()).unwrap();
+        assert_eq!(text.lines().count(), 1, "exactly one span per request");
+        let r: opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest = serde_json::from_str(text.trim()).unwrap();
+        let span = &r.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(span.name, "no-such-verb");
+        let body_len = reply.split_once('\n').unwrap().1.len() as i64;
+        let size = span.attributes.iter().find(|a| a.key == "rpc.response.size").unwrap();
+        assert_eq!(format!("{:?}", size.value), format!("Some(AnyValue {{ value: Some(IntValue({body_len})) }})"));
+
+        let blocked = dir.join("spira-lc.1970-01-01.jsonl");
+        std::fs::write(&blocked, "x").unwrap();
+        let dead = spira_otel::Sink::new(blocked.join("sub"), "spira-lc", 14);
+        let before = spira_otel::dropped();
+        let (reply2, code2) = ask(Some(&dead), req);
+        assert_eq!((reply2, code2), (reply, code), "a failing sink leaves the reply and exit code unchanged");
+        assert_eq!(spira_otel::dropped(), before + 1);
+    }
+
     #[test]
     fn inherited_listener_needs_this_process_and_a_descriptor() {
         assert!(super::inherited_listener(None, None, 7).is_none());
