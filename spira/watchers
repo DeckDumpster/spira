@@ -162,6 +162,11 @@ supersede-duty|daemon|@SPIRA_HOME@/supersede-duty.sh watch --interval 60|@SPIRA_
 # quiet log means every path answered inside the limit.
 perf-watch|log|@SPIRA_RUN@/perf-watch.log
 
+# CONCIERGE-GUARD wakes the Concierge session when its inbox waiter has lapsed and mails the
+# operator when the wake does not take. Its log holds events only; health reads the state file
+# every check rewrites, so "not listening" and "no check lately" both show red.
+concierge-guard|log|@SPIRA_RUN@/concierge-guard.log|concierge-guard health --state @SPIRA_RUN@/concierge-guard.state --max-age 600
+
 # CONCIERGE-INBOX is the durable inbox the Concierge reads. `watchd next concierge-inbox` is how
 # it waits: it blocks until a line survives the drop and dedup rules, prints it and exits, with
 # the unread count and cursor kept here like any other row.

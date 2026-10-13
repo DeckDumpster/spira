@@ -150,6 +150,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-sop-lint.timer", true));
     m.units.push(t("spira-event-continuity.service", false));
     m.units.push(t("spira-event-continuity.timer", true));
+    m.units.push(t("spira-concierge-guard.service", false));
+    m.units.push(t("spira-concierge-guard.timer", true));
     m.units.push(t("spira-mend-watch.service", false));
     m.units.push(t("spira-mend-watch.timer", true));
     m.units.push(t("spira-escape-census.service", false));

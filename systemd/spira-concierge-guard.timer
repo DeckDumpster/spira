@@ -1,0 +1,15 @@
+[Unit]
+Description=Check that the Concierge is listening every three minutes
+
+[Timer]
+OnBootSec=2min
+OnActiveSec=2min
+OnUnitActiveSec=3min
+AccuracySec=15s
+Unit=spira-concierge-guard.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability
