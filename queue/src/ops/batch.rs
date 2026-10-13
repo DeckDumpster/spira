@@ -177,6 +177,10 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             }
         }
     }
+    let branch = kv.as_ref().and_then(|k| k.get_first("branch")).unwrap_or("").to_string();
+    if !branch.is_empty() && idents(w, "eject", &[("branch", &branch)]).is_ok() {
+        w.lib.cancel_runs(&c.s.forge, &path, &branch);
+    }
     if !pr.is_empty() && idents(w, "eject", &[("pr", &pr)]).is_ok() {
         w.forge.pr_close(&c.s.forge, &path, &pr);
     }
