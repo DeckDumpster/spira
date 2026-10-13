@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=concierge
+DOC=PUSH COALESCING, seconds: urgent lines arriving within this window of the first are delivered as ONE wake.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PUSH COALESCING, seconds: urgent lines arriving within this window of the first are delivered as ONE wake.
+    : "${SPIRA_CONCIERGE_PUSH_WINDOW:=5}"
+SPIRA_CONF_DEFAULT_EOF
