@@ -57,7 +57,9 @@ out="$(q "$SYN" 1 "SELECT p99_ms FROM otel_verb_stats WHERE caller='callerA';")"
 is "p99 latency interpolates (10,20,30 ms -> 29.8)" "29.8" "$out"
 
 out="$(q "$T/none" 1 "SELECT count(*) FROM otel_calls;")"
-nowant "a missing directory yields an error, not an empty answer" "0" "$out"
+# Assert the error itself. A bare nowant "0" matched the random mktemp suffix in the error
+# text (/tmp/tmp.B02N...), so the case failed whenever that name contained a 0 (r-auto-81).
+want "a missing directory yields an error, not an empty answer" "No files found" "$out"
 
 FIX="$T/fix"; mkdir -p "$FIX"
 cp "$HERE/../spira-otel/tests/fixtures/spira-lc.ndjson" "$FIX/spira-lc.2023-11-14.jsonl"
