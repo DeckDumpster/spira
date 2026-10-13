@@ -24,6 +24,8 @@ use serde_json::Value;
 
 use crate::wire::Wire;
 
+pub const READ_POOL: usize = 4;
+
 pub struct Conn {
     pub host: String,
     pub port: u16,
@@ -33,9 +35,10 @@ pub struct Conn {
     /// The one live connection, opened on first use and dropped on any failure: after an
     /// error a transaction may still be open, so the next call starts from a fresh session.
     session: Mutex<Option<Wire>>,
-    /// A second connection for plain reads, so a slow `list` never holds the write session
-    /// and every lifecycle write queues behind it.
-    read_session: Mutex<Option<Wire>>,
+    /// Connections for plain reads, so a slow `list` never holds the write session nor the
+    /// other readers: a read takes the first free one.
+    read_sessions: [Mutex<Option<Wire>>; READ_POOL],
+    read_turn: std::sync::atomic::AtomicUsize,
     /// The socket read/write limit for this connection: the query deadline, or
     /// [`ADMIN_IO_TIMEOUT`] for the admin batch verbs.
     pub io_timeout: std::time::Duration,
@@ -111,7 +114,7 @@ impl Conn {
         let password = password_from(password_file, std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: QUERY_DEADLINE, live: None })
+        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0), io_timeout: QUERY_DEADLINE, live: None })
     }
 
     /// A second connection to the same server and database under other credentials — the
@@ -125,7 +128,7 @@ impl Conn {
             password,
             database: self.database.clone(),
             session: Mutex::new(None),
-            read_session: Mutex::new(None),
+            read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0),
             io_timeout: self.io_timeout,
             live: None,
         }
@@ -141,7 +144,7 @@ impl Conn {
             password: String::new(),
             database: String::new(),
             session: Mutex::new(None),
-            read_session: Mutex::new(None),
+            read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0),
             io_timeout: std::time::Duration::from_millis(200),
             live: None,
         }
@@ -201,9 +204,17 @@ impl Conn {
         Err(failure.expect("CONNECT_ATTEMPTS is at least one"))
     }
 
+    fn read_slot(&self) -> &Mutex<Option<Wire>> {
+        if let Some(free) = self.read_sessions.iter().find(|m| m.try_lock().is_ok()) {
+            return free;
+        }
+        let turn = self.read_turn.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        &self.read_sessions[turn % READ_POOL]
+    }
+
     /// A single read-only query: the rows of its last result set.
     pub fn query(&self, sql: &str) -> Result<Vec<Value>, DbError> {
-        match self.run_script_on(&self.read_session, sql) {
+        match self.run_script_on(self.read_slot(), sql) {
             Ok(sets) => Ok(sets.into_iter().last().unwrap_or_default()),
             Err(ScriptFailure::LostRace) => unreachable!("a plain SELECT never conflicts"),
             Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),

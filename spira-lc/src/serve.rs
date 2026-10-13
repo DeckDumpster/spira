@@ -114,7 +114,8 @@ pub fn run(args: &[String]) -> i32 {
             match conn_stream {
                 Ok(stream) => {
                     let conn = Arc::clone(&conn);
-                    scope.spawn(move || handle(stream, &conn));
+                    let accepted = Instant::now();
+                    scope.spawn(move || handle(stream, &conn, accepted));
                 }
                 Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
             }
@@ -170,12 +171,13 @@ fn bind_socket(socket_path: &str) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
-fn handle(stream: UnixStream, conn: &Arc<Conn>) {
-    serve_one(stream, conn, SPANS.get());
+fn handle(stream: UnixStream, conn: &Arc<Conn>, accepted: Instant) {
+    serve_one(stream, conn, SPANS.get(), accepted);
 }
 
-fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Sink>) {
+fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Sink>, accepted: Instant) {
     let received = Instant::now();
+    let started_work = Arc::new(std::sync::Mutex::new(None::<Instant>));
     let started = SystemTime::now();
     let mut reader = BufReader::new(stream.try_clone().expect("clone unix stream"));
     let mut line = String::new();
@@ -187,7 +189,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
         Err(e) => {
             let msg = format!("bad request: {e}");
             let _ = write_response(&stream, 2, &msg);
-            record_span(spans, "-", "-", line.len(), msg.len(), 2, started, SystemTime::now());
+            record_span(spans, "-", "-", line.len(), msg.len(), 2, started, SystemTime::now(), Instant::now().saturating_duration_since(accepted));
             return;
         }
     };
@@ -198,7 +200,9 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
         Ok(argv) => {
             let worker = Arc::clone(conn);
             let who = caller.clone();
+            let began = Arc::clone(&started_work);
             within(crate::db::QUERY_DEADLINE.saturating_sub(received.elapsed()), move || {
+                *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
                 crate::dispatch(&argv, &worker)
             })
@@ -208,10 +212,12 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
     };
     crate::slow::request_done(&verb, &caller, received.elapsed());
     let _ = write_response(&stream, code, &out);
-    record_span(spans, &verb, &caller, line.len(), out.len(), code, started, SystemTime::now());
+    let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
+    let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
+    record_span(spans, &verb, &caller, line.len(), out.len(), code, started, SystemTime::now(), waited);
 }
 
-fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, request_size: usize, response_size: usize, code: i32, start: SystemTime, end: SystemTime) {
+fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, request_size: usize, response_size: usize, code: i32, start: SystemTime, end: SystemTime, queue_wait: Duration) {
     if let Some(sink) = spans {
         sink.emit(&spira_otel::Call {
             method: verb,
@@ -221,6 +227,7 @@ fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, reque
             exit_code: code,
             start,
             end,
+            queue_wait,
         });
     }
 }
@@ -274,7 +281,7 @@ mod tests {
         let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
         (&client).write_all(request.as_bytes()).unwrap();
         let conn = std::sync::Arc::new(crate::db::Conn::unreachable());
-        super::serve_one(server, &conn, sink);
+        super::serve_one(server, &conn, sink, std::time::Instant::now());
         let mut got = String::new();
         (&client).read_to_string(&mut got).unwrap();
         let head: serde_json::Value = serde_json::from_str(got.lines().next().unwrap()).unwrap();
@@ -295,6 +302,7 @@ mod tests {
         let span = &r.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(span.name, "no-such-verb");
         let body_len = reply.split_once('\n').unwrap().1.len() as i64;
+        assert!(span.attributes.iter().any(|a| a.key == "spira.queue_wait_us"), "queue wait is recorded on every span");
         let size = span.attributes.iter().find(|a| a.key == "rpc.response.size").unwrap();
         assert_eq!(format!("{:?}", size.value), format!("Some(AnyValue {{ value: Some(IntValue({body_len})) }})"));
 
