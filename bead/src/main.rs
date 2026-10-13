@@ -34,6 +34,7 @@ fn main() {
     let rc = match cmd.as_str() {
         "file" => cmd_file(&home, &rest),
         "amend" => cmd_amend(&home, &rest),
+        "label" => cmd_label(&home, &rest),
         "contract" => cmd_contract(&home),
         "lint" => cmd_lint(&home, &rest),
         "judge-create" => cmd_judge_create(&home, &rest),
@@ -50,7 +51,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh label add|remove <id> <label>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -1314,6 +1315,46 @@ fn cmd_dep_convert(home: &str, args: &[String]) -> i32 {
 // =========================================================================================
 // dep remove
 // =========================================================================================
+
+fn cmd_label(home: &str, args: &[String]) -> i32 {
+    let (verb, id, label) = match args {
+        [v, i, l] if (v == "add" || v == "remove") && !i.starts_with('-') && !l.starts_with('-') => (v.as_str(), i.clone(), l.clone()),
+        _ => {
+            eprintln!("usage: bead.sh label add|remove <id> <label>");
+            return 2;
+        }
+    };
+
+    let personas: Vec<(String, String)> = fayth_names(home)
+        .into_iter()
+        .map(|f| {
+            let labels = fayth_label(home, &f);
+            (f, labels)
+        })
+        .collect();
+    let partitions = chamber_partitions(&personas, "");
+    if partitions.iter().any(|p| p == &label) || label.starts_with("fayth:") {
+        eprintln!("bead: label {verb}: refusing — {label} is a partition label; `bead.sh file --for <persona>` derives those from the persona's own predicate, so a hand-set one can disagree with it");
+        return 1;
+    }
+
+    let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
+    let Some(row) = parse_show_row(&out) else {
+        eprintln!("bead: label {verb}: refusing — unknown bead {id}");
+        return 1;
+    };
+    let has = row.labels.iter().any(|l| l == &label);
+    if (verb == "add") == has {
+        println!("{id}: label {label} already {}", if has { "present" } else { "absent" });
+        return 0;
+    }
+
+    let rc = bdq_status(home, &s(&["label", verb, &id, &label]));
+    if rc == 0 {
+        println!("{verb}ed label: {id} {label}");
+    }
+    rc
+}
 
 fn cmd_dep_remove(home: &str, args: &[String]) -> i32 {
     let (id, depid) = match args {

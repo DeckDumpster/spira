@@ -7,6 +7,9 @@
 #   bead.sh lint [--all|<id>...]     check that beads in the store satisfy the contract
 #   bead.sh contract                 legal personas, repos and kinds, read from source
 #   bead.sh amend <id> [--note "<text>"] [--body-file F --replace | --append-body F] [--express] [--priority N]
+#   bead.sh label add|remove <id> <label>
+#                                     set or drop a label through the contract; refuses the
+#                                     partition labels (and fayth:*) that `file --for` derives
 #   bead.sh dep add <id> <depends-on-id> [--type <type>]
 #                                     wrap `bd dep add`, refusing a blocks edge onto an
 #                                     incident-labelled bead (use `bd dep relate` for those)
