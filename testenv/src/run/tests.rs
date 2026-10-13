@@ -277,6 +277,7 @@ impl World {
             },
             env: &env,
             config: self.config.as_ref(),
+            repo_root: &|_| None,
             settings: test_settings(&self.env),
             stdin: &read_stdin,
             out: &out,
@@ -1860,6 +1861,7 @@ fn resolve_repo_names_a_hash_named_dir_outside_the_map_by_its_basename() {
         },
         env: &env,
         config: None,
+        repo_root: &|_| None,
         settings: unused_settings(),
         stdin: &read_stdin,
         out: &out,
@@ -1896,6 +1898,7 @@ fn a_non_git_harness_root_resolves_to_the_home_repo_by_the_map() {
         harness: Harness { root: root.to_path_buf() },
         env: &env,
         config: Some(&cfg),
+        repo_root: &|_| None,
         settings: unused_settings(),
         stdin: &|| String::new(),
         out: &|_| {},
@@ -1943,6 +1946,7 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
         harness: Harness { root: w.harness.clone() },
         env: &env,
         config,
+        repo_root: &|_| None,
         settings: unused_settings(),
         stdin: &stdin,
         out: &out,
@@ -1991,6 +1995,7 @@ fn landref_falls_back_to_local_main_for_an_unmapped_checkout() {
         harness: Harness { root: w.harness.clone() },
         env: &env,
         config: None,
+        repo_root: &|_| None,
         settings: unused_settings(),
         stdin: &read_stdin,
         out: &out,
@@ -2021,4 +2026,101 @@ fn a_green_run_records_a_full_suite_pass_only_when_it_selected_every_suite() {
     assert!(check(&run, Kind::FullSuite, "aaaa", None, "u", "0").is_err());
     record_full_suite_pass(&run, "aaaa", &names(&["test-b.sh", "test-a.sh"]), &dir, &|_| {});
     assert_eq!(check(&run, Kind::FullSuite, "aaaa", None, "u", "0"), Ok(Verdict::Passed));
+}
+
+fn foreign_world(tag: &str, decl: Option<&str>) -> World {
+    let w = World::new(tag);
+    sh(&w.repo, "git rm -rq spira && git commit -qm drop-spira-shape");
+    if let Some(d) = decl {
+        fs::create_dir_all(w.repo.join(".spira")).unwrap();
+        fs::write(w.repo.join(".spira/testenv.toml"), d).unwrap();
+        sh(&w.repo, "git add .spira && git commit -qm declare");
+    }
+    sh(&w.repo, "git checkout -q -B topic main");
+    w
+}
+
+const FOREIGN_DECL: &str = "image = \"localhost/other-ci:9\"\nworkdir = \"/src\"\ndefault = [\"unit\"]\n[tier.unit]\nargv = [\"bash\", \"deploy/ci.sh\", \"unit\"]\nenv = { INSTANCE = \"ci-x\" }\n[tier.lint]\nargv = [\"bash\", \"deploy/ci.sh\", \"lint\"]\n";
+
+#[test]
+fn a_forge_repo_runs_its_declared_tier_in_its_own_image() {
+    let w = foreign_world("foreign-pass", Some(FOREIGN_DECL));
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "unit", "topic"], "", &w.root);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
+    let calls = rt.once_calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].image, "localhost/other-ci:9");
+    assert_eq!(calls[0].workdir, "/src");
+    assert_eq!(calls[0].argv, ["bash", "deploy/ci.sh", "unit"]);
+    assert_eq!(calls[0].env, [("INSTANCE".to_string(), "ci-x".to_string())]);
+    assert!(rt.execs.lock().unwrap().is_empty(), "no spira fixture container is booted");
+}
+
+#[test]
+fn a_forge_repo_red_tier_is_red_and_the_default_selects_the_declared_default() {
+    let w = foreign_world("foreign-red", Some(FOREIGN_DECL));
+    let rt = runtime();
+    rt.once_rc.lock().unwrap().insert("unit".into(), 3);
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["topic"], "", &w.root);
+    assert_eq!(rc, 1);
+    assert_eq!(w.last(), "VERDICT RED ran=1 red=1");
+    assert_eq!(rt.once_calls.lock().unwrap().len(), 1, "lint is not in the default");
+}
+
+#[test]
+fn a_forge_repo_podman_failure_is_a_fault_not_a_red() {
+    let w = foreign_world("foreign-fault", Some(FOREIGN_DECL));
+    let rt = runtime();
+    rt.once_rc.lock().unwrap().insert("unit".into(), 125);
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=container-run");
+}
+
+#[test]
+fn a_forge_repo_unknown_tier_and_missing_declaration_fault_by_name() {
+    let w = foreign_world("foreign-unknown", Some(FOREIGN_DECL));
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "nosuch", "topic"], "", &w.root), 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=unknown-suite");
+    assert!(rt.once_calls.lock().unwrap().is_empty());
+
+    let w = foreign_world("foreign-undeclared", None);
+    assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=no-test-entry");
+}
+
+#[test]
+fn a_registered_name_outside_spira_toml_resolves_through_the_repo_map() {
+    let w = World::new("resolve-registry");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let env = |_: &str| None;
+    let root = w.repo.clone();
+    let lookup = move |n: &str| (n == "registered").then(|| root.clone());
+    let deps = Deps {
+        rt: &rt,
+        builder: &b,
+        harness: Harness { root: w.harness.clone() },
+        env: &env,
+        config: None,
+        repo_root: &lookup,
+        settings: unused_settings(),
+        stdin: &|| String::new(),
+        out: &|_| {},
+        owner_dir: w.owner.clone(),
+        cwd: w.root.to_path_buf(),
+        runner_identity: vec![],
+        warm_refill: &|_, _| {},
+        spawn_sweep: &|_| {},
+        runner_exe: w.runner_exe(),
+    };
+    let r = resolve_repo(Some("registered"), &deps).unwrap();
+    assert_eq!((r.name.as_str(), r.path.as_path()), ("registered", w.repo.as_path()));
+    assert!(resolve_repo(Some("nosuch"), &deps).err().unwrap().contains("cannot find repo nosuch"));
 }

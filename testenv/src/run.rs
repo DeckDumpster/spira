@@ -8,6 +8,7 @@ use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
 use crate::cli::{Invocation, RunArgs, SuitesArg};
 use crate::fixture::{Fixtures, Session, SetupFault, WORKSPACE};
+use crate::foreign;
 use crate::phase::{RunEvent, RunLog};
 use crate::prebuilt::{self, Prebuilt};
 use crate::record::{suite_line, Mode, Producer, ResultRecord, Status};
@@ -175,6 +176,9 @@ pub struct Deps<'a> {
     pub harness: Harness,
     pub env: &'a dyn Fn(&str) -> Option<String>,
     pub config: Option<&'a SpiraToml>,
+    /// A registered repository's checkout by name: the repo-map the other tools read, not
+    /// only `[repo.*]` in spira.toml.
+    pub repo_root: &'a (dyn Fn(&str) -> Option<PathBuf> + Sync),
     /// Loaded once at the true top level (`main`), per Ryan 2026-10-05: one source of
     /// config. Pure logic (`run`, `report`, `warm_refill`, `warm_sweep`, ...) reads this
     /// field, never the environment or `spira_config::process::cfg` directly — which is
@@ -246,6 +250,7 @@ fn resolve_repo(arg: Option<&str>, deps: &Deps) -> Result<RepoRef, String> {
             let p = cfg_repos
                 .and_then(|r| r.get(name))
                 .map(|r| PathBuf::from(&r.path))
+                .or_else(|| (deps.repo_root)(name))
                 .ok_or_else(|| format!("batch: cannot find repo {name} in repo-map"))?;
             return Ok(RepoRef {
                 path: p,
@@ -307,6 +312,79 @@ fn resolve_repo(arg: Option<&str>, deps: &Deps) -> Result<RepoRef, String> {
             .unwrap_or_default()
     });
     Ok(RepoRef { path, name })
+}
+
+fn run_foreign(
+    args: &RunArgs,
+    deps: &Deps,
+    text: &str,
+    tree: &str,
+    wt: &Path,
+    started: &std::cell::RefCell<Option<PathBuf>>,
+) -> Finish {
+    let s = &deps.settings;
+    let decl = match foreign::Decl::parse(text) {
+        Ok(d) => d,
+        Err(e) => {
+            stderr(&format!("batch: {e}"));
+            return Finish::fault(2, "test-entry-invalid", 0);
+        }
+    };
+    let exists = |n: &str| decl.known(n);
+    let picked = match &args.suites {
+        Some(SuitesArg::List(l)) => selection::from_list(l, &exists),
+        Some(SuitesArg::Stdin) => selection::from_lines(&(deps.stdin)(), &exists),
+        None => Ok(decl.default_tiers()),
+    };
+    let tiers = match picked {
+        Ok(v) => v,
+        Err(selection::UnknownSuite(n)) => {
+            stderr(&format!("batch: unknown suite: {n}"));
+            stderr(&format!(
+                "batch: suite must be a tier declared in {}: {}",
+                foreign::DECL,
+                decl.tier.keys().cloned().collect::<Vec<_>>().join(", ")
+            ));
+            return Finish::fault(2, "unknown-suite", 0);
+        }
+    };
+    if tiers.is_empty() {
+        deps.log("no suites selected — nothing to do");
+        return Finish::nothing();
+    }
+    let key = verdict::sha256_hex(format!("foreign\n{tree}\n{text}\n{}", tiers.join(",")).as_bytes());
+    let results = s.results_root.join(&key);
+    if let Err(e) = fs::create_dir_all(&results) {
+        stderr(&format!("batch: cannot create {}: {e}", results.display()));
+        return Finish::fault(2, "results-dir", 0);
+    }
+    *started.borrow_mut() = Some(results.clone());
+    let runner = foreign::TierRun {
+        rt: deps.rt,
+        decl: &decl,
+        tree: wt,
+        results: &results,
+        key: &key,
+        deadline: args.deadline.map(|d| Instant::now() + Duration::from_secs(d)),
+    };
+    let (mut ran, mut red) = (0, 0);
+    for t in &tiers {
+        let (o, secs) = runner.run(t);
+        (deps.out)(&foreign::tier_line(t, o, secs));
+        match o {
+            foreign::Outcome::Pass => ran += 1,
+            foreign::Outcome::Red => {
+                ran += 1;
+                red += 1;
+            }
+            foreign::Outcome::Fault(reason) => return Finish::fault(2, reason, ran),
+        }
+    }
+    if red == 0 {
+        Finish::green(ran)
+    } else {
+        Finish { rc: 1, red, ..Finish::green(ran) }
+    }
 }
 
 fn verified(repo: &Path, r: &str) -> bool {
@@ -849,6 +927,22 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         wt.describe(),
         wt.path.display()
     ));
+
+    // ---- a registered repository other than the harness: its own declared tiers ------
+    let decl_text = git(&repo.path, &["show", &format!("{br}:{}", foreign::DECL)]).ok();
+    let has_suite_dir = git(&repo.path, &["cat-file", "-e", &format!("{br}:spira")]).is_ok();
+    match decl_text {
+        Some(text) => return run_foreign(args, deps, &text, &tree, &wt.path, started),
+        None if !has_suite_dir => {
+            stderr(&format!(
+                "batch: {} declares no test entry: add {} to the tree under test",
+                repo.name,
+                foreign::DECL
+            ));
+            return Finish::fault(2, "no-test-entry", 0);
+        }
+        None => {}
+    }
 
     // ---- --artifacts: validate the prebuilt set before anything else (DESIGN.md D8) ----
     let prebuilt: Option<Prebuilt> = match &args.artifacts {

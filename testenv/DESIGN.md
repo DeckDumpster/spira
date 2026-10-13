@@ -62,6 +62,19 @@ testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
 `--mode=X`, `--suites=X`, `--report=N`, `--profile=P`, `--artifacts=DIR`, `--deadline=S` spellings are accepted. `--` ends
 options. An unknown option prints `batch: unknown option: X` and the usage line, exit 2.
 
+#### 2.1.1 Registered repositories other than the harness
+
+`<repo>` resolves through the repo-map (the registry every other tool reads) as well as
+`[repo.*]`; an unknown name is still `FAULT rc=2 reason=repo`. A tree that has no `spira/`
+directory runs the tiers it declares in `.spira/testenv.toml` — `image`, optional `workdir`
+(default `/work`) and `timeout`, `default` (tiers run with no `--suites`; absent = all), and
+`[tier.<name>]` with `argv`, `env`, `timeout`. Each tier is one `podman run --rm` of that image
+with the tree mounted at `workdir`, bounded by `--deadline`; `--suites` names tiers
+(`reason=unknown-suite` otherwise), output lands in `<results>/<tier>.log`, and the last line is
+the usual `VERDICT`. podman's own failure (rc 125) is `FAULT reason=container-run`, never RED. A
+tree with neither `spira/` nor a declaration is `FAULT reason=no-test-entry`. These runs are not
+verdict-cached.
+
 ### 2.2 Exit status (unchanged from testenv-batch.sh — every caller branches on it)
 
 | rc | meaning | whose fault |

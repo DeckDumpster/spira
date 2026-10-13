@@ -112,7 +112,41 @@ impl ExecOutcome {
     }
 }
 
+/// One throwaway container for a foreign repository's tier (`podman run --rm`): the tree
+/// mounted at `workdir`, the declared argv, bounded like an exec.
+#[derive(Debug, Clone)]
+pub struct RunRequest {
+    pub name: String,
+    pub image: String,
+    pub mount: PathBuf,
+    pub workdir: String,
+    pub env: Vec<(String, String)>,
+    pub argv: Vec<String>,
+    pub timeout: Option<Duration>,
+    pub deadline: Option<Instant>,
+    pub output: PathBuf,
+}
+
+pub fn podman_run_args(req: &RunRequest) -> Vec<String> {
+    let mut a: Vec<String> = ["run", "--rm", "--name", &req.name, "-v"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    a.push(format!("{}:{}:Z", req.mount.display(), req.workdir));
+    a.push("-w".into());
+    a.push(req.workdir.clone());
+    for (k, v) in &req.env {
+        a.push("-e".into());
+        a.push(format!("{k}={v}"));
+    }
+    a.push(req.image.clone());
+    a.extend(req.argv.iter().cloned());
+    a
+}
+
 pub trait ContainerRuntime: Send + Sync {
+    /// Run `req` in a fresh container to completion, output to `req.output`.
+    fn run_once(&self, req: &RunRequest) -> ExecOutcome;
     /// `podman exec [--user U] [-e K=V ...] <container> argv...`, bounded by `timeout`.
     fn exec(&self, req: &ExecRequest) -> ExecOutcome;
     /// `podman container inspect --format <format> <name>`; None on failure or empty output.
@@ -301,6 +335,12 @@ pub fn podman_exec_args(req: &ExecRequest) -> Vec<String> {
 }
 
 impl ContainerRuntime for Podman {
+    fn run_once(&self, req: &RunRequest) -> ExecOutcome {
+        let mut cmd = Command::new("podman");
+        cmd.args(podman_run_args(req));
+        let rc = run_bounded(cmd, &req.output, req.timeout, req.deadline);
+        ExecOutcome { rc, output: read_lossy(&req.output) }
+    }
     fn exec(&self, req: &ExecRequest) -> ExecOutcome {
         let mut cmd = Command::new("podman");
         cmd.args(podman_exec_args(req));

@@ -1050,6 +1050,9 @@ pub mod fake {
         pub plans: Mutex<usize>,
         /// Answer plan execs with this instead of running their steps (a broken runner).
         pub plan_answer: Mutex<Option<ExecOutcome>>,
+        /// Foreign-repository tiers run (`run_once`), and the rc each tier name answers.
+        pub once_calls: Mutex<Vec<crate::runtime::RunRequest>>,
+        pub once_rc: Mutex<std::collections::HashMap<String, i32>>,
     }
 
     impl FakeRuntime {
@@ -1158,6 +1161,13 @@ pub mod fake {
     }
 
     impl ContainerRuntime for FakeRuntime {
+        fn run_once(&self, req: &crate::runtime::RunRequest) -> ExecOutcome {
+            self.once_calls.lock().unwrap().push(req.clone());
+            let tier = req.name.rsplit('-').next().unwrap_or("").to_string();
+            let rc = self.once_rc.lock().unwrap().get(&tier).copied().unwrap_or(0);
+            let _ = std::fs::write(&req.output, format!("fake tier {tier} rc={rc}\n"));
+            ExecOutcome { rc, output: String::new() }
+        }
         fn exec(&self, req: &ExecRequest) -> ExecOutcome {
             if let Some(o) = self.exec_plan(req) {
                 return o;
