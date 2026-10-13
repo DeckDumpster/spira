@@ -165,9 +165,9 @@ impl Pool {
 
     /// Leases `vm`, ends any outage, and starts the one background provision of the next VM
     /// if nothing is ready or in flight (G1).
-    fn hand_out(s: &mut PoolState, vm: &Vm, owner: Option<ProcId>, spawner: &dyn Spawner, why: &str) {
+    fn hand_out(s: &mut PoolState, vm: &Vm, owner: Option<ProcId>, holder: Option<ProcId>, spawner: &dyn Spawner, why: &str) {
         s.note(&vm.handle, VmState::Leased, why);
-        s.leases.push(Lease { vm: vm.clone(), owner, since: now(), holder: None });
+        s.leases.push(Lease { vm: vm.clone(), owner, since: now(), holder, held: false });
         s.outage = None;
         if s.ready.is_none() && s.provisioning.is_none() {
             match spawner.spawn_next() {
@@ -205,6 +205,11 @@ impl Pool {
     /// Waits and retries for as long as it takes (or `max_retries`); never runs anything
     /// anywhere else (G5).
     pub fn acquire(&self, deps: &Deps, owner: Option<ProcId>) -> Result<(Vm, AcquireMode), String> {
+        self.acquire_held(deps, owner, None)
+    }
+
+    /// As `acquire`, recording `holder` in the lease in the same write that creates it.
+    pub fn acquire_held(&self, deps: &Deps, owner: Option<ProcId>, holder: Option<ProcId>) -> Result<(Vm, AcquireMode), String> {
         let me = ProcId::current();
         let mut attempts = 0u32;
         let mut waited = false;
@@ -233,7 +238,7 @@ impl Pool {
             }
             if let Some(plan) = attempt.spill.as_ref().filter(|_| !spill_failed) {
                 if let Place::Ec2(reason) = decide(&plan.rule, wait_since.map(|t| t.elapsed()), (plan.pressure)()) {
-                    match self.spill(&attempt, plan, owner, &reason) {
+                    match self.spill(&attempt, plan, owner, holder, &reason) {
                         Ok(vm) => return Ok((vm, AcquireMode::Cold)),
                         Err(e) => {
                             eprintln!("round-vm: spill to EC2 failed, staying local: {e}");
@@ -250,7 +255,7 @@ impl Pool {
                 }
                 if let Some(vm) = s.ready.take() {
                     if p.alive(&vm.handle).unwrap_or(false) {
-                        Self::hand_out(s, &vm, owner, deps.spawner, "warm VM handed out (provider: proxmox)");
+                        Self::hand_out(s, &vm, owner, holder, deps.spawner, "warm VM handed out (provider: proxmox)");
                         return Next::Got(vm);
                     }
                     s.note(&vm.handle, VmState::Doomed, "died while ready");
@@ -284,7 +289,7 @@ impl Pool {
                         Ok(vm) => {
                             self.with_state(|s| {
                                 clear_mine(s);
-                                Self::hand_out(s, &vm, owner, deps.spawner, "provisioned for this acquire (provider: proxmox)");
+                                Self::hand_out(s, &vm, owner, holder, deps.spawner, "provisioned for this acquire (provider: proxmox)");
                             })?;
                             return Ok((vm, AcquireMode::Cold));
                         }
@@ -330,7 +335,7 @@ impl Pool {
 
     /// Provisions this pass's VM on EC2. Recorded in `spilled` before the instance exists
     /// (G2); leased on success; destroyed or doomed on failure.
-    fn spill(&self, attempt: &Attempt, plan: &SpillPlan, owner: Option<ProcId>, reason: &str) -> Result<Vm, String> {
+    fn spill(&self, attempt: &Attempt, plan: &SpillPlan, owner: Option<ProcId>, holder: Option<ProcId>, reason: &str) -> Result<Vm, String> {
         let me = ProcId::current();
         let why = format!("spilled to ec2: {reason}");
         let mut handle: Option<String> = None;
@@ -347,7 +352,7 @@ impl Pool {
                 self.with_state(|s| {
                     s.spilled.retain(|pr| pr.vmid.as_deref() != Some(&vm.handle));
                     s.note(&vm.handle, VmState::Leased, &format!("{why} (provider: ec2)"));
-                    s.leases.push(Lease { vm: vm.clone(), owner, since: now(), holder: None });
+                    s.leases.push(Lease { vm: vm.clone(), owner, since: now(), holder, held: false });
                     s.outage = None;
                 })?;
                 Ok(vm)
@@ -427,15 +432,6 @@ impl Pool {
         self.release_inner(handle, caller, false, factory)
     }
 
-    /// Records the process that called `acquire` as the holder of `handle`'s lease.
-    pub fn set_holder(&self, handle: &str, holder: ProcId) -> Result<(), String> {
-        self.with_state(|s| {
-            for l in s.leases.iter_mut().filter(|l| l.vm.handle == handle) {
-                l.holder = Some(holder);
-            }
-        })
-    }
-
     /// Destroys the VMs of leases whose owner or holder is gone, logging each.
     pub fn reap_dead_holders(&self, attempt: &Attempt) {
         let _ = self.with_state(|s| Self::reap(s, attempt.provider.as_ref(), attempt.timing));
@@ -448,6 +444,7 @@ impl Pool {
             for l in s.leases.iter_mut().filter(|l| l.vm.handle == handle) {
                 l.owner = None;
                 l.holder = None;
+                l.held = true;
             }
         })
     }
@@ -842,14 +839,46 @@ mod tests {
         fp.plant("301", "round-301");
         fp.plant("302", "round-302");
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "301".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0, holder: None });
-            s.leases.push(Lease { vm: Vm { handle: "302".into(), addr: "y".into() }, owner: None, since: 0, holder: None });
+            s.leases.push(Lease { vm: Vm { handle: "301".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0, holder: None, held: false });
+            s.leases.push(Lease { vm: Vm { handle: "302".into(), addr: "y".into() }, owner: None, since: 0, holder: None, held: true });
         })
         .unwrap();
         let f = || Ok(attempt(&fp));
         pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
         assert!(fp.name("301").is_none());
         assert!(fp.name("302").is_some());
+    }
+
+    #[test]
+    fn an_ownerless_lease_past_the_grace_is_reaped_and_its_vm_destroyed() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        fp.plant("401", "round-401");
+        fp.plant("402", "round-402");
+        let old = now() - crate::schema::OWNERLESS_GRACE_SECS - 5;
+        pl.with_state(|s| {
+            s.leases.push(Lease { vm: Vm { handle: "401".into(), addr: "x".into() }, owner: None, since: old, holder: None, held: false });
+            s.leases.push(Lease { vm: Vm { handle: "402".into(), addr: "y".into() }, owner: None, since: now(), holder: None, held: false });
+        })
+        .unwrap();
+        let f = || Ok(attempt(&fp));
+        pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(fp.name("401").is_none(), "ownerless past the grace");
+        assert!(fp.name("402").is_some(), "ownerless but inside the grace");
+    }
+
+    #[test]
+    fn an_acquire_with_a_holder_writes_the_holder_with_the_lease() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let me = ProcId::current();
+        let (vm, _) = pl.acquire_held(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None, Some(me)).unwrap();
+        let s = read_state(&pl.state_file()).unwrap();
+        let l = s.leases.iter().find(|l| l.vm == vm).unwrap();
+        assert_eq!(l.holder, Some(me));
     }
 
     #[test]
@@ -977,7 +1006,7 @@ mod tests {
         fp.plant("321", "round-321");
         let pl = pool(&d, 1);
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "321".into(), addr: "x".into() }, owner: None, since: 0, holder: Some(dead_proc()) });
+            s.leases.push(Lease { vm: Vm { handle: "321".into(), addr: "x".into() }, owner: None, since: 0, holder: Some(dead_proc()), held: false });
         })
         .unwrap();
         pl.begin_refresh(ProcId::current()).unwrap().unwrap();
@@ -992,7 +1021,7 @@ mod tests {
         let d = TempDir::new();
         let pl = pool(&d, 1);
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "322".into(), addr: "x".into() }, owner: None, since: 0, holder: Some(ProcId::current()) });
+            s.leases.push(Lease { vm: Vm { handle: "322".into(), addr: "x".into() }, owner: None, since: 0, holder: Some(ProcId::current()), held: false });
         })
         .unwrap();
         assert!(pl.begin_refresh(ProcId::current()).unwrap().is_err());
@@ -1005,7 +1034,7 @@ mod tests {
         fp.plant("311", "round-311");
         let pl = pool(&d, 1);
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "311".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0, holder: None })
+            s.leases.push(Lease { vm: Vm { handle: "311".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0, holder: None, held: false })
         })
         .unwrap();
         let f = || Ok(attempt(&fp));

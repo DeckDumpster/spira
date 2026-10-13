@@ -201,13 +201,8 @@ pub fn main_with(args: Vec<String>) -> i32 {
     let deps = Deps { factory: &factory, alarm: &alarm, spawner: &spawner };
 
     match verb.as_str() {
-        "acquire" => match pool.acquire(&deps, None) {
+        "acquire" => match pool.acquire_held(&deps, None, ProcId::of(unsafe { libc::getppid() } as u32)) {
             Ok((vm, mode)) => {
-                if let Some(parent) = ProcId::of(unsafe { libc::getppid() } as u32) {
-                    if let Err(e) = pool.set_holder(&vm.handle, parent) {
-                        eprintln!("round-vm acquire: could not record the holder of {}: {e}", vm.handle);
-                    }
-                }
                 println!("{} {} {}", vm.handle, vm.addr, mode.as_str());
                 0
             }

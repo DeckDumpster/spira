@@ -33,9 +33,9 @@ pub struct Provisioning {
     pub since: u64,
 }
 
-/// A VM handed out and not yet released. `owner: None` is a handle given to an external
-/// caller by `round-vm acquire`, who must `release` it; `Some` is a `run` in progress,
-/// destroyed by the next acquire if that process is gone.
+/// A VM handed out and not yet released. `owner: Some` is a `run` in progress and `holder`
+/// the process that called `round-vm acquire`; either gone makes the lease stale. A lease
+/// naming neither is stale after `OWNERLESS_GRACE_SECS` unless `held` (set by `hold`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lease {
     pub vm: Vm,
@@ -44,11 +44,19 @@ pub struct Lease {
     /// The process that called `round-vm acquire`; the lease is stale once it is gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub holder: Option<ProcId>,
+    /// Set by `hold`: the lease deliberately belongs to no process.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub held: bool,
 }
+
+/// How long a lease may name no owner and no holder before it counts as abandoned.
+pub const OWNERLESS_GRACE_SECS: u64 = 60;
 
 impl Lease {
     pub fn stale(&self) -> bool {
-        self.owner.is_some_and(|o| !o.alive()) || self.holder.is_some_and(|h| !h.alive())
+        self.owner.is_some_and(|o| !o.alive())
+            || self.holder.is_some_and(|h| !h.alive())
+            || (self.owner.is_none() && self.holder.is_none() && !self.held && now().saturating_sub(self.since) > OWNERLESS_GRACE_SECS)
     }
 }
 
