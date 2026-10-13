@@ -50,7 +50,7 @@ if [ -z "$img" ]; then echo "round-vm template: testenv container image printed 
 podman images --format '{{.Repository}}:{{.Tag}}' \
     | { grep '^localhost/spira-testenv:' || true; } | { grep -vxF "$img" || true; } \
     | while read -r old; do podman rmi "$old" >&2; done
-cargo fetch --locked >&2
+cargo fetch --locked --target x86_64-unknown-linux-gnu >&2
 "$CARGO_HOME/bin/sccache" --stop-server >&2 || true
 cd /
 rm -rf "$work" /root/.ssh/authorized_keys
