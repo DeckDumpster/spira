@@ -574,7 +574,8 @@ lc_fact_count() {
 # `"_lc_state"` / `"_lc_holds"` to set its row outright, or `"_lc_rowless": true` for none;
 # for a real store (which drops unknown fields), `<dir>/states` lines `<id> <STATE>` do it.
 # Express is the row's `express` column: a fixture row's `"_lc_express": true`, or an id on a
-# line of `<dir>/express`; `list --express` keeps only those.
+# line of `<dir>/express`; `list --express` keeps only those. `list` takes --state, --ids and
+# --hold; with $LC_MIRROR_LOG set each answer's byte count and arguments are appended to it.
 # Sets SPIRA_LC_BIN; pass it (and LC_MIRROR_CLOSED, if set) through any `env -i`.
 lc_mirror_bd() {
     local dir="${1:?lc_mirror_bd needs a directory}"
@@ -670,11 +671,16 @@ for b in beads:
                  "express": 1 if (b.get("_lc_express") or b["id"] in express) else 0})
 if verb == "list":
     a = sys.argv[2:]
-    opt = {a[k]: a[k + 1] for k in range(len(a) - 1) if a[k] in ("--state", "--ids")}
+    opt = {a[k]: a[k + 1] for k in range(len(a) - 1) if a[k] in ("--state", "--ids", "--hold")}
     states = opt["--state"].split(",") if "--state" in opt else None
     ids = opt["--ids"].split(",") if "--ids" in opt else None
     only_express = "--express" in a
-    print(json.dumps([r for r in rows if (states is None or r["state"] in states) and (ids is None or r["bead_id"] in ids) and (not only_express or r["express"])]))
+    hold = opt.get("--hold")
+    out = json.dumps([r for r in rows if (states is None or r["state"] in states) and (ids is None or r["bead_id"] in ids) and (hold is None or hold in r["holds"]) and (not only_express or r["express"])])
+    if os.environ.get("LC_MIRROR_LOG"):
+        with open(os.environ["LC_MIRROR_LOG"], "a") as log:
+            log.write("%d %s\n" % (len(out), " ".join(a)))
+    print(out)
 elif verb == "show":
     hit = [r for r in rows if r["bead_id"] == (sys.argv[2] if len(sys.argv) > 2 else "")]
     if not hit:

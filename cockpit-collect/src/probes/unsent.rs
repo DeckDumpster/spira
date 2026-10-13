@@ -59,7 +59,7 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
         super::lc::list(Some("IN_DELIVERY")).unwrap_or_default().into_iter().map(|r| (r.id.clone(), r)).collect();
     // A branch's bead state is its lifecycle row's (design §3.4, sp-mve9i): one read for
     // every branch instead of a bd show per branch.
-    let lc_index = super::lc::state_index();
+    let lc_index = super::lc::state_index_of(&branch_ids(&reg));
     let batch_wait: i64 = cfg.queue_batch_wait;
 
     for rname in reg.all() {
@@ -280,6 +280,16 @@ enum BeadStatus {
 /// answer is a probe fault. A bead with no lifecycle row falls back to bd for existence
 /// only (content, not state): present in bd it counts as open — its state cannot be told,
 /// so it is never read as done — and absent it is no bead.
+fn branch_ids(reg: &spira_config::repos::Registry) -> Vec<String> {
+    let mut ids = Vec::new();
+    for rname in reg.all() {
+        let Some(rp) = reg.root(&rname) else { continue };
+        let Some(brs) = io::git(Path::new(&rp), &["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/*"]) else { continue };
+        ids.extend(brs.lines().filter(|b| !b.starts_with("spira/queue/")).map(|b| b.trim_start_matches("spira/").to_string()));
+    }
+    ids
+}
+
 fn bead_status(id: &str, lc: Option<&HashMap<String, super::lc::Row>>) -> BeadStatus {
     let Some(lc) = lc else { return BeadStatus::ProbeFailed };
     if let Some(s) = status_of_row(lc.get(id)) {
@@ -403,7 +413,13 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
         }
         return;
     };
-    let Some(lc_index) = super::lc::state_index() else {
+    let logged: Vec<String> = rows
+        .iter()
+        .filter_map(|i| i.get("id").and_then(Value::as_str))
+        .filter(|id| run.join(format!("{id}.log")).exists())
+        .map(str::to_string)
+        .collect();
+    let Some(lc_index) = super::lc::state_index_of(&logged) else {
         for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
             push(out, k, "?");
         }
