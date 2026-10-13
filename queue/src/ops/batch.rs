@@ -138,18 +138,22 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     // The cause row spira-claim classifies: eject (harness) or eject-red (judged). §8 D1.
     // `bead_reopen` carries the suites a recertification must force.
     w.lib.cause_event(id, cause.as_str());
-    // The delivery-exit event legal from IN_DELIVERY (sp-rlyl0).
-    let mut failed = lc_return(w, id).is_err();
+    let mut failed = false;
     w.lib.release_claim(id);
     if !batch_id.is_empty() {
         let r = bounded_text(&why);
         match lc_cas(w, &batch_id, |s, v| w.lc.eject_member(&batch_id, id, s, v, "queue.sh", &r)) {
-            Ok(()) => w.out(format!("queue.sh eject: {id} ejected on spira-lc (returned to CERTIFIED there)")),
+            Ok(()) => w.out(format!("queue.sh eject: {id} ejected on spira-lc")),
             Err((rc, out)) => {
                 failed = true;
                 w.err(format!("queue.sh eject: spira-lc eject-member refused for {id} (rc={rc}): {out}"));
             }
         }
+    }
+    // eject-member requeues the member to CERTIFIED, so the walk to REWORK must follow it: done
+    // first, the requeue would undo it and the next cut would re-batch the bead.
+    if !harness_fault || batch_id.is_empty() {
+        failed |= lc_return(w, id).is_err();
     }
     let mut comment = format!("Ejected from open batch in {}.", c.r.name);
     if !reason.is_empty() {

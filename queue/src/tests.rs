@@ -1310,6 +1310,28 @@ fn eject_with_a_batch_id_ejects_on_spira_lc_too() {
 }
 
 #[test]
+fn a_forge_eject_returns_the_member_to_rework_only_after_eject_member_requeues_it() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
+    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    assert_eq!(t.run(&["eject", "sp-a", "--red", "--reason", "PR red"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    let e = calls.iter().position(|c| c.starts_with("eject-member spira-1 sp-a")).unwrap_or_else(|| panic!("{calls:?}"));
+    let r = calls.iter().position(|c| c.contains("event bead sp-a") && c.contains("Returned")).unwrap_or_else(|| panic!("no Returned: {calls:?}"));
+    assert!(e < r, "{calls:?}");
+}
+
+#[test]
+fn a_forge_harness_fault_eject_leaves_the_member_certified() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
+    assert_eq!(t.run(&["eject", "sp-a", "--harness-fault", "--reason", "runner died"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().join("\n");
+    assert!(calls.contains("eject-member spira-1 sp-a"), "{calls}");
+    assert!(!calls.contains("event bead sp-a"), "{calls}");
+}
+
+#[test]
 fn eject_leaving_a_member_abandons_the_batch_row_so_the_survivor_is_not_stranded() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
