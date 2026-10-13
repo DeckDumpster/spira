@@ -167,11 +167,18 @@ pub fn pr_red(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
 
 // ── pr-automerge (new) ───────────────────────────────────────────────────────────────────
 
-/// Arms squash auto-merge — `land_pr`'s `ghq pr merge --auto --squash` (DESIGN.md §6).
-/// Silent; exit 0 armed, 1 could not be armed (an open PR with a red required check stays
-/// open, not a failure worth surfacing beyond the exit code — the caller logs it).
-pub fn pr_automerge(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
-    let r = gh.call(Some(repo), &["pr", "merge", "--auto", "--squash", selector]);
+/// Arms auto-merge — `land_pr`'s `ghq pr merge --auto --squash` (DESIGN.md §6); `method` is
+/// `merge`, `squash` or `rebase`, empty meaning squash. Silent; exit 0 armed, 1 could not be
+/// armed (an open PR with a red required check stays open, not a failure worth surfacing
+/// beyond the exit code — the caller logs it).
+pub fn pr_automerge(gh: &dyn Gh, repo: &Path, selector: &str, method: &str) -> Out {
+    let flag = match method {
+        "" | "squash" => "--squash",
+        "merge" => "--merge",
+        "rebase" => "--rebase",
+        _ => return fail(vec![]),
+    };
+    let r = gh.call(Some(repo), &["pr", "merge", "--auto", flag, selector]);
     if r.ok() {
         ok(vec![])
     } else {

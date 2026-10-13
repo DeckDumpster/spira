@@ -444,6 +444,10 @@ impl Forge for FForge {
         self.calls.borrow_mut().push(format!("pr-create {head} {base} {title}\n{body}"));
         self.pr.borrow().clone()
     }
+    fn pr_automerge(&self, _: &Path, _: &Path, pr: &str) -> bool {
+        self.calls.borrow_mut().push(format!("pr-automerge {pr}"));
+        true
+    }
     fn pr_close(&self, _: &Path, _: &Path, pr: &str) {
         self.calls.borrow_mut().push(format!("pr-close {pr}"));
     }
@@ -1565,6 +1569,20 @@ fn open_batch_with_lifecycle_on_cuts_on_spira_lc_and_records_the_batch_id() {
     assert!(calls.contains(&"create-bead sp-a".to_string()));
     assert!(calls.contains(&"cut spira-20260929T010203Z sp-a:ta".to_string()));
     assert!(fs::read_to_string(t.qfile("open")).unwrap().ends_with("batch_id=spira-20260929T010203Z\nversion=1\n"));
+}
+
+#[test]
+fn open_batch_arms_auto_merge_on_the_pr_it_opens() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
+    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
+    let calls = t.forge.calls.borrow().clone();
+    let create = calls.iter().position(|c| c.starts_with("pr-create")).expect("pr-create");
+    let armed = calls.iter().position(|c| c.starts_with("pr-automerge")).expect("a batch PR is armed to merge itself on green");
+    assert!(create < armed, "{calls:?}");
 }
 
 #[test]

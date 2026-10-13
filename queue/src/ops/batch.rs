@@ -575,6 +575,9 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         undo("open-batch got no PR number");
         return FAIL;
     }
+    if !w.forge.pr_automerge(&c.s.forge, &path, &pr) {
+        w.err(format!("queue.sh open-batch: PR {pr} for {name} is open but auto-merge could not be armed — the verdict pass must land it"));
+    }
     let opened = w.clock.now();
     let mut rec = Kv::default();
     for (k, v) in [
