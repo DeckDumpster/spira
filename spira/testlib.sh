@@ -600,6 +600,25 @@ if [ "$1" = reopen ]; then
     [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" label remove "$2" "$SPIRA_SUBMITTED_LABEL" >/dev/null 2>&1
     exit 0
 fi
+if [ "$1" = pane-facets ] && [ "$2" = repo-labels ]; then
+    if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then src="$(cat "$SPIRA_BDJSON_FIXTURE")"
+    else src="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null)" || exit 2; fi
+    printf '%s' "$src" | python3 -c '
+import json, sys
+valid = set(v for v in sys.argv[1].split(",") if v)
+absent = unmapped = 0
+for b in json.loads(sys.stdin.read() or "[]"):
+    if b.get("status") == "closed":
+        continue
+    repos = [l[5:] for l in b.get("labels") or [] if l.startswith("repo:")]
+    if not repos:
+        absent += 1
+    elif not any(r in valid for r in repos):
+        unmapped += 1
+print(json.dumps({"unmapped": unmapped, "absent": absent}))
+' "$4"
+    exit $?
+fi
 if [ "$1" = content-rows ]; then
     bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
     exec "${bd:-bd}" ${db:+-C "$db"} list --id "$3" --status all --limit 0 --json
