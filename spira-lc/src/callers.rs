@@ -526,6 +526,21 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
                 return Answer::out(ans.code, log_line(&line));
             }
         }
+        // A pr-mode bead has no delivery round either. A merged PR lands it only on content
+        // proof from the landing ref: a merge since reverted proves nothing.
+        if sub == "pr-merged" {
+            let waiting = show(m, &id).ok().is_some_and(|v| matches!(bead_field(&v, "state").as_str(), "SUBMITTED" | "CERTIFIED"));
+            if waiting && crate::git_evidence::change_in_force(std::path::Path::new(&a(1)), &a(3), &a(4)) {
+                let proof = format!("merge-tree:{}", a(4));
+                let ans = with_row(m, &id, actor, |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }));
+                let line = if ans.code == 0 {
+                    format!("lc: {id} landed by merged pull request — LANDED (no delivery round; {actor}, {proof})")
+                } else {
+                    format!("lc: {id} merged pull request, but the LANDED event was refused or unreachable ({actor}, exit {})", ans.code)
+                };
+                return Answer::out(ans.code, log_line(&line));
+            }
+        }
         return Answer::out(
             NO_ROW,
             log_line(&format!("lc: no delivery row for {id} — not recording {actor}'s event (inert until the delivery round lands)")),
