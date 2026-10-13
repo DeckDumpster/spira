@@ -1,4 +1,7 @@
 set -euo pipefail
+: "${USER:=$(id -un)}"
+: "${HOME:=$(getent passwd "$(id -u)" | cut -d: -f6)}"
+export HOME USER
 work="$1" host_addr="$2" toolchain="$3" cache_home="$4"
 cd "$work"
 export CARGO_HOME="${cache_home:-$HOME/.cargo}"
