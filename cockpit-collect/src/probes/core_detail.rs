@@ -488,6 +488,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_server_inflow_reply_parses_to_the_same_shape_as_the_row_aggregate() {
+        let f = inflow_from_server(r#"{"n":3,"defect":1,"kinds":[["task",2],["bug",1]],"rows":[{"id":"sp-a"}]}"#).unwrap();
+        assert_eq!((f.n, f.defect, f.kinds.len(), f.rows.len()), (3, 1, 2, 1));
+        assert!(inflow_from_server(r#"{"n":3}"#).is_none(), "a partial reply is cannot-tell, not zero");
+        let rows: Vec<Value> = serde_json::from_str(r#"[{"id":"a","issue_type":"bug","created_at":"2026-01-01T00:10:00Z"},{"id":"b","issue_type":"event","created_at":"2026-01-01T00:11:00Z"},{"id":"c","created_at":"2026-01-01T00:00:00Z"}]"#).unwrap();
+        let f = inflow_from_rows(&rows, parse_iso8601("2026-01-01T00:05:00Z").unwrap());
+        assert_eq!((f.n, f.defect, f.rows.len()), (1, 1, 2));
+    }
+
+    #[test]
     fn inflow_defect_counts_bugs_and_incidents() {
         let rows = vec![
             serde_json::json!({"id":"sp-1","issue_type":"bug","created_at":"2026-09-30T00:00:00Z","labels":[]}),
