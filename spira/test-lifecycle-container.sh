@@ -294,8 +294,8 @@ BENCH_N=100
 for i in $(seq 1 "$BENCH_N"); do
     bid="sp-bench-$i"
     seed_bead "$bid"
-    # Reset to the real socket: the previous iteration's fallback case below left the
-    # override pointed at a nonexistent one, and SPIRA_LC_SOCKET is registered — no plain
+    # Reset to the real socket: the previous iteration's direct case below left the
+    # override declared empty, and SPIRA_LC_SOCKET is registered — no plain
     # env prefix reaches spira-lc any more, only this suite's own SPIRA_TOML override.
     tl_config SPIRA_LC_SOCKET="$SOCK"
     start_ns=$(date +%s%N)
@@ -306,7 +306,8 @@ for i in $(seq 1 "$BENCH_N"); do
 
     fbid="sp-fallback-$i"
     seed_bead "$fbid"
-    tl_config SPIRA_LC_SOCKET="$TMP/no-such-socket"
+    # Direct mode is declared (an empty socket), never a fallback from a dead one (sp-yvyvzd).
+    tl_config SPIRA_LC_SOCKET=""
     start_ns=$(date +%s%N)
     "$BIN" event bead "$fbid" --expect READY --version 0 --actor bench \
         --kind '{"Claim":{"holder":"bench","lease_until":1}}' >/dev/null 2>&1

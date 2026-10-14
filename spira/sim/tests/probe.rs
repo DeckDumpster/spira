@@ -182,6 +182,9 @@ fn probe_runs_the_worlds_spira_lc_in_a_cleared_environment() {
     assert!(lc_env.contains("SPIRA_LC_PORT=40123\n"), "{lc_env}");
     assert!(lc_env.contains(&format!("SPIRA_TOML={}\n", w.join("config/lc.toml").display())), "{lc_env}");
     assert!(lc_env.lines().last() == Some("list"), "{lc_env}");
+    // sp-yvyvzd: without a release to locate its registry, spira-lc refuses its config (and no
+    // longer quietly connects without one).
+    assert!(lc_env.contains(&format!("SPIRA_RELEASE={}\n", w.join("release").display())), "{lc_env}");
     for k in PRODUCTION_LOCATORS {
         assert!(!lc_env.contains(&format!("{k}=")), "{k} leaked into spira-lc's environment");
     }

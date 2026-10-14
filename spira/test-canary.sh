@@ -168,7 +168,7 @@ printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
         SPIRA_DB="${SPIRA_DB:-}"
 
     for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_SUMMON SPIRA_LAUNCH \
-               SPIRA_LC_PASSWORD_FILE SPIRA_LC_SOCKET SPIRA_LC_DATA_DIR; do
+               SPIRA_LC_PASSWORD_FILE SPIRA_LC_DATA_DIR; do
         val="${!var:-}"
         case "$val" in
             "$STAGE_ROOT"/*|"$STAGE_ROOT")
@@ -177,6 +177,10 @@ printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
                 bad "$var is under STAGE_ROOT" "$var=$val is outside $STAGE_ROOT" ;;
         esac
     done
+
+    # The stage declares direct mode (an empty socket, sp-yvyvzd): it can reach no service,
+    # the operator's or any — a dead socket under the stage is no longer a route anywhere.
+    is "SPIRA_LC_SOCKET is declared empty (direct mode)" "" "${SPIRA_LC_SOCKET-unset}"
 
     # Critically: SPIRA_HOME must not resolve to the real harness directory
     real_here="$(cd "$HERE" && pwd -P)"

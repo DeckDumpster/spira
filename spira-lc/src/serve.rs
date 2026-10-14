@@ -66,6 +66,7 @@ pub fn run(args: &[String]) -> i32 {
     let conn = match Conn::from_env() {
         Ok(mut c) => {
             c.enable_live();
+            c.enable_group_commit();
             Arc::new(c)
         }
         Err(e) => {
@@ -222,9 +223,11 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
             let worker = Arc::clone(conn);
             let who = caller.clone();
             let began = Arc::clone(&started_work);
-            within(crate::db::QUERY_DEADLINE.saturating_sub(received.elapsed()), move || {
+            let limit = request_deadline(&argv);
+            within(limit.saturating_sub(received.elapsed()), move || {
                 *began.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 crate::slow::set_caller(&who);
+                crate::db::set_request_deadline(Some(received + limit));
                 crate::dispatch(&argv, &worker)
             })
                 .unwrap_or_else(|| (2, format!("cannot tell: {}", crate::db::DEADLINE_MESSAGE)))
@@ -250,6 +253,22 @@ fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, reque
             end,
             queue_wait,
         });
+    }
+}
+
+/// How long after receiving a store request this service stops working on it
+/// (law-calls-have-deadlines: the receiver stops 3 s after receiving; the client waits 5 s).
+pub const REQUEST_DEADLINE: Duration = Duration::from_secs(3);
+
+/// The request's deadline: [`REQUEST_DEADLINE`] for every store call. Two verbs are batch
+/// jobs this service brokers, not calls, and keep the bound they had: `work`'s lane verbs run a
+/// harness tool (groomer sweep, bead filing, mail) for the aeon, and `facts-query` is census's
+/// aggregate over the whole fact history.
+fn request_deadline(argv: &[String]) -> Duration {
+    match argv.first().map(String::as_str) {
+        // batch-job: broker-run tools and census's aggregate, bounded at the query deadline.
+        Some("work") | Some("facts-query") => crate::db::QUERY_DEADLINE,
+        _ => REQUEST_DEADLINE,
     }
 }
 
@@ -334,6 +353,18 @@ mod tests {
         let (reply2, code2) = ask(Some(&dead), req);
         assert_eq!((reply2, code2), (reply, code), "a failing sink leaves the reply and exit code unchanged");
         assert_eq!(spira_otel::dropped(), before + 1);
+    }
+
+    /// law-calls-have-deadlines: a store call is abandoned 3 s after it was received; only
+    /// the brokered batch verbs keep the longer bound.
+    #[test]
+    fn a_store_call_is_abandoned_at_three_seconds_and_only_batch_verbs_wait_longer() {
+        let d = |v: &str| super::request_deadline(&[v.to_string(), "x".to_string()]);
+        for verb in ["show", "list", "event", "fact", "cut", "land", "stats", ""] {
+            assert_eq!(d(verb), std::time::Duration::from_secs(3), "{verb}");
+        }
+        assert_eq!(d("work"), crate::db::QUERY_DEADLINE);
+        assert_eq!(d("facts-query"), crate::db::QUERY_DEADLINE);
     }
 
     #[test]

@@ -39,7 +39,7 @@ const LC_READY_DEADLINE: Duration = Duration::from_secs(30); // batch-job: serve
 const LC_STOP_DEADLINE: Duration = Duration::from_secs(5); // batch-job: serve exit after SIGTERM
 /// Every key declared: a process resolves its config only from a file that declares them all
 /// (spira-config/src/process.rs), so the world's config starts from the complete fixture and
-/// overrides each locator a world must own. Its `lc_socket` is the production default and
+/// overrides each locator a world must own. Its `lc_socket` is empty (direct mode) and
 /// is always overwritten below.
 const CONFIG_BASE: &str = include_str!("../../../spira-config/tests/fixtures/complete.toml");
 
@@ -328,9 +328,15 @@ impl Steps for ProcessSteps {
         let toml = config.join("lc.toml");
         let credential = config.join("lc-credential");
         std::fs::write(&credential, "").map_err(|e| e.to_string())?;
-        self.config_set(release, &toml, "spira.lc_password_file", &credential.display().to_string())?;
         let world = config.parent().ok_or("config dir has no parent")?;
-        self.config_set(release, &toml, "spira.lc_socket", &lc_socket(world).display().to_string())?;
+        // A complete config (spira-lc resolves only from one that declares every key) in
+        // declared direct mode: a dead or absent socket is no longer a route to the store
+        // (sp-yvyvzd), so these admin and probe reads name direct mode outright.
+        if !toml.exists() {
+            std::fs::write(&toml, base_config(&world.join(HOME))).map_err(|e| format!("{}: {e}", toml.display()))?;
+        }
+        self.config_set(release, &toml, "spira.lc_password_file", &credential.display().to_string())?;
+        self.config_set(release, &toml, "spira.lc_socket", "")?;
         let lc = |verb: &str, arg: PathBuf| run(lc_command(release, config, &port).arg(verb).arg(arg), CALL_DEADLINE).map(|_| ());
         let t = Instant::now();
         lc("admin-apply-ddl", lifecycle.join("schema.sql"))?;
@@ -407,12 +413,14 @@ impl Steps for ProcessSteps {
     }
 }
 
-/// `spira-lc` against the world's own lifecycle store and nothing else: a cleared environment,
-/// the world's `config/lc.toml`, and its private Dolt server's port.
+/// `spira-lc` against the world's own lifecycle store and nothing else: a cleared environment
+/// but for the world's release (where spira-lc locates its config registry), the world's
+/// `config/lc.toml` (complete, direct mode), and its private Dolt server's port.
 pub fn lc_command(release: &Path, config: &Path, port: &str) -> Command {
     let mut cmd = Command::new(release.join("bin/spira-lc"));
     cmd.env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("SPIRA_RELEASE", release)
         .env("SPIRA_TOML", config.join("lc.toml"))
         .env("SPIRA_LC_HOST", "127.0.0.1")
         .env("SPIRA_LC_PORT", port.trim())
@@ -760,9 +768,10 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
 }
 
 /// The world's own lifecycle locators (sp-hq1v76), written over the complete base so none of
-/// them is the base's (production-default) value: its socket, the empty credential world up
-/// wrote, and its run dir. `SPIRA_LC_HOST`/`PORT`/`USER` in `sim.env` pin a same-user
-/// fallback connection to the world's own Dolt fixture as well.
+/// them is the base's value: its socket, the empty credential world up
+/// wrote, and its run dir. `SPIRA_LC_HOST`/`PORT`/`USER` in `sim.env` name the world's own
+/// Dolt fixture for a reader that declares direct mode (`spira.lc_socket = ""`); a declared
+/// socket never falls back to it (sp-yvyvzd).
 pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
     vec![
         ("spira.lc_socket".to_string(), lc_socket(world).display().to_string()),

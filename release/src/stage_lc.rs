@@ -9,8 +9,9 @@
 //! Dolt on 127.0.0.1:3307, the credential under `~/.config/spira`, and the serve socket under
 //! `/run/user/<uid>` — which the CLI forwards every request to before it ever opens a
 //! connection. The stage's env therefore names every one of them: the stage's port, its own
-//! credential file, and a socket path under the stage root where nothing listens, so each
-//! `spira-lc` call in the stage connects directly to the stage's server as `spira_lc`.
+//! credential file, and an EMPTY socket — declared direct mode (sp-yvyvzd: a socket nothing
+//! answers is no longer a route to a direct connection, it is a refusal) — so each `spira-lc`
+//! call in the stage connects directly to the stage's server as `spira_lc`.
 //!
 //! THE SERVER OUTLIVES `release stage up` (a caller `eval`s the env and runs against the
 //! stage later), so its pid is recorded in `<root>/lc/dolt.pid` and [`stop`] — run by `release
@@ -28,9 +29,6 @@ use std::time::{Duration, Instant};
 pub const LC_DIR: &str = "lc";
 const PID_FILE: &str = "dolt.pid";
 const CREDENTIAL: &str = "credential";
-/// The socket path the stage names so spira-lc never forwards to the operator's service.
-/// Nothing ever listens on it.
-pub const SOCKET: &str = "sock";
 const DATABASE: &str = "spira_lifecycle";
 /// How long the server gets to accept connections.
 const UP_WAIT: Duration = Duration::from_secs(60);
@@ -53,7 +51,8 @@ impl Store {
             ("SPIRA_LC_USER".into(), "spira_lc".into()),
             ("SPIRA_LC_PASSWORD_FILE".into(), self.dir.join(CREDENTIAL).display().to_string()),
             ("SPIRA_LC_PASSWORD".into(), String::new()),
-            ("SPIRA_LC_SOCKET".into(), self.dir.join(SOCKET).display().to_string()),
+            // Declared direct mode: never the operator's service, and no fallback needed.
+            ("SPIRA_LC_SOCKET".into(), String::new()),
         ]
     }
 }
@@ -214,7 +213,7 @@ mod tests {
         assert_eq!(get("SPIRA_LC_PASSWORD"), "");
         // Unset, each of these would resolve to the operator's own credential and serve socket.
         assert!(get("SPIRA_LC_PASSWORD_FILE").starts_with("/st/lc/"));
-        assert!(get("SPIRA_LC_SOCKET").starts_with("/st/lc/"));
+        assert_eq!(get("SPIRA_LC_SOCKET"), "", "declared direct mode: no service, the operator's or any");
         assert!(get("SPIRA_LC_DATA_DIR").starts_with("/st/lc/"));
     }
 

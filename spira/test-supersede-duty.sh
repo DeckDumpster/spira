@@ -81,7 +81,9 @@ spira-lc hold sp-manual manual "operator parked it" tester >/dev/null 2>&1
 
 run() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_BD="$TMP/bin/bd" SPIRA_CONCIERGE_INBOX="$TMP/inbox.log"
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$REPO" \
+    # SPIRA_HOME as a unit gives SPIRA_RELEASE: without either, spira-lc cannot resolve its
+    # config and (sp-yvyvzd) refuses instead of quietly opening a connection of its own.
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$REPO" SPIRA_HOME="$HERE" \
         SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle \
         SPIRA_LC_DATA_DIR="$TMP" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
         bash "$HERE/supersede-duty.sh" "$@" 2>&1

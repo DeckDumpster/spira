@@ -371,10 +371,23 @@ impl Live {
         let out = match run(script) {
             Ok(out) => out,
             Err(e) => {
-                self.invalidate_for(touched(touch));
+                self.write_failed(touch);
                 return Err(e);
             }
         };
+        let refreshed = self.after_commit(touch, run);
+        Ok((out, refreshed))
+    }
+
+    /// A write that may or may not have committed: memory is unloaded until the next load.
+    pub fn write_failed(&self, touch: &Touch) {
+        self.invalidate_for(touched(touch));
+    }
+
+    /// The second half of [`Self::write_through`], for a write already committed through
+    /// `run` (lc-serve's group commit commits several callers' writes, then refreshes once):
+    /// re-reads what `touch` names; false when that re-read failed (memory is then unloaded).
+    pub fn after_commit<E>(&self, touch: &Touch, mut run: impl FnMut(&str) -> Result<Sets, E>) -> bool {
         match touch {
             Touch::Keys(k) => {
                 if let Some(t) = self.cold_lock().touched.as_mut() {
@@ -394,7 +407,7 @@ impl Live {
         if !refreshed {
             self.invalidate_for(touched(touch));
         }
-        Ok((out, refreshed))
+        refreshed
     }
 
     fn apply_keys<E>(&self, keys: &[String], fetched: Result<Sets, E>) -> bool {

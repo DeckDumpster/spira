@@ -18,11 +18,68 @@
 //!
 //! Either way exactly one transition is ever recorded as applied for a given (key, version).
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
 use crate::wire::Wire;
+
+type Sets = Vec<Vec<Value>>;
+
+/// Every write this process sent, and the transactions they committed in: with group commit
+/// (group.rs) the second grows slower than the first. Read by `spira-lc stats`.
+static WRITES: AtomicU64 = AtomicU64::new(0);
+static COMMITS: AtomicU64 = AtomicU64::new(0);
+/// Transactions that carried more than one write.
+static GROUPS: AtomicU64 = AtomicU64::new(0);
+
+/// `{"writes": n, "commits": m, "groups": g}` for this process.
+pub fn write_stats() -> Value {
+    serde_json::json!({
+        "writes": WRITES.load(Ordering::Relaxed),
+        "commits": COMMITS.load(Ordering::Relaxed),
+        "groups": GROUPS.load(Ordering::Relaxed),
+    })
+}
+
+thread_local! {
+    static REQUEST_DEADLINE: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// The instant after which the request this thread serves is abandoned (serve.rs sets it):
+/// a write still queued for the session then is never started (law-calls-have-deadlines —
+/// the receiver stops working on a request its caller has stopped waiting for).
+pub fn set_request_deadline(at: Option<Instant>) {
+    REQUEST_DEADLINE.with(|d| d.set(at));
+}
+
+/// One caller's write, queued for the session; the thread that runs its group fills `result`.
+struct Pending {
+    script: String,
+    touch: Option<crate::live::Touch>,
+    deadline: Option<Instant>,
+    result: Mutex<Option<Result<Sets, ScriptFailure>>>,
+}
+
+impl Pending {
+    fn answer(&self, r: Result<Sets, ScriptFailure>) {
+        *self.result.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+    }
+
+    fn take(&self) -> Option<Result<Sets, ScriptFailure>> {
+        self.result.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+/// The writes waiting for the session. `window` is how long a write that finds no other
+/// waiting holds the session open for company: `None` in a one-shot CLI, which never has any.
+#[derive(Default)]
+struct WriteQueue {
+    waiting: Mutex<Vec<Arc<Pending>>>,
+    window: Option<Duration>,
+}
 
 pub const READ_POOL: usize = 4;
 
@@ -40,6 +97,8 @@ pub struct Conn {
     /// other readers: a read takes the first free one.
     read_sessions: [Mutex<Option<Wire>>; READ_POOL],
     read_turn: std::sync::atomic::AtomicUsize,
+    /// Writes waiting for `session`, committed together (group.rs).
+    writes: WriteQueue,
     /// The socket read/write limit for this connection: the query deadline, or
     /// [`ADMIN_IO_TIMEOUT`] for the admin batch verbs.
     pub io_timeout: std::time::Duration,
@@ -125,7 +184,7 @@ impl Conn {
         let password = password_from(password_file.clone(), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        Ok(Conn { host, port, user, password: Mutex::new(password), password_file: password_file.filter(|p| !p.is_empty()), database, session: Mutex::new(None), read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0), io_timeout: QUERY_DEADLINE, live: None })
+        Ok(Conn { host, port, user, password: Mutex::new(password), password_file: password_file.filter(|p| !p.is_empty()), database, session: Mutex::new(None), read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0), writes: WriteQueue::default(), io_timeout: QUERY_DEADLINE, live: None })
     }
 
     /// A second connection to the same server and database under other credentials — the
@@ -141,6 +200,7 @@ impl Conn {
             database: self.database.clone(),
             session: Mutex::new(None),
             read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0),
+            writes: WriteQueue::default(),
             io_timeout: self.io_timeout,
             live: None,
         }
@@ -158,6 +218,7 @@ impl Conn {
             database: String::new(),
             session: Mutex::new(None),
             read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0),
+            writes: WriteQueue::default(),
             io_timeout: std::time::Duration::from_millis(200),
             live: None,
         }
@@ -166,6 +227,12 @@ impl Conn {
     /// Turns on the in-memory live rows; call once, before the connection is shared.
     pub fn enable_live(&mut self) {
         self.live = Some(crate::live::Live::default());
+    }
+
+    /// Turns on group commit's window (group.rs); call once, before the connection is shared.
+    /// Without it writes still queue, but a lone write never waits for company.
+    pub fn enable_group_commit(&mut self) {
+        self.writes.window = Some(crate::group::WINDOW);
     }
 
     /// The live rows, once loaded; `None` makes every caller read Dolt as before.
@@ -266,26 +333,134 @@ impl Conn {
         }
     }
 
-    /// Run a script, returning each result set's rows in script order (statements that
-    /// return no rows contribute none). Reuses this `Conn`'s session, pinging first when it
-    /// has sat idle so a connection the server closed is replaced instead of failing a write.
+    /// Run a write script that touches no live row, returning each result set's rows in
+    /// script order (statements that return no rows contribute none). See [`Self::write`].
     fn run_script(&self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
-        self.run_script_on(&self.session, script)
+        self.write(script, None)
     }
 
     /// A write: once it commits, the live rows it touched are re-read from Dolt on the same
     /// session, still holding it, so refreshes land in commit order.
     fn run_write(&self, script: &str, touch: crate::live::Touch) -> Result<Vec<Vec<Value>>, ScriptFailure> {
-        self.run_session(&self.session, script, Some(&touch))
+        self.write(script, Some(touch))
+    }
+
+    /// Every write goes through here (group commit, group.rs): queue it, then take the write
+    /// session. Whoever holds the session runs every write waiting at that moment as one
+    /// transaction and hands each caller its own answer, so a caller that gets the session
+    /// may find its write already done by the holder before it. Writes that arrive while a
+    /// commit is in flight form the next group; when serving, a write that finds nothing else
+    /// waiting holds the session open for the group window first.
+    fn write(&self, script: &str, touch: Option<crate::live::Touch>) -> Result<Sets, ScriptFailure> {
+        let deadline = REQUEST_DEADLINE.with(|d| d.get());
+        let me = Arc::new(Pending { script: script.to_string(), touch, deadline, result: Mutex::new(None) });
+        self.writes.waiting.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::clone(&me));
+        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if let Some(answer) = me.take() {
+                return answer;
+            }
+            if let Some(window) = self.writes.window {
+                if self.writes.waiting.lock().unwrap_or_else(|e| e.into_inner()).len() == 1 {
+                    std::thread::sleep(window);
+                }
+            }
+            let batch: Vec<Arc<Pending>> = {
+                let mut waiting = self.writes.waiting.lock().unwrap_or_else(|e| e.into_inner());
+                let n = waiting.len().min(crate::group::MAX_GROUP);
+                waiting.drain(..n).collect()
+            };
+            self.run_batch(&mut guard, batch);
+        }
+    }
+
+    /// Runs `batch` on the held write session: one transaction when every member is a whole
+    /// transaction (group.rs), else each alone as before. A member whose request deadline has
+    /// passed is never started.
+    fn run_batch(&self, guard: &mut MutexGuard<'_, Option<Wire>>, batch: Vec<Arc<Pending>>) {
+        let now = Instant::now();
+        let (members, expired): (Vec<_>, Vec<_>) = batch.into_iter().partition(|m| m.deadline.is_none_or(|d| d > now));
+        for m in expired {
+            m.answer(Err(ScriptFailure::CannotTell(format!("{DEADLINE_MESSAGE}: the write was still queued for the session and was never started"))));
+        }
+        WRITES.fetch_add(members.len() as u64, Ordering::Relaxed);
+        let bodies: Option<Vec<&str>> = members.iter().map(|m| crate::group::txn_body(&m.script)).collect();
+        let bodies = match bodies {
+            Some(b) if b.len() > 1 => b,
+            _ => {
+                for m in &members {
+                    m.answer(self.run_alone(guard, m));
+                }
+                return;
+            }
+        };
+        let session_started = Instant::now();
+        let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
+        let mut wire = match reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database))) {
+            Ok(w) => w,
+            Err(e) => {
+                let why = match e {
+                    ScriptFailure::CannotTell(m) => m,
+                    ScriptFailure::LostRace => "serialization conflict on connect".to_string(),
+                };
+                for m in &members {
+                    m.answer(Err(ScriptFailure::CannotTell(why.clone())));
+                }
+                return;
+            }
+        };
+        crate::slow::record(session_started.elapsed(), "CONNECT");
+        let touch = union_touch(&members);
+        let started = Instant::now();
+        let outcome = crate::group::run(&bodies, |sql| wire.exec(sql));
+        crate::slow::record(started.elapsed(), &format!("GROUP COMMIT of {}", members.len()));
+        match outcome {
+            crate::group::Group::Committed(outs) => {
+                COMMITS.fetch_add(1, Ordering::Relaxed);
+                GROUPS.fetch_add(1, Ordering::Relaxed);
+                let keep = match (&touch, &self.live) {
+                    (Some(t), Some(live)) => live.after_commit(t, |sql| wire.exec(sql)),
+                    _ => true,
+                };
+                if keep {
+                    **guard = Some(wire);
+                }
+                for (m, out) in members.iter().zip(outs) {
+                    m.answer(Ok(out));
+                }
+            }
+            crate::group::Group::Retry { drop_session } => {
+                if !drop_session {
+                    **guard = Some(wire);
+                }
+                for m in &members {
+                    m.answer(self.run_alone(guard, m));
+                }
+            }
+            crate::group::Group::Unknown(why) => {
+                if let (Some(t), Some(live)) = (&touch, &self.live) {
+                    live.write_failed(t);
+                }
+                for m in &members {
+                    m.answer(Err(ScriptFailure::CannotTell(why.clone())));
+                }
+            }
+        }
+    }
+
+    /// One write on its own, exactly as every write ran before group commit.
+    fn run_alone(&self, guard: &mut MutexGuard<'_, Option<Wire>>, m: &Pending) -> Result<Sets, ScriptFailure> {
+        COMMITS.fetch_add(1, Ordering::Relaxed);
+        self.run_locked(guard, &m.script, m.touch.as_ref())
     }
 
     fn run_script_on(&self, session: &Mutex<Option<Wire>>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
-        self.run_session(session, script, None)
+        let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
+        self.run_locked(&mut guard, script, None)
     }
 
     /// Times only the statements: the wait for the session lock is queueing, not a slow query.
-    fn run_session(&self, session: &Mutex<Option<Wire>>, script: &str, touch: Option<&crate::live::Touch>) -> Result<Vec<Vec<Value>>, ScriptFailure> {
-        let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
+    fn run_locked(&self, guard: &mut MutexGuard<'_, Option<Wire>>, script: &str, touch: Option<&crate::live::Touch>) -> Result<Vec<Vec<Value>>, ScriptFailure> {
         let session_started = std::time::Instant::now();
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
         let wire = reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database)));
@@ -306,7 +481,7 @@ impl Conn {
                 };
                 crate::slow::record(started.elapsed(), script);
                 if keep {
-                    *guard = Some(wire);
+                    **guard = Some(wire);
                 }
                 out
             }
@@ -711,6 +886,22 @@ impl EventRecord {
     }
 }
 
+/// The live rows a group's writes changed together: `None` when no member touches any.
+fn union_touch(members: &[Arc<Pending>]) -> Option<crate::live::Touch> {
+    let mut keys = Vec::new();
+    let mut any = false;
+    for t in members.iter().filter_map(|m| m.touch.as_ref()) {
+        any = true;
+        match t {
+            crate::live::Touch::All => return Some(crate::live::Touch::All),
+            crate::live::Touch::Keys(k) => keys.extend(k.iter().cloned()),
+        }
+    }
+    keys.sort();
+    keys.dedup();
+    any.then_some(crate::live::Touch::Keys(keys))
+}
+
 fn is_live_table(table: &str) -> bool {
     matches!(table, "bead" | "delivery")
 }
@@ -820,6 +1011,39 @@ mod io_timeout_tests {
         assert!(ADMIN_IO_TIMEOUT <= std::time::Duration::from_secs(120), "bounded");
         assert_eq!(io_timeout_for("facts-query"), FACTS_QUERY_IO_TIMEOUT);
         assert_eq!(io_timeout_for("facts"), QUERY_DEADLINE);
+    }
+}
+
+#[cfg(test)]
+mod group_commit_tests {
+    use super::*;
+    use crate::live::Touch;
+
+    fn pending(touch: Option<Touch>) -> Arc<Pending> {
+        Arc::new(Pending { script: String::new(), touch, deadline: None, result: Mutex::new(None) })
+    }
+
+    #[test]
+    fn a_group_refreshes_the_union_of_its_members_rows() {
+        let keys = |k: &[&str]| Some(Touch::Keys(k.iter().map(|s| s.to_string()).collect()));
+        assert_eq!(union_touch(&[pending(None), pending(None)]), None, "no member touches a live row");
+        assert_eq!(union_touch(&[pending(keys(&["b", "a"])), pending(None), pending(keys(&["a", "c"]))]), keys(&["a", "b", "c"]));
+        assert_eq!(union_touch(&[pending(keys(&["a"])), pending(Some(Touch::All))]), Some(Touch::All));
+    }
+
+    /// law-calls-have-deadlines: a write still queued when its request's deadline passed is
+    /// answered "deadline" and never sent — this Conn's server is unreachable, so an attempt
+    /// would have answered with the connect failure instead.
+    #[test]
+    fn a_write_whose_request_deadline_passed_is_never_started() {
+        let conn = Conn::unreachable();
+        set_request_deadline(Some(Instant::now() - Duration::from_millis(1)));
+        let err = conn.append_event("INSERT INTO fact VALUES (1)");
+        set_request_deadline(None);
+        let msg = format!("{err:?}");
+        assert!(msg.contains(DEADLINE_MESSAGE) && msg.contains("never started"), "{msg}");
+        let control = format!("{:?}", conn.append_event("INSERT INTO fact VALUES (1)"));
+        assert!(control.contains("connecting to 127.0.0.1:1"), "POSITIVE CONTROL: without a deadline the write is attempted: {control}");
     }
 }
 
