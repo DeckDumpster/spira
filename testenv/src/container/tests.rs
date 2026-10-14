@@ -812,6 +812,8 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
             "--name",
             "n1",
             "--systemd=true",
+            "--cap-add",
+            "AUDIT_CONTROL",
             "--pids-limit",
             "32768",
             "--network",
