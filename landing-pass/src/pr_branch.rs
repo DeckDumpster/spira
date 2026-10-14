@@ -38,9 +38,21 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
     match c.tools.forge_pr_state(repo, br).as_deref() {
         Some("merged") => {
             let merge_sha = c.git.rev_parse(repo, base_fq).unwrap_or_else(|| baseref.to_string());
-            c.lib.deliver_pr_merged(repo, id, br, &merge_sha);
-            (c.log)(&format!("{br}'s pull request is merged in {name} — delivered"));
-            return 7;
+            if c.lib.deliver_pr_merged(repo, id, br, &merge_sha) {
+                (c.log)(&format!("{br}'s pull request is merged in {name} — delivered"));
+                return 7;
+            }
+            if crate::model::handed_on(&c.beads.bead_lc_state(id)) {
+                c.lib.reopen(
+                    id,
+                    "pr-merged-not-in-force",
+                    &format!("{br}'s pull request is merged in {name}, but its change is not in {base_fq}: reverted or superseded since. Re-land it."),
+                );
+                (c.log)(&format!("{id}: {br}'s pull request is merged in {name} but its change is not in force — returned to rework"));
+            } else {
+                (c.log)(&format!("{id}: {br}'s pull request is merged in {name}; spira-lc declined to record it"));
+            }
+            return 0;
         }
         Some("closed") => {
             c.lib.deliver_pr_closed(id, "pull request closed unmerged");
@@ -224,6 +236,7 @@ mod tests {
         calls: RefCell<Vec<String>>,
         rebase: RefCell<Option<Rebase>>,
         pr_merged: Cell<bool>,
+        pr_merge_declined: Cell<bool>,
         requeues: Cell<u32>,
         force_push_err: RefCell<Option<String>>,
         notes: RefCell<Vec<String>>,
@@ -298,8 +311,9 @@ mod tests {
         fn ask_refresh_loop(&self, _: &Path, _: &str, br: &str, id: &str, _: &str, n: u32) {
             self.rec(format!("ask_refresh_loop {id} {br} {n}"));
         }
-        fn deliver_pr_merged(&self, _: &Path, id: &str, br: &str, sha: &str) {
+        fn deliver_pr_merged(&self, _: &Path, id: &str, br: &str, sha: &str) -> bool {
             self.rec(format!("deliver_pr_merged {id} {br} {sha}"));
+            !self.pr_merge_declined.get()
         }
         fn deliver_pr_closed(&self, id: &str, reason: &str) {
             self.rec(format!("deliver_pr_closed {id} {reason}"));
@@ -624,6 +638,17 @@ mod tests {
         assert_eq!(rc, 0);
         assert!(f.lib.has("force_push origin spira/sp-a"));
         assert!(!f.lib.has("reopen"));
+    }
+
+    #[test]
+    fn a_merged_pr_whose_change_is_not_in_force_is_reopened_not_called_delivered() {
+        let f = Fixture::new();
+        *f.tools.pr_state.borrow_mut() = Some("merged".into());
+        f.lib.pr_merge_declined.set(true);
+        let rc = f.run("spira/sp-a", "sp-a", "t1");
+        assert_eq!(rc, 0);
+        assert!(f.lib.has("reopen sp-a pr-merged-not-in-force"), "{:?}", f.lib.calls.borrow());
+        assert!(!f.logs.borrow().iter().any(|l| l.contains("— delivered")));
     }
 
     #[test]
