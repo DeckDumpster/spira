@@ -63,6 +63,7 @@ pub fn sift_repo(env: &Env, repo: &Repo, open: Option<&OpenBatch>) -> Result<sif
         name: repo.name.clone(),
         registered: io::registry(env).names(),
         wiki: cfg("SPIRA_WIKI").unwrap_or_default(),
+        identity_projects: cfg("SPIRA_IDENTITY_PROJECTS").unwrap_or_default(),
         base_ref: repo.base.clone(),
         work: work.clone(),
         state: Box::new(move |id| io::lc_state(&probe_env, id)),

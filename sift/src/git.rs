@@ -11,6 +11,7 @@ pub struct GitProbe {
     pub registered: Vec<String>,
     /// `SPIRA_WIKI`; empty when unset.
     pub wiki: String,
+    pub identity_projects: String,
     pub base_ref: String,
     pub work: PathBuf,
     pub state: Box<dyn Fn(&str) -> Result<String, String>>,
@@ -90,9 +91,9 @@ impl Probe for GitProbe {
         if !self.registered.iter().any(|r| *r != self.name) {
             return Ok(None);
         }
-        let pages = crate::identity::load(&self.wiki, &self.registered)?;
+        let pages = crate::identity::load(&self.wiki, &self.identity_projects, &self.registered)?;
         let diff = out(git(&self.repo).args(["diff", "-U0", "--no-color", "--no-ext-diff", &format!("{}...{tip}", self.base_ref)]), "git diff")?;
-        Ok(crate::identity::gap(&self.name, &pages, &self.wiki, &diff))
+        Ok(crate::identity::gap(&self.name, &pages, &Path::new(&self.wiki).join(&self.identity_projects), &diff))
     }
 }
 
@@ -125,7 +126,7 @@ mod tests {
         let conflict = commit(&p, "f", "other\n", "sp-other: edits the same line");
         g(&p, &["checkout", "-q", "-b", "clean", "main"]);
         let clean = commit(&p, "g", "new\n", "spira: land sp-bead — adds g");
-        let probe = GitProbe { repo: p.clone(), name: "alpha".into(), registered: vec!["alpha".into()], wiki: String::new(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())), shown: Box::new(|_| Ok(String::new())) };
+        let probe = GitProbe { repo: p.clone(), name: "alpha".into(), registered: vec!["alpha".into()], wiki: String::new(), identity_projects: String::new(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())), shown: Box::new(|_| Ok(String::new())) };
         (d, probe, [conflict, clean, "x".into()])
     }
 
@@ -156,13 +157,15 @@ mod tests {
         let tip = commit(p, "ui.ts", "const c = 'Zorblax';\n", "adds a term");
         let brain = testkit::TempDir::new("sift-brain");
         for (repo, page) in [("alpha", "## Identity terms\n- Quuxify\n"), ("beta", "## Identity terms\n- Zorblax\n")] {
-            std::fs::create_dir_all(brain.path().join("projects").join(repo)).unwrap();
-            std::fs::write(brain.path().join("projects").join(repo).join("identity.md"), page).unwrap();
+            std::fs::create_dir_all(brain.path().join("wiki/projects").join(repo)).unwrap();
+            std::fs::write(brain.path().join("wiki/projects").join(repo).join("identity.md"), page).unwrap();
         }
         probe.registered = vec!["alpha".into(), "beta".into()];
         probe.wiki = String::new();
         assert!(probe.identity_gap(&tip).unwrap_err().contains("SPIRA_WIKI"));
         probe.wiki = brain.path().to_str().unwrap().into();
+        assert!(probe.identity_gap(&tip).unwrap_err().contains("SPIRA_IDENTITY_PROJECTS"));
+        probe.identity_projects = "wiki/projects".into();
         let hit = probe.identity_gap(&tip).unwrap().expect("alpha adds beta's term");
         assert!(hit.contains("ui.ts:1: 'Zorblax' belongs to beta"), "{hit}");
         probe.name = "beta".into();

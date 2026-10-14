@@ -1,5 +1,5 @@
 //! Whose words are whose. Each repo's identity terms are installation knowledge, declared on its
-//! project page in the brain (`<wiki>/projects/<repo>/identity.md`); the harness ships only this
+//! project page in the brain (`<wiki>/<identity_projects>/<repo>/identity.md`); the harness ships only this
 //! reader. A batch member that adds another registered repo's term is sent back.
 //!
 //! ```text
@@ -48,14 +48,18 @@ pub fn parse(text: &str) -> Page {
     page
 }
 
-/// A registered repo with no page declares no terms; an unset wiki is a refusal naming the key.
-pub fn load(wiki: &str, repos: &[String]) -> Result<BTreeMap<String, Page>, String> {
+/// A registered repo with no page declares no terms; an unset wiki or pages directory is a
+/// refusal naming the key.
+pub fn load(wiki: &str, rel: &str, repos: &[String]) -> Result<BTreeMap<String, Page>, String> {
     if wiki.is_empty() {
         return Err("SPIRA_WIKI is empty: the brain path is where each repo's identity terms are declared; set SPIRA_WIKI through the config CLI — refusing".into());
     }
-    let projects = Path::new(wiki).join("projects");
+    if rel.is_empty() || Path::new(rel).is_absolute() || rel.split('/').any(|c| c == "..") {
+        return Err(format!("SPIRA_IDENTITY_PROJECTS {rel:?} must be a directory path relative to SPIRA_WIKI; set it through the config CLI — refusing"));
+    }
+    let projects = Path::new(wiki).join(rel);
     if !projects.is_dir() {
-        return Err(format!("SPIRA_WIKI {wiki:?} has no projects/ directory — refusing"));
+        return Err(format!("SPIRA_IDENTITY_PROJECTS {rel:?} is not a directory under SPIRA_WIKI {wiki:?} — refusing"));
     }
     let mut out = BTreeMap::new();
     for r in repos {
@@ -83,7 +87,7 @@ fn owner<'a>(own: &str, pages: &'a BTreeMap<String, Page>, hay: &str) -> Option<
 
 /// The added lines and added paths of a `git diff -U0` that carry another repo's term, as
 /// `path:line: 'term' belongs to <repo>` lines; None when the diff is clean.
-pub fn gap(own: &str, pages: &BTreeMap<String, Page>, wiki: &str, diff: &str) -> Option<String> {
+pub fn gap(own: &str, pages: &BTreeMap<String, Page>, dir: &Path, diff: &str) -> Option<String> {
     let exempt: &[String] = pages.get(own).map_or(&[], |p| &p.vendored);
     let (mut path, mut line, mut skip) = (String::new(), 0u64, true);
     let mut hits: Vec<String> = Vec::new();
@@ -114,8 +118,9 @@ pub fn gap(own: &str, pages: &BTreeMap<String, Page>, wiki: &str, diff: &str) ->
     hits.truncate(SHOWN);
     let tail = if more > 0 { format!("\n… and {more} more") } else { String::new() };
     Some(format!(
-        "adds another repo's identity terms:\n{}{tail}\noverride: list the term under \"## Allowed foreign terms\" in {wiki}/projects/{own}/{PAGE}",
-        hits.join("\n")
+        "adds another repo's identity terms:\n{}{tail}\noverride: list the term under \"## Allowed foreign terms\" in {}",
+        hits.join("\n"),
+        dir.join(own).join(PAGE).display()
     ))
 }
 
@@ -134,47 +139,50 @@ mod tests {
 
     #[test]
     fn a_term_another_repo_owns_fails_naming_it_and_the_override() {
-        let g = gap("alpha", &pages(), "/brain", ADD).expect("a hit");
+        let g = gap("alpha", &pages(), Path::new("/brain/projects"), ADD).expect("a hit");
         assert!(g.contains("web/app.ts:5: 'Wibblet' belongs to beta"), "{g}");
         assert!(g.contains("/brain/projects/alpha/identity.md"), "{g}");
     }
 
     #[test]
     fn the_owning_repo_and_one_that_allows_the_term_pass() {
-        assert_eq!(gap("beta", &pages(), "/brain", ADD), None);
+        assert_eq!(gap("beta", &pages(), Path::new("/brain/projects"), ADD), None);
         let zorb = ADD.replace("wibblet", "ZORBLAX");
-        assert_eq!(gap("beta", &pages(), "/brain", &zorb), None);
-        assert!(gap("alpha", &pages(), "/brain", &zorb).is_none(), "alpha owns Zorblax");
+        assert_eq!(gap("beta", &pages(), Path::new("/brain/projects"), &zorb), None);
+        assert!(gap("alpha", &pages(), Path::new("/brain/projects"), &zorb).is_none(), "alpha owns Zorblax");
     }
 
     #[test]
     fn a_vendored_path_is_exempt_and_an_added_path_is_scanned() {
         let kit = ADD.replace("web/app.ts", "kit/app.ts");
-        assert_eq!(gap("alpha", &pages(), "/brain", &kit), None);
+        assert_eq!(gap("alpha", &pages(), Path::new("/brain/projects"), &kit), None);
         let named = "--- /dev/null\n+++ b/web/wibblet.ts\n@@ -0,0 +1 @@\n+ok\n";
-        assert!(gap("alpha", &pages(), "/brain", named).unwrap().contains("web/wibblet.ts: path: 'Wibblet' belongs to beta"));
+        assert!(gap("alpha", &pages(), Path::new("/brain/projects"), named).unwrap().contains("web/wibblet.ts: path: 'Wibblet' belongs to beta"));
     }
 
     #[test]
     fn removed_lines_and_clean_additions_pass() {
         let d = "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-wibblet\n+fine\n";
-        assert_eq!(gap("alpha", &pages(), "/brain", d), None);
+        assert_eq!(gap("alpha", &pages(), Path::new("/brain/projects"), d), None);
     }
 
     #[test]
     fn an_unset_wiki_is_a_refusal_naming_the_key() {
-        assert!(load("", &["alpha".into()]).unwrap_err().contains("SPIRA_WIKI"));
+        assert!(load("", "wiki/projects", &["alpha".into()]).unwrap_err().contains("SPIRA_WIKI"));
         let d = testkit::TempDir::new("sift-identity");
-        assert!(load(d.path().to_str().unwrap(), &["alpha".into()]).unwrap_err().contains("projects/"));
+        let w = d.path().to_str().unwrap();
+        assert!(load(w, "", &["alpha".into()]).unwrap_err().contains("SPIRA_IDENTITY_PROJECTS"));
+        assert!(load(w, "../x", &["alpha".into()]).unwrap_err().contains("SPIRA_IDENTITY_PROJECTS"));
+        assert!(load(w, "wiki/projects", &["alpha".into()]).unwrap_err().contains("SPIRA_IDENTITY_PROJECTS"));
     }
 
     #[test]
     fn pages_are_read_from_the_brain_and_a_repo_without_one_declares_nothing() {
         let d = testkit::TempDir::new("sift-identity");
-        let dir = d.path().join("projects/alpha");
+        let dir = d.path().join("wiki/projects/alpha");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(PAGE), "## Identity terms\n- Zorblax\n").unwrap();
-        let p = load(d.path().to_str().unwrap(), &["alpha".into(), "beta".into()]).unwrap();
+        let p = load(d.path().to_str().unwrap(), "wiki/projects", &["alpha".into(), "beta".into()]).unwrap();
         assert_eq!(p["alpha"].terms, ["Zorblax"]);
         assert_eq!(p["beta"], Page::default());
     }
