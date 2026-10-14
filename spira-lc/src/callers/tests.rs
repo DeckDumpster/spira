@@ -511,6 +511,22 @@ fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
 }
 
 #[test]
+fn certify_records_a_moved_tip_on_a_submitted_bead_before_a_pass_and_never_before_a_red() {
+    let mut f = Fake::default();
+    f.bead("sp-m", BeadState::Submitted).tip = Some("old111".into());
+    let a = go(&mut f, "certify", &["sp-m", "new222", "pass", "keyA"]);
+    assert_eq!(a.code, APPLIED);
+    assert_eq!((f.state("sp-m"), f.beads["sp-m"].tip.as_deref()), ("CERTIFIED", Some("new222")));
+    let kinds: Vec<&str> = f.events.iter().map(|e| e.5.as_str()).collect();
+    assert_eq!(kinds, [r#"{"Submit":{"tip":"new222"}}"#, r#"{"GatePass":{"tip":"new222","gate_key":"keyA"}}"#]);
+
+    let mut f = Fake::default();
+    f.bead("sp-n", BeadState::Submitted).tip = Some("old111".into());
+    let a = go(&mut f, "certify", &["sp-n", "new222", "red", "branch-red"]);
+    assert_eq!(f.beads["sp-n"].tip.as_deref(), Some("old111"), "{a:?}");
+}
+
+#[test]
 fn certify_skips_an_infra_verdict_on_a_tip_the_row_has_left() {
     let mut f = Fake::default();
     f.bead("sp-st", BeadState::Submitted).tip = Some("new111".into());
