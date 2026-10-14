@@ -1,5 +1,5 @@
 # perf-watch probes: <name><TAB><command>. Each is a frequently invoked read-only path, timed end to end.
-lc-list	spira-lc list
+lc-list	spira-lc list --live
 lc-show	spira-lc show sp-perf-probe
 lc-ops-view	spira-lc ops-view ops_live
 work-list	work list --json

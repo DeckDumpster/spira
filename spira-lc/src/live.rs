@@ -342,6 +342,13 @@ impl Live {
     }
 }
 
+/// True when `csv` names at least one state and every one is non-terminal: memory holds every
+/// such row, so the listing needs no `--live` to be answerable from it.
+pub fn names_only_live_states(csv: &str) -> bool {
+    let states: Vec<&str> = csv.split(',').filter(|x| !x.is_empty()).collect();
+    !states.is_empty() && states.iter().all(|s| LIVE.contains(s))
+}
+
 pub fn filter_from_flags(state: Option<&str>, ids: Option<&str>, hold: Option<&str>, express: bool) -> ListFilter {
     let csv = |v: &str| v.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
     ListFilter { states: state.map(csv), ids: ids.map(csv), hold: hold.map(str::to_string), express }
@@ -416,6 +423,12 @@ mod tests {
         assert_eq!(f(None, None, Some("poison"), false), "sp-h");
         assert_eq!(f(None, None, None, true), "sp-h");
         assert_eq!(f(Some(""), None, None, false), "", "an empty list matches nothing, as IN (NULL) does");
+    }
+
+    #[test]
+    fn a_state_filter_is_memory_servable_only_when_every_state_is_live() {
+        assert!(names_only_live_states("READY") && names_only_live_states("READY,IN_DELIVERY"));
+        assert!(!names_only_live_states("READY,LANDED") && !names_only_live_states("") && !names_only_live_states("BOGUS"));
     }
 
     #[test]
