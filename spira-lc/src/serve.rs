@@ -106,6 +106,7 @@ pub fn run(args: &[String]) -> i32 {
         let sweeper = Arc::clone(&conn);
         scope.spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
+            cold_tick(&sweeper);
             if let Err(e) = crate::mending::expire_overdue(&sweeper, "spira-lc.sweep") {
                 eprintln!("spira-lc serve: mending sweep: {e:?}");
             }
@@ -122,6 +123,18 @@ pub fn run(args: &[String]) -> i32 {
         }
     });
     0
+}
+
+/// Between attempts to fetch the older rows: each is a read of the whole table.
+const COLD_RETRY: Duration = Duration::from_secs(30);
+
+fn cold_tick(conn: &Conn) {
+    if conn.live.as_ref().is_some_and(|l| l.cold_due(COLD_RETRY)) {
+        match conn.live_load_cold() {
+            Ok(n) => eprintln!("spira-lc serve: {n} older rows in memory"),
+            Err(e) => eprintln!("spira-lc serve: older rows not loaded, reads that need them go to Dolt: {e}"),
+        }
+    }
 }
 
 const LIVE_SETTLE_MARGIN: Duration = Duration::from_secs(2);

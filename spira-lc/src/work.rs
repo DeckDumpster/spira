@@ -915,7 +915,14 @@ fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
 /// is the machine's; `--label`/`--title-contains` narrow by content through bd, and the two are
 /// intersected here so neither side's idea of "open" is consulted.
 fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[String], json: bool, full: bool, limit: Option<usize>) -> (i32, String) {
-    let (rc, rows) = crate::cmd_list(&[], conn);
+    let narrowing = if !states.is_empty() {
+        vec![s("--state"), states.join(",")]
+    } else if all {
+        Vec::new()
+    } else {
+        vec![s("--live")]
+    };
+    let (rc, rows) = crate::cmd_list(&narrowing, conn);
     if rc != 0 {
         return (rc, rows);
     }
@@ -927,6 +934,13 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
     ids.sort_unstable();
     let mut content: Vec<serde_json::Value> = Vec::new();
     for chunk in ids.chunks(LIST_ID_CHUNK) {
+        if bd_args.is_empty() && !full {
+            match crate::content_rows::fetch(conn, chunk, true) {
+                Ok(rows) => content.extend(rows),
+                Err(e) => return (CANNOT_TELL, e),
+            }
+            continue;
+        }
         let mut args = vec![s("list"), s("--id"), chunk.join(","), s("--status"), s("all"), s("--limit"), s("0"), s("--json")];
         args.extend(bd_args.iter().cloned());
         match crate::bd::run_stdin(&args, None) {

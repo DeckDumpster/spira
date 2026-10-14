@@ -390,6 +390,9 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     if let Some((bead, delivery)) = conn.live().and_then(|l| l.show(bead_id)) {
         return (0, serde_json::to_string_pretty(&serde_json::json!({ "bead": bead, "delivery": delivery })).unwrap());
     }
+    if conn.live().is_some_and(|l| l.absent(bead_id)) {
+        return (1, "{}".to_string());
+    }
     let bead_rows = match conn.query(&format!(
         "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, updated_at FROM bead WHERE bead_id = '{}'",
         rows::escape(bead_id)
@@ -439,9 +442,14 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let live = args.iter().any(|a| a == "--live");
     let ids = flag(args, "--ids");
     let repo = flag(args, "--repo");
-    if live && repo.is_none() {
-        let f = live::filter_from_flags(state.as_deref(), ids.as_deref(), hold.as_deref(), express);
-        if let Some(beads) = conn.live().and_then(|l| l.list(&f)) {
+    if let Some(mem) = conn.live() {
+        let f = live::filter_from_flags(state.as_deref(), ids.as_deref(), hold.as_deref(), express, repo.as_deref());
+        let beads = match (live, repo.is_some()) {
+            (true, false) => mem.list(&f),
+            (true, true) => mem.list_live_full(&f),
+            (false, _) => mem.list_all(&f),
+        };
+        if let Some(beads) = beads {
             return (0, serde_json::to_string(&Value::Array(beads)).unwrap());
         }
     }
@@ -828,7 +836,7 @@ mod tests {
         assert_eq!(code, 0, "{out}");
         assert!(out.contains("\"delivery\": null"), "{out}");
         assert_eq!(ops::cmd_ops_view(&["ops_live".to_string()], &conn).0, 0);
-        assert_eq!(cmd_list(&[], &conn).0, CANNOT_TELL, "a list without --live still reads Dolt");
+        assert_eq!(cmd_list(&[], &conn).0, CANNOT_TELL, "a list without --live reads Dolt until the older rows are in memory");
         assert_eq!(cmd_show(&["sp-missing".to_string()], &conn).0, CANNOT_TELL, "a bead memory does not hold is asked of Dolt");
     }
 
