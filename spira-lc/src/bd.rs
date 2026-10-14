@@ -30,7 +30,7 @@ pub fn run(args: &[&str]) -> Result<String, String> {
 
 const WRITE_SECS: u64 = 60;
 
-// batch-job: a store write opens bd read-write, which runs the schema gate and a Dolt commit; under the 5 s read cap that is killed mid-commit ("context canceled") though the write lands
+// A write runs the schema gate and a Dolt commit; the 5 s read cap kills it mid-commit though it lands.
 fn run_write(args: &[&str]) -> Result<String, String> {
     let mut cmd = std::process::Command::new("timeout");
     cmd.arg(WRITE_SECS.to_string()).arg(bd_bin()?);
