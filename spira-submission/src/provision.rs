@@ -21,6 +21,7 @@ pub struct RealHost;
 impl Host for RealHost {
     fn run(&self, argv: &[&str]) -> Result<String, String> {
         let (prog, args) = argv.split_first().ok_or("empty command")?;
+        // batch-job: tailscale cert blocks on certificate issuance
         let out = Command::new(prog).args(args).stdin(Stdio::null()).output().map_err(|e| format!("{prog}: {e}"))?;
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())

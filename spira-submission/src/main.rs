@@ -5,7 +5,7 @@ use std::sync::Arc;
 fn main() {
     let cmd = std::env::args().nth(1).unwrap_or_default();
     if cmd == "provision" || cmd == "status" {
-        return operate(&cmd);
+        std::process::exit(operate(&cmd));
     }
     let cfg = match Config::from_spira() {
         Ok(Some(c)) => c,
@@ -54,18 +54,18 @@ fn main() {
     }
 }
 
-fn operate(cmd: &str) {
+fn operate(cmd: &str) -> i32 {
     let home = std::env::var("HOME").unwrap_or_default();
     let plan = match Plan::from_spira(format!("{home}/.config/spira/submission").into(), "/etc/ufw/ufw.conf".into()) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("spira-submission: {e}");
-            std::process::exit(2);
+            return 2;
         }
     };
     if cmd == "status" {
         print!("{}", provision::status(&RealHost, &plan));
-        return;
+        return 0;
     }
     let report = provision::provision(&RealHost, &plan);
     for n in &report.notes {
@@ -74,7 +74,5 @@ fn operate(cmd: &str) {
     for e in &report.errors {
         eprintln!("spira-submission: {e}");
     }
-    if !report.errors.is_empty() {
-        std::process::exit(1);
-    }
+    i32::from(!report.errors.is_empty())
 }
