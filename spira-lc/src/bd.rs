@@ -94,6 +94,24 @@ impl crate::callers::Bd for LiveBd {
         let labels = doc.get("labels").and_then(|l| l.as_array()).cloned().unwrap_or_default();
         Ok(labels.iter().filter_map(|l| l.as_str()).filter_map(|l| l.strip_prefix("work-bead:").map(str::to_string)).collect())
     }
+    fn blocking_dependents(&mut self, id: &str) -> Result<Vec<String>, String> {
+        let out = run(&["dep", "list", id, "--direction", "up", "--type", "blocks", "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd dep list --json: {e}"))?;
+        let ids: Vec<String> = parsed
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|d| d.get("depends_on_id").or_else(|| d.get("id")).and_then(|x| x.as_str()))
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+        self.open_among(&ids)
+    }
     fn external(&mut self, id: &str) -> Result<bool, String> {
         let out = run(&["show", id, "--json"])?;
         let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;

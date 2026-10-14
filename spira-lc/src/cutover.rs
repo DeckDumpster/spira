@@ -1089,6 +1089,34 @@ pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// `batches-of <bead-id>` — the not-yet-finished batches naming the bead as a member, as a JSON
+/// array of `{batch_id, state, version}` ready to feed `eject-member`.
+pub fn cmd_batches_of(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(bead_id) = args.first() else {
+        return (CANNOT_TELL, "batches-of: missing <bead-id>".into());
+    };
+    let sql = format!(
+        "SELECT b.batch_id, b.state, b.version FROM batch_member bm JOIN batch b ON b.batch_id = bm.batch_id \
+         WHERE bm.bead_id = {} AND b.state NOT IN ('LANDED', 'SETTLED', 'ABANDONED') ORDER BY b.batch_id",
+        q(bead_id)
+    );
+    match conn.query(&sql) {
+        Ok(found) => {
+            let text = |r: &serde_json::Value, k: &str| match r.get(k) {
+                Some(serde_json::Value::String(s)) => s.clone(),
+                Some(v) if !v.is_null() => v.to_string(),
+                _ => String::new(),
+            };
+            let out: Vec<serde_json::Value> = found
+                .iter()
+                .map(|r| serde_json::json!({"batch_id": text(r, "batch_id"), "state": text(r, "state"), "version": text(r, "version")}))
+                .collect();
+            (0, serde_json::Value::Array(out).to_string())
+        }
+        Err(e) => cannot_tell(e),
+    }
+}
+
 fn fetch_members(conn: &Conn, batch_id: &str) -> Result<Vec<(String, String)>, DbError> {
     let sql = format!("SELECT bead_id, tip FROM batch_member WHERE batch_id = {}", q(batch_id));
     let rows_v = conn.query(&sql)?;

@@ -35,6 +35,7 @@ fn main() {
         "file" => cmd_file(&home, &rest),
         "amend" => cmd_amend(&home, &rest),
         "label" => cmd_label(&home, &rest),
+        "drop" => cmd_drop(&home, &rest),
         "contract" => cmd_contract(&home),
         "lint" => cmd_lint(&home, &rest),
         "judge-create" => cmd_judge_create(&home, &rest),
@@ -51,7 +52,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh label add|remove <id> <label>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -1415,6 +1416,54 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
         println!("{verb}ed label: {id} {label}");
     }
     rc
+}
+
+const DROPPED_LABEL: &str = "spira-dropped";
+
+/// End a work bead as won't-do: the lifecycle machine does the work (refuse on open dependents,
+/// leave every batch, DROPPED with the reason, close the store); this labels it afterwards.
+fn cmd_drop(home: &str, args: &[String]) -> i32 {
+    let usage = "usage: bead.sh drop <id> --reason <text>";
+    let (mut id, mut reason) = (None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--reason" => reason = it.next().cloned(),
+            x if !x.starts_with('-') && id.is_none() => id = Some(x.to_string()),
+            _ => {
+                eprintln!("{usage}");
+                return 2;
+            }
+        }
+    }
+    let (Some(id), Some(reason)) = (id, reason.filter(|r| !r.trim().is_empty())) else {
+        eprintln!("{usage}");
+        return 2;
+    };
+
+    let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
+    if parse_show_row(&out).is_none() {
+        eprintln!("bead: drop: refusing — unknown bead {id}");
+        return 1;
+    }
+
+    // batch-job: ejects from batches and closes the store, bounded by timeout(1)
+    let status = Command::new("timeout")
+        .args(["120", "spira-lc", "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .status()
+        .map(|s| s.code().unwrap_or(1))
+        .unwrap_or(127);
+    if status != 0 {
+        return status;
+    }
+    let rc = bdq_status(home, &s(&["label", "add", &id, DROPPED_LABEL]));
+    if rc != 0 {
+        eprintln!("bead: drop: {id} is DROPPED but could not be labelled; add it: bead.sh label add {id} {DROPPED_LABEL}");
+        return rc;
+    }
+    println!("dropped: {id} ({reason})");
+    0
 }
 
 fn cmd_dep_remove(home: &str, args: &[String]) -> i32 {
