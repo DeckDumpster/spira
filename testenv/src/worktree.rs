@@ -222,6 +222,10 @@ fn make_room(req: &Request, base: &Path, log: &dyn Fn(&str)) -> Result<Option<sp
         Ok(g) => return Ok(g),
         Err(e) => e,
     };
+    reap_stale_test_scratch(&std::env::temp_dir(), STALE_SCRATCH_AGE, &|pid| Path::new(&format!("/proc/{pid}")).exists(), log);
+    if let Ok(g) = try_once() {
+        return Ok(g);
+    }
     let held = if crate::testdb::on_tmpfs(base) {
         spira_config::scratch::reserved_mib(&spira_config::scratch::ledger_for(base))
     } else {
@@ -232,6 +236,44 @@ fn make_room(req: &Request, base: &Path, log: &dyn Fn(&str)) -> Result<Option<sp
         return Err(refusal);
     }
     try_once()
+}
+
+/// Prefixes of the scratch directories `testkit::TempDir` names `<tag>-<pid>-<n>-<nanos>`
+/// for tests that copy binaries; a killed test process never runs `Drop`, so they are reaped here.
+const TEST_SCRATCH_PREFIXES: &[&str] = &["sp-hh599-unit-env-"];
+const STALE_SCRATCH_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Remove test scratch under `root` that is older than `min_age` and whose owning pid is gone.
+/// Returns the number removed.
+pub(crate) fn reap_stale_test_scratch(
+    root: &Path,
+    min_age: std::time::Duration,
+    pid_alive: &dyn Fn(u32) -> bool,
+    log: &dyn Fn(&str),
+) -> usize {
+    let Ok(rd) = fs::read_dir(root) else { return 0 };
+    let mut n = 0;
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(rest) = TEST_SCRATCH_PREFIXES.iter().find_map(|p| name.strip_prefix(p)) else { continue };
+        let mut parts = rest.rsplitn(4, '-');
+        let (_nanos, _n, pid) = (parts.next(), parts.next(), parts.next().and_then(|p| p.parse::<u32>().ok()));
+        let Some(pid) = pid else { continue };
+        if pid_alive(pid) {
+            continue;
+        }
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age >= min_age);
+        if old && fs::remove_dir_all(e.path()).is_ok() {
+            log(&format!("reaped stale test scratch {}", e.path().display()));
+            n += 1;
+        }
+    }
+    n
 }
 
 fn dir_bytes(p: &Path) -> u64 {
@@ -461,6 +503,31 @@ mod tests {
     use std::process::Command;
 
     const LIST: &str = "worktree /srv/harness\nHEAD aaa\nbranch refs/heads/main\n\nworktree /run/worktree/sp-x\nHEAD bbb\nbranch refs/heads/spira/sp-x\n\nworktree /run/worktree/round-5\nHEAD ccc\ndetached\n";
+
+    #[test]
+    fn stale_unheld_test_scratch_is_reaped_and_the_rest_is_kept() {
+        let root = testkit::TempDir::new("reap-root");
+        for n in [
+            "sp-hh599-unit-env-cfg-mail-111-1-5",
+            "sp-hh599-unit-env-summon-svc-222-2-6",
+            "sp-hh599-unit-env-cfg-gh-intake-333-3-7",
+            "unrelated-444-4-8",
+            "sp-hh599-unit-env-nopid",
+        ] {
+            fs::create_dir(root.join(n)).unwrap();
+            fs::write(root.join(n).join("f"), "x").unwrap();
+        }
+        let alive = |pid: u32| pid == 222;
+        let zero = std::time::Duration::ZERO;
+        let day = std::time::Duration::from_secs(86400);
+        assert_eq!(reap_stale_test_scratch(&root, day, &alive, &|_| {}), 0, "too young");
+        assert_eq!(reap_stale_test_scratch(&root, zero, &alive, &|_| {}), 2);
+        assert!(!root.join("sp-hh599-unit-env-cfg-mail-111-1-5").exists());
+        assert!(!root.join("sp-hh599-unit-env-cfg-gh-intake-333-3-7").exists());
+        assert!(root.join("sp-hh599-unit-env-summon-svc-222-2-6").exists(), "pid held");
+        assert!(root.join("unrelated-444-4-8").exists());
+        assert!(root.join("sp-hh599-unit-env-nopid").exists());
+    }
 
     #[test]
     fn the_scratch_root_is_the_tmpfs_never_the_disk() {
