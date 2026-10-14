@@ -31,6 +31,18 @@ pub enum Kind {
     Hold,
 }
 
+/// bd issue types that never carry a lifecycle row: containers, asks, events and the like.
+pub const NO_ROW_TYPES: &[&str] = &["epic", "decision", "event", "molecule", "gate"];
+
+pub fn is_work_type(issue_type: Option<&str>) -> bool {
+    !issue_type.is_some_and(|t| NO_ROW_TYPES.contains(&t))
+}
+
+/// `NO_ROW_TYPES` as a bd `--exclude-type` value.
+pub fn no_row_types_arg() -> String {
+    NO_ROW_TYPES.join(",")
+}
+
 /// Which bd statuses a query wants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Which {
@@ -100,6 +112,7 @@ mod tests {
         let row: Value = serde_json::from_str(r#"{"id":"sp-a","status":"closed"}"#).unwrap();
         assert!(row_closed(Kind::Alert, &row));
         assert!(is_active(Kind::Alert, "in_progress") && !is_active(Kind::Alert, "closed"));
+        assert!(!is_work_type(Some("decision")) && is_work_type(Some("task")) && is_work_type(None));
         assert_eq!(status_of(Kind::Ask, &serde_json::json!({})), "");
     }
 }

@@ -356,7 +356,7 @@ fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
 pub fn rowless_beads(cfg: &RowlessCfg, now: i64) -> Reading {
     let prior = load_rowless_state(&cfg.state);
     let plan = rowless_plan(prior.as_ref(), now, cfg.full_secs);
-    let mut args: Vec<String> = ["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", "epic,event", "--json", "--limit", "0", "--brief"]
+    let mut args: Vec<String> = ["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", &spira_config::nonwork::no_row_types_arg(), "--json", "--limit", "0", "--brief"]
         .iter().map(|s| s.to_string()).collect();
     if let Some(since) = plan.created_after {
         args.extend(["--created-after".to_string(), crate::log::fmt_iso(since)]);
@@ -521,6 +521,29 @@ mod tests {
     }
 
     #[test]
+    fn an_open_decision_bead_is_not_rowless_but_a_rowless_task_is() {
+        let t = testkit::TempDir::new("rowless-decision");
+        let write = |name: &str, body: &str| {
+            let p = t.path().join(name);
+            testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
+            p.to_string_lossy().into_owned()
+        };
+        let bd = write(
+            "bd",
+            "case \"$*\" in *\"--exclude-type\"*decision*) echo '[{\"id\":\"sp-task\"}]';; *) echo '[{\"id\":\"sp-ask\"},{\"id\":\"sp-task\"}]';; esac",
+        );
+        let lc = write("lc", "echo '[]'");
+        let cfg = RowlessCfg { bd, db: "x".into(), lc_bin: lc, cap: 20, sustain_secs: 0, state: t.path().join("rowless.state"), full_secs: 3600 };
+        match rowless_beads(&cfg, 1_000_000) {
+            Reading::Standing(v) => {
+                assert_eq!(v.len(), 1);
+                assert!(v[0].body.contains("sp-task") && !v[0].body.contains("sp-ask"), "{}", v[0].body);
+            }
+            Reading::Unknown => panic!("both stores answered"),
+        }
+    }
+
+    #[test]
     fn rowless_beads_is_silent_with_lifecycle_off_and_reads_the_stores_when_on() {
         let t = testkit::TempDir::new("rowless");
         let write = |name: &str, body: &str| {
@@ -543,7 +566,7 @@ mod tests {
         cfg.bd = write("bd-rec", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
         let _ = rowless_beads(&cfg, now + 60);
         let seen = std::fs::read_to_string(&argv).unwrap();
-        assert!(seen.contains("--exclude-type epic,event"), "epics are out of scope: {seen}");
+        assert!(seen.contains(&format!("--exclude-type {}", spira_config::nonwork::no_row_types_arg())), "rowless-by-design types are out of scope: {seen}");
         assert!(seen.contains("--created-after"), "between full sweeps only new beads are listed: {seen}");
         cfg.bd = write("bd-new", "echo '[{\"id\":\"sp-c\"}]'");
         match rowless_beads(&cfg, now + 120) {

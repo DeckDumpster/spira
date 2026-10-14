@@ -340,7 +340,7 @@ pub fn all_blockers(rows: &[ReadyRow]) -> Vec<String> {
 
 /// A work bead is anything that is not a container/decision/event.
 fn is_work(r: &ReadyRow) -> bool {
-    !matches!(r.issue_type.as_deref(), Some("epic") | Some("decision") | Some("event") | Some("molecule") | Some("gate"))
+    spira_config::nonwork::is_work_type(r.issue_type.as_deref())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
