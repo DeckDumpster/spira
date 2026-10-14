@@ -19,7 +19,7 @@ INBOX="$TMP/inbox.log"; KEY="$TMP/k.tskey"
 rsk() {
     local spill="$1"; shift
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL="$spill" \
-        SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9
+        SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=7
     env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 fresh() { rm -f "$TMP/run/watchd/round-spill-key.said" "$INBOX"; }
@@ -41,7 +41,8 @@ printf '#!/usr/bin/env bash\necho "$*" >> "%s/probe.log"\nif [ -e "%s/probe-red"
 chmod +x "$TMP/stub/round-vm"
 rskp() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only \
-        SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9
+        SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 \
+        SPIRA_ROUND_VM_EC2_PROBE_DEADLINE="${DL:-7}"
     env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 echo "$((now + 30 * 86400))" > "$KEY.expires"
@@ -55,6 +56,18 @@ is "the same failure is said once" "" "$(rskp pass)"
 rm -f "$TMP/probe-red"; rskp pass >/dev/null; touch "$TMP/probe-red"
 want "a recurrence after recovery alarms again" "UnauthorizedOperation" "$(rskp pass)"
 rm -f "$TMP/probe-red"
+fresh
+printf '#!/usr/bin/env bash\nsleep 6\nexit 0\n' > "$TMP/stub/round-vm"
+is "a probe slower than the old 5s cap but inside the 7s deadline is quiet" "" "$(rskp pass)"
+nowant "a slow successful probe leaves no alarm" "ROUND SPILL LAUNCH" "$(cat "$INBOX" 2>/dev/null)"
+printf '#!/usr/bin/env bash\nsleep 5\nexit 0\n' > "$TMP/stub/round-vm"
+DL=1 out="$(rskp pass)"
+want "a probe past the deadline alarms as a timeout" "probe timed out after 1s" "$out"
+nowant "a timeout is not reported as a refused launch" "cannot launch" "$(cat "$INBOX")"
+rm -f "$TMP/probe.log"
+printf '#!/usr/bin/env bash\necho "FAILED at dry-run launch: aws ec2: UnauthorizedOperation" >&2; exit 1\n' > "$TMP/stub/round-vm"
+fresh
+want "a refused launch still quotes the AWS error" "cannot launch: FAILED at dry-run launch: aws ec2: UnauthorizedOperation" "$(rskp pass)"
 echo "$((now + 5 * 86400))" > "$KEY.expires"
 
 fresh

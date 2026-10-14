@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_PROBE_DEADLINE — seconds the round-spill-key watcher gives `round-vm ec2-probe --dry-run`.
+SCHEMA=Seconds the round-spill-key watcher waits for the EC2 dry-run probe before reporting a timeout (default 60).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_PROBE_DEADLINE:=60}"
+SPIRA_CONF_DEFAULT_EOF

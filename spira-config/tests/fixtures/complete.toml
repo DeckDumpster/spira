@@ -322,6 +322,7 @@ round_vm_ec2_host_addr = ""
 round_vm_ec2_run_deadline = 7200
 round_vm_ec2_boot_tries = 150
 round_vm_ec2_key_warn_days = 14
+round_vm_ec2_probe_deadline = 60
 round_vm_retry_interval = "60"
 round_vm_ssh_port = "22"
 round_vm_ssh_user = "root"
