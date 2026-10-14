@@ -160,7 +160,7 @@ fn live_tick(conn: &Conn) {
     }
     match crate::ops::run_live_check(conn, &crate::ops::raise_incident) {
         Ok(c) if c.divergent.is_empty() => {}
-        Ok(c) => eprintln!("spira-lc serve: live rows diverged from Dolt and were reloaded (explained by an ambiguous write: {}): {}\n{}", c.explained, c.divergent.join(", "), crate::ops::last_writers(conn, &c.divergent)),
+        Ok(c) => eprintln!("spira-lc serve: live rows diverged from Dolt and were reloaded{}: {}\n{}", if c.explained { " (explained by an ambiguous write)" } else { "" }, c.divergent.join(", "), crate::ops::last_writers(conn, &c.divergent)),
         Err(e) => eprintln!("spira-lc serve: live check failed: {e}"),
     }
 }
