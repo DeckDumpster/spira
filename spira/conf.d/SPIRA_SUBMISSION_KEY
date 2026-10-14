@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=submission
+DOC=PEM private key matching SPIRA_SUBMISSION_CERT
+SCHEMA=Path to the PEM private key matching SPIRA_SUBMISSION_CERT. No default: empty means spira-submission does not start (it never guesses).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets
+    # it; empty means spira-submission refuses to start (law-a-config-value-has-no-fallback).
+SPIRA_CONF_DEFAULT_EOF

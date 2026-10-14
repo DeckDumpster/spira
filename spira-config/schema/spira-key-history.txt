@@ -424,3 +424,11 @@ concierge_push_pattern
 concierge_push_wake
 concierge_push_window
 repo_identity
+submission_addr
+submission_cert
+submission_key
+submission_password_file
+submission_from
+submission_user
+submission_port
+submission_rcpt_domain

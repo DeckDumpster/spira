@@ -1802,6 +1802,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spira-submission"
+version = "1.0.0"
+dependencies = [
+ "rustls",
+ "rustls-pemfile",
+ "sha2",
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "spira-supervise"
 version = "1.0.0"
 dependencies = [

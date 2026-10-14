@@ -1,0 +1,19 @@
+[Unit]
+Description=spira-submission — authenticated SMTPS on the tailnet, so a reply from a mail client reaches mail sendmail
+After=default.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=simple
+ExecStart=@SPIRA_RELEASE@/bin/spira-submission
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:@SPIRA_RUN@/spira-submission.log
+StandardError=append:@SPIRA_RUN@/spira-submission.log
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=submission
+DOC=SMTP AUTH user name spira-submission accepts
+SCHEMA=The one SMTP AUTH user name spira-submission accepts.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_SUBMISSION_USER:=operator}"
+SPIRA_CONF_DEFAULT_EOF
