@@ -42,15 +42,19 @@ want "the refusal names the exit" "SPIRA_CONCIERGE_ALLOW_IDLE" "$out"
 
 is "live waiter child: allows" "" "$(run_hook "$armed")"
 want "another session's waiter does not satisfy it" '"decision": "block"' "$(run_hook "$bare")"
-# Siblings that exit between the hook's listing and its read must neither be reported nor hide the waiter.
-( while :; do sleep 0.01; done ) >/dev/null 2>&1 & churn=$!; PIDS+=("$churn")
-errs=0
-for _ in $(seq 20); do
-    err="$(run_hook "$armed" 2>&1 >/dev/null)"; out="$(run_hook "$armed" 2>/dev/null)"
-    [ -z "$err" ] && [ -z "$out" ] || errs=$((errs+1))
-done
-kill "$churn" 2>/dev/null
-is "vanishing siblings: live waiter still found, no noise" 0 "$errs"
+# Siblings that vanish between the hook's listing and its read must neither be reported nor hide the waiter.
+FX="$TMP/proc"
+mkdir -p "$FX/100" "$FX/200" "$FX/300" "$FX/400" "$FX/500"
+printf '100 (claude) S 1 ' > "$FX/100/stat"
+printf '200 (bash) S 100 ' > "$FX/200/stat"
+printf 'bash\0%s\0' "$W" > "$FX/200/cmdline"
+: > "$FX/300/cmdline"
+printf '400 (sleep) S 100 ' > "$FX/400/stat"
+printf 'sleep\0300\0' > "$FX/400/cmdline"
+fx_hook() { env -i PATH="$PATH" SPIRA_CONCIERGE=1 SPIRA_RUN="$TMP/run" SPIRA_PROC_ROOT="$FX" SPIRA_CONCIERGE_SESSION_PID=100 bash "$HOOK" </dev/null 2>&1; }
+is "vanishing siblings: live waiter still found, no noise" "" "$(fx_hook)"
+rm "$FX/200/cmdline"
+want "fixture control: without the waiter it blocks" '"decision": "block"' "$(fx_hook)"
 is "override allows idle" "" "$(run_hook "$bare" SPIRA_CONCIERGE_ALLOW_IDLE=1)"
 is "outside the Concierge it is inert" "" "$(run_hook "$bare" SPIRA_CONCIERGE=0)"
 
