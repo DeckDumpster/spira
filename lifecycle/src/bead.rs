@@ -829,6 +829,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             // the round's full suite on the merged tree is the certification, so a submitted tip
             // enters delivery without a per-bead gate first. The tip stays the submitted one.
             Deliver => {
+                if let Some(tip) = row.tip.as_ref().filter(|t| row.ejected_red_tip.as_ref() == Some(*t)) {
+                    return Outcome::refuse(row.clone(), Refusal::EjectedRedTip { tip: tip.clone() });
+                }
                 let mut new = row.clone();
                 new.state = BeadState::InDelivery;
                 new.reason = Some(FROM_SUBMITTED.to_string());
@@ -951,6 +954,12 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 // way a live tip change would, and returns to SUBMITTED instead.
                 let mut new = row.clone();
                 let certified_before = row.gate_key.is_some() && row.reason.as_deref() != Some(FROM_SUBMITTED);
+                if row.ejected_red_tip.as_deref() == Some(tip.as_str()) {
+                    new.state = BeadState::Rework;
+                    new.reason = None;
+                    new.version += 1;
+                    return Outcome::applied(new);
+                }
                 new.state = if certified_before && row.tip.as_deref() == Some(tip.as_str()) { BeadState::Certified } else { BeadState::Submitted };
                 new.reason = None;
                 new.version += 1;
@@ -1903,6 +1912,24 @@ mod tests {
         }
         let pr = BeadEventKind::Returned { reason: ReturnedReason::PrChangesRequested };
         assert_eq!(go(BeadState::InDelivery, pr).as_deref(), Some("1111111111111111111111111111111111111111"));
+    }
+
+    #[test]
+    fn a_known_red_tip_is_neither_delivered_nor_requeued_to_submitted() {
+        let t = "1111111111111111111111111111111111111111";
+        let mut r = row(BeadState::Submitted);
+        r.tip = Some(t.into());
+        r.ejected_red_tip = Some(t.into());
+        let d = apply(&r, &ev(BeadState::Submitted, r.version, BeadEventKind::Deliver));
+        assert_eq!(d.refusal, Some(Refusal::EjectedRedTip { tip: t.into() }));
+        let mut q = row(BeadState::InDelivery);
+        q.tip = Some(t.into());
+        q.ejected_red_tip = Some(t.into());
+        let out = apply(&q, &ev(BeadState::InDelivery, q.version, BeadEventKind::Requeued { tip: t.into() }));
+        assert_eq!(out.row.state, BeadState::Rework);
+        q.ejected_red_tip = None;
+        let out = apply(&q, &ev(BeadState::InDelivery, q.version, BeadEventKind::Requeued { tip: t.into() }));
+        assert_eq!(out.row.state, BeadState::Submitted);
     }
 
     #[test]
