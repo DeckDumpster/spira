@@ -195,7 +195,8 @@ impl Progress {
             Some((k, m, _)) if phase == "suites" && k < m && total_done(&fresh, self.total) => "unit-tests",
             _ => phase,
         };
-        if matches!(phase, "suites" | "unit-tests") && self.suites_started.is_none() {
+        let past_build = started && matches!(phase, "salvage" | "done");
+        if (matches!(phase, "suites" | "unit-tests") || past_build) && self.suites_started.is_none() {
             self.suites_started = Some(now);
         }
         let detail_changed = self.seen_detail != self.detail;
@@ -339,6 +340,21 @@ mod tests {
         let v = read(&run);
         assert_eq!((v["phase"].as_str(), v["verdict"].as_str()), (Some("done"), Some("red")));
         assert_eq!(read(&run)["round"], "r1");
+    }
+
+    #[test]
+    fn a_pass_first_seen_past_its_build_in_salvage_still_began_its_suites() {
+        let d = TempDir::new();
+        let (run, res) = (d.path().join("run"), d.path().join("res"));
+        fs::create_dir_all(&res).unwrap();
+        let mut p = Progress::start(&run, &res, "r1", "p1", 1, 777, BUDGETS);
+        p.enter(&res, "build", None);
+        assert!(!p.take_suites_began());
+        fs::write(res.join("test-a.sh.result"), "ok 1 3 - p e 0\n").unwrap();
+        p.enter(&res, "salvage", None);
+        p.update(&res);
+        assert!(p.take_suites_began());
+        assert!(!p.take_suites_began());
     }
 
     #[test]
