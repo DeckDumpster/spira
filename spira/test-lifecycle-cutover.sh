@@ -368,8 +368,8 @@ is "first half is open for a fresh CI run" "OPEN" "$(batch_field batch-bisect-lo
 is "second half is open for a fresh CI run" "OPEN" "$(batch_field batch-bisect-hi state)"
 
 # ── criterion 4: two verdict passes racing on one batch — exactly one applies ────────────
-certify sp-lc-race tipRace
-lc cut batch-race --repo spira --head H5 --base B5 --members "sp-lc-race:tipRace" --actor test >/dev/null
+certify sp-lc-race b625a334a1c85ebed2c326293c484f7d773c5851
+lc cut batch-race --repo spira --head H5 --base B5 --members "sp-lc-race:b625a334a1c85ebed2c326293c484f7d773c5851" --actor test >/dev/null
 v="$(batch_field batch-race version)"
 lc event batch batch-race --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
 v="$(batch_field batch-race version)"
@@ -390,8 +390,7 @@ for i in $(seq 1 "$N"); do
     rc="$(tail -n1 "$TMP/race-$i.out")"
     [ "$rc" = "0" ] && applied_count=$((applied_count + 1))
 done
-race_diag="$(tr "\n" " " < "$TMP/race-1.out" | cut -c1-200)"
-is "exactly one racing land applies [$race_diag]" "1" "$applied_count"
+is "exactly one racing land applies" "1" "$applied_count"
 is "the batch's version advanced by exactly one applied land" "$((race_version + 1))" "$(batch_field batch-race version)"
 is "the batch ends landed" "LANDED" "$(batch_field batch-race state)"
 
