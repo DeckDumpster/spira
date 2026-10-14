@@ -19,7 +19,7 @@ INBOX="$TMP/inbox.log"; KEY="$TMP/k.tskey"
 rsk() {
     local spill="$1"; shift
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL="$spill" \
-        SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9
+        SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=7
     env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 fresh() { rm -f "$TMP/run/watchd/round-spill-key.said" "$INBOX"; }
