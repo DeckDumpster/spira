@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::{parse_stacked_id, Merge, Probe};
+use crate::{parse_stacked_id, Merge, Probe, INFRA_FAULT};
 
 pub struct GitProbe {
     pub repo: PathBuf,
@@ -92,7 +92,7 @@ impl Probe for GitProbe {
             return Ok(None);
         }
         let pages = crate::identity::load(&self.wiki, &self.identity_projects, &self.registered)?;
-        let diff = out(git(&self.repo).args(["diff", "-U0", "--no-color", "--no-ext-diff", &format!("{}...{tip}", self.base_ref)]), "git diff")?;
+        let diff = out(git(&self.repo).args(["diff", "-U0", "--no-color", "--no-ext-diff", &format!("{}...{tip}", self.base_ref)]), "git diff").map_err(|e| format!("{INFRA_FAULT}{e}"))?;
         Ok(crate::identity::gap(&self.name, &pages, &Path::new(&self.wiki).join(&self.identity_projects), &diff))
     }
 }

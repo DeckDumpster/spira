@@ -15,6 +15,9 @@ pub use store::FileStore;
 
 pub const SEND_BACK_CAP: u32 = 3;
 
+/// Prefix of a probe error that is a fault of the check's own tooling, not a finding about the work.
+pub const INFRA_FAULT: &str = "infra: ";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Candidate {
     pub id: String,
@@ -38,7 +41,8 @@ pub trait Probe {
         Ok(None)
     }
     /// The added lines and paths of `tip` that carry another registered repo's identity terms.
-    /// Err is a refusal (no brain path configured, a page unreadable), never a silent pass.
+    /// Err is a refusal (no brain path configured, a page unreadable), never a silent pass; an Err
+    /// prefixed `INFRA_FAULT` is the check failing to run, which says nothing about the work.
     fn identity_gap(&self, _tip: &str) -> Result<Option<String>, String> {
         Ok(None)
     }
@@ -204,6 +208,11 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
         match probe.identity_gap(&c.tip) {
             Ok(Some(text)) => findings.push(Finding { reason: "policy-violation", text }),
             Ok(None) => {}
+            Err(e) if e.starts_with(INFRA_FAULT) => {
+                out.errors.push(format!("sift: {} identity check could not run ({e}); held out of this cut, retried next pass", c.id));
+                out.held.push(c.id.clone());
+                continue;
+            }
             Err(e) => findings.push(Finding { reason: "policy-violation", text: format!("identity check refused: {e}") }),
         }
         if findings.is_empty() {
