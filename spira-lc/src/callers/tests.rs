@@ -729,6 +729,35 @@ fn a_merged_pr_whose_branch_is_gone_lands_by_the_merge_commits_ancestry_only() {
     assert_eq!(f.state("sp-h"), "SUBMITTED");
 }
 
+#[test]
+fn a_merged_pr_lands_a_bead_whose_row_never_left_ready() {
+    let g = |dir: &std::path::Path, a: &[&str]| {
+        let o = std::process::Command::new("git").arg("-C").arg(dir).args(a).output().unwrap();
+        assert!(o.status.success(), "git {a:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    let dir = testkit::TempDir::new("spira-lc-pr-ready");
+    g(&dir, &["init", "-q", "-b", "main"]);
+    g(&dir, &["config", "user.email", "t@example.invalid"]);
+    g(&dir, &["config", "user.name", "t"]);
+    g(&dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    g(&dir, &["checkout", "-q", "-b", "spira/sp-r"]);
+    std::fs::write(dir.join("f"), "x\n").unwrap();
+    g(&dir, &["add", "f"]);
+    g(&dir, &["commit", "-q", "-m", "work"]);
+    g(&dir, &["checkout", "-q", "main"]);
+    g(&dir, &["merge", "-q", "--no-ff", "-m", "merge", "spira/sp-r"]);
+    let merged = g(&dir, &["rev-parse", "HEAD"]);
+    let repo = dir.to_string_lossy().to_string();
+
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Ready);
+    let a = go(&mut f, "deliver", &["pr-merged", &repo, "sp-r", "spira/sp-r", &merged]);
+    assert_eq!(a.code, APPLIED, "{}", a.stdout);
+    assert_eq!(f.state("sp-r"), "LANDED");
+    assert_eq!(f.events.last().unwrap().5, format!(r#"{{"ContentOnBase":{{"proof":"merge-tree:{merged}"}}}}"#));
+}
+
 // ---- unclaim / close-epic (sp-hyo5e) ---------------------------------------------------
 
 #[derive(Default)]
