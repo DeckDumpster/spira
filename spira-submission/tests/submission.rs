@@ -43,7 +43,7 @@ fn start(sendmail_body: &str) -> Harness {
         key: fixtures.join("test-key.pem"),
         password_file: pw,
         user: "operator".into(),
-        from: "operator@example.test".into(),
+        from: "operator@example.org".into(),
         rcpt_domain: "spira".into(),
         sendmail: vec![script.display().to_string()],
     };
@@ -94,10 +94,10 @@ fn login(c: &mut Client<impl Read + Write>) {
     assert!(r.starts_with("235"), "{r}");
 }
 
-const MSG: &str = "From: Ryan <operator@example.test>\r\nTo: concierge@spira\r\nSubject: Re: ask\r\nMessage-ID: <new-1@phone>\r\nIn-Reply-To: <ask-77@spira>\r\nReferences: <root@spira> <ask-77@spira>\r\n\r\nyes, go\r\n.. a dot line\r\n.\r\n";
+const MSG: &str = "From: Ryan <operator@example.org>\r\nTo: concierge@spira\r\nSubject: Re: ask\r\nMessage-ID: <new-1@phone>\r\nIn-Reply-To: <ask-77@spira>\r\nReferences: <root@spira> <ask-77@spira>\r\n\r\nyes, go\r\n.. a dot line\r\n.\r\n";
 
 fn send(c: &mut Client<impl Read + Write>) -> String {
-    assert!(c.say("MAIL FROM:<operator@example.test>").starts_with("250"));
+    assert!(c.say("MAIL FROM:<operator@example.org>").starts_with("250"));
     assert!(c.say("RCPT TO:<concierge@spira>").starts_with("250"));
     assert!(c.say("DATA").starts_with("354"));
     c.s.write_all(MSG.as_bytes()).unwrap();
@@ -108,7 +108,7 @@ fn send(c: &mut Client<impl Read + Write>) -> String {
 fn mail_is_refused_before_authentication() {
     let h = start("cat >/dev/null");
     let mut c = client(&h);
-    assert!(c.say("MAIL FROM:<operator@example.test>").starts_with("530"));
+    assert!(c.say("MAIL FROM:<operator@example.org>").starts_with("530"));
     assert!(c.say("RCPT TO:<concierge@spira>").starts_with("530"));
     assert!(c.say("DATA").starts_with("530"));
 }
@@ -143,10 +143,10 @@ fn a_non_spira_recipient_is_refused_at_rcpt_and_so_is_a_foreign_sender() {
     let h = start("cat >/dev/null");
     let mut c = client(&h);
     login(&mut c);
-    let r = c.say("MAIL FROM:<stranger@example.test>");
+    let r = c.say("MAIL FROM:<stranger@example.org>");
     assert!(r.starts_with("550"), "{r}");
-    assert!(c.say("MAIL FROM:<operator@example.test>").starts_with("250"));
-    for bad in ["victim@gmail.com", "concierge@spira.example.com", "concierge", "a@spira@evil.test", "<>"] {
+    assert!(c.say("MAIL FROM:<operator@example.org>").starts_with("250"));
+    for bad in ["victim@example.com", "concierge@spira.local", "concierge", "a@spira@evil.invalid", "<>"] {
         let r = c.say(&format!("RCPT TO:<{bad}>"));
         assert!(r.starts_with("550") || r.starts_with("501"), "{bad}: {r}");
     }

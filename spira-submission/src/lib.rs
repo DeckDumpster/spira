@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-pub const IO_TIMEOUT: Duration = Duration::from_secs(60);
+pub const IO_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -95,6 +95,7 @@ pub struct SendmailSink {
 impl Sink for SendmailSink {
     fn deliver(&self, message: &[u8]) -> Result<(), String> {
         let (prog, args) = self.argv.split_first().ok_or("no sendmail command configured")?;
+        // batch-job: a hand-off killed midway could deliver and still report failure, so it runs to its own exit
         let mut child = Command::new(prog)
             .args(args)
             .stdin(Stdio::piped())
@@ -202,8 +203,8 @@ pub fn probe_config() -> Arc<ClientConfig> {
 
 pub fn connect_tls(addr: SocketAddr) -> Result<StreamOwned<ClientConnection, TcpStream>, String> {
     let tcp = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).map_err(|e| format!("connect {addr}: {e}"))?;
-    tcp.set_read_timeout(Some(Duration::from_secs(10))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(10))).ok();
+    tcp.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(5))).ok();
     let conn = ClientConnection::new(probe_config(), ServerName::IpAddress(addr.ip().into())).map_err(|e| e.to_string())?;
     Ok(StreamOwned::new(conn, tcp))
 }
