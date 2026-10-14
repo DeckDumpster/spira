@@ -405,6 +405,12 @@ fn base_withdrawn_applies(row: &BeadRow, prereq: &str, tip: &str) -> bool {
     row.stack.get(prereq).map(String::as_str) == Some(tip)
 }
 
+/// A red verdict on the tree itself bars that tip from resubmission; a rebase conflict or a
+/// killed run says nothing about the tree.
+fn gate_red_bars_tip(reason: GateRedReason) -> bool {
+    !matches!(reason, GateRedReason::NoRebase | GateRedReason::Timeout)
+}
+
 /// Apply one event to one row. Pure: the only inputs are the row and the event, and the
 /// only output is the outcome. Every (state, event) pair is covered by rustc's exhaustive-
 /// match check on both `BeadState` and `BeadEventKind` — a new variant on either enum fails
@@ -803,6 +809,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 let mut new = row.clone();
                 new.state = BeadState::Rework;
                 new.reason = Some(reason.as_str().to_string());
+                if gate_red_bars_tip(*reason) {
+                    new.ejected_red_tip = row.tip.clone();
+                }
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -879,6 +888,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.state = BeadState::Rework;
                 new.gate_key = None;
                 new.reason = Some(reason.as_str().to_string());
+                if gate_red_bars_tip(*reason) {
+                    new.ejected_red_tip = row.tip.clone();
+                }
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -917,7 +929,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 let mut new = row.clone();
                 new.state = BeadState::Rework;
                 new.reason = Some(reason.as_str().to_string());
-                if *reason == ReturnedReason::BatchEjectedRed {
+                if matches!(reason, ReturnedReason::BatchEjectedRed | ReturnedReason::PrChangesRequested) {
                     new.ejected_red_tip = row.tip.clone();
                 }
                 new.version += 1;
@@ -1864,6 +1876,33 @@ mod tests {
             assert_eq!(out.row.state, BeadState::Rework);
             assert_eq!((out.row.holder, out.row.persona, out.row.lease_until), (None, None, None));
         }
+    }
+
+    #[test]
+    fn a_red_gate_or_pr_check_eject_bars_the_tip_and_a_rebase_conflict_does_not() {
+        let go = |state, kind| {
+            let mut r = row(state);
+            r.tip = Some("t1".into());
+            apply(&r, &ev(state, r.version, kind)).row.ejected_red_tip
+        };
+        let red = |reason| BeadEventKind::GateRed { tip: "t1".into(), reason };
+        for state in [BeadState::Submitted, BeadState::Certified] {
+            assert_eq!(go(state, red(GateRedReason::SuitesFailed)).as_deref(), Some("t1"), "{state:?}");
+            assert_eq!(go(state, red(GateRedReason::NoRebase)), None, "{state:?}");
+            assert_eq!(go(state, red(GateRedReason::Timeout)), None, "{state:?}");
+        }
+        let pr = BeadEventKind::Returned { reason: ReturnedReason::PrChangesRequested };
+        assert_eq!(go(BeadState::InDelivery, pr).as_deref(), Some("t1"));
+    }
+
+    #[test]
+    fn a_pr_red_bead_resubmitted_at_the_same_tip_is_refused() {
+        let mut r = row(BeadState::Submitted);
+        r.tip = Some("t1".into());
+        let red = apply(&r, &ev(BeadState::Submitted, r.version, BeadEventKind::GateRed { tip: "t1".into(), reason: GateRedReason::SuitesFailed }));
+        let claimed = apply(&red.row, &ev(BeadState::Rework, red.row.version, BeadEventKind::Claim { holder: "h".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }));
+        let again = apply(&claimed.row, &ev(BeadState::Working, claimed.row.version, BeadEventKind::Submit { tip: "t1".into() }));
+        assert_eq!(again.refusal, Some(Refusal::EjectedRedTip { tip: "t1".into() }));
     }
 
     #[test]
