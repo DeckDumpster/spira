@@ -389,8 +389,9 @@ applied_count=0
 for i in $(seq 1 "$N"); do
     rc="$(tail -n1 "$TMP/race-$i.out")"
     [ "$rc" = "0" ] && applied_count=$((applied_count + 1))
-is "exactly one racing land applies [rv=$race_version $(tr "\n" " " < "$TMP/race-1.out" | cut -c1-200)]" "1" "$applied_count"
-is "exactly one racing land applies" "1" "$applied_count"
+done
+race_diag="$(tr "\n" " " < "$TMP/race-1.out" | cut -c1-200)"
+is "exactly one racing land applies [$race_diag]" "1" "$applied_count"
 is "the batch's version advanced by exactly one applied land" "$((race_version + 1))" "$(batch_field batch-race version)"
 is "the batch ends landed" "LANDED" "$(batch_field batch-race state)"
 
