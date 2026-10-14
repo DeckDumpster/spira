@@ -749,3 +749,10 @@ tier = "release"
 purpose = "Spira's refusal-watch binary, from the release's bin/ — files one bead per refused-transition class over baseline"
 version_min = ""
 version_probe = "readlink -f \"$(command -v refusal-watch)\""
+
+[[dep]]
+name = "spira-submission"
+tier = "release"
+purpose = "Spira's spira-submission binary, from the release's bin/ — authenticated SMTPS submission on the tailnet, handing replies from a mail client to mail sendmail."
+version_min = ""
+version_probe = "readlink -f \"$(command -v spira-submission)\""

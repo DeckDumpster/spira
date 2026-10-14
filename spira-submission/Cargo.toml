@@ -1,0 +1,22 @@
+[package]
+name = "spira-submission"
+version = "1.0.0"
+edition = "2021"
+description = "Authenticated SMTPS submission on the tailnet: a reply from a mail client reaches `mail sendmail` with its thread intact."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "spira-submission"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pemfile = "2"
+sha2 = "0.10"
+spira-config = { path = "../spira-config" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

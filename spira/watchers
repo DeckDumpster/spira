@@ -193,3 +193,7 @@ pass-rate|daemon|@SPIRA_HOME@/pass-rate.sh watch --interval 900|@SPIRA_HOME@/pas
 # breach — a MENDING row past its deadline, or a bead mended more than twice in a day — and a
 # quiet log means every mender is inside its bounds.
 mend-watch|log|@SPIRA_RUN@/mend-watch.log
+
+# spira-submission is its own systemd unit; health TLS-connects to the configured address and
+# requires the SMTP banner. Unconfigured (SPIRA_SUBMISSION_ADDR empty) health exits 0 and serve idles.
+spira-submission|extern|spira-submission|spira-submission health

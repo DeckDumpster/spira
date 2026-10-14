@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=submission
+DOC=Domain of the Spira mailbox addresses spira-submission accepts as recipients
+SCHEMA=Domain part of the Spira mailbox addresses (concierge@spira) spira-submission accepts as recipients; anything else is refused at RCPT.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_SUBMISSION_RCPT_DOMAIN:=spira}"
+SPIRA_CONF_DEFAULT_EOF

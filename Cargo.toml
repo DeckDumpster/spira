@@ -78,6 +78,7 @@ members = [
     "reclaim",
     "sift",
     "refusal-watch",
+    "spira-submission",
 ]
 resolver = "2"
 

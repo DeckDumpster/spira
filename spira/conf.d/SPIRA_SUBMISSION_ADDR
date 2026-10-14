@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=submission
+DOC=This host's tailnet IP address spira-submission listens on (never a wildcard); empty disables the service
+SCHEMA=The host's tailnet IP address (no port, never a wildcard) that spira-submission, the authenticated SMTPS endpoint for replying from a mail client, binds. No default: empty means spira-submission does not start (it never guesses).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets
+    # it; empty means spira-submission refuses to start (law-a-config-value-has-no-fallback).
+SPIRA_CONF_DEFAULT_EOF

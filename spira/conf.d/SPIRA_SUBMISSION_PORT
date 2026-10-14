@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=submission
+DOC=TCP port spira-submission listens on (implicit TLS)
+SCHEMA=TCP port spira-submission listens on (SMTPS); above 1024 so it needs no privilege (range 1025-65535).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_SUBMISSION_PORT:=2587}"
+SPIRA_CONF_DEFAULT_EOF
