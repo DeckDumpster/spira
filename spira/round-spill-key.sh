@@ -35,7 +35,7 @@ _rsk_once() {
 
 _rsk_probe() {
     local out mark="$SPIRA_RUN/watchd/round-spill-key.said"
-    if out="$(timeout 120 round-vm ec2-probe --dry-run 2>&1)"; then
+    if out="$(timeout 5 round-vm ec2-probe --dry-run 2>&1)"; then
         [ -f "$mark" ] && { grep -v '^probe-' "$mark" > "$mark.tmp"; mv "$mark.tmp" "$mark"; }
         return 0
     fi
