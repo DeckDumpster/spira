@@ -1,7 +1,9 @@
 //! spira-submission: implicit-TLS SMTP submission that hands each accepted message to
 //! `mail sendmail`, so a reply from a mail client behaves exactly like a cockpit reply.
 
+pub mod clock;
 pub mod credential;
+pub mod provision;
 pub mod smtp;
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -76,7 +78,7 @@ impl Config {
         SocketAddr::new(self.addr, self.port)
     }
 
-    fn policy(&self) -> Policy {
+    fn policy(&self, peer: String) -> Policy {
         Policy {
             host: self.addr.to_string(),
             user: self.user.clone(),
@@ -84,6 +86,7 @@ impl Config {
             rcpt_domain: self.rcpt_domain.clone(),
             password_file: self.password_file.clone(),
             max_message_bytes: MAX_MESSAGE_BYTES,
+            peer,
         }
     }
 }
@@ -148,24 +151,26 @@ pub fn serve(listener: TcpListener, cfg: Config, sink: Arc<dyn Sink + Send + Syn
     for conn in listener.incoming() {
         let Ok(tcp) = conn else { continue };
         let (cfg, sink) = (cfg.clone(), sink.clone());
+        let peer = tcp.peer_addr().map_or("unknown".to_string(), |a| a.to_string());
         std::thread::spawn(move || {
             let _ = tcp.set_read_timeout(Some(IO_TIMEOUT));
             let _ = tcp.set_write_timeout(Some(IO_TIMEOUT));
             let tls_cfg = match server_config(&cfg.cert, &cfg.key) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("spira-submission: {e}");
+                    smtp::attempt(sink.as_ref(), &peer, "", "", &format!("tls: refused: {e}"));
                     return;
                 }
             };
             let Ok(conn) = ServerConnection::new(tls_cfg) else { return };
             let mut tls = StreamOwned::new(conn, tcp);
             while tls.conn.is_handshaking() {
-                if tls.conn.complete_io(&mut tls.sock).is_err() {
+                if let Err(e) = tls.conn.complete_io(&mut tls.sock) {
+                    smtp::attempt(sink.as_ref(), &peer, "", "", &format!("tls: refused: handshake failed: {e}"));
                     return;
                 }
             }
-            smtp::serve_session(tls, &cfg.policy(), sink.as_ref());
+            smtp::serve_session(tls, &cfg.policy(peer), sink.as_ref());
         });
     }
 }

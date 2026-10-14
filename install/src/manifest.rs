@@ -219,6 +219,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
 
     m.units.push(t("spira-loom.service", true));
     m.units.push(t("spira-submission.service", true));
+    m.units.push(t("spira-submission-provision.service", false));
+    m.units.push(t("spira-submission-provision.timer", true));
 
     // sccache-dav.service: a template whose Environment= lines bind one box's own LAN
     // address — operator inventory, never a literal in the public harness

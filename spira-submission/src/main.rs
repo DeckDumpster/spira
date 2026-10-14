@@ -1,8 +1,12 @@
+use spira_submission::provision::{self, Plan, RealHost};
 use spira_submission::{health, serve, Config, SendmailSink};
 use std::sync::Arc;
 
 fn main() {
     let cmd = std::env::args().nth(1).unwrap_or_default();
+    if cmd == "provision" || cmd == "status" {
+        return operate(&cmd);
+    }
     let cfg = match Config::from_spira() {
         Ok(Some(c)) => c,
         Ok(None) => {
@@ -44,8 +48,33 @@ fn main() {
             serve(listener, cfg, sink);
         }
         other => {
-            eprintln!("spira-submission: unknown subcommand {other:?} (serve | health)");
+            eprintln!("spira-submission: unknown subcommand {other:?} (serve | health | provision | status)");
             std::process::exit(2);
         }
+    }
+}
+
+fn operate(cmd: &str) {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let plan = match Plan::from_spira(format!("{home}/.config/spira/submission").into(), "/etc/ufw/ufw.conf".into()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("spira-submission: {e}");
+            std::process::exit(2);
+        }
+    };
+    if cmd == "status" {
+        print!("{}", provision::status(&RealHost, &plan));
+        return;
+    }
+    let report = provision::provision(&RealHost, &plan);
+    for n in &report.notes {
+        println!("spira-submission: {n}");
+    }
+    for e in &report.errors {
+        eprintln!("spira-submission: {e}");
+    }
+    if !report.errors.is_empty() {
+        std::process::exit(1);
     }
 }

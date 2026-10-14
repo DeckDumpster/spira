@@ -59,7 +59,7 @@ pub struct Section {
 pub fn run(w: &dyn World) -> i32 {
     w.out("spira doctor");
 
-    let sections: Vec<Section> = vec![
+    let mut sections: Vec<Section> = vec![
         Section { title: "release tools", lines: check_release_tools(w) },
         Section { title: "hotfix", lines: check_hotfix(w) },
         Section { title: "config files", lines: check_config_files(w) },
@@ -95,6 +95,10 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "git hooks", lines: check_hooks_path(w) },
         Section { title: "spira-env", lines: check_spira_env(w) },
     ];
+    let submission = check_submission(w);
+    if !submission.is_empty() {
+        sections.push(Section { title: "mail submission", lines: submission });
+    }
 
     let mut fatal = 0u32;
     let mut warned = 0u32;
@@ -767,6 +771,61 @@ pub fn check_snapshot_fresh(w: &dyn World) -> Vec<Line> {
 }
 
 // ============================================================================ operator channel
+
+/// Reads `spira-submission status`. Silent where the binary is absent.
+pub fn check_submission(w: &dyn World) -> Vec<Line> {
+    let Some(text) = w.submission_status() else { return Vec::new() };
+    let kv: std::collections::BTreeMap<&str, &str> = text.lines().filter_map(|l| l.split_once('=')).collect();
+    let get = |k: &str| kv.get(k).copied().unwrap_or("");
+    if get("configured") != "1" {
+        return vec![if get("tailnet") == "1" {
+            warn(
+                "spira-submission is not configured although tailscale is up — the operator cannot send from a mail client",
+                "Run: spira-submission provision (the provision timer does this daily)",
+            )
+        } else {
+            ok("spira-submission is not configured (spira.submission_addr empty) and tailscale is not up")
+        }];
+    }
+    let addr = get("addr");
+    let mut out = Vec::new();
+    if get("listening") != "1" {
+        out.push(fail(
+            format!("spira-submission is configured for {addr} but not listening"),
+            "journalctl --user -u spira-submission.service; the log is spira-submission.log under SPIRA_RUN",
+        ));
+    } else {
+        match get("firewall") {
+            "closed" => out.push(fail(
+                format!("spira-submission is listening on {addr} but unreachable on the tailnet interface — the firewall has no allow rule for it"),
+                format!("As root: ufw allow in on {} to any port {} proto tcp (spira-submission provision does this where it has sudo)", get("iface"), addr.rsplit(':').next().unwrap_or("")),
+            )),
+            "unknown" => out.push(warn(
+                format!("spira-submission is listening on {addr} but the firewall cannot be read, so tailnet reachability is unverified"),
+                "ufw is enabled and `sudo -n ufw status` is refused",
+            )),
+            _ => out.push(ok(format!("spira-submission listening on {addr}"))),
+        }
+    }
+    match get("cert_days").parse::<i64>() {
+        Err(_) => out.push(fail("spira-submission has no readable certificate", "Run: spira-submission provision")),
+        Ok(d) if d <= 0 => out.push(fail("spira-submission certificate has expired", "Run: spira-submission provision")),
+        Ok(d) if d < 21 => out.push(warn(
+            format!("spira-submission certificate expires in {d} days — the renewal timer is not keeping it fresh"),
+            "systemctl --user status spira-submission-provision.timer; run: spira-submission provision",
+        )),
+        Ok(d) => out.push(ok(format!("spira-submission certificate has {d} days left"))),
+    }
+    match get("password") {
+        "missing" => out.push(fail("spira-submission password file is missing", "Run: spira-submission provision")),
+        "mode" => out.push(fail("spira-submission password file has group or other permission bits — the server refuses it", "Run: spira-submission provision")),
+        "drifted" => out.push(fail("spira-submission password file has drifted from the IMAP users file — the phone's password no longer matches", "Run: spira-submission provision")),
+        "nosource" => out.push(fail("spira-submission cannot read its password source (spira.submission_users_file)", "")),
+        "ok" => out.push(ok("spira-submission password file matches the IMAP users file")),
+        _ => {}
+    }
+    out
+}
 
 pub fn check_operator_channel(w: &dyn World) -> Vec<Line> {
     let operated = w.env("SPIRA_OPERATED").map(|v| v != "0").unwrap_or(true);

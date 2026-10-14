@@ -58,6 +58,7 @@ pub struct Fake {
     pub env_installed: RefCell<Option<String>>,
     pub env_locked: RefCell<Result<String, String>>,
     pub tool_versions: RefCell<BTreeMap<PathBuf, String>>,
+    pub submission: RefCell<Option<String>>,
 }
 
 impl Default for Fake {
@@ -109,6 +110,7 @@ impl Default for Fake {
             env_installed: RefCell::new(None),
             env_locked: RefCell::new(Err(String::new())),
             tool_versions: RefCell::new(BTreeMap::new()),
+            submission: RefCell::new(None),
         }
     }
 }
@@ -254,6 +256,9 @@ impl World for Fake {
     }
     fn git_hooks_path(&self, _repo: &Path) -> Option<String> {
         self.hooks_path.borrow().clone()
+    }
+    fn submission_status(&self) -> Option<String> {
+        self.submission.borrow().clone()
     }
     fn out(&self, s: &str) {
         self.stdout.borrow_mut().push(s.to_string());
@@ -1280,4 +1285,59 @@ fn spira_env_warns_when_not_installed() {
     let f = env_fixture(STORE_A, STORE_A, "/h/.local/lib/spira-env/bin/bd");
     *f.env_installed.borrow_mut() = None;
     assert_eq!(levels(&check_spira_env(&f)), vec![Level::Warn]);
+}
+
+// ============================================================================ mail submission
+
+fn submission(status: &str) -> Vec<Line> {
+    let f = Fake::default();
+    *f.submission.borrow_mut() = Some(status.to_string());
+    check_submission(&f)
+}
+
+const HEALTHY: &str = "configured=1\ntailnet=1\nlistening=1\naddr=100.64.0.1:2587\niface=tailscale0\nfirewall=open\ncert_days=80\npassword=ok\n";
+
+#[test]
+fn submission_absent_binary_is_silent() {
+    assert!(check_submission(&Fake::default()).is_empty());
+}
+
+#[test]
+fn submission_healthy_is_all_ok() {
+    assert!(submission(HEALTHY).iter().all(|l| l.level == Level::Ok));
+}
+
+#[test]
+fn submission_configured_but_not_listening_fails() {
+    let out = submission(&HEALTHY.replace("listening=1", "listening=0"));
+    assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("not listening")), "{out:?}");
+}
+
+#[test]
+fn submission_listening_behind_a_closed_firewall_is_its_own_row() {
+    let out = submission(&HEALTHY.replace("firewall=open", "firewall=closed"));
+    let l = out.iter().find(|l| l.level == Level::Fail).expect("a failing row");
+    assert!(l.msg.contains("unreachable on the tailnet interface"), "{l:?}");
+    assert!(!l.msg.contains("not listening"));
+    assert!(l.detail.as_deref().unwrap().contains("ufw allow in on tailscale0 to any port 2587"));
+}
+
+#[test]
+fn submission_certificate_under_21_days_warns_and_expired_fails() {
+    let out = submission(&HEALTHY.replace("cert_days=80", "cert_days=20"));
+    assert!(out.iter().any(|l| l.level == Level::Warn && l.msg.contains("expires in 20 days")), "{out:?}");
+    assert!(submission(&HEALTHY.replace("cert_days=80", "cert_days=21")).iter().all(|l| l.level == Level::Ok));
+    assert!(submission(&HEALTHY.replace("cert_days=80", "cert_days=0")).iter().any(|l| l.level == Level::Fail));
+}
+
+#[test]
+fn submission_password_drift_fails() {
+    let out = submission(&HEALTHY.replace("password=ok", "password=drifted"));
+    assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("drifted")), "{out:?}");
+}
+
+#[test]
+fn submission_unconfigured_warns_only_when_tailscale_is_up() {
+    assert_eq!(submission("configured=0\ntailnet=1\n")[0].level, Level::Warn);
+    assert_eq!(submission("configured=0\ntailnet=0\n")[0].level, Level::Ok);
 }
