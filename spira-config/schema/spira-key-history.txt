@@ -208,6 +208,8 @@ queue_batcher
 queue_batch_idle_cut
 queue_batch_max
 queue_batch_wait
+queue_capacity_backoff_max
+queue_capacity_backoff_min
 queue_ci_idle_sec
 queue_ci_maxsec
 queue_dir
@@ -440,3 +442,5 @@ lc_backup_drill_budget_ms
 lc_backup_drill_dir
 lc_backup_drill_poll_secs
 lc_backup_drill_wait_secs
+queue_capacity_backoff_max
+queue_capacity_backoff_min

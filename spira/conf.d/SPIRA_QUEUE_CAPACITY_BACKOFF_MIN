@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=queue
+DOC=HOW LONG, in seconds, a repo is not re-cut after its batch failed for lack of capacity; doubles per consecutive failure.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG, in seconds, a repo is not re-cut after its batch failed for lack of capacity; doubles per consecutive failure.
+    : "${SPIRA_QUEUE_CAPACITY_BACKOFF_MIN:=300}"
+SPIRA_CONF_DEFAULT_EOF

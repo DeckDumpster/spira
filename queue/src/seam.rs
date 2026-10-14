@@ -73,6 +73,8 @@ __v="SPIRA_QUEUE_CI_IDLE_SEC_$__K"; __kv ci_idle "${!__v:-${SPIRA_QUEUE_CI_IDLE_
 __kv infra_retries "${SPIRA_QUEUE_INFRA_RETRIES:-2}"
 __kv lock_wait "${SPIRA_QUEUE_LOCK_WAIT:-90}"
 __kv starve_max "${SPIRA_QUEUE_LOCK_STARVE_MAX:-5}"
+__kv capacity_backoff_min "${SPIRA_QUEUE_CAPACITY_BACKOFF_MIN:-300}"
+__kv capacity_backoff_max "${SPIRA_QUEUE_CAPACITY_BACKOFF_MAX:-3600}"
 __kv incident_priority "${SPIRA_INCIDENT_PRIORITY:-1}"
 __kv red_tracker_label "${SPIRA_RED_TRACKER_LABEL:-}"
 __kv mender_label "${SPIRA_MENDER_LABEL:-mender-failure}"

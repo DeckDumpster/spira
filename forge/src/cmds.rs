@@ -283,6 +283,7 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, b
     let mut build_err_lines: Vec<String> = Vec::new();
     let mut step_lines: Vec<String> = Vec::new();
     let mut run_attributable = false;
+    let mut capacity_line: Option<String> = None;
     if status == "green" || status == "red" {
         run_attributable = true;
         if let Some(rid) = &run_id {
@@ -294,6 +295,10 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, b
             let prov_failed = jv.as_ref().map(|v| job_bad(v, "provision")).unwrap_or(false);
             if prov_failed {
                 status = "provision_fault".to_string();
+                if let Some(id) = jv.as_ref().and_then(|v| bad_job_id(v, "provision")) {
+                    let logs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")]);
+                    capacity_line = capacity_marker(&logs.text()).map(|m| format!("capacity: {m}"));
+                }
             }
         }
         if status == "red" {
@@ -347,6 +352,7 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, b
     if status == "red" {
         lines.extend(step_lines);
     }
+    lines.extend(capacity_line);
     for l in &build_err_lines {
         if !l.is_empty() {
             lines.push(format!("build-error: {l}"));
@@ -378,6 +384,13 @@ fn job_bad(v: &Value, name: &str) -> bool {
         }
     }
     false
+}
+
+const CAPACITY_MARKERS: [&str; 5] = ["VcpuLimitExceeded", "InstanceLimitExceeded", "MaxSpotInstanceCountExceeded", "InsufficientInstanceCapacity", "spill ceiling"];
+
+/// The first capacity marker a provision job's log names: a failure that retrying cannot change.
+fn capacity_marker(log: &str) -> Option<&'static str> {
+    CAPACITY_MARKERS.iter().copied().find(|m| log.contains(m))
 }
 
 const STEP_LOG_TAIL: usize = 20;

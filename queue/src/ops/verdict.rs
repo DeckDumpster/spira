@@ -514,7 +514,7 @@ fn process(w: &World, c: &Ctx, path: &Path, file: &Path) -> i32 {
     }
     match status.as_str() {
         "pending" => pending(w, c, &b),
-        "harness_fault" => harness_fault(w, c, &b),
+        "harness_fault" => harness_fault(w, c, &b, &out),
         "green" => green(w, c, &b, &base, &out),
         "red" => red(w, c, &b, &out),
         s => {
@@ -612,8 +612,34 @@ fn close_and_certify(w: &World, c: &Ctx, b: &Batch) {
     let _ = std::fs::remove_file(b.file);
 }
 
-fn harness_fault(w: &World, c: &Ctx, b: &Batch) -> i32 {
+/// A capacity failure changes nothing on a re-run or a re-cut: close the batch, hold the repo
+/// off for an exponentially growing, bounded interval, and say so once (the first failure).
+fn capacity_fault(w: &World, c: &Ctx, b: &Batch, marker: &str) -> i32 {
     let (name, pr) = (b.name, &b.pr);
+    let file = c.queue_file("capacity-backoff");
+    let failures = records::read_kv(&file).ok().flatten().and_then(|k| k.get("failures").and_then(|f| f.trim().parse::<u32>().ok())).unwrap_or(0) + 1;
+    let (min, max) = (c.s.verdict.capacity_backoff_min, c.s.verdict.capacity_backoff_max.max(c.s.verdict.capacity_backoff_min));
+    let wait = min.saturating_mul(1u64 << (failures - 1).min(20)).min(max);
+    let until = w.clock.now() + wait;
+    if let Err(e) = write_atomic(&file, &format!("failures={failures}\nuntil={until}\nreason={}\n", records::one_line(marker))) {
+        w.err(format!("verdict {name}: cannot record the capacity backoff: {e}"));
+    }
+    w.out(format!("verdict {name}: PR {pr} provision failed on capacity ({marker}) — closing batch; no re-cut for {wait}s (failure {failures})"));
+    close_and_certify(w, c, b);
+    if failures == 1 {
+        w.scripts.mail_operator(
+            &format!("Merge queue: {name} waiting on capacity"),
+            &format!("## Note\nMerge queue batch for {name} failed in provision on capacity ({marker}). PR {pr} closed, members returned to CERTIFIED.\n\nThe repo is not re-cut until capacity changes: backing off {wait}s, doubling per consecutive capacity failure up to {max}s. Reported once; further failures are silent.\n"),
+        );
+    }
+    OK
+}
+
+fn harness_fault(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
+    let (name, pr) = (b.name, &b.pr);
+    if let Some(marker) = tagged(out, "capacity: ").last() {
+        return capacity_fault(w, c, b, marker.trim());
+    }
     let retries: u64 = b.kv.get("retries").and_then(|r| r.trim().parse().ok()).unwrap_or(0);
     let max = c.s.verdict.infra_retries;
     if classify_fault_rerun(retries, max) {
@@ -689,6 +715,7 @@ fn fast_forward(w: &World, c: &Ctx, b: &Batch, base: &str, remote: &str, base_br
         w.err(format!("verdict {name}: PR {pr} fast-forward push failed"));
         return FAIL;
     }
+    let _ = std::fs::remove_file(c.queue_file("capacity-backoff"));
     w.out(format!("verdict {name}: PR {pr} landed by fast-forward ({})", b.head));
     if !lc_land(w, b) {
         // The base has moved but the lifecycle did not take the land: keep the record so the

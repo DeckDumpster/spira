@@ -414,6 +414,8 @@ impl Lib for RealLib {
                 infra_retries: n("infra_retries", 2),
                 lock_wait: n("lock_wait", 90),
                 lock_starve_max: n("starve_max", 5),
+                capacity_backoff_min: n("capacity_backoff_min", 300),
+                capacity_backoff_max: n("capacity_backoff_max", 3600),
                 incident_priority: Some(g("incident_priority")).filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "1".into()),
                 red_tracker_label: g("red_tracker_label"),
                 mender_label: g("mender_label"),
@@ -1262,7 +1264,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let (s, _) = lib.context(Some("spira")).unwrap();
         assert_eq!(
             s.verdict,
-            VerdictSettings { ci_maxsec: 77, ci_idle_sec: 12, infra_retries: 4, lock_wait: 9, lock_starve_max: 3, incident_priority: "3".into(), red_tracker_label: String::new(), mender_label: "mender-failure".into() }
+            VerdictSettings { ci_maxsec: 77, ci_idle_sec: 12, infra_retries: 4, lock_wait: 9, lock_starve_max: 3, capacity_backoff_min: 300, capacity_backoff_max: 3600, incident_priority: "3".into(), red_tracker_label: String::new(), mender_label: "mender-failure".into() }
         );
         // another repository gets the global value; a name that is not an identifier none
         let (s, _) = lib.context(Some("svc")).unwrap();

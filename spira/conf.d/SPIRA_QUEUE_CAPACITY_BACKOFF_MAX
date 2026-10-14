@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=queue
+DOC=THE CEILING, in seconds, of the capacity backoff.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE CEILING, in seconds, of the capacity backoff.
+    : "${SPIRA_QUEUE_CAPACITY_BACKOFF_MAX:=3600}"
+SPIRA_CONF_DEFAULT_EOF
