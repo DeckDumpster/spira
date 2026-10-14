@@ -92,6 +92,7 @@ nowant "amend foreign: nothing written" "Pokédex" "$(show sp-idn-a)"
 run "$REG" amend x-1 --note "clean note"; rc=$?
 is "amend clean: exit 0" 0 "$rc"
 BEAD_CROSS_REPO_CONSIDERED="spans repos" run "$REG" amend x-1 --note "also cover Pokédex"; rc=$?
+[ "$rc" = 0 ] || sed 's/^/# /' "$TMP/out"
 is   "amend override: exit 0" 0 "$rc"
 want "amend override: reason noted" "Cross-repo considered: spans repos" "$(show sp-idn-a)"
 
