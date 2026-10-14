@@ -1,0 +1,20 @@
+[Unit]
+Description=Spira round VM drain — release the warm round VM once nothing needs it, so it stops holding Proxmox memory
+Documentation=file://@SPIRA_PROD_ROOT@/round-vm/DESIGN.md
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=SPIRA_HOME=@SPIRA_HOME@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/round-vm drain
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spira-round-vm-drain
+
+[X-Spira]
+Plane=work
