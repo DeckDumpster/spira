@@ -262,8 +262,9 @@ impl Lib for FakeLib {
     fn ask_refresh_loop(&self, _: &Path, name: &str, br: &str, id: &str, _: &str, n: u32) {
         self.rec(format!("ask_refresh_loop {id} {br} {name} {n}"));
     }
-    fn deliver_pr_merged(&self, _: &Path, id: &str, br: &str, sha: &str) {
+    fn deliver_pr_merged(&self, _: &Path, id: &str, br: &str, sha: &str) -> bool {
         self.rec(format!("deliver_pr_merged {id} {br} {sha}"));
+        true
     }
     fn deliver_pr_closed(&self, id: &str, reason: &str) {
         self.rec(format!("deliver_pr_closed {id} {reason}"));
@@ -1195,7 +1196,7 @@ fn push_mode_lands_on_a_real_remote() {
         fn ask_refresh_loop(&self, a: &Path, b: &str, c: &str, d: &str, e: &str, n: u32) {
             self.0.ask_refresh_loop(a, b, c, d, e, n)
         }
-        fn deliver_pr_merged(&self, a: &Path, b: &str, c: &str, d: &str) {
+        fn deliver_pr_merged(&self, a: &Path, b: &str, c: &str, d: &str) -> bool {
             self.0.deliver_pr_merged(a, b, c, d)
         }
         fn deliver_pr_closed(&self, a: &str, b: &str) {

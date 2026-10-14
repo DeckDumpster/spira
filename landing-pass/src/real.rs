@@ -226,13 +226,14 @@ fn p(p: &Path) -> String {
 
 impl<'a> RealLib<'a> {
     /// A refused delivery event is a loud line, never a swallowed status.
-    fn deliver_checked(&self, op: Op, values: &[&str], verb: &str, id: &str) {
+    fn deliver_checked(&self, op: Op, values: &[&str], verb: &str, id: &str) -> bool {
         let (rc, _) = self.seam.call(op, values);
         if rc != 0 {
             let line = format!("landing-pass: {id}: LIFECYCLE: spira-lc deliver {verb} did not happen (exit {rc})");
             self.seam.out.log(&line);
             eprintln!("{line}");
         }
+        rc == 0
     }
     /// lib.sh `ask_already_open <subject>` (sp-31hjr) — the strongest dedupe is "is it
     /// already in front of him", so this asks the database.
@@ -536,8 +537,8 @@ impl<'a> Lib for RealLib<'a> {
         let (subj, dflt, body) = crate::ask::refresh_loop_mail(id, branch, name, base_fq, &behind, n, self.s.pr_refresh_max, &ctx);
         self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body);
     }
-    fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str) {
-        self.deliver_checked(Op::DeliverPrMerged, &[&p(repo), id, branch, merge_sha], "pr-merged", id);
+    fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str) -> bool {
+        self.deliver_checked(Op::DeliverPrMerged, &[&p(repo), id, branch, merge_sha], "pr-merged", id)
     }
     fn deliver_pr_closed(&self, id: &str, reason: &str) {
         self.deliver_checked(Op::DeliverPrClosed, &[id, reason], "pr-closed", id);
