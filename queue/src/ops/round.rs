@@ -428,7 +428,7 @@ pub(super) fn return_to_rework(w: &World, m: &Member) -> Result<(), String> {
 
 /// The gate-worker's recorded FAIL for `spira/<id>` at exactly `tip`, as the gate's own reason.
 /// BASE_FAIL and NO_VERDICT are not the branch's fault and a missing verdict says nothing.
-fn gate_red_at(c: &Ctx, id: &str, tip: &str) -> Option<String> {
+pub(super) fn gate_red_at(c: &Ctx, id: &str, tip: &str) -> Option<String> {
     let done = GateQueue::new(&c.s.run).peek_done(&c.r.name, &format!("spira/{id}"), tip)?;
     (done.run.outcome == GateOutcome::Fail).then(|| done.run.reason_or("unspecified").to_string())
 }

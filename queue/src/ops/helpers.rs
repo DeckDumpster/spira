@@ -29,7 +29,12 @@ pub fn certified_list(repo: &Path) -> Vec<(String, String, u64)> {
 
 /// The CERTIFIED rows whose bead has a `spira/<id>` branch among `branches`.
 pub fn certified_rows(lc: &dyn Lc, branches: &[(String, String)]) -> Vec<(String, String, u64)> {
-    let rows = lc.bead_rows(Some("CERTIFIED")).unwrap_or_default();
+    state_rows(lc, branches, "CERTIFIED")
+}
+
+/// The `state` rows whose bead has a `spira/<id>` branch among `branches`.
+pub fn state_rows(lc: &dyn Lc, branches: &[(String, String)], state: &str) -> Vec<(String, String, u64)> {
+    let rows = lc.bead_rows(Some(state)).unwrap_or_default();
     let mut out = Vec::new();
     for (branch, _) in branches {
         let Some(id) = branch.strip_prefix("spira/") else { continue };

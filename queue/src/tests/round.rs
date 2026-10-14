@@ -353,7 +353,7 @@ fn open_admits_a_submitted_member_its_full_suite_certifies() {
     assert!(t.lc.has("cut"), "the round is recorded as a batch");
 }
 
-fn file_gate_verdict(t: &T, id: &str, tip: &str, rc: i32) {
+pub(super) fn file_gate_verdict(t: &T, id: &str, tip: &str, rc: i32) {
     use landing_pass::gateq::{Done, GateQueue, Job};
     let job = Job::new("spira", &format!("spira/{id}"), id, tip, false);
     let run = landing_pass::model::GateRun::parse(rc, "gate: VERDICT=FAIL reason=branch-red suite=test-x.sh".into());

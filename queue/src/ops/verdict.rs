@@ -319,8 +319,26 @@ fn lock_waiting(w: &World, c: &Ctx) -> Result<Guard, bool> {
     }
 }
 
+/// A provisional member (admitted SUBMITTED, its gate still running) whose gate has gone FAIL at
+/// the tip the batch carries is ejected with the gate's own failing reason; the batcher re-cuts.
+fn eject_gate_red_provisionals(w: &World, c: &Ctx) {
+    let kv = match records::read_kv(&c.queue_file("open")) {
+        Ok(Some(kv)) => kv,
+        _ => return,
+    };
+    let provisional: Vec<&str> = kv.get_first("provisional").unwrap_or("").split_whitespace().collect();
+    for m in kv.members().into_iter().filter(|m| provisional.contains(&m.id.as_str())) {
+        let Some(why) = super::round::gate_red_at(c, &m.id, &m.tip) else { continue };
+        let reason = format!("provisional member {}: its own gate went FAIL at {} while the batch was open: {why}", m.id, m.tip);
+        w.out(format!("verdict {}: {reason}", c.r.name));
+        super::batch::eject(w, &m.id, Some(&c.r.name), &crate::cli::Text::Arg(reason), "", true, false, false);
+        return;
+    }
+}
+
 fn forge_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
     let name = c.r.name.as_str();
+    eject_gate_red_provisionals(w, c);
     let skips_file = c.queue_file("lock-skips");
     let guard = match lock_waiting(w, c) {
         Ok(g) => g,

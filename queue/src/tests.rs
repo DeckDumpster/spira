@@ -1604,6 +1604,52 @@ fn open_batch_refused_cut_opens_no_pr_and_leaves_no_state() {
 }
 
 #[test]
+fn open_batch_with_only_a_submitted_bead_cuts_it_as_a_provisional_member() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-s".into(), "ts".into())];
+    t.lc_row("sp-s", "SUBMITTED", "ts", 1);
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-s".into(), status: Some("closed".into()), ..Default::default() });
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.contains("cut ") && c.contains("sp-s:ts")));
+    let rec = fs::read_to_string(t.qfile("open")).unwrap();
+    assert!(rec.contains("members=sp-s:ts\n") && rec.contains("provisional=sp-s\n"), "{rec}");
+}
+
+#[test]
+fn open_batch_puts_certified_ahead_of_submitted_and_marks_only_the_submitted_provisional() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-s".into(), "ts".into()), ("spira/sp-c".into(), "tc".into())];
+    t.lc_row("sp-s", "SUBMITTED", "ts", 1);
+    t.lc_row("sp-c", "CERTIFIED", "tc", 2);
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
+    let rec = fs::read_to_string(t.qfile("open")).unwrap();
+    assert!(rec.contains("members=sp-c:tc sp-s:ts\n") && rec.contains("provisional=sp-s\n"), "{rec}");
+}
+
+#[test]
+fn open_batch_leaves_a_submitted_bead_whose_gate_is_already_fail_out() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-s".into(), "ts".into())];
+    t.lc_row("sp-s", "SUBMITTED", "ts", 1);
+    round::file_gate_verdict(&t, "sp-s", "ts", 1);
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
+    assert!(t.out().contains("sp-s: its gate is FAIL at ts (branch-red)"), "{}", t.out());
+}
+
+#[test]
+fn verdict_ejects_a_provisional_member_whose_gate_went_red_naming_the_gate_lines() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-s:ts\nopened=5\nbranch=spira/queue/x\nowner=batcher\nprovisional=sp-s\nbatch_id=spira-x\nversion=1\n");
+    round::file_gate_verdict(&t, "sp-s", "ts", 1);
+    t.run(&["verdict", "spira"]);
+    assert!(t.out().contains("provisional member sp-s") && t.out().contains("branch-red"), "{}", t.out());
+    assert!(t.lib.has("cause_event sp-s eject-red"), "{:?}", t.lib.calls.borrow());
+}
+
+#[test]
 fn open_batch_refuses_while_a_batch_is_open() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=1\n");
@@ -2631,7 +2677,7 @@ fn open_batch_admits_on_the_lifecycle_row_not_bd_status() {
     ]);
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
     let out = t.out();
-    assert!(out.contains("skip — sp-r: lifecycle state=REWORK (no longer CERTIFIED) — not admitted"), "{out}");
+    assert!(out.contains("skip — sp-r: lifecycle state=REWORK (no longer SUBMITTED or CERTIFIED) — not admitted"), "{out}");
     let rec = fs::read_to_string(t.qfile("open")).unwrap();
     assert!(rec.contains("members=sp-a:ta\n"), "{rec}");
 }
@@ -2677,7 +2723,7 @@ fn open_batch_assembles_admits_opens_and_cuts_on_spira_lc() {
     t.git.merge_fail.borrow_mut().insert("tb".into());
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
     let out = t.out();
-    assert!(out.contains("skip — sp-c: lifecycle state=REWORK (no longer CERTIFIED) — not admitted"), "{out}");
+    assert!(out.contains("skip — sp-c: lifecycle state=REWORK (no longer SUBMITTED or CERTIFIED) — not admitted"), "{out}");
     assert!(out.contains("skip — sp-b: conflicts with base"));
     assert!(out.contains("PR 77 opened — 1 branches (spira/queue/20260929T010203Z)"));
     let rec = fs::read_to_string(t.qfile("open")).unwrap();
