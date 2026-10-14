@@ -188,7 +188,7 @@ _tl_declare() {
 
 # The shipped registry, so a decision-recording tool under test finds one; a suite about a missing
 # registry declares its own path after this.
-tl_config SPIRA_STATUTE_GUARDS="$_TL_HERE/statute-guards" || exit 1
+printf 'statute_guards = "%s"\n' "$_TL_HERE/statute-guards" >> "$_TL_CONF_OVERRIDE"
 
 _tl_init() {
     [ "$_TL_INITED" = 1 ] && return 0
