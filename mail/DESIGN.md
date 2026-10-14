@@ -38,7 +38,8 @@ mail read <mailbox> [<message>]   prints, moves new -> cur
 mail count <mailbox>              number of unread messages
 mail unread-age <mailbox>         seconds since oldest unread; empty if none
 mail done <mailbox> <msgid> [note...]
-mail sendmail                     RFC 5322 on stdin; closes tracking bead on reply
+mail sendmail                     RFC 5322 on stdin; delivers only, never touches the bead store
+mail reconcile                    apply delivered replies to the beads they answer (timer, idempotent per Message-ID)
 mail tidy <mailbox> [--dry-run]
 mail ensure <mailbox>             create the maildir if absent; no-op if present
 mail sweep-dismissed [mailbox]    close asks whose mail was deleted (default operator)

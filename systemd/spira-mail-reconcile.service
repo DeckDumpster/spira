@@ -1,0 +1,26 @@
+[Unit]
+After=lc-serve.service
+Wants=lc-serve.service
+Description=Spira mail reconcile — apply delivered replies to the beads they answer
+Documentation=file://@SPIRA_PROD_ROOT@/mail/DESIGN.md
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=SPIRA_DB=@SPIRA_DB@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+CPUQuota=25%
+Nice=10
+ExecStart=@SPIRA_PROD_ROOT@/bin/mail reconcile
+TimeoutStartSec=300
+StandardOutput=append:@SPIRA_RUN@/mail-reconcile.log
+StandardError=append:@SPIRA_RUN@/mail-reconcile.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance

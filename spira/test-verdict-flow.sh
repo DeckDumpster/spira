@@ -258,6 +258,7 @@ echo
 echo "UC-15: reply closes decision bead; work bead stays open; verdict note written"
 
 compose_reply "$MSGID_A" "Yes, proceed with option A." | run sendmail >/dev/null 2>&1; rc=$?
+run reconcile >/dev/null 2>&1
 isz "sendmail exits 0 on reply" "$rc"
 is "decision bead is closed after reply" "closed" "$(bead_status "$x_bead_a")"
 is "work bead is still open (reply did not close it)" "open" "$(bead_status "$WORK_A")"
@@ -268,6 +269,7 @@ echo
 echo "UC-15: the no-bead decision bead also closes on reply"
 
 compose_reply "$MSGID_NB" "Yes, refactor the parser." | run sendmail >/dev/null 2>&1
+run reconcile >/dev/null 2>&1
 is "no-bead decision bead is closed after reply" "closed" "$(bead_status "$x_bead_nb")"
 
 echo
@@ -280,6 +282,7 @@ SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_OPERATOR_CONSIDERED="test" run send
     --subject "Test message" --bead "$BEAD_T" <<< "body" >/dev/null 2>&1
 MSGID_T="$(msgid_of operator)"
 compose_reply "$MSGID_T" "All looks good." "Re: Test message" | run sendmail >/dev/null 2>&1; rc=$?
+run reconcile >/dev/null 2>&1
 isz "sendmail exits 0 on reply" "$rc"
 is "reply leaves the cited work bead open" "open" "$(bead_status "$BEAD_T")"
 want "reply is recorded as a note on the work bead" "All looks good." "$(bead_notes "$BEAD_T")"
@@ -297,6 +300,7 @@ x_bead_d="$(xbead_of operator)"
 is "with override, work bead IS blocked (1 open blocking-dep)" "1" "$(bead_open_deps "$WORK_D")"
 
 compose_reply "$MSGID_D" "Yes, proceed." | run sendmail >/dev/null 2>&1; rc=$?
+run reconcile >/dev/null 2>&1
 isz "sendmail exits 0 on blocking reply" "$rc"
 is "blocking decision bead is closed after reply" "closed" "$(bead_status "$x_bead_d")"
 is "work bead unblocked after reply (0 open blocking-deps)" "0" "$(bead_open_deps "$WORK_D")"
@@ -324,6 +328,7 @@ is "SEEN RED: decision bead is open before accept-default" "open" "$(bead_status
 
 tl_config SPIRA_MAIL_UNREAD_AGE=4242
 accept_out="$(bash "$HERE/../aerc/accept-default.sh" < "$accept_msg" 2>&1)"; rc=$?
+run reconcile >/dev/null 2>&1
 isz "accept-default exits 0 with a config file present" "$rc"
 [ "$rc" = 0 ] || printf '    %s\n' "$accept_out"
 is "accept-default closes the decision bead (not the work bead)" "closed" "$(bead_status "${dec_bead_accept:-none}")"
@@ -350,14 +355,15 @@ SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" SPIRA_MAIL
 MSGID_S1="$(msgid_of operator)"
 is "SEEN RED: suit bead is open before reply" "open" "$(bead_status "$SUIT1")"
 compose_reply "$MSGID_S1" "uphold" "Re: Suit test" | run sendmail >/dev/null 2>&1
+run reconcile >/dev/null 2>&1
 is "uphold closes suit bead" "closed" "$(bead_status "$SUIT1")"
 is "close reason is the mapped word, not the raw paragraph" "upheld" "$(bead_close_reason "$SUIT1")"
 
 # ==========================================================================
-# UC-19 — a failed bead close leaves sendmail non-zero and the original unmarked.
+# UC-19 — a bead the store cannot close never fails the delivery of the reply.
 # ==========================================================================
 echo
-echo "UC-19: bead-not-found — close failure is reported, sendmail exits non-zero"
+echo "UC-19: bead-not-found — sendmail still exits 0 and delivers; the original is marked replied"
 
 BEAD_MISSING="sp-vf-missing"
 missing_msgid="missing-bead-test.$(date +%s).$$"
@@ -367,11 +373,10 @@ printf 'From: Gate <gate@spira>\nTo: Operator <operator@spira>\nSubject: Missing
 is "SEEN RED: original message exists in new/ before sendmail" "1" \
     "$(ls "$SPIRA_MAIL/operator/new/$missing_msgid" 2>/dev/null | wc -l | tr -d ' ')"
 
-err_out="$(compose_reply "$missing_msgid" "the answer" "Missing bead test" | run sendmail 2>&1)"; reply_rc=$?
-isnz "sendmail exits non-zero when bead close fails" "$reply_rc"
-want "error names the missing bead" "$BEAD_MISSING" "$err_out"
-is "original stays unmodified (not marked replied) when close fails" "1" \
-    "$(ls "$SPIRA_MAIL/operator/new/$missing_msgid" 2>/dev/null | wc -l | tr -d ' ')"
+compose_reply "$missing_msgid" "the answer" "Missing bead test" | run sendmail >/dev/null 2>&1; reply_rc=$?
+isz "sendmail exits 0 although the bead cannot be closed" "$reply_rc"
+is "original is flagged replied" "1" \
+    "$(ls "$SPIRA_MAIL/operator/new/" 2>/dev/null | grep -c "^$missing_msgid.*R$")"
 
 # ==========================================================================
 # UC-24 — land_escalate (sp-31hjr: ported natively into sentinel; was lib.sh via a seam).

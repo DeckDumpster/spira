@@ -1,0 +1,16 @@
+[Unit]
+Description=Apply delivered mail replies to their beads every minute
+
+[Timer]
+OnBootSec=1min
+OnActiveSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=spira-mail-reconcile.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=maintenance
