@@ -1292,6 +1292,17 @@ fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
 }
 
 #[test]
+fn eject_of_a_submitted_unbatched_bead_withdraws_it_to_rework_at_its_red_tip() {
+    let t = T::new(LandMode::Queue);
+    t.lc_row("sp-s", "SUBMITTED", "ts", 5);
+    assert_eq!(t.run(&["eject", "sp-s", "--red", "--reason-file", "-"]), 0, "{}", t.err());
+    assert!(t.lib.has("bead_reopen sp-s eject-red "));
+    let calls = t.lc.calls.borrow().clone();
+    assert!(calls.iter().any(|c| c.contains("sp-s ") && c.contains("Deliver")), "{calls:?}");
+    assert!(calls.iter().any(|c| c.contains("sp-s IN_DELIVERY") && c.contains("batch-ejected-red")), "{calls:?}");
+}
+
+#[test]
 fn eject_of_a_certified_unbatched_bead_is_not_blocked_by_an_unrelated_open_batch() {
     let t = T::new(LandMode::Queue);
     let rec = "pr=12\nmembers=sp-a:ta,sp-b:tb\nbatch_id=spira-1\nversion=3\n";
@@ -1337,7 +1348,7 @@ fn eject_of_a_stranger_names_the_members_and_changes_nothing() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
     assert_eq!(t.run(&["eject", "sp-z"]), 1);
-    assert!(t.err().contains("sp-z is not a member of the open batch for spira and is not CERTIFIED"));
+    assert!(t.err().contains("sp-z is not a member of the open batch for spira and is not CERTIFIED or SUBMITTED"));
     assert!(t.err().contains("batch members: sp-a sp-b"));
     assert!(t.qfile("open").exists());
     assert!(t.lib.calls.borrow().is_empty());

@@ -85,17 +85,18 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     }
 
     let Some(hit) = hit else {
-        // Not batched: a CERTIFIED bead is withdrawn the way a reopen withdraws it.
+        // Not batched: a CERTIFIED or SUBMITTED bead is withdrawn the way a reopen withdraws it.
         let st = w.lc.bead_row(id);
-        if st.as_ref().map(|s| s.state.as_str()) != Some("CERTIFIED") {
-            w.err(format!("queue.sh eject: {id} is not a member of the open batch for {} and is not CERTIFIED", c.r.name));
+        if !matches!(st.as_ref().map(|s| s.state.as_str()), Some("CERTIFIED" | "SUBMITTED")) {
+            w.err(format!("queue.sh eject: {id} is not a member of the open batch for {} and is not CERTIFIED or SUBMITTED", c.r.name));
             let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
             w.err(format!("batch members: {}", if ids.is_empty() { "<none>".to_string() } else { ids.join(" ") }));
             return FAIL;
         }
         if dry_run {
+            let state = st.as_ref().map(|s| s.state.clone()).unwrap_or_default();
             let tip = st.and_then(|s| s.tip).unwrap_or_default();
-            w.out(format!("dry-run: {id} is CERTIFIED but not yet batched for {} (tip={tip})", c.r.name));
+            w.out(format!("dry-run: {id} is {state} but not yet batched for {} (tip={tip})", c.r.name));
             w.out(format!("dry-run: would reopen bead {id}, return it to REWORK on spira-lc and clear assignee"));
             w.out(format!("dry-run: would record cause {}", cause.as_str()));
             w.out(format!("dry-run: would post comment to {id}"));
