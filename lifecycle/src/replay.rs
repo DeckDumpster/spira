@@ -53,10 +53,10 @@ mod tests {
     fn bead_replay_matches_incremental_application_byte_for_byte() {
         let log = vec![
             bead_ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 10, stack: bead::Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }),
-            bead_ev(BeadState::Working, 1, BeadEventKind::Submit { tip: "sha-a".into() }),
+            bead_ev(BeadState::Working, 1, BeadEventKind::Submit { tip: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into() }),
             // A stale gate_pass for a tip that no longer applies: refused, must be a no-op.
-            bead_ev(BeadState::Submitted, 2, BeadEventKind::GatePass { tip: "stale".into(), gate_key: "k0".into() }),
-            bead_ev(BeadState::Submitted, 2, BeadEventKind::GatePass { tip: "sha-a".into(), gate_key: "k1".into() }),
+            bead_ev(BeadState::Submitted, 2, BeadEventKind::GatePass { tip: "9999999999999999999999999999999999999999".into(), gate_key: "k0".into() }),
+            bead_ev(BeadState::Submitted, 2, BeadEventKind::GatePass { tip: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(), gate_key: "k1".into() }),
             bead_ev(BeadState::Certified, 3, BeadEventKind::Deliver),
             bead_ev(BeadState::InDelivery, 4, BeadEventKind::Delivered { merge_sha: "m1".into(), proof: "ancestry".into() }),
         ];
@@ -80,8 +80,8 @@ mod tests {
     fn bead_replay_is_stable_under_re_chunking() {
         let log = vec![
             bead_ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 10, stack: bead::Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }),
-            bead_ev(BeadState::Working, 1, BeadEventKind::Submit { tip: "sha-a".into() }),
-            bead_ev(BeadState::Submitted, 2, BeadEventKind::GateRed { tip: "sha-a".into(), reason: GateRedReason::SuitesFailed }),
+            bead_ev(BeadState::Working, 1, BeadEventKind::Submit { tip: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into() }),
+            bead_ev(BeadState::Submitted, 2, BeadEventKind::GateRed { tip: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(), reason: GateRedReason::SuitesFailed }),
             bead_ev(BeadState::Rework, 3, BeadEventKind::Claim { holder: "aeon-2".into(), lease_until: 20, stack: bead::Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }),
         ];
 

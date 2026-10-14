@@ -176,16 +176,16 @@ submit() {
 }
 
 # ── a round takes SUBMITTED beads directly (law-a-round-is-feature-first-then-catch-all) ─
-submit sp-lc-sub tipS
-certify sp-lc-cer tipC
-out="$(lc cut batch-sub --repo spira --head HS --base BS --members "sp-lc-sub:tipS,sp-lc-cer:tipC" --actor test)"
+submit sp-lc-sub 5a87b6f5b834a712b814f5fe06dc34fb5d3afd00
+certify sp-lc-cer 47c04b5ea08b8b13538198558ff01d225f906962
+out="$(lc cut batch-sub --repo spira --head HS --base BS --members "sp-lc-sub:5a87b6f5b834a712b814f5fe06dc34fb5d3afd00,sp-lc-cer:47c04b5ea08b8b13538198558ff01d225f906962" --actor test)"
 wantrc "cut admits a SUBMITTED member beside a CERTIFIED one" 0 $?
 is "the SUBMITTED member enters delivery" "IN_DELIVERY" "$(member_field sp-lc-sub bead state)"
 is "the CERTIFIED member enters delivery" "IN_DELIVERY" "$(member_field sp-lc-cer bead state)"
-submit sp-lc-rw tipR
+submit sp-lc-rw ae87434d367a0bc968848dd5f559b8ba34b238dd
 v="$(lc show sp-lc-rw | python3 -c 'import json,sys; print(json.load(sys.stdin)["bead"]["version"])')"
-lc event bead sp-lc-rw --expect SUBMITTED --version "$v" --actor test --kind '{"GateRed":{"tip":"tipR","reason":"suites-failed"}}' >/dev/null
-lc cut batch-rw --repo spira --head HR --base BR --members "sp-lc-rw:tipR" --actor test >/dev/null 2>&1
+lc event bead sp-lc-rw --expect SUBMITTED --version "$v" --actor test --kind '{"GateRed":{"tip":"ae87434d367a0bc968848dd5f559b8ba34b238dd","reason":"suites-failed"}}' >/dev/null
+lc cut batch-rw --repo spira --head HR --base BR --members "sp-lc-rw:ae87434d367a0bc968848dd5f559b8ba34b238dd" --actor test >/dev/null 2>&1
 wantrc "cut still refuses a REWORK member" 3 $?
 
 # ── an applied event's states come from the row it applied to (sp-zt7r2p) ───────────────
@@ -199,17 +199,17 @@ is "a CERTIFIED member's Deliver logs CERTIFIED" "CERTIFIED" "$(ev_field bead sp
 is "a delivery row that did not exist is enqueued from NONE" "NONE" "$(ev_field delivery sp-lc-sub Enqueued from_state)"
 is "...and cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-sub Cut from_state)"
 
-certify sp-lc-bx tipBX
+certify sp-lc-bx b8b6bc8fa619d756fe79e1e31c0a0bfe7c2b5168
 root_sql --use-db spira_lifecycle sql -q "INSERT INTO delivery (bead_id, mode, state, batch_id, version) VALUES ('sp-lc-bx', 'queue', 'BATCHED', 'batch-elsewhere', 1)" >/dev/null
-out="$(lc cut batch-bx --repo spira --head HX --base BX --members "sp-lc-bx:tipBX" --actor test 2>&1)"
+out="$(lc cut batch-bx --repo spira --head HX --base BX --members "sp-lc-bx:b8b6bc8fa619d756fe79e1e31c0a0bfe7c2b5168" --actor test 2>&1)"
 wantrc "a cut over a member BATCHED in another batch is refused" 3 $?
 want "...naming that batch" "batch-elsewhere" "$out"
 is "...and the member's bead is untouched" "CERTIFIED" "$(member_field sp-lc-bx bead state)"
 is "...and its delivery row still names the other batch" "batch-elsewhere" "$(member_field sp-lc-bx delivery batch_id)"
 
-certify sp-lc-ex tipEX
+certify sp-lc-ex 509ccd53851bbef241c31f18b73fbccc8bc54188
 root_sql --use-db spira_lifecycle sql -q "INSERT INTO delivery (bead_id, mode, state, version) VALUES ('sp-lc-ex', 'queue', 'EXITED', 4)" >/dev/null
-lc cut batch-ex --repo spira --head HE --base BE --members "sp-lc-ex:tipEX" --actor test >/dev/null
+lc cut batch-ex --repo spira --head HE --base BE --members "sp-lc-ex:509ccd53851bbef241c31f18b73fbccc8bc54188" --actor test >/dev/null
 wantrc "a cut over an EXITED delivery row re-queues it by compare-and-swap" 0 $?
 is "...logging the EXITED row it was" "EXITED" "$(ev_field delivery sp-lc-ex Enqueued from_state)"
 is "...then the cut from QUEUED" "QUEUED" "$(ev_field delivery sp-lc-ex Cut from_state)"
@@ -257,9 +257,9 @@ root_sql --use-db spira_lifecycle sql < "$REPO/lifecycle/migrations/0019-event-c
 wantrc "migration 0013 is idempotent" 0 $?
 
 # ── criterion 1: a green batch lands every member atomically in one transaction ──────────
-certify sp-lc-1 tipA
-certify sp-lc-2 tipB
-out="$(lc cut batch-green --repo spira --head H1 --base B1 --members "sp-lc-1:tipA,sp-lc-2:tipB" --actor test)"
+certify sp-lc-1 78869638376f624716d8cad8f50bd97e85483d83
+certify sp-lc-2 247f23ca924f46eaa79b5a8d6611c1f5ade0bfc0
+out="$(lc cut batch-green --repo spira --head H1 --base B1 --members "sp-lc-1:78869638376f624716d8cad8f50bd97e85483d83,sp-lc-2:247f23ca924f46eaa79b5a8d6611c1f5ade0bfc0" --actor test)"
 wantrc "cut opens batch-green with two members" 0 $?
 want "cut applied every step" '"applied":[true,true,true,true,true,true]' "$out"
 
@@ -291,8 +291,8 @@ wantrc "a second land against an already-landed batch is refused, not partially 
 nowant "the refused replay did not touch the already-landed member" "sha-green-2" "$(member_field sp-lc-1 delivery merge_sha)"
 
 # ── kill mid-flight: the cascade script is one transaction, all-or-nothing ───────────────
-certify sp-lc-kill tipK
-lc cut batch-kill --repo spira --head H2 --base B2 --members "sp-lc-kill:tipK" --actor test >/dev/null
+certify sp-lc-kill a117c79088e6e853371b44f9e76f5ed8ed602fb4
+lc cut batch-kill --repo spira --head H2 --base B2 --members "sp-lc-kill:a117c79088e6e853371b44f9e76f5ed8ed602fb4" --actor test >/dev/null
 v="$(batch_field batch-kill version)"
 lc event batch batch-kill --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
 v="$(batch_field batch-kill version)"
@@ -322,11 +322,11 @@ wantrc "POSITIVE CONTROL: the same batch lands cleanly once the killed attempt i
 is "recovered batch lands" "LANDED" "$(batch_field batch-kill state)"
 
 # ── criterion 2: a red batch settles each member as returned or requeued ─────────────────
-certify sp-lc-eject tipE
-certify sp-lc-req1 tipR1
-certify sp-lc-req2 tipR2
+certify sp-lc-eject e4726a4efc1c18799426d8d476d0a9862ce0821a
+certify sp-lc-req1 8cd777b1e57090b3e1dd4822bc6625bd79e40a9f
+certify sp-lc-req2 24ec62ea28e930a92d47feb2622b797d5fa51a30
 lc cut batch-red --repo spira --head H3 --base B3 \
-    --members "sp-lc-eject:tipE,sp-lc-req1:tipR1,sp-lc-req2:tipR2" --actor test >/dev/null
+    --members "sp-lc-eject:e4726a4efc1c18799426d8d476d0a9862ce0821a,sp-lc-req1:8cd777b1e57090b3e1dd4822bc6625bd79e40a9f,sp-lc-req2:24ec62ea28e930a92d47feb2622b797d5fa51a30" --actor test >/dev/null
 v="$(batch_field batch-red version)"
 lc event batch batch-red --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
 v="$(batch_field batch-red version)"
@@ -343,12 +343,12 @@ is "requeued member 1's bead is certified again" "CERTIFIED" "$(member_field sp-
 is "requeued member 2's bead is certified again" "CERTIFIED" "$(member_field sp-lc-req2 bead state)"
 
 # ── criterion 3: bisect halves are child batches ──────────────────────────────────────────
-certify sp-lc-b1 tipB1
-certify sp-lc-b2 tipB2
-certify sp-lc-b3 tipB3
-certify sp-lc-b4 tipB4
+certify sp-lc-b1 655801ffd0d82ea0d27fcd5ef3c58aadf1bae06e
+certify sp-lc-b2 6f5c5b461ce4476d9e54af2ed76ace77fd6ea884
+certify sp-lc-b3 1ddfb2aaaf515ea6bd55ccf87ca6d89cc41b12fa
+certify sp-lc-b4 72dc4dfa96d33bcd546062bdef722912ab5333b4
 lc cut batch-bisect --repo spira --head H4 --base B4 \
-    --members "sp-lc-b1:tipB1,sp-lc-b2:tipB2,sp-lc-b3:tipB3,sp-lc-b4:tipB4" --actor test >/dev/null
+    --members "sp-lc-b1:655801ffd0d82ea0d27fcd5ef3c58aadf1bae06e,sp-lc-b2:6f5c5b461ce4476d9e54af2ed76ace77fd6ea884,sp-lc-b3:1ddfb2aaaf515ea6bd55ccf87ca6d89cc41b12fa,sp-lc-b4:72dc4dfa96d33bcd546062bdef722912ab5333b4" --actor test >/dev/null
 v="$(batch_field batch-bisect version)"
 lc event batch batch-bisect --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
 v="$(batch_field batch-bisect version)"
@@ -356,9 +356,9 @@ lc event batch batch-bisect --expect CI_RUNNING --version "$v" --actor test --ki
 v="$(batch_field batch-bisect version)"
 lc settle batch-bisect --expect ATTRIBUTING --version "$v" --actor test --requeue sp-lc-b1,sp-lc-b2,sp-lc-b3,sp-lc-b4 >/dev/null
 
-out="$(lc cut batch-bisect-lo --repo spira --head H4 --base B4 --members "sp-lc-b1:tipB1,sp-lc-b2:tipB2" --actor test --parent batch-bisect)"
+out="$(lc cut batch-bisect-lo --repo spira --head H4 --base B4 --members "sp-lc-b1:655801ffd0d82ea0d27fcd5ef3c58aadf1bae06e,sp-lc-b2:6f5c5b461ce4476d9e54af2ed76ace77fd6ea884" --actor test --parent batch-bisect)"
 wantrc "first bisect half cuts cleanly" 0 $?
-out="$(lc cut batch-bisect-hi --repo spira --head H4 --base B4 --members "sp-lc-b3:tipB3,sp-lc-b4:tipB4" --actor test --parent batch-bisect)"
+out="$(lc cut batch-bisect-hi --repo spira --head H4 --base B4 --members "sp-lc-b3:1ddfb2aaaf515ea6bd55ccf87ca6d89cc41b12fa,sp-lc-b4:72dc4dfa96d33bcd546062bdef722912ab5333b4" --actor test --parent batch-bisect)"
 wantrc "second bisect half cuts cleanly" 0 $?
 
 is "parent batch stays settled" "SETTLED" "$(batch_field batch-bisect state)"
@@ -368,8 +368,8 @@ is "first half is open for a fresh CI run" "OPEN" "$(batch_field batch-bisect-lo
 is "second half is open for a fresh CI run" "OPEN" "$(batch_field batch-bisect-hi state)"
 
 # ── criterion 4: two verdict passes racing on one batch — exactly one applies ────────────
-certify sp-lc-race tipRace
-lc cut batch-race --repo spira --head H5 --base B5 --members "sp-lc-race:tipRace" --actor test >/dev/null
+certify sp-lc-race b625a334a1c85ebed2c326293c484f7d773c5851
+lc cut batch-race --repo spira --head H5 --base B5 --members "sp-lc-race:b625a334a1c85ebed2c326293c484f7d773c5851" --actor test >/dev/null
 v="$(batch_field batch-race version)"
 lc event batch batch-race --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
 v="$(batch_field batch-race version)"
@@ -411,14 +411,14 @@ is "every racing land left its own event row, applied or refused" "$N" "$event_c
 # verdict-owned attribution (D1).
 
 # ── criterion 5: stack pipelines new members onto an already-OPEN batch ──────────────────
-certify sp-lc-s1 tipS1
-lc cut batch-stack --repo spira --head H6 --base B6 --members "sp-lc-s1:tipS1" --actor test >/dev/null
+certify sp-lc-s1 616223b891e50f8a5090752f78dbdc3870712e3d
+lc cut batch-stack --repo spira --head H6 --base B6 --members "sp-lc-s1:616223b891e50f8a5090752f78dbdc3870712e3d" --actor test >/dev/null
 v="$(batch_field batch-stack version)"
 is "cut leaves the batch's version at 1 (one MemberAdded)" "1" "$v"
 
-certify sp-lc-s2 tipS2
-certify sp-lc-s3 tipS3
-out="$(lc stack batch-stack --members "sp-lc-s2:tipS2,sp-lc-s3:tipS3" --actor test)"
+certify sp-lc-s2 be1bbfa40bdc01f69957aa48d7fe842e7719f734
+certify sp-lc-s3 50b897f44f9281f8acd345a78cf455734e12ce3b
+out="$(lc stack batch-stack --members "sp-lc-s2:be1bbfa40bdc01f69957aa48d7fe842e7719f734,sp-lc-s3:50b897f44f9281f8acd345a78cf455734e12ce3b" --actor test)"
 wantrc "stack applies" 0 $?
 want "stack applied every step" '"applied":[true,true,true,true,true,true]' "$out"
 
@@ -432,7 +432,7 @@ is "stacked member 3 enters delivery" "IN_DELIVERY" "$(member_field sp-lc-s3 bea
 # POSITIVE CONTROL: a member CERTIFIED at a different tip than named refuses, and writes
 # nothing — the batch's version is unchanged, not partially advanced by an earlier member
 # in the same call that did check out.
-certify sp-lc-s5 tipS5
+certify sp-lc-s5 08fe1ee141982fac88ed796edc4b49a6c1e9b5e2
 out="$(lc stack batch-stack --members "sp-lc-s5:tip-does-not-match" --actor test)"
 rc=$?
 wantrc "PLANTED VIOLATION: stack refuses a member whose certified tip does not match" 3 $rc
@@ -447,8 +447,8 @@ v="$(batch_field batch-stack version)"
 lc event batch batch-stack --expect CI_RUNNING --version "$v" --actor test --kind '"Red"' >/dev/null
 v="$(batch_field batch-stack version)"
 lc settle batch-stack --expect ATTRIBUTING --version "$v" --actor test --requeue sp-lc-s1,sp-lc-s2,sp-lc-s3 >/dev/null
-certify sp-lc-s4 tipS4
-out="$(lc stack batch-stack --members "sp-lc-s4:tipS4" --actor test)"
+certify sp-lc-s4 340277c9314e54e9457a80175aa5be288befaed1
+out="$(lc stack batch-stack --members "sp-lc-s4:340277c9314e54e9457a80175aa5be288befaed1" --actor test)"
 rc=$?
 wantrc "PLANTED VIOLATION: stack refuses a batch that is SETTLED, not OPEN" 3 $rc
 is "the refused stack did not touch the settled batch's state" "SETTLED" "$(batch_field batch-stack state)"
@@ -460,11 +460,11 @@ is "the refused stack did not touch the settled batch's state" "SETTLED" "$(batc
 # `--requeue` (design stacked-dependents-2026-09-28 §3: "ejecting a member ejects every
 # member stacked on it, transitively... the batch machine's SETTLED emits returned for the
 # ejected prerequisite and returned(base_withdrawn) for its dependents").
-certify sp-f-a tipFA
-certify_stacked sp-f-b tipFB sp-f-a tipFA
-certify sp-f-x tipFX
+certify sp-f-a d91d516a30598cdb09d5a031dc07928fd4abb8af
+certify_stacked sp-f-b c2e02917225884b23716b4e62a5ca93cb9cadd1a sp-f-a d91d516a30598cdb09d5a031dc07928fd4abb8af
+certify sp-f-x a0ecfd350112d34a5e946c2217051a600a656833
 lc cut batch-stacked-red --repo spira --head H7 --base B7 \
-    --members "sp-f-a:tipFA,sp-f-b:tipFB,sp-f-x:tipFX" --actor test >/dev/null
+    --members "sp-f-a:d91d516a30598cdb09d5a031dc07928fd4abb8af,sp-f-b:c2e02917225884b23716b4e62a5ca93cb9cadd1a,sp-f-x:a0ecfd350112d34a5e946c2217051a600a656833" --actor test >/dev/null
 v="$(batch_field batch-stacked-red version)"
 lc event batch batch-stacked-red --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
 v="$(batch_field batch-stacked-red version)"
@@ -489,12 +489,12 @@ want "the settle summary meters the one cascaded base_withdrawn" '"base_withdraw
 # chain A -> B -> C, plus unrelated X, can: ejecting the root A must cascade both B and C
 # (design stacked-dependents-2026-09-28's own test-strategy item 4: "A red in the round ->
 # A, B, C ejected together [3-deep]; unrelated members requeued").
-certify sp-f3-a tipF3A
-certify_stacked sp-f3-b tipF3B sp-f3-a tipF3A
-certify_stacked sp-f3-c tipF3C sp-f3-b tipF3B
-certify sp-f3-x tipF3X
+certify sp-f3-a 13af06f2e1e4d0d9911e264bfc3a98ef010f2a48
+certify_stacked sp-f3-b e58070e136f50adb8fdf989d6170682c3e564ba4 sp-f3-a 13af06f2e1e4d0d9911e264bfc3a98ef010f2a48
+certify_stacked sp-f3-c 009bc989d9c326cd85af8b594e89274e1df1e6f2 sp-f3-b e58070e136f50adb8fdf989d6170682c3e564ba4
+certify sp-f3-x f6e5bc23d8aa56fdfd38f8d23631b382ea9da359
 lc cut batch-stacked-3deep --repo spira --head H7b --base B7b \
-    --members "sp-f3-a:tipF3A,sp-f3-b:tipF3B,sp-f3-c:tipF3C,sp-f3-x:tipF3X" --actor test >/dev/null
+    --members "sp-f3-a:13af06f2e1e4d0d9911e264bfc3a98ef010f2a48,sp-f3-b:e58070e136f50adb8fdf989d6170682c3e564ba4,sp-f3-c:009bc989d9c326cd85af8b594e89274e1df1e6f2,sp-f3-x:f6e5bc23d8aa56fdfd38f8d23631b382ea9da359" --actor test >/dev/null
 v="$(batch_field batch-stacked-3deep version)"
 lc event batch batch-stacked-3deep --expect OPEN --version "$v" --actor test --kind '{"CiStarted":{"run":"r1"}}' >/dev/null
 v="$(batch_field batch-stacked-3deep version)"
@@ -545,17 +545,17 @@ _lc_eject_member() {    # _lc_eject_member <batch-id> <bead> <actor> <reason>
 
 # _lc_cut_batch: every member needs a bead row, but cut itself still only accepts a
 # CERTIFIED row at the given tip — create-bead-if-absent never shortcuts that.
-certify sp-lc-q-cut1 tipQC1
+certify sp-lc-q-cut1 41b7a22b433d944f6618b474ea15333c4c405059
 lc create-bead sp-lc-q-cut2 >/dev/null   # a bead row exists, but is never certified below
 
-out="$(_lc_cut_batch batch-q-cut fixture-repo headQ baseQ queue "sp-lc-q-cut1:tipQC1")"
+out="$(_lc_cut_batch batch-q-cut fixture-repo headQ baseQ queue "sp-lc-q-cut1:41b7a22b433d944f6618b474ea15333c4c405059")"
 wantrc "_lc_cut_batch applies for a certified member" 0 $?
 is "cut batch is OPEN" "OPEN" "$(batch_field batch-q-cut state)"
 is "member's bead moves to IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-q-cut1 bead state)"
 
 # POSITIVE CONTROL: a not-yet-CERTIFIED member refuses cleanly and leaves no batch row —
 # the shape cmd_open_batch relies on to leave batch_id/version unset on its own record.
-out="$(_lc_cut_batch batch-q-refuse fixture-repo headQ baseQ queue "sp-lc-q-cut2:tipQC2")"
+out="$(_lc_cut_batch batch-q-refuse fixture-repo headQ baseQ queue "sp-lc-q-cut2:5a9700cd439d3804d6299a319c1f14d30efe590c")"
 rc=$?
 wantrc "_lc_cut_batch refuses a member that is not CERTIFIED there" 3 $rc
 is "a refused cut leaves no batch row behind" "" "$(batch_field batch-q-refuse state)"
@@ -564,10 +564,10 @@ is "a refused cut leaves no batch row behind" "" "$(batch_field batch-q-refuse s
 # CERTIFIED, and does not move the batch or touch survivors — distinct from settle's own
 # CI-driven eject, which only runs after a real Red (design: the event log is the record
 # of what happened, and no Red ever fired here).
-certify sp-lc-q-e1 tipQE1
-certify sp-lc-q-e2 tipQE2
+certify sp-lc-q-e1 d57de05ff800468f42c2e1a5cc9c3031ee013ade
+certify sp-lc-q-e2 c0db0a821e7626378d80b31729e47c4caeb2be6f
 lc cut batch-q-eject --repo fixture-repo --head headE --base baseE \
-    --members "sp-lc-q-e1:tipQE1,sp-lc-q-e2:tipQE2" --actor test >/dev/null
+    --members "sp-lc-q-e1:d57de05ff800468f42c2e1a5cc9c3031ee013ade,sp-lc-q-e2:c0db0a821e7626378d80b31729e47c4caeb2be6f" --actor test >/dev/null
 
 out="$(_lc_eject_member batch-q-eject sp-lc-q-e1 queue "manual eject")"
 wantrc "_lc_eject_member applies from OPEN" 0 $?
@@ -594,10 +594,10 @@ rc=$?
 wantrc "_lc_eject_member refuses once the batch is terminal (ABANDONED)" 3 $rc
 
 # _lc_abandon_batch: accepts from any non-terminal state, returns every member.
-certify sp-lc-q-a1 tipQA1
-certify sp-lc-q-a2 tipQA2
+certify sp-lc-q-a1 b8f524fe73c7edbb04280b6545c2505e311be94e
+certify sp-lc-q-a2 5f6fa4f627ac73d70d3de78e11f8125e334ef510
 lc cut batch-q-abandon --repo fixture-repo --head headA --base baseA \
-    --members "sp-lc-q-a1:tipQA1,sp-lc-q-a2:tipQA2" --actor test >/dev/null
+    --members "sp-lc-q-a1:b8f524fe73c7edbb04280b6545c2505e311be94e,sp-lc-q-a2:5f6fa4f627ac73d70d3de78e11f8125e334ef510" --actor test >/dev/null
 
 out="$(_lc_abandon_batch batch-q-abandon queue "test abandon")"
 wantrc "_lc_abandon_batch applies from OPEN" 0 $?
@@ -613,10 +613,10 @@ rc=$?
 wantrc "_lc_abandon_batch fails closed when the batch row does not exist" 1 $rc
 
 # ── an abandon returns each member to the state it entered delivery from ───────────────────
-submit sp-lc-o-sub tipOS
-certify sp-lc-o-cer tipOC
+submit sp-lc-o-sub 864491ef52aaddaf847a3f564f7bd3586343fefb
+certify sp-lc-o-cer 87621c41ac79bb231a9784fc86ec26c601e4eb01
 lc cut batch-q-prior --repo fixture-repo --head headO --base baseO \
-    --members "sp-lc-o-sub:tipOS,sp-lc-o-cer:tipOC" --actor test >/dev/null
+    --members "sp-lc-o-sub:864491ef52aaddaf847a3f564f7bd3586343fefb,sp-lc-o-cer:87621c41ac79bb231a9784fc86ec26c601e4eb01" --actor test >/dev/null
 out="$(_lc_abandon_batch batch-q-prior queue "prior state")"
 wantrc "abandoning a mixed round applies" 0 $?
 is "a SUBMITTED member returns to SUBMITTED, never promoted" "SUBMITTED" "$(member_field sp-lc-o-sub bead state)"
@@ -624,12 +624,12 @@ is "a CERTIFIED member returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-o
 
 # ── an IN_DELIVERY bead no open batch names is requeued by the invariant ───────────────────
 # POSITIVE CONTROL: the planted orphan is seen first, then a bead held by an open batch is not.
-submit sp-lc-orph-sub tipPS
-certify sp-lc-orph-cer tipPC
-certify sp-lc-held tipPH
+submit sp-lc-orph-sub 48562c548301af8fc16ae40479bf412689bb60f5
+certify sp-lc-orph-cer c604f0b918747bac3b192b7de12bd875743a5d7a
+certify sp-lc-held c114c63afe9b40e5cc412a8eb1fb63cb13fa7b56
 lc cut batch-orph --repo fixture-repo --head headP --base baseP \
-    --members "sp-lc-orph-sub:tipPS,sp-lc-orph-cer:tipPC" --actor test >/dev/null
-lc cut batch-held --repo fixture-repo --head headH --base baseH --members "sp-lc-held:tipPH" --actor test >/dev/null
+    --members "sp-lc-orph-sub:48562c548301af8fc16ae40479bf412689bb60f5,sp-lc-orph-cer:c604f0b918747bac3b192b7de12bd875743a5d7a" --actor test >/dev/null
+lc cut batch-held --repo fixture-repo --head headH --base baseH --members "sp-lc-held:c114c63afe9b40e5cc412a8eb1fb63cb13fa7b56" --actor test >/dev/null
 v="$(batch_field batch-orph version)"
 lc event batch batch-orph --expect OPEN --version "$v" --actor test --kind '{"Abandon":{"reason":"planted"}}' >/dev/null
 is "the planted orphans are stranded IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-orph-sub bead state)"
@@ -646,13 +646,13 @@ is "the held member stays IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-held 
 
 # ── a batch that opened and never began is a phantom: requeue-orphans releases its members ─
 # POSITIVE CONTROL: a fresh OPEN batch and an aged OPEN batch with a pass in flight are not phantoms.
-certify sp-lc-ph-a tipPHA
-certify sp-lc-ph-b tipPHB
-certify sp-lc-ph-fresh tipPHF
-certify sp-lc-ph-live tipPHL
-lc cut batch-phantom --repo fixture-repo --head headPH --base basePH --members "sp-lc-ph-a:tipPHA,sp-lc-ph-b:tipPHB" --actor test >/dev/null
-lc cut batch-phantom-fresh --repo fixture-repo --head headPF --base basePF --members "sp-lc-ph-fresh:tipPHF" --actor test >/dev/null
-lc cut batch-phantom-live --repo fixture-repo --head headPL --base basePL --members "sp-lc-ph-live:tipPHL" --actor test >/dev/null
+certify sp-lc-ph-a ed2e563137985950e2b283f7966d7cf5976e6fa5
+certify sp-lc-ph-b 1d365c5fe4c023f429ab3917c5801474e7faba76
+certify sp-lc-ph-fresh 6d5b313a9351f5cd9641a785337872e2f10783c4
+certify sp-lc-ph-live 18dc358b5a86a837a8dd926e63e47e2d38bec084
+lc cut batch-phantom --repo fixture-repo --head headPH --base basePH --members "sp-lc-ph-a:ed2e563137985950e2b283f7966d7cf5976e6fa5,sp-lc-ph-b:1d365c5fe4c023f429ab3917c5801474e7faba76" --actor test >/dev/null
+lc cut batch-phantom-fresh --repo fixture-repo --head headPF --base basePF --members "sp-lc-ph-fresh:6d5b313a9351f5cd9641a785337872e2f10783c4" --actor test >/dev/null
+lc cut batch-phantom-live --repo fixture-repo --head headPL --base basePL --members "sp-lc-ph-live:18dc358b5a86a837a8dd926e63e47e2d38bec084" --actor test >/dev/null
 root_sql --use-db spira_lifecycle sql -q "UPDATE batch SET opened_at = 1 WHERE batch_id IN ('batch-phantom', 'batch-phantom-live'); UPDATE batch SET pass = 1 WHERE batch_id = 'batch-phantom-live'" >/dev/null
 out="$(lc requeue-orphans --actor test)"
 want "a dry run names the phantom batch" 'batch-phantom"' "$out"
@@ -680,10 +680,10 @@ git -C "$RG" checkout -q -b side
 git -C "$RG" commit -q --allow-empty -m "sp-lc-rec-side: work that never reached main"
 SIDE="$(git -C "$RG" rev-parse HEAD)"
 git -C "$RG" checkout -q main
-submit sp-lc-rec-sub tipRS
-submit sp-lc-rec-side tipRD
-submit sp-lc-rec-batched tipRB
-lc cut batch-rec-phantom --repo fixture-repo --head headR --base baseR --members "sp-lc-rec-batched:tipRB" --actor test >/dev/null
+submit sp-lc-rec-sub bd5e5de53738b69ea9989845b3219b182ef175ba
+submit sp-lc-rec-side fe4fa7df3973668d669b9edf2b10b60ad0203bac
+submit sp-lc-rec-batched 3c12f1f196afe28678e99c3aa227416019b60546
+lc cut batch-rec-phantom --repo fixture-repo --head headR --base baseR --members "sp-lc-rec-batched:3c12f1f196afe28678e99c3aa227416019b60546" --actor test >/dev/null
 rec() { lc reconcile-landed "$1" --sha "$2" --ref main --repo-path "$RG" --actor test; }
 rec sp-lc-rec-side "$SIDE" >/dev/null 2>&1
 wantrc "reconcile-landed refuses a commit that is not on the landing ref" 3 $?
@@ -708,10 +708,10 @@ wantrc "reconcile-landed refuses a bead that is already terminal" 3 $?
 # cascade to a stacked dependent exactly as settle's own CI-driven eject does above: the
 # dependent follows into REWORK with base-withdrawn, even though the manual path returns
 # the ejected prerequisite itself to CERTIFIED (unchanged tip, no rework of its own).
-certify sp-f-ha tipHA
-certify_stacked sp-f-hb tipHB sp-f-ha tipHA
+certify sp-f-ha 7476195cc6884d40bc7500c5d7c42392b375bf5e
+certify_stacked sp-f-hb f34eb91d6ba3dc909a1d19045eb48e0c00deedc8 sp-f-ha 7476195cc6884d40bc7500c5d7c42392b375bf5e
 lc cut batch-stacked-hand --repo fixture-repo --head H8 --base B8 \
-    --members "sp-f-ha:tipHA,sp-f-hb:tipHB" --actor test >/dev/null
+    --members "sp-f-ha:7476195cc6884d40bc7500c5d7c42392b375bf5e,sp-f-hb:f34eb91d6ba3dc909a1d19045eb48e0c00deedc8" --actor test >/dev/null
 
 out="$(_lc_eject_member batch-stacked-hand sp-f-ha queue "hand eject")"
 wantrc "_lc_eject_member applies from OPEN" 0 $?
@@ -761,9 +761,9 @@ wantrc "spira-claim select runs cleanly once the epic closes" 0 $?
 is "B is claimable once the epic closes — the hand-ordered epic edge, unchanged" "1" "$count_closed"
 
 # ── a round's passes: red pass 1 → eject → rebuild → green pass 2, and a pass killed at the cap ──
-certify sp-lc-p-1 tipP1
-certify sp-lc-p-2 tipP2
-lc cut batch-passes --repo fixture-repo --head headP0 --base baseP --members "sp-lc-p-1:tipP1,sp-lc-p-2:tipP2" --actor test >/dev/null
+certify sp-lc-p-1 a8ea1dfdcfaa98eb4c546aaabdd734e1de04f49b
+certify sp-lc-p-2 db75a80ae9fd3f6ea92fd1f69afe2cc2425c2cd9
+lc cut batch-passes --repo fixture-repo --head headP0 --base baseP --members "sp-lc-p-1:a8ea1dfdcfaa98eb4c546aaabdd734e1de04f49b,sp-lc-p-2:db75a80ae9fd3f6ea92fd1f69afe2cc2425c2cd9" --actor test >/dev/null
 pev() {   # pev <batch> <kind-json>: the event at the batch's current state and version
     lc event batch "$1" --expect "$(batch_field "$1" state)" --version "$(batch_field "$1" version)" --actor test --kind "$2"
 }
@@ -792,8 +792,8 @@ nowant "phase_since is reported" "None" "$(pfield 'b["phase_since"]')"
 pev batch-passes '{"PassGreen":{"n":2,"suites_s":80,"build_s":20}}' >/dev/null
 is "the second pass reaches GREEN" "GREEN" "$(batch_field batch-passes state)"
 
-certify sp-lc-p-3 tipP3
-lc cut batch-cap --repo fixture-repo --head headC --base baseC --members "sp-lc-p-3:tipP3" --actor test >/dev/null
+certify sp-lc-p-3 9e4a60ee8279330a8f02b7acb1e7e48d0cb70e34
+lc cut batch-cap --repo fixture-repo --head headC --base baseC --members "sp-lc-p-3:9e4a60ee8279330a8f02b7acb1e7e48d0cb70e34" --actor test >/dev/null
 pev batch-cap '{"PassStarted":{"n":1,"head":"headC"}}' >/dev/null
 pev batch-cap '{"SuitesStarted":{"n":1}}' >/dev/null
 pev batch-cap '{"PassIncomplete":{"n":1,"reason":"over the 900s cap"}}' >/dev/null
@@ -802,9 +802,9 @@ pfield() { printf '%s' "$passes_json" | python3 -c 'import json,sys; b=[x for x 
 is "a pass killed at the cap is incomplete, in ATTRIBUTING, neither red nor green" "incomplete ATTRIBUTING" "$(pfield 'b["last_pass"]["verdict"] + " " + b["state"]')"
 
 # ── a round staged behind a running one: members untouched until promoted ───────────────
-certify sp-lc-g1 tipG1
-certify sp-lc-g2 tipG2
-out="$(lc stage batch-staged --repo spira --head headG --base baseG --members "sp-lc-g1:tipG1,sp-lc-g2:tipG2" --actor test --parent batch-running)"
+certify sp-lc-g1 54880af43e60229aaa85efb91082297f4ca33642
+certify sp-lc-g2 ffb292b5b98e48957622846a87e68600910c1f7b
+out="$(lc stage batch-staged --repo spira --head headG --base baseG --members "sp-lc-g1:54880af43e60229aaa85efb91082297f4ca33642,sp-lc-g2:ffb292b5b98e48957622846a87e68600910c1f7b" --actor test --parent batch-running)"
 wantrc "stage writes the staged round" 0 $?
 is "a staged round is STAGED, behind its parent" "STAGED batch-running" "$(batch_field batch-staged state) $(batch_field batch-staged parent)"
 is "staging delivers no member" "CERTIFIED CERTIFIED" "$(member_field sp-lc-g1 bead state) $(member_field sp-lc-g2 bead state)"
@@ -819,8 +819,8 @@ is "promotion batches each member's delivery onto the round" "BATCHED" "$(member
 out="$(lc promote batch-staged --head h --base b --actor test)"
 wantrc "PLANTED VIOLATION: a round already OPEN is not promoted again" 3 $?
 
-certify sp-lc-g3 tipG3
-lc stage batch-staged-dead --repo spira --head headD --base baseD --members "sp-lc-g3:tipG3" --actor test --parent batch-running >/dev/null
+certify sp-lc-g3 1af7487ae55c9cd4867ed84c6c55d01be97b4c1c
+lc stage batch-staged-dead --repo spira --head headD --base baseD --members "sp-lc-g3:1af7487ae55c9cd4867ed84c6c55d01be97b4c1c" --actor test --parent batch-running >/dev/null
 lc event batch batch-staged-dead --expect STAGED --version 0 --actor test --kind '{"Discard":{"reason":"parent red"}}' >/dev/null
 is "a discarded stage is DISCARDED with its reason" "DISCARDED parent red" "$(batch_field batch-staged-dead state) $(batch_field batch-staged-dead reason)"
 is "discarding returns nothing: the member is still CERTIFIED" "CERTIFIED" "$(member_field sp-lc-g3 bead state)"
@@ -855,8 +855,8 @@ wantrc "a disposition outside WORKING is refused" 3 $?
 
 
 # ── mid-pass failures: each red suite is a Failed event and a MENDING row; the machine expires the row ──
-certify sp-lc-m-1 tipM1
-lc cut batch-mend --repo fixture-repo --head headM --base baseM --members "sp-lc-m-1:tipM1" --actor test >/dev/null
+certify sp-lc-m-1 a99c65e15e286c45e353db428bf9c3a0b4d89b41
+lc cut batch-mend --repo fixture-repo --head headM --base baseM --members "sp-lc-m-1:a99c65e15e286c45e353db428bf9c3a0b4d89b41" --actor test >/dev/null
 pev batch-mend '{"PassStarted":{"n":1,"head":"headM"}}' >/dev/null
 out="$(pev batch-mend '{"Failed":{"suite":"test-early.sh","n":1}}' 2>&1)"
 wantrc "a failure reported before the suites phase is refused" 3 $?
@@ -899,24 +899,24 @@ is "the expiry never touched the pass" "CI_RUNNING suites" "$(batch_field batch-
 mfacts() { printf '{"changes":[{"path":"%s","added":1,"deleted":0}],"member_files":["%s"],"required_checks":[],"checked":[],"ask":null}' "$1" "$1"; }
 mendrow() { lc mending mend batch-mend --pass 1 --suite "$1" --members "sp-lc-m-1:$2:$3" --facts "$(mfacts "$4")" --fences '["gate/"]' --actor "mender-$1"; }
 mrow_state() { lc mending list --batch batch-mend | python3 -c 'import json,sys; r={x["suite"]:x for x in json.load(sys.stdin)}; print(" ".join(filter(None, [r[sys.argv[1]]["state"], r[sys.argv[1]]["diagnosis"]])))' "$1"; }
-mendrow test-b.sh tipM1 tipM2 gate/x.rs >/dev/null 2>&1
+mendrow test-b.sh a99c65e15e286c45e353db428bf9c3a0b4d89b41 2728b0b551d31353098466c9b738654ac52f5bda gate/x.rs >/dev/null 2>&1
 wantrc "a fence edit without an ask is refused" 3 $?
 is "the refused mend leaves the row MENDING" "MENDING" "$(mrow_state test-b.sh | cut -d' ' -f1)"
-mendrow test-b.sh tipM1 tipM2 queue/src/a.rs >/dev/null
+mendrow test-b.sh a99c65e15e286c45e353db428bf9c3a0b4d89b41 2728b0b551d31353098466c9b738654ac52f5bda queue/src/a.rs >/dev/null
 wantrc "an in-diff source edit is mended" 0 $?
 is "the row is MENDED" "MENDED" "$(mrow_state test-b.sh | cut -d' ' -f1)"
-is "the mended tip is the branch's recorded tip" "tipM2" "$(lc mending tips --beads sp-lc-m-1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["sp-lc-m-1"])')"
+is "the mended tip is the branch's recorded tip" "2728b0b551d31353098466c9b738654ac52f5bda" "$(lc mending tips --beads sp-lc-m-1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["sp-lc-m-1"])')"
 for s in test-c.sh test-d.sh test-e.sh; do
     pev batch-mend "{\"Failed\":{\"suite\":\"$s\",\"n\":1}}" >/dev/null
     lc mending pickup batch-mend --pass 1 --suite "$s" --deadline-secs 600 --actor "mender-$s" >/dev/null
 done
-out="$(mendrow test-c.sh tipM1 tipM9 queue/src/a.rs 2>&1)"
+out="$(mendrow test-c.sh a99c65e15e286c45e353db428bf9c3a0b4d89b41 0496d7df82c32871e154e693aa267b00f169c139 queue/src/a.rs 2>&1)"
 wantrc "a mend built on a stale tip is refused" 3 $?
 want "the refusal names the stale tip" "StaleTip" "$out"
 want "the failure is returned: the fix no longer applies" "RETURNED fix no longer applies" "$(mrow_state test-c.sh)"
-mendrow test-d.sh tipM2 tipM3 queue/src/a.rs >/dev/null
+mendrow test-d.sh 2728b0b551d31353098466c9b738654ac52f5bda a785b91ebd8c184bae68153eee6a61c963debef0 queue/src/a.rs >/dev/null
 wantrc "the second mend of a bead is taken" 0 $?
-out="$(mendrow test-e.sh tipM3 tipM4 queue/src/a.rs 2>&1)"
+out="$(mendrow test-e.sh a785b91ebd8c184bae68153eee6a61c963debef0 ec60a55ac1759769c6c58b05ac0e3f7e3bb9315d queue/src/a.rs 2>&1)"
 wantrc "a third mend of a bead is refused" 3 $?
 want "the refusal names the cap" "MendCap" "$out"
 want "the failure is returned with the cap in its diagnosis" "RETURNED mend cap" "$(mrow_state test-e.sh)"

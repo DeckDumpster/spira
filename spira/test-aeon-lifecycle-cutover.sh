@@ -200,7 +200,7 @@ is "sp-zw9ot fixture: batch landing applies (exit 0)" "0" "$?"
 _zw9="$(row_json sp-zw9ot)"
 want "sp-zw9ot fixture: bead is LANDED" '"state":"LANDED"' "$_zw9"
 want "sp-zw9ot fixture: landing advanced the version" '"version":"1"' "$_zw9"
-lc_event_bead "sp-zw9ot" LANDED 1 "aeon-t1" '{"Submit":{"tip":"late-tip"}}'
+lc_event_bead "sp-zw9ot" LANDED 1 "aeon-t1" '{"Submit":{"tip":"7809491aff0901fa62d1d5f6ea0334780a8db167"}}'
 is "sp-zw9ot fixture: late submit on LANDED is refused (exit 3)" "3" "$?"
 _zw9="$(row_json sp-zw9ot)"
 want "sp-zw9ot fixture: late submit left the row LANDED" '"state":"LANDED"' "$_zw9"

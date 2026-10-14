@@ -125,28 +125,28 @@ spira-lc state sp-inert >/dev/null 2>&1; is "the machine answers a bead with no 
 # ---------------------------------------------------------------------------------------
 echo
 echo "certification for a stale tip is refused:"
-seed_bead sp-stale SUBMITTED aaa111 -
-spira-lc certify sp-stale bbb222 pass keyA >/dev/null 2>&1
+seed_bead sp-stale SUBMITTED 4a0cde71aee7158542d013fc0c9f5acfc735c612 -
+spira-lc certify sp-stale 6be712a6e73d979726c02a308b3457f9f5cf148e pass keyA >/dev/null 2>&1
 is "GatePass for a different tip is refused" "3" "$?"
 is "row state is unchanged" "SUBMITTED" "$(row_field sp-stale state)"
-is "row tip is unchanged" "aaa111" "$(row_field sp-stale tip)"
+is "row tip is unchanged" "4a0cde71aee7158542d013fc0c9f5acfc735c612" "$(row_field sp-stale tip)"
 is "row gate_key was never set" "" "$(row_field sp-stale gate_key)"
 
-spira-lc certify sp-stale aaa111 pass keyA >/dev/null 2>&1
+spira-lc certify sp-stale 4a0cde71aee7158542d013fc0c9f5acfc735c612 pass keyA >/dev/null 2>&1
 is "POSITIVE CONTROL: GatePass for the matching tip applies" "0" "$?"
 is "row is now CERTIFIED" "CERTIFIED" "$(row_field sp-stale state)"
 is "row carries the gate key" "keyA" "$(row_field sp-stale gate_key)"
 
 # ---------------------------------------------------------------------------------------
 # THE TIP INVARIANT — a harness rebase of a certified branch sends it back to SUBMITTED
-# (acceptance criterion 2). sp-stale is CERTIFIED at aaa111 from the case above.
+# (acceptance criterion 2). sp-stale is CERTIFIED at 4a0cde71aee7158542d013fc0c9f5acfc735c612 from the case above.
 # ---------------------------------------------------------------------------------------
 echo
 echo "a harness rebase (moved tip) voids certification back to SUBMITTED:"
-spira-lc resubmit sp-stale ccc333 >/dev/null 2>&1
+spira-lc resubmit sp-stale 926839139b8cf77fca0d1ccef742df1f23db3e81 >/dev/null 2>&1
 is "lc_resubmit applies" "0" "$?"
 is "row is back to SUBMITTED" "SUBMITTED" "$(row_field sp-stale state)"
-is "row tip is the new (rebased) one" "ccc333" "$(row_field sp-stale tip)"
+is "row tip is the new (rebased) one" "926839139b8cf77fca0d1ccef742df1f23db3e81" "$(row_field sp-stale tip)"
 is "row's gate key is cleared — the old verdict no longer answers for this tree" "" "$(row_field sp-stale gate_key)"
 
 # ---------------------------------------------------------------------------------------
@@ -154,8 +154,8 @@ is "row's gate key is cleared — the old verdict no longer answers for this tre
 # ---------------------------------------------------------------------------------------
 echo
 echo "GateRed sends a submitted bead to REWORK:"
-seed_bead sp-red SUBMITTED ddd444 -
-spira-lc certify sp-red ddd444 red "branch-red" >/dev/null 2>&1
+seed_bead sp-red SUBMITTED 416797588a44ad7127cacb2471bc5ff549e15dff -
+spira-lc certify sp-red 416797588a44ad7127cacb2471bc5ff549e15dff red "branch-red" >/dev/null 2>&1
 is "GateRed applies" "0" "$?"
 is "row is REWORK" "REWORK" "$(row_field sp-red state)"
 
@@ -167,16 +167,16 @@ is "row is REWORK" "REWORK" "$(row_field sp-red state)"
 # and "branch-red" itself — the one gate.sh actually emits — failed to parse).
 echo
 echo "GateRed with an unrecognized raw reason still applies (mapped, not passed through):"
-seed_bead sp-red2 SUBMITTED fff777 -
-spira-lc certify sp-red2 fff777 red "a-reason-spira-lc-has-never-heard-of" >/dev/null 2>&1
+seed_bead sp-red2 SUBMITTED 9dfe5bb4211c8967d10dc13590acc1ad8da9ee7c -
+spira-lc certify sp-red2 9dfe5bb4211c8967d10dc13590acc1ad8da9ee7c red "a-reason-spira-lc-has-never-heard-of" >/dev/null 2>&1
 is "GateRed with an unmapped reason still applies" "0" "$?"
 is "row is REWORK" "REWORK" "$(row_field sp-red2 state)"
 
 echo
 echo "GateInfra leaves a submitted bead SUBMITTED but still advances its version:"
-seed_bead sp-infra SUBMITTED eee555 -
+seed_bead sp-infra SUBMITTED f6c4bf78c47ab305e4a99ca66e20ef812819705c -
 v0="$(row_field sp-infra version)"
-spira-lc certify sp-infra eee555 infra - >/dev/null 2>&1
+spira-lc certify sp-infra f6c4bf78c47ab305e4a99ca66e20ef812819705c infra - >/dev/null 2>&1
 is "GateInfra applies" "0" "$?"
 is "row is still SUBMITTED" "SUBMITTED" "$(row_field sp-infra state)"
 is "row's version advanced (a recorded retry, not a silent no-op)" "$((v0 + 1))" "$(row_field sp-infra version)"
@@ -188,10 +188,10 @@ is "row's version advanced (a recorded retry, not a silent no-op)" "$((v0 + 1))"
 echo
 echo "a WORKING bead is auto-submitted at the given tip, then certified:"
 seed_bead sp-working WORKING - -
-spira-lc certify sp-working fff666 pass keyB >/dev/null 2>&1
+spira-lc certify sp-working 53aebfaae14bcb2e0fd283d18ee2638ad7d55013 pass keyB >/dev/null 2>&1
 is "lc_certify from WORKING applies" "0" "$?"
 is "row is CERTIFIED" "CERTIFIED" "$(row_field sp-working state)"
-is "row tip is the one it was certified at" "fff666" "$(row_field sp-working tip)"
+is "row tip is the one it was certified at" "53aebfaae14bcb2e0fd283d18ee2638ad7d55013" "$(row_field sp-working tip)"
 
 # ---------------------------------------------------------------------------------------
 # gate.sh's OWN verdict() calls through, for real — no stub, real git, real gate command.
