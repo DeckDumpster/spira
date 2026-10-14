@@ -235,6 +235,17 @@ impl<T: Transport> Provider for Pve<T> {
         as_id(&d).ok_or_else(|| format!("nextid returned {d}"))
     }
 
+    fn tags_of(&self, vmid: &str) -> Result<Vec<String>, String> {
+        let d = self.t.call(Method::Get, &format!("{}/qemu", self.node()), &[])?;
+        let list = d.as_array().ok_or_else(|| format!("VM list is not a list: {d}"))?;
+        let tags = list
+            .iter()
+            .find(|v| v.get("vmid").and_then(as_id).as_deref() == Some(vmid))
+            .and_then(|v| v.get("tags").and_then(Value::as_str))
+            .unwrap_or("");
+        Ok(tags.split([';', ',']).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect())
+    }
+
     fn clone_to(&self, vmid: &str, name: &str) -> Result<(), String> {
         let mut params = vec![("newid", vmid.to_string()), ("name", name.to_string()), ("full", "0".to_string())];
         if let Some(pool) = &self.env.pool {
@@ -244,7 +255,11 @@ impl<T: Transport> Provider for Pve<T> {
         let mac = slot_mac(vmid)?;
         let cfg_path = format!("{}/config", self.qemu(vmid));
         let cfg = self.t.call(Method::Get, &cfg_path, &[])?;
-        let mut reserve = vec![("balloon", "0".to_string()), ("cpuunits", ROUND_CPUUNITS.to_string())];
+        let mut reserve = vec![
+            ("balloon", "0".to_string()),
+            ("cpuunits", ROUND_CPUUNITS.to_string()),
+            ("tags", crate::provider::OWNER_TAG.to_string()),
+        ];
         if let Some(net0) = cfg.get("net0").and_then(Value::as_str) {
             let pinned = with_mac(net0, &mac).ok_or_else(|| format!("net0 {net0:?} has no model=MAC field"))?;
             reserve.insert(0, ("net0", pinned));
@@ -457,6 +472,7 @@ mod tests {
                 ("net0".into(), "virtio=02:52:56:00:00:7C,bridge=vmbr0,firewall=1".into()),
                 ("balloon".into(), "0".into()),
                 ("cpuunits".into(), "10000".into()),
+                ("tags".into(), "spira-round-vm".into()),
             ]
         );
         let first = pve();
@@ -514,6 +530,20 @@ mod tests {
         p.t.vms.lock().unwrap().push(json!({"vmid": 123, "name": "round-123"}));
         assert_eq!(p.name_of("123").unwrap().as_deref(), Some("round-123"));
         assert_eq!(p.name_of("124").unwrap(), None);
+    }
+
+    #[test]
+    fn a_vm_without_our_tag_is_never_destroyed_even_under_a_round_name() {
+        use crate::provider::{destroy_verified, DestroyError, Timing};
+        let t = Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 };
+        let p = pve();
+        p.t.vms.lock().unwrap().push(json!({"vmid": 125, "name": "round-125", "tags": "repo-x-ephemeral-ci"}));
+        let e = destroy_verified(&p, "125", t).unwrap_err();
+        assert!(matches!(e, DestroyError::NotOurs(ref m) if m.contains("lacks")), "{e:?}");
+        assert!(p.t.log.lock().unwrap().iter().all(|(m, _, _)| *m == Method::Get));
+        p.t.vms.lock().unwrap().push(json!({"vmid": 126, "name": "round-126", "tags": "spira-round-vm"}));
+        destroy_verified(&p, "126", t).ok();
+        assert!(p.t.log.lock().unwrap().iter().any(|(m, path, _)| *m == Method::Delete && path.ends_with("/qemu/126")));
     }
 
     #[test]

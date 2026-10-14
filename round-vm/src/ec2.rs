@@ -302,6 +302,10 @@ impl<A: Ec2Api> Provider for Ec2<A> {
         self.api.terminate(&i.id)
     }
 
+    fn tags_of(&self, vmid: &str) -> Result<Vec<String>, String> {
+        Ok(self.api.find(vmid)?.map(|_| vec![crate::provider::OWNER_TAG.to_string()]).unwrap_or_default())
+    }
+
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String> {
         Ok(self.api.find(vmid)?.map(|i| i.name))
     }

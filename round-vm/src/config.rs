@@ -352,6 +352,13 @@ mod tests {
     /// touch real env vars, since they already passed values straight to pure logic).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    #[test]
+    fn no_vmid_or_range_is_read_from_config() {
+        let src = include_str!("config.rs");
+        let key = ["PVE_", "VMID_M"].concat();
+        assert!(!src.contains(key.as_str()), "config reads a VMID range");
+    }
+
     fn base_fields() -> Fields {
         Fields {
             run: "/r".into(),
