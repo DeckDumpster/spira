@@ -17,3 +17,6 @@ StandardError=append:@SPIRA_RUN@/spira-submission.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work
