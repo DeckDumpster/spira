@@ -132,21 +132,18 @@ pub fn sendmail(home: &Path, mail_root: &Path, mute: bool, raw: &str) -> Result<
     Ok(SendmailOutcome { dest_mailbox, delivered_path })
 }
 
-/// `_mark_replied`: adds the Maildir `R` flag in place (directory unchanged — a message
-/// found in `new/` keeps living in `new/`, just renamed). A no-op if `R` is already set.
+/// Replying to a message is having seen it: the original moves out of `new/` into `cur/`
+/// carrying `S` and `R` in one rename. Flagging it in place left it in `new/` unread, and a
+/// client's own seen-rename of the old name then failed against it.
 pub fn mark_replied(path: &Path) {
     if !path.is_file() {
         return;
     }
-    let base = match path.file_name().and_then(|f| f.to_str()) {
-        Some(b) => b,
-        None => return,
-    };
-    if let Some(new_name) = maildir::add_flag(base, 'R') {
-        if let Some(dir) = path.parent() {
-            let _ = fs::rename(path, dir.join(new_name));
-        }
-    }
+    let Some(base) = path.file_name().and_then(|f| f.to_str()) else { return };
+    let Some(mbox) = path.parent().and_then(|sub| sub.parent()) else { return };
+    let named = maildir::add_flag(base, 'R').unwrap_or_else(|| base.to_string());
+    let name = maildir::add_flag(&named, 'S').unwrap_or(named);
+    let _ = fs::rename(path, mbox.join("cur").join(name));
 }
 
 #[cfg(test)]
@@ -233,16 +230,31 @@ mod tests {
     }
 
     #[test]
-    fn a_reply_marks_the_original_replied_in_place_and_touches_no_bead() {
+    fn a_reply_marks_the_original_seen_and_replied_in_cur_and_touches_no_bead() {
         let d = testkit::TempDir::new("mail-sendmail");
         let home = d.path().join("home");
         fs::create_dir_all(home.join("chamber")).unwrap();
         let msgid = send_plain(d.path(), "gate", "Gate <gate@spira>", "Enable feature?");
         let raw = format!("From: Operator <operator@spira>\nSubject: Re: Enable feature?\nIn-Reply-To: <{msgid}@spira>\n\nApprove it.\n");
         sendmail(&home, d.path(), false, &raw).unwrap();
-        let names: Vec<String> = fs::read_dir(d.path().join("gate/new")).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
-        assert_eq!(names.len(), 2, "{names:?}");
-        assert!(names.iter().any(|n| n.ends_with(":2,R")), "the original, flagged replied: {names:?}");
+        let names = |sub: &str| -> Vec<String> { fs::read_dir(d.path().join("gate").join(sub)).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect() };
+        assert_eq!(names("new").len(), 1, "the original left new/: {:?}", names("new"));
+        assert!(names("new").iter().all(|n| !n.contains(":2,")), "the delivered reply stays unflagged in new/");
+        assert_eq!(names("cur"), vec![format!("{msgid}:2,RS")]);
+    }
+
+    #[test]
+    fn a_reply_to_an_already_seen_original_keeps_it_in_cur_with_s_and_gains_r() {
+        let d = testkit::TempDir::new("mail-sendmail");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("chamber")).unwrap();
+        let msgid = send_plain(d.path(), "gate", "Gate <gate@spira>", "Enable feature?");
+        let gate = d.path().join("gate");
+        fs::rename(gate.join("new").join(&msgid), gate.join("cur").join(format!("{msgid}:2,S"))).unwrap();
+        let raw = format!("From: Operator <operator@spira>\nSubject: Re: x\nIn-Reply-To: <{msgid}@spira>\n\nOk.\n");
+        sendmail(&home, d.path(), false, &raw).unwrap();
+        assert!(gate.join("cur").join(format!("{msgid}:2,RS")).is_file());
+        assert_eq!(fs::read_dir(gate.join("new")).unwrap().count(), 1);
     }
 
     #[test]

@@ -376,7 +376,7 @@ is "SEEN RED: original message exists in new/ before sendmail" "1" \
 compose_reply "$missing_msgid" "the answer" "Missing bead test" | run sendmail >/dev/null 2>&1; reply_rc=$?
 isz "sendmail exits 0 although the bead cannot be closed" "$reply_rc"
 is "original is flagged replied" "1" \
-    "$(ls "$SPIRA_MAIL/operator/new/" 2>/dev/null | grep -c "^$missing_msgid.*R$")"
+    "$(ls "$SPIRA_MAIL/operator/cur/" 2>/dev/null | grep -c "^$missing_msgid:2,RS$")"
 
 # ==========================================================================
 # UC-24 — land_escalate (sp-31hjr: ported natively into sentinel; was lib.sh via a seam).
