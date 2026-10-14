@@ -231,11 +231,38 @@ impl<T: Transport> Pve<T> {
 
 impl<T: Transport> Provider for Pve<T> {
     fn next_id(&self) -> Result<String, String> {
-        let d = self.t.call(Method::Get, "/cluster/nextid", &[])?;
-        as_id(&d).ok_or_else(|| format!("nextid returned {d}"))
+        let d = self.t.call(Method::Get, &format!("{}/qemu", self.node()), &[])?;
+        let list = d.as_array().ok_or_else(|| format!("VM list is not a list: {d}"))?;
+        let taken: std::collections::BTreeSet<u32> =
+            list.iter().filter_map(|v| v.get("vmid").and_then(as_id)).filter_map(|s| s.parse().ok()).collect();
+        (self.env.vmid_min..=self.env.vmid_max)
+            .find(|n| !taken.contains(n))
+            .map(|n| n.to_string())
+            .ok_or_else(|| format!("no free VMID in {}-{}", self.env.vmid_min, self.env.vmid_max))
+    }
+
+    fn manages(&self, vmid: &str) -> bool {
+        vmid.parse::<u32>().is_ok_and(|n| (self.env.vmid_min..=self.env.vmid_max).contains(&n))
+    }
+
+    fn tags_of(&self, vmid: &str) -> Result<Vec<String>, String> {
+        let d = self.t.call(Method::Get, &format!("{}/qemu", self.node()), &[])?;
+        let list = d.as_array().ok_or_else(|| format!("VM list is not a list: {d}"))?;
+        let tags = list
+            .iter()
+            .find(|v| v.get("vmid").and_then(as_id).as_deref() == Some(vmid))
+            .and_then(|v| v.get("tags").and_then(Value::as_str))
+            .unwrap_or("");
+        Ok(tags.split([';', ',']).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect())
     }
 
     fn clone_to(&self, vmid: &str, name: &str) -> Result<(), String> {
+        if !self.manages(vmid) {
+            return Err(format!(
+                "refusing to clone into VMID {vmid}: outside {}-{}",
+                self.env.vmid_min, self.env.vmid_max
+            ));
+        }
         let mut params = vec![("newid", vmid.to_string()), ("name", name.to_string()), ("full", "0".to_string())];
         if let Some(pool) = &self.env.pool {
             params.push(("pool", pool.clone()));
@@ -244,7 +271,11 @@ impl<T: Transport> Provider for Pve<T> {
         let mac = slot_mac(vmid)?;
         let cfg_path = format!("{}/config", self.qemu(vmid));
         let cfg = self.t.call(Method::Get, &cfg_path, &[])?;
-        let mut reserve = vec![("balloon", "0".to_string()), ("cpuunits", ROUND_CPUUNITS.to_string())];
+        let mut reserve = vec![
+            ("balloon", "0".to_string()),
+            ("cpuunits", ROUND_CPUUNITS.to_string()),
+            ("tags", crate::provider::OWNER_TAG.to_string()),
+        ];
         if let Some(net0) = cfg.get("net0").and_then(Value::as_str) {
             let pinned = with_mac(net0, &mac).ok_or_else(|| format!("net0 {net0:?} has no model=MAC field"))?;
             reserve.insert(0, ("net0", pinned));
@@ -301,6 +332,9 @@ impl<T: Transport> Provider for Pve<T> {
     }
 
     fn destroy(&self, vmid: &str) -> Result<(), String> {
+        if !self.manages(vmid) {
+            return Err(format!("refusing to destroy VMID {vmid}: outside {}-{}", self.env.vmid_min, self.env.vmid_max));
+        }
         self.task(
             Method::Delete,
             &self.qemu(vmid),
@@ -353,8 +387,7 @@ mod tests {
             self.log.lock().unwrap().push((method, path.to_string(), params.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()));
             let upid = json!("UPID:pve:0001:task:");
             Ok(match (method, path) {
-                (Method::Get, "/cluster/nextid") => json!("123"),
-                (Method::Get, "/nodes/pve/qemu") => Value::Array(self.vms.lock().unwrap().clone()),
+                                (Method::Get, "/nodes/pve/qemu") => Value::Array(self.vms.lock().unwrap().clone()),
                 (Method::Get, p) if p.starts_with("/nodes/pve/tasks/") => json!({"status": "stopped", "exitstatus": "OK"}),
                 (Method::Get, p) if p.ends_with("/agent/exec-status") => {
                     let mut n = self.exec_polls.lock().unwrap();
@@ -388,6 +421,8 @@ mod tests {
                 token_secret: "s".into(),
                 cacert: PathBuf::from("/ca"),
                 template_vmid: "9000".into(),
+                vmid_min: 120,
+                vmid_max: 129,
                 pool: Some("ci".into()),
             },
             task_timeout: Duration::from_secs(5),
@@ -457,6 +492,7 @@ mod tests {
                 ("net0".into(), "virtio=02:52:56:00:00:7C,bridge=vmbr0,firewall=1".into()),
                 ("balloon".into(), "0".into()),
                 ("cpuunits".into(), "10000".into()),
+                ("tags".into(), "spira-round-vm".into()),
             ]
         );
         let first = pve();
@@ -507,13 +543,46 @@ mod tests {
     #[test]
     fn reads_nextid_address_liveness_and_names() {
         let p = pve();
-        assert_eq!(p.next_id().unwrap(), "123");
+        assert_eq!(p.next_id().unwrap(), "120");
         assert_eq!(p.guest_addr("123", "ens18").unwrap().as_deref(), Some("192.168.1.149"));
         assert_eq!(p.guest_addr("123", "eth9").unwrap(), None);
         assert!(p.alive("123").unwrap());
         p.t.vms.lock().unwrap().push(json!({"vmid": 123, "name": "round-123"}));
         assert_eq!(p.name_of("123").unwrap().as_deref(), Some("round-123"));
         assert_eq!(p.name_of("124").unwrap(), None);
+    }
+
+    #[test]
+    fn next_id_picks_the_lowest_free_id_in_the_configured_range_only() {
+        let p = pve();
+        p.t.vms.lock().unwrap().extend([json!({"vmid": 5}), json!({"vmid": 120}), json!({"vmid": "121"})]);
+        assert_eq!(p.next_id().unwrap(), "122");
+        for n in 122..=129 {
+            p.t.vms.lock().unwrap().push(json!({"vmid": n}));
+        }
+        assert!(p.next_id().unwrap_err().contains("no free VMID"));
+    }
+
+    #[test]
+    fn clone_and_destroy_refuse_an_id_outside_the_range() {
+        let p = pve();
+        assert!(p.clone_to("112", "round-112").unwrap_err().contains("outside"));
+        assert!(p.destroy("112").unwrap_err().contains("outside"));
+        assert!(p.t.log.lock().unwrap().iter().all(|(m, _, _)| *m == Method::Get));
+    }
+
+    #[test]
+    fn a_vm_tagged_by_another_owner_is_never_destroyed_even_under_a_round_name() {
+        use crate::provider::{destroy_verified, DestroyError, Timing};
+        let t = Timing { boot_tries: 1, poll: Duration::ZERO, gone_tries: 1 };
+        let p = pve();
+        p.t.vms.lock().unwrap().push(json!({"vmid": 125, "name": "round-125", "tags": "repo-x-ephemeral-ci"}));
+        let e = destroy_verified(&p, "125", t).unwrap_err();
+        assert!(matches!(e, DestroyError::NotOurs(ref m) if m.contains("tagged")), "{e:?}");
+        assert!(p.t.log.lock().unwrap().iter().all(|(m, _, _)| *m == Method::Get));
+        p.t.vms.lock().unwrap().push(json!({"vmid": 126, "name": "round-126", "tags": "spira-round-vm"}));
+        destroy_verified(&p, "126", t).ok();
+        assert!(p.t.log.lock().unwrap().iter().any(|(m, path, _)| *m == Method::Delete && path.ends_with("/qemu/126")));
     }
 
     #[test]
