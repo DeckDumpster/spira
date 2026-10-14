@@ -210,7 +210,7 @@ pub fn ensure_admin(
             if let Some(parent) = cred_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
             }
-            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(cred_path).map_err(|e| format!("cannot create {}: {e}", cred_path.display()))?;
+            let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(cred_path).map_err(|e| format!("cannot create {}: {e}", cred_path.display()))?;
             f.write_all(p.as_bytes()).map_err(|e| format!("cannot write {}: {e}", cred_path.display()))?;
             p
         }
@@ -224,6 +224,158 @@ pub fn ensure_admin(
         return Err(format!("root was given the password in {} but does not accept it", cred_path.display()));
     }
     Ok((make(pw), format!("root's password set; credential written to {} (0600)", cred_path.display())))
+}
+
+pub const LC_USERS: [&str; 2] = ["spira_lc", "spira_lc_ro"];
+
+/// The `user<TAB>host` lines `spira-lc admin-accounts` prints, as pairs.
+pub fn parse_accounts(out: &str) -> Vec<(String, String)> {
+    out.lines().filter_map(|l| l.split_once('\t')).map(|(u, h)| (u.trim().to_string(), h.trim().to_string())).collect()
+}
+
+/// One ALTER USER per account that exists, so no host variant of a user keeps the old
+/// password. Refuses a user with no account (ALTER would fail half-way) and a host that
+/// could break out of its quoted literal.
+pub fn rotate_sql(accounts: &[(String, String)], rw: &str, ro: &str) -> Result<String, String> {
+    let mut sql = String::new();
+    for (user, pw) in [(LC_USERS[0], rw), (LC_USERS[1], ro)] {
+        if pw.is_empty() || pw.chars().any(|c| c == '\'' || c == '\\' || c == '"' || c.is_control()) {
+            return Err(format!("the {user} password is empty or carries a quote, backslash or control character"));
+        }
+        let hosts: Vec<&str> = accounts.iter().filter(|(u, _)| u == user).map(|(_, h)| h.as_str()).collect();
+        if hosts.is_empty() {
+            return Err(format!("the server has no {user} account — rotation alters accounts, it does not create them"));
+        }
+        for h in hosts {
+            if h.is_empty() || !h.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '_' | '-' | '%' | '/')) {
+                return Err(format!("the host {h:?} of {user} is not a plain host pattern — refusing to place it in ALTER USER"));
+            }
+            sql.push_str(&format!("ALTER USER '{user}'@'{h}' IDENTIFIED BY '{pw}';\n"));
+        }
+    }
+    Ok(sql)
+}
+
+/// Replace `path` with `contents` (0600) by rename, so a reader sees the old or the new, whole.
+fn replace_secret(path: &Path, contents: &str) -> Result<(), String> {
+    let tmp = path.with_extension("rotating");
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp).map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
+    f.write_all(contents.as_bytes()).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("cannot replace {}: {e}", path.display()))
+}
+
+/// Rotate the two lifecycle credentials. Order is the safety: the new passwords are set on
+/// every account, a FRESH login with each new password and a refusal of each old one are
+/// observed through `spira-lc verify-login` (the code clients log in with), and only then are
+/// the files clients read replaced. Any failure before the swap puts the old passwords back on
+/// the server and leaves the files as they were. The files hold the old secrets until the
+/// rename, so a running client with the old password re-reads on its next refusal.
+pub fn rotate(
+    rw_file: &Path,
+    ro_file: &Path,
+    tmp_parent: &Path,
+    admin: &Admin,
+    mut run: impl FnMut(&[String], &[(String, String)]) -> (i32, String),
+) -> Result<Vec<String>, String> {
+    let old_rw = read_credential(rw_file)?;
+    let old_ro = read_credential(ro_file)?;
+    let (new_rw, new_ro) = (random_secret()?, random_secret()?);
+    let secrets = [old_rw.as_str(), old_ro.as_str(), new_rw.as_str(), new_ro.as_str(), admin.password.as_str()];
+
+    let dir = PrivateDir::new(tmp_parent, "rot")?;
+    let admin_pw = dir.write("admin", &admin.password)?;
+    let env = admin_env(admin, &admin_pw);
+    let mut call = |args: Vec<String>| {
+        let (rc, out) = run(&args, &env);
+        (rc, redact(out.trim_end(), &secrets))
+    };
+    let path_arg = |p: &Path| p.to_string_lossy().to_string();
+
+    let (rc, out) = call(vec!["admin-accounts".into()]);
+    if rc != 0 {
+        return Err(format!("listing the accounts as {} failed (spira-lc exit {rc}): {out}", admin.user));
+    }
+    let accounts = parse_accounts(&out);
+    let forward = rotate_sql(&accounts, &new_rw, &new_ro)?;
+    let backward = rotate_sql(&accounts, &old_rw, &old_ro)?;
+    let fwd_file = dir.write("forward.sql", &forward)?;
+    let back_file = dir.write("backward.sql", &backward)?;
+    let (new_rw_f, new_ro_f) = (dir.write("new-rw", &new_rw)?, dir.write("new-ro", &new_ro)?);
+    let (old_rw_f, old_ro_f) = (dir.write("old-rw", &old_rw)?, dir.write("old-ro", &old_ro)?);
+
+    let back_arg = path_arg(&back_file);
+    fn put_back(call: &mut impl FnMut(Vec<String>) -> (i32, String), back_arg: &str, why: String) -> String {
+        let (rc, out) = call(vec!["admin-apply-ddl".into(), back_arg.to_string()]);
+        if rc == 0 {
+            format!("{why}; the old passwords were put back and the credential files are unchanged")
+        } else {
+            format!("{why}; ALSO putting the old passwords back failed (spira-lc exit {rc}): {out} — the server may hold the new passwords while the files hold the old")
+        }
+    }
+
+    let (rc, out) = call(vec!["admin-apply-ddl".into(), path_arg(&fwd_file)]);
+    if rc != 0 {
+        return Err(put_back(&mut call, &back_arg, format!("setting the new passwords failed (spira-lc exit {rc}): {out}")));
+    }
+    for (user, new_f, old_f) in [(LC_USERS[0], &new_rw_f, &old_rw_f), (LC_USERS[1], &new_ro_f, &old_ro_f)] {
+        let (rc, out) = call(vec!["verify-login".into(), user.into(), path_arg(new_f)]);
+        if rc != 0 {
+            return Err(put_back(&mut call, &back_arg, format!("a fresh login as {user} with its new password failed (spira-lc exit {rc}): {out}")));
+        }
+        let (rc, _) = call(vec!["verify-login".into(), user.into(), path_arg(old_f)]);
+        if rc == 0 {
+            return Err(put_back(&mut call, &back_arg, format!("{user} still logs in with its OLD password after the change")));
+        }
+    }
+
+    replace_secret(rw_file, &new_rw).map_err(|e| put_back(&mut call, &back_arg, e))?;
+    if let Err(e) = replace_secret(ro_file, &new_ro) {
+        let _ = replace_secret(rw_file, &old_rw);
+        return Err(put_back(&mut call, &back_arg, e));
+    }
+    let hosts: Vec<String> = accounts.iter().map(|(u, h)| format!("{u}@{h}")).collect();
+    Ok(vec![
+        format!("altered {}", hosts.join(", ")),
+        "fresh logins with both new passwords succeeded and both old ones are refused".to_string(),
+        format!("replaced {} and {} (0600, by rename)", rw_file.display(), ro_file.display()),
+    ])
+}
+
+/// `release rotate-lc-credentials`: close a passwordless root ([`ensure_admin`]), then
+/// [`rotate`] the credential files the environment names, against the server it names.
+pub fn rotate_from_env(env: &std::collections::BTreeMap<String, String>) -> Result<Vec<String>, String> {
+    let rw_file = spira_config::resolve::lc_password_file(env);
+    if rw_file.is_empty() {
+        return Err("no spira_lc credential file: set SPIRA_LC_PASSWORD_FILE".into());
+    }
+    let ro_file = format!("{rw_file}-ro");
+    let host = env.get("SPIRA_LC_HOST").filter(|h| !h.is_empty()).cloned();
+    let port: u16 = match env.get("SPIRA_LC_PORT").filter(|p| !p.is_empty()) {
+        Some(p) => p.parse().map_err(|e| format!("SPIRA_LC_PORT: {e}"))?,
+        None => 3307,
+    };
+    let admin_file = match env.get("SPIRA_LC_ADMIN_PASSWORD_FILE").filter(|p| !p.is_empty()) {
+        Some(p) => p.clone(),
+        None => spira_config::resolve::lc_admin_credential_default(env),
+    };
+    let tmp = std::env::temp_dir();
+    let run = |args: &[String], e: &[(String, String)]| {
+        // batch-job: one operator-run rotation against the local Dolt; bounded at 120 s by timeout(1).
+        let mut c = std::process::Command::new("timeout");
+        c.arg("120").arg("spira-lc").args(args).stdin(std::process::Stdio::null());
+        for (k, v) in e {
+            c.env(k, v);
+        }
+        match c.output() {
+            Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
+            Err(e) => (127, format!("cannot run spira-lc: {e}")),
+        }
+    };
+    let (admin, msg) = ensure_admin(Path::new(&admin_file), &tmp, host, port, run)?;
+    let mut lines = vec![msg];
+    lines.extend(rotate(Path::new(&rw_file), Path::new(&ro_file), &tmp, &admin, run)?);
+    Ok(lines)
 }
 
 pub const BEADS_USER: &str = "beads";

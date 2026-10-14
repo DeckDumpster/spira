@@ -16,7 +16,7 @@ pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
     // `classify` reads bd, git and the ledger files from the CALLER's environment and runs far
     // past this client's timeout on a real store: forwarded, the service would read its own
     // environment and the timed-out caller would fall back and run it a second time.
-    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl") | Some("admin-migrate") | Some("classify")) {
+    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl") | Some("admin-migrate") | Some("admin-accounts") | Some("verify-login") | Some("classify")) {
         return None;
     }
     // One source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
@@ -66,7 +66,7 @@ mod tests {
     /// reads the caller's own bd, git and ledger files (see try_socket).
     #[test]
     fn admin_verbs_never_go_through_the_socket() {
-        for verb in ["admin-apply-ddl", "admin-migrate", "serve", "classify"] {
+        for verb in ["admin-apply-ddl", "admin-migrate", "admin-accounts", "verify-login", "serve", "classify"] {
             assert!(super::try_socket(&[verb.to_string(), "/x".to_string()]).is_none(), "{verb}");
         }
     }

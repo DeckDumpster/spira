@@ -30,7 +30,8 @@ pub struct Conn {
     pub host: String,
     pub port: u16,
     pub user: String,
-    pub password: String,
+    password: Mutex<String>,
+    password_file: Option<String>,
     pub database: String,
     /// The one live connection, opened on first use and dropped on any failure: after an
     /// error a transaction may still be open, so the next call starts from a fresh session.
@@ -72,6 +73,16 @@ fn refused_for_good(e: &ScriptFailure) -> bool {
     matches!(e, ScriptFailure::CannotTell(m) if m.starts_with("Error 1049 ") || m.starts_with("Error 1045 "))
 }
 
+fn refused_login(e: &ScriptFailure) -> bool {
+    matches!(e, ScriptFailure::CannotTell(m) if m.starts_with("Error 1045 "))
+}
+
+/// The password now in `file`, when it differs from the one in use.
+fn reloaded_password(file: &str, current: &str, read: impl Fn(&str) -> std::io::Result<String>) -> Option<String> {
+    let fresh = read(file).ok()?.trim().to_string();
+    (!fresh.is_empty() && fresh != current).then_some(fresh)
+}
+
 fn connect_backoff(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_millis(200u64 << (attempt - 1).min(6))
 }
@@ -111,10 +122,10 @@ impl Conn {
         // $SPIRA_TOML (per Ryan 2026-10-05), never this process's own environment. The
         // credential itself still comes from reading that file's contents, same as always.
         let password_file = spira_config::process::cfg("SPIRA_LC_PASSWORD_FILE").ok();
-        let password = password_from(password_file, std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
+        let password = password_from(password_file.clone(), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0), io_timeout: QUERY_DEADLINE, live: None })
+        Ok(Conn { host, port, user, password: Mutex::new(password), password_file: password_file.filter(|p| !p.is_empty()), database, session: Mutex::new(None), read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0), io_timeout: QUERY_DEADLINE, live: None })
     }
 
     /// A second connection to the same server and database under other credentials — the
@@ -125,7 +136,8 @@ impl Conn {
             host: self.host.clone(),
             port: self.port,
             user,
-            password,
+            password: Mutex::new(password),
+            password_file: None,
             database: self.database.clone(),
             session: Mutex::new(None),
             read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0),
@@ -141,7 +153,8 @@ impl Conn {
             host: "127.0.0.1".into(),
             port: 1,
             user: String::new(),
-            password: String::new(),
+            password: Mutex::new(String::new()),
+            password_file: None,
             database: String::new(),
             session: Mutex::new(None),
             read_sessions: std::array::from_fn(|_| Mutex::new(None)), read_turn: std::sync::atomic::AtomicUsize::new(0),
@@ -195,13 +208,32 @@ impl Conn {
             if attempt > 0 {
                 std::thread::sleep(connect_backoff(attempt));
             }
-            match Wire::connect_with(&self.host, self.port, &self.user, &self.password, database, self.io_timeout) {
+            match self.connect_once(database) {
                 Ok(w) => return Ok(w),
                 Err(e) if refused_for_good(&e) => return Err(e),
                 Err(e) => failure = Some(e),
             }
         }
         Err(failure.expect("CONNECT_ATTEMPTS is at least one"))
+    }
+
+    /// One login. A long-lived process holds the password it read at startup, so a rotation
+    /// would lock it out until restarted: on a refusal the credential file is read again and,
+    /// if it now holds a different password, the login is retried with it and it is kept.
+    fn connect_once(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
+        let current = self.password.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let first = Wire::connect_with(&self.host, self.port, &self.user, &current, database, self.io_timeout);
+        match (&first, self.password_file.as_deref()) {
+            (Err(e), Some(file)) if refused_login(e) => {
+                let Some(fresh) = reloaded_password(file, &current, |p| std::fs::read_to_string(p)) else { return first };
+                let retry = Wire::connect_with(&self.host, self.port, &self.user, &fresh, database, self.io_timeout);
+                if retry.is_ok() {
+                    *self.password.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
+                }
+                retry
+            }
+            _ => first,
+        }
     }
 
     fn read_slot(&self) -> &Mutex<Option<Wire>> {
@@ -745,6 +777,17 @@ mod io_timeout_tests {
         assert!(refused_for_good(&no_db) && refused_for_good(&denied));
         assert!(!refused_for_good(&refused), "positive control: a transport failure is still retried");
         assert!(!refused_for_good(&ScriptFailure::LostRace));
+    }
+
+    #[test]
+    fn a_rotated_credential_file_is_picked_up_and_an_unchanged_one_is_not() {
+        let rotated = |_: &str| Ok("new\n".to_string());
+        assert_eq!(reloaded_password("/f", "old", rotated), Some("new".into()));
+        assert_eq!(reloaded_password("/f", "new", rotated), None, "same password: retrying cannot help");
+        assert_eq!(reloaded_password("/f", "old", |_| Ok("\n".into())), None);
+        assert_eq!(reloaded_password("/f", "old", |_| Err(std::io::ErrorKind::NotFound.into())), None);
+        assert!(refused_login(&ScriptFailure::CannotTell("Error 1045 (28000): Access denied".into())));
+        assert!(!refused_login(&ScriptFailure::CannotTell("Error 1049 (42000): Unknown database".into())));
     }
 
     #[test]
