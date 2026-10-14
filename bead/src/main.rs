@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use bead::claimdesc::notify_live_aeon;
 use bead::{
     branch_candidate, branch_label, chamber_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
-    awaits_dispatch, lane_check, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    awaits_dispatch, lane_check, find_id_by_title, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -149,7 +149,16 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
     if incident.is_none() && mirror.is_none() && !express {
         return bdq_status(home, args);
     }
-    let (code, stdout) = bdq_capture_with(home, args, Stdio::inherit());
+    let (code, mut stdout) = bdq_capture_with(home, args, Stdio::inherit());
+    if parse_created_id(&stdout).is_none() {
+        if let Some((title, _)) = mirror {
+            let (_, listing) = bdq_capture(home, &s(&["list", "--limit", "0", "--json"]));
+            if let Some(found) = find_id_by_title(&listing, title) {
+                eprintln!("bead: file: bd create printed no id; found {found} by its title and creating its lifecycle row");
+                stdout = format!("{found}\n");
+            }
+        }
+    }
     if submitted_tip.is_none() {
         print!("{stdout}");
     }
@@ -1061,7 +1070,7 @@ fn lc_done(lc: &mut Option<Result<HashMap<String, spira_config::lc_state::Row>, 
 
 fn cmd_lint(home: &str, args: &[String]) -> i32 {
     let ids: Vec<String> = if args.is_empty() || args[0] == "--all" {
-        let (_, out) = bdq_capture(home, &s(&["list", "--all", "--limit", "0", "--json"]));
+        let (_, out) = bdq_capture(home, &s(&["list", "--limit", "0", "--json"]));
         parse_list_ids(&out)
     } else {
         args.to_vec()
