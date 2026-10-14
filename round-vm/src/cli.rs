@@ -19,7 +19,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha|ec2-probe [--dry-run]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -39,7 +39,7 @@ pub fn real_attempt() -> Result<Attempt, String> {
         exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30),
         poll: Duration::from_secs(1),
     };
-    let (ec2, spill) = spill_wiring(&cfg);
+    let (ec2, spill) = spill_wiring(&cfg)?;
     Ok(Attempt {
         provider: Box::new(Routed { local: Box::new(local), ec2 }),
         spill,
@@ -61,18 +61,20 @@ fn spill_listen() -> Vec<String> {
 /// The EC2 provider and the spill rule, when `SPIRA_ROUND_VM_SPILL=ec2`. A provider that
 /// cannot start says what is missing and the pool stays local: a half-configured spill must
 /// not take the local rounds down with it.
-fn spill_wiring(cfg: &Config) -> (Option<std::sync::Arc<dyn crate::provider::Provider>>, Option<SpillPlan>) {
+fn spill_wiring(cfg: &Config) -> Result<(Option<std::sync::Arc<dyn crate::provider::Provider>>, Option<SpillPlan>), String> {
     let mode = crate::config::declared("SPIRA_ROUND_VM_SPILL");
-    if !matches!(mode.as_deref(), Some("ec2" | "ec2-always")) {
-        return (None, None);
+    if !matches!(mode.as_deref(), Some("ec2" | "ec2-always" | "ec2-only")) {
+        return Ok((None, None));
     }
+    let only = mode.as_deref() == Some("ec2-only");
     let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
     let api = AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2"));
     let ec2: std::sync::Arc<dyn crate::provider::Provider> = match Ec2::new(api, &ec2cfg) {
         Ok(p) => std::sync::Arc::new(p),
+        Err(e) if only => return Err(format!("{e}; placement ec2-only has no local fallback")),
         Err(e) => {
             eprintln!("{e}; rounds stay local");
-            return (None, None);
+            return Ok((None, None));
         }
     };
     let num = |k: &str, d: u64| crate::config::declared(k).and_then(|v| v.parse().ok()).unwrap_or(d);
@@ -81,12 +83,13 @@ fn spill_wiring(cfg: &Config) -> (Option<std::sync::Arc<dyn crate::provider::Pro
         rule: Rule {
             wait: Duration::from_secs(num("SPIRA_ROUND_VM_SPILL_WAIT_SECS", 30)),
             io_full_avg60: crate::config::declared("SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60").and_then(|v| v.parse().ok()).unwrap_or(30.0),
-            always: mode.as_deref() == Some("ec2-always"),
+            always: mode.as_deref() != Some("ec2"),
         },
+        only,
         pressure: Box::new(|| crate::spill::read_io_full_avg60(crate::spill::PSI_IO)),
         timing: Timing { boot_tries: num("SPIRA_ROUND_VM_EC2_BOOT_TRIES", 150) as u32, poll: cfg.boot_poll, gone_tries: 60 },
     };
-    (Some(ec2), Some(plan))
+    Ok((Some(ec2), Some(plan)))
 }
 
 /// Starts `round-vm _provision-bg` in its own process group (so a `timeout` killing the
@@ -128,6 +131,50 @@ fn pool_for(cfg: &Config) -> Pool {
     }
 }
 
+/// `round-vm ec2-probe [--dry-run]`: one EC2 launch through the production path, no local
+/// fallback. Exit 0 only when every step passed; otherwise 1 naming the step and the AWS error.
+fn ec2_probe(args: &[String]) -> i32 {
+    let dry = match args {
+        [] => false,
+        [a] if a == "--dry-run" => true,
+        _ => {
+            eprintln!("round-vm ec2-probe: usage: round-vm ec2-probe [--dry-run]");
+            return 2;
+        }
+    };
+    let cfg = match Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
+    let p = match Ec2::new(AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), &ec2cfg) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("round-vm ec2-probe: FAILED at config: {e}");
+            return 1;
+        }
+    };
+    let r = if dry {
+        p.probe_dry()
+    } else {
+        let tries = crate::config::declared("SPIRA_ROUND_VM_EC2_BOOT_TRIES").and_then(|v| v.parse().ok()).unwrap_or(150);
+        p.probe(tries, cfg.boot_poll)
+    };
+    match r {
+        Ok(()) => {
+            println!("round-vm ec2-probe: ok{}", if dry { " (dry-run: DryRunOperation)" } else { "" });
+            0
+        }
+        Err(e) => {
+            eprintln!("round-vm ec2-probe: FAILED at {e}");
+            1
+        }
+    }
+}
+
 /// What a panic inside round-vm exits with: its own harness fault (DESIGN.md §2.2), never
 /// Rust's 101, which no caller has a row for (sp-dp872).
 pub const PANIC_EXIT: i32 = 2;
@@ -155,6 +202,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
         return 1;
     };
     let rest = rest.to_vec();
+    if verb == "ec2-probe" {
+        return ec2_probe(&rest);
+    }
     match verb.as_str() {
         "acquire" | "release" | "run" | "status" | "warm" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
         other => {

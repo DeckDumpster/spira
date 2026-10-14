@@ -34,6 +34,30 @@ fresh
 want "ec2-always is watched like ec2" "expires in 4 days" "$(rsk ec2-always pass)"
 
 fresh
+want "ec2-only is watched like ec2" "expires in 4 days" "$(rsk ec2-only pass)"
+
+mkdir -p "$TMP/stub"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/probe.log"\nif [ -e "%s/probe-red" ]; then echo "FAILED at dry-run launch: aws ec2: UnauthorizedOperation" >&2; exit 1; fi\n' "$TMP" "$TMP" > "$TMP/stub/round-vm"
+chmod +x "$TMP/stub/round-vm"
+rskp() {
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only \
+        SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9
+    env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
+}
+echo "$((now + 30 * 86400))" > "$KEY.expires"
+fresh; rm -f "$TMP/probe.log"
+is "a passing probe is quiet" "" "$(rskp pass)"
+want "the watcher probes with --dry-run" "ec2-probe --dry-run" "$(cat "$TMP/probe.log")"
+touch "$TMP/probe-red"
+want "a failing probe alarms with the AWS error" "UnauthorizedOperation" "$(rskp pass)"
+want "the alarm reaches the inbox" "ROUND SPILL LAUNCH" "$(cat "$INBOX")"
+is "the same failure is said once" "" "$(rskp pass)"
+rm -f "$TMP/probe-red"; rskp pass >/dev/null; touch "$TMP/probe-red"
+want "a recurrence after recovery alarms again" "UnauthorizedOperation" "$(rskp pass)"
+rm -f "$TMP/probe-red"
+echo "$((now + 5 * 86400))" > "$KEY.expires"
+
+fresh
 out="$(rsk ec2 pass)"
 want "inside the window it warns with the days left" "expires in 4 days" "$out"
 want "the warning reaches the inbox" "[watch:round-spill-key] ROUND SPILL KEY" "$(cat "$INBOX")"

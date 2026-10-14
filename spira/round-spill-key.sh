@@ -9,7 +9,8 @@
 # The key file is SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE; its expiry (epoch seconds) is recorded
 # beside it in <file>.expires, written by whoever pastes the key. A spilled pass cannot join the
 # tailnet with an expired key, so the warning comes SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS before.
-# Silent while SPIRA_ROUND_VM_SPILL is not ec2 or ec2-always. Each distinct condition is said once.
+# Each pass also runs `round-vm ec2-probe --dry-run`, so a launch path that stops authorising alarms
+# within one interval. Silent while SPIRA_ROUND_VM_SPILL is not ec2, ec2-always or ec2-only. Each distinct condition is said once.
 #
 # covers: spira/round-spill-key.sh spira/watchers spira/conf.d/SPIRA_ROUND_VM_EC2_*
 set -uo pipefail
@@ -32,8 +33,19 @@ _rsk_once() {
     mkdir -p "$(dirname "$mark")" && printf '%s\n' "$1" >> "$mark"
 }
 
+_rsk_probe() {
+    local out mark="$SPIRA_RUN/watchd/round-spill-key.said"
+    if out="$(timeout 5 round-vm ec2-probe --dry-run 2>&1)"; then
+        [ -f "$mark" ] && { grep -v '^probe-' "$mark" > "$mark.tmp"; mv "$mark.tmp" "$mark"; }
+        return 0
+    fi
+    out="$(printf '%s' "$out" | tail -n 3 | tr '\n' ' ')"
+    _rsk_once "probe-$(printf '%s' "$out" | cksum | cut -d' ' -f1)" "ROUND SPILL LAUNCH: round-vm ec2-probe --dry-run failed; EC2 rounds cannot launch: $out"
+}
+
 cmd_pass() {
-    case "${SPIRA_ROUND_VM_SPILL:-}" in ec2|ec2-always) ;; *) return 0 ;; esac
+    case "${SPIRA_ROUND_VM_SPILL:-}" in ec2|ec2-always|ec2-only) ;; *) return 0 ;; esac
+    _rsk_probe
     local file="$SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE" exp now days left
     [ -n "$file" ] || { _rsk_once "nofile" "ROUND SPILL KEY: SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE is not set"; return 0; }
     exp="$(tr -d '[:space:]' < "$file.expires" 2>/dev/null)"
