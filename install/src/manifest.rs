@@ -132,6 +132,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-gate-check.timer", true));
     m.units.push(t("spira-mail-tidy.service", false));
     m.units.push(t("spira-mail-tidy.timer", true));
+    m.units.push(t("spira-mail-reconcile.service", false));
+    m.units.push(t("spira-mail-reconcile.timer", true));
     m.units.push(t("spira-gh-intake.service", false));
     m.units.push(t("spira-gh-intake.timer", true));
     m.units.push(t("spira-verdict.service", false));

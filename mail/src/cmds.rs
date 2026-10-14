@@ -201,10 +201,9 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
     // The bead a question is ABOUT (the asking session's own, under `work ask`), carried as
     // X-Spira-Work-Bead so whoever answers can lift its `ask` hold (sp-v62vn follow-up).
     let work_bead = if asks { args.bead } else { "" };
-    // A rerouted question files no tracking bead, so X-Spira-Bead would name the WORK bead —
-    // and a reply's sendmail closes whatever X-Spira-Bead names. The work bead rides
-    // X-Spira-Work-Bead alone.
-    let mut x_bead = if rerouted && asks { String::new() } else { args.bead.to_string() };
+    // A question's thread bead is its own ask bead, never the work bead it is about: a reply
+    // resolves to X-Spira-Bead, and the work bead rides X-Spira-Work-Bead alone.
+    let mut x_bead = if asks { String::new() } else { args.bead.to_string() };
 
     if args.dry_run {
         if asks && db_configured && !rerouted && mailbox != "concierge" {
@@ -678,6 +677,19 @@ mod probe_tests {
         let text = written_message(t.path());
         assert!(text.contains("X-Spira-Requested-By: put it in my mailbox"), "{text}");
         assert!(!text.contains("X-Spira-Urgent"), "{text}");
+    }
+
+    #[test]
+    fn a_question_about_a_work_bead_never_threads_on_the_work_bead() {
+        let t = testkit::TempDir::new("mail-thread-bead");
+        let mut e = env(t.path());
+        e.db = "db".into();
+        let q = SendArgs { bead: "sp-work1", ..args("May I prove the migration on a copy?", false) };
+        let r = send(&FakeBd::new(vec![]), &e, &q, "## Class basis\nit is policy\n".into()).unwrap();
+        assert!(r.x_bead.is_none(), "{:?}", r.x_bead);
+        let text = written_message(t.path());
+        assert!(!text.contains("X-Spira-Bead:"), "{text}");
+        assert!(text.contains("X-Spira-Work-Bead: sp-work1"), "{text}");
     }
 
     #[test]

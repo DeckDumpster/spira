@@ -242,7 +242,7 @@ FYIs, notifications and alerts — because chat is a log, and a log cannot hold 
 - **A failed probe renders `?`, never 0.** A panel reporting a broken check as all-clear
   displaces the suspicion that would have prompted a look.
 - **The operator's answer arrives as mail, from every surface that takes one.** A reply to an
-  escalation closes its tracking bead through `mail sendmail`; the pane's own close or
+  escalation is delivered by `mail sendmail` and closes its tracking bead on the next `mail reconcile` pass; the pane's own close or
   comment on a decision delivers the same way. Either lands in the concierge's mailbox, and
   `spira-mail-deliver` wakes the reader — there is no bead-scanning watcher to duplicate it.
 

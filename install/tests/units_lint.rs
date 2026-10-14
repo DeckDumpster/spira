@@ -3,7 +3,7 @@ use install::values::{render_file, HostValues};
 use std::path::{Path, PathBuf};
 
 const IO_FENCED: [&str; 4] = ["spira-landing-pass.service", "spira-sop-lint.service", "lc-backup.service", "lc-backup-drill.service"];
-const QUOTA_FENCED: [&str; 8] = ["spira-concierge-guard.service", "spira-nix-gc.service", "spira-verify-asks.service", "spira-perf-watch.service", "spira-perf-happy-path.service", "spira-refusal-watch.service", "spira-sift.service", "spira-reclaim.service"];
+const QUOTA_FENCED: [&str; 9] = ["spira-mail-reconcile.service", "spira-concierge-guard.service", "spira-nix-gc.service", "spira-verify-asks.service", "spira-perf-watch.service", "spira-perf-happy-path.service", "spira-refusal-watch.service", "spira-sift.service", "spira-reclaim.service"];
 const FENCE_EXEMPT_OTHER: [&str; 1] = ["dolt-tmp-prune.service"];
 const STORE_LATE: u32 = 60;
 
@@ -113,7 +113,7 @@ fn no_unit_outside_the_fenced_set_carries_cpuquota_nice_or_ioschedulingclass() {
 
 #[test]
 fn the_notify_refresh_and_mail_tidy_pairs_fire_periodically() {
-    for t in ["spira-notify.timer", "spira-refresh.timer", "spira-mail-tidy.timer"] {
+    for t in ["spira-notify.timer", "spira-refresh.timer", "spira-mail-tidy.timer", "spira-mail-reconcile.timer"] {
         let text = render_file(&dir().join(t), &host(), None).unwrap();
         assert!(text.contains("OnUnitActiveSec="), "{t}: fires periodically");
     }

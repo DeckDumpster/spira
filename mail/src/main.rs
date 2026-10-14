@@ -10,6 +10,7 @@
 //!   mail count <mailbox>
 //!   mail unread-age <mailbox>
 //!   mail sendmail                     RFC 5322 on stdin
+//!   mail reconcile                    apply delivered replies to the beads they answer
 //!   mail tidy <mailbox> [--dry-run]
 //!   mail ensure <mailbox>
 //!   mail sweep-dismissed [mailbox]
@@ -21,7 +22,7 @@ use mail::bead::BdCli;
 use mail::cmds::{self, SendArgs};
 use mail::env::Env;
 use mail::lc::LcCli;
-use mail::{sendmail, tidy};
+use mail::{reconcile, sendmail, tidy};
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -38,6 +39,7 @@ fn main() -> ExitCode {
         "unread-age" => run_unread_age(&rest),
         "done" => run_done(&rest),
         "sendmail" => run_sendmail(&rest),
+        "reconcile" => run_reconcile(&rest),
         "tidy" => run_tidy(&rest),
         "ensure" => run_ensure(&rest),
         "sweep-dismissed" => run_sweep_dismissed(&rest),
@@ -253,10 +255,8 @@ fn run_sendmail(_args: &[String]) -> ExitCode {
         Ok(e) => e,
         Err(e) => return fail(e),
     };
-    let bd = bd_cli(&env);
-    let db_configured = !env.db.is_empty();
     let spool = sendmail::spool_message(&env.run_dir, &raw);
-    match sendmail::sendmail(&bd, &LcCli, db_configured, &env.home, &env.mail_root, env.mute, &raw) {
+    match sendmail::sendmail(&env.home, &env.mail_root, env.mute, &raw) {
         Ok(_) => {
             if let Some(p) = spool {
                 let _ = std::fs::remove_file(p);
@@ -268,6 +268,18 @@ fn run_sendmail(_args: &[String]) -> ExitCode {
             fail(format!("sendmail: {e}{kept}"))
         }
     }
+}
+
+fn run_reconcile(_args: &[String]) -> ExitCode {
+    let env = match Env::load() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
+    let bd = bd_cli(&env);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let r = reconcile::pass(&bd, &LcCli, !env.db.is_empty(), &env.mail_root, &env.run_dir.join("mail-reconcile"), now);
+    println!("reconcile: converged {}, pending {}, refused {}", r.converged, r.pending, r.refused);
+    ExitCode::SUCCESS
 }
 
 fn run_tidy(args: &[String]) -> ExitCode {

@@ -9,6 +9,7 @@ pub mod lc;
 pub mod lint;
 pub mod maildir;
 pub mod message;
+pub mod reconcile;
 pub mod repeat;
 pub mod rfc822;
 pub mod sendmail;
