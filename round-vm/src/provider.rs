@@ -192,18 +192,33 @@ fn cleanup(p: &dyn Provider, vmid: &str, t: Timing, reason: String) -> Provision
     }
 }
 
+/// Another provisioner can take an id between `nextid` and our clone; a fresh id cures that.
+pub const CLONE_ID_ATTEMPTS: u32 = 5;
+
+fn id_was_taken(clone_error: &str) -> bool {
+    clone_error.contains("already exists")
+}
+
 /// Clone → start → address → key. `on_vmid` is told the VMID before the clone is asked
 /// for, so a process that dies mid-provision leaves a record the next acquire can reap.
 /// Every failure after that point destroys the VM before returning (G2).
 pub fn provision(p: &dyn Provider, spec: &ProvisionSpec, on_vmid: &mut dyn FnMut(&str)) -> Result<Vm, ProvisionFailure> {
     let fail = |reason: String| ProvisionFailure { reason, doomed: None };
-    let vmid = p.next_id().map_err(|e| fail(format!("API unreachable (nextid): {e}")))?;
-    on_vmid(&vmid);
     let t = spec.timing;
-    p.hold_for_ci();
-    if let Err(e) = p.clone_to(&vmid, &vm_name(&vmid)) {
-        return Err(cleanup(p, &vmid, t, format!("clone refused: {e}")));
-    }
+    let mut attempt = 1;
+    let vmid = loop {
+        let vmid = p.next_id().map_err(|e| fail(format!("API unreachable (nextid): {e}")))?;
+        on_vmid(&vmid);
+        p.hold_for_ci();
+        match p.clone_to(&vmid, &vm_name(&vmid)) {
+            Ok(()) => break vmid,
+            Err(e) if id_was_taken(&e) && attempt < CLONE_ID_ATTEMPTS => {
+                eprintln!("round-vm: VM id {vmid} was taken before the clone landed ({e}); asking nextid again (attempt {attempt}/{CLONE_ID_ATTEMPTS})");
+                attempt += 1;
+            }
+            Err(e) => return Err(cleanup(p, &vmid, t, format!("clone refused: {e}"))),
+        }
+    };
     match boot(p, &vmid, spec) {
         Ok(addr) => Ok(Vm { handle: vmid, addr }),
         Err(reason) => Err(cleanup(p, &vmid, t, reason)),
@@ -353,11 +368,34 @@ mod tests {
     }
 
     #[test]
-    fn a_clone_that_lost_the_nextid_race_never_destroys_the_winner() {
+    fn a_clone_that_lost_the_nextid_race_retries_on_a_fresh_id_and_spares_the_winner() {
         let p = FakeProvider::new();
         p.plant("100", "someone-else");
+        let mut seen = vec![];
+        let vm = provision(&p, &spec("k"), &mut |id| seen.push(id.to_string())).unwrap();
+        assert_eq!(vm.handle, "101");
+        assert_eq!(seen, ["100", "101"]);
+        assert_eq!(p.count("nextid"), 2);
+        assert_eq!(p.name("100").as_deref(), Some("someone-else"));
+    }
+
+    #[test]
+    fn a_clone_that_keeps_losing_the_race_gives_up_after_a_bounded_number_of_ids() {
+        let p = FakeProvider::new();
+        for id in 100..100 + CLONE_ID_ATTEMPTS + 1 {
+            p.plant(&id.to_string(), "someone-else");
+        }
         let e = provision(&p, &spec("k"), &mut |_| {}).unwrap_err();
         assert!(e.reason.contains("clone refused"), "{}", e.reason);
+        assert_eq!(p.count("nextid") as u32, CLONE_ID_ATTEMPTS);
         assert_eq!(p.name("100").as_deref(), Some("someone-else"));
+    }
+
+    #[test]
+    fn a_clone_refused_for_another_reason_is_not_retried() {
+        let p = FakeProvider::new();
+        p.fail(Step::Clone);
+        provision(&p, &spec("k"), &mut |_| {}).unwrap_err();
+        assert_eq!(p.count("nextid"), 1);
     }
 }
