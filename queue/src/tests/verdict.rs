@@ -863,6 +863,39 @@ fn a_merged_pr_whose_batch_the_lifecycle_already_landed_only_retires_the_record(
 }
 
 #[test]
+fn a_merged_pr_whose_batch_was_abandoned_lands_its_members_from_the_merge() {
+    let t = T::new(LandMode::Queue);
+    t.submitted(&["sp-a", "sp-b"]);
+    lc_batch(&t);
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    *t.forge.merge_commit.borrow_mut() = Some("m1".into());
+    t.git.ancestor("h1", "origin/main");
+    t.lc.batch_states.borrow_mut().insert("spira-1".into(), ("ABANDONED".into(), "6".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    let lc = t.lc.calls.borrow().clone();
+    for id in ["sp-a", "sp-b"] {
+        let want = format!("event bead {id} CERTIFIED 3 {{\"ContentOnBase\":{{\"proof\":\"ancestry:m1\"}}}}");
+        assert!(lc.contains(&want), "{lc:?}");
+        assert!(t.lib.has(&format!("bead_close {id} m1")));
+    }
+    assert!(!t.lc.has("land "));
+    assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn a_merged_pr_on_an_abandoned_batch_with_a_member_not_on_the_base_keeps_the_record() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    *t.forge.merge_commit.borrow_mut() = Some("m1".into());
+    t.lc.batch_states.borrow_mut().insert("spira-1".into(), ("ABANDONED".into(), "6".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 1);
+    assert!(t.err().contains("members not landed"), "{}", t.err());
+    assert!(!t.lc.calls.borrow().iter().any(|c| c.starts_with("event bead")));
+    assert!(t.qfile("open").exists());
+}
+
+#[test]
 fn a_merged_pr_falls_back_to_the_sealed_head_when_it_is_on_the_base() {
     let t = T::new(LandMode::Queue);
     lc_batch(&t);

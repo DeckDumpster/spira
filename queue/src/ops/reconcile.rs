@@ -82,6 +82,12 @@ fn land(w: &World, c: &Ctx, path: &Path, file: &Path, kv: &Kv, pr: &str, members
     if let Some(id) = kv.get("batch_id").filter(|b| !b.is_empty()) {
         match w.lc.batch_state(id) {
             Some((s, _)) if matches!(s.as_str(), "LANDED" | "SETTLED") => {}
+            Some((s, _)) if matches!(s.as_str(), "ABANDONED" | "DISCARDED") => {
+                if let Err(why) = land_members_from_merge(w, path, &head, &base, &sha, members) {
+                    return cannot_act(w, c, file, kv, &format!("PR {pr} merged but batch {id} is already {s} on spira-lc and {why}"));
+                }
+                w.out(format!("verdict {name}: reconcile: PR {pr} merged but batch {id} was {s}; members landed from the merge at {sha}"));
+            }
             Some((s, _)) if terminal(&s) => return cannot_act(w, c, file, kv, &format!("PR {pr} merged but batch {id} is already {s} on spira-lc")),
             Some((mut s, v)) => {
                 let Ok(mut v) = v.trim().parse::<u64>() else { return cannot_act(w, c, file, kv, &format!("batch {id}: unreadable version {v:?}")) };
@@ -117,6 +123,35 @@ fn land(w: &World, c: &Ctx, path: &Path, file: &Path, kv: &Kv, pr: &str, members
     w.lib.notify(&c.s.mailbox, name, &format!("PR {pr} merged (reconciled)"), &format!("PR {pr} was merged on the forge; the batch was landed on spira-lc at {sha}."));
     w.out(format!("verdict {name}: reconcile: PR {pr} merged — batch landed at {sha}"));
     OK
+}
+
+/// An abandoned batch's members went back to CERTIFIED; each whose content (its own tip, or the
+/// batch head) is on the landing ref is recorded LANDED, the merge as proof. Err names the
+/// members that could not be proven or recorded; nothing is half-reported.
+fn land_members_from_merge(w: &World, path: &Path, head: &str, base: &str, sha: &str, members: &[Member]) -> Result<(), String> {
+    let head_on_base = !head.is_empty() && !base.is_empty() && w.git.is_ancestor(path, head, base);
+    let kind = serde_json::json!({"ContentOnBase": {"proof": format!("ancestry:{sha}")}}).to_string();
+    let mut stuck = Vec::new();
+    for m in members {
+        let Some((state, version)) = w.lc.bead_state(&m.id) else {
+            stuck.push(format!("{} (no readable row)", m.id));
+            continue;
+        };
+        if !matches!(state.as_str(), "CERTIFIED" | "SUBMITTED") {
+            continue;
+        }
+        let on_base = head_on_base || (!m.tip.is_empty() && !base.is_empty() && w.git.is_ancestor(path, &m.tip, base));
+        if !on_base {
+            stuck.push(format!("{} (tip {} is not on {base})", m.id, m.tip));
+        } else if let Err((rc, e)) = w.lc.bead_event(&m.id, &state, version.trim(), "reconcile", &kind) {
+            stuck.push(format!("{} (LANDED refused, rc={rc}: {e})", m.id));
+        }
+    }
+    if stuck.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("members not landed: {}", stuck.join("; ")))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

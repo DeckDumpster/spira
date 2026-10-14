@@ -266,6 +266,10 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
     let pr = kv.get_first("pr").unwrap_or("").to_string();
     let branch = kv.get_first("branch").unwrap_or("").to_string();
     let batch_id = kv.get_first("batch_id").unwrap_or("").to_string();
+    if !pr.is_empty() && idents(w, label, &[("pr", &pr)]).is_ok() && w.forge.pr_state(&c.s.forge, path, &pr).as_deref().map(str::trim) == Some("merged") {
+        w.err(format!("queue.sh {label}: refused — PR {pr} is already merged; its batch lands through verdict, not abandon"));
+        return FAIL;
+    }
     let members = kv.members();
     let stamp = w.clock.stamp();
     let archive = c.queue_file(&format!("closed-pr{pr}-{stamp}"));
