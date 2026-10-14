@@ -74,10 +74,11 @@ is "row is READY" 1 "$([ -f "$LC_FIX/bead/READY/sp-new1" ] && echo 1 || echo 0)"
 rm -f "$LC_FIX/bead/READY/sp-new1"
 
 echo; echo "FILING: a failed row creation is an error naming the bead"
-: > "$LOG"; touch "$LC_FIX/refuse-create"
+: > "$LOG"; : > "$LC_FIX/creates.log"; touch "$LC_FIX/refuse-create"
 out="$(run_trigger)"; rc=$?
 is "row failure exits 1" 1 "$rc"
 want "names the unclaimable bead" "sp-new1" "$out"
+is "row creation is retried ATTEMPTS times" 3 "$(grep -c "create-bead sp-new1" "$LC_FIX/creates.log")"
 rm -f "$LC_FIX/refuse-create"
 
 echo; echo "FILING: a row creation that fails once is retried and succeeds"
