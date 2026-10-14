@@ -121,7 +121,6 @@ fn statute_dir_from(dir: &str, run: &str) -> Option<std::path::PathBuf> {
     }
 }
 
-/// An empty configured value means the declared default, `$SPIRA_RUN/statutes`.
 fn statute_dir() -> Result<std::path::PathBuf, String> {
     let dir = spira_config::process::cfg("SPIRA_STATUTE_DIR")?;
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
