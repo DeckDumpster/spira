@@ -12,7 +12,7 @@ use crate::records::{self, one_line, write_atomic, Kv};
 /// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED or SUBMITTED (a requeue of a member delivered from SUBMITTED lands there; Returned is
 /// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK; a row already in REWORK is the target state, not a refusal. The refusal is
 /// reported here and handed back: an eject that leaves the row where it was must exit non-zero.
-pub fn lc_return(w: &World, id: &str) -> Result<(), ()> {
+pub fn lc_return(w: &World, id: &str, red: bool) -> Result<(), ()> {
     let fail = |why: String| {
         w.err(format!("queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"));
         Err(())
@@ -33,7 +33,8 @@ pub fn lc_return(w: &World, id: &str) -> Result<(), ()> {
     if state != "IN_DELIVERY" {
         return fail(format!("in state {state}, not SUBMITTED, CERTIFIED or IN_DELIVERY"));
     }
-    if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "{\"Returned\":{\"reason\":\"batch-ejected\"}}") {
+    let reason = if red { "batch-ejected-red" } else { "batch-ejected" };
+    if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, &format!("{{\"Returned\":{{\"reason\":\"{reason}\"}}}}")) {
         return fail(format!("Returned refused (rc={rc}): {e}"));
     }
     Ok(())
@@ -104,7 +105,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         if !reopened {
             w.err(format!("queue.sh eject: cannot reopen {id} (cause {})", cause.as_str()));
         }
-        let returned = lc_return(w, id).is_ok();
+        let returned = lc_return(w, id, cause == EjectCause::EjectRed).is_ok();
         let mut comment = format!("Ejected while certified but not yet batched in {}.", c.r.name);
         if !reason.is_empty() {
             comment.push_str(&format!("\n\n{reason}"));
@@ -153,7 +154,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     // eject-member requeues the member to CERTIFIED, so the walk to REWORK must follow it: done
     // first, the requeue would undo it and the next cut would re-batch the bead.
     if !harness_fault || batch_id.is_empty() {
-        failed |= lc_return(w, id).is_err();
+        failed |= lc_return(w, id, cause == EjectCause::EjectRed).is_err();
     }
     let mut comment = format!("Ejected from open batch in {}.", c.r.name);
     if !reason.is_empty() {

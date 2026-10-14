@@ -962,7 +962,7 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
             w.err(format!("queue.sh {label}: cannot reopen {bead} (cause {})", own_cause.as_str()));
             unreturned.push(bead);
         }
-        if lc_return(w, bead).is_err() && !unreturned.contains(&bead) {
+        if lc_return(w, bead, bead == id && own_cause == EjectCause::EjectRed).is_err() && !unreturned.contains(&bead) {
             unreturned.push(bead);
         }
         w.lib.release_claim(bead);
