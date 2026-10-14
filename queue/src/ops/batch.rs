@@ -421,6 +421,12 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         w.err(format!("queue.sh open-batch: a batch is already open for {name} (owner={owner}) — abandon it first (queue.sh abandon) or pass --replace --reason"));
         return FAIL;
     }
+    if !(dry_run && replace_reason.is_some()) {
+        if let Some((pr, br)) = w.forge.queue_prs(&c.s.forge, &path).and_then(|v| v.into_iter().next()) {
+            w.err(format!("queue.sh open-batch: {name} already has open batch PR {pr} ({br}) on the forge — nothing cut; abandon it first (queue.sh abandon) or pass --replace --reason"));
+            return FAIL;
+        }
+    }
     let Some(base) = c.r.landref.clone() else {
         w.err(format!("queue.sh open-batch: cannot resolve landing ref for {name}"));
         return FAIL;
