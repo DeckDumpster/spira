@@ -332,12 +332,6 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
     OK
 }
 
-/// queue_certified_list: every `spira/*` branch whose lifecycle row is CERTIFIED, with the
-/// row's tip and the epoch it entered CERTIFIED.
-fn certified(w: &World, path: &std::path::Path) -> Vec<(String, String, u64)> {
-    super::helpers::certified_rows(w.lc, &w.git.branches(path, "refs/heads/spira/"))
-}
-
 /// The first prerequisite in `row`'s recorded stack, transitively, that is held, ejected at its
 /// current tip, or whose row cannot be read; its dependent would carry that prerequisite's
 /// commits into a batch.
@@ -415,23 +409,19 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     let remote = c.r.ref_remote(&base).unwrap_or_else(|| "origin".into());
     let base_branch = ref_branch(&base).to_string();
 
-    let certs = certified(w, &path);
+    let branches = w.git.branches(&path, "refs/heads/spira/");
+    let certs = super::helpers::certified_rows(w.lc, &branches);
+    let submitted = super::helpers::state_rows(w.lc, &branches, "SUBMITTED");
     let mut skips: Vec<String> = Vec::new();
     let mut cands: Vec<(String, String)> = Vec::new();
     if !members_arg.trim().is_empty() {
         for mid in members_arg.split(|ch: char| ch == ',' || ch.is_whitespace()).filter(|s| !s.is_empty()) {
-            match certs.iter().find(|(i, _, _)| i == mid) {
+            match certs.iter().chain(submitted.iter()).find(|(i, _, _)| i == mid) {
                 Some((i, t, _)) => cands.push((i.clone(), t.clone())),
-                None => skips.push(format!("{mid}: not CERTIFIED")),
+                None => skips.push(format!("{mid}: not SUBMITTED or CERTIFIED")),
             }
         }
-    } else if !certs.is_empty() {
-        let ids: Vec<String> = certs.iter().map(|(i, _, _)| i.clone()).collect();
-        let prio = w.bd.show(&ids).ok().map(|rows| rows_json(&rows)).unwrap_or_else(|| "[]".into());
-        let rows: String = certs.iter().fold(String::new(), |mut acc, (i, t, e)| {
-            acc.push_str(&format!("{i} {t} {e}\n"));
-            acc
-        });
+    } else {
         let express: std::collections::HashSet<String> = match w.lc.express_ids() {
             Ok(ids) => ids.into_iter().collect(),
             Err(e) => {
@@ -439,23 +429,46 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
                 Default::default()
             }
         };
-        cands = w.lib.sort_rows(&express, &path, &base_sha, &prio, &rows);
+        for group in [&certs, &submitted] {
+            if group.is_empty() {
+                continue;
+            }
+            let ids: Vec<String> = group.iter().map(|(i, _, _)| i.clone()).collect();
+            let prio = w.bd.show(&ids).ok().map(|rows| rows_json(&rows)).unwrap_or_else(|| "[]".into());
+            let rows: String = group.iter().fold(String::new(), |mut acc, (i, t, e)| {
+                acc.push_str(&format!("{i} {t} {e}\n"));
+                acc
+            });
+            cands.extend(w.lib.sort_rows(&express, &path, &base_sha, &prio, &rows));
+        }
     }
 
-    // Admission: the member's lifecycle row, read fresh, is still CERTIFIED — waiting for a
-    // round. Never bd's status (design §3.4, sp-mve9i: bd status is inert for work beads, and
+    // Admission: the member's lifecycle row, read fresh, is still CERTIFIED or SUBMITTED — waiting
+    // for a round; a SUBMITTED member is provisional, and its gate red ejects it (verdict). Never bd's status (design §3.4, sp-mve9i: bd status is inert for work beads, and
     // the work verbs never move it). A row the machine cannot read is not admitted
     // (DESIGN.md §8 D8).
     let mut admitted = Vec::new();
+    let mut provisional: Vec<String> = Vec::new();
     for (id, tip) in cands {
         match w.lc.bead_row(&id) {
             None => skips.push(format!("{id}: no lifecycle row (spira-lc could not say) — not admitted")),
-            Some(r) if r.state == "CERTIFIED" && !r.holds.is_empty() => skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(","))),
-            Some(r) if r.state == "CERTIFIED" => match barred_prereq(w, &r) {
+            Some(r) if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") && !r.holds.is_empty() => {
+                skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(",")))
+            }
+            Some(r) if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") => match barred_prereq(w, &r) {
                 Some(p) => skips.push(format!("{id}: stacked on held {p} — not admitted")),
-                None => admitted.push((id, tip)),
+                None => {
+                    if r.state == "SUBMITTED" {
+                        if let Some(why) = super::round::gate_red_at(&c, &id, &tip) {
+                            skips.push(format!("{id}: its gate is FAIL at {tip} ({why}) — not admitted"));
+                            continue;
+                        }
+                        provisional.push(id.clone());
+                    }
+                    admitted.push((id, tip))
+                }
             },
-            Some(r) => skips.push(format!("{id}: lifecycle state={} (no longer CERTIFIED) — not admitted", r.state)),
+            Some(r) => skips.push(format!("{id}: lifecycle state={} (no longer SUBMITTED or CERTIFIED) — not admitted", r.state)),
         }
     }
 
@@ -580,6 +593,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         w.err(format!("queue.sh open-batch: PR {pr} for {name} is open but auto-merge could not be armed — the verdict pass must land it"));
     }
     let opened = w.clock.now();
+    let provisional = provisional.iter().filter(|p| members.iter().any(|m| &m.id == *p)).cloned().collect::<Vec<_>>().join(" ");
     let mut rec = Kv::default();
     for (k, v) in [
         ("pr", pr.as_str()),
@@ -591,6 +605,10 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         ("owner", actor.as_str()),
     ] {
         rec.push(k, v);
+    }
+    if !provisional.is_empty() {
+        rec.push("provisional", &provisional);
+        w.out(format!("queue.sh open-batch: provisional (SUBMITTED, gate still running): {provisional}"));
     }
     if let Err(e) = write_atomic(&open, &rec.render()) {
         w.err(format!("queue.sh open-batch: {e}"));

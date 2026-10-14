@@ -292,7 +292,7 @@ echo
 echo "8. nothing admissible — refuses rather than open an empty-list PR:"
 seed
 out8="$(openbatch fixture-repo --members "sp-nosuchbead")"; rc8=$?
-want "8. names the bead as not certified" "sp-nosuchbead: not CERTIFIED" "$out8"
+want "8. names the bead as not certified" "sp-nosuchbead: not SUBMITTED or CERTIFIED" "$out8"
 want "8. reports no cut"                  "no cut"                       "$out8"
 is   "8. no PR created"                   "0" "$(wc -l < "$FORGE_LOG")"
 [ "$rc8" -ne 0 ] && ok "8. non-zero exit" || bad "8. non-zero exit" "rc=$rc8"
