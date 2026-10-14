@@ -83,7 +83,7 @@ out="$(lcb drill "$TMP/other.tar.gz")"; rc=$?; wantrc "drill red on another stor
 echo; echo "drill — defers while a round is open or the store is over budget, then runs:"
 echo open > "$TMP/round"; out="$(lcb drill)"; rc=$?; wantrc "drill never runs while a round is open" 1 $rc; want "the deferral names the round" "DEFERRED" "$out"; want "the deferral names why" "round state is 'open'" "$out"
 : > "$TMP/round"; out="$(lcb drill)"; rc=$?; wantrc "an unknown round state defers" 1 $rc
-out="$(BUDGET=1 lcb drill)"; rc=$?; wantrc "drill defers when the store is over budget" 1 $rc; want "the deferral names the budget" "over the 1ms budget" "$out"
+out="$(BUDGET=1 lcb drill)"; rc=$?; wantrc "drill defers when the store is over budget" 1 $rc; want "the deferral names the budget" "over the 1ms budget" "$out"; echo "# budget out: ${out//$'\n'/ | }"
 [ -z "$(ls "$TMP/drill-scratch" 2>/dev/null)" ] && ok "a deferred drill restored nothing" || bad "a deferred drill restored nothing"
 echo open > "$TMP/round"; ( sleep 3; echo none > "$TMP/round" ) &
 out="$(WAIT=60 lcb drill)"; rc=$?; wantrc "drill runs once the round closes" 0 $rc; want "it deferred first" "deferring" "$out"; want "then restored" "drill ok" "$out"
