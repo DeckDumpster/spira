@@ -59,6 +59,8 @@ the work — or the other ask — it references; the guard in `mail` enforces th
 regardless of the cited bead's own type and will refuse any attempt to wire a blocking
 edge.
 
+An ask to the operator names its `--class` as `permissions`, `policy`, `destructive` or `design`; `mail` refuses any other.
+
 **Rolling repeated questions into one ask.** When several loose questions are really the same
 ask, file one and link the ones it subsumes to it with `work relate <rollup> <ask>`, naming
 every subsumed id in the rollup's body. Never wire an untyped dependency between two beads
