@@ -90,7 +90,7 @@ out="$(WAIT=60 lcb drill)"; rc=$?; wantrc "drill runs once the round closes" 0 $
 wait; echo none > "$TMP/round"
 echo; echo "drill overlapping a run — verifies the previous tarball or defers, never fails:"
 mkdir -p "$TMP/slow"; real_tar="$(command -v tar)"
-printf '#!/bin/sh\ncase "$*" in *-caf*) sleep 25 ;; esac\nexec %s "$@"\n' "$real_tar" > "$TMP/slow/tar"; chmod +x "$TMP/slow/tar"
+printf '#!/bin/sh\n%s "$@"; rc=$?\ncase "$*" in *-caf*) sleep 25 ;; esac\nexit $rc\n' "$real_tar" > "$TMP/slow/tar"; chmod +x "$TMP/slow/tar"
 prev="$(ls "$RUN"/lc-backup/spira/latest.tar.* 2>/dev/null | head -1)"
 [ -s "$prev" ] && ok "previous tarball exists before the overlapping run" || bad "previous tarball exists before the overlapping run"
 ( PATH="$TMP/slow:$PATH" DBS=spira lcb run >"$TMP/slowrun.out" 2>&1 ) & slowpid=$!
