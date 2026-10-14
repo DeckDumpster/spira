@@ -54,6 +54,10 @@ if [ -n "${DEP_PROBE_FLAKY:-}" ] && [ ! -e "$dir/probe-ran" ]; then
     echo "flaky first run" >&2
     exit 1
 fi
+if [ -n "${DEP_PROBE_CWD:-}" ] && [ -n "\$(ls -A)" ]; then
+    echo "probe cwd not empty: \$(pwd): \$(ls -A | head -3 | tr '\n' ' ')" >&2
+    exit 1
+fi
 echo "${DEP_PROBE_OUT:-9.9.9}"
 [ -z "${DEP_PROBE_ERR:-}" ] || echo "${DEP_PROBE_ERR:-}" >&2
 exit ${DEP_PROBE_RC:-0}
@@ -130,6 +134,13 @@ REL="$TMP/rel-deps-flaky"; DEP_PROBE_FLAKY=1 DEP_VMIN=1.0.0 DEP_PROBE_OUT=2.3.4 
 run "$REL"
 is   "deps: transient probe failure: passes on retry" 0 "$rc"
 want "deps: transient probe failure: first failure logged" "flaky first run" "$out"
+
+REL="$TMP/rel-deps-cwd"; DEP_PROBE_CWD=1 DEP_VMIN=1.0.0 DEP_PROBE_OUT=2.3.4 mkrel "$REL"
+mkdir -p "$TMP/scratchcwd"; : > "$TMP/scratchcwd/vanishing.tmp"
+( cd "$TMP/scratchcwd" && run "$REL" ; echo "$rc" > "$TMP/cwd-rc"; printf '%s' "$out" > "$TMP/cwd-out" )
+rc="$(cat "$TMP/cwd-rc")"; out="$(cat "$TMP/cwd-out")"
+is   "deps: probe does not run in the caller's cwd: exit 0" 0 "$rc"
+want "deps: probe does not run in the caller's cwd: ok"    "ok   deps" "$out"
 
 REL="$TMP/rel-deps-old"; DEP_VMIN=5.0.0 DEP_PROBE_OUT=1.2.3 DEP_PROBE_RC=0 mkrel "$REL"
 run "$REL"
