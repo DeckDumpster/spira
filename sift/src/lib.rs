@@ -4,6 +4,7 @@
 //! candidate the screen cannot judge records nothing and stays unscreened.
 
 mod git;
+pub mod identity;
 pub mod machine;
 mod store;
 
@@ -34,6 +35,11 @@ pub trait Probe {
     /// Why a bead that declares a target may not proceed: its submission carries no verdict, or a
     /// SHORT with no follow-on or escalation.
     fn target_gap(&self, _id: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    /// The added lines and paths of `tip` that carry another registered repo's identity terms.
+    /// Err is a refusal (no brain path configured, a page unreadable), never a silent pass.
+    fn identity_gap(&self, _tip: &str) -> Result<Option<String>, String> {
         Ok(None)
     }
 }
@@ -194,6 +200,11 @@ pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &
             Ok(Some(text)) => findings.push(Finding { reason: "policy-violation", text }),
             Ok(None) => {}
             Err(e) => out.errors.push(format!("sift: {} target not read ({e}); passed on the target", c.id)),
+        }
+        match probe.identity_gap(&c.tip) {
+            Ok(Some(text)) => findings.push(Finding { reason: "policy-violation", text }),
+            Ok(None) => {}
+            Err(e) => findings.push(Finding { reason: "policy-violation", text: format!("identity check refused: {e}") }),
         }
         if findings.is_empty() {
             if let Err(e) = store.record_screened(&c.id, &c.tip) {

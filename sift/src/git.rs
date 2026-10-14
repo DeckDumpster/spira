@@ -6,6 +6,11 @@ use crate::{parse_stacked_id, Merge, Probe};
 
 pub struct GitProbe {
     pub repo: PathBuf,
+    /// This repo's registry name, and every registered name (this one included).
+    pub name: String,
+    pub registered: Vec<String>,
+    /// `SPIRA_WIKI`; empty when unset.
+    pub wiki: String,
     pub base_ref: String,
     pub work: PathBuf,
     pub state: Box<dyn Fn(&str) -> Result<String, String>>,
@@ -80,6 +85,15 @@ impl Probe for GitProbe {
     fn target_gap(&self, id: &str) -> Result<Option<String>, String> {
         (self.shown)(id).map(|text| spira_config::target::gap(&text))
     }
+
+    fn identity_gap(&self, tip: &str) -> Result<Option<String>, String> {
+        if !self.registered.iter().any(|r| *r != self.name) {
+            return Ok(None);
+        }
+        let pages = crate::identity::load(&self.wiki, &self.registered)?;
+        let diff = out(git(&self.repo).args(["diff", "-U0", "--no-color", "--no-ext-diff", &format!("{}...{tip}", self.base_ref)]), "git diff")?;
+        Ok(crate::identity::gap(&self.name, &pages, &self.wiki, &diff))
+    }
 }
 
 #[cfg(test)]
@@ -111,7 +125,7 @@ mod tests {
         let conflict = commit(&p, "f", "other\n", "sp-other: edits the same line");
         g(&p, &["checkout", "-q", "-b", "clean", "main"]);
         let clean = commit(&p, "g", "new\n", "spira: land sp-bead — adds g");
-        let probe = GitProbe { repo: p.clone(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())), shown: Box::new(|_| Ok(String::new())) };
+        let probe = GitProbe { repo: p.clone(), name: "alpha".into(), registered: vec!["alpha".into()], wiki: String::new(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())), shown: Box::new(|_| Ok(String::new())) };
         (d, probe, [conflict, clean, "x".into()])
     }
 
@@ -132,5 +146,30 @@ mod tests {
         assert_eq!(probe.patch_id(&clean).unwrap(), probe.patch_id(&copy).unwrap());
         assert_eq!(probe.stacked_on("sp-me", &clean).unwrap(), ["sp-bead"]);
         assert!(probe.stacked_on("sp-bead", &clean).unwrap().is_empty());
+    }
+
+    #[test]
+    fn identity_gap_reads_the_brain_pages_and_the_branch_diff() {
+        let (d, mut probe, _) = fixture();
+        let p = d.path();
+        g(p, &["checkout", "-q", "-b", "term", "main"]);
+        let tip = commit(p, "ui.ts", "const c = 'Zorblax';\n", "adds a term");
+        let brain = testkit::TempDir::new("sift-brain");
+        for (repo, page) in [("alpha", "## Identity terms\n- Quuxify\n"), ("beta", "## Identity terms\n- Zorblax\n")] {
+            std::fs::create_dir_all(brain.path().join("projects").join(repo)).unwrap();
+            std::fs::write(brain.path().join("projects").join(repo).join("identity.md"), page).unwrap();
+        }
+        probe.registered = vec!["alpha".into(), "beta".into()];
+        probe.wiki = String::new();
+        assert!(probe.identity_gap(&tip).unwrap_err().contains("SPIRA_WIKI"));
+        probe.wiki = brain.path().to_str().unwrap().into();
+        let hit = probe.identity_gap(&tip).unwrap().expect("alpha adds beta's term");
+        assert!(hit.contains("ui.ts:1: 'Zorblax' belongs to beta"), "{hit}");
+        probe.name = "beta".into();
+        assert_eq!(probe.identity_gap(&tip).unwrap(), None);
+        probe.registered = vec!["beta".into()];
+        probe.name = "beta".into();
+        probe.wiki = String::new();
+        assert_eq!(probe.identity_gap(&tip).unwrap(), None, "a lone repo has nobody to collide with");
     }
 }
