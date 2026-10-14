@@ -55,7 +55,7 @@ if [ -n "${DEP_PROBE_FLAKY:-}" ] && [ ! -e "$dir/probe-ran" ]; then
     exit 1
 fi
 echo "${DEP_PROBE_OUT:-9.9.9}"
-[ -z "${DEP_PROBE_ERR:-}" ] || echo "${DEP_PROBE_ERR}" >&2
+[ -z "${DEP_PROBE_ERR:-}" ] || echo "${DEP_PROBE_ERR:-}" >&2
 exit ${DEP_PROBE_RC:-0}
 EOF
     chmod +x "$dir/probe-widget.sh"
