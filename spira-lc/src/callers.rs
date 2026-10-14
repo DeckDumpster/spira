@@ -821,6 +821,8 @@ pub trait Bd {
     fn work_beads(&mut self, id: &str) -> Result<Vec<String>, String>;
     /// Whether the bead came from outside: its bd `external_ref` is set.
     fn external(&mut self, id: &str) -> Result<bool, String>;
+    /// The open beads that `blocks`-depend on `id`.
+    fn blocking_dependents(&mut self, id: &str) -> Result<Vec<String>, String>;
 }
 
 /// Why `kind` may not end the external bead `id`, as an answer; `None` when it may go ahead or
@@ -845,6 +847,77 @@ pub fn drop_cmd(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer
         }
     }
     run("drop", args, m)
+}
+
+/// `drop-bead <bead-id> --reason <text> [--actor <name>]` — end a work bead as won't-do. Refuses
+/// while an open bead still depends on it, takes it out of every unfinished batch, then closes it
+/// through [`close`] as DROPPED with the reason. Terminal and rowless beads are refused.
+pub fn drop_bead(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    const USE: &str = "drop-bead <bead-id> --reason <text> [--actor <name>]";
+    let (mut id, mut reason, mut actor) = (None, None, "drop".to_string());
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--reason" => reason = args.get(i + 1).cloned(),
+            "--actor" => actor = args.get(i + 1).cloned().unwrap_or_default(),
+            a if !a.starts_with('-') && id.is_none() => {
+                id = Some(a.to_string());
+                i += 1;
+                continue;
+            }
+            _ => return usage(USE),
+        }
+        i += 2;
+    }
+    let (Some(id), Some(reason)) = (id.filter(|s| !s.is_empty()), reason.map(|r| r.trim().to_string()).filter(|r| !r.is_empty())) else {
+        return usage(USE);
+    };
+    if actor.is_empty() {
+        return usage(USE);
+    }
+    let refused = |why: String| Answer { code: REFUSED, stderr: format!("spira-lc drop-bead: {id}: {why} — nothing dropped\n"), ..Default::default() };
+    match show(m, &id) {
+        Err(NO_ROW) => return refused("has no lifecycle row, so it is not a work bead".into()),
+        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc drop-bead: {id}: the lifecycle row is unreadable — nothing dropped\n"), ..Default::default() },
+        Ok(v) => {
+            let state = bead_field(&v, "state");
+            if matches!(state.as_str(), "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE") {
+                return refused(format!("is already {state}"));
+            }
+        }
+    }
+    match bd.blocking_dependents(&id) {
+        Ok(d) if !d.is_empty() => return refused(format!("{} would be released without a decision: {}", if d.len() == 1 { "an open dependent" } else { "open dependents" }, d.join(", "))),
+        Ok(_) => {}
+        Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc drop-bead: {id}: its dependents are unreadable — nothing dropped: {}\n", e.trim()), ..Default::default() },
+    }
+    let (rc, out) = m.call(&["batches-of".into(), id.clone()]);
+    if rc != 0 {
+        return Answer { code: CANNOT_TELL, stderr: format!("spira-lc drop-bead: {id}: its batches are unreadable — nothing dropped\n"), ..Default::default() };
+    }
+    let batches: Vec<Value> = serde_json::from_str(out.trim()).unwrap_or_default();
+    for b in &batches {
+        let (batch, state, version) = (s(b, "batch_id"), s(b, "state"), s(b, "version"));
+        let (rc, out) = m.call(&[
+            "eject-member".into(),
+            batch.clone(),
+            "--bead-id".into(),
+            id.clone(),
+            "--expect".into(),
+            state.clone(),
+            "--version".into(),
+            version,
+            "--actor".into(),
+            actor.clone(),
+            "--reason".into(),
+            format!("dropped: {reason}"),
+        ]);
+        if rc != 0 {
+            return Answer { code: if rc == REFUSED { REFUSED } else { CANNOT_TELL }, stderr: format!("spira-lc drop-bead: {id}: could not leave batch {batch} ({state}): {} — nothing dropped\n", out.trim()), ..Default::default() };
+        }
+    }
+    let close_args = vec![id.clone(), "--reason".into(), format!("dropped: {reason}"), "--dropped".into(), "--actor".into(), actor];
+    close(&close_args, m, bd, &mut |_| Err("no reason file".into()))
 }
 
 /// `reopen <id> [cause] [actor]` — the one door for handing a bead back (sp-swh8b8), the mirror of
@@ -1206,9 +1279,9 @@ pub fn close(
     bd: &mut dyn Bd,
     reason_file: &mut dyn FnMut(&str) -> Result<String, String>,
 ) -> Answer {
-    const USE: &str = "close <bead-id> (--reason <text> | --reason-file <file|->) [--superseded-by <id> | --landing | --delivered] [--actor <name>]";
+    const USE: &str = "close <bead-id> (--reason <text> | --reason-file <file|->) [--superseded-by <id> | --landing | --delivered | --dropped] [--actor <name>]";
     let mut id = None;
-    let (mut reason, mut by, mut actor, mut landing, mut delivered) = (None, None, "close".to_string(), false, false);
+    let (mut reason, mut by, mut actor, mut landing, mut delivered, mut dropped) = (None, None, "close".to_string(), false, false, false);
     let mut i = 0;
     while i < args.len() {
         let val = args.get(i + 1).cloned();
@@ -1220,6 +1293,11 @@ pub fn close(
             }
             "--delivered" => {
                 delivered = true;
+                i += 1;
+                continue;
+            }
+            "--dropped" => {
+                dropped = true;
                 i += 1;
                 continue;
             }
@@ -1243,7 +1321,7 @@ pub fn close(
     let (Some(id), Some(reason)) = (id.filter(|s| !s.is_empty()), reason.map(|r| r.trim_end().to_string()).filter(|r| !r.is_empty())) else {
         return usage(USE);
     };
-    if actor.is_empty() || (landing && by.is_some()) || (delivered && (landing || by.is_some())) {
+    if actor.is_empty() || (landing && by.is_some()) || (delivered && (landing || by.is_some())) || (dropped && (landing || delivered || by.is_some())) {
         return usage(USE);
     }
     let asked_about = match bd.work_beads(&id) {
@@ -1287,6 +1365,7 @@ pub fn close(
                 let kind = match by.as_deref().filter(|b| !b.is_empty()) {
                     Some(b) => BeadEventKind::Supersede { by: b.to_string() },
                     None if delivered => BeadEventKind::Done { delivers: reason.clone() },
+                    None if dropped => BeadEventKind::Drop { reason: DropReason::Unwanted },
                     None => terminal_event_for(&reason),
                 };
                 if let Some(a) = external_refusal(bd, &id, &kind, &reason, "close") {

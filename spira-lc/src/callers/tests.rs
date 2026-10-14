@@ -26,6 +26,9 @@ struct Fake {
     /// Ask rows on the ask machine, and the `close-ask` calls made against them.
     ask_rows: Vec<String>,
     ask_closes: Vec<Vec<String>>,
+    /// bead id -> the `(batch, state)` pairs it is a member of, and the `eject-member` calls made.
+    batches: BTreeMap<String, Vec<(String, String)>>,
+    ejects: Vec<Vec<String>>,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -131,6 +134,19 @@ impl Machine for Fake {
                     })
                     .collect();
                 (0, Value::Array(rows).to_string())
+            }
+            "batches-of" => {
+                let rows: Vec<Value> = self.batches.get(&args[1]).into_iter().flatten().map(|(b, st)| json!({"batch_id": b, "state": st, "version": "3"})).collect();
+                (0, Value::Array(rows).to_string())
+            }
+            "eject-member" => {
+                self.ejects.push(args.to_vec());
+                let bead = flag(args, "--bead-id").unwrap();
+                if flag(args, "--expect").as_deref() == Some("ATTRIBUTING") {
+                    return (REFUSED, "refused".into());
+                }
+                self.batches.get_mut(&bead).unwrap().retain(|(b, _)| *b != args[1]);
+                (0, String::new())
             }
             "close-ask" => {
                 self.ask_closes.push(args.to_vec());
@@ -703,10 +719,18 @@ struct FakeBd {
     asks: BTreeMap<String, Vec<String>>,
     /// bead ids carrying an `external_ref`.
     external: std::collections::BTreeSet<String>,
+    /// bead id -> the beads that `blocks`-depend on it (open unless in `closed`).
+    dependents: BTreeMap<String, Vec<String>>,
     down: bool,
 }
 
 impl Bd for FakeBd {
+    fn blocking_dependents(&mut self, id: &str) -> Result<Vec<String>, String> {
+        if self.down {
+            return Err("bd down".into());
+        }
+        Ok(self.dependents.get(id).into_iter().flatten().filter(|d| !self.closed.iter().any(|(c, _)| c == *d)).cloned().collect())
+    }
     fn external(&mut self, id: &str) -> Result<bool, String> {
         if self.down {
             return Err("bd down".into());
@@ -1406,4 +1430,70 @@ fn close_delivered_corrects_a_dropped_bead_to_done() {
     assert_eq!(a.code, APPLIED, "{}", a.stderr);
     assert_eq!(f.state("sp-x"), "DONE");
     assert_eq!(f.beads["sp-x"].reason.as_deref(), Some("spira-env live"));
+}
+
+// ---- drop-bead -------------------------------------------------------------------------
+
+#[test]
+fn drop_bead_ends_a_live_work_bead_as_dropped_with_the_reason_from_any_live_state() {
+    for st in [BeadState::Submitted, BeadState::InDelivery, BeadState::Rework] {
+        let mut f = Fake::default();
+        f.bead("sp-x", st);
+        let mut bd = FakeBd::default();
+        let a = drop_bead(&v(&["sp-x", "--reason", "failed five gates", "--actor", "concierge"]), &mut f, &mut bd);
+        assert_eq!(a.code, APPLIED, "{st:?}: {}", a.stderr);
+        assert_eq!(f.state("sp-x"), "DROPPED", "{st:?}");
+        assert_eq!(bd.closed, vec![("sp-x".to_string(), "dropped: failed five gates".to_string())]);
+        assert_eq!(f.events.last().unwrap().4, "concierge");
+    }
+}
+
+#[test]
+fn a_dropped_bead_leaves_its_batches_first_and_is_never_claimable_again() {
+    let mut f = Fake::default();
+    f.bead("sp-b", BeadState::InDelivery);
+    f.batches.insert("sp-b".into(), vec![("batch-1".into(), "OPEN".into())]);
+    let mut bd = FakeBd::default();
+    assert_eq!(drop_bead(&v(&["sp-b", "--reason", "no"]), &mut f, &mut bd).code, APPLIED);
+    assert_eq!(f.ejects.len(), 1);
+    assert!(f.batches["sp-b"].is_empty(), "no batch still names it");
+    assert_eq!(f.state("sp-b"), "DROPPED");
+    let again = drop_bead(&v(&["sp-b", "--reason", "no"]), &mut f, &mut bd);
+    assert_eq!(again.code, REFUSED, "terminal: nothing further can batch or summon it");
+}
+
+#[test]
+fn a_bead_in_a_batch_that_cannot_release_it_is_not_dropped() {
+    let mut f = Fake::default();
+    f.bead("sp-a", BeadState::InDelivery);
+    f.batches.insert("sp-a".into(), vec![("batch-2".into(), "ATTRIBUTING".into())]);
+    let mut bd = FakeBd::default();
+    let a = drop_bead(&v(&["sp-a", "--reason", "no"]), &mut f, &mut bd);
+    assert_eq!(a.code, REFUSED, "{}", a.stderr);
+    assert!(a.stderr.contains("batch-2"), "{}", a.stderr);
+    assert_eq!(f.state("sp-a"), "IN_DELIVERY");
+    assert!(bd.closed.is_empty());
+}
+
+#[test]
+fn drop_bead_with_an_open_dependent_refuses_naming_it() {
+    let mut f = Fake::default();
+    f.bead("sp-p", BeadState::Submitted);
+    let mut bd = FakeBd::default();
+    bd.dependents.insert("sp-p".into(), vec!["sp-kid".into()]);
+    let a = drop_bead(&v(&["sp-p", "--reason", "no"]), &mut f, &mut bd);
+    assert_eq!(a.code, REFUSED);
+    assert!(a.stderr.contains("sp-kid"), "{}", a.stderr);
+    assert_eq!(f.state("sp-p"), "SUBMITTED");
+    assert!(f.events.is_empty() && bd.closed.is_empty());
+    bd.closed.push(("sp-kid".into(), "done".into()));
+    assert_eq!(drop_bead(&v(&["sp-p", "--reason", "no"]), &mut f, &mut bd).code, APPLIED, "a closed dependent is no obstacle");
+}
+
+#[test]
+fn drop_bead_needs_a_reason_and_a_work_bead() {
+    let mut f = Fake::default();
+    let mut bd = FakeBd::default();
+    assert_eq!(drop_bead(&v(&["sp-q"]), &mut f, &mut bd).code, 2);
+    assert_eq!(drop_bead(&v(&["sp-none", "--reason", "x"]), &mut f, &mut bd).code, REFUSED);
 }
