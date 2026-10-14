@@ -88,6 +88,21 @@ echo none > "$TMP/round"; out="$(BUDGET=1 lcb drill)"; rc=$?; wantrc "drill defe
 echo open > "$TMP/round"; ( sleep 3; echo none > "$TMP/round" ) &
 out="$(WAIT=60 lcb drill)"; rc=$?; wantrc "drill runs once the round closes" 0 $rc; want "it deferred first" "deferring" "$out"; want "then restored" "drill ok" "$out"
 wait; echo none > "$TMP/round"
+echo; echo "drill overlapping a run — verifies the previous tarball or defers, never fails:"
+mkdir -p "$TMP/slow"; real_tar="$(command -v tar)"
+printf '#!/bin/sh\n%s "$@"; rc=$?\ncase "$*" in *-caf*) sleep 25 ;; esac\nexit $rc\n' "$real_tar" > "$TMP/slow/tar"; chmod +x "$TMP/slow/tar"
+prev="$(ls "$RUN"/lc-backup/spira/latest.tar.* 2>/dev/null | head -1)"
+[ -s "$prev" ] && ok "previous tarball exists before the overlapping run" || bad "previous tarball exists before the overlapping run"
+( PATH="$TMP/slow:$PATH" DBS=spira lcb run >"$TMP/slowrun.out" 2>&1 ) & slowpid=$!
+for _ in $(seq 1 120); do ls "$RUN"/lc-backup/spira/latest.tar.*.tmp >/dev/null 2>&1 && break; sleep 0.5; done
+ls "$RUN"/lc-backup/spira/latest.tar.*.tmp >/dev/null 2>&1 && ok "pack is in flight (half-written .tmp present)" || bad "pack is in flight (half-written .tmp present)"
+[ -s "$prev" ] && ok "the previous tarball survives the pack" || bad "the previous tarball survives the pack"
+out="$(DBS=spira lcb drill)"; rc=$?; wantrc "drill during a run does not fail" 0 $rc; want "drill defers to the run" "deferred" "$out"
+wait "$slowpid"
+[ -s "$RUN"/lc-backup/spira/latest.tar.zst ] || [ -s "$RUN"/lc-backup/spira/latest.tar.gz ] && ok "run replaced the tarball" || bad "run replaced the tarball"
+ls "$RUN"/lc-backup/spira/latest.tar.*.tmp >/dev/null 2>&1 && bad "no .tmp left behind" || ok "no .tmp left behind"
+out="$(DBS=spira lcb drill)"; rc=$?; wantrc "drill after the run verifies it" 0 $rc; want "drill ok after run" "drill ok" "$out"
+
 grep -q 'SPIRA_LC_BACKUP_DRILL_DIR' "$HERE/lc-backup.sh" && ! grep -q 'SPIRA_RUN/lc-backup/drill' "$HERE/lc-backup.sh" && ok "drill restores into its own directory, not under the run dir" || bad "drill restores into its own directory, not under the run dir"
 
 echo; echo "s3 — one signed PUT, no read verbs:"
