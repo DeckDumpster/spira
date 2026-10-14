@@ -105,11 +105,13 @@ echo "ROW: the answer lifts the ask hold — a reply to the ask mail through mai
 # THE DEFECT THIS GUARDS (sp-v62vn follow-up): only `spira-lc reply` / `withdraw-ask` lift an
 # ask hold, and nothing that carries an answer emitted one — so a bead whose question was
 # answered stayed held, unclaimable, forever. The concierge answers the routed question the
-# way any answer arrives: a reply with In-Reply-To, through `mail sendmail`.
+# way any answer arrives: a reply with In-Reply-To, through `mail sendmail`.  sendmail only delivers; `mail reconcile` applies.
 ow_qid="$([ -n "$ow_mail" ] && hdr_of "$ow_mail" Message-ID)"
 printf 'From: Concierge <concierge@spira>\nSubject: Re: fixture question\nIn-Reply-To: %s\nMessage-ID: <ow-answer-1@spira>\n\nProceed without waiting.\n' "$ow_qid" \
     | mail sendmail > "$FA_TMP/sendmail.out" 2>&1
 is   "the reply was delivered" "0" "$?"
+mail reconcile > "$FA_TMP/reconcile.out" 2>&1
+is   "one reconciler pass applied the reply" "0" "$?"
 is   "the row: READY with no hold — claimable again" "READY -" "$(ow_row sp-ow2)"
 if spira-lc held sp-ow2 ask >/dev/null 2>&1; then bad "spira-lc held sp-ow2 ask: no longer held" "still held"; else ok "spira-lc held sp-ow2 ask: no longer held"; fi
 want "the answer is on the work bead for the next session" "Proceed without waiting." "$(fa_notes sp-ow2)"
