@@ -19,6 +19,10 @@ cat > "$TMP/bin/spira-lc" <<'STUB'
 case "$*" in
     "list --state LANDED"*) cat "$STUB_DIR/term.json" ;;
     "list --state"*) cat "$STUB_DIR/rows.json" ;;
+    "create-bead"*)
+        [ -e "$STUB_DIR/refuse-create" ] && exit 2
+        printf '%s\n' "$*" >> "$STUB_DIR/creates.log"
+        printf '[{"bead_id":"%s","state":"READY","since":%s,"holds":"[]","blocked_by":[],"reason":"r"}]' "$2" "$(date +%s)" > "$STUB_DIR/rows.json" ;;
     "content list"*) cat "$STUB_DIR/content.json" ;;
 esac
 STUB
@@ -139,5 +143,23 @@ out="$(run --show)"
 want "positive control: a queue-mode bead past the wait is still WAITING" "SUSPECT sp-qw SUBMITTED WAITING" "$out"
 case "$out" in *sp-prw*WAITING*) bad=1 ;; *) bad=0 ;; esac
 is "a pr-mode bead is not waiting for a round" "0" "$bad"
+
+ropen() { printf '{"id":"%s","labels":["repo:widgets"],"issue_type":"task","status":"open","priority":0,"title":"fix the thing"}' "$1"; }
+: > "$TMP/inbox"; : > "$STUB_DIR/creates.log"
+board -- "$(ropen sp-orph)"
+run watch --interval 5 --ticks 1 >/dev/null
+want "a rowless open bead is given a row from its title, priority and repo" "create-bead sp-orph --priority 0 --title fix the thing --repo widgets" "$(cat "$STUB_DIR/creates.log")"
+want "the repair is reported" "REPAIRED sp-orph" "$(cat "$TMP/inbox")"
+nowant "a repaired bead is not left as a SUSPECT" "ROWLESS" "$(cat "$TMP/inbox")"
+board "$(row sp-orph READY "$NOW" '[]')" -- "$(ropen sp-orph)"
+: > "$STUB_DIR/creates.log"; : > "$TMP/inbox"
+run watch --interval 5 --ticks 1 >/dev/null
+is "a second pass creates nothing" "0" "$(wc -l < "$STUB_DIR/creates.log")"
+is "a second pass says nothing" "0" "$(wc -l < "$TMP/inbox")"
+board -- "$(ropen sp-stuck)"
+touch "$STUB_DIR/refuse-create"; : > "$TMP/inbox"
+run watch --interval 5 --ticks 1 >/dev/null
+want "a repair that fails stays a SUSPECT" "SUSPECT sp-stuck ROWLESS" "$(cat "$TMP/inbox")"
+rm -f "$STUB_DIR/refuse-create"
 
 tl_summary
