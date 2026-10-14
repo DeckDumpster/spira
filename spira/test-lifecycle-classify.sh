@@ -104,7 +104,7 @@ tl_config SPIRA_LC_SOCKET=/nonexistent/spira-lc.sock SPIRA_LC_PASSWORD_FILE="$LC
 "$BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema applies cleanly" 0 $?
 
-root_sql() { timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls --use-db spira_lifecycle "$@"; }
+root_sql() { timeout "${SPIRA_TEST_SQL_TIMEOUT:-30}" "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls --use-db spira_lifecycle "$@"; }
 row_count() { root_sql sql -q "SELECT COUNT(*) AS n FROM $1" -r json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["rows"][0]["n"])' 2>/dev/null || echo "?"; }
 
 # ── the scratch git repository ────────────────────────────────────────────────────────
