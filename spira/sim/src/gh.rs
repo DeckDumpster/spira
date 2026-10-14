@@ -432,7 +432,7 @@ fn pr_view(st: &State, args: &[String]) -> R<Out> {
 }
 
 fn pr_list(st: &State, args: &[String]) -> R<Out> {
-    let f = parse(args, &[("--json", ""), ("--jq", "-q"), ("--state", "-s"), ("--limit", "-L"), ("--head", "-H"), ("--base", "-B")], &[])?;
+    let f = parse(args, &[("--json", ""), ("--jq", "-q"), ("--state", "-s"), ("--limit", "-L"), ("--head", "-H"), ("--base", "-B"), ("--author", "-A")], &[])?;
     let state = f.get("--state").unwrap_or("open").to_uppercase();
     let limit: usize = f.get("--limit").map(|l| l.parse().map_err(|_| format!("invalid --limit {l}"))).transpose()?.unwrap_or(30);
     let items: Vec<&Value> = st

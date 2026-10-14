@@ -32,7 +32,31 @@ fn parse(bytes: &[u8]) -> Option<Value> {
 
 // ── pr-create ────────────────────────────────────────────────────────────────────────────
 
-pub fn pr_create(gh: &dyn Gh, repo: &Path, head: &str, base: &str, title: &str, body: &[u8]) -> Out {
+/// One open PR per repo from this installation's identity, whoever opens it. Unreadable
+/// listing refuses too: a control that cannot check must not wave the PR through.
+pub fn pr_create(gh: &dyn Gh, repo: &Path, head: &str, base: &str, title: &str, body: &[u8], second_pr_why: &str) -> Out {
+    let listed = gh.call(Some(repo), &["pr", "list", "--state", "open", "--author", "@me", "--json", "number,headRefName"]);
+    let Some(Value::Array(open)) = listed.ok().then(|| parse(&listed.stdout)).flatten() else {
+        eprintln!("forge pr-create: cannot list this installation's open PRs on {} — refusing to open {head}", repo.display());
+        return fail(vec![String::new()]);
+    };
+    let open: Vec<String> = open
+        .iter()
+        .filter(|p| jstr(p, "headRefName").as_deref() != Some(head))
+        .map(|p| format!("#{} ({})", p.get("number").map(|n| n.to_string()).unwrap_or_default(), jstr(p, "headRefName").unwrap_or_default()))
+        .collect();
+    if !open.is_empty() {
+        let why = second_pr_why.trim();
+        if why.is_empty() {
+            eprintln!(
+                "forge pr-create: refusing {head}: this installation already has open PR {} on {} — one open PR per repo; set QUEUE_SECOND_PR_CONSIDERED=\"<why>\" to open a second",
+                open.join(", "),
+                repo.display()
+            );
+            return fail(vec![String::new()]);
+        }
+        eprintln!("forge pr-create: SECOND_PR_CONSIDERED opening {head} beside {}: {why}", open.join(", "));
+    }
     let r = gh.call_merged(Some(repo), &["pr", "create", "--head", head, "--base", base, "--title", title, "--body-file", "-"], Some(body));
     if !r.ok() {
         return ok(vec![String::new()]);

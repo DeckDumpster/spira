@@ -48,7 +48,7 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
     };
     let workflow = workflow.as_str();
     match cmd {
-        "pr-create" => pr_create(gh, repo, arg(args, 0), arg(args, 1), arg(args, 2), &stdin_bytes()),
+        "pr-create" => pr_create(gh, repo, arg(args, 0), arg(args, 1), arg(args, 2), &stdin_bytes(), &std::env::var("QUEUE_SECOND_PR_CONSIDERED").unwrap_or_default()),
         "pr-number" => pr_number(gh, repo, arg(args, 0)),
         "pr-list-queue" => pr_list_queue(gh, repo),
         "pr-list-open" => pr_list_open(gh, repo),
