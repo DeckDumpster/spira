@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=dolt
+DOC=The documented loss bound of a RAM-backed store: seconds since the newest finished pass began past which store-persist age is red (the pass interval plus the slowest expected pass).
+SCHEMA=Loss bound of the RAM-backed store; store-persist age is red past it (unit: seconds; default 120; must exceed the pass interval).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_DOLT_PERSIST_MAX_LAG_SECS:=120}"
+SPIRA_CONF_DEFAULT_EOF

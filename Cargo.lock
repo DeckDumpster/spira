@@ -1834,6 +1834,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "store-persist"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "strand"
 version = "1.0.0"
 dependencies = [

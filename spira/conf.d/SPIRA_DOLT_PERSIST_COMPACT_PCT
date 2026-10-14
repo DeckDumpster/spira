@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=dolt
+DOC=store-persist compact rebuilds a database's durable copy once it exceeds this percentage of the live store's size: a backup never sheds chunks the live store has collected, and a reboot restores the whole copy into RAM.
+SCHEMA=Percentage of the live store's size past which store-persist compact rebuilds a durable copy (default 150; at least 100).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_DOLT_PERSIST_COMPACT_PCT:=150}"
+SPIRA_CONF_DEFAULT_EOF

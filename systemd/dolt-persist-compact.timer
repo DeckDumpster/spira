@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the RAM-backed Dolt store's durable copy for compaction daily
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+Persistent=true
+RandomizedDelaySec=600
+Unit=dolt-persist-compact.service
+
+[Install]
+WantedBy=timers.target

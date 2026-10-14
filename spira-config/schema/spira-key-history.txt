@@ -446,3 +446,7 @@ lc_backup_drill_poll_secs
 lc_backup_drill_wait_secs
 queue_capacity_backoff_max
 queue_capacity_backoff_min
+dolt_durable
+dolt_persist_interval_secs
+dolt_persist_max_lag_secs
+dolt_persist_compact_pct

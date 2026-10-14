@@ -79,6 +79,7 @@ members = [
     "sift",
     "refusal-watch",
     "spira-submission",
+    "store-persist",
 ]
 resolver = "2"
 

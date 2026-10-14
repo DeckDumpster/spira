@@ -23,6 +23,8 @@ pub struct Inputs {
     pub instance: String,
     /// `SPIRA_DOLT_DATA` is non-empty.
     pub dolt_data_set: bool,
+    /// `SPIRA_DOLT_DURABLE` is non-empty: the store is RAM-backed and store-persist keeps its copy.
+    pub dolt_durable_set: bool,
     /// `SPIRA_TESTDB_DATA` is non-empty.
     pub testdb_data_set: bool,
     /// `SPIRA_BROKER_ENABLE=1`.
@@ -51,7 +53,7 @@ pub struct Inputs {
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { instance: String::new(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
+        Inputs { instance: String::new(), dolt_data_set: false, dolt_durable_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
     }
 }
 
@@ -206,10 +208,22 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.units.push(t("dolt-beads.service", true));
         m.units.push(t("dolt-tmp-prune.service", false));
         m.units.push(t("dolt-tmp-prune.timer", true));
+        if inputs.dolt_durable_set {
+            m.units.push(t("dolt-persist.service", true));
+            m.units.push(t("dolt-persist-compact.service", false));
+            m.units.push(t("dolt-persist-compact.timer", true));
+        } else {
+            m.optional.push("dolt-persist.service".into());
+            m.optional.push("dolt-persist-compact.service".into());
+            m.optional.push("dolt-persist-compact.timer".into());
+        }
     } else {
         m.optional.push("dolt-beads.service".into());
         m.optional.push("dolt-tmp-prune.service".into());
         m.optional.push("dolt-tmp-prune.timer".into());
+        m.optional.push("dolt-persist.service".into());
+        m.optional.push("dolt-persist-compact.service".into());
+        m.optional.push("dolt-persist-compact.timer".into());
         m.notes.push("SPIRA_DOLT_DATA is empty — not installing dolt-beads.service.".into());
         m.notes.push("Start your Dolt server yourself, or set it in spira.conf.".into());
     }
@@ -346,7 +360,7 @@ pub fn union_template_names() -> Vec<String> {
                 for sccache in [false, true] {
                     for lc_system in [false, true] {
                         for repo_git in [false, true] {
-                            let inputs = Inputs { dolt_data_set: dolt, testdb_data_set: testdb, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, repo_is_git_checkout: repo_git, ..Default::default() };
+                            let inputs = Inputs { dolt_data_set: dolt, dolt_durable_set: dolt, testdb_data_set: testdb, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, repo_is_git_checkout: repo_git, ..Default::default() };
                             if let Ok(m) = build(&inputs) {
                                 set.extend(m.units.into_iter().map(|u| u.name).filter(|n| n != "spira-watch@.service"));
                             }
@@ -398,6 +412,7 @@ mod tests {
         Inputs {
             instance: "prod".into(),
             dolt_data_set: true,
+            dolt_durable_set: false,
             testdb_data_set: false,
             broker_enable: false,
             inotify_present: true,
@@ -509,6 +524,21 @@ mod tests {
         assert!(m.optional.contains(&"dolt-beads.service".to_string()));
         assert!(!m.units.iter().any(|u| u.name.starts_with("dolt-tmp-prune")));
         assert!(m.optional.contains(&"dolt-tmp-prune.timer".to_string()));
+    }
+
+    #[test]
+    fn the_persist_units_come_with_a_durable_copy_and_only_then() {
+        let m = build(&inputs()).unwrap();
+        assert!(!m.units.iter().any(|u| u.name.starts_with("dolt-persist")), "no durable copy: not installed");
+        assert!(m.optional.contains(&"dolt-persist.service".to_string()));
+
+        let mut i = inputs();
+        i.dolt_durable_set = true;
+        let m = build(&i).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "dolt-persist.service" && u.enable));
+        assert!(m.units.iter().any(|u| u.name == "dolt-persist-compact.timer" && u.enable));
+        assert!(m.units.iter().any(|u| u.name == "dolt-persist-compact.service" && !u.enable), "the timer runs it, never boot");
+        assert!(union_template_names().contains(&"dolt-persist.service".to_string()), "uninstall knows the unit");
     }
 
     #[test]

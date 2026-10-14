@@ -1,0 +1,16 @@
+[Unit]
+# A durable copy keeps every chunk the live store has since collected, and a reboot restores
+# the whole copy into RAM; past SPIRA_DOLT_PERSIST_COMPACT_PCT of the live size it is rebuilt.
+Description=Rebuild an oversized durable copy of the RAM-backed Dolt store
+Documentation=file://@SPIRA_HOME@/README.md
+After=dolt-beads.service
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/store-persist compact
+TimeoutStartSec=4h
+StandardOutput=append:@SPIRA_RUN@/dolt-persist.log
+StandardError=append:@SPIRA_RUN@/dolt-persist.log
