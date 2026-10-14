@@ -54,6 +54,12 @@ impl Provider for Routed {
     fn destroy(&self, vmid: &str) -> Result<(), String> {
         to!(self, vmid, destroy)
     }
+    fn tags_of(&self, vmid: &str) -> Result<Vec<String>, String> {
+        to!(self, vmid, tags_of)
+    }
+    fn manages(&self, vmid: &str) -> bool {
+        self.of(vmid).map(|p| p.manages(vmid)).unwrap_or(false)
+    }
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String> {
         to!(self, vmid, name_of)
     }

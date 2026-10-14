@@ -269,6 +269,8 @@ pub struct PveEnv {
     pub token_secret: String,
     pub cacert: PathBuf,
     pub template_vmid: String,
+    pub vmid_min: u32,
+    pub vmid_max: u32,
     pub pool: Option<String>,
 }
 
@@ -324,6 +326,15 @@ impl PveEnv {
                 path.display()
             ));
         }
+        let vmid_bound = |k: &str| -> Result<u32, String> {
+            let v = need(k)?;
+            v.parse().map_err(|_| format!("round-vm: {k} not a VMID: {v:?}"))
+        };
+        let vmid_min = vmid_bound("PVE_VMID_MIN")?;
+        let vmid_max = vmid_bound("PVE_VMID_MAX")?;
+        if vmid_min > vmid_max {
+            return Err(format!("round-vm: PVE_VMID_MIN {vmid_min} is above PVE_VMID_MAX {vmid_max}"));
+        }
         let api_port = match get("PVE_API_PORT") {
             None => 8006,
             Some(v) => v.parse().map_err(|_| format!("round-vm: PVE_API_PORT not a port: {v:?}"))?,
@@ -336,6 +347,8 @@ impl PveEnv {
             token_secret,
             cacert,
             template_vmid,
+            vmid_min,
+            vmid_max,
             pool: get("PVE_RUNNER_POOL"),
         })
     }
@@ -479,6 +492,15 @@ mod tests {
     }
 
     #[test]
+    fn the_vmid_range_is_required_and_ordered() {
+        let d = TempDir::new();
+        let e = PveEnv::load(&write_env(&d, "PVE_TEMPLATE_VMID=9000\n"), &|_| None).unwrap_err();
+        assert!(e.contains("PVE_VMID_MIN"), "{e}");
+        let e = PveEnv::load(&write_env(&d, "PVE_TEMPLATE_VMID=9000\nPVE_VMID_MIN=300\nPVE_VMID_MAX=200\n"), &|_| None).unwrap_err();
+        assert!(e.contains("above"), "{e}");
+    }
+
+    #[test]
     fn missing_cacert_is_refused_not_skipped() {
         let d = TempDir::new();
         let p = d.path().join("pve.env");
@@ -492,17 +514,18 @@ mod tests {
         let d = TempDir::new();
         let p = write_env(&d, "");
         assert!(PveEnv::load(&p, &|_| None).is_err());
-        let p = write_env(&d, "PVE_TEMPLATE_VMID=9000\nPVE_RUNNER_POOL=ci\n");
+        let p = write_env(&d, "PVE_TEMPLATE_VMID=9000\nPVE_VMID_MIN=200\nPVE_VMID_MAX=299\nPVE_RUNNER_POOL=ci\n");
         let e = PveEnv::load(&p, &|_| None).unwrap();
         assert_eq!(e.template_vmid, "9000");
         assert_eq!(e.pool.as_deref(), Some("ci"));
+        assert_eq!((e.vmid_min, e.vmid_max), (200, 299));
         assert_eq!((e.api_host.as_str(), e.api_port), ("localhost", 8006));
     }
 
     #[test]
     fn file_wins_over_environment() {
         let d = TempDir::new();
-        let p = write_env(&d, "PVE_TEMPLATE_VMID=9000\n");
+        let p = write_env(&d, "PVE_TEMPLATE_VMID=9000\nPVE_VMID_MIN=200\nPVE_VMID_MAX=299\n");
         let e = PveEnv::load(&p, &|k| (k == "PVE_TEMPLATE_VMID" || k == "PVE_API_HOST").then(|| "env".to_string())).unwrap();
         assert_eq!(e.template_vmid, "9000");
         assert_eq!(e.api_host, "env");
