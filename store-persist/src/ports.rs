@@ -3,7 +3,7 @@
 use std::path::Path;
 
 pub trait Clock {
-    fn now(&self) -> u64;
+    fn now_ms(&self) -> u64;
     fn sleep(&self, secs: u64);
 }
 

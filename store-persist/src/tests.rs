@@ -7,11 +7,11 @@ use testkit::TempDir;
 struct FakeClock(Cell<u64>);
 
 impl Clock for FakeClock {
-    fn now(&self) -> u64 {
+    fn now_ms(&self) -> u64 {
         self.0.get()
     }
     fn sleep(&self, secs: u64) {
-        self.0.set(self.0.get() + secs);
+        self.0.set(self.0.get() + secs * 1000);
     }
 }
 
@@ -245,7 +245,7 @@ fn an_online_pass_goes_through_the_server_and_records_its_start() {
     w.clock.0.set(5_000);
     put(&w.cfg.data.join("spira/.dolt/noms/payload"), "beads-v3");
     let st = pass(&w.cfg, Mode::Online, &w.dolt, &w.clock).unwrap();
-    assert_eq!(st.start, 5_000);
+    assert_eq!(st.start_ms, 5_000);
     assert_eq!(read_state(&layout(&w)).unwrap(), st);
     let last = w.dolt.syncs.borrow().last().cloned().unwrap();
     assert_eq!(last.0, Conn::Server { port: 3999, secret: "s3cret".into() });
@@ -291,9 +291,9 @@ fn a_failed_pass_keeps_the_last_good_start_so_age_turns_red() {
     w.dolt.fail_sync.set(usize::MAX);
     let mut log = Vec::new();
     run(&w.cfg, &w.dolt, &w.clock, Some(8), &mut |l| log.push(l.to_string()));
-    assert_eq!(read_state(&layout(&w)).unwrap().start, 2_000);
-    assert_eq!(age(&w.cfg, 2_000 + 40).unwrap(), (40, false));
-    assert_eq!(age(&w.cfg, 2_000 + 41).unwrap(), (41, true));
+    assert_eq!(read_state(&layout(&w)).unwrap().start_ms, 2_000);
+    assert_eq!(age(&w.cfg, 2_000 + 40_000).unwrap(), (40_000, false));
+    assert_eq!(age(&w.cfg, 2_000 + 40_001).unwrap(), (40_001, true));
     assert_eq!(log.len(), 8);
     w.dolt.fail_sync.set(0);
     log.clear();
@@ -311,14 +311,14 @@ fn the_daemon_reports_a_recovery_once() {
     run(&w.cfg, &w.dolt, &w.clock, Some(5), &mut |l| log.push(l.to_string()));
     assert_eq!(log.len(), 3, "{log:?}");
     assert!(log[0].contains("failed") && log[1].contains("failed") && log[2].contains("recovered"), "{log:?}");
-    assert_eq!(w.clock.now(), 1_000 + 4 * 7, "one interval between passes");
+    assert_eq!(w.clock.now_ms(), 1_000 + 4 * 7 * 1000, "one interval between passes");
 }
 
 #[test]
 fn state_round_trips() {
-    let st = State { start: 10, finish: 12, dbs: vec!["a".into(), "b".into()] };
+    let st = State { start_ms: 10, finish_ms: 12, dbs: vec!["a".into(), "b".into()] };
     assert_eq!(State::parse(&st.render()).unwrap(), st);
-    assert!(State::parse("finish=1\ndbs=\n").unwrap_err().contains("start"));
+    assert!(State::parse("finish_ms=1\ndbs=\n").unwrap_err().contains("start_ms"));
 }
 
 #[test]

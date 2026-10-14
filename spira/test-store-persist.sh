@@ -99,14 +99,18 @@ writer() {
         i=$((i + 1))
     done
 }
+seed_start="$(sed -n 's/^start_ms=//p' "$DURABLE/persist.state")"
+: > "$TMP/acks"
 writer &
 WRITER=$!
 
-for _ in $(seq 1 120); do
-    [ "$(wc -l < "$TMP/acks" 2>/dev/null || echo 0)" -ge 30 ] && break
+# Mid-stream: rows acknowledged, and a pass begun after the first of them has finished.
+for _ in $(seq 1 150); do
+    first_ack="$(awk 'NR == 1 { print $2 }' "$TMP/acks")"
+    now_start="$(sed -n 's/^start_ms=//p' "$DURABLE/persist.state")"
+    [ "$(wc -l < "$TMP/acks")" -ge 20 ] && [ -n "$first_ack" ] && [ "$now_start" -gt "$first_ack" ] && break
     sleep 0.1
 done
-seed_start="$(sed -n 's/^start=//p' "$DURABLE/persist.state")"
 
 # The host crash: the server dies mid-stream, then the daemon, then RAM is gone.
 kill -9 "$SERVER"; wait "$SERVER" 2>/dev/null; SERVER=""
@@ -115,9 +119,10 @@ kill -9 "$DAEMON"; wait "$DAEMON" 2>/dev/null; DAEMON=""
 wait "$WRITER" 2>/dev/null; WRITER=""
 acked="$(wc -l < "$TMP/acks")"
 [ "$acked" -ge 5 ] || bail "the writer acknowledged only $acked rows before the crash"
-start="$(sed -n 's/^start=//p' "$DURABLE/persist.state")"
-[ "$start" -gt "$seed_start" ] && ok "the daemon finished passes during the stream" \
-    || bad "the daemon finished passes during the stream" "persist.state start $start, seed $seed_start; $(tail -3 "$TMP/daemon.log")"
+start="$(sed -n 's/^start_ms=//p' "$DURABLE/persist.state")"
+first_ack="$(awk 'NR == 1 { print $2 }' "$TMP/acks")"
+[ "$start" -gt "$seed_start" ] && [ "$start" -gt "${first_ack:-0}" ] && ok "the daemon finished a pass during the stream" \
+    || bad "the daemon finished a pass during the stream" "persist.state start_ms $start, seed $seed_start, first ack $first_ack; $(tail -3 "$TMP/daemon.log")"
 rm -rf "$RAM"/* "$RAM"/.dolt "$RAM"/.doltcfg
 
 out="$(store-persist restore 2>&1)"
@@ -128,10 +133,10 @@ survivors="$(sql probe "SELECT seq FROM w WHERE seq > 0 ORDER BY seq" | tail -n 
 n="$(printf '%s\n' "$survivors" | grep -c .)"
 max="$(printf '%s\n' "$survivors" | tail -1)"
 is "the survivors are a prefix of the stream" "$(seq 1 "${max:-0}" | tr '\n' ' ')" "$(printf '%s\n' "$survivors" | tr '\n' ' ')"
-lost_before="$(awk -v s="$start" -v m="${max:-0}" '$1 > m && $2 < s * 1000 { n++ } END { print n + 0 }' "$TMP/acks")"
+lost_before="$(awk -v s="$start" -v m="${max:-0}" '$1 > m && $2 < s { n++ } END { print n + 0 }' "$TMP/acks")"
 is "no row acknowledged before the newest pass began is lost" 0 "$lost_before"
 [ "$n" -ge 1 ] && ok "rows streamed after the seed survived the crash" || bad "rows streamed after the seed survived the crash" "0 of $acked"
-echo "# crash: $acked acknowledged, $n restored, $((acked - n)) lost; newest pass began $(( crash_ms - start * 1000 )) ms before the kill"
+echo "# crash: $acked acknowledged, $n restored, $((acked - n)) lost; newest pass began $(( crash_ms - start )) ms before the kill"
 
 store-persist age >/dev/null 2>&1
 wantrc "age is green inside the bound" 0 $?

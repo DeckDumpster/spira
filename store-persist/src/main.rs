@@ -14,8 +14,8 @@ const USAGE: &str = "usage: store-persist restore | pass [--offline] | run | see
 struct RealClock;
 
 impl Clock for RealClock {
-    fn now(&self) -> u64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    fn now_ms(&self) -> u64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
     }
     fn sleep(&self, secs: u64) {
         std::thread::sleep(std::time::Duration::from_secs(secs));
@@ -105,7 +105,7 @@ fn main() -> ExitCode {
         ["pass"] | ["pass", "--offline"] if cfg.durable.is_none() => store_persist::unconfigured(&cfg).map(|n| vec![format!("store-persist: {n}")]),
         ["pass"] | ["pass", "--offline"] => {
             let mode = if args.len() == 2 { Mode::Offline } else { Mode::Online };
-            store_persist::pass(&cfg, mode, &dolt, &clock).map(|st| vec![format!("store-persist: pass {}..{} synced {}", st.start, st.finish, st.dbs.join(","))])
+            store_persist::pass(&cfg, mode, &dolt, &clock).map(|st| vec![format!("store-persist: pass {}..{} synced {}", st.start_ms, st.finish_ms, st.dbs.join(","))])
         }
         ["run"] => {
             store_persist::run(&cfg, &dolt, &clock, None, &mut |l| eprintln!("{l}"));
@@ -114,9 +114,9 @@ fn main() -> ExitCode {
         ["seed", "--from", dir] => store_persist::seed(&cfg, &PathBuf::from(dir), &dolt, &clock)
             .map(|st| vec![format!("store-persist: seeded {} from {dir}", st.dbs.join(","))]),
         ["compact"] => store_persist::compact(&cfg, &dolt).map(|v| v.into_iter().map(|l| format!("store-persist: {l}")).collect()),
-        ["age"] => match store_persist::age(&cfg, clock.now()) {
-            Ok((lag, false)) => Ok(vec![format!("store-persist: newest pass began {lag}s ago (bound {}s)", cfg.max_lag_secs)]),
-            Ok((lag, true)) => Err(format!("newest pass began {lag}s ago, past the {}s bound — writes since then are not durable", cfg.max_lag_secs)),
+        ["age"] => match store_persist::age(&cfg, clock.now_ms()) {
+            Ok((lag, false)) => Ok(vec![format!("store-persist: newest pass began {lag} ms ago (bound {}s)", cfg.max_lag_secs)]),
+            Ok((lag, true)) => Err(format!("newest pass began {lag} ms ago, past the {}s bound — writes since then are not durable", cfg.max_lag_secs)),
             Err(e) => Err(e),
         },
         _ => {

@@ -225,17 +225,17 @@ fn read(p: &Path) -> Result<Vec<u8>, String> {
     fs::read(p).map_err(|e| format!("cannot read {}: {e}", p.display()))
 }
 
-/// The pass record: every write committed before `start` is in the durable copy.
+/// The pass record: every write committed before `start_ms` is in the durable copy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
-    pub start: u64,
-    pub finish: u64,
+    pub start_ms: u64,
+    pub finish_ms: u64,
     pub dbs: Vec<String>,
 }
 
 impl State {
     pub fn render(&self) -> String {
-        format!("start={}\nfinish={}\ndbs={}\n", self.start, self.finish, self.dbs.join(","))
+        format!("start_ms={}\nfinish_ms={}\ndbs={}\n", self.start_ms, self.finish_ms, self.dbs.join(","))
     }
     pub fn parse(text: &str) -> Result<State, String> {
         let field = |k: &str| {
@@ -245,8 +245,8 @@ impl State {
         };
         let n = |k: &str| field(k).and_then(|v| v.parse::<u64>().map_err(|_| format!("persist state {k}={v:?} is not a number")));
         Ok(State {
-            start: n("start")?,
-            finish: n("finish")?,
+            start_ms: n("start_ms")?,
+            finish_ms: n("finish_ms")?,
             dbs: field("dbs")?.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect(),
         })
     }
@@ -272,7 +272,7 @@ fn pass_from(l: &Layout, source: &Path, mode: Mode, server_yaml: bool, dolt: &dy
             l.dbs_dir().display()
         ));
     }
-    let start = clock.now();
+    let start_ms = clock.now_ms();
     fs::create_dir_all(l.dbs_dir()).map_err(|e| format!("cannot create {}: {e}", l.dbs_dir().display()))?;
     for db in &live {
         dolt.sync(&conn, source, db, &l.db(db))?;
@@ -300,7 +300,7 @@ fn pass_from(l: &Layout, source: &Path, mode: Mode, server_yaml: bool, dolt: &dy
             }
         }
     }
-    let st = State { start, finish: clock.now(), dbs: live.into_iter().collect() };
+    let st = State { start_ms, finish_ms: clock.now_ms(), dbs: live.into_iter().collect() };
     put_durable(&l.state(), st.render().as_bytes())?;
     Ok(st)
 }
@@ -331,7 +331,7 @@ pub fn seed(cfg: &Config, from: &Path, dolt: &dyn Dolt, clock: &dyn Clock) -> Re
         return Err(format!("{} already holds a durable copy — seeding would overwrite it", l.root.display()));
     }
     let st = pass_from(&l, from, Mode::Offline, false, dolt, clock)?;
-    put_durable(&l.marker(), format!("seeded={} from={}\n", st.finish, from.display()).as_bytes())?;
+    put_durable(&l.marker(), format!("seeded={} from={}\n", st.finish_ms, from.display()).as_bytes())?;
     Ok(st)
 }
 
@@ -476,11 +476,11 @@ pub fn restore(cfg: &Config, dolt: &dyn Dolt) -> Result<Restored, String> {
     Ok(out)
 }
 
-/// Seconds since the newest finished pass began, and whether that exceeds the bound.
-pub fn age(cfg: &Config, now: u64) -> Result<(u64, bool), String> {
+/// Milliseconds since the newest finished pass began, and whether that exceeds the bound.
+pub fn age(cfg: &Config, now_ms: u64) -> Result<(u64, bool), String> {
     let st = read_state(&cfg.layout()?)?;
-    let lag = now.saturating_sub(st.start);
-    Ok((lag, lag > cfg.max_lag_secs))
+    let lag_ms = now_ms.saturating_sub(st.start_ms);
+    Ok((lag_ms, lag_ms > cfg.max_lag_secs.saturating_mul(1000)))
 }
 
 fn exchange(a: &Path, b: &Path) -> Result<(), String> {
@@ -532,7 +532,7 @@ pub fn run(cfg: &Config, dolt: &dyn Dolt, clock: &dyn Clock, passes: Option<u64>
     loop {
         match pass(cfg, Mode::Online, dolt, clock) {
             Ok(st) if failing => {
-                log(&format!("store-persist: recovered — pass {}..{} synced {}", st.start, st.finish, st.dbs.join(",")));
+                log(&format!("store-persist: recovered — pass {}..{} synced {}", st.start_ms, st.finish_ms, st.dbs.join(",")));
                 failing = false;
             }
             Ok(_) => {}
