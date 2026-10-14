@@ -41,7 +41,7 @@ _RSK_LAUNCHES='
 
 _rsk_recent_launch() {
     local json
-    json="$(timeout 20 round-vm status --json 2>/dev/null)" || { echo none; return 0; }
+    json="$(timeout 5 round-vm status --json 2>/dev/null)" || { echo none; return 0; }
     printf '%s' "$json" | jq -r --argjson since "$(( $(date +%s) - SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW ))" "$_RSK_LAUNCHES" 2>/dev/null || echo none
 }
 

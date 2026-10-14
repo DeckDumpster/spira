@@ -96,3 +96,4 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.queue_capacity_backoff_max" = "3600"
 "spira.statute_dir" = ""
 "spira.statute_guards" = ""
+"spira.round_vm_ec2_launch_window" = 3600
