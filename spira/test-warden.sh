@@ -80,6 +80,15 @@ is "row failure exits 1" 1 "$rc"
 want "names the unclaimable bead" "sp-new1" "$out"
 rm -f "$LC_FIX/refuse-create"
 
+echo; echo "FILING: a row creation that fails once is retried and succeeds"
+: > "$LOG"; : > "$LC_FIX/creates.log"; touch "$LC_FIX/refuse-create-once"
+out="$(run_trigger)"; rc=$?
+is "transient row failure exits 0" 0 "$rc"
+is "create-bead called twice" 2 "$(grep -c 'create-bead sp-new1' "$LC_FIX/creates.log")"
+is "row is READY after retry" 1 "$([ -f "$LC_FIX/bead/READY/sp-new1" ] && echo 1 || echo 0)"
+is "bead filed once" 1 "$(grep -c '^create' "$LOG")"
+rm -f "$LC_FIX/bead/READY/sp-new1"
+
 echo; echo "DEDUP: an open sweep suppresses filing (positive control: filing happened above)"
 : > "$LOG"
 lc_bead READY sp-x deadbeef 0

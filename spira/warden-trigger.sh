@@ -83,7 +83,19 @@ fi
 id="$(printf '%s\n' "$id" | tail -n 1)"
 
 # A bead with no lifecycle row is unclaimable; the row is created in the same pass as the filing.
-if ! timeout "$CALL_TIMEOUT" "$LC" create-bead "$id" --priority 3 >/dev/null 2>&1; then
+# create-bead is an ignoring insert, so a retry after an indeterminate failure is safe.
+row_created=0
+n=1
+while [ "$n" -le "$ATTEMPTS" ]; do
+    if timeout "$CALL_TIMEOUT" "$LC" create-bead "$id" --priority 3 >/dev/null 2>&1; then
+        row_created=1
+        break
+    fi
+    log "lifecycle row for $id not created (attempt $n/$ATTEMPTS)"
+    [ "$n" -lt "$ATTEMPTS" ] && sleep $((BACKOFF * n))
+    n=$((n + 1))
+done
+if [ "$row_created" -ne 1 ]; then
     log "ERROR: warden sweep $id filed but its lifecycle row was not created — unclaimable until: spira-lc create-bead $id"
     exit 1
 fi
