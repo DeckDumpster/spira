@@ -7,6 +7,7 @@
 #   probe.sh seed <data-dir> <db>            create <db> with table w(seq, at)
 #   probe.sh latency <port> <db> <n>         n autocommit inserts in one session; prints ms/txn
 #   probe.sh sync <data-dir> <db> <dest>     one CALL dolt_backup('sync-url') through the server; prints ms
+#   probe.sh sync-loop <data-dir> <db> <dest> <secs>   sync every <secs> until killed
 #   probe.sh restore <backup> <parent> <db>  `dolt backup restore`; prints ms
 #   probe.sh offline <dir> <db> <sql>        query a database with no server
 #   probe.sh trace-sync <dir> <db> <dest> <out>   strace an offline sync's fsync/rename order
@@ -67,6 +68,10 @@ sync)
     out="$(cd "$dir/data/$db" && echo "CALL DOLT_BACKUP('sync-url', 'file://$dest');" | "$DOLT" sql 2>&1)" || { echo "sync failed: $out" >&2; exit 1; }
     t1="$(date +%s%N)"
     echo "sync $(( (t1 - t0) / 1000000 )) ms" ;;
+sync-loop)
+    # sync every <secs> until killed, as the daemon does; prints each sync's ms.
+    dir="$1" db="$2" dest="$3" secs="$4"
+    while :; do "$0" sync "$dir" "$db" "$dest"; sleep "$secs"; done ;;
 restore)
     src="$1" parent="$2" db="$3"
     mkdir -p "$parent" && t0="$(date +%s%N)" && ( cd "$parent" && "$DOLT" backup restore "file://$src" "$db" ) || exit 1

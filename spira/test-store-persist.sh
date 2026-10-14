@@ -36,9 +36,10 @@ tl_config SPIRA_DOLT_DATA="$RAM" SPIRA_DOLT_DURABLE="$DURABLE" SPIRA_DOLT_PERSIS
     SPIRA_DOLT_PERSIST_MAX_LAG_SECS=30 SPIRA_DOLT_PERSIST_COMPACT_PCT=175 \
     || bail "cannot declare the store-persist config"
 
-sql() { dolt --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls --use-db "$1" sql -r csv -q "$2"; }
+sql() { timeout 5 dolt --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls --use-db "$1" sql -r csv -q "$2"; }
 
 server_up() {
+    # batch-job: the fixture server runs until the suite kills it
     ( cd "$RAM" && exec dolt sql-server --config "$RAM/dolt-server.yaml" ) > "$TMP/server.log" 2>&1 &
     SERVER=$!
     local _
@@ -52,9 +53,11 @@ server_up() {
 # The stopped store the cutover starts from: two databases, rows uncommitted in the working
 # set as the server's dolt_transaction_commit=false leaves them.
 for db in probe other; do
+    # batch-job: fixture construction writes a new repository
     mkdir -p "$OLD/$db" && ( cd "$OLD/$db" && dolt init --name fixture --email fixture@localhost >/dev/null ) \
         || bail "cannot init $db"
 done
+# batch-job: fixture construction writes the stream table
 ( cd "$OLD/probe" && dolt sql -q "CREATE TABLE w (seq INT PRIMARY KEY, at_ms BIGINT); INSERT INTO w VALUES (0, 0);" ) \
     || bail "cannot create the stream table"
 
