@@ -49,7 +49,13 @@ mkrel() {
     mkdir -p "$dir/spira" "$dir/bin" "$dir/systemd"
     cat > "$dir/probe-widget.sh" <<EOF
 #!/usr/bin/env bash
+if [ -n "${DEP_PROBE_FLAKY:-}" ] && [ ! -e "$dir/probe-ran" ]; then
+    : > "$dir/probe-ran"
+    echo "flaky first run" >&2
+    exit 1
+fi
 echo "${DEP_PROBE_OUT:-9.9.9}"
+[ -z "${DEP_PROBE_ERR:-}" ] || echo "${DEP_PROBE_ERR:-}" >&2
 exit ${DEP_PROBE_RC:-0}
 EOF
     chmod +x "$dir/probe-widget.sh"
@@ -114,6 +120,16 @@ REL="$TMP/rel-deps-absent"; DEP_PROBE_RC=1 mkrel "$REL"
 run "$REL"
 is   "deps: absent probe: exit 1"          1 "$rc"
 want "deps: absent probe: names dependency" "FAIL deps: widget" "$out"
+
+REL="$TMP/rel-deps-message"; DEP_PROBE_ERR="dolt: lock held by pid 42" DEP_PROBE_RC=1 mkrel "$REL"
+run "$REL"
+is   "deps: failing probe: exit 1"                  1 "$rc"
+want "deps: failing probe: FAIL line carries stderr" "lock held by pid 42" "$out"
+
+REL="$TMP/rel-deps-flaky"; DEP_PROBE_FLAKY=1 DEP_VMIN=1.0.0 DEP_PROBE_OUT=2.3.4 mkrel "$REL"
+run "$REL"
+is   "deps: transient probe failure: passes on retry" 0 "$rc"
+want "deps: transient probe failure: first failure logged" "flaky first run" "$out"
 
 REL="$TMP/rel-deps-old"; DEP_VMIN=5.0.0 DEP_PROBE_OUT=1.2.3 DEP_PROBE_RC=0 mkrel "$REL"
 run "$REL"

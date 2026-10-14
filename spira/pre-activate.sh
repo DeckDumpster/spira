@@ -65,13 +65,24 @@ for dep in doc.get("dep", []):
     if not probe:
         bad.append(f"{name}: no version_probe in deps.toml")
         continue
-    try:
-        p = subprocess.run(["bash", "-c", probe], capture_output=True, text=True, timeout=10)
-    except Exception as e:
-        bad.append(f"{name}: probe error: {e}")
-        continue
-    if p.returncode != 0:
-        bad.append(f"{name}: not usable (probe exit {p.returncode})")
+    def run_probe():
+        try:
+            return subprocess.run(["bash", "-c", probe], capture_output=True, text=True, timeout=10), None
+        except Exception as e:
+            return None, e
+
+    def detail(p, e):
+        if e is not None:
+            return f"probe error: {e}"
+        text = " ".join(((p.stderr or "") + " " + (p.stdout or "")).split())[:400]
+        return f"not usable (probe exit {p.returncode})" + (f": {text}" if text else "")
+
+    p, err = run_probe()
+    if err is not None or p.returncode != 0:
+        print(f"pre-activate: {name}: first probe failed, retrying once: {detail(p, err)}", file=sys.stderr)
+        p, err = run_probe()
+    if err is not None or p.returncode != 0:
+        bad.append(f"{name}: {detail(p, err)}")
         continue
     if vmin:
         m = re.search(r"\d+(?:\.\d+)*", p.stdout)
