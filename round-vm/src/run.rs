@@ -228,9 +228,29 @@ fi
 export SCCACHE_IGNORE_SERVER_IO_ERROR=1
 export SCCACHE_WEBDAV_ENDPOINT="http://${host_addr}:9431"
 export SCCACHE_WEBDAV_KEY_PREFIX="/"
+export SCCACHE_ERROR_LOG="$HOME/sccache-error.log"
+start_sccache() {
+    export SCCACHE_STARTUP_TIMEOUT="${SCCACHE_STARTUP_TIMEOUT:-120}"
+    for attempt in 1 2; do
+        if "$RUSTC_WRAPPER" --start-server >&2; then
+            echo "round-vm: sccache server started (attempt $attempt)" >&2
+            return 0
+        fi
+        echo "round-vm: sccache server start failed (attempt $attempt)" >&2
+        "$RUSTC_WRAPPER" --stop-server >/dev/null 2>&1 || true
+    done
+    return 1
+}
+sccache_mode="with sccache"
+if ! start_sccache; then
+    echo "round-vm: sccache server would not start; building WITHOUT sccache (cold, slower)" >&2
+    export RUSTC_WRAPPER=""
+    sccache_mode="without sccache (fallback after two failed server starts)"
+fi
 t0=$(date +%s)
 if ! cargo build -q --profile release --workspace --config profile.release.incremental=false; then
-    echo "round-vm: the round's workspace build failed" >&2
+    echo "round-vm: the round's workspace build failed, built $sccache_mode" >&2
+    tail -40 "$SCCACHE_ERROR_LOG" >&2 2>/dev/null || true
     exit 4
 fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
@@ -1759,6 +1779,47 @@ mod tests {
         let c = REMOTE_SCRIPT.find("if [ -n \"$fence_fail\" ]; then\n    rdir=").unwrap();
         let d = c + REMOTE_SCRIPT[c..].find("\nfi\n").unwrap() + 4;
         REMOTE_SCRIPT[c..d].to_string()
+    }
+
+    fn start_sccache_fn() -> String {
+        let a = REMOTE_SCRIPT.find("start_sccache() {").unwrap();
+        let b = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
+        REMOTE_SCRIPT[a..b].to_string()
+    }
+
+    fn run_start_sccache(fail_first: u32) -> (bool, String) {
+        let tmp = testkit::TempDir::new("sccache-start");
+        let dir = tmp.path().to_path_buf();
+        let stub = dir.join("sccache");
+        testkit::write_exe(&stub, &format!(
+            "#!/bin/bash\nif [ \"$1\" = --start-server ]; then n=$(cat {d}/n 2>/dev/null || echo 0); echo $((n+1)) > {d}/n; \
+             [ \"$n\" -ge {fail_first} ] || {{ echo 'sccache: error: Timed out waiting for server startup' >&2; exit 2; }}; fi\nexit 0\n",
+            d = dir.display()));
+        let script = format!("{}\nRUSTC_WRAPPER={}\nif start_sccache; then echo STARTED; else echo FALLBACK; fi\nenv | grep -c ^SCCACHE_STARTUP_TIMEOUT=120$",
+            start_sccache_fn(), stub.display());
+        let out = sh(&dir, &script);
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        (text.contains("STARTED"), text)
+    }
+
+    #[test]
+    fn a_server_start_that_times_out_once_is_retried_and_the_build_proceeds() {
+        let (started, log) = run_start_sccache(1);
+        assert!(started, "{log}");
+        assert!(log.contains("start failed (attempt 1)") && log.contains("started (attempt 2)"), "{log}");
+        assert!(log.lines().any(|l| l == "1"), "start-up deadline raised for the server: {log}");
+    }
+
+    #[test]
+    fn a_server_that_never_starts_falls_back_to_no_wrapper_and_the_log_says_so() {
+        let (started, log) = run_start_sccache(99);
+        assert!(!started, "{log}");
+        let fb = REMOTE_SCRIPT.find("building WITHOUT sccache").expect("fallback is named in the log");
+        let wrapper_off = REMOTE_SCRIPT.find("export RUSTC_WRAPPER=\"\"").expect("the wrapper is dropped");
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        assert!(fb < wrapper_off && wrapper_off < build);
+        assert!(REMOTE_SCRIPT.contains("built $sccache_mode"), "the build failure line names which happened");
+        assert!(REMOTE_SCRIPT.contains("tail -40 \"$SCCACHE_ERROR_LOG\""), "error log kept on build failure");
     }
 
     fn unit_stream_fn() -> String {
