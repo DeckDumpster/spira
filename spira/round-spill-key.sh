@@ -9,7 +9,7 @@
 # The key file is SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE; its expiry (epoch seconds) is recorded
 # beside it in <file>.expires, written by whoever pastes the key. A spilled pass cannot join the
 # tailnet with an expired key, so the warning comes SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS before.
-# Silent while SPIRA_ROUND_VM_SPILL is not ec2. Each distinct condition is said once.
+# Silent while SPIRA_ROUND_VM_SPILL is not ec2 or ec2-always. Each distinct condition is said once.
 #
 # covers: spira/round-spill-key.sh spira/watchers spira/conf.d/SPIRA_ROUND_VM_EC2_*
 set -uo pipefail
@@ -33,7 +33,7 @@ _rsk_once() {
 }
 
 cmd_pass() {
-    [ "${SPIRA_ROUND_VM_SPILL:-}" = ec2 ] || return 0
+    case "${SPIRA_ROUND_VM_SPILL:-}" in ec2|ec2-always) ;; *) return 0 ;; esac
     local file="$SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE" exp now days left
     [ -n "$file" ] || { _rsk_once "nofile" "ROUND SPILL KEY: SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE is not set"; return 0; }
     exp="$(tr -d '[:space:]' < "$file.expires" 2>/dev/null)"

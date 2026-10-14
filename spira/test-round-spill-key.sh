@@ -30,6 +30,10 @@ fresh
 is "off while spill is unset" "" "$(rsk '' pass)"
 nowant "a planted near expiry is not reported while spill is off" "ROUND SPILL KEY" "$(cat "$INBOX" 2>/dev/null)"
 
+fresh
+want "ec2-always is watched like ec2" "expires in 4 days" "$(rsk ec2-always pass)"
+
+fresh
 out="$(rsk ec2 pass)"
 want "inside the window it warns with the days left" "expires in 4 days" "$out"
 want "the warning reaches the inbox" "[watch:round-spill-key] ROUND SPILL KEY" "$(cat "$INBOX")"

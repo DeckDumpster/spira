@@ -217,6 +217,7 @@ impl Pool {
         let mut waiting_on = String::from("the first attempt");
         let mut wait_since: Option<std::time::Instant> = None;
         let mut spill_failed = false;
+        let mut fallback = String::new();
         let mut reaped_stale = false;
         loop {
             if !self.acquire_deadline.is_zero() && started.elapsed() >= self.acquire_deadline {
@@ -242,6 +243,7 @@ impl Pool {
                         Ok(vm) => return Ok((vm, AcquireMode::Cold)),
                         Err(e) => {
                             eprintln!("round-vm: spill to EC2 failed, staying local: {e}");
+                            fallback = format!("; ec2 unavailable ({reason}): {e}");
                             spill_failed = true;
                         }
                     }
@@ -255,7 +257,7 @@ impl Pool {
                 }
                 if let Some(vm) = s.ready.take() {
                     if p.alive(&vm.handle).unwrap_or(false) {
-                        Self::hand_out(s, &vm, owner, holder, deps.spawner, "warm VM handed out (provider: proxmox)");
+                        Self::hand_out(s, &vm, owner, holder, deps.spawner, &format!("warm VM handed out (provider: proxmox{fallback})"));
                         return Next::Got(vm);
                     }
                     s.note(&vm.handle, VmState::Doomed, "died while ready");
@@ -289,7 +291,7 @@ impl Pool {
                         Ok(vm) => {
                             self.with_state(|s| {
                                 clear_mine(s);
-                                Self::hand_out(s, &vm, owner, holder, deps.spawner, "provisioned for this acquire (provider: proxmox)");
+                                Self::hand_out(s, &vm, owner, holder, deps.spawner, &format!("provisioned for this acquire (provider: proxmox{fallback})"));
                             })?;
                             return Ok((vm, AcquireMode::Cold));
                         }
@@ -1268,7 +1270,7 @@ mod tests {
     fn spilling(p: &FakeProvider, ec2: Arc<dyn Provider>, pressure: Option<f64>) -> Attempt {
         let plan = SpillPlan {
             ec2: ec2.clone(),
-            rule: Rule { wait: Duration::ZERO, io_full_avg60: 30.0 },
+            rule: Rule { wait: Duration::ZERO, io_full_avg60: 30.0, always: false },
             pressure: Box::new(move || pressure),
             timing: T,
         };
@@ -1323,6 +1325,34 @@ mod tests {
         let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
         assert!(crate::ec2::is_ec2_handle(&vm.handle));
         assert!(lease_reason(&pl, &vm.handle).contains("no local VM within"));
+    }
+
+    #[test]
+    fn ec2_always_leases_on_ec2_with_a_free_local_vm_and_falls_back_with_the_reason() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let always = |p: &FakeProvider, e: Arc<dyn Provider>| {
+            let mut a = spilling(p, e, None);
+            a.spill.as_mut().unwrap().rule = Rule { wait: Duration::from_secs(30), io_full_avg60: 30.0, always: true };
+            a
+        };
+        let f = || Ok(always(&fp, ec2.clone()));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle));
+        assert!(lease_reason(&pl, &vm.handle).contains("ec2-always"));
+
+        let d = TempDir::new();
+        let fake = crate::testutil::FakeEc2::default();
+        fake.fail_run();
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(always(&fp, ec2.clone()));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(!crate::ec2::is_ec2_handle(&vm.handle));
+        let why = lease_reason(&pl, &vm.handle);
+        assert!(why.contains("provider: proxmox") && why.contains("ec2 unavailable (placement ec2-always)"), "{why}");
     }
 
     #[test]

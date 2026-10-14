@@ -54,7 +54,8 @@ pub fn real_attempt() -> Result<Attempt, String> {
 /// cannot start says what is missing and the pool stays local: a half-configured spill must
 /// not take the local rounds down with it.
 fn spill_wiring(cfg: &Config) -> (Option<std::sync::Arc<dyn crate::provider::Provider>>, Option<SpillPlan>) {
-    if crate::config::declared("SPIRA_ROUND_VM_SPILL").as_deref() != Some("ec2") {
+    let mode = crate::config::declared("SPIRA_ROUND_VM_SPILL");
+    if !matches!(mode.as_deref(), Some("ec2" | "ec2-always")) {
         return (None, None);
     }
     let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
@@ -72,6 +73,7 @@ fn spill_wiring(cfg: &Config) -> (Option<std::sync::Arc<dyn crate::provider::Pro
         rule: Rule {
             wait: Duration::from_secs(num("SPIRA_ROUND_VM_SPILL_WAIT_SECS", 30)),
             io_full_avg60: crate::config::declared("SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60").and_then(|v| v.parse().ok()).unwrap_or(30.0),
+            always: mode.as_deref() == Some("ec2-always"),
         },
         pressure: Box::new(|| crate::spill::read_io_full_avg60(crate::spill::PSI_IO)),
         timing: Timing { boot_tries: num("SPIRA_ROUND_VM_EC2_BOOT_TRIES", 150) as u32, poll: cfg.boot_poll, gone_tries: 60 },
