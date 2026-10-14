@@ -71,6 +71,6 @@ echo "ioclass=$(ionice -p $$) nice=$(nice)" >&2
 EOF
 out="$(nice -n 3 bash "$HERE/gate.sh" br repo 2>&1)"
 want "gate child keeps the caller's nice value (3, not 13)" "nice=$(nice -n 3 nice)" "$out"
-case "$out" in *ioclass=idle*) bad "gate child is not in the idle I/O class" "$out" ;; *) ok "gate child is not in the idle I/O class" ;; esac
+want "gate child keeps the caller's I/O class" "ioclass=$(ionice -p $$) nice=" "$out"
 
 tl_summary
