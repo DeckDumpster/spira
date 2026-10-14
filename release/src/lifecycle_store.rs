@@ -342,8 +342,67 @@ pub fn rotate(
     ])
 }
 
-/// `release rotate-lc-credentials`: close a passwordless root ([`ensure_admin`]), then
-/// [`rotate`] the credential files the environment names, against the server it names.
+/// The user and database the bead store's clients (bd, work, Sift) connect as, read from the
+/// beads `metadata.json` they all resolve; an absent user is root, bd's own default.
+pub fn bead_client(metadata: &Path) -> Result<(String, String), String> {
+    let text = std::fs::read_to_string(metadata).map_err(|e| format!("cannot read the bead-store client config {}: {e}", metadata.display()))?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{} is not JSON: {e}", metadata.display()))?;
+    let get = |k: &str| v.get(k).and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(String::from);
+    let db = get("dolt_database").ok_or_else(|| format!("{} names no dolt_database", metadata.display()))?;
+    Ok((get("dolt_server_user").unwrap_or_else(|| "root".into()), db))
+}
+
+/// [`ensure_admin`] for a server whose bead-store clients must keep connecting. While root
+/// has no password in force it refuses outright if any client authenticates as root; after a
+/// password is set it logs in as the client user with its own credential, and puts root back
+/// on an empty password (emptying `cred_path` to match) if that login fails.
+pub fn ensure_admin_keeping_clients(
+    cred_path: &Path,
+    metadata: &Path,
+    client_cred: Option<&Path>,
+    tmp_parent: &Path,
+    host: Option<String>,
+    port: u16,
+    mut run: impl FnMut(&[String], &[(String, String)]) -> (i32, String),
+) -> Result<(Admin, String), String> {
+    let (client, db) = bead_client(metadata)?;
+    let root_open = std::fs::read_to_string(cred_path).map(|t| t.trim().is_empty()).unwrap_or(true);
+    if root_open && client == "root" {
+        return Err(format!("not setting root's password: the bead-store clients ({}) connect as root with no password and would be locked out — give them their own user first (install creates {BEADS_USER}), then re-run", metadata.display()));
+    }
+    let client_host = host.clone().unwrap_or_else(|| "127.0.0.1".into());
+    let client_pw = match client_cred {
+        Some(f) if client != "root" => read_beads_credential(f, &client_host, port),
+        _ => None,
+    };
+    if root_open && client_pw.is_none() {
+        return Err(format!("not setting root's password: no password for the bead-store client {client} could be read, so its login cannot be verified afterwards (set SPIRA_BEAD_CLIENT_CREDENTIALS to the file holding the [{client_host}:{port}] section)"));
+    }
+    let (admin, msg) = ensure_admin(cred_path, tmp_parent, host, port, &mut run)?;
+    let Some(pw) = client_pw else { return Ok((admin, msg)) };
+    let dir = PrivateDir::new(tmp_parent, "cli")?;
+    let f = dir.write("client", &pw)?;
+    let env = vec![("SPIRA_LC_DB".to_string(), db), ("SPIRA_LC_PORT".to_string(), port.to_string()), ("SPIRA_LC_HOST".to_string(), client_host)];
+    let (rc, out) = run(&["verify-login".to_string(), client.clone(), f.to_string_lossy().to_string()], &env);
+    if rc == 0 {
+        return Ok((admin, format!("{msg}; bead-store client {client} still logs in")));
+    }
+    let why = redact(out.trim_end(), &[&pw]);
+    if !root_open {
+        return Err(format!("the bead-store client {client} cannot log in ({why}); root's password was already in force and is left as it was"));
+    }
+    let pw_file = dir.write("root", &admin.password)?;
+    let undo = dir.write("undo.sql", "ALTER USER 'root'@'localhost' IDENTIFIED BY '';\n")?;
+    let (rc, out) = run(&["admin-apply-ddl".to_string(), undo.to_string_lossy().to_string()], &admin_env(&admin, &pw_file));
+    if rc != 0 {
+        return Err(format!("the bead-store client {client} cannot log in ({why}); ALSO putting root back on an empty password failed (spira-lc exit {rc}): {}", redact(out.trim_end(), &[&admin.password])));
+    }
+    std::fs::write(cred_path, "").map_err(|e| format!("root was put back but {} could not be emptied: {e}", cred_path.display()))?;
+    Err(format!("the bead-store client {client} cannot log in after root's password was set ({why}); root was put back on an empty password"))
+}
+
+/// `release rotate-lc-credentials`: close a passwordless root ([`ensure_admin_keeping_clients`]),
+/// then [`rotate`] the credential files the environment names, against the server it names.
 pub fn rotate_from_env(env: &std::collections::BTreeMap<String, String>) -> Result<Vec<String>, String> {
     let rw_file = spira_config::resolve::lc_password_file(env);
     if rw_file.is_empty() {
@@ -359,6 +418,9 @@ pub fn rotate_from_env(env: &std::collections::BTreeMap<String, String>) -> Resu
         Some(p) => p.clone(),
         None => spira_config::resolve::lc_admin_credential_default(env),
     };
+    let store_dir = env.get("SPIRA_DB").filter(|d| !d.is_empty()).ok_or("SPIRA_DB is not set — cannot find the bead-store client config rotation must not break")?;
+    let metadata = Path::new(store_dir).join(".beads/metadata.json");
+    let client_cred = env.get("SPIRA_BEAD_CLIENT_CREDENTIALS").filter(|p| !p.is_empty()).map(PathBuf::from);
     let tmp = std::env::temp_dir();
     let run = |args: &[String], e: &[(String, String)]| {
         // batch-job: one operator-run rotation against the local Dolt; bounded at 120 s by timeout(1).
@@ -372,7 +434,7 @@ pub fn rotate_from_env(env: &std::collections::BTreeMap<String, String>) -> Resu
             Err(e) => (127, format!("cannot run spira-lc: {e}")),
         }
     };
-    let (admin, msg) = ensure_admin(Path::new(&admin_file), &tmp, host, port, run)?;
+    let (admin, msg) = ensure_admin_keeping_clients(Path::new(&admin_file), &metadata, client_cred.as_deref(), &tmp, host, port, run)?;
     let mut lines = vec![msg];
     lines.extend(rotate(Path::new(&rw_file), Path::new(&ro_file), &tmp, &admin, run)?);
     Ok(lines)
@@ -710,6 +772,70 @@ mod tests {
             }
             (0, String::new())
         }
+    }
+
+    fn client_fixture(t: &testkit::TempDir, user: Option<&str>) -> (PathBuf, PathBuf, PathBuf) {
+        let meta = t.path().join("metadata.json");
+        let body = match user {
+            Some(u) => format!("{{\"dolt_database\":\"spira\",\"dolt_server_user\":\"{u}\"}}"),
+            None => "{\"dolt_database\":\"spira\"}".to_string(),
+        };
+        std::fs::write(&meta, body).unwrap();
+        let client_cred = t.path().join("client-cred");
+        std::fs::write(&client_cred, "[127.0.0.1:3307]\npassword = clientPw1\n").unwrap();
+        (meta, client_cred, t.path().join("admin.credential"))
+    }
+
+    fn fake_server<'a>(root_pw: &'a std::cell::RefCell<String>, client_ok: bool) -> impl FnMut(&[String], &[(String, String)]) -> (i32, String) + 'a {
+        let mut root = fake_root(root_pw);
+        move |args, env| {
+            if args[0] == "verify-login" {
+                assert_eq!(args[1], "beads");
+                assert_eq!(std::fs::read_to_string(&args[2]).unwrap(), "clientPw1");
+                return if client_ok { (0, String::new()) } else { (1, "Access denied for clientPw1".into()) };
+            }
+            root(args, env)
+        }
+    }
+
+    #[test]
+    fn root_keeps_its_empty_password_while_a_client_still_connects_as_root() {
+        let t = testkit::TempDir::new("lc-clients-root");
+        for user in [Some("root"), None] {
+            let (meta, client_cred, cred) = client_fixture(&t, user);
+            let e = ensure_admin_keeping_clients(&cred, &meta, Some(&client_cred), t.path(), None, 3307, |_, _| panic!("no call may be made")).unwrap_err();
+            assert!(e.contains("not setting root's password") && e.contains("connect as root"), "{e}");
+            assert!(!cred.exists(), "no credential may be written");
+        }
+    }
+
+    #[test]
+    fn root_gets_a_password_once_clients_have_their_own_user_and_they_still_log_in() {
+        let t = testkit::TempDir::new("lc-clients-own");
+        let (meta, client_cred, cred) = client_fixture(&t, Some("beads"));
+        let root = std::cell::RefCell::new(String::new());
+        let (admin, msg) = ensure_admin_keeping_clients(&cred, &meta, Some(&client_cred), t.path(), None, 3307, fake_server(&root, true)).unwrap();
+        assert!(msg.contains("set") && msg.contains("still logs in"), "{msg}");
+        assert!(!root.borrow().is_empty() && *root.borrow() == admin.password);
+    }
+
+    #[test]
+    fn root_is_rolled_back_when_a_client_cannot_log_in_afterwards() {
+        let t = testkit::TempDir::new("lc-clients-rollback");
+        let (meta, client_cred, cred) = client_fixture(&t, Some("beads"));
+        let root = std::cell::RefCell::new(String::new());
+        let e = ensure_admin_keeping_clients(&cred, &meta, Some(&client_cred), t.path(), None, 3307, fake_server(&root, false)).unwrap_err();
+        assert!(e.contains("put back") && !e.contains("clientPw1"), "{e}");
+        assert_eq!(*root.borrow(), "", "root is passwordless again");
+        assert_eq!(std::fs::read_to_string(&cred).unwrap(), "", "the credential file matches");
+    }
+
+    #[test]
+    fn a_client_whose_password_cannot_be_read_blocks_the_change() {
+        let t = testkit::TempDir::new("lc-clients-nocred");
+        let (meta, _, cred) = client_fixture(&t, Some("beads"));
+        let e = ensure_admin_keeping_clients(&cred, &meta, None, t.path(), None, 3307, |_, _| panic!("no call may be made")).unwrap_err();
+        assert!(e.contains("cannot be verified afterwards") || e.contains("login cannot be verified"), "{e}");
     }
 
     #[test]
