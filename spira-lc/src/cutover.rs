@@ -67,7 +67,7 @@ pub fn is_row_key(x: &str) -> bool {
 /// never touches `version`, so a mirror write cannot lose a transition's CAS.
 fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i64>, submitted_tip: Option<&str>, repo: Option<&str>) -> String {
     if title.is_none() && priority.is_none() && submitted_tip.is_none() && repo.is_none() {
-        return format!("INSERT IGNORE INTO bead (bead_id, state, holds, version, updated_at) VALUES ({}, 'READY', '[]', 0, {at});\n", q(id));
+        return format!("INSERT IGNORE INTO bead (bead_id, state, holds, version, updated_at, since) VALUES ({}, 'READY', '[]', 0, {at}, {at});\n", q(id));
     }
     let title_sql = title.map_or("NULL".to_string(), |t| q(&t.chars().take(MIRROR_TITLE_CHARS).collect::<String>()));
     let priority_sql = priority.map_or("NULL".to_string(), |p| p.to_string());
@@ -76,7 +76,7 @@ fn create_bead_script(id: &str, at: i64, title: Option<&str>, priority: Option<i
         return submitted_create_script(id, at, &title_sql, &priority_sql, &repo_sql, tip);
     }
     format!(
-        "INSERT INTO bead (bead_id, state, tip, holds, version, updated_at, title, priority, repo) VALUES ({}, 'READY', NULL, '[]', 0, {at}, {title_sql}, {priority_sql}, {repo_sql}) \
+        "INSERT INTO bead (bead_id, state, tip, holds, version, updated_at, since, title, priority, repo) VALUES ({}, 'READY', NULL, '[]', 0, {at}, {at}, {title_sql}, {priority_sql}, {repo_sql}) \
          ON DUPLICATE KEY UPDATE title = COALESCE(VALUES(title), title), priority = COALESCE(VALUES(priority), priority), repo = COALESCE(VALUES(repo), repo);\n",
         q(id)
     )
@@ -1374,6 +1374,19 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn every_created_row_carries_since() {
+        for s in [
+            create_bead_script("sp-a", 7, None, None, None, None),
+            create_bead_script("sp-a", 7, Some("t"), Some(1), None, Some("spira")),
+            create_bead_script("sp-a", 7, Some("t"), Some(2), Some("abc123"), Some("spira")),
+        ] {
+            for ins in s.split(';').filter(|x| x.contains("INSERT") && x.contains("INTO bead ")) {
+                assert!(ins.contains("since"), "{ins}");
+            }
+        }
+    }
+
+    #[test]
     fn a_cascaded_state_change_stamps_since_with_the_events_own_at() {
         let at = 1_000;
         let mut bead_row = bead::BeadRow::filed("sp-a");
@@ -1401,7 +1414,7 @@ mod tests {
         assert!(s.contains("it\\'s a title") && s.contains("ON DUPLICATE KEY UPDATE title = COALESCE"), "{s}");
         assert!(!s.contains("version ="), "{s}");
         let only_priority = create_bead_script("sp-a", 7, None, Some(0), None, None);
-        assert!(only_priority.contains("VALUES ('sp-a', 'READY', NULL, '[]', 0, 7, NULL, 0, NULL)"), "{only_priority}");
+        assert!(only_priority.contains("VALUES ('sp-a', 'READY', NULL, '[]', 0, 7, 7, NULL, 0, NULL)"), "{only_priority}");
         let long = create_bead_script("sp-a", 7, Some(&"é".repeat(600)), None, None, None);
         assert_eq!(long.matches('é').count(), MIRROR_TITLE_CHARS, "cut at the column width by chars, not bytes");
     }
