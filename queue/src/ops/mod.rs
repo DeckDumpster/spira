@@ -116,10 +116,24 @@ where
         match &last {
             Err(e) if timed_out(e) => continue,
             Err(_) if attempt > 0 && applied(w) => return Ok(()),
-            _ => return last,
+            _ => break,
         }
     }
+    if last.is_err() {
+        converge_orphans(w);
+    }
     last
+}
+
+/// A batch write that did not settle may have left members IN_DELIVERY behind a batch that is
+/// gone or never readable; the sweep returns them whether or not the batch row exists.
+pub fn converge_orphans(w: &World) {
+    if !w.lc.available() {
+        return;
+    }
+    if let Err((rc, out)) = w.lc.requeue_orphans("queue.sh") {
+        w.err(format!("queue.sh: orphan sweep did not complete (rc={rc}): {out}"));
+    }
 }
 
 pub fn lc_abandon(w: &World, batch_id: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {

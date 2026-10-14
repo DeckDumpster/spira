@@ -353,6 +353,23 @@ fn open_whose_record_cannot_be_written_abandons_the_batch_it_cut() {
 }
 
 #[test]
+fn open_whose_cut_answers_a_deadline_after_committing_is_a_round_not_a_failure() {
+    let t = round_world();
+    t.lc.deadline_after_write.set(Some("cut"));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert!(t.out().contains("batch="), "{}", t.out());
+    assert!(!t.lc.has("requeue-orphans"));
+}
+
+#[test]
+fn open_whose_cut_is_refused_sweeps_orphans() {
+    let t = round_world();
+    t.lc.cut_refused.set(Some("refused"));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
+    assert!(t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
 fn open_admits_a_submitted_member_its_full_suite_certifies() {
     // law-a-round-is-feature-first-then-catch-all: a round takes SUBMITTED beads directly.
     let t = round_world();

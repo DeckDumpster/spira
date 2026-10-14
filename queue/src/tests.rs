@@ -514,6 +514,8 @@ struct FLc {
     batch_states: RefCell<BTreeMap<String, (String, String)>>,
     /// Reads of `show-batch` that fail once the release is activated (the store restarting).
     down_for: Cell<u32>,
+    /// `show-batch` finds no row for any batch.
+    no_batch_row: Cell<bool>,
     activated: std::rc::Rc<Cell<bool>>,
     eject_refused: Cell<bool>,
     /// Every bead event is refused with this text (a locked lifecycle store).
@@ -537,7 +539,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), deadline_after_write: Cell::new(None), down_for: Cell::new(0), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), batch_event_times_out: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
+        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), deadline_after_write: Cell::new(None), down_for: Cell::new(0), no_batch_row: Cell::new(false), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), batch_event_times_out: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -552,12 +554,19 @@ impl Lc for FLc {
         self.calls.borrow_mut().push("available".into());
         self.available.get()
     }
+    fn requeue_orphans(&self, _: &str) -> Result<String, (i32, String)> {
+        self.calls.borrow_mut().push("requeue-orphans".into());
+        Ok(String::new())
+    }
     fn probe(&self) -> Result<(), String> {
         self.calls.borrow_mut().push("probe".into());
         self.rows.borrow().clone().map(|_| ())
     }
     fn batch_state(&self, id: &str) -> Option<(String, String)> {
         self.calls.borrow_mut().push(format!("show-batch {id}"));
+        if self.no_batch_row.get() {
+            return None;
+        }
         if let Some(s) = self.batch_states.borrow().get(id) {
             return Some(s.clone());
         }
@@ -1435,6 +1444,24 @@ fn a_deadline_on_the_batch_abandon_inside_an_eject_is_settled_not_left_half_writ
     let n = t.lc.calls.borrow().iter().filter(|c| c.starts_with("abandon-batch spira-1")).count();
     assert_eq!(n, 1, "the write that landed is not repeated: {:?}", t.lc.calls.borrow());
     assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn eject_of_a_batch_with_no_lifecycle_row_sweeps_the_orphans_it_left() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
+    t.lc.no_batch_row.set(true);
+    assert_eq!(t.run(&["eject", "sp-a", "--reason", "bad"]), 1, "{}", t.err());
+    assert!(t.err().contains("no readable lifecycle row"), "POSITIVE CONTROL: the abandon was refused: {}", t.err());
+    assert!(t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn an_eject_that_settles_runs_no_sweep() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
+    assert_eq!(t.run(&["eject", "sp-a", "--reason", "bad"]), 0, "{}", t.err());
+    assert!(!t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
 }
 
 #[test]

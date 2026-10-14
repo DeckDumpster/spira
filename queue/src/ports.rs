@@ -330,6 +330,11 @@ pub trait Lc {
     fn churn_facts(&self, _since: i64) -> Result<String, String> {
         Err("churn-facts is not available on this lifecycle".into())
     }
+    /// `requeue-orphans --apply`: return every bead IN_DELIVERY that no open batch names, and
+    /// abandon a batch that never began.
+    fn requeue_orphans(&self, _actor: &str) -> Result<String, (i32, String)> {
+        Ok(String::new())
+    }
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.
     fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)>;
 }
