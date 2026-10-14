@@ -4,7 +4,7 @@ use lifecycle::Refusal;
 use proptest::prelude::*;
 
 fn tip() -> impl Strategy<Value = String> {
-    prop_oneof![Just("t1".to_string()), Just("t2".to_string())]
+    prop_oneof![Just("1111111111111111111111111111111111111111".to_string()), Just("2222222222222222222222222222222222222222".to_string())]
 }
 
 fn kind() -> impl Strategy<Value = BeadEventKind> {
@@ -39,7 +39,7 @@ fn event_for(row: &BeadRow, kind: BeadEventKind) -> BeadEvent {
 }
 
 fn forward(row: &BeadRow) -> BeadEventKind {
-    let tip = row.tip.clone().unwrap_or_else(|| "t1".into());
+    let tip = row.tip.clone().unwrap_or_else(|| "1111111111111111111111111111111111111111".into());
     match row.state {
         BeadState::Ready => BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
         BeadState::Working | BeadState::Rework => BeadEventKind::Submit { tip },
@@ -106,7 +106,7 @@ proptest! {
     }
 
     #[test]
-    fn gate_verdict_on_a_foreign_tip_never_applies(kinds in steps(), foreign in "[a-z]{8}") {
+    fn gate_verdict_on_a_foreign_tip_never_applies(kinds in steps(), foreign in "[a-f]{8}") {
         for (before, _, _) in run(kinds) {
             if before.state != BeadState::Submitted { continue; }
             for k in [
@@ -137,12 +137,12 @@ proptest! {
     }
 
     #[test]
-    fn resubmitting_a_different_tip_voids_certification(foreign in "[a-z]{8}") {
+    fn resubmitting_a_different_tip_voids_certification(foreign in "[a-f]{8}") {
         let mut row = BeadRow::filed("sp-prop");
         row.state = BeadState::Certified;
-        row.tip = Some("t1".into());
+        row.tip = Some("1111111111111111111111111111111111111111".into());
         row.gate_key = Some("k".into());
-        let out = apply(&row, &event_for(&row, BeadEventKind::Submit { tip: format!("x{foreign}") }));
+        let out = apply(&row, &event_for(&row, BeadEventKind::Submit { tip: format!("{foreign}{}", "b".repeat(32)) }));
         prop_assert!(out.applied);
         prop_assert_eq!(out.row.state, BeadState::Submitted);
         prop_assert!(out.row.gate_key.is_none());
