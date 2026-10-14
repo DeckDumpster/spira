@@ -5,6 +5,9 @@
 Description=Sync the RAM-backed Dolt store to its durable copy on disk
 Documentation=file://@SPIRA_HOME@/README.md
 After=dolt-beads.service
+# Restart=always without a limiter can spin forever on a broken store; five restarts a minute, then stop.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
