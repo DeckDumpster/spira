@@ -285,6 +285,7 @@ release_stale_secs = 3600
 release_store_slack = 20
 remedy_window = "30"
 repo_map = "/fixture/userhome/.config/spira/repo-map"
+repo_identity = ""
 reviewer_diff_limit = "80000"
 reviewer_model = "claude-fable-5-1"
 reviewer_timeout = "300"
