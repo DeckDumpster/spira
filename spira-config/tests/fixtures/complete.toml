@@ -349,6 +349,7 @@ spike_paths = "docs/spikes"
 stack_max_depth = 4
 statute_core = "law-absence-needs-a-positive-control,law-alerts-must-be-actionable,law-prefer-the-real-dependency,law-gates-run-in-a-clean-environment,law-closed-is-not-landed,law-a-regression-test-must-be-seen-to-fail,law-guard-binds-the-caller,law-verify-nothing-was-dropped,law-hand-land-the-unblocker,law-no-close-reason-admits-unfinished"
 statute_core_local = "law-filed-bead-queued-xor-escalated,law-no-filing-only-escalation,law-decisions-surface-immediately,law-commit-to-a-recommendation,law-prod-is-a-different-checkout,law-git-dash-c-not-cd,law-a-concierge-duty-is-a-missing-mechanism,law-fence-loops-on-shared-hardware,law-gate-earns-its-place,law-arm-before-you-retire"
+statute_dir = "/fixture/userhome/spira/run/statutes"
 statute_page = "wiki/notes/common-law.md"
 statute_source = "llm-wiki"
 forge_workflow = "Gate"

@@ -205,6 +205,51 @@ impl CommitOutcome {
     }
 }
 
+
+/// The on-disk statute mirror: one `<key>.txt` per statute, whose whole content is the text.
+/// Every read of the book goes here so a slow or stopped store cannot make law unreadable.
+pub mod mirror {
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    fn storable(key: &str) -> bool {
+        !key.is_empty() && !key.starts_with('.') && !key.contains('/')
+    }
+
+    /// Makes `dir` hold exactly `book`: each statute written atomically, any other `.txt` removed.
+    pub fn sync(dir: &Path, book: &BTreeMap<String, serde_json::Value>) -> Result<(), String> {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        for (key, v) in book {
+            let (Some(text), true) = (v.as_str(), storable(key)) else { continue };
+            let tmp = dir.join(format!(".tmp-{key}-{}", std::process::id()));
+            std::fs::write(&tmp, text).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+            std::fs::rename(&tmp, dir.join(format!("{key}.txt")))
+                .map_err(|e| format!("cannot place {key}: {e}"))?;
+        }
+        for entry in std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(key) = name.strip_suffix(".txt") else { continue };
+            if !book.get(key).is_some_and(|v| v.is_string()) {
+                std::fs::remove_file(entry.path()).map_err(|e| format!("cannot remove {name}: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The mirrored book, or `None` when `dir` holds no statute (never mirrored, or unreadable).
+    pub fn read(dir: &Path) -> Option<BTreeMap<String, serde_json::Value>> {
+        let mut book = BTreeMap::new();
+        for entry in std::fs::read_dir(dir).ok()?.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(key) = name.strip_suffix(".txt") else { continue };
+            if let Ok(text) = std::fs::read_to_string(entry.path()) {
+                book.insert(key.to_string(), serde_json::Value::String(text));
+            }
+        }
+        (!book.is_empty()).then_some(book)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,3 +421,32 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::mirror;
+    use std::collections::BTreeMap;
+
+    fn book(pairs: &[(&str, &str)]) -> BTreeMap<String, serde_json::Value> {
+        pairs.iter().map(|(k, v)| (k.to_string(), serde_json::Value::String(v.to_string()))).collect()
+    }
+
+    #[test]
+    fn a_synced_book_reads_back_and_an_unmirrored_dir_reads_as_none() {
+        let t = testkit::TempDir::new("mirror-rt");
+        let d = t.path().to_path_buf();
+        assert!(mirror::read(&d).is_none());
+        mirror::sync(&d, &book(&[("law-a", "Alpha."), ("law-b", "Beta.")])).unwrap();
+        assert_eq!(mirror::read(&d).unwrap(), book(&[("law-a", "Alpha."), ("law-b", "Beta.")]));
+    }
+
+    #[test]
+    fn sync_replaces_text_and_drops_a_retired_statute() {
+        let t = testkit::TempDir::new("mirror-drop");
+        let d = t.path().to_path_buf();
+        mirror::sync(&d, &book(&[("law-a", "Alpha."), ("law-b", "Beta.")])).unwrap();
+        mirror::sync(&d, &book(&[("law-a", "Alpha amended.")])).unwrap();
+        assert_eq!(mirror::read(&d).unwrap(), book(&[("law-a", "Alpha amended.")]));
+    }
+}
+

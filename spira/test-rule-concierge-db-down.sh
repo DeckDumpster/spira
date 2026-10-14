@@ -89,7 +89,11 @@ want "and returns its text"                   "Seed statute" "$out_show_up"
 break_store
 
 echo
-echo "=== rule.sh: the same store, now unreachable ==="
+echo "=== rule.sh: the same store, now unreachable, with nothing mirrored yet ==="
+
+# A mirror that already holds the book would serve these reads (tested further down); this
+# directory has never been filled, so the reads must go to the store and report it.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$DB" SPIRA_STATUTE_DIR="$TMP/never-mirrored"
 
 out_list_down=$(run_rule list); rc_list_down=$?
 if [ "$rc_list_down" -ne 0 ]; then ok "list against an unreachable store exits non-zero"
@@ -117,6 +121,7 @@ else bad "enact against an unreachable store exits non-zero" "got rc=0"; fi
 want "enact names the database path" "$DB" "$out_enact_down"
 
 fix_store
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$DB" SPIRA_STATUTE_DIR="$SPIRA_RUN/statutes"
 
 # The key survives: every command above refused to touch the book while it was unreachable.
 out_list_restored=$(run_rule list)
@@ -150,7 +155,7 @@ run_concierge_brief() {
     # the reachable, non-empty-store positive control. Nothing derives these empty any more,
     # so this suite must say so itself, matching the pre-migration behaviour of an unset env.
     tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber" SPIRA_DB="$DB" \
-        SPIRA_STATUTE_CORE="" SPIRA_STATUTE_CORE_LOCAL=""
+        SPIRA_STATUTE_CORE="" SPIRA_STATUTE_CORE_LOCAL="" SPIRA_STATUTE_DIR="${BRIEF_STATUTE_DIR:-$TMP/brief-statutes}"
     SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx \
         bash "$CONCIERGE_SH" brief 2>&1
 }
@@ -170,6 +175,7 @@ nowant "and does NOT claim the database is unreachable"  "cannot reach"   "$out_
 # NEGATIVE CONTROL B: same store, now unreachable — the case this bead is about.
 bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 break_store
+BRIEF_STATUTE_DIR="$TMP/brief-statutes-unmirrored"
 out_brief_down=$(run_concierge_brief); rc_brief_down=$?
 if [ "$rc_brief_down" -ne 0 ]; then ok "concierge brief against an unreachable store exits non-zero"
 else bad "concierge brief against an unreachable store exits non-zero" "got rc=0"; fi
@@ -177,5 +183,38 @@ want   "and names the database"                                  "$DB"          
 nowant "and does NOT claim the statute book rendered empty"      "rendered empty" "$out_brief_down"
 
 fix_store
+
+echo
+echo "=== statutes are served from files: the store down, the text is the same ==="
+
+MIRROR="$TMP/served-statutes"
+HOOK="$TMP/ok-hook.sh"; printf '#!/bin/sh\nexit 0\n' > "$HOOK"; chmod +x "$HOOK"
+served_cfg() {
+    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$DB" SPIRA_STATUTE_DIR="$MIRROR" SPIRA_WIKI_HOOK="$HOOK" SPIRA_WIKI=""
+}
+served_cfg
+out_enact=$(run_rule enact dbdown-served --tool none --reason fixture "Served from a file while the store is down."); rc_enact=$?
+is   "enact against the reachable store exits 0" "0" "$rc_enact"
+[ -f "$MIRROR/law-dbdown-served.txt" ] && ok "enact wrote the statute file" || bad "enact wrote the statute file" "no $MIRROR/law-dbdown-served.txt"
+
+break_store
+out_show_served=$(run_rule show dbdown-served); rc_show_served=$?
+is   "show with the store stopped exits 0"       "0" "$rc_show_served"
+want "and prints the statute"                    "Served from a file while the store is down." "$out_show_served"
+out_list_served=$(run_rule list); rc_list_served=$?
+is   "list with the store stopped exits 0"       "0" "$rc_list_served"
+want "and names the statute"                     "law-dbdown-served" "$out_list_served"
+BRIEF_STATUTE_DIR="$MIRROR"
+out_brief_served=$(run_concierge_brief); rc_brief_served=$?
+is   "concierge brief with the store stopped exits 0" "0" "$rc_brief_served"
+want "and carries the statute index"             "dbdown-served" "$out_brief_served"
+fix_store
+served_cfg
+
+out_enact2=$(run_rule enact dbdown-served --tool none --reason fixture "Amended text, served after enact."); rc_enact2=$?
+is   "re-enact exits 0" "0" "$rc_enact2"
+want "show returns the new text" "Amended text, served after enact." "$(run_rule show dbdown-served)"
+run_rule retire dbdown-served >/dev/null
+is   "retire removes the file" "1" "$([ -f "$MIRROR/law-dbdown-served.txt" ]; echo $?)"
 
 tl_summary
