@@ -64,13 +64,13 @@ kill -0 "$gp" 2>/dev/null && bad "TERM to gate.sh kills the gate" "pid $gp still
 wait "$gs" 2>/dev/null
 
 echo
-echo "5. the gate runs fenced — idle I/O class and a raised nice value:"
+echo "5. the gate runs at the caller's priority — no nice, no idle I/O class (law-reduce-the-count-never-throttle-the-job):"
 cat > "$STUB/gate" <<'EOF'
 #!/usr/bin/env bash
 echo "ioclass=$(ionice -p $$) nice=$(nice)" >&2
 EOF
-out="$(bash "$HERE/gate.sh" br repo 2>&1)"
-want "gate child is in the idle I/O class" "ioclass=idle" "$out"
-want "gate child is niced" "nice=10" "$out"
+out="$(nice -n 3 bash "$HERE/gate.sh" br repo 2>&1)"
+want "gate child keeps the caller's nice value (3, not 13)" "nice=$(nice -n 3 nice)" "$out"
+case "$out" in *ioclass=idle*) bad "gate child is not in the idle I/O class" "$out" ;; *) ok "gate child is not in the idle I/O class" ;; esac
 
 tl_summary
