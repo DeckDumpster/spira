@@ -1,0 +1,21 @@
+[package]
+name = "store-persist"
+version = "0.1.0"
+edition = "2021"
+description = "store-persist — keeps a RAM-resident Dolt store durable: restores it from its on-disk copy before the server starts, syncs it there continuously, compacts that copy, and reports its age."
+
+[lib]
+name = "store_persist"
+path = "src/lib.rs"
+
+[[bin]]
+name = "store-persist"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+libc = "0.2"
+spira-config = { path = "../spira-config" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

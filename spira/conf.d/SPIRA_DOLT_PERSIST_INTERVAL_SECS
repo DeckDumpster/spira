@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=dolt
+DOC=Seconds store-persist waits between passes that sync the RAM-backed store into SPIRA_DOLT_DURABLE; a host crash loses at most this plus one pass's duration.
+SCHEMA=Seconds between store-persist passes (unit: seconds; default 5).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_DOLT_PERSIST_INTERVAL_SECS:=5}"
+SPIRA_CONF_DEFAULT_EOF

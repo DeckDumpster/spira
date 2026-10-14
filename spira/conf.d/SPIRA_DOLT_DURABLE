@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=dolt
+DOC=On-disk directory holding the durable copy of a RAM-backed store (SPIRA_DOLT_DATA on tmpfs): store-persist restores from it before the server starts and syncs into it continuously. Empty means the store is not RAM-backed, and a RAM-backed SPIRA_DOLT_DATA is then refused.
+SCHEMA=On-disk directory holding the durable copy of a RAM-backed Dolt store (store-persist); empty means the store is not RAM-backed.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_DOLT_DURABLE:=}"
+SPIRA_CONF_DEFAULT_EOF

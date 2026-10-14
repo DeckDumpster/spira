@@ -546,7 +546,7 @@ mod tests {
     }
 
     fn tiny_manifest() -> Manifest {
-        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         m.units.retain(|u| u.name == "spira-sentinel.service" || u.name == "spira-sentinel.timer");
         m
     }
@@ -634,7 +634,7 @@ mod tests {
         fs::write(tmpl_dir.join("spira-reconciler.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
         fs::write(tmpl_dir.join("spira-reconciler.timer"), "[Unit]\nUnit=spira-reconciler.service\n[Timer]\nOnCalendar=*:0/1\n").unwrap();
 
-        let mut manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let mut manifest = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         manifest.units.retain(|u| u.name.starts_with("spira-sentinel.") || u.name.starts_with("spira-reconciler."));
         let h = host();
         let sc = FakeSystemctl::default();
