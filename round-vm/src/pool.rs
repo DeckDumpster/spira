@@ -564,6 +564,29 @@ impl Pool {
         Ok(released)
     }
 
+    /// Releases the warm VM when the pool no longer needs it: always under `ec2-always`/`ec2-only`
+    /// (no pass takes a local VM there, bar the fallback, which provisions cold), otherwise once
+    /// it has sat ready for `idle`. A leased VM is never touched. Returns how many it released.
+    pub fn drain_idle(&self, idle: Duration, spill_only_ec2: bool, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<usize, String> {
+        let Some((handle, why)) = self.with_state(|s| {
+            let v = s.ready.as_ref()?;
+            if s.leases.iter().any(|l| l.vm.handle == v.handle) || s.refreshing.is_some_and(|r| r.alive()) {
+                return None;
+            }
+            if spill_only_ec2 {
+                return Some((v.handle.clone(), "placement keeps rounds off the local pool".to_string()));
+            }
+            let since = s.vms().into_iter().find(|(h, st, _, _)| *h == v.handle && *st == VmState::Ready).map_or(now(), |(_, _, at, _)| at);
+            let age = now().saturating_sub(since);
+            (age >= idle.as_secs()).then(|| (v.handle.clone(), format!("idle {age}s past the {}s bound", idle.as_secs())))
+        })? else {
+            return Ok(0);
+        };
+        eprintln!("round-vm: releasing warm VM {handle}: {why}");
+        self.release_inner(&handle, ProcId::current(), true, factory)?;
+        Ok(1)
+    }
+
     /// Claims the pool for a template refresh: refused (with the reason) while a round holds
     /// a lease, a provision is in flight, or another refresh runs. While claimed, `acquire`
     /// waits, so no round starts on a VM the refresh is about to recycle.
@@ -1178,6 +1201,59 @@ mod tests {
         assert!(pl.begin_refresh(me).unwrap().unwrap_err().contains("another refresh"));
         pl.end_refresh(me);
         assert!(pl.with_state(|s| s.refreshing).unwrap().is_none());
+    }
+
+    fn warm(pl: &Pool, fp: &FakeProvider, age: u64) {
+        fp.plant("201", "round-201");
+        pl.with_state(|s| {
+            s.note("201", VmState::Provisioning, "test");
+            s.note("201", VmState::Ready, "test");
+            s.ready = Some(Vm { handle: "201".into(), addr: "10.0.0.1".into() });
+            for e in s.events.iter_mut().filter(|e| e.vm == "201") {
+                e.at = now() - age;
+            }
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn under_ec2_always_the_next_pass_releases_a_warm_vm_however_young() {
+        let d = TempDir::new();
+        let (fp, pl) = (FakeProvider::new(), pool(&d, 1));
+        let f = || Ok(attempt(&fp));
+        warm(&pl, &fp, 0);
+        assert_eq!(pl.drain_idle(Duration::from_secs(1800), true, &f).unwrap(), 1);
+        assert!(fp.name("201").is_none());
+        let s = read_state(&pl.state_file()).unwrap();
+        assert!(s.ready.is_none() && s.doomed.is_empty());
+        assert_eq!(pl.drain_idle(Duration::from_secs(1800), true, &f).unwrap(), 0);
+    }
+
+    #[test]
+    fn in_local_mode_a_warm_vm_is_released_only_past_the_idle_bound() {
+        let d = TempDir::new();
+        let (fp, pl) = (FakeProvider::new(), pool(&d, 1));
+        let f = || Ok(attempt(&fp));
+        warm(&pl, &fp, 100);
+        assert_eq!(pl.drain_idle(Duration::from_secs(1800), false, &f).unwrap(), 0);
+        assert!(fp.name("201").is_some());
+        warm(&pl, &fp, 1801);
+        assert_eq!(pl.drain_idle(Duration::from_secs(1800), false, &f).unwrap(), 1);
+        assert!(fp.name("201").is_none());
+    }
+
+    #[test]
+    fn draining_never_touches_a_vm_a_live_round_holds() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &sp };
+        let (leased, _) = pl.acquire(&deps, Some(ProcId::current())).unwrap();
+        warm(&pl, &fp, 99999);
+        pl.drain_idle(Duration::ZERO, true, &f).unwrap();
+        assert!(fp.name(&leased.handle).is_some(), "the leased VM survives");
+        assert!(read_state(&pl.state_file()).unwrap().leases.iter().any(|l| l.vm.handle == leased.handle));
     }
 
     #[test]

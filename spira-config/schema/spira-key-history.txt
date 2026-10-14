@@ -411,6 +411,7 @@ round_vm_ec2_tailscale_key_file
 round_vm_spill
 round_vm_spill_io_full_avg60
 round_vm_spill_wait_secs
+round_vm_warm_idle_secs
 rounds_pacing
 pass_rate_max_pct
 pass_rate_window
