@@ -115,7 +115,7 @@ jobs:
               "ResourceType=image,Tags=[{Key=spill:owner,Value=round},{Key=Name,Value=spira-round},{Key=recipe-sha,Value=$SHA}]" \
               "ResourceType=snapshot,Tags=[{Key=spill:owner,Value=round}]" \
             --query ImageId --output text)"
-          aws ec2 wait image-available --image-ids "$ami"
+          bash round-vm/wait-image.sh "$ami"
           echo "built $ami recipe-sha=$SHA"
 
       - name: Remove the staged tree

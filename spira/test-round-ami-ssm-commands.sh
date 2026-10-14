@@ -3,7 +3,7 @@
 # test-round-ami-ssm-commands.sh — the Round AMI SSM command document survives /bin/sh.
 #
 # tier: T1
-# covers: round-vm/ssm-commands.jq .github/workflows/round-ami-build.yml
+# covers: round-vm/wait-image.sh round-vm/ssm-commands.jq .github/workflows/round-ami-build.yml
 # host-reason: jq and sh only; no container or database dependency
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -57,5 +57,21 @@ fi
 want "prefetch skips other targets' manifests (wasm-only deps need a newer cargo)" "cargo fetch --locked --target x86_64-unknown-linux-gnu" "$(cat "$ROOT/round-vm/src/template.sh")"
 grep -q 'ssm-commands.jq' "$ROOT/.github/workflows/round-ami-build.yml" \
     && ok "workflow uses the filter" || bad "workflow uses the filter" "not referenced"
+
+W="$ROOT/round-vm/wait-image.sh"
+mkdir -p "$TMP/wbin"
+cat > "$TMP/wbin/aws" <<'AWS'
+#!/bin/sh
+n="$(cat "$FX/n" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$FX/n"
+if [ "$n" -ge "$PENDING_POLLS" ]; then echo "$FINAL"; else echo pending; fi
+AWS
+printf '#!/bin/sh\nexit 0\n' > "$TMP/wbin/sleep"; chmod +x "$TMP/wbin/aws" "$TMP/wbin/sleep"
+wrun() { rm -f "$TMP/n"; FX="$TMP" PENDING_POLLS="$1" FINAL="$2" PATH="$TMP/wbin:$PATH" ROUND_AMI_WAIT_INTERVAL=60 bash "$W" ami-1 >/dev/null 2>&1; }
+wrun 15 available; is "image pending 15 minutes still succeeds" 0 "$?"
+wrun 15 failed; is "image that goes failed fails" 1 "$?"
+wrun 100000 available; is "image pending past the bound fails" 1 "$?"
+grep -q 'wait-image.sh' "$ROOT/.github/workflows/round-ami-build.yml" \
+    && ok "workflow uses the bounded wait" || bad "workflow uses the bounded wait" "not referenced"
+if grep -q 'ec2 wait image-available' "$ROOT/.github/workflows/round-ami-build.yml"; then bad "stock 10-minute waiter gone" "found"; else ok "stock 10-minute waiter gone"; fi
 
 tl_summary
