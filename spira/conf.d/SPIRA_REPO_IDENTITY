@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=repo
+DOC=Path of the repo identity registry: one `repo | term, term` row per repo. Empty means no repo declares identity terms.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Path of the repo identity registry: one `repo | term, term` row per repo, the terms that
+    # belong only to that repo. bead.sh refuses a bead for one repo carrying another's terms.
+    # Empty means no repo declares identity terms and the guard is inert.
+    : "${SPIRA_REPO_IDENTITY:=}"
+SPIRA_CONF_DEFAULT_EOF

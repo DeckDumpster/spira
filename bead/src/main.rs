@@ -410,6 +410,30 @@ fn load_repos() -> std::collections::BTreeMap<String, spira_config::RepoSection>
     }
 }
 
+fn load_identity() -> std::collections::BTreeMap<String, Vec<String>> {
+    let path = cfg_label("SPIRA_REPO_IDENTITY");
+    if path.is_empty() {
+        return Default::default();
+    }
+    std::fs::read_to_string(&path).map(|t| bead::identity::parse(&t)).unwrap_or_default()
+}
+
+/// `Err` is the exit code of a refusal; `Ok(Some(reason))` means the named override admitted
+/// text that carried another repo's terms.
+fn identity_guard(repo: &str, text: &str) -> Result<Option<String>, i32> {
+    let hits = bead::identity::foreign_terms(&load_identity(), repo, text);
+    if hits.is_empty() {
+        return Ok(None);
+    }
+    match bead::identity::override_reason(env::var(bead::identity::OVERRIDE_ENV).ok()) {
+        Some(why) => Ok(Some(why)),
+        None => {
+            eprintln!("{}", bead::identity::refusal(repo, &hits));
+            Err(2)
+        }
+    }
+}
+
 /// One source of config (per Ryan 2026-10-05): a registered key's value, through
 /// `spira_config::process::cfg`, resolved from `$SPIRA_TOML`. Several of these keys treat
 /// a resolved empty string as a legitimate, documented value (SPIRA_SCOPE_LABEL's "no
@@ -540,6 +564,22 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             };
             eprintln!("bead: repo:{r} is not in the repo map; valid keys: {valid}");
             return 2;
+        }
+    }
+
+    if let Some(r) = &repo {
+        let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+        match identity_guard(r, &format!("{title}\n{body}")) {
+            Err(rc) => return rc,
+            Ok(Some(why)) => {
+                let path = env::temp_dir().join(format!("bead-crossrepo-{}.md", std::process::id()));
+                if let Err(e) = std::fs::write(&path, format!("{}\n\n{body}", bead::identity::recorded_line(&why))) {
+                    eprintln!("bead: writing {}: {e}", path.display());
+                    return 1;
+                }
+                body_file = Some(path.to_string_lossy().into_owned());
+            }
+            Ok(None) => {}
         }
     }
 
@@ -757,8 +797,29 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         return 2;
     }
 
+    let mut override_note: Option<String> = None;
+    if note.is_some() || body_file.is_some() || append_file.is_some() {
+        let (_, shown) = bdq_capture(home, &s(&["show", &id, "--json"]));
+        let repo = bead::parse_show_row(&shown)
+            .and_then(|r| r.labels.iter().find_map(|l| l.strip_prefix("repo:").map(str::to_string)));
+        if let Some(repo) = repo {
+            let mut text = note.clone().unwrap_or_default();
+            for f in [&body_file, &append_file].into_iter().flatten() {
+                text.push('\n');
+                text.push_str(&std::fs::read_to_string(f).unwrap_or_default());
+            }
+            match identity_guard(&repo, &text) {
+                Err(rc) => return rc,
+                Ok(why) => override_note = why.map(|w| bead::identity::recorded_line(&w)),
+            }
+        }
+    }
+
     let mut changed = String::new();
     let mut rc = 0;
+    if let Some(line) = &override_note {
+        rc |= bdq_status(home, &s(&["note", &id, line]));
+    }
     if let Some(new) = priority {
         let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
         let Some(old) = bead::parse_priority(&out) else {

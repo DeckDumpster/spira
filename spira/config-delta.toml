@@ -70,3 +70,4 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.concierge_push_pattern" = '\bP0\b|RED on|PAUSED|UNDRIVEN|unread (operator )?verdict'
 "spira.concierge_push_wake" = "concierge.sh wake"
 "spira.concierge_push_window" = 5
+"spira.repo_identity" = ""
