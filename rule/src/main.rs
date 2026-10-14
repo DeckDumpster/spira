@@ -357,7 +357,7 @@ fn release_lookup(home: &str) -> impl Fn(&str) -> Option<String> {
 }
 
 fn open_bead_titles(db: &str) -> Vec<String> {
-    let (code, out, _) = run_bd(db, &["list", "--json", "--status", "open", "--limit", "0"]);
+    let (code, out, _) = run_bd(db, &["list", "--json", "--limit", "0"]);
     if code != 0 {
         return Vec::new();
     }
@@ -429,8 +429,7 @@ fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
             title
         );
         let bead_sh = Path::new(home).join("bead.sh");
-        // batch-job: bead.sh file writes the store under its lock
-        let child = Command::new(&bead_sh)
+        let child = Command::new(&bead_sh) // batch-job: bead.sh file writes the store under its lock
             .args(["file", &title, "--for", persona.as_deref().unwrap_or(""), "--repo", repo.as_deref().unwrap_or(""), "--body-file", "-"])
             .stdin(Stdio::piped())
             .spawn();
