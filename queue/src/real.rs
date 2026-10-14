@@ -960,6 +960,14 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
+    fn requeue_orphans(&self, actor: &str) -> Result<String, (i32, String)> {
+        let (rc, out) = self.run(&["requeue-orphans", "--actor", actor, "--apply"]);
+        if rc == 0 {
+            Ok(out)
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
     fn bead_state(&self, bead: &str) -> Option<(String, String)> {
         let out = self.stdout(&["show", bead]).ok()?;
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;

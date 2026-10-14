@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use super::batch::lc_return;
 use super::stage;
 use super::land::land_local_with;
-use super::{actor, czar_ok, idents, landing_log, lc_abandon, lc_cas, lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, take_lock, Ctx, World, FAIL, OK, USAGE};
+use super::{actor, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas, lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, take_lock, Ctx, World, FAIL, OK, USAGE};
 use crate::cli::{Round, Text};
 use landing_pass::gateq::GateQueue;
 use landing_pass::model::GateOutcome;
@@ -601,8 +601,9 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
     let head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
     let batch = name.map(str::to_string).unwrap_or_else(|| format!("{repo_name}-{}", w.clock.stamp()));
     let cut_members: Vec<Member> = merged.iter().map(|m| Member { id: m.id.clone(), tip: certified.get(&m.id).cloned().unwrap_or_else(|| m.tip.clone()) }).collect();
-    if let Err((rc, out)) = w.lc.cut(&batch, &repo_name, &head, &base_sha, &csv(&cut_members), LC_ACTOR) {
+    if let Err((rc, out)) = super::batch::cut_settled(w, &batch, &repo_name, &head, &base_sha, &csv(&cut_members), LC_ACTOR) {
         w.err(format!("queue.sh {label}: spira-lc cut refused for {batch} (rc={rc}): {out}"));
+        converge_orphans(w);
         w.git.worktree_remove(&path, &wt);
         return FAIL;
     }
@@ -622,6 +623,7 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
         if let Err((rc, out)) = lc_cas(w, &batch, |s, v| w.lc.abandon_batch(&batch, s, v, LC_ACTOR, why)) {
             w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the unrecorded round {batch} (rc={rc}): {out} — its members stay BATCHED until requeue-orphans"));
         }
+        converge_orphans(w);
         w.git.worktree_remove(&path, &wt);
         return FAIL;
     }

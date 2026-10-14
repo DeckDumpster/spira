@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use super::{actor, czar_ok, lc_abandon, lc_eject_member, require_lc, idents, landing_log, owner_refused, read_text, repo_path, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
+use super::{actor, converge_orphans, czar_ok, lc_abandon, lc_eject_member, require_lc, idents, landing_log, owner_refused, read_text, repo_path, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::ident::bounded_text;
 use crate::model::{EjectCause, LandMode, Member};
@@ -178,6 +178,9 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             }
         }
     }
+    if failed {
+        converge_orphans(w);
+    }
     let branch = kv.as_ref().and_then(|k| k.get_first("branch")).unwrap_or("").to_string();
     if !branch.is_empty() && idents(w, "eject", &[("branch", &branch)]).is_ok() {
         w.lib.cancel_runs(&c.s.forge, &path, &branch);
@@ -204,7 +207,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
 
 /// A cut that answered "cannot tell" may have written the batch row: look before retrying, so a
 /// deadline neither strands BATCHED members behind no PR nor cuts the same batch twice.
-fn cut_settled(w: &World, id: &str, repo: &str, head: &str, base: &str, members: &str) -> Result<String, (i32, String)> {
+pub(super) fn cut_settled(w: &World, id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)> {
     let mut last = Err((2, "no attempt".to_string()));
     for attempt in 0..3u32 {
         if attempt > 0 {
@@ -213,10 +216,13 @@ fn cut_settled(w: &World, id: &str, repo: &str, head: &str, base: &str, members:
                 return Ok(version);
             }
         }
-        last = w.lc.cut(id, repo, head, base, members, "queue.sh");
+        last = w.lc.cut(id, repo, head, base, members, actor);
         if !matches!(&last, Err((2, _))) {
             return last;
         }
+    }
+    if let Some((_, version)) = w.lc.batch_state(id) {
+        return Ok(version);
     }
     last
 }
@@ -584,7 +590,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     for m in &members {
         w.lc.create_bead(&m.id);
     }
-    let version = match cut_settled(w, &lc_id, &name, &head, &base_sha, &csv) {
+    let version = match cut_settled(w, &lc_id, &name, &head, &base_sha, &csv, "queue.sh") {
         Ok(v) => v,
         Err((rc, out)) => {
             w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"));
