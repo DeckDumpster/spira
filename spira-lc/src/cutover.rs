@@ -854,6 +854,27 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// True when the bead's last `Returned` came after its last `Deliver`: the queue ejected it
+/// from this delivery, whatever the bead and delivery rows say now.
+fn returned_since_delivery(conn: &Conn, id: &str) -> Result<bool, DbError> {
+    let key = rows::escape(id);
+    let sql = format!(
+        "SELECT 1 AS hit FROM event WHERE machine = 'bead' AND lc_key = '{key}' AND applied = 1 AND event = 'Returned' \
+         AND seq > COALESCE((SELECT MAX(seq) FROM event WHERE machine = 'bead' AND lc_key = '{key}' AND applied = 1 AND event = 'Deliver'), 0) LIMIT 1"
+    );
+    Ok(!conn.query(&sql)?.is_empty())
+}
+
+/// The exit a member takes when its round is released: an ejected bead keeps its verdict
+/// (`Returned`), any other returns to where it entered delivery (`Requeued`).
+fn release_kind(conn: &Conn, id: &str, tip: String) -> Result<delivery::DeliveryEventKind, DbError> {
+    Ok(if returned_since_delivery(conn, id)? {
+        delivery::DeliveryEventKind::Returned { reason: lifecycle::reason::ReturnedReason::BatchEjectedRed }
+    } else {
+        delivery::DeliveryEventKind::Requeued { tip }
+    })
+}
+
 /// `abandon-batch <batch-id> --expect S --version V --actor A --reason R`
 ///
 /// One transaction: `Abandon{reason}` on the batch (any non-terminal S -> ABANDONED), and
@@ -908,7 +929,11 @@ pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
     }];
 
     for (id, tip) in &members {
-        if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Requeued { tip: tip.clone() }, &actor, at) {
+        let kind = match release_kind(conn, id, tip.clone()) {
+            Ok(k) => k,
+            Err(e) => return cannot_tell(e),
+        };
+        if let Err(e) = add_exit_steps(conn, &mut steps, id, kind, &actor, at) {
             return cannot_tell(e);
         }
     }
@@ -936,7 +961,8 @@ const PHANTOM_BATCH_SECS: i64 = 1800;
 /// round. So is the member of a batch that opened and never began: OPEN, no PR, run, pass or
 /// phase, older than `--stale-secs`. Lists them; with `--apply` an orphan goes back through
 /// `Requeued{tip}` in its own transaction (so a SUBMITTED member returns to SUBMITTED, a
-/// CERTIFIED one to CERTIFIED) and a phantom batch is abandoned with all its members.
+/// CERTIFIED one to CERTIFIED); a member the queue ejected since it entered delivery is
+/// `Returned` instead, so it ends REWORK and only its stale delivery row is cleared and a phantom batch is abandoned with all its members.
 /// Beads whose delivery is live outside a batch (pr, push, local) are not orphans.
 pub fn cmd_requeue_orphans(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(actor) = flag(args, "--actor") else {
@@ -1018,7 +1044,11 @@ pub fn cmd_requeue_orphans(args: &[String], conn: &Conn) -> (i32, String) {
                 Err(e) => return cannot_tell(e),
             };
             let mut steps = Vec::new();
-            if let Err(e) = add_exit_steps(conn, &mut steps, id, delivery::DeliveryEventKind::Requeued { tip }, &actor, at) {
+            let kind = match release_kind(conn, id, tip) {
+                Ok(k) => k,
+                Err(e) => return cannot_tell(e),
+            };
+            if let Err(e) = add_exit_steps(conn, &mut steps, id, kind, &actor, at) {
                 return cannot_tell(e);
             }
             match conn.cascade("", &steps) {

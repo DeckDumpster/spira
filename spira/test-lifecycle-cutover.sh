@@ -668,6 +668,19 @@ is "...and its delivery row exits" "EXITED" "$(member_field sp-lc-ph-b delivery 
 is "the fresh batch stays OPEN" "OPEN" "$(batch_field batch-phantom-fresh state)"
 is "the live batch stays OPEN" "OPEN" "$(batch_field batch-phantom-live state)"
 
+# ── an ejected member of a phantom batch keeps its verdict: only its delivery row is cleared ─
+# The eject's Returned event is recorded but the row writes never landed, so the bead still reads
+# IN_DELIVERY and the delivery row BATCHED. POSITIVE CONTROL: its innocent co-member is requeued.
+certify sp-lc-ej-red 2b0c3f2d6a1f4a5f8d3c0a9e7b6c5d4e3f2a1b0c
+certify sp-lc-ej-ok 3c1d4a3e7b2a5b6a9e4d1b0f8c7d6e5f4a3b2c1d
+lc cut batch-ejected --repo fixture-repo --head headEJ --base baseEJ --members "sp-lc-ej-red:2b0c3f2d6a1f4a5f8d3c0a9e7b6c5d4e3f2a1b0c,sp-lc-ej-ok:3c1d4a3e7b2a5b6a9e4d1b0f8c7d6e5f4a3b2c1d" --actor test >/dev/null
+root_sql --use-db spira_lifecycle sql -q "UPDATE batch SET opened_at = 1 WHERE batch_id = 'batch-ejected'; INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) VALUES ('bead', 'sp-lc-ej-red', 'Returned', 'IN_DELIVERY', 'IN_DELIVERY', 'REWORK', 1, NULL, '{\"Returned\":{\"reason\":\"batch-ejected\"}}', 'test', 2)" >/dev/null
+out="$(lc requeue-orphans --actor test --apply)"
+wantrc "requeue-orphans --apply releases the round holding an ejected member" 0 $?
+is "the ejected member is not requeued" "REWORK" "$(member_field sp-lc-ej-red bead state)"
+is "...and its stale delivery row exits" "EXITED" "$(member_field sp-lc-ej-red delivery state)"
+is "an innocent co-member returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-ej-ok bead state)"
+
 # ── reconcile-landed: merged work the lifecycle missed reaches LANDED on ancestry ────────────
 RG="$TMP/reconcile-repo"
 git init -q -b main "$RG"
