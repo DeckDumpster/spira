@@ -47,7 +47,7 @@ pub struct Lease {
     /// Set by `hold`: the lease deliberately belongs to no process.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub held: bool,
-    /// When `hold` kept the lease; the unheld grace for a kept lease counts from here, not from `since`. 0 for a lease written before the field.
+    /// When `hold` kept the lease; the unheld grace counts from here. 0 if unrecorded.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub kept_at: u64,
     /// The process pulling this VM's results: no reaper may terminate the VM while it lives.
