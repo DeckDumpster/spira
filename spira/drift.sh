@@ -52,12 +52,13 @@ checkout() {
 }
 
 # local_units <manifest> -> "<path>\t<bead>" per complete [[unit]] table. An entry names
-# the bead that retires it, or says `permanent = true` (bead "-"); neither is no declaration.
+# the bead that retires it, or says `permanent = true` (bead "-"); neither is bead "?",
+# reported as incomplete rather than as undeclared.
 local_units() {
     local file="$1"
     [ -n "$file" ] && [ -r "$file" ] || return 0
     awk '
-        function flush() { if (perm) bead = "-"; if (path != "" && bead != "") printf "%s\t%s\n", path, bead; path = ""; bead = ""; perm = 0 }
+        function flush() { if (perm) bead = "-"; if (path != "" && bead == "") bead = "?"; if (path != "") printf "%s\t%s\n", path, bead; path = ""; bead = ""; perm = 0 }
         /^[[:space:]]*\[\[unit\]\]/ { flush(); next }
         /^[[:space:]]*path[[:space:]]*=/ { v = $0; sub(/^[^=]*=[[:space:]]*"/, "", v); sub(/"[[:space:]]*(#.*)?$/, "", v); path = v }
         /^[[:space:]]*bead[[:space:]]*=/ { v = $0; sub(/^[^=]*=[[:space:]]*"/, "", v); sub(/"[[:space:]]*(#.*)?$/, "", v); bead = v }
@@ -73,6 +74,10 @@ declared_verdict() {
     rel="${f#"$unitdir"/}"
     bead="${declared[$rel]:-}"
     [ "$bead" = "-" ] && return 0
+    if [ "$bead" = "?" ]; then
+        printf 'UNSHIPPED %s (declared but names no bead and is not permanent = true)\n' "$f"
+        return 1
+    fi
     if [ -z "$bead" ]; then
         printf 'UNSHIPPED %s (%s)\n' "$f" "$why"
         return 1
