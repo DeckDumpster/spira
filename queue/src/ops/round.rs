@@ -600,6 +600,11 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
     kv.push("actor", &actor(w));
     kv.push("opened", &now);
     if save(w, label, &c, &kv).is_err() {
+        let why = "round open could not record the round it cut";
+        if let Err((rc, out)) = lc_cas(w, &batch, |s, v| w.lc.abandon_batch(&batch, s, v, LC_ACTOR, why)) {
+            w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the unrecorded round {batch} (rc={rc}): {out} — its members stay BATCHED until requeue-orphans"));
+        }
+        w.git.worktree_remove(&path, &wt);
         return FAIL;
     }
     mark_running(&c, &batch);
