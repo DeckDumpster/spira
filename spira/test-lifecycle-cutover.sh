@@ -390,7 +390,7 @@ for i in $(seq 1 "$N"); do
     rc="$(tail -n1 "$TMP/race-$i.out")"
     [ "$rc" = "0" ] && applied_count=$((applied_count + 1))
 done
-[ "$applied_count" = 1 ] || sed "s/^/# /" "$TMP"/race-1.out
+[ "$applied_count" = 1 ] && true || { echo "# rv=[$race_version] $(cat "$TMP"/race-1.out)" | head -5; ls "$TMP" | head -30; }
 is "exactly one racing land applies" "1" "$applied_count"
 is "the batch's version advanced by exactly one applied land" "$((race_version + 1))" "$(batch_field batch-race version)"
 is "the batch ends landed" "LANDED" "$(batch_field batch-race state)"
