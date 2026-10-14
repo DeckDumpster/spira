@@ -603,11 +603,16 @@ fn submit_kind(tip: &str) -> String {
 /// REWORK row has no Submit, so a verdict for a bead that moved on is skipped, not refused),
 /// and a CERTIFIED row at another tip is voided by Submit (the tip invariant, as bead.rs's
 /// own Certified+Submit arm has it). None: the row is unreadable.
-fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Option<(String, String)> {
+/// Only `queue submit` (which gated the branch tip itself) may move a SUBMITTED row's tip; a keyed
+/// worker pass at another tip stays a refused stale verdict.
+const BRANCH_TIP_DETAIL: &str = "queue-submit";
+
+fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str, actor: &str) -> Option<(String, String)> {
     let (mut st, mut ver, row) = state_version(m, id)?;
     let resubmit = match st.as_str() {
         "WORKING" => true,
         "CERTIFIED" => bead_field(&row, "tip") != tip,
+        "SUBMITTED" => outcome == "pass" && detail == BRANCH_TIP_DETAIL && bead_field(&row, "tip") != tip,
         _ => false,
     };
     if resubmit {
@@ -618,7 +623,7 @@ fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Opt
 }
 
 fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str, actor: &str) -> Answer {
-    let Some((state, version)) = reach_submitted(m, id, tip, actor) else {
+    let Some((state, version)) = reach_submitted(m, id, tip, outcome, detail, actor) else {
         return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
     };
     // A pass on a row already CERTIFIED at this tip (reach_submitted resubmits any other
@@ -629,7 +634,9 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
     }
     let in_round = state == "IN_DELIVERY" && outcome == "red";
     if state != "SUBMITTED" && !in_round {
-        return Answer::cert(REFUSED, "skip", format!("state={state} tip={tip} outcome={outcome} — not SUBMITTED"));
+        let mut a = Answer::cert(REFUSED, "skip", format!("state={state} tip={tip} outcome={outcome} — not SUBMITTED"));
+        a.stderr = format!("spira-lc certify: {id} is {state}, not SUBMITTED; gated {tip} — nothing recorded\n");
+        return a;
     }
     if outcome == "infra" && state == "SUBMITTED" {
         if let Some((_, _, row)) = state_version(m, id) {
@@ -649,7 +656,10 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
         let marked = if in_round { " (in delivery — marked for eject)" } else { "" };
         return Answer::cert(APPLIED, "applied", format!("{outcome} tip={tip}{marked}"));
     }
-    Answer::cert(REFUSED, "refused", format!("{outcome} tip={tip}"))
+    let held = state_version(m, id).map(|(_, _, row)| bead_field(&row, "tip")).unwrap_or_default();
+    let mut a = Answer::cert(REFUSED, "refused", format!("{outcome} tip={tip}"));
+    a.stderr = format!("spira-lc certify: {id} refused: tip mismatch: held {held}, gated {tip}\n");
+    a
 }
 
 /// Record a moved tip with NO verdict — the tip invariant voiding a stale certification.

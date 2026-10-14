@@ -396,6 +396,20 @@ fn schema_name(home: &str, key: &str) -> String {
 // Repository map / env helpers
 // =========================================================================================
 
+/// A short or symbolic tip resolves to the one full commit it names in the repo; unknown and
+/// ambiguous ones are refused, because the lifecycle compares tips byte for byte.
+fn resolve_full_tip(repo_path: &str, raw: &str) -> Result<String, String> {
+    let out = spira_config::bounded::bounded("git")
+        .args(["-C", repo_path, "rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{raw}^{{commit}}")])
+        .output()
+        .map_err(|e| format!("cannot run git: {e}"))?;
+    let full = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !out.status.success() || full.len() != 40 || !full.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("not an unambiguous commit in {repo_path}"));
+    }
+    Ok(full)
+}
+
 /// `SPIRA_REPO_MAP` through `cfg` (per Ryan 2026-10-05: one source of config) — the config
 /// file `cfg` reads is the same whatever `--home` says; `--home` only ever selects
 /// chamber/registry PATHS (`chamber_home`/`chamber_dir`/`fayth_names`), never which
@@ -632,6 +646,17 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
                 return 2;
             }
         };
+        if submitted {
+            let Some(raw) = tip.take() else { return 2 };
+            let path = repos.get(&repo).map(|r| r.path.as_str()).unwrap_or_default();
+            match resolve_full_tip(path, &raw) {
+                Ok(full) => tip = Some(full),
+                Err(e) => {
+                    eprintln!("bead: --tip {raw}: {e}");
+                    return 2;
+                }
+            }
+        }
         let fpath = format!("{}/{}.fayth", chamber_dir(home), for_fayth);
         if !Path::new(&fpath).is_file() {
             eprintln!("bead: no such persona: {for_fayth}");

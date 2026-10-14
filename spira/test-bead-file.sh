@@ -59,8 +59,13 @@ FAYTH
 # REPO MAP. testrepo is plan-only (default); dev-repo is develop (no maechen-sweep);
 # self-repo admits every lane.
 # ---------------------------------------------------------------------------
-cat > "$T/repo-map" <<'MAP'
-testrepo  | /tmp/test | push | origin/main | | true | plan
+mkdir -p "$T/testrepo"
+git -C "$T/testrepo" init -q
+git -C "$T/testrepo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
+FULL="$(git -C "$T/testrepo" rev-parse HEAD)"
+SHORT="${FULL:0:7}"
+cat > "$T/repo-map" <<MAP
+testrepo  | $T/testrepo | push | origin/main | | true | plan
 dev-repo  | /tmp/dev  | push | origin/main | | true | develop
 self-repo | /tmp/self | push | origin/main | | true | self
 MAP
@@ -129,12 +134,12 @@ want "work: bd create called" "create"  "$(cat "$BD_LOG")"
 out="$(run_bead "work bead" --for builder --repo testrepo)"
 nowant "work: no submitted label by default" "testsubmitted" "$(cat "$BD_LOG")"
 : > "$BD_LOG"
-out="$(run_bead "own fix" --for builder --repo testrepo --submitted --tip abc123)"; rc=$?
+out="$(run_bead "own fix" --for builder --repo testrepo --submitted --tip "$SHORT")"; rc=$?
 is   "submitted: exits 0"               "0"             "$rc"
 want "submitted: configured label applied" "testsubmitted" "$(cat "$BD_LOG")"
-want "submitted: row created at the tip, not READY" "create-bead sp-test --priority 2 --title own fix --submitted-tip abc123" "$(cat "$LC_LOG")"
+want "submitted: row created at the tip, not READY" "create-bead sp-test --priority 2 --title own fix --submitted-tip $FULL" "$(cat "$LC_LOG")"
 
-out="$(LC_FAIL=1 run_bead_raw "own fix" --for builder --repo testrepo --submitted --tip abc123 2>/dev/null)"; rc=$?
+out="$(LC_FAIL=1 run_bead_raw "own fix" --for builder --repo testrepo --submitted --tip "$SHORT" 2>/dev/null)"; rc=$?
 is     "submitted, row write fails: exits non-zero" "1" "$rc"
 is     "submitted, row write fails: stdout carries no id" "" "$out"
 
@@ -149,7 +154,9 @@ is     "submitted without tip: refused"            "2"     "$rc"
 want   "submitted without tip: refusal names --tip" "--tip" "$out"
 nowant "submitted without tip: bd create NOT called" "create" "$(cat "$BD_LOG")"
 
-out="$(run_bead "own fix" --for builder --repo testrepo --tip abc123)"; rc=$?
+out="$(run_bead "own fix" --for builder --repo testrepo --submitted --tip deadbee)"; rc=$?
+is     "submitted, unknown short tip: refused"     "2"     "$rc"
+out="$(run_bead "own fix" --for builder --repo testrepo --tip "$SHORT")"; rc=$?
 is     "tip without submitted: refused"            "2"     "$rc"
 nowant "tip without submitted: bd create NOT called" "create" "$(cat "$BD_LOG")"
 
