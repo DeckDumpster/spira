@@ -307,17 +307,54 @@ fn pr_list_open_lists_every_open_pr_with_its_branch() {
 
 // ── pr-automerge (new) ────────────────────────────────────────────────────────────────────
 
+const ARMED: &str = r#"{"autoMergeRequest":{"mergeMethod":"MERGE"},"state":"OPEN"}"#;
+const UNARMED: &str = r#"{"autoMergeRequest":null,"state":"OPEN"}"#;
+
 #[test]
 fn pr_automerge_arms_squash_and_reports_gh_s_exit() {
     let gh = FakeGh::default();
     gh.on(&["pr", "merge", "--auto", "--squash", "spira/sp-a"], 0, "");
+    gh.on(&["pr", "view", "spira/sp-a", "--json", "autoMergeRequest,state"], 0, ARMED);
     assert_eq!(pr_automerge(&gh, repo(), "spira/sp-a", "").code, 0);
     let gh2 = FakeGh::default();
     assert_eq!(pr_automerge(&gh2, repo(), "spira/sp-a", "").code, 1);
     let gh3 = FakeGh::default();
     gh3.on(&["pr", "merge", "--auto", "--merge", "7"], 0, "");
+    gh3.on(&["pr", "view", "7", "--json", "autoMergeRequest,state"], 0, ARMED);
     assert_eq!(pr_automerge(&gh3, repo(), "7", "merge").code, 0);
     assert_eq!(pr_automerge(&gh3, repo(), "7", "bogus").code, 1);
+}
+
+#[test]
+fn pr_automerge_is_not_armed_until_the_pr_shows_the_request() {
+    let gh = FakeGh::default();
+    gh.on(&["pr", "merge", "--auto", "--merge", "7"], 0, "");
+    gh.on(&["pr", "view", "7", "--json", "autoMergeRequest,state"], 0, UNARMED);
+    assert_eq!(pr_automerge(&gh, repo(), "7", "merge").code, 1);
+    let gh2 = FakeGh::default();
+    gh2.on(&["pr", "merge", "--auto", "--merge", "7"], 0, "");
+    gh2.on(&["pr", "view", "7", "--json", "autoMergeRequest,state"], 0, r#"{"autoMergeRequest":null,"state":"MERGED"}"#);
+    assert_eq!(pr_automerge(&gh2, repo(), "7", "merge").code, 0);
+}
+
+#[test]
+fn pr_arm_queue_arms_only_unarmed_batch_prs() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["pr", "list", "--state", "open", "--json", "number,headRefName,autoMergeRequest"],
+        0,
+        r#"[{"number":1,"headRefName":"spira/queue/a","autoMergeRequest":null},
+            {"number":2,"headRefName":"spira/queue/b","autoMergeRequest":{"mergeMethod":"MERGE"}},
+            {"number":3,"headRefName":"spira/sp-x","autoMergeRequest":null}]"#,
+    );
+    gh.on(&["pr", "merge", "--auto", "--merge", "1"], 0, "");
+    gh.on(&["pr", "view", "1", "--json", "autoMergeRequest,state"], 0, ARMED);
+    let o = pr_arm_queue(&gh, repo(), "merge");
+    assert_eq!((o.code, o.lines), (0, vec!["armed 1".to_string()]));
+    let none = FakeGh::default();
+    none.on(&["pr", "list", "--state", "open", "--json", "number,headRefName,autoMergeRequest"], 0, r#"[{"number":1,"headRefName":"spira/queue/a","autoMergeRequest":null}]"#);
+    let o = pr_arm_queue(&none, repo(), "merge");
+    assert_eq!((o.code, o.lines), (1, vec!["failed 1".to_string()]));
 }
 
 // ── run-metadata: both last-activity lines, per forge.sh's own double-print ─────────────

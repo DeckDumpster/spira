@@ -192,9 +192,9 @@ pub fn pr_red(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
 // ── pr-automerge (new) ───────────────────────────────────────────────────────────────────
 
 /// Arms auto-merge — `land_pr`'s `ghq pr merge --auto --squash` (DESIGN.md §6); `method` is
-/// `merge`, `squash` or `rebase`, empty meaning squash. Silent; exit 0 armed, 1 could not be
-/// armed (an open PR with a red required check stays open, not a failure worth surfacing
-/// beyond the exit code — the caller logs it).
+/// `merge`, `squash` or `rebase`, empty meaning squash. Silent; exit 0 armed, 1 not armed.
+/// Armed means read back: gh's own exit is not believed until the PR shows an
+/// autoMergeRequest (or has already merged).
 pub fn pr_automerge(gh: &dyn Gh, repo: &Path, selector: &str, method: &str) -> Out {
     let flag = match method {
         "" | "squash" => "--squash",
@@ -202,12 +202,40 @@ pub fn pr_automerge(gh: &dyn Gh, repo: &Path, selector: &str, method: &str) -> O
         "rebase" => "--rebase",
         _ => return fail(vec![]),
     };
-    let r = gh.call(Some(repo), &["pr", "merge", "--auto", flag, selector]);
-    if r.ok() {
-        ok(vec![])
-    } else {
-        fail(vec![])
+    if !gh.call(Some(repo), &["pr", "merge", "--auto", flag, selector]).ok() {
+        return fail(vec![]);
     }
+    let r = gh.call(Some(repo), &["pr", "view", selector, "--json", "autoMergeRequest,state"]);
+    match parse(&r.stdout) {
+        Some(v) if jstr(&v, "state").as_deref() == Some("MERGED") || v.get("autoMergeRequest").is_some_and(|a| !a.is_null()) => ok(vec![]),
+        _ => fail(vec![]),
+    }
+}
+
+/// The reconciler: arms every open batch PR (`spira/queue/*`) that has no auto-merge
+/// request. One `armed <n>` / `failed <n>` line per PR touched; exit 1 if any failed.
+pub fn pr_arm_queue(gh: &dyn Gh, repo: &Path, method: &str) -> Out {
+    let r = gh.call(Some(repo), &["pr", "list", "--state", "open", "--json", "number,headRefName,autoMergeRequest"]);
+    let Some(Value::Array(items)) = parse(&r.stdout) else {
+        return if r.ok() { ok(vec![]) } else { fail(vec!["failed list".into()]) };
+    };
+    let mut lines = Vec::new();
+    let mut bad = false;
+    for pr in items {
+        let batch = jstr(&pr, "headRefName").unwrap_or_default().starts_with("spira/queue/");
+        let unarmed = pr.get("autoMergeRequest").is_none_or(|a| a.is_null());
+        let Some(n) = pr.get("number").map(|n| n.to_string()) else { continue };
+        if !batch || !unarmed {
+            continue;
+        }
+        if pr_automerge(gh, repo, &n, method).code == 0 {
+            lines.push(format!("armed {n}"));
+        } else {
+            bad = true;
+            lines.push(format!("failed {n}"));
+        }
+    }
+    if bad { fail(lines) } else { ok(lines) }
 }
 
 /// The gate workflow for the repository named `name`: its `name=Workflow` pair in `table`,
