@@ -735,7 +735,7 @@ fn batch_script(insert_sqls: &[String]) -> Option<String> {
 }
 
 fn sql_str(s: &str) -> String {
-    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
+    format!("'{}'", crate::rows::escape(s))
 }
 
 fn sql_json(v: &serde_json::Value) -> String {

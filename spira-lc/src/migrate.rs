@@ -178,7 +178,7 @@ pub fn plan(files: &[(String, String)]) -> Result<Vec<(String, Stmt)>, String> {
 }
 
 fn quote(s: &str) -> String {
-    format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
+    format!("'{}'", crate::rows::escape(s))
 }
 
 /// The probe behind an `AddColumn`: every column `table` has, as this user sees them.
