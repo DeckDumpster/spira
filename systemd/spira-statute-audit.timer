@@ -1,0 +1,14 @@
+[Unit]
+Description=Weekly statute audit — files at most five beads for statutes naming tools that do not exist
+
+[Timer]
+OnCalendar=weekly
+AccuracySec=1h
+Persistent=true
+Unit=spira-statute-audit.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=maintenance

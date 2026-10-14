@@ -10,8 +10,8 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rule::{
-    find_duplicate, is_in_force, list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
-    CommitOutcome, EnactError, USAGE,
+    audit::{audit, finding_title}, find_duplicate, is_in_force, list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
+    CommitOutcome, EnactError, ToolDecl, USAGE,
 };
 
 fn main() {
@@ -49,7 +49,7 @@ fn main() {
     // but test-render-memories.sh's seam cases deliberately never set one. SPIRA_DB is a
     // registered config key (spira/conf.d) — resolved only for the commands that need it, via
     // the one source of config, never a process-environment read.
-    let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "list" | "show");
+    let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "list" | "show" | "audit");
     let db = if needs_db {
         match spira_config::process::cfg("SPIRA_DB") {
             Ok(v) => v,
@@ -71,6 +71,7 @@ fn main() {
         "retire" => cmd_retire(&db, &home, &rest),
         "list" => cmd_list(&db),
         "show" => cmd_show(&db, &rest),
+        "audit" => cmd_audit(&db, &home, &rest),
         "render-memories" => cmd_render_memories(&home, &rest),
         "system-prompt-split" => cmd_system_prompt_split(&rest),
         _ => {
@@ -246,8 +247,8 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
     let key = slugify(&rest[0]);
-    let (dry_run, text) = match parse_enact_args(&rest[1..]) {
-        Ok(a) => (a.dry_run, a.text),
+    let (dry_run, text, tool) = match parse_enact_args(&rest[1..]) {
+        Ok(a) => (a.dry_run, a.text, a.tool),
         Err(EnactError::Usage) => {
             println!("{USAGE}");
             return 1;
@@ -318,6 +319,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     }
     rm_memories_cache();
     println!("enacted {key} ({words} words)");
+    println!("{}", tool_line(&tool));
 
     finish_write(
         db,
@@ -328,6 +330,122 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         prior.as_deref(),
         "Statute is live in every agent session at its next summon.",
     )
+}
+
+fn tool_line(tool: &ToolDecl) -> String {
+    match tool {
+        ToolDecl::Tool(t) => format!("complied with by: {t}"),
+        ToolDecl::Mechanism(b) => format!("compliance mechanism being built in {b}"),
+        ToolDecl::None(r) => format!("constrains judgement only: {r}"),
+    }
+}
+
+fn release_lookup(home: &str) -> impl Fn(&str) -> Option<String> {
+    let root = Path::new(home).parent().map(Path::to_path_buf).unwrap_or_default();
+    let dirs = [
+        Path::new(home).to_path_buf(),
+        root.clone(),
+        root.join("bin"),
+        root.join("model-bin"),
+    ];
+    move |name: &str| {
+        dirs.iter()
+            .map(|d| d.join(name))
+            .find(|p| p.is_file())
+            .map(|p| String::from_utf8_lossy(&std::fs::read(p).unwrap_or_default()).into_owned())
+    }
+}
+
+fn open_bead_titles(db: &str) -> Vec<String> {
+    let (code, out, _) = run_bd(db, &["list", "--json", "--limit", "0"]);
+    if code != 0 {
+        return Vec::new();
+    }
+    serde_json::from_str::<Vec<serde_json::Value>>(&out)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|b| b.get("title").and_then(|t| t.as_str()).map(str::to_string))
+        .collect()
+}
+
+fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
+    let (mut file, mut persona, mut repo, mut max) = (false, None, None, 5usize);
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--file" => file = true,
+            "--for" => persona = it.next().cloned(),
+            "--repo" => repo = it.next().cloned(),
+            "--max" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(n) => max = n,
+                None => {
+                    eprintln!("rule: audit: --max needs a number");
+                    return 1;
+                }
+            },
+            other => {
+                eprintln!("rule: audit does not take '{other}'");
+                return 1;
+            }
+        }
+    }
+    if file && repo.is_none() {
+        repo = spira_config::process::cfg("SPIRA_HOME_REPO")
+            .ok()
+            .and_then(|p| Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned()));
+    }
+    if file && (persona.is_none() || repo.is_none()) {
+        eprintln!("rule: audit --file needs --for <persona>, and --repo <name> where SPIRA_HOME_REPO does not name the harness repo");
+        return 1;
+    }
+    let memories = match memories_json(db) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let findings = audit(&memories, &release_lookup(home));
+    for f in &findings {
+        println!("{}: {}", f.slug, f.missing.join(", "));
+    }
+    println!("{} of {} statutes name something the release does not have", findings.len(), memories.keys().filter(|k| k.starts_with("law-")).count());
+    if !file {
+        return 0;
+    }
+    let open = open_bead_titles(db);
+    let mut filed = 0;
+    for f in &findings {
+        if open.iter().any(|t| t.contains(&f.slug)) {
+            continue;
+        }
+        if filed == max {
+            println!("rule: audit filed {max}, the batch bound; the rest wait for the next run.");
+            break;
+        }
+        let title = finding_title(f);
+        let body = format!(
+            "{}\n\nThe statute names the above and the activated release has no such tool or verb. Build it, or amend the statute to name what exists (rule.sh enact with --tool).\n",
+            title
+        );
+        let bead_sh = Path::new(home).join("bead.sh");
+        let child = Command::new(&bead_sh) // batch-job: bead.sh file writes the store under its lock
+            .args(["file", &title, "--for", persona.as_deref().unwrap_or(""), "--repo", repo.as_deref().unwrap_or(""), "--body-file", "-"])
+            .stdin(Stdio::piped())
+            .spawn();
+        let Ok(mut child) = child else {
+            eprintln!("rule: audit could not run {}", bead_sh.display());
+            return 1;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(body.as_bytes());
+        }
+        match child.wait() {
+            Ok(s) if s.success() => filed += 1,
+            _ => eprintln!("rule: audit: filing for {} failed", f.slug),
+        }
+    }
+    0
 }
 
 fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {

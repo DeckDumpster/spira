@@ -729,9 +729,12 @@ fn run_verbose(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<(), String> {
 /// The two writes are ordered and NOT atomic, so the failure between them is reported for
 /// what it is. A statute that exists with no citation on its case is a real state, and
 /// saying "failed" without saying that would send Ryan to re-enact a law already in force.
+/// The pane cannot ask which tool complies; the audit (`rule.sh audit`) still checks the text.
+const PANEL_NO_TOOL: &str = "enacted from the operator pane";
+
 pub fn enact(item: &Item, slug: &str, text: &str, cfg: &Cfg) -> Result<(), String> {
     let rule = rule_sh()?;
-    run_verbose(&rule, &["enact", slug, text], cfg)?;
+    run_verbose(&rule, &["enact", slug, text, "--tool", "none", "--reason", PANEL_NO_TOOL], cfg)?;
     let key = format!("{ENACTED}law-{}", slug.trim_start_matches("law-"));
     run(
         "spira-lc",
@@ -827,7 +830,7 @@ pub fn suit_verdict(item: &Item, verdict: &str, cfg: &Cfg) -> Result<(), String>
             let slug = suit_slug(item)
                 .ok_or_else(|| "no statute:law-<slug> label on this bead".to_string())?;
             let rule = rule_sh()?;
-            run_verbose(&rule, &["enact", &slug, rest], cfg)?;
+            run_verbose(&rule, &["enact", &slug, rest, "--tool", "none", "--reason", PANEL_NO_TOOL], cfg)?;
             close_decision(&cfg.db, item, &format!("amend: law-{slug} amended"), cfg)?;
         }
         _ => {
@@ -867,7 +870,7 @@ pub fn enact_law(item: &Item, input: &str, cfg: &Cfg) -> Result<(), String> {
     };
     let (slug, text) = parse_enact(raw)?;
     let rule = rule_sh()?;
-    run_verbose(&rule, &["enact", &slug, &text], cfg)?;
+    run_verbose(&rule, &["enact", &slug, &text, "--tool", "none", "--reason", PANEL_NO_TOOL], cfg)?;
     // Close the bead now that the statute is in force.
     let evidence = format!("enacted law-{} from panel", slug.trim_start_matches("law-"));
     close_decision(&cfg.db, item, &evidence, cfg)

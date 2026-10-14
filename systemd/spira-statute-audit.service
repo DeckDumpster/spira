@@ -1,0 +1,22 @@
+[Unit]
+After=lc-serve.service
+Wants=lc-serve.service
+Description=Spira statute audit — every statute's named tools and verbs exist in the activated release
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=SPIRA_HOME=@SPIRA_HOME@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+Environment=SPIRA_DB=@SPIRA_DB@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/rule audit --file --for builder --max 5
+TimeoutStartSec=300
+StandardOutput=append:@SPIRA_RUN@/statute-audit.log
+StandardError=append:@SPIRA_RUN@/statute-audit.log
+
+[X-Spira]
+Plane=maintenance

@@ -57,7 +57,7 @@ MISSING_HOOK="$TMP/does-not-exist.sh"
 
 run_enact() {   # run_enact <hook> <key> <text>
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$1"
-    bash "$RULE_SH" enact "$2" "$3" 2>&1
+    bash "$RULE_SH" enact "$2" --tool none --reason fixture "$3" 2>&1
 }
 
 # POSITIVE CONTROL: good hook → exits 0 and prints "Statute is live".
@@ -117,7 +117,7 @@ chmod +x "$CL_HOOK"
 
 run_enact_wiki() {
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$CL_HOOK" SPIRA_WIKI="$WIKI_CL"
-    bash "$RULE_SH" enact "$1" "$2" 2>&1
+    bash "$RULE_SH" enact "$1" --tool none --reason fixture "$2" 2>&1
 }
 run_retire_wiki() {
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$CL_HOOK" SPIRA_WIKI="$WIKI_CL"
@@ -155,7 +155,7 @@ is "commit: retire commit message names the statute" "law: retire law-sp-4fl2e-c
 # (unchanged behaviour — this is the "rule.sh: synth failure propagation" section's own
 # GOOD_HOOK, which never touches a wiki checkout at all).
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$GOOD_HOOK" SPIRA_WIKI=""
-out_cl_nowiki=$(bash "$RULE_SH" enact "sp-4fl2e-commit-nowiki" "No wiki canary." 2>&1)
+out_cl_nowiki=$(bash "$RULE_SH" enact "sp-4fl2e-commit-nowiki" --tool none --reason fixture "No wiki canary." 2>&1)
 want "commit: no SPIRA_WIKI prints manual-commit hint" \
     "Commit wiki/notes/common-law.md to replicate it off this box." "$out_cl_nowiki"
 
@@ -223,7 +223,7 @@ want "and names the missing statute" "no statute" "$(run_rule retire no-such-slu
 
 # retire with a failing synth hook: the write and the page are one operation, so the book
 # is rolled back and nothing is written.
-run_rule enact sp-p0xyt-retire-hookfail "Canary for the retire hook-failure path." >/dev/null 2>&1
+run_rule enact sp-p0xyt-retire-hookfail --tool none --reason fixture "Canary for the retire hook-failure path." >/dev/null 2>&1
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK"
 out_retire_fail="$(bash "$RULE_SH" retire sp-p0xyt-retire-hookfail 2>&1)"
 rc_retire_fail=$?
@@ -234,32 +234,32 @@ is "and the statute is still in the book" "0" \
 
 # sp-pj5dp: enact is one operation with its page — from any cwd, and never half done.
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK"
-out_e_fail="$(bash "$RULE_SH" enact sp-pj5dp-rollback "Rolled back canary." 2>&1)"
+out_e_fail="$(bash "$RULE_SH" enact sp-pj5dp-rollback --tool none --reason fixture "Rolled back canary." 2>&1)"
 is "enact with a failing hook exits non-zero" "1" "$?"
 want "and reports the rollback" "rolled back" "$out_e_fail"
 is "and the new statute is not in the book" "1" \
    "$(run_rule show sp-pj5dp-rollback >/dev/null 2>&1; echo $?)"
 
-run_rule enact sp-pj5dp-amend "Original text." >/dev/null 2>&1
+run_rule enact sp-pj5dp-amend --tool none --reason fixture "Original text." >/dev/null 2>&1
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK"
-bash "$RULE_SH" enact sp-pj5dp-amend "Amended text." >/dev/null 2>&1
+bash "$RULE_SH" enact sp-pj5dp-amend --tool none --reason fixture "Amended text." >/dev/null 2>&1
 want "a failed amendment restores the prior text" "Original text." "$(run_rule show sp-pj5dp-amend)"
 nowant "and not the amendment" "Amended text." "$(run_rule show sp-pj5dp-amend)"
 
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$MISSING_HOOK"
-out_e_missing="$(bash "$RULE_SH" enact sp-pj5dp-nohook "No hook canary." 2>&1)"
+out_e_missing="$(bash "$RULE_SH" enact sp-pj5dp-nohook --tool none --reason fixture "No hook canary." 2>&1)"
 is "enact with an unavailable hook exits non-zero" "1" "$?"
 want "and says nothing was written" "nothing written" "$out_e_missing"
 is "and the statute is not in the book" "1" \
    "$(run_rule show sp-pj5dp-nohook >/dev/null 2>&1; echo $?)"
 
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="./good-hook.sh"
-out_rel="$(cd "$TMP" && bash "$RULE_SH" enact sp-pj5dp-relhook "Relative hook canary." 2>&1)"
+out_rel="$(cd "$TMP" && bash "$RULE_SH" enact sp-pj5dp-relhook --tool none --reason fixture "Relative hook canary." 2>&1)"
 is "a cwd-relative hook is refused even where it resolves" "1" "$?"
 want "and the refusal names the path" "not an absolute path" "$out_rel"
 
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK=""
-out_cwd="$(cd "$TMP" && bash "$RULE_SH" enact sp-pj5dp-cwd "Cwd canary." 2>&1)"
+out_cwd="$(cd "$TMP" && bash "$RULE_SH" enact sp-pj5dp-cwd --tool none --reason fixture "Cwd canary." 2>&1)"
 want "default hook resolves from a cwd with no law-synth.sh" "Statute is live" "$out_cwd"
 nowant "and is not refused" "not executable" "$out_cwd"
 
@@ -270,23 +270,23 @@ echo "=== sp-dnrjw: enact rejects unrecognised arguments before touching the boo
 # `text="$*"` used to join every trailing argument into the statute text with no check, so
 # a stray flag (a mistyped --dry-run) became law with no complaint (sp-dnrjw).
 
-run_rule enact sp-dnrjw-enact-guard "Original text for the enact argument guard." >/dev/null 2>&1
+run_rule enact sp-dnrjw-enact-guard --tool none --reason fixture "Original text for the enact argument guard." >/dev/null 2>&1
 before_guard="$(run_rule show sp-dnrjw-enact-guard)"
 
 # NEGATIVE CONTROL: an unrecognised flag is refused, and the book is untouched.
-out_badflag="$(run_rule enact sp-dnrjw-enact-guard "x" --whatever)"; rc_badflag=$?
+out_badflag="$(run_rule enact sp-dnrjw-enact-guard --tool none --reason fixture "x" --whatever)"; rc_badflag=$?
 is   "enact: unrecognised flag exits non-zero" "1" "$rc_badflag"
 want "and names the offending argument"        "'--whatever'" "$out_badflag"
 is   "and the statute is left unchanged" "$before_guard" "$(run_rule show sp-dnrjw-enact-guard)"
 
 # NEGATIVE CONTROL: a second, unquoted text argument is refused the same way.
-out_2ndtext="$(run_rule enact sp-dnrjw-enact-guard "x" "y")"; rc_2ndtext=$?
+out_2ndtext="$(run_rule enact sp-dnrjw-enact-guard --tool none --reason fixture "x" "y")"; rc_2ndtext=$?
 is   "enact: a second text argument exits non-zero" "1" "$rc_2ndtext"
 want "and names the offending argument"             "'y'" "$out_2ndtext"
 is   "and the statute is still left unchanged" "$before_guard" "$(run_rule show sp-dnrjw-enact-guard)"
 
 # POSITIVE PAIR: one quoted text argument, with no flags, still enacts.
-rc_goodtext=0; run_rule enact sp-dnrjw-enact-guard "Replacement text for the enact argument guard." >/dev/null || rc_goodtext=$?
+rc_goodtext=0; run_rule enact sp-dnrjw-enact-guard --tool none --reason fixture "Replacement text for the enact argument guard." >/dev/null || rc_goodtext=$?
 is   "enact: one quoted text argument still exits 0" "0" "$rc_goodtext"
 want "and the statute now reads the new text" \
     "Replacement text for the enact argument guard." "$(run_rule show sp-dnrjw-enact-guard)"
@@ -295,22 +295,48 @@ echo
 echo "=== sp-dnrjw: enact prints the prior text before an overwrite ==="
 
 before_overwrite="$(run_rule show sp-dnrjw-enact-guard)"
-out_overwrite="$(run_rule enact sp-dnrjw-enact-guard "Second replacement for the overwrite-visibility test.")"
+out_overwrite="$(run_rule enact sp-dnrjw-enact-guard --tool none --reason fixture "Second replacement for the overwrite-visibility test.")"
 want "enact: overwrite prints the prior text" "$before_overwrite" "$out_overwrite"
 want "and prints the new text" "Second replacement for the overwrite-visibility test." "$out_overwrite"
 
 # POSITIVE CONTROL: enacting a brand-new slug prints no "already exists" overwrite banner.
 nowant "enact: a brand-new slug prints no overwrite banner" "already exists" \
-    "$(run_rule enact sp-dnrjw-enact-new "Brand new statute, never enacted before.")"
+    "$(run_rule enact sp-dnrjw-enact-new --tool none --reason fixture "Brand new statute, never enacted before.")"
 
 echo
 echo "=== sp-dnrjw: enact --dry-run writes nothing ==="
 
 before_dry="$(run_rule show sp-dnrjw-enact-guard)"
-out_dry="$(run_rule enact sp-dnrjw-enact-guard "Text that --dry-run must not write." --dry-run)"; rc_dry=$?
+out_dry="$(run_rule enact sp-dnrjw-enact-guard --tool none --reason fixture "Text that --dry-run must not write." --dry-run)"; rc_dry=$?
 is   "enact --dry-run exits 0"  "0" "$rc_dry"
 want "and says DRY RUN"         "DRY RUN" "$out_dry"
 is   "and the statute is left unchanged" "$before_dry" "$(run_rule show sp-dnrjw-enact-guard)"
+
+echo
+echo "=== enact names its tool; the audit finds statutes naming verbs that do not exist ==="
+
+out_notool="$(run_rule enact tool-gate-none "A statute with nothing that can comply.")"; rc_notool=$?
+is   "enact without --tool or --mechanism refuses" "1" "$rc_notool"
+want "the refusal names --tool"      "--tool"      "$out_notool"
+want "the refusal names --mechanism" "--mechanism" "$out_notool"
+is   "and nothing was written" "1" "$(run_rule show tool-gate-none >/dev/null; echo $?)"
+out_noreason="$(run_rule enact tool-gate-none --tool none "Judgement only.")"; rc_noreason=$?
+is   "--tool none without a reason refuses" "1" "$rc_noreason"
+out_badmech="$(run_rule enact tool-gate-none --mechanism "not a bead" "Judgement only.")"; rc_badmech=$?
+is   "--mechanism that is not a bead id refuses" "1" "$rc_badmech"
+out_mech="$(run_rule enact tool-gate-mech --mechanism sp-zzzzz "Mechanism pending statute.")"; rc_mech=$?
+is   "--mechanism <bead> enacts" "0" "$rc_mech"
+want "and records the mechanism bead" "sp-zzzzz" "$out_mech"
+
+run_rule enact tool-audit-bad --tool bead.sh "Remove a bead with bead.sh nosuchverb and never anything else." >/dev/null 2>&1
+run_rule enact tool-audit-ghost --tool x "Use ghost-tool-zzz.sh for it." >/dev/null 2>&1
+run_rule enact tool-audit-good --tool bead.sh "File a bead with bead.sh file and no other way." >/dev/null 2>&1
+out_audit="$(run_rule audit)"; rc_audit=$?
+is     "audit exits 0 on findings" "0" "$rc_audit"
+want   "audit flags a statute naming a verb the script lacks" "law-tool-audit-bad: bead.sh nosuchverb" "$out_audit"
+want   "audit flags a statute naming a script the release lacks" "law-tool-audit-ghost: ghost-tool-zzz.sh" "$out_audit"
+nowant "audit passes a statute naming a real verb" "law-tool-audit-good" "$out_audit"
+for _k in tool-gate-mech tool-audit-bad tool-audit-ghost tool-audit-good; do run_rule retire "$_k" >/dev/null 2>&1; done
 
 # ==========================================================================
 echo
@@ -323,7 +349,7 @@ echo "=== rule.sh: default hook is the harness's own law-synth.sh (sp-fe3ee) ===
 WIKI_DEFAULT_HOOK="$TMP/wiki-default-hook"
 mkdir -p "$WIKI_DEFAULT_HOOK"
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_DEFAULT_HOOK" SPIRA_WIKI_HOOK=""
-out_default_hook=$(bash "$RULE_SH" enact "sp-fe3ee-default-hook-test" "Default hook canary statute." 2>&1)
+out_default_hook=$(bash "$RULE_SH" enact "sp-fe3ee-default-hook-test" --tool none --reason fixture "Default hook canary statute." 2>&1)
 rc_default_hook=$?
 if [ $rc_default_hook -eq 0 ]; then
     ok "rule.sh: default hook (no SPIRA_WIKI_HOOK) exits 0"
