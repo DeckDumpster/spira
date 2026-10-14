@@ -363,6 +363,19 @@ pub fn parse_created_id(out: &str) -> Option<String> {
     (!last.is_empty() && !last.contains(char::is_whitespace)).then(|| last.to_string())
 }
 
+/// The one open non-event bead in a `bd list --json` payload whose title is `title`; two or
+/// none is `None`, so an ambiguous match never attaches a row to the wrong bead.
+pub fn find_id_by_title(json: &str, title: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let mut hits = v.as_array()?.iter().filter(|d| {
+        d.get("title").and_then(|t| t.as_str()) == Some(title)
+            && d.get("status").and_then(|t| t.as_str()) == Some("open")
+            && d.get("issue_type").and_then(|t| t.as_str()) != Some("event")
+    });
+    let id = hits.next()?.get("id")?.as_str()?.to_string();
+    hits.next().is_none().then_some(id)
+}
+
 /// The `branch:` label a bead carries, if any (first one found, matching the bash's
 /// `break` on first match).
 pub fn branch_label(labels: &[String]) -> Option<&str> {
@@ -718,6 +731,16 @@ mod tests {
         assert_eq!(parse_created_id("[{\"id\":\"sp-y\"}]").as_deref(), Some("sp-y"));
         assert_eq!(parse_created_id("created a thing"), None);
         assert_eq!(parse_created_id(""), None);
+    }
+
+    #[test]
+    fn find_id_by_title_needs_exactly_one_open_match() {
+        let one = r#"[{"id":"sp-a","title":"t","status":"open"},{"id":"sp-b","title":"u","status":"open"},{"id":"sp-c","title":"t","status":"closed"}]"#;
+        assert_eq!(find_id_by_title(one, "t").as_deref(), Some("sp-a"));
+        assert_eq!(find_id_by_title(one, "missing"), None);
+        let two = r#"[{"id":"sp-a","title":"t","status":"open"},{"id":"sp-b","title":"t","status":"open"}]"#;
+        assert_eq!(find_id_by_title(two, "t"), None);
+        assert_eq!(find_id_by_title("nope", "t"), None);
     }
 
     #[test]
