@@ -1,0 +1,6 @@
+TYPE=path
+GROUP=lc
+DOC=Directory the restore drill unpacks and restores into; it must be off the live store's disk (tmpfs by default).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_BACKUP_DRILL_DIR:=/dev/shm/spira-lc-drill}"
+SPIRA_CONF_DEFAULT_EOF

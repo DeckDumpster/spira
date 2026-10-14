@@ -175,7 +175,11 @@ _lcb_drill_db() {
     [ -r "$tarball" ] || { echo "lc-backup: drill: no snapshot at $tarball" >&2; return 1; }
     [ -r "$stamp" ] || { echo "lc-backup: drill: $db: no stamp — nothing has been backed up" >&2; return 1; }
     read -r t head < "$stamp"
-    mkdir -p "$SPIRA_RUN/lc-backup/drill" && scratch="$(mktemp -d "$SPIRA_RUN/lc-backup/drill/$db.XXXXXX")" || return 1
+    local need=$(( $(stat -c %s "$tarball") * 4 / 1024 )) have
+    mkdir -p "$SPIRA_LC_BACKUP_DRILL_DIR" && scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/$db.XXXXXX")" || return 1
+    have="$(df -Pk "$scratch" | awk 'NR==2{print $4}')"
+    [ "${have:-0}" -ge "$need" ] \
+        || { echo "lc-backup: drill: $SPIRA_LC_BACKUP_DRILL_DIR has ${have:-0}KiB free, the restore needs ~${need}KiB" >&2; rm -rf "$scratch"; return 1; }
     mkdir "$scratch/snap" && tar -C "$scratch/snap" -xaf "$tarball" \
         || { echo "lc-backup: drill: cannot unpack $tarball" >&2; rm -rf "$scratch"; return 1; }
     # batch-job: restoring a snapshot into the scratch dir
@@ -200,6 +204,31 @@ _lcb_drill_db() {
     return "$rc"
 }
 
+# Prints why the drill must not start now; prints nothing when it may. An unanswered probe defers.
+_lcb_drill_busy() {
+    local round t0 ms db
+    round="$(queue round status 2>/dev/null | sed -n 's/^round=//p' | head -n1)"
+    [ "$round" = none ] || { echo "round state is '${round:-unknown}', not none"; return; }
+    db="$(_lcb_dbs | head -1)"
+    t0="$(date +%s%N)"
+    _lcb_sql "$db" -q "SELECT 1" >/dev/null 2>&1 || { echo "live store did not answer a probe"; return; }
+    ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+    [ "$ms" -le "$SPIRA_LC_BACKUP_DRILL_BUDGET_MS" ] || echo "live store probe took ${ms}ms, over the ${SPIRA_LC_BACKUP_DRILL_BUDGET_MS}ms budget"
+}
+
+_lcb_drill_wait_quiet() {
+    local deadline why
+    deadline=$(( $(date +%s) + SPIRA_LC_BACKUP_DRILL_WAIT_SECS ))
+    while why="$(_lcb_drill_busy)"; [ -n "$why" ]; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why" >&2
+            return 1
+        fi
+        echo "lc-backup: drill: deferring — $why"
+        sleep "$SPIRA_LC_BACKUP_DRILL_POLL_SECS"
+    done
+}
+
 cmd_drill() {
     local only="" tarball="" db rc=0
     while [ $# -gt 0 ]; do
@@ -209,6 +238,7 @@ cmd_drill() {
         esac
     done
     [ -z "$tarball" ] || [ -n "$only" ] || only="$(_lcb_dbs | head -1)"
+    _lcb_drill_wait_quiet || return 1
     for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" "$tarball" || rc=1; done
     return "$rc"
 }

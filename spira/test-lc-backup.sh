@@ -26,8 +26,11 @@ DATA="$TMP/data"; RUN="$TMP/run"; DEST="$TMP/dest"; mkdir -p "$DATA/spira_lifecy
     && dlt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); INSERT INTO bead VALUES (1),(2);" \
     && dlt sql -q "CALL DOLT_COMMIT('-Am','seed')" >/dev/null ) || bail "fixture content store"
 
+mkdir -p "$TMP/bin"
+printf '#!/bin/sh\necho "round=$(cat "%s/round" 2>/dev/null || echo none)"\n' "$TMP" > "$TMP/bin/queue"; chmod +x "$TMP/bin/queue"
 lcb() {
-    SPIRA_TOML="$(tl_layer SPIRA_RUN="$RUN" SPIRA_DOLT_DATA="$DATA" SPIRA_LC_BACKUP_URL="${URL-file://$DEST}" \
+    PATH="$TMP/bin:$PATH" SPIRA_TOML="$(tl_layer SPIRA_RUN="$RUN" SPIRA_LC_BACKUP_DRILL_DIR="$TMP/drill-scratch" \
+        SPIRA_LC_BACKUP_DRILL_BUDGET_MS="${BUDGET-60000}" SPIRA_LC_BACKUP_DRILL_WAIT_SECS="${WAIT-0}" SPIRA_LC_BACKUP_DRILL_POLL_SECS=1 SPIRA_DOLT_DATA="$DATA" SPIRA_LC_BACKUP_URL="${URL-file://$DEST}" \
         SPIRA_LC_BACKUP_MAX_AGE=1000 SPIRA_LC_BACKUP_ALLOW_LOCAL="${LOCALOK-1}" SPIRA_LC_BACKUP_DB="${DBS-spira_lifecycle spira}")" \
         bash "$HERE/lc-backup.sh" "$@" 2>&1
 }
@@ -76,6 +79,16 @@ mkdir -p "$TMP/other" && ( cd "$TMP/other" && mkdir spira_lifecycle snap && cd s
     && dlt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); CALL DOLT_COMMIT('-Am','x')" >/dev/null && dlt sql -q "CALL DOLT_BACKUP('sync-url','file://$TMP/other/snap')" >/dev/null \
     && tar -C "$TMP/other/snap" -czf "$TMP/other.tar.gz" . )
 out="$(lcb drill "$TMP/other.tar.gz")"; rc=$?; wantrc "drill red on another store's snapshot" 1 $rc; want "drill names the head mismatch" "stamped head" "$out"
+
+echo; echo "drill — defers while a round is open or the store is over budget, then runs:"
+echo open > "$TMP/round"; out="$(lcb drill)"; rc=$?; wantrc "drill never runs while a round is open" 1 $rc; want "the deferral names the round" "DEFERRED" "$out"; want "the deferral names why" "round state is 'open'" "$out"
+: > "$TMP/round"; out="$(lcb drill)"; rc=$?; wantrc "an unknown round state defers" 1 $rc
+out="$(BUDGET=0 lcb drill)"; rc=$?; wantrc "drill defers when the store is over budget" 1 $rc; want "the deferral names the budget" "over the 0ms budget" "$out"
+[ -z "$(ls "$TMP/drill-scratch" 2>/dev/null)" ] && ok "a deferred drill restored nothing" || bad "a deferred drill restored nothing"
+echo open > "$TMP/round"; ( sleep 3; echo none > "$TMP/round" ) &
+out="$(WAIT=60 lcb drill)"; rc=$?; wantrc "drill runs once the round closes" 0 $rc; want "it deferred first" "deferring" "$out"; want "then restored" "drill ok" "$out"
+wait; echo none > "$TMP/round"
+grep -q 'SPIRA_LC_BACKUP_DRILL_DIR' "$HERE/lc-backup.sh" && ! grep -q 'SPIRA_RUN/lc-backup/drill' "$HERE/lc-backup.sh" && ok "drill restores into its own directory, not under the run dir" || bad "drill restores into its own directory, not under the run dir"
 
 echo; echo "s3 — one signed PUT, no read verbs:"
 cat > "$TMP/sink.py" <<'PYEOF'

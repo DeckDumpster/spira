@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Seconds the restore drill waits for a quiet signal (no round open, store under budget) before giving up red.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_BACKUP_DRILL_WAIT_SECS:=7200}"
+SPIRA_CONF_DEFAULT_EOF
