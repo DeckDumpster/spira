@@ -29,6 +29,13 @@ pub struct Job {
     pub fix: bool,
     /// Nanoseconds since the epoch at enqueue: the order jobs are taken in.
     pub queued: u128,
+    /// The bead's priority, lower first; a job queued without one sorts last.
+    #[serde(default = "no_priority")]
+    pub priority: i64,
+}
+
+fn no_priority() -> i64 {
+    9999
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +63,10 @@ fn nanos() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
 }
 
+fn pick_key(j: &Job, running: &std::collections::HashMap<String, usize>) -> (bool, usize, i64, u128) {
+    (!j.fix, running.get(&j.repo).copied().unwrap_or(0), j.priority, j.queued)
+}
+
 impl Job {
     fn prefix(&self) -> String {
         format!("{}.{}.", branch_key(&self.repo), branch_key(&self.branch))
@@ -64,7 +75,11 @@ impl Job {
         format!("{}{}.json", self.prefix(), branch_key(&self.tip))
     }
     pub fn new(repo: &str, branch: &str, bead: &str, tip: &str, fix: bool) -> Job {
-        Job { repo: repo.into(), branch: branch.into(), bead: bead.into(), tip: tip.into(), fix, queued: nanos() }
+        Job { repo: repo.into(), branch: branch.into(), bead: bead.into(), tip: tip.into(), fix, queued: nanos(), priority: no_priority() }
+    }
+    pub fn with_priority(mut self, priority: i64) -> Job {
+        self.priority = priority;
+        self
     }
 }
 
@@ -172,8 +187,24 @@ impl GateQueue {
 
     pub fn queued(&self) -> Vec<Job> {
         let mut v: Vec<Job> = self.read_dir_jobs(&self.dir(Where::Inbox)).into_iter().map(|(_, j)| j).collect();
-        v.sort_by_key(|j| (!j.fix, j.queued));
+        let running = self.running_by_repo();
+        v.sort_by_key(|j| pick_key(j, &running));
         v
+    }
+
+    /// Jobs currently claimed by any slot, counted per repository. Read-only: a claimed
+    /// file that cannot be parsed is not this call's to refuse.
+    pub fn running_by_repo(&self) -> std::collections::HashMap<String, usize> {
+        let mut m = std::collections::HashMap::new();
+        for d in self.claimed_dirs() {
+            let Ok(rd) = fs::read_dir(d) else { continue };
+            for e in rd.flatten() {
+                if let Some(j) = fs::read_to_string(e.path()).ok().and_then(|t| serde_json::from_str::<Job>(&t).ok()) {
+                    *m.entry(j.repo).or_insert(0) += 1;
+                }
+            }
+        }
+        m
     }
 
     /// Return jobs left claimed in this slot to the inbox. Safe to call unconditionally at
@@ -202,7 +233,8 @@ impl GateQueue {
         }
     }
 
-    /// Take the next job for this slot: base fixes first, then oldest. The move into
+    /// Take the next job for this slot: base fixes first, then the repository holding the
+    /// fewest running slots, then lowest priority number, then oldest. The move into
     /// `claimed/<slot>/` is a single `rename(2)` of the inbox file: whichever slot's rename
     /// lands first wins the job, and every other slot's rename of that same (now-gone)
     /// source path fails and falls through to the next candidate — no two slots can ever
@@ -211,7 +243,8 @@ impl GateQueue {
         let dest = self.claimed_slot(slot);
         let _ = fs::create_dir_all(&dest);
         let mut v = self.read_dir_jobs(&self.dir(Where::Inbox));
-        v.sort_by_key(|(_, j)| (!j.fix, j.queued));
+        let running = self.running_by_repo();
+        v.sort_by_key(|(_, j)| pick_key(j, &running));
         for (p, j) in v {
             if fs::rename(&p, dest.join(j.file())).is_ok() {
                 return Some(j);
@@ -271,6 +304,41 @@ mod tests {
         let moved = Job::new("r", "spira/sp-a", "sp-a", "bbb", false);
         assert!(q.enqueue(&moved).unwrap());
         assert_eq!(q.queued().iter().map(|j| j.tip.as_str()).collect::<Vec<_>>(), vec!["bbb"]);
+    }
+
+    #[test]
+    fn a_p0_queued_after_a_p2_is_claimed_first() {
+        let d = tmpdir("gq-pri");
+        let q = GateQueue::new(&d);
+        q.enqueue(&Job::new("r", "spira/sp-p2", "sp-p2", "t1", false).with_priority(2)).unwrap();
+        q.enqueue(&Job::new("r", "spira/sp-p0", "sp-p0", "t2", false).with_priority(0)).unwrap();
+        assert_eq!(q.claim(0).unwrap().bead, "sp-p0");
+    }
+
+    #[test]
+    fn a_free_slot_goes_to_the_repo_holding_fewest_even_behind_older_jobs() {
+        let d = tmpdir("gq-fair");
+        let q = GateQueue::new(&d);
+        for (i, b) in ["a1", "a2", "a3", "a4"].iter().enumerate() {
+            q.enqueue(&Job::new("A", &format!("spira/{b}"), b, &format!("t{i}"), false).with_priority(0)).unwrap();
+        }
+        q.enqueue(&Job::new("B", "spira/b1", "b1", "tb", false).with_priority(4)).unwrap();
+        assert_eq!(q.claim(0).unwrap().repo, "A");
+        assert_eq!(q.claim(1).unwrap().repo, "B");
+        assert_eq!(q.claim(2).unwrap().repo, "A");
+    }
+
+    #[test]
+    fn all_slots_held_by_a_repo_still_yield_to_a_queued_other_repo() {
+        let d = tmpdir("gq-fair2");
+        let q = GateQueue::new(&d);
+        for i in 0..3 {
+            q.enqueue(&Job::new("A", &format!("spira/a{i}"), "a", &format!("t{i}"), false)).unwrap();
+        }
+        assert_eq!(q.claim(0).unwrap().repo, "A");
+        assert_eq!(q.claim(1).unwrap().repo, "A");
+        q.enqueue(&Job::new("B", "spira/b", "b", "tb", false).with_priority(4)).unwrap();
+        assert_eq!(q.claim(2).unwrap().repo, "B");
     }
 
     #[test]
