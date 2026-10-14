@@ -111,7 +111,7 @@ else bad "retire against an unreachable store exits non-zero" "got rc=0"; fi
 want   "retire names the database path"                "$DB"       "$out_retire_down"
 nowant "retire does NOT crash with a python traceback" "Traceback" "$out_retire_down"
 
-out_enact_down=$(run_rule enact dbdown-new "New statute while the store is down."); rc_enact_down=$?
+out_enact_down=$(run_rule enact dbdown-new --tool none --reason fixture "New statute while the store is down."); rc_enact_down=$?
 if [ "$rc_enact_down" -ne 0 ]; then ok "enact against an unreachable store exits non-zero"
 else bad "enact against an unreachable store exits non-zero" "got rc=0"; fi
 want "enact names the database path" "$DB" "$out_enact_down"

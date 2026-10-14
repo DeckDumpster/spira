@@ -2,6 +2,7 @@
 //! (which does the `bd`/hook subprocess work) so it is unit-testable with no database, no
 //! filesystem and no subprocess.
 
+pub mod audit;
 pub mod memories;
 
 use std::collections::BTreeMap;
@@ -52,7 +53,27 @@ pub fn is_in_force(
 pub struct EnactArgs {
     pub dry_run: bool,
     pub text: String,
+    pub tool: ToolDecl,
 }
+
+/// What performs the statute: a tool that exists now, a bead building it, or nothing because
+/// the statute only constrains judgement (with the reason).
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum ToolDecl {
+    Tool(String),
+    Mechanism(String),
+    None(String),
+}
+
+fn is_bead_id(s: &str) -> bool {
+    let mut parts = s.splitn(2, '-');
+    let (p, rest) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    !p.is_empty()
+        && !rest.is_empty()
+        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+}
+
+const TOOL_REFUSAL: &str = "rule: refusing — a statute must name what can comply with it. Pass --tool \"<command or component that performs it>\", or --mechanism <bead-id> (the bead filed to build it). A statute that only constrains judgement passes --tool none --reason \"<why no action is prescribed>\".";
 
 /// An `enact`-argument refusal: either the bash's `usage()` (printed to stdout, exit 1) or
 /// a named refusal (printed to stderr, exit 1) — the two streams the bash kept distinct.
@@ -68,12 +89,27 @@ pub enum EnactError {
 pub fn parse_enact_args(rest: &[String]) -> Result<EnactArgs, EnactError> {
     let mut dry_run = false;
     let mut text: Option<String> = None;
-    for arg in rest {
-        if arg == "--dry-run" {
+    let (mut tool, mut mechanism, mut reason): (Option<String>, Option<String>, Option<String>) =
+        (None, None, None);
+    let mut it = rest.iter();
+    while let Some(arg) = it.next() {
+        if matches!(arg.as_str(), "--tool" | "--mechanism" | "--reason") {
+            let Some(v) = it.next().filter(|v| !v.starts_with("--")) else {
+                return Err(EnactError::Message(format!("rule: enact: {arg} needs a value")));
+            };
+            let slot = match arg.as_str() {
+                "--tool" => &mut tool,
+                "--mechanism" => &mut mechanism,
+                _ => &mut reason,
+            };
+            if slot.replace(v.clone()).is_some() {
+                return Err(EnactError::Message(format!("rule: enact: {arg} given twice")));
+            }
+        } else if arg == "--dry-run" {
             dry_run = true;
         } else if arg.starts_with('-') {
             return Err(EnactError::Message(format!(
-                "rule: enact does not take '{arg}' — usage: rule.sh enact <slug> \"<text>\" [--dry-run]"
+                "rule: enact does not take '{arg}' — usage: rule.sh enact <slug> \"<text>\" --tool <cmd>|--mechanism <bead>|--tool none --reason <why> [--dry-run]"
             )));
         } else if text.is_some() {
             return Err(EnactError::Message(format!(
@@ -83,10 +119,26 @@ pub fn parse_enact_args(rest: &[String]) -> Result<EnactArgs, EnactError> {
             text = Some(arg.clone());
         }
     }
-    match text {
-        Some(text) => Ok(EnactArgs { dry_run, text }),
-        None => Err(EnactError::Usage),
+    let Some(text) = text else {
+        return Err(EnactError::Usage);
+    };
+    let refuse = |m: &str| Err(EnactError::Message(m.to_string()));
+    let tool = match (tool, mechanism) {
+        (None, None) => return refuse(TOOL_REFUSAL),
+        (Some(_), Some(_)) => return refuse("rule: enact takes --tool or --mechanism, not both"),
+        (Some(t), None) if t.trim().is_empty() => return refuse(TOOL_REFUSAL),
+        (Some(t), None) if t == "none" => match reason.as_deref().map(str::trim) {
+            Some(r) if !r.is_empty() => ToolDecl::None(r.to_string()),
+            _ => return refuse("rule: --tool none needs --reason \"<why no action is prescribed>\""),
+        },
+        (Some(t), None) => ToolDecl::Tool(t),
+        (None, Some(m)) if is_bead_id(&m) => ToolDecl::Mechanism(m),
+        (None, Some(m)) => return Err(EnactError::Message(format!("rule: --mechanism '{m}' is not a bead id"))),
+    };
+    if reason.is_some() && !matches!(tool, ToolDecl::None(_)) {
+        return refuse("rule: --reason belongs to --tool none");
     }
+    Ok(EnactArgs { dry_run, text, tool })
 }
 
 /// The three-line refusal for a statute over the word budget (unchanged text from `rule.sh`).
@@ -98,7 +150,7 @@ pub fn word_limit_refusal(words: usize) -> String {
 
 /// `rule.sh`'s own doc-comment usage block (`sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'`),
 /// pinned verbatim since this binary has no bash header comment of its own to read.
-pub const USAGE: &str = "rule.sh — enact, amend, or retire a statute in one command.\n\n  rule.sh enact <slug> \"<statute text>\" [--dry-run]   write it, then synthesise it into the wiki\n  rule.sh retire <slug>                    remove it\n  rule.sh list                             what is in force\n  rule.sh show <slug>                      one statute's full text\n\n`<slug>` is written without the `law-` prefix; it is added for you.";
+pub const USAGE: &str = "rule.sh — enact, amend, or retire a statute in one command.\n\n  rule.sh enact <slug> \"<statute text>\" (--tool <cmd> | --mechanism <bead> | --tool none --reason <why>) [--dry-run]\n                                           write it, then synthesise it into the wiki\n  rule.sh audit [--file --for <persona> --repo <name> --max N]\n                                           check every statute's named tools exist in the release\n  rule.sh retire <slug>                    remove it\n  rule.sh list                             what is in force\n  rule.sh show <slug>                      one statute's full text\n\n`<slug>` is written without the `law-` prefix; it is added for you.";
 
 /// One `list` line: `  {key:<44} {words:>3}w  {first 64 chars of the first sentence}`.
 pub fn list_line(key: &str, text: &str) -> String {
@@ -191,28 +243,60 @@ mod tests {
         assert_eq!(word_count(""), 0);
     }
 
+    fn a(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn refusal(v: &[&str]) -> String {
+        match parse_enact_args(&a(v)).unwrap_err() {
+            EnactError::Message(m) => m,
+            EnactError::Usage => panic!("expected a named message"),
+        }
+    }
+
+    #[test]
+    fn enact_without_tool_or_mechanism_refuses_naming_both() {
+        let m = refusal(&["text"]);
+        assert!(m.contains("--tool") && m.contains("--mechanism"), "{m}");
+    }
+
+    #[test]
+    fn tool_none_needs_a_reason() {
+        assert!(refusal(&["text", "--tool", "none"]).contains("--reason"));
+        let ok = parse_enact_args(&a(&["text", "--tool", "none", "--reason", "judgement only"])).unwrap();
+        assert_eq!(ok.tool, ToolDecl::None("judgement only".to_string()));
+    }
+
+    #[test]
+    fn mechanism_must_be_a_bead_id_and_excludes_tool() {
+        assert!(refusal(&["text", "--mechanism", "Not A Bead"]).contains("not a bead id"));
+        assert!(refusal(&["text", "--mechanism", "sp-abc", "--tool", "x"]).contains("not both"));
+        assert!(refusal(&["text", "--tool", "x", "--reason", "y"]).contains("--reason"));
+    }
+
     #[test]
     fn parse_enact_args_happy_path() {
-        let got = parse_enact_args(&["some text".to_string()]).unwrap();
+        let got = parse_enact_args(&a(&["some text", "--tool", "queue open-batch"])).unwrap();
         assert_eq!(
             got,
             EnactArgs {
                 dry_run: false,
-                text: "some text".to_string()
+                text: "some text".to_string(),
+                tool: ToolDecl::Tool("queue open-batch".to_string()),
             }
         );
     }
 
     #[test]
     fn parse_enact_args_dry_run_flag() {
-        let got = parse_enact_args(&["--dry-run".to_string(), "some text".to_string()]).unwrap();
+        let got = parse_enact_args(&a(&["--dry-run", "some text", "--mechanism", "sp-abc12"])).unwrap();
         assert!(got.dry_run);
         assert_eq!(got.text, "some text");
     }
 
     #[test]
     fn parse_enact_args_rejects_unknown_flag() {
-        let err = parse_enact_args(&["--nope".to_string(), "text".to_string()]).unwrap_err();
+        let err = parse_enact_args(&a(&["--nope", "text"])).unwrap_err();
         match err {
             EnactError::Message(m) => assert!(m.contains("does not take '--nope'"), "{m}"),
             EnactError::Usage => panic!("expected a named message, got Usage"),
@@ -221,7 +305,7 @@ mod tests {
 
     #[test]
     fn parse_enact_args_rejects_second_positional() {
-        let err = parse_enact_args(&["first".to_string(), "second".to_string()]).unwrap_err();
+        let err = parse_enact_args(&a(&["first", "second"])).unwrap_err();
         match err {
             EnactError::Message(m) => assert!(m.contains("is a second one"), "{m}"),
             EnactError::Usage => panic!("expected a named message, got Usage"),
@@ -230,7 +314,7 @@ mod tests {
 
     #[test]
     fn parse_enact_args_requires_text() {
-        let err = parse_enact_args(&["--dry-run".to_string()]).unwrap_err();
+        let err = parse_enact_args(&a(&["--dry-run", "--tool", "x"])).unwrap_err();
         assert_eq!(err, EnactError::Usage);
     }
 

@@ -114,6 +114,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("lc-backup-drill.timer", true));
     m.units.push(t("spira-archive.service", false));
     m.units.push(t("spira-archive.timer", true));
+    m.units.push(t("spira-statute-audit.service", false));
+    m.units.push(t("spira-statute-audit.timer", true));
     m.units.push(t("spira-groom.service", false));
     m.units.push(t("spira-groom.timer", true));
     m.units.push(t("spira-maechen.service", false));

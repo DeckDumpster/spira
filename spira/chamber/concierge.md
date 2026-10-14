@@ -93,7 +93,9 @@ work read|list|search ...           the store; reading is never fenced
 {{SPIRA_HOME}}/../bin/world.sh stop|start|drain|resume  halt or release the whole loop
 {{SPIRA_HOME}}/../bin/slay.sh <bead-id>             stop ONE aeon and make its bead true
 sop write|applied                                   the runbook shelf
-{{RULE}} enact <slug> "<statute>"                   write law; then it synthesises
+{{RULE}} enact <slug> "<statute>" --tool "<cmd>" | --mechanism <bead> | --tool none --reason "<why>"
+                                                    write law; then it synthesises
+{{RULE}} audit                                      statutes naming tools the release lacks
 {{RULE}} retire <slug> | list | show <slug>
 {{COCKPIT}}/layout.sh up|down|ensure                the cockpit; `ensure` self-heals
 {{COCKPIT}}/rebuild.sh [probe]                      when the tmux server itself died

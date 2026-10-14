@@ -290,8 +290,10 @@ sp-lzt — every attempt since is counted from the events table, never a label).
 Two bodies of written knowledge in the same store, injected into a session at summon; a persona
 declares which prefixes it reads.
 
-- **Statutes** (`law-`) are how to behave. `rule.sh enact <slug> "<text>"` is one command,
-  because a rule that depends on remembering a second step is a resolution, not a mechanism.
+- **Statutes** (`law-`) are how to behave. `rule.sh enact <slug> "<text>" --tool <cmd>` (or `--mechanism <bead>`, or
+  `--tool none --reason <why>` for a statute that only constrains judgement) is one command,
+  and `rule.sh audit` checks weekly that every tool a statute names exists. A rule with no tool that can comply gets
+  obeyed only as far as the tool allows. This is one command because a rule that depends on remembering a second step is a resolution, not a mechanism.
   `rule.sh retire` is the other half, and retiring is as deliberate an act as enacting.
 - **SOPs** (`sop-`) are how to fix. `sop` writes, matches, recalls and synthesises them. An
   SOP has a *shape* — match expression, checks, steps — and the program refuses prose, because
