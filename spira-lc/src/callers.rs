@@ -363,12 +363,21 @@ fn list(m: &mut dyn Machine, args: &[String], line: impl Fn(&Value) -> String) -
 
 /// Apply one bead event under the CAS of the row as read. The event may depend on the row
 /// (certify's tip invariant); `build` returning Err is a caller error, answered as given.
+const ACTOR_MAX: usize = 128;
+
 fn with_row(
     m: &mut dyn Machine,
     id: &str,
     actor: &str,
     build: impl FnOnce(&Value) -> Result<BeadEventKind, Answer>,
 ) -> Answer {
+    if actor.chars().count() > ACTOR_MAX || actor.chars().any(char::is_whitespace) {
+        return Answer {
+            code: REFUSED,
+            stderr: format!("lc: the actor must be one word of at most {ACTOR_MAX} characters, not free text (the verb carries no message text) — nothing sent\n"),
+            ..Default::default()
+        };
+    }
     let v = match show(m, id) {
         Ok(v) => v,
         Err(rc) => return Answer::code(rc),

@@ -1521,3 +1521,15 @@ fn drop_bead_needs_a_reason_and_a_work_bead() {
     assert_eq!(drop_bead(&v(&["sp-q"]), &mut f, &mut bd).code, 2);
     assert_eq!(drop_bead(&v(&["sp-none", "--reason", "x"]), &mut f, &mut bd).code, REFUSED);
 }
+
+#[test]
+fn free_text_in_the_actor_slot_is_refused_not_sent() {
+    let mut f = Fake::default();
+    f.bead("sp-q", BeadState::Working);
+    assert_eq!(go(&mut f, "hold", &["sp-q", "ask", "which way?", "aeon"]).code, APPLIED);
+    let text = "Cause found: the Concierge's worktree; DROP TABLE x; --";
+    let a = go(&mut f, "reply", &["sp-q", "seq:1", text]);
+    assert_eq!(a.code, REFUSED);
+    assert!(a.stderr.contains("actor"), "{}", a.stderr);
+    assert_eq!(go(&mut f, "holds", &["sp-q"]).stdout, "ask", "nothing was sent");
+}
