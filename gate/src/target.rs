@@ -343,6 +343,55 @@ pub fn reap_stale(
     out
 }
 
+/// Evict idle testenv slot and warm caches (`<sibling of root>/spira-testenv-*/.testenv-{slot,warm}-N`),
+/// least recently locked first, until `free()` reaches `need_mib`. A cache is idle when its
+/// `.lock` can be taken; it is removed while that lock is held, so a run never loses a slot it is
+/// using. A warm cache's spare record goes with it. Returns the number evicted.
+pub fn shed_idle_slots(root: &Path, need_mib: u64, free: &dyn Fn() -> Option<u64>, log: &dyn Fn(&str)) -> usize {
+    use std::os::unix::io::AsRawFd;
+    let Some(mut now_free) = free() else { return 0 };
+    if now_free >= need_mib {
+        return 0;
+    }
+    let parent = root.parent().unwrap_or(Path::new("/"));
+    let mut cands: Vec<(std::time::SystemTime, PathBuf, String)> = Vec::new();
+    for b in fs::read_dir(parent).into_iter().flatten().flatten() {
+        if !b.file_name().to_string_lossy().starts_with("spira-testenv-") {
+            continue;
+        }
+        for e in fs::read_dir(b.path()).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let idx = name.strip_prefix(".testenv-slot-").or_else(|| name.strip_prefix(".testenv-warm-"));
+            if idx.is_some_and(|n| n.parse::<usize>().is_ok()) && e.path().is_dir() {
+                cands.push((mtime(&b.path().join(format!("{name}.lock"))), b.path(), name));
+            }
+        }
+    }
+    cands.sort();
+    let mut evicted = 0;
+    for (_, base, name) in cands {
+        if now_free >= need_mib {
+            break;
+        }
+        let Ok(lock) = fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join(format!("{name}.lock"))) else {
+            continue;
+        };
+        // SAFETY: flock on a descriptor we own; released when `lock` is dropped.
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            continue;
+        }
+        let bytes = size_of(&base.join(&name));
+        if fs::remove_dir_all(base.join(&name)).is_err() {
+            continue;
+        }
+        let _ = fs::remove_file(base.join(format!("{name}.spare")));
+        log(&format!("gate: evicted idle testenv cache {name}: {} MiB freed (scratch short of {need_mib} MiB)", bytes / (1024 * 1024)));
+        evicted += 1;
+        now_free = free().unwrap_or(now_free);
+    }
+    evicted
+}
+
 /// Space this user can still write under `p`: statvfs free or quota headroom, whichever is smaller.
 pub fn free_mib(p: &Path) -> Option<u64> {
     spira_config::room::avail_mib(p)
@@ -365,6 +414,29 @@ pub fn mem_available_mib() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_testenv_caches_are_shed_until_the_room_is_there_and_a_held_one_is_kept() {
+        use std::os::unix::io::AsRawFd;
+        let s = Scratch::new("shed");
+        let root = s.1.join("spira-gate-target-aa");
+        let base = s.1.join("spira-testenv-bb");
+        for n in [".testenv-warm-0", ".testenv-slot-1", ".testenv-slot-2"] {
+            write_mib(&base.join(n).join("blob"), 3);
+            fs::write(base.join(format!("{n}.lock")), b"").unwrap();
+        }
+        fs::write(base.join(".testenv-warm-0.spare"), b"x").unwrap();
+        let held = fs::File::open(base.join(".testenv-slot-2.lock")).unwrap();
+        assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        let free = || {
+            let left = [".testenv-warm-0", ".testenv-slot-1", ".testenv-slot-2"].iter().filter(|n| base.join(n).exists()).count() as u64;
+            Some(10 + 3 * (3 - left))
+        };
+        assert_eq!(shed_idle_slots(&root, 1000, &free, &|_| {}), 2, "both idle caches go, the held one stays");
+        assert!(base.join(".testenv-slot-2").exists());
+        assert!(!base.join(".testenv-warm-0.spare").exists());
+        assert_eq!(shed_idle_slots(&root, 0, &free, &|_| {}), 0, "no shortfall, no eviction");
+    }
 
     #[test]
     fn a_tree_name_reduces_to_its_composition() {

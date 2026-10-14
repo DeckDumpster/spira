@@ -820,15 +820,27 @@ impl World for Real {
         let owner = format!("gate-{}", tree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
         let ledger = spira_config::scratch::ledger_for(&root);
         let mib = spira_config::scratch::estimate_mib(&ledger, &target::composition(tree), lim.reserve_mib);
-        let mut g = spira_config::scratch::reserve_class(
-            &ledger,
-            &owner,
-            spira_config::scratch::Class::parse(class),
-            mib,
-            0,
-            std::time::Duration::from_secs(wait_secs),
-            &|| target::free_mib(&root),
-        )?;
+        let reserve = |wait: u64| {
+            spira_config::scratch::reserve_class(
+                &ledger,
+                &owner,
+                spira_config::scratch::Class::parse(class),
+                mib,
+                0,
+                std::time::Duration::from_secs(wait),
+                &|| target::free_mib(&root),
+            )
+        };
+        let mut g = match reserve(0) {
+            Ok(g) => g,
+            Err(first) => {
+                let need = mib.saturating_add(spira_config::scratch::reserved_mib(&ledger));
+                if target::shed_idle_slots(&root, need, &|| target::free_mib(&root), &|l| eprintln!("{l}")) == 0 && wait_secs == 0 {
+                    return Err(first);
+                }
+                reserve(wait_secs)?
+            }
+        };
         g.account(tree);
         Ok(Box::new(g))
     }
