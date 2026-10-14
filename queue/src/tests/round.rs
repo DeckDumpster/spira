@@ -343,6 +343,16 @@ fn open_fails_and_does_not_claim_a_return_the_lifecycle_refused_or_ignored() {
 }
 
 #[test]
+fn open_whose_record_cannot_be_written_abandons_the_batch_it_cut() {
+    let t = round_world();
+    fs::create_dir_all(t.qfile("round")).unwrap();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    assert!(calls.iter().any(|c| c.starts_with("cut ")), "POSITIVE CONTROL: the cut ran first: {calls:?}");
+    assert!(calls.iter().any(|c| c.starts_with("abandon-batch ") && c.contains("OPEN")), "the cut batch is released: {calls:?}");
+}
+
+#[test]
 fn open_admits_a_submitted_member_its_full_suite_certifies() {
     // law-a-round-is-feature-first-then-catch-all: a round takes SUBMITTED beads directly.
     let t = round_world();

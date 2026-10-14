@@ -17,6 +17,29 @@ fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// Whether `sha`'s commit message names `bead_id` as a whole id, not as the prefix of a longer one
+/// (`sp-x` inside `sp-x2` or the child `sp-x.1`).
+pub fn commit_names_bead(repo: &Path, sha: &str, bead_id: &str) -> bool {
+    let Some(message) = git_output(repo, &["log", "-1", "--format=%B", sha]) else { return false };
+    let mut from = 0;
+    while let Some(at) = message[from..].find(bead_id) {
+        let start = from + at;
+        let rest = &message[start + bead_id.len()..];
+        let before_ok = message[..start].chars().next_back().map_or(true, |c| !(c.is_ascii_alphanumeric() || c == '-'));
+        let mut after = rest.chars();
+        let after_ok = match after.next() {
+            None => true,
+            Some('.') => !after.next().is_some_and(|c| c.is_ascii_alphanumeric()),
+            Some(c) => !(c.is_ascii_alphanumeric() || c == '-'),
+        };
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + bead_id.len();
+    }
+    false
+}
+
 /// `git merge-base --is-ancestor <candidate> <base>` — the fast path in [`content_on_base`] below.
 pub fn is_ancestor(repo: &Path, candidate: &str, base: &str) -> bool {
     spira_config::bounded::bounded("git")
@@ -246,6 +269,17 @@ mod tests {
         run(&repo.dir, &["checkout", "-q", "-b", "work"]);
         let tip = repo.commit("f.txt", "base\nplus new work\n", "real outstanding work");
         assert!(!content_on_base(&repo.dir, &tip, &base), "genuinely outstanding work must not be reported as landed");
+    }
+
+    #[test]
+    fn a_commit_names_a_bead_only_as_a_whole_id() {
+        let repo = ScratchRepo::new("names-bead");
+        let sha = repo.commit("a.txt", "a\n", "sp-abc2: work\n\nalso sp-abc.1 and (sp-abc).");
+        assert!(commit_names_bead(&repo.dir, &sha, "sp-abc"), "the parenthesised mention is a whole id");
+        assert!(commit_names_bead(&repo.dir, &sha, "sp-abc2"));
+        let other = repo.commit("b.txt", "b\n", "xsp-abc and sp-abc2 and sp-abc.1");
+        assert!(!commit_names_bead(&repo.dir, &other, "sp-abc"), "prefix of a longer id, child id and embedded id are not it");
+        assert!(!commit_names_bead(&repo.dir, "nosuchsha", "sp-abc"));
     }
 
     #[test]
