@@ -339,6 +339,7 @@ impl AwsCli {
     }
 
     pub fn run_args(&self, ami: &str, handle: &str, name: &str, user_data_file: &str, spot: bool) -> Vec<String> {
+        let (ok, ov) = AMI_OWNER_TAG;
         let mut a: Vec<String> = vec![
             "ec2".into(), "run-instances".into(),
             "--image-id".into(), ami.to_string(),
@@ -348,7 +349,9 @@ impl AwsCli {
             "--instance-initiated-shutdown-behavior".into(), "terminate".into(),
             "--user-data".into(), format!("file://{user_data_file}"),
             "--tag-specifications".into(),
-            format!("ResourceType=instance,Tags=[{{Key={TAG_KEY},Value={handle}}},{{Key=Name,Value={name}}}]"),
+            format!("ResourceType=instance,Tags=[{{Key={ok},Value={ov}}},{{Key={TAG_KEY},Value={handle}}},{{Key=Name,Value={name}}}]"),
+            "--tag-specifications".into(),
+            format!("ResourceType=volume,Tags=[{{Key={ok},Value={ov}}}]"),
             "--query".into(), "Instances[0].InstanceId".into(),
             "--output".into(), "text".into(),
         ];
@@ -593,7 +596,9 @@ mod tests {
         };
         let a = cli.run_args("ami-1", "ec2-a", "round-ec2-a", "/tmp/ud", false);
         let j = a.join(" ");
-        assert!(j.contains("Tags=[{Key=spira-round-vm,Value=ec2-a},{Key=Name,Value=round-ec2-a}]"), "{j}");
+        assert!(j.contains("{Key=spira-round-vm,Value=ec2-a},{Key=Name,Value=round-ec2-a}]"), "{j}");
+        assert!(j.contains("ResourceType=instance,Tags=[{Key=spill:owner,Value=round},"), "{j}");
+        assert!(j.contains("ResourceType=volume,Tags=[{Key=spill:owner,Value=round}]"), "{j}");
         assert!(j.contains("--instance-initiated-shutdown-behavior terminate"), "{j}");
         assert!(j.contains("--security-group-ids sg-1") && j.contains("--iam-instance-profile Name=ssm"), "{j}");
         assert!(!j.contains("tskey"), "the auth key stays in the user-data file, never in argv");
