@@ -178,17 +178,32 @@ pub fn cmd_live_check(conn: &Conn) -> (i32, String) {
     }
 }
 
-pub fn run_live_check(conn: &Conn, raise: &dyn Fn(&[String])) -> Result<crate::live::Check, String> {
+pub fn run_live_check(conn: &Conn, raise: &dyn Fn(&[String], &str)) -> Result<crate::live::Check, String> {
     let check = conn.live_check()?;
     if !check.divergent.is_empty() && !check.explained {
-        raise(&check.divergent);
+        raise(&check.divergent, &last_writers(conn, &check.divergent));
     }
     Ok(check)
 }
 
-pub fn raise_incident(divergent: &[String]) {
+/// The newest event of each bead, as `bead: actor event applied@at`. A row that changed with no
+/// event newer than the reload point names no lc-serve writer: it was written out of band.
+pub fn last_writers(conn: &Conn, ids: &[String]) -> String {
+    let list = ids.iter().map(|i| format!("'{}'", i.replace('\\', "\\\\").replace('\'', "\\'"))).collect::<Vec<_>>().join(",");
+    let sql = format!("SELECT e.lc_key, e.actor, e.event, e.applied, e.at FROM event e WHERE e.machine = 'bead' AND e.lc_key IN ({list}) AND e.seq = (SELECT MAX(seq) FROM event WHERE machine = 'bead' AND lc_key = e.lc_key)");
+    match conn.query(&sql) {
+        Ok(rows) => rows.iter().map(|r| format!("{}: {} {} applied={}@{}", field(r, "lc_key"), field(r, "actor"), field(r, "event"), field(r, "applied"), field(r, "at"))).collect::<Vec<_>>().join("\n"),
+        Err(e) => format!("last events unreadable: {e:?}"),
+    }
+}
+
+fn field(r: &Value, k: &str) -> String {
+    r.get(k).map_or(String::new(), |v| v.as_str().map_or_else(|| v.to_string(), str::to_string))
+}
+
+pub fn raise_incident(divergent: &[String], writers: &str) {
     let title = format!("lc-serve live rows diverged from Dolt: {}", divergent.iter().take(5).cloned().collect::<Vec<_>>().join(", "));
-    let body = format!("The consistency check found these beads in memory differing from the lifecycle store, and reloaded them from Dolt:\n{}\n\nA row changed without passing through lc-serve's write path, or a write's refresh was lost.\n", divergent.join("\n"));
+    let body = format!("The consistency check found these beads in memory differing from the lifecycle store, and reloaded them from Dolt:\n{}\n\nNewest event of each (a row whose newest event predates the divergence was written out of band):\n{writers}\n\nA row changed without passing through lc-serve's write path, or a write's refresh was lost.\n", divergent.join("\n"));
     let env = [("SPIRA_INCIDENT_TYPE", "bug"), ("SPIRA_INCIDENT_PRIORITY", "1"), ("SPIRA_INCIDENT_ACTOR", "lc-serve"), ("SPIRA_INCIDENT_REPO", "spira"), ("SPIRA_INCIDENT_REF", "lc-live-divergence"), ("SPIRA_INCIDENT_CAUSE", "lc-live-divergence")];
     let (code, out) = crate::bd::tool_env("incident.sh", &["file".to_string(), title, "-".to_string()], Some(&body), "lc-serve", 60, &env);
     if code != 0 {

@@ -153,14 +153,14 @@ fn live_tick(conn: &Conn) {
     if conn.live.as_ref().is_some_and(|l| l.verify_due(crate::db::QUERY_DEADLINE * 2 + LIVE_SETTLE_MARGIN)) {
         match conn.live_check() {
             Ok(c) if c.divergent.is_empty() => {}
-            Ok(c) => eprintln!("spira-lc serve: an abandoned write committed after the reload; reconciled: {}", c.divergent.join(", ")),
+            Ok(c) => eprintln!("spira-lc serve: an abandoned write committed after the reload; reconciled: {}\n{}", c.divergent.join(", "), crate::ops::last_writers(conn, &c.divergent)),
             Err(e) => eprintln!("spira-lc serve: post-reload verification failed: {e}"),
         }
         return;
     }
     match crate::ops::run_live_check(conn, &crate::ops::raise_incident) {
         Ok(c) if c.divergent.is_empty() => {}
-        Ok(c) => eprintln!("spira-lc serve: live rows diverged from Dolt and were reloaded: {}", c.divergent.join(", ")),
+        Ok(c) => eprintln!("spira-lc serve: live rows diverged from Dolt and were reloaded{}: {}\n{}", if c.explained { " (explained by an ambiguous write)" } else { "" }, c.divergent.join(", "), crate::ops::last_writers(conn, &c.divergent)),
         Err(e) => eprintln!("spira-lc serve: live check failed: {e}"),
     }
 }
