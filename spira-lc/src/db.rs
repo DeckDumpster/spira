@@ -180,6 +180,19 @@ impl Conn {
         self.with_write_wire(|wire| live.load(now_epoch(), |sql| wire.exec(sql).map_err(|_| ())))
     }
 
+    /// Reads every older terminal row on a plain read session, so a slow read holds no write:
+    /// the writes that commit meanwhile are tracked by [`crate::live::Live`] and win over it.
+    pub fn live_load_cold(&self) -> Result<usize, String> {
+        let live = self.live.as_ref().ok_or("the live rows are not enabled")?;
+        live.cold_begin();
+        let fetched = match self.run_script_on(self.read_slot(), &crate::live::cold_sql()) {
+            Ok(sets) => Ok(sets),
+            Err(ScriptFailure::LostRace) => Err("serialization conflict on a plain read".to_string()),
+            Err(ScriptFailure::CannotTell(e)) => Err(e),
+        };
+        live.cold_finish(fetched)
+    }
+
     /// Compares memory with Dolt through the write session (quiescent against writes) and
     /// reloads on a mismatch; the caller raises the incident.
     pub fn live_check(&self) -> Result<crate::live::Check, String> {

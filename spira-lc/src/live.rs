@@ -1,6 +1,9 @@
-//! The live bead rows (non-terminal, plus terminal within the last day) held in memory by
-//! `spira-lc serve`, the store's only writer. `list --live`, `show` and the ops snapshot's
-//! live views answer from here and never touch Dolt, so no read waits behind a write.
+//! The bead rows held in memory by `spira-lc serve`, the store's only writer: the live window
+//! (non-terminal, plus terminal within the last day) first, then, once [`Live::cold_finish`]
+//! has run, every older terminal row too. `list`, `show` and the ops snapshot's live views
+//! answer from here and never touch Dolt, so no read waits behind a write. Until the cold
+//! rows are in, a read that needs them (a miss, a list that includes terminal rows) is not
+//! answered from memory.
 //!
 //! Memory changes in two places only: [`Live::write_through`], which re-reads the touched
 //! rows from Dolt AFTER the write committed (a failed write may have committed, so it
@@ -22,13 +25,19 @@ pub const WINDOW_SECS: i64 = 24 * 3600;
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 const LIVE: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK"];
 
-const BEAD_COLS: &str = "bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, updated_at, title, priority";
+const BEAD_COLS: &str = "bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, updated_at, title, priority, repo";
 const DELIVERY_COLS: &str = "bead_id, mode, state, batch_id, pr, merge_sha, version";
 
 const LIST_COLS: [&str; 20] =
     ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "title", "priority"];
-const SHOW_COLS: [&str; 18] =
-    ["bead_id", "state", "tip", "gate_key", "holder", "persona", "lease_until", "holds", "reason", "version", "stack", "stack_depth", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "updated_at"];
+const FULL_LIST_COLS: [&str; 22] = [
+    "bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note",
+    "ejected_red_tip", "sifted_tip", "title", "priority", "repo",
+];
+const SHOW_COLS: [&str; 19] = [
+    "bead_id", "state", "tip", "gate_key", "holder", "persona", "lease_until", "holds", "reason", "version", "stack", "stack_depth", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip",
+    "sifted_tip", "updated_at",
+];
 const OPS_LIVE_COLS: [&str; 11] = ["bead_id", "state", "holds", "holder", "persona", "rework", "lease_until", "since", "updated_at", "priority", "title"];
 const OPS_RECENT_COLS: [&str; 6] = ["bead_id", "state", "since", "updated_at", "priority", "title"];
 
@@ -76,6 +85,14 @@ fn window_sql(now: i64) -> String {
     format!("(state NOT IN ('LANDED','SUPERSEDED','DROPPED','DONE') OR updated_at >= {cutoff} OR since >= {cutoff})")
 }
 
+pub fn cold_sql() -> String {
+    format!(
+        "SELECT {BEAD_COLS} FROM bead ORDER BY bead_id;\n\
+         SELECT {DELIVERY_COLS} FROM delivery ORDER BY bead_id;\n\
+         SELECT bead_id, depends_on FROM bead_dep WHERE dep_type = 'blocks' ORDER BY bead_id, depends_on;\n"
+    )
+}
+
 pub fn load_sql(now: i64) -> String {
     let w = window_sql(now);
     format!(
@@ -97,6 +114,7 @@ fn keys_sql(keys: &[String]) -> String {
 #[derive(Default)]
 struct State {
     loaded: bool,
+    cold_loaded: bool,
     beads: BTreeMap<String, Value>,
     delivery: BTreeMap<String, Value>,
     blocks: BTreeMap<String, BTreeSet<String>>,
@@ -113,6 +131,27 @@ impl State {
         for e in snap.edges {
             self.blocks.entry(text(&e, "bead_id").to_string()).or_default().insert(text(&e, "depends_on").to_string());
         }
+    }
+
+    /// Keeps the terminal rows `old` held that this snapshot does not: the ones that aged out of
+    /// the window, which a reload of the window alone must not forget.
+    fn carry_cold(&mut self, old: State) {
+        if !(old.loaded && old.cold_loaded) {
+            return;
+        }
+        for (id, b) in old.beads {
+            if self.beads.contains_key(&id) || !TERMINAL.contains(&text(&b, "state")) {
+                continue;
+            }
+            if let Some(d) = old.delivery.get(&id) {
+                self.delivery.insert(id.clone(), d.clone());
+            }
+            if let Some(e) = old.blocks.get(&id) {
+                self.blocks.insert(id.clone(), e.clone());
+            }
+            self.beads.insert(id, b);
+        }
+        self.cold_loaded = true;
     }
 
     fn blocked_by(&self, id: &str) -> Value {
@@ -136,6 +175,7 @@ fn project(row: &Value, cols: &[&str]) -> Map<String, Value> {
 
 #[derive(Default)]
 pub struct ListFilter {
+    pub repo: Option<String>,
     pub states: Option<Vec<String>>,
     pub ids: Option<Vec<String>>,
     pub hold: Option<String>,
@@ -165,9 +205,25 @@ pub struct Live {
     unloaded_at: Mutex<Option<std::time::Instant>>,
     ambiguous: std::sync::atomic::AtomicBool,
     verify_from: Mutex<Option<std::time::Instant>>,
+    cold: Mutex<ColdLoad>,
+}
+
+/// The bookkeeping of a cold load in flight: the keys written since it began (their rows are
+/// fresher than the read) and whether a write of unknown reach voids the read.
+#[derive(Default)]
+struct ColdLoad {
+    touched: Option<BTreeSet<String>>,
+    void: bool,
+    tried: Option<std::time::Instant>,
 }
 
 type Sets = Vec<Vec<Value>>;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Scope {
+    Live,
+    Every,
+}
 
 impl Live {
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -178,7 +234,72 @@ impl Live {
         self.lock().loaded
     }
 
+    fn cold_lock(&self) -> std::sync::MutexGuard<'_, ColdLoad> {
+        self.cold.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// True when the window is in memory and the older terminal rows are not, and no attempt to
+    /// fetch them began within `backoff`.
+    pub fn cold_due(&self, backoff: std::time::Duration) -> bool {
+        let st = self.lock();
+        st.loaded && !st.cold_loaded && self.cold_lock().tried.is_none_or(|t| t.elapsed() >= backoff)
+    }
+
+    /// True once every row, terminal ones of any age included, is in memory.
+    pub fn is_complete(&self) -> bool {
+        let st = self.lock();
+        st.loaded && st.cold_loaded
+    }
+
+    pub fn cold_begin(&self) {
+        *self.cold_lock() = ColdLoad { touched: Some(BTreeSet::new()), void: false, tried: Some(std::time::Instant::now()) };
+    }
+
+    /// Merges what `cold_sql` read. A row memory already holds stays (a write refreshed it, or
+    /// the window load is newer); a write of unknown reach during the read voids the whole read.
+    pub fn cold_finish(&self, fetched: Result<Sets, String>) -> Result<usize, String> {
+        let (touched, void) = {
+            let mut cold = self.cold_lock();
+            (cold.touched.take(), std::mem::take(&mut cold.void))
+        };
+        let snap = Snapshot::from_sets(fetched?)?;
+        let touched = touched.unwrap_or_default();
+        if void {
+            return Err("a write of unknown reach committed during the read".into());
+        }
+        let mut st = self.lock();
+        if !st.loaded {
+            return Err("memory was unloaded during the read".into());
+        }
+        let fresh: BTreeSet<String> = snap.beads.iter().map(|b| text(b, "bead_id").to_string()).filter(|id| !st.beads.contains_key(id) && !touched.contains(id)).collect();
+        for b in snap.beads {
+            if fresh.contains(text(&b, "bead_id")) {
+                st.beads.insert(text(&b, "bead_id").to_string(), b);
+            }
+        }
+        for d in snap.delivery {
+            if fresh.contains(text(&d, "bead_id")) {
+                st.delivery.insert(text(&d, "bead_id").to_string(), d);
+            }
+        }
+        for e in snap.edges {
+            if fresh.contains(text(&e, "bead_id")) {
+                st.blocks.entry(text(&e, "bead_id").to_string()).or_default().insert(text(&e, "depends_on").to_string());
+            }
+        }
+        st.cold_loaded = true;
+        Ok(fresh.len())
+    }
+
+    fn void_cold(&self) {
+        let mut cold = self.cold_lock();
+        if cold.touched.is_some() {
+            cold.void = true;
+        }
+    }
+
     pub fn invalidate(&self) {
+        self.void_cold();
         self.ambiguous.store(true, std::sync::atomic::Ordering::SeqCst);
         self.lock().loaded = false;
         *self.unloaded_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
@@ -194,9 +315,10 @@ impl Live {
     pub fn replace(&self, sets: Sets) -> Result<usize, String> {
         let snap = Snapshot::from_sets(sets)?;
         let mut st = self.lock();
-        *st = State::default();
+        let old = std::mem::take(&mut *st);
         st.fill(snap);
         st.loaded = true;
+        st.carry_cold(old);
         Ok(st.beads.len())
     }
 
@@ -231,6 +353,14 @@ impl Live {
                 return Err(e);
             }
         };
+        match touch {
+            Touch::Keys(k) => {
+                if let Some(t) = self.cold_lock().touched.as_mut() {
+                    t.extend(k.iter().cloned());
+                }
+            }
+            Touch::All => self.void_cold(),
+        }
         let refreshed = match touch {
             Touch::Keys(k) if k.is_empty() => true,
             Touch::Keys(k) => self.apply_keys(k, run(&keys_sql(k))),
@@ -276,30 +406,54 @@ impl Live {
         let ids: BTreeSet<&String> = mine.keys().chain(dolt_digests.keys()).collect();
         let divergent: Vec<String> = if loaded { ids.into_iter().filter(|id| mine.get(*id) != dolt_digests.get(*id)).cloned().collect() } else { Vec::new() };
         let check = Check { memory_hash: hash_all(&mine), dolt_hash: hash_all(&dolt_digests), rows: dolt_digests.len(), divergent, explained: self.ambiguous.swap(false, std::sync::atomic::Ordering::SeqCst) };
-        *self.lock() = State { loaded: true, ..dolt };
+        let mut st = self.lock();
+        let old = std::mem::replace(&mut *st, State { loaded: true, ..dolt });
+        st.carry_cold(old);
         Ok(check)
     }
 
     pub fn list(&self, f: &ListFilter) -> Option<Vec<Value>> {
+        self.list_rows(f, Scope::Live, &LIST_COLS)
+    }
+
+    /// What `list` without `--live` returns: terminal rows of any age too, every column the SQL
+    /// selects. `None` until the cold rows are in memory.
+    pub fn list_all(&self, f: &ListFilter) -> Option<Vec<Value>> {
+        self.list_rows(f, Scope::Every, &FULL_LIST_COLS)
+    }
+
+    /// `--live` with `--repo`: the live rows, with the full column set the SQL selects.
+    pub fn list_live_full(&self, f: &ListFilter) -> Option<Vec<Value>> {
+        self.list_rows(f, Scope::Live, &FULL_LIST_COLS)
+    }
+
+    fn list_rows(&self, f: &ListFilter, scope: Scope, cols: &[&str]) -> Option<Vec<Value>> {
         let st = self.lock();
-        if !st.loaded {
+        if !st.loaded || (scope == Scope::Every && !st.cold_loaded) {
             return None;
         }
         let wanted = |set: &Option<Vec<String>>, v: &str| set.as_ref().is_none_or(|s| s.iter().any(|x| x == v));
         let out = st
             .beads
             .values()
-            .filter(|b| !TERMINAL.contains(&text(b, "state")))
+            .filter(|b| scope == Scope::Every || !TERMINAL.contains(&text(b, "state")))
             .filter(|b| wanted(&f.states, text(b, "state")) && wanted(&f.ids, text(b, "bead_id")))
             .filter(|b| f.hold.as_ref().is_none_or(|k| serde_json::from_str::<Vec<String>>(text(b, "holds")).is_ok_and(|h| h.contains(k))))
             .filter(|b| !f.express || num(b, "express").is_some_and(|n| n == 1))
+            .filter(|b| f.repo.as_ref().is_none_or(|r| b.get("repo").and_then(Value::as_str) == Some(r.as_str())))
             .map(|b| {
-                let mut o = project(b, &LIST_COLS);
+                let mut o = project(b, cols);
                 o.insert("blocked_by".into(), st.blocked_by(text(b, "bead_id")));
                 Value::Object(o)
             })
             .collect();
         Some(out)
+    }
+
+    /// True when memory holds every row and none of them is `id`: the answer to `show` is "no row".
+    pub fn absent(&self, id: &str) -> bool {
+        let st = self.lock();
+        st.loaded && st.cold_loaded && !st.beads.contains_key(id)
     }
 
     /// `(bead, delivery)` as `show` prints them, or `None` when memory cannot vouch for the answer.
@@ -342,9 +496,9 @@ impl Live {
     }
 }
 
-pub fn filter_from_flags(state: Option<&str>, ids: Option<&str>, hold: Option<&str>, express: bool) -> ListFilter {
+pub fn filter_from_flags(state: Option<&str>, ids: Option<&str>, hold: Option<&str>, express: bool, repo: Option<&str>) -> ListFilter {
     let csv = |v: &str| v.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
-    ListFilter { states: state.map(csv), ids: ids.map(csv), hold: hold.map(str::to_string), express }
+    ListFilter { states: state.map(csv), ids: ids.map(csv), hold: hold.map(str::to_string), express, repo: repo.map(str::to_string) }
 }
 
 #[cfg(test)]
@@ -409,7 +563,7 @@ mod tests {
         held["holds"] = Value::String("[\"poison\"]".into());
         held["express"] = Value::String("1".into());
         let live = loaded(vec![bead("sp-a", "WORKING", 1, NOW), held], vec![]);
-        let f = |s, i, h, e| ids(&live.list(&filter_from_flags(s, i, h, e)).unwrap()).join(",");
+        let f = |s, i, h, e| ids(&live.list(&filter_from_flags(s, i, h, e, None)).unwrap()).join(",");
         assert_eq!(f(Some("READY,WORKING"), None, None, false), "sp-a,sp-h");
         assert_eq!(f(Some("READY"), None, None, false), "sp-h");
         assert_eq!(f(None, Some("sp-a"), None, false), "sp-a");
@@ -573,5 +727,105 @@ mod tests {
             assert!(sql_states.contains(&format!("'{s}'")), "{s}");
         }
         assert_eq!(LIVE.len(), sql_states.matches('\'').count() / 2);
+    }
+
+    fn cold_sets(beads: Vec<Value>) -> Sets {
+        vec![beads, vec![], vec![]]
+    }
+
+    fn with_cold(hot: Vec<Value>, cold: Vec<Value>) -> Live {
+        let live = loaded(hot, vec![]);
+        live.cold_begin();
+        live.cold_finish(Ok(cold_sets(cold))).unwrap();
+        live
+    }
+
+    #[test]
+    fn older_terminal_rows_answer_list_and_a_miss_only_once_they_are_in_memory() {
+        let live = loaded(vec![bead("sp-a", "WORKING", 1, NOW)], vec![]);
+        assert!(live.list_all(&ListFilter::default()).is_none(), "the window alone cannot list every row");
+        assert!(!live.absent("sp-nobody"), "the window alone cannot say a row does not exist");
+        live.cold_begin();
+        assert_eq!(live.cold_finish(Ok(cold_sets(vec![bead("sp-a", "LANDED", 0, 1), bead("sp-old", "LANDED", 4, 1)]))), Ok(1), "a row memory holds is not overwritten");
+        assert_eq!(ids(&live.list_all(&ListFilter::default()).unwrap()), ["sp-a", "sp-old"]);
+        assert_eq!(live.list_all(&ListFilter::default()).unwrap()[0]["state"], "WORKING");
+        assert_eq!(ids(&live.list(&ListFilter::default()).unwrap()), ["sp-a"], "--live still omits terminal rows");
+        assert!(live.absent("sp-nobody") && !live.absent("sp-old"));
+        assert_eq!(live.show("sp-old").unwrap().0["state"], "LANDED");
+    }
+
+    #[test]
+    fn a_write_during_the_cold_read_wins_over_the_read() {
+        let live = loaded(vec![], vec![]);
+        live.cold_begin();
+        live.write_through(&Touch::Keys(vec!["sp-w".into()]), "w", |sql| -> Result<Sets, ()> {
+            Ok(if sql == "w" { vec![] } else { sets(vec![bead("sp-w", "READY", 9, NOW)], vec![]) })
+        })
+        .unwrap();
+        live.cold_finish(Ok(cold_sets(vec![bead("sp-w", "LANDED", 1, 1)]))).unwrap();
+        assert_eq!(live.show("sp-w").unwrap().0["state"], "READY");
+    }
+
+    #[test]
+    fn a_write_of_unknown_reach_voids_the_cold_read() {
+        let live = loaded(vec![], vec![]);
+        live.cold_begin();
+        live.invalidate();
+        live.replace(sets(vec![], vec![])).unwrap();
+        assert!(live.cold_finish(Ok(cold_sets(vec![bead("sp-x", "LANDED", 1, 1)]))).is_err());
+        assert!(!live.is_complete());
+        live.cold_begin();
+        let _ = live.write_through(&Touch::All, "w", |_| -> Result<Sets, ()> { Ok(sets(vec![], vec![])) });
+        assert!(live.cold_finish(Ok(cold_sets(vec![]))).is_err());
+        assert!(!live.is_complete());
+    }
+
+    #[test]
+    fn a_failed_cold_read_leaves_memory_incomplete_and_waits_before_the_next_try() {
+        let live = loaded(vec![], vec![]);
+        assert!(live.cold_due(std::time::Duration::from_secs(30)));
+        live.cold_begin();
+        assert!(live.cold_finish(Err("deadline".into())).is_err());
+        assert!(!live.cold_due(std::time::Duration::from_secs(30)), "a failed read is not retried at once");
+        assert!(live.cold_due(std::time::Duration::ZERO));
+    }
+
+    #[test]
+    fn a_reload_of_the_window_keeps_the_older_rows_but_an_unload_forgets_them() {
+        let live = with_cold(vec![bead("sp-a", "READY", 1, NOW)], vec![bead("sp-old", "LANDED", 4, 1)]);
+        live.replace(sets(vec![bead("sp-a", "READY", 2, NOW)], vec![])).unwrap();
+        assert!(live.is_complete() && live.show("sp-old").is_some());
+        let check = live.check(NOW, |_| -> Result<Sets, ()> { Ok(sets(vec![bead("sp-a", "READY", 2, NOW)], vec![])) }).unwrap();
+        assert!(check.divergent.is_empty());
+        assert!(live.is_complete() && live.show("sp-old").is_some(), "the periodic check keeps the older rows");
+        live.invalidate();
+        live.replace(sets(vec![], vec![])).unwrap();
+        assert!(!live.is_complete(), "after an ambiguous write the older rows are read again");
+    }
+
+    #[test]
+    fn list_all_carries_repo_and_sifted_tip_and_filters_by_repo() {
+        let mut a = bead("sp-a", "LANDED", 1, 1);
+        a["repo"] = "spira".into();
+        a["sifted_tip"] = "abc".into();
+        let live = with_cold(vec![], vec![a, bead("sp-b", "LANDED", 1, 1)]);
+        let f = ListFilter { repo: Some("spira".into()), ..Default::default() };
+        let rows = live.list_all(&f).unwrap();
+        assert_eq!(ids(&rows), ["sp-a"]);
+        assert_eq!((rows[0]["repo"].clone(), rows[0]["sifted_tip"].clone()), ("spira".into(), "abc".into()));
+        assert_eq!(rows[0].as_object().unwrap().keys().last().unwrap(), "blocked_by");
+    }
+
+    #[test]
+    fn a_full_table_list_and_a_miss_answer_from_memory_at_production_row_counts() {
+        const ROWS: usize = 5_000;
+        let old: Vec<Value> = (0..ROWS).map(|i| bead(&format!("sp-{i:06}"), "LANDED", 3, 1)).collect();
+        let hot: Vec<Value> = (0..200).map(|i| bead(&format!("sp-h{i:04}"), "READY", 1, NOW)).collect();
+        let live = with_cold(hot, old);
+        let rows = live.list_all(&ListFilter::default()).unwrap();
+        let body = serde_json::to_string(&Value::Array(rows)).unwrap();
+        let miss = live.absent("sp-perf-probe");
+        let state = live.list_all(&filter_from_flags(Some("READY"), None, None, false, None)).unwrap();
+        assert!(miss && state.len() == 200 && body.len() > 500_000);
     }
 }
