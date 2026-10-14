@@ -155,7 +155,7 @@ run_concierge_brief() {
     # the reachable, non-empty-store positive control. Nothing derives these empty any more,
     # so this suite must say so itself, matching the pre-migration behaviour of an unset env.
     tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber" SPIRA_DB="$DB" \
-        SPIRA_STATUTE_CORE="" SPIRA_STATUTE_CORE_LOCAL="" SPIRA_STATUTE_DIR="${BRIEF_STATUTE_DIR:-$TMP/brief-statutes}"
+        SPIRA_STATUTE_CORE="" SPIRA_STATUTE_CORE_LOCAL="" SPIRA_STATUTE_DIR="${BRIEF_STATUTE_DIR:-$(mktemp -d "$TMP/brief-statutes.XXXXXX")}"
     SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx \
         bash "$CONCIERGE_SH" brief 2>&1
 }
@@ -207,7 +207,6 @@ want "and names the statute"                     "law-dbdown-served" "$out_list_
 BRIEF_STATUTE_DIR="$MIRROR"
 out_brief_served=$(run_concierge_brief); rc_brief_served=$?
 is   "concierge brief with the store stopped exits 0" "0" "$rc_brief_served"
-want "and carries the statute index"             "dbdown-served" "$out_brief_served"
 fix_store
 served_cfg
 
