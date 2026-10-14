@@ -111,8 +111,7 @@ pub struct BatchJob {
     pub toolchain: Option<String>,
     /// sp-xjnzl: this operator's own `CARGO_HOME` (read from the caller's own environment,
     /// never hardcoded — a literal path names one operator's box, which this crate ships to
-    /// everyone who clones it). Empty: the VM's own ambient default applies, no cache
-    /// sharing with the host.
+    /// everyone who clones it). Empty: the VM's image records its own (EC2).
     pub cache_home: Option<String>,
     pub testenv_registry: Option<String>,
     /// Seconds of setup (script start to the suites launching) beyond which the run reports SETUP-SLOW.
@@ -207,14 +206,23 @@ if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 # sccache hashes a dependency's registry source path into its cache key, so a hit across
 # machines needs that path byte-identical, not merely consistent (spira-config/DESIGN-
 # build-cache.md §2.5; re-verified against sccache 0.18.0's own generate_hash_key for this
-# bead). The `${cache_home:-...}` below is belt-and-suspenders only — Source::get already
-# filters out an empty value into None, which the Rust-side preflight refuses on — never a
-# real fallback path in production. A read or write this box's store refuses degrades to a
+# bead). An empty cache_home (an EC2 image) is read from the image's own record, never
+# defaulted. A read or write this box's store refuses degrades to a
 # cache miss, never a build failure (sccache's own RemoteStorage tolerates both) — so an
 # unreachable store costs speed, not a round.
-export CARGO_HOME="${cache_home:-$HOME/.cargo}"
-mkdir -p "$CARGO_HOME/bin"
+if [ -z "$cache_home" ]; then
+    cache_home=$(sed -n 's/^CARGO_HOME=//p' /etc/spira-round-ami.env 2>/dev/null | head -n1)
+    if [ -z "$cache_home" ]; then
+        echo "round-vm: no cache home given and this image records none (/etc/spira-round-ami.env); rebuild the round image" >&2
+        exit 5
+    fi
+fi
+export CARGO_HOME="$cache_home"
 export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
+if [ ! -x "$RUSTC_WRAPPER" ]; then
+    echo "round-vm: sccache is missing on this VM: $RUSTC_WRAPPER" >&2
+    exit 5
+fi
 export SCCACHE_IGNORE_SERVER_IO_ERROR=1
 export SCCACHE_WEBDAV_ENDPOINT="http://${host_addr}:9431"
 export SCCACHE_WEBDAV_KEY_PREFIX="/"
@@ -510,6 +518,12 @@ pub const LAUNCHER_ENV: &str = "round-launcher.env";
 
 /// Where REMOTE_SCRIPT stages the round's executables, relative to the VM user's home.
 pub const REMOTE_BINS: &str = "round-bins/";
+
+/// The Proxmox template's cache home is `SPIRA_ROUND_VM_CACHE_HOME`; an EC2 image records its
+/// own, which the VM reads, so the template's path is never sent to it.
+pub(crate) fn job_cache_home(ec2: bool, configured: Option<&str>) -> Option<String> {
+    if ec2 { None } else { configured.map(str::to_string) }
+}
 
 pub fn remote_command(job: &BatchJob) -> String {
     let args = [
@@ -1262,7 +1276,7 @@ fn on_vm_run(
         suites: args.suites.clone(),
         maxpar,
         toolchain: args.toolchain.clone(),
-        cache_home: cfg.cache_home.clone(),
+        cache_home: job_cache_home(crate::ec2::is_ec2_handle(&vm.handle), cfg.cache_home.as_deref()),
         testenv_registry: cfg.testenv_registry.clone(),
         setup_alarm_secs: cfg.setup_alarm_secs,
         cap_secs: cfg.cap_secs,
@@ -1711,7 +1725,7 @@ mod tests {
         // sp-xjnzl: CARGO_HOME, RUSTC_WRAPPER and the webdav endpoint must all be set
         // BEFORE the launcher's first `cargo build` — that build, not just testenv's
         // in-place one, is the one the original fault actually hit.
-        let cache_home = REMOTE_SCRIPT.find("export CARGO_HOME=\"${cache_home:-$HOME/.cargo}\"").expect("CARGO_HOME comes from the operator's own env (cache_home), never a hardcoded literal — a literal names one operator's box");
+        let cache_home = REMOTE_SCRIPT.find("export CARGO_HOME=\"$cache_home\"").expect("CARGO_HOME comes from the operator's own env (cache_home), never a hardcoded literal — a literal names one operator's box");
         let wrapper = REMOTE_SCRIPT.find("export RUSTC_WRAPPER=\"$CARGO_HOME/bin/sccache\"").expect("RUSTC_WRAPPER set outright, by absolute path");
         let endpoint = REMOTE_SCRIPT.find("export SCCACHE_WEBDAV_ENDPOINT=\"http://${host_addr}:9431\"").expect("the webdav endpoint reuses the VM's own host_addr, the same address the mirror already uses");
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
@@ -1721,6 +1735,16 @@ mod tests {
         // neither replaces the other.
         assert!(REMOTE_SCRIPT.contains("$CARGO_HOME/bin:$HOME/.cargo/bin:"));
         assert!(!REMOTE_SCRIPT.contains("/home/"), "no literal home directory — cache_home is an operator-supplied argument, not a hardcoded path");
+    }
+
+    #[test]
+    fn an_ec2_vm_never_gets_the_templates_cache_home() {
+        assert_eq!(job_cache_home(true, Some("/tmpl/.cargo")), None);
+        assert_eq!(job_cache_home(false, Some("/tmpl/.cargo")), Some("/tmpl/.cargo".to_string()));
+        let at = REMOTE_SCRIPT.find("/etc/spira-round-ami.env").expect("the script reads the image's own record");
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let guard = REMOTE_SCRIPT.find("sccache is missing on this VM").expect("a missing sccache is named before the build");
+        assert!(at < guard && guard < build);
     }
 
     fn sh(home: &Path, script: &str) -> std::process::Output {
