@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=statute
+DOC=WHERE THE STATUTES ARE READ FROM. One <slug>.txt per statute, written by rule.sh enact|retire.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE STATUTES ARE READ FROM. rule.sh enact|retire mirror the whole book here, one
+    # `<slug>.txt` per statute, and every read (show, list, the session injection) uses this
+    # directory and never the store, so a slow or stopped store cannot make law unreadable.
+    : "${SPIRA_STATUTE_DIR:=$SPIRA_RUN/statutes}"
+SPIRA_CONF_DEFAULT_EOF

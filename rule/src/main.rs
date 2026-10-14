@@ -49,7 +49,8 @@ fn main() {
     // but test-render-memories.sh's seam cases deliberately never set one. SPIRA_DB is a
     // registered config key (spira/conf.d) — resolved only for the commands that need it, via
     // the one source of config, never a process-environment read.
-    let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "list" | "show" | "audit");
+    let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "audit");
+    let reads_book = matches!(cmd.as_str(), "list" | "show");
     let db = if needs_db {
         match spira_config::process::cfg("SPIRA_DB") {
             Ok(v) => v,
@@ -58,6 +59,8 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    } else if reads_book {
+        spira_config::process::cfg("SPIRA_DB").unwrap_or_default()
     } else {
         String::new()
     };
@@ -108,6 +111,35 @@ fn memories_json(db: &str) -> Result<BTreeMap<String, serde_json::Value>, String
         ));
     }
     Ok(serde_json::from_str(&stdout).unwrap_or_default())
+}
+
+fn statute_dir() -> Result<std::path::PathBuf, String> {
+    spira_config::process::cfg("SPIRA_STATUTE_DIR")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "SPIRA_STATUTE_DIR is not resolvable from spira_config".to_string())
+}
+
+/// Reads of the book come from the on-disk mirror. Only a book never mirrored falls back to
+/// the store, and that read then fills the mirror so the next one does not need it.
+fn read_book(db: &str) -> Result<BTreeMap<String, serde_json::Value>, String> {
+    let dir = statute_dir()?;
+    if let Some(book) = rule::mirror::read(&dir) {
+        return Ok(book);
+    }
+    if !Path::new(&format!("{db}/.beads")).is_dir() {
+        return Err(format!("rule: no statute mirror in {} and {db} has no .beads — refusing to guess a database", dir.display()));
+    }
+    let book = memories_json(db)?;
+    let _ = rule::mirror::sync(&dir, &book);
+    Ok(book)
+}
+
+/// Mirrors `book`; a failure is the caller's to roll back, because a statute in the store
+/// that readers cannot see is not in force.
+fn mirror_book(book: &BTreeMap<String, serde_json::Value>) -> Result<(), String> {
+    rule::mirror::sync(&statute_dir()?, book).map_err(|e| format!("rule: statute mirror not written: {e}"))
 }
 
 /// `SPIRA_MEMORIES_CACHE`, a registered config key (spira/conf.d) — the one source of config,
@@ -161,13 +193,13 @@ fn synth(hook: &str) -> bool {
 
 /// Puts the book back as it was before a write whose page could not be regenerated:
 /// the prior text, or no key at all.
-fn rollback(db: &str, key: &str, prior: Option<&str>) -> bool {
+fn rollback(db: &str, key: &str, prior: Option<&str>, before: &BTreeMap<String, serde_json::Value>) -> bool {
     let (code, _, _) = match prior {
         Some(text) => run_bd(db, &["remember", "--key", key, text]),
         None => run_bd(db, &["forget", key]),
     };
     rm_memories_cache();
-    code == 0
+    code == 0 && mirror_book(before).is_ok()
 }
 
 /// Commits the `SPIRA_STATUTE_PAGE` page through `<home>/wiki-commit.sh`, immediately after
@@ -218,9 +250,20 @@ fn finish_write(
     hook: &str,
     verb: &str,
     key: &str,
-    prior: Option<&str>,
+    before: &BTreeMap<String, serde_json::Value>,
+    after: &BTreeMap<String, serde_json::Value>,
     live_line: &str,
 ) -> i32 {
+    let prior = before.get(key).and_then(|v| v.as_str());
+    if let Err(e) = mirror_book(after) {
+        eprintln!("{e}");
+        if rollback(db, key, prior, before) {
+            eprintln!("rule: {verb} of {key} rolled back, nothing written.");
+        } else {
+            eprintln!("rule: the rollback of {key} failed too — run `rule.sh {verb} {key}` again once the mirror is writable.");
+        }
+        return 1;
+    }
     if synth(hook) {
         println!();
         println!("{live_line}");
@@ -231,7 +274,7 @@ fn finish_write(
             _ => println!("{msg}"),
         }
         0
-    } else if rollback(db, key, prior) {
+    } else if rollback(db, key, prior, before) {
         eprintln!("rule: hook '{hook}' failed — wiki page NOT regenerated; {verb} of {key} rolled back, nothing written.");
         1
     } else {
@@ -296,7 +339,6 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         eprintln!("rule: this text is already in force as {existing} — refused, nothing written. Retire or amend {existing} instead.");
         return 1;
     }
-    let prior = before.get(&key).and_then(|v| v.as_str()).map(str::to_string);
     let (code, _, stderr) = run_bd(db, &["remember", "--key", &key, &text]);
     if code != 0 {
         let landed = memories_json(db).map(|m| is_in_force(&m, &key, &text));
@@ -327,7 +369,12 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         &hook,
         "enact",
         &key,
-        prior.as_deref(),
+        &before,
+        &{
+            let mut after = before.clone();
+            after.insert(key.clone(), serde_json::Value::String(text.clone()));
+            after
+        },
         "Statute is live in every agent session at its next summon.",
     )
 }
@@ -471,7 +518,6 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         Ok(h) => h,
         Err(e) => return refuse_hook(&e),
     };
-    let prior = memories.get(&key).and_then(|v| v.as_str()).map(str::to_string);
 
     let (code, _, stderr) = run_bd(db, &["forget", &key]);
     if code != 0 {
@@ -487,13 +533,18 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         &hook,
         "retire",
         &key,
-        prior.as_deref(),
+        &memories,
+        &{
+            let mut after = memories.clone();
+            after.remove(&key);
+            after
+        },
         "Retired. Do not leave a retired statute standing with a correction attached —\nthat is the same defect as a correction banner on a stale page.",
     )
 }
 
 fn cmd_list(db: &str) -> i32 {
-    match memories_json(db) {
+    match read_book(db) {
         Ok(m) => {
             print!("{}", list_body(&m));
             0
@@ -511,19 +562,23 @@ fn cmd_show(db: &str, rest: &[String]) -> i32 {
         return 1;
     }
     let key = slugify(&rest[0]);
-    let (code, stdout, stderr) = run_bd(db, &["recall", &key]);
-    if code != 0 {
-        let msg = if stderr.trim().is_empty() {
-            stdout.trim()
-        } else {
-            stderr.trim()
-        };
-        eprintln!("rule: {msg}");
-        eprintln!("rule: `rule.sh list` shows what is in force");
-        return 1;
+    match read_book(db) {
+        Ok(book) => match book.get(&key).and_then(|v| v.as_str()) {
+            Some(text) => {
+                println!("{}", text.trim_end_matches('\n'));
+                0
+            }
+            None => {
+                eprintln!("rule: no statute '{key}'");
+                eprintln!("rule: `rule.sh list` shows what is in force");
+                1
+            }
+        },
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
     }
-    println!("{stdout}");
-    0
 }
 
 // =========================================================================================
@@ -588,6 +643,12 @@ fn epoch_secs(t: SystemTime) -> i64 {
 /// or present but empty once read — falls through to [`fetch_memories_json`], and a
 /// non-empty result only is written back.
 fn memories_json_cached() -> Result<String, String> {
+    let seam = std::env::var("SPIRA_MEMORIES_CMD").is_ok_and(|c| !c.is_empty());
+    if !seam {
+        if let Some(book) = statute_dir().ok().and_then(|d| rule::mirror::read(&d)) {
+            return serde_json::to_string(&book).map_err(|e| e.to_string());
+        }
+    }
     let cache = memories_cache_path();
     // SPIRA_MEMORIES_CACHE_AGE is a registered config key (spira/conf.d) — the one source of
     // config; no crate-local default on it.
@@ -604,6 +665,11 @@ fn memories_json_cached() -> Result<String, String> {
     }
     if mem_json.is_empty() {
         mem_json = fetch_memories_json();
+        if !seam {
+            if let (Ok(serde_json::Value::Object(o)), Ok(dir)) = (serde_json::from_str(&mem_json), statute_dir()) {
+                let _ = rule::mirror::sync(&dir, &o.into_iter().collect());
+            }
+        }
         if let Some(path) = cache.as_deref() {
             if !mem_json.is_empty() {
                 if let Some(parent) = Path::new(path).parent() {

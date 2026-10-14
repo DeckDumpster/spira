@@ -89,3 +89,4 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.round_vm_ec2_probe_deadline" = 60
 "spira.queue_capacity_backoff_min" = "300"
 "spira.queue_capacity_backoff_max" = "3600"
+"spira.statute_dir" = ""
