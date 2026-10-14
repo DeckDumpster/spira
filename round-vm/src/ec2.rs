@@ -350,7 +350,6 @@ impl AwsCli {
             "--user-data".into(), format!("file://{user_data_file}"),
             "--tag-specifications".into(),
             format!("ResourceType=instance,Tags=[{{Key={ok},Value={ov}}},{{Key={TAG_KEY},Value={handle}}},{{Key=Name,Value={name}}}]"),
-            "--tag-specifications".into(),
             format!("ResourceType=volume,Tags=[{{Key={ok},Value={ov}}}]"),
             "--query".into(), "Instances[0].InstanceId".into(),
             "--output".into(), "text".into(),
@@ -599,6 +598,10 @@ mod tests {
         assert!(j.contains("{Key=spira-round-vm,Value=ec2-a},{Key=Name,Value=round-ec2-a}]"), "{j}");
         assert!(j.contains("ResourceType=instance,Tags=[{Key=spill:owner,Value=round},"), "{j}");
         assert!(j.contains("ResourceType=volume,Tags=[{Key=spill:owner,Value=round}]"), "{j}");
+        let flags: Vec<usize> = a.iter().enumerate().filter(|(_, s)| *s == "--tag-specifications").map(|(i, _)| i).collect();
+        assert_eq!(flags.len(), 1, "the AWS CLI keeps only the last repeat of an option: {j}");
+        assert!(a[flags[0] + 1].starts_with("ResourceType=instance,"), "{j}");
+        assert!(a[flags[0] + 2].starts_with("ResourceType=volume,"), "{j}");
         assert!(j.contains("--instance-initiated-shutdown-behavior terminate"), "{j}");
         assert!(j.contains("--security-group-ids sg-1") && j.contains("--iam-instance-profile Name=ssm"), "{j}");
         assert!(!j.contains("tskey"), "the auth key stays in the user-data file, never in argv");
