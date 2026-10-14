@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::provider::{vm_name, Provider};
+use crate::provider::{vm_name, Provider, Timing};
 use crate::schema::now;
 
 pub const TAG_KEY: &str = "spira-round-vm";
@@ -60,6 +60,8 @@ pub fn select_image(images: &[Image], expected: &str) -> Result<String, String> 
 pub trait Ec2Api {
     /// Launches one instance of `ami` tagged `TAG_KEY=handle`, `Name=name`; its instance id.
     fn run(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String>;
+    /// `run` with the same argv under `--dry-run`: Ok only when AWS would have launched it.
+    fn run_dry(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<(), String>;
     /// Every available image tagged as a round image, with its recipe-sha.
     fn images(&self) -> Result<Vec<Image>, String>;
     /// The live instance tagged with `handle`; None once it is terminated or never existed.
@@ -173,6 +175,41 @@ impl<A: Ec2Api> Ec2<A> {
         let id = select_image(&self.api.images()?, &self.recipe_sha)?;
         *g = Some(id.clone());
         Ok(id)
+    }
+
+    /// The production launch, asked of AWS with `--dry-run`: no instance, no cost.
+    pub fn probe_dry(&self) -> Result<(), String> {
+        let handle = self.next_id()?;
+        let ami = self.image().map_err(|e| format!("image selection: {e}"))?;
+        self.api.run_dry(&ami, &handle, &vm_name(&handle), &user_data(&self.tailscale_key, &vm_name(&handle))).map_err(|e| format!("dry-run launch: {e}"))
+    }
+
+    /// Launches one instance through the production path with no local fallback, waits for SSM to
+    /// run `true` on it, terminates it and confirms it is gone. Every failure names its step and
+    /// still terminates what was launched.
+    pub fn probe(&self, tries: u32, poll: Duration) -> Result<(), String> {
+        let handle = self.next_id()?;
+        self.clone_to(&handle, &vm_name(&handle)).map_err(|e| format!("launch: {e}"))?;
+        let mut step = Err("ssm: never answered".to_string());
+        for i in 0..tries.max(1) {
+            step = match self.guest_exec(&handle, &["true"]) {
+                Ok(0) => Ok(()),
+                Ok(rc) => Err(format!("ssm: `true` exited {rc}")),
+                Err(e) => Err(format!("ssm: {e}")),
+            };
+            if step.is_ok() || i + 1 == tries {
+                break;
+            }
+            std::thread::sleep(poll);
+        }
+        let gone = crate::provider::destroy_verified(self, &handle, Timing { boot_tries: 1, poll, gone_tries: tries.max(1) })
+            .map_err(|e| format!("terminate: {e}"));
+        match (step, gone) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(a), Ok(())) => Err(a),
+            (Ok(()), Err(b)) => Err(b),
+            (Err(a), Err(b)) => Err(format!("{a}; {b}")),
+        }
     }
 
     fn inst(&self, handle: &str) -> Result<Inst, String> {
@@ -367,6 +404,33 @@ impl AwsCli {
         a
     }
 
+    fn dry_flag(&self, mut a: Vec<String>, dry: bool) -> Vec<String> {
+        if dry {
+            a.push("--dry-run".into());
+        }
+        a
+    }
+
+    fn launch(&self, ami: &str, handle: &str, name: &str, user_data: &str, dry: bool) -> Result<String, String> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::create_dir_all(&self.scratch).map_err(|e| format!("{}: {e}", self.scratch.display()))?;
+        let file = self.scratch.join(format!("user-data.{handle}"));
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+        f.write_all(user_data.as_bytes()).map_err(|e| e.to_string())?;
+        let path = file.to_string_lossy();
+        let r = if self.spot_first {
+            self.aws(self.dry_flag(self.run_args(ami, handle, name, &path, true), dry)).or_else(|spot_err| {
+                eprintln!("round-vm: spot launch refused ({spot_err}); falling back to on-demand");
+                self.aws(self.dry_flag(self.run_args(ami, handle, name, &path, false), dry))
+            })
+        } else {
+            self.aws(self.dry_flag(self.run_args(ami, handle, name, &path, false), dry))
+        };
+        let _ = std::fs::remove_file(&file);
+        r.map(|s| s.trim().to_string())
+    }
+
     fn describe(&self, handle: Option<&str>) -> Result<Vec<Inst>, String> {
         let tag = match handle {
             Some(h) => format!("Name=tag:{TAG_KEY},Values={h}"),
@@ -379,6 +443,16 @@ impl AwsCli {
             "--output".into(), "json".into(),
         ])?;
         parse_instances(&out)
+    }
+}
+
+/// A dry-run RunInstances succeeds by failing with `DryRunOperation`; any other error, or an
+/// instance actually launched, is a fault.
+pub fn dry_run_verdict(r: Result<String, String>) -> Result<(), String> {
+    match r {
+        Err(e) if e.contains("DryRunOperation") => Ok(()),
+        Err(e) => Err(e),
+        Ok(id) => Err(format!("--dry-run launched instance {id}")),
     }
 }
 
@@ -395,23 +469,11 @@ impl Ec2Api for AwsCli {
     }
 
     fn run(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        std::fs::create_dir_all(&self.scratch).map_err(|e| format!("{}: {e}", self.scratch.display()))?;
-        let file = self.scratch.join(format!("user-data.{handle}"));
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-        f.write_all(user_data.as_bytes()).map_err(|e| e.to_string())?;
-        let path = file.to_string_lossy();
-        let r = if self.spot_first {
-            self.aws(self.run_args(ami, handle, name, &path, true)).or_else(|spot_err| {
-                eprintln!("round-vm: spot launch refused ({spot_err}); falling back to on-demand");
-                self.aws(self.run_args(ami, handle, name, &path, false))
-            })
-        } else {
-            self.aws(self.run_args(ami, handle, name, &path, false))
-        };
-        let _ = std::fs::remove_file(&file);
-        r.map(|s| s.trim().to_string())
+        self.launch(ami, handle, name, user_data, false)
+    }
+
+    fn run_dry(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<(), String> {
+        dry_run_verdict(self.launch(ami, handle, name, user_data, true))
     }
 
     fn find(&self, handle: &str) -> Result<Option<Inst>, String> {
@@ -661,6 +723,38 @@ mod tests {
 
     fn spec() -> ProvisionSpec<'static> {
         ProvisionSpec { iface: "ens18", ssh_user: "root", pubkey: "ssh-ed25519 AAAA host", timing: T }
+    }
+
+    #[test]
+    fn dry_run_succeeds_only_on_dryrunoperation() {
+        let ok = "aws ec2: An error occurred (DryRunOperation) when calling the RunInstances operation: Request would have succeeded, but DryRun flag is set.";
+        assert_eq!(dry_run_verdict(Err(ok.into())), Ok(()));
+        let denied = "aws ec2: An error occurred (UnauthorizedOperation) when calling the RunInstances operation: not authorized";
+        assert_eq!(dry_run_verdict(Err(denied.into())).unwrap_err(), denied);
+        assert!(dry_run_verdict(Ok("i-1".into())).unwrap_err().contains("launched instance i-1"));
+    }
+
+    #[test]
+    fn probe_dry_launches_nothing_and_names_the_failing_step() {
+        let d = TempDir::new();
+        let fake = FakeEc2::default();
+        let p = Ec2::new(fake.clone(), &config(&d)).unwrap();
+        p.probe_dry().unwrap();
+        assert!(fake.ids().is_empty());
+        fake.fail_run();
+        assert!(p.probe_dry().unwrap_err().contains("dry-run launch: fake run-instances refused"));
+    }
+
+    #[test]
+    fn probe_launches_runs_true_terminates_and_confirms_gone() {
+        let d = TempDir::new();
+        let fake = FakeEc2::default();
+        let p = Ec2::new(fake.clone(), &config(&d)).unwrap();
+        p.probe(2, Duration::ZERO).unwrap();
+        assert_eq!(fake.scripts(), ["'true'"]);
+        assert!(fake.ids().is_empty(), "{:?}", fake.ids());
+        fake.fail_run();
+        assert!(p.probe(2, Duration::ZERO).unwrap_err().starts_with("launch: "));
     }
 
     #[test]

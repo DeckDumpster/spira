@@ -234,6 +234,12 @@ its instance exists and leased on success, so G2 holds. It starts no local backg
 `SPIRA_ROUND_VM_SPILL=ec2-always` skips the rule: every pass leases on EC2 first, whatever the pool
 or the pressure reading; only a failed EC2 acquire falls back to local, and the lease event says why.
 
+`SPIRA_ROUND_VM_SPILL=ec2-only` is `ec2-always` with no fallback: a failed EC2 acquire (or a provider
+that cannot start) is the pass's error, never a local lease. `round-vm ec2-probe` acquires one
+instance through the production launch path, waits for SSM to run `true` on it, terminates it and
+confirms it gone; `--dry-run` issues the same RunInstances under `--dry-run` and passes only on
+`DryRunOperation`. Either exits non-zero naming the failing step and the AWS error.
+
 Keys (round-vm's own, read from the environment): `SPIRA_ROUND_VM_EC2_PROFILE`, `_REGION`, `_AMI`,
 `_INSTANCE_TYPE` (c7i.8xlarge, spot first, on-demand fallback; `_MARKET=on-demand` skips spot), `_SUBNET`, `_SECURITY_GROUP`, `_INSTANCE_PROFILE` (SSM),
 `_TAILSCALE_KEY_FILE`, `_HOST_ADDR` (this host's tailnet address, handed to the instance as the
