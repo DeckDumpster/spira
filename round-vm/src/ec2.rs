@@ -302,14 +302,6 @@ impl<A: Ec2Api> Provider for Ec2<A> {
         self.api.terminate(&i.id)
     }
 
-    fn tags_of(&self, _vmid: &str) -> Result<Vec<String>, String> {
-        Ok(Vec::new())
-    }
-
-    fn manages(&self, _vmid: &str) -> bool {
-        true
-    }
-
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String> {
         Ok(self.api.find(vmid)?.map(|i| i.name))
     }

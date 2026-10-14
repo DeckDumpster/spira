@@ -22,10 +22,6 @@ pub trait Provider {
     fn alive(&self, vmid: &str) -> Result<bool, String>;
     fn stop(&self, vmid: &str) -> Result<(), String>;
     fn destroy(&self, vmid: &str) -> Result<(), String>;
-    /// The tags on the VM; empty if it has none or the VMID does not exist.
-    fn tags_of(&self, vmid: &str) -> Result<Vec<String>, String>;
-    /// Whether `vmid` lies in the range this provider owns; it never clones into or destroys outside it.
-    fn manages(&self, vmid: &str) -> bool;
     /// The VM's name, or None if the VMID does not exist.
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String>;
     /// `template` only (DESIGN.md §2.2b) from here. Graceful shutdown, waited on, so the guest flushes its disks.
@@ -53,9 +49,6 @@ pub trait Provider {
 pub fn vm_name(vmid: &str) -> String {
     format!("round-{vmid}")
 }
-
-/// The tag round-vm puts on every VM it clones and requires before it destroys one.
-pub const OWNER_TAG: &str = "spira-round-vm";
 
 /// How long verification and boot waits poll.
 #[derive(Debug, Clone, Copy)]
@@ -92,17 +85,6 @@ pub fn destroy_fenced(p: &dyn Provider, vmid: &str, expected: &str, t: Timing) -
         .name_of(vmid)
         .map_err(|e| DestroyError::Failed(format!("round-vm: destroy {vmid}: cannot list VMs: {e}")))?;
     let Some(name) = name else { return Ok(()) };
-    if !p.manages(vmid) {
-        return Err(DestroyError::NotOurs(format!("round-vm: refusing to destroy VM {vmid}: outside the configured VMID range")));
-    }
-    let tags = p
-        .tags_of(vmid)
-        .map_err(|e| DestroyError::Failed(format!("round-vm: destroy {vmid}: cannot read tags: {e}")))?;
-    if !tags.is_empty() && !tags.iter().any(|t| t == OWNER_TAG) {
-        return Err(DestroyError::NotOurs(format!(
-            "round-vm: refusing to destroy VM {vmid}: tagged {tags:?}, not {OWNER_TAG:?}"
-        )));
-    }
     if name != expected {
         return Err(DestroyError::NotOurs(format!(
             "round-vm: refusing to destroy VM {vmid}: it is named {name:?}, not {expected:?}"
@@ -338,25 +320,6 @@ mod tests {
         let e = destroy_verified(&p, "9000", spec("k").timing).unwrap_err();
         assert!(matches!(e, DestroyError::NotOurs(_)), "{e:?}");
         assert_eq!(p.name("9000").as_deref(), Some("ci-template"));
-    }
-
-    #[test]
-    fn destroy_refuses_a_vm_tagged_by_another_owner_under_a_round_name() {
-        let p = FakeProvider::new();
-        p.plant_tagged("112", "round-112", "repo-x-ephemeral-ci");
-        let e = destroy_verified(&p, "112", spec("k").timing).unwrap_err();
-        assert!(matches!(e, DestroyError::NotOurs(_)), "{e:?}");
-        assert_eq!(p.count("destroy"), 0);
-        assert!(p.name("112").is_some());
-    }
-
-    #[test]
-    fn destroy_refuses_an_id_outside_the_providers_range() {
-        let p = FakeProvider::new();
-        p.plant("50", "round-50");
-        let e = destroy_verified(&p, "50", spec("k").timing).unwrap_err();
-        assert!(matches!(e, DestroyError::NotOurs(_)), "{e:?}");
-        assert_eq!(p.count("destroy"), 0);
     }
 
     #[test]

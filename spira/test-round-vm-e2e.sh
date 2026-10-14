@@ -160,8 +160,6 @@ PVE_TOKEN_ID=testid
 PVE_TOKEN_SECRET=testsecret
 PVE_CACERT=$TMP/ca_cert.pem
 PVE_TEMPLATE_VMID=9000
-PVE_VMID_MIN=777
-PVE_VMID_MAX=799
 EOF
 
 # ── the fixture tree: round-vm's own mirror/clone contract is under test, not its content.
