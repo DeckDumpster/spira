@@ -90,11 +90,11 @@ out="$(WAIT=60 lcb drill)"; rc=$?; wantrc "drill runs once the round closes" 0 $
 wait; echo none > "$TMP/round"
 echo; echo "drill overlapping a run — verifies the previous tarball or defers, never fails:"
 mkdir -p "$TMP/slow"; real_tar="$(command -v tar)"
-printf '#!/bin/sh\ncase "$*" in *-caf*) sleep 4 ;; esac\nexec %s "$@"\n' "$real_tar" > "$TMP/slow/tar"; chmod +x "$TMP/slow/tar"
+printf '#!/bin/sh\ncase "$*" in *-caf*) sleep 25 ;; esac\nexec %s "$@"\n' "$real_tar" > "$TMP/slow/tar"; chmod +x "$TMP/slow/tar"
 prev="$(ls "$RUN"/lc-backup/spira/latest.tar.* 2>/dev/null | head -1)"
 [ -s "$prev" ] && ok "previous tarball exists before the overlapping run" || bad "previous tarball exists before the overlapping run"
 ( PATH="$TMP/slow:$PATH" DBS=spira lcb run >"$TMP/slowrun.out" 2>&1 ) & slowpid=$!
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do ls "$RUN"/lc-backup/spira/latest.tar.*.tmp >/dev/null 2>&1 && break; sleep 0.5; done
+for _ in $(seq 1 120); do ls "$RUN"/lc-backup/spira/latest.tar.*.tmp >/dev/null 2>&1 && break; sleep 0.5; done
 ls "$RUN"/lc-backup/spira/latest.tar.*.tmp >/dev/null 2>&1 && ok "pack is in flight (half-written .tmp present)" || bad "pack is in flight (half-written .tmp present)"
 [ -s "$prev" ] && ok "the previous tarball survives the pack" || bad "the previous tarball survives the pack"
 out="$(DBS=spira lcb drill)"; rc=$?; wantrc "drill during a run does not fail" 0 $rc; want "drill defers to the run" "deferred" "$out"
