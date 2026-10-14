@@ -75,6 +75,8 @@ while IFS=$'\t' read -r id works cmd; do
           if [ "$works" != "-" ]; then
             IFS=',' read -ra _ws <<< "$works"
             for w in "${_ws[@]}"; do
+              # A terminal bead has no ask hold to lift; the machine would record a refusal.
+              case "$(spira-lc state "$w" 2>/dev/null)" in LANDED|SUPERSEDED|DROPPED|DONE) continue ;; esac
               lc_out=$(spira-lc withdraw-ask "$w" claude 2>&1); lc_rc=$?
               case "$lc_rc" in
                 0) echo "    withdrew the ask hold on $w" ;;

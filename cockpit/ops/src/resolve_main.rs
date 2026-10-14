@@ -54,6 +54,11 @@ impl Closer for RealBd {
     }
 
     fn withdraw_ask(&self, work_bead: &str) -> (i32, String) {
+        if let Ok(Some(row)) = spira_config::lc_state::row(work_bead) {
+            if row.terminal() {
+                return (3, String::new());
+            }
+        }
         let mut c = Command::new(spira_config::lc_call::lc_bin());
         c.args(["withdraw-ask", work_bead, "claude"]);
         spira_config::lc_call::run_bounded(c, spira_config::lc_call::LC_TIMEOUT)
