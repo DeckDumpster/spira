@@ -55,8 +55,14 @@ set -uo pipefail
 # checkout that is not it may be tested, landed and read; it may not print into the operator's
 # sessions. Silent, because a second harness is a legitimate thing to have and a warning in
 # every session is the noise this whole file exists to have replaced.
-_prod="$(readlink -f "${SPIRA_PROD:-}" 2>/dev/null || printf '%s' "${SPIRA_PROD:-}")"
-_home="$(readlink -f "${SPIRA_HOME:-}" 2>/dev/null || printf '%s' "${SPIRA_HOME:-}")"
+#
+# AN UNSET PATH IS NEVER RESOLVED. uutils coreutils (Ubuntu 26.04's readlink) answers
+# `readlink -f ''` with the CURRENT DIRECTORY and exit 0, where GNU fails — so an unset
+# SPIRA_PROD became "the harness in force is wherever this hook happened to start", and the
+# hook went silent for a reason that has nothing to do with which harness is in force.
+_canon() { [ -n "$1" ] || return 0; readlink -f "$1" 2>/dev/null || printf '%s' "$1"; }
+_prod="$(_canon "${SPIRA_PROD:-}")"
+_home="$(_canon "${SPIRA_HOME:-}")"
 [ -n "$_prod" ] && [ "$_home" != "$_prod" ] && exit 0
 
 # THE PAYLOAD IS READ ONLY IF SOMETHING SENT ONE. The client pipes a JSON object in; a person

@@ -290,6 +290,14 @@ impl crate::ec2::Ec2Api for FakeEc2 {
         g.insts.push(FakeEc2Inst { id: id.clone(), tag: Some(handle.into()), name: name.into(), launched_at: crate::schema::now() });
         Ok(id)
     }
+    fn run_dry(&self, ami: &str, _handle: &str, _name: &str, _user_data: &str) -> Result<(), String> {
+        let mut g = self.0.lock().unwrap();
+        g.launched_amis.push(format!("dry:{ami}"));
+        if g.fail_run {
+            return Err("fake run-instances refused".into());
+        }
+        Ok(())
+    }
     fn find(&self, handle: &str) -> Result<Option<crate::ec2::Inst>, String> {
         Ok(self.list_tagged()?.into_iter().find(|i| i.handle == handle))
     }

@@ -211,7 +211,9 @@ if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 # cache miss, never a build failure (sccache's own RemoteStorage tolerates both) — so an
 # unreachable store costs speed, not a round.
 if [ -z "$cache_home" ]; then
-    cache_home=$(sed -n 's/^CARGO_HOME=//p' /etc/spira-round-ami.env 2>/dev/null | head -n1)
+    # `|| true`: under pipefail a missing record fails the substitution, and set -e then
+    # exits here silently, before the refusal below can name the cause.
+    cache_home=$(sed -n 's/^CARGO_HOME=//p' /etc/spira-round-ami.env 2>/dev/null | head -n1 || true)
     if [ -z "$cache_home" ]; then
         echo "round-vm: no cache home given and this image records none (/etc/spira-round-ami.env); rebuild the round image" >&2
         exit 5
@@ -1961,6 +1963,24 @@ mod tests {
         assert_eq!(out.status.code(), Some(127));
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("cargo not found"), "{stderr}");
+    }
+
+    #[test]
+    fn an_image_without_a_cache_home_record_is_refused_out_loud() {
+        // The block runs under REMOTE_SCRIPT's own `set -euo pipefail`: a `sed` of a missing
+        // /etc/spira-round-ami.env inside `$(...)` failed the assignment, and the script
+        // exited 2 with nothing on stderr — a round that died between conf-gen and the build
+        // without a word (seen on an EC2 image that predates the record).
+        if std::path::Path::new("/etc/spira-round-ami.env").exists() {
+            return; // an image that HAS the record cannot show its absence
+        }
+        let start = REMOTE_SCRIPT.find("if [ -z \"$cache_home\" ]; then").expect("the cache-home block");
+        let end = REMOTE_SCRIPT.find("export CARGO_HOME=\"$cache_home\"").expect("CARGO_HOME export");
+        let block = format!("set -euo pipefail\ncache_home=\"\"\n{}", &REMOTE_SCRIPT[start..end]);
+        let out = std::process::Command::new("bash").arg("-c").arg(&block).env("PATH", "/usr/bin:/bin").output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(5), "{stderr}");
+        assert!(stderr.contains("this image records none"), "{stderr}");
     }
 
     #[test]

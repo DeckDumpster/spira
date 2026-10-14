@@ -419,8 +419,22 @@ testkit::write_exe(
             spira_repo: String::new(),
             spira_conf: None,
         };
+        // The binding apply_mouse_mode replaces is INSTALLED here, never read from this tmux's
+        // own defaults: tmux 3.3 ships it, but newer tmux (the EC2 round image's) already
+        // dropped alternate_on, which failed this control on a host whose tmux is newer.
+        assert!(tmux.run_ok(&[
+            "bind-key",
+            "-T",
+            "root",
+            "MouseDrag1Pane",
+            "if-shell",
+            "-F",
+            "#{||:#{pane_in_mode},#{mouse_any_flag},#{alternate_on}}",
+            "send-keys -M",
+            "copy-mode -M",
+        ]));
         let before = tmux.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
-        assert!(before.contains("alternate_on"), "control: default binding must test alternate_on: {before}");
+        assert!(before.contains("alternate_on"), "control: the installed binding must test alternate_on: {before}");
         Layout { tmux, conf }.apply_mouse_mode();
         let t = Tmux::with_bin(wrap.to_string_lossy().to_string());
         let after = t.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();

@@ -860,6 +860,15 @@ impl Driver<'_> {
             s("--name"),
             name.clone(),
             s("--systemd=true"),
+            // THE CALLER'S LOGINUID IS NOT THE CONTAINER'S BUSINESS. podman 4.x (the EC2 round
+            // image's) hands the container the loginuid of whoever ran it — 0 under an ssh
+            // session — and changing a set loginuid needs CAP_AUDIT_CONTROL, which the default
+            // set lacks. pam_loginuid in user@1001's PAM stack then fails the session
+            // (224/PAM: "Error writing /proc/self/loginuid: Operation not permitted") and
+            // there is no `systemctl --user`. Seen on a round instance; the same container
+            // started from a service (loginuid unset) or with this capability came up.
+            s("--cap-add"),
+            s("AUDIT_CONTROL"),
             s("--pids-limit"),
             pids_limit.to_string(),
             s("--network"),

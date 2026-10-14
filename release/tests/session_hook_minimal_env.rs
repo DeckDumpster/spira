@@ -13,10 +13,10 @@
 //! dying. `session.sh` is not one of those callers, but it is not guarded by `set -e` either,
 //! so it was never going to die from that `return` — it just carries on with every derived
 //! key unset, reaches its own `WATCHD status` call with `watchd` not on the bare `PATH`
-//! either, and takes the "no watchers configured" empty-output exit built for a harness
-//! nobody has turned on (session.sh's own "IT ALWAYS EXITS 0" rule). So the bare form no
-//! longer dies with a visible hook error; it goes quiet instead — rc 0, no output — which is
-//! what this test now has to demonstrate instead of a nonzero exit.
+//! either, and fails that read (session.sh's own "IT ALWAYS EXITS 0" rule). So the bare form no
+//! longer dies with a visible hook error; it exits 0 without the watcher table — since
+//! sp-zsi1n saying "status unavailable" in its place — which is what this test now has to
+//! demonstrate instead of a nonzero exit.
 //!
 //! Builds a fixture release root: `bin/spira-config` (a real build — conf.sh's own
 //! `spira-config convert`/`export` calls need it, and that dependency is the whole defect),
@@ -203,5 +203,14 @@ fn the_old_bare_path_form_is_the_regression_this_replaces() {
     let bare_command = release_root.join("spira/hooks/session.sh").display().to_string();
     let (rc, out) = run_under_minimal_env(&bare_command, "");
     assert_eq!(rc, 0, "a SessionStart hook exits 0 even for this failure shape (session.sh's own rule) — a nonzero code here would be a different bug, not this one; got rc={rc}, output:\n{out}");
-    assert!(out.trim().is_empty(), "the bare, unwrapped registration must produce no watcher output under a minimal env — if it printed the watcher line the wrapped command does, this test no longer demonstrates the defect it exists to guard against; got output:\n{out}");
+    // What the bare form costs is the watcher TABLE ("re-attach with", one row per watcher):
+    // with no spira-config and no watchd on a bare PATH it cannot read one, and session.sh
+    // says so (sp-zsi1n's "status unavailable" line) instead of printing it. This used to
+    // assert EMPTY output, which held only on hosts whose `readlink -f ''` answers the cwd
+    // (uutils, Ubuntu 26.04): an unset SPIRA_PROD then read as "another harness is in force"
+    // and the hook exited silently — passing this test for a reason unrelated to the defect.
+    // On GNU readlink (the EC2 round image) the same command printed the unavailable line
+    // and the old assertion failed. Both are now pinned, on every host.
+    assert!(!out.contains("re-attach with"), "the bare, unwrapped registration must not produce the watcher table under a minimal env — if it did, this test no longer demonstrates the defect it exists to guard against; got output:\n{out}");
+    assert!(out.contains("status unavailable (watchd status failed)"), "the bare registration must say it could not read watcher status (session.sh's own failure line), not go silent; got output:\n{out}");
 }

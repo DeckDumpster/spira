@@ -26,6 +26,8 @@ pub struct Attempt {
 pub struct SpillPlan {
     pub ec2: std::sync::Arc<dyn Provider>,
     pub rule: Rule,
+    /// `ec2-only`: a failed EC2 acquire is the pass's error, never a local lease.
+    pub only: bool,
     pub pressure: Box<dyn Fn() -> Option<f64>>,
     pub timing: Timing,
 }
@@ -241,6 +243,7 @@ impl Pool {
                 if let Place::Ec2(reason) = decide(&plan.rule, wait_since.map(|t| t.elapsed()), (plan.pressure)()) {
                     match self.spill(&attempt, plan, owner, holder, &reason) {
                         Ok(vm) => return Ok((vm, AcquireMode::Cold)),
+                        Err(e) if plan.only => return Err(format!("round-vm: acquire: EC2 launch failed ({reason}), placement ec2-only has no local fallback: {e}")),
                         Err(e) => {
                             eprintln!("round-vm: spill to EC2 failed, staying local: {e}");
                             fallback = format!("; ec2 unavailable ({reason}): {e}");
@@ -1271,6 +1274,7 @@ mod tests {
         let plan = SpillPlan {
             ec2: ec2.clone(),
             rule: Rule { wait: Duration::ZERO, io_full_avg60: 30.0, always: false },
+            only: false,
             pressure: Box::new(move || pressure),
             timing: T,
         };
@@ -1353,6 +1357,35 @@ mod tests {
         assert!(!crate::ec2::is_ec2_handle(&vm.handle));
         let why = lease_reason(&pl, &vm.handle);
         assert!(why.contains("provider: proxmox") && why.contains("ec2 unavailable (placement ec2-always)"), "{why}");
+    }
+
+    #[test]
+    fn ec2_only_places_on_ec2_and_a_failed_acquire_is_an_error_never_local() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let only = |p: &FakeProvider, e: Arc<dyn Provider>| {
+            let mut a = spilling(p, e, None);
+            let plan = a.spill.as_mut().unwrap();
+            plan.rule.always = true;
+            plan.only = true;
+            a
+        };
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(only(&fp, ec2.clone()));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle));
+
+        let d = TempDir::new();
+        let fake = crate::testutil::FakeEc2::default();
+        fake.fail_run();
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(only(&fp, ec2.clone()));
+        let err = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap_err();
+        assert!(err.contains("ec2-only") && err.contains("fake run-instances refused"), "{err}");
+        let s = read_state(&pl.state_file()).unwrap();
+        assert!(s.ready.is_none() && s.leases.is_empty() && s.spilled.is_empty(), "nothing local was leased or started");
     }
 
     #[test]
