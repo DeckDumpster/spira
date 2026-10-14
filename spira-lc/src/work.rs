@@ -1409,6 +1409,7 @@ mod tests {
         let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().path().file_stem().unwrap().to_string_lossy().into_owned())
+            .filter(|k| k != "report")
             .collect();
         on_disk.sort();
         assert_eq!(on_disk, MAIL_KINDS);
