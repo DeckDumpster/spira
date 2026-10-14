@@ -50,6 +50,14 @@ pub fn real_attempt() -> Result<Attempt, String> {
     })
 }
 
+/// The tailnet address a spilled VM dials, when spill is on: the mirror must listen there too.
+fn spill_listen() -> Vec<String> {
+    if !matches!(crate::config::declared("SPIRA_ROUND_VM_SPILL").as_deref(), Some("ec2" | "ec2-always" | "ec2-only")) {
+        return vec![];
+    }
+    crate::config::declared("SPIRA_ROUND_VM_EC2_HOST_ADDR").map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).into_iter().collect()
+}
+
 /// The EC2 provider and the spill rule, when `SPIRA_ROUND_VM_SPILL=ec2`. A provider that
 /// cannot start says what is missing and the pool stays local: a half-configured spill must
 /// not take the local rounds down with it.
@@ -286,7 +294,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 sig_pool.release_owned_by(me, &real_attempt);
                 std::process::exit(128 + sig);
             });
-            let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default() };
+            let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default(), also_listen: spill_listen() };
             let remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
             let Some(a) = run_args.as_ref() else { return 2 };
             let env = RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote, record: &crate::run::QueueRecorder };
@@ -309,7 +317,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
 fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool: &Pool) -> i32 {
     use crate::template::{repoint, Record};
     use crate::run::Host;
-    let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default() };
+    let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default(), also_listen: spill_listen() };
     if !host.is_checkout(&a.tree_dir) {
         eprintln!("round-vm template: not a git checkout: {}", a.tree_dir.display());
         return 2;

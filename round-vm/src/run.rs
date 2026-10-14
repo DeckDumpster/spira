@@ -617,8 +617,18 @@ impl Remote for SshRemote {
 pub struct GitHost {
     pub state_dir: PathBuf,
     pub mirror_port: u16,
-    /// The LAN address the VMs reach; the daemon binds only there.
+    /// The LAN address the VMs reach; the daemon binds only there and on `also_listen`.
     pub listen: String,
+    /// Further addresses of this host the daemon binds, e.g. the tailnet one a spilled VM dials.
+    pub also_listen: Vec<String>,
+}
+
+impl GitHost {
+    fn listen_set(&self) -> Vec<&str> {
+        let mut v = vec![self.listen.as_str()];
+        v.extend(self.also_listen.iter().map(String::as_str).filter(|a| !a.is_empty() && *a != self.listen));
+        v
+    }
 }
 
 pub(crate) fn git(args: &[&str]) -> Result<String, String> {
@@ -735,14 +745,15 @@ impl Host for GitHost {
         }
         let out = command("ip").args(["-br", "addr"]).stdin(Stdio::null()).output().map_err(|e| format!("ip -br addr: {e}"))?;
         let addrs = host_addresses(&String::from_utf8_lossy(&out.stdout));
-        if !out.status.success() || !addrs.iter().any(|a| a == &self.listen) {
+        let wanted = self.listen_set();
+        if let Some(gone) = wanted.iter().find(|w| !out.status.success() || !addrs.iter().any(|a| a == *w)) {
             return Err(format!(
-                "{} is not an address of this host (ip -br addr: {}); a pinned round_vm_host_addr no longer names this host — \
+                "{gone} is not an address of this host (ip -br addr: {}); a pinned round_vm_host_addr no longer names this host — \
                  set it to auto, which resolves the address each round",
-                self.listen,
                 addrs.join(" ")
             ));
         }
+        let listen_key = wanted.join(",");
         fs::create_dir_all(&self.state_dir).map_err(|e| e.to_string())?;
         let mirror = self.state_dir.join("mirror.git");
         let m = mirror.to_string_lossy().to_string();
@@ -757,17 +768,19 @@ impl Host for GitHost {
         let addrfile = self.state_dir.join("git-daemon.addr");
         let bound_to = fs::read_to_string(&addrfile).ok().map(|s| s.trim().to_string());
         if running(&pidfile) {
-            if bound_to.as_deref() == Some(self.listen.as_str()) {
+            if bound_to.as_deref() == Some(listen_key.as_str()) {
                 return Ok(());
             }
             stop_mirror(&self.state_dir)?;
         }
         let _ = fs::remove_file(&pidfile);
         let _ = fs::remove_file(&addrfile);
-        let st = command("git")
-            .arg("daemon")
-            .arg("--reuseaddr")
-            .arg(format!("--listen={}", self.listen))
+        let mut daemon = command("git");
+        daemon.arg("daemon").arg("--reuseaddr");
+        for a in &wanted {
+            daemon.arg(format!("--listen={a}"));
+        }
+        let st = daemon
             .arg(format!("--port={}", self.mirror_port))
             .arg(format!("--base-path={}", self.state_dir.display()))
             .arg("--export-all")
@@ -780,7 +793,7 @@ impl Host for GitHost {
             .map_err(|e| format!("git daemon: {e}"))?;
         for _ in 0..20 {
             if running(&pidfile) {
-                return fs::write(&addrfile, &self.listen).map_err(|e| format!("{}: {e}", addrfile.display()));
+                return fs::write(&addrfile, &listen_key).map_err(|e| format!("{}: {e}", addrfile.display()));
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
@@ -2030,9 +2043,9 @@ mod tests {
         }
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let state = d.path().join("state");
-        let no_addr = GitHost { state_dir: state.clone(), mirror_port: port, listen: String::new() };
+        let no_addr = GitHost { state_dir: state.clone(), mirror_port: port, listen: String::new(), also_listen: vec![] };
         assert!(no_addr.prepare_mirror(&tree).is_err(), "no address means no daemon, never every interface");
-        let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into() };
+        let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec![] };
         host.prepare_mirror(&tree).unwrap();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok(), "daemon not listening");
         let old_pid = fs::read_to_string(state.join("git-daemon.pid")).unwrap();
@@ -2043,11 +2056,38 @@ mod tests {
         assert_ne!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon recorded on another address is restarted");
         assert_eq!(fs::read_to_string(state.join("git-daemon.addr")).unwrap(), "127.0.0.1");
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
-        let foreign = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into() };
+        let foreign = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into(), also_listen: vec![] };
         let e = foreign.prepare_mirror(&tree).unwrap_err();
         assert!(e.contains("not an address of this host") && e.contains("set it to auto"), "{e}");
         stop_mirror(&state).unwrap();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener survived teardown");
+    }
+
+    #[test]
+    fn a_mirror_with_a_second_address_binds_both_and_refuses_a_foreign_one() {
+        let d = TempDir::new();
+        let tree = d.path().join("tree");
+        fs::create_dir_all(&tree).unwrap();
+        for a in [vec!["init", "--quiet"], vec!["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", "x"]] {
+            assert!(std::process::Command::new("git").arg("-C").arg(&tree).args(&a).status().unwrap().success());
+        }
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let state = d.path().join("state");
+        let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec!["127.0.0.1".into()] };
+        assert_eq!(host.listen_set(), vec!["127.0.0.1"], "a duplicate address is bound once");
+        let two = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into(), also_listen: vec!["127.0.0.1".into()] };
+        assert_eq!(two.listen_set(), vec!["192.0.2.1", "127.0.0.1"]);
+        let bad = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec!["192.0.2.1".into()] };
+        let e = bad.prepare_mirror(&tree).unwrap_err();
+        assert!(e.starts_with("192.0.2.1 is not an address of this host"), "{e}");
+        let loopback2 = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec!["127.0.0.2".into()] };
+        let r = loopback2.prepare_mirror(&tree);
+        if r.is_ok() {
+            assert!(std::net::TcpStream::connect(("127.0.0.2", port)).is_ok(), "second address not listening");
+            assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
+            assert_eq!(fs::read_to_string(state.join("git-daemon.addr")).unwrap(), "127.0.0.1,127.0.0.2");
+        }
+        stop_mirror(&state).unwrap();
     }
 
     struct FakeHost;
