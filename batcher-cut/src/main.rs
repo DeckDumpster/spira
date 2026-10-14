@@ -1073,6 +1073,7 @@ fn open_round_pr(
     io::write_local_verdict(env_, &repo.name, "green", "");
     println!("{}", opened_event(&prr).text);
     println!("batcher {}: PR {} opened — {} member(s) ({})", repo.name, pr_n, merged.len(), batch_br);
+    let armed = io::forge_pr_arm(repo, &pr_n);
 
     let mut fields = vec![
         ("repo", repo.name.clone()),
@@ -1089,7 +1090,7 @@ fn open_round_pr(
         fields.push(("regreen_seconds", r.to_string()));
     }
     io::tsd_append_round(env_, &fields);
-    Ok(())
+    armed
 }
 
 /// While a batch PR is open the next round is built and proven on that PR's head, from the
@@ -1282,7 +1283,10 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
     let paced = cfg("SPIRA_ROUNDS_PACING")?.trim() == "1";
     let repos: Vec<(String, String)> = reg.all().into_iter().map(|n| { let l = reg.land(&n); (n, l) }).collect();
     let failed = drive_pass(&repos, pass, local_enabled, |name, step| match step {
-        Step::Verdict => settle_batch(&env_, name),
+        Step::Verdict => {
+            let armed = find_repo(&env_, name).and_then(|r| io::forge_arm_queue(&r));
+            settle_batch(&env_, name).and(armed)
+        }
         Step::Cut => {
             let one = Opts { cmd: "cut".into(), repo: name.to_string(), run: o.run.clone(), db: o.db.clone(), home: o.home.clone(), round_vm: o.round_vm.clone(), suites: None, members: None, evidence: None, reds: None, record: None };
             if paced && reg.land(name) == "queue.local" {

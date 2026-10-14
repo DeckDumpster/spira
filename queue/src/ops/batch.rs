@@ -608,8 +608,9 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         undo("open-batch got no PR number");
         return FAIL;
     }
-    if !w.forge.pr_automerge(&c.s.forge, &path, &pr) {
-        w.err(format!("queue.sh open-batch: PR {pr} for {name} is open but auto-merge could not be armed — the verdict pass must land it"));
+    let armed = w.forge.pr_automerge(&c.s.forge, &path, &pr);
+    if !armed {
+        w.err(format!("queue.sh open-batch: PR {pr} for {name} is open but auto-merge could not be armed — the reconciler arms it on the next pass"));
     }
     let opened = w.clock.now();
     let provisional = provisional.iter().filter(|p| members.iter().any(|m| &m.id == *p)).cloned().collect::<Vec<_>>().join(" ");
@@ -643,7 +644,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     let _ = fs::remove_file(c.s.run.join(format!("queue-stuck-{name}")));
     landing_log(&c.s.run, &format!("QUEUE BATCH {opened} repo={name} members={} gate_seconds=0 verdict=green source=open-batch", members.len()));
     w.out(format!("queue.sh open-batch: PR {pr} opened — {} branches ({batch_br})", members.len()));
-    OK
+    if armed { OK } else { FAIL }
 }
 
 /// The bd rows as the JSON array `queue_sort_rows` reads through PRIO_JSON.

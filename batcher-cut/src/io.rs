@@ -1550,8 +1550,7 @@ pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &
     forge_pr_create_on(repo, head, base, title, body, None)
 }
 
-/// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
-fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &str, path: Option<&std::ffi::OsStr>) -> Result<String, String> {
+fn forge_cmd(repo: &Repo, path: Option<&std::ffi::OsStr>) -> std::process::Command {
     // A bare name (the default, `forge`, since sp-yv4b3) is the launcher-PATH program, run
     // directly; a configured SPIRA_FORGE path is run with bash, as batch.sh did.
     let mut cmd = if repo.forge.components().count() == 1 {
@@ -1564,6 +1563,43 @@ fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &s
     if let Some(p) = path {
         cmd.env("PATH", p);
     }
+    cmd
+}
+
+/// Arms auto-merge on a batch PR and requires the forge to have read the request back.
+pub fn forge_pr_arm(repo: &Repo, pr: &str) -> Result<(), String> {
+    forge_pr_arm_on(repo, pr, None)
+}
+
+fn forge_pr_arm_on(repo: &Repo, pr: &str, path: Option<&std::ffi::OsStr>) -> Result<(), String> {
+    let mut cmd = forge_cmd(repo, path);
+    cmd.arg("pr-automerge").arg(&repo.path).arg(pr).arg("merge");
+    let o = cmd.stdin(std::process::Stdio::null()).output().map_err(|e| format!("forge pr-automerge: {e}"))?;
+    if o.status.success() {
+        Ok(())
+    } else {
+        Err(format!("PR {pr} is open but auto-merge could not be armed (forge pr-automerge exited {})", o.status.code().unwrap_or(-1)))
+    }
+}
+
+/// The reconciler: arms every open batch PR found without auto-merge.
+pub fn forge_arm_queue(repo: &Repo) -> Result<(), String> {
+    let mut cmd = forge_cmd(repo, None);
+    cmd.arg("pr-arm-queue").arg(&repo.path).arg("merge");
+    let o = cmd.stdin(std::process::Stdio::null()).output().map_err(|e| format!("forge pr-arm-queue: {e}"))?;
+    for l in String::from_utf8_lossy(&o.stdout).lines() {
+        println!("batcher {}: forge {l}", repo.name);
+    }
+    if o.status.success() {
+        Ok(())
+    } else {
+        Err(format!("forge pr-arm-queue exited {}", o.status.code().unwrap_or(-1)))
+    }
+}
+
+/// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
+fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &str, path: Option<&std::ffi::OsStr>) -> Result<String, String> {
+    let mut cmd = forge_cmd(repo, path);
     cmd.arg("pr-create").arg(&repo.path).arg(head).arg(base).arg(title);
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
@@ -2300,7 +2336,7 @@ mod forge_default_tests {
         testkit::write_exe(
             dir.join("forge"),
             "#!/bin/sh
-case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; *) exit 1 ;; esac
+case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; pr-automerge) [ \"$4\" = merge ] && exit 0; exit 1 ;; *) exit 1 ;; esac
 ",
         );
         let real_path = std::env::var_os("PATH").unwrap_or_default();
@@ -2311,6 +2347,9 @@ case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; *) exit 1 ;; esac
         let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: PathBuf::from("forge"), land: Land::Forge };
         let pr = forge_pr_create_on(&repo, "head", "base", "title", "body", Some(&path)).expect("forge_pr_create should reach the stub");
         assert_eq!(pr, "42");
+        forge_pr_arm_on(&repo, &pr, Some(&path)).expect("a batch PR is armed with the merge method");
+        let bare = Repo { forge: PathBuf::from("forge-missing"), ..repo };
+        assert!(forge_pr_arm_on(&bare, &pr, Some(&path)).is_err(), "an arm failure is an error, not a warning");
     }
 
     fn g(dir: &Path, args: &[&str]) -> String {

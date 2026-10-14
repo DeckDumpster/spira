@@ -57,6 +57,7 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "pr-merge-commit" => pr_merge_commit(gh, repo, arg(args, 0)),
         "pr-red" => pr_red(gh, repo, arg(args, 0)),
         "pr-automerge" => pr_automerge(gh, repo, arg(args, 0), arg(args, 1)),
+        "pr-arm-queue" => pr_arm_queue(gh, repo, arg(args, 0)),
         "check-status" => check_status(gh, proc, repo, workflow, arg(args, 1)),
         "run-id" => run_id(gh, repo, arg(args, 0)),
         "runs-for-branch" => runs_for_branch(gh, repo, workflow, arg(args, 0)),

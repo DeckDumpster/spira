@@ -437,6 +437,7 @@ struct FForge {
     meta: RefCell<String>,
     /// What `fail-lines` answers.
     fails: RefCell<String>,
+    arm_fails: std::cell::Cell<bool>,
 }
 
 impl Forge for FForge {
@@ -446,7 +447,7 @@ impl Forge for FForge {
     }
     fn pr_automerge(&self, _: &Path, _: &Path, pr: &str) -> bool {
         self.calls.borrow_mut().push(format!("pr-automerge {pr}"));
-        true
+        !self.arm_fails.get()
     }
     fn pr_close(&self, _: &Path, _: &Path, pr: &str) {
         self.calls.borrow_mut().push(format!("pr-close {pr}"));
@@ -1637,6 +1638,18 @@ fn open_batch_arms_auto_merge_on_the_pr_it_opens() {
     let create = calls.iter().position(|c| c.starts_with("pr-create")).expect("pr-create");
     let armed = calls.iter().position(|c| c.starts_with("pr-automerge")).expect("a batch PR is armed to merge itself on green");
     assert!(create < armed, "{calls:?}");
+}
+
+#[test]
+fn open_batch_fails_when_the_pr_cannot_be_armed() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
+    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.forge.arm_fails.set(true);
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
+    assert!(t.err().contains("could not be armed"), "{}", t.err());
 }
 
 #[test]
