@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=submission
+DOC=The IMAP server's users file the submission password is derived from; empty leaves the password file to the operator
+SCHEMA=Path to the dovecot-style passwd-file (`user:{SHA512-CRYPT}$6$...:...`) the IMAP server authenticates from. When set, the provisioner derives spira.submission_password_file from this file's entry for spira.submission_user, so the two credentials cannot drift. No default: empty means the password file is the operator's own.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets
+    # it; empty means the password file is not derived (law-a-config-value-has-no-fallback).
+SPIRA_CONF_DEFAULT_EOF

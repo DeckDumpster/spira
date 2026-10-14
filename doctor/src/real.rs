@@ -573,6 +573,12 @@ impl World for Real {
         String::from_utf8_lossy(&o.stdout).lines().next().map(str::to_string)
     }
 
+    fn submission_status(&self) -> Option<String> {
+        let bin = self.which("spira-submission")?;
+        let o = spira_config::bounded::bounded(&bin).arg("status").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    }
+
     fn out(&self, s: &str) {
         println!("{s}");
     }

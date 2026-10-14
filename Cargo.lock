@@ -1807,6 +1807,7 @@ version = "1.0.0"
 dependencies = [
  "rustls",
  "rustls-pemfile",
+ "serde_json",
  "sha2",
  "spira-config",
  "testkit",

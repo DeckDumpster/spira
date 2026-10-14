@@ -79,5 +79,6 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.submission_user" = "operator"
 "spira.submission_port" = 2587
 "spira.submission_rcpt_domain" = "spira"
+"spira.submission_users_file" = ""
 "spira.identity_projects" = ""
 "spira.round_vm_ec2_probe_deadline" = 60

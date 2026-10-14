@@ -14,10 +14,19 @@ pub struct Policy {
     pub rcpt_domain: String,
     pub password_file: PathBuf,
     pub max_message_bytes: usize,
+    pub peer: String,
 }
 
 pub trait Sink {
     fn deliver(&self, message: &[u8]) -> Result<(), String>;
+
+    fn log(&self, line: &str) {
+        eprintln!("spira-submission: {line}");
+    }
+}
+
+pub fn attempt(sink: &dyn Sink, peer: &str, user: &str, from: &str, outcome: &str) {
+    sink.log(&format!("ts={} peer={peer} user={user:?} from={from:?} {outcome}", crate::clock::iso(crate::clock::now())));
 }
 
 struct Conn<S> {
@@ -158,6 +167,7 @@ pub fn serve_session<S: Read + Write>(stream: S, p: &Policy, sink: &dyn Sink) {
         return;
     }
     let mut auth = Auth::No;
+    let mut who = String::new();
     let mut failures = 0u32;
     let mut from: Option<String> = None;
     let mut rcpts: Vec<String> = Vec::new();
@@ -199,13 +209,20 @@ pub fn serve_session<S: Read + Write>(stream: S, p: &Policy, sink: &dyn Sink) {
                 if auth == Auth::Yes {
                     c.reply("503 5.5.1 already authenticated")
                 } else {
-                    match do_auth(&mut c, p, rest) {
+                    let mut tried = String::new();
+                    match do_auth(&mut c, p, rest, &mut tried) {
                         Some(Some(true)) => {
                             auth = Auth::Yes;
+                            who = tried;
+                            attempt(sink, &p.peer, &who, "", "auth: accepted");
                             c.reply("235 2.7.0 authenticated")
                         }
-                        Some(None) => c.reply("504 5.5.4 mechanism not supported"),
+                        Some(None) => {
+                            attempt(sink, &p.peer, "", "", "auth: refused: mechanism not supported");
+                            c.reply("504 5.5.4 mechanism not supported")
+                        }
                         Some(Some(false)) => {
+                            attempt(sink, &p.peer, &clean(&tried), "", "auth: refused: authentication failed");
                             failures += 1;
                             if failures >= MAX_AUTH_FAILURES {
                                 c.reply("421 4.7.0 too many authentication failures");
@@ -229,7 +246,10 @@ pub fn serve_session<S: Read + Write>(stream: S, p: &Policy, sink: &dyn Sink) {
                             from = Some(a);
                             c.reply("250 2.1.0 ok")
                         }
-                        Some(_) => c.reply("550 5.7.1 sender is not the operator address"),
+                        Some(a) => {
+                            attempt(sink, &p.peer, &who, &clean(&a), "mail: refused: sender is not the operator address");
+                            c.reply("550 5.7.1 sender is not the operator address")
+                        }
                     }
                 }
             }
@@ -241,7 +261,10 @@ pub fn serve_session<S: Read + Write>(stream: S, p: &Policy, sink: &dyn Sink) {
                 } else {
                     match rest.get(..3).filter(|k| k.eq_ignore_ascii_case("TO:")).and_then(|_| path_arg(&rest[3..])) {
                         None => c.reply("501 5.5.4 syntax: RCPT TO:<address>"),
-                        Some(a) if !recipient_allowed(&a, &p.rcpt_domain) => c.reply("550 5.7.1 relay denied: only Spira mailbox addresses are accepted"),
+                        Some(a) if !recipient_allowed(&a, &p.rcpt_domain) => {
+                            attempt(sink, &p.peer, &who, from.as_deref().unwrap_or(""), &format!("rcpt: refused: relay denied to {:?}", clean(&a)));
+                            c.reply("550 5.7.1 relay denied: only Spira mailbox addresses are accepted")
+                        }
                         Some(_) if rcpts.len() >= MAX_RCPT => c.reply("452 4.5.3 too many recipients"),
                         Some(a) => {
                             rcpts.push(a);
@@ -262,16 +285,19 @@ pub fn serve_session<S: Read + Write>(stream: S, p: &Policy, sink: &dyn Sink) {
                     let to = std::mem::take(&mut rcpts);
                     match read_data(&mut c, p.max_message_bytes) {
                         Err(DataErr::Closed) => return,
-                        Err(DataErr::TooBig) => c.reply("552 5.3.4 message too large"),
+                        Err(DataErr::TooBig) => {
+                            attempt(sink, &p.peer, &who, &clean(&sender), "data: refused: message too large");
+                            c.reply("552 5.3.4 message too large")
+                        }
                         Ok(raw) => {
                             let text = String::from_utf8_lossy(&raw).into_owned();
                             let (mid, irt) = (header(&text, "message-id"), header(&text, "in-reply-to"));
                             let outcome = sink.deliver(&raw);
                             let state = match &outcome {
-                                Ok(()) => "delivered".to_string(),
-                                Err(e) => format!("failed: {}", clean(e)),
+                                Ok(()) => "accepted".to_string(),
+                                Err(e) => format!("refused: delivery failed: {}", clean(e)),
                             };
-                            eprintln!("spira-submission: from={} to={} message-id={mid:?} in-reply-to={irt:?} outcome={state}", clean(&sender), clean(&to.join(",")));
+                            attempt(sink, &p.peer, &who, &clean(&sender), &format!("data: {state} to={} message-id={mid:?} in-reply-to={irt:?}", clean(&to.join(","))));
                             match outcome {
                                 Ok(()) => c.reply("250 2.0.0 queued"),
                                 Err(_) => c.reply("451 4.3.0 local delivery failed, try again"),
@@ -290,7 +316,7 @@ pub fn serve_session<S: Read + Write>(stream: S, p: &Policy, sink: &dyn Sink) {
 }
 
 /// Outer `None`: the connection ended mid-exchange. Inner `None`: unknown mechanism.
-fn do_auth<S: Read + Write>(c: &mut Conn<S>, p: &Policy, rest: &str) -> Option<Option<bool>> {
+fn do_auth<S: Read + Write>(c: &mut Conn<S>, p: &Policy, rest: &str, tried: &mut String) -> Option<Option<bool>> {
     let mut words = rest.split_whitespace();
     let mech = words.next().unwrap_or("").to_ascii_uppercase();
     let initial = words.next();
@@ -316,6 +342,7 @@ fn do_auth<S: Read + Write>(c: &mut Conn<S>, p: &Policy, rest: &str) -> Option<O
             }
             let authz = String::from_utf8_lossy(parts[0]).into_owned();
             let user = String::from_utf8_lossy(parts[1]).into_owned();
+            *tried = user.clone();
             if !authz.is_empty() && authz != user {
                 return Some(Some(false));
             }
@@ -328,7 +355,8 @@ fn do_auth<S: Read + Write>(c: &mut Conn<S>, p: &Policy, rest: &str) -> Option<O
             };
             let pw = prompt(c, &b64_encode("Password:"))?;
             let (Some(u), Some(pw)) = (b64_decode(&u), b64_decode(&pw)) else { return Some(Some(false)) };
-            (String::from_utf8_lossy(&u).into_owned(), String::from_utf8_lossy(&pw).into_owned())
+            *tried = String::from_utf8_lossy(&u).into_owned();
+            (tried.clone(), String::from_utf8_lossy(&pw).into_owned())
         }
         _ => {
             return Some(None);

@@ -1,0 +1,16 @@
+[Unit]
+Description=spira-submission provisioning — tailnet address, certificate renewal, password file, firewall rule
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/spira-submission provision
+TimeoutStartSec=120
+StandardOutput=append:@SPIRA_RUN@/spira-submission.log
+StandardError=append:@SPIRA_RUN@/spira-submission.log
+
+[X-Spira]
+Plane=work

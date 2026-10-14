@@ -157,5 +157,9 @@ pub trait World {
     /// First line of `<path> --version`; `None` when it could not be run.
     fn tool_version_line(&self, path: &Path) -> Option<String>;
 
+    // ---- mail submission ----
+    /// `spira-submission status` (key=value lines); `None` when the binary is absent or failed.
+    fn submission_status(&self) -> Option<String>;
+
     fn out(&self, s: &str);
 }

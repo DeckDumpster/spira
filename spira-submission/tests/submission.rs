@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use testkit::TempDir;
 
 const PASSWORD: &str = "correct horse";
@@ -26,7 +26,25 @@ fn b64(s: &[u8]) -> String {
     out
 }
 
+struct LogSink {
+    inner: SendmailSink,
+    lines: Arc<Mutex<Vec<String>>>,
+}
+
+impl spira_submission::smtp::Sink for LogSink {
+    fn deliver(&self, message: &[u8]) -> Result<(), String> {
+        self.inner.deliver(message)
+    }
+    fn log(&self, line: &str) {
+        self.lines.lock().unwrap().push(line.to_string());
+    }
+}
+
 fn start(sendmail_body: &str) -> Harness {
+    start_logged(sendmail_body).0
+}
+
+fn start_logged(sendmail_body: &str) -> (Harness, Arc<Mutex<Vec<String>>>) {
     let dir = TempDir::new("submission");
     let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let pw = dir.join("pw");
@@ -47,9 +65,10 @@ fn start(sendmail_body: &str) -> Harness {
         rcpt_domain: "spira".into(),
         sendmail: vec![script.display().to_string()],
     };
-    let sink = Arc::new(SendmailSink { argv: cfg.sendmail.clone() });
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(LogSink { inner: SendmailSink { argv: cfg.sendmail.clone() }, lines: lines.clone() });
     std::thread::spawn(move || serve(listener, cfg, sink));
-    Harness { dir, addr }
+    (Harness { dir, addr }, lines)
 }
 
 struct Client<S: Read + Write> {
@@ -219,4 +238,53 @@ fn an_unconfigured_or_wildcard_address_never_listens() {
         .to_string())
     };
     assert!(Config::from_values(&no_cert, vec![]).unwrap_err().contains("SPIRA_SUBMISSION_CERT"));
+}
+
+fn logged(lines: &Arc<Mutex<Vec<String>>>, needle: &str) -> bool {
+    for _ in 0..50 {
+        if lines.lock().unwrap().iter().any(|l| l.contains(needle)) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
+#[test]
+fn every_attempt_leaves_one_line_naming_peer_user_sender_and_outcome() {
+    let (h, lines) = start_logged("cat >/dev/null");
+    let mut c = client(&h);
+    let bad = c.say(&format!("AUTH PLAIN {}", b64(b"\0operator\0wrong")));
+    assert!(bad.starts_with("535"), "{bad}");
+    assert!(logged(&lines, "user=\"operator\" from=\"\" auth: refused: authentication failed"), "{:?}", lines.lock().unwrap());
+    login(&mut c);
+    assert!(c.say("MAIL FROM:<stranger@example.org>").starts_with("550"));
+    assert!(logged(&lines, "from=\"stranger@example.org\" mail: refused: sender is not the operator address"), "{:?}", lines.lock().unwrap());
+    assert!(c.say("MAIL FROM:<operator@example.org>").starts_with("250"));
+    assert!(c.say("RCPT TO:<victim@example.com>").starts_with("550"));
+    assert!(logged(&lines, "rcpt: refused: relay denied to \"victim@example.com\""), "{:?}", lines.lock().unwrap());
+    assert!(c.say("RCPT TO:<concierge@spira>").starts_with("250"));
+    assert!(c.say("DATA").starts_with("354"));
+    c.s.write_all(MSG.as_bytes()).unwrap();
+    assert!(c.reply().starts_with("250"));
+    assert!(logged(&lines, "from=\"operator@example.org\" data: accepted to=concierge@spira message-id=\"<new-1@phone>\""), "{:?}", lines.lock().unwrap());
+    let all = lines.lock().unwrap();
+    assert!(all.iter().all(|l| l.contains("peer=127.0.0.1:") && l.starts_with("ts=20")), "{all:?}");
+}
+
+#[test]
+fn a_failed_hand_off_is_logged_as_a_refusal_with_its_reason() {
+    let (h, lines) = start_logged("echo boom >&2; exit 3");
+    let mut c = client(&h);
+    login(&mut c);
+    assert!(send(&mut c).starts_with("451"));
+    assert!(logged(&lines, "data: refused: delivery failed:"), "{:?}", lines.lock().unwrap());
+}
+
+#[test]
+fn a_connection_that_never_finishes_tls_is_logged() {
+    let (h, lines) = start_logged("cat >/dev/null");
+    let mut tcp = TcpStream::connect(h.addr).unwrap();
+    tcp.write_all(b"EHLO plaintext\r\n").unwrap();
+    assert!(logged(&lines, "tls: refused"), "{:?}", lines.lock().unwrap());
 }

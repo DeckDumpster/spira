@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily spira-submission provisioning — renews the tailscale certificate well before it expires
+
+[Timer]
+OnBootSec=2min
+OnCalendar=daily
+RandomizedDelaySec=30min
+Persistent=true
+Unit=spira-submission-provision.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work
