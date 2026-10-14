@@ -433,6 +433,21 @@ pub(super) fn gate_red_at(c: &Ctx, id: &str, tip: &str) -> Option<String> {
     (done.run.outcome == GateOutcome::Fail).then(|| done.run.reason_or("unspecified").to_string())
 }
 
+const RED_TIPS: &str = "red-tips";
+
+/// Whether `id` at exactly `tip` was already ejected red from a batch: only a new tip may rejoin.
+pub(super) fn batch_red_at(c: &Ctx, id: &str, tip: &str) -> bool {
+    let text = fs::read_to_string(c.queue_file(RED_TIPS)).unwrap_or_default();
+    text.lines().any(|l| l.split_once(' ').is_some_and(|(i, t)| i == id && !t.is_empty() && (tip.starts_with(t) || t.starts_with(tip))))
+}
+
+pub(super) fn record_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<()> {
+    let path = c.queue_file(RED_TIPS);
+    let mut text = fs::read_to_string(&path).unwrap_or_default();
+    text.push_str(&format!("{id} {tip}\n"));
+    records::write_atomic(&path, &text).map_err(std::io::Error::other)
+}
+
 fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, worktree: Option<&Path>) -> i32 {
     let label = "round open";
     let text = match read_text(w, members_arg) {
@@ -503,6 +518,9 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
                 skips.push(format!("{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted", m.id, r.state))
             }
             Some(r) => match r.tip.filter(|t| !t.is_empty()) {
+                Some(tip) if tip.starts_with(&m.tip) && batch_red_at(&c, &m.id, &tip) => {
+                    skips.push(format!("{}: {tip} already went red in a batch — not admitted until the tip changes", m.id))
+                }
                 Some(tip) if tip.starts_with(&m.tip) => match gate_red_at(&c, &m.id, &tip) {
                     Some(why) => skips.push(format!("{}: its gate is FAIL at {tip} ({why}) — not admitted", m.id)),
                     None => {

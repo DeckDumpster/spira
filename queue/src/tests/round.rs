@@ -371,6 +371,17 @@ pub(super) fn file_gate_verdict(t: &T, id: &str, tip: &str, rc: i32) {
 }
 
 #[test]
+fn open_skips_a_member_at_a_tip_that_already_went_red_in_a_batch() {
+    let t = round_world();
+    t.lc_row("sp-r", "CERTIFIED", "tsp-r", 100);
+    std::fs::create_dir_all(t.qfile("red-tips").parent().unwrap()).unwrap();
+    std::fs::write(t.qfile("red-tips"), "sp-r tsp-r\n").unwrap();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-r"]), 0, "{}", t.err());
+    let o = t.out();
+    assert!(o.contains("sp-r: tsp-r already went red in a batch"), "{o}");
+}
+
+#[test]
 fn open_skips_a_submitted_member_whose_gate_is_fail_at_its_current_tip_and_only_that() {
     let t = round_world();
     for id in ["sp-f", "sp-old", "sp-base", "sp-nov"] {

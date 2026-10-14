@@ -338,6 +338,14 @@ fn run_metadata_prints_started_at_then_both_last_activity_lines() {
 }
 
 #[test]
+fn run_metadata_reports_the_runs_own_status() {
+    let gh = FakeGh::default();
+    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/9"], 0, r#"{"status":"queued","run_started_at":"2026-09-29T00:00:00Z"}"#);
+    let out = run_metadata(&gh, repo(), "9");
+    assert!(out.lines.contains(&"run-status: queued".to_string()), "{:?}", out.lines);
+}
+
+#[test]
 fn run_metadata_names_the_job_and_step_in_progress() {
     let gh = FakeGh::default();
     gh.on(&["api", "repos/{owner}/{repo}/actions/runs/9"], 0, r#"{"run_started_at":"2026-09-29T00:00:00Z"}"#);

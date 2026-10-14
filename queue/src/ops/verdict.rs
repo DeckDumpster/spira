@@ -813,6 +813,87 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
     OK
 }
 
+/// Whether the batch's latest run is queued or in progress, as the forge itself says.
+fn run_active(w: &World, c: &Ctx, b: &Batch) -> bool {
+    let Some(run) = w.forge.run_id(&c.s.forge, b.path, &b.branch) else { return false };
+    let meta = w.forge.run_metadata(&c.s.forge, b.path, &run);
+    meta.lines().filter_map(|l| l.strip_prefix("run-status: ")).any(|s| matches!(s.trim(), "queued" | "in_progress" | "waiting" | "pending" | "requested"))
+}
+
+/// `(path, line)` for every `path:line[:col]` the failed step's log tail names.
+fn located_lines(out: &str) -> Vec<(String, String)> {
+    let mut hits = Vec::new();
+    for l in tagged(out, "step-log: ") {
+        for tok in l.split_whitespace() {
+            let mut parts = tok.trim_start_matches("-->").split(':');
+            let (Some(path), Some(line)) = (parts.next(), parts.next()) else { continue };
+            let path = path.trim_start_matches("./");
+            if path.contains('.') && !path.contains("//") && !path.is_empty() && !line.is_empty() && line.chars().all(|ch| ch.is_ascii_digit()) {
+                hits.push((path.to_string(), l.trim().to_string()));
+            }
+        }
+    }
+    hits
+}
+
+/// Members whose own changed files a failed step's log names with a file:line, with those lines.
+fn member_lint_reds(w: &World, b: &Batch, out: &str) -> Vec<(Member, Vec<String>)> {
+    let hits = located_lines(out);
+    if hits.is_empty() {
+        return Vec::new();
+    }
+    let mut faulty = Vec::new();
+    for m in &b.members {
+        let from = w.git.merge_base(b.path, &b.base_sha, &m.tip).unwrap_or_else(|| b.base_sha.clone());
+        let Ok(changed) = w.git.numstat(b.path, &from, &m.tip) else { continue };
+        let mut lines: Vec<String> = Vec::new();
+        for (path, line) in &hits {
+            if changed.iter().any(|(f, _, _)| f == path) && !lines.contains(line) {
+                lines.push(line.clone());
+            }
+        }
+        if !lines.is_empty() {
+            faulty.push((m.clone(), lines));
+        }
+    }
+    faulty
+}
+
+/// Eject the members the red names (with the lines), record their tips so no re-cut re-admits
+/// them, and abandon the batch so the survivors return to CERTIFIED.
+fn eject_red_members(w: &World, c: &Ctx, b: &Batch, faulty: &[(Member, Vec<String>)], bo: &str) -> i32 {
+    let (name, pr) = (b.name, &b.pr);
+    let batch_id = b.kv.get("batch_id").unwrap_or("").to_string();
+    let mut failed = false;
+    for (m, lines) in faulty {
+        let why = format!("batch PR {pr} red at {}: {}", m.tip, lines.join(" | "));
+        if let Err(e) = super::round::record_batch_red(c, &m.id, &m.tip) {
+            w.err(format!("verdict {name}: cannot record {}'s red tip: {e}", m.id));
+            failed = true;
+        }
+        w.lib.cause_event(&m.id, "eject-red");
+        w.lib.release_claim(&m.id);
+        if !batch_id.is_empty() {
+            if let Err((rc, e)) = super::lc_eject_member(w, &batch_id, &m.id, "verdict.sh", &crate::ident::bounded_text(&why)) {
+                w.err(format!("verdict {name}: spira-lc eject-member refused for {} (rc={rc}): {e}", m.id));
+                failed = true;
+            }
+        }
+        failed |= super::batch::lc_return(w, &m.id, true).is_err();
+        w.lib.comment(&m.id, &format!("Ejected from batch PR {pr}: its own files failed CI.\n\n{}\n\nFix the failing issue and re-certify before rejoining the queue.", lines.join("\n")));
+        w.out(format!("verdict {name}: PR {pr} red — {bo}{} ejected: {}", m.id, lines.join(" | ")));
+    }
+    lc_requeue(w, b, &format!("member red: {}", faulty.iter().map(|(m, _)| m.id.as_str()).collect::<Vec<_>>().join(",")));
+    w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
+    w.forge.pr_close(&c.s.forge, b.path, pr);
+    let _ = std::fs::remove_file(b.file);
+    if failed {
+        FAIL
+    } else {
+        OK
+    }
+}
+
 /// A red with no suite annotations is a setup red: re-run it once in full, then abandon the
 /// batch with the evidence if it is still red. The re-run may be refused (no input changed),
 /// so the grace is a clock, not a verdict; the next batch is what changes the input.
@@ -822,7 +903,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
     let step = tagged(out, "failed-step: ").first().map(|s| s.trim().to_string()).unwrap_or_default();
     let rerun_at: Option<u64> = b.kv.get("setup_rerun").and_then(|t| t.trim().parse().ok());
     if let Some(t) = rerun_at {
-        if b.kv.get("setup_incident").is_none() && now.saturating_sub(t) < c.s.verdict.ci_idle_sec {
+        if b.kv.get("setup_incident").is_none() && now.saturating_sub(t) < c.s.verdict.ci_idle_sec && run_active(w, c, b) {
             w.out(format!("verdict {name}: PR {pr} red — {bo}setup red, re-run in flight"));
             return OK;
         }
@@ -881,6 +962,10 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         suites = test_red_csv(out);
     }
     if suites.is_empty() {
+        let faulty = member_lint_reds(w, b, out);
+        if !faulty.is_empty() {
+            return eject_red_members(w, c, b, &faulty, bo);
+        }
         return setup_red(w, c, b, out, bo);
     }
     if c.s.batcher_off {
