@@ -19,7 +19,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha|ec2-probe [--dry-run]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha|reap|ec2-probe [--dry-run]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -206,7 +206,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
         return ec2_probe(&rest);
     }
     match verb.as_str() {
-        "acquire" | "release" | "run" | "status" | "warm" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
+        "acquire" | "release" | "run" | "status" | "reap" | "warm" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
         other => {
             eprintln!("round-vm: unknown verb: {other}");
             eprintln!("{USAGE}");
@@ -278,6 +278,18 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
+        "reap" => match factory() {
+            Ok(attempt) => {
+                pool.reap_dead_holders(&attempt);
+                let n = pool.reap_unheld(&attempt).len();
+                println!("reaped: {n}");
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        },
         "warm" => match pool.ensure_spare(&spawner) {
             Ok(started) => {
                 println!("{}", if started { "spare: provisioning" } else { "spare: not needed" });
@@ -291,6 +303,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
         "status" => match {
             if let Ok(attempt) = factory() {
                 pool.reap_dead_holders(&attempt);
+                pool.reap_unheld(&attempt);
             }
             if rest.is_empty() { pool.status() } else { pool.status_json().map(|j| format!("{j}\n")) }
         } {

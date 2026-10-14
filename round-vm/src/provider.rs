@@ -35,6 +35,10 @@ pub trait Provider {
     fn stale(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Every live VM this provider created, as (handle, launch time): the reconciler's census.
+    fn tagged(&self) -> Vec<(String, u64)> {
+        Vec::new()
+    }
     /// Why a VM that never reached the network is stuck, for the failure's reason.
     fn diagnose(&self, _vmid: &str) -> String {
         String::new()
