@@ -92,7 +92,16 @@ _lcb_upload() {
         "$host/$key" >/dev/null
 }
 
+_lcb_lock() { mkdir -p "$SPIRA_RUN/lc-backup/$1" && printf '%s/lc-backup/%s/.lock' "$SPIRA_RUN" "$1"; }
+
 _lcb_run_db() {
+    local db="$1" lock
+    lock="$(_lcb_lock "$db")" || return 1
+    ( flock -w "${SPIRA_LC_BACKUP_LOCK_WAIT_SECS:-3600}" 9 || { echo "lc-backup: $db: another run or drill holds the lock" >&2; exit 1; }
+      _lcb_run_db_locked "$db" ) 9>"$lock"
+}
+
+_lcb_run_db_locked() {
     local db="$1" out head work stage tarball prefix stamp key ext
     _lcb_require_db "$db" || return 1
     out="$(_lcb_sql "$db" -q "CALL DOLT_COMMIT('-Am', 'lc-backup $(date -u +%Y-%m-%dT%H:%M:%SZ)')" 2>&1)" \
@@ -105,8 +114,9 @@ _lcb_run_db() {
         || { echo "lc-backup: local snapshot of $db failed: $out" >&2; return 1; }
     head="$(_lcb_head "$db")"
     [ -n "$head" ] || { echo "lc-backup: snapshot taken but cannot read $db's head commit" >&2; return 1; }
-    rm -f "$work"/latest.tar.* && tar -C "$stage" -caf "$tarball.tmp" --format=posix . 2>/dev/null && mv "$tarball.tmp" "$tarball" \
-        || { echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
+    tar -C "$stage" -caf "$tarball.tmp" --format=posix . 2>/dev/null && mv "$tarball.tmp" "$tarball" \
+        || { rm -f "$tarball.tmp"; echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
+    find "$work" -maxdepth 1 -name 'latest.tar.*' ! -name "latest.tar.$ext" -delete
     rm -rf "$stage"
     prefix=""
     case "$SPIRA_LC_BACKUP_URL" in s3://*/*) prefix="${SPIRA_LC_BACKUP_URL#s3://*/}"; prefix="${prefix%/}"; [ -z "$prefix" ] || prefix="$prefix/" ;; esac
@@ -167,10 +177,21 @@ cmd_age() {
 }
 
 _lcb_drill_db() {
+    local db="$1" tarball="$2" lock
+    if [ -z "$tarball" ]; then
+        lock="$(_lcb_lock "$db")" || return 1
+        ( flock -n 9 || { echo "lc-backup: drill: $db: a run holds the lock, deferred"; exit 0; }
+          _lcb_drill_db_locked "$db" "" ) 9>"$lock"
+    else
+        _lcb_drill_db_locked "$db" "$tarball"
+    fi
+}
+
+_lcb_drill_db_locked() {
     local db="$1" tarball="$2" stamp
     stamp="$(_lcb_stamp "$db")"
     _lcb_require_db "$db" || return 1
-    [ -n "$tarball" ] || tarball="$(ls "$SPIRA_RUN/lc-backup/$db"/latest.tar.* 2>/dev/null | head -1)"
+    [ -n "$tarball" ] || tarball="$(ls "$SPIRA_RUN/lc-backup/$db"/latest.tar.zst "$SPIRA_RUN/lc-backup/$db"/latest.tar.gz 2>/dev/null | head -1)"
     local t head scratch rc=0 tables tbl live restored live_head
     [ -r "$tarball" ] || { echo "lc-backup: drill: no snapshot at $tarball" >&2; return 1; }
     [ -r "$stamp" ] || { echo "lc-backup: drill: $db: no stamp — nothing has been backed up" >&2; return 1; }
