@@ -151,7 +151,6 @@ exit 0
 pub struct Real {
     pub home: PathBuf,
     admission: RefCell<Vec<File>>,
-    warm: RefCell<Option<(PathBuf, File)>>,
     tree_lock: RefCell<Option<File>>,
     cancel: RefCell<Option<PathBuf>>,
 }
@@ -161,7 +160,6 @@ impl Real {
         Real {
             home,
             admission: RefCell::new(Vec::new()),
-            warm: RefCell::new(None),
             tree_lock: RefCell::new(None),
             cancel: RefCell::new(None),
         }
@@ -799,14 +797,6 @@ impl World for Real {
         let trees = tree.parent().unwrap_or(Path::new("/"));
         let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib)?;
         let mut line = format!("gate: build on tmpfs at {}", p.dir.display());
-        if self.warm.borrow().is_none() {
-            let base = Path::new(run).join(target::WARM_DIR);
-            *self.warm.borrow_mut() = target::acquire_warm(&base, self.certify_par_live().unwrap_or(4));
-        }
-        if let Some((slot, _)) = self.warm.borrow().as_ref() {
-            target::link_warm(tree, slot)?;
-            line.push_str(&format!("; warm target {}", slot.display()));
-        }
         if p.disk_freed_mib > 0 {
             line.push_str(&format!(" ({} MiB of build output moved off the disk)", p.disk_freed_mib));
         }
@@ -818,7 +808,6 @@ impl World for Real {
     fn release_target(&self, tree: &Path, keep_release: bool) {
         let root = crate::target::tree_root(tree);
         let mib = crate::target::release_tree(tree, keep_release);
-        *self.warm.borrow_mut() = None;
         if let (Some(root), true) = (root, mib > 0) {
             spira_config::scratch::record_peak(&spira_config::scratch::ledger_for(&root), &crate::target::composition(tree), mib);
         }
@@ -1183,5 +1172,30 @@ mod tests {
         result.unwrap();
         assert_eq!(kv.get("SPIRA_GATE_BEAD").map(String::as_str), Some("sp-xyz"), "the bash dump's own value must survive the merge");
         assert_eq!(kv.get("SPIRA_GATE_TIMEOUT").map(String::as_str), Some("1234"), "a RETIRED_VARS key cfg() covers must reach kv in-process");
+    }
+    /// sp-z61hj's rule, which sp-nv7btk's on-disk warm slot broke: every build directory of a
+    /// gate tree lands on the tmpfs root, none on the disk. The slot (`<run>/gate-warm/slot.N/
+    /// aeon`, 23-25 GiB each, on the one SATA disk) took every aeon build of every spira gate —
+    /// the unit build, the re-entry and base trials' in-place `cargo build --workspace` — and
+    /// relinked all 87 workspace binaries into it per trial (a fresh gate tree's sources are
+    /// all newer than the slot's outputs, so nothing in the workspace was ever fresh there),
+    /// under the gate's `ionice -c3` on a disk at 60-75 % full IO pressure: the 300 s cap.
+    #[test]
+    fn every_build_directory_of_a_gate_tree_lands_on_the_tmpfs_never_the_disk() {
+        use crate::ports::World;
+        let _l = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = testkit::TempDir::new("gate-real-tmpfs-only");
+        let (root, run) = (t.path().join("tmpfs"), t.path().join("run"));
+        let tree = run.join("worktree").join(".gate.harness.spira-sp-x");
+        std::fs::create_dir_all(&tree).unwrap();
+        let lim = crate::target::Limits { cap_mib: 1000, min_free_mib: 1, min_mem_mib: 1, shed_free_mib: 0, reserve_mib: 0 };
+        let real = super::Real::new(t.path().join("home"));
+        let line = real.target_on_tmpfs(&tree, root.to_str().unwrap(), run.to_str().unwrap(), &lim).unwrap();
+        for d in crate::target::LINKED {
+            let dest = std::fs::read_link(tree.join("target").join(d)).unwrap_or_else(|e| panic!("target/{d}: {e}"));
+            assert!(dest.starts_with(&root), "target/{d} -> {} is off the tmpfs root {} ({line})", dest.display(), root.display());
+        }
+        assert!(!run.join(crate::target::WARM_DIR).exists(), "a gate built into {}: {line}", run.join(crate::target::WARM_DIR).display());
+        assert!(!line.contains("warm target"), "{line}");
     }
 }
