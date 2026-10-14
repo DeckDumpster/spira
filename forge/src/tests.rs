@@ -565,3 +565,52 @@ fn workflow_for_picks_the_repos_pair_else_the_default() {
     assert_eq!(workflow_for("Gate", "", Some("deck")), "Gate");
     assert_eq!(workflow_for("Gate", "deck=", Some("deck")), "Gate");
 }
+
+// ── pr-create: one open PR per installation per repo ──────────────────────────────────
+
+const LIST_MINE: &[&str] = &["pr", "list", "--state", "open", "--author", "@me", "--json", "number,headRefName"];
+const CREATE: &[&str] = &["pr", "create", "--head", "spira/queue/b", "--base", "main", "--title", "t", "--body-file", "-"];
+
+fn creatable(open_json: &str) -> FakeGh {
+    let gh = FakeGh::default();
+    gh.on(LIST_MINE, 0, open_json);
+    gh.on(CREATE, 0, "");
+    gh.on(&["pr", "view", "spira/queue/b", "--json", "number", "-q", ".number"], 0, "9\n");
+    gh
+}
+
+fn created(gh: &FakeGh) -> bool {
+    gh.calls.borrow().iter().any(|c| c.iter().map(String::as_str).eq(CREATE.iter().copied()))
+}
+
+#[test]
+fn pr_create_refuses_a_second_open_installation_pr_and_opens_nothing() {
+    let gh = creatable(r#"[{"number":22,"headRefName":"spira/queue/a"}]"#);
+    let out = pr_create(&gh, repo(), "spira/queue/b", "main", "t", b"", "");
+    assert_eq!(out.code, 1);
+    assert_eq!(out.lines, vec![String::new()]);
+    assert!(!created(&gh));
+}
+
+#[test]
+fn pr_create_with_the_override_opens_the_second_pr() {
+    let gh = creatable(r#"[{"number":22,"headRefName":"spira/queue/a"}]"#);
+    let out = pr_create(&gh, repo(), "spira/queue/b", "main", "t", b"", "expunge fix");
+    assert_eq!((out.code, out.lines), (0, vec!["9".to_string()]));
+    assert!(created(&gh));
+}
+
+#[test]
+fn pr_create_opens_when_the_only_open_prs_are_another_authors() {
+    let gh = creatable("[]");
+    assert_eq!(pr_create(&gh, repo(), "spira/queue/b", "main", "t", b"", "").lines, vec!["9".to_string()]);
+    assert!(created(&gh));
+}
+
+#[test]
+fn pr_create_refuses_when_the_listing_cannot_be_read() {
+    let gh = FakeGh::default();
+    gh.on(CREATE, 0, "");
+    assert_eq!(pr_create(&gh, repo(), "spira/queue/b", "main", "t", b"", "").code, 1);
+    assert!(!created(&gh));
+}

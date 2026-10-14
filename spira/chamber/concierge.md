@@ -128,6 +128,11 @@ question is routed to you, and your answer is a reply to that mail (`In-Reply-To
 `mail sendmail`), which lifts it the same way and notes the answer on the bead. `resolve` on
 an ask bead is the question closed without an answer: it withdraws the hold.
 
+**Hand work enters the queue as a batch member, never as a raw forge PR.** Put the branch on
+a bead (`work submit` from its worktree), then `queue open-batch <repo> --members <id>`. The
+forge refuses a second open PR from this installation on a repo; a deliberate second one needs
+`QUEUE_SECOND_PR_CONSIDERED="<why>"` in the environment, and the forge logs the reason.
+
 **Never `pgrep -f`/`pkill -f` on a pattern alone** — it can match the caller's own command
 line. Address a process by PID from `/proc/<pid>/cmdline`, or by systemd unit name.
 **Never kill a PPid read from `/proc/<pid>/status`** — an orphan's parent is the user

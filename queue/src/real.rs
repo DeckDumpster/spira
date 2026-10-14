@@ -794,7 +794,7 @@ impl Forge for RealForge {
             .arg(title)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .ok()?;
         if let Some(mut si) = child.stdin.take() {
