@@ -935,7 +935,7 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
     let mut content: Vec<serde_json::Value> = Vec::new();
     for chunk in ids.chunks(LIST_ID_CHUNK) {
         if bd_args.is_empty() && !full {
-            match crate::content_rows::fetch(conn, chunk, true) {
+            match crate::content_rows::fetch(conn, chunk) {
                 Ok(rows) => content.extend(rows),
                 Err(e) => return (CANNOT_TELL, e),
             }
@@ -953,6 +953,9 @@ fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[Strin
         let Some(lc) = c["id"].as_str().and_then(|id| by_id.get(id)).cloned() else { continue };
         c["lifecycle_state"] = lc["state"].clone();
         c["lifecycle_holds"] = lc["holds"].clone();
+        if let Some(h) = lc.get("holder").filter(|h| !h.is_null()) {
+            c["assignee"] = h.clone();
+        }
         out.push(c);
     }
     out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));

@@ -60,23 +60,21 @@ pub fn cmd_content_rows(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "content-rows: --ids <a,b,…> is required".into());
     };
     let ids: Vec<&str> = ids.split(',').filter(|x| !x.is_empty()).collect();
-    match fetch(conn, &ids, false) {
+    match fetch(conn, &ids) {
         Ok(v) => (0, serde_json::to_string(&Value::Array(v)).unwrap()),
         Err(e) => (CANNOT_TELL, e),
     }
 }
 
-/// The content rows of `ids`; `assignee` adds the column `work list` shows and a claim decision
-/// never reads, so the claim path's query is unchanged.
-pub fn fetch(conn: &Conn, ids: &[&str], assignee: bool) -> Result<Vec<Value>, String> {
+/// The content rows of `ids`.
+pub fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
     let list = ids.iter().map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",");
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
-    let extra = if assignee { ", assignee" } else { "" };
     let issues = q(format!(
-        "SELECT id, title, priority, issue_type, status{extra}, DATE_FORMAT(defer_until, '{RFC3339}') AS defer_until, DATE_FORMAT(created_at, '{RFC3339}') AS created_at, DATE_FORMAT(updated_at, '{RFC3339}') AS updated_at \
+        "SELECT id, title, priority, issue_type, status, DATE_FORMAT(defer_until, '{RFC3339}') AS defer_until, DATE_FORMAT(created_at, '{RFC3339}') AS created_at, DATE_FORMAT(updated_at, '{RFC3339}') AS updated_at \
          FROM {CONTENT_DB}.issues WHERE id IN ({list}) ORDER BY id"
     ))?;
     let labels = q(format!("SELECT issue_id, label FROM {CONTENT_DB}.labels WHERE issue_id IN ({list}) ORDER BY issue_id, label"))?;
@@ -84,14 +82,7 @@ pub fn fetch(conn: &Conn, ids: &[&str], assignee: bool) -> Result<Vec<Value>, St
     // the claim decision only follows issue-to-issue edges. sp-9j0937: the query named a
     // depends_on_id column that no beads schema has, and every claim check failed in prod.
     let deps = q(format!("SELECT issue_id, depends_on_issue_id AS depends_on_id, `type` FROM {CONTENT_DB}.dependencies WHERE issue_id IN ({list}) AND depends_on_issue_id IS NOT NULL ORDER BY issue_id, depends_on_issue_id"))?;
-    let mut out = assemble(&issues, &labels, &deps);
-    if assignee {
-        for (row, issue) in out.iter_mut().zip(issues.iter().filter(|i| s(i, "id").is_some())) {
-            if let (Some(a), Some(o)) = (s(issue, "assignee"), row.as_object_mut()) {
-                o.insert("assignee".into(), Value::String(a.to_string()));
-            }
-        }
-    }
+    let out = assemble(&issues, &labels, &deps);
     Ok(out)
 }
 
