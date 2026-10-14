@@ -14,49 +14,15 @@ use std::path::{Path, PathBuf};
 /// build fence's `make build` (release), a stray dev build, and the tree-keyed tools.
 pub const LINKED: [&str; 4] = ["aeon", "release", "debug", "gate-tools"];
 
-/// Directory under the run dir holding the warm per-slot build output: on disk at a fixed
-/// path, kept between trials, so a unit build recompiles only what the branch changed.
+/// Directory under the run dir that held sp-nv7btk's warm per-slot `aeon` targets, **retired**
+/// (DESIGN.md "The gate tree's target is on tmpfs", sp-z61hj). A slot sat at a fixed path on the
+/// disk while the gate tree it was linked from changed path with every branch, and every file of
+/// a fresh gate tree is newer than the slot's outputs, so cargo found nothing in the workspace
+/// fresh: each trial still recompiled every workspace crate and relinked every binary (87, all
+/// of them, measured 2026-10-14), only now onto the one SATA disk instead of the tmpfs, under
+/// the gate's `ionice -c3` — the 300 s cap. Nothing links into it any more; the name is kept so
+/// a tree a gate of the previous release left linked there is never cleared through the link.
 pub const WARM_DIR: &str = "gate-warm";
-
-/// The build directories that live warm in a slot rather than being rebuilt cold.
-pub const WARM: [&str; 1] = ["aeon"];
-
-/// Claim the first free warm slot of `slots` under `base`: a non-blocking exclusive `flock` on
-/// `slot.<n>.lock` held for as long as the returned file lives. None when every slot is busy
-/// (the trial then builds cold on the tmpfs, never waits for a slot).
-pub fn acquire_warm(base: &Path, slots: u64) -> Option<(PathBuf, fs::File)> {
-    use std::os::unix::io::AsRawFd;
-    for n in 1..=slots.max(1) {
-        let dir = base.join(format!("slot.{n}"));
-        fs::create_dir_all(&dir).ok()?;
-        let Ok(f) = fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join(format!("slot.{n}.lock"))) else {
-            continue;
-        };
-        // SAFETY: flock on a descriptor we own; the lock lives as long as `f`.
-        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-            return Some((dir, f));
-        }
-    }
-    None
-}
-
-/// Point `tree/target/<WARM dirs>` at `slot/<dir>`, replacing the links [`prepare`] made to the
-/// tmpfs. The tmpfs copies it leaves empty are removed.
-pub fn link_warm(tree: &Path, slot: &Path) -> Result<(), String> {
-    for d in WARM {
-        let dest = slot.join(d);
-        fs::create_dir_all(&dest).map_err(|e| format!("gate: cannot create {}: {e}", dest.display()))?;
-        let link = tree.join("target").join(d);
-        if let Ok(old) = fs::read_link(&link) {
-            if old != dest && !is_warm(&old) {
-                let _ = fs::remove_dir_all(&old);
-            }
-        }
-        let _ = fs::remove_file(&link);
-        std::os::unix::fs::symlink(&dest, &link).map_err(|e| format!("gate: cannot link {} to {}: {e}", link.display(), dest.display()))?;
-    }
-    Ok(())
-}
 
 /// True when `dest` is `<base>/WARM_DIR/slot.<n>/<dir>`: never removed with a trial.
 pub fn is_warm(dest: &Path) -> bool {
@@ -660,26 +626,19 @@ mod tests {
     }
 
     #[test]
-    fn a_warm_slot_survives_the_trial_and_a_busy_slot_is_skipped() {
-        let s = Scratch::new("warm");
-        let (root, trees, base) = (s.1.join("root"), s.1.join("worktree"), s.1.join("run").join(WARM_DIR));
+    fn a_tree_left_linked_into_a_retired_warm_slot_is_relinked_and_never_clears_the_slot() {
+        let s = Scratch::new("retired-warm");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        let slot = s.1.join("run").join(WARM_DIR).join("slot.1").join("aeon");
         let tree = trees.join(".gate.harness.w");
-        fs::create_dir_all(&tree).unwrap();
-        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
-        let (slot, held) = acquire_warm(&base, 2).unwrap();
-        assert_eq!(slot, base.join("slot.1"));
-        let (second, _h2) = acquire_warm(&base, 2).unwrap();
-        assert_eq!(second, base.join("slot.2"), "a held slot is skipped");
-        assert!(acquire_warm(&base, 2).is_none(), "every slot busy: the trial builds cold");
-        link_warm(&tree, &slot).unwrap();
-        write_mib(&slot.join("aeon/deps/libz.rlib"), 1);
-        assert!(!root.join(".gate.harness.w/aeon").exists() || fs::read_dir(root.join(".gate.harness.w/aeon")).unwrap().next().is_none());
+        fs::create_dir_all(tree.join("target")).unwrap();
+        write_mib(&slot.join("deps/libz.rlib"), 1);
+        std::os::unix::fs::symlink(&slot, tree.join("target/aeon")).unwrap();
         release_tree(&tree, false);
-        assert!(slot.join("aeon/deps/libz.rlib").is_file(), "release_tree leaves the warm output");
-        assert!(fs::symlink_metadata(tree.join("target/aeon")).is_err(), "the link is gone");
-        drop(held);
-        // A concurrent test's fork can hold the descriptor for an instant before its exec closes it.
-        let again = (0..200).find_map(|_| acquire_warm(&base, 2).or_else(|| { std::thread::sleep(std::time::Duration::from_millis(10)); None }));
-        assert_eq!(again.unwrap().0, slot, "the slot is free again at the same path");
+        assert!(slot.join("deps/libz.rlib").is_file(), "release_tree cleared a warm slot through a stale link");
+        std::os::unix::fs::symlink(&slot, tree.join("target/aeon")).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        assert_eq!(fs::read_link(tree.join("target/aeon")).unwrap(), root.join(".gate.harness.w/aeon"), "relinked to the tmpfs");
+        assert!(slot.join("deps/libz.rlib").is_file(), "prepare cleared a warm slot through a stale link");
     }
 }

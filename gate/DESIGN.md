@@ -912,6 +912,20 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   overflow it; a refused reservation is the same NO_VERDICT. A build whose output says
   `No space left on device` / `Disk quota exceeded` (branch or base trial) is
   `scratch-short` too, never a red.
+* **No on-disk warm target (concierge/gate-overcap, 2026-10-14; retires sp-nv7btk's slots).**
+  sp-nv7btk linked `target/aeon` to a per-admission-slot directory on the disk,
+  `<run>/gate-warm/slot.N/aeon`, so a unit build would "recompile only what the branch
+  changed". It never did: the slot's path was fixed but the gate tree's path changes with
+  every branch, and every source file of a fresh gate tree is newer than the slot's outputs,
+  so cargo found no workspace crate fresh. Every trial still rebuilt the whole workspace and
+  relinked every binary (all 87 rewritten within one re-entry build, measured 2026-10-14) —
+  now onto the one SATA disk, 23–25 GiB a slot, under the gate's `ionice -c3`, while the disk
+  sat at 60–75 % full IO pressure. Spira gates with a re-entry or base trial (each an in-place
+  `cargo build --workspace` through that link) then died at the 300 s cap ten in a row. Unit
+  build medians had gone 35–50 s → 76–79 s since the slots landed. **Rejected:** keeping the
+  slot and fixing its freshness (a kept tree per slot): a hub crate (`spira-config`,
+  `testkit`, 64–65 dependents) relinks most binaries anyway, and the slot's mtime freshness
+  across trees could pass a crate built from *another* branch's sources as fresh.
 * Measured on a one-line Rust probe (unit composition, cold gate tree): 1,020,960,768 bytes
   written before; see the bead's closing note for after.
 * **`gate.sh --release-bins <branch> <repo>`** (the hand landing): on a PASS, `cargo build
