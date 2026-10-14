@@ -1,6 +1,8 @@
 //! `content-rows --ids a,b,…` — the bead-content fields a claim decision reads (labels, type,
 //! priority, defer, blockers), straight from the content store over this connection: no bd,
-//! no git. Read-only; spira_lc holds SELECT on these three tables and nothing else there.
+//! no git. `--full` adds description, notes and external_ref; `--external-contains S` selects
+//! by external_ref instead of by id. Read-only; spira_lc holds SELECT on these three tables and
+//! nothing else there.
 
 use std::collections::BTreeMap;
 
@@ -56,11 +58,14 @@ pub fn assemble(issues: &[Value], labels: &[Value], deps: &[Value]) -> Vec<Value
 }
 
 pub fn cmd_content_rows(args: &[String], conn: &Conn) -> (i32, String) {
-    let Some(ids) = args.iter().position(|a| a == "--ids").and_then(|i| args.get(i + 1)) else {
-        return (CANNOT_TELL, "content-rows: --ids <a,b,…> is required".into());
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+    let full = args.iter().any(|a| a == "--full");
+    let found: Result<Vec<Value>, String> = match (flag("--ids"), flag("--external-contains")) {
+        (Some(ids), None) => fetch_with(conn, &ids.split(',').filter(|x| !x.is_empty()).collect::<Vec<_>>(), full),
+        (None, Some(needle)) => by_external_ref(conn, needle, full),
+        _ => Err("content-rows: exactly one of --ids <a,b,…> or --external-contains <text> is required".into()),
     };
-    let ids: Vec<&str> = ids.split(',').filter(|x| !x.is_empty()).collect();
-    match fetch(conn, &ids) {
+    match found {
         Ok(v) => (0, serde_json::to_string(&Value::Array(v)).unwrap()),
         Err(e) => (CANNOT_TELL, e),
     }
@@ -68,13 +73,30 @@ pub fn cmd_content_rows(args: &[String], conn: &Conn) -> (i32, String) {
 
 /// The content rows of `ids`.
 pub fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
+    fetch_with(conn, ids, false)
+}
+
+const TEXT_COLUMNS: &str = ", description, notes, external_ref";
+
+fn by_external_ref(conn: &Conn, needle: &str, full: bool) -> Result<Vec<Value>, String> {
+    if needle.is_empty() {
+        return Err("content-rows: --external-contains needs a non-empty text".into());
+    }
+    let sql = format!("SELECT id FROM {CONTENT_DB}.issues WHERE LOCATE('{}', external_ref) > 0 ORDER BY id", rows::escape(needle));
+    let found = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
+    let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
+    fetch_with(conn, &ids, full)
+}
+
+fn fetch_with(conn: &Conn, ids: &[&str], full: bool) -> Result<Vec<Value>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
     let list = ids.iter().map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",");
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
+    let text = if full { TEXT_COLUMNS } else { "" };
     let issues = q(format!(
-        "SELECT id, title, priority, issue_type, status, DATE_FORMAT(defer_until, '{RFC3339}') AS defer_until, DATE_FORMAT(created_at, '{RFC3339}') AS created_at, DATE_FORMAT(updated_at, '{RFC3339}') AS updated_at \
+        "SELECT id, title, priority, issue_type, status, DATE_FORMAT(defer_until, '{RFC3339}') AS defer_until, DATE_FORMAT(created_at, '{RFC3339}') AS created_at, DATE_FORMAT(updated_at, '{RFC3339}') AS updated_at{text} \
          FROM {CONTENT_DB}.issues WHERE id IN ({list}) ORDER BY id"
     ))?;
     let labels = q(format!("SELECT issue_id, label FROM {CONTENT_DB}.labels WHERE issue_id IN ({list}) ORDER BY issue_id, label"))?;
@@ -82,7 +104,14 @@ pub fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
     // the claim decision only follows issue-to-issue edges. sp-9j0937: the query named a
     // depends_on_id column that no beads schema has, and every claim check failed in prod.
     let deps = q(format!("SELECT issue_id, depends_on_issue_id AS depends_on_id, `type` FROM {CONTENT_DB}.dependencies WHERE issue_id IN ({list}) AND depends_on_issue_id IS NOT NULL ORDER BY issue_id, depends_on_issue_id"))?;
-    let out = assemble(&issues, &labels, &deps);
+    let mut out = assemble(&issues, &labels, &deps);
+    if full {
+        for (row, issue) in out.iter_mut().zip(issues.iter().filter(|i| s(i, "id").is_some())) {
+            for col in ["description", "notes", "external_ref"] {
+                row[col] = json!(issue.get(col).and_then(Value::as_str).unwrap_or(""));
+            }
+        }
+    }
     Ok(out)
 }
 

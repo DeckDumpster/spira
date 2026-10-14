@@ -378,27 +378,23 @@ fn drop_stacked_on_barred(members: Vec<Member>, mut barred: std::collections::BT
     }
 }
 
-/// `bd show <id>` as text: the description and notes, where a target and its verdict live.
+/// The description and notes of `id`, where a target and its verdict live — read through
+/// lc-serve, never by spawning bd.
 pub fn bd_show_text(env: &Env, id: &str) -> Result<String, String> {
-    let mut cmd = Command::new(&env.bd);
-    if let Some(db) = &env.db {
-        cmd.current_dir(db);
-    }
-    cmd.arg("show").arg(id);
-    run(&mut cmd, "bd show")
+    let rows = bd_show(env, &[id.to_string()])?;
+    let row = rows.as_array().and_then(|a| a.first()).ok_or_else(|| format!("content-rows: no row for {id}"))?;
+    let field = |k: &str| row.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    Ok(format!("{}\n{}", field("description"), field("notes")))
 }
 
+/// The content rows of `ids` (title, priority, description, notes, external_ref, dependencies as
+/// `{depends_on_id, type}`), from `spira-lc content-rows --full`.
 fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
     if ids.is_empty() {
         return Ok(serde_json::Value::Array(vec![]));
     }
-    let mut cmd = Command::new(&env.bd);
-    if let Some(db) = &env.db {
-        cmd.current_dir(db);
-    }
-    cmd.arg("show").arg("--json").args(ids);
-    let text = run(&mut cmd, "bd show")?;
-    serde_json::from_str(&text).map_err(|e| format!("bd show: unparsed output: {e}"))
+    let text = lcq(env, &["content-rows", "--full", "--ids", &ids.join(",")])?;
+    serde_json::from_str(&text).map_err(|e| format!("content-rows: unparsed output: {e}"))
 }
 
 /// `repo`'s own `refs/heads/spira/*` tips, keyed by bead id — the same authority
@@ -486,15 +482,10 @@ fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>
         return Default::default();
     }
     let mut fixes: std::collections::BTreeSet<String> = texts.iter().filter(|(_, (own, _))| *own).map(|(id, _)| id.clone()).collect();
-    let mut cmd = Command::new(&env.bd);
-    if let Some(db) = &env.db {
-        cmd.current_dir(db);
-    }
-    // bd lists the base-red beads (content); whether one is still open is its lifecycle
+    // The content store lists the base-red beads; whether one is still open is its lifecycle
     // row's — not terminal (sp-mve9i). A base-red bead with no row, or a machine that cannot
     // answer, accelerates nothing: the lane is never a gate.
-    cmd.args(["list", "--json", "--limit", "0", "--all", "--external-contains"]).arg(format!("basefail:{}:", repo.name));
-    let Ok(text) = run(&mut cmd, "bd list basefail") else { return fixes };
+    let Ok(text) = lcq(env, &["content-rows", "--external-contains", &format!("basefail:{}:", repo.name)]) else { return fixes };
     let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(&text) else { return fixes };
     let basefail_ids: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect();
     let Ok(lc) = lc_rows_of(env, &basefail_ids).and_then(|r| spira_config::lc_state::parse_rows(&serde_json::Value::Array(r).to_string())) else { return fixes };
@@ -515,8 +506,8 @@ fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>
         };
         for b in shown {
             for d in b.get("dependencies").and_then(|d| d.as_array()).into_iter().flatten() {
-                let blocks = d.get("dependency_type").and_then(|t| t.as_str()) != Some("parent-child");
-                if let (true, Some(id)) = (blocks, d.get("id").and_then(|i| i.as_str())) {
+                let blocks = d.get("type").and_then(|t| t.as_str()) != Some("parent-child");
+                if let (true, Some(id)) = (blocks, d.get("depends_on_id").and_then(|i| i.as_str())) {
                     fixes.insert(id.to_string());
                 }
             }
@@ -2475,6 +2466,11 @@ mod pool_parity_tests {
     /// `list` (the given certified ids at their live tips, then every
     /// row in `lc_rows`) and `show`, and a bd stand-in whose `list` honours `--status` the way
     /// bd does — so a reader that still filtered on bd status would see bd's answer.
+    /// The `content-rows` case arm of a `spira-lc` stub, answering from the fixture's `show-*` and `list-all` files.
+    fn content_rows_arm(sd: &str) -> String {
+        format!("content-rows) echo content-rows >> {sd}/content.log; if [ \"$2\" = --external-contains ]; then cat {sd}/list-all; else IFS=, read -ra a <<<\"$4\"; o=; for i in \"${{a[@]}}\"; do [ -f {sd}/show-$i ] && o=\"$o${{o:+,}}$(cat {sd}/show-$i)\"; done; echo \"[$o]\"; fi ;;")
+    }
+
     fn pool_fixture(tag: &str, certified: &[&str], lc_rows: &[(&str, &str)], bd_rows: &[(&str, &str, &str, &str)]) -> (testkit::TempDir, testkit::TempDir, Env, Repo) {
         let d = tmp_repo(tag);
         let stubs = testkit::TempDir::new(&format!("batcher-cut-pool-stubs-{tag}"));
@@ -2493,21 +2489,14 @@ mod pool_parity_tests {
             fs::write(stubs.join(format!("show-{}", r.0)), row(r)).unwrap();
         }
         // `list` is only ever `--external-contains basefail:…`: the base-red rows.
-        let live: Vec<String> = bd_rows.iter().filter(|r| !r.2.is_empty() && r.1 != "closed").map(row).collect();
         let every: Vec<String> = bd_rows.iter().filter(|r| !r.2.is_empty()).map(row).collect();
-        fs::write(stubs.join("list-live"), format!("[{}]", live.join(","))).unwrap();
         fs::write(stubs.join("list-all"), format!("[{}]", every.join(","))).unwrap();
         let sd = stubs.path().display().to_string();
         testkit::write_exe(
             stubs.join("spira-lc"),
-            &format!("#!/bin/bash\ncase \"$1\" in list) cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; esac\n"),
+            &format!("#!/bin/bash\ncase \"$1\" in list) cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; {} esac\n", content_rows_arm(&sd)),
         );
-        testkit::write_exe(
-            stubs.join("bd"),
-            &format!(
-                "#!/bin/bash\nif [ \"$1\" = show ]; then shift 2; o=; for i in \"$@\"; do [ -f {sd}/show-$i ] && o=\"$o${{o:+,}}$(cat {sd}/show-$i)\"; done; echo \"[$o]\"; exit 0; fi\nfor a in \"$@\"; do [ \"$a\" = --status ] && {{ cat {sd}/list-live; exit 0; }}; done\ncat {sd}/list-all\n"
-            ),
-        );
+        testkit::write_exe(stubs.join("bd"), &format!("#!/bin/bash\ntouch {sd}/bd-spawned\nexit 99\n"));
         let mut env = super::lifecycle_tests_env(stubs.path());
         env.lc_bin = Some(stubs.join("spira-lc"));
         env.bd = stubs.join("bd").display().to_string();
@@ -2540,9 +2529,8 @@ mod pool_parity_tests {
     #[test]
     fn an_empty_pool_asks_bd_for_nothing() {
         let (_d, stubs, env, repo) = pool_fixture("lc-empty", &[], &[], &[("sp-b1", "open", "basefail:r:x", "")]);
-        testkit::write_exe(stubs.join("bd"), &format!("#!/bin/bash\ntouch {}/bd-called\necho '[]'\n", stubs.display()));
         assert!(certified_pool(&env, &repo).unwrap().is_empty());
-        assert!(!stubs.join("bd-called").exists(), "bd was run for an empty pool");
+        assert!(!stubs.join("content.log").exists(), "the content store was read for an empty pool");
     }
 
     /// The sift path reads only the beads it screens: a store whose full list would be over 64 KiB
@@ -2554,13 +2542,30 @@ mod pool_parity_tests {
         testkit::write_exe(
             stubs.join("spira-lc"),
             &format!(
-                "#!/bin/bash\necho \"$@\" >> {sd}/lc.log\nfor a in \"$@\"; do case \"$a\" in --state|--ids) f=1;; esac; done\ncase \"$1\" in list) if [ -z \"$f\" ]; then head -c 200000 /dev/zero | tr '\\0' x; exit 0; fi; cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; esac\n"
+                "#!/bin/bash\necho \"$@\" >> {sd}/lc.log\nfor a in \"$@\"; do case \"$a\" in --state|--ids) f=1;; esac; done\ncase \"$1\" in list) if [ -z \"$f\" ]; then head -c 200000 /dev/zero | tr '\\0' x; exit 0; fi; cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; {} esac\n",
+                content_rows_arm(&sd)
             ),
         );
         let ids: Vec<String> = certified_pool(&env, &repo).unwrap().into_iter().map(|m| m.id).collect();
         assert_eq!(ids, vec!["sp-c1"]);
         let log = fs::read_to_string(stubs.join("lc.log")).unwrap();
         assert!(log.lines().filter(|l| l.starts_with("list")).all(|l| l.contains("--state") || l.contains("--ids")), "{log}");
+    }
+
+    /// A sift pass over N beads (pool, base-fix lookup, per-bead description read) spawns no bd.
+    #[test]
+    fn a_sift_pass_spawns_no_bd() {
+        let ids = ["sp-c1", "sp-c2", "sp-c3", "sp-c4"];
+        let lc: Vec<(&str, &str)> = ids.iter().map(|i| (*i, "CERTIFIED")).chain([("sp-bf1", "READY")]).collect();
+        let bd: Vec<(&str, &str, &str, &str)> = ids.iter().map(|i| (*i, "open", "", "fixes sp-bf1")).chain([("sp-bf1", "open", "basefail:r:t.sh", "")]).collect();
+        let (_d, stubs, env, repo) = pool_fixture("lc-nobd", &ids, &lc, &bd);
+        let pool = certified_pool(&env, &repo).unwrap();
+        assert_eq!(pool.len(), ids.len());
+        assert!(pool.iter().all(|m| m.base_fix), "the base-fix lookup ran through the content reader");
+        for id in ids {
+            bd_show_text(&env, id).unwrap();
+        }
+        assert!(!stubs.join("bd-spawned").exists(), "a bd process was spawned");
     }
 
     /// sp-mve9i: the pool is the lifecycle machine's CERTIFIED rows. bd's status — here a
@@ -3274,9 +3279,9 @@ mod integration_tests {
     fn a_hold_blocks_only_the_same_round_and_only_while_its_bead_is_not_closed() {
         let dir = testkit::TempDir::new("batcher-hold");
         let mut env = lifecycle_tests_env(dir.path());
-        let bd = dir.join("bd");
-        testkit::write_exe(&bd, "#!/usr/bin/env bash\necho '[{\"id\":\"'$3'\",\"status\":\"'$(cat \"$(dirname \"$0\")/status\")'\"}]'\n");
-        env.bd = bd.display().to_string();
+        let lc = dir.join("spira-lc");
+        testkit::write_exe(&lc, "#!/usr/bin/env bash\necho '[{\"id\":\"'$4'\",\"status\":\"'$(cat \"$(dirname \"$0\")/status\")'\"}]'\n");
+        env.lc_bin = Some(lc);
         let key = batcher::core::round_key(&[("sp-b".into(), "2".into()), ("sp-a".into(), "1".into())]);
         write_hold(&env, "r", &key, "sp-hold1").unwrap();
         fs::write(dir.join("status"), "open").unwrap();
