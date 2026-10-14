@@ -489,10 +489,16 @@ cls_send() { # <subject> <class-args...> ; body on $CLS_STDIN
 op_before="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
 conc_before="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
 CLS_STDIN="$CLS_BODY"
-out="$(cls_send "Which crate layout should gate-worker take" --class architecture)"
-want "architecture class: aeon is told it was routed to the concierge" "routed to the concierge" "$out"
-is "architecture class: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
-is "architecture class: concierge got it" "$((conc_before + 1))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+out="$(cls_send "Which crate layout should gate-worker take" --class architecture)"; rc=$?
+want "unknown class: refused naming the valid classes" "destructive, design" "$out"
+is "unknown class: refused at the sender (non-zero)" 1 "$rc"
+is "unknown class: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "unknown class: not rerouted to the concierge" "$conc_before" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+for c in destructive destructive-on-production-data design; do
+    out="$(cls_send "Delete the superseded snapshots ($c)" --class "$c")"
+    is "class $c lands in the operator queue" "$((op_before + 1))" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
+    op_before="$((op_before + 1))"
+done
 out="$(cls_send "Which verb layout should gate-worker take" )"
 want "no class: routed to the concierge" "routed to the concierge" "$out"
 is "no class: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
@@ -503,7 +509,7 @@ CLS_STDIN="$CLS_BODY"
 out="$(cls_send "Grant the aeon a deploy credential" --class permissions)"; rc=$?
 is "permissions ask exits 0" 0 "$rc"
 is "permissions ask reaches the operator" "$((op_before + 1))" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
-is "permissions ask is not routed to the concierge" "$((conc_before + 3))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+is "permissions ask is not routed to the concierge" "$((conc_before + 2))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
 
 echo
 echo "escalation class binds a sender holding no bead (watchers, sentinel, mail ask path)"
@@ -513,9 +519,9 @@ nb_send() { printf '%s\n' "$CLS_STDIN" | ( unset BEAD_ID; run send operator --fr
     --subject "$1" --kind question --default "the crate" "${@:2}" 2>&1 ); }
 CLS_STDIN="$CLS_BODY"
 out="$(nb_send "Which verb layout should the watcher take" --class architecture)"
-want "no-bead sender, out-of-class ask: told it was routed to the concierge" "routed to the concierge" "$out"
-is "no-bead sender, out-of-class ask: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
-is "no-bead sender, out-of-class ask: concierge got it" "$((conc_before + 1))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+want "no-bead sender, unknown class: refused naming the valid classes" "destructive, design" "$out"
+is "no-bead sender, unknown class: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
+is "no-bead sender, unknown class: concierge inbox unchanged" "$conc_before" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
 out="$(nb_send "Grant the watcher a deploy credential" --class permissions)"
 is "no-bead sender, in-class ask reaches the operator" "$((op_before + 1))" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
 

@@ -3,7 +3,7 @@
 //! stdout/stderr/exit code. Replaces spira/mail.sh (sp-ooh1k).
 //!
 //!   mail send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
-//!                       [--default D] [--class permissions|policy|destructive] [--bead ID] [--requested-by "<his words>"] [--digest] [--dry-run] < body
+//!                       [--default D] [--class permissions|policy|destructive|design] [--bead ID] [--requested-by "<his words>"] [--digest] [--dry-run] < body
 //!   mail template <kind>
 //!   mail list <mailbox> [--unread]
 //!   mail read <mailbox> [<message>]
