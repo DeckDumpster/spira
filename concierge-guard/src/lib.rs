@@ -10,24 +10,16 @@ pub struct Proc {
     pub argv: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Pane {
-    pub socket: String,
-    pub pane: String,
-}
-
 pub struct Settings {
     pub session_name: String,
     pub waiters: Vec<Vec<String>>,
-    pub min_gap: u64,
     pub mail_after: u64,
-    pub wake_text: String,
+    pub inbox_text: String,
 }
 
 pub trait World {
     fn procs(&self) -> Vec<Proc>;
-    fn pane_of(&self, pid: u32) -> Option<Pane>;
-    fn send_keys(&mut self, pane: &Pane, text: &str) -> Result<(), String>;
+    fn append_inbox(&mut self, text: &str) -> Result<(), String>;
     fn send_mail(&mut self, subject: &str, body: &str) -> Result<(), String>;
     fn inbox_tail(&self) -> String;
 }
@@ -39,7 +31,7 @@ pub struct State {
     pub checked: u64,
     pub session: u32,
     pub missing_since: Option<u64>,
-    pub woke_at: Option<u64>,
+    pub inboxed_at: Option<u64>,
     pub mailed_at: Option<u64>,
 }
 
@@ -47,13 +39,13 @@ impl State {
     pub fn render(&self) -> String {
         let opt = |v: Option<u64>| v.map(|n| n.to_string()).unwrap_or_default();
         format!(
-            "listening={}\nsince={}\nchecked={}\nsession={}\nmissing_since={}\nwoke_at={}\nmailed_at={}\n",
+            "listening={}\nsince={}\nchecked={}\nsession={}\nmissing_since={}\ninboxed_at={}\nmailed_at={}\n",
             if self.listening { "yes" } else { "no" },
             self.since,
             self.checked,
             self.session,
             opt(self.missing_since),
-            opt(self.woke_at),
+            opt(self.inboxed_at),
             opt(self.mailed_at)
         )
     }
@@ -67,7 +59,7 @@ impl State {
             checked: num("checked").unwrap_or(0),
             session: num("session").unwrap_or(0) as u32,
             missing_since: num("missing_since"),
-            woke_at: num("woke_at"),
+            inboxed_at: num("inboxed_at"),
             mailed_at: num("mailed_at"),
         }
     }
@@ -123,7 +115,7 @@ pub fn check(cfg: &Settings, world: &mut dyn World, prior: &State, now: u64) -> 
         }
         s.listening = true;
         s.missing_since = None;
-        s.woke_at = None;
+        s.inboxed_at = None;
         s.mailed_at = None;
         return (s, events);
     }
@@ -147,24 +139,19 @@ pub fn check(cfg: &Settings, world: &mut dyn World, prior: &State, now: u64) -> 
         return (s, events);
     };
 
-    if prior.mailed_at.is_none() && prior.woke_at.is_some_and(|w| now.saturating_sub(w) >= cfg.mail_after) {
-        let body = mail_body(world, &format!("Session {sid} was woken and still has no inbox waiter; it is dead or wedged."));
-        mail(world, &mut s, now, &mut events, "Concierge woke but did not re-arm its inbox waiter", &body);
-        return (s, events);
+    if prior.inboxed_at.is_none() {
+        match world.append_inbox(&cfg.inbox_text) {
+            Ok(()) => {
+                s.inboxed_at = Some(now);
+                events.push(format!("session {sid} has no inbox waiter; wrote an inbox row"));
+            }
+            Err(e) => events.push(format!("session {sid} has no inbox waiter; could not write the inbox row: {e}")),
+        }
     }
 
-    if prior.woke_at.is_some_and(|w| now.saturating_sub(w) < cfg.min_gap) {
-        events.push(format!("session {sid} has no waiter; woken under {}s ago, holding", cfg.min_gap));
-        return (s, events);
-    }
-
-    s.woke_at = Some(now);
-    match world.pane_of(sid) {
-        None => events.push(format!("session {sid} has no waiter and its pane is unknown; cannot wake")),
-        Some(pane) => match world.send_keys(&pane, &cfg.wake_text) {
-            Ok(()) => events.push(format!("woke session {sid} in pane {} on {}", pane.pane, pane.socket)),
-            Err(e) => events.push(format!("could not wake session {sid} in pane {}: {e}", pane.pane)),
-        },
+    if prior.mailed_at.is_none() && now.saturating_sub(missing) >= cfg.mail_after {
+        let body = mail_body(world, &format!("Session {sid} still has no inbox waiter {}s after the lapse was first seen; it is dead or wedged.", cfg.mail_after));
+        mail(world, &mut s, now, &mut events, "Concierge did not re-arm its inbox waiter", &body);
     }
     (s, events)
 }
@@ -201,7 +188,7 @@ mod tests {
 
     struct Fake {
         procs: Vec<Proc>,
-        keys: Vec<(Pane, String)>,
+        rows: Vec<String>,
         mails: Vec<(String, String)>,
         mail_fails: bool,
     }
@@ -210,11 +197,8 @@ mod tests {
         fn procs(&self) -> Vec<Proc> {
             self.procs.clone()
         }
-        fn pane_of(&self, _: u32) -> Option<Pane> {
-            Some(Pane { socket: "/s/sock".into(), pane: "%7".into() })
-        }
-        fn send_keys(&mut self, p: &Pane, t: &str) -> Result<(), String> {
-            self.keys.push((p.clone(), t.to_string()));
+        fn append_inbox(&mut self, t: &str) -> Result<(), String> {
+            self.rows.push(t.to_string());
             Ok(())
         }
         fn send_mail(&mut self, s: &str, b: &str) -> Result<(), String> {
@@ -237,9 +221,8 @@ mod tests {
         Settings {
             session_name: "concierge".into(),
             waiters: vec![argv(&["inbox-next"]), argv(&["watchd", "next", "concierge-inbox"])],
-            min_gap: 600,
             mail_after: 600,
-            wake_text: "wake".into(),
+            inbox_text: "row".into(),
         }
     }
 
@@ -248,7 +231,7 @@ mod tests {
     }
 
     fn world(procs: Vec<Proc>) -> Fake {
-        Fake { procs, keys: vec![], mails: vec![], mail_fails: false }
+        Fake { procs, rows: vec![], mails: vec![], mail_fails: false }
     }
 
     fn waiter_under_shell() -> Vec<Proc> {
@@ -260,12 +243,12 @@ mod tests {
     }
 
     #[test]
-    fn a_waiter_descendant_means_no_wake() {
+    fn a_waiter_descendant_means_no_row() {
         let mut w = world(waiter_under_shell());
         let (s, _) = check(&cfg(), &mut w, &State::default(), 1000);
         let (s, _) = check(&cfg(), &mut w, &s, 1180);
         assert!(s.listening);
-        assert!(w.keys.is_empty() && w.mails.is_empty());
+        assert!(w.rows.is_empty() && w.mails.is_empty());
     }
 
     #[test]
@@ -283,25 +266,25 @@ mod tests {
     }
 
     #[test]
-    fn first_miss_is_quiet_second_wakes_once_to_the_session_pane_and_a_third_holds() {
+    fn first_miss_is_quiet_second_writes_one_row_and_a_third_does_not_repeat_it() {
         let mut w = world(vec![session("concierge")]);
         let (s, _) = check(&cfg(), &mut w, &State::default(), 1000);
-        assert!(w.keys.is_empty());
+        assert!(w.rows.is_empty());
         let (s, _) = check(&cfg(), &mut w, &s, 1180);
-        assert_eq!(w.keys, vec![(Pane { socket: "/s/sock".into(), pane: "%7".into() }, "wake".to_string())]);
+        assert_eq!(w.rows, vec!["row".to_string()]);
         let (s, _) = check(&cfg(), &mut w, &s, 1360);
-        assert_eq!(w.keys.len(), 1);
+        assert_eq!(w.rows.len(), 1);
         assert!(s.mailed_at.is_none());
     }
 
     #[test]
-    fn a_wake_with_no_waiter_ten_minutes_on_mails_the_operator_once() {
+    fn a_lapse_past_mail_after_mails_the_operator_once() {
         let mut w = world(vec![session("concierge")]);
         let (s, _) = check(&cfg(), &mut w, &State::default(), 1000);
         let (s, _) = check(&cfg(), &mut w, &s, 1180);
-        let (s, _) = check(&cfg(), &mut w, &s, 1779);
+        let (s, _) = check(&cfg(), &mut w, &s, 1599);
         assert!(w.mails.is_empty());
-        let (s, ev) = check(&cfg(), &mut w, &s, 1780);
+        let (s, ev) = check(&cfg(), &mut w, &s, 1600);
         assert_eq!(w.mails.len(), 1);
         assert!(w.mails[0].1.contains("inbox line"), "{ev:?}");
         let (_, _) = check(&cfg(), &mut w, &s, 1960);
@@ -327,18 +310,18 @@ mod tests {
         let (s, _) = check(&cfg(), &mut w, &State::default(), 1000);
         let (s, _) = check(&cfg(), &mut w, &s, 1180);
         assert_eq!(s.session, 0);
-        assert!(w.keys.is_empty());
+        assert!(w.rows.is_empty());
     }
 
     #[test]
-    fn no_session_for_ten_minutes_mails_and_never_types() {
+    fn no_session_for_mail_after_mails_and_writes_no_row() {
         let mut w = world(vec![]);
         let (s, _) = check(&cfg(), &mut w, &State::default(), 1000);
         let (s, _) = check(&cfg(), &mut w, &s, 1599);
         assert!(w.mails.is_empty());
         let (_, _) = check(&cfg(), &mut w, &s, 1600);
         assert_eq!(w.mails.len(), 1);
-        assert!(w.keys.is_empty());
+        assert!(w.rows.is_empty());
     }
 
     #[test]
@@ -348,12 +331,12 @@ mod tests {
         let (s, _) = check(&cfg(), &mut w, &s, 1180);
         w.procs = waiter_under_shell();
         let (s, ev) = check(&cfg(), &mut w, &s, 1360);
-        assert!(s.listening && s.woke_at.is_none() && s.since == 1360 && !ev.is_empty());
+        assert!(s.listening && s.inboxed_at.is_none() && s.since == 1360 && !ev.is_empty());
     }
 
     #[test]
     fn state_round_trips_and_health_reads_it() {
-        let st = State { listening: true, since: 5, checked: 100, session: 3, missing_since: None, woke_at: Some(4), mailed_at: None };
+        let st = State { listening: true, since: 5, checked: 100, session: 3, missing_since: None, inboxed_at: Some(4), mailed_at: None };
         assert_eq!(State::parse(&st.render()), st);
         assert!(health(&st, 200, 300).is_ok());
         assert!(health(&st, 500, 300).is_err());

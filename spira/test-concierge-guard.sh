@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # test-concierge-guard.sh — the guard's timer is registered and fenced, and the built binary,
-# against a fixture /proc, wakes the session's own recorded pane on the second consecutive miss,
-# holds inside the gap, and mails the operator once when the wake does not take.
+# against a fixture /proc, writes one inbox row on the second consecutive miss and never invokes tmux,
+# and mails the operator once when the lapse persists past --mail-after.
 #
 # tier: T0
 # covers: concierge-guard/* systemd/spira-concierge-guard.* spira/watchers install/src/manifest.rs install/tests/units_lint.rs
@@ -57,33 +57,37 @@ session() {  # session <name>
     printf 'TMUX=%s,4242,0\0TMUX_PANE=%%9\0' "$T/tmux.sock" > "$PROC/100/environ"
 }
 guard() {
-    "$BIN" check --proc-root "$PROC" --state "$ST" --session concierge --waiter inbox-next --waiter "watchd next concierge-inbox" \
-        --rearm "re-arm now" --min-gap 600 --mail-after 600 --inbox "$T/inbox.log" --tmux "$T/tmux" --mail "$T/mail" --from "Guard <g@spira>"
+    PATH="$T:$PATH" "$BIN" check --proc-root "$PROC" --state "$ST" --session concierge --waiter inbox-next --waiter "watchd next concierge-inbox" \
+        --inbox-text "re-arm now" --mail-after 600 --inbox "$T/inbox.log" --mail "$T/mail" --from "Guard <g@spira>"
 }
 sets() { sed -i "s/^$1=.*/$1=$2/" "$ST"; }
+rows() { wc -l < "$T/inbox.log" | tr -d ' '; }
 
 session concierge; mkproc 101 100 bash -c snapshot; mkproc 102 101 bash /run/concierge-notes/inbox-next.sh
 guard >/dev/null; guard >/dev/null
-is "a waiter descendant: no wake" "" "$(cat "$KEYS" 2>/dev/null)"
+is "a waiter descendant: no inbox row" "2" "$(rows)"
 want "listening is recorded" "listening=yes" "$(cat "$ST")"
 
 session concierge; rm -f "$ST"
 guard >/dev/null
-is "no waiter, first check: no wake" "" "$(cat "$KEYS" 2>/dev/null)"
+is "no waiter, first check: no row" "2" "$(rows)"
 guard >/dev/null
-want "second check: one send-keys to the session's own pane" "-S $T/tmux.sock send-keys -t %9 -l re-arm now" "$(cat "$KEYS" 2>/dev/null)"
-is "second check: text then Enter, two tmux calls" "2" "$(wc -l < "$KEYS" | tr -d ' ')"
+is "second check: one inbox row" "3" "$(rows)"
+want "the row carries the text" "re-arm now" "$(tail -1 "$T/inbox.log")"
 guard >/dev/null
-is "third check inside the gap: no second wake" "2" "$(wc -l < "$KEYS" | tr -d ' ')"
+is "third check: no second row" "3" "$(rows)"
 is "no mail yet" "" "$(cat "$MAILS" 2>/dev/null)"
 
-sets woke_at "$(( $(date +%s) - 700 ))"
+sets missing_since "$(( $(date +%s) - 700 ))"
 guard >/dev/null
-want "a wake with no waiter ten minutes on mails the operator a note" "--kind note" "$(cat "$MAILS" 2>/dev/null)"
-want "the mail carries the last inbox lines" "last inbox line" "$(cat "$MAILS" 2>/dev/null)"
+want "a lapse ten minutes on mails the operator a note" "--kind note" "$(cat "$MAILS" 2>/dev/null)"
+want "the mail carries the last inbox lines" "re-arm now" "$(cat "$MAILS" 2>/dev/null)"
 want "the mail names the consideration that lets it reach the operator" "ENV concierge-guard" "$(cat "$MAILS" 2>/dev/null)"
 guard >/dev/null
 is "exactly one mail" "1" "$(grep -c '^ARGS' "$MAILS")"
+is "tmux was never invoked, through the whole lapse" "" "$(cat "$KEYS" 2>/dev/null)"
+is "positive control: the tmux stub records an invocation" "x" "$(PATH="$T:$PATH" tmux x; cat "$KEYS" | tr -d '\n')"
+: > "$KEYS"
 
 echo "=== positive control: a differing argv is not the session ==="
 session other; rm -f "$ST" "$KEYS"

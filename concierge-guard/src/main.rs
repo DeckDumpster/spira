@@ -1,15 +1,14 @@
 //! `concierge-guard check|health --state FILE ...` — see systemd/spira-concierge-guard.service.
 
-use concierge_guard::{check, health, Pane, Proc, Settings, State, World};
+use concierge_guard::{check, health, Proc, Settings, State, World};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const USAGE: &str = "usage: concierge-guard check --state FILE --session NAME --waiter \"WORDS\"... --rearm TEXT --min-gap SECS --mail-after SECS [--inbox FILE] --tmux BIN --mail BIN --from ADDR [--proc-root DIR]\n       concierge-guard health --state FILE --max-age SECS";
+const USAGE: &str = "usage: concierge-guard check --state FILE --session NAME --waiter \"WORDS\"... --inbox-text TEXT --mail-after SECS [--inbox FILE] --mail BIN --from ADDR [--proc-root DIR]\n       concierge-guard health --state FILE --max-age SECS";
 
 struct Real {
     proc_root: PathBuf,
-    tmux: String,
     mail: String,
     from: String,
     inbox: PathBuf,
@@ -37,27 +36,9 @@ impl World for Real {
             .collect()
     }
 
-    fn pane_of(&self, pid: u32) -> Option<Pane> {
-        let raw = std::fs::read(self.proc_root.join(pid.to_string()).join("environ")).ok()?;
-        let var = |k: &str| {
-            raw.split(|b| *b == 0).find_map(|kv| String::from_utf8_lossy(kv).strip_prefix(&format!("{k}=")).map(str::to_string))
-        };
-        let socket = var("TMUX")?.split(',').next()?.to_string();
-        Some(Pane { socket, pane: var("TMUX_PANE")? })
-    }
-
-    fn send_keys(&mut self, pane: &Pane, text: &str) -> Result<(), String> {
-        let run = |args: &[&str]| -> Result<(), String> {
-            let st = Command::new("timeout")
-                .args(["5", &self.tmux, "-S", &pane.socket, "send-keys", "-t", &pane.pane])
-                .args(args)
-                .stdin(Stdio::null())
-                .status()
-                .map_err(|e| format!("{}: {e}", self.tmux))?;
-            st.success().then_some(()).ok_or_else(|| format!("tmux send-keys exited {st}"))
-        };
-        run(&["-l", text])?;
-        run(&["Enter"])
+    fn append_inbox(&mut self, text: &str) -> Result<(), String> {
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.inbox).map_err(|e| format!("{}: {e}", self.inbox.display()))?;
+        writeln!(f, "{} {text}", iso(now())).map_err(|e| e.to_string())
     }
 
     fn send_mail(&mut self, subject: &str, body: &str) -> Result<(), String> {
@@ -114,16 +95,14 @@ fn run() -> Result<i32, String> {
     let cfg = Settings {
         session_name: get("--session")?,
         waiters: opts.iter().filter(|(k, _)| k == "--waiter").map(|(_, v)| v.split_whitespace().map(str::to_string).collect()).collect(),
-        min_gap: num("--min-gap")?,
         mail_after: num("--mail-after")?,
-        wake_text: get("--rearm")?,
+        inbox_text: get("--inbox-text")?,
     };
     if cfg.waiters.is_empty() {
         return Err(format!("missing --waiter\n{USAGE}"));
     }
     let mut world = Real {
         proc_root: PathBuf::from(get("--proc-root").unwrap_or_else(|_| "/proc".to_string())),
-        tmux: get("--tmux")?,
         mail: get("--mail")?,
         from: get("--from")?,
         inbox: PathBuf::from(get("--inbox").or_else(|_| spira_config::process::cfg("SPIRA_CONCIERGE_INBOX"))?),
