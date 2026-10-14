@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=repo
+DOC=Directory, relative to SPIRA_WIKI, holding one <repo>/identity.md page per repo. No default: unset, Sift's identity screen refuses.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Directory, relative to SPIRA_WIKI, holding one <repo>/identity.md page per repo.
+    # No default: the layout of the brain is installation knowledge.
+SPIRA_CONF_DEFAULT_EOF
