@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::{idents, landing_log, lc_cas, Ctx, World, FAIL, OK};
+use super::{idents, landing_log, lc_abandon, Ctx, World, FAIL, OK};
 use crate::ident::bounded_text;
 use crate::model::Member;
 use crate::records::{one_line, write_atomic, Kv};
@@ -127,7 +127,7 @@ fn abandon(w: &World, c: &Ctx, path: &Path, file: &Path, kv: &Kv, pr: &str, memb
         match w.lc.batch_state(id) {
             Some((s, _)) if terminal(&s) => {}
             _ => {
-                if let Err((rc, e)) = lc_cas(w, id, |s, v| w.lc.abandon_batch(id, s, v, "reconcile", &r)) {
+                if let Err((rc, e)) = lc_abandon(w, id, "reconcile", &r) {
                     return cannot_act(w, c, file, kv, &format!("spira-lc refused abandon for batch {id} (rc={rc}): {e}"));
                 }
             }

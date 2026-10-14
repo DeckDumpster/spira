@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use super::{actor, czar_ok, lc_cas, require_lc, idents, landing_log, owner_refused, read_text, repo_path, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
+use super::{actor, czar_ok, lc_abandon, lc_eject_member, require_lc, idents, landing_log, owner_refused, read_text, repo_path, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::ident::bounded_text;
 use crate::model::{EjectCause, LandMode, Member};
@@ -143,7 +143,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     w.lib.release_claim(id);
     if !batch_id.is_empty() {
         let r = bounded_text(&why);
-        match lc_cas(w, &batch_id, |s, v| w.lc.eject_member(&batch_id, id, s, v, "queue.sh", &r)) {
+        match lc_eject_member(w, &batch_id, id, "queue.sh", &r) {
             Ok(()) => w.out(format!("queue.sh eject: {id} ejected on spira-lc")),
             Err((rc, out)) => {
                 failed = true;
@@ -170,7 +170,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     // members stay IN_DELIVERY behind a PR that is gone, or an emptied batch stays OPEN.
     if !batch_id.is_empty() {
         let r = bounded_text(&format!("{id} ejected; the batch PR is closed and not rebuilt"));
-        match lc_cas(w, &batch_id, |s, v| w.lc.abandon_batch(&batch_id, s, v, "queue.sh", &r)) {
+        match lc_abandon(w, &batch_id, "queue.sh", &r) {
             Ok(()) => w.out(format!("queue.sh eject: {batch_id} abandoned on spira-lc (survivors back to CERTIFIED)")),
             Err((rc, out)) => {
                 failed = true;
@@ -200,6 +200,25 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     }
     w.out(format!("queue.sh eject: ejected {id} from {} batch {batch_id}; {} member(s) remain", c.r.name, survivors.len()));
     OK
+}
+
+/// A cut that answered "cannot tell" may have written the batch row: look before retrying, so a
+/// deadline neither strands BATCHED members behind no PR nor cuts the same batch twice.
+fn cut_settled(w: &World, id: &str, repo: &str, head: &str, base: &str, members: &str) -> Result<String, (i32, String)> {
+    let mut last = Err((2, "no attempt".to_string()));
+    for attempt in 0..3u32 {
+        if attempt > 0 {
+            w.clock.sleep(u64::from(attempt));
+            if let Some((_, version)) = w.lc.batch_state(id) {
+                return Ok(version);
+            }
+        }
+        last = w.lc.cut(id, repo, head, base, members, "queue.sh");
+        if !matches!(&last, Err((2, _))) {
+            return last;
+        }
+    }
+    last
 }
 
 fn bead_resolves(w: &World, id: &str) -> i32 {
@@ -283,7 +302,7 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
 
     if !batch_id.is_empty() {
         let r = bounded_text(reason);
-        match lc_cas(w, &batch_id, |s, v| w.lc.abandon_batch(&batch_id, s, v, "queue.sh", &r)) {
+        match lc_abandon(w, &batch_id, "queue.sh", &r) {
             Ok(()) => w.out(format!("queue.sh {label}: {batch_id} abandoned on spira-lc")),
             Err((rc, out)) => w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}")),
         }
@@ -552,7 +571,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     for m in &members {
         w.lc.create_bead(&m.id);
     }
-    let version = match w.lc.cut(&lc_id, &name, &head, &base_sha, &csv, "queue.sh") {
+    let version = match cut_settled(w, &lc_id, &name, &head, &base_sha, &csv) {
         Ok(v) => v,
         Err((rc, out)) => {
             w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out} — no PR opened"));
@@ -561,7 +580,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         }
     };
     let undo = |why: &str| {
-        let _ = lc_cas(w, &lc_id, |s, v| w.lc.abandon_batch(&lc_id, s, v, "queue.sh", why));
+        let _ = lc_abandon(w, &lc_id, "queue.sh", why);
         w.git.branch_delete(&path, &batch_br);
     };
     if !w.lib.push(&path, &remote, &format!("{head}:refs/heads/{batch_br}")) {

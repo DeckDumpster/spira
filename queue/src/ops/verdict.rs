@@ -599,7 +599,7 @@ fn rewrite(file: &Path, drop: &[&str], add: &[(&str, &str)]) -> Result<(), Strin
 fn lc_requeue(w: &World, b: &Batch, reason: &str) {
     let Some(id) = b.kv.get("batch_id") else { return };
     let r = crate::ident::bounded_text(reason);
-    if let Err((rc, e)) = super::lc_cas(w, id, |s, v| w.lc.abandon_batch(id, s, v, "verdict.sh", &r)) {
+    if let Err((rc, e)) = super::lc_abandon(w, id, "verdict.sh", &r) {
         w.err(format!("verdict: spira-lc abandon-batch refused for {id} (rc={rc}): {e}"));
     }
 }

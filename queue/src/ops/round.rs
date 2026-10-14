@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use super::batch::lc_return;
 use super::stage;
 use super::land::land_local_with;
-use super::{actor, czar_ok, idents, landing_log, lc_cas, lock_held_by_caller, read_text, repo_path, require_lc, resolve, take_lock, Ctx, World, FAIL, OK, USAGE};
+use super::{actor, czar_ok, idents, landing_log, lc_abandon, lc_cas, lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, take_lock, Ctx, World, FAIL, OK, USAGE};
 use crate::cli::{Round, Text};
 use landing_pass::gateq::GateQueue;
 use landing_pass::model::GateOutcome;
@@ -947,7 +947,7 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
     }
 
     let why = bounded_text(&reason);
-    if let Err((rc, out)) = lc_cas(w, batch, |s, v| w.lc.eject_member(batch, id, s, v, LC_ACTOR, &why)) {
+    if let Err((rc, out)) = lc_eject_member(w, batch, id, LC_ACTOR, &why) {
         if new_head != old_head {
             w.git.worktree_remove(&path, &wt);
             let _ = w.git.worktree_add_detached(&path, &wt, &old_head);
@@ -968,7 +968,7 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         w.lib.release_claim(bead);
         if bead != id {
             let why = bounded_text(&why_text);
-            if let Err((rc, out)) = lc_cas(w, batch, |s, v| w.lc.eject_member(batch, bead, s, v, LC_ACTOR, &why)) {
+            if let Err((rc, out)) = lc_eject_member(w, batch, bead, LC_ACTOR, &why) {
                 w.err(format!("queue.sh {label}: spira-lc eject-member refused for {bead} (rc={rc}): {out}"));
             }
         }
@@ -986,7 +986,7 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
 
     if survivors.is_empty() {
         let emptied = bounded_text(&format!("round emptied: {id} ejected — {reason}"));
-        if let Err((rc, out)) = lc_cas(w, batch, |s, v| w.lc.abandon_batch(batch, s, v, LC_ACTOR, &emptied)) {
+        if let Err((rc, out)) = lc_abandon(w, batch, LC_ACTOR, &emptied) {
             w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the emptied round {batch} (rc={rc}): {out}"));
         }
         let _ = fs::remove_file(c.queue_file(RECORD));
@@ -1256,7 +1256,7 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
     let Ok(kv) = load(w, label, &c, batch) else { return FAIL };
     let members = kv.members();
     let why = bounded_text(&reason);
-    match lc_cas(w, batch, |s, v| w.lc.abandon_batch(batch, s, v, LC_ACTOR, &why)) {
+    match lc_abandon(w, batch, LC_ACTOR, &why) {
         Ok(()) => w.out(format!("queue.sh {label}: {batch} abandoned on spira-lc")),
         Err((1, out)) if out.is_empty() => w.err(format!("queue.sh {label}: spira-lc has no batch row for {batch}")),
         Err((rc, out)) => {
