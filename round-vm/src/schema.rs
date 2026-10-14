@@ -51,6 +51,8 @@ pub struct Lease {
 
 /// How long a lease may name no owner and no holder before it counts as abandoned.
 pub const OWNERLESS_GRACE_SECS: u64 = 60;
+/// How long a tagged cloud instance may go unheld, or sit on a kept lease, before the reconciler terminates it.
+pub const UNHELD_GRACE_SECS: u64 = 300;
 
 impl Lease {
     pub fn stale(&self) -> bool {

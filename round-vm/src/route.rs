@@ -74,6 +74,9 @@ impl Provider for Routed {
         v.extend(self.ec2.iter().flat_map(|e| e.stale()));
         v
     }
+    fn tagged(&self) -> Vec<(String, u64)> {
+        self.ec2.iter().flat_map(|e| e.tagged()).collect()
+    }
     fn diagnose(&self, vmid: &str) -> String {
         self.of(vmid).map(|p| p.diagnose(vmid)).unwrap_or_default()
     }

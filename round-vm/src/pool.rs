@@ -238,6 +238,7 @@ impl Pool {
             };
             if !std::mem::replace(&mut reaped_stale, true) {
                 self.reap_stale(&attempt);
+                self.reap_unheld(&attempt);
             }
             if let Some(plan) = attempt.spill.as_ref().filter(|_| !spill_failed) {
                 if let Place::Ec2(reason) = decide(&plan.rule, wait_since.map(|t| t.elapsed()), (plan.pressure)()) {
@@ -336,6 +337,47 @@ impl Pool {
             }
             Self::reap(s, attempt.provider.as_ref(), attempt.timing);
         });
+    }
+
+    /// Terminates every tagged cloud instance that no live process holds, past the grace:
+    /// not leased, or leased only by a kept (ownerless) lease older than the grace, and not
+    /// being provisioned. Reports each one it reaps.
+    pub fn reap_unheld(&self, attempt: &Attempt) -> Vec<String> {
+        let census = attempt.provider.tagged();
+        if census.is_empty() {
+            return Vec::new();
+        }
+        let t = now();
+        let grace = crate::schema::UNHELD_GRACE_SECS;
+        let mut reaped = Vec::new();
+        let _ = self.with_state(|s| {
+            for (h, launched) in &census {
+                if launched + grace >= t {
+                    continue;
+                }
+                let held = s.leases.iter().any(|l| &l.vm.handle == h && !l.stale() && (!l.held || l.since + grace >= t))
+                    || s.spilled.iter().any(|pr| pr.vmid.as_deref() == Some(h) && pr.owner.alive())
+                    || s.provisioning.as_ref().is_some_and(|pr| pr.vmid.as_deref() == Some(h) && pr.owner.alive())
+                    || s.ready.as_ref().is_some_and(|v| &v.handle == h);
+                if held {
+                    continue;
+                }
+                eprintln!("round-vm: reaping unheld instance {h} (launched at {launched}): no live process holds a lease on it");
+                s.leases.retain(|l| &l.vm.handle != h);
+                s.spilled.retain(|pr| pr.vmid.as_deref() != Some(h));
+                if matches!(s.state_of(h), Some(VmState::Provisioning | VmState::Ready | VmState::Leased | VmState::Released)) {
+                    s.note(h, VmState::Doomed, "unheld past the grace");
+                }
+                if !s.doomed.contains(h) {
+                    s.doomed.push(h.clone());
+                }
+                reaped.push(h.clone());
+            }
+            if !reaped.is_empty() {
+                Self::reap(s, attempt.provider.as_ref(), attempt.timing);
+            }
+        });
+        reaped
     }
 
     /// Provisions this pass's VM on EC2. Recorded in `spilled` before the instance exists
@@ -1430,5 +1472,42 @@ mod tests {
         let f = || Ok(spilling(&fp, ec2.clone(), Some(1.0)));
         pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
         assert!(fake.ids().is_empty(), "{:?}", fake.ids());
+    }
+
+    #[test]
+    fn the_reconciler_reaps_an_unheld_tagged_instance_past_grace_and_leaves_held_ones() {
+        let d = TempDir::new();
+        let (fp, fake) = (FakeProvider::new(), crate::testutil::FakeEc2::default());
+        let old = now() - crate::schema::UNHELD_GRACE_SECS - 5;
+        fake.plant("i-leak", Some("ec2-leak"), "round-ec2-leak", old);
+        fake.plant("i-live", Some("ec2-live"), "round-ec2-live", old);
+        fake.plant("i-kept", Some("ec2-kept"), "round-ec2-kept", old);
+        fake.plant("i-young", Some("ec2-young"), "round-ec2-young", now());
+        fake.plant("i-untagged", None, "round-ec2-untagged", old);
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        pl.with_state(|s| {
+            s.leases.push(Lease { vm: Vm { handle: "ec2-live".into(), addr: "x".into() }, owner: Some(ProcId::current()), since: old, holder: None, held: false });
+            s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: None, since: now(), holder: None, held: true });
+        })
+        .unwrap();
+        let att = spilling(&fp, ec2, None);
+        assert_eq!(pl.reap_unheld(&att), ["ec2-leak"]);
+        let mut left = fake.ids();
+        left.sort();
+        assert_eq!(left, ["i-kept", "i-live", "i-untagged", "i-young"]);
+    }
+
+    #[test]
+    fn a_kept_lease_older_than_the_grace_is_reaped() {
+        let d = TempDir::new();
+        let (fp, fake) = (FakeProvider::new(), crate::testutil::FakeEc2::default());
+        let old = now() - crate::schema::UNHELD_GRACE_SECS - 5;
+        fake.plant("i-kept", Some("ec2-kept"), "round-ec2-kept", old);
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: None, since: old, holder: None, held: true })).unwrap();
+        assert_eq!(pl.reap_unheld(&spilling(&fp, ec2, None)), ["ec2-kept"]);
+        assert!(fake.ids().is_empty());
     }
 }

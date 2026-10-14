@@ -333,6 +333,16 @@ impl<A: Ec2Api> Provider for Ec2<A> {
         }
     }
 
+    fn tagged(&self) -> Vec<(String, u64)> {
+        match self.api.list_tagged() {
+            Ok(v) => v.into_iter().map(|i| (i.handle, i.launched_at)).collect(),
+            Err(e) => {
+                eprintln!("round-vm: EC2 reconciler cannot list tagged instances: {e}");
+                Vec::new()
+            }
+        }
+    }
+
     fn diagnose(&self, vmid: &str) -> String {
         match self.script(vmid, "tailscale status 2>&1 | head -20; journalctl -u tailscaled --no-pager -n 20 2>&1; tail -n 20 /var/log/cloud-init-output.log 2>&1") {
             Ok((rc, out)) => format!("SSM diagnosis (exit {rc}): {}", out.trim()),
