@@ -2484,7 +2484,7 @@ mod tests {
         let ca = fx.d.path().join("ca.pem");
         fs::write(&ca, "x").unwrap();
         let env = fx.d.path().join("pve.env");
-        fs::write(&env, format!("PVE_TOKEN_ID=t\nPVE_TOKEN_SECRET=s\nPVE_NODE=n\nPVE_CACERT={}\nPVE_TEMPLATE_VMID={pve_names}\nPVE_VMID_MIN=200\nPVE_VMID_MAX=299\n", ca.display())).unwrap();
+        fs::write(&env, format!("PVE_TOKEN_ID=t\nPVE_TOKEN_SECRET=s\nPVE_NODE=n\nPVE_CACERT={}\nPVE_TEMPLATE_VMID={pve_names}\n", ca.display())).unwrap();
         fx.cfg.pve_env_path = env;
         fs::create_dir_all(&fx.cfg.state_dir).unwrap();
         Record { vmid: vmid.into(), image: image.into() }.write(&fx.cfg.state_dir).unwrap();

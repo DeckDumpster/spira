@@ -43,7 +43,6 @@ struct FakeVm {
     running: bool,
     files: BTreeMap<String, String>,
     template: bool,
-    tags: Vec<String>,
 }
 
 #[derive(Default)]
@@ -73,12 +72,8 @@ impl FakeProvider {
     pub fn plant(&self, vmid: &str, name: &str) {
         self.0.lock().unwrap().vms.insert(
             vmid.into(),
-            FakeVm { name: name.into(), running: true, files: BTreeMap::new(), template: false, tags: Vec::new() },
+            FakeVm { name: name.into(), running: true, files: BTreeMap::new(), template: false },
         );
-    }
-    pub fn plant_tagged(&self, vmid: &str, name: &str, tag: &str) {
-        self.plant(vmid, name);
-        self.0.lock().unwrap().vms.get_mut(vmid).unwrap().tags.push(tag.into());
     }
     pub fn calls(&self) -> Vec<String> {
         self.0.lock().unwrap().calls.clone()
@@ -133,7 +128,7 @@ impl Provider for FakeProvider {
         if g.vms.contains_key(vmid) {
             return Err(format!("VM {vmid} already exists"));
         }
-        g.vms.insert(vmid.into(), FakeVm { name: name.into(), running: false, files: BTreeMap::new(), template: false, tags: vec![crate::provider::OWNER_TAG.into()] });
+        g.vms.insert(vmid.into(), FakeVm { name: name.into(), running: false, files: BTreeMap::new(), template: false });
         Ok(())
     }
     fn start(&self, vmid: &str) -> Result<(), String> {
@@ -180,12 +175,6 @@ impl Provider for FakeProvider {
         }
         g.vms.remove(vmid);
         Ok(())
-    }
-    fn tags_of(&self, vmid: &str) -> Result<Vec<String>, String> {
-        Ok(self.0.lock().unwrap().vms.get(vmid).map(|v| v.tags.clone()).unwrap_or_default())
-    }
-    fn manages(&self, vmid: &str) -> bool {
-        vmid.parse::<u32>().is_ok_and(|n| n >= 100)
     }
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String> {
         Ok(self.0.lock().unwrap().vms.get(vmid).map(|v| v.name.clone()))

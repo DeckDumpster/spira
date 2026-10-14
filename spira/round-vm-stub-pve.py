@@ -98,7 +98,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             _, sub = rest.split("/", 1)
             if method == "GET" and sub == "qemu":
                 with _lock:
-                    return self._send([{"vmid": int(v), "name": d["name"], "tags": d.get("tags", "")} for v, d in VMS.items()])
+                    return self._send([{"vmid": int(v), "name": d["name"]} for v, d in VMS.items()])
             parts = sub.split("/")
             vmid = parts[1]
             tail = "/".join(parts[2:])
@@ -106,11 +106,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 d = dict(params)
                 with _lock:
                     VMS[d["newid"]] = {"name": d.get("name", ""), "running": False}
-                return self._send(None)
-            if method == "POST" and tail == "config":
-                with _lock:
-                    if vmid in VMS:
-                        VMS[vmid]["tags"] = dict(params).get("tags", "")
                 return self._send(None)
             if method == "POST" and tail == "status/start":
                 with _lock:

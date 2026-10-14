@@ -184,7 +184,7 @@ healthy warm round measured 108 s of setup, a cold image build 1314 s).
    the template it builds must agree with every round cloned from it on where `CARGO_HOME`
    lives, or §2.2's own preflight refuses every round the moment it is run the way
    production actually runs it — with no ambient `CARGO_HOME` to fall back to at all).
-2. VMID: the lowest free id in `PVE_VMID_MIN`..`PVE_VMID_MAX`, chosen by the provider; the caller never chooses one.
+2. VMID: always the hypervisor's `/cluster/nextid`; the caller never chooses one (per Ryan 2026-10-04, sp-bb0l2).
 3. **Linked** clone of `PVE_TEMPLATE_VMID` to it, named `round-template-<commit12>` — the
    same clone a round VM gets, so the old template's base disk stays referenced and cannot
    be destroyed while the new one exists. A full clone was tried first and abandoned: it
@@ -264,9 +264,8 @@ guest setup, the toolchain pin and the test Containerfile), naming both. The CI 
 - **G3 Destroy is verified.** Destroy = stop, delete (purge), then poll until the VMID is
   absent from the node's VM list. A VM that is still listed is an error and stays in
   `doomed`, retried on every `acquire`.
-- **G4 Destroy is fenced.** round-vm only ever destroys a VM named `round-<vmid>`, inside
-  its configured VMID range, and carrying no tag but its own (`spira-round-vm`, set at
-  clone). A VM tagged by another owner is refused under any name. A handle naming anything else (the template, another client's VM that won a `nextid`
+- **G4 Destroy is fenced.** round-vm only ever destroys a VM named `round-<vmid>`. A
+  handle naming anything else (the template, another client's VM that won a `nextid`
   race) is refused and never touched. The one other name it destroys is the
   `round-template-<commit12>` a `template` run gave its own half-built clone (§2.2b), and
   only from inside that run.
@@ -353,8 +352,6 @@ pub struct PveEnv {
     pub token_secret: String,   // PVE_TOKEN_SECRET, required
     pub cacert: PathBuf,        // PVE_CACERT, default /etc/pve/pve-root-ca.pem, must exist
     pub template_vmid: String,  // PVE_TEMPLATE_VMID, required
-    pub vmid_min: u32,          // PVE_VMID_MIN, required: the range this owner clones into and destroys in
-    pub vmid_max: u32,          // PVE_VMID_MAX, required
     pub pool: Option<String>,   // PVE_RUNNER_POOL
 }
 ```
@@ -417,7 +414,7 @@ insecure fallback. Responses it reads, each wrapped in `{"data": ...}`:
 
 | call | `data` |
 |---|---|
-| `GET /nodes/<n>/qemu` (free-id pick, tags) | list of `{vmid, name, tags}` |
+| `GET /cluster/nextid` | `"123"` |
 | `POST .../qemu/<t>/clone`, `.../status/start`, `.../status/stop`, `DELETE .../qemu/<id>` | a task UPID string |
 | `GET /nodes/<n>/tasks/<upid>/status` | `{"status": "running"\|"stopped", "exitstatus": "OK"\|...}` |
 | `GET .../qemu/<id>/status/current` | `{"status": "running"\|"stopped"}` |
