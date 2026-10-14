@@ -13,7 +13,7 @@ Environment=SPIRA_HOME=@SPIRA_HOME@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
-ExecStart=@SPIRA_PROD_ROOT@/rule.sh audit --file --for builder --max 5
+ExecStart=@SPIRA_PROD_ROOT@/bin/rule audit --file --for builder --max 5
 TimeoutStartSec=300
 StandardOutput=append:@SPIRA_RUN@/statute-audit.log
 StandardError=append:@SPIRA_RUN@/statute-audit.log
