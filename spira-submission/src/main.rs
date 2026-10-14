@@ -7,7 +7,12 @@ fn main() {
         Ok(Some(c)) => c,
         Ok(None) => {
             eprintln!("spira-submission: SPIRA_SUBMISSION_ADDR is empty — not configured, not listening");
-            return;
+            if cmd == "health" {
+                return;
+            }
+            loop {
+                std::thread::park();
+            }
         }
         Err(e) => {
             eprintln!("spira-submission: {e}");
