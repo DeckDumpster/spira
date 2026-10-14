@@ -212,6 +212,7 @@ printf '[[unit]]\npath = "spira-bins-prune.timer"\nreason = "no bead"\n' > "$LMA
 out="$(ldrift)"; rc=$?
 is "entry without a retiring bead is no declaration: exits 1" "1" "$rc"
 want "entry without a bead: reported" "spira-bins-prune.timer" "$out"
+want "entry without a bead: says why" "names no bead" "$out"
 
 rm -rf "$UNITDIR/dolt-beads.service.d" "$UNITDIR/spira-bins-prune.timer"
 
