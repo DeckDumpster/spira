@@ -315,6 +315,8 @@ fn plain_ident(tok: &str) -> Option<String> {
     (!t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(t)
 }
 
+const CONVERGE_TRIES: u32 = 5;
+
 /// The read that decides whether `st` is already applied (see [`Probe`]).
 pub fn probe_for(st: &Stmt) -> Probe {
     let sql = match st {
@@ -563,11 +565,21 @@ pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, a
         if applier_for(grants, steps, name) == Applier::Service {
             match service.exec(sql) {
                 Ok(()) => {
-                    // Re-verify through the probe that called it pending.
-                    match is_applied(service, st) {
-                        Ok(true) => {}
-                        Ok(false) => return (2, format!("admin-migrate: {name}: applied as the lifecycle service user, but its probe still finds {}", what(st, false))),
-                        Err(e) => return (2, format!("admin-migrate: {name}: applied as the lifecycle service user, but cannot tell whether it took: {e}")),
+                    // A guarded UPDATE/DELETE is idempotent and a live writer may re-dirty its rows
+                    // before the re-probe, so it is re-applied a bounded number of times.
+                    let mut tries = 1;
+                    loop {
+                        match is_applied(service, st) {
+                            Ok(true) => break,
+                            Ok(false) if tries < CONVERGE_TRIES && matches!(probe_for(st), Probe::NoRowMatches(_)) => {
+                                tries += 1;
+                                if let Err(e) = service.exec(sql) {
+                                    return (2, format!("admin-migrate: {name}: re-applying it as the lifecycle service user failed: {e}"));
+                                }
+                            }
+                            Ok(false) => return (2, format!("admin-migrate: {name}: applied as the lifecycle service user ({tries} time(s)), but its probe still finds {}", what(st, false))),
+                            Err(e) => return (2, format!("admin-migrate: {name}: applied as the lifecycle service user, but cannot tell whether it took: {e}")),
+                        }
                     }
                     wrote = true;
                     report.push(format!("{name}: {}", applied_as(st, "the lifecycle service user", touched)));
@@ -788,6 +800,8 @@ mod tests {
         users: std::collections::BTreeSet<String>,
         /// Terminal rows still carrying a holder (what 0003's guarded UPDATE corrects).
         stale_terminal_rows: bool,
+        /// Live writers that re-dirty a guarded UPDATE's rows right after it is applied, this many times.
+        racing_writes: u32,
         /// Every statement that changed something, as `<user>: <sql>`.
         writes: Vec<String>,
     }
@@ -872,7 +886,10 @@ mod tests {
                     st.views.insert(p.split_whitespace().nth(2).unwrap_or("").to_string());
                 }
                 Stmt::Plain(p) if p.to_ascii_uppercase().starts_with("GRANT") => {}
-                _ => st.stale_terminal_rows = false,
+                _ => {
+                    st.stale_terminal_rows = st.racing_writes > 0;
+                    st.racing_writes = st.racing_writes.saturating_sub(1);
+                }
             }
             st.writes.push(format!("{}: {sql}", self.user));
             Ok(())
@@ -992,6 +1009,26 @@ mod tests {
         assert_eq!(rc, 0, "{out}");
         assert!(out.contains("every migration already applied"), "{out}");
         assert_eq!(db.borrow().writes.len(), 1, "nothing re-run");
+    }
+
+    #[test]
+    fn a_guarded_update_converges_when_a_live_writer_redirties_a_row_between_apply_and_reprobe() {
+        let db = migrated();
+        db.borrow_mut().stale_terminal_rows = true;
+        db.borrow_mut().racing_writes = 1;
+        let (rc, out) = migrate(&real_steps(), &service(&db), None);
+        assert_eq!(rc, 0, "{out}");
+        assert!(!out.contains("probe still finds"), "{out}");
+    }
+
+    #[test]
+    fn a_guarded_update_that_never_converges_still_fails_naming_its_probe() {
+        let db = migrated();
+        db.borrow_mut().stale_terminal_rows = true;
+        db.borrow_mut().racing_writes = u32::MAX;
+        let (rc, out) = migrate(&real_steps(), &service(&db), None);
+        assert_eq!(rc, 2, "{out}");
+        assert!(out.contains("probe still finds"), "{out}");
     }
 
     #[test]
