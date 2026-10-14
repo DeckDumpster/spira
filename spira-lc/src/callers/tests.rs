@@ -514,11 +514,14 @@ fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
 fn certify_records_a_moved_tip_on_a_submitted_bead_before_a_pass_and_never_before_a_red() {
     let mut f = Fake::default();
     f.bead("sp-m", BeadState::Submitted).tip = Some("old111".into());
-    let a = go(&mut f, "certify", &["sp-m", "new222", "pass", "keyA"]);
+    go(&mut f, "certify", &["sp-m", "new222", "pass", "keyA"]);
+    assert!(!f.events.iter().any(|e| e.5.contains("Submit")), "a keyed worker pass never moves the tip");
+    f.events.clear();
+    let a = go(&mut f, "certify", &["sp-m", "new222", "pass", "queue-submit"]);
     assert_eq!(a.code, APPLIED);
     assert_eq!((f.state("sp-m"), f.beads["sp-m"].tip.as_deref()), ("CERTIFIED", Some("new222")));
     let kinds: Vec<&str> = f.events.iter().map(|e| e.5.as_str()).collect();
-    assert_eq!(kinds, [r#"{"Submit":{"tip":"new222"}}"#, r#"{"GatePass":{"tip":"new222","gate_key":"keyA"}}"#]);
+    assert_eq!(kinds, [r#"{"Submit":{"tip":"new222"}}"#, r#"{"GatePass":{"tip":"new222","gate_key":"queue-submit"}}"#]);
 
     let mut f = Fake::default();
     f.bead("sp-n", BeadState::Submitted).tip = Some("old111".into());

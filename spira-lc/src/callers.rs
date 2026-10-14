@@ -603,12 +603,16 @@ fn submit_kind(tip: &str) -> String {
 /// REWORK row has no Submit, so a verdict for a bead that moved on is skipped, not refused),
 /// and a CERTIFIED row at another tip is voided by Submit (the tip invariant, as bead.rs's
 /// own Certified+Submit arm has it). None: the row is unreadable.
-fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, actor: &str) -> Option<(String, String)> {
+/// Only `queue submit` (which gated the branch tip itself) may move a SUBMITTED row's tip; a keyed
+/// worker pass at another tip stays a refused stale verdict.
+const BRANCH_TIP_DETAIL: &str = "queue-submit";
+
+fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str, actor: &str) -> Option<(String, String)> {
     let (mut st, mut ver, row) = state_version(m, id)?;
     let resubmit = match st.as_str() {
         "WORKING" => true,
         "CERTIFIED" => bead_field(&row, "tip") != tip,
-        "SUBMITTED" => outcome == "pass" && bead_field(&row, "tip") != tip,
+        "SUBMITTED" => outcome == "pass" && detail == BRANCH_TIP_DETAIL && bead_field(&row, "tip") != tip,
         _ => false,
     };
     if resubmit {
@@ -619,7 +623,7 @@ fn reach_submitted(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, acto
 }
 
 fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str, actor: &str) -> Answer {
-    let Some((state, version)) = reach_submitted(m, id, tip, outcome, actor) else {
+    let Some((state, version)) = reach_submitted(m, id, tip, outcome, detail, actor) else {
         return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
     };
     // A pass on a row already CERTIFIED at this tip (reach_submitted resubmits any other
