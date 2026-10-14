@@ -116,7 +116,7 @@ pub fn stats_json() -> String {
         c.verbs.iter().map(|(v, (n, ms))| (v.clone(), serde_json::json!({"count": n, "total_ms": ms}))).collect();
     let callers: Vec<serde_json::Value> =
         c.callers.iter().map(|((v, who), n)| serde_json::json!({"verb": v, "caller": who, "count": n})).collect();
-    serde_json::json!({"verbs": verbs, "callers": callers}).to_string()
+    serde_json::json!({"verbs": verbs, "callers": callers, "writes": crate::db::write_stats()}).to_string()
 }
 
 pub fn set_verb(verb: &str) {

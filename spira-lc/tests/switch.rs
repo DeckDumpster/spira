@@ -11,9 +11,9 @@ fn run(args: &[&str], dir: &std::path::Path, db: &Db) -> (i32, String, bool) {
     let before = db.accepted.load(Ordering::SeqCst);
     // SPIRA_RUN and SPIRA_LC_SOCKET are declared config (spira/conf.d): the one source is
     // $SPIRA_TOML (per Ryan 2026-10-05), so the binary no longer reads them from its own
-    // environment — declare them in a fixture toml instead. SPIRA_LC_SOCKET still names a
-    // socket nothing is listening on, so the direct connection below is exercised.
-    let no_such_socket = dir.join("no-such-socket");
+    // environment — declare them in a fixture toml instead. SPIRA_LC_SOCKET is declared
+    // empty (direct mode, sp-yvyvzd: a dead socket is no longer a route to a direct
+    // connection), so the direct connection below is exercised.
     // SPIRA_LC_PASSWORD_FILE is also declared config, and the base fixture (complete.toml)
     // points it at a placeholder path that does not exist on disk. Left alone, Conn::from_env
     // tries to read that file, fails, and `Live::call` returns cannot-tell WITHOUT ever
@@ -25,7 +25,7 @@ fn run(args: &[&str], dir: &std::path::Path, db: &Db) -> (i32, String, bool) {
         dir,
         &[
             ("SPIRA_RUN", dir.to_str().unwrap()),
-            ("SPIRA_LC_SOCKET", no_such_socket.to_str().unwrap()),
+            ("SPIRA_LC_SOCKET", ""),
             ("SPIRA_LC_PASSWORD_FILE", ""),
         ],
     );

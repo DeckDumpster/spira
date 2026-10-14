@@ -39,7 +39,7 @@ const LC_READY_DEADLINE: Duration = Duration::from_secs(30); // batch-job: serve
 const LC_STOP_DEADLINE: Duration = Duration::from_secs(5); // batch-job: serve exit after SIGTERM
 /// Every key declared: a process resolves its config only from a file that declares them all
 /// (spira-config/src/process.rs), so the world's config starts from the complete fixture and
-/// overrides each locator a world must own. Its `lc_socket` is the production default and
+/// overrides each locator a world must own. Its `lc_socket` is empty (direct mode) and
 /// is always overwritten below.
 const CONFIG_BASE: &str = include_str!("../../../spira-config/tests/fixtures/complete.toml");
 

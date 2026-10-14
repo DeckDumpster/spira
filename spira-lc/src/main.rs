@@ -27,6 +27,7 @@ mod deps;
 mod db;
 mod facts;
 mod git_evidence;
+mod group;
 mod legacy_files;
 mod live;
 mod mend_watch;
@@ -137,9 +138,9 @@ fn main() {
         std::process::exit(emit(rest, ans));
     }
 
-    // The fast path: if the system-user service is up, its persistent connection answers
-    // in well under the same-user fallback's per-call reconnect cost. Same-user fallback
-    // (below) is always correct, just slower — see db.rs's module doc.
+    // Every store call goes through the service that owns the store's connections; when it is
+    // down the call fails naming it (client.rs). Only a declared-empty socket (direct mode, a
+    // fixture with no service) or a verb never forwarded reaches the connection below.
     if let Some((code, out)) = client::try_socket(&args) {
         spira_config::lc_call::print_answer(code, &out);
         std::process::exit(code);
@@ -162,8 +163,8 @@ fn main() {
     std::process::exit(code);
 }
 
-/// The primitives as a caller verb reaches them: the service socket when it answers, else a
-/// same-user connection opened once, on first use.
+/// The primitives as a caller verb reaches them: the service socket, or — only in declared
+/// direct mode — a same-user connection opened once, on first use.
 struct Live {
     conn: Option<Result<Conn, String>>,
 }
