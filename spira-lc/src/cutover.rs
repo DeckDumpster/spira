@@ -544,7 +544,7 @@ fn member_added_steps(
             version: bead_row.version,
             kind: bead::BeadEventKind::Deliver,
             actor: actor.to_string(),
-            at: Some(crate::db::now_epoch()),
+            at: Some(at),
         };
         let bead_outcome = bead::apply(bead_row, &deliver_ev);
         if !bead_outcome.applied {
@@ -712,7 +712,7 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
             version: bead_row.version,
             kind: bead::BeadEventKind::Delivered { merge_sha: sha.clone(), proof: format!("queue-fast-forward:{tip}") },
             actor: actor.clone(),
-            at: Some(crate::db::now_epoch()),
+            at: Some(at),
         };
         let b_outcome = bead::apply(&bead_row, &bead_delivered_ev);
         if b_outcome.applied {
@@ -1227,6 +1227,20 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn a_cascaded_state_change_stamps_since_with_the_events_own_at() {
+        let at = 1_000;
+        let mut bead_row = bead::BeadRow::filed("sp-a");
+        bead_row.state = bead::BeadState::Certified;
+        let batch_row = batch::BatchRow::cut("b-1", "r", "h", "base");
+        let mut preamble = String::new();
+        let steps = member_added_steps("b-1", batch_row, &[("sp-a".into(), "t".into())], &[bead_row], &[None], "x", at, &mut preamble, "v").unwrap();
+        let step = steps.iter().find(|s| s.table == "bead").expect("a bead step");
+        assert!(step.set_clause.contains("state = 'IN_DELIVERY'"), "{}", step.set_clause);
+        assert!(step.set_clause.contains("since = 1000,"), "{}", step.set_clause);
+        assert!(step.event.applied_insert_sql("IN_DELIVERY").contains(", 1000);"));
+    }
+
+    #[test]
     fn create_bead_is_one_ignoring_insert() {
         let s = create_bead_script("sp-a'b", 7, None, None, None, None);
         assert!(s.starts_with("INSERT IGNORE INTO bead"), "{s}");
@@ -1408,7 +1422,7 @@ fn add_exit_steps(
     }
 
     let Some(bead_row) = rows::fetch_bead(conn, id)? else { return Ok(()) };
-    let bead_ev = bead::BeadEvent { expect: bead_row.state, version: bead_row.version, kind: bead_kind.clone(), actor: actor.to_string(), at: Some(crate::db::now_epoch()) };
+    let bead_ev = bead::BeadEvent { expect: bead_row.state, version: bead_row.version, kind: bead_kind.clone(), actor: actor.to_string(), at: Some(at) };
     let bead_outcome = bead::apply(&bead_row, &bead_ev);
     if bead_outcome.applied {
         steps.push(cascade_step(
