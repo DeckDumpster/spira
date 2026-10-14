@@ -1118,6 +1118,9 @@ impl Env for SysEnv {
     fn read_file(&self, p: &Path) -> Result<String, String> {
         fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))
     }
+    fn config(&self, k: &str) -> Result<String, String> {
+        crate::conf::value(k)
+    }
 }
 
 /// stdout/stderr, flushed per write so interleaving with child processes stays in order.

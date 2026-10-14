@@ -922,6 +922,9 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     if let Some(line) = &statute_note {
         rc |= bdq_status(home, &s(&["note", &id, line]));
     }
+    if let Some(line) = &statute_note {
+        rc |= bdq_status(home, &s(&["note", &id, line]));
+    }
     if let Some(new) = priority {
         let (_, out) = bdq_capture(home, &s(&["show", &id, "--json"]));
         let Some(old) = bead::parse_priority(&out) else {

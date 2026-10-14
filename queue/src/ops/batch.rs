@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use super::{actor, converge_orphans, czar_ok, lc_abandon, lc_eject_member, require_lc, idents, landing_log, owner_refused, read_text, repo_path, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
+use super::{actor, converge_orphans, czar_ok, lc_abandon, lc_eject_member, require_lc, idents, landing_log, owner_refused, read_text, repo_path, statute_gate, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::ident::bounded_text;
 use crate::model::{EjectCause, LandMode, Member};
@@ -51,6 +51,11 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             w.err(format!("queue.sh eject: cannot read the reason: {e}"));
             return USAGE;
         }
+    };
+    let reason = match statute_gate(w, "eject", &reason) {
+        Ok(Some(line)) => format!("{reason}\n\n{line}"),
+        Ok(None) => reason,
+        Err(rc) => return rc,
     };
     let Ok(c) = resolve(w, "eject", repo) else { return FAIL };
     let Ok(path) = repo_path(w, "eject", &c) else { return FAIL };

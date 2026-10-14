@@ -362,6 +362,10 @@ pub trait Env {
     fn pid(&self) -> u32;
     fn read_stdin(&self) -> Result<String, String>;
     fn read_file(&self, p: &Path) -> Result<String, String>;
+    /// A registered config key's resolved value; a fake that declares none resolves empty.
+    fn config(&self, k: &str) -> Result<String, String> {
+        Ok(self.var(k).unwrap_or_default())
+    }
 }
 
 pub trait Emit {

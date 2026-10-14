@@ -84,6 +84,32 @@ pub fn recorded_line(hits: &[Hit], overridden: Option<&str>) -> String {
     }
 }
 
+/// What a decision-recording tool shows its actor and writes into the record.
+#[derive(Debug, PartialEq)]
+pub struct Admitted {
+    pub shown: String,
+    pub line: String,
+}
+
+/// The whole check for tools that hold the registry text: `Ok(None)` when nothing matched,
+/// `Ok(Some)` when the text is admitted (touching only, or a contradiction with an override
+/// reason), `Err(message)` when it is refused or the registry is malformed.
+pub fn gate(registry: &str, text: &str, override_value: Option<String>) -> Result<Option<Admitted>, String> {
+    let hits = check(registry, text).map_err(|e| format!("statute registry: {e}"))?;
+    if hits.is_empty() {
+        return Ok(None);
+    }
+    let why = if hits.iter().any(|h| h.refuses) {
+        match override_reason(override_value) {
+            Some(w) => Some(w),
+            None => return Err(refusal(&hits)),
+        }
+    } else {
+        None
+    };
+    Ok(Some(Admitted { shown: shown(&hits), line: recorded_line(&hits, why.as_deref()) }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +139,18 @@ mod tests {
         let h = check(REG, "pick vmids from a configured range").unwrap();
         assert_eq!(recorded_line(&h, None), "Statute check: law-alloc");
         assert!(recorded_line(&h, Some("why")).contains("override: why"));
+    }
+
+    #[test]
+    fn gate_refuses_admits_with_a_reason_and_records_a_touch() {
+        let bad = "pick vmids from a configured range";
+        assert!(gate(REG, bad, None).unwrap_err().contains("law-alloc"));
+        assert!(gate(REG, bad, Some("  ".into())).is_err());
+        let a = gate(REG, bad, Some("why".into())).unwrap().unwrap();
+        assert!(a.line.contains("override: why") && a.shown.contains("law-alloc"));
+        let t = gate(REG, "the allocator", None).unwrap().unwrap();
+        assert_eq!(t.line, "Statute check: law-touch");
+        assert_eq!(gate(REG, "tidy", None).unwrap(), None);
+        assert!(gate("law-x | maybe | y", "y", None).is_err());
     }
 }

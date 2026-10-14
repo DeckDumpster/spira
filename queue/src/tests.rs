@@ -3004,3 +3004,18 @@ fn publish_goes_ahead_on_a_named_override_and_logs_it() {
     let log = fs::read_to_string(t.lib.s.run.join("local-pass/overrides.log")).unwrap();
     assert!(log.contains("sha=m3") && log.contains("box is down"), "{log}");
 }
+
+#[test]
+fn a_plain_eject_reason_contradicting_a_statute_is_refused_before_anything_is_touched() {
+    let t = T::new(LandMode::Queue);
+    open_batch_record(&t);
+    let g = t.dir.path().join("statute-guards");
+    std::fs::write(&g, "law-nonrebase | refuse | rebase by hand\n").unwrap();
+    t.env.vars.borrow_mut().insert("SPIRA_STATUTE_GUARDS".into(), g.to_string_lossy().into_owned());
+    assert_eq!(t.run(&["eject", "sp-a", "--reason", "rebase by hand"]), 1);
+    assert!(t.err().contains("law-nonrebase"), "{}", t.err());
+    assert!(t.qfile("open").exists() && !t.lib.has("cause_event sp-a eject"));
+    t.env.vars.borrow_mut().insert("BEAD_STATUTE_CONSIDERED".into(), "why".into());
+    assert_eq!(t.run(&["eject", "sp-a", "--reason", "rebase by hand"]), 0, "{}", t.err());
+    assert!(t.lib.has("cause_event sp-a eject"));
+}

@@ -133,6 +133,23 @@ pub fn probe_marker(subject: &str, body: &str) -> Option<&'static str> {
 
 const ASK_KEY_WINDOW_S: u64 = 86_400;
 
+/// The statute check on an ask or escalation's own text, before it is filed or delivered.
+/// Returns the line to record in the body; an unreadable registry refuses. An empty
+/// `SPIRA_STATUTE_GUARDS` is the only inert setting.
+fn statute_check(env: &Env, subject: &str, body: &str) -> Result<Option<String>, String> {
+    if env.statute_guards.is_empty() {
+        return Ok(None);
+    }
+    let registry = fs::read_to_string(&env.statute_guards).map_err(|e| format!("refusing: cannot read the statute registry {}: {e}", env.statute_guards))?;
+    match ::bead::statute::gate(&registry, &format!("{subject}\n{body}"), env.statute_considered.clone())? {
+        Some(a) => {
+            eprint!("{}", a.shown);
+            Ok(Some(a.line))
+        }
+        None => Ok(None),
+    }
+}
+
 pub type DeliverFn<'a> = &'a dyn Fn(&Path, &str, &str, bool) -> Result<PathBuf, String>;
 
 fn deliver_to_maildir(dir: &Path, msgid: &str, msg: &str, mute: bool) -> Result<PathBuf, String> {
@@ -174,6 +191,12 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
             body = format!("(Routed here from an operator mail: {why}.)\n\n{body}");
             mailbox = "concierge".to_string();
             rerouted = true;
+        }
+    }
+    if (mailbox == "operator" || mailbox == "concierge") && !args.digest {
+        if let Some(line) = statute_check(env, args.subject, &body)? {
+            steps.push(line.clone());
+            body = format!("{line}\n\n{body}");
         }
     }
     steps.push(match mailbox.as_str() {
@@ -674,6 +697,8 @@ mod probe_tests {
             lint_considered: Some("test".into()),
             repeat_considered: Some("test".into()),
             operator_considered: None,
+            statute_guards: String::new(),
+            statute_considered: None,
             allow_blocking: false,
             bead_id: None,
             lock_timeout_ms: 1000,
@@ -969,5 +994,62 @@ mod probe_tests {
         assert!(out.delivered_path.to_string_lossy().contains("/new/"), "{:?}", out.delivered_path);
         let plain = send(&FakeBd::new(vec![]), &e, &args("Plain?", false), body.into()).unwrap();
         assert!(plain.delivered_path.to_string_lossy().contains("/cur/"), "{:?}", plain.delivered_path);
+    }
+
+    fn guarded(root: &Path, considered: Option<&str>) -> Env {
+        let reg = root.join("guards");
+        std::fs::write(&reg, "law-alloc | refuse | pick \\w+ from a configured range\nlaw-touch | show | allocator\n").unwrap();
+        let mut e = env(root);
+        e.statute_guards = reg.to_string_lossy().into_owned();
+        e.statute_considered = considered.map(str::to_string);
+        e
+    }
+
+    fn body_of(root: &Path) -> String {
+        let new = root.join("mail/operator/new");
+        let f = std::fs::read_dir(new).unwrap().next().unwrap().unwrap().path();
+        std::fs::read_to_string(f).unwrap()
+    }
+
+    #[test]
+    fn an_ask_contradicting_a_statute_is_refused_and_nothing_is_delivered() {
+        let t = testkit::TempDir::new("mail-statute-refuse");
+        let e = guarded(t.path(), None);
+        let err = send(&FakeBd::new(vec![]), &e, &args("Pick VMIDs from a configured range?", false), "## Class basis\nit is policy\n".into()).unwrap_err();
+        assert!(err.contains("law-alloc") && err.contains("BEAD_STATUTE_CONSIDERED"), "{err}");
+        assert_eq!(mailbox_entries(t.path()), 0);
+        let err = send(&FakeBd::new(vec![]), &e, &args("Which?", true), "pick x from a configured range\n## Class basis\np\n".into()).unwrap_err();
+        assert!(err.contains("law-alloc"), "a dry run refuses too: {err}");
+    }
+
+    #[test]
+    fn an_override_reason_admits_the_ask_and_is_recorded_in_it() {
+        let t = testkit::TempDir::new("mail-statute-override");
+        let e = guarded(t.path(), Some("fixture only"));
+        send(&FakeBd::new(vec![]), &e, &args("Pick VMIDs from a configured range?", false), "## Class basis\nit is policy\n".into()).unwrap();
+        let m = body_of(t.path());
+        assert!(m.contains("Statute check: law-alloc (override: fixture only)"), "{m}");
+    }
+
+    #[test]
+    fn a_touching_ask_is_recorded_and_a_clean_one_is_not() {
+        let t = testkit::TempDir::new("mail-statute-touch");
+        let e = guarded(t.path(), None);
+        send(&FakeBd::new(vec![]), &e, &args("Ask the allocator?", false), "## Class basis\nit is policy\n".into()).unwrap();
+        assert!(body_of(t.path()).contains("Statute check: law-touch"));
+        let t = testkit::TempDir::new("mail-statute-clean");
+        send(&FakeBd::new(vec![]), &guarded(t.path(), None), &args("Tidy?", false), "## Class basis\nit is policy\n".into()).unwrap();
+        assert!(!body_of(t.path()).contains("Statute check"));
+    }
+
+    #[test]
+    fn an_unreadable_registry_refuses_and_an_empty_key_is_inert() {
+        let t = testkit::TempDir::new("mail-statute-unreadable");
+        let mut e = guarded(t.path(), None);
+        e.statute_guards = t.path().join("missing").to_string_lossy().into_owned();
+        let err = send(&FakeBd::new(vec![]), &e, &args("Tidy?", false), "## Class basis\np\n".into()).unwrap_err();
+        assert!(err.contains("cannot read the statute registry"), "{err}");
+        e.statute_guards = String::new();
+        send(&FakeBd::new(vec![]), &e, &args("Pick x from a configured range", false), "## Class basis\np\n".into()).unwrap();
     }
 }
