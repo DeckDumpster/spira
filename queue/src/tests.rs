@@ -1253,6 +1253,8 @@ fn eject_red_records_eject_red() {
     open_batch_record(&t);
     assert_eq!(t.run(&["eject", "sp-a", "--red"]), 0);
     assert!(t.lib.has("cause_event sp-a eject-red"));
+    let calls = t.lc.calls.borrow().clone();
+    assert!(calls.contains(&"event bead sp-a IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected-red\"}}".to_string()), "{calls:?}");
 }
 
 #[test]
@@ -1372,7 +1374,7 @@ fn a_forge_eject_of_a_red_member_requeued_to_submitted_still_ends_in_rework() {
     assert_eq!(t.run(&["eject", "sp-a", "--red", "--reason", "PR red"]), 0, "{}", t.err());
     let calls = t.lc.calls.borrow().clone();
     assert!(calls.contains(&"event bead sp-a SUBMITTED 7 \"Deliver\"".to_string()), "{calls:?}");
-    assert!(calls.contains(&"event bead sp-a IN_DELIVERY 8 {\"Returned\":{\"reason\":\"batch-ejected\"}}".to_string()), "{calls:?}");
+    assert!(calls.contains(&"event bead sp-a IN_DELIVERY 8 {\"Returned\":{\"reason\":\"batch-ejected-red\"}}".to_string()), "{calls:?}");
 }
 
 #[test]
