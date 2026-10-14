@@ -10,6 +10,7 @@ pub mod bdq;
 pub mod claimdesc;
 pub mod event;
 pub mod identity;
+pub mod statute;
 pub mod latency;
 
 use std::collections::BTreeMap;
