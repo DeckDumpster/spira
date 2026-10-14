@@ -917,9 +917,9 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     let mut changed = String::new();
     let mut rc = 0;
     if let Some(line) = &override_note {
-    if let Some(line) = &statute_note {
         rc |= bdq_status(home, &s(&["note", &id, line]));
     }
+    if let Some(line) = &statute_note {
         rc |= bdq_status(home, &s(&["note", &id, line]));
     }
     if let Some(new) = priority {
