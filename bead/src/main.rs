@@ -152,7 +152,7 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
     let (code, mut stdout) = bdq_capture_with(home, args, Stdio::inherit());
     if parse_created_id(&stdout).is_none() {
         if let Some((title, _)) = mirror {
-            let (_, listing) = bdq_capture(home, &s(&["list", "--all", "--limit", "0", "--json"]));
+            let (_, listing) = bdq_capture(home, &s(&["list", "--limit", "0", "--json"]));
             if let Some(found) = find_id_by_title(&listing, title) {
                 eprintln!("bead: file: bd create printed no id; found {found} by its title and creating its lifecycle row");
                 stdout = format!("{found}\n");
@@ -1070,7 +1070,7 @@ fn lc_done(lc: &mut Option<Result<HashMap<String, spira_config::lc_state::Row>, 
 
 fn cmd_lint(home: &str, args: &[String]) -> i32 {
     let ids: Vec<String> = if args.is_empty() || args[0] == "--all" {
-        let (_, out) = bdq_capture(home, &s(&["list", "--all", "--limit", "0", "--json"]));
+        let (_, out) = bdq_capture(home, &s(&["list", "--limit", "0", "--json"]));
         parse_list_ids(&out)
     } else {
         args.to_vec()
