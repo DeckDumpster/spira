@@ -91,6 +91,55 @@ where
     }
 }
 
+const DEADLINE_TRIES: u32 = 3;
+
+fn timed_out(e: &(i32, String)) -> bool {
+    e.0 == 2
+}
+
+/// `lc_cas` that survives a deadline: a write that answered "cannot tell" may have landed, so
+/// each retry re-reads the row first and `applied(state)` says whether the first try took.
+pub fn lc_cas_settled<F, A>(w: &World, batch_id: &str, f: F, applied: A) -> Result<(), (i32, String)>
+where
+    F: Fn(&str, &str) -> Result<(), (i32, String)>,
+    A: Fn(&World) -> bool,
+{
+    let mut last = Err((2, "no attempt".to_string()));
+    for attempt in 0..DEADLINE_TRIES {
+        if attempt > 0 {
+            w.clock.sleep(u64::from(attempt));
+            if applied(w) {
+                return Ok(());
+            }
+        }
+        last = lc_cas(w, batch_id, &f);
+        match &last {
+            Err(e) if timed_out(e) => continue,
+            Err(_) if attempt > 0 && applied(w) => return Ok(()),
+            _ => return last,
+        }
+    }
+    last
+}
+
+pub fn lc_abandon(w: &World, batch_id: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
+    lc_cas_settled(
+        w,
+        batch_id,
+        |s, v| w.lc.abandon_batch(batch_id, s, v, actor, reason),
+        |w| matches!(w.lc.batch_state(batch_id), Some((s, _)) if matches!(s.as_str(), "ABANDONED" | "DISCARDED")),
+    )
+}
+
+pub fn lc_eject_member(w: &World, batch_id: &str, bead: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
+    lc_cas_settled(
+        w,
+        batch_id,
+        |s, v| w.lc.eject_member(batch_id, bead, s, v, actor, reason),
+        |w| matches!(w.lc.bead_row(bead), Some(r) if r.state != "IN_DELIVERY"),
+    )
+}
+
 /// The acting identity: SPIRA_QUEUE_ACTOR, BEADS_ACTOR, aeon-$SPIRA_AEON, USER, unknown.
 pub fn actor(w: &World) -> String {
     w.var("SPIRA_QUEUE_ACTOR")
