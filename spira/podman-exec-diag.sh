@@ -13,11 +13,11 @@ podman_exec_diag() {
         grep -q 'timed out waiting for file' "$log" || break
         {
             echo "podman-exec-diag: podman could not start an exec in $name (attempt $try, exit $rc)"
-            podman info 2>&1 | head -60
-            podman ps -a --filter "name=$name" 2>&1
-            podman logs --tail 50 "$name" 2>&1
+            timeout 5 podman info 2>&1 | head -60
+            timeout 5 podman ps -a --filter "name=$name" 2>&1
+            timeout 5 podman logs --tail 50 "$name" 2>&1
             df -h /var/tmp "${XDG_DATA_HOME:-$HOME/.local/share}/containers" 2>&1
-            podman version 2>&1 | head -5
+            timeout 5 podman version 2>&1 | head -5
             conmon --version 2>&1 | head -2
             crun --version 2>&1 | head -1
         } >&2
