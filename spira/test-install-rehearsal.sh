@@ -33,11 +33,12 @@
 # runtime: ~3m
 # tier: T3
 # bare-host: builds its own podman containers; the corpus container has no podman
-# covers: install/src/bin/install.rs spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile UC-instance-lifecycle-40
+# covers: spira/podman-exec-diag.sh install/src/bin/install.rs spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile UC-instance-lifecycle-40
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 . "$HERE/testlib.sh"
+. "$HERE/podman-exec-diag.sh"
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 # Exit 3 is "installed but not ready": no cockpit collector runs in this container.
 installed() { { [ "$2" = 0 ] || [ "$2" = 3 ]; } && ok "$1" || bad "$1" "exit $2"; }
@@ -278,7 +279,7 @@ iszero "world.halted created" "$?"
 # A fresh host exports neither SPIRA_TOML nor SPIRA_RELEASES: install runs from the release it
 # ships in (doctor beside it, no Spira directory on the inherited PATH) and finds the config
 # configure wrote at its default path.
-"${INSTALL_EXEC[@]}" \
+podman_exec_diag "$CNAME" "${INSTALL_EXEC[@]}" \
     -e "PATH=${STUBS_CTR}:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e "SPIRA_INSTALL_FORCE=1" \
     -e "SPIRA_INSTALL_LC_STORE_CONSIDERED=1" \
