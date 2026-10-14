@@ -272,7 +272,8 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     // ---- isolation check: the stores, the run dir, the harness, and the lifecycle
     // credential and socket every spira-lc call in the stage resolves.
     let lc_paths: Vec<PathBuf> =
-        lc_env.iter().filter(|(k, _)| matches!(k.as_str(), "SPIRA_LC_PASSWORD_FILE" | "SPIRA_LC_SOCKET" | "SPIRA_LC_DATA_DIR")).map(|(_, v)| PathBuf::from(v)).collect();
+        // An empty socket is declared direct mode: it names no path, so nothing to confine.
+        lc_env.iter().filter(|(k, v)| matches!(k.as_str(), "SPIRA_LC_PASSWORD_FILE" | "SPIRA_LC_SOCKET" | "SPIRA_LC_DATA_DIR") && !(k == "SPIRA_LC_SOCKET" && v.is_empty())).map(|(_, v)| PathBuf::from(v)).collect();
     for p in [&db, &root.join("run"), &sh].into_iter().chain(lc_paths.iter()) {
         if !p.starts_with(&root) {
             crate::stage_lc::stop(&root);

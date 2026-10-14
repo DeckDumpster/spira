@@ -200,6 +200,10 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     // and socket too, or a spira-lc call would reach the operator's machine.
     for k in ["SPIRA_DB", "SPIRA_RUN", "SPIRA_HOME", "SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET"] {
         let v = get(k);
+        // An empty socket is declared direct mode (sp-yvyvzd): it reaches no service at all.
+        if k == "SPIRA_LC_SOCKET" && v.is_empty() {
+            continue;
+        }
         if !Path::new(&v).starts_with(stage_root) {
             return Err(format!("isolation check failed: {v} is outside STAGE_ROOT={}", stage_root.display()));
         }
