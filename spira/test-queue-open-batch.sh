@@ -66,6 +66,7 @@ case "\$cmd" in
         printf '%s\n' "\$n"
         ;;
     pr-number) grep "^\${1:-}	" "$FORGE_LOG" 2>/dev/null | tail -1 | cut -f2 ;;
+    pr-list-open) cat "$TMP/live-prs" 2>/dev/null ;;
     pr-comment|pr-list-queue) : ;;
     *) printf 'forge-fixture: unknown: %s\n' "\$cmd" >&2; exit 1 ;;
 esac
@@ -120,7 +121,7 @@ open_batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 remote_queue_branches() { git --git-dir="$REMOTE" for-each-ref --format='%(refname:short)' 'refs/heads/spira/queue/*' 2>/dev/null; }
 
 clean_case() {
-    rm -f "$(open_batch_file)"
+    rm -f "$(open_batch_file)" "$TMP/live-prs"
     : > "$FORGE_LOG"; : > "$BODY_LOG"; : > "$GATE_COUNT"; printf '0\n' > "$GATE_RC_FILE"
     local t
     for t in event delivery batch_member batch bead; do lcfix_sql -q "DELETE FROM $t" >/dev/null 2>&1; done
@@ -307,6 +308,25 @@ out9a="$(openbatch nosuchrepo)"
 want "9. names the repo" "no such repo" "$out9a"
 out9b="$(openbatch notq)"
 want "9. names queue mode" "not in queue mode" "$out9b"
+
+# =============================================================================
+# 10. A live batch PR on the forge with no local record: refuse before cutting,
+#     touching neither the PR nor any lifecycle row.
+# =============================================================================
+echo
+echo "10. a forge-open batch PR refuses the cut before anything is written:"
+seed
+certify sp-k fk.txt "k-content"
+printf '538 spira/queue/20261014T140210Z\n' > "$TMP/live-prs"
+out10="$(openbatch fixture-repo)"; rc10=$?
+want "10. names the live PR"      "already has open batch PR 538" "$out10"
+[ "$rc10" -ne 0 ] && ok "10. non-zero exit" || bad "10. non-zero exit" "rc=$rc10"
+is   "10. no PR created"          "0" "$(wc -l < "$FORGE_LOG")"
+is   "10. sp-k is still CERTIFIED" "CERTIFIED" "$(lcfix_state sp-k)"
+qb10="$(remote_queue_branches)"
+[ -z "$qb10" ] && ok "10. no queue branch pushed" || bad "10. no queue branch pushed" "$qb10"
+[ -f "$(open_batch_file)" ] && bad "10. no open record written" "file exists" || ok "10. no open record written"
+clean_case
 
 echo
 tl_summary
