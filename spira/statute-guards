@@ -1,0 +1,5 @@
+# slug | refuse|show | regex   (case-insensitive; matched against a decision's title and body)
+# Add your own statutes' rows to a copy and point SPIRA_STATUTE_GUARDS at it.
+law-tests-run-only-through-testenv | refuse | \b(run|running)\b[^.\n]{0,40}\b(suite|tests?)\b[^.\n]{0,30}\b(directly )?on the host\b
+law-never-disarm-a-check-to-proceed | show | \b(disable|disarm|bypass|skip)\b[^.\n]{0,30}\b(guard|check|gate|fence)\b
+law-never-derive-an-id-from-output | show | \b(parse|grep|scrape)\b[^.\n]{0,30}\bid\b[^.\n]{0,20}\boutput\b

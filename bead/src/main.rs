@@ -458,6 +458,41 @@ fn identity_guard(repo: &str, text: &str) -> Result<Option<String>, i32> {
     }
 }
 
+/// The statute check on a decision's own text. `Ok(Some(line))` is the line to record on the
+/// bead: every statute the registry matched, and the override reason when one admitted a
+/// contradiction. An unreadable or malformed registry refuses; only an empty key is inert.
+fn statute_guard(text: &str) -> Result<Option<String>, i32> {
+    let path = cfg_label("SPIRA_STATUTE_GUARDS");
+    if path.is_empty() {
+        return Ok(None);
+    }
+    let registry = std::fs::read_to_string(&path).map_err(|e| {
+        eprintln!("bead: refusing: cannot read the statute registry {path}: {e}");
+        1
+    })?;
+    let hits = bead::statute::check(&registry, text).map_err(|e| {
+        eprintln!("bead: refusing: statute registry {path}: {e}");
+        1
+    })?;
+    if hits.is_empty() {
+        return Ok(None);
+    }
+    if !hits.iter().any(|h| h.refuses) {
+        eprint!("{}", bead::statute::shown(&hits));
+        return Ok(Some(bead::statute::recorded_line(&hits, None)));
+    }
+    match bead::statute::override_reason(env::var(bead::statute::OVERRIDE_ENV).ok()) {
+        Some(why) => {
+            eprint!("{}", bead::statute::shown(&hits));
+            Ok(Some(bead::statute::recorded_line(&hits, Some(&why))))
+        }
+        None => {
+            eprintln!("{}", bead::statute::refusal(&hits));
+            Err(2)
+        }
+    }
+}
+
 /// One source of config (per Ryan 2026-10-05): a registered key's value, through
 /// `spira_config::process::cfg`, resolved from `$SPIRA_TOML`. Several of these keys treat
 /// a resolved empty string as a legitimate, documented value (SPIRA_SCOPE_LABEL's "no
@@ -598,6 +633,22 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             Ok(Some(why)) => {
                 let path = env::temp_dir().join(format!("bead-crossrepo-{}.md", std::process::id()));
                 if let Err(e) = std::fs::write(&path, format!("{}\n\n{body}", bead::identity::recorded_line(&why))) {
+                    eprintln!("bead: writing {}: {e}", path.display());
+                    return 1;
+                }
+                body_file = Some(path.to_string_lossy().into_owned());
+            }
+            Ok(None) => {}
+        }
+    }
+
+    {
+        let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+        match statute_guard(&format!("{title}\n{body}")) {
+            Err(rc) => return rc,
+            Ok(Some(line)) => {
+                let path = env::temp_dir().join(format!("bead-statute-{}.md", std::process::id()));
+                if let Err(e) = std::fs::write(&path, format!("{line}\n\n{body}")) {
                     eprintln!("bead: writing {}: {e}", path.display());
                     return 1;
                 }
@@ -850,9 +901,25 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         }
     }
 
+    let mut statute_note: Option<String> = None;
+    if note.is_some() || body_file.is_some() || append_file.is_some() {
+        let mut text = note.clone().unwrap_or_default();
+        for f in [&body_file, &append_file].into_iter().flatten() {
+            text.push('\n');
+            text.push_str(&std::fs::read_to_string(f).unwrap_or_default());
+        }
+        match statute_guard(&text) {
+            Err(rc) => return rc,
+            Ok(line) => statute_note = line,
+        }
+    }
+
     let mut changed = String::new();
     let mut rc = 0;
     if let Some(line) = &override_note {
+    if let Some(line) = &statute_note {
+        rc |= bdq_status(home, &s(&["note", &id, line]));
+    }
         rc |= bdq_status(home, &s(&["note", &id, line]));
     }
     if let Some(new) = priority {

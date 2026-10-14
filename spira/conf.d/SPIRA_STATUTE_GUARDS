@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=statute
+DOC=Path of the statute guard registry: one `slug | refuse|show | regex` row per rule. Empty means no check runs.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Path of the statute guard registry bead.sh file|amend run a decision's text against
+    # before the write: `slug | refuse|show | regex`. A refuse row stops the write and names
+    # the statute; every match is recorded on the bead. Empty means the check is inert.
+    : "${SPIRA_STATUTE_GUARDS:=$SPIRA_HOME/statute-guards}"
+SPIRA_CONF_DEFAULT_EOF
