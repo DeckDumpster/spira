@@ -760,6 +760,9 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
     let mut lines = Vec::new();
     let run_json = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}")]);
     if let Some(v) = parse(&run_json.stdout) {
+        if let Some(st) = jstr(&v, "status").filter(|s| !s.is_empty()) {
+            lines.push(format!("run-status: {st}"));
+        }
         let started = jstr(&v, "run_started_at").filter(|s| !s.is_empty()).or_else(|| jstr(&v, "created_at")).unwrap_or_default();
         let e = epoch(&started);
         if e > 0 {

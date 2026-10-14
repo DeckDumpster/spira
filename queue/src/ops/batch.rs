@@ -471,6 +471,9 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     for (id, tip) in cands {
         match w.lc.bead_row(&id) {
             None => skips.push(format!("{id}: no lifecycle row (spira-lc could not say) — not admitted")),
+            Some(r) if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") && super::round::batch_red_at(&c, &id, &tip) => {
+                skips.push(format!("{id}: {tip} already went red in a batch — not admitted until the tip changes"))
+            }
             Some(r) if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") && !r.holds.is_empty() => {
                 skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(",")))
             }

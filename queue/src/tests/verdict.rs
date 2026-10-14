@@ -467,8 +467,10 @@ fn a_setup_red_is_rerun_once_then_abandoned_with_evidence_never_an_endless_defer
     tick(&t);
     assert_eq!(count(&t, "workflow-rerun 77"), 1);
     assert_eq!(mails(&t), 0);
+    *t.forge.meta.borrow_mut() = "run-status: in_progress\n".into();
     tick(&t);
     assert_eq!(count(&t, "workflow-rerun 77"), 1, "{}", t.out());
+    assert!(t.out().contains("setup red, re-run in flight"), "{}", t.out());
     assert_eq!(mails(&t), 0, "a rerun inside the grace is still in flight");
     t.clock.now.set(t.clock.now.get() + t.lib.s.verdict.ci_idle_sec + 1);
     tick(&t);
@@ -479,6 +481,54 @@ fn a_setup_red_is_rerun_once_then_abandoned_with_evidence_never_an_endless_defer
     assert!(has_call(&t.forge.calls, "pr-close 12"), "{:?}", t.forge.calls.borrow());
     assert!(!t.qfile("open").exists(), "the record goes so the next batch can be cut");
     assert_eq!(count(&t, "workflow-rerun 77"), 1);
+}
+
+#[test]
+fn a_rerun_that_never_started_is_not_called_in_flight() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.meta.borrow_mut() = "run-status: completed\n".into();
+    let red = "red\nfailed-step: gate / Set up runner\nstep-log: no space left\n";
+    for _ in 0..2 {
+        t.forge.status.borrow_mut().push(Some(red.into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    }
+    assert!(!t.out().contains("re-run in flight"), "{}", t.out());
+    assert!(has_call(&t.forge.calls, "pr-close 12"), "{:?}", t.forge.calls.borrow());
+}
+
+#[test]
+fn a_lint_red_naming_a_members_file_ejects_that_member_and_bars_its_tip() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    t.git.stat("b0", "ta", &[("mtg_collector/other.py", 1, 0)]);
+    t.git.stat("b0", "tb", &[("mtg_collector/cli/data_cmd.py", 3, 1)]);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    let red = "red\nfailed-step: gate / Lint\nstep-log: mtg_collector/cli/data_cmd.py:3:1: I001 [*] Import block is un-sorted or un-formatted\nstep-log: Found 1 error.\n";
+    t.forge.status.borrow_mut().push(Some(red.into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.out().contains("sp-b ejected: mtg_collector/cli/data_cmd.py:3:1: I001"), "{}", t.out());
+    assert!(t.lc.has("eject-member spira-1 sp-b"), "{:?}", t.lc.calls.borrow());
+    assert!(!t.lc.has("eject-member spira-1 sp-a"), "{:?}", t.lc.calls.borrow());
+    assert!(t.lib.has("cause_event sp-b eject-red"));
+    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("workflow-rerun")));
+    assert!(has_call(&t.forge.calls, "pr-close 12"));
+    assert!(!t.qfile("open").exists());
+    assert_eq!(fs::read_to_string(t.qfile("red-tips")).unwrap(), "sp-b tb\n");
+}
+
+#[test]
+fn a_lint_red_naming_no_members_file_is_still_a_setup_red() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    t.git.stat("b0", "ta", &[("a.py", 1, 0)]);
+    t.git.stat("b0", "tb", &[("b.py", 1, 0)]);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    t.forge.status.borrow_mut().push(Some("red\nfailed-step: gate / Lint\nstep-log: elsewhere.py:3:1: I001 x\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(!t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    assert!(t.out().contains("no suite annotations"), "{}", t.out());
 }
 
 #[test]
