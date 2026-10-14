@@ -4,4 +4,5 @@ DOC=Directory, relative to SPIRA_WIKI, holding one <repo>/identity.md page per r
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # Directory, relative to SPIRA_WIKI, holding one <repo>/identity.md page per repo.
     # No default: the layout of the brain is installation knowledge.
+    : "${SPIRA_IDENTITY_PROJECTS:=}"
 SPIRA_CONF_DEFAULT_EOF
