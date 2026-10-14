@@ -10,6 +10,7 @@ pub const PSI_IO: &str = "/proc/pressure/io";
 pub struct Rule {
     pub wait: Duration,
     pub io_full_avg60: f64,
+    pub always: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,8 +30,11 @@ pub fn read_io_full_avg60(path: &str) -> Option<f64> {
 }
 
 /// `no_lease_for` is how long the pass has gone without a local lease (None: it is being leased).
-/// An unreadable pressure never spills.
+/// An unreadable pressure never spills; `always` places every pass on EC2.
 pub fn decide(rule: &Rule, no_lease_for: Option<Duration>, pressure: Option<f64>) -> Place {
+    if rule.always {
+        return Place::Ec2("placement ec2-always".into());
+    }
     if let Some(p) = pressure.filter(|p| *p > rule.io_full_avg60) {
         return Place::Ec2(format!("io pressure full avg60 {p:.1} above {:.1}", rule.io_full_avg60));
     }
@@ -44,7 +48,8 @@ pub fn decide(rule: &Rule, no_lease_for: Option<Duration>, pressure: Option<f64>
 mod tests {
     use super::*;
 
-    const RULE: Rule = Rule { wait: Duration::from_secs(30), io_full_avg60: 30.0 };
+    const RULE: Rule = Rule { wait: Duration::from_secs(30), io_full_avg60: 30.0, always: false };
+    const ALWAYS: Rule = Rule { always: true, ..RULE };
     const PSI: &str = "some avg10=1.00 avg60=2.00 avg300=3.00 total=10\nfull avg10=0.00 avg60=41.25 avg300=9.00 total=5\n";
 
     #[test]
@@ -65,5 +70,12 @@ mod tests {
     fn a_local_pool_that_cannot_lease_within_the_wait_spills() {
         assert!(matches!(decide(&RULE, Some(Duration::from_secs(30)), Some(1.0)), Place::Ec2(r) if r.contains("30s")));
         assert_eq!(decide(&RULE, Some(Duration::from_secs(29)), Some(1.0)), Place::Local);
+    }
+
+    #[test]
+    fn ec2_always_places_on_ec2_with_a_free_local_vm_and_unreadable_pressure() {
+        assert!(matches!(decide(&ALWAYS, None, Some(0.0)), Place::Ec2(r) if r.contains("ec2-always")));
+        assert!(matches!(decide(&ALWAYS, None, None), Place::Ec2(_)));
+        assert_eq!(decide(&RULE, None, None), Place::Local);
     }
 }

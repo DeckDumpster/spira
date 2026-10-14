@@ -231,6 +231,9 @@ records the provider and the reason (`spilled to ec2: ...`, `provider: proxmox`)
 carries `provider`. A spilled pass is not the pool of one (G1): it is recorded in `spilled` before
 its instance exists and leased on success, so G2 holds. It starts no local background provision.
 
+`SPIRA_ROUND_VM_SPILL=ec2-always` skips the rule: every pass leases on EC2 first, whatever the pool
+or the pressure reading; only a failed EC2 acquire falls back to local, and the lease event says why.
+
 Keys (round-vm's own, read from the environment): `SPIRA_ROUND_VM_EC2_PROFILE`, `_REGION`, `_AMI`,
 `_INSTANCE_TYPE` (c7i.8xlarge, spot first, on-demand fallback; `_MARKET=on-demand` skips spot), `_SUBNET`, `_SECURITY_GROUP`, `_INSTANCE_PROFILE` (SSM),
 `_TAILSCALE_KEY_FILE`, `_HOST_ADDR` (this host's tailnet address, handed to the instance as the

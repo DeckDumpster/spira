@@ -1,7 +1,7 @@
 TYPE=string
 GROUP=round
-DOC=SPIRA_ROUND_VM_SPILL — empty (off) or `ec2`: when the hypervisor has no room, a round pass spills to an EC2 instance. Production stays off until the operator turns it on.
-SCHEMA=Round-VM spill provider: empty means rounds only ever run on the local hypervisor; `ec2` lets a pass spill to EC2 when the hypervisor has no room.
+DOC=SPIRA_ROUND_VM_SPILL — empty (off), `ec2` or `ec2-always`: `ec2` spills a round pass to EC2 when the hypervisor has no room or is io-bound; `ec2-always` leases every pass on EC2 first and falls back to the hypervisor only when EC2 cannot be acquired. Production stays off until the operator turns it on.
+SCHEMA=Round-VM spill provider: empty means rounds only ever run on the local hypervisor; `ec2` lets a pass spill to EC2 when the hypervisor has no room; `ec2-always` places every pass on EC2, falling back to local only if EC2 cannot be acquired.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
 SPIRA_CONF_DEFAULT_EOF
