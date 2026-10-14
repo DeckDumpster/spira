@@ -57,13 +57,42 @@ rm -f "$TMP/probe-red"; rskp pass >/dev/null; touch "$TMP/probe-red"
 want "a recurrence after recovery alarms again" "UnauthorizedOperation" "$(rskp pass)"
 rm -f "$TMP/probe-red"
 fresh
-printf '#!/usr/bin/env bash\nsleep 6\nexit 0\n' > "$TMP/stub/round-vm"
+printf '#!/usr/bin/env bash\n[ "$1" = status ] && exit 1\nsleep 6\nexit 0\n' > "$TMP/stub/round-vm"
 is "a probe slower than the old 5s cap but inside the 7s deadline is quiet" "" "$(rskp pass)"
 nowant "a slow successful probe leaves no alarm" "ROUND SPILL LAUNCH" "$(cat "$INBOX" 2>/dev/null)"
-printf '#!/usr/bin/env bash\nsleep 5\nexit 0\n' > "$TMP/stub/round-vm"
+printf '#!/usr/bin/env bash\n[ "$1" = status ] && exit 1\nsleep 5\nexit 0\n' > "$TMP/stub/round-vm"
 DL=1 out="$(rskp pass)"
-want "a probe past the deadline alarms as a timeout" "probe timed out after 1s" "$out"
+want "a probe past the deadline says it could not decide" "probe could not decide" "$out"
 nowant "a timeout is not reported as a refused launch" "cannot launch" "$(cat "$INBOX")"
+nowant "a timeout is not reported as a launch failure" "not confirmed" "$(cat "$INBOX")"
+
+now2="$(date +%s)"
+status_stub() {
+    printf '#!/usr/bin/env bash\nif [ "$1" = status ]; then cat "%s/status.json"; exit 0; fi\nsleep 5\nexit 0\n' "$TMP" > "$TMP/stub/round-vm"
+}
+status_stub
+cat > "$TMP/status.json" <<JSON
+{"events":[{"vm":"ec2-aa","to":"provisioning","reason":"spilled to ec2: x","at":$((now2 - 300))},{"vm":"ec2-aa","to":"leased","reason":"spilled to ec2: x (provider: ec2)","at":$((now2 - 290))}]}
+JSON
+fresh
+DL=1 out="$(rskp pass)"
+is "a real launch inside the window leaves a slow dry-run unrun and the watcher quiet" "" "$out"
+cat > "$TMP/status.json" <<JSON
+{"events":[{"vm":"ec2-aa","to":"leased","reason":"spilled to ec2: x (provider: ec2)","at":$((now2 - 90000))}]}
+JSON
+fresh
+DL=1 out="$(rskp pass)"
+want "a real launch outside the window falls back to the dry-run" "probe could not decide" "$out"
+cat > "$TMP/status.json" <<JSON
+{"events":[{"vm":"ec2-bb","to":"provisioning","reason":"spilled to ec2: x","at":$((now2 - 120))},{"vm":"ec2-bb","to":"destroyed","reason":"aws ec2: An error occurred (VcpuLimitExceeded) when calling RunInstances","at":$((now2 - 100))}]}
+JSON
+fresh
+want "a refused real launch alarms with its error" "VcpuLimitExceeded" "$(rskp pass)"
+cat > "$TMP/status.json" <<JSON
+{"events":[{"vm":"ec2-bb","to":"destroyed","reason":"aws ec2: VcpuLimitExceeded","at":$((now2 - 100))},{"vm":"ec2-cc","to":"leased","reason":"spilled to ec2: x (provider: ec2)","at":$((now2 - 50))}]}
+JSON
+fresh
+is "a later successful launch supersedes an earlier refusal" "" "$(rskp pass)"
 rm -f "$TMP/probe.log"
 printf '#!/usr/bin/env bash\necho "FAILED at dry-run launch: aws ec2: UnauthorizedOperation" >&2; exit 1\n' > "$TMP/stub/round-vm"
 fresh
