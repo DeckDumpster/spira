@@ -13,6 +13,7 @@ use crate::provider::{vm_name, Provider, Timing};
 use crate::schema::now;
 
 pub const TAG_KEY: &str = "spira-round-vm";
+pub const DEFAULT_INSTANCE_TYPE: &str = "c7i.8xlarge";
 pub const HANDLE_PREFIX: &str = "ec2-";
 
 pub fn is_ec2_handle(handle: &str) -> bool {
@@ -26,6 +27,7 @@ pub struct Inst {
     pub name: String,
     pub running: bool,
     pub launched_at: u64,
+    pub instance_type: String,
 }
 
 pub const AMI_AUTO: &str = "auto";
@@ -65,10 +67,10 @@ pub fn select_image(images: &[Image], expected: &str) -> Result<String, String> 
 }
 
 pub trait Ec2Api {
-    /// Launches one instance of `ami` tagged `TAG_KEY=handle`, `Name=name`; its instance id.
-    fn run(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String>;
+    /// Launches one instance of `ami` and `instance_type` tagged `TAG_KEY=handle`, `Name=name`; its instance id.
+    fn run(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String>;
     /// `run` with the same argv under `--dry-run`: Ok only when AWS would have launched it.
-    fn run_dry(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<(), String>;
+    fn run_dry(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<(), String>;
     /// Every available image tagged as a round image, with its recipe-sha.
     fn images(&self) -> Result<Vec<Image>, String>;
     /// The live instance tagged with `handle`; None once it is terminated or never existed.
@@ -91,7 +93,7 @@ pub struct Ec2Config {
     pub profile: String,
     pub region: String,
     pub ami: String,
-    pub instance_type: String,
+    pub instance_types: Vec<String>,
     pub subnet: String,
     pub security_group: String,
     pub instance_profile: String,
@@ -102,6 +104,47 @@ pub struct Ec2Config {
     pub recipe_sha: String,
 }
 
+/// The ordered launch candidates: the list key if it names any, else the single key, else the default.
+pub fn instance_types(list: &str, single: &str) -> Vec<String> {
+    let listed: Vec<String> = list.split(',').map(str::trim).filter(|t| !t.is_empty()).map(String::from).collect();
+    if !listed.is_empty() {
+        return listed;
+    }
+    vec![if single.is_empty() { DEFAULT_INSTANCE_TYPE.to_string() } else { single.to_string() }]
+}
+
+/// Whether AWS refused a launch for want of quota or capacity, which a smaller type may not share.
+pub fn refused_for_capacity(err: &str) -> bool {
+    ["VcpuLimitExceeded", "InsufficientInstanceCapacity", "InstanceLimitExceeded"].iter().any(|c| err.contains(c))
+}
+
+/// Tries each type in order, moving on only when `launch` is refused for capacity; the type that
+/// launched, or the last refusal.
+pub fn first_accepted<T>(types: &[String], mut launch: impl FnMut(&str) -> Result<T, String>) -> Result<(String, T), String> {
+    let mut refusals: Vec<String> = Vec::new();
+    for t in types {
+        match launch(t) {
+            Ok(v) => return Ok((t.clone(), v)),
+            Err(e) if refused_for_capacity(&e) => {
+                eprintln!("round-vm: EC2 refused {t} ({e}); trying the next instance type");
+                refusals.push(format!("{t}: {e}"));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(format!("every configured EC2 instance type was refused: {}", refusals.join("; ")))
+}
+
+/// vCPUs of an EC2 size name such as `c7i.8xlarge`; None for a name this does not recognise.
+pub fn vcpus_of(instance_type: &str) -> Option<u32> {
+    let size = instance_type.split_once('.')?.1;
+    match size {
+        "large" => Some(2),
+        "xlarge" => Some(4),
+        _ => size.strip_suffix("xlarge")?.parse::<u32>().ok().map(|n| n * 4),
+    }
+}
+
 impl Ec2Config {
     pub fn from_lookup(get: &dyn Fn(&str) -> Option<String>) -> Ec2Config {
         let s = |k: &str| get(k).map(|v| v.trim().to_string()).unwrap_or_default();
@@ -110,7 +153,7 @@ impl Ec2Config {
             profile: s("SPIRA_ROUND_VM_EC2_PROFILE"),
             region: s("SPIRA_ROUND_VM_EC2_REGION"),
             ami: s("SPIRA_ROUND_VM_EC2_AMI"),
-            instance_type: Some(s("SPIRA_ROUND_VM_EC2_INSTANCE_TYPE")).filter(|v| !v.is_empty()).unwrap_or_else(|| "c7i.8xlarge".into()),
+            instance_types: instance_types(&s("SPIRA_ROUND_VM_EC2_INSTANCE_TYPES"), &s("SPIRA_ROUND_VM_EC2_INSTANCE_TYPE")),
             subnet: s("SPIRA_ROUND_VM_EC2_SUBNET"),
             security_group: s("SPIRA_ROUND_VM_EC2_SECURITY_GROUP"),
             instance_profile: s("SPIRA_ROUND_VM_EC2_INSTANCE_PROFILE"),
@@ -151,6 +194,7 @@ pub struct Ec2<A: Ec2Api> {
     tailscale_key: String,
     run_deadline: Duration,
     ami: String,
+    instance_types: Vec<String>,
     recipe_sha: String,
     resolved: std::sync::Mutex<Option<String>>,
 }
@@ -168,6 +212,7 @@ impl<A: Ec2Api> Ec2<A> {
             tailscale_key: key.trim().to_string(),
             run_deadline: cfg.run_deadline,
             ami: cfg.ami.clone(),
+            instance_types: cfg.instance_types.clone(),
             recipe_sha: cfg.recipe_sha.clone(),
             resolved: std::sync::Mutex::new(None),
         })
@@ -192,7 +237,9 @@ impl<A: Ec2Api> Ec2<A> {
     pub fn probe_dry(&self) -> Result<(), String> {
         let handle = self.next_id()?;
         let ami = self.image().map_err(|e| format!("image selection: {e}"))?;
-        self.api.run_dry(&ami, &handle, &vm_name(&handle), &user_data(&self.tailscale_key, &vm_name(&handle))).map_err(|e| format!("dry-run launch: {e}"))
+        first_accepted(&self.instance_types, |t| self.api.run_dry(&ami, t, &handle, &vm_name(&handle), &user_data(&self.tailscale_key, &vm_name(&handle))))
+            .map(|_| ())
+            .map_err(|e| format!("dry-run launch: {e}"))
     }
 
     /// Launches one instance through the production path with no local fallback, waits for SSM to
@@ -261,7 +308,13 @@ impl<A: Ec2Api> Provider for Ec2<A> {
             return Err(format!("EC2 instance {vmid} already exists"));
         }
         let ami = self.image()?;
-        self.api.run(&ami, vmid, name, &user_data(&self.tailscale_key, name)).map(|_| ())
+        let (chosen, _) = first_accepted(&self.instance_types, |t| self.api.run(&ami, t, vmid, name, &user_data(&self.tailscale_key, name)))?;
+        eprintln!("round-vm: EC2 instance type {chosen} for {vmid}");
+        Ok(())
+    }
+
+    fn instance_type(&self, vmid: &str) -> Option<String> {
+        self.api.find(vmid).ok().flatten().map(|i| i.instance_type).filter(|t| !t.is_empty())
     }
 
     fn start(&self, vmid: &str) -> Result<(), String> {
@@ -366,7 +419,6 @@ impl<A: Ec2Api> Provider for Ec2<A> {
 pub struct AwsCli {
     pub profile: String,
     pub region: String,
-    pub instance_type: String,
     pub subnet: String,
     pub security_group: String,
     pub instance_profile: String,
@@ -379,7 +431,6 @@ impl AwsCli {
         AwsCli {
             profile: cfg.profile.clone(),
             region: cfg.region.clone(),
-            instance_type: cfg.instance_type.clone(),
             subnet: cfg.subnet.clone(),
             security_group: cfg.security_group.clone(),
             instance_profile: cfg.instance_profile.clone(),
@@ -403,12 +454,12 @@ impl AwsCli {
         }
     }
 
-    pub fn run_args(&self, ami: &str, handle: &str, name: &str, user_data_file: &str, spot: bool) -> Vec<String> {
+    pub fn run_args(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data_file: &str, spot: bool) -> Vec<String> {
         let (ok, ov) = AMI_OWNER_TAG;
         let mut a: Vec<String> = vec![
             "ec2".into(), "run-instances".into(),
             "--image-id".into(), ami.to_string(),
-            "--instance-type".into(), self.instance_type.clone(),
+            "--instance-type".into(), instance_type.to_string(),
             "--subnet-id".into(), self.subnet.clone(),
             "--count".into(), "1".into(),
             "--instance-initiated-shutdown-behavior".into(), "terminate".into(),
@@ -443,7 +494,7 @@ impl AwsCli {
         a
     }
 
-    fn launch(&self, ami: &str, handle: &str, name: &str, user_data: &str, dry: bool) -> Result<String, String> {
+    fn launch(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str, dry: bool) -> Result<String, String> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         std::fs::create_dir_all(&self.scratch).map_err(|e| format!("{}: {e}", self.scratch.display()))?;
@@ -452,12 +503,12 @@ impl AwsCli {
         f.write_all(user_data.as_bytes()).map_err(|e| e.to_string())?;
         let path = file.to_string_lossy();
         let r = if self.spot_first {
-            self.aws(self.dry_flag(self.run_args(ami, handle, name, &path, true), dry)).or_else(|spot_err| {
+            self.aws(self.dry_flag(self.run_args(ami, instance_type, handle, name, &path, true), dry)).or_else(|spot_err| {
                 eprintln!("round-vm: spot launch refused ({spot_err}); falling back to on-demand");
-                self.aws(self.dry_flag(self.run_args(ami, handle, name, &path, false), dry))
+                self.aws(self.dry_flag(self.run_args(ami, instance_type, handle, name, &path, false), dry))
             })
         } else {
-            self.aws(self.dry_flag(self.run_args(ami, handle, name, &path, false), dry))
+            self.aws(self.dry_flag(self.run_args(ami, instance_type, handle, name, &path, false), dry))
         };
         let _ = std::fs::remove_file(&file);
         r.map(|s| s.trim().to_string())
@@ -500,12 +551,12 @@ impl Ec2Api for AwsCli {
         parse_images(&out)
     }
 
-    fn run(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
-        self.launch(ami, handle, name, user_data, false)
+    fn run(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
+        self.launch(ami, instance_type, handle, name, user_data, false)
     }
 
-    fn run_dry(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<(), String> {
-        dry_run_verdict(self.launch(ami, handle, name, user_data, true))
+    fn run_dry(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<(), String> {
+        dry_run_verdict(self.launch(ami, instance_type, handle, name, user_data, true))
     }
 
     fn find(&self, handle: &str) -> Result<Option<Inst>, String> {
@@ -649,6 +700,7 @@ pub fn parse_instances(json: &str) -> Result<Vec<Inst>, String> {
                 name: tag("Name").unwrap_or_default(),
                 running: state == "running",
                 launched_at: i.get("LaunchTime").and_then(Value::as_str).and_then(parse_iso).unwrap_or(0),
+                instance_type: i.get("InstanceType").and_then(Value::as_str).unwrap_or("").to_string(),
             });
         }
     }
@@ -715,10 +767,10 @@ mod tests {
     #[test]
     fn run_args_tag_the_instance_and_terminate_on_shutdown() {
         let cli = AwsCli {
-            profile: "p".into(), region: "r".into(), instance_type: "c7i.8xlarge".into(),
+            profile: "p".into(), region: "r".into(),
             subnet: "subnet-1".into(), security_group: "sg-1".into(), instance_profile: "ssm".into(), spot_first: true, scratch: "/tmp".into(),
         };
-        let a = cli.run_args("ami-1", "ec2-a", "round-ec2-a", "/tmp/ud", false);
+        let a = cli.run_args("ami-1", "c7i.8xlarge", "ec2-a", "round-ec2-a", "/tmp/ud", false);
         let j = a.join(" ");
         assert!(j.contains("{Key=spira-round-vm,Value=ec2-a},{Key=Name,Value=round-ec2-a}]"), "{j}");
         assert!(j.contains("ResourceType=instance,Tags=[{Key=spill:owner,Value=round},"), "{j}");
@@ -731,7 +783,7 @@ mod tests {
         assert!(j.contains("--security-group-ids sg-1") && j.contains("--iam-instance-profile Name=ssm"), "{j}");
         assert!(!j.contains("tskey"), "the auth key stays in the user-data file, never in argv");
         assert!(!j.contains("instance-market-options"), "{j}");
-        let spot = cli.run_args("ami-1", "ec2-a", "round-ec2-a", "/tmp/ud", true).join(" ");
+        let spot = cli.run_args("ami-1", "c7i.8xlarge", "ec2-a", "round-ec2-a", "/tmp/ud", true).join(" ");
         assert!(spot.contains("--instance-market-options MarketType=spot,") && spot.contains("InstanceInterruptionBehavior=terminate"), "{spot}");
     }
 
@@ -741,11 +793,11 @@ mod tests {
         // read: measured on a round instance, 133 MB of rustc read cold in 26.8 s (5 MB/s),
         // and the batch container's systemd missed its 10 s basic.target and user@ waits.
         let cli = AwsCli {
-            profile: "p".into(), region: "r".into(), instance_type: "c7i.8xlarge".into(),
+            profile: "p".into(), region: "r".into(),
             subnet: "subnet-1".into(), security_group: String::new(), instance_profile: String::new(), spot_first: false, scratch: "/tmp".into(),
         };
         for spot in [false, true] {
-            let a = cli.run_args("ami-1", "ec2-a", "round-ec2-a", "/tmp/ud", spot);
+            let a = cli.run_args("ami-1", "c7i.8xlarge", "ec2-a", "round-ec2-a", "/tmp/ud", spot);
             let i = a.iter().position(|s| s == "--block-device-mappings").unwrap_or_else(|| panic!("no block-device mapping: {}", a.join(" ")));
             let m = &a[i + 1];
             assert!(m.starts_with(&format!("DeviceName={ROOT_DEVICE},Ebs={{")), "{m}");
@@ -756,7 +808,7 @@ mod tests {
     #[test]
     fn the_defaults_are_a_c7i_spot_first_and_the_market_key_turns_spot_off() {
         let none = Ec2Config::from_lookup(&|_| None);
-        assert_eq!(none.instance_type, "c7i.8xlarge");
+        assert_eq!(none.instance_types, ["c7i.8xlarge"]);
         assert!(none.spot_first);
         let od = Ec2Config::from_lookup(&|k| (k == "SPIRA_ROUND_VM_EC2_MARKET").then(|| "on-demand".to_string()));
         assert!(!od.spot_first);
@@ -799,7 +851,7 @@ mod tests {
         let key = d.path().join("ts.key");
         std::fs::write(&key, "tskey-auth-abc\n").unwrap();
         Ec2Config {
-            profile: "p".into(), region: "r".into(), ami: "ami-1".into(), instance_type: "c7i.8xlarge".into(), subnet: "subnet-1".into(),
+            profile: "p".into(), region: "r".into(), ami: "ami-1".into(), instance_types: vec!["c7i.8xlarge".into()], subnet: "subnet-1".into(),
             security_group: String::new(), instance_profile: String::new(), spot_first: true, tailscale_key_file: key.to_string_lossy().into(),
             run_deadline: Duration::from_secs(7200), host_addr: "100.64.0.1".into(), recipe_sha: "sha-now".into(),
         }
@@ -963,6 +1015,55 @@ mod tests {
         let pinned = FakeEc2::default();
         provision(&Ec2::new(pinned.clone(), &c).unwrap(), &spec(), &mut |_| {}).unwrap();
         assert_eq!(pinned.launched_amis(), ["ami-pinned"]);
+    }
+
+    #[test]
+    fn instance_types_prefer_the_list_then_the_single_key_then_the_default() {
+        assert_eq!(instance_types("a.x, b.y,,", "c.z"), ["a.x", "b.y"]);
+        assert_eq!(instance_types("", "c.z"), ["c.z"]);
+        assert_eq!(instance_types(" ", ""), [DEFAULT_INSTANCE_TYPE]);
+        let c = Ec2Config::from_lookup(&|k| (k == "SPIRA_ROUND_VM_EC2_INSTANCE_TYPES").then(|| "c7i.8xlarge,c7i.4xlarge".to_string()));
+        assert_eq!(c.instance_types, ["c7i.8xlarge", "c7i.4xlarge"]);
+    }
+
+    #[test]
+    fn a_vcpu_limit_refusal_moves_to_the_next_type_and_all_refused_is_an_error() {
+        let d = TempDir::new();
+        let mut c = config(&d);
+        c.instance_types = vec!["c7i.8xlarge".into(), "c7i.4xlarge".into()];
+        let fake = FakeEc2::default();
+        fake.refuse_type("c7i.8xlarge");
+        let ec2 = Ec2::new(fake.clone(), &c).unwrap();
+        let vm = provision(&ec2, &spec(), &mut |_| {}).unwrap();
+        assert_eq!(fake.launched_types(), ["c7i.4xlarge"]);
+        assert_eq!(ec2.instance_type(&vm.handle).as_deref(), Some("c7i.4xlarge"));
+
+        let all = FakeEc2::default();
+        all.refuse_type("c7i.8xlarge");
+        all.refuse_type("c7i.4xlarge");
+        let e = provision(&Ec2::new(all.clone(), &c).unwrap(), &spec(), &mut |_| {}).err().expect("refused");
+        assert!(all.launched_types().is_empty() && format!("{e:?}").contains("c7i.4xlarge"), "{e:?}");
+    }
+
+    #[test]
+    fn only_a_capacity_refusal_tries_the_next_type() {
+        let types = vec!["a".to_string(), "b".to_string()];
+        let mut tried = Vec::new();
+        let r: Result<(String, ()), String> = first_accepted(&types, |t| {
+            tried.push(t.to_string());
+            Err("UnauthorizedOperation".into())
+        });
+        assert!(r.is_err() && tried == ["a"]);
+    }
+
+    #[test]
+    fn vcpus_follow_the_size_name() {
+        assert_eq!(vcpus_of("c7i.8xlarge"), Some(32));
+        assert_eq!(vcpus_of("c7i.4xlarge"), Some(16));
+        assert_eq!(vcpus_of("c7i.xlarge"), Some(4));
+        assert_eq!(vcpus_of("c7i.large"), Some(2));
+        assert_eq!(vcpus_of("c7i.metal-24xl"), None);
+        assert_eq!(vcpus_of("nonsense"), None);
     }
 
     #[test]

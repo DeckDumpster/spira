@@ -50,6 +50,7 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.round_vm_ec2_region" = "us-west-2"
 "spira.round_vm_ec2_ami" = ""
 "spira.round_vm_ec2_instance_type" = "c7i.8xlarge"
+"spira.round_vm_ec2_instance_types" = "c7i.8xlarge,c7i.4xlarge"
 "spira.round_vm_ec2_market" = "spot-first"
 "spira.round_vm_ec2_subnet" = ""
 "spira.round_vm_ec2_security_group" = ""

@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_INSTANCE_TYPES — ordered, comma-separated EC2 instance types a spill tries before a local VM.
+SCHEMA=Instance types tried in order when EC2 refuses a launch for vCPU quota or capacity; empty = the single SPIRA_ROUND_VM_EC2_INSTANCE_TYPE. Empty is valid.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_INSTANCE_TYPES:=}"
+SPIRA_CONF_DEFAULT_EOF
