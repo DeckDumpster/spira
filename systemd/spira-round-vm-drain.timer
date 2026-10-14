@@ -1,0 +1,14 @@
+[Unit]
+Description=Release an idle warm round VM every five minutes
+
+[Timer]
+OnCalendar=*-*-* *:0/5:00
+AccuracySec=30s
+Persistent=true
+Unit=spira-round-vm-drain.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work
