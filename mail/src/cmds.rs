@@ -50,6 +50,7 @@ pub struct SendArgs<'a> {
     pub urgent: bool,
     pub digest: bool,
     pub dry_run: bool,
+    pub requested_by: &'a str,
 }
 
 #[derive(Debug)]
@@ -81,9 +82,16 @@ pub fn class_refusal(class: &str, default: &str, body: &str) -> Option<String> {
 }
 
 /// Why a mail for the operator does not belong in the operator mailbox, or None if it does.
-pub fn operator_refusal(kind: &str, default: &str, class: &str, body: &str) -> Option<String> {
+pub fn operator_refusal(kind: &str, default: &str, class: &str, body: &str, requested_by: &str) -> Option<String> {
+    if kind == "report" {
+        return if requested_by.trim().is_empty() {
+            Some("kind 'report' is admitted only with --requested-by \"<the operator's words>\" citing his request for it".to_string())
+        } else {
+            None
+        };
+    }
     if kind != "question" && kind != "decision" {
-        return Some(format!("kind '{kind}' is not a decision ask"));
+        return Some(format!("kind '{kind}' is not a decision ask; a write-up the operator asked for goes as --kind report --requested-by \"<his words>\""));
     }
     if default.trim().is_empty() {
         return Some("no --default carried".to_string());
@@ -130,7 +138,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
     let mut body = body;
     let mut rerouted = false;
     if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
-        if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body) {
+        if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body, args.requested_by) {
             eprintln!(
                 "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only question asks with a class (permissions, policy, destructive-on-production-data), a default and a '## Class basis' section; everything else is the concierge's judgement, and carries no ask label."
             );
@@ -267,6 +275,9 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
     }
     if !args.default.is_empty() {
         msg.push_str(&message::header("X-Spira-Default", args.default)?);
+    }
+    if !args.requested_by.is_empty() {
+        msg.push_str(&message::header("X-Spira-Requested-By", args.requested_by)?);
     }
     if args.urgent {
         msg.push_str("X-Spira-Urgent: yes\n");
@@ -633,7 +644,7 @@ mod probe_tests {
     }
 
     fn args<'a>(subject: &'a str, dry_run: bool) -> SendArgs<'a> {
-        SendArgs { mailbox: "operator", from: Some("A <a@spira>"), subject, kind: "question", default: "do it", class: "policy", bead: "", urgent: false, digest: false, dry_run }
+        SendArgs { mailbox: "operator", from: Some("A <a@spira>"), subject, kind: "question", default: "do it", class: "policy", bead: "", urgent: false, digest: false, dry_run, requested_by: "" }
     }
 
     fn mailbox_entries(root: &Path) -> usize {
@@ -650,6 +661,30 @@ mod probe_tests {
             assert!(msg.contains("--dry-run"), "{msg}");
         }
         assert_eq!(mailbox_entries(t.path()), 0);
+    }
+
+    #[test]
+    fn a_report_reaches_the_operator_only_with_his_request_cited_and_carries_no_ask_label() {
+        let t = testkit::TempDir::new("mail-report");
+        let bd = FakeBd::new(vec![]);
+        let bare = SendArgs { kind: "report", default: "", class: "", ..args("Disk contention", false) };
+        let r = send(&bd, &env(t.path()), &bare, "write-up".into()).unwrap();
+        assert!(r.delivered_path.to_string_lossy().contains("/concierge/"), "{:?}", r.delivered_path);
+        let cited = SendArgs { requested_by: "put it in my mailbox", ..bare };
+        let r = send(&bd, &env(t.path()), &cited, "write-up".into()).unwrap();
+        assert!(r.delivered_path.to_string_lossy().contains("/operator/"), "{:?}", r.delivered_path);
+        assert!(r.x_bead.is_none());
+        assert!(bd.calls().is_empty(), "{:?}", bd.calls());
+        let text = written_message(t.path());
+        assert!(text.contains("X-Spira-Requested-By: put it in my mailbox"), "{text}");
+        assert!(!text.contains("X-Spira-Urgent"), "{text}");
+    }
+
+    #[test]
+    fn a_note_is_still_refused_and_the_refusal_names_the_report_exit() {
+        let why = operator_refusal("note", "", "", "", "").unwrap();
+        assert!(why.contains("--kind report"), "{why}");
+        assert!(operator_refusal("report", "", "", "", "").unwrap().contains("--requested-by"));
     }
 
     #[test]
@@ -776,7 +811,7 @@ mod probe_tests {
         for d in ["mail/operator/new", "mail/concierge/new", "run"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
-        let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind: "question", default, class, bead: "", urgent: false, digest: false, dry_run: false };
+        let args = SendArgs { mailbox: "operator", from: None, subject: "Mute it?", kind: "question", default, class, bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
         let mut e = env(root);
         e.db = "db".into();
         e.bd_bin = "bd".into();
@@ -813,7 +848,7 @@ mod probe_tests {
     }
 
     fn ask_args() -> SendArgs<'static> {
-        SendArgs { mailbox: "operator", from: None, subject: "Grant it?", kind: "question", default: "grant", class: "permissions", bead: "", urgent: false, digest: false, dry_run: false }
+        SendArgs { mailbox: "operator", from: None, subject: "Grant it?", kind: "question", default: "grant", class: "permissions", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" }
     }
 
     const ASK_BODY: &str = "## Question\nq\n\n## Class basis\nneeds a credential\n";
