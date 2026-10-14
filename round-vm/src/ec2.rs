@@ -76,6 +76,10 @@ pub trait Ec2Api {
     /// Every live instance carrying `TAG_KEY`; an untagged instance is never listed.
     fn list_tagged(&self) -> Result<Vec<Inst>, String>;
     fn terminate(&self, id: &str) -> Result<(), String>;
+    /// Why the instance tagged `handle` ended (its StateReason and transition reason), when AWS still lists it.
+    fn end_reason(&self, _handle: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
     /// Runs `script` on the instance through SSM: (exit code, output).
     fn ssm(&self, id: &str, script: &str) -> Result<(i32, String), String>;
     /// The tailnet IPv4 address of the online peer `hostname`.
@@ -346,7 +350,10 @@ impl<A: Ec2Api> Provider for Ec2<A> {
     fn diagnose(&self, vmid: &str) -> String {
         match self.script(vmid, "tailscale status 2>&1 | head -20; journalctl -u tailscaled --no-pager -n 20 2>&1; tail -n 20 /var/log/cloud-init-output.log 2>&1") {
             Ok((rc, out)) => format!("SSM diagnosis (exit {rc}): {}", out.trim()),
-            Err(e) => format!("SSM diagnosis failed: {e}"),
+            Err(e) => match self.api.end_reason(vmid) {
+                Ok(Some(r)) => format!("SSM diagnosis failed: {e}; AWS reports {r}"),
+                _ => format!("SSM diagnosis failed: {e}"),
+            },
         }
     }
 }
@@ -505,6 +512,15 @@ impl Ec2Api for AwsCli {
         self.describe(None)
     }
 
+    fn end_reason(&self, handle: &str) -> Result<Option<String>, String> {
+        let out = self.aws(vec![
+            "ec2".into(), "describe-instances".into(),
+            "--filters".into(), format!("Name=tag:{TAG_KEY},Values={handle}"),
+            "--output".into(), "json".into(),
+        ])?;
+        Ok(parse_end_reason(&out))
+    }
+
     fn terminate(&self, id: &str) -> Result<(), String> {
         self.aws(vec!["ec2".into(), "terminate-instances".into(), "--instance-ids".into(), id.into()]).map(|_| ())
     }
@@ -593,6 +609,17 @@ pub fn parse_images(json: &str) -> Result<Vec<Image>, String> {
         .collect())
 }
 
+/// "State: Code (Message); transition: reason" for the first tagged instance in `describe-instances` output.
+pub fn parse_end_reason(json: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(json).ok()?;
+    let i = v.get("Reservations")?.as_array()?.iter().flat_map(|r| r.get("Instances").and_then(Value::as_array).into_iter().flatten()).next()?;
+    let state = i.pointer("/State/Name").and_then(Value::as_str).unwrap_or("unknown");
+    let code = i.pointer("/StateReason/Code").and_then(Value::as_str).unwrap_or("none");
+    let msg = i.pointer("/StateReason/Message").and_then(Value::as_str).unwrap_or("");
+    let transition = i.get("StateTransitionReason").and_then(Value::as_str).unwrap_or("");
+    Some(format!("state {state}, reason {code} ({msg}), transition {transition:?}"))
+}
+
 pub fn parse_instances(json: &str) -> Result<Vec<Inst>, String> {
     let v: Value = serde_json::from_str(json).map_err(|e| format!("describe-instances: {e}"))?;
     let mut out = Vec::new();
@@ -649,6 +676,16 @@ mod tests {
         assert_eq!(parse_iso("1970-01-01T00:00:00+00:00"), Some(0));
         assert_eq!(parse_iso("2026-10-10T01:02:03.000Z"), Some(1791594123));
         assert_eq!(parse_iso("garbage"), None);
+    }
+
+    #[test]
+    fn end_reason_names_a_spot_interruption_and_a_shutdown() {
+        let spot = r#"{"Reservations":[{"Instances":[{"State":{"Name":"terminated"},"StateReason":{"Code":"Server.SpotInstanceTermination","Message":"Server.SpotInstanceTermination: Spot instance termination"},"StateTransitionReason":"Server.SpotInstanceTermination: x"}]}]}"#;
+        let r = parse_end_reason(spot).unwrap();
+        assert!(r.contains("terminated") && r.contains("Server.SpotInstanceTermination"), "{r}");
+        let user = r#"{"Reservations":[{"Instances":[{"State":{"Name":"terminated"},"StateReason":{"Code":"Client.UserInitiatedShutdown"},"StateTransitionReason":"User initiated"}]}]}"#;
+        assert!(parse_end_reason(user).unwrap().contains("Client.UserInitiatedShutdown"));
+        assert!(parse_end_reason(r#"{"Reservations":[]}"#).is_none());
     }
 
     #[test]

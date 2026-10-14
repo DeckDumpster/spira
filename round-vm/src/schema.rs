@@ -47,6 +47,16 @@ pub struct Lease {
     /// Set by `hold`: the lease deliberately belongs to no process.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub held: bool,
+    /// When `hold` kept the lease; the unheld grace for a kept lease counts from here, not from `since`. 0 for a lease written before the field.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub kept_at: u64,
+    /// The process pulling this VM's results: no reaper may terminate the VM while it lives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pulling: Option<ProcId>,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// How long a lease may name no owner and no holder before it counts as abandoned.
@@ -55,6 +65,16 @@ pub const OWNERLESS_GRACE_SECS: u64 = 60;
 pub const UNHELD_GRACE_SECS: u64 = 300;
 
 impl Lease {
+    pub fn pull_in_flight(&self) -> bool {
+        self.pulling.is_some_and(|p| p.alive())
+    }
+
+    /// Whether the unheld reconciler must leave this lease alone at `t`.
+    pub fn shields_from_reaper(&self, t: u64) -> bool {
+        let kept_from = if self.kept_at > 0 { self.kept_at } else { self.since };
+        self.pull_in_flight() || (!self.stale() && (!self.held || kept_from + UNHELD_GRACE_SECS >= t))
+    }
+
     pub fn stale(&self) -> bool {
         self.owner.is_some_and(|o| !o.alive())
             || self.holder.is_some_and(|h| !h.alive())

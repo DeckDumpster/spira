@@ -1478,6 +1478,7 @@ fn keep_vm(env: &RunEnv, vm: &Vm, keep: &AtomicBool) {
 /// The batch's ssh dropped, so what the VM holds is unknown: take what it has and keep the VM.
 fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, keep: &AtomicBool) {
     keep_vm(env, vm, keep);
+    let _pin = env.pool.pin_pull(&vm.handle);
     let scratch = env.cfg.state_dir.join(format!(".pulled-lost.{}", std::process::id()));
     let _ = fs::remove_dir_all(&scratch);
     if pull_retry(env.remote, env.cfg, &vm.addr, REMOTE_RESULTS, &scratch) {
@@ -1540,6 +1541,7 @@ fn after_batch(
     for d in [&pulled, &tsd, &bins] {
         let _ = fs::remove_dir_all(d);
     }
+    let _pin = env.pool.pin_pull(&vm.handle);
     let remote = env.remote;
     let timed = |what: &str, remote_path: &str, local: &Path| {
         let t0 = std::time::Instant::now();
@@ -1567,6 +1569,9 @@ fn after_batch(
         keep_vm(env, vm, keep);
     }
     if !pulled_ok {
+        if let Ok(a) = (env.deps.factory)() {
+            eprintln!("round-vm run: {}", a.provider.diagnose(&vm.handle));
+        }
         eprintln!("round-vm run: INCOMPLETE: the results pull from {} failed after retries; this is not a verdict", vm.handle);
         keep_vm(env, vm, keep);
         record_incomplete(env, args, "the results pull failed after retries");
