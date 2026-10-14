@@ -361,14 +361,28 @@ mod tests {
         log: Mutex<Vec<Request>>,
         vms: Mutex<Vec<Value>>,
         exec_polls: Mutex<u32>,
+        nextids: Mutex<u32>,
+        clone_refusals: Mutex<u32>,
     }
 
     impl Transport for FakeApi {
         fn call(&self, method: Method, path: &str, params: &[(&str, String)]) -> Result<Value, String> {
             self.log.lock().unwrap().push((method, path.to_string(), params.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()));
             let upid = json!("UPID:pve:0001:task:");
+            if method == Method::Post && path.ends_with("/clone") {
+                let mut n = self.clone_refusals.lock().unwrap();
+                if *n > 0 {
+                    *n -= 1;
+                    let id = params.iter().find(|(k, _)| *k == "newid").map(|(_, v)| v.as_str()).unwrap_or("");
+                    return Err(format!("HTTP 500 (POST {path}): unable to create VM {id}: config file already exists"));
+                }
+            }
             Ok(match (method, path) {
-                (Method::Get, "/cluster/nextid") => json!("123"),
+                (Method::Get, "/cluster/nextid") => {
+                    let mut n = self.nextids.lock().unwrap();
+                    *n += 1;
+                    json!((122 + *n).to_string())
+                }
                 (Method::Get, "/nodes/pve/qemu") => Value::Array(self.vms.lock().unwrap().clone()),
                 (Method::Get, p) if p.starts_with("/nodes/pve/tasks/") => json!({"status": "stopped", "exitstatus": "OK"}),
                 (Method::Get, p) if p.ends_with("/agent/exec-status") => {
@@ -554,5 +568,22 @@ mod tests {
         let mut env = pve().env;
         env.cacert = ca;
         assert!(HttpTransport::new(&env).err().unwrap().contains("no certificate"));
+    }
+
+    #[test]
+    fn a_clone_refused_because_the_id_exists_is_retried_on_the_next_nextid() {
+        use crate::provider::{provision, ProvisionSpec, Timing};
+        let p = pve();
+        *p.t.clone_refusals.lock().unwrap() = 1;
+        let spec = ProvisionSpec {
+            iface: "ens18",
+            ssh_user: "root",
+            pubkey: "k",
+            timing: Timing { boot_tries: 3, poll: Duration::ZERO, gone_tries: 3 },
+        };
+        let mut seen = vec![];
+        let e = provision(&p, &spec, &mut |id| seen.push(id.to_string())).unwrap_err();
+        assert!(!e.reason.contains("clone refused"), "{}", e.reason);
+        assert_eq!(seen, ["123", "124"]);
     }
 }
