@@ -497,3 +497,17 @@ fn a_member_carrying_another_repos_terms_or_an_unconfigured_brain_is_sent_back_n
     assert!(r.log.iter().any(|l| l.starts_with("note a:") && l.contains("'Zorblax' belongs to beta")));
     assert!(r.log.iter().any(|l| l.starts_with("note b:") && l.contains("identity check refused") && l.contains("SPIRA_WIKI")));
 }
+
+#[test]
+fn an_identity_check_whose_git_diff_timed_out_holds_the_bead_and_never_sends_it_back() {
+    let mut f = fake();
+    f.identity.insert("t-a".into(), Err(format!("{}git diff exited 124: ", crate::INFRA_FAULT)));
+    f.identity.insert("t-b".into(), Ok("web/x.ts:3: 'Zorblax' belongs to beta".into()));
+    let mut r = Rec::default();
+    let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
+    assert_eq!(o.held, ["a".to_string()]);
+    assert_eq!(o.sent_back, ["b".to_string()], "a real mismatch still goes back");
+    assert!(o.pass.is_empty());
+    assert!(o.errors.iter().any(|e| e.contains("exited 124")));
+    assert_eq!(reds(&r), ["red b t-b policy-violation"]);
+}
