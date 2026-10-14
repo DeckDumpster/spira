@@ -644,6 +644,65 @@ is "the SUBMITTED orphan returns to SUBMITTED" "SUBMITTED" "$(member_field sp-lc
 is "the CERTIFIED orphan returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-orph-cer bead state)"
 is "the held member stays IN_DELIVERY" "IN_DELIVERY" "$(member_field sp-lc-held bead state)"
 
+# ── a batch that opened and never began is a phantom: requeue-orphans releases its members ─
+# POSITIVE CONTROL: a fresh OPEN batch and an aged OPEN batch with a pass in flight are not phantoms.
+certify sp-lc-ph-a tipPHA
+certify sp-lc-ph-b tipPHB
+certify sp-lc-ph-fresh tipPHF
+certify sp-lc-ph-live tipPHL
+lc cut batch-phantom --repo fixture-repo --head headPH --base basePH --members "sp-lc-ph-a:tipPHA,sp-lc-ph-b:tipPHB" --actor test >/dev/null
+lc cut batch-phantom-fresh --repo fixture-repo --head headPF --base basePF --members "sp-lc-ph-fresh:tipPHF" --actor test >/dev/null
+lc cut batch-phantom-live --repo fixture-repo --head headPL --base basePL --members "sp-lc-ph-live:tipPHL" --actor test >/dev/null
+root_sql --use-db spira_lifecycle sql -q "UPDATE batch SET opened_at = 1 WHERE batch_id IN ('batch-phantom', 'batch-phantom-live'); UPDATE batch SET pass = 1 WHERE batch_id = 'batch-phantom-live'" >/dev/null
+out="$(lc requeue-orphans --actor test)"
+want "a dry run names the phantom batch" 'batch-phantom"' "$out"
+want "a dry run names a phantom batch's member" 'sp-lc-ph-b' "$out"
+nowant "a fresh OPEN batch is not a phantom" 'sp-lc-ph-fresh' "$out"
+nowant "an aged batch with a pass in flight is not a phantom" 'sp-lc-ph-live' "$out"
+is "a dry run leaves the phantom batch OPEN" "OPEN" "$(batch_field batch-phantom state)"
+out="$(lc requeue-orphans --actor test --apply)"
+wantrc "requeue-orphans --apply releases a phantom batch" 0 $?
+is "the phantom batch is ABANDONED" "ABANDONED" "$(batch_field batch-phantom state)"
+is "a phantom batch's member returns to CERTIFIED" "CERTIFIED" "$(member_field sp-lc-ph-a bead state)"
+is "...and its delivery row exits" "EXITED" "$(member_field sp-lc-ph-b delivery state)"
+is "the fresh batch stays OPEN" "OPEN" "$(batch_field batch-phantom-fresh state)"
+is "the live batch stays OPEN" "OPEN" "$(batch_field batch-phantom-live state)"
+
+# ── reconcile-landed: merged work the lifecycle missed reaches LANDED on ancestry ────────────
+RG="$TMP/reconcile-repo"
+git init -q -b main "$RG"
+git -C "$RG" config user.email t@example.invalid
+git -C "$RG" config user.name t
+git -C "$RG" commit -q --allow-empty -m "base"
+git -C "$RG" commit -q --allow-empty -m "sp-lc-rec-sub: the merged work"
+MERGED="$(git -C "$RG" rev-parse HEAD)"
+git -C "$RG" checkout -q -b side
+git -C "$RG" commit -q --allow-empty -m "sp-lc-rec-side: work that never reached main"
+SIDE="$(git -C "$RG" rev-parse HEAD)"
+git -C "$RG" checkout -q main
+submit sp-lc-rec-sub tipRS
+submit sp-lc-rec-side tipRD
+submit sp-lc-rec-batched tipRB
+lc cut batch-rec-phantom --repo fixture-repo --head headR --base baseR --members "sp-lc-rec-batched:tipRB" --actor test >/dev/null
+rec() { lc reconcile-landed "$1" --sha "$2" --ref main --repo-path "$RG" --actor test; }
+rec sp-lc-rec-side "$SIDE" >/dev/null 2>&1
+wantrc "reconcile-landed refuses a commit that is not on the landing ref" 3 $?
+is "...and the bead stays SUBMITTED" "SUBMITTED" "$(member_field sp-lc-rec-side bead state)"
+rec sp-lc-rec-sub "$(git -C "$RG" rev-parse main~1)" >/dev/null 2>&1
+wantrc "reconcile-landed refuses a commit that does not name the bead" 3 $?
+is "...and that bead stays SUBMITTED" "SUBMITTED" "$(member_field sp-lc-rec-sub bead state)"
+rec sp-lc-rec-sub "$MERGED" >/dev/null
+wantrc "reconcile-landed lands a SUBMITTED bead whose commit is on the landing ref" 0 $?
+is "the SUBMITTED bead is LANDED" "LANDED" "$(member_field sp-lc-rec-sub bead state)"
+git -C "$RG" commit -q --allow-empty -m "sp-lc-rec-batched: merged by a PR"
+rec sp-lc-rec-batched "$(git -C "$RG" rev-parse HEAD)" >/dev/null
+wantrc "reconcile-landed lands a bead BATCHED in a phantom batch" 0 $?
+is "the BATCHED bead is LANDED" "LANDED" "$(member_field sp-lc-rec-batched bead state)"
+is "...and its delivery exits" "EXITED" "$(member_field sp-lc-rec-batched delivery state)"
+is "...with the merge sha" "$(git -C "$RG" rev-parse HEAD)" "$(member_field sp-lc-rec-batched delivery merge_sha)"
+rec sp-lc-rec-batched "$MERGED" >/dev/null 2>&1
+wantrc "reconcile-landed refuses a bead that is already terminal" 3 $?
+
 # ── criterion 6, hand half (sp-f3af9): queue.sh's own eject cascades identically ─────────
 # A hand eject through _lc_eject_member (the same call queue.sh's cmd_eject makes) must
 # cascade to a stacked dependent exactly as settle's own CI-driven eject does above: the

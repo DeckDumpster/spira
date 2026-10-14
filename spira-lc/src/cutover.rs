@@ -927,17 +927,29 @@ pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
-/// `requeue-orphans --actor A [--apply]`
+/// A round that opened and then showed no sign of life: no PR, no run, no pass, no phase.
+const PHANTOM_BATCH_SECS: i64 = 1800;
+
+/// `requeue-orphans --actor A [--apply] [--stale-secs N]`
 ///
 /// A bead IN_DELIVERY that no open batch names is held by nothing and invisible to every
-/// round. Lists them; with `--apply` each goes back through `Requeued{tip}` in its own
-/// transaction (so a SUBMITTED member returns to SUBMITTED, a CERTIFIED one to CERTIFIED).
+/// round. So is the member of a batch that opened and never began: OPEN, no PR, run, pass or
+/// phase, older than `--stale-secs`. Lists them; with `--apply` an orphan goes back through
+/// `Requeued{tip}` in its own transaction (so a SUBMITTED member returns to SUBMITTED, a
+/// CERTIFIED one to CERTIFIED) and a phantom batch is abandoned with all its members.
 /// Beads whose delivery is live outside a batch (pr, push, local) are not orphans.
 pub fn cmd_requeue_orphans(args: &[String], conn: &Conn) -> (i32, String) {
     let Some(actor) = flag(args, "--actor") else {
         return (CANNOT_TELL, "requeue-orphans: --actor is required".into());
     };
     let apply = args.iter().any(|a| a == "--apply");
+    let stale_secs = match flag(args, "--stale-secs") {
+        None => PHANTOM_BATCH_SECS,
+        Some(s) => match s.parse::<i64>() {
+            Ok(n) if n >= 0 => n,
+            _ => return (CANNOT_TELL, "requeue-orphans: --stale-secs must be a non-negative integer".into()),
+        },
+    };
     let sql = "SELECT bead_id FROM bead WHERE state = 'IN_DELIVERY' AND bead_id NOT IN \
                (SELECT bm.bead_id FROM batch_member bm JOIN batch b ON b.batch_id = bm.batch_id \
                 WHERE b.state NOT IN ('LANDED', 'SETTLED', 'ABANDONED')) ORDER BY bead_id";
@@ -954,10 +966,51 @@ pub fn cmd_requeue_orphans(args: &[String], conn: &Conn) -> (i32, String) {
             Err(e) => return cannot_tell(e),
         }
     }
+
+    let phantom_sql = format!(
+        "SELECT batch_id, version FROM batch WHERE state = 'OPEN' AND pr IS NULL AND run IS NULL AND pass = 0 AND phase IS NULL \
+         AND opened_at < {} ORDER BY batch_id",
+        crate::db::now_epoch() - stale_secs
+    );
+    let phantoms = match conn.query(&phantom_sql) {
+        Ok(r) => r,
+        Err(e) => return cannot_tell(e),
+    };
+    let mut phantom_batches: Vec<(String, String)> = Vec::new();
+    for r in &phantoms {
+        let (Some(id), Some(v)) = (r.get("batch_id").and_then(|v| v.as_str()), r.get("version").and_then(|v| v.as_str())) else { continue };
+        phantom_batches.push((id.to_string(), v.to_string()));
+    }
+    let mut phantom_members: Vec<String> = Vec::new();
+    for (batch_id, _) in &phantom_batches {
+        match fetch_members(conn, batch_id) {
+            Ok(m) => phantom_members.extend(m.into_iter().map(|(id, _)| id)),
+            Err(e) => return cannot_tell(e),
+        }
+    }
+    orphans.extend(phantom_members.iter().filter(|id| !orphans.contains(id)).cloned().collect::<Vec<_>>());
+    orphans.sort();
+
     let mut requeued = Vec::new();
     let mut failed = Vec::new();
+    let mut abandoned = Vec::new();
     if apply {
+        for (batch_id, version) in &phantom_batches {
+            let why = format!("requeue-orphans: opened and never began (no PR, run, pass or phase in {stale_secs}s)");
+            let abandon_args: Vec<String> =
+                [batch_id.as_str(), "--expect", "OPEN", "--version", version, "--actor", &actor, "--reason", &why].iter().map(|s| s.to_string()).collect();
+            match cmd_abandon_batch(&abandon_args, conn) {
+                (0, _) => abandoned.push(batch_id.clone()),
+                _ => failed.push(batch_id.clone()),
+            }
+        }
         for id in &orphans {
+            if phantom_members.contains(id) {
+                if !phantom_batches.iter().any(|(b, _)| failed.contains(b)) {
+                    requeued.push(id.clone());
+                }
+                continue;
+            }
             let at = crate::db::now_epoch();
             let tip = match rows::fetch_bead(conn, id) {
                 Ok(Some(b)) => b.tip.unwrap_or_default(),
@@ -974,8 +1027,102 @@ pub fn cmd_requeue_orphans(args: &[String], conn: &Conn) -> (i32, String) {
             }
         }
     }
-    let summary = serde_json::json!({"orphans": orphans, "requeued": requeued, "failed": failed});
+    let summary = serde_json::json!({
+        "orphans": orphans,
+        "phantom_batches": phantom_batches.iter().map(|(b, _)| b).collect::<Vec<_>>(),
+        "abandoned": abandoned,
+        "requeued": requeued,
+        "failed": failed,
+    });
     (if failed.is_empty() { 0 } else { REFUSED }, serde_json::to_string(&summary).unwrap())
+}
+
+/// `reconcile-landed <bead-id> --sha SHA --ref REF (--repo-path P | --repo NAME) --actor A`
+///
+/// Work that verifiably merged while the lifecycle missed it. The proof is ancestry — SHA is
+/// reachable from REF — and a message on SHA that names the bead; a tip compare proves
+/// neither. One transaction: the bead goes to LANDED from whatever non-terminal state it
+/// holds, and a delivery row still BATCHED, PR_OPEN or PUSHING exits Delivered with SHA.
+pub fn cmd_reconcile_landed(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(bead_id) = args.first() else {
+        return (CANNOT_TELL, "reconcile-landed: missing <bead-id>".into());
+    };
+    let (Some(sha), Some(base), Some(actor)) = (flag(args, "--sha"), flag(args, "--ref"), flag(args, "--actor")) else {
+        return (CANNOT_TELL, "reconcile-landed: --sha, --ref and --actor are required".into());
+    };
+    let repo_path = match (flag(args, "--repo-path"), flag(args, "--repo")) {
+        (Some(p), _) => std::path::PathBuf::from(p),
+        (None, Some(name)) => match crate::repo_config::from_process().map(|c| c.repos.get(&name).map(|s| s.path.clone())) {
+            Ok(Some(p)) => std::path::PathBuf::from(p),
+            Ok(None) => return (CANNOT_TELL, format!("reconcile-landed: no repository {name:?} in the config in force")),
+            Err(e) => return (CANNOT_TELL, format!("reconcile-landed: {e}")),
+        },
+        (None, None) => return (CANNOT_TELL, "reconcile-landed: --repo-path or --repo is required".into()),
+    };
+    if !crate::git_evidence::is_ancestor(&repo_path, &sha, &base) {
+        return (REFUSED, format!("refused: {sha} is not reachable from {base}"));
+    }
+    if !crate::git_evidence::commit_names_bead(&repo_path, &sha, bead_id) {
+        return (REFUSED, format!("refused: the commit message of {sha} does not name {bead_id}"));
+    }
+
+    let bead_row = match rows::fetch_bead(conn, bead_id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return (REFUSED, format!("refused: no bead row for {bead_id}")),
+        Err(e) => return cannot_tell(e),
+    };
+    let at = crate::db::now_epoch();
+    let proof = format!("reconcile-landed:{sha}");
+    let bead_ev = bead::BeadEvent {
+        expect: bead_row.state,
+        version: bead_row.version,
+        kind: bead::BeadEventKind::ContentOnBase { proof: proof.clone() },
+        actor: actor.clone(),
+        at: Some(at),
+    };
+    let bead_outcome = bead::apply(&bead_row, &bead_ev);
+    if !bead_outcome.applied {
+        return (REFUSED, format!("refused: {:?}", bead_outcome.refusal));
+    }
+
+    let mut steps = Vec::new();
+    match rows::fetch_delivery(conn, bead_id) {
+        Ok(Some(d)) => {
+            let ev = delivery::DeliveryEvent {
+                expect: d.state,
+                version: d.version,
+                kind: delivery::DeliveryEventKind::Delivered { merge_sha: sha.clone(), proof },
+                actor: actor.clone(),
+            };
+            let outcome = delivery::apply(&d, &ev);
+            if outcome.applied {
+                steps.push(cascade_step("delivery", "bead_id", bead_id, d.version, rows::delivery_set_clause(&outcome.row), outcome.row.state.as_str(), "delivery", "Delivered", d.state.as_str(), &ev.kind, &actor, at));
+            }
+        }
+        Ok(None) => {}
+        Err(e) => return cannot_tell(e),
+    }
+    steps.push(cascade_step(
+        "bead",
+        "bead_id",
+        bead_id,
+        bead_row.version,
+        rows::bead_set_clause(&bead_outcome.row),
+        bead_outcome.row.state.as_str(),
+        "bead",
+        "ContentOnBase",
+        bead_row.state.as_str(),
+        &bead_ev.kind,
+        &actor,
+        at,
+    ));
+    match conn.cascade("", &steps) {
+        Ok(applied) => {
+            let summary = serde_json::json!({"bead_id": bead_id, "sha": sha, "steps": steps.len(), "applied": applied});
+            (if applied.iter().all(|a| *a) { 0 } else { REFUSED }, summary.to_string())
+        }
+        Err(e) => cannot_tell(e),
+    }
 }
 
 /// `eject-member <batch-id> --bead-id ID --expect S --version V --actor A --reason R`
