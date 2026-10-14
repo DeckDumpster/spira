@@ -916,9 +916,9 @@ fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
 /// intersected here so neither side's idea of "open" is consulted.
 fn list_with_content(conn: &Conn, states: &[String], all: bool, bd_args: &[String], json: bool, full: bool, limit: Option<usize>) -> (i32, String) {
     let narrowing = if !states.is_empty() {
-        vec![s("--state"), states.join(",")]
+        vec![s("--state"), states.join(","), s("--cached")]
     } else if all {
-        Vec::new()
+        vec![s("--cached")]
     } else {
         vec![s("--live")]
     };

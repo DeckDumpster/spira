@@ -390,7 +390,7 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
     if let Some((bead, delivery)) = conn.live().and_then(|l| l.show(bead_id)) {
         return (0, serde_json::to_string_pretty(&serde_json::json!({ "bead": bead, "delivery": delivery })).unwrap());
     }
-    if conn.live().is_some_and(|l| l.absent(bead_id)) {
+    if args.iter().any(|a| a == "--cached") && conn.live().is_some_and(|l| l.absent(bead_id)) {
         return (1, "{}".to_string());
     }
     let bead_rows = match conn.query(&format!(
@@ -440,6 +440,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let hold = flag(args, "--hold");
     let express = args.iter().any(|a| a == "--express");
     let live = args.iter().any(|a| a == "--live");
+    let cached = args.iter().any(|a| a == "--cached");
     let ids = flag(args, "--ids");
     let repo = flag(args, "--repo");
     if let Some(mem) = conn.live() {
@@ -447,7 +448,8 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         let beads = match (live, repo.is_some()) {
             (true, false) => mem.list(&f),
             (true, true) => mem.list_live_full(&f),
-            (false, _) => mem.list_all(&f),
+            (false, _) if cached => mem.list_all(&f),
+            (false, _) => None,
         };
         if let Some(beads) = beads {
             return (0, serde_json::to_string(&Value::Array(beads)).unwrap());
@@ -838,6 +840,7 @@ mod tests {
         assert_eq!(ops::cmd_ops_view(&["ops_live".to_string()], &conn).0, 0);
         assert_eq!(cmd_list(&[], &conn).0, CANNOT_TELL, "a list without --live reads Dolt until the older rows are in memory");
         assert_eq!(cmd_show(&["sp-missing".to_string()], &conn).0, CANNOT_TELL, "a bead memory does not hold is asked of Dolt");
+        assert_eq!(cmd_list(&["--cached".to_string()], &conn).0, CANNOT_TELL, "--cached still needs the older rows in memory");
     }
 
     #[test]
