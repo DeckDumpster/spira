@@ -66,6 +66,9 @@ impl Provider for Routed {
     fn is_template(&self, vmid: &str) -> Result<bool, String> {
         to!(self, vmid, is_template)
     }
+    fn instance_type(&self, vmid: &str) -> Option<String> {
+        self.of(vmid).ok()?.instance_type(vmid)
+    }
     fn hold_for_ci(&self) {
         self.local.hold_for_ci()
     }

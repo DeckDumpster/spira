@@ -402,6 +402,7 @@ round_vm_ec2_boot_tries
 round_vm_ec2_host_addr
 round_vm_ec2_instance_profile
 round_vm_ec2_instance_type
+round_vm_ec2_instance_types
 round_vm_ec2_key_warn_days
 round_vm_ec2_market
 round_vm_ec2_profile

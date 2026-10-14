@@ -1174,7 +1174,19 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
             return 2;
         }
     };
-    eprintln!("round-vm run: {} {} {}", vm.handle, vm.addr, mode.as_str());
+    let instance_type = (env.deps.factory)().ok().and_then(|a| a.provider.instance_type(&vm.handle));
+    match &instance_type {
+        Some(t) => eprintln!("round-vm run: {} {} {} type={t}", vm.handle, vm.addr, mode.as_str()),
+        None => eprintln!("round-vm run: {} {} {}", vm.handle, vm.addr, mode.as_str()),
+    }
+    let scaled;
+    let args = match spilled_maxpar(args.maxpar, instance_type.as_deref(), crate::config::declared("SPIRA_ROUND_VM_MAXPAR").is_some()) {
+        Some(n) => {
+            scaled = RunArgs { maxpar: Some(n), ..args.clone() };
+            &scaled
+        }
+        None => args,
+    };
     let host_addr = if crate::ec2::is_ec2_handle(&vm.handle) {
         match crate::config::declared("SPIRA_ROUND_VM_EC2_HOST_ADDR") {
             Some(a) => a,
@@ -1201,6 +1213,15 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         eprintln!("round-vm run: warning: release of {} failed: {e}", vm.handle);
     }
     code
+}
+
+/// The suite slots for a spilled VM: one per vCPU of its type, unless the operator or the caller
+/// named a number.
+fn spilled_maxpar(requested: Option<u32>, instance_type: Option<&str>, configured: bool) -> Option<u32> {
+    if requested.is_some() || configured {
+        return None;
+    }
+    instance_type.and_then(crate::ec2::vcpus_of)
 }
 
 /// True when the head's image is one the template does not hold, so the VM must build it:
@@ -1635,6 +1656,15 @@ mod tests {
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_spilled_vm_runs_one_slot_per_vcpu_unless_a_number_was_named() {
+        assert_eq!(spilled_maxpar(None, Some("c7i.4xlarge"), false), Some(16));
+        assert_eq!(spilled_maxpar(None, Some("c7i.8xlarge"), false), Some(32));
+        assert_eq!(spilled_maxpar(Some(8), Some("c7i.4xlarge"), false), None);
+        assert_eq!(spilled_maxpar(None, Some("c7i.4xlarge"), true), None);
+        assert_eq!(spilled_maxpar(None, None, false), None);
     }
 
     #[test]

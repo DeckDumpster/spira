@@ -1381,7 +1381,7 @@ mod tests {
         let key = d.path().join("ts.key");
         std::fs::write(&key, "tskey").unwrap();
         let cfg = crate::ec2::Ec2Config {
-            profile: "p".into(), region: "r".into(), ami: "a".into(), instance_type: "t".into(), subnet: "s".into(),
+            profile: "p".into(), region: "r".into(), ami: "a".into(), instance_types: vec!["t".into()], subnet: "s".into(),
             security_group: String::new(), instance_profile: String::new(), spot_first: false, tailscale_key_file: key.to_string_lossy().into(),
             run_deadline: Duration::from_secs(7200), host_addr: "h".into(), recipe_sha: String::new(),
         };
@@ -1475,6 +1475,46 @@ mod tests {
         assert!(!crate::ec2::is_ec2_handle(&vm.handle));
         let why = lease_reason(&pl, &vm.handle);
         assert!(why.contains("provider: proxmox") && why.contains("ec2 unavailable (placement ec2-always)"), "{why}");
+    }
+
+    fn two_type_ec2(d: &TempDir, fake: &crate::testutil::FakeEc2) -> Arc<dyn Provider> {
+        let key = d.path().join("ts.key");
+        std::fs::write(&key, "tskey").unwrap();
+        let cfg = crate::ec2::Ec2Config {
+            profile: "p".into(), region: "r".into(), ami: "a".into(), instance_types: vec!["big".into(), "small".into()], subnet: "s".into(),
+            security_group: String::new(), instance_profile: String::new(), spot_first: false, tailscale_key_file: key.to_string_lossy().into(),
+            run_deadline: Duration::from_secs(7200), host_addr: "h".into(), recipe_sha: String::new(),
+        };
+        Arc::new(crate::ec2::Ec2::new(fake.clone(), &cfg).unwrap())
+    }
+
+    #[test]
+    fn a_refused_first_instance_type_launches_the_second_not_a_local_vm() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        fake.refuse_type("big");
+        let ec2 = two_type_ec2(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(41.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
+        assert_eq!(fake.launched_types(), ["small"]);
+        assert!(fp.live_vms().is_empty());
+        assert_eq!(ec2.instance_type(&vm.handle).as_deref(), Some("small"));
+    }
+
+    #[test]
+    fn every_instance_type_refused_falls_back_to_a_local_vm() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        fake.refuse_type("big");
+        fake.refuse_type("small");
+        let ec2 = two_type_ec2(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(41.0)));
+        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
+        assert!(!crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
+        assert!(fake.launched_types().is_empty());
     }
 
     #[test]

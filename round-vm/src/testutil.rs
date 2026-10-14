@@ -229,6 +229,7 @@ pub struct FakeEc2Inst {
     pub tag: Option<String>,
     pub name: String,
     pub launched_at: u64,
+    pub instance_type: String,
 }
 
 #[derive(Default)]
@@ -239,6 +240,8 @@ struct Ec2Inner {
     user_data: Vec<String>,
     never_joins: bool,
     fail_run: bool,
+    refused_types: Vec<String>,
+    launched_types: Vec<String>,
     images: Vec<crate::ec2::Image>,
     launched_amis: Vec<String>,
 }
@@ -249,7 +252,7 @@ pub struct FakeEc2(Arc<Mutex<Ec2Inner>>);
 
 impl FakeEc2 {
     pub fn plant(&self, id: &str, tag: Option<&str>, name: &str, launched_at: u64) {
-        self.0.lock().unwrap().insts.push(FakeEc2Inst { id: id.into(), tag: tag.map(String::from), name: name.into(), launched_at });
+        self.0.lock().unwrap().insts.push(FakeEc2Inst { id: id.into(), tag: tag.map(String::from), name: name.into(), launched_at, instance_type: String::new() });
     }
     pub fn plant_image(&self, id: &str, recipe_sha: &str, created: &str) {
         self.0.lock().unwrap().images.push(crate::ec2::Image { id: id.into(), recipe_sha: recipe_sha.into(), created: created.into() });
@@ -259,6 +262,12 @@ impl FakeEc2 {
     }
     pub fn never_joins_tailnet(&self) {
         self.0.lock().unwrap().never_joins = true;
+    }
+    pub fn refuse_type(&self, t: &str) {
+        self.0.lock().unwrap().refused_types.push(t.to_string());
+    }
+    pub fn launched_types(&self) -> Vec<String> {
+        self.0.lock().unwrap().launched_types.clone()
     }
     pub fn fail_run(&self) {
         self.0.lock().unwrap().fail_run = true;
@@ -278,19 +287,23 @@ impl crate::ec2::Ec2Api for FakeEc2 {
     fn images(&self) -> Result<Vec<crate::ec2::Image>, String> {
         Ok(self.0.lock().unwrap().images.clone())
     }
-    fn run(&self, ami: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
+    fn run(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
         let mut g = self.0.lock().unwrap();
         g.launched_amis.push(ami.to_string());
         if g.fail_run {
             return Err("fake run-instances refused".into());
         }
+        if g.refused_types.iter().any(|t| t == instance_type) {
+            return Err(format!("aws ec2: An error occurred (VcpuLimitExceeded) when calling the RunInstances operation: {instance_type}"));
+        }
+        g.launched_types.push(instance_type.to_string());
         g.n += 1;
         let id = format!("i-{:04}", g.n);
         g.user_data.push(user_data.to_string());
-        g.insts.push(FakeEc2Inst { id: id.clone(), tag: Some(handle.into()), name: name.into(), launched_at: crate::schema::now() });
+        g.insts.push(FakeEc2Inst { id: id.clone(), tag: Some(handle.into()), name: name.into(), launched_at: crate::schema::now(), instance_type: instance_type.to_string() });
         Ok(id)
     }
-    fn run_dry(&self, ami: &str, _handle: &str, _name: &str, _user_data: &str) -> Result<(), String> {
+    fn run_dry(&self, ami: &str, _instance_type: &str, _handle: &str, _name: &str, _user_data: &str) -> Result<(), String> {
         let mut g = self.0.lock().unwrap();
         g.launched_amis.push(format!("dry:{ami}"));
         if g.fail_run {
@@ -309,7 +322,7 @@ impl crate::ec2::Ec2Api for FakeEc2 {
             .insts
             .iter()
             .filter_map(|i| {
-                i.tag.as_ref().map(|t| crate::ec2::Inst { id: i.id.clone(), handle: t.clone(), name: i.name.clone(), running: true, launched_at: i.launched_at })
+                i.tag.as_ref().map(|t| crate::ec2::Inst { id: i.id.clone(), handle: t.clone(), name: i.name.clone(), running: true, launched_at: i.launched_at, instance_type: i.instance_type.clone() })
             })
             .collect())
     }

@@ -39,6 +39,10 @@ pub trait Provider {
     fn tagged(&self) -> Vec<(String, u64)> {
         Vec::new()
     }
+    /// The size of a VM that has one (EC2); None for a fixed-shape local VM.
+    fn instance_type(&self, _vmid: &str) -> Option<String> {
+        None
+    }
     /// Why a VM that never reached the network is stuck, for the failure's reason.
     fn diagnose(&self, _vmid: &str) -> String {
         String::new()
