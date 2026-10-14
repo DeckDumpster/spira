@@ -28,6 +28,37 @@ pub fn run(args: &[&str]) -> Result<String, String> {
     Ok(stdout)
 }
 
+const WRITE_SECS: u64 = 60;
+
+// batch-job: a store write opens bd read-write, which runs the schema gate and a Dolt commit; under the 5 s read cap that is killed mid-commit ("context canceled") though the write lands
+fn run_write(args: &[&str]) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("timeout");
+    cmd.arg(WRITE_SECS.to_string()).arg(bd_bin()?);
+    let db = spira_config::process::cfg("SPIRA_DB")?;
+    if !db.is_empty() {
+        cmd.args(["-C", &db]);
+    }
+    cmd.args(args);
+    let out = cmd.output().map_err(|e| format!("running bd {args:?}: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    if !out.status.success() {
+        return Err(format!("{stdout}{}", String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(stdout)
+}
+
+/// A close whose bd call failed is still done when the bead reads closed afterwards: bd can
+/// exit non-zero after the write committed.
+fn settled(res: Result<(), String>, id: &str, still_open: impl FnOnce() -> Result<Vec<String>, String>) -> Result<(), String> {
+    match res {
+        Ok(()) => Ok(()),
+        Err(e) => match still_open() {
+            Ok(open) if !open.iter().any(|o| o == id) => Ok(()),
+            _ => Err(e),
+        },
+    }
+}
+
 pub fn show(bead_id: &str) -> Result<String, String> {
     run(&["show", bead_id])
 }
@@ -73,7 +104,8 @@ impl crate::callers::Bd for LiveBd {
     fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
         // --force: the lifecycle row is already terminal when `close` gets here, so the store
         // must follow it; a refused store close would leave the two disagreeing again.
-        run(&["close", id, "--force", "--reason", reason]).map(|_| ())
+        let res = run_write(&["close", id, "--force", "--reason", reason]).map(|_| ());
+        settled(res, id, || self.open_among(&[id.to_string()]))
     }
     fn closed(&mut self, ids: &[String]) -> Result<Vec<(String, String)>, String> {
         crate::bd_facts::closed(&bd_bin()?, &spira_config::process::cfg("SPIRA_DB")?, ids)
@@ -124,7 +156,7 @@ impl crate::callers::Bd for LiveBd {
     fn reopen(&mut self, id: &str) -> Result<(), String> {
         // The store follows the row the door just moved: open, unassigned, and no longer wearing
         // the submitted label (a legacy state label; best effort, it may not be there).
-        run(&["update", id, "--status", "open", "--assignee", ""]).map(|_| ())?;
+        run_write(&["update", id, "--status", "open", "--assignee", ""]).map(|_| ())?;
         if let Some(label) = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()) {
             let _ = run(&["label", "remove", id, &label]);
         }
@@ -269,6 +301,27 @@ fn spawn_with(mut cmd: Command, stdin: Option<&str>, what: &str, keep_stderr: bo
         Some(0) => (0, stdout),
         Some(c) => (c, format!("{stdout}{}", String::from_utf8_lossy(&out.stderr))),
         None => (2, format!("{what} was killed by a signal: {stdout}{}", String::from_utf8_lossy(&out.stderr))),
+    }
+}
+
+#[cfg(test)]
+mod settled_tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_close_of_a_bead_that_reads_closed_is_done() {
+        assert!(settled(Err("context canceled".into()), "sp-a", || Ok(vec![])).is_ok());
+    }
+
+    #[test]
+    fn a_failed_close_of_a_bead_still_open_or_unreadable_stays_failed() {
+        assert_eq!(settled(Err("boom".into()), "sp-a", || Ok(vec!["sp-a".into()])), Err("boom".into()));
+        assert_eq!(settled(Err("boom".into()), "sp-a", || Err("down".into())), Err("boom".into()));
+    }
+
+    #[test]
+    fn a_successful_close_is_never_reread() {
+        assert!(settled(Ok(()), "sp-a", || panic!("must not read")).is_ok());
     }
 }
 
