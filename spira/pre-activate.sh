@@ -45,7 +45,7 @@ check_deps() {
     fi
     local out rc
     out="$(python3 - "$toml" <<'PY'
-import re, subprocess, sys, tomllib
+import os, re, subprocess, sys, tempfile, tomllib
 
 def ge(a, b):
     def parts(v):
@@ -54,6 +54,9 @@ def ge(a, b):
 
 with open(sys.argv[1], "rb") as f:
     doc = tomllib.load(f)
+
+# A probe must not inherit the caller's cwd: dolt scans it for databases and races scratch files.
+probe_cwd = tempfile.mkdtemp(prefix="pre-activate-probe.")
 
 bad = []
 for dep in doc.get("dep", []):
@@ -67,7 +70,7 @@ for dep in doc.get("dep", []):
         continue
     def run_probe():
         try:
-            return subprocess.run(["bash", "-c", probe], capture_output=True, text=True, timeout=10), None
+            return subprocess.run(["bash", "-c", probe], capture_output=True, text=True, timeout=10, cwd=probe_cwd), None
         except Exception as e:
             return None, e
 
@@ -90,6 +93,7 @@ for dep in doc.get("dep", []):
         if not got or not ge(got, vmin):
             bad.append(f"{name}: version {got or 'unknown'} is below required {vmin}")
 
+os.rmdir(probe_cwd)
 for b in bad:
     print(b)
 sys.exit(1 if bad else 0)
