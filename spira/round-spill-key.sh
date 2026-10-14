@@ -34,9 +34,14 @@ _rsk_once() {
 }
 
 _rsk_probe() {
-    local out mark="$SPIRA_RUN/watchd/round-spill-key.said"
-    if out="$(timeout 5 round-vm ec2-probe --dry-run 2>&1)"; then
+    local out rc mark="$SPIRA_RUN/watchd/round-spill-key.said" deadline="$SPIRA_ROUND_VM_EC2_PROBE_DEADLINE"
+    out="$(timeout "$deadline" round-vm ec2-probe --dry-run 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ]; then
         [ -f "$mark" ] && { grep -v '^probe-' "$mark" > "$mark.tmp"; mv "$mark.tmp" "$mark"; }
+        return 0
+    fi
+    if [ "$rc" -eq 124 ]; then
+        _rsk_once "probe-timeout" "ROUND SPILL LAUNCH: round-vm ec2-probe --dry-run probe timed out after ${deadline}s; EC2 launch not confirmed"
         return 0
     fi
     out="$(printf '%s' "$out" | tail -n 3 | tr '\n' ' ')"
