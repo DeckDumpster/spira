@@ -23,6 +23,7 @@ const USAGE: &str = "usage:
   release activate <sha> [--hotfix <reason>] [--repo R] [--landed-ref REF] [--settle SECS] [--drain-wait SECS]
   release rollback [--repo R] [--settle SECS] [--drain-wait SECS]
   release prune [--keep N]
+  release rotate-lc-credentials   (rotates the spira_lc/spira_lc_ro passwords on every account, verified by fresh login before the files are swapped)
   release status [--json]
   release install-tarball <tarball> [--answers FILE] [--dry-run] [--settle SECS] [--skip-restart]
   release stage up [ROOT]
@@ -453,6 +454,13 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             let o = CanaryOpts { external_stage, stage_opts, deadline: a.deadline, verdict_window };
             let r = canary::canary(&o).map_err(fail)?;
             println!("release: canary PASS — commit '{}' on origin/main in {}s (stage {})", r.commit, r.elapsed.as_secs(), r.stage_root.display());
+            return Ok(());
+        }
+        "rotate-lc-credentials" => {
+            want(0)?;
+            for line in release::lifecycle_store::rotate_from_env(&env).map_err(fail)? {
+                println!("release: {line}");
+            }
             return Ok(());
         }
         "canary-worker" => {

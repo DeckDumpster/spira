@@ -275,6 +275,8 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // step and the test fixture use to apply schema.sql/grants.sql through the same
         // connection code the rest of this binary uses, instead of a second copy in shell.
         Some("admin-apply-ddl") => cmd_admin_apply_ddl(&args[1..], conn),
+        Some("admin-accounts") => cmd_admin_accounts(conn),
+        Some("verify-login") => cmd_verify_login(&args[1..], conn),
         // lifecycle/migrations/*.sql in filename order, each ADD COLUMN applied only when
         // the column is absent (migrate.rs) — what spira-install's lifecycle-store phase runs
         // after schema.sql, so a fresh database and an old one converge (sp-xfqnr), and
@@ -319,6 +321,38 @@ fn cmd_admin_apply_ddl(args: &[String], conn: &Conn) -> (i32, String) {
     match admin.as_ref().unwrap_or(conn).apply_ddl(&sql_text) {
         Ok(()) => (0, String::new()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    }
+}
+
+/// Every `user<TAB>host` of the two lifecycle accounts in `mysql.user`, as the admin sees it.
+fn cmd_admin_accounts(conn: &Conn) -> (i32, String) {
+    let admin = match migrate::admin_conn(conn) {
+        Ok(Some(a)) => a,
+        Ok(None) => return (CANNOT_TELL, "admin-accounts: no admin credential (SPIRA_LC_ADMIN_USER)".into()),
+        Err(e) => return (CANNOT_TELL, format!("admin-accounts: the admin password file (SPIRA_LC_ADMIN_PASSWORD_FILE): {e}")),
+    };
+    match admin.query("SELECT user, host FROM mysql.user WHERE user IN ('spira_lc', 'spira_lc_ro') ORDER BY user, host") {
+        Ok(rows) => {
+            let field = |r: &Value, k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+            (0, rows.iter().map(|r| format!("{}\t{}", field(r, "user"), field(r, "host"))).collect::<Vec<_>>().join("\n"))
+        }
+        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    }
+}
+
+/// A fresh login as `<user>` with the password in `<password-file>`, through the same
+/// connection code every client uses: exit 0 only when the server accepts it and answers.
+fn cmd_verify_login(args: &[String], conn: &Conn) -> (i32, String) {
+    let (Some(user), Some(file)) = (args.first(), args.get(1)) else {
+        return (CANNOT_TELL, "verify-login: usage verify-login <user> <password-file>".into());
+    };
+    let password = match std::fs::read_to_string(file) {
+        Ok(p) => p.trim().to_string(),
+        Err(e) => return (CANNOT_TELL, format!("verify-login: reading {file}: {e}")),
+    };
+    match conn.as_user(user.clone(), password).query("SELECT 1 AS ok") {
+        Ok(_) => (0, format!("{user} logged in")),
+        Err(e) => (1, format!("{user} could not log in: {e:?}")),
     }
 }
 
