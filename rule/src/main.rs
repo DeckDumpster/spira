@@ -113,12 +113,19 @@ fn memories_json(db: &str) -> Result<BTreeMap<String, serde_json::Value>, String
     Ok(serde_json::from_str(&stdout).unwrap_or_default())
 }
 
+fn statute_dir_from(dir: &str, run: &str) -> Option<std::path::PathBuf> {
+    match (dir.is_empty(), run.is_empty()) {
+        (false, _) => Some(dir.into()),
+        (true, false) => Some(Path::new(run).join("statutes")),
+        (true, true) => None,
+    }
+}
+
+/// An empty configured value means the declared default, `$SPIRA_RUN/statutes`.
 fn statute_dir() -> Result<std::path::PathBuf, String> {
-    spira_config::process::cfg("SPIRA_STATUTE_DIR")
-        .ok()
-        .filter(|d| !d.is_empty())
-        .map(std::path::PathBuf::from)
-        .ok_or_else(|| "SPIRA_STATUTE_DIR is not resolvable from spira_config".to_string())
+    let dir = spira_config::process::cfg("SPIRA_STATUTE_DIR")?;
+    let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
+    statute_dir_from(&dir, &run).ok_or_else(|| "SPIRA_STATUTE_DIR and SPIRA_RUN are both empty in spira_config".to_string())
 }
 
 /// Reads of the book come from the on-disk mirror. Only a book never mirrored falls back to
@@ -742,4 +749,26 @@ fn cmd_system_prompt_split(rest: &[String]) -> i32 {
         return 1;
     }
     0
+}
+
+#[cfg(test)]
+mod statute_dir_tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_key_defaults_under_run() {
+        assert_eq!(statute_dir_from("", "/r"), Some("/r/statutes".into()));
+        assert_eq!(statute_dir_from("/s", "/r"), Some("/s".into()));
+        assert_eq!(statute_dir_from("", ""), None);
+    }
+
+    #[test]
+    fn the_delta_rendered_toml_resolves() {
+        let delta = include_str!("../../spira/config-delta.toml");
+        assert!(delta.contains("\"spira.statute_dir\" = \"\""));
+        let tmp = testkit::TempDir::new("rule-sd");
+        let toml = spira_config::process::fixture_toml(tmp.path(), &[("SPIRA_STATUTE_DIR", ""), ("SPIRA_RUN", "/fx/run")]);
+        let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        assert_eq!(statute_dir().unwrap(), std::path::PathBuf::from("/fx/run/statutes"));
+    }
 }
