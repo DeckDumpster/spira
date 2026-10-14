@@ -58,10 +58,14 @@ def review_by(reason):
         return None
 def review_text(reason):
     return REVIEW.match(reason or "")[5][:70]
+rowless = []
 out ={k: [] for k in ("OK", "BLOCKED", "HELD", "ASK", "SUSPECT")}
 for i, b in content.items():
     if i not in rows and i not in term and b.get("issue_type") not in ("epic", "event") and ask not in b.get("labels", []):
         out["SUSPECT"].append(f"{i} ROWLESS open bead with no lifecycle row")
+        if b.get("status") == "open":
+            repo = next((l[5:] for l in b.get("labels", []) if l.startswith("repo:")), "")
+            rowless.append("\t".join((i, str(b.get("priority", 2)), repo, (b.get("title") or "").replace("\t", " ").replace("\n", " "))))
 for i, r in sorted(rows.items()):
     st = r["state"]
     holds = json.loads(r.get("holds") or "[]")
@@ -104,6 +108,7 @@ for i, r in sorted(rows.items()):
         put("SUSPECT", f"LEASE EXPIRED holder {str(r.get('holder'))[:28]}")
     else:
         put("OK", "")
+open(T + "/rowless.tsv", "w").write("".join(r + "\n" for r in rowless))
 print(f"BEAD SWEEP {len(rows)} live rows; " + ", ".join(f"{k} {len(v)}" for k, v in out.items()))
 for k in ("SUSPECT", "BLOCKED", "HELD", "ASK", "OK"):
     for l in out[k]:
@@ -118,12 +123,31 @@ _bs_say() {
     return 0
 }
 
+# An open bead with no lifecycle row is converged, not reported: create-bead is an ignoring
+# insert, so repeating it is safe. Only a repair that fails stays a SUSPECT.
+_bs_converge_rowless() {
+    local f="$1" id prio repo title args
+    while IFS=$'\t' read -r id prio repo title; do
+        [ -n "$id" ] || continue
+        args=(create-bead "$id" --priority "$prio" --title "$title")
+        [ -n "$repo" ] && args+=(--repo "$repo")
+        # batch-job: one point write per rowless bead, bounded by timeout(1)
+        if timeout 30 spira-lc "${args[@]}" >/dev/null 2>&1; then
+            _bs_say "REPAIRED $id open bead had no lifecycle row; created it (priority $prio, repo ${repo:-none})"
+            REPAIRED_IDS+=("$id")
+        fi
+    done < "$f"
+}
+
 _bs_tick() {
-    local t out rc line k
+    local t out rc line k id
+    REPAIRED_IDS=()
     t="$(mktemp -d)"
     out="$(_bs_classify "$t")"; rc=$?
+    [ "$rc" -eq 0 ] && [ -s "$t/rowless.tsv" ] && _bs_converge_rowless "$t/rowless.tsv"
     rm -rf "$t"
     if [ "$rc" -ne 0 ]; then echo "SWEEP FAILED: spira-lc unreadable"; return 1; fi
+    for id in "${REPAIRED_IDS[@]}"; do out="$(grep -v "^SUSPECT $id ROWLESS" <<< "$out")"; done
     local -A now_set=()
     while IFS= read -r line; do
         case "$line" in
