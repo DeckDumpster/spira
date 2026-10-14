@@ -189,8 +189,17 @@ pub struct Check {
     pub dolt_hash: String,
     pub rows: usize,
     pub divergent: Vec<String>,
-    /// An ambiguous write unloaded memory since the last check, so a late commit it left behind is expected.
+    /// Every divergent row is one an ambiguous write touched within `AMBIGUOUS_GRACE`, so its late commit is expected.
     pub explained: bool,
+}
+
+const AMBIGUOUS_GRACE: std::time::Duration = std::time::Duration::from_secs(900);
+
+fn touched(touch: &Touch) -> Option<Vec<String>> {
+    match touch {
+        Touch::Keys(k) => Some(k.clone()),
+        Touch::All => None,
+    }
 }
 
 fn hash_all(digests: &BTreeMap<String, String>) -> String {
@@ -203,7 +212,7 @@ fn hash_all(digests: &BTreeMap<String, String>) -> String {
 pub struct Live {
     state: Mutex<State>,
     unloaded_at: Mutex<Option<std::time::Instant>>,
-    ambiguous: std::sync::atomic::AtomicBool,
+    ambiguous: Mutex<Vec<(std::time::Instant, Option<Vec<String>>)>>,
     verify_from: Mutex<Option<std::time::Instant>>,
     cold: Mutex<ColdLoad>,
 }
@@ -299,10 +308,23 @@ impl Live {
     }
 
     pub fn invalidate(&self) {
+        self.invalidate_for(None);
+    }
+
+    fn invalidate_for(&self, keys: Option<Vec<String>>) {
         self.void_cold();
-        self.ambiguous.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.ambiguous.lock().unwrap_or_else(|e| e.into_inner()).push((std::time::Instant::now(), keys));
         self.lock().loaded = false;
         *self.unloaded_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+    }
+
+    /// Whether an ambiguous write within the grace touched every row in `divergent`. The record
+    /// is kept, not spent: a statement abandoned on a deadline can commit at any point while the
+    /// server is loaded, and each such commit is reconciled by the check that finds it.
+    fn explains(&self, divergent: &[String]) -> bool {
+        let mut log = self.ambiguous.lock().unwrap_or_else(|e| e.into_inner());
+        log.retain(|(at, _)| at.elapsed() < AMBIGUOUS_GRACE);
+        !divergent.is_empty() && divergent.iter().all(|id| log.iter().any(|(_, keys)| keys.as_ref().is_none_or(|k| k.contains(id))))
     }
 
     /// True once `settle` has passed since memory was last unloaded. A statement the client
@@ -349,7 +371,7 @@ impl Live {
         let out = match run(script) {
             Ok(out) => out,
             Err(e) => {
-                self.invalidate();
+                self.invalidate_for(touched(touch));
                 return Err(e);
             }
         };
@@ -370,7 +392,7 @@ impl Live {
             },
         };
         if !refreshed {
-            self.invalidate();
+            self.invalidate_for(touched(touch));
         }
         Ok((out, refreshed))
     }
@@ -405,7 +427,8 @@ impl Live {
         };
         let ids: BTreeSet<&String> = mine.keys().chain(dolt_digests.keys()).collect();
         let divergent: Vec<String> = if loaded { ids.into_iter().filter(|id| mine.get(*id) != dolt_digests.get(*id)).cloned().collect() } else { Vec::new() };
-        let check = Check { memory_hash: hash_all(&mine), dolt_hash: hash_all(&dolt_digests), rows: dolt_digests.len(), divergent, explained: self.ambiguous.swap(false, std::sync::atomic::Ordering::SeqCst) };
+        let mut check = Check { memory_hash: hash_all(&mine), dolt_hash: hash_all(&dolt_digests), rows: dolt_digests.len(), divergent, explained: false };
+        check.explained = self.explains(&check.divergent);
         let mut st = self.lock();
         let old = std::mem::replace(&mut *st, State { loaded: true, ..dolt });
         st.carry_cold(old);
@@ -695,14 +718,36 @@ mod tests {
     }
 
     #[test]
-    fn a_divergence_after_an_ambiguous_write_is_explained_once() {
+    fn a_divergence_after_an_ambiguous_write_is_explained() {
         let live = loaded(vec![bead("sp-a", "READY", 0, NOW)], vec![]);
         live.invalidate();
         live.replace(sets(vec![bead("sp-a", "READY", 0, NOW)], vec![])).unwrap();
         let late = || -> Result<Sets, ()> { Ok(sets(vec![bead("sp-a", "WORKING", 1, NOW)], vec![])) };
         let c = live.check(NOW, |_| late()).unwrap();
         assert_eq!((c.divergent.as_slice(), c.explained), (["sp-a".to_string()].as_slice(), true));
-        assert!(!live.check(NOW, |_| late()).unwrap().explained, "the allowance is spent by one check");
+        assert!(live.check(NOW, |_| late()).unwrap().divergent.is_empty(), "the check reloaded memory to Dolt");
+    }
+
+    #[test]
+    fn a_late_commit_of_an_abandoned_write_is_explained_by_every_check_in_the_grace() {
+        let live = loaded(vec![bead("sp-a", "READY", 0, NOW), bead("sp-b", "READY", 0, NOW)], vec![]);
+        let _ = live.write_through(&Touch::Keys(vec!["sp-a".into()]), "UPDATE", |_: &str| -> Result<Sets, ()> { Err(()) });
+        live.replace(sets(vec![bead("sp-a", "READY", 0, NOW), bead("sp-b", "READY", 0, NOW)], vec![])).unwrap();
+        let verify = || -> Result<Sets, ()> { Ok(sets(vec![bead("sp-a", "READY", 0, NOW), bead("sp-b", "READY", 0, NOW)], vec![])) };
+        assert!(live.check(NOW, |_| verify()).unwrap().divergent.is_empty());
+        let late = || -> Result<Sets, ()> { Ok(sets(vec![bead("sp-a", "WORKING", 1, NOW), bead("sp-b", "READY", 0, NOW)], vec![])) };
+        let c = live.check(NOW, |_| late()).unwrap();
+        assert_eq!((c.divergent.as_slice(), c.explained), (["sp-a".to_string()].as_slice(), true), "the abandoned write's row stays explained after the verification");
+        assert_eq!(text(&live.show("sp-a").unwrap().0, "state"), "WORKING", "and memory was refreshed to it");
+    }
+
+    #[test]
+    fn a_divergence_in_a_row_no_ambiguous_write_touched_is_not_explained() {
+        let live = loaded(vec![bead("sp-a", "READY", 0, NOW), bead("sp-b", "READY", 0, NOW)], vec![]);
+        let _ = live.write_through(&Touch::Keys(vec!["sp-a".into()]), "UPDATE", |_: &str| -> Result<Sets, ()> { Err(()) });
+        live.replace(sets(vec![bead("sp-a", "READY", 0, NOW), bead("sp-b", "READY", 0, NOW)], vec![])).unwrap();
+        let c = live.check(NOW, |_| -> Result<Sets, ()> { Ok(sets(vec![bead("sp-a", "READY", 0, NOW), bead("sp-b", "WORKING", 1, NOW)], vec![])) }).unwrap();
+        assert_eq!((c.divergent.as_slice(), c.explained), (["sp-b".to_string()].as_slice(), false));
     }
 
     #[test]
