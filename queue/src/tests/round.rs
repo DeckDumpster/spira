@@ -1096,3 +1096,46 @@ fn a_green_batch_at_another_head_is_still_refused_as_changed() {
     assert_eq!(t.run(&["round", "certify", &batch, "--attest", "elsewhere"]), 1);
     assert!(!certified_tree_exists(&t));
 }
+
+fn guards_file(t: &T) -> String {
+    let p = t.dir.path().join("statute-guards");
+    std::fs::write(&p, "law-nonrebase | refuse | rebase by hand\nlaw-touch | show | allocator\n").unwrap();
+    p.to_string_lossy().into_owned()
+}
+
+#[test]
+fn a_round_eject_reason_contradicting_a_statute_is_refused_and_ejects_nothing() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let g = guards_file(&t);
+    t.env.vars.borrow_mut().insert("SPIRA_STATUTE_GUARDS".into(), g);
+    let before = kv_of(&t, "round");
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "needs a rebase by hand"]), 1);
+    assert!(t.err().contains("law-nonrebase") && t.err().contains("BEAD_STATUTE_CONSIDERED"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round"), before);
+    assert!(!t.lib.has("bead_reopen"));
+}
+
+#[test]
+fn a_round_eject_with_an_override_reason_proceeds_and_a_touch_is_shown() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let g = guards_file(&t);
+    t.env.vars.borrow_mut().insert("SPIRA_STATUTE_GUARDS".into(), g);
+    t.env.vars.borrow_mut().insert("BEAD_STATUTE_CONSIDERED".into(), "not that rebase".into());
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "rebase by hand"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-a", "--reason", "the allocator is red"]), 0, "{}", t.err());
+    assert!(t.err().contains("law-touch"), "{}", t.err());
+}
+
+#[test]
+fn an_unreadable_statute_registry_refuses_a_round_eject() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    t.env.vars.borrow_mut().insert("SPIRA_STATUTE_GUARDS".into(), "/nonexistent/guards".into());
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-a", "--reason", "red"]), 1);
+    assert!(t.err().contains("cannot read the statute registry"), "{}", t.err());
+}

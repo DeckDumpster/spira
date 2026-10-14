@@ -233,6 +233,34 @@ pub fn read_text(w: &World, t: &Text) -> Result<String, String> {
     }
 }
 
+/// The statute check on an eject's reason: the line to record with it, or the refusal. An
+/// unresolvable or unreadable registry refuses; only an empty key is inert.
+pub fn statute_gate(w: &World, label: &str, reason: &str) -> Result<Option<String>, i32> {
+    let refuse = |m: String| {
+        w.err(format!("queue.sh {label}: refusing: {m}"));
+        Err(FAIL)
+    };
+    let path = match w.env.config("SPIRA_STATUTE_GUARDS") {
+        Ok(p) => p,
+        Err(e) => return refuse(e),
+    };
+    if path.is_empty() {
+        return Ok(None);
+    }
+    let registry = match w.env.read_file(Path::new(&path)) {
+        Ok(r) => r,
+        Err(e) => return refuse(format!("cannot read the statute registry {path}: {e}")),
+    };
+    match bead::statute::gate(&registry, reason, w.var(bead::statute::OVERRIDE_ENV)) {
+        Ok(Some(a)) => {
+            w.err(a.shown.trim_end());
+            Ok(Some(a.line))
+        }
+        Ok(None) => Ok(None),
+        Err(m) => refuse(m),
+    }
+}
+
 /// Validate identifiers before any of them reaches an argv (DESIGN.md §5).
 pub fn idents(w: &World, label: &str, pairs: &[(&str, &str)]) -> Result<(), i32> {
     for (k, v) in pairs {

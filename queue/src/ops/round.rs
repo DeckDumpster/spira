@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use super::batch::lc_return;
 use super::stage;
 use super::land::land_local_with;
-use super::{actor, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas, lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, take_lock, Ctx, World, FAIL, OK, USAGE};
+use super::{actor, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas, lc_eject_member, lock_held_by_caller, read_text, repo_path, require_lc, resolve, statute_gate, take_lock, Ctx, World, FAIL, OK, USAGE};
 use crate::cli::{Round, Text};
 use landing_pass::gateq::GateQueue;
 use landing_pass::model::GateOutcome;
@@ -930,6 +930,11 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
             w.err(format!("queue.sh {label}: cannot read the reason: {e}"));
             return USAGE;
         }
+    };
+    let reason = match statute_gate(w, label, &reason) {
+        Ok(Some(line)) => format!("{reason}\n\n{line}"),
+        Ok(None) => reason,
+        Err(rc) => return rc,
     };
     let Ok((c, path)) = local_ctx(w, label, repo) else { return FAIL };
     if idents(w, label, &[("batch id", batch), ("bead id", id)]).is_err() {

@@ -1116,6 +1116,7 @@ dependencies = [
 name = "queue"
 version = "1.0.0"
 dependencies = [
+ "bead",
  "gate",
  "landing-pass",
  "libc",
