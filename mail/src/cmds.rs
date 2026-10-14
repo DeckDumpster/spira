@@ -60,7 +60,30 @@ pub struct SendOutcome {
     pub steps: Vec<String>,
 }
 
-pub const ESCALATION_CLASSES: [&str; 3] = ["permissions", "policy", "destructive"];
+/// Each escalation class of law-escalate-decisions-not-problems with the spellings it is accepted under.
+pub const ESCALATION_CLASSES: [(&str, &[&str]); 4] = [
+    ("permissions", &["permission"]),
+    ("policy", &[]),
+    ("destructive", &["destructive-on-production-data", "destructive-or-irreversible-on-production-data"]),
+    ("design", &[]),
+];
+
+pub fn canonical_class(class: &str) -> Option<&'static str> {
+    let c = class.trim().to_ascii_lowercase();
+    ESCALATION_CLASSES.iter().find(|(name, aliases)| *name == c || aliases.contains(&c.as_str())).map(|(name, _)| *name)
+}
+
+pub fn class_names() -> String {
+    ESCALATION_CLASSES.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
+}
+
+/// The sender-side refusal for a declared class that names no escalation class.
+pub fn unknown_class_refusal(class: &str) -> Option<String> {
+    if class.trim().is_empty() || canonical_class(class).is_some() {
+        return None;
+    }
+    Some(format!("unknown --class '{class}'; the escalation classes are: {}", class_names()))
+}
 
 /// Why an aeon's decision ask for the operator does not qualify, or None if it does.
 /// A class is supported only when declared, one of `ESCALATION_CLASSES`, and argued in a
@@ -72,8 +95,8 @@ pub fn class_refusal(class: &str, default: &str, body: &str) -> Option<String> {
     if class.is_empty() {
         return Some("no --class declared".to_string());
     }
-    if !ESCALATION_CLASSES.contains(&class) {
-        return Some(format!("class '{class}' is not an escalation class"));
+    if canonical_class(class).is_none() {
+        return Some(unknown_class_refusal(class).unwrap_or_default());
     }
     if kinds::section_empty("Class basis", body) {
         return Some(format!("class '{class}' declared but the body has no '## Class basis' section supporting it"));
@@ -135,12 +158,18 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
         }
     }
 
+    if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
+        if let Some(why) = unknown_class_refusal(args.class) {
+            return Err(why);
+        }
+    }
+
     let mut body = body;
     let mut rerouted = false;
     if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
         if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body, args.requested_by) {
             eprintln!(
-                "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only question asks with a class (permissions, policy, destructive-on-production-data), a default and a '## Class basis' section; everything else is the concierge's judgement, and carries no ask label."
+                "mail: routed to the concierge, not the operator — {why}. The operator mailbox admits only question asks with a class (permissions, policy, destructive, design), a default and a '## Class basis' section; everything else is the concierge's judgement, and carries no ask label."
             );
             body = format!("(Routed here from an operator mail: {why}.)\n\n{body}");
             mailbox = "concierge".to_string();
@@ -551,9 +580,18 @@ mod class_tests {
 
     #[test]
     fn a_declared_supported_class_qualifies() {
-        for c in ["permissions", "policy", "destructive"] {
-            assert_eq!(class_refusal(c, "take the safe path", BASIS), None);
+        for c in ["permissions", "policy", "destructive", "design", "destructive-on-production-data", "Destructive"] {
+            assert_eq!(class_refusal(c, "take the safe path", BASIS), None, "{c}");
         }
+    }
+
+    #[test]
+    fn an_unknown_class_is_refused_naming_the_valid_ones() {
+        let why = super::unknown_class_refusal("architecture").unwrap();
+        for n in ["permissions", "policy", "destructive", "design"] {
+            assert!(why.contains(n), "{why}");
+        }
+        assert_eq!(super::unknown_class_refusal(""), None);
     }
 
     #[test]
