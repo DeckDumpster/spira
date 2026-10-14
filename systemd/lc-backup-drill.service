@@ -9,7 +9,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_HOME@/lc-backup.sh drill
-TimeoutStartSec=3h
+TimeoutStartSec=4h
 IOSchedulingClass=idle
 IOWeight=10
 Nice=19

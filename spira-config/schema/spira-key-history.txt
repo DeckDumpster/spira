@@ -435,3 +435,7 @@ submission_rcpt_domain
 identity_projects
 round_vm_ec2_probe_deadline
 submission_users_file
+lc_backup_drill_budget_ms
+lc_backup_drill_dir
+lc_backup_drill_poll_secs
+lc_backup_drill_wait_secs

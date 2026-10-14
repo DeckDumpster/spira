@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lc
+DOC=Seconds between the restore drill's quiet-signal checks.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_BACKUP_DRILL_POLL_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF
