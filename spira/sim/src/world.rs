@@ -760,9 +760,10 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
 }
 
 /// The world's own lifecycle locators (sp-hq1v76), written over the complete base so none of
-/// them is the base's (production-default) value: its socket, the empty credential world up
-/// wrote, and its run dir. `SPIRA_LC_HOST`/`PORT`/`USER` in `sim.env` pin a same-user
-/// fallback connection to the world's own Dolt fixture as well.
+/// them is the base's value: its socket, the empty credential world up
+/// wrote, and its run dir. `SPIRA_LC_HOST`/`PORT`/`USER` in `sim.env` name the world's own
+/// Dolt fixture for a reader that declares direct mode (`spira.lc_socket = ""`); a declared
+/// socket never falls back to it (sp-yvyvzd).
 pub fn lc_settings(world: &Path) -> Vec<(String, String)> {
     vec![
         ("spira.lc_socket".to_string(), lc_socket(world).display().to_string()),

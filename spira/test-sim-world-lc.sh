@@ -84,6 +84,14 @@ state_of() {  # state_of <world> <bead> — the row's state
     in_world "$1" spira-lc show "$2" 2>&1 | sed -n 's/.*"state": *"\([A-Z_]*\)".*/\1/p' | head -1
 }
 
+direct_state_of() {  # direct_state_of <world> <bead> — the row's state read from the world's Dolt
+    # Direct mode is declared, never a fallback from a dead socket (sp-yvyvzd): the world's
+    # config with lc_socket layered empty, and sim.env's HOST/PORT/USER naming its fixture.
+    printf '[spira]\nlc_socket = ""\n' > "$1/config/direct.toml"
+    in_world "$1" env SPIRA_TOML="$1/config/sim.toml:$1/config/direct.toml" spira-lc show "$2" 2>&1 \
+        | sed -n 's/.*"state": *"\([A-Z_]*\)".*/\1/p' | head -1
+}
+
 world_up() {  # world_up <dir> — up, reported
     local out rc
     out="$(sim_world up "$1" 2>&1)"; rc=$?
@@ -144,8 +152,12 @@ if world_up "$W"; then
     out="$(in_world "$W" env SPIRA_WORK_BEAD_ID=sp-simlc2 work submit 2>&1)"; rc=$?
     wantrc "control: work submit without the serve fails cannot-tell" 2 "$rc"
     want   "control: the failure names the world's socket" "connecting to $W/lc.sock" "$out"
-    # sim.env pins a same-user fallback to the world's own fixture: the row reads directly.
-    is     "control: the row is still WORKING" "WORKING" "$(state_of "$W" sp-simlc2)"
+    # A declared socket with its serve stopped fails naming the service, never falls back.
+    out="$(in_world "$W" spira-lc show sp-simlc2 2>&1)"; rc=$?
+    wantrc "control: spira-lc show without the serve fails cannot-tell" 2 "$rc"
+    want   "control: that failure names the service" "lc-serve" "$out"
+    # Declared direct mode reads the world's own fixture: the row is untouched.
+    is     "control: the row is still WORKING" "WORKING" "$(direct_state_of "$W" sp-simlc2)"
     out="$(sim_world down "$W" 2>&1)"; rc=$?
     wantrc "control: down succeeds with its serve already gone" 0 "$rc"
     [ "$rc" = 0 ] || printf '%s\n' "$out" | sed 's/^/# down: /'
