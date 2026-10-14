@@ -33,7 +33,8 @@ means the same thing.
 | `round-vm run <tree-dir> [--suites CSV; absent = whole corpus, longest recorded median first, unrecorded first with an alarm] [--maxpar N] [--toolchain V] [--results-dir D] [--base REF]` | the remote batch's own output | see 2.2 |
 | `round-vm status` | exactly three lines: `ready: <handle> <addr>\|none`, `provisioning: pid <pid>\|none`, `outage: <reason>\|none` | 0 |
 | `round-vm status --json` | the pool as recorded: `ready`, `provisioning`, `refreshing`, `outage`, `template`, `leases`, `doomed`, `vms` (state, since, age, reason) and the last 50 `events` | 0 |
-| `round-vm warm` | `spare: provisioning\|not needed` — starts the background provision when nothing is ready, in flight or refreshing | 0 |
+| `round-vm warm` | `spare: provisioning\|not needed` — first runs `drain`; then starts the background provision when nothing is ready, in flight or refreshing, and never under `ec2-always`/`ec2-only` | 0 |
+| `round-vm drain` | `warm: N released` — destroys the unleased ready VM under `ec2-always`/`ec2-only`, or once it has been ready `SPIRA_ROUND_VM_WARM_IDLE_SECS`; never a leased VM | 0 |
 | `round-vm _provision-bg` | internal: the one background provision | 0 |
 | `round-vm template <tree-dir>` | `<new-template-vmid> <image-ref>` | 0 built, verified a template; 1 failed (the half-built VM destroyed, or named if it could not be); 2 usage/preflight |
 

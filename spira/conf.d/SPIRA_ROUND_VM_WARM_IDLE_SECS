@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SPIRA_ROUND_VM_WARM_IDLE_SECS — seconds an unused warm local round VM may stay running before the pool releases it.
+SCHEMA=Seconds a warm local round VM may sit unleased before the pool releases it (unit: seconds; default 1800; 0 releases it at the next pass).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_WARM_IDLE_SECS:=1800}"
+SPIRA_CONF_DEFAULT_EOF

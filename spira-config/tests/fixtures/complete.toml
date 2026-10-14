@@ -312,6 +312,7 @@ round_vm_mem_mib = 0
 round_vm_provider = ""
 round_vm_spill = "ec2-always"
 round_vm_spill_wait_secs = 30
+round_vm_warm_idle_secs = 1800
 round_vm_spill_io_full_avg60 = "30"
 round_vm_ec2_profile = "spira-round-spill"
 round_vm_ec2_region = "us-west-2"

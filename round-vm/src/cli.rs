@@ -92,6 +92,15 @@ fn spill_wiring(cfg: &Config) -> Result<(Option<std::sync::Arc<dyn crate::provid
     Ok((Some(ec2), Some(plan)))
 }
 
+fn keeps_local_pool_cold() -> bool {
+    matches!(crate::config::declared("SPIRA_ROUND_VM_SPILL").as_deref(), Some("ec2-always" | "ec2-only"))
+}
+
+fn drain_pass(pool: &Pool, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<usize, String> {
+    let idle = crate::config::declared("SPIRA_ROUND_VM_WARM_IDLE_SECS").and_then(|v| v.parse().ok()).unwrap_or(1800);
+    pool.drain_idle(Duration::from_secs(idle), keeps_local_pool_cold(), factory)
+}
+
 /// Starts `round-vm _provision-bg` in its own process group (so a `timeout` killing the
 /// caller's group does not kill it), logging to `<state>/provisioning.out`.
 struct SelfSpawner {
@@ -206,7 +215,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
         return ec2_probe(&rest);
     }
     match verb.as_str() {
-        "acquire" | "release" | "run" | "status" | "reap" | "warm" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
+        "acquire" | "release" | "run" | "status" | "reap" | "warm" | "drain" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
         other => {
             eprintln!("round-vm: unknown verb: {other}");
             eprintln!("{USAGE}");
@@ -290,7 +299,17 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
-        "warm" => match pool.ensure_spare(&spawner) {
+        "drain" => match drain_pass(&pool, &factory) {
+            Ok(n) => {
+                println!("warm: {n} released");
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        },
+        "warm" => match drain_pass(&pool, &factory).and_then(|_| if keeps_local_pool_cold() { Ok(false) } else { pool.ensure_spare(&spawner) }) {
             Ok(started) => {
                 println!("{}", if started { "spare: provisioning" } else { "spare: not needed" });
                 0

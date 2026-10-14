@@ -44,6 +44,7 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.mender_label" = "mender-failure"
 "spira.round_vm_spill" = ""
 "spira.round_vm_spill_wait_secs" = 30
+"spira.round_vm_warm_idle_secs" = 1800
 "spira.round_vm_spill_io_full_avg60" = "30"
 "spira.round_vm_ec2_profile" = "spira-round-spill"
 "spira.round_vm_ec2_region" = "us-west-2"
