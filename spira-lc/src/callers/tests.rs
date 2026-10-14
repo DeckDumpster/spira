@@ -512,21 +512,26 @@ fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
 
 #[test]
 fn certify_records_a_moved_tip_on_a_submitted_bead_before_a_pass_and_never_before_a_red() {
+    let (old, new) = ("a".repeat(40), "b".repeat(40));
+    let (old, new) = (old.as_str(), new.as_str());
     let mut f = Fake::default();
-    f.bead("sp-m", BeadState::Submitted).tip = Some("old111".into());
-    go(&mut f, "certify", &["sp-m", "new222", "pass", "keyA"]);
+    f.bead("sp-m", BeadState::Submitted).tip = Some(old.into());
+    go(&mut f, "certify", &["sp-m", new, "pass", "keyA"]);
     assert!(!f.events.iter().any(|e| e.5.contains("Submit")), "a keyed worker pass never moves the tip");
     f.events.clear();
-    let a = go(&mut f, "certify", &["sp-m", "new222", "pass", "queue-submit"]);
+    let a = go(&mut f, "certify", &["sp-m", new, "pass", "queue-submit"]);
     assert_eq!(a.code, APPLIED);
-    assert_eq!((f.state("sp-m"), f.beads["sp-m"].tip.as_deref()), ("CERTIFIED", Some("new222")));
-    let kinds: Vec<&str> = f.events.iter().map(|e| e.5.as_str()).collect();
-    assert_eq!(kinds, [r#"{"Submit":{"tip":"new222"}}"#, r#"{"GatePass":{"tip":"new222","gate_key":"queue-submit"}}"#]);
+    assert_eq!((f.state("sp-m"), f.beads["sp-m"].tip.as_deref()), ("CERTIFIED", Some(new)));
+    let kinds: Vec<String> = f.events.iter().map(|e| e.5.clone()).collect();
+    let want = [format!(r#"{{"Submit":{{"tip":"{new}"}}}}"#), format!(r#"{{"GatePass":{{"tip":"{new}","gate_key":"queue-submit"}}}}"#)];
+    let kinds: Vec<&str> = kinds.iter().map(|k| k.as_str()).collect();
+    let want: Vec<&str> = want.iter().map(|k| k.as_str()).collect();
+    assert_eq!(kinds, want);
 
     let mut f = Fake::default();
-    f.bead("sp-n", BeadState::Submitted).tip = Some("old111".into());
-    let a = go(&mut f, "certify", &["sp-n", "new222", "red", "branch-red"]);
-    assert_eq!(f.beads["sp-n"].tip.as_deref(), Some("old111"), "{a:?}");
+    f.bead("sp-n", BeadState::Submitted).tip = Some(old.into());
+    let a = go(&mut f, "certify", &["sp-n", new, "red", "branch-red"]);
+    assert_eq!(f.beads["sp-n"].tip.as_deref(), Some(old), "{a:?}");
 }
 
 #[test]
