@@ -427,6 +427,13 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             return FAIL;
         }
     }
+    if let Some(until) = records::read_kv(&c.queue_file("capacity-backoff")).ok().flatten().and_then(|k| k.get("until").and_then(|u| u.trim().parse::<u64>().ok())) {
+        let now = w.clock.now();
+        if until > now && !dry_run {
+            w.out(format!("queue.sh open-batch: no cut — {name} is waiting on capacity (a capacity failure closed its last batch); {}s of backoff remain", until - now));
+            return FAIL;
+        }
+    }
     let Some(base) = c.r.landref.clone() else {
         w.err(format!("queue.sh open-batch: cannot resolve landing ref for {name}"));
         return FAIL;

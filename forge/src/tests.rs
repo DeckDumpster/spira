@@ -114,6 +114,31 @@ fn check_status_provision_job_failure_overrides_red() {
 }
 
 #[test]
+fn check_status_provision_fault_names_a_capacity_marker_from_the_provision_log() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["run", "list", "--branch", "b", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        0,
+        r#"[{"databaseId":7,"status":"completed","conclusion":"failure"}]"#,
+    );
+    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/7/jobs"], 0, r#"{"jobs":[{"id":41,"name":"provision","conclusion":"failure"}]}"#);
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/41/logs"], 0, "2026-10-14T01:00:00.000Z Error: VcpuLimitExceeded: current vCPU limit of 64\n");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "b");
+    assert_eq!(out.lines[0], "provision_fault");
+    assert!(out.lines.contains(&"capacity: VcpuLimitExceeded".to_string()), "{:?}", out.lines);
+    let gh = FakeGh::default();
+    gh.on(
+        &["run", "list", "--branch", "b", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        0,
+        r#"[{"databaseId":7,"status":"completed","conclusion":"failure"}]"#,
+    );
+    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/7/jobs"], 0, r#"{"jobs":[{"id":41,"name":"provision","conclusion":"failure"}]}"#);
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/41/logs"], 0, "Error: ssh timed out\n");
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "b");
+    assert!(!out.lines.iter().any(|l| l.starts_with("capacity: ")), "{:?}", out.lines);
+}
+
+#[test]
 fn check_status_red_with_only_a_non_suite_step_names_the_step_and_its_log_tail() {
     let gh = FakeGh::default();
     gh.on(

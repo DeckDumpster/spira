@@ -61,6 +61,8 @@ pub struct VerdictSettings {
     pub infra_retries: u64,
     pub lock_wait: u64,
     pub lock_starve_max: u64,
+    pub capacity_backoff_min: u64,
+    pub capacity_backoff_max: u64,
     pub incident_priority: String,
     pub red_tracker_label: String,
     pub mender_label: String,
@@ -68,7 +70,7 @@ pub struct VerdictSettings {
 
 impl Default for VerdictSettings {
     fn default() -> Self {
-        VerdictSettings { ci_maxsec: 3600, ci_idle_sec: 600, infra_retries: 2, lock_wait: 90, lock_starve_max: 5, incident_priority: "1".into(), red_tracker_label: String::new(), mender_label: "mender-failure".into() }
+        VerdictSettings { ci_maxsec: 3600, ci_idle_sec: 600, infra_retries: 2, lock_wait: 90, lock_starve_max: 5, capacity_backoff_min: 300, capacity_backoff_max: 3600, incident_priority: "1".into(), red_tracker_label: String::new(), mender_label: "mender-failure".into() }
     }
 }
 

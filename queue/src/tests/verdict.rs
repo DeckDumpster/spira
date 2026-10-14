@@ -325,6 +325,28 @@ fn harness_fault_reruns_within_the_budget_then_closes_and_returns_members() {
 }
 
 #[test]
+fn a_capacity_fault_closes_once_backs_off_and_blocks_the_recut_until_it_lapses() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    t.forge.status.borrow_mut().push(Some("provision_fault\ncapacity: VcpuLimitExceeded\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert!(t.out().contains("provision failed on capacity (VcpuLimitExceeded)"), "{}", t.out());
+    assert!(has_call(&t.forge.calls, "pr-close 12") && !has_call(&t.forge.calls, "workflow-rerun"));
+    assert!(!t.qfile("open").exists());
+    let backoff = fs::read_to_string(t.qfile("capacity-backoff")).unwrap();
+    assert!(backoff.contains("failures=1\n") && backoff.contains("reason=VcpuLimitExceeded"), "{backoff}");
+    assert_eq!(count(&t.scripts.calls, "mail-operator Merge queue: spira waiting on capacity"), 1);
+    let until: u64 = backoff.lines().find_map(|l| l.strip_prefix("until=")).unwrap().parse().unwrap();
+    t.git.set("origin/main", "b0");
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
+    assert!(t.out().contains("waiting on capacity"), "{}", t.out());
+    assert!(!t.lc.has("cut "));
+    fs::write(t.qfile("capacity-backoff"), format!("failures=1\nuntil={}\nreason=x\n", until.min(1))).unwrap();
+    t.run(&["open-batch", "--skip-pregate"]);
+    assert!(t.out().matches("waiting on capacity").count() == 1, "lapsed backoff must not block: {}", t.out());
+}
+
+#[test]
 fn green_on_another_head_or_no_head_is_refused_as_a_fault() {
     for (answer, line, subject) in [
         ("green\nhead-sha: hX\n", "verdict spira: PR 12 CI head mismatch (ci=hX sealed=h1) — harness fault; PR closed, members requeued", "Merge queue: spira CI head mismatch"),
