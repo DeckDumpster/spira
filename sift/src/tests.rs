@@ -11,6 +11,7 @@ struct Fake {
     stacked: BTreeMap<String, Vec<String>>,
     states: BTreeMap<String, String>,
     target_gaps: BTreeMap<String, String>,
+    identity: BTreeMap<String, Result<String, String>>,
     broken: Vec<String>,
     merges: Cell<u32>,
 }
@@ -40,6 +41,9 @@ impl Probe for Fake {
     }
     fn target_gap(&self, id: &str) -> Result<Option<String>, String> {
         Ok(self.target_gaps.get(id).cloned())
+    }
+    fn identity_gap(&self, tip: &str) -> Result<Option<String>, String> {
+        self.identity.get(tip).cloned().map_or(Ok(None), |r| r.map(Some))
     }
 }
 
@@ -479,4 +483,17 @@ fn a_target_bead_without_a_follow_on_is_sent_back_and_one_without_a_gap_passes()
     assert_eq!((o.pass.as_slice(), o.sent_back.as_slice()), (&["b".to_string()][..], &["a".to_string()][..]));
     assert_eq!(reds(&r), ["red a t-a policy-violation"]);
     assert!(r.log.iter().any(|l| l.starts_with("note a: ") && l.contains("SHORT")));
+}
+
+#[test]
+fn a_member_carrying_another_repos_terms_or_an_unconfigured_brain_is_sent_back_naming_why() {
+    let mut f = fake();
+    f.identity.insert("t-a".into(), Ok("web/x.ts:3: 'Zorblax' belongs to beta".into()));
+    f.identity.insert("t-b".into(), Err("SPIRA_WIKI is empty".into()));
+    let s = Mem::default();
+    let mut r = Rec::default();
+    let o = screen(&f, &s, &mut r, &[c("a"), c("b"), c("c")], &[]);
+    assert_eq!((o.sent_back, o.pass), (vec!["a".to_string(), "b".to_string()], vec!["c".to_string()]));
+    assert!(r.log.iter().any(|l| l.starts_with("note a:") && l.contains("'Zorblax' belongs to beta")));
+    assert!(r.log.iter().any(|l| l.starts_with("note b:") && l.contains("identity check refused") && l.contains("SPIRA_WIKI")));
 }
