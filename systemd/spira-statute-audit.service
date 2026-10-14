@@ -15,7 +15,6 @@ Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/rule.sh audit --file --for builder --max 5
 TimeoutStartSec=300
-CPUQuota=25%
 StandardOutput=append:@SPIRA_RUN@/statute-audit.log
 StandardError=append:@SPIRA_RUN@/statute-audit.log
 
