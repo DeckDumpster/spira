@@ -405,8 +405,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let live = args.iter().any(|a| a == "--live");
     let ids = flag(args, "--ids");
     let repo = flag(args, "--repo");
-    let live_states_only = state.as_deref().is_some_and(|s| live::names_only_live_states(s));
-    if (live || live_states_only) && repo.is_none() {
+    if live && repo.is_none() {
         let f = live::filter_from_flags(state.as_deref(), ids.as_deref(), hold.as_deref(), express);
         if let Some(beads) = conn.live().and_then(|l| l.list(&f)) {
             return (0, serde_json::to_string(&Value::Array(beads)).unwrap());
