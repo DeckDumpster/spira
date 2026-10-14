@@ -396,14 +396,10 @@ fn schema_name(home: &str, key: &str) -> String {
 // Repository map / env helpers
 // =========================================================================================
 
-/// `SPIRA_REPO_MAP` through `cfg` (per Ryan 2026-10-05: one source of config) — the config
-/// file `cfg` reads is the same whatever `--home` says; `--home` only ever selects
-/// chamber/registry PATHS (`chamber_home`/`chamber_dir`/`fayth_names`), never which
-/// config file is in force.
 /// A short or symbolic tip resolves to the one full commit it names in the repo; unknown and
 /// ambiguous ones are refused, because the lifecycle compares tips byte for byte.
 fn resolve_full_tip(repo_path: &str, raw: &str) -> Result<String, String> {
-    let out = Command::new("git")
+    let out = spira_config::bounded::bounded("git")
         .args(["-C", repo_path, "rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{raw}^{{commit}}")])
         .output()
         .map_err(|e| format!("cannot run git: {e}"))?;
@@ -414,6 +410,10 @@ fn resolve_full_tip(repo_path: &str, raw: &str) -> Result<String, String> {
     Ok(full)
 }
 
+/// `SPIRA_REPO_MAP` through `cfg` (per Ryan 2026-10-05: one source of config) — the config
+/// file `cfg` reads is the same whatever `--home` says; `--home` only ever selects
+/// chamber/registry PATHS (`chamber_home`/`chamber_dir`/`fayth_names`), never which
+/// config file is in force.
 fn load_repos() -> std::collections::BTreeMap<String, spira_config::RepoSection> {
     let path = cfg_label("SPIRA_REPO_MAP");
     if path.is_empty() {
