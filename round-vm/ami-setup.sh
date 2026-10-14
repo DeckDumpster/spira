@@ -11,3 +11,4 @@ curl -fsSL https://tailscale.com/install.sh | sh
 systemctl enable --now ssh tailscaled
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
 bash -s -- "$tree" "" "$toolchain" "$cache_home" < "$tree/round-vm/src/template.sh"
+printf 'CARGO_HOME=%s\n' "$cache_home" > /etc/spira-round-ami.env
