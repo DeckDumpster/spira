@@ -429,6 +429,7 @@ fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
             title
         );
         let bead_sh = Path::new(home).join("bead.sh");
+        // batch-job: bead.sh file writes the store under its lock and takes as long as that does
         let child = Command::new(&bead_sh)
             .args(["file", &title, "--for", persona.as_deref().unwrap_or(""), "--repo", repo.as_deref().unwrap_or(""), "--body-file", "-"])
             .stdin(Stdio::piped())
