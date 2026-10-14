@@ -1561,6 +1561,17 @@ fn abandon_with_lifecycle_on_abandons_the_batch_on_spira_lc() {
 }
 
 #[test]
+fn abandon_refuses_a_batch_whose_pr_is_merged() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
+    *t.forge.pr_state.borrow_mut() = Some("merged".into());
+    assert_eq!(t.run(&["abandon", "--reason", "dirty"]), 1);
+    assert!(t.err().contains("PR 12 is already merged"), "{}", t.err());
+    assert!(!t.lc.has("abandon-batch"));
+    assert!(t.qfile("open").exists());
+}
+
+#[test]
 fn abandon_dry_run_prints_the_audit_line_and_changes_nothing() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
