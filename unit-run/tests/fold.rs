@@ -333,3 +333,19 @@ fn unit_file_fences_io() {
     assert!(u.lines().any(|l| l.starts_with("IOReadBandwidthMax=")));
     assert!(u.lines().any(|l| l.starts_with("IOWeight=")));
 }
+
+fn open_count(f: &Folder) -> usize {
+    serde_json::to_value(f).unwrap()["open"].as_object().unwrap().len()
+}
+
+#[test]
+fn an_execution_that_never_closes_is_dropped_after_the_stale_window() {
+    let entry = |seq, at, inv: &str| parse_entry(&line(seq, at, ID_STARTING, "u.service", inv, json!({}))).unwrap();
+    let mut f = Folder::default();
+    f.push(&entry(1, T0, "inv-stale"));
+    f.push(&entry(2, T0 + STALE_OPEN_US / 2, "inv-live"));
+    assert_eq!(open_count(&f), 2, "within the window both stay");
+    f.push(&entry(3, T0 + STALE_OPEN_US + S, "inv-new"));
+    assert_eq!(open_count(&f), 2, "the one silent past the window is dropped, the rest kept");
+    assert!(!serde_json::to_string(&f).unwrap().contains("inv-stale"));
+}

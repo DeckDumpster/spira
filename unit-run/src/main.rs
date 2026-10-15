@@ -32,6 +32,8 @@ impl Proc for Spawn {
 
 struct Journal;
 
+const CHANNEL_DEPTH: usize = 1024;
+
 struct Lines {
     rx: mpsc::Receiver<String>,
     follow: bool,
@@ -66,7 +68,7 @@ impl Source for Journal {
         cmd.args(journal_args(after_cursor, follow));
         let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().map_err(|e| format!("journalctl: {e}"))?;
         let out = child.stdout.take().ok_or("journalctl: no stdout")?;
-        let (tx, rx) = mpsc::channel::<String>();
+        let (tx, rx) = mpsc::sync_channel::<String>(CHANNEL_DEPTH);
         std::thread::spawn(move || {
             for l in BufReader::new(out).lines().map_while(Result::ok) {
                 if tx.send(l).is_err() {
