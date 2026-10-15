@@ -13,6 +13,28 @@ pub struct UnitState {
     pub kind: String,
 }
 
+/// Poll `units` until each reports `active` or `failed`, for at most `cap`. Returns each
+/// unit's last state; a unit still `activating` at the cap is returned as it stood.
+pub fn await_settled(sc: &dyn Systemctl, units: &[String], cap: std::time::Duration) -> Vec<(String, Result<UnitState, String>)> {
+    let deadline = std::time::Instant::now() + cap;
+    let mut out: Vec<(String, Result<UnitState, String>)> = Vec::new();
+    for u in units {
+        loop {
+            let st = sc.state(u);
+            let done = match &st {
+                Ok(s) => matches!(s.active.as_str(), "active" | "failed"),
+                Err(_) => true,
+            };
+            if done || std::time::Instant::now() >= deadline {
+                out.push((u.clone(), st));
+                break;
+            }
+            std::thread::sleep((cap / 50).clamp(std::time::Duration::from_millis(10), std::time::Duration::from_millis(250)));
+        }
+    }
+    out
+}
+
 pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
     fn state(&self, unit: &str) -> Result<UnitState, String>;
