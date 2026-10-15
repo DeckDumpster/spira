@@ -1212,12 +1212,12 @@ fn plan(land: &str, pass: Pass) -> Vec<Step> {
 fn drive_pass(
     repos: &[(String, String)],
     pass: Pass,
-    local_enabled: bool,
+    enabled: bool,
     mut run: impl FnMut(&str, &Step) -> Result<(), String>,
 ) -> Vec<String> {
     let mut failed = Vec::new();
     for (name, land) in repos {
-        if land == "queue.local" && !local_enabled {
+        if !enabled {
             continue;
         }
         for step in plan(land, pass) {
@@ -1266,15 +1266,13 @@ fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), String> {
 
 /// One scheduler pass over the repo map. `Pass::Local` is the harness's VM rounds, run one repo
 /// at a time; `Pass::Forge` settles and opens queue.forge batches. They run as separate units so
-/// a long VM round never delays a forge batch. `SPIRA_BATCHER_ENABLE=0` holds only the local
-/// rounds: the operator cuts those by hand, and a forge batch is not theirs.
+/// a long VM round never delays a forge batch. `SPIRA_BATCHER_ENABLE=0` holds both: the operator
+/// cuts by hand, whichever queue mode the repo lands by.
 fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
-    let local_enabled = cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0";
-    if !local_enabled {
-        println!("batcher rounds: SPIRA_BATCHER_ENABLE=0 — the operator cuts local rounds");
-        if pass == Pass::Local {
-            return Ok(());
-        }
+    let enabled = cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0";
+    if !enabled {
+        println!("batcher rounds: SPIRA_BATCHER_ENABLE=0 — the operator cuts rounds and batches");
+        return Ok(());
     }
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
@@ -1282,7 +1280,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
     let reg = io::registry(&env_);
     let paced = cfg("SPIRA_ROUNDS_PACING")?.trim() == "1";
     let repos: Vec<(String, String)> = reg.all().into_iter().map(|n| { let l = reg.land(&n); (n, l) }).collect();
-    let failed = drive_pass(&repos, pass, local_enabled, |name, step| match step {
+    let failed = drive_pass(&repos, pass, true, |name, step| match step {
         Step::Verdict => {
             let armed = find_repo(&env_, name).and_then(|r| io::forge_arm_queue(&r));
             settle_batch(&env_, name).and(armed)
@@ -1497,14 +1495,14 @@ mod tests {
     }
 
     #[test]
-    fn the_local_switch_holds_local_rounds_and_not_forge_batches() {
+    fn the_switch_holds_local_rounds_and_forge_batches_alike() {
         let repos = vec![("spira".to_string(), "queue.local".to_string()), ("deck".to_string(), "queue".to_string())];
         let mut seen = Vec::new();
         drive_pass(&repos, Pass::All, false, |n, _| {
             seen.push(n.to_string());
             Ok(())
         });
-        assert_eq!(seen, ["deck", "deck"]);
+        assert!(seen.is_empty(), "{seen:?}");
     }
 
     #[test]
