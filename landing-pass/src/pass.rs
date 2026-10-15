@@ -457,6 +457,10 @@ impl<'a> Pass<'a> {
             Ok(tip) => tip,
             Err(f) => return f,
         };
+        if self.files.deferred_to_round(br, &tip) {
+            self.log(&format!("CHECK6 {id}: {br} at {tip} was deferred to round: over-cap — not gated again"));
+            return Flow::Next;
+        }
         if self.s.gate_worker {
             return self.certify_queued(w, br, id, bead, &tip);
         }
@@ -521,6 +525,10 @@ impl<'a> Pass<'a> {
                 GateOutcome::BaseFail => {
                     self.log(&format!("CHECK6 {id}: held — the base fails its own gate (suite {})", g.suite));
                     self.base_fail(w, br, id, bead, &tip, &g);
+                }
+                GateOutcome::NoVerdict if reason == "over-cap" => {
+                    self.files.defer_to_round(br, &tip);
+                    self.log(&format!("CHECK6 {id}: {br} at {tip} deferred to round: over-cap"));
                 }
                 GateOutcome::NoVerdict => {
                     if matches!(reason.as_str(), "scratch-short" | "died") {
