@@ -2224,3 +2224,66 @@ fn activation_is_handed_to_the_target_releases_own_binary_after_verifying_it() {
     let e = activate::delegate_target(&w.cfg, B, &old).unwrap_err();
     assert!(e.contains("fails verify"), "{e}");
 }
+
+/// sp-1fzo3z: a unit that restarts through its own RestartSec (dolt-beads: kill +
+/// Restart=always, RestartSec=5, ExecStartPre restore) is still activating when a fixed
+/// settle runs out. The wait is bounded by the unit's own start budget, not the settle.
+struct SlowStart {
+    t0: std::time::Instant,
+    active_after: Duration,
+    budget: Option<Duration>,
+}
+
+impl Systemctl for SlowStart {
+    fn daemon_reload(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn state(&self, _unit: &str) -> Result<UnitState, String> {
+        let active = if self.t0.elapsed() >= self.active_after { "active" } else { "activating" };
+        Ok(UnitState { active: active.into(), result: "success".into(), kind: "simple".into() })
+    }
+    fn start_budget(&self, _unit: &str) -> Option<Duration> {
+        self.budget
+    }
+    fn restart(&self, _unit: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn kill(&self, _unit: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn list_active(&self, _glob: &str) -> Result<Vec<String>, String> {
+        Ok(vec![])
+    }
+    fn cat(&self, _unit: &str) -> Result<String, String> {
+        Ok(String::new())
+    }
+    fn disable_now(&self, _unit: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_unit_still_activating_within_its_own_start_budget_is_waited_for() {
+    let sc = SlowStart { t0: std::time::Instant::now(), active_after: Duration::from_millis(150), budget: Some(Duration::from_millis(600)) };
+    let got = crate::systemctl::await_settled(&sc, &["dolt-beads.service".to_string()], Duration::from_millis(20));
+    assert_eq!(got[0].1.as_ref().unwrap().active, "active", "a 20ms settle must not cut short a unit whose RestartSec+TimeoutStartSec allows 600ms");
+}
+
+#[test]
+fn a_unit_that_never_comes_up_is_returned_at_its_budget_not_held_forever() {
+    // Returning at all is the bound: without one this would poll for the unit's hour.
+    let sc = SlowStart { t0: std::time::Instant::now(), active_after: Duration::from_secs(3600), budget: Some(Duration::from_millis(100)) };
+    let got = crate::systemctl::await_settled(&sc, &["stuck.service".to_string()], Duration::from_millis(10));
+    assert_eq!(got[0].1.as_ref().unwrap().active, "activating");
+}
+
+#[test]
+fn systemd_timespans_parse_into_a_start_budget() {
+    use crate::systemctl::parse_timespan;
+    assert_eq!(parse_timespan("5s"), Some(Duration::from_secs(5)));
+    assert_eq!(parse_timespan("15min"), Some(Duration::from_secs(900)));
+    assert_eq!(parse_timespan("1min 30s"), Some(Duration::from_secs(90)));
+    assert_eq!(parse_timespan("100ms"), Some(Duration::from_millis(100)));
+    assert_eq!(parse_timespan("infinity"), None);
+    assert_eq!(crate::systemctl::budget_from_show("RestartUSec=5s\nTimeoutStartUSec=15min\n"), Some(Duration::from_secs(905)));
+}

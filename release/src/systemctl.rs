@@ -13,12 +13,19 @@ pub struct UnitState {
     pub kind: String,
 }
 
-/// Poll `units` until each reports `active` or `failed`, for at most `cap`. Returns each
-/// unit's last state; a unit still `activating` at the cap is returned as it stood.
+/// Hard ceiling on one unit's wait when systemd reports no finite start budget.
+pub const MAX_UNIT_WAIT: std::time::Duration = std::time::Duration::from_secs(900);
+
+/// Poll `units` until each reports `active` or `failed`. Each unit is waited for up to its
+/// own start budget (`RestartSec` + `TimeoutStartSec`, sp-1fzo3z), never less than `cap`
+/// and never more than [`MAX_UNIT_WAIT`]; a unit still `activating` at that bound is
+/// returned as it stood.
 pub fn await_settled(sc: &dyn Systemctl, units: &[String], cap: std::time::Duration) -> Vec<(String, Result<UnitState, String>)> {
-    let deadline = std::time::Instant::now() + cap;
+    let start = std::time::Instant::now();
     let mut out: Vec<(String, Result<UnitState, String>)> = Vec::new();
     for u in units {
+        let budget = sc.start_budget(u).unwrap_or(cap).max(cap).min(MAX_UNIT_WAIT);
+        let deadline = start + budget;
         loop {
             let st = sc.state(u);
             let done = match &st {
@@ -29,7 +36,7 @@ pub fn await_settled(sc: &dyn Systemctl, units: &[String], cap: std::time::Durat
                 out.push((u.clone(), st));
                 break;
             }
-            std::thread::sleep((cap / 50).clamp(std::time::Duration::from_millis(10), std::time::Duration::from_millis(250)));
+            std::thread::sleep((budget / 50).clamp(std::time::Duration::from_millis(10), std::time::Duration::from_millis(250)));
         }
     }
     out
@@ -38,6 +45,12 @@ pub fn await_settled(sc: &dyn Systemctl, units: &[String], cap: std::time::Durat
 pub trait Systemctl {
     fn daemon_reload(&self) -> Result<(), String>;
     fn state(&self, unit: &str) -> Result<UnitState, String>;
+    /// How long the unit may legitimately take to come up after a restart: its own
+    /// `RestartSec` + `TimeoutStartSec` (sp-1fzo3z). None when systemd reports no finite
+    /// budget, or the fake does not model one.
+    fn start_budget(&self, _unit: &str) -> Option<std::time::Duration> {
+        None
+    }
     fn restart(&self, unit: &str) -> Result<(), String>;
     /// `systemctl --user kill`: bypasses job control, for a unit that refuses a restart job.
     fn kill(&self, unit: &str) -> Result<(), String>;
@@ -93,6 +106,45 @@ impl RealSystemctl {
 }
 
 /// Parse `Key=Value` lines from `systemctl show -p ...`.
+/// A systemd timespan as `systemctl show` prints it ("5s", "15min", "1min 30s", "100ms",
+/// "infinity"). None for infinity or anything unparseable.
+pub fn parse_timespan(v: &str) -> Option<std::time::Duration> {
+    let v = v.trim();
+    if v.is_empty() || v == "infinity" {
+        return None;
+    }
+    let mut total = std::time::Duration::ZERO;
+    for tok in v.split_whitespace() {
+        let split = tok.find(|c: char| !c.is_ascii_digit() && c != '.')?;
+        let (num, unit) = tok.split_at(split);
+        let n: f64 = num.parse().ok()?;
+        let secs = match unit {
+            "us" | "usec" => n / 1_000_000.0,
+            "ms" | "msec" => n / 1000.0,
+            "s" | "sec" => n,
+            "min" | "m" => n * 60.0,
+            "h" | "hr" => n * 3600.0,
+            "d" => n * 86400.0,
+            _ => return None,
+        };
+        total += std::time::Duration::from_secs_f64(secs);
+    }
+    Some(total)
+}
+
+/// `RestartUSec` + `TimeoutStartUSec` from `systemctl show` text; None if either is infinite.
+pub fn budget_from_show(text: &str) -> Option<std::time::Duration> {
+    let (mut restart, mut start) = (None, None);
+    for line in text.lines() {
+        match line.split_once('=') {
+            Some(("RestartUSec", v)) => restart = parse_timespan(v),
+            Some(("TimeoutStartUSec", v)) => start = parse_timespan(v),
+            _ => {}
+        }
+    }
+    Some(restart? + start?)
+}
+
 pub fn parse_show(text: &str) -> UnitState {
     let mut s = UnitState::default();
     for line in text.lines() {
@@ -114,6 +166,9 @@ impl Systemctl for RealSystemctl {
     }
     fn state(&self, unit: &str) -> Result<UnitState, String> {
         self.run(&["show", unit, "-p", "ActiveState", "-p", "Result", "-p", "Type"]).map(|t| parse_show(&t))
+    }
+    fn start_budget(&self, unit: &str) -> Option<std::time::Duration> {
+        self.run(&["show", unit, "-p", "RestartUSec", "-p", "TimeoutStartUSec"]).ok().and_then(|t| budget_from_show(&t))
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.run(&["restart", unit]).map(|_| ())
