@@ -2,7 +2,7 @@
 //!
 //! An execution is one systemd invocation id. The journal's own message ids mark its edges:
 //! `Starting` opens it, the exit message names how the main process ended, `Deactivated
-//! successfully` / `Failed with result` close it, and the `Consumed` resources line follows
+//! successfully` / `Failed with result` close it (a oneshot that succeeds logs only `Finished`), and the `Consumed` resources line follows
 //! with the accounting. The fold is pure; the clock, the journal and `systemctl` arrive as
 //! the traits below so a test drives all three.
 
@@ -53,6 +53,8 @@ pub struct Entry {
     pub exit_code: Option<String>,
     pub exit_status: Option<i64>,
     pub command: Option<String>,
+    pub message: Option<String>,
+    pub job_result: Option<String>,
     pub unit_result: Option<String>,
     pub cpu_nsec: Option<u64>,
     pub memory_peak: Option<u64>,
@@ -85,6 +87,8 @@ pub fn parse_entry(line: &str) -> Option<Entry> {
         exit_code: field(&v, "EXIT_CODE").map(String::from),
         exit_status: number(&v, "EXIT_STATUS"),
         command: field(&v, "COMMAND").map(String::from),
+        message: field(&v, "MESSAGE").map(String::from),
+        job_result: field(&v, "JOB_RESULT").map(String::from),
         unit_result: field(&v, "UNIT_RESULT").map(String::from),
         cpu_nsec: number(&v, "CPU_USAGE_NSEC"),
         memory_peak: number(&v, "MEMORY_PEAK"),
@@ -151,7 +155,12 @@ impl Folder {
         match e.message_id.as_str() {
             ID_STARTING => o.started_us = Some(o.started_us.map_or(e.at_us, |s| s.min(e.at_us))),
             ID_STARTED => {
-                o.started_us.get_or_insert(e.at_us);
+                let msg = e.message.as_deref().unwrap_or("");
+                if msg.starts_with("Finished ") && e.job_result.as_deref() == Some("done") {
+                    o.end.get_or_insert(End { at_us: e.at_us, result: "success".into() });
+                } else if msg.starts_with("Started ") {
+                    o.started_us.get_or_insert(e.at_us);
+                }
             }
             ID_EXIT => {
                 let main = matches!(e.command.as_deref(), None | Some("ExecStart"));
@@ -377,6 +386,16 @@ pub fn accounting_dropin_path(config_home: &std::path::Path) -> std::path::PathB
 
 /// Turn IO accounting on for every user unit: true when the drop-in had to be written, which
 /// is also when the manager must re-exec to apply it.
+pub fn io_controller_available(controllers_file: &std::path::Path) -> bool {
+    std::fs::read_to_string(controllers_file).is_ok_and(|t| t.split_whitespace().any(|c| c == "io"))
+}
+
+pub fn own_controllers_file() -> Option<std::path::PathBuf> {
+    let t = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let rel = t.lines().find_map(|l| l.strip_prefix("0::"))?;
+    Some(std::path::Path::new("/sys/fs/cgroup").join(rel.trim_start_matches('/')).join("cgroup.controllers"))
+}
+
 pub fn ensure_io_accounting(config_home: &std::path::Path) -> Result<bool, String> {
     let path = accounting_dropin_path(config_home);
     if std::fs::read_to_string(&path).ok().as_deref() == Some(ACCOUNTING_DROPIN) {
