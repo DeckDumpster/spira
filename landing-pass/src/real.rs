@@ -184,7 +184,6 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         queue_dir: path_opt("queue_dir").unwrap_or_else(|| PathBuf::from(&run).join("queue")),
         lc_bin: Some(PathBuf::from("spira-lc")),
         halt_grace: num("halt_grace", 30).max(0) as u64,
-        batcher_enable: g("batcher_enable").trim() != "0",
         path: kv.get("path").filter(|v| !v.is_empty()).cloned(),
         bdjson_fixture: path_opt("bdjson_fixture"),
         pr_refresh_max: num("pr_refresh_max", 5).max(0) as u32,
