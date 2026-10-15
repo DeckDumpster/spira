@@ -214,6 +214,11 @@ pub fn world_state(run_dir: &Path, now: i64, drain_ttl: i64) -> WorldState {
     }
     let draining_path = run_dir.join("world.draining");
     if let Ok(text) = std::fs::read_to_string(&draining_path) {
+        if text.lines().any(|l| l == "holds until resume") {
+            w.draining = true;
+            w.drain_at = parse_stamp_first_line(&draining_path);
+            return w;
+        }
         let expires = text.lines().find_map(|l| l.strip_prefix("expires ")).and_then(|s| s.trim().parse::<i64>().ok()).unwrap_or(0);
         let expires = if expires == 0 {
             std::fs::metadata(&draining_path).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64 + drain_ttl).unwrap_or(0)
@@ -294,6 +299,13 @@ mod tests {
         std::fs::write(dir.join("world.halted"), "Mon Sep 29 00:00:00 UTC 2026\n").unwrap();
         let w = world_state(&dir, 1000, 1800);
         assert!(w.halted);
+    }
+
+    #[test]
+    fn a_holds_until_resume_stamp_is_draining_at_any_age() {
+        let dir = testkit::TempDir::new("auron-gather-holds");
+        std::fs::write(dir.join("world.draining"), "now\ngated\nholds until resume\n").unwrap();
+        assert!(world_state(&dir, i64::MAX / 2, 1).draining);
     }
 
     #[test]
