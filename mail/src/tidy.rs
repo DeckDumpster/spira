@@ -1,7 +1,8 @@
 //! `tidy`: archive old, answered and closed mail from a mailbox (the operator inbox, in
 //! production). A message is kept only if (1) its bead id names an open ask-labelled bead,
 //! (2) it is unread and younger than the fresh window, or (3) it carries `X-Spira-Urgent`
-//! and is younger than 7 days. Older copies of a repeated subject are always archived.
+//! and is younger than 7 days; rules (2) and (3) never keep mail whose bead is closed.
+//! Older copies of a repeated subject are always archived.
 //! FAIL CLOSED throughout (law-a-control-that-cannot-check-must-refuse): an unreadable bead
 //! store, or a mailbox that was never created, moves nothing rather than guessing.
 
@@ -85,9 +86,9 @@ pub fn tidy(
             let age = now.saturating_sub(mtime);
             let urgent_hdr = message::header_line_sed(&text, "X-Spira-Urgent");
 
-            (!bead_id.is_empty() && ask_ids.contains(&bead_id))
-                || (maildir::is_unread(&path) && age < fresh_s)
-                || (!urgent_hdr.is_empty() && age < URGENT_MAX_S)
+            let open_ask = !bead_id.is_empty() && ask_ids.contains(&bead_id);
+            let fresh = (maildir::is_unread(&path) && age < fresh_s) || (!urgent_hdr.is_empty() && age < URGENT_MAX_S);
+            open_ask || (fresh && !(!bead_id.is_empty() && bead::bead_is_closed(bd, &bead_id)))
         };
 
         if keep {
@@ -212,6 +213,35 @@ mod tests {
         setup(d.path(), "operator");
         seed_message(&d.path().join("operator"), "new", "fresh", "Fresh note", None, false, 5);
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#)]);
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap();
+        assert_eq!((report.archived, report.kept), (0, 1));
+    }
+
+    #[test]
+    fn fresh_unread_mail_of_a_closed_bead_is_archived_open_one_is_kept() {
+        let d = testkit::TempDir::new("mail-tidy");
+        setup(d.path(), "operator");
+        seed_message(&d.path().join("operator"), "new", "c", "Closed one", Some("sp-closed1"), false, 5);
+        seed_message(&d.path().join("operator"), "new", "u", "Urgent closed", Some("sp-closed2"), true, 3);
+        seed_message(&d.path().join("operator"), "new", "o", "Open one", Some("sp-open1"), false, 10);
+        let bd = FakeBd::new(vec![
+            BdOut::ok(r#"[{"id":"sp-open1"}]"#),
+            BdOut::ok(r#"[{"id":"sp-closed2","status":"closed"}]"#),
+            BdOut::ok(r#"[{"id":"sp-closed1","status":"closed"}]"#),
+        ]);
+        let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap();
+        assert_eq!((report.archived, report.kept), (2, 1));
+        assert!(d.path().join("operator/new/o").exists());
+        assert!(d.path().join("archive/cur/c").exists());
+        assert!(d.path().join("archive/cur/u").exists());
+    }
+
+    #[test]
+    fn fresh_unread_mail_of_an_unresolvable_bead_is_kept() {
+        let d = testkit::TempDir::new("mail-tidy");
+        setup(d.path(), "operator");
+        seed_message(&d.path().join("operator"), "new", "x", "Unknown", Some("sp-gone1"), false, 5);
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok(r#"[{"id":"probe"}]"#), BdOut::fail(1, "no such bead")]);
         let report = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap();
         assert_eq!((report.archived, report.kept), (0, 1));
     }

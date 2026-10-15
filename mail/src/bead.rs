@@ -481,6 +481,15 @@ pub fn open_duplicate_ask(bd: &dyn Bd, ask_label: &str, subject: &str, work_bead
     Ok(None)
 }
 
+/// True only when the store resolves `id` and reports it closed; unresolved or unreadable
+/// is "not known closed", so the caller keeps the mail.
+pub fn bead_is_closed(bd: &dyn Bd, id: &str) -> bool {
+    let out = bd.run(&a(&["show", id, "--json"]), None);
+    first_object(&out.stdout)
+        .filter(|d| d.get("error").is_none())
+        .is_some_and(|d| spira_config::nonwork::row_closed(spira_config::nonwork::Kind::Ask, &d))
+}
+
 /// The probe an empty [`open_ask_ids`] result needs before it is trusted (an empty result
 /// from a broken query would archive every live ask). `Err` carries the failing call's exit
 /// code and stderr so the caller's refusal can name what actually went wrong.
