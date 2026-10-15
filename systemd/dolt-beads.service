@@ -45,9 +45,9 @@ Environment=GIT_CONFIG_KEY_2=core.compression
 Environment=GIT_CONFIG_VALUE_2=0
 Type=simple
 # A RAM-backed data directory (SPIRA_DOLT_DURABLE set) is filled from its durable copy before
-# the server accepts a connection (a directory already populated is kept), and the stop-time pass
-# copies only what the persist daemon has not; with the key
-# empty both are no-ops, and a RAM-backed directory with no copy is refused (store-persist).
+# the server accepts a connection (a populated directory is kept); the stop-time pass copies only
+# what the persist daemon has not. With the key empty both are no-ops, and a RAM-backed
+# directory with no copy is refused (store-persist).
 ExecStartPre=@SPIRA_PROD_ROOT@/bin/store-persist restore
 ExecStart=@DOLT@ sql-server --config @SPIRA_DOLT_DATA@/dolt-server.yaml
 ExecStopPost=@SPIRA_PROD_ROOT@/bin/store-persist pass --offline
