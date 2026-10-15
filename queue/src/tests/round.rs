@@ -1305,3 +1305,24 @@ fn a_member_spira_lc_refuses_at_the_cut_is_dropped_and_the_round_opens_with_the_
     assert!(t.out().contains("sp-b: spira-lc refused it at the cut — dropped from the round"), "{}", t.out());
     assert!(t.out().contains("members=sp-a:ta sp-c:tc"), "{}", t.out());
 }
+
+#[test]
+fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
+    let t = round_world();
+    t.lc.rows.borrow_mut().as_mut().unwrap().retain(|r| r.bead_id != "sp-c");
+    t.lc_row("sp-c", "SUBMITTED", "tc", 100);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+
+    assert_eq!(t.run(&["rework", "sp-a", "--by=concierge", "--reason=red"]), 1);
+    assert!(t.err().contains("member of the open round spira-"), "the batch is named: {}", t.err());
+    assert!(!t.lc.has("\"GateRed\""), "{:?}", t.lc.calls.borrow());
+
+    assert_eq!(t.run(&["rework", "sp-c", "--by=aeon-x", "--reason=red"]), 1);
+    assert_eq!(t.run(&["rework", "sp-c", "--by=concierge"]), 2, "a reason is required");
+    assert!(!t.lc.has("\"GateRed\""), "{:?}", t.lc.calls.borrow());
+
+    assert_eq!(t.run(&["rework", "sp-c", "--by=concierge", "--reason=red on test-install-aeons"]), 0, "{}", t.err());
+    assert!(t.lc.has("event bead sp-c "), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.contains("\"tip\":\"tc\"")), "{:?}", t.lc.calls.borrow());
+    assert_eq!(t.lc.bead_state("sp-c").unwrap().0, "REWORK");
+}

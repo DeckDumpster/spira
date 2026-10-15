@@ -444,6 +444,74 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
     OK
 }
 
+const SANCTIONED_REWORKERS: [&str; 2] = ["concierge", "operator"];
+
+/// The door back to REWORK for a SUBMITTED or CERTIFIED bead that sits in no round or batch:
+/// a GateRed on its current tip, so the red tip is barred and a builder claims it.
+pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) -> i32 {
+    let reason = match read_text(w, reason) {
+        Ok(r) => r,
+        Err(e) => {
+            w.err(format!("queue.sh rework: cannot read the reason: {e}"));
+            return USAGE;
+        }
+    };
+    if reason.trim().is_empty() {
+        w.err("queue.sh rework: --reason is required — give the evidence the tip is unfit");
+        return USAGE;
+    }
+    if !SANCTIONED_REWORKERS.contains(&by) {
+        w.err(format!("queue.sh rework: refused — only {} may send a bead to rework (--by {by})", SANCTIONED_REWORKERS.join(" or ")));
+        return FAIL;
+    }
+    let reason = match statute_gate(w, "rework", &reason) {
+        Ok(Some(line)) => format!("{reason}\n\n{line}"),
+        Ok(None) => reason,
+        Err(rc) => return rc,
+    };
+    let Ok(c) = resolve(w, "rework", repo) else { return FAIL };
+    if repo_path(w, "rework", &c).is_err() || idents(w, "rework", &[("bead id", id), ("repo", &c.r.name), ("by", by)]).is_err() {
+        return FAIL;
+    }
+    if super::require_lc(w, "rework").is_err() {
+        return FAIL;
+    }
+    let Ok(_g) = take_lock(w, "rework", &c, "") else { return FAIL };
+    for record in ["open", super::round::RECORD, super::stage::STAGED] {
+        let Ok(Some(kv)) = records::read_kv(&c.queue_file(record)) else { continue };
+        if kv.members().iter().any(|m| m.id == id) {
+            let batch = kv.get_first("batch_id").unwrap_or("");
+            w.err(format!("queue.sh rework: {id} is a member of the open {record} {batch} for {} — refused; eject it with `queue eject` or `queue round eject`", c.r.name));
+            return FAIL;
+        }
+    }
+    let Some(row) = w.lc.bead_row(id) else {
+        w.err(format!("queue.sh rework: {id}: no lifecycle row — refused"));
+        return FAIL;
+    };
+    if !matches!(row.state.as_str(), "SUBMITTED" | "CERTIFIED") {
+        w.err(format!("queue.sh rework: {id} is {}, not SUBMITTED or CERTIFIED — refused, nothing changed", row.state));
+        return FAIL;
+    }
+    let Some(tip) = row.tip.filter(|t| !t.is_empty()) else {
+        w.err(format!("queue.sh rework: {id} has no recorded tip — refused"));
+        return FAIL;
+    };
+    let Some((state, version)) = w.lc.bead_state(id) else {
+        w.err(format!("queue.sh rework: {id}: no lifecycle row — refused"));
+        return FAIL;
+    };
+    let kind = format!("{{\"GateRed\":{{\"tip\":\"{tip}\",\"reason\":\"suites-failed\"}}}}");
+    if let Err((rc, e)) = w.lc.bead_event(id, &state, version.trim(), by, &kind) {
+        w.err(format!("queue.sh rework: spira-lc refused {id} (rc={rc}): {e}"));
+        return FAIL;
+    }
+    w.lib.comment(id, &format!("Returned to rework by {by} on tip {tip}.\n\n{reason}"));
+    landing_log(&c.s.run, &format!("QUEUE REWORK {} branch={id} tip={tip} by={by} reason={}", w.clock.now(), reason.lines().next().unwrap_or("")));
+    w.out(format!("queue.sh rework: {id} {state} -> REWORK on {tip}; a builder may claim it"));
+    OK
+}
+
 pub fn release(w: &World, repo: Option<&str>) -> i32 {
     let Ok(c) = resolve(w, "release", repo) else { return FAIL };
     if repo_path(w, "release", &c).is_err() {
