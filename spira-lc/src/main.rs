@@ -436,7 +436,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         return cmd_list_delivery(args, conn);
     }
     if args.iter().any(|a| a == "--batches") {
-        return cmd_list_batches(conn);
+        return cmd_list_batches(args, conn);
     }
     let state = flag(args, "--state");
     let hold = flag(args, "--hold");
@@ -516,11 +516,17 @@ fn entered_at_join(machine: &str) -> String {
 const BATCHES_SHOWN: usize = 8;
 
 /// The newest batches with their members, ejections and last event time, for the ops pane.
-fn cmd_list_batches(conn: &Conn) -> (i32, String) {
+fn cmd_list_batches(args: &[String], conn: &Conn) -> (i32, String) {
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let run = || -> Result<Vec<Value>, String> {
+        let scope = match (flag(args, "--batch"), flag(args, "--window").and_then(|w| w.parse::<u64>().ok())) {
+            (Some(id), _) => format!(" WHERE batch_id = '{}'", rows::escape(&id)),
+            (None, Some(w)) => format!(" WHERE opened_at >= UNIX_TIMESTAMP() - {w} OR state NOT IN ('LANDED','SETTLED','ABANDONED','DISCARDED')"),
+            (None, None) => String::new(),
+        };
+        let limit = if scope.is_empty() { format!(" LIMIT {BATCHES_SHOWN}") } else { String::new() };
         let mut batches = q(format!(
-            "SELECT batch_id, repo, state, parent, pr, reason, pass, phase, progress, opened_at, version FROM batch ORDER BY opened_at DESC, batch_id DESC LIMIT {BATCHES_SHOWN}"
+            "SELECT batch_id, repo, state, parent, pr, reason, pass, phase, progress, opened_at, version, head, base, run FROM batch{scope} ORDER BY opened_at DESC, batch_id DESC{limit}"
         ))?;
         let ids: Vec<String> = batches
             .iter()
@@ -531,7 +537,7 @@ fn cmd_list_batches(conn: &Conn) -> (i32, String) {
             return Ok(batches);
         }
         let ids = ids.join(",");
-        let members = q(format!("SELECT batch_id, bead_id, outcome FROM batch_member WHERE batch_id IN ({ids}) ORDER BY bead_id"))?;
+        let members = q(format!("SELECT m.batch_id, m.bead_id, m.outcome, m.tip, b.title FROM batch_member m LEFT JOIN bead b ON b.bead_id = m.bead_id WHERE m.batch_id IN ({ids}) ORDER BY m.bead_id"))?;
         let ejected = q(format!(
             "SELECT lc_key AS batch_id, JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.Eject.bead_id')) AS bead_id, JSON_UNQUOTE(JSON_EXTRACT(evidence, '$.Eject.reason')) AS reason \
              FROM event WHERE machine = 'batch' AND event = 'Eject' AND applied = 1 AND lc_key IN ({ids}) ORDER BY seq"

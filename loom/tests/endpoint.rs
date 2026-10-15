@@ -193,6 +193,7 @@ now=$(date +%s)
 case "$1 $2" in
   "ops-gantt "*) echo "{\"now\":$now,\"events\":[{\"seq\":1,\"bead_id\":\"sp-2cah6\",\"from_state\":\"SUBMITTED\",\"to_state\":\"CERTIFIED\",\"at\":$((now-72000))},{\"seq\":2,\"bead_id\":\"sp-fine\",\"from_state\":\"READY\",\"to_state\":\"WORKING\",\"at\":$((now-600))}]}" ;;
   "ops-view ops_dwell") echo "[{\"bead_id\":\"sp-2cah6\",\"state\":\"CERTIFIED\",\"holds\":\"[]\",\"priority\":1,\"title\":\"stuck one\",\"entered_at\":$((now-72000))},{\"bead_id\":\"sp-fine\",\"state\":\"WORKING\",\"holds\":\"[]\",\"priority\":2,\"title\":\"fine one\",\"entered_at\":$((now-600))}]" ;;
+  "list --batches") echo '[]' ;;
   "ops-view ops_dwell_p95") echo '[{"state":"CERTIFIED","p95_s":7200},{"state":"WORKING","p95_s":10800}]' ;;
   "ops-bead sp-2cah6") echo "{\"now\":$now,\"bead\":{\"state\":\"CERTIFIED\",\"holder\":null,\"holds\":\"[]\",\"title\":\"stuck one\"},\"events\":[{\"seq\":1,\"event\":\"Certify\",\"from_state\":\"SUBMITTED\",\"to_state\":\"CERTIFIED\",\"applied\":1,\"actor\":\"gate\",\"at\":$((now-72000))},{\"seq\":2,\"event\":\"Rework\",\"from_state\":\"CERTIFIED\",\"to_state\":\"CERTIFIED\",\"applied\":0,\"refusal\":\"no-edge\",\"actor\":\"x\",\"at\":$((now-60))}]}" ;;
   *) echo "no such bead" >&2; exit 1 ;;
@@ -653,4 +654,128 @@ async fn a_failing_broker_says_ci_detail_is_unavailable_and_still_serves_the_mem
     assert!(page.contains("CI detail unavailable") && page.contains("sp-aaa"), "{page}");
     let (code, _) = get(addr, "/rounds/pokedumpster/nope").await;
     assert_eq!(code, 404);
+}
+
+// ── /rounds ──────────────────────────────────────────────────────────────────
+
+fn fixture_log(name: &str) -> String {
+    std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)).expect("a fixture")
+}
+
+fn batch_json(id: &str, state: &str, pr: i64, last_verdict: Option<&str>, passes: &str) -> String {
+    let verdict = last_verdict.map(|v| format!("\"{v}\"")).unwrap_or("null".into());
+    format!(
+        "{{\"batch_id\":\"{id}\",\"repo\":\"spira\",\"state\":\"{state}\",\"pr\":{pr},\"phase\":\"suites\",\"progress\":{{\"done\":120,\"total\":470}},\"opened_at\":1,\"last_at\":4000,\
+         \"head\":\"aaaaaaaaaaaaaaaa\",\"base\":\"bbbbbbbbbbbbbbbb\",\"run\":\"ec2-6ad1374f-6d7c5-0\",\
+         \"members\":[{{\"batch_id\":\"{id}\",\"bead_id\":\"sp-ejected1\",\"outcome\":null,\"tip\":\"1111111111\",\"title\":\"the red one\"}},{{\"batch_id\":\"{id}\",\"bead_id\":\"sp-kept2\",\"outcome\":null,\"tip\":\"2222222222\",\"title\":\"the kept one\"}}],\
+         \"ejected\":[{{\"batch_id\":\"{id}\",\"bead_id\":\"sp-ejected1\",\"reason\":\"red: test-acceptance-ci-scratch-queue.sh\"}}],\
+         \"passes\":{passes},\"last_pass\":{{\"n\":2,\"verdict\":{verdict}}}}}"
+    )
+}
+
+fn rounds_lc(dir: &PathBuf, red: &str, live: &str, forge: &str) -> String {
+    let bin = dir.join("spira-lc");
+    script(
+        &bin,
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in\n  'list --batches --window'*) echo '[{red},{live},{forge}]' ;;\n  'list --batches --batch r-auto-194') echo '[{red}]' ;;\n  'list --batches --batch r-auto-200') echo '[{live}]' ;;\n  'list --batches --batch none') echo '[]' ;;\n  *) echo 'bad' >&2; exit 1 ;;\nesac\n"
+        ),
+    );
+    bin.to_string_lossy().into_owned()
+}
+
+const PASSES_194: &str = "[{\"n\":1,\"head\":\"h1\",\"started_at\":1,\"ended_at\":220,\"verdict\":\"red\",\"red_suites\":[\"test-acceptance-ci-scratch-queue.sh\"],\"build_s\":42,\"suites_s\":158,\"ejects\":1},{\"n\":2,\"head\":\"h2\",\"started_at\":300,\"ended_at\":560,\"verdict\":\"green\",\"build_s\":45,\"suites_s\":155,\"ejects\":0}]";
+
+async fn rounds_fixture() -> (SocketAddr, testkit::TempDir) {
+    let dir = scratch("rounds");
+    let run = dir.join("run");
+    let results = run.join("vm-results");
+    std::fs::create_dir_all(&results).expect("vm-results");
+    std::fs::write(results.join("cert-rauto194.log"), fixture_log("pass-red-2026-10-15.log")).unwrap();
+    std::fs::write(results.join("cert-auto-r-auto-194-6161a0ecea28.log"), fixture_log("pass-recert-2026-10-15.log")).unwrap();
+    let older = std::time::SystemTime::now() - Duration::from_secs(3600);
+    std::fs::OpenOptions::new().write(true).open(results.join("cert-rauto194.log")).unwrap().set_modified(older).unwrap();
+    std::fs::write(results.join("cert-rauto200.log"), "round-vm: EC2 instance type c7i.8xlarge for ec2-x\n  test-a.sh                        ok      3s\nround-vm: building the next suite\n").unwrap();
+    let red = batch_json("r-auto-194", "LANDED", 0, Some("green"), PASSES_194);
+    let live = batch_json("r-auto-200", "CI_RUNNING", 0, None, "[{\"n\":1,\"head\":\"h3\",\"started_at\":10}]");
+    let forge = batch_json("pr-77", "CI_RUNNING", 77, None, "[]");
+    let mut c = ops_cfg(&run.to_string_lossy());
+    c.lc = rounds_lc(&dir.to_path_buf(), &red, &live, &forge);
+    (spawn(c).await, dir)
+}
+
+#[tokio::test]
+async fn the_rounds_list_names_every_round_and_links_only_the_vm_rounds() {
+    let (addr, _dir) = rounds_fixture().await;
+    let (code, page) = get(addr, "/rounds").await;
+    assert_eq!(code, 200, "{page}");
+    assert!(page.contains("/rounds/spira/r-auto-194") && page.contains("/rounds/spira/r-auto-200"), "{page}");
+    assert!(page.contains("forge PR #77") && !page.contains("/rounds/spira/pr-77"), "a forge batch is listed, not linked: {page}");
+    assert!(page.contains("ec2-6ad1374f-6d7c5-0") && page.contains("120/470"), "{page}");
+}
+
+#[tokio::test]
+async fn a_re_certified_round_page_shows_both_passes_both_logs_and_the_red_suite_first() {
+    let (addr, _dir) = rounds_fixture().await;
+    let (code, page) = get(addr, "/rounds/spira/r-auto-194?log=cert-rauto194").await;
+    assert_eq!(code, 200, "{page}");
+    assert!(page.contains("ejected: red: test-acceptance-ci-scratch-queue.sh") && page.contains("/beads/sp-kept2"), "{page}");
+    assert!(page.contains("cert-rauto194") && page.contains("cert-auto-r-auto-194-6161a0ecea28"), "both certification logs are listed: {page}");
+    let (red_at, ok_at) = (page.find("test-acceptance-ci-scratch-queue.sh</td>").expect("the red suite"), page.find("test-ops-read-model.sh</td>").expect("a green suite"));
+    assert!(red_at < ok_at, "reds first");
+    assert!(page.contains("not ok 10 - publish-settle has nothing to publish") && page.contains("c7i.8xlarge"), "{page}");
+    assert!(page.contains("bbbbbbbbbb → aaaaaaaaaa"), "{page}");
+
+    let (_, recert) = get(addr, "/rounds/spira/r-auto-194").await;
+    assert!(recert.contains("470 ran · 0 red"), "the newest log is the default: {recert}");
+    assert!(!recert.contains("not ok 10 - publish-settle"), "positive control: the re-cert log has no red line");
+}
+
+#[tokio::test]
+async fn the_round_json_carries_the_suite_table_and_the_member_outcomes() {
+    let (addr, _dir) = rounds_fixture().await;
+    let (code, body) = get(addr, "/api/rounds/spira/r-auto-194").await;
+    assert_eq!(code, 200, "{body}");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["members"][0]["outcome"], "ejected: red: test-acceptance-ci-scratch-queue.sh");
+    assert_eq!(v["members"][1]["outcome"], "landed");
+    let logs = v["logs"].as_array().unwrap();
+    assert_eq!(logs.len(), 2);
+    assert_eq!(logs[0]["parsed"]["verdict"], "red");
+    assert_eq!(logs[0]["parsed"]["suites"][0]["suite"], "test-acceptance-ci-scratch-queue.sh");
+    assert_eq!(logs[1]["parsed"]["verdict"], "green");
+}
+
+#[tokio::test]
+async fn a_live_round_tails_its_log_and_an_unknown_round_is_a_404() {
+    let (addr, _dir) = rounds_fixture().await;
+    let (code, page) = get(addr, "/rounds/spira/r-auto-200").await;
+    assert_eq!(code, 200, "{page}");
+    assert!(page.contains("setInterval") && page.contains("round-vm: building the next suite"), "{page}");
+    let (code, tail) = get(addr, "/rounds/spira/r-auto-200/log").await;
+    assert_eq!(code, 200);
+    assert!(tail.contains("building the next suite"), "{tail}");
+    let (_, done) = get(addr, "/rounds/spira/r-auto-194").await;
+    assert!(!done.contains("setInterval"), "positive control: a finished round does not poll");
+    assert_eq!(get(addr, "/rounds/spira/none").await.0, 404);
+    assert_eq!(get(addr, "/rounds/spira/a%20b").await.0, 400);
+}
+
+#[tokio::test]
+async fn a_failing_lifecycle_read_serves_the_last_good_rounds_page_marked_stale() {
+    let dir = scratch("rounds-stale");
+    let flag = dir.join("broken");
+    let bin = dir.join("spira-lc");
+    let red = batch_json("r-auto-194", "LANDED", 0, Some("green"), PASSES_194);
+    script(&bin, &format!("#!/bin/sh\nif [ -e {} ]; then echo down >&2; exit 2; fi\necho '[{red}]'\n", flag.display()));
+    let mut c = ops_cfg(&dir.join("run").to_string_lossy());
+    c.lc = bin.to_string_lossy().into_owned();
+    c.cache = Duration::from_millis(0);
+    let addr = spawn(c).await;
+    let (_, fresh) = get(addr, "/rounds").await;
+    assert!(fresh.contains("r-auto-194") && !fresh.contains("last good read"), "{fresh}");
+    std::fs::write(&flag, b"").unwrap();
+    let (code, stale) = get(addr, "/rounds").await;
+    assert_eq!(code, 200);
+    assert!(stale.contains("r-auto-194") && stale.contains("last good read"), "{stale}");
 }
