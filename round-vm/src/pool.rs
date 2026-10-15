@@ -498,7 +498,41 @@ impl Pool {
 
     /// Destroys the VMs of leases whose owner or holder is gone, logging each.
     pub fn reap_dead_holders(&self, attempt: &Attempt) {
-        let _ = self.with_state(|s| Self::reap(s, attempt.provider.as_ref(), attempt.timing));
+        let _ = self.with_state(|s| {
+            Self::forget_vanished(s, attempt.provider.as_ref());
+            Self::reap(s, attempt.provider.as_ref(), attempt.timing)
+        });
+    }
+
+    /// Drops every lease whose machine is gone or whose handle now names a machine round-vm
+    /// does not own. Nothing is destroyed: a reused handle belongs to someone else (G4). A
+    /// provider that cannot answer leaves the lease alone.
+    fn forget_vanished(s: &mut PoolState, p: &dyn Provider) {
+        let mut dropped: Vec<(String, String)> = Vec::new();
+        for l in &s.leases {
+            let h = &l.vm.handle;
+            let why = match p.name_of(h) {
+                Err(_) => continue,
+                Ok(None) => "its machine no longer exists".to_string(),
+                Ok(Some(name)) => match p.tags_of(h) {
+                    Err(_) => continue,
+                    Ok(tags) if !tags.iter().any(|t| t == crate::provider::OWNER_TAG) => {
+                        format!("its handle now names a machine tagged {tags:?}, not ours")
+                    }
+                    Ok(_) if name != crate::provider::vm_name(h) => {
+                        format!("its handle now names a machine called {name:?}, not ours")
+                    }
+                    Ok(_) => continue,
+                },
+            };
+            dropped.push((h.clone(), why));
+        }
+        for (h, why) in dropped {
+            eprintln!("round-vm: dropping the lease on {h}: {why}");
+            s.leases.retain(|l| l.vm.handle != h);
+            s.note(&h, VmState::Doomed, &why);
+            s.note(&h, VmState::Destroyed, &why);
+        }
     }
 
     /// Keeps `handle` out of every reaper: its lease belongs to no process, so only a person
@@ -1686,5 +1720,32 @@ mod tests {
             assert_eq!(fake.ids(), ["i-kept"], "terminated while its results were still being pulled");
         }
         assert_eq!(pl.reap_unheld(&att), ["ec2-kept"], "the pin must not outlive the pull");
+    }
+
+    #[test]
+    fn a_sweep_drops_leases_on_vanished_or_reused_handles_and_keeps_ours() {
+        let d = TempDir::new();
+        let (fp, fake) = (FakeProvider::new(), crate::testutil::FakeEc2::default());
+        fake.plant("i-live", Some("ec2-live"), "round-ec2-live", now());
+        fp.plant("112", "round-112");
+        fp.plant_tagged("113", "round-113", "");
+        let pl = pool(&d, 1);
+        let kept = |h: &str| Lease { vm: Vm { handle: h.into(), addr: "x".into() }, owner: None, since: now(), holder: None, held: true, kept_at: 0, pulling: None };
+        pl.with_state(|s| {
+            for h in ["ec2-gone", "113", "112", "ec2-live"] {
+                s.leases.push(kept(h));
+                s.note(h, VmState::Leased, "test");
+            }
+        })
+        .unwrap();
+        pl.reap_dead_holders(&spilling(&fp, ec2_provider(&d, &fake), None));
+        let s = read_state(&pl.state_file()).unwrap();
+        let left: Vec<&str> = s.leases.iter().map(|l| l.vm.handle.as_str()).collect();
+        assert_eq!(left, ["112", "ec2-live"]);
+        assert_eq!(s.state_of("ec2-gone"), Some(VmState::Destroyed));
+        assert_eq!(s.state_of("113"), Some(VmState::Destroyed));
+        assert!(s.doomed.is_empty());
+        assert_eq!(fp.name("113").as_deref(), Some("round-113"), "the machine now holding the reused handle must survive");
+        assert_eq!(fp.count("destroy"), 0);
     }
 }
