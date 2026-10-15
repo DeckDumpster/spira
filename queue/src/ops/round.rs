@@ -610,7 +610,10 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
             Some(r) if r.state != "CERTIFIED" && r.state != "SUBMITTED" => {
                 skips.push(format!("{}: lifecycle state={} (not SUBMITTED or CERTIFIED) — not admitted", m.id, r.state))
             }
-            Some(r) => match r.tip.filter(|t| !t.is_empty()) {
+            Some(r) => match r.tip.clone().filter(|t| !t.is_empty()) {
+                Some(tip) if r.ejected_red_tip.as_deref() == Some(tip.as_str()) => {
+                    skips.push(format!("{}: {tip} is a recorded ejected-red tip — not admitted until the tip changes", m.id))
+                }
                 Some(tip) if tip.starts_with(&m.tip) && batch_red_at(&c, &m.id, &tip) => {
                     skips.push(format!("{}: {tip} already went red in a batch — not admitted until the tip changes", m.id))
                 }
@@ -695,9 +698,21 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
         w.git.worktree_remove(&path, &wt);
         return FAIL;
     }
-    let head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
-    let cut_members: Vec<Member> = merged.iter().map(|m| Member { id: m.id.clone(), tip: certified.get(&m.id).cloned().unwrap_or_else(|| m.tip.clone()) }).collect();
-    if let Err((rc, out)) = super::batch::cut_settled(w, &batch, &repo_name, &head, &base_sha, &csv(&cut_members), LC_ACTOR) {
+    let mut head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
+    let cut = loop {
+        let cut_members: Vec<Member> = merged.iter().map(|m| Member { id: m.id.clone(), tip: certified.get(&m.id).cloned().unwrap_or_else(|| m.tip.clone()) }).collect();
+        let Err((rc, out)) = super::batch::cut_settled(w, &batch, &repo_name, &head, &base_sha, &csv(&cut_members), LC_ACTOR) else { break Ok(()) };
+        let refused = merged.iter().position(|m| out.contains(&format!("Deliver refused unexpectedly for {}:", m.id)));
+        let Some(i) = refused.filter(|_| merged.len() > 1) else { break Err((rc, out)) };
+        let dropped = merged.remove(i);
+        let line = format!("{}: spira-lc refused it at the cut — dropped from the round: {}", dropped.id, one_line(&out));
+        w.out(format!("queue.sh {label}: skip — {line}"));
+        match assemble(w, &c, &path, &wt, &base_sha, &merged, &base_sha) {
+            Ok(h) => head = h,
+            Err(e) => break Err((rc, format!("{out}; reassembling without {}: {e}", dropped.id))),
+        }
+    };
+    if let Err((rc, out)) = cut {
         w.err(format!("queue.sh {label}: spira-lc cut refused for {batch} (rc={rc}): {out}"));
         converge_orphans(w);
         w.git.worktree_remove(&path, &wt);

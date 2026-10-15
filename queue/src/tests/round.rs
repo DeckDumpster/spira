@@ -1286,3 +1286,22 @@ fn a_later_round_sharing_a_file_with_the_landed_one_goes_back_to_certify_on_the_
     assert_eq!(t.run(&["round", "land", "r-2"]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb@merged-ta"));
 }
+
+#[test]
+fn a_member_whose_tip_is_a_recorded_ejected_red_tip_is_not_offered_to_the_cut() {
+    let t = round_world();
+    t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().find(|r| r.bead_id == "sp-b").unwrap().ejected_red_tip = Some("tb".into());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    assert!(t.out().contains("sp-b: tb is a recorded ejected-red tip"), "{}", t.out());
+    assert!(t.out().contains("members=sp-a:ta sp-c:tc"), "{}", t.out());
+}
+
+#[test]
+fn a_member_spira_lc_refuses_at_the_cut_is_dropped_and_the_round_opens_with_the_rest() {
+    let t = round_world();
+    t.lc.cut_refuses_member.set(Some("sp-b"));
+    t.lc.no_batch_row.set(true);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]), 0, "{}", t.err());
+    assert!(t.out().contains("sp-b: spira-lc refused it at the cut — dropped from the round"), "{}", t.out());
+    assert!(t.out().contains("members=sp-a:ta sp-c:tc"), "{}", t.out());
+}
