@@ -13,5 +13,4 @@
 1 release/src/activate.rs sp-4gcxuz.4
 1 release/src/install.rs sp-4gcxuz.4
 1 round-vm/src/pool.rs sp-4gcxuz.5
-1 spira/inbox-append.sh sp-4gcxuz.6
 2 store-persist/probe/probe.sh sp-4gcxuz.7
