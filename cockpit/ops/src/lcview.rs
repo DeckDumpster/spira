@@ -165,6 +165,12 @@ pub struct BatchRow {
     pub phase: String,
     #[serde(default)]
     pub progress: Option<PassProgress>,
+    /// The failing forge check run's URL, when the batch is red.
+    #[serde(default)]
+    pub run_url: String,
+    /// A VM round's certification log, as the pass reports it.
+    #[serde(default)]
+    pub log: String,
 }
 
 /// One live aeon: its unit, main pid, when it started, and its phase from its process tree
@@ -269,6 +275,9 @@ pub struct Snapshot {
     pub dwell: Vec<DwellRow>,
     #[serde(default)]
     pub batches: Vec<BatchRow>,
+    /// The forge's owner URL (`https://github.com/<owner>`); empty leaves PR numbers as text.
+    #[serde(default)]
+    pub forge_base: String,
     #[serde(default)]
     pub menders: Vec<MenderRow>,
     #[serde(default)]
@@ -527,6 +536,39 @@ pub struct RepoRound {
     /// An OPEN row with no live run and no PR for over an hour: drawn as STALE, not as a round.
     pub stale: bool,
     pub round: RoundView,
+    pub pr_url: String,
+    pub run_url: String,
+    pub log: String,
+    pub members: Vec<String>,
+}
+
+/// An OSC 8 terminal hyperlink whose visible text is the URL itself, so a terminal without
+/// OSC 8 still shows something to copy.
+pub fn osc8(url: &str) -> String {
+    format!("\x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\")
+}
+
+impl RepoRound {
+    pub fn link_lines(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut links = Vec::new();
+        if !self.pr_url.is_empty() {
+            links.push(format!("PR {}", osc8(&self.pr_url)));
+        }
+        if !self.run_url.is_empty() && self.red > 0 {
+            links.push(format!("failing run {}", osc8(&self.run_url)));
+        }
+        if !self.log.is_empty() {
+            links.push(format!("log {}", osc8(&format!("file://{}", self.log))));
+        }
+        if !links.is_empty() {
+            out.push(links.join(" · "));
+        }
+        if !self.stale && !self.members.is_empty() {
+            out.push(format!("{} · members {}", self.phase, self.members.join(" ")));
+        }
+        out
+    }
 }
 
 impl RepoRound {
@@ -937,6 +979,10 @@ fn repo_rounds(s: &Snapshot, round_view: &dyn Fn(&BatchRow) -> RoundView) -> Vec
             red: p.map_or(0, |p| p.red.len()),
             age: age(s.now - if b.opened_at > 0 { b.opened_at } else { b.last_at }),
             stale: is_stale,
+            pr_url: if b.pr > 0 && !s.forge_base.is_empty() && !b.repo.is_empty() { format!("{}/{}/pull/{}", s.forge_base, b.repo, b.pr) } else { String::new() },
+            run_url: b.run_url.clone(),
+            log: b.log.clone(),
+            members: b.members.iter().filter(|m| !b.ejected.contains(m)).cloned().collect(),
             round,
         }
     };
@@ -1371,6 +1417,9 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     }
     for r in &v.rounds {
         out.push(if r.stale { format!("  {YEL}{}{R}", cut(&r.line(), w - 4)) } else { format!("  {}", cut(&r.line(), w - 4)) });
+        for l in r.link_lines() {
+            out.push(format!("      {D}{l}{R}"));
+        }
         for c in &r.round.staged {
             out.push(format!("      {D}{} · {} · {} member(s) · head {}{R}", c.name, c.state, c.members.len(), c.members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(" ")));
         }
@@ -2134,6 +2183,23 @@ BATCH
         assert!(notes.iter().any(|n| n == "blocked by sp-up1") && notes.iter().any(|n| n.starts_with("held (manual): operator hold")), "{notes:?}");
         let d_notes: Vec<String> = v.machine.iter().find(|m| m.name == "IN_DELIVERY").unwrap().beads.iter().map(|b| b.note.clone()).collect();
         assert!(d_notes.iter().any(|n| n == "pokedumpster PR 209 · merging"), "{d_notes:?}");
+    }
+
+    #[test]
+    fn rounds_rows_link_to_the_pr_the_failing_run_and_the_vm_round_log() {
+        let mut s = healthy();
+        s.forge_base = "https://github.com/acme".into();
+        let p = |red: Vec<String>| PassProgress { round: "r-vm".into(), pass: 2, phase: "suites".into(), done: 1, total: 3, red, updated_at: s.now, ..Default::default() };
+        s.batches = vec![
+            BatchRow { id: "b-609".into(), repo: "pokedumpster".into(), pr: 609, state: "CI_RUNNING".into(), phase: "red".into(), run_url: "https://github.com/acme/pokedumpster/actions/runs/77".into(), members: vec!["sp-p0".into()], progress: Some(p(vec!["test-x".into()])), ..Default::default() },
+            BatchRow { id: "r-vm".into(), repo: "spira".into(), state: "CI_RUNNING".into(), phase: "certifying pass 2".into(), log: "/run/round/r-vm.log".into(), members: vec!["sp-a0".into(), "sp-a1".into()], ..Default::default() },
+        ];
+        let v = view(&s);
+        let text = render(&v, 160).join("\n");
+        assert!(text.contains(&osc8("https://github.com/acme/pokedumpster/pull/609")), "{text}");
+        assert!(text.contains(&osc8("https://github.com/acme/pokedumpster/actions/runs/77")), "{text}");
+        assert!(text.contains(&osc8("file:///run/round/r-vm.log")), "{text}");
+        assert!(text.contains("certifying pass 2 · members sp-a0 sp-a1"), "{text}");
     }
 
     #[test]
