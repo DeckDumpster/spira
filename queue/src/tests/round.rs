@@ -1139,3 +1139,52 @@ fn an_unreadable_statute_registry_refuses_a_round_eject() {
     assert_eq!(t.run(&["round", "eject", &batch, "sp-a", "--reason", "red"]), 1);
     assert!(t.err().contains("cannot read the statute registry"), "{}", t.err());
 }
+
+const T_FIX: &str = "4444444444444444444444444444444444444444";
+
+fn rework_world(holds: &[&str]) -> T {
+    let t = round_world();
+    t.lc.rows.borrow_mut().as_mut().unwrap().retain(|r| r.bead_id != "sp-a");
+    t.lc_row("sp-a", "REWORK", "ta", 100);
+    for r in t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().filter(|r| r.bead_id == "sp-a") {
+        r.holds = holds.iter().map(|h| h.to_string()).collect();
+    }
+    t.git.set("refs/heads/spira/sp-a", T_FIX);
+    t.git.ancestor(T_FIX, "merged-tb");
+    t
+}
+
+#[test]
+fn a_rework_bead_held_manual_is_retipped_and_admitted_to_a_round() {
+    let t = rework_world(&["manual"]);
+    let tip_arg = format!("--tip={T_FIX}");
+    t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]);
+    assert!(t.err().contains("nothing admissible") && !t.qfile("round").exists(), "a REWORK row is not admitted: {}", t.err());
+
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix"]), 0, "{}", t.err());
+    assert!(t.lc.has(&format!("retip sp-a {T_FIX} concierge")), "{:?}", t.lc.calls.borrow());
+
+    assert_eq!(t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]), 0, "{}", t.err());
+    assert!(t.out().contains(&format!("sp-a:{T_FIX}")), "{}", t.out());
+}
+
+#[test]
+fn a_bead_held_by_no_one_is_not_retipped() {
+    let t = rework_world(&[]);
+    let tip_arg = format!("--tip={T_FIX}");
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix"]), 1);
+    assert!(t.err().contains("held by no one"), "{}", t.err());
+    assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn resubmit_refuses_a_stranger_a_short_tip_an_unknown_commit_and_a_non_rework_row() {
+    let t = rework_world(&["manual"]);
+    let ok = format!("--tip={T_FIX}");
+    assert_eq!(t.run(&["resubmit", "sp-a", &ok, "--by=aeon-x", "--reason=r"]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", "--tip=abc", "--by=concierge", "--reason=r"]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", &format!("--tip={}", "5".repeat(40)), "--by=concierge", "--reason=r"]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-b", &ok, "--by=concierge", "--reason=r"]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", &ok, "--by=concierge"]), 2, "a reason is required");
+    assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
+}

@@ -217,6 +217,18 @@ fn a_cached_stacked_verdict_is_judged_against_the_prerequisites_current_state() 
 }
 
 #[test]
+fn a_vehicle_is_not_stacked_once_its_prerequisite_is_retipped_out_of_rework() {
+    let mut f = fake();
+    f.stacked.insert("a".into(), vec!["sp-x".into()]);
+    f.states.insert("sp-x".into(), "REWORK".into());
+    let s = Mem::default();
+    let mut r = Rec::default();
+    assert_eq!(screen(&f, &s, &mut r, &[c("a")], &[]).sent_back, ["a"]);
+    f.states.insert("sp-x".into(), "SUBMITTED".into());
+    assert_eq!(screen(&f, &s, &mut r, &[c("a")], &[]).pass, ["a"]);
+}
+
+#[test]
 fn after_three_send_backs_the_bead_is_excluded_and_the_concierge_told_once() {
     let mut f = fake();
     f.target_gaps.insert("a".into(), "no verdict".into());

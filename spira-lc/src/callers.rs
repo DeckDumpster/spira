@@ -76,6 +76,7 @@ pub const VERBS: &[&str] = &[
     "deliver",
     "certify",
     "resubmit",
+    "retip",
     "renew",
     "phase",
     "disposition",
@@ -249,6 +250,12 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 return usage("resubmit <bead-id> <tip> [actor]");
             }
             resubmit(m, &a(0), &a(1), &actor_or(args.get(2), "lifecycle-cert"))
+        }
+        "retip" => {
+            if !need(2) {
+                return usage("retip <bead-id> <tip> [actor]");
+            }
+            retip(m, &a(0), &a(1), &actor_or(args.get(2), "concierge"))
         }
         "renew" => renew(m, args),
         "phase" => phase(m, args),
@@ -697,6 +704,27 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
     );
     a
 
+}
+
+/// Move a REWORK bead held by hand to SUBMITTED at a new tip with no gate verdict: the round it
+/// is admitted to certifies it. The machine refuses a row with no manual hold.
+fn retip(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
+    let Some((state, version, _)) = state_version(m, id) else {
+        return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
+    };
+    if state != "REWORK" {
+        let mut a = Answer::cert(REFUSED, "skip", format!("retip: state={state} not eligible for tip={tip}"));
+        a.stderr = format!("spira-lc retip: {id} is {state}, not REWORK — nothing changed\n");
+        return a;
+    }
+    let kind = serde_json::to_string(&BeadEventKind::Resubmit { tip: tip.to_string() }).unwrap_or_default();
+    let (rc, out) = event(m, "bead", id, &state, &version, actor, &kind);
+    if rc == 0 {
+        return Answer::cert(APPLIED, "applied", format!("retip tip={tip}"));
+    }
+    let mut a = Answer::cert(REFUSED, "refused", format!("retip tip={tip}"));
+    a.stderr = format!("spira-lc retip: {id} refused: {} — nothing changed\n", out.trim());
+    a
 }
 
 /// `renew <id> <holder> <lease-until>` — a working aeon extends its own lease (sp-2jf0a). The

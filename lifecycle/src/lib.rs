@@ -61,6 +61,9 @@ pub enum Refusal {
     /// `claim` of a REWORK row after a red gate verdict, proposing the very stack the red
     /// work was built on: only a moved prerequisite tip can change the outcome.
     StackUnchanged { prereqs: Vec<String> },
+    /// A `resubmit` of a REWORK row that carries no manual hold: only a bead somebody holds
+    /// by hand is re-tipped past the gate.
+    NotManuallyHeld,
     /// A mender's outcome arrived at or after the MENDING row's deadline; the machine's own
     /// `Expire` is the only transition left.
     DeadlinePassed { deadline: i64, at: i64 },
