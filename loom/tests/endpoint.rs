@@ -339,6 +339,8 @@ async fn units_page_renders_the_same_rows_and_is_cached() {
         assert!(html.contains(n), "{n} in the page");
     }
     assert!(html.contains("stale — last success") && html.contains("boom: it broke"), "{html}");
+    assert!(html.contains("@media(max-width:639px)") && html.contains("class=\"u\" title=\"ok.service\"") || html.contains("class=u title=\"ok.service\""), "narrow viewports stack each family as a card: {html}");
+    assert!(html.contains("<td class=sr><div class=strip>"), "{html}");
 
     let swapped = fx.dir.join("duckdb");
     script(&swapped, "#!/bin/sh\necho '[]'\n");

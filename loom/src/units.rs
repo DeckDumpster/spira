@@ -332,7 +332,13 @@ fn ago(now: i64, t: Option<i64>) -> String {
 
 const CSS: &str = "<style>.tick{display:inline-block;width:4px;height:14px;margin-right:1px;background:#3aa57a}\
 .tick.bad{background:#ff4d4f}.strip{white-space:nowrap;overflow:hidden;max-width:30rem}td.u{font-weight:600}\
-tr.stale td{background:#1e1416}pre{margin:.2rem 0;white-space:pre-wrap;color:#9aa5b1}.st-failed{color:#ff6b6d}.st-active{color:#3aa57a}</style>";
+tr.stale td{background:#1e1416}pre{margin:.2rem 0;white-space:pre-wrap;color:#9aa5b1}.st-failed{color:#ff6b6d}.st-active{color:#3aa57a}\
+header h1{overflow-wrap:anywhere}\
+@media(max-width:639px){body{overflow-x:hidden}table.units,table.units tbody{display:block}table.units tr.head{display:none}\
+table.units tr{display:flex;flex-wrap:wrap;gap:.1rem .8rem;padding:.5rem .8rem;border-bottom:1px solid #1d232b}\
+table.units td{display:block;padding:0;border:0;min-width:0}table.units td.u{flex:0 0 100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
+table.units td.st{flex:0 0 100%}table.units td.sr{flex:0 0 100%;order:5}table.units td.sr .strip{max-width:100%;display:flex;justify-content:flex-end}table.units .strip i{flex:none}\
+table.units td.fl{flex:0 0 100%;order:6}table.units td.m::before{content:attr(data-l) \" \";color:#7d8896}}</style>";
 
 pub fn render_page(s: &Snapshot) -> String {
     let shown: Vec<&Row> = s.rows.iter().filter(|r| r.kind != "system").collect();
@@ -363,7 +369,7 @@ pub fn render_page(s: &Snapshot) -> String {
     shell("Units", 60, &b)
 }
 
-const TABLE_HEAD: &str = "<table><tr><td>unit</td><td>state</td><td>24 h</td><td>24 h</td><td>7 d</td><td>p50 / p95 (7 d)</td><td>last failure</td></tr>";
+const TABLE_HEAD: &str = "<table class=units><tr class=head><td>unit</td><td>state</td><td>24 h</td><td>24 h</td><td>7 d</td><td>p50 / p95 (7 d)</td><td>last failure</td></tr>";
 
 fn row_html(now: i64, r: &Row) -> String {
     {
@@ -381,8 +387,9 @@ fn row_html(now: i64, r: &Row) -> String {
         });
         let name = if r.kind == "plain" { esc(&r.unit) } else { format!("{} <span class=dim>({} · {} instances)</span>", esc(&r.unit), r.kind, r.instances) };
         format!(
-            "<tr class=\"{}\"><td class=u>{}</td><td>{state}</td><td><div class=strip>{strip}</div></td><td>{} runs · {}</td><td>{} runs · {}</td><td>{} / {}</td><td>{fail}</td></tr>",
+            "<tr class=\"{}\"><td class=u title=\"{}\">{}</td><td class=st>{state}</td><td class=sr><div class=strip>{strip}</div></td><td class=m data-l=\"24 h\">{} runs · {}</td><td class=m data-l=\"7 d\">{} runs · {}</td><td class=m data-l=\"p50/p95\">{} / {}</td><td class=fl>{fail}</td></tr>",
             if r.stale { "stale" } else { "" },
+            esc(&r.unit),
             name,
             r.runs_24h,
             pct(r.ok_24h, r.runs_24h),
