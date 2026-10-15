@@ -2043,6 +2043,20 @@ fn foreign_world(tag: &str, decl: Option<&str>) -> World {
 const FOREIGN_DECL: &str = "image = \"localhost/other-ci:9\"\nworkdir = \"/src\"\ndefault = [\"unit\"]\n[tier.unit]\nargv = [\"bash\", \"deploy/ci.sh\", \"unit\"]\nenv = { INSTANCE = \"ci-x\" }\n[tier.lint]\nargv = [\"bash\", \"deploy/ci.sh\", \"lint\"]\n";
 
 #[test]
+fn a_tier_that_names_its_own_image_runs_in_it_and_the_others_keep_the_repo_image() {
+    let decl = "image = \"localhost/rust-ci:1\"\ndefault = [\"rust\", \"fe\"]\n[tier.rust]\nargv = [\"bash\", \"deploy/ci.sh\"]\n[tier.fe]\nargv = [\"bash\", \"-c\", \"cd frontend && npm run check\"]\nimage = \"docker.io/library/node:22-bookworm-slim\"\n";
+    let w = foreign_world("foreign-tier-image", Some(decl));
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "rust,fe", "topic"], "", &w.root);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    let calls = rt.once_calls.lock().unwrap();
+    let image = |argv0: &str| calls.iter().find(|c| c.argv.last().map(|a| a.contains(argv0)).unwrap_or(false)).map(|c| c.image.clone());
+    assert_eq!(image("ci.sh").as_deref(), Some("localhost/rust-ci:1"));
+    assert_eq!(image("npm run check").as_deref(), Some("docker.io/library/node:22-bookworm-slim"));
+}
+
+#[test]
 fn a_forge_repo_runs_its_declared_tier_in_its_own_image() {
     let w = foreign_world("foreign-pass", Some(FOREIGN_DECL));
     let rt = runtime();
