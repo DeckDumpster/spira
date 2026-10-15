@@ -6,6 +6,7 @@ pub mod forge_rounds;
 pub mod now;
 pub mod ops;
 pub mod shell;
+pub mod rounds;
 pub mod stuck;
 pub mod units;
 
@@ -89,6 +90,8 @@ pub struct Loom {
     units_cell: Mutex<Option<Arc<units::Snapshot>>>,
     units_refreshing: AtomicBool,
     forge_ci: forge_rounds::Cache,
+    /// `spira-lc` batch reads by query, each held for `cfg.cache`; a failed refresh serves the last good read, marked stale.
+    batches_cell: Mutex<std::collections::HashMap<String, (std::time::Instant, Value)>>,
 }
 
 impl Loom {
@@ -99,6 +102,7 @@ impl Loom {
             units_cell: Mutex::new(None),
             units_refreshing: AtomicBool::new(false),
             forge_ci: forge_rounds::Cache::default(),
+            batches_cell: Mutex::new(Default::default()),
         }
     }
 
@@ -136,6 +140,27 @@ impl Loom {
             });
         }
         held
+    }
+
+    /// `list --batches` for `args`: the cached read, the fresh one, or the last good one with the error that kept it from refreshing.
+    pub async fn batches(&self, args: &[&str]) -> Result<(Vec<Value>, Option<String>), String> {
+        let key = args.join(" ");
+        let mut held = self.batches_cell.lock().await;
+        if let Some((_, v)) = held.get(&key).filter(|(at, _)| at.elapsed() < self.cfg.cache) {
+            return Ok((v.as_array().cloned().unwrap_or_default(), None));
+        }
+        let mut full = vec!["list", "--batches"];
+        full.extend_from_slice(args);
+        match lc_json(self, &full).await {
+            Ok(v) => {
+                held.insert(key, (std::time::Instant::now(), v.clone()));
+                Ok((v.as_array().cloned().unwrap_or_default(), None))
+            }
+            Err(e) => match held.get(&key) {
+                Some((_, v)) => Ok((v.as_array().cloned().unwrap_or_default(), Some(e))),
+                None => Err(e),
+            },
+        }
     }
 
     /// Serve the ops dashboard, refreshing first if the held snapshot has aged out (5 s TTL).
@@ -437,20 +462,6 @@ async fn now_route(State(loom): State<Arc<Loom>>) -> Response {
     }
 }
 
-async fn rounds_route(State(loom): State<Arc<Loom>>) -> Response {
-    let forge = forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom)));
-    match lifecycle_snapshot(&loom) {
-        Ok((snap, _)) => {
-            let page = now::render_rounds(&cockpit_ops::lcview::view(&snap)).replacen("</main>", &format!("{forge}</main>"), 1);
-            html_response(StatusCode::OK, shell::with_bar(&page, &now::bar(Some(&snap), now_s())))
-        }
-        Err(e) => {
-            let page = shell::shell("rounds", "Rounds", 15, &format!("<header><h1>Rounds</h1></header><main><p class=dim>lifecycle view unavailable: {}</p>{forge}</main>", stuck::esc(&e)));
-            html_response(StatusCode::OK, shell::with_bar(&page, &shell::Bar::default()))
-        }
-    }
-}
-
 async fn round_route(State(loom): State<Arc<Loom>>, axum::extract::Path((repo, batch)): axum::extract::Path<(String, String)>) -> Response {
     if let Some(b) = forge_rounds::read_all(&forge_queue_dir(&loom)).into_iter().find(|b| b.repo == repo && b.key == batch) {
         let target = format!("{}/{}", b.repo, b.run);
@@ -492,6 +503,113 @@ fn forge_queue_dir(loom: &Loom) -> std::path::PathBuf {
     std::path::Path::new(&loom.config().run).join("queue")
 }
 
+async fn rounds_page_route(State(loom): State<Arc<Loom>>) -> Response {
+    let window = rounds::WINDOW_S.to_string();
+    match loom.batches(&["--window", &window]).await {
+        Ok((batches, stale)) => {
+            let forge = forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom)));
+            let page = rounds::render_list(now_s(), &batches, stale.as_deref()).replacen("</main>", &format!("{forge}</main>"), 1);
+            html_response(StatusCode::OK, shell::with_bar(&page, &page_bar(&loom)))
+        }
+        Err(e) => unavailable("rounds", &e),
+    }
+}
+
+fn log_param(uri: &axum::http::Uri) -> Option<String> {
+    uri.query()?.split('&').find_map(|kv| kv.strip_prefix("log=")).filter(|v| safe_id(v)).map(str::to_string)
+}
+
+fn safe_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
+}
+
+/// The round, its pass logs and the selected log (default newest); `None` is a 404.
+async fn round_detail(loom: &Loom, id: &str) -> Result<Option<(Value, Option<String>, Vec<std::path::PathBuf>)>, String> {
+    let (rows, stale) = loom.batches(&["--batch", id]).await?;
+    let Some(batch) = rows.into_iter().next() else { return Ok(None) };
+    let heads: Vec<String> = batch["passes"].as_array().into_iter().flatten().filter_map(|p| p["head"].as_str().map(str::to_string)).collect();
+    let logs = rounds::pass_logs(&loom.config().run, id, &heads);
+    Ok(Some((batch, stale, logs)))
+}
+
+fn pick_log<'a>(logs: &'a [std::path::PathBuf], want: Option<&str>) -> Option<&'a std::path::PathBuf> {
+    match want {
+        Some(w) => logs.iter().find(|p| rounds::stem(p) == w),
+        None => logs.last(),
+    }
+}
+
+async fn round_page_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id): axum::extract::Path<String>, uri: axum::http::Uri) -> Response {
+    if !safe_id(&id) {
+        return html_response(StatusCode::BAD_REQUEST, "<!doctype html><p>not a round id</p>".into());
+    }
+    match round_detail(&loom, &id).await {
+        Ok(Some((batch, stale, logs))) => {
+            let chosen = pick_log(&logs, log_param(&uri).as_deref());
+            let detail = rounds::Detail {
+                now: now_s(),
+                batch: &batch,
+                logs: logs.iter().map(|p| (rounds::stem(p), rounds::read_pass_log(p))).collect(),
+                selected: chosen.map(|p| rounds::stem(p)),
+                tail: chosen.map(|p| rounds::tail(p)).unwrap_or_default(),
+            };
+            html_response(StatusCode::OK, shell::with_bar(&rounds::render_detail(&detail, stale.as_deref()), &page_bar(&loom)))
+        }
+        Ok(None) => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such round</p>".into()),
+        Err(e) => unavailable("round", &e),
+    }
+}
+
+async fn round_api_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id): axum::extract::Path<String>) -> Response {
+    let json_response = |status, body: Value| {
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(body.to_string().into())
+            .expect("a response with a valid status and headers")
+    };
+    if !safe_id(&id) {
+        return json_response(StatusCode::BAD_REQUEST, json!({ "error": "not a round id" }));
+    }
+    match round_detail(&loom, &id).await {
+        Ok(Some((batch, stale, logs))) => {
+            let detail = rounds::Detail {
+                now: now_s(),
+                batch: &batch,
+                logs: logs.iter().map(|p| (rounds::stem(p), rounds::read_pass_log(p))).collect(),
+                selected: None,
+                tail: String::new(),
+            };
+            let mut body = rounds::detail_json(&detail);
+            body["stale"] = json!(stale);
+            json_response(StatusCode::OK, body)
+        }
+        Ok(None) => json_response(StatusCode::NOT_FOUND, json!({ "error": "no such round" })),
+        Err(e) => json_response(StatusCode::SERVICE_UNAVAILABLE, json!({ "error": e })),
+    }
+}
+
+async fn round_log_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id): axum::extract::Path<String>, uri: axum::http::Uri) -> Response {
+    let plain = |status, body: String| {
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(body.into())
+            .expect("a response with a valid status and headers")
+    };
+    if !safe_id(&id) {
+        return plain(StatusCode::BAD_REQUEST, "not a round id".into());
+    }
+    let heads = loom.batches(&["--batch", &id]).await.ok().and_then(|(rows, _)| rows.into_iter().next()).map(|b| b["passes"].as_array().into_iter().flatten().filter_map(|p| p["head"].as_str().map(str::to_string)).collect::<Vec<_>>()).unwrap_or_default();
+    let logs = rounds::pass_logs(&loom.config().run, &id, &heads);
+    match pick_log(&logs, log_param(&uri).as_deref()) {
+        Some(p) => plain(StatusCode::OK, rounds::tail(p)),
+        None => plain(StatusCode::NOT_FOUND, "no such pass log".into()),
+    }
+}
+
 pub fn router(loom: Arc<Loom>) -> Router {
     Router::new()
         .route("/lifecycle", get(lifecycle_page_route))
@@ -503,9 +621,12 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/beads/{id}", get(stuck_bead_route))
         .route("/units", get(units_page_route))
         .route("/api/units", get(units_api_route))
+        .route("/rounds", get(rounds_page_route))
+        .route("/rounds/spira/{id}", get(round_page_route))
+        .route("/rounds/spira/{id}/log", get(round_log_route))
+        .route("/api/rounds/spira/{id}", get(round_api_route))
         .route("/api/ops", get(ops_route))
         .route("/", get(now_route))
-        .route("/rounds", get(rounds_route))
         .route("/rounds/{repo}/{batch}", get(round_route))
         .with_state(loom)
 }
