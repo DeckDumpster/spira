@@ -104,6 +104,7 @@ fn ops_cfg(run: &str) -> Config {
         systemctl: "systemctl".to_string(),
         duckdb: "duckdb".to_string(),
         journalctl: "journalctl".to_string(),
+        broker: fake_broker().0.to_string_lossy().into_owned(),
     }
 }
 
@@ -557,4 +558,85 @@ async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_all_five_sections_
         assert!(css.contains(".lm-tabs{position:fixed;left:0;right:0;bottom:0") && css.contains("flex:1 1 0;min-width:0"), "{path}: bottom tab bar of five equal cells");
         assert!(css.contains("body{overflow-x:hidden"), "{path}: no horizontal overflow");
     }
+}
+
+static BROKER: std::sync::OnceLock<(PathBuf, PathBuf)> = std::sync::OnceLock::new();
+
+/// One fake broker for the process, answering recorded
+/// `run-jobs` responses by run id and logging every call.
+fn fake_broker() -> &'static (PathBuf, PathBuf) {
+    BROKER.get_or_init(|| {
+        let dir = PathBuf::from(testkit::TempDir::new("loom-broker").to_path_buf());
+        std::fs::create_dir_all(&dir).expect("a broker dir");
+        let (bin, log) = (dir.join("broker"), dir.join("calls.log"));
+        let red = r#"{"run":{"id":9001,"url":"https://github.com/o/dumpstar/actions/runs/9001","status":"completed","conclusion":"failure","head_sha":"e6e8c19"},"jobs":[{"name":"lint","conclusion":"success","status":"completed","url":"https://github.com/o/dumpstar/actions/runs/9001/job/1","failed_step":null,"error_lines":[]},{"name":"gate","conclusion":"failure","status":"completed","url":"https://github.com/o/dumpstar/actions/runs/9001/job/2","failed_step":"svelte-check","error_lines":["Error: Type 'string' is not assignable to type 'number'. (ts)","svelte-check found 1 error"]}]}"#;
+        let green = r#"{"run":{"id":9002,"url":"https://github.com/o/deckdumpster/actions/runs/9002","status":"completed","conclusion":"success","head_sha":"aa"},"jobs":[{"name":"gate","conclusion":"success","status":"completed","url":"https://github.com/o/deckdumpster/actions/runs/9002/job/3","failed_step":null,"error_lines":[]}]}"#;
+        script(&bin, &format!("#!/bin/sh\necho \"$*\" >> {log}\ncase \"$3\" in\n*/9001) cat <<'EOF'\n{red}\nEOF\n;;\n*/9002) cat <<'EOF'\n{green}\nEOF\n;;\n*) echo boom >&2; exit 1;;\nesac\n", log = log.display()));
+        (bin, log)
+    })
+}
+
+fn batch_files(run: &PathBuf, repo: &str, pr: &str, id: &str, ci: &str, run_id: &str, step: &str) {
+    let d = run.join("queue").join(repo);
+    std::fs::create_dir_all(&d).expect("a repo queue dir");
+    std::fs::write(d.join("open"), format!("pr={pr}\nhead=h\nbase=b\nmembers=sp-aaa:1111111111111 sp-bbb:2222222222222\nopened={}\nbranch=spira/queue/{id}\nbatch_id=spira/queue/{id}\n", now_s() - 600)).expect("open");
+    std::fs::write(d.join("forge-state"), format!("batch_id=spira/queue/{id}\npr={pr}\npr_state=open\nci={ci}\nrun={run_id}\nstep={step}\nwall=5700\n")).expect("forge-state");
+    std::fs::write(d.join("closed-pr60-20261014T000000Z"), "pr=60\nhead=h\nbase=b\nmembers=sp-old:3333333333333\nopened=1000\nbranch=spira/queue/20261014T000000Z\nbatch_id=spira/queue/20261014T000000Z\nreason=re-cut the same members\nactor=operator\n").expect("closed");
+}
+
+async fn forge_loom() -> (SocketAddr, testkit::TempDir) {
+    let run = ops_run_dir();
+    let p = PathBuf::from(run.to_path_buf());
+    batch_files(&p, "dumpstar", "66", "20261015T000000Z", "red", "9001", "gate / svelte-check");
+    batch_files(&p, "deckdumpster", "619", "20261015T010000Z", "green", "9002", "");
+    batch_files(&p, "pokedumpster", "7", "20261015T020000Z", "pending", "666", "gate / deploy");
+    (spawn(ops_cfg(&run.to_string_lossy())).await, run)
+}
+
+#[tokio::test]
+async fn rounds_lists_forge_batches_with_ci_state_and_links_each_to_its_page() {
+    let (addr, _run) = forge_loom().await;
+    let (code, page) = get(addr, "/rounds").await;
+    assert_eq!(code, 200);
+    assert!(page.contains("PR #66") && page.contains("CI red"), "{page}");
+    assert!(page.contains("PR #619") && page.contains("CI green"), "{page}");
+    assert!(page.contains("href=\"/rounds/dumpstar/20261015T000000Z\""), "{page}");
+    assert!(page.contains("PR #60") && page.contains("closed"), "closed batches are listed: {page}");
+    assert!(page.contains("width=device-width"), "mobile viewport: {page}");
+}
+
+#[tokio::test]
+async fn a_red_batch_page_names_the_failing_step_its_error_lines_the_pr_and_the_run() {
+    let (addr, _run) = forge_loom().await;
+    let (code, page) = get(addr, "/rounds/dumpstar/20261015T000000Z").await;
+    assert_eq!(code, 200);
+    assert!(page.contains("failed step: svelte-check"), "{page}");
+    assert!(page.contains("svelte-check found 1 error") && page.contains("not assignable to type"), "{page}");
+    assert!(page.contains("href=\"https://github.com/o/dumpstar/pull/66\"") && page.contains("PR #66"), "{page}");
+    assert!(page.contains("href=\"https://github.com/o/dumpstar/actions/runs/9001\""), "{page}");
+    assert!(page.contains("href=\"/stuck/sp-aaa\"") && page.contains("sp-bbb"), "{page}");
+}
+
+#[tokio::test]
+async fn a_green_batch_page_has_no_failed_step_and_ci_detail_is_cached_per_batch() {
+    let (addr, _run) = forge_loom().await;
+    let (_, log) = fake_broker();
+    let calls = |needle: &str| std::fs::read_to_string(log).unwrap_or_default().lines().filter(|l| l.contains(needle)).count();
+    let before = calls("deckdumpster/9002");
+    let (code, page) = get(addr, "/rounds/deckdumpster/20261015T010000Z").await;
+    assert_eq!(code, 200);
+    assert!(page.contains("success") && !page.contains("failed step"), "{page}");
+    let (_, again) = get(addr, "/rounds/deckdumpster/20261015T010000Z").await;
+    assert!(again.contains("pull/619"), "{again}");
+    assert_eq!(calls("deckdumpster/9002") - before, 1, "the second view is served from the 60 s cache");
+}
+
+#[tokio::test]
+async fn a_failing_broker_says_ci_detail_is_unavailable_and_still_serves_the_members() {
+    let (addr, _run) = forge_loom().await;
+    let (code, page) = get(addr, "/rounds/pokedumpster/20261015T020000Z").await;
+    assert_eq!(code, 200);
+    assert!(page.contains("CI detail unavailable") && page.contains("sp-aaa"), "{page}");
+    let (code, _) = get(addr, "/rounds/pokedumpster/nope").await;
+    assert_eq!(code, 404);
 }

@@ -13,7 +13,7 @@ pub fn run(raw: &[String]) -> Result<(), String> {
     let verb = match ReadVerb::parse(&raw[0]) {
         Some(v) => v,
         None => return Err(format!(
-            "broker read: unknown verb '{}'; allowed: run-view artifact-download",
+            "broker read: unknown verb '{}'; allowed: run-view run-jobs artifact-download",
             raw[0]
         )),
     };
@@ -53,6 +53,10 @@ pub fn run(raw: &[String]) -> Result<(), String> {
     match verb {
         ReadVerb::RunView => {
             let out = gh_run_view(&repo_path, &number)?;
+            println!("{}", out);
+        }
+        ReadVerb::RunJobs => {
+            let out = gh_run_jobs(&repo_path, &number)?;
             println!("{}", out);
         }
         ReadVerb::ArtifactDownload => {
@@ -106,6 +110,75 @@ fn gh_run_view(repo_path: &str, run_id: &str) -> Result<String, String> {
     }
 }
 
+const ERROR_LINES: usize = 5;
+const ERROR_LINE_CHARS: usize = 300;
+
+fn gh_api(repo_path: &str, endpoint: &str) -> Result<String, String> {
+    let output = spira_config::bounded::bounded(gh_bin())
+        .args(["api", endpoint])
+        .current_dir(repo_path)
+        .envs(crate::token::gh_env()?)
+        .output()
+        .map_err(|e| format!("gh failed: {e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(format!("gh api {endpoint} failed: {}", String::from_utf8_lossy(&output.stderr).trim()))
+    }
+}
+
+/// The first error lines of a job log, GitHub's per-line timestamp stripped.
+pub(crate) fn error_lines(log: &str) -> Vec<String> {
+    log.lines()
+        .map(|l| l.split_once(' ').filter(|(t, _)| t.ends_with('Z') && t.contains('T')).map_or(l, |(_, r)| r))
+        .map(str::trim)
+        .filter(|l| l.to_ascii_lowercase().contains("error") && !l.starts_with("0 errors"))
+        .take(ERROR_LINES)
+        .map(|l| l.trim_start_matches("##[error]").chars().take(ERROR_LINE_CHARS).collect())
+        .collect()
+}
+
+/// Run and job results for one run: per job its conclusion, link and failing step, and for a
+/// failed job the first error lines of its log fetched by `log_of(job id)`.
+pub(crate) fn jobs_summary(run: &serde_json::Value, jobs: &serde_json::Value, log_of: &dyn Fn(&str) -> String) -> serde_json::Value {
+    let s = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let jobs: Vec<serde_json::Value> = jobs
+        .get("jobs")
+        .and_then(|j| j.as_array())
+        .map(|a| a.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .map(|j| {
+            let failed = s(j, "conclusion") == "failure";
+            let step = j.get("steps").and_then(|x| x.as_array()).and_then(|ss| ss.iter().find(|st| s(st, "conclusion") == "failure")).map(|st| s(st, "name"));
+            let id = j.get("id").map(|i| i.to_string()).unwrap_or_default();
+            serde_json::json!({
+                "name": s(j, "name"),
+                "conclusion": s(j, "conclusion"),
+                "status": s(j, "status"),
+                "url": s(j, "html_url"),
+                "failed_step": step,
+                "error_lines": if failed && !id.is_empty() { error_lines(&log_of(&id)) } else { Vec::new() },
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "run": { "id": run.get("id"), "url": s(run, "html_url"), "status": s(run, "status"), "conclusion": s(run, "conclusion"), "head_sha": s(run, "head_sha") },
+        "jobs": jobs,
+    })
+}
+
+fn gh_run_jobs(repo_path: &str, run_id: &str) -> Result<String, String> {
+    if !run_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!("broker read run-jobs: run id must be numeric, got '{run_id}'"));
+    }
+    let parse = |t: String| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("gh api returned non-JSON: {e}"));
+    let run = parse(gh_api(repo_path, &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}"))?)?;
+    let jobs = parse(gh_api(repo_path, &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs"))?)?;
+    let log_of = |id: &str| gh_api(repo_path, &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")).unwrap_or_default();
+    Ok(jobs_summary(&run, &jobs, &log_of).to_string())
+}
+
 fn gh_artifact_download(repo_path: &str, run_id: &str, name: &str, dir: &str) -> Result<(), String> {
     let output = spira_config::bounded::bounded(gh_bin())
         .args(artifact_download_args(run_id, name, dir))
@@ -152,6 +225,27 @@ mod tests {
         // list is a const, so this is really a guard against someone appending to it.
         assert!(!run_view_args("12345").iter().any(|a| a == "--log"));
         assert!(!RUN_VIEW_FIELDS.contains("log"));
+    }
+
+    #[test]
+    fn jobs_summary_names_the_failing_step_and_its_first_error_lines_only_for_failed_jobs() {
+        let run = serde_json::json!({"id": 7, "html_url": "https://github.com/o/r/actions/runs/7", "status": "completed", "conclusion": "failure", "head_sha": "abc"});
+        let jobs = serde_json::json!({"jobs": [
+            {"id": 1, "name": "lint", "conclusion": "success", "html_url": "u1", "steps": [{"name": "a", "conclusion": "success"}]},
+            {"id": 2, "name": "gate", "conclusion": "failure", "html_url": "u2", "steps": [{"name": "setup", "conclusion": "success"}, {"name": "svelte-check", "conclusion": "failure"}]},
+        ]});
+        let asked = std::cell::RefCell::new(Vec::new());
+        let log_of = |id: &str| {
+            asked.borrow_mut().push(id.to_string());
+            "2026-10-15T01:02:03.1234567Z ok\n2026-10-15T01:02:04.1Z Error: Property 'x' does not exist\n2026-10-15T01:02:05Z ##[error]Process completed with exit code 1.\n".to_string()
+        };
+        let v = jobs_summary(&run, &jobs, &log_of);
+        assert_eq!(*asked.borrow(), vec!["2"], "a green job's log is never fetched");
+        assert_eq!(v["jobs"][0]["failed_step"], serde_json::Value::Null);
+        assert_eq!(v["jobs"][1]["failed_step"], "svelte-check");
+        assert_eq!(v["jobs"][1]["error_lines"][0], "Error: Property 'x' does not exist");
+        assert_eq!(v["jobs"][1]["error_lines"][1], "Process completed with exit code 1.");
+        assert_eq!(v["run"]["url"], "https://github.com/o/r/actions/runs/7");
     }
 
     #[test]

@@ -4,6 +4,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReadVerb {
     RunView,
+    RunJobs,
     ArtifactDownload,
 }
 
@@ -11,6 +12,7 @@ impl ReadVerb {
     pub fn parse(s: &str) -> Option<ReadVerb> {
         match s {
             "run-view"          => Some(ReadVerb::RunView),
+            "run-jobs"          => Some(ReadVerb::RunJobs),
             "artifact-download" => Some(ReadVerb::ArtifactDownload),
             _                   => None,
         }
