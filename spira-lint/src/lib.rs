@@ -62,7 +62,8 @@ impl Tree {
             )));
         }
         let list = |extra: &[&str]| -> Result<Vec<String>, LintError> {
-            let out = spira_config::bounded::bounded("git")
+            // batch-job: lists the whole tree, which outlasts a 5s call deadline on a loaded box
+            let out = std::process::Command::new("git")
                 .arg("-C")
                 .arg(root)
                 .args(["ls-files", "-z"])
@@ -71,7 +72,8 @@ impl Tree {
                 .map_err(|e| LintError::NotARepo(format!("git ls-files: {e}")))?;
             if !out.status.success() {
                 return Err(LintError::NotARepo(format!(
-                    "git ls-files failed: {}",
+                    "git ls-files failed ({}): {}",
+                    out.status,
                     String::from_utf8_lossy(&out.stderr).trim()
                 )));
             }
