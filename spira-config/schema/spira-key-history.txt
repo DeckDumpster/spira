@@ -451,3 +451,4 @@ dolt_persist_interval_secs
 dolt_persist_max_lag_secs
 dolt_persist_compact_pct
 statute_guards
+round_vm_ec2_launch_window

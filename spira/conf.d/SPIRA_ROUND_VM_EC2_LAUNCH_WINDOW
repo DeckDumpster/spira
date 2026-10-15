@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW — seconds a real EC2 launch outcome stands in for the round-spill-key watcher's dry-run probe.
+SCHEMA=Seconds a real EC2 launch outcome read from `round-vm status --json` is taken as the answer; the dry-run probe runs only when none is that recent (default 3600).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW:=3600}"
+SPIRA_CONF_DEFAULT_EOF

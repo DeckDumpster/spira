@@ -9,8 +9,8 @@
 # The key file is SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE; its expiry (epoch seconds) is recorded
 # beside it in <file>.expires, written by whoever pastes the key. A spilled pass cannot join the
 # tailnet with an expired key, so the warning comes SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS before.
-# Each pass also runs `round-vm ec2-probe --dry-run`, so a launch path that stops authorising alarms
-# within one interval. Silent while SPIRA_ROUND_VM_SPILL is not ec2, ec2-always or ec2-only. Each distinct condition is said once.
+# Each pass reads the outcome of the latest real EC2 launch from `round-vm status --json`; only when none is
+# within SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW does it run `round-vm ec2-probe --dry-run`, whose timeout is "could not decide". Silent while SPIRA_ROUND_VM_SPILL is not ec2, ec2-always or ec2-only. Each distinct condition is said once.
 #
 # covers: spira/round-spill-key.sh spira/watchers spira/conf.d/SPIRA_ROUND_VM_EC2_*
 set -uo pipefail
@@ -33,15 +33,43 @@ _rsk_once() {
     mkdir -p "$(dirname "$mark")" && printf '%s\n' "$1" >> "$mark"
 }
 
+_RSK_LAUNCHES='
+    ([.events[] | select(.vm | startswith("ec2-"))]) as $e
+    | ([$e[] | select(.to == "leased" and (.reason | contains("(provider: ec2)")) and .at >= $since) | .at] | max) as $ok
+    | ([$e | group_by(.vm)[] | select(all(.[]; .to != "leased") and any(.[]; .to == "destroyed" or .to == "doomed")) | last | select(.at >= $since)] | max_by(.at)) as $bad
+    | if $bad != null and ($ok == null or $bad.at > $ok) then "fail \($bad.reason)" elif $ok != null then "ok" else "none" end'
+
+_rsk_recent_launch() {
+    local json
+    json="$(timeout 5 round-vm status --json 2>/dev/null)" || { echo none; return 0; }
+    printf '%s' "$json" | jq -r --argjson since "$(( $(date +%s) - SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW ))" "$_RSK_LAUNCHES" 2>/dev/null || echo none
+}
+
+_rsk_clear() {
+    local mark="$SPIRA_RUN/watchd/round-spill-key.said"
+    [ -f "$mark" ] && { grep -v '^probe-' "$mark" > "$mark.tmp"; mv "$mark.tmp" "$mark"; }
+    return 0
+}
+
 _rsk_probe() {
-    local out rc mark="$SPIRA_RUN/watchd/round-spill-key.said" deadline="$SPIRA_ROUND_VM_EC2_PROBE_DEADLINE"
+    local out rc recent lat="$SPIRA_RUN/watchd/round-spill-key.latency" deadline="$SPIRA_ROUND_VM_EC2_PROBE_DEADLINE" last t0 took
+    recent="$(_rsk_recent_launch)"
+    case "$recent" in
+        ok) _rsk_clear; return 0 ;;
+        fail\ *) _rsk_once "probe-$(printf '%s' "$recent" | cksum | cut -d' ' -f1)" "ROUND SPILL LAUNCH: a real EC2 launch failed; EC2 rounds cannot launch: ${recent#fail }"; return 0 ;;
+    esac
+    last="$(cat "$lat" 2>/dev/null)"
+    case "$last" in ''|*[!0-9]*) ;; *) [ $(( last * 4 )) -gt "$deadline" ] && deadline=$(( last * 4 )) ;; esac
+    t0="$(date +%s)"
     out="$(timeout "$deadline" round-vm ec2-probe --dry-run 2>&1)"; rc=$?
+    took=$(( $(date +%s) - t0 ))
     if [ "$rc" -eq 0 ]; then
-        [ -f "$mark" ] && { grep -v '^probe-' "$mark" > "$mark.tmp"; mv "$mark.tmp" "$mark"; }
+        mkdir -p "$(dirname "$lat")" && printf '%s\n' "$took" > "$lat"
+        _rsk_clear
         return 0
     fi
     if [ "$rc" -eq 124 ]; then
-        _rsk_once "probe-timeout" "ROUND SPILL LAUNCH: round-vm ec2-probe --dry-run probe timed out after ${deadline}s; EC2 launch not confirmed"
+        _rsk_once "probe-timeout" "ROUND SPILL LAUNCH: probe could not decide: round-vm ec2-probe --dry-run gave no answer in ${deadline}s and no real EC2 launch is recorded in the last ${SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW}s"
         return 0
     fi
     out="$(printf '%s' "$out" | tail -n 3 | tr '\n' ' ')"

@@ -322,6 +322,7 @@ round_vm_warm_idle_secs = 1800
 round_vm_spill_io_full_avg60 = "30"
 round_vm_ec2_profile = "spira-round-spill"
 round_vm_ec2_region = "us-west-2"
+round_vm_ec2_launch_window = 1800
 round_vm_ec2_ami = ""
 round_vm_ec2_instance_type = "c7i.8xlarge"
 round_vm_ec2_instance_types = "c7i.8xlarge,c7i.4xlarge"
