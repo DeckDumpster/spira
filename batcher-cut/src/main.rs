@@ -577,13 +577,20 @@ fn stabilize_round(
 
     // The corpus selects `test-*.sh` and never runs the fences a single branch's gate chains
     // ahead of it. Held, not attributed: a fence reads the whole merged tree, not one member's diff.
-    if let Err(evidence) = io::run_fences(env_, repo, &round_branch) {
-        println!("batcher {}: local round red (fences) — held before reaching CI", repo.name);
-        match io::file_local_red_incident(env_, repo, &[io::GATE_FENCES.to_string()], &round_branch, &evidence, "fences") {
-            Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
-            Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+    match io::run_fences(env_, repo, &round_branch) {
+        Ok(()) => {}
+        Err(io::FencesEnd::Refused(why)) => {
+            println!("batcher {}: fences refused, nothing judged — round held, no incident filed: {why}", repo.name);
+            return Ok(None);
         }
-        return Ok(None);
+        Err(io::FencesEnd::Red(evidence)) => {
+            println!("batcher {}: local round red (fences) — held before reaching CI", repo.name);
+            match io::file_local_red_incident(env_, repo, &[io::GATE_FENCES.to_string()], &round_branch, &evidence, "fences") {
+                Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
+                Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+            }
+            return Ok(None);
+        }
     }
 
     let history = std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
