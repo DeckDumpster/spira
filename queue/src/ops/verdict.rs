@@ -928,12 +928,31 @@ fn member_lint_reds(w: &World, b: &Batch, out: &str) -> Vec<(Member, Vec<String>
     faulty
 }
 
+/// A red forge-batch step is judged like a red VM-round suite: the Failed event opens the
+/// mending row and a mender bead names the member and the step. The member's red tip stays
+/// barred, so the next batch carries only a mended tip.
+fn summon_forge_mender(w: &World, c: &Ctx, b: &Batch, faulty: &[(Member, Vec<String>)], step: &str) {
+    let batch_id = b.kv.get("batch_id").unwrap_or("");
+    if batch_id.is_empty() {
+        return;
+    }
+    let suite = step.split(|ch: char| !ch.is_ascii_alphanumeric()).filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-").to_ascii_lowercase();
+    let suite = if suite.is_empty() { "forge-step".to_string() } else { suite };
+    if super::round::forge_failed(w, batch_id, &suite).is_err() {
+        return;
+    }
+    let evidence: String = faulty.iter().map(|(m, lines)| format!("Member {} (tip {}):\n{}", m.id, m.tip, lines.join("\n"))).collect::<Vec<_>>().join("\n\n");
+    let members = faulty.iter().map(|(m, _)| m.id.as_str()).collect::<Vec<_>>().join(",");
+    super::round::summon_mender(w, c, batch_id, &suite, &format!("Forge batch PR {} step {suite} is red in member code: {members}", b.pr), Some(&evidence));
+}
+
 /// Eject the members the red names (with the lines), record their tips so no re-cut re-admits
 /// them, and abandon the batch so the survivors return to CERTIFIED.
-fn eject_red_members(w: &World, c: &Ctx, b: &Batch, faulty: &[(Member, Vec<String>)], bo: &str) -> i32 {
+fn eject_red_members(w: &World, c: &Ctx, b: &Batch, faulty: &[(Member, Vec<String>)], step: &str, bo: &str) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     let batch_id = b.kv.get("batch_id").unwrap_or("").to_string();
     let mut failed = false;
+    summon_forge_mender(w, c, b, faulty, step);
     for (m, lines) in faulty {
         let why = format!("batch PR {pr} red at {}: {}", m.tip, lines.join(" | "));
         if let Err(e) = super::round::record_batch_red(c, &m.id, &m.tip) {
@@ -1003,7 +1022,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
         if lines.is_empty() {
             lines.push(format!("failed step: {shown}"));
         }
-        return eject_red_members(w, c, b, &[(b.members[0].clone(), lines)], bo);
+        return eject_red_members(w, c, b, &[(b.members[0].clone(), lines)], &step, bo);
     }
     let evidence = format!("no suite annotations ({same}); failed step: {shown}; log tail:\n{log}");
     w.forge.pr_comment(&c.s.forge, b.path, &b.pr, &crate::ident::bounded_text(&format!("Batch abandoned: {evidence}")));
@@ -1041,7 +1060,8 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
     if suites.is_empty() {
         let faulty = member_lint_reds(w, b, out);
         if !faulty.is_empty() {
-            return eject_red_members(w, c, b, &faulty, bo);
+            let step = tagged(out, "failed-step: ").first().map(|s| s.trim().to_string()).unwrap_or_default();
+            return eject_red_members(w, c, b, &faulty, &step, bo);
         }
         return setup_red(w, c, b, out, bo);
     }
