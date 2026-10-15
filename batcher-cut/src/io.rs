@@ -1300,6 +1300,27 @@ pub fn local_tier(env: &Env, repo: &Repo, rev: &str) -> Result<(), String> {
     Err(local_red_evidence(out.status.code(), &text))
 }
 
+/// Where a local red of the landing ref's own tiers is recorded, one file per ref sha.
+pub fn local_fault_path(env: &Env, repo: &Repo, base: &str) -> PathBuf {
+    env.run.join("local-fault").join(&repo.name).join(base)
+}
+
+/// A member's red is the member's only when the landing ref is green on the same tiers; a red
+/// landing ref is a fault of the check. Returns that fault's evidence and whether this call
+/// is the first to see it for `base`, so the alarm is raised once per landing-ref sha.
+pub fn landing_ref_fault(env: &Env, repo: &Repo, base: &str) -> Option<(String, bool)> {
+    let mark = local_fault_path(env, repo, base);
+    if let Ok(evidence) = fs::read_to_string(&mark) {
+        return Some((evidence, false));
+    }
+    let evidence = local_tier(env, repo, base).err()?;
+    if let Some(dir) = mark.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = fs::write(&mark, &evidence);
+    Some((evidence, true))
+}
+
 fn local_red_evidence(rc: Option<i32>, text: &str) -> String {
     let mut sites: Vec<&str> = text.lines().filter_map(|l| l.trim().strip_prefix("--> ")).collect();
     sites.dedup();
@@ -3544,6 +3565,17 @@ mod local_tier_tests {
         local_tier(&env, &repo, "abc").unwrap();
         let ran = fs::read_to_string(format!("{}.log", env.testenv_bin.display())).unwrap();
         assert_eq!(ran.lines().count(), 1);
+    }
+
+    #[test]
+    fn a_red_landing_ref_is_a_fault_reported_once_and_a_green_one_is_not() {
+        let (_d, env, repo) = fixture("lt-fault", "#!/bin/sh\necho 'tier X red'\nexit 1\n");
+        let (ev, first) = landing_ref_fault(&env, &repo, "base1").unwrap();
+        assert!(ev.contains("tier X red") && first);
+        let (_, again) = landing_ref_fault(&env, &repo, "base1").unwrap();
+        assert!(!again);
+        let (_d2, env2, repo2) = fixture("lt-nofault", "#!/bin/sh\nexit 0\n");
+        assert!(landing_ref_fault(&env2, &repo2, "base1").is_none());
     }
 
     #[test]
