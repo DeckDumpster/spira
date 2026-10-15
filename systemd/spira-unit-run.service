@@ -1,0 +1,25 @@
+[Unit]
+Description=Spira unit-run — one record per user-unit execution, followed from the journal
+After=default.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=simple
+CPUQuota=20%
+MemoryMax=256M
+ExecStartPre=-@SPIRA_PROD_ROOT@/bin/unit-run ensure-accounting
+ExecStart=@SPIRA_PROD_ROOT@/bin/unit-run follow
+Restart=always
+RestartSec=10
+StandardOutput=append:@SPIRA_RUN@/unit-run.log
+StandardError=append:@SPIRA_RUN@/unit-run.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=observability

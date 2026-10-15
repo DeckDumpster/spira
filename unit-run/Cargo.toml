@@ -1,0 +1,29 @@
+[package]
+name = "unit-run"
+version = "1.0.0"
+edition = "2021"
+description = "unit-run — the one writer of run/tsd/'s unit-run family: one record per systemd user-unit execution, folded from the user journal (follow, resuming from its cursor; backfill, idempotent on invocation_id)."
+
+[lib]
+name = "unit_run"
+path = "src/lib.rs"
+
+[[bin]]
+name = "unit-run"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+spira-config = { path = "../spira-config" }
+tsd = { path = "../tsd" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
