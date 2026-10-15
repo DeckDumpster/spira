@@ -104,6 +104,8 @@ fn main() -> ExitCode {
 
     let landed_ok = report("", reap::reap(&dir, dry, &landed_fn, &busy_fn));
     let idle_ok = report("idle: ", reap::reap_idle(&dir, dry, idle_secs, &reap::idle_age_secs, &busy_fn, None));
+    let state_fn = |id: &str| landed::lc_state(&lc_bin, &path_env, id);
+    let tmp_ok = report("tmp: ", reap::reap_tmp_targets(Path::new("/tmp"), dry, &state_fn, &busy_fn));
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let explicit = var("SPIRA_GATE_TARGET_ROOT").unwrap_or_default();
     let max_age = var("SPIRA_GATE_TARGET_MAX_AGE_MIN").and_then(|v| v.parse::<u64>().ok()).unwrap_or(120);
@@ -117,7 +119,7 @@ fn main() -> ExitCode {
             if gone.is_empty() { String::new() } else { format!(" ({})", gone.join(" ")) }
         );
     }
-    if landed_ok && idle_ok {
+    if landed_ok && idle_ok && tmp_ok {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)

@@ -35,6 +35,23 @@ pub fn lc_landed(lc_bin: &str, env: &[(String, String)], id: &str) -> Option<boo
     answer(o.status.code(), &String::from_utf8_lossy(&o.stdout))
 }
 
+/// The record's state word for `id` (`WORKING`, `LANDED`, ...), `Some("")` when it holds no
+/// row, `None` when it could not answer.
+pub fn lc_state(lc_bin: &str, env: &[(String, String)], id: &str) -> Option<String> {
+    let o = Command::new("timeout")
+        .args(["5", lc_bin, "state", id])
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    match o.status.code() {
+        Some(0) => Some(String::from_utf8_lossy(&o.stdout).trim().to_string()),
+        Some(NO_ROW) => Some(String::new()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
