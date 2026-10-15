@@ -348,7 +348,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
 /// Every verb that is not bound to the summoned bead. The bound verbs above act on the
 /// bead the client is bound to; these name their target (or none) themselves.
 pub const LANE_VERBS: &[&str] = &[
-    "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "file", "groom", "incident",
+    "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
     "sop", "census", "queue", "landing-pass", "strand", "fence", "sending", "mender",
 ];
 
@@ -402,6 +402,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("relate", &["archivist", "groomer"]),
     ("reopen", &["groomer", "czar", "maechen"]),
     ("close-other", &["czar"]),
+    ("close-ask", &["archivist"]),
     ("file", &["ops", "spike", "archivist", "maechen", "czar", "groomer", "batcher", "warden"]),
     // Tools.
     ("groom sweep", &["groomer"]),
@@ -746,6 +747,32 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
                 return Err(usage(verb, "--evidence <text> is required"));
             };
             Ok(vec![Step::Tool { program: "groomer", args: vec![s("close"), id, s("--evidence"), ev.to_string()], stdin: None }])
+        }
+        "close-ask" => {
+            let id = bead_arg(verb, a, 0, "<ask-id>")?;
+            let f = parse_flags(verb, a, 1, &["--exit", "--source", "--body-file"], &[])?;
+            let quote = match (get(&f, "--body-file"), &call.stdin) {
+                (Some("-"), Some(text)) if !text.trim().is_empty() => text.trim().to_string(),
+                _ => return Err(usage(verb, "--body-file - with the closing words on stdin is required: the quote of the answer, or the statute or fix that decided it")),
+            };
+            match get(&f, "--exit") {
+                Some("answered") => {
+                    let Some(src) = get(&f, "--source").filter(|x| !x.trim().is_empty()) else {
+                        return Err(usage(verb, "--exit answered needs --source <transcript:turn> naming where the operator said it"));
+                    };
+                    Ok(vec![Step::Tool {
+                        program: "spira-lc",
+                        args: vec![s("close-ask"), id, s("--exit"), s("answered"), s("--quote"), quote, s("--actor"), actor.to_string(), s("--channel"), s("transcript"), s("--message-id"), src.to_string()],
+                        stdin: None,
+                    }])
+                }
+                Some("withdrawn") => Ok(vec![Step::Tool {
+                    program: "spira-lc",
+                    args: vec![s("close-ask"), id, s("--exit"), s("withdrawn"), s("--quote"), quote, s("--actor"), actor.to_string()],
+                    stdin: None,
+                }]),
+                other => Err(usage(verb, &format!("--exit {other:?} (want answered, or withdrawn for an ask a statute or a landed fix decided; taking the default is the operator's)"))),
+            }
         }
         "file" => {
             let Some(title) = a.first().filter(|t| !t.trim().is_empty() && !t.starts_with('-')) else {
@@ -1313,6 +1340,30 @@ mod tests {
         assert_eq!(
             plan("close-other", "-", &call(&["sp-a1", "--evidence", "duplicate of sp-b2"], "czar")).unwrap(),
             vec![tool("groomer", &["close", "sp-a1", "--evidence", "duplicate of sp-b2"])]
+        );
+    }
+
+    #[test]
+    fn close_ask_is_the_archivists_and_closes_only_on_a_quote() {
+        let ok = call(&["sp-ask1", "--exit", "answered", "--source", "t41", "--body-file", "-"], "archivist");
+        let mut ok = ok;
+        ok.stdin = Some("delete them\n".into());
+        assert_eq!(
+            plan("close-ask", "-", &ok).unwrap(),
+            vec![tool("spira-lc", &["close-ask", "sp-ask1", "--exit", "answered", "--quote", "delete them", "--actor", "archivist", "--channel", "transcript", "--message-id", "t41"])]
+        );
+        let mut no_source = call(&["sp-ask1", "--exit", "answered", "--body-file", "-"], "archivist");
+        no_source.stdin = Some("yes".into());
+        assert!(plan("close-ask", "-", &no_source).is_err());
+        assert!(plan("close-ask", "-", &call(&["sp-ask1", "--exit", "answered", "--source", "t1", "--body-file", "-"], "archivist")).is_err());
+        let mut dflt = call(&["sp-ask1", "--exit", "default", "--body-file", "-"], "archivist");
+        dflt.stdin = Some("x".into());
+        assert!(plan("close-ask", "-", &dflt).is_err());
+        let mut gone = call(&["sp-ask1", "--exit", "withdrawn", "--body-file", "-"], "archivist");
+        gone.stdin = Some("decided by law-x".into());
+        assert_eq!(
+            plan("close-ask", "-", &gone).unwrap(),
+            vec![tool("spira-lc", &["close-ask", "sp-ask1", "--exit", "withdrawn", "--quote", "decided by law-x", "--actor", "archivist"])]
         );
     }
 

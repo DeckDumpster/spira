@@ -69,6 +69,24 @@ other: answering one does not gate starting another, and a blocked ask silently 
 any view that hides blocked work. When the rollup is answered, the concierge resolves the
 subsumed asks with a pointer to it.
 
+## Closing the asks the operator has already answered
+
+Lifting questions out of a transcript is half the job; the other half is lifting the answers.
+Before you finish, list the open asks (`work list` — the beads waiting on the operator) and
+read the digest for the operator's replies to each. An ask is closed **only when his answer in
+this transcript is unambiguous** — a plain yes/no, a named choice, an instruction that settles
+the question ("delete them", "ran that command"). A reply that could be read two ways, answers a
+different question, or is conditional leaves the ask open: say nothing, close nothing.
+
+    work close-ask <ask-id> --exit answered --source "<transcript>:<turn>" --body-file - <<'QUOTE'
+    <his words, verbatim>
+    QUOTE
+
+An ask that a statute in force or a landed fix already decides is closed the same way with
+`--exit withdrawn`, the stdin naming that statute or fix. Never close an ask on your own
+inference of what he would say, and never take its default: that is his call
+(`law-closing-an-ask-names-what-decided-it`).
+
 **No per-finding mail.** A finding's durable home is the bead, the note or the wiki page
 above — never a mail of its own. Every time you file one, register it with
 `{{ARCHIVIST}} record "<where it lives>: <what it is>"`, and say nothing to the operator

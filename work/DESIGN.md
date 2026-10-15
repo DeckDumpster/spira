@@ -34,6 +34,7 @@ target, and run unbound too (the archivist has no bead; it sends `-` in the boun
 | `note-on <id> <text\|->`, `label-add\|label-remove <id> <label>`, `relate <a> <b>`, `reopen <id> --evidence T` | bd writes to another bead |
 | `dep-add <id> <on> [--type T]` | `bead.sh dep add` (refuses a blocks edge onto an incident) |
 | `close-other <id> --evidence T` | `groomer close` |
+| `close-ask <ask> --exit answered --source T:N --body-file -` \| `--exit withdrawn --body-file -` | `spira-lc close-ask` with the words on stdin as the quote (archivist only) |
 | `file "<t>" (--for P --repo R \| --kind K [--repo R]) [--priority N] [--parent ID] [--body-file F]` | `bead.sh file`, plus the lifecycle row for work |
 | `groom\|incident\|sop\|queue\|landing-pass\|strand <sub> ...`, `census [--with-suppressed]` | the harness tool, `<sub>` from the allow table |
 | `fence <class>` | `czar-fence.sh`'s answer (0 act, 1 shadow) from the installation's own `SPIRA_CZAR_STAGE_<CLASS>` |
