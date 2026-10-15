@@ -286,7 +286,7 @@ echo "QUEUE.LOCAL — the landref is local/main, not origin/main."
 
 LREPO="$TMP/lrepo"
 git init -q -b main "$LREPO"
-git -C "$LREPO" config user.email t@t; git -C "$LREPO" config user.name test
+timeout 5 git -C "$LREPO" config user.email t@t; timeout 5 git -C "$LREPO" config user.name test
 printf 'a\n' > "$LREPO/f"; git -C "$LREPO" add f; git -C "$LREPO" commit -qm a
 git -C "$LREPO" remote add origin "$ORIGIN"
 timeout 5 git -C "$LREPO" fetch -q origin
