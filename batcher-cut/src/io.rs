@@ -1293,6 +1293,10 @@ pub enum MemberTier {
     Red(String),
 }
 
+pub fn member_pass_recorded(env: &Env, repo: &Repo, base_sha: &str, tip: &str) -> bool {
+    local_pass_path(env, repo, &format!("{tip}@{base_sha}")).is_file()
+}
+
 /// The local check on the tree the batch will carry for this member: `tip` merged onto `base_sha`,
 /// built in the object store with no worktree. The pass is recorded per (tip, base).
 pub fn local_tier_member(env: &Env, repo: &Repo, base_sha: &str, tip: &str) -> Result<(), MemberTier> {

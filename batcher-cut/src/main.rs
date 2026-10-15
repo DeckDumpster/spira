@@ -69,7 +69,7 @@ struct Opts {
 
 fn usage() -> ExitCode {
     eprintln!("usage: batcher cut <repo> [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
-    eprintln!("       batcher rounds|rounds-local|rounds-forge [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
+    eprintln!("       batcher rounds|rounds-local|rounds-forge|checks-forge [--run DIR] [--db DIR] [--home DIR] [--round-vm PATH]");
     eprintln!("       batcher sift <repo> [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher sifts [--run DIR] [--db DIR] [--home DIR]");
     eprintln!("       batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT [--run DIR] [--db DIR] [--home DIR]");
@@ -674,9 +674,9 @@ fn stabilize_round(
     }
 }
 
-/// A forge repo's merged tree reaches CI only when every member's tip, and then the merged tree,
-/// has passed the repo's declared tiers in testenv on this host. A red member is returned to
-/// rework with the compiler's locations; a red merge holds the round.
+/// A forge repo's merged tree reaches CI only with members whose declared-tier pass is already
+/// recorded for (tip, base). The pass never runs a check: a member whose check is pending is left
+/// out and joins a later batch once `checks-forge` records it.
 fn forge_local_tier(
     env_: &Env,
     repo: &Repo,
@@ -685,53 +685,93 @@ fn forge_local_tier(
     members: Vec<Member>,
     round_branch: String,
 ) -> Result<Option<StableRound>, String> {
-    let mut red = Vec::new();
-    for m in &members {
-        match io::local_tier_member(env_, repo, start_sha, &m.tip) {
-            Ok(()) => {}
-            Err(io::MemberTier::Conflict) => {
-                println!("batcher {}: {} conflicts with {start_sha} — not checked locally; the merge reports it", repo.name, m.id);
-            }
-            Err(io::MemberTier::Red(evidence)) => {
-                if let Some((fault, first)) = io::landing_ref_fault(env_, repo, start_sha) {
-                    println!("batcher {}: FAULT the declared tiers are red on the landing ref {start_sha} itself — {} is not blamed, round held", repo.name, m.id);
-                    if first {
-                        let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
-                        let reason = format!("landing-ref-red {first_error}");
-                        match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], start_sha, &fault, &reason) {
-                            Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
-                            Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
-                        }
-                    }
-                    return Ok(None);
-                }
-                println!("batcher {}: {} is red locally at {} merged onto {start_sha} — not batched ({})", repo.name, m.id, m.tip, evidence.lines().next().unwrap_or(""));
-                io::bead_reopen(env_, &m.id, "local-tier-red", &format!("Reopened by the batcher: {}'s declared tiers are red locally with {} merged onto {start_sha} and never reached CI.\n{evidence}", repo.name, m.tip));
-                red.push(m.id.clone());
-            }
-        }
+    let (passed, pending): (Vec<Member>, Vec<Member>) = members.into_iter().partition(|m| io::member_pass_recorded(env_, repo, start_sha, &m.tip));
+    for m in &pending {
+        println!("batcher {}: {} has no recorded local check at {} on {start_sha} — left for the next batch", repo.name, m.id, m.tip);
     }
-    let members = if red.is_empty() {
-        members
-    } else {
-        let kept: Vec<Member> = members.into_iter().filter(|m| !red.contains(&m.id)).collect();
-        merge_round(env_, repo, wt, start_sha, kept)?
-    };
+    let members = if pending.is_empty() { passed } else { merge_round(env_, repo, wt, start_sha, passed)? };
     if members.is_empty() {
-        println!("{}", skipped_event("round emptied by local tier reds").text);
+        println!("{}", skipped_event("round emptied: no member has a recorded local check").text);
         return Ok(None);
     }
     let head = io::head_of(wt)?;
     io::set_branch(repo, &round_branch, &head);
-    if let Err(evidence) = io::local_tier(env_, repo, &head) {
-        println!("batcher {}: merged round is red locally — held before reaching CI", repo.name);
-        match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], &round_branch, &evidence, "local-tier") {
-            Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
-            Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
-        }
-        return Ok(None);
-    }
     Ok(Some(StableRound { members, head, green_branch: round_branch, attribution_seconds: None, regreen_seconds: None, staged: None }))
+}
+
+/// Runs one member's declared tiers and handles the outcome: a red member is returned to rework
+/// with the compiler's locations; a red landing ref is a fault of the check, filed once for Ops.
+/// Returns whether a check actually ran.
+fn check_forge_member(env_: &Env, repo: &Repo, start_sha: &str, m: &Member) -> bool {
+    match io::local_tier_member(env_, repo, start_sha, &m.tip) {
+        Ok(()) => {
+            println!("batcher {}: {} passed its local check at {} on {start_sha}", repo.name, m.id, m.tip);
+            true
+        }
+        Err(io::MemberTier::Conflict) => {
+            println!("batcher {}: {} conflicts with {start_sha} — not checked locally; the merge reports it", repo.name, m.id);
+            false
+        }
+        Err(io::MemberTier::Red(evidence)) => {
+            if let Some((fault, first)) = io::landing_ref_fault(env_, repo, start_sha) {
+                println!("batcher {}: FAULT the declared tiers are red on the landing ref {start_sha} itself — {} is not blamed", repo.name, m.id);
+                if first {
+                    let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
+                    let reason = format!("landing-ref-red {first_error}");
+                    match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], start_sha, &fault, &reason) {
+                        Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
+                        Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+                    }
+                }
+                return true;
+            }
+            println!("batcher {}: {} is red locally at {} merged onto {start_sha} — not batched ({})", repo.name, m.id, m.tip, evidence.lines().next().unwrap_or(""));
+            io::bead_reopen(env_, &m.id, "local-tier-red", &format!("Reopened by the batcher: {}'s declared tiers are red locally with {} merged onto {start_sha} and never reached CI.\n{evidence}", repo.name, m.tip));
+            true
+        }
+    }
+}
+
+/// The scheduled local-tier checks: per forge repo, the first certified member with no recorded
+/// pass for (tip, the base its batch is built on) gets one check this invocation, so a repo runs
+/// one heavy tier at a time and never inside a batcher pass.
+fn checks_forge(o: &Opts) -> Result<(), String> {
+    if cfg("SPIRA_BATCHER_FORGE_ENABLE")?.trim() == "0" {
+        println!("batcher checks-forge: SPIRA_BATCHER_FORGE_ENABLE=0 — no checks run");
+        return Ok(());
+    }
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
+    let env_ = env_for(o, home, run)?;
+    let reg = io::registry(&env_);
+    io::lc_forget(&env_);
+    let mut failed = Vec::new();
+    for name in reg.all().into_iter().filter(|n| reg.land(n) == "queue") {
+        let one = || -> Result<(), String> {
+            let repo = find_repo(&env_, &name)?;
+            let pool = topo_order(&screen::cut_pool(io::certified_pool(&env_, &repo)?, &io::sifted_tips(&env_)?));
+            io::fetch_base(&repo)?;
+            let base = match io::read_open_batch(&env_, &repo.name)? {
+                Some(ob) => ob.head,
+                None => io::resolve_base_sha(&repo)?,
+            };
+            for m in pool.iter().filter(|m| !io::member_pass_recorded(&env_, &repo, &base, &m.tip)) {
+                if check_forge_member(&env_, &repo, &base, m) {
+                    break;
+                }
+            }
+            Ok(())
+        };
+        if let Err(e) = one() {
+            eprintln!("batcher checks-forge: {name}: {e}");
+            failed.push(name);
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("failed for: {}", failed.join(", ")))
+    }
 }
 
 /// The round's corpus died in the container install, so no suite is red to follow: bisect
@@ -1570,6 +1610,7 @@ fn main() -> ExitCode {
         "rounds" => rounds(&o, Pass::All),
         "rounds-local" => rounds(&o, Pass::Local),
         "rounds-forge" => rounds(&o, Pass::Forge),
+        "checks-forge" => checks_forge(&o),
         "judgement-ci" => judgement_ci(&o),
         "sift" => sift_one(&o),
         "sifts" => sifts(&o),
@@ -1729,6 +1770,11 @@ mod base_conflict_handling {
             e.home = d.to_path_buf();
             let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land };
             let wt = d.join("wt");
+            for t in [&t1, &t2] {
+                let mark = io::local_pass_path(&e, &repo, &format!("{t}@{base}"));
+                fs::create_dir_all(mark.parent().unwrap()).unwrap();
+                fs::write(&mark, "1\n").unwrap();
+            }
             let r = stabilize_round(&e, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap();
             assert_eq!(r.is_some(), opens, "land={land:?}");
             if let Some(s) = r {
@@ -1760,16 +1806,55 @@ mod base_conflict_handling {
         e.home = d.to_path_buf();
         let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Forge };
         let wt = d.join("wt");
+        let members = vec![member("sp-1", &t1), member("sp-2", &t2)];
+        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 99\n");
+        assert!(stabilize_round(&e, &repo, &wt, &base, members.clone(), None, &[]).unwrap().is_none(), "a pass never runs a check, so unchecked members are not batched");
+        assert!(!io::local_pass_path(&e, &repo, &format!("{t1}@{base}")).exists());
+
         testkit::write_exe(&e.testenv_bin, &format!("#!/bin/sh\ngit -C '{}' cat-file -e \"$1:one\" 2>/dev/null && {{ echo '  --> src/x.rs:1:1'; exit 1; }}\nexit 0\n", d.display()));
-        let r = stabilize_round(&e, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap().unwrap();
-        let ids: Vec<&str> = r.members.iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, ["sp-2"]);
+        for m in &members {
+            check_forge_member(&e, &repo, &base, m);
+        }
         assert!(!io::local_pass_path(&e, &repo, &format!("{t1}@{base}")).exists());
         assert!(io::local_pass_path(&e, &repo, &format!("{t2}@{base}")).is_file());
+        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 99\n");
+        let r = stabilize_round(&e, &repo, &wt, &base, members, None, &[]).unwrap().unwrap();
+        let ids: Vec<&str> = r.members.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["sp-2"], "the red member never reaches the batch; the passed one opens without waiting");
+    }
 
-        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 1\n");
-        let e2 = Env { run: d.join("fresh"), ..e.clone() };
-        assert!(stabilize_round(&e2, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap().is_none());
+    #[test]
+    fn a_pending_member_never_holds_passed_members_and_joins_once_its_pass_is_recorded() {
+        let d = testkit::TempDir::new("batcher-cut-pending");
+        let [base, _a, _b, _c, _root] = fixture(&d);
+        let mut tips = Vec::new();
+        for (name, file) in [("m1", "one"), ("m2", "two"), ("m3", "three")] {
+            git(&d, &["checkout", "-q", "-b", name, &base]);
+            fs::write(d.join(file), "x\n").unwrap();
+            git(&d, &["add", file]);
+            git(&d, &["commit", "-qm", name]);
+            tips.push(git(&d, &["rev-parse", "HEAD"]));
+        }
+        git(&d, &["checkout", "-q", "--detach", &base]);
+        let mut e = io::lifecycle_tests_env(&d);
+        fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
+        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 99\n");
+        e.run = d.to_path_buf();
+        e.home = d.to_path_buf();
+        let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Forge };
+        let wt = d.join("wt");
+        let members: Vec<Member> = tips.iter().enumerate().map(|(i, t)| member(&format!("sp-{i}"), t)).collect();
+        for t in &tips[..2] {
+            let mark = io::local_pass_path(&e, &repo, &format!("{t}@{base}"));
+            fs::create_dir_all(mark.parent().unwrap()).unwrap();
+            fs::write(&mark, "1\n").unwrap();
+        }
+        let r = stabilize_round(&e, &repo, &wt, &base, members.clone(), None, &[]).unwrap().unwrap();
+        assert_eq!(r.members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["sp-0", "sp-1"]);
+        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 0\n");
+        check_forge_member(&e, &repo, &base, &members[2]);
+        let r = stabilize_round(&e, &repo, &wt, &base, members, None, &[]).unwrap().unwrap();
+        assert_eq!(r.members.len(), 3);
     }
 
     #[test]
@@ -1802,7 +1887,11 @@ mod base_conflict_handling {
         let wt = d.join("wt");
         let red_if = format!("git -C '{0}' cat-file -e \"$1:broken\" 2>/dev/null || git -C '{0}' cat-file -e \"$1:evil\" 2>/dev/null", d.display());
         testkit::write_exe(&e.testenv_bin, &format!("#!/bin/sh\n{red_if} && {{ echo '  --> tier:1:1'; exit 1; }}\nexit 0\n"));
-        let r = stabilize_round(&e, &repo, &wt, &landing, vec![member("sp-clean", &clean), member("sp-evil", &evil)], None, &[]).unwrap().unwrap();
+        let members = vec![member("sp-clean", &clean), member("sp-evil", &evil)];
+        for m in &members {
+            check_forge_member(&e, &repo, &landing, m);
+        }
+        let r = stabilize_round(&e, &repo, &wt, &landing, members, None, &[]).unwrap().unwrap();
         let ids: Vec<&str> = r.members.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["sp-clean"]);
         assert!(io::local_pass_path(&e, &repo, &format!("{clean}@{landing}")).is_file());
