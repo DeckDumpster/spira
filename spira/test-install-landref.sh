@@ -286,7 +286,7 @@ git init -q -b main "$LREPO"
 git -C "$LREPO" config user.email t@t; git -C "$LREPO" config user.name test
 printf 'a\n' > "$LREPO/f"; git -C "$LREPO" add f; git -C "$LREPO" commit -qm a
 git -C "$LREPO" remote add origin "$ORIGIN"
-git -C "$LREPO" fetch -q origin
+timeout 5 git -C "$LREPO" fetch -q origin
 git -C "$LREPO" update-ref refs/remotes/origin/main "$(git -C "$CLONE" rev-parse HEAD)"
 git -C "$LREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 git -C "$LREPO" branch local/main main
