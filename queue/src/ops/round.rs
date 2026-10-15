@@ -304,6 +304,34 @@ pub(super) fn lock(w: &World, label: &str, c: &Ctx) -> Result<Option<Guard>, i32
     }
 }
 
+/// The record of the batch a mender reports on: the open round of a queue.local repo, or the open
+/// batch PR of a queue.forge one.
+pub(super) fn load_failed_batch(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
+    match records::read_kv(&c.queue_file("open")) {
+        Ok(Some(kv)) if c.r.mode != LandMode::QueueLocal && kv.get("batch_id") == Some(batch) => Ok(kv),
+        _ => load(w, label, c, batch),
+    }
+}
+
+/// A queue.forge batch's red suites get the Failed event and mender bead a queue.local round's do.
+pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
+    let Some(batch) = kv.get("batch_id").filter(|b| !b.is_empty()) else { return };
+    for suite in suites_csv.split(',').filter(|s| !s.is_empty()) {
+        if idents(w, "verdict", &[("suite", suite)]).is_err() {
+            continue;
+        }
+        let marker = rounds_dir(c).join(format!("{batch}.mender-{}-{suite}", w.lc.batch_pass(batch).map_or(0, |p| p.0)));
+        if marker.exists() {
+            continue;
+        }
+        let sent = suites_started(w, batch, false).and_then(|()| pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())));
+        match sent {
+            Ok(()) => summon_mender(w, c, batch, suite, ""),
+            Err((rc, e)) => w.err(format!("verdict {}: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}", c.r.name)),
+        }
+    }
+}
+
 pub(super) fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
     match records::read_kv(&c.queue_file(RECORD)) {
         Ok(Some(kv)) if kv.get("batch_id") == Some(batch) => Ok(kv),
