@@ -71,6 +71,8 @@ pub struct Env {
     pub queue_bin: PathBuf,
     /// The `rebase-stale` program (by name on the launcher's PATH).
     pub rebase_stale_bin: PathBuf,
+    /// The `testenv` program (by name on the launcher's PATH): a forge repo's own declared tiers, run locally.
+    pub testenv_bin: PathBuf,
     /// The round's slot budget for concurrent attribution (DESIGN.md §4.2):
     /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
     pub round_slots: Option<u32>,
@@ -1257,6 +1259,40 @@ pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), String> {
     let path = dir.join(format!("{}-{}-fences.log", repo.name, now()));
     let _ = fs::write(&path, &text);
     Err(path.display().to_string())
+}
+
+/// Where a local pass for `tip` of `repo` is recorded: the file's existence is the record.
+pub fn local_pass_path(env: &Env, repo: &Repo, tip: &str) -> PathBuf {
+    env.run.join("local-pass").join(&repo.name).join(tip)
+}
+
+/// A forge repo's declared tiers (`testenv <rev> <repo>`, no `--suites`: the repo's own default,
+/// compile and lint included) run in testenv on this host, once per tip. A green is recorded under
+/// [`local_pass_path`]; a red returns the compiler/linter's `file:line` locations and the output tail.
+pub fn local_tier(env: &Env, repo: &Repo, rev: &str) -> Result<(), String> {
+    let mark = local_pass_path(env, repo, rev);
+    if mark.is_file() {
+        return Ok(());
+    }
+    // batch-job: runs the repo's declared tiers, as long as they take
+    let out = Command::new(&env.testenv_bin).arg(rev).arg(&repo.name).output().map_err(|e| format!("testenv: {e}"))?;
+    if out.status.success() {
+        if let Some(dir) = mark.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
+        let _ = fs::write(&mark, format!("{}\n", now()));
+        return Ok(());
+    }
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    Err(local_red_evidence(out.status.code(), &text))
+}
+
+fn local_red_evidence(rc: Option<i32>, text: &str) -> String {
+    let mut sites: Vec<&str> = text.lines().filter_map(|l| l.trim().strip_prefix("--> ")).collect();
+    sites.dedup();
+    let tail: Vec<&str> = text.lines().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("testenv exited {}\nlocations: {}\n{}", rc.unwrap_or(-1), sites.join(", "), tail.join("\n"))
 }
 
 /// The runner writes `<results>/<batch-key>/<suite>.<ext>` (testenv DESIGN.md §9 F1); older
@@ -3428,6 +3464,7 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         round_vm: dir.join("round-vm"),
         queue_bin: dir.join("queue"),
         rebase_stale_bin: dir.join("rebase-stale"),
+        testenv_bin: dir.join("testenv"),
         round_slots: None,
         hypervisor: Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
         poll: std::time::Duration::from_secs(1),
@@ -3464,5 +3501,43 @@ mod hypervisor_tests {
     fn an_unknown_size_never_fits() {
         assert!(!hv(0, 65536).fits_a_staged_round());
         assert!(!hv(1 << 30, 0).fits_a_staged_round());
+    }
+}
+
+#[cfg(test)]
+mod local_tier_tests {
+    use super::*;
+
+    fn fixture(tag: &str, script: &str) -> (testkit::TempDir, Env, Repo) {
+        let d = testkit::TempDir::new(tag);
+        let env = lifecycle_tests_env(d.path());
+        testkit::write_exe(&env.testenv_bin, script);
+        let repo = Repo { name: "r".into(), path: d.path().to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
+        (d, env, repo)
+    }
+
+    #[test]
+    fn a_red_tip_is_refused_with_its_locations_and_records_no_pass() {
+        let (_d, env, repo) = fixture("lt-red", "#!/bin/sh\necho '   --> src/binder.rs:222:9'\nexit 1\n");
+        let e = local_tier(&env, &repo, "abc").unwrap_err();
+        assert!(e.contains("src/binder.rs:222:9"), "{e}");
+        assert!(!local_pass_path(&env, &repo, "abc").exists());
+    }
+
+    #[test]
+    fn a_green_tip_is_recorded_and_not_rerun() {
+        let (_d, env, repo) = fixture("lt-green", "#!/bin/sh\necho ran >> \"$0.log\"\nexit 0\n");
+        local_tier(&env, &repo, "abc").unwrap();
+        assert!(local_pass_path(&env, &repo, "abc").is_file());
+        local_tier(&env, &repo, "abc").unwrap();
+        let ran = fs::read_to_string(format!("{}.log", env.testenv_bin.display())).unwrap();
+        assert_eq!(ran.lines().count(), 1);
+    }
+
+    #[test]
+    fn a_missing_testenv_refuses() {
+        let (_d, mut env, repo) = fixture("lt-missing", "#!/bin/sh\nexit 0\n");
+        env.testenv_bin = env.run.join("no-such-testenv");
+        assert!(local_tier(&env, &repo, "abc").is_err());
     }
 }
