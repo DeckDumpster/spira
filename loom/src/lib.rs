@@ -227,7 +227,7 @@ async fn lifecycle_page_route(
         .expect("a response with a valid status and headers")
 }
 
-async fn rounds_route(State(loom): State<Arc<Loom>>, axum::extract::Path(batch): axum::extract::Path<String>) -> Response {
+async fn vm_round_route(State(loom): State<Arc<Loom>>, axum::extract::Path(batch): axum::extract::Path<String>) -> Response {
     const TAIL: u64 = 256 * 1024;
     let (snap, _) = match lifecycle_snapshot(&loom) {
         Ok(x) => x,
@@ -418,7 +418,7 @@ async fn round_route(State(loom): State<Arc<Loom>>, axum::extract::Path((repo, b
 pub fn router(loom: Arc<Loom>) -> Router {
     Router::new()
         .route("/lifecycle", get(lifecycle_page_route))
-        .route("/rounds/{batch}", get(rounds_route))
+        .route("/rounds/{batch}", get(vm_round_route))
         .route("/api/lifecycle", get(lifecycle_api_route))
         .route("/stuck", get(stuck_page_route))
         .route("/api/stuck", get(stuck_api_route))

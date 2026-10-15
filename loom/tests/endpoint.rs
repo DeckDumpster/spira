@@ -465,6 +465,8 @@ async fn lifecycle_round_rows_are_links_and_a_vm_round_serves_its_log() {
     assert_eq!(code, 200, "{page}");
     assert!(page.contains("suite one ok") && page.contains("&lt;b&gt;red"), "{page}");
     assert_eq!(get(addr, "/rounds/nope").await.0, 404);
+}
+
 
 // ── Now and the shell ────────────────────────────────────────────────────────
 
