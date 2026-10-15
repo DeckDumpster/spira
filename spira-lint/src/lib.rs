@@ -10,6 +10,8 @@
 //! (law-absence-needs-a-positive-control) — that is an error, not a pass.
 
 use std::sync::OnceLock;
+
+const GIT_HANG_GUARD_SECS: &str = "120";
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -113,7 +115,10 @@ impl Tree {
 
     /// `git -C <root> <args>`'s stdout, or its error.
     pub fn git(&self, args: &[&str]) -> Result<Vec<u8>, String> {
-        let out = spira_config::bounded::bounded("git")
+        // batch-job: a local repo read that stalls for tens of seconds on a loaded host; 120 s hang guard
+        let out = std::process::Command::new("timeout")
+            .arg(GIT_HANG_GUARD_SECS)
+            .arg("git")
             .arg("-C")
             .arg(&self.root)
             .args(args)
@@ -122,7 +127,7 @@ impl Tree {
         if out.status.success() {
             Ok(out.stdout)
         } else if out.status.code() == Some(124) {
-            Err(format!("git {}: timed out after {}s", args.join(" "), spira_config::bounded::CALL_TIMEOUT_SECS))
+            Err(format!("git {}: timed out after {}s", args.join(" "), GIT_HANG_GUARD_SECS))
         } else {
             Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
         }
