@@ -9,9 +9,11 @@ Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=simple
+TimeoutStartSec=600
 CPUQuota=20%
 MemoryMax=256M
 ExecStartPre=-@SPIRA_PROD_ROOT@/bin/unit-run ensure-accounting
+ExecStartPre=-@SPIRA_PROD_ROOT@/bin/unit-run backfill
 ExecStart=@SPIRA_PROD_ROOT@/bin/unit-run follow
 Restart=always
 RestartSec=10

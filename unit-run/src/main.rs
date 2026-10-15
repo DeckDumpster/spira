@@ -1,4 +1,4 @@
-//! unit-run follow | backfill | ensure-accounting [--dir DIR]
+//! unit-run follow | backfill [--force] | ensure-accounting [--dir DIR]
 //!
 //! follow: tail the user journal from the cursor last checkpointed, writing one record per
 //! unit execution to run/tsd/unit-run.jsonl. backfill: replay the journal from its oldest
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
-use unit_run::{accounting_dropin_path, ensure_io_accounting, pass, written_ids, Clock, Folder, Item, Proc, Sink, Source, Triggers, MESSAGE_IDS};
+use unit_run::{accounting_dropin_path, ensure_io_accounting, pass, written_ids, Clock, io_controller_available, own_controllers_file, Folder, Item, Proc, Sink, Source, Triggers, MESSAGE_IDS};
 
 struct Wall;
 impl Clock for Wall {
@@ -138,9 +138,14 @@ fn follow() -> Result<(), String> {
     Err("journalctl ended".into())
 }
 
-fn backfill() -> Result<(), String> {
+fn backfill(force: bool) -> Result<(), String> {
     let run = run_dir()?;
     let cp = checkpoint_path(&run);
+    let marker = run.join("tsd").join(".unit-run-backfilled");
+    if marker.exists() && !force {
+        eprintln!("unit-run backfill: already run; --force replays again");
+        return Ok(());
+    }
     std::fs::create_dir_all(cp.parent().ok_or("no tsd dir")?).map_err(|e| e.to_string())?;
     let mut s = sink(&run, &Wall, &Spawn)?;
     let (folder, n) = pass(&Journal, Folder::default(), false, &mut s, &mut |_| Ok(()))?;
@@ -150,6 +155,7 @@ fn backfill() -> Result<(), String> {
             save_checkpoint(&cp, &folder)?;
         }
     }
+    std::fs::write(&marker, "").map_err(|e| format!("{}: {e}", marker.display()))?;
     eprintln!("unit-run backfill: {n} record(s) written");
     Ok(())
 }
@@ -166,6 +172,9 @@ fn ensure_accounting(dir: Option<String>) -> Result<(), String> {
         eprintln!("unit-run: wrote {} — re-executing the user manager to apply it", accounting_dropin_path(&home).display());
         Spawn.run(&["systemctl", "--user", "daemon-reexec"])?;
     }
+    if !own_controllers_file().is_some_and(|f| io_controller_available(&f)) {
+        eprintln!("unit-run: the io cgroup controller is not delegated to the user manager, so no record can carry io bytes; set Delegate=io in a user@.service drop-in (root) and restart the user manager");
+    }
     Ok(())
 }
 
@@ -173,10 +182,10 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("follow") => follow(),
-        Some("backfill") => backfill(),
+        Some("backfill") => backfill(args.iter().any(|a| a == "--force")),
         Some("ensure-accounting") => ensure_accounting(args.iter().position(|a| a == "--dir").and_then(|i| args.get(i + 1)).cloned()),
         _ => {
-            eprintln!("usage: unit-run <follow|backfill|ensure-accounting [--dir DIR]>");
+            eprintln!("usage: unit-run <follow|backfill [--force]|ensure-accounting [--dir DIR]>");
             std::process::exit(2);
         }
     };

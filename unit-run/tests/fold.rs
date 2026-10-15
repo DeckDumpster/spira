@@ -247,3 +247,51 @@ fn a_restart_is_two_records() {
     pass(&Fake { lines, stop_after: None, idle_at_end: false }, Folder::default(), false, &mut sink(&file, &clock, &sys), &mut |_| Ok(())).unwrap();
     assert_eq!(rows(&file).len(), 2);
 }
+
+fn real_journal_fixture() -> Vec<String> {
+    let io = json!({"CPU_USAGE_NSEC": "1500000000", "MEMORY_PEAK": "1000", "IO_METRIC_READ_BYTES": "111", "IO_METRIC_WRITE_BYTES": "222"});
+    vec![
+        line(1, T0, ID_STARTING, "ok.service", "inv-ok", json!({"MESSAGE": "Starting ok.service - x..."})),
+        line(2, T0 + 2 * S, ID_STARTED, "ok.service", "inv-ok", json!({"MESSAGE": "Finished ok.service - x.", "JOB_RESULT": "done", "JOB_TYPE": "start"})),
+        line(3, T0 + 2 * S + 100, ID_RESOURCES, "ok.service", "inv-ok", io.clone()),
+        line(4, T0 + 3 * S, ID_STARTING, "bad.service", "inv-bad", json!({"MESSAGE": "Starting bad.service - x..."})),
+        line(5, T0 + 4 * S, ID_EXIT, "bad.service", "inv-bad", json!({"EXIT_CODE": "exited", "EXIT_STATUS": "1", "COMMAND": "ExecStart"})),
+        line(6, T0 + 4 * S + 10, ID_FAILURE, "bad.service", "inv-bad", json!({"UNIT_RESULT": "exit-code"})),
+        line(7, T0 + 4 * S + 20, ID_STARTED, "bad.service", "inv-bad", json!({"MESSAGE": "Failed to start bad.service - x.", "JOB_RESULT": "failed", "JOB_TYPE": "start"})),
+        line(8, T0 + 4 * S + 30, ID_RESOURCES, "bad.service", "inv-bad", io.clone()),
+        line(9, T0 + 5 * S, ID_STARTED, "long.service", "inv-long1", json!({"MESSAGE": "Started long.service - x.", "JOB_RESULT": "done", "JOB_TYPE": "start"})),
+        line(10, T0 + 15 * S, ID_FAILURE, "long.service", "inv-long1", json!({"UNIT_RESULT": "signal"})),
+        line(11, T0 + 15 * S + 10, ID_RESOURCES, "long.service", "inv-long1", io),
+        line(12, T0 + 25 * S, ID_STARTED, "long.service", "inv-long2", json!({"MESSAGE": "Started long.service - x.", "JOB_RESULT": "done", "JOB_TYPE": "start"})),
+    ]
+}
+
+#[test]
+fn a_journal_of_a_success_a_failure_and_a_restart_yields_exactly_three_records() {
+    let d = TempDir::new("unit-run-real");
+    let file = d.path().join("unit-run.jsonl");
+    let (clock, sys) = (Fixed(1_792_100_000), systemctl());
+    pass(&Fake { lines: real_journal_fixture(), stop_after: None, idle_at_end: false }, Folder::default(), false, &mut sink(&file, &clock, &sys), &mut |_| Ok(())).unwrap();
+    let m = by_inv(&rows(&file));
+    assert_eq!(m.len(), 3, "{m:?}");
+    let ok = &m["inv-ok"];
+    assert_eq!((ok["result"].as_str(), ok["duration_ms"].as_u64()), (Some("success"), Some(2000)));
+    let bad = &m["inv-bad"];
+    assert_eq!((bad["result"].as_str(), bad["exit_status"].as_i64()), (Some("exit-code"), Some(1)));
+    let long = &m["inv-long1"];
+    assert_eq!((long["result"].as_str(), long["duration_ms"].as_u64()), (Some("signal"), Some(10_000)));
+    for r in m.values() {
+        assert_eq!((r["io_read_bytes"].as_u64(), r["io_write_bytes"].as_u64()), (Some(111), Some(222)));
+    }
+}
+
+#[test]
+fn io_controller_presence_is_read_from_the_controllers_file() {
+    let d = TempDir::new("unit-run-ctl");
+    let f = d.path().join("cgroup.controllers");
+    std::fs::write(&f, "cpu memory pids\n").unwrap();
+    assert!(!io_controller_available(&f));
+    std::fs::write(&f, "cpu io memory pids\n").unwrap();
+    assert!(io_controller_available(&f));
+    assert!(!io_controller_available(&d.path().join("absent")));
+}
