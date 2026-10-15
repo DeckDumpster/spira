@@ -112,7 +112,9 @@ where (`ec2`|`proxmox`), capacity wait (the lease), boot, build and suites secon
 cause from the closed set `green, red-attributed, over-cap, vm-lost, infra, contention-flake`
 (exit 0, 1, 124, ssh lost or unreachable, else). A record that cannot be written ends a judged
 pass as exit 2 and records the batch's pass incomplete. A lane that is not `round-vm` writes the
-same row with `tsd-write pass --repo R --batch B --pass N --where W --cause C [...]`.
+same row with `tsd-write pass --repo R --batch B --pass N --where W --cause C [...]`. A queue.forge batch's
+judged CI run (`queue verdict`: green, red or harness fault) writes the same row itself, once per run,
+where `local`, cause `infra` for a fault or an unverifiable green.
 
 `cert-report [--day D] [--line] [--record]` reads those rows alone and reports, per repo and instance type,
 beads landed per hour, first-pass-to-landed p50/p95, passes per landed bead, capacity-wait share, lost

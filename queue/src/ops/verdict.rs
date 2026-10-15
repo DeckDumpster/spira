@@ -511,6 +511,7 @@ fn process(w: &World, c: &Ctx, path: &Path, file: &Path) -> i32 {
     let status = normalize_status(if raw.is_empty() { "pending" } else { raw }).to_string();
     if status != "pending" {
         record_forge_state(w, c, &b, &status, "", "");
+        record_pass(w, c, &b, &status, &out);
     }
     match status.as_str() {
         "pending" => pending(w, c, &b),
@@ -542,6 +543,47 @@ fn record_forge_state(w: &World, c: &Ctx, b: &Batch, ci: &str, run: &str, meta: 
     kv.push("observed", &w.clock.now().to_string());
     if let Err(e) = write_atomic(&c.queue_file("forge-state"), &kv.render()) {
         w.err(format!("verdict {}: cannot record the forge state: {e}", b.name));
+    }
+}
+
+/// One `cert-pass` row per judged CI run of the batch, so the throughput report counts forge
+/// batches as it counts rounds. The batch record keeps what was recorded, so a verdict pass that
+/// re-reads the same settled run (a failed push, a held PR) writes no second row.
+fn record_pass(w: &World, c: &Ctx, b: &Batch, status: &str, out: &str) {
+    use tsd::pass::{Cause, PassRecord, Place};
+    let retries = b.kv.get("retries").unwrap_or("0");
+    let key = format!("{}/{retries}/{status}", b.head);
+    if b.kv.get("pass_recorded") == Some(key.as_str()) {
+        return;
+    }
+    let batch = [b.kv.get("batch_id"), Some(b.branch.as_str()), Some(b.pr.as_str())].into_iter().flatten().find(|v| !v.is_empty()).unwrap_or("").to_string();
+    let passes: u64 = b.kv.get("passes").and_then(|p| p.trim().parse().ok()).unwrap_or(0);
+    let now = w.clock.now();
+    let started = w.forge.run_id(&c.s.forge, b.path, &b.branch).and_then(|r| parse_run_metadata(&w.forge.run_metadata(&c.s.forge, b.path, &r)).0);
+    let cause = match status {
+        "green" if tagged(out, "head-sha: ").last().map(|h| h.trim()) == Some(b.head.as_str()) => Cause::Green,
+        "red" => Cause::RedAttributed,
+        _ => Cause::Infra,
+    };
+    let rec = PassRecord {
+        repo: b.name.to_string(),
+        batch,
+        pass: (passes + 1).to_string(),
+        members: b.members.iter().map(|m| m.id.clone()).collect(),
+        instance_type: String::new(),
+        vcpus: None,
+        place: Place::Local,
+        capacity_wait_s: 0,
+        boot_s: 0,
+        build_s: 0,
+        suites_s: started.map_or(0, |s| now.saturating_sub(s)),
+        cause,
+        detail: format!("PR {}", b.pr),
+    };
+    let written = rec.write(&c.s.run, &tsd::default_host(), &tsd::iso_utc(now));
+    let marked = written.and_then(|()| rewrite(b.file, &["pass_recorded", "passes"], &[("pass_recorded", &key), ("passes", &(passes + 1).to_string())]));
+    if let Err(e) = marked {
+        w.err(format!("verdict {}: cannot record the certification pass: {e}", b.name));
     }
 }
 
