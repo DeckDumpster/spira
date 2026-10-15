@@ -102,3 +102,5 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.statute_dir" = ""
 "spira.statute_guards" = ""
 "spira.round_vm_ec2_launch_window" = 3600
+"spira.round_max_open" = 1
+"spira.round_ec2_vcpu_quota" = 0
