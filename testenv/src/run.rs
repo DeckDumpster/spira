@@ -317,6 +317,7 @@ fn resolve_repo(arg: Option<&str>, deps: &Deps) -> Result<RepoRef, String> {
 fn run_foreign(
     args: &RunArgs,
     deps: &Deps,
+    repo: &str,
     text: &str,
     tree: &str,
     wt: &Path,
@@ -359,7 +360,9 @@ fn run_foreign(
         return Finish::fault(2, "results-dir", 0);
     }
     *started.borrow_mut() = Some(results.clone());
+    let cache = foreign::Cache::new(&s.run.join("foreign-cache"), repo);
     let runner = foreign::TierRun {
+        cache: &cache,
         rt: deps.rt,
         decl: &decl,
         tree: wt,
@@ -938,7 +941,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let decl_text = git(&repo.path, &["show", &format!("{br}:{}", foreign::DECL)]).ok();
     let has_suite_dir = git(&repo.path, &["cat-file", "-e", &format!("{br}:spira")]).is_ok();
     match decl_text {
-        Some(text) => return run_foreign(args, deps, &text, &tree, &wt.path, started),
+        Some(text) => return run_foreign(args, deps, &repo.name, &text, &tree, &wt.path, started),
         None if !has_suite_dir => {
             stderr(&format!(
                 "batch: {} declares no test entry: add {} to the tree under test",

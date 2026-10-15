@@ -5,7 +5,7 @@
 //! code it tests.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -98,7 +98,62 @@ pub enum Outcome {
     Fault(&'static str),
 }
 
+const CACHE_TARGET: &str = "/var/cache/spira-foreign/target";
+const CACHE_CARGO: &str = "/var/cache/spira-foreign/cargo";
+const LOCK_POLL: Duration = Duration::from_secs(2);
+
+/// A repository's warm build state on the host, kept between runs: cargo's target dir and
+/// registry, and the lock that lets one tier of that repository run at a time.
+pub struct Cache {
+    dir: PathBuf,
+}
+
+impl Cache {
+    pub fn new(root: &Path, repo: &str) -> Cache {
+        let name: String = repo
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
+            .collect();
+        Cache { dir: root.join(name) }
+    }
+
+    fn prepare(&self) -> std::io::Result<()> {
+        std::fs::create_dir_all(self.dir.join("target"))?;
+        std::fs::create_dir_all(self.dir.join("cargo"))
+    }
+
+    /// The volumes and variables a tier's cargo runs on; a variable the tier declares wins.
+    fn mounts(&self) -> Vec<(PathBuf, String)> {
+        vec![
+            (self.dir.join("target"), CACHE_TARGET.into()),
+            (self.dir.join("cargo"), CACHE_CARGO.into()),
+        ]
+    }
+
+    fn env(&self) -> [(&'static str, &'static str); 2] {
+        [("CARGO_TARGET_DIR", CACHE_TARGET), ("CARGO_HOME", CACHE_CARGO)]
+    }
+
+    /// Wait for this repository's lock; Err names the fault when the deadline passes or the
+    /// run is cancelled first.
+    fn lock(&self, deadline: Option<Instant>) -> Result<std::fs::File, &'static str> {
+        loop {
+            if let Some(f) = crate::worktree::try_lock(&self.dir.join("lock")) {
+                return Ok(f);
+            }
+            if crate::runtime::cancelled() {
+                return Err("cancelled");
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                return Err("deadline-suites");
+            }
+            std::thread::sleep(LOCK_POLL);
+        }
+    }
+}
+
 pub struct TierRun<'a> {
+    pub cache: &'a Cache,
     pub rt: &'a dyn ContainerRuntime,
     pub decl: &'a Decl,
     pub tree: &'a Path,
@@ -110,19 +165,33 @@ pub struct TierRun<'a> {
 impl TierRun<'_> {
     pub fn run(&self, name: &str) -> (Outcome, u64) {
         let tier = &self.decl.tier[name];
+        let t0 = Instant::now();
+        if self.cache.prepare().is_err() {
+            return (Outcome::Fault("cache-dir"), 0);
+        }
+        let _held = match self.cache.lock(self.deadline) {
+            Ok(f) => f,
+            Err(reason) => return (Outcome::Fault(reason), t0.elapsed().as_secs()),
+        };
         let cname = format!("testenv-foreign-{}-{name}", &self.key[..self.key.len().min(12)]);
+        let mut env: Vec<(String, String)> = tier.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        for (k, v) in self.cache.env() {
+            if !tier.env.contains_key(k) {
+                env.push((k.into(), v.into()));
+            }
+        }
         let req = RunRequest {
             name: cname.clone(),
             image: self.decl.image.clone(),
             mount: self.tree.to_path_buf(),
             workdir: self.decl.workdir.clone(),
-            env: tier.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            env,
+            mounts: self.cache.mounts(),
             argv: tier.argv.clone(),
             timeout: tier.timeout.or(self.decl.timeout).map(Duration::from_secs),
             deadline: self.deadline,
             output: self.results.join(format!("{name}.log")),
         };
-        let t0 = Instant::now();
         let rc = self.rt.run_once(&req).rc;
         self.rt.purge(&cname);
         let outcome = match rc {
