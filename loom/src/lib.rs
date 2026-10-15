@@ -1,9 +1,10 @@
 //! Loom's read endpoints: the stuck page and its bead timelines, the lifecycle view, and
-//! `GET /api/ops` for the Spira ops dashboard. Every one reads the lifecycle read model or
+//! `GET /api/ops` for the Spira ops dashboard, and `/units`, the per-unit run history. Every one reads the lifecycle read model or
 //! the collector's snapshot files; none reads `bd`.
 
 pub mod ops;
 pub mod stuck;
+pub mod units;
 
 use axum::extract::State;
 use axum::http::{header, StatusCode};
@@ -38,6 +39,9 @@ pub struct Config {
     pub instance: String,
     /// The `systemctl` binary to use for sentinel-active checks. Overridable in tests.
     pub systemctl: String,
+    /// The `duckdb` and `journalctl` the units page runs. Overridable in tests.
+    pub duckdb: String,
+    pub journalctl: String,
 }
 
 impl Config {
@@ -63,6 +67,8 @@ impl Config {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "systemctl".to_string()),
+            duckdb: std::env::var("SPIRA_DUCKDB").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "duckdb".to_string()),
+            journalctl: std::env::var("SPIRA_JOURNALCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "journalctl".to_string()),
         })
     }
 }
@@ -71,6 +77,9 @@ pub struct Loom {
     cfg: Config,
     /// The ops snapshot cache. A 5-second TTL: two small file reads and one systemctl call.
     ops_cell: Mutex<Option<Arc<OpsSnapshot>>>,
+    /// The units snapshot, held for `cfg.cache`; the lock is kept across the refresh so
+    /// concurrent viewers share one.
+    units_cell: Mutex<Option<Arc<units::Snapshot>>>,
 }
 
 impl Loom {
@@ -78,11 +87,30 @@ impl Loom {
         Loom {
             cfg,
             ops_cell: Mutex::new(None),
+            units_cell: Mutex::new(None),
         }
     }
 
     pub fn config(&self) -> &Config {
         &self.cfg
+    }
+
+    pub async fn units_snapshot(&self) -> Arc<units::Snapshot> {
+        let mut held = self.units_cell.lock().await;
+        if let Some(s) = held.as_ref().filter(|s| s.taken.elapsed() < self.cfg.cache) {
+            return s.clone();
+        }
+        let src = units::Sources {
+            run: self.cfg.run.clone(),
+            systemctl: self.cfg.systemctl.clone(),
+            duckdb: self.cfg.duckdb.clone(),
+            journalctl: self.cfg.journalctl.clone(),
+            extra_path: self.cfg.extra_path.join(":"),
+            budget: self.cfg.budget,
+        };
+        let snap = Arc::new(units::take(&src, now_s()).await);
+        *held = Some(snap.clone());
+        snap
     }
 
     /// Serve the ops dashboard, refreshing first if the held snapshot has aged out (5 s TTL).
@@ -270,6 +298,19 @@ async fn stuck_bead_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id)
     }
 }
 
+async fn units_page_route(State(loom): State<Arc<Loom>>) -> Response {
+    html_response(StatusCode::OK, units::render_page(loom.units_snapshot().await.as_ref()))
+}
+
+async fn units_api_route(State(loom): State<Arc<Loom>>) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(units::snapshot_json(loom.units_snapshot().await.as_ref()).to_string().into())
+        .expect("a response with a valid status and headers")
+}
+
 async fn root_route() -> Response {
     Response::builder()
         .status(StatusCode::SEE_OTHER)
@@ -286,6 +327,8 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/stuck", get(stuck_page_route))
         .route("/api/stuck", get(stuck_api_route))
         .route("/stuck/{id}", get(stuck_bead_route))
+        .route("/units", get(units_page_route))
+        .route("/api/units", get(units_api_route))
         .route("/api/ops", get(ops_route))
         .route("/", get(root_route))
         .with_state(loom)
