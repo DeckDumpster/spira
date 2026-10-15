@@ -278,6 +278,10 @@ pub struct Snapshot {
     /// The forge's owner URL (`https://github.com/<owner>`); empty leaves PR numbers as text.
     #[serde(default)]
     pub forge_base: String,
+    /// Where Loom is served, for a VM round's log link; `Some("")` is Loom's own origin
+    /// (relative links), `None` leaves the host-local log path.
+    #[serde(default)]
+    pub loom_base: Option<String>,
     #[serde(default)]
     pub menders: Vec<MenderRow>,
     #[serde(default)]
@@ -539,6 +543,7 @@ pub struct RepoRound {
     pub pr_url: String,
     pub run_url: String,
     pub log: String,
+    pub round_url: String,
     pub members: Vec<String>,
 }
 
@@ -558,7 +563,9 @@ impl RepoRound {
         if !self.run_url.is_empty() && self.red > 0 {
             links.push(format!("failing run {}", osc8(&self.run_url)));
         }
-        if !self.log.is_empty() {
+        if !self.round_url.is_empty() {
+            links.push(format!("log {}", osc8(&self.round_url)));
+        } else if !self.log.is_empty() {
             links.push(format!("log {}", osc8(&format!("file://{}", self.log))));
         }
         if !links.is_empty() {
@@ -982,6 +989,10 @@ fn repo_rounds(s: &Snapshot, round_view: &dyn Fn(&BatchRow) -> RoundView) -> Vec
             pr_url: if b.pr > 0 && !s.forge_base.is_empty() && !b.repo.is_empty() { format!("{}/{}/pull/{}", s.forge_base, b.repo, b.pr) } else { String::new() },
             run_url: b.run_url.clone(),
             log: b.log.clone(),
+            round_url: match &s.loom_base {
+                Some(base) if !b.log.is_empty() => format!("{base}/rounds/{}", b.id),
+                _ => String::new(),
+            },
             members: b.members.iter().filter(|m| !b.ejected.contains(m)).cloned().collect(),
             round,
         }
@@ -2199,6 +2210,9 @@ BATCH
         assert!(text.contains(&osc8("https://github.com/acme/pokedumpster/pull/609")), "{text}");
         assert!(text.contains(&osc8("https://github.com/acme/pokedumpster/actions/runs/77")), "{text}");
         assert!(text.contains(&osc8("file:///run/round/r-vm.log")), "{text}");
+        s.loom_base = Some("http://loom:9".into());
+        let text = render(&view(&s), 160).join("\n");
+        assert!(text.contains(&osc8("http://loom:9/rounds/r-vm")) && !text.contains("file://"), "{text}");
         assert!(text.contains("certifying pass 2 · members sp-a0 sp-a1"), "{text}");
     }
 

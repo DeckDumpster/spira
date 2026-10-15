@@ -384,6 +384,7 @@ fn gather() -> Snapshot {
     s.progress = None;
     s.ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
     s.forge_base = spira_config::process::cfg("SPIRA_FORGE_REPO").ok().and_then(|r| r.trim().split_once('/').map(|(o, _)| format!("https://github.com/{o}"))).unwrap_or_default();
+    s.loom_base = spira_config::process::cfg("SPIRA_LOOM_ADDR").ok().map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).map(|a| format!("http://{}", a.replacen("0.0.0.0", "localhost", 1)));
     gather_menders(&mut s);
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s.failures = s.errors.len() as u64;

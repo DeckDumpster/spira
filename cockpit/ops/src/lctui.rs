@@ -236,7 +236,8 @@ pub fn tree(v: &View) -> Vec<Node> {
                     let heads = c.members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(" ");
                     Node::new(format!("{key}/staged/{}", c.name), format!("{B}{}{R} · {} · {} member(s) · head {heads}", c.name, c.state, c.members.len()))
                 });
-                Node::new(key.clone(), r.line()).kids(staged.collect())
+                let links = r.link_lines().into_iter().enumerate().map(|(i, l)| Node::new(format!("{key}/link/{i}"), format!("{D}{l}{R}")));
+                Node::new(key.clone(), r.line()).kids(links.chain(staged).collect())
             })
             .collect();
         kids.extend(v.vm_runs.iter().map(|r| Node::new(format!("rounds/vm/{}", r.vm), r.line())));
@@ -873,12 +874,42 @@ pub fn ansi_html(s: &str) -> String {
     let mut open = 0usize;
     let mut text = String::new();
     let mut chars = s.chars().peekable();
-    let flush = |text: &mut String, out: &mut String| {
-        out.push_str(&link_ids(&html_esc(text)));
+    let mut href: Option<String> = None;
+    let flush = |text: &mut String, out: &mut String, in_link: bool| {
+        if in_link {
+            out.push_str(&html_esc(text));
+        } else {
+            out.push_str(&link_ids(&html_esc(text)));
+        }
         text.clear();
     };
     while let Some(c) = chars.next() {
-        if c == '\x1b' && chars.peek() == Some(&'[') {
+        if c == '\x1b' && chars.peek() == Some(&']') {
+            chars.next();
+            let mut body = String::new();
+            while let Some(d) = chars.next() {
+                if d == '\x07' {
+                    break;
+                }
+                if d == '\x1b' {
+                    if chars.peek() == Some(&'\\') {
+                        chars.next();
+                    }
+                    break;
+                }
+                body.push(d);
+            }
+            let Some(rest) = body.strip_prefix("8;") else { continue };
+            flush(&mut text, &mut out, href.is_some());
+            if href.take().is_some() {
+                out.push_str("</a>");
+            }
+            let url = rest.split_once(';').map_or("", |(_, u)| u);
+            if url.starts_with("http://") || url.starts_with("https://") || url.starts_with('/') {
+                out.push_str(&format!("<a href=\"{}\">", html_esc(url).replace('"', "&quot;")));
+                href = Some(url.to_string());
+            }
+        } else if c == '\x1b' && chars.peek() == Some(&'[') {
             chars.next();
             let mut code = String::new();
             while let Some(&d) = chars.peek() {
@@ -888,7 +919,7 @@ pub fn ansi_html(s: &str) -> String {
                 }
                 code.push(d);
             }
-            flush(&mut text, &mut out);
+            flush(&mut text, &mut out, href.is_some());
             let class = match code.as_str() {
                 "0" | "" => {
                     out.push_str(&"</span>".repeat(open));
@@ -910,7 +941,10 @@ pub fn ansi_html(s: &str) -> String {
             text.push(c);
         }
     }
-    flush(&mut text, &mut out);
+    flush(&mut text, &mut out, href.is_some());
+    if href.is_some() {
+        out.push_str("</a>");
+    }
     out.push_str(&"</span>".repeat(open));
     out
 }
@@ -1363,6 +1397,15 @@ mod tests {
         assert!(h.contains("&lt;x&gt;"), "text is escaped: {h}");
         assert!(h.contains("<a href=/stuck/sp-q2.3>sp-q2.3</a>."), "a trailing dot is not part of the id: {h}");
         assert!(!h.contains("/stuck/sp-zz"), "only a bead id at a word boundary is linked: {h}");
+    }
+
+    #[test]
+    fn an_osc8_hyperlink_becomes_an_escaped_anchor_and_a_foreign_scheme_does_not() {
+        let h = ansi_html(&crate::lcview::osc8("https://x.test/p?a=1&b=\"2\""));
+        assert_eq!(h, "<a href=\"https://x.test/p?a=1&amp;b=&quot;2&quot;\">https://x.test/p?a=1&amp;b=&quot;2&quot;</a>");
+        assert_eq!(ansi_html(&crate::lcview::osc8("/rounds/r-1")), "<a href=\"/rounds/r-1\">/rounds/r-1</a>");
+        let bad = ansi_html(&crate::lcview::osc8("javascript:alert(1)"));
+        assert!(!bad.contains("<a "), "{bad}");
     }
 
     #[test]

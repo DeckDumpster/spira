@@ -434,3 +434,35 @@ async fn units_folds_per_instance_names_into_one_family_row() {
     assert!(html.contains("unit families"), "{html}");
     assert!(html.contains("<details>"), "system families are folded away");
 }
+
+#[tokio::test]
+async fn lifecycle_round_rows_are_links_and_a_vm_round_serves_its_log() {
+    use cockpit_ops::lcview::{BatchRow, Snapshot};
+    let run = ops_run_dir();
+    let log = run.join("r-vm.log");
+    std::fs::write(&log, "suite one ok\nsuite two <b>red</b>\n").expect("a log");
+    let now = now_s();
+    let snap = Snapshot {
+        now,
+        forge_base: "https://forge.test/acme".into(),
+        batches: vec![
+            BatchRow { id: "b-70".into(), repo: "dumpstar".into(), pr: 70, state: "CI_RUNNING".into(), phase: "red".into(), opened_at: now - 60, run_url: "https://forge.test/acme/dumpstar/actions/runs/9".into(), members: vec!["sp-p0".into()], progress: Some(cockpit_ops::lcview::PassProgress { round: "b-70".into(), phase: "suites".into(), done: 1, total: 2, red: vec!["t".into()], updated_at: now, ..Default::default() }), ..Default::default() },
+            BatchRow { id: "r-vm".into(), repo: "spira".into(), state: "CI_RUNNING".into(), phase: "certifying".into(), opened_at: now - 50, log: log.to_string_lossy().into_owned(), members: vec!["sp-a0".into()], ..Default::default() },
+        ],
+        ..Default::default()
+    };
+    std::fs::create_dir_all(run.join("lcview")).expect("lcview dir");
+    std::fs::write(run.join("lcview").join("snapshot.json"), serde_json::to_string(&snap).unwrap()).expect("a snapshot");
+    let addr = spawn(ops_cfg(run.to_str().unwrap())).await;
+    let (code, body) = get(addr, "/lifecycle?fragment").await;
+    assert_eq!(code, 200, "{body}");
+    let v: Value = serde_json::from_str(&body).expect("fragment json");
+    let html = format!("{}{}", v["banner"], v["tree"]).replace("\\\"", "\"");
+    for href in ["https://forge.test/acme/dumpstar/pull/70", "https://forge.test/acme/dumpstar/actions/runs/9", "/rounds/r-vm"] {
+        assert!(html.contains(&format!("<a href=\"{href}\">")), "{href} in {html}");
+    }
+    let (code, page) = get(addr, "/rounds/r-vm").await;
+    assert_eq!(code, 200, "{page}");
+    assert!(page.contains("suite one ok") && page.contains("&lt;b&gt;red"), "{page}");
+    assert_eq!(get(addr, "/rounds/nope").await.0, 404);
+}
