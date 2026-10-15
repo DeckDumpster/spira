@@ -850,7 +850,7 @@ fn html_esc(s: &str) -> String {
 }
 
 /// A pane line as HTML: its ANSI styles become classes, the text is escaped, and every bead id
-/// links to its `/stuck/<id>` timeline.
+/// links to its `/beads/<id>` timeline.
 /// A pane line without its ANSI styles, for tests that compare the page to the pane.
 pub fn strip_for_test(s: &str) -> String {
     let mut out = String::new();
@@ -966,7 +966,7 @@ fn link_ids(s: &str) -> String {
             }
             if j > i + 3 {
                 let id = &s[i..j];
-                out.push_str(&format!("<a href=/stuck/{id}>{id}</a>"));
+                out.push_str(&format!("<a href=/beads/{id}>{id}</a>"));
                 i = j;
                 continue;
             }
@@ -1393,10 +1393,10 @@ mod tests {
     #[test]
     fn a_page_line_keeps_the_panes_styles_and_links_bead_ids() {
         let h = ansi_html(&format!("{RED}sp-ab1c red{R} and <x> sp-q2.3. not-sp-zz"));
-        assert!(h.contains("<span class=red><a href=/stuck/sp-ab1c>sp-ab1c</a> red</span>"), "{h}");
+        assert!(h.contains("<span class=red><a href=/beads/sp-ab1c>sp-ab1c</a> red</span>"), "{h}");
         assert!(h.contains("&lt;x&gt;"), "text is escaped: {h}");
-        assert!(h.contains("<a href=/stuck/sp-q2.3>sp-q2.3</a>."), "a trailing dot is not part of the id: {h}");
-        assert!(!h.contains("/stuck/sp-zz"), "only a bead id at a word boundary is linked: {h}");
+        assert!(h.contains("<a href=/beads/sp-q2.3>sp-q2.3</a>."), "a trailing dot is not part of the id: {h}");
+        assert!(!h.contains("/beads/sp-zz"), "only a bead id at a word boundary is linked: {h}");
     }
 
     #[test]
