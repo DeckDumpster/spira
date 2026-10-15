@@ -814,10 +814,14 @@ if [ "${1:-}" = content-rows ]; then
     if [ -n "$ext" ]; then
         BD_IGNORE_SCHEMA_SKEW=1 "${bd:-bd}" ${db:+-C "$db"} list --all --limit 0 --json | EXT="$ext" python3 -c '
 import json, os, sys
-print(json.dumps([r for r in json.load(sys.stdin) if os.environ["EXT"] in (r.get("external_ref") or "")]))'
+print(json.dumps([r for r in json.loads(sys.stdin.read() or "[]") if os.environ["EXT"] in (r.get("external_ref") or "")]))'
         exit $?
     fi
-    BD_IGNORE_SCHEMA_SKEW=1 exec "${bd:-bd}" ${db:+-C "$db"} list --id "$ids" --status all --limit 0 --json
+    # content-rows answers `[]` for no match, as the real reader does; a bd that prints nothing
+    # for an empty result would otherwise hand the caller unparseable empty output.
+    out="$(BD_IGNORE_SCHEMA_SKEW=1 "${bd:-bd}" ${db:+-C "$db"} list --id "$ids" --status all --limit 0 --json)" || exit $?
+    printf '%s\n' "${out:-[]}"
+    exit 0
 fi
 for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done
 exit 2

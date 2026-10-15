@@ -184,7 +184,7 @@ want "content-rows --full carries the notes" '"notes":"the notes"' "$out_full"
 case "$out" in *"the body"*) want "content-rows without --full omits the description" "absent" "present: $out" ;; *) want "content-rows without --full omits the description" "absent" "absent" ;; esac
 out="$("$BIN" content-rows --external-contains basefail:rr: 2>&1)"
 want "content-rows --external-contains selects by external_ref" '"id":"sp-row-a"' "$out"
-case "$out" in *sp-row-b*) want "content-rows --external-contains selects only matching rows" "absent" "present: $out" ;; *) want "content-rows --external-contains selects only matching rows" "absent" "absent" ;; esac
+case "$out" in *'"id":"sp-row-b"'*) want "content-rows --external-contains selects only matching rows" "absent" "present: $out" ;; *) want "content-rows --external-contains selects only matching rows" "absent" "absent" ;; esac
 out="$("$BIN" content-rows --ids sp-row-a 2>&1)"
 case "$out" in *ext:x*) want "content-rows ignores non-issue edges (depends_on_external)" "absent" "present: $out" ;; *) want "content-rows ignores non-issue edges (depends_on_external)" "absent" "absent" ;; esac
 

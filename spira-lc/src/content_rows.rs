@@ -12,7 +12,27 @@ use crate::db::Conn;
 use crate::rows;
 
 const CANNOT_TELL: i32 = 2;
+/// The content store's database when the bead store names none: production's.
 pub const CONTENT_DB: &str = "spira";
+
+/// The content store's database: the one the bead store's own `.beads/metadata.json` names
+/// (`dolt_database`) under `spira.db`, resolved once per process; `spira` when it names none.
+/// Production's store names `spira`; a testdb fixture and a sim world name their own
+/// (`sptest_…`), on the same server lc-serve reaches, so a hardcoded name read a database
+/// that was not there.
+fn content_db() -> &'static str {
+    static DB: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DB.get_or_init(|| {
+        spira_config::process::cfg("SPIRA_DB")
+            .ok()
+            .filter(|d| !d.trim().is_empty())
+            .and_then(|d| std::fs::read_to_string(std::path::Path::new(d.trim()).join(".beads/metadata.json")).ok())
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|m| m.get("dolt_database").and_then(Value::as_str).map(str::to_string))
+            .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+            .map_or_else(|| CONTENT_DB.to_string(), |n| format!("`{n}`"))
+    })
+}
 const RFC3339: &str = "%Y-%m-%dT%H:%i:%sZ";
 
 fn s<'a>(row: &'a Value, col: &str) -> Option<&'a str> {
@@ -79,16 +99,18 @@ pub fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
 const TEXT_COLUMNS: &str = ", description, notes, external_ref";
 
 fn by_external_ref(conn: &Conn, needle: &str, full: bool) -> Result<Vec<Value>, String> {
+    let cdb = content_db();
     if needle.is_empty() {
         return Err("content-rows: --external-contains needs a non-empty text".into());
     }
-    let sql = format!("SELECT id FROM {CONTENT_DB}.issues WHERE LOCATE('{}', external_ref) > 0 ORDER BY id", rows::escape(needle));
+    let sql = format!("SELECT id FROM {cdb}.issues WHERE LOCATE('{}', external_ref) > 0 ORDER BY id", rows::escape(needle));
     let found = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
     fetch_with(conn, &ids, full)
 }
 
 fn fetch_with(conn: &Conn, ids: &[&str], full: bool) -> Result<Vec<Value>, String> {
+    let cdb = content_db();
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -97,13 +119,13 @@ fn fetch_with(conn: &Conn, ids: &[&str], full: bool) -> Result<Vec<Value>, Strin
     let text = if full { TEXT_COLUMNS } else { "" };
     let issues = q(format!(
         "SELECT id, title, priority, issue_type, status, DATE_FORMAT(defer_until, '{RFC3339}') AS defer_until, DATE_FORMAT(created_at, '{RFC3339}') AS created_at, DATE_FORMAT(updated_at, '{RFC3339}') AS updated_at{text} \
-         FROM {CONTENT_DB}.issues WHERE id IN ({list}) ORDER BY id"
+         FROM {cdb}.issues WHERE id IN ({list}) ORDER BY id"
     ))?;
-    let labels = q(format!("SELECT issue_id, label FROM {CONTENT_DB}.labels WHERE issue_id IN ({list}) ORDER BY issue_id, label"))?;
+    let labels = q(format!("SELECT issue_id, label FROM {cdb}.labels WHERE issue_id IN ({list}) ORDER BY issue_id, label"))?;
     // beads' column is depends_on_issue_id (beside depends_on_wisp_id / depends_on_external);
     // the claim decision only follows issue-to-issue edges. sp-9j0937: the query named a
     // depends_on_id column that no beads schema has, and every claim check failed in prod.
-    let deps = q(format!("SELECT issue_id, depends_on_issue_id AS depends_on_id, `type` FROM {CONTENT_DB}.dependencies WHERE issue_id IN ({list}) AND depends_on_issue_id IS NOT NULL ORDER BY issue_id, depends_on_issue_id"))?;
+    let deps = q(format!("SELECT issue_id, depends_on_issue_id AS depends_on_id, `type` FROM {cdb}.dependencies WHERE issue_id IN ({list}) AND depends_on_issue_id IS NOT NULL ORDER BY issue_id, depends_on_issue_id"))?;
     let mut out = assemble(&issues, &labels, &deps);
     if full {
         for (row, issue) in out.iter_mut().zip(issues.iter().filter(|i| s(i, "id").is_some())) {
@@ -142,37 +164,39 @@ pub fn cmd_pane_facets(args: &[String], conn: &Conn) -> (i32, String) {
 }
 
 fn inflow(conn: &Conn, window_secs: u32) -> Result<Value, String> {
+    let cdb = content_db();
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let work = "COALESCE(issue_type, 'task') <> 'event'";
     let fresh = format!("{work} AND {PANE_SCOPE} AND created_at >= UTC_TIMESTAMP() - INTERVAL {window_secs} SECOND");
     let issues = q(format!(
-        "SELECT id, title, priority, issue_type, status, DATE_FORMAT(created_at, '{RFC3339}') AS created_at FROM {CONTENT_DB}.issues \
+        "SELECT id, title, priority, issue_type, status, DATE_FORMAT(created_at, '{RFC3339}') AS created_at FROM {cdb}.issues \
          WHERE {work} AND {PANE_SCOPE} AND created_at IS NOT NULL ORDER BY created_at DESC, id LIMIT {INFLOW_ROWS}"
     ))?;
     let ids: Vec<String> = issues.iter().filter_map(|i| s(i, "id")).map(|i| format!("'{}'", rows::escape(i))).collect();
     let labels = if ids.is_empty() {
         vec![]
     } else {
-        q(format!("SELECT issue_id, label FROM {CONTENT_DB}.labels WHERE issue_id IN ({}) ORDER BY issue_id, label", ids.join(",")))?
+        q(format!("SELECT issue_id, label FROM {cdb}.labels WHERE issue_id IN ({}) ORDER BY issue_id, label", ids.join(",")))?
     };
-    let kinds = q(format!("SELECT COALESCE(issue_type, 'task') AS kind, COUNT(*) AS n FROM {CONTENT_DB}.issues WHERE {fresh} GROUP BY kind ORDER BY n DESC, kind"))?;
-    let n = count(conn, format!("SELECT COUNT(*) AS n FROM {CONTENT_DB}.issues WHERE {fresh}"))?;
+    let kinds = q(format!("SELECT COALESCE(issue_type, 'task') AS kind, COUNT(*) AS n FROM {cdb}.issues WHERE {fresh} GROUP BY kind ORDER BY n DESC, kind"))?;
+    let n = count(conn, format!("SELECT COUNT(*) AS n FROM {cdb}.issues WHERE {fresh}"))?;
     let defect = count(
         conn,
-        format!("SELECT COUNT(*) AS n FROM {CONTENT_DB}.issues WHERE {fresh} AND (issue_type = 'bug' OR id IN (SELECT issue_id FROM {CONTENT_DB}.labels WHERE label = 'incident'))"),
+        format!("SELECT COUNT(*) AS n FROM {cdb}.issues WHERE {fresh} AND (issue_type = 'bug' OR id IN (SELECT issue_id FROM {cdb}.labels WHERE label = 'incident'))"),
     )?;
     let kinds: Vec<Value> = kinds.iter().map(|k| json!([s(k, "kind").unwrap_or("task"), k.get("n").and_then(|n| n.as_i64().or_else(|| n.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0)])).collect();
     Ok(json!({ "n": n, "defect": defect, "kinds": kinds, "rows": assemble(&issues, &labels, &[]) }))
 }
 
 fn repo_labels(conn: &Conn, valid: &str) -> Result<Value, String> {
-    let live = format!("{CONTENT_DB}.issues WHERE status <> 'closed'");
-    let with_repo = format!("{live} AND id IN (SELECT issue_id FROM {CONTENT_DB}.labels WHERE label LIKE 'repo:%')");
+    let cdb = content_db();
+    let live = format!("{cdb}.issues WHERE status <> 'closed'");
+    let with_repo = format!("{live} AND id IN (SELECT issue_id FROM {cdb}.labels WHERE label LIKE 'repo:%')");
     let valid: Vec<String> = valid.split(',').filter(|v| !v.is_empty()).map(|v| format!("'repo:{}'", rows::escape(v))).collect();
     let mapped = if valid.is_empty() {
         0
     } else {
-        count(conn, format!("SELECT COUNT(*) AS n FROM {live} AND id IN (SELECT issue_id FROM {CONTENT_DB}.labels WHERE label IN ({}))", valid.join(",")))?
+        count(conn, format!("SELECT COUNT(*) AS n FROM {live} AND id IN (SELECT issue_id FROM {cdb}.labels WHERE label IN ({}))", valid.join(",")))?
     };
     let total = count(conn, format!("SELECT COUNT(*) AS n FROM {live}"))?;
     let repo = count(conn, format!("SELECT COUNT(*) AS n FROM {with_repo}"))?;
