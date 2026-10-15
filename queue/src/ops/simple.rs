@@ -430,9 +430,13 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         w.err(format!("queue.sh resubmit: --tip {tip}: not a full 40-hex commit name — refused"));
         return FAIL;
     }
+    let branch = format!("spira/{id}");
     if !w.git.commit_exists(&path, tip) {
-        w.err(format!("queue.sh resubmit: --tip {tip}: no such commit in {} — refused", c.r.name));
-        return FAIL;
+        let remote = c.r.landref.as_deref().and_then(|b| c.r.ref_remote(b)).unwrap_or_else(|| "origin".to_string());
+        if !w.git.fetch(&path, &remote, &branch) || !w.git.commit_exists(&path, tip) {
+            w.err(format!("queue.sh resubmit: --tip {tip}: no such commit in {} (fetching {branch} from {remote} did not bring it) — refused", c.r.name));
+            return FAIL;
+        }
     }
     if !lint_passed(w, "resubmit", &path, tip, false) {
         return FAIL;
@@ -450,6 +454,11 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
     }
     if !row.holds.iter().any(|h| h == "manual") {
         w.err(format!("queue.sh resubmit: {id} is held by no one (no manual hold) — hold it first with a reason, then resubmit; refused"));
+        return FAIL;
+    }
+    let local = format!("refs/heads/{branch}");
+    if !w.git.update_ref(&path, &local, tip, None) || w.git.rev_parse(&path, &local).as_deref() != Some(tip) {
+        w.err(format!("queue.sh resubmit: could not move {local} to {tip} in {} — refused, nothing changed", c.r.name));
         return FAIL;
     }
     if let Err((rc, e)) = w.lc.retip(id, tip, by) {
