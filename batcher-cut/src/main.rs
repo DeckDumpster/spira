@@ -687,22 +687,28 @@ fn forge_local_tier(
 ) -> Result<Option<StableRound>, String> {
     let mut red = Vec::new();
     for m in &members {
-        if let Err(evidence) = io::local_tier(env_, repo, &m.tip) {
-            if let Some((fault, first)) = io::landing_ref_fault(env_, repo, start_sha) {
-                println!("batcher {}: FAULT the declared tiers are red on the landing ref {start_sha} itself — {} is not blamed, round held", repo.name, m.id);
-                if first {
-                    let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
-                    let reason = format!("landing-ref-red {first_error}");
-                    match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], start_sha, &fault, &reason) {
-                        Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
-                        Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
-                    }
-                }
-                return Ok(None);
+        match io::local_tier_member(env_, repo, start_sha, &m.tip) {
+            Ok(()) => {}
+            Err(io::MemberTier::Conflict) => {
+                println!("batcher {}: {} conflicts with {start_sha} — not checked locally; the merge reports it", repo.name, m.id);
             }
-            println!("batcher {}: {} is red locally at {} — not batched ({})", repo.name, m.id, m.tip, evidence.lines().next().unwrap_or(""));
-            io::bead_reopen(env_, &m.id, "local-tier-red", &format!("Reopened by the batcher: {}'s declared tiers are red locally at {} and never reached CI.\n{evidence}", repo.name, m.tip));
-            red.push(m.id.clone());
+            Err(io::MemberTier::Red(evidence)) => {
+                if let Some((fault, first)) = io::landing_ref_fault(env_, repo, start_sha) {
+                    println!("batcher {}: FAULT the declared tiers are red on the landing ref {start_sha} itself — {} is not blamed, round held", repo.name, m.id);
+                    if first {
+                        let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
+                        let reason = format!("landing-ref-red {first_error}");
+                        match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], start_sha, &fault, &reason) {
+                            Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
+                            Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+                        }
+                    }
+                    return Ok(None);
+                }
+                println!("batcher {}: {} is red locally at {} merged onto {start_sha} — not batched ({})", repo.name, m.id, m.tip, evidence.lines().next().unwrap_or(""));
+                io::bead_reopen(env_, &m.id, "local-tier-red", &format!("Reopened by the batcher: {}'s declared tiers are red locally with {} merged onto {start_sha} and never reached CI.\n{evidence}", repo.name, m.tip));
+                red.push(m.id.clone());
+            }
         }
     }
     let members = if red.is_empty() {
@@ -1754,16 +1760,67 @@ mod base_conflict_handling {
         e.home = d.to_path_buf();
         let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Forge };
         let wt = d.join("wt");
-        testkit::write_exe(&e.testenv_bin, &format!("#!/bin/sh\ncase \"$1\" in {t1}) echo '  --> src/x.rs:1:1'; exit 1;; esac\nexit 0\n"));
+        testkit::write_exe(&e.testenv_bin, &format!("#!/bin/sh\ngit -C '{}' cat-file -e \"$1:one\" 2>/dev/null && {{ echo '  --> src/x.rs:1:1'; exit 1; }}\nexit 0\n", d.display()));
         let r = stabilize_round(&e, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap().unwrap();
         let ids: Vec<&str> = r.members.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["sp-2"]);
-        assert!(!io::local_pass_path(&e, &repo, &t1).exists());
-        assert!(io::local_pass_path(&e, &repo, &t2).is_file());
+        assert!(!io::local_pass_path(&e, &repo, &format!("{t1}@{base}")).exists());
+        assert!(io::local_pass_path(&e, &repo, &format!("{t2}@{base}")).is_file());
 
         testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 1\n");
         let e2 = Env { run: d.join("fresh"), ..e.clone() };
         assert!(stabilize_round(&e2, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_forge_member_is_checked_merged_onto_the_landing_ref_so_a_fix_there_reaches_an_older_member() {
+        let d = testkit::TempDir::new("batcher-cut-localbase");
+        git(&d, &["init", "-q", "-b", "main"]);
+        fs::write(d.join("broken"), "x\n").unwrap();
+        git(&d, &["add", "broken"]);
+        git(&d, &["commit", "-qm", "old base, tier red"]);
+        let old = git(&d, &["rev-parse", "HEAD"]);
+        let cut = |name: &str, file: &str| {
+            git(&d, &["checkout", "-q", "-b", name, &old]);
+            fs::write(d.join(file), "m\n").unwrap();
+            git(&d, &["add", file]);
+            git(&d, &["commit", "-qm", name]);
+            git(&d, &["rev-parse", "HEAD"])
+        };
+        let clean = cut("clean", "one");
+        let evil = cut("evil", "evil");
+        git(&d, &["checkout", "-q", "-b", "fixed", &old]);
+        git(&d, &["rm", "-q", "broken"]);
+        git(&d, &["commit", "-qm", "fix on landing ref"]);
+        let landing = git(&d, &["rev-parse", "HEAD"]);
+        git(&d, &["checkout", "-q", "--detach", &landing]);
+        let mut e = io::lifecycle_tests_env(&d);
+        fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
+        e.run = d.to_path_buf();
+        e.home = d.to_path_buf();
+        let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "fixed".into(), forge: PathBuf::new(), land: Land::Forge };
+        let wt = d.join("wt");
+        let red_if = format!("git -C '{0}' cat-file -e \"$1:broken\" 2>/dev/null || git -C '{0}' cat-file -e \"$1:evil\" 2>/dev/null", d.display());
+        testkit::write_exe(&e.testenv_bin, &format!("#!/bin/sh\n{red_if} && {{ echo '  --> tier:1:1'; exit 1; }}\nexit 0\n"));
+        let r = stabilize_round(&e, &repo, &wt, &landing, vec![member("sp-clean", &clean), member("sp-evil", &evil)], None, &[]).unwrap().unwrap();
+        let ids: Vec<&str> = r.members.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["sp-clean"]);
+        assert!(io::local_pass_path(&e, &repo, &format!("{clean}@{landing}")).is_file());
+        assert!(!io::local_pass_path(&e, &repo, &format!("{evil}@{landing}")).exists());
+        assert!(!io::local_pass_path(&e, &repo, &clean).exists());
+    }
+
+    #[test]
+    fn a_member_conflicting_with_the_landing_ref_is_a_conflict_not_a_tier_red() {
+        let d = testkit::TempDir::new("batcher-cut-localconflict");
+        let [base, a, _b, c, _root] = fixture(&d);
+        git(&d, &["checkout", "-q", "--detach", &base]);
+        let mut e = io::lifecycle_tests_env(&d);
+        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 1\n");
+        e.run = d.to_path_buf();
+        let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Forge };
+        assert_eq!(io::local_tier_member(&e, &repo, &base, &c), Err(io::MemberTier::Conflict));
+        assert!(matches!(io::local_tier_member(&e, &repo, &base, &a), Err(io::MemberTier::Red(_))));
     }
 
     #[test]

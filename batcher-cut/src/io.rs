@@ -1282,7 +1282,52 @@ pub fn local_pass_path(env: &Env, repo: &Repo, tip: &str) -> PathBuf {
 /// compile and lint included) run in testenv on this host, once per tip. A green is recorded under
 /// [`local_pass_path`]; a red returns the compiler/linter's `file:line` locations and the output tail.
 pub fn local_tier(env: &Env, repo: &Repo, rev: &str) -> Result<(), String> {
-    let mark = local_pass_path(env, repo, rev);
+    local_tier_keyed(env, repo, rev, local_pass_path(env, repo, rev))
+}
+
+/// Why a member's local check did not run: its tip does not merge onto the base (a conflict is
+/// the merge's to report, never a tier red), or the merged tree could not be built at all.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MemberTier {
+    Conflict,
+    Red(String),
+}
+
+/// The local check on the tree the batch will carry for this member: `tip` merged onto `base_sha`,
+/// built in the object store with no worktree. The pass is recorded per (tip, base).
+pub fn local_tier_member(env: &Env, repo: &Repo, base_sha: &str, tip: &str) -> Result<(), MemberTier> {
+    let mark = local_pass_path(env, repo, &format!("{tip}@{base_sha}"));
+    if mark.is_file() {
+        return Ok(());
+    }
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["-c", "user.name=spira", "-c", "user.email=spira@localhost"])
+            .args(args)
+            .env("GIT_AUTHOR_DATE", "@0 +0000")
+            .env("GIT_COMMITTER_DATE", "@0 +0000")
+            .output()
+    };
+    let m = git(&["merge-tree", "--write-tree", base_sha, tip]).map_err(|e| MemberTier::Red(format!("git merge-tree: {e}")))?;
+    if m.status.code() == Some(1) {
+        return Err(MemberTier::Conflict);
+    }
+    if !m.status.success() {
+        return Err(MemberTier::Red(format!("git merge-tree: {}", String::from_utf8_lossy(&m.stderr))));
+    }
+    let tree = String::from_utf8_lossy(&m.stdout).lines().next().unwrap_or("").trim().to_string();
+    let c = git(&["commit-tree", &tree, "-p", base_sha, "-p", tip, "-m", &format!("member {tip} on {base_sha}")])
+        .map_err(|e| MemberTier::Red(format!("git commit-tree: {e}")))?;
+    if !c.status.success() {
+        return Err(MemberTier::Red(format!("git commit-tree: {}", String::from_utf8_lossy(&c.stderr))));
+    }
+    let rev = String::from_utf8_lossy(&c.stdout).trim().to_string();
+    local_tier_keyed(env, repo, &rev, mark).map_err(MemberTier::Red)
+}
+
+fn local_tier_keyed(env: &Env, repo: &Repo, rev: &str, mark: PathBuf) -> Result<(), String> {
     if mark.is_file() {
         return Ok(());
     }
