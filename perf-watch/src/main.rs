@@ -184,6 +184,10 @@ impl Sim for RealSim {
         }
     }
 
+    fn backoff(&mut self) {
+        std::thread::sleep(Duration::from_secs(20));
+    }
+
     fn run(&mut self) -> Result<String, String> {
         std::fs::create_dir_all(&self.scratch).map_err(|e| e.to_string())?;
         let seed = self.seed.to_string();
