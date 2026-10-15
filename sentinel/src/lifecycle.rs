@@ -122,6 +122,12 @@ pub fn stale_leases(rows: &[LcRow], now: i64, grace: i64, alive: impl Fn(&str) -
         .collect()
 }
 
+/// SUBMITTED, CERTIFIED and IN_DELIVERY keep the holder on purpose (branch affinity); only
+/// the states the lifecycle machine clears it on are a violation.
+fn holder_forbidden(state: &str) -> bool {
+    matches!(state, "OPEN" | "READY" | "REWORK" | "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE")
+}
+
 /// CHECK 2c: rows whose holder and state disagree.
 pub fn inconsistent(rows: &[LcRow]) -> Vec<String> {
     rows.iter()
@@ -131,7 +137,7 @@ pub fn inconsistent(rows: &[LcRow]) -> Vec<String> {
                     "INCONSISTENT\t{}\tWORKING with no holder",
                     r.bead_id
                 ))
-            } else if r.state != "WORKING" && r.holder.is_some() {
+            } else if holder_forbidden(&r.state) && r.holder.is_some() {
                 Some(format!(
                     "INCONSISTENT\t{}\t{} with a holder still set",
                     r.bead_id, r.state
@@ -547,6 +553,24 @@ mod tests {
             LcRow {
                 bead_id: "c".into(),
                 state: "WORKING".into(),
+                holder: Some("x".into()),
+                ..Default::default()
+            },
+            LcRow {
+                bead_id: "d".into(),
+                state: "SUBMITTED".into(),
+                holder: Some("x".into()),
+                ..Default::default()
+            },
+            LcRow {
+                bead_id: "e".into(),
+                state: "CERTIFIED".into(),
+                holder: Some("x".into()),
+                ..Default::default()
+            },
+            LcRow {
+                bead_id: "f".into(),
+                state: "IN_DELIVERY".into(),
                 holder: Some("x".into()),
                 ..Default::default()
             },
