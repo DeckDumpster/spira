@@ -332,6 +332,19 @@ mod absent_is_empty_tests {
 }
 
 #[cfg(test)]
+mod exec_changed_tests {
+    use super::exec_changed;
+
+    #[test]
+    fn a_release_that_moves_only_environment_lines_is_not_an_exec_change() {
+        let old = "[Service]\nEnvironment=SPIRA_RELEASE=/r/aaa\nExecStart=/bin/dolt sql-server\nExecStopPost=/p/store-persist pass --offline\n";
+        let new = old.replace("/r/aaa", "/r/bbb");
+        assert!(!exec_changed(old, &new));
+        assert!(exec_changed(old, &old.replace("--offline", "")));
+    }
+}
+
+#[cfg(test)]
 mod units_repo_tests {
     use super::*;
     #[test]

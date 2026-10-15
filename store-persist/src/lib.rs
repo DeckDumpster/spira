@@ -256,10 +256,35 @@ pub fn read_state(l: &Layout) -> Result<State, String> {
     State::parse(&String::from_utf8_lossy(&read(&l.state())?))
 }
 
+/// A stop-time pass copies only a database with a file written since the last finished pass
+/// began; the daemon keeps the copy that close to the live store, so a full sync is redundant.
+const MTIME_MARGIN_MS: u64 = 1000;
+
+fn newest_mtime_ms(p: &Path) -> u64 {
+    let Ok(rd) = fs::read_dir(p) else { return 0 };
+    rd.filter_map(Result::ok)
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => {
+                if e.file_name() == "git-remote-cache" || e.file_name() == "store-persist" { 0 } else { newest_mtime_ms(&e.path()) }
+            }
+            Ok(_) => e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(u64::MAX),
+            _ => 0,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 /// One pass: every database `source` serves is synced into the durable copy, with the files a
 /// backup does not carry. `server_yaml` is false only when seeding from another directory,
 /// whose server config names that directory, not `cfg.data`.
 fn pass_from(l: &Layout, source: &Path, mode: Mode, server_yaml: bool, dolt: &dyn Dolt, clock: &dyn Clock) -> Result<State, String> {
+    let incremental = mode == Mode::Offline && server_yaml;
     let conn = conn_for(source, mode, dolt)?;
     let _lock = lock(l)?;
     let live = data_dbs(source)?;
@@ -272,10 +297,14 @@ fn pass_from(l: &Layout, source: &Path, mode: Mode, server_yaml: bool, dolt: &dy
             l.dbs_dir().display()
         ));
     }
+    let covered = if incremental { read_state(l).ok().map(|s| s.start_ms.saturating_sub(MTIME_MARGIN_MS)) } else { None };
     let start_ms = clock.now_ms();
     fs::create_dir_all(l.dbs_dir()).map_err(|e| format!("cannot create {}: {e}", l.dbs_dir().display()))?;
     for db in &live {
-        dolt.sync(&conn, source, db, &l.db(db))?;
+        let untouched = covered.is_some_and(|c| held.contains(db) && newest_mtime_ms(&source.join(db).join(".dolt")) < c);
+        if !untouched {
+            dolt.sync(&conn, source, db, &l.db(db))?;
+        }
         for f in DB_META {
             let p = source.join(db).join(".dolt").join(f);
             if p.is_file() {
