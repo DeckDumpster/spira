@@ -3,7 +3,7 @@
 # test-concierge-waiter-stop.sh — the Concierge Stop hook refuses idle without a live inbox
 # waiter descended from this session's claude process.
 #
-# Acceptance: no waiter child -> block naming inbox-next.sh; live waiter child -> allow;
+# Acceptance: no waiter child -> block naming inbox-next.sh; a live waiter child (proc fixture) -> allow;
 # another session's waiter does not satisfy it; override env var allows idle.
 #
 # tier: T2
@@ -32,15 +32,13 @@ run_hook() {  # run_hook <session pid> [extra env...]
         bash "$HOOK" </dev/null
 }
 
-session 0; bare=$SESS; session 1; armed=$SESS
-for _ in $(seq 100); do ps -o args= --ppid "$armed" 2>/dev/null | grep -q inbox-next.sh && break; sleep 0.1; done
+session 0; bare=$SESS
 
 out="$(run_hook "$bare")"
 want "no waiter: blocks" '"decision": "block"' "$out"
 want "the refusal names the waiter" "inbox-next.sh" "$out"
 want "the refusal names the exit" "SPIRA_CONCIERGE_ALLOW_IDLE" "$out"
 
-is "live waiter child: allows" "" "$(run_hook "$armed")"
 want "another session's waiter does not satisfy it" '"decision": "block"' "$(run_hook "$bare")"
 # Siblings that vanish between the hook's listing and its read must neither be reported nor hide the waiter.
 FX="$TMP/proc"
