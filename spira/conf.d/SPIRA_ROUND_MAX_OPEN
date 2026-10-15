@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=Rounds that may be open at once per the round loop (round-duty.sh); 1 keeps one round at a time.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Rounds that may be open at once per the round loop (round-duty.sh); 1 keeps one round at a time.
+    : "${SPIRA_ROUND_MAX_OPEN:=1}"
+SPIRA_CONF_DEFAULT_EOF
