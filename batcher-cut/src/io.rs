@@ -1238,7 +1238,7 @@ pub const GATE_FENCES: &str = "gate-fences";
 /// itself rather than naming individual fence scripts here, so a fence added to the gate
 /// is covered with nothing to keep in sync. On a non-zero exit, writes the combined output to
 /// a file under `env.run` and returns its path as the error, for the incident this files.
-pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), String> {
+pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), FencesEnd> {
     // batch-job: runs a gate, build or forge script that takes as long as its work
     let out = Command::new("bash")
         .arg(env.home.join("gate.sh"))
@@ -1246,7 +1246,7 @@ pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), String> {
         .arg(&repo.name)
         .env("SPIRA_GATE_SUITES", "off")
         .output()
-        .map_err(|e| format!("gate.sh (fences): {e}"))?;
+        .map_err(|e| FencesEnd::Refused(format!("gate.sh (fences): {e}")))?;
     if out.status.success() {
         return Ok(());
     }
@@ -1256,7 +1256,19 @@ pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), String> {
     let _ = fs::create_dir_all(&dir);
     let path = dir.join(format!("{}-{}-fences.log", repo.name, now()));
     let _ = fs::write(&path, &text);
-    Err(path.display().to_string())
+    let at = path.display().to_string();
+    if text.contains("VERDICT=NO_VERDICT") {
+        Err(FencesEnd::Refused(at))
+    } else {
+        Err(FencesEnd::Red(at))
+    }
+}
+
+/// `Refused`: the gate judged nothing (NO_VERDICT, e.g. an unresolvable ref) — never a red.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FencesEnd {
+    Red(String),
+    Refused(String),
 }
 
 /// The runner writes `<results>/<batch-key>/<suite>.<ext>` (testenv DESIGN.md §9 F1); older
