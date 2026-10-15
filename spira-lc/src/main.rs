@@ -141,6 +141,7 @@ fn main() {
     // Every store call goes through the service that owns the store's connections; when it is
     // down the call fails naming it (client.rs). Only a declared-empty socket (direct mode, a
     // fixture with no service) or a verb never forwarded reaches the connection below.
+    let args = cutover::inline_stdin_payload(args);
     if let Some((code, out)) = client::try_socket(&args) {
         spira_config::lc_call::print_answer(code, &out);
         std::process::exit(code);

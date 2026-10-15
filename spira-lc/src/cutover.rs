@@ -170,6 +170,22 @@ pub fn cmd_show_batch(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// The service never sees this process's stdin, so `batch-progress`'s payload is read here and
+/// travels as `--json <body>`.
+pub fn inline_stdin_payload(args: Vec<String>) -> Vec<String> {
+    inline_payload_from(args, &mut std::io::stdin())
+}
+
+fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io::Read) -> Vec<String> {
+    if args.first().map(String::as_str) == Some("batch-progress") && !args.iter().any(|a| a == "--json") {
+        let mut body = String::new();
+        let _ = input.read_to_string(&mut body);
+        args.push("--json".into());
+        args.push(body);
+    }
+    args
+}
+
 /// `batch-progress <batch-id>`, a JSON object on stdin: records the running pass's live counts on
 /// the batch row. It is a reading of the pass, not a transition — no event, no version bump.
 pub fn cmd_batch_progress(args: &[String], conn: &Conn) -> (i32, String) {
@@ -177,7 +193,9 @@ pub fn cmd_batch_progress(args: &[String], conn: &Conn) -> (i32, String) {
         return (CANNOT_TELL, "batch-progress: missing <batch-id>".into());
     };
     let mut body = String::new();
-    if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut body) {
+    if let Some(inline) = flag(args, "--json") {
+        body = inline;
+    } else if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut body) {
         return (CANNOT_TELL, format!("batch-progress: stdin: {e}"));
     }
     if !serde_json::from_str::<serde_json::Value>(&body).is_ok_and(|v| v.is_object()) {
@@ -1733,4 +1751,27 @@ pub fn cmd_event_continuity(_args: &[String], conn: &Conn) -> (i32, String) {
         }
     }
     if fresh { (REFUSED, out) } else { (0, out) }
+}
+
+#[cfg(test)]
+mod progress_payload_tests {
+    #[test]
+    fn a_payload_already_inline_is_left_alone() {
+        let a: Vec<String> = ["batch-progress", "b", "--json", "{}"].map(String::from).to_vec();
+        assert_eq!(super::inline_stdin_payload(a.clone()), a);
+    }
+
+    #[test]
+    fn stdin_travels_as_the_json_flag_and_the_handler_accepts_it() {
+        let a: Vec<String> = ["batch-progress", "b"].map(String::from).to_vec();
+        let out = super::inline_payload_from(a, &mut "{\"phase\":\"suites\"}\n".as_bytes());
+        assert_eq!(out[2], "--json");
+        assert_eq!(super::flag(&out, "--json").as_deref(), Some("{\"phase\":\"suites\"}\n"));
+    }
+
+    #[test]
+    fn other_verbs_are_untouched() {
+        let a: Vec<String> = ["show", "b"].map(String::from).to_vec();
+        assert_eq!(super::inline_stdin_payload(a.clone()), a);
+    }
 }
