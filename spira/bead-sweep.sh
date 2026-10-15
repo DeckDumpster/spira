@@ -38,7 +38,7 @@ _bs_classify() {
     local pr_labels="" n
     for n in $(repo_names); do [ "$(repo_land "$n")" = pr ] && pr_labels="$pr_labels repo:$n"; done
     python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" "$pr_labels" <<'PY'
-import calendar, json, re, sys, time
+import calendar, json, re, subprocess, sys, time
 T, ask, home = sys.argv[1:4]
 hold_min, rework_min, cert_min, wait_min = (int(x) for x in sys.argv[4:8])
 pr_labels = set(sys.argv[8].split())
@@ -58,6 +58,32 @@ def review_by(reason):
         return None
 def review_text(reason):
     return REVIEW.match(reason or "")[5][:70]
+def details(x):
+    if isinstance(x, str):
+        try:
+            return details(json.loads(x))
+        except ValueError:
+            return []
+    if isinstance(x, dict):
+        return [v for k, v in x.items() if k == "detail" and isinstance(v, str)] + [d for v in x.values() for d in details(v)]
+    return [d for v in x for d in details(v)] if isinstance(x, list) else []
+def held_reason(i, reason):
+    if review_by(reason) is not None:
+        return reason
+    try:
+        # batch-job: one history read per manual hold whose row reason lost its review-by; bounded by the daemon row cadence
+        h = json.loads(subprocess.run(["timeout", "20", "spira-lc", "history", i, "--machine", "bead"], capture_output=True, text=True).stdout or "[]")
+    except (ValueError, OSError):
+        return reason
+    for e in reversed(h):
+        if e.get("event") == "Unhold" and e.get("applied"):
+            break
+        if e.get("event") == "Hold" and e.get("applied"):
+            for d in details(e.get("evidence")):
+                if review_by(d) is not None:
+                    return d
+            break
+    return reason
 rowless = []
 out ={k: [] for k in ("OK", "BLOCKED", "HELD", "ASK", "SUSPECT")}
 for i, b in content.items():
@@ -84,14 +110,14 @@ for i, r in sorted(rows.items()):
         put("SUSPECT", f"POISONED ({why})")
     elif "ask" in holds:
         put("SUSPECT", f"ASK HOLD unanswered ({why})")
-    elif "manual" in holds and review_by(r.get("reason")) is not None:
-        due = review_by(r.get("reason"))
+    elif "manual" in holds and (hr := held_reason(i, r.get("reason"))) and review_by(hr) is not None:
+        due = review_by(hr)
         if due > now:
-            put("HELD", f"manual hold until review {time.strftime('%Y-%m-%d', time.gmtime(due))}: {review_text(r.get('reason'))}")
+            put("HELD", f"manual hold until review {time.strftime('%Y-%m-%d', time.gmtime(due))}: {review_text(hr)}")
         else:
-            put("SUSPECT", f"HOLD REVIEW OVERDUE since {time.strftime('%Y-%m-%d', time.gmtime(due))} ({review_text(r.get('reason'))})")
+            put("SUSPECT", f"HOLD REVIEW OVERDUE since {time.strftime('%Y-%m-%d', time.gmtime(due))} ({review_text(hr)})")
     elif "manual" in holds and age > hold_min:
-        put("SUSPECT", f"STALE HOLD manual, over {hold_min}m ({why})")
+        put("SUSPECT", f"STALE HOLD manual, over {hold_min}m, no review-by ({why})")
     elif holds:
         put("HELD", f"holds={holds} {why}")
     elif blk and not live:
