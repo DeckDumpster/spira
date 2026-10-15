@@ -84,7 +84,7 @@ stub queue 'if [ "${1:-}" = step ]; then verdict-fixture "${2:-}"; fi; exit 0'
 
 B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 
-tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" SPIRA_GATE_WORKER=0
 landing() {

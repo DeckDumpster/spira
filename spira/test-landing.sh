@@ -181,7 +181,7 @@ landing() {
     # other_beads_on_conflicts a pattern that does not match the sp- ids used in this
     # fixture's commits, so the function returns empty and the parallel-duplicate note
     # omits the bead name it is written to carry (law-gates-run-in-a-clean-environment).
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
         SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
     # SPIRA_RUN AS A PLAIN ENV VAR TOO, not only in config: landing-pass's own process reads
