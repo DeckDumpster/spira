@@ -43,10 +43,29 @@ fn text(row: &serde_json::Value, col: &str) -> String {
     }
 }
 
+const READ_ATTEMPTS: u32 = 4;
+const READ_PAUSE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// A store read that timed out or lost its reply is retried: the store restarting under the
+/// poll is not a reason to exit "cannot tell" for a probe that runs every two minutes.
+pub fn with_retries<T, E>(attempts: u32, pause: std::time::Duration, mut read: impl FnMut() -> Result<T, E>) -> Result<T, E> {
+    let mut last = read();
+    for _ in 1..attempts {
+        if last.is_ok() {
+            break;
+        }
+        std::thread::sleep(pause);
+        last = read();
+    }
+    last
+}
+
 pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
     let now = now_epoch();
-    let overdue = conn.query(&format!("SELECT batch_id, pass, suite, deadline FROM mending WHERE state = 'MENDING' AND deadline <= {now} ORDER BY deadline"));
-    let mends = conn.query(&format!("SELECT bead_id AS bead, COUNT(*) AS n FROM mend WHERE at >= {} GROUP BY bead_id", now - DAY_S));
+    let overdue_sql = format!("SELECT batch_id, pass, suite, deadline FROM mending WHERE state = 'MENDING' AND deadline <= {now} ORDER BY deadline");
+    let mends_sql = format!("SELECT bead_id AS bead, COUNT(*) AS n FROM mend WHERE at >= {} GROUP BY bead_id", now - DAY_S);
+    let overdue = with_retries(READ_ATTEMPTS, READ_PAUSE, || conn.query(&overdue_sql));
+    let mends = with_retries(READ_ATTEMPTS, READ_PAUSE, || conn.query(&mends_sql));
     let (overdue, mends) = match (overdue, mends) {
         (Ok(o), Ok(m)) => (o, m),
         (Err(e), _) | (_, Err(e)) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
@@ -74,6 +93,16 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_read_that_fails_then_succeeds_is_retried_and_one_that_never_does_is_not_hidden() {
+        let mut n = 0;
+        let r = with_retries(4, std::time::Duration::ZERO, || { n += 1; if n < 3 { Err("deadline") } else { Ok(n) } });
+        assert_eq!(r, Ok(3));
+        let mut m = 0;
+        let r: Result<(), &str> = with_retries(4, std::time::Duration::ZERO, || { m += 1; Err("deadline") });
+        assert_eq!((r, m), (Err("deadline"), 4));
+    }
 
     #[test]
     fn more_than_two_mends_in_a_day_breaches_and_two_does_not() {
