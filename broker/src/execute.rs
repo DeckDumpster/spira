@@ -168,11 +168,12 @@ fn process_intent(
         }
     }
 
-    // 6. For pr-close: verify it's a batch PR.
+    // 6. For pr-close: verify it's a batch PR, and cancel its runs before it closes.
+    let mut cancelled = String::new();
     if verb.requires_batch_pr() {
-        match check_batch_pr(&repo_path, number) {
-            Ok(true) => {}
-            Ok(false) => return (
+        let branch = match batch_pr_branch(&repo_path, number) {
+            Ok(b) if b.starts_with("spira/queue/") => b,
+            Ok(_) => return (
                 "REFUSED".to_string(),
                 format!("PR {} is not a batch PR (branch must start with spira/queue/)", number),
             ),
@@ -180,12 +181,20 @@ fn process_intent(
                 "REFUSED".to_string(),
                 format!("cannot verify batch PR: {}", e),
             ),
+        };
+        match cancel_branch_runs(&repo_path, &branch) {
+            Ok(ids) if ids.is_empty() => {}
+            Ok(ids) => cancelled = format!("cancelled runs {} on {}; ", ids.join(","), branch),
+            Err(e) => return (
+                "REFUSED".to_string(),
+                format!("PR {} left open: {}", number, e),
+            ),
         }
     }
 
     // 7. Execute.
     match gh_exec(&verb, &repo_path, number, reason) {
-        Ok(out) => ("DONE".to_string(), out),
+        Ok(out) => ("DONE".to_string(), format!("{cancelled}{out}")),
         Err(e)  => ("REFUSED".to_string(), format!("gh exec failed: {}", e)),
     }
 }
@@ -203,7 +212,7 @@ fn czar_fence_check(_spira_home: &str, class: &str) -> Result<bool, String> {
     Ok(status.success())
 }
 
-fn check_batch_pr(repo_path: &str, number: &str) -> Result<bool, String> {
+fn batch_pr_branch(repo_path: &str, number: &str) -> Result<String, String> {
     let gh = gh_bin();
     let output = spira_config::bounded::bounded(&gh)
         .args(["pr", "view", number, "--json", "headRefName", "-q", ".headRefName"])
@@ -213,8 +222,47 @@ fn check_batch_pr(repo_path: &str, number: &str) -> Result<bool, String> {
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
     }
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(branch.starts_with("spira/queue/"))
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn active_runs(repo_path: &str, branch: &str) -> Result<Vec<String>, String> {
+    let output = spira_config::bounded::bounded(&gh_bin())
+        .args(["run", "list", "--branch", branch, "--json", "databaseId,status", "--limit", "50"])
+        .current_dir(repo_path)
+        .envs(crate::token::gh_env()?)
+        .output()
+        .map_err(|e| format!("gh run list failed: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("gh run list: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let runs: Value = serde_json::from_slice(&output.stdout).map_err(|e| format!("gh run list: unreadable: {e}"))?;
+    Ok(runs.as_array().map(Vec::as_slice).unwrap_or_default().iter()
+        .filter(|r| r["status"].as_str() != Some("completed"))
+        .filter_map(|r| r["databaseId"].as_u64().map(|i| i.to_string()))
+        .collect())
+}
+
+/// Cancel every non-completed run on a batch branch and read the list back: a cancel that
+/// failed and left its run active refuses the close, so the PR is not closed over a live run.
+fn cancel_branch_runs(repo_path: &str, branch: &str) -> Result<Vec<String>, String> {
+    let ids = active_runs(repo_path, branch)?;
+    let mut failed = Vec::new();
+    for id in &ids {
+        let ok = gh_exec(&Verb::RunCancel, repo_path, id, "").is_ok();
+        if !ok {
+            failed.push(id.clone());
+        }
+    }
+    if failed.is_empty() {
+        return Ok(ids);
+    }
+    let still = active_runs(repo_path, branch)?;
+    let stuck: Vec<String> = failed.into_iter().filter(|f| still.contains(f)).collect();
+    if stuck.is_empty() {
+        Ok(ids)
+    } else {
+        Err(format!("could not cancel run(s) {} on {}; retry the close", stuck.join(","), branch))
+    }
 }
 
 // The gh argv for each verb. Pulled out of gh_exec so it can be asserted without spawning a
