@@ -558,7 +558,7 @@ async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_all_five_sections_
     fx.cfg.lc = fake_lc(&fx.dir.to_path_buf());
     write_snapshot(&PathBuf::from(&fx.cfg.run), &now_snapshot());
     let addr = spawn(fx.cfg.clone()).await;
-    for path in FIVE.iter().chain(&["/stuck/sp-2cah6", "/rounds/dumpstar/b-live1"]) {
+    for path in FIVE.iter().chain(&["/beads/sp-2cah6", "/rounds/dumpstar/b-live1"]) {
         let (code, page) = get(addr, path).await;
         assert_eq!(code, 200, "{path}");
         assert!(page.contains("width=device-width") || *path == "/lifecycle", "{path}: viewport");
