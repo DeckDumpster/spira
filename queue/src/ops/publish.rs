@@ -335,8 +335,8 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
 fn adopt_forge_publish(w: &World, c: &Ctx, path: &std::path::Path, pfile: &std::path::Path) -> Result<bool, ()> {
     let name = &c.r.name;
     let Some(mut open) = w.forge.publish_prs(&c.s.forge, path) else {
-        w.err(format!("queue.sh publish-settle: {name}: cannot list open publish PRs on the forge"));
-        return Err(());
+        w.err(format!("queue.sh publish-settle: {name}: cannot list open publish PRs on the forge; continuing without adoption"));
+        return Ok(false);
     };
     open.sort_by_key(|(n, _)| n.parse::<u64>().unwrap_or(0));
     let Some((pr, branch)) = open.pop() else { return Ok(false) };
