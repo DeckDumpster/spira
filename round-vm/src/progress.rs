@@ -208,18 +208,18 @@ impl Progress {
                 .args(&argv[1..])
                 .arg(suite)
                 .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
             {
                 Ok(child) => {
                     let suite = suite.to_string();
+                    eprintln!("round-vm run: --on-red hook fired for {suite}");
                     std::thread::spawn(move || match child.wait_with_output() {
-                        Ok(o) => {
-                            if let Some(line) = hook_failure(&suite, o.status.code(), &o.stderr) {
-                                eprintln!("{line}");
-                            }
-                        }
+                        Ok(o) => match hook_failure(&suite, o.status.code(), &o.stderr) {
+                            Some(line) => eprintln!("{line}"),
+                            None => eprintln!("round-vm run: --on-red hook for {suite} done: {}", String::from_utf8_lossy(&o.stdout).trim()),
+                        },
                         Err(e) => eprintln!("round-vm run: --on-red hook for {suite} lost: {e}"),
                     });
                 }

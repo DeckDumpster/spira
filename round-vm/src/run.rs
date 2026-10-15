@@ -1007,7 +1007,7 @@ impl Recorder for QueueRecorder {
     fn progress(&self, batch: &str, body: &str) -> Result<(), String> {
         use std::io::Write;
         let mut cmd = command("timeout");
-        cmd.args(["-k", "5", "30", "spira-lc", "batch-progress", batch]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+        cmd.args(["-k", "5", "30", "spira-lc", "batch-progress", batch]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| format!("cannot run spira-lc: {e}"))?;
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(body.as_bytes());
@@ -1016,7 +1016,7 @@ impl Recorder for QueueRecorder {
         if out.status.success() {
             return Ok(());
         }
-        Err(format!("spira-lc batch-progress refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
+        Err(progress_refusal(batch, out.status.code(), &out.stdout, &out.stderr))
     }
 
     fn pass_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String> {
@@ -1048,6 +1048,13 @@ impl Recorder for QueueRecorder {
         }
         Err(format!("queue round suites-started refused for {batch} (rc={}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()))
     }
+}
+
+/// spira-lc states a refusal's reason on stdout, so both streams are the reason.
+fn progress_refusal(batch: &str, rc: Option<i32>, stdout: &[u8], stderr: &[u8]) -> String {
+    let reason = [stdout, stderr].map(|b| String::from_utf8_lossy(b).trim().to_string()).into_iter().filter(|r| !r.is_empty()).collect::<Vec<_>>().join(" | ");
+    let reason = if reason.is_empty() { "(spira-lc said nothing)".to_string() } else { reason };
+    format!("spira-lc batch-progress refused for {batch} (rc={}): {reason}", rc.unwrap_or(-1))
 }
 
 /// The pass's live counts onto its batch row; telemetry, so a refusal is logged and never fails the pass.
@@ -1741,6 +1748,13 @@ fn after_batch(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_progress_refusal_carries_the_reason_spira_lc_wrote_to_stdout() {
+        let m = progress_refusal("b1", Some(2), b"cannot tell: no such column\n", b"");
+        assert!(m.contains("rc=2") && m.contains("no such column"), "{m}");
+        assert!(progress_refusal("b1", Some(2), b"", b"").contains("said nothing"));
+    }
     use super::*;
     use crate::config::Fields;
     use crate::pool::{Attempt, Spawner};

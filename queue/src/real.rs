@@ -773,11 +773,20 @@ impl Scripts for RealScripts {
 /// round-vm splits it on whitespace, so a path that holds any gets no hook rather than a wrong one.
 fn on_red_hook(batch: &str, repo: &str) -> Vec<String> {
     let Ok(exe) = std::env::current_exe() else { return vec![] };
-    let cmd = format!("{} round failed {batch} {repo} --suite", exe.display());
-    if cmd.split_whitespace().count() != 6 {
-        return vec![];
+    match on_red_cmd(&exe.to_string_lossy(), batch, repo) {
+        Some(cmd) => vec!["--on-red".into(), cmd],
+        None => {
+            eprintln!("queue: no --on-red hook for {batch}: {} cannot be split on whitespace; reds are raised when the pass ends", exe.display());
+            vec![]
+        }
     }
-    vec!["--on-red".into(), cmd]
+}
+
+/// A binary replaced while this process runs reads back as `<path> (deleted)`; the path is still the new binary.
+fn on_red_cmd(exe: &str, batch: &str, repo: &str) -> Option<String> {
+    let exe = exe.strip_suffix(" (deleted)").unwrap_or(exe);
+    let cmd = format!("{exe} round failed {batch} {repo} --suite");
+    (cmd.split_whitespace().count() == 6).then_some(cmd)
 }
 
 // ---------------------------------------------------------------------------------- forge
@@ -1165,6 +1174,13 @@ impl Emit for StdEmit {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_on_red_hook_survives_a_replaced_binary_and_refuses_a_spaced_path() {
+        assert_eq!(on_red_cmd("/r/queue (deleted)", "b1", "repo").as_deref(), Some("/r/queue round failed b1 repo --suite"));
+        assert_eq!(on_red_cmd("/r/queue", "b1", "repo").as_deref(), Some("/r/queue round failed b1 repo --suite"));
+        assert_eq!(on_red_cmd("/my dir/queue", "b1", "repo"), None);
+    }
     use super::*;
 
     /// This tree's real `spira/` dir (where `conf.d` actually lives) — `$SPIRA_HOME` for any
