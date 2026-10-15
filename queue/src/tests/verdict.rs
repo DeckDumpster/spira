@@ -643,7 +643,7 @@ fn red_without_suites_or_without_a_batcher_is_not_judged() {
     let before = record(&t);
     assert_eq!(t.run(&["verdict", "spira"]), 1);
     assert!(t.err().contains("batcher-owned, judgement-ci failed: batcher: no repo"));
-    assert_eq!(record(&t), before);
+    assert_eq!(record(&t).replace("pass_recorded=h1/0/red\npasses=1\n", ""), before);
 }
 
 #[test]
@@ -1060,4 +1060,40 @@ fn a_record_naming_no_branch_closes_nothing() {
     *t.forge.queue_prs.borrow_mut() = vec![("500".into(), "spira/queue/A".into())];
     t.run(&["verdict", "spira"]);
     assert!(!has_call(&t.forge.calls, "pr-close 500"));
+}
+
+fn pass_rows(t: &T) -> Vec<serde_json::Value> {
+    let text = fs::read_to_string(tsd::family_path(&t.s().run, tsd::pass::FAMILY)).unwrap_or_default();
+    text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+}
+
+#[test]
+fn a_judged_forge_run_leaves_one_cert_pass_row_and_a_reread_leaves_no_second() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    t.lib.push_ok.set(false);
+    for _ in 0..2 {
+        t.forge.status.borrow_mut().push(Some("green\nhead-sha: h1\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 1);
+    }
+    let rows = pass_rows(&t);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!((rows[0]["repo"].as_str(), rows[0]["batch"].as_str(), rows[0]["pass"].as_str(), rows[0]["cause"].as_str()), (Some("spira"), Some("spira-1"), Some("1"), Some("green")));
+    assert_eq!(rows[0]["members"], serde_json::json!(["sp-a", "sp-b"]));
+}
+
+#[test]
+fn a_pending_run_leaves_no_row_and_a_harness_fault_or_mismatched_green_leaves_an_infra_row() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    t.forge.status.borrow_mut().push(Some("pending".into()));
+    t.run(&["verdict", "spira"]);
+    assert!(pass_rows(&t).is_empty());
+
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    t.forge.status.borrow_mut().push(Some("green\nhead-sha: hX\n".into()));
+    t.run(&["verdict", "spira"]);
+    let rows = pass_rows(&t);
+    assert_eq!((rows.len(), rows[0]["cause"].as_str(), rows[0]["verdict"].as_str()), (1, Some("infra"), Some("incomplete")));
 }
