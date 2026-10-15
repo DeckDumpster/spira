@@ -13,7 +13,7 @@ Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc reconcile-content --apply
 TimeoutStartSec=300
 StandardOutput=append:@SPIRA_RUN@/reconcile-content.log
-StandardError=append:@SPIRA_RUN@/reconcile-content.log
+StandardError=journal
 
 [Install]
 WantedBy=default.target

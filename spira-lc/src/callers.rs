@@ -1158,10 +1158,14 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     let ids: Vec<String> = terminal.keys().cloned().collect();
     let mut open = Vec::new();
     for chunk in ids.chunks(RECONCILE_CHUNK) {
-        match bd.open_among(chunk) {
-            Ok(v) => open.extend(v),
-            Err(e) => return cannot(format!("bd unreadable: {}", e.trim())),
+        let (rc, out) = m.call(&["content-rows".into(), "--ids".into(), chunk.join(",")]);
+        if rc != 0 {
+            return cannot(format!("content store unreadable: {}", out.trim()));
         }
+        let Ok(Value::Array(found)) = serde_json::from_str::<Value>(out.trim()) else {
+            return cannot("content-rows is not a JSON array".into());
+        };
+        open.extend(found.iter().filter(|r| s(r, "status") != "closed").map(|r| s(r, "id")).filter(|i| !i.is_empty()));
     }
     let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
     for id in open {
