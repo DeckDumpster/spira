@@ -2,7 +2,7 @@
 Description=Regenerate the bead mirror every six hours
 
 [Timer]
-OnBootSec=10min
+OnActiveSec=10min
 OnUnitActiveSec=6h
 AccuracySec=5min
 Persistent=true
