@@ -70,11 +70,13 @@ PATH="$TMP/bin:$PATH"
 seed sp-land READY;   seed sp-landed-succ LANDED
 seed sp-ready READY;  seed sp-ready-succ READY
 seed sp-norow READY
+seed sp-self READY
 seed sp-manual READY
 seed sp-done READY
 request sp-land sp-landed-succ
 request sp-ready sp-ready-succ
 request sp-norow sp-absent
+request sp-self sp-self
 request sp-done sp-landed-succ
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='SUPERSEDED' WHERE bead_id='sp-done'" >/dev/null 2>&1
 spira-lc hold sp-manual manual "operator parked it" tester >/dev/null 2>&1
@@ -104,6 +106,10 @@ want "the refusal is noted with the successor's state" "bdq note sp-ready supers
 
 is "successor without a row: the bead is unheld" "" "$(spira-lc holds sp-norow)"
 is "successor without a row: the bead is not superseded" READY "$(state_of sp-norow)"
+
+is "a self-supersede is unheld" "" "$(spira-lc holds sp-self)"
+is "a self-supersede does not supersede the bead" READY "$(state_of sp-self)"
+want "a self-supersede is refused as naming the bead itself" "bdq note sp-self supersede-request names the bead itself" "$(cat "$TMP/calls.log")"
 
 is "a manual hold is left alone" manual "$(spira-lc holds sp-manual)"
 nowant "a manual hold is never adjudicated" "sp-manual" "$out"

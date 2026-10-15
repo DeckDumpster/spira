@@ -74,7 +74,11 @@ _sd_adjudicate() {
     _sd_terminal "$own" && return 0
     _sd_settled "$id.failed" || _sd_say "SUPERSEDE REQUEST $id: successor $succ"
     st="$(timeout 5 spira-lc state "$succ" 2>/dev/null)"
-    if [ "$succ" = "$id" ] || [ -z "$st" ]; then
+    if [ "$succ" = "$id" ]; then
+        timeout 5 spira-lc unhold "$id" manual "$ACTOR" || { _sd_retry "$id" "unhold failed"; return 0; }
+        _sd_note "$id" "supersede-request names the bead itself ($own): a bead cannot supersede itself. Hold lifted; a merged pull request is recorded LANDED by the landing pass, not by this request."
+        _sd_say "SUPERSEDE REQUEST $id: refused, the successor is the bead itself ($own); unheld"
+    elif [ -z "$st" ]; then
         timeout 5 spira-lc unhold "$id" manual "$ACTOR" || { _sd_retry "$id" "unhold failed"; return 0; }
         _sd_note "$id" "supersede-request by $succ refused: ${st:-no lifecycle row for $succ}. Hold lifted; the bead proceeds."
         _sd_say "SUPERSEDE REQUEST $id: refused, successor $succ has no usable row; unheld"

@@ -1405,6 +1405,33 @@ fn the_pr_pass_hands_done_branches_to_pr_branch_and_proves_content_landings() {
 }
 
 #[test]
+fn the_pr_pass_records_a_merged_pr_whose_bead_never_left_the_builder() {
+    let h = H::new(LandMode::Pr);
+    h.bead("sp-lost", "in_progress", &[]);
+    h.git.add("spira/sp-lost", "t1");
+    h.git.shas.borrow_mut().insert("refs/remotes/origin/main".into(), "M".into());
+    h.tools.forge_pr_state.borrow_mut().insert("spira/sp-lost".into(), "merged".into());
+    let tools = FakePr::default();
+    let files = Files::new(&h.s.run);
+    let p = PrPass {
+        s: &h.s,
+        repos: &h.repos,
+        beads: &h.beads,
+        git: &h.git,
+        lib: &h.lib,
+        land_tools: &h.tools,
+        procs: &h.procs,
+        tools: &tools,
+        files: &files,
+        out: &h.out,
+        loud: Default::default(),
+    };
+    p.run();
+    assert!(h.lib.has("deliver_pr_merged sp-lost spira/sp-lost M"), "{:?}", h.lib.calls.borrow());
+    assert!(!h.lib.has("rebase"), "a merged PR is recorded, never rebased");
+}
+
+#[test]
 fn delivery_rows_accept_a_numeric_version() {
     assert_eq!(crate::pr::delivery_of(br#"{"delivery":{"state":"PR_OPEN","version":3}}"#), Some(("PR_OPEN".into(), "3".into())));
     assert_eq!(crate::pr::delivery_of(br#"{"delivery":{"state":"PR_OPEN","version":"4"}}"#), Some(("PR_OPEN".into(), "4".into())));

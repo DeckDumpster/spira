@@ -110,6 +110,14 @@ impl<'a> PrPass<'a> {
                 self.log(&format!("landing-pass {name}: {id} not in bead db — skipped"));
                 continue;
             };
+            if !bead.handed_on() && self.land_tools.forge_pr_state(&r.path, br).as_deref() == Some("merged") {
+                let sha = self.git.rev_parse(&r.path, &base_fq).unwrap_or_else(|| base.clone());
+                if self.lib.deliver_pr_merged(&r.path, id, br, &sha) {
+                    self.log(&format!("landing-pass {name}: {id} is {} but {br}'s pull request is merged — recorded LANDED", bead.state));
+                    acted += 1;
+                    continue;
+                }
+            }
             if !bead.handed_on() {
                 self.log(&format!("landing-pass {name}: {id} not landed — its bead is {}", bead.state));
                 continue;

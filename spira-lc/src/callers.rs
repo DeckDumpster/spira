@@ -535,10 +535,11 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
                 return Answer::out(ans.code, log_line(&line));
             }
         }
-        // A pr-mode bead has no delivery round either. A merged PR lands it only on content
-        // proof from the landing ref: a merge since reverted proves nothing.
+        // A pr-mode bead has no delivery round either. A merged PR lands it from any live state (a lost
+        // write leaves READY) and only on content proof from the landing ref: a merge since
+        // reverted proves nothing.
         if sub == "pr-merged" {
-            let waiting = show(m, &id).ok().is_some_and(|v| matches!(bead_field(&v, "state").as_str(), "SUBMITTED" | "CERTIFIED"));
+            let waiting = show(m, &id).ok().is_some_and(|v| !matches!(bead_field(&v, "state").as_str(), "" | "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE"));
             let repo_arg = a(1);
             let repo = std::path::Path::new(&repo_arg);
             // A deleted branch leaves no patch to test; the merge commit's place in the landing ref is the proof.
