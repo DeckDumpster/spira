@@ -60,6 +60,7 @@ impl Drop for Lines {
 
 impl Source for Journal {
     fn open(&self, after_cursor: Option<&str>, follow: bool) -> Result<Box<dyn Iterator<Item = Item>>, String> {
+        // batch-job: the journal follower and the backfill replay run until the journal ends or the unit stops
         let mut cmd = Command::new("journalctl");
         cmd.args(["--user", "-o", "json", "--no-pager"]);
         match (after_cursor, follow) {
@@ -77,7 +78,6 @@ impl Source for Journal {
         for id in MESSAGE_IDS {
             cmd.arg(format!("MESSAGE_ID={id}"));
         }
-        // batch-job: the journal follower and the backfill replay run until the journal ends or the unit stops
         let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().map_err(|e| format!("journalctl: {e}"))?;
         let out = child.stdout.take().ok_or("journalctl: no stdout")?;
         let (tx, rx) = mpsc::channel::<String>();
