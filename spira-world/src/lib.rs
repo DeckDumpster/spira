@@ -110,6 +110,9 @@ pub fn live_worker_paths(home: &Path, prod: &Path) -> Vec<String> {
     v
 }
 
+/// The line a drain stamp carries to say no clock lifts it; only `resume` does.
+pub const DRAIN_HOLDS_UNTIL_RESUME: &str = "holds until resume";
+
 /// The drain stamp path: `$SPIRA_RUN/world.draining`.
 pub fn drain_stamp() -> Result<PathBuf, String> {
     spira_run().map(|r| r.join("world.draining"))

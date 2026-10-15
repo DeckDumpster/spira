@@ -190,6 +190,10 @@ impl<'a> Sentinel<'a> {
             return true;
         };
         let text = std::fs::read_to_string(&dstamp).unwrap_or_default();
+        if text.lines().any(|l| l == "holds until resume") {
+            self.log(&format!("{prefix} {f}: draining — not summoning (world.sh resume to lift)"));
+            return false;
+        }
         let declared = text
             .lines()
             .find_map(|l| l.strip_prefix("expires "))

@@ -98,10 +98,6 @@ fn now_iso() -> String {
         .unwrap_or_default()
 }
 
-fn epoch_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
 /// The planes a `stop`/`start` acts on: exactly the ones named by flag, or `default` when
 /// none is. `--hard` names work and observability.
 fn selected_planes(args: &[String], default: &[Plane]) -> BTreeSet<Plane> {
@@ -649,9 +645,9 @@ fn cmd_drain(args: &[String]) -> i32 {
     let _ = std::fs::write(
         drain_stamp_or_die(),
         format!(
-            "{}\nsummons gated in summon_fayth; loop and landing still running. Lift with: {exe} resume\nexpires {}\n",
+            "{}\nsummons gated in summon_fayth; loop and landing still running. Lift with: {exe} resume\n{}\n",
             Command::new("date").arg("+%Y-%m-%d %H:%M:%S %Z").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default(),
-            epoch_secs() + dfor
+            spira_world::DRAIN_HOLDS_UNTIL_RESUME
         ),
     );
     if reboot {
@@ -663,13 +659,29 @@ fn cmd_drain(args: &[String]) -> i32 {
     let limit = if dslay { dtimeout } else { dfor };
     let mut notifier = spira_world::notice::Notifier::default();
     let mut waited: u64 = 0;
+    let captured = live_beads();
+    if !captured.is_empty() {
+        println!("spira: waiting for {} aeon(s): {}", captured.len(), captured.join(" "));
+    }
+    let mut ended: BTreeSet<String> = BTreeSet::new();
     loop {
-        let procs = live_aeon_pidfiles().len() as u64;
-        let n = procs.max(sysctl::live_aeon_units().len() as u64);
+        let now_live = live_beads();
+        for b in &captured {
+            if !now_live.contains(b) && ended.insert(b.clone()) {
+                println!("  {b} ended ({waited}s)");
+            }
+        }
+        let n = if captured.is_empty() {
+            let procs = live_aeon_pidfiles().len() as u64;
+            procs.max(sysctl::live_aeon_units().len() as u64)
+        } else {
+            captured.iter().filter(|b| now_live.contains(b)).count() as u64
+        };
         if n == 0 {
             break;
         }
-        notify_aeons(&mut notifier, "draining", waited, limit, &live_beads());
+        let pending: Vec<String> = captured.iter().filter(|b| now_live.contains(b)).cloned().collect();
+        notify_aeons(&mut notifier, "draining", waited, limit, &pending);
         if waited >= dtimeout {
             if dslay {
                 eprintln!("spira: drain deadline reached — slaying {n} aeon(s)");
@@ -697,7 +709,7 @@ fn cmd_drain(args: &[String]) -> i32 {
                 println!("spira: resume with: {exe} resume");
                 return 0;
             }
-            eprintln!("spira: NOT DRAINED — {n} aeon(s) still live after {dtimeout}s");
+            eprintln!("spira: NOT DRAINED — {n} aeon(s) still live after {dtimeout}s: {}", pending.join(" "));
             eprintln!("spira: summons REMAIN GATED. Lift with: {exe} resume");
             return 1;
         }
