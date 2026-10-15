@@ -93,6 +93,8 @@ pub struct Settings {
     pub queue_dir: PathBuf,
     pub lc_bin: Option<PathBuf>,
     pub halt_grace: u64,
+    /// `SPIRA_BATCHER_ENABLE` is not `0`: the maintenance freeze that holds every landing mode.
+    pub batcher_enable: bool,
     /// conf.sh's PATH (`SPIRA_PATH` prepended to the box's tail) — what every command
     /// landing.sh ran was looked up in. `halt` runs podman and testenv under it.
     pub path: Option<String>,
@@ -161,6 +163,7 @@ impl Settings {
             queue_dir: run.join("queue"),
             lc_bin: None,
             halt_grace: 30,
+            batcher_enable: true,
             path: None,
             bdjson_fixture: None,
             pr_refresh_max: 5,

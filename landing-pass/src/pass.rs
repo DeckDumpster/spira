@@ -253,6 +253,10 @@ impl<'a> Pass<'a> {
         if repo.mode == LandMode::Pr {
             return;
         }
+        if !self.s.batcher_enable && matches!(repo.mode, LandMode::Push | LandMode::Other(_)) {
+            self.log(&format!("{name}: SPIRA_BATCHER_ENABLE=0 — the operator lands by hand; {} branch(es) held", refs.len()));
+            return;
+        }
         let (Some(base), Some(base_fq)) = (repo.landref.clone(), repo.base_fq.clone()) else {
             self.log(&format!(
                 "CHECK6 {name}: cannot resolve the ref its branches land on — skipped. Give it a `base` in the repository map."
