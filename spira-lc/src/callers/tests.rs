@@ -631,6 +631,18 @@ fn resubmit_on_a_rework_bead_names_its_refusal() {
 }
 
 #[test]
+fn retip_moves_a_ready_bead_to_submitted_and_refuses_a_working_one() {
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Ready);
+    f.bead("sp-w", BeadState::Working);
+    let tip = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+    let a = go(&mut f, "retip", &["sp-r", tip]);
+    assert_eq!((a.code, f.state("sp-r"), f.beads["sp-r"].tip.as_deref()), (APPLIED, "SUBMITTED", Some(tip)));
+    let a = go(&mut f, "retip", &["sp-w", tip]);
+    assert_eq!((a.code, f.state("sp-w")), (REFUSED, "WORKING"));
+}
+
+#[test]
 fn every_event_verb_needs_its_arguments() {
     let mut f = Fake::default();
     for (verb, args) in [("hold", vec!["sp-a"]), ("drop", vec!["sp-a"]), ("returned", vec!["sp-a"]), ("content-on-base", vec!["sp-a"]), ("certify", vec!["sp-a", "t"]), ("deliver", vec!["push-delivered", "sp-a"]), ("state", vec![])] {

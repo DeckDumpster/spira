@@ -398,8 +398,8 @@ fn is_full_sha(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-/// The concierge's door for a hand-built fix to a bead it holds: record the new tip and move the
-/// row REWORK to SUBMITTED, so the round's full suite certifies it where the host gate cannot.
+/// The concierge's door for a hand-built fix: record the new tip and move a manually held REWORK
+/// row, or an unclaimed READY one, to SUBMITTED, so the round's full suite certifies it where the host gate cannot.
 pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, reason: &Text) -> i32 {
     let reason = match read_text(w, reason) {
         Ok(r) => r,
@@ -448,13 +448,21 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         w.err(format!("queue.sh resubmit: {id}: no lifecycle row — refused"));
         return FAIL;
     };
-    if row.state != "REWORK" {
-        w.err(format!("queue.sh resubmit: {id} is {}, not REWORK — refused, nothing changed", row.state));
-        return FAIL;
-    }
-    if !row.holds.iter().any(|h| h == "manual") {
-        w.err(format!("queue.sh resubmit: {id} is held by no one (no manual hold) — hold it first with a reason, then resubmit; refused"));
-        return FAIL;
+    match row.state.as_str() {
+        "REWORK" if !row.holds.iter().any(|h| h == "manual") => {
+            w.err(format!("queue.sh resubmit: {id} is held by no one (no manual hold) — hold it first with a reason, then resubmit; refused"));
+            return FAIL;
+        }
+        "REWORK" | "READY" => {}
+        "WORKING" => {
+            let holder = row.holder.as_deref().filter(|h| !h.is_empty()).unwrap_or("<unknown>");
+            w.err(format!("queue.sh resubmit: {id} is held by a live aeon ({holder}) — refused, nothing changed"));
+            return FAIL;
+        }
+        state => {
+            w.err(format!("queue.sh resubmit: {id} is {state}, not REWORK or READY — refused, nothing changed"));
+            return FAIL;
+        }
     }
     let local = format!("refs/heads/{branch}");
     if !w.git.update_ref(&path, &local, tip, None) || w.git.rev_parse(&path, &local).as_deref() != Some(tip) {
@@ -465,8 +473,13 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         w.err(format!("queue.sh resubmit: spira-lc refused {id} (rc={rc}): {e}"));
         return FAIL;
     }
+    let branch = format!("spira/{id}");
+    if !w.git.branch_set(&path, &branch, tip, true) {
+        w.err(format!("queue.sh resubmit: {id} re-tipped to {tip} but cannot point {branch} at it — set it by hand"));
+        return FAIL;
+    }
     landing_log(&c.s.run, &format!("QUEUE RESUBMIT {} branch={id} tip={tip} by={by} reason={}", w.clock.now(), reason.lines().next().unwrap_or("")));
-    w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, REWORK -> SUBMITTED; admit it with `queue round open --members {id}:{tip}` — the round certifies it"));
+    w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; admit it with `queue round open --members {id}:{tip}` — the round certifies it", row.state));
     OK
 }
 
