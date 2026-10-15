@@ -220,6 +220,7 @@ drain_out="$(MOCK_AEONS= MOCK_IS_ACTIVE=active MOCK_FORCE= \
               MOCK_ONESHOT_SVC=spira-sentinel-prod.service inst)"
 drain_rc=$?
 drain_log="$(cat "$MOCK_LOG")"
+[ "$drain_rc" = 0 ] || printf "DBG %s\n" "$drain_out"
 
 isz     "drain: exit 0 after draining the oneshot"                  "$drain_rc"
 want    "drain: is-active was queried on the backing service"        "is-active spira-sentinel-prod.service" "$drain_log"
