@@ -955,6 +955,14 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
     } else {
         "a different failing step on the re-run"
     };
+    if rerun_at.is_some() && first == step && b.members.len() == 1 {
+        let mut lines: Vec<String> = log.lines().rev().take(5).map(str::to_string).collect();
+        lines.reverse();
+        if lines.is_empty() {
+            lines.push(format!("failed step: {shown}"));
+        }
+        return eject_red_members(w, c, b, &[(b.members[0].clone(), lines)], bo);
+    }
     let evidence = format!("no suite annotations ({same}); failed step: {shown}; log tail:\n{log}");
     w.forge.pr_comment(&c.s.forge, b.path, &b.pr, &crate::ident::bounded_text(&format!("Batch abandoned: {evidence}")));
     w.scripts.mail_operator(
