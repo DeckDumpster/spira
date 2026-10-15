@@ -312,7 +312,6 @@ round_certify_wall_secs = 900
 round_marker_max_age = 10800
 round_min = 8
 round_max_open = 1
-round_ec2_vcpu_quota = 0
 round_vm_cache_home = "/fixture/userhome/.cargo"
 round_vm_host_addr = "auto"
 round_vm_host_key = "/fixture/userhome/spira/run/round-vm/host_key"

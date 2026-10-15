@@ -56,13 +56,10 @@ _rd_round_state() {
     fi
 }
 
-# A further round while others are open needs a free slot and EC2 vCPU headroom for one more VM.
+# Open rounds are bounded by the cap alone; VM capacity is the scheduler's concern, never checked here.
 _rd_may_cut() {
     [ "$_rd_state" = none ] && return 0
-    [ "$_rd_state" = open ] || return 1
-    [ "$_rd_open" -lt "$SPIRA_ROUND_MAX_OPEN" ] || return 1
-    [ "$SPIRA_ROUND_EC2_VCPU_QUOTA" -gt 0 ] || return 1
-    [ $(( (_rd_open + 1) * SPIRA_ROUND_VM_VCPUS )) -le "$SPIRA_ROUND_EC2_VCPU_QUOTA" ]
+    [ "$_rd_state" = open ] && [ "$_rd_open" -lt "$SPIRA_ROUND_MAX_OPEN" ]
 }
 
 _rd_tick() {

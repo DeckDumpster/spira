@@ -457,5 +457,4 @@ aeon_warm_base
 aeon_warm_cap_mib
 batcher_forge_enable
 queue_rounds_max
-round_ec2_vcpu_quota
 round_max_open

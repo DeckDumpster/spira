@@ -1,7 +1,0 @@
-TYPE=u32
-GROUP=round
-DOC=EC2 vCPUs the account may run for round VMs; round-duty.sh calls another round due only while open rounds x SPIRA_ROUND_VM_VCPUS fit under it. 0 = unknown, no further round is called due.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # EC2 vCPUs the account may run for round VMs; 0 = unknown, so no further round is called due.
-    : "${SPIRA_ROUND_EC2_VCPU_QUOTA:=0}"
-SPIRA_CONF_DEFAULT_EOF

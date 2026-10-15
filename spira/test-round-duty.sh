@@ -44,20 +44,18 @@ nowant "certified forge beads alone raise nothing" "ROUND DUE" "$(run watch --in
 : > "$TMP/spiraon"
 
 mrun() {
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 SPIRA_REPO_MAP="$TMP/rows" SPIRA_ROUND_VM_VCPUS=16 SPIRA_ROUND_MAX_OPEN=1 SPIRA_ROUND_EC2_VCPU_QUOTA=0 "$@"
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 SPIRA_REPO_MAP="$TMP/rows" SPIRA_ROUND_MAX_OPEN=1 "$@"
     env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/repo" \
         bash "$HERE/round-duty.sh" watch --interval 1 --ticks 1 2>&1
 }
 echo open > "$TMP/qmode"
 nowant "one open round with the default cap of one raises nothing" "ROUND DUE" "$(mrun)"
-out="$(mrun SPIRA_ROUND_MAX_OPEN=2 SPIRA_ROUND_EC2_VCPU_QUOTA=32)"
-want "a free slot and vCPU headroom call a second round due" "ROUND DUE: 1 certified" "$out"
+out="$(mrun SPIRA_ROUND_MAX_OPEN=2)"
+want "a free slot calls a second round due" "ROUND DUE: 1 certified" "$out"
 want "ROUND DUE reports the open count" "1 of 2 rounds open" "$out"
-nowant "an unknown vCPU quota calls no further round due" "ROUND DUE" "$(mrun SPIRA_ROUND_MAX_OPEN=2)"
-nowant "a quota too small for another VM calls no round due" "ROUND DUE" "$(mrun SPIRA_ROUND_MAX_OPEN=2 SPIRA_ROUND_EC2_VCPU_QUOTA=31)"
 echo two > "$TMP/qmode"
-nowant "two open rounds fill a cap of two" "ROUND DUE" "$(mrun SPIRA_ROUND_MAX_OPEN=2 SPIRA_ROUND_EC2_VCPU_QUOTA=96)"
-want "the third slot opens once the cap allows" "2 of 3 rounds open" "$(mrun SPIRA_ROUND_MAX_OPEN=3 SPIRA_ROUND_EC2_VCPU_QUOTA=96)"
+nowant "two open rounds fill a cap of two" "ROUND DUE" "$(mrun SPIRA_ROUND_MAX_OPEN=2)"
+want "the third slot opens once the cap allows" "2 of 3 rounds open" "$(mrun SPIRA_ROUND_MAX_OPEN=3)"
 mrun >/dev/null
 
 for m in fail garbage; do
