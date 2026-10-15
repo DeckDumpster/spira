@@ -129,6 +129,8 @@ fn gather_state_machine(s: &mut Snapshot) {
                     pr: num(&b["pr"]).unwrap_or(0),
                     phase: text(&b["phase"]),
                     progress: PassProgress::from_json(&b["progress"]),
+                    run_url: b["progress"]["run_url"].as_str().unwrap_or("").to_string(),
+                    log: b["progress"]["log"].as_str().unwrap_or("").to_string(),
                     eject_at: Vec::new(),
                     ejected: b["ejected"]
                         .as_array()
@@ -381,6 +383,7 @@ fn gather() -> Snapshot {
     // through spira-lc (cockpit-no-round-files), so the bar stays empty until they are.
     s.progress = None;
     s.ask_label = spira_config::process::cfg("SPIRA_ASK_LABEL").map(|v| v.trim().to_string()).unwrap_or_default();
+    s.forge_base = spira_config::process::cfg("SPIRA_FORGE_REPO").ok().and_then(|r| r.trim().split_once('/').map(|(o, _)| format!("https://github.com/{o}"))).unwrap_or_default();
     gather_menders(&mut s);
     s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s.failures = s.errors.len() as u64;
