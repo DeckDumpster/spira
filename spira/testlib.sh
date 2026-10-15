@@ -807,7 +807,21 @@ lc_content_shim() {
 #!/usr/bin/env bash
 if [ "${1:-}" = content-rows ]; then
     bd="${SPIRA_BD:-$(spira-config get spira.bd 2>/dev/null)}"; db="${SPIRA_DB:-$(spira-config get spira.db 2>/dev/null)}"
-    BD_IGNORE_SCHEMA_SKEW=1 exec "${bd:-bd}" ${db:+-C "$db"} list --id "$3" --status all --limit 0 --json
+    shift; ids=; ext=
+    while [ $# -gt 0 ]; do
+        case "$1" in --ids) ids="${2:-}"; shift 2 ;; --external-contains) ext="${2:-}"; shift 2 ;; *) shift ;; esac
+    done
+    if [ -n "$ext" ]; then
+        BD_IGNORE_SCHEMA_SKEW=1 "${bd:-bd}" ${db:+-C "$db"} list --all --limit 0 --json | EXT="$ext" python3 -c '
+import json, os, sys
+print(json.dumps([r for r in json.loads(sys.stdin.read() or "[]") if os.environ["EXT"] in (r.get("external_ref") or "")]))'
+        exit $?
+    fi
+    # content-rows answers `[]` for no match, as the real reader does; a bd that prints nothing
+    # for an empty result would otherwise hand the caller unparseable empty output.
+    out="$(BD_IGNORE_SCHEMA_SKEW=1 "${bd:-bd}" ${db:+-C "$db"} list --id "$ids" --status all --limit 0 --json)" || exit $?
+    printf '%s\n' "${out:-[]}"
+    exit 0
 fi
 for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done
 exit 2

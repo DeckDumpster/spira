@@ -28,6 +28,9 @@ testdb_require test-config-compat-master-base
 TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up cfgcompatmaster || skip "testdb not available"
 lcfix_up || { echo "test-config-compat-master-base: could not build a lifecycle fixture"; exit 1; }
+# The batcher reads bead content through `spira-lc content-rows` (sp-jf7spl); the lifecycle
+# fixture server holds no content store, so the shim answers it from this suite's bd fixture.
+lc_content_shim "$TMP/lcshim"; export PATH="$TMP/lcshim:$PATH"
 
 # The batcher is the tree's own build, by name on this suite's PATH (sp-gypjk).
 

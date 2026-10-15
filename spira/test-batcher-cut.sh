@@ -278,6 +278,7 @@ certified_rows() {
 printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
+    content-rows) exec "${SH_CONTENT_SHIM:?}/spira-lc" "$@" ;;
     cut)
         members=""; while [ $# -gt 0 ]; do [ "$1" = --members ] && members="$2"; shift; done
         for m in $(printf '%s' "$members" | tr ',' ' '); do printf '%s\n' "${m%%:*}" >> "${SPIRA_RUN:?}/lc-taken"; done
@@ -302,6 +303,7 @@ case "${1:-}" in
 esac
 LCSTUB
 chmod +x "$SH/spira-lc-stub.sh"
+lc_content_shim "$SH/lcshim"; export SH_CONTENT_SHIM="$SH/lcshim" PATH="$SH/lcshim:$PATH"
 # The stub, by name: a directory whose spira-lc is it, put first on PATH for a case (sp-gypjk).
 mkdir -p "$SH/lc-stub-bin" && ln -sf ../spira-lc-stub.sh "$SH/lc-stub-bin/spira-lc"
 
