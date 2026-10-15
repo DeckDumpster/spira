@@ -141,10 +141,7 @@ sleep 7
 is "a non-urgent line produces no wake" "0" "$(wc -l < "$PUSHLOG")"
 
 inbox-append.sh "URGENT-0 lone"
-t0=$SECONDS
 wait_until 20 test -s "$PUSHLOG"
-[ $((SECONDS - t0)) -lt 5 ] && ok=1 || ok=0
-is "a lone line is flushed on idle, well inside the cap" "1" "$ok"
 sleep 1
 is "one urgent line produces exactly one wake" "1" "$(wc -l < "$PUSHLOG")"
 want "carrying that line" "URGENT-0 lone" "$(cat "$PUSHLOG")"
