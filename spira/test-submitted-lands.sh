@@ -168,7 +168,7 @@ run_aeon() {
     [ "$(cat "$TMP/submit.rc" 2>/dev/null)" = 0 ] && return 0
     { cat "$TMP/submit.out" 2>/dev/null; tail -n 15 "$TMP/aeon.out"; } | sed 's/^/# /'
 }
-tl_config SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh"
+tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh"
 landing() {
     rm -f "$SPIRA_RUN/landing.progress" "$TMP/gate-state"
     SPIRA_REPO="$REPO" \
