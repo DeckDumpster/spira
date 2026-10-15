@@ -7,7 +7,7 @@ One row per landing-path mechanism, one column per land mode. A cell is exactly 
 - `gap:<bead>` — the mechanism is missing on that mode; the bead owns the outcome.
 
 `spira/test-landing-parity.sh` fails on an empty cell, a `test:` that names nothing real, an `n/a:` with no reason and
-a bare `gap`. `PARITY_STRICT=1` fails on every `gap:` as well. Add a mechanism or a mode by adding the row or column.
+a bare `gap`. `PARITY_STRICT=1` fails on every `gap:` as well. Add a mechanism or a mode by adding the row or column; `spira/suites.sh list` shows where the checker runs.
 
 | mechanism | queue.local | queue.forge | pr | push |
 |---|---|---|---|---|
