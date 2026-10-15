@@ -100,6 +100,21 @@ impl Files {
         let _ = atomic_write(&self.backoff_file(branch), &format!("{tip}\n{now}\n"));
     }
 
+    fn round_deferred_file(&self, branch: &str) -> PathBuf {
+        self.run.join("gate-deferred").join(branch_key(branch))
+    }
+
+    /// Record that the host gate could not judge `branch` at `tip` within its cap: the round
+    /// is its trial, and the same tip is not gated again.
+    pub fn defer_to_round(&self, branch: &str, tip: &str) {
+        let _ = fs::create_dir_all(self.run.join("gate-deferred"));
+        let _ = atomic_write(&self.round_deferred_file(branch), &format!("{tip}\n"));
+    }
+
+    pub fn deferred_to_round(&self, branch: &str, tip: &str) -> bool {
+        fs::read_to_string(self.round_deferred_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
+    }
+
     /// True while `window` seconds have not passed since [`Files::back_off`] for this very tip.
     pub fn backing_off(&self, branch: &str, tip: &str, now: u64, window: i64) -> bool {
         let Ok(t) = fs::read_to_string(self.backoff_file(branch)) else { return false };

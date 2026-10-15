@@ -722,6 +722,22 @@ fn a_base_fix_for_a_fence_red_base_certifies_on_a_fully_green_branch() {
 }
 
 #[test]
+fn an_over_cap_gate_is_deferred_to_the_round_once_and_never_mailed() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let out = "gate: VERDICT=FAIL reason=over-cap branch=b repo=spira suite=- (killed)\n";
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (1, out.into()));
+    h.run();
+    assert!(h.logged("deferred to round: over-cap"));
+    assert!(!h.lib.has("noverdict"), "an over-cap branch is the round's, not a notice");
+    assert!(!h.lib.has("reopen"));
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (0, "gate: VERDICT=PASS reason=ok branch=b repo=spira suite=-\n".into()));
+    h.run();
+    assert!(h.logged("was deferred to round: over-cap — not gated again"));
+    assert!(!h.mailbox().contains("certified spira/sp-a"), "the second pass on the same tip did not gate");
+}
+
+#[test]
 fn no_verdict_is_counted_by_the_seam_and_never_reopens() {
     let h = H::new(LandMode::Queue);
     h.closed("sp-a", "t1");
