@@ -217,9 +217,17 @@ impl DiffScope {
 
     fn parse(&mut self, diff: &str) {
         let mut cur: Option<String> = None;
+        let mut old: Option<String> = None;
         for l in diff.lines() {
-            if let Some(p) = l.strip_prefix("+++ ") {
+            if let Some(p) = l.strip_prefix("--- ") {
+                old = p.strip_prefix("a/").map(str::to_string);
+            } else if let Some(p) = l.strip_prefix("+++ ") {
                 cur = p.strip_prefix("b/").map(str::to_string);
+                if p == "/dev/null" {
+                    if let Some(o) = old.take() {
+                        self.files.entry(o).or_insert_with(|| Some(Vec::new()));
+                    }
+                }
                 if let Some(c) = &cur {
                     self.files.entry(c.clone()).or_insert_with(|| Some(Vec::new()));
                 }

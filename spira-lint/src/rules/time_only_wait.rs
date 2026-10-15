@@ -258,9 +258,9 @@ impl Rule for TimeOnlyWait {
                 let fix = if now == 0 { "remove the line".to_string() } else { format!("lower it to {now}") };
                 out.push(Finding {
                     rule: NAME,
-                    path: ALLOW_FILE.to_string(),
-                    line: Some(*line),
-                    message: format!("allows {n} for {path}, which now has {now} — {fix} (the list only shrinks)"),
+                    path: path.clone(),
+                    line: None,
+                    message: format!("{ALLOW_FILE}:{line} allows {n} for {path}, which now has {now} — {fix} (the list only shrinks)"),
                 });
             }
         }
@@ -337,7 +337,7 @@ mod tests {
         t.write(ALLOW_FILE, "# h\n1 spira/old.sh sp-abc\n1 spira/fixed.sh sp-abc\n");
         assert_eq!(
             run(&t, &["spira/old.sh", "spira/fixed.sh"]).unwrap(),
-            vec!["time-only-wait: spira-lint/time-only-wait-allow:3: allows 1 for spira/fixed.sh, which now has 0 — remove the line (the list only shrinks)"]
+            vec!["time-only-wait: spira/fixed.sh: spira-lint/time-only-wait-allow:3 allows 1 for spira/fixed.sh, which now has 0 — remove the line (the list only shrinks)"]
         );
         t.write(ALLOW_FILE, "1 spira/old.sh\n");
         assert!(run(&t, &["spira/old.sh"]).is_err());

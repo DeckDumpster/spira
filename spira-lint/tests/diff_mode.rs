@@ -68,3 +68,56 @@ fn an_uncommitted_new_file_is_judged() {
     assert_eq!(rc, 1, "{out}");
     assert!(out.contains("a/src/new.rs:2"), "{out}");
 }
+
+fn lint_rule(dir: &Path, rule: &str, flags: &[&str]) -> (i32, String) {
+    let o = Command::new(env!("CARGO_BIN_EXE_spira-lint"))
+        .args(["--root", dir.to_str().unwrap(), "--only", rule])
+        .args(flags)
+        .env_remove("SPIRA_GATE_BASE")
+        .output()
+        .unwrap();
+    (o.status.code().unwrap(), String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+fn wait_fixture() -> testkit::TempDir {
+    let d = testkit::TempDir::new("spira-lint-diff-stale-allow");
+    std::fs::create_dir_all(d.join("spira")).unwrap();
+    std::fs::create_dir_all(d.join("spira-lint")).unwrap();
+    std::fs::write(d.join("spira/probe.sh"), "#!/bin/bash\nsleep 3\ntrue\n").unwrap();
+    std::fs::write(d.join("spira/other.sh"), "#!/bin/bash\ntrue\n").unwrap();
+    std::fs::write(d.join("spira-lint/time-only-wait-allow"), "# h\n1 spira/probe.sh sp-x\n").unwrap();
+    git(&d, &["init", "-q", "-b", "main"]);
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-q", "-m", "base"]);
+    git(&d, &["checkout", "-q", "-b", "branch"]);
+    d
+}
+
+#[test]
+fn a_member_that_drops_a_files_waits_below_its_allowance_reds_on_its_own_diff() {
+    let d = wait_fixture();
+    std::fs::write(d.join("spira/probe.sh"), "#!/bin/bash\ntrue\n").unwrap();
+    git(&d, &["commit", "-qam", "convert the wait"]);
+    let (rc, out) = lint_rule(&d, "time-only-wait", &["--diff", "main"]);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("spira/probe.sh") && out.contains("which now has 0"), "{out}");
+}
+
+#[test]
+fn deleting_the_file_an_allowance_names_reds_the_member_that_deleted_it() {
+    let d = wait_fixture();
+    git(&d, &["rm", "-q", "spira/probe.sh"]);
+    git(&d, &["commit", "-qm", "delete the file"]);
+    let (rc, out) = lint_rule(&d, "time-only-wait", &["--diff", "main"]);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("which now has 0"), "{out}");
+}
+
+#[test]
+fn an_edit_above_an_allowlisted_wait_does_not_move_the_finding_into_the_diff() {
+    let d = wait_fixture();
+    std::fs::write(d.join("spira-lint/time-only-wait-allow"), "# h\n# more\n1 spira/probe.sh sp-x\n").unwrap();
+    git(&d, &["commit", "-qam", "reflow the header"]);
+    let (rc, out) = lint_rule(&d, "time-only-wait", &["--diff", "main"]);
+    assert_eq!((rc, out.as_str()), (0, ""));
+}
