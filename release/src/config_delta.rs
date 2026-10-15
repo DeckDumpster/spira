@@ -302,6 +302,7 @@ fn registry_keys(rel: &Path) -> Result<Vec<spira_config::registry::RegistryKey>,
 /// to apply.
 pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Option<Delta>) -> Result<Option<Delta>, String> {
     let mut d = delta.unwrap_or_default();
+    let mut unset = Vec::new();
     let known: std::collections::BTreeSet<String> = match active {
         Some(a) => registry_keys(a)?.into_iter().map(|k| k.name).collect(),
         None => Default::default(),
@@ -309,6 +310,10 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
     for k in registry_keys(rel)? {
         let path = format!("spira.{}", k.name.strip_prefix("SPIRA_").unwrap_or(&k.name).to_ascii_lowercase());
         if known.contains(&k.name) || d.added.contains_key(&path) || d.removed.contains(&path) || original.iter().any(|t| get(t, &path).is_some()) {
+            continue;
+        }
+        if k.required && active.is_some() {
+            unset.push(format!("{} (config key {path}): {}", k.name, k.doc));
             continue;
         }
         match literal_default(&k) {
@@ -320,6 +325,12 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
             // every round VM, which has no active release (r-auto-107 and r-auto-110, 2026-10-10).
             Err(_) => {}
         }
+    }
+    if !unset.is_empty() {
+        return Err(format!(
+            "this release makes config keys REQUIRED that this box does not set, and its config delta does not set them; set each in the config (or ship the value in config-delta.toml) and retry; nothing changed:\n  {}",
+            unset.join("\n  ")
+        ));
     }
     Ok((!d.is_empty()).then_some(d))
 }

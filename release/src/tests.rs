@@ -1918,6 +1918,50 @@ fn a_registry_key_with_no_default_is_left_out_and_activation_proceeds() {
     assert!(!after.contains("new_key") && !after.contains("computed_key"), "nothing invented for an optional key: {after}");
 }
 
+fn required_key() -> (String, String, bool) {
+    (
+        "spira/conf.d/SPIRA_REQ_KEY".into(),
+        "TYPE=string\nGROUP=test\nDOC=Where the req thing lives.\nSCHEMA=REQUIRED: the req thing.\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # NO DEFAULT\nSPIRA_CONF_DEFAULT_EOF\n".into(),
+        false,
+    )
+}
+
+#[test]
+fn a_new_required_key_the_config_lacks_refuses_activation_naming_it_and_leaves_current() {
+    let mut g = FakeGit { validator: true, ..Default::default() };
+    g.extra_only.push((B.to_string(), required_key().0, required_key().1));
+    let w = World::with_git(g);
+    let cfg = Path::new(&w.cfg.toml_spec().unwrap()).to_path_buf();
+    let before = "[spira]\nid_prefix = \"sp\"\n";
+    file(&cfg, before);
+    build_with_schema(&w, A, &[], &[]);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    let e = activate::activate(&ctx(&w, &sc), B, None).unwrap_err();
+    assert!(e.contains("SPIRA_REQ_KEY") && e.contains("spira.req_key") && e.contains("Where the req thing lives") && e.contains("nothing changed"), "{e}");
+    assert_eq!(w.current().as_deref(), Some(A));
+    assert_eq!(cfg_text(&w), before);
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\nreq_key = \"/x\"\n");
+    activate::activate(&ctx(&w, &sc), B, None).expect("with the key set the release activates");
+    assert_eq!(w.current().as_deref(), Some(B));
+}
+
+#[test]
+fn a_new_required_key_the_delta_sets_does_not_refuse_activation() {
+    let mut g = delta_git("[added]\n\"spira.req_key\" = \"/dev/shm/x\"\n");
+    g.extra_only.push((B.to_string(), required_key().0, required_key().1));
+    let w = World::with_git(g);
+    let cfg = Path::new(&w.cfg.toml_spec().unwrap()).to_path_buf();
+    file(&cfg, "[spira]\nid_prefix = \"sp\"\n");
+    build_with_schema(&w, A, &[], &[]);
+    build_with_schema(&w, B, &["req_key"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    assert!(cfg_text(&w).contains("req_key"), "{}", cfg_text(&w));
+}
+
 #[test]
 fn a_failed_switch_puts_the_config_back() {
     let w = World::with_git(delta_git(DELTA_BOTH));
