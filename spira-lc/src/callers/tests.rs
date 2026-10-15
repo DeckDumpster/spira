@@ -29,6 +29,8 @@ struct Fake {
     /// bead id -> the `(batch, state)` pairs it is a member of, and the `eject-member` calls made.
     batches: BTreeMap<String, Vec<(String, String)>>,
     ejects: Vec<Vec<String>>,
+    /// bead id -> content status, as `content-rows` reports it.
+    content: BTreeMap<String, String>,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -78,6 +80,17 @@ impl Machine for Fake {
                     (0, json!({"bead": Self::row_json(r), "delivery": d}).to_string())
                 }
             },
+            "content-rows" => {
+                let ids = flag(args, "--ids").unwrap_or_default();
+                let only_open = args.iter().any(|a| a == "--open");
+                let rows: Vec<Value> = ids
+                    .split(',')
+                    .filter_map(|i| self.content.get(i).map(|st| (i, st)))
+                    .filter(|(_, st)| !only_open || st.as_str() != "closed")
+                    .map(|(i, st)| json!({"id": i, "status": st}))
+                    .collect();
+                (0, Value::Array(rows).to_string())
+            }
             "list" => {
                 let st = flag(args, "--state");
                 let hold = flag(args, "--hold");
@@ -1029,6 +1042,7 @@ fn reconcile_content_closes_the_store_bead_of_every_terminal_state_and_only_thos
     ] {
         f.bead(id, st);
         b.rows.insert(id.into(), ("task".into(), None));
+        f.content.insert(id.into(), "open".into());
     }
 
     let dry = reconcile_content(&[], &mut f, &mut b);
@@ -1046,17 +1060,38 @@ fn reconcile_content_closes_the_store_bead_of_every_terminal_state_and_only_thos
         assert!(reason.contains(&format!("the lifecycle row is {state}")), "{id}: {reason}");
     }
     assert!(f.events.is_empty(), "the row is never written");
+    for (id, _) in &b.closed {
+        f.content.insert(id.clone(), "closed".into());
+    }
     assert_eq!(reconcile_content(&v(&["--apply"]), &mut f, &mut b).stdout, "reconcile-content: 0 closed");
 }
 
 #[test]
-fn reconcile_content_cannot_tell_when_bd_is_down_and_rejects_unknown_flags() {
+fn reconcile_content_reads_no_bd_and_cannot_tell_when_the_store_is_down() {
     let mut f = Fake::default();
     f.bead("sp-done", BeadState::Done);
+    f.content.insert("sp-done".into(), "open".into());
     let mut b = FakeBd::default();
-    b.rows.insert("sp-done".into(), ("task".into(), None));
     b.down = true;
-    assert_eq!(reconcile_content(&v(&["--apply"]), &mut f, &mut b).code, CANNOT_TELL);
+    let ans = reconcile_content(&v(&[]), &mut f, &mut b);
+    assert_eq!(ans.code, APPLIED, "a down bd must not matter to a read: {}", ans.stderr);
+    assert!(ans.stdout.contains("would close sp-done"), "{}", ans.stdout);
+    let mut down = Fake::default();
+    down.bead("sp-done", BeadState::Done);
+    down.content.insert("sp-done".into(), "open".into());
+    struct Refusing(Fake);
+    impl Machine for Refusing {
+        fn call(&mut self, args: &[String]) -> (i32, String) {
+            if args[0] == "content-rows" {
+                return (CANNOT_TELL, "cannot tell: deadline".into());
+            }
+            self.0.call(args)
+        }
+    }
+    let mut r = Refusing(down);
+    let ans = reconcile_content(&v(&["--apply"]), &mut r, &mut b);
+    assert_eq!(ans.code, CANNOT_TELL);
+    assert!(ans.stderr.contains("content store unreadable: cannot tell: deadline"), "{}", ans.stderr);
     assert!(b.closed.is_empty());
     assert_eq!(reconcile_content(&v(&["--bogus"]), &mut f, &mut b).code, 2);
 }
