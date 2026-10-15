@@ -94,7 +94,7 @@ closed_branch() {
 
 runpass() {  # runpass <land|pr>
     rm -f "$RUN/landing.progress"
-    tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_GATE_WORKER=0 SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_DB="$SPIRA_DB" \
+    tl_config SPIRA_BATCHER_ENABLE="${BATCHER_ENABLE:-1}" SPIRA_GATE_WORKER=0 SPIRA_RUN="$RUN" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_DB="$SPIRA_DB" \
         SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp SPIRA_REPO_MAP="$SH/land-map" SPIRA_GH="$SH/gh"
     SPIRA_HOME="$SH" SPIRA_REPO="$REPO" PATH="$SH:$PATH" landing-pass "$1" 2>&1
 }
@@ -155,5 +155,15 @@ nowant  "pr: no land event"                     "kind: bead.landed" "$(events)"
 out="$(runpass pr)"
 is      "pr: a second pass opens no second pull request" 1 "$(grep -c '^pr-create' "$FORGE_LOG")"
 want    "pr: the second pass finds the pull request already open" "pull request 41 open on spira/sp-prd" "$out"
+
+echo
+echo "pr mode under SPIRA_BATCHER_ENABLE=0: the walk is held, then resumes"
+fixture pr
+closed_branch sp-frz
+out="$(BATCHER_ENABLE=0 runpass pr)"
+want    "freeze: the pass says the walk is held" "the pr walk is held" "$out"
+nowant  "freeze: no pull request opened"        "pr-create" "$(cat "$FORGE_LOG")"
+out="$(runpass pr)"
+want    "freeze lifted: the pull request is opened" "opened a pull request for spira/sp-frz" "$out"
 
 tl_summary
