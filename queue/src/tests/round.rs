@@ -1322,6 +1322,7 @@ fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
     assert!(!t.lc.has("\"GateRed\""), "{:?}", t.lc.calls.borrow());
 
     assert_eq!(t.run(&["rework", "sp-c", "--by=concierge", "--reason=red on test-install-aeons"]), 0, "{}", t.err());
-    assert!(t.lc.has("event bead sp-c ") && t.lc.has("\"tip\":\"tc\""), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.has("event bead sp-c "), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.contains("\"tip\":\"tc\"")), "{:?}", t.lc.calls.borrow());
     assert_eq!(t.lc.bead_state("sp-c").unwrap().0, "REWORK");
 }
