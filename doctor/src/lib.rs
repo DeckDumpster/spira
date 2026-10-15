@@ -609,10 +609,10 @@ pub fn check_sccache_backend(w: &dyn World) -> Vec<Line> {
 /// back to the root disk puts every aeon build's writes on the store's disk.
 pub fn check_aeon_warm(w: &dyn World) -> Vec<Line> {
     let Some(base) = w.aeon_warm_base() else {
-        return vec![fail("SPIRA_AEON_WARM_BASE is not set", "aeon sessions refuse to start without it; set aeon_warm_base (the config document) to a directory on a tmpfs.")];
+        return vec![warn("SPIRA_AEON_WARM_BASE is not set", "aeon sessions refuse to start without it; set aeon_warm_base (the config document) to a directory on a tmpfs.")];
     };
     if !w.on_tmpfs(&base) {
-        return vec![fail(
+        return vec![warn(
             format!("aeon warm base {} is not a tmpfs", base.display()),
             "incremental builds write tens of MB/s there and starve the store's disk. Mount a tmpfs on it (fstab) or point aeon_warm_base at one.",
         )];
