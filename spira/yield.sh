@@ -150,6 +150,14 @@ bead_of() {
     esac
 }
 
+# load <file> -> REC filled from one read of the file; no subshell per field.
+declare -A REC=()
+load() {
+    local k v
+    REC=()
+    while IFS='=' read -r k v; do REC["$k"]="$v"; done < "$1" 2>/dev/null
+}
+
 prune() {
     [ -d "$YDIR" ] || return 0
     find "$YDIR" -maxdepth 1 -type f -mtime "+$KEEP_DAYS" -delete 2>/dev/null || true
@@ -327,13 +335,16 @@ except OSError:
     print('YIELD_LOG_REDS=?')
     raise SystemExit
 solo, conc, log_reds = [], [], 0
+by_repo = {}
+for j, (r, s2, e2, _c, _r) in enumerate(rows):
+    if e2 >= now - win - 86400:
+        by_repo.setdefault(r, []).append((j, s2, e2))
 for i, (repo, s, e, cost, red) in enumerate(rows):
     if e < now - win:
         continue
     if red:
         log_reds += 1
-    overlapped = any(r == repo and j != i and s2 < e and s < e2
-                     for j, (r, s2, e2, _c, _r) in enumerate(rows))
+    overlapped = any(s2 < e and s < e2 for j, s2, e2 in by_repo[repo] if j != i)
     (conc if overlapped else solo).append(cost)
 def stat(v):
     if not v:
@@ -394,15 +405,16 @@ cmd_report() {
     local -A faults=()
     for f in "$YDIR"/*; do
         [ -r "$f" ] || continue
-        at="$(get "$f" at)" || continue
+        load "$f"
+        at="${REC[at]:-}"
         case "$at" in ''|*[!0-9]*) continue ;; esac
         [ "$at" -ge "$cutoff" ] || continue
         n=$((n+1))
-        v="$(get "$f" verdict)" || v=UNKNOWN
+        v="${REC[verdict]-UNKNOWN}"
         case "$v" in
             DEFECT)
                 d=$((d+1))
-                case "$(get "$f" by)" in auto:*) di=$((di+1)) ;; esac ;;
+                case "${REC[by]:-}" in auto:*) di=$((di+1)) ;; esac ;;
             GATE_FAULT)
                 gf=$((gf+1))
                 # WHICH SUITE, so a single suite responsible for a run of gate faults is
@@ -410,8 +422,8 @@ cmd_report() {
                 # number exists to make possible. A red with no suite is attributed to the
                 # gate's own reason instead, because "which check keeps refusing good work"
                 # has an answer either way.
-                local k; k="$(get "$f" suite)" || k=""
-                if [ -z "$k" ] || [ "$k" = "-" ]; then k="$(get "$f" reason)" || k=""; fi
+                local k="${REC[suite]:-}"
+                if [ -z "$k" ] || [ "$k" = "-" ]; then k="${REC[reason]:-}"; fi
                 [ -n "$k" ] && faults["$k"]=$(( ${faults["$k"]:-0} + 1 )) ;;
             *)  u=$((u+1)) ;;
         esac
