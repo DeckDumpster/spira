@@ -153,6 +153,7 @@ want "filed for the groomer persona"   "--for groomer" "$(cat "$BD_LOG")"
 want "filed against the home repo"     "--repo test-repo" "$(cat "$BD_LOG")"
 nowant "no raw bd create"              "create"   "$(grep -v '^bead-file' "$BD_LOG")"
 want "delivers label added to the filed id" "update sp-trig1 --add-label delivers:note:$T/run/groom.log" "$(cat "$BD_LOG")"
+want "groom-trigger marker added so the groomer can close it" "--add-label groom-trigger" "$(cat "$BD_LOG")"
 # sp-mve9i: the backlog count reads the lifecycle rows; bd is never asked by status.
 nowant "bd is never queried by status"  "--status" "$(cat "$BD_LOG")"
 
