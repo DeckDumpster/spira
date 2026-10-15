@@ -505,13 +505,16 @@ fn forge_queue_dir(loom: &Loom) -> std::path::PathBuf {
 
 async fn rounds_page_route(State(loom): State<Arc<Loom>>) -> Response {
     let window = rounds::WINDOW_S.to_string();
+    let forge = forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom)));
     match loom.batches(&["--window", &window]).await {
         Ok((batches, stale)) => {
-            let forge = forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom)));
             let page = rounds::render_list(now_s(), &batches, stale.as_deref()).replacen("</main>", &format!("{forge}</main>"), 1);
             html_response(StatusCode::OK, shell::with_bar(&page, &page_bar(&loom)))
         }
-        Err(e) => unavailable("rounds", &e),
+        Err(e) => {
+            let page = shell::shell("rounds", "Rounds", 15, &format!("<header><h1>Rounds</h1></header><main><p class=dim>round records unavailable: {}</p>{forge}</main>", stuck::esc(&e)));
+            html_response(StatusCode::OK, shell::with_bar(&page, &shell::Bar::default()))
+        }
     }
 }
 
