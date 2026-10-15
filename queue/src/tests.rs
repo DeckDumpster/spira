@@ -325,6 +325,11 @@ struct FScripts {
     release_rc: RefCell<BTreeMap<String, (i32, String)>>,
     /// What `release build` answers on stdout (absent = the commit it was asked for).
     build_answers: RefCell<Option<String>>,
+    /// `release activate` answers consumed in order before `release_rc` applies.
+    activate_seq: RefCell<std::collections::VecDeque<(i32, String)>>,
+    /// `ActiveState` answers in order (the last repeats; empty reads `active`), and the units asked about.
+    unit_states: RefCell<std::collections::VecDeque<String>>,
+    unit_asked: RefCell<Vec<String>>,
     /// Every `release` call: the bin it was run as, its argv joined, and the SPIRA_DB it
     /// was handed.
     release_calls: RefCell<Vec<(String, String, String)>>,
@@ -415,13 +420,19 @@ impl Scripts for FScripts {
         }
         self.round_vm.borrow().clone()
     }
+    fn unit_active_state(&self, unit: &str) -> String {
+        self.unit_asked.borrow_mut().push(unit.to_string());
+        let mut q = self.unit_states.borrow_mut();
+        if q.len() > 1 { q.pop_front().unwrap() } else { q.front().cloned().unwrap_or_else(|| "active".into()) }
+    }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         self.release_calls.borrow_mut().push((bin.display().to_string(), args.join(" "), db.to_string()));
         self.calls.borrow_mut().push(format!("release {}", args[0]));
         if args[0] == "activate" {
             self.activated.set(true);
         }
-        let (rc, err) = self.release_rc.borrow().get(&args[0]).cloned().unwrap_or((0, String::new()));
+        let seq = if args[0] == "activate" { self.activate_seq.borrow_mut().pop_front() } else { None };
+        let (rc, err) = seq.unwrap_or_else(|| self.release_rc.borrow().get(&args[0]).cloned().unwrap_or((0, String::new())));
         let out = if args[0] == "build" && rc == 0 { format!("{}\n", self.build_answers.borrow().clone().unwrap_or_else(|| args[1].clone())) } else { String::new() };
         RunOut { rc, out, err }
     }
@@ -2268,6 +2279,52 @@ fn land_local_activate_failure_is_a_deploy_fault_and_keeps_the_landing() {
     assert_eq!(release_argv(&t).len(), 3);
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"") && t.lib.has("bead_close sp-a h1"));
+}
+
+const RESTART_124: &str = "release: activating h1 failed, rolled back to r1:\n  spira-watch-bead-sweep-prod.service: restart failed: systemctl --user restart spira-watch-bead-sweep-prod.service failed (exit status: 124)\n";
+
+#[test]
+fn land_local_waits_for_a_timed_out_unit_to_settle_and_reattempts_activation_once() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.submitted(&["sp-a", "sp-b"]);
+    let wts = harness_world(&mut t);
+    release_in_force(&t);
+    t.scripts.activate_seq.borrow_mut().push_back((1, RESTART_124.into()));
+    t.scripts.unit_states.borrow_mut().extend(["activating".to_string(), "deactivating".to_string(), "active".to_string()]);
+    assert_eq!(land_harness(&t, &wts), 0, "{}", t.err());
+    let argv = release_argv(&t);
+    assert_eq!(argv.iter().filter(|a| a.starts_with("activate ")).count(), 2, "{argv:?}");
+    assert_eq!(t.scripts.unit_asked.borrow().len(), 3);
+    assert!(t.scripts.unit_asked.borrow().iter().all(|u| u == "spira-watch-bead-sweep-prod.service"));
+    assert!(!t.err().contains("LAND DEPLOY FAILED"), "{}", t.err());
+    assert!(t.out().contains("queue.sh land-local: activated release h1"), "{}", t.out());
+}
+
+#[test]
+fn land_local_alarms_once_with_both_errors_when_the_reattempt_also_fails() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.submitted(&["sp-a", "sp-b"]);
+    let wts = harness_world(&mut t);
+    release_in_force(&t);
+    t.scripts.activate_seq.borrow_mut().push_back((1, RESTART_124.into()));
+    t.scripts.activate_seq.borrow_mut().push_back((1, "release: dolt-beads.service: did not come up (ActiveState=deactivating, Result=success)\n".into()));
+    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
+    let e = t.err();
+    assert_eq!(e.matches("LAND DEPLOY FAILED").count(), 1, "{e}");
+    assert!(e.contains("exit status: 124") && e.contains("did not come up"), "both failures: {e}");
+    assert_eq!(release_argv(&t).iter().filter(|a| a.starts_with("activate ")).count(), 2);
+}
+
+#[test]
+fn land_local_does_not_retry_an_activation_refused_for_a_reason_that_is_not_a_unit_timeout() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.submitted(&["sp-a", "sp-b"]);
+    let wts = harness_world(&mut t);
+    release_in_force(&t);
+    t.scripts.release_rc.borrow_mut().insert("activate".into(), (1, "release: MANIFEST missing a binary\n".into()));
+    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
+    assert_eq!(release_argv(&t).iter().filter(|a| a.starts_with("activate ")).count(), 1);
+    assert!(t.scripts.unit_asked.borrow().is_empty());
 }
 
 #[test]
