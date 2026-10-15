@@ -301,15 +301,39 @@ pub fn one_shot_words(profile: &str) -> String {
     format!("--config profile.{profile}.incremental=false")
 }
 
-/// Directory under the run dir holding each aeon slot's warm `CARGO_TARGET_DIR`.
-pub const AEON_WARM_DIR: &str = "aeon-warm";
+/// Registry keys: the directory holding each aeon slot's warm `CARGO_TARGET_DIR` (a tmpfs of
+/// its own), and the MiB one slot may hold.
+pub const AEON_WARM_BASE_ENV: &str = "SPIRA_AEON_WARM_BASE";
+pub const AEON_WARM_CAP_ENV: &str = "SPIRA_AEON_WARM_CAP_MIB";
 
 /// Slots offered: one per aeon name, so a free one always exists below the live-aeon ceiling.
 pub const AEON_WARM_SLOTS: u64 = 10;
 
-/// MiB a slot may hold before the next session to take it starts it empty: reaped by size,
-/// never per session.
-pub const AEON_WARM_CAP_MIB: u64 = 12288;
+/// Create `base` and every slot directory in it, so a session never creates them.
+pub fn prepare_warm(base: &Path, slots: u64) -> std::io::Result<()> {
+    for n in 1..=slots.max(1) {
+        std::fs::create_dir_all(base.join(format!("slot.{n}")))?;
+    }
+    Ok(())
+}
+
+/// Whether `p` (or its nearest existing ancestor) is on a tmpfs.
+pub fn on_tmpfs(p: &Path) -> bool {
+    const TMPFS_MAGIC: i64 = 0x0102_1994;
+    let mut cur = Some(p);
+    while let Some(d) = cur {
+        if d.exists() {
+            let Ok(c) = std::ffi::CString::new(d.as_os_str().as_encoded_bytes()) else { return false };
+            // SAFETY: statfs into a zeroed struct we own, on a NUL-terminated path.
+            let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+            let r = unsafe { libc::statfs(c.as_ptr(), &mut st) };
+            #[allow(clippy::unnecessary_cast)]
+            return r == 0 && st.f_type as i64 == TMPFS_MAGIC;
+        }
+        cur = d.parent();
+    }
+    false
+}
 
 /// Claim the first free slot under `base` with a non-blocking exclusive `flock` that lives as
 /// long as the returned file. None when every slot is busy: the session then builds in its
@@ -344,17 +368,97 @@ pub fn size_of(p: &Path) -> u64 {
 /// Empty `slot` when it holds more than `cap_mib`. True when it did. The caller holds the
 /// slot's lock.
 pub fn reap_over_cap(slot: &Path, cap_mib: u64) -> bool {
+    let slot = &resolved(slot);
     if size_of(slot) <= cap_mib * 1024 * 1024 {
         return false;
     }
-    let _ = std::fs::remove_dir_all(slot);
-    let _ = std::fs::create_dir_all(slot);
+    empty_dir(slot);
+    true
+}
+
+fn resolved(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+fn empty_dir(dir: &Path) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                let _ = std::fs::remove_dir_all(&p);
+            } else {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+}
+
+/// Hold a slot to `cap_mib` while a build runs in it: past the cap the regenerable
+/// `incremental` trees go first, and if the slot is still over, everything goes. A symlinked
+/// slot is emptied in place, never replaced. True when anything was removed.
+pub fn enforce_cap(slot: &Path, cap_mib: u64) -> bool {
+    let slot = &resolved(slot);
+    let cap = cap_mib * 1024 * 1024;
+    if size_of(slot) <= cap {
+        return false;
+    }
+    if let Ok(profiles) = std::fs::read_dir(slot) {
+        for p in profiles.flatten() {
+            let _ = std::fs::remove_dir_all(p.path().join("incremental"));
+        }
+    }
+    if size_of(slot) > cap {
+        empty_dir(slot);
+    }
     true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fill(p: &Path, kib: usize) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, vec![1u8; kib * 1024]).unwrap();
+    }
+
+    #[test]
+    fn a_slot_over_its_cap_sheds_incremental_first_and_everything_if_that_is_not_enough() {
+        let d = testkit::TempDir::new("warm-cap");
+        let slot = d.path().join("slot.1");
+        fill(&slot.join("debug/incremental/a"), 3072);
+        fill(&slot.join("debug/deps/b"), 512);
+        assert!(!enforce_cap(&slot, 4), "under the cap nothing is touched");
+        assert!(slot.join("debug/incremental/a").exists());
+        assert!(enforce_cap(&slot, 2), "over the cap is acted on");
+        assert!(!slot.join("debug/incremental").exists());
+        assert!(slot.join("debug/deps/b").exists(), "dropping incremental was enough: deps stay warm");
+        fill(&slot.join("debug/deps/c"), 3072);
+        assert!(enforce_cap(&slot, 2));
+        assert!(slot.is_dir() && std::fs::read_dir(&slot).unwrap().next().is_none(), "still over: emptied, the directory kept");
+    }
+
+    #[test]
+    fn a_symlinked_slot_is_emptied_in_place() {
+        let d = testkit::TempDir::new("warm-link");
+        let real = d.path().join("real");
+        fill(&real.join("debug/x"), 3072);
+        let link = d.path().join("slot.1");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(reap_over_cap(&link, 1));
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(std::fs::read_dir(&real).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn prepare_creates_every_slot() {
+        let d = testkit::TempDir::new("warm-prep");
+        prepare_warm(&d.path().join("base"), 3).unwrap();
+        for n in 1..=3 {
+            assert!(d.path().join(format!("base/slot.{n}")).is_dir());
+        }
+        assert!(!on_tmpfs(Path::new("/nonexistent-root-xyz/a")) || on_tmpfs(Path::new("/")), "an unmounted path takes its nearest ancestor's answer");
+    }
 
     fn bin_dir(with: bool) -> (testkit::TempDir, String) {
         let d = testkit::TempDir::new("spira-config-build");

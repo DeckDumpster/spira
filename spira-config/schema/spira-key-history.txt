@@ -453,3 +453,5 @@ dolt_persist_compact_pct
 statute_guards
 round_vm_ec2_launch_window
 cert_prices
+aeon_warm_base
+aeon_warm_cap_mib

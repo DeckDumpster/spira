@@ -52,6 +52,14 @@ impl Stop {
     }
 }
 
+/// A warm build slot held to `cap_mib` while the session runs, looked at every `every`.
+#[derive(Debug, Clone)]
+pub struct WarmSlot {
+    pub dir: PathBuf,
+    pub cap_mib: u64,
+    pub every: Duration,
+}
+
 /// Everything one session launch needs.
 #[derive(Debug, Clone)]
 pub struct SessionSpec {
@@ -65,12 +73,16 @@ pub struct SessionSpec {
     pub timeout: Option<u64>,
     /// The world-halted stamp: while it exists, a signal waits for a turn boundary first.
     pub halted: Option<PathBuf>,
+    /// The warm slot this session builds in and the MiB it may hold: checked while it runs.
+    pub warm: Option<WarmSlot>,
 }
 
 pub trait Launcher: Send + Sync {
     /// Runs the session to its end; its exit code (124 on timeout, 128+sig when signalled).
     fn run(&self, spec: &SessionSpec, stop: &Stop) -> i32;
 }
+
+pub const WARM_CHECK_EVERY: Duration = Duration::from_secs(5);
 
 pub struct RealLauncher;
 
@@ -100,7 +112,19 @@ impl Launcher for RealLauncher {
         let mut timed_out = false;
         let mut forwarded = false;
         let mut signalled_at: Option<Instant> = None;
+        let mut warm_checked = Instant::now();
         let code = loop {
+            if let Some(w) = &spec.warm {
+                if warm_checked.elapsed() >= w.every {
+                    warm_checked = Instant::now();
+                    if spira_config::build::enforce_cap(&w.dir, w.cap_mib) {
+                        if let Ok(mut f) = OpenOptions::new().append(true).open(&spec.log) {
+                            use std::io::Write;
+                            let _ = writeln!(f, "aeon: warm target {} passed {} MiB — trimmed while the session ran", w.dir.display(), w.cap_mib);
+                        }
+                    }
+                }
+            }
             match child.try_wait() {
                 Ok(Some(s)) => break util::exit_code(s),
                 Ok(None) => {}
@@ -435,7 +459,7 @@ mod tests {
         std::fs::write(&task, "hi").unwrap();
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), "cat; sleep 30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: None, halted: None };
+        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), "cat; sleep 30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: None, halted: None, warm: None };
         let t0 = Instant::now();
         let rc = RealLauncher.run(&spec, &stop);
         assert!(t0.elapsed() < Duration::from_secs(10), "a stop already recorded kills the session at once");
@@ -447,13 +471,29 @@ mod tests {
     }
 
     #[test]
+    fn a_session_growing_its_warm_slot_past_the_cap_is_trimmed_while_it_runs() {
+        let d = tmp("warm-cap");
+        let slot = d.join("slot.1");
+        std::fs::create_dir_all(&slot).unwrap();
+        let task = d.join("task.md");
+        std::fs::write(&task, "").unwrap();
+        let mut env = BTreeMap::new();
+        env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
+        let script = format!("mkdir -p {0}/debug/incremental; head -c 3145728 /dev/zero > {0}/debug/incremental/x; sleep 1", slot.display());
+        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), script], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: None, halted: None, warm: Some(WarmSlot { dir: slot.clone(), cap_mib: 1, every: Duration::from_millis(100) }) };
+        assert_eq!(RealLauncher.run(&spec, &Stop::default()), 0);
+        assert!(!slot.join("debug/incremental/x").exists(), "the growth past the cap was refused");
+        assert!(std::fs::read_to_string(d.join("log")).unwrap().contains("trimmed while the session ran"));
+    }
+
+    #[test]
     fn timeout_is_124() {
         let d = tmp("timeout");
         let task = d.join("task.md");
         std::fs::write(&task, "").unwrap();
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        let spec = SessionSpec { prog: "sleep".into(), args: vec!["30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: Some(0), halted: None };
+        let spec = SessionSpec { prog: "sleep".into(), args: vec!["30".into()], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: Some(0), halted: None, warm: None };
         assert_eq!(RealLauncher.run(&spec, &Stop::default()), 124);
     }
 }

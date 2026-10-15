@@ -103,6 +103,7 @@ impl Run<'_> {
             env: self.d.env.child(),
             timeout: self.fayth.timeout_seconds,
             halted: None,
+            warm: None,
         };
         let renewing = std::sync::atomic::AtomicBool::new(true);
         let rc = std::thread::scope(|sc| {

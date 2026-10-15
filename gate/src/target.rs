@@ -73,24 +73,7 @@ impl Limits {
     }
 }
 
-pub fn on_tmpfs(p: &Path) -> bool {
-    const TMPFS_MAGIC: i64 = 0x0102_1994;
-    let mut cur = Some(p);
-    while let Some(d) = cur {
-        if d.exists() {
-            let Ok(c) = std::ffi::CString::new(d.as_os_str().as_encoded_bytes()) else {
-                return false;
-            };
-            // SAFETY: statfs into a zeroed struct we own, on a NUL-terminated path.
-            let mut st: libc::statfs = unsafe { std::mem::zeroed() };
-            let r = unsafe { libc::statfs(c.as_ptr(), &mut st) };
-            #[allow(clippy::unnecessary_cast)]
-            return r == 0 && st.f_type as i64 == TMPFS_MAGIC;
-        }
-        cur = d.parent();
-    }
-    false
-}
+pub use spira_config::build::on_tmpfs;
 
 /// Where gate-tree targets live: `explicit` (`$SPIRA_GATE_TARGET_ROOT`) when set, else
 /// `/tmp/spira-gate-target-<sha256(run)[..6]>` when `/tmp` is a tmpfs, else None (no tmpfs

@@ -1609,11 +1609,21 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
 fn a_session_builds_into_its_slots_warm_target_dir() {
     let f = fx("warm-target");
     seed(&f, "sp-warm");
-    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let base = f.run.join("warm-elsewhere");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0"), (spira_config::build::AEON_WARM_BASE_ENV, base.to_str().unwrap())], Mode::Claim, BTreeMap::new(), commits_and_closes());
     let target = o.seen[0].env.get("CARGO_TARGET_DIR").cloned().expect("CARGO_TARGET_DIR set");
-    let want = f.run.join(spira_config::build::AEON_WARM_DIR).join("slot.1");
+    let want = base.join("slot.1");
     assert_eq!(target, want.display().to_string());
     assert!(want.is_dir(), "the slot outlives the session");
+}
+
+#[test]
+fn a_session_with_no_warm_base_configured_is_refused_by_name() {
+    let f = fx("warm-unset");
+    seed(&f, "sp-warm2");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0"), (spira_config::build::AEON_WARM_BASE_ENV, "")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert!(o.seen.is_empty(), "no session starts without a warm base");
+    assert!(o.log.contains("SPIRA_AEON_WARM_BASE is not set"), "{}", o.log);
 }
 
 #[test]
