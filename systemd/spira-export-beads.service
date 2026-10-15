@@ -11,7 +11,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_HOME@/export-beads.sh
+ExecStart=@SPIRA_PROD@/export-beads.sh
 TimeoutStartSec=900
 StandardOutput=append:@SPIRA_RUN@/export-beads.log
 StandardError=append:@SPIRA_RUN@/export-beads.log
