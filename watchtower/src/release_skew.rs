@@ -11,16 +11,41 @@ pub struct Cfg {
     pub max_secs: i64,
 }
 
-/// Live-unit count per release, from `systemctl show -p Id -p Environment` blocks.
-pub fn count_by_release(show: &str, resolve: impl Fn(&str) -> Option<String>) -> BTreeMap<String, usize> {
+const AEON_UNIT_PREFIX: &str = "spira-aeon-";
+
+/// An aeon that started before `activated` and is within `max_secs` of its start finishes on
+/// the release it was summoned from by design; it is not skew.
+pub struct Grace {
+    pub activated: Option<i64>,
+    pub now: i64,
+    pub max_secs: i64,
+}
+
+impl Grace {
+    fn excuses(&self, id: &str, started: Option<i64>) -> bool {
+        match (self.activated, started) {
+            (Some(act), Some(st)) => id.starts_with(AEON_UNIT_PREFIX) && st < act && self.now - st <= self.max_secs,
+            _ => false,
+        }
+    }
+}
+
+/// Live-unit count per release, from `systemctl show --timestamp=unix -p Id -p Environment
+/// -p ActiveEnterTimestamp` blocks.
+pub fn count_by_release(show: &str, resolve: impl Fn(&str) -> Option<String>, grace: &Grace) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for block in show.split("\n\n") {
+        let field = |k: &str| block.lines().find_map(|l| l.strip_prefix(k)).unwrap_or("");
+        let started = field("ActiveEnterTimestamp=").trim().trim_start_matches('@').parse().ok();
         let release = block
             .lines()
             .filter(|l| l.starts_with("Environment="))
             .flat_map(|l| l.split_whitespace())
             .find_map(|w| w.trim_start_matches("Environment=").trim_matches(['"', '\'']).strip_prefix("SPIRA_RELEASE="));
         if let Some(r) = release {
+            if grace.excuses(field("Id="), started) {
+                continue;
+            }
             let r = r.trim_end_matches('/');
             let resolved = resolve(r);
             let r = resolved.as_deref().unwrap_or(r).trim_end_matches('/');
@@ -29,6 +54,16 @@ pub fn count_by_release(show: &str, resolve: impl Fn(&str) -> Option<String>) ->
         }
     }
     counts
+}
+
+/// When `current` was last repointed: the mtime of the symlink beside the release roots.
+fn activation_time(show: &str) -> Option<i64> {
+    use std::os::unix::fs::MetadataExt;
+    let root = show
+        .split_whitespace()
+        .find_map(|w| w.trim_start_matches("Environment=").trim_matches(['"', '\'']).strip_prefix("SPIRA_RELEASE="))?;
+    let parent = Path::new(root.trim_end_matches('/')).parent()?;
+    std::fs::symlink_metadata(parent.join(spira_config::release_skew::CURRENT)).ok().map(|m| m.mtime())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -52,15 +87,19 @@ pub fn decide(releases: usize, since: Option<i64>, now: i64, max_secs: i64) -> V
 
 pub fn run(now: i64, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
     let out = spira_config::bounded::bounded(&cfg.systemctl)
-        .args(["--user", "show", "spira-*", "--state=active", "-p", "Id", "-p", "Environment"])
+        .args(["--user", "show", "spira-*", "--state=active", "--timestamp=unix", "-p", "Id", "-p", "Environment", "-p", "ActiveEnterTimestamp"])
         .output();
     let Some(out) = out.ok().filter(|o| o.status.success()) else {
         log("watchtower: release-skew-check skipped — systemctl show failed");
         return;
     };
-    let counts = count_by_release(&String::from_utf8_lossy(&out.stdout), |p| {
-        std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned())
-    });
+    let show = String::from_utf8_lossy(&out.stdout);
+    let grace = Grace { activated: activation_time(&show), now, max_secs: cfg.max_secs };
+    let counts = count_by_release(
+        &show,
+        |p| std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned()),
+        &grace,
+    );
     let stamp = run_dir.join("release-skew.since");
     let since = std::fs::read_to_string(&stamp).ok().and_then(|s| s.trim().parse().ok());
     match decide(counts.len(), since, now, cfg.max_secs) {
@@ -94,22 +133,24 @@ pub fn run(now: i64, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &st
 mod tests {
     use super::*;
 
+    const NO_GRACE: Grace = Grace { activated: None, now: 0, max_secs: 0 };
+
     const SHOW: &str = "Id=spira-aeon-builder-1.service\nEnvironment=SPIRA_RELEASE=/r/aaa PATH=/r/aaa/bin\n\nId=spira-aeon-ops-2.service\nEnvironment=\"SPIRA_RELEASE=/r/bbb\" PATH=/x\n\nId=spira-aeon-ops-3.service\nEnvironment=SPIRA_RELEASE=/r/bbb\n\nId=spira-x.service\nEnvironment=\n";
 
     #[test]
     fn counts_live_units_by_release_and_ignores_units_without_one() {
-        let c = count_by_release(SHOW, |_| None);
+        let c = count_by_release(SHOW, |_| None, &NO_GRACE);
         assert_eq!((c.get("aaa"), c.get("bbb"), c.len()), (Some(&1), Some(&2), 2));
-        assert!(count_by_release("Id=x\nEnvironment=FOO=1\n", |_| None).is_empty());
+        assert!(count_by_release("Id=x\nEnvironment=FOO=1\n", |_| None, &NO_GRACE).is_empty());
     }
 
     #[test]
     fn a_current_symlink_and_its_sha_path_are_one_release() {
         let show = "Id=a\nEnvironment=SPIRA_RELEASE=/r/current\n\nId=b\nEnvironment=SPIRA_RELEASE=/r/abc123\n";
         let resolve = |p: &str| (p == "/r/current").then(|| "/r/abc123".to_string());
-        let c = count_by_release(show, resolve);
+        let c = count_by_release(show, resolve, &NO_GRACE);
         assert_eq!((c.get("abc123"), c.len()), (Some(&2), 1));
-        assert_eq!(count_by_release(show, |_| None).len(), 2);
+        assert_eq!(count_by_release(show, |_| None, &NO_GRACE).len(), 2);
     }
 
     #[test]
@@ -121,7 +162,7 @@ mod tests {
             "Id=a.service\nEnvironment=SPIRA_RELEASE={0}/current\n\nId=b.service\nEnvironment=SPIRA_RELEASE={0}/abc123\n",
             d.display()
         );
-        let c = count_by_release(&show, |p| std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned()));
+        let c = count_by_release(&show, |p| std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned()), &NO_GRACE);
         assert_eq!((c.get("abc123"), c.len()), (Some(&2), 1));
     }
 
@@ -131,5 +172,49 @@ mod tests {
         assert_eq!(decide(2, None, 100, 3600), Verdict::Since(100));
         assert_eq!(decide(2, Some(100), 3700, 3600), Verdict::Since(100));
         assert_eq!(decide(2, Some(100), 3701, 3600), Verdict::Anomaly);
+    }
+
+    fn unit(id: &str, rel: &str, started: i64) -> String {
+        format!("Id={id}\nEnvironment=SPIRA_RELEASE=/r/{rel}\nActiveEnterTimestamp=@{started}\n\n")
+    }
+
+    fn releases_of(show: &str) -> usize {
+        let grace = Grace { activated: Some(1000), now: 1500, max_secs: 3600 };
+        count_by_release(show, |_| None, &grace).len()
+    }
+
+    #[test]
+    fn an_aeon_started_before_the_activation_is_not_skew() {
+        let show = unit("spira-aeon-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
+        assert_eq!(releases_of(&show), 1);
+    }
+
+    #[test]
+    fn an_aeon_started_after_the_activation_is_skew() {
+        let show = unit("spira-aeon-a-1.service", "A", 1100) + &unit("spira-watchd.service", "B", 1000);
+        assert_eq!(releases_of(&show), 2);
+    }
+
+    #[test]
+    fn a_long_lived_unit_on_the_old_release_is_skew_whenever_it_started() {
+        let show = unit("spira-watchd.service", "A", 900) + &unit("spira-aeon-a-1.service", "B", 1200);
+        assert_eq!(releases_of(&show), 2);
+    }
+
+    #[test]
+    fn an_aeon_past_its_deadline_is_skew() {
+        let show = unit("spira-aeon-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
+        let grace = Grace { activated: Some(1000), now: 900 + 3601, max_secs: 3600 };
+        assert_eq!(count_by_release(&show, |_| None, &grace).len(), 2);
+    }
+
+    #[test]
+    fn activation_is_the_mtime_of_current_beside_the_release_root() {
+        let d = testkit::TempDir::new("wt-skew-act");
+        std::fs::create_dir_all(d.join("A")).unwrap();
+        std::os::unix::fs::symlink("A", d.join("current")).unwrap();
+        let show = format!("Environment=SPIRA_RELEASE={}/A\n", d.display());
+        assert!(activation_time(&show).is_some_and(|t| t > 0));
+        assert_eq!(activation_time("Environment=FOO=1\n"), None);
     }
 }
