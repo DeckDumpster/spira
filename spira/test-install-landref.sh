@@ -288,12 +288,14 @@ LREPO="$TMP/lrepo"
 timeout 5 git init -q -b main "$LREPO"
 timeout 5 git -C "$LREPO" config user.email t@t
 timeout 5 git -C "$LREPO" config user.name test
-printf 'a\n' > "$LREPO/f"; git -C "$LREPO" add f; git -C "$LREPO" commit -qm a
-git -C "$LREPO" remote add origin "$ORIGIN"
+printf 'a\n' > "$LREPO/f"
+timeout 5 git -C "$LREPO" add f
+timeout 5 git -C "$LREPO" commit -qm a
+timeout 5 git -C "$LREPO" remote add origin "$ORIGIN"
 timeout 5 git -C "$LREPO" fetch -q origin
-git -C "$LREPO" update-ref refs/remotes/origin/main "$(git -C "$CLONE" rev-parse HEAD)"
-git -C "$LREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
-git -C "$LREPO" branch local/main main
+timeout 5 git -C "$LREPO" update-ref refs/remotes/origin/main "$(timeout 5 git -C "$CLONE" rev-parse HEAD)"
+timeout 5 git -C "$LREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+timeout 5 git -C "$LREPO" branch local/main main
 LTOML="$TMP/lrepo.toml"; printf '[spira]\n' > "$LTOML"
 printf '[repo.spira]\npath = "%s"\nmode = "queue.local"\nbase = "local/main"\n' "$LREPO" >> "$LTOML"
 INST_TOML="$SPIRA_TOML:$LTOML"
@@ -304,8 +306,8 @@ out_lcur="$(inst "$LREPO")"
 nowant "queue.local current: not refused as behind" "refusing — checkout is" "$out_lcur"
 clear_dest
 
-git -C "$LREPO" branch -f local/main "$(git -C "$CLONE" rev-parse HEAD)" 2>/dev/null \
-    || git -C "$LREPO" update-ref refs/heads/local/main "$(git -C "$CLONE" rev-parse HEAD)"
+timeout 5 git -C "$LREPO" branch -f local/main "$(timeout 5 git -C "$CLONE" rev-parse HEAD)" 2>/dev/null \
+    || timeout 5 git -C "$LREPO" update-ref refs/heads/local/main "$(timeout 5 git -C "$CLONE" rev-parse HEAD)"
 out_lbehind="$(inst "$LREPO")"; rc_lbehind=$?
 nonzero "queue.local behind: exit non-zero" "$rc_lbehind"
 want    "queue.local behind: refusal names local/main" "behind local/main" "$out_lbehind"
