@@ -487,8 +487,7 @@ pub fn bead_is_closed(bd: &dyn Bd, id: &str) -> bool {
     let out = bd.run(&a(&["show", id, "--json"]), None);
     first_object(&out.stdout)
         .filter(|d| d.get("error").is_none())
-        .and_then(|d| d.get("status").and_then(|v| v.as_str()).map(|s| s == "closed"))
-        .unwrap_or(false)
+        .is_some_and(|d| spira_config::nonwork::row_closed(spira_config::nonwork::Kind::Ask, &d))
 }
 
 /// The probe an empty [`open_ask_ids`] result needs before it is trusted (an empty result
