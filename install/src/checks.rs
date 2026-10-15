@@ -7,7 +7,6 @@ use crate::guards;
 use crate::systemctl::Systemctl;
 use crate::values::HostValues;
 use std::path::Path;
-use std::process::Command;
 
 pub fn check_collisions(instance: &str, host: &HostValues) -> Result<(), Vec<String>> {
     let Some(conf_file) = nonempty_env("SPIRA_CONF_FILE") else { return Ok(()) };
@@ -58,21 +57,12 @@ pub fn check_landref(host: &HostValues) -> Result<(), String> {
             return Ok(());
         }
     }
-    let (ok, base) = git(&["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]);
-    let base = if ok && !base.is_empty() {
-        base
-    } else {
-        // batch-job: git history or network operation, as long as the repository is large
-        let _ = Command::new("git").arg("-C").arg(repo).args(["remote", "set-head", "origin", "-a"]).status();
-        let (ok2, b2) = git(&["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]);
-        if ok2 {
-            b2
-        } else {
-            return Err(format!("cannot resolve landref for {repo}"));
-        }
+    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), Path::new(&host.home));
+    let Some(base) = spira_config::repos::landref(&reg, repo) else {
+        return Err(format!("cannot resolve landref for {repo}"));
     };
-    let base_short = base.rsplit('/').next().unwrap_or(&base);
-    if cur != base_short {
+    let base_short = spira_config::repos::ref_branch(&base);
+    if cur != base_short.as_str() {
         return Err(format!("refusing — checkout is on branch {cur}, not the landref ({base_short}). switch to {base_short} first, or set SPIRA_INSTALL_FORCE=1 to override."));
     }
     let (_, behind) = git(&["rev-list", "--count", &format!("HEAD..{base}")]);

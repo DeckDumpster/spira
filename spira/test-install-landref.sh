@@ -149,7 +149,7 @@ inst() {
     tl_config SPIRA_REPO_MAP=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
     env -i \
-        SPIRA_TOML="$SPIRA_TOML" \
+        SPIRA_TOML="${INST_TOML:-$SPIRA_TOML}" \
         "PATH=$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -161,6 +161,9 @@ inst() {
 }
 
 mkdir -p "$TMP/home/.config/systemd/user" "$TMP/run"
+
+# SPIRA_REPO resolves to the home repo, whose declared base is local/main; these fixtures land on origin/main.
+printf '[repo.spira]\npath = "%s"\nmode = "pr"\nbase = "origin/main"\n' "$REPO" >> "$_TL_CONF_OVERRIDE"
 
 # ===========================================================================
 echo
@@ -274,4 +277,40 @@ out_tag="$(inst "$TAG_REPO")"; rc_tag=$?
 nowant "tag install: no 'cannot resolve landref' in output"  "cannot resolve landref"    "$out_tag"
 nowant "tag install: no landref refusal"                     "refusing — checkout is"    "$out_tag"
 want   "tag install: mentions release install in output"     "release install from tag"  "$out_tag"
+# ===========================================================================
+echo
+echo "QUEUE.LOCAL — the landref is local/main, not origin/main."
+# The checkout equals local/main yet trails origin/main by design: install must proceed.
+# Behind local/main it must refuse, naming local/main (the positive control).
+# ===========================================================================
+
+LREPO="$TMP/lrepo"
+timeout 5 git init -q -b main "$LREPO"
+timeout 5 git -C "$LREPO" config user.email t@t
+timeout 5 git -C "$LREPO" config user.name test
+printf 'a\n' > "$LREPO/f"
+timeout 5 git -C "$LREPO" add f
+timeout 5 git -C "$LREPO" commit -qm a
+timeout 5 git -C "$LREPO" remote add origin "$ORIGIN"
+timeout 5 git -C "$LREPO" fetch -q origin
+timeout 5 git -C "$LREPO" update-ref refs/remotes/origin/main "$(timeout 5 git -C "$CLONE" rev-parse HEAD)"
+timeout 5 git -C "$LREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+timeout 5 git -C "$LREPO" branch local/main main
+LTOML="$TMP/lrepo.toml"; printf '[spira]\n' > "$LTOML"
+printf '[repo.spira]\npath = "%s"\nmode = "queue.local"\nbase = "local/main"\n' "$LREPO" >> "$LTOML"
+INST_TOML="$SPIRA_TOML:$LTOML"
+clear_dest() { find "$TMP/home/.config/systemd/user" -maxdepth 1 \( -name '*.service' -o -name '*.timer' \) -delete; }
+clear_dest
+
+out_lcur="$(inst "$LREPO")"
+nowant "queue.local current: not refused as behind" "refusing — checkout is" "$out_lcur"
+clear_dest
+
+timeout 5 git -C "$LREPO" branch -f local/main "$(timeout 5 git -C "$CLONE" rev-parse HEAD)" 2>/dev/null \
+    || timeout 5 git -C "$LREPO" update-ref refs/heads/local/main "$(timeout 5 git -C "$CLONE" rev-parse HEAD)"
+out_lbehind="$(inst "$LREPO")"; rc_lbehind=$?
+nonzero "queue.local behind: exit non-zero" "$rc_lbehind"
+want    "queue.local behind: refusal names local/main" "behind local/main" "$out_lbehind"
+dest_empty "queue.local behind: no unit file written"
+
 tl_summary

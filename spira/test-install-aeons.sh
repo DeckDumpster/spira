@@ -63,6 +63,8 @@ git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"
 timeout 5 git -C "$FAKE_REPO" push -q origin main 2>/dev/null
 timeout 5 git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
 git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+# SPIRA_REPO resolves to the home repo, whose declared base is local/main; this fixture lands on origin/main.
+printf '[repo.spira]\npath = "%s"\nmode = "pr"\nbase = "origin/main"\n' "$FAKE_REPO" >> "$_TL_CONF_OVERRIDE"
 # The templates substitute @SPIRA_REPO@ in ExecStart lines; the ExecStart check requires
 # those targets to be executable. Symlink the two scripts that templates use this way.
 for _s in concierge.sh; do
