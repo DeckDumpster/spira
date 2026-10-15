@@ -74,6 +74,11 @@ lcb drill --db spira >/dev/null; wantrc "drill restores one named database" 0 $?
 ( cd "$DATA/spira" && dlt sql -q "INSERT INTO bead VALUES (9); CALL DOLT_COMMIT('-Am','x')" >/dev/null )
 out="$(lcb drill)"; rc=$?; wantrc "a later live change to one database is not drift" 0 $rc
 
+echo; echo "run while the store takes commits — the stamp is the snapshot's head, so the drill passes:"
+( i=0; while [ ! -e "$TMP/stopwriter" ]; do i=$((i+1)); ( cd "$DATA/spira" && dlt sql -q "INSERT INTO bead VALUES ($((1000+i))); CALL DOLT_COMMIT('-Am','w$i')" >/dev/null 2>&1 ); done ) & writer=$!
+for _ in 1 2 3; do DBS=spira lcb run >/dev/null; DBS=spira lcb drill >"$TMP/busy.out" 2>&1; wantrc "drill ok against a store committing during the run" 0 $?; done
+: > "$TMP/stopwriter"; wait "$writer"; rm -f "$TMP/stopwriter"
+
 echo; echo "drill — positive control: a snapshot of another store is red:"
 mkdir -p "$TMP/other" && ( cd "$TMP/other" && mkdir spira_lifecycle snap && cd spira_lifecycle && dlt init >/dev/null \
     && dlt sql -q "CREATE TABLE bead (id INT PRIMARY KEY); CALL DOLT_COMMIT('-Am','x')" >/dev/null && dlt sql -q "CALL DOLT_BACKUP('sync-url','file://$TMP/other/snap')" >/dev/null \

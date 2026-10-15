@@ -67,8 +67,6 @@ _lcb_refuse_same_disk() {
 # batch-job: snapshot and restore of the whole store run for as long as the store is large
 _lcb_sql() { local db="$1"; shift; ( cd "$(_lcb_db_dir "$db")" && dolt sql "$@" ); }
 
-_lcb_head() { _lcb_sql "$1" -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null | tail -n +2; }
-
 _lcb_upload() {
     local file="$1" key="$2" url="$SPIRA_LC_BACKUP_URL" bucket rest region host sum
     case "$url" in
@@ -110,9 +108,10 @@ _lcb_run_db_locked() {
     if command -v zstd >/dev/null 2>&1; then ext=zst; else ext=gz; fi
     tarball="$work/latest.tar.$ext"
     rm -rf "$stage" && mkdir -p "$stage" || return 1
-    out="$(_lcb_sql "$db" -q "CALL DOLT_BACKUP('sync-url', 'file://$stage')" 2>&1)" \
+    out="$(_lcb_sql "$db" -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1; CALL DOLT_BACKUP('sync-url', 'file://$stage')" 2>&1)" \
         || { echo "lc-backup: local snapshot of $db failed: $out" >&2; return 1; }
-    head="$(_lcb_head "$db")"
+    head="$(printf '%s\n' "$out" | sed -n '2p')"
+    case "$head" in *[!0-9a-v]*|"") head="" ;; esac
     [ -n "$head" ] || { echo "lc-backup: snapshot taken but cannot read $db's head commit" >&2; return 1; }
     tar -C "$stage" -caf "$tarball.tmp" --format=posix . 2>/dev/null && mv "$tarball.tmp" "$tarball" \
         || { rm -f "$tarball.tmp"; echo "lc-backup: cannot pack the snapshot" >&2; return 1; }
