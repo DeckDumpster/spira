@@ -397,3 +397,38 @@ async fn units_reads_the_real_unit_run_file_through_duckdb() {
     let flaky = unit(&v, "flaky.service");
     assert_eq!((flaky["runs_7d"].as_i64(), flaky["last_failure"]["result"].as_str()), (Some(1), Some("exit-code")), "the nine-day-old row is outside the window");
 }
+
+#[tokio::test]
+async fn units_folds_per_instance_names_into_one_family_row() {
+    let mut rows = fixture_rows();
+    for i in 0..30 {
+        let result = if i == 7 { "exit-code" } else { "success" };
+        rows.push(exec_row(&format!("spira-aeon-builder-17920{i:05}.service"), 40_000 + i * 100, result, 500, "inv-bad"));
+    }
+    rows.push(exec_row("spira-aeon-ops-1792000001.service", 3_000, "success", 500, "ops-1"));
+    rows.push(exec_row("libpod-0123456789abcdef.scope", 3_000, "success", 500, "pod-1"));
+    rows.push(exec_row("gpg-agent.service", 3_000, "success", 500, "gpg-1"));
+    rows.push(exec_row("blockdev@dev-sda.service", 3_000, "success", 500, "bd-1"));
+    rows.push(exec_row("blockdev@dev-sdb.service", 2_000, "success", 500, "bd-2"));
+    let fx = units_fixture(&rows);
+    let addr = spawn(fx.cfg.clone()).await;
+    let v = units_json(addr).await;
+
+    let names: Vec<&str> = v["units"].as_array().unwrap().iter().map(|u| u["unit"].as_str().unwrap()).collect();
+    assert!(!names.iter().any(|n| n.contains("17920") || n.contains("0123456789")), "instances are not rows: {names:?}");
+
+    let b = unit(&v, "spira-aeon-builder");
+    assert_eq!(b["kind"], "session");
+    assert_eq!(b["instances"], 30);
+    assert_eq!(b["runs_7d"], 30);
+    assert_eq!(b["stale"], false, "a finished session is not a stopped unit");
+    assert!(b["last_failure"]["unit"].as_str().unwrap().starts_with("spira-aeon-builder-17920"), "{b}");
+    assert_eq!(unit(&v, "spira-aeon-ops")["runs_7d"], 1);
+    assert_eq!(unit(&v, "libpod")["kind"], "session");
+    assert_eq!(unit(&v, "gpg-agent")["kind"], "system");
+    assert_eq!(unit(&v, "blockdev")["instances"], 2);
+
+    let (_, html) = get(addr, "/units").await;
+    assert!(html.contains("unit families"), "{html}");
+    assert!(html.contains("<details>"), "system families are folded away");
+}
