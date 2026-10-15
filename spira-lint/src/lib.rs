@@ -121,6 +121,8 @@ impl Tree {
             .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
         if out.status.success() {
             Ok(out.stdout)
+        } else if out.status.code() == Some(124) {
+            Err(format!("git {}: timed out after {}s", args.join(" "), spira_config::bounded::CALL_TIMEOUT_SECS))
         } else {
             Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
         }
