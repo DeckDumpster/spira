@@ -117,6 +117,11 @@ nowant "does not print NOT DRAINED"             "NOT DRAINED" "$out"
 [ -f "$RUN/world.draining" ] && ok "stamp stays (gate held after slay)" \
                              || bad "stamp stays" "stamp was removed"
 
+stamp_text="$(cat "$RUN/world.draining" 2>/dev/null)"
+want   "stamp holds until resume"               "holds until resume" "$stamp_text"
+nowant "stamp carries no clock expiry"          "expires"     "$stamp_text"
+want   "output names the awaited bead"          "waiting for 1 aeon(s): $TEST_BEAD" "$out"
+
 rm -f "$RUN/aeon-valefor-${TEST_BEAD}.pid" "$RUN/aeon-valefor-${TEST_BEAD}.lease"
 kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID=""
 rm -f "$RUN/world.draining"

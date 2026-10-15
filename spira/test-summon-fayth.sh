@@ -116,21 +116,19 @@ F
 DRAIN_STAMP="$T/run/world.draining"
 HALT_STAMP="$T/run/world.halted"
 echo
-echo "drain expiry — the seam: world.sh drain WRITES the expiry, and --for sets it"
+echo "drain stamp — world.sh drain gates until resume; --for caps the wait, never the gate"
 rm -f "$DRAIN_STAMP"
 SPIRA_RUN="$SPIRA_RUN" world drain --for 900 --timeout 1 >/dev/null 2>&1
 if [ -f "$DRAIN_STAMP" ]; then
-    exp="$(sed -n 's/^expires \([0-9][0-9]*\)$/\1/p' "$DRAIN_STAMP" | head -1)"
-    if [ -n "$exp" ]; then
-        ok "world.sh drain writes an expires line"
-        d=$(( exp - $(date +%s) ))
-        if [ "$d" -gt 840 ] && [ "$d" -le 900 ]; then
-            ok "--for 900 sets the deadline (${d}s out)"
-        else
-            bad "--for 900 sets the deadline" "expected ~900s out, got ${d}s"
-        fi
+    if grep -qx 'holds until resume' "$DRAIN_STAMP"; then
+        ok "world.sh drain stamp holds until resume"
     else
-        bad "world.sh drain writes an expires line" "no expires line in the stamp"
+        bad "world.sh drain stamp holds until resume" "no 'holds until resume' line in the stamp"
+    fi
+    if grep -q '^expires ' "$DRAIN_STAMP"; then
+        bad "world.sh drain stamp has no expiry" "an expires line would let a clock lift the gate"
+    else
+        ok "world.sh drain stamp has no expiry"
     fi
 else
     bad "world.sh drain writes a stamp" "no stamp at $DRAIN_STAMP"

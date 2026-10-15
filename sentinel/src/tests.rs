@@ -822,6 +822,13 @@ fn world_gate_cmd_halts_pins_and_lifts_an_expired_drain_loudly() {
     assert!(!sink.has("EXPIRED"));
     assert!(w.run.join("world.draining").is_file(), "a live drain is never touched");
 
+    // DRAINING with a "holds until resume" stamp: no clock lifts it, however old.
+    let (w, r, sink, clock) = setup("wg-holds");
+    std::fs::write(w.run.join("world.draining"), "then\ngated\nholds until resume\n").unwrap();
+    assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 1);
+    assert!(!sink.has("EXPIRED"));
+    assert!(w.run.join("world.draining").is_file());
+
     // DRAINING, past its own `expires` line: lifted, LOUDLY, and removed.
     let (w, r, sink, clock) = setup("wg-expired");
     std::fs::write(w.run.join("world.draining"), format!("expires {}\n", NOW - 10)).unwrap();
