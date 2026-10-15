@@ -38,6 +38,7 @@
 #   build    ensure sessions + (re)build the cockpit links. No attach. Idempotent.
 #   sync     select brain-or-hunk in the cockpit per current review state. No attach.
 #   done     dismiss live hunk session(s) and flip to brain; hunk stays running.
+#   finish   dismiss live hunk session(s), flip to brain and close them; for an approved review.
 #   keys     (re)install the tmux key binding for `done`.
 #   watch    the transition-driven poll loop (normally launched detached by `attach`).
 #   status   print what cockpit sees: review state, cockpit windows, watcher liveness.
@@ -59,6 +60,8 @@ SELF="${COCKPIT_SELF:-$HOME/.local/bin/cockpit-remote}"
 LOCK="${TMPDIR:-/tmp}/cockpit-watch.lock"
 LOG="${TMPDIR:-/tmp}/cockpit-watch.log"
 STATE_DIR="${COCKPIT_STATE:-$HOME/.local/state/cockpit}"
+ABSENT="$STATE_DIR/dismissed.absent"
+ABSENT_MAX="${COCKPIT_ABSENT_PROBES:-5}"
 DISMISS="$STATE_DIR/dismissed"                  # hunk session-ids dismissed from the view
 DONE_KEY="${COCKPIT_DONE_KEY:-E}"               # <prefix> KEY signals "review phase ended"
 HEAL_EVERY="${COCKPIT_HEAL_EVERY:-5}"           # poll iterations between layout checks
@@ -155,22 +158,31 @@ live_ids() {
 review_active() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
   local live; live=$(live_ids) || return 2
-  if [ -z "$live" ]; then
-    [ -s "$DISMISS" ] && : >"$DISMISS"          # positively no sessions -> forget dismissals
-    return 1
-  fi
-  # Self-clean: keep only dismissals whose session is still live.
-  if [ -s "$DISMISS" ]; then
-    grep -Fxf <(printf '%s\n' "$live") "$DISMISS" 2>/dev/null | sort -u >"$DISMISS.tmp" \
-      && mv "$DISMISS.tmp" "$DISMISS" || rm -f "$DISMISS.tmp"
-  fi
-  # Active iff some live session has NOT been dismissed.
+  forget_absent "$live"
+  [ -n "$live" ] || return 1
   local id
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     { [ -s "$DISMISS" ] && grep -Fxq "$id" "$DISMISS"; } || return 0
   done <<<"$live"
   return 1
+}
+
+# A dismissal is forgotten only after its session was absent from ABSENT_MAX consecutive
+# successful probes; one empty answer from a CPU-capped probe is not an ended session.
+forget_absent() {  # live-ids
+  [ -s "$DISMISS" ] || { rm -f "$ABSENT"; return 0; }
+  local id n keep="" counts=""
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    if printf '%s\n' "$1" | grep -Fxq "$id"; then
+      keep+="$id"$'\n'; continue
+    fi
+    n=$(awk -v i="$id" '$1==i {print $2}' "$ABSENT" 2>/dev/null); n=$(( ${n:-0} + 1 ))
+    if [ "$n" -lt "$ABSENT_MAX" ]; then keep+="$id"$'\n'; counts+="$id $n"$'\n'; fi
+  done <"$DISMISS"
+  printf '%s' "$counts" >"$ABSENT"
+  printf '%s' "$keep" >"$DISMISS.tmp" && mv "$DISMISS.tmp" "$DISMISS"
 }
 
 want_session() {
@@ -362,6 +374,16 @@ cmd_done() {
   fi
 }
 
+cmd_finish() {
+  local live id; live=$(live_ids) || { echo "hunk did not answer; nothing closed"; return 1; }
+  cmd_done
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    timeout "${COCKPIT_HUNK_TIMEOUT:-5}" "${HUNK_FENCE[@]}" "$HUNK" session close "$id" >/dev/null 2>&1 \
+      || echo "could not close hunk session $id" >&2
+  done <<<"$live"
+}
+
 # Bind <prefix> DONE_KEY to `cockpit-remote done`, so it can be signalled from inside the
 # pane where there's no shell prompt. `-b` runs it off the server loop so the keypress
 # never stalls tmux while hunk/node spin up. tmux keys are global; harmless elsewhere.
@@ -413,6 +435,7 @@ case "${1:-attach}" in
     ;;
   sync)   select_want "${2:-}" ;;
   done)   cmd_done ;;
+  finish) cmd_finish ;;
   keys)   set_keybindings ;;
   watch)
     exec 9>"$LOCK"
