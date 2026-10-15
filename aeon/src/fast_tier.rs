@@ -51,7 +51,9 @@ fn changes_compiled_registry(git: &dyn Git, work: &Path, base_fq: &str) -> bool 
 /// the tree carries the build fence) spira-lint and the fence. `strict` makes an absent tool
 /// (127) red; otherwise it is skipped.
 pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &str, base_fq: &str, strict: bool) -> Option<Red> {
-    let mt = git.git(repo, &["merge-tree", "--write-tree", base_fq, branch]);
+    let head = git.git(work, &["rev-parse", "HEAD"]);
+    let tip = if head.success() && !head.stdout.trim().is_empty() { head.stdout.trim().to_string() } else { branch.to_string() };
+    let mt = git.git(repo, &["merge-tree", "--write-tree", base_fq, &tip]);
     if mt.code == 1 {
         return Some(Red { harness: false, text: format!("{branch} does not rebase onto {base_fq} cleanly:\n{}", mt.text()) });
     }
@@ -67,6 +69,22 @@ pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &st
         }
     }
     None
+}
+
+/// The recorded digest if it still describes this branch, else empty: a red judged a tip that
+/// is no longer HEAD, or carries no tip, is dropped; a rebase conflict is re-checked against
+/// the base as it stands, by tip sha so no other ref can answer for the branch.
+pub fn current_digest(git: &dyn Git, repo: &Path, work: &Path, base_fq: &str, recorded: &str) -> String {
+    let (digest, judged) = split_tip(recorded);
+    let head = git.git(work, &["rev-parse", "HEAD"]);
+    let tip = head.stdout.trim();
+    if !head.success() || tip.is_empty() || judged != Some(tip) {
+        return String::new();
+    }
+    if digest.contains(" does not rebase onto ") && git.git(repo, &["merge-tree", "--write-tree", base_fq, tip]).code != 1 {
+        return String::new();
+    }
+    digest.to_string()
 }
 
 /// The paths a rebase-conflict red names; empty for any other red.
@@ -301,5 +319,41 @@ mod tests {
         let rec = with_tip(&d, "abc123");
         assert_eq!(split_tip(&rec), (d.as_str(), Some("abc123")));
         assert_eq!(split_tip(&d).1, None);
+    }
+
+    struct T(Vec<(&'static str, i32, &'static str)>);
+    impl Git for T {
+        fn git(&self, _: &Path, a: &[&str]) -> Out {
+            let (_, code, out) = self.0.iter().find(|(k, _, _)| a.contains(k)).copied().unwrap_or(("", 0, ""));
+            Out { code, stdout: out.into(), stderr: String::new() }
+        }
+    }
+
+    #[test]
+    fn a_red_is_shown_only_for_the_tip_it_judged_and_a_conflict_only_while_it_holds() {
+        let w = Path::new(".");
+        let rec = with_tip("b does not rebase onto base cleanly:\nCONFLICT (content): Merge conflict in x", "aaa");
+        let conflicting = T(vec![("rev-parse", 0, "aaa\n"), ("merge-tree", 1, "")]);
+        assert!(current_digest(&conflicting, w, w, "base", &rec).contains("CONFLICT"));
+        let clean = T(vec![("rev-parse", 0, "aaa\n"), ("merge-tree", 0, "")]);
+        assert_eq!(current_digest(&clean, w, w, "base", &rec), "", "another branch's conflict does not stand for this one");
+        let moved = T(vec![("rev-parse", 0, "bbb\n"), ("merge-tree", 1, "")]);
+        assert_eq!(current_digest(&moved, w, w, "base", &rec), "");
+        assert_eq!(current_digest(&conflicting, w, w, "base", "no tip recorded"), "");
+    }
+
+    #[test]
+    fn the_rebase_check_judges_the_tip_sha_not_a_ref_name() {
+        struct S(Mutex<Vec<Vec<String>>>);
+        impl Git for S {
+            fn git(&self, _: &Path, a: &[&str]) -> Out {
+                self.0.lock().unwrap().push(a.iter().map(|s| s.to_string()).collect());
+                Out { code: 0, stdout: "abc123\n".into(), stderr: String::new() }
+            }
+        }
+        let w = tree("sha", false);
+        let g = S(Mutex::new(vec![]));
+        red(&g, &E(0, Mutex::new(vec![])), &w.join("."), &w.join("."), "spira/b", "base", false);
+        assert!(g.0.lock().unwrap().iter().any(|c| c.contains(&"merge-tree".to_string()) && c.last().unwrap() == "abc123"));
     }
 }
