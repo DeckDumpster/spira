@@ -2095,6 +2095,7 @@ fn a_forge_repo_tier_runs_beside_another_reader_and_waits_only_for_a_swap() {
         assert_eq!(rt.once_calls.lock().unwrap().len(), 1, "a shared holder does not block a run");
     }
     fs::write(cache.join("holder"), "testenv-foreign-swapper-lint").unwrap();
+    slot_lock_free(&cache.join("lock"));
     let held = crate::worktree::try_lock(&cache.join("lock")).expect("lock is free");
     assert_eq!(w.run(&rt, &b, &["--deadline", "1", "topic"], "", &w.root), 2);
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=deadline-suites");
