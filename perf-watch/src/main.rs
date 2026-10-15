@@ -32,7 +32,7 @@ struct Spawn {
 
 impl Spawn {
     fn new() -> Spawn {
-        let scoped = Command::new("systemd-run").arg("--version").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        let scoped = Command::new("timeout").args(["5", "systemd-run", "--version"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         Spawn { scoped, measured: None }
     }
 }
