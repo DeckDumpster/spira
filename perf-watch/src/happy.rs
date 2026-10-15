@@ -3,6 +3,8 @@
 //! are traits so a test scripts both.
 
 use crate::Clock;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 pub trait Sim {
     /// Whether a round VM pass is certifying right now.
@@ -71,6 +73,74 @@ pub fn alarm(outcome: &Outcome, goal_ms: u64, recent: &[u64]) -> Option<String> 
         }
         Outcome::Measured { .. } => None,
     }
+}
+
+/// Directories of a release tree a sim world reads from its checkout.
+const WORLD_DIRS: [&str; 6] = [".github", "lifecycle", "out", "sim", "spira", "systemd"];
+
+fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    // batch-job: git add/commit of a whole release tree takes as long as the tree is large
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=perf-watch", "-c", "user.email=perf-watch@localhost"])
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(format!("git {} {}: {}", args.join(" "), out.status, stderr_tail(&String::from_utf8_lossy(&out.stderr))))
+    }
+}
+
+/// A git checkout the sim can run in: `repo` itself when it is one, else a repository kept
+/// under `scratch` and committed from the release tree, so an unchanged tree keeps its hash.
+pub fn checkout(repo: &Path, scratch: &Path) -> Result<PathBuf, String> {
+    if repo.join(".git").exists() {
+        return Ok(repo.to_path_buf());
+    }
+    let dir = scratch.join("tree");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if !dir.join(".git").exists() {
+        git(&dir, &["init", "-q", "--initial-branch=main"])?;
+    }
+    for e in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+        if e.file_name() != ".git" {
+            let p = e.path();
+            if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) }.map_err(|e| e.to_string())?;
+        }
+    }
+    for e in std::fs::read_dir(repo).map_err(|e| format!("{}: {e}", repo.display()))?.flatten() {
+        let name = e.file_name();
+        let wanted = if e.path().is_dir() { WORLD_DIRS.iter().any(|d| name == *d) } else { name != ".git" };
+        if wanted {
+            // batch-job: copies a release directory, as long as it is large
+            let st = Command::new("cp").arg("-a").arg(e.path()).arg(dir.join(&name)).status().map_err(|e| format!("cp: {e}"))?;
+            if !st.success() {
+                return Err(format!("cp {}: {st}", name.to_string_lossy()));
+            }
+        }
+    }
+    git(&dir, &["add", "-A", "-f"])?;
+    if git(&dir, &["status", "--porcelain"])?.trim().is_empty() && git(&dir, &["rev-parse", "-q", "--verify", "HEAD"]).is_ok() {
+        return Ok(dir);
+    }
+    git(&dir, &["commit", "-q", "--allow-empty", "-m", "release tree"])?;
+    Ok(dir)
+}
+
+const TAIL_BYTES: usize = 400;
+
+/// The end of a command's stderr as one line, for an alarm that names the cause.
+pub fn stderr_tail(text: &str) -> String {
+    let one = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut start = one.len().saturating_sub(TAIL_BYTES);
+    while !one.is_char_boundary(start) {
+        start += 1;
+    }
+    one[start..].to_string()
 }
 
 #[cfg(test)]
@@ -169,5 +239,37 @@ mod tests {
         let h = format!("{}{}junk\n{}", history_line(1, 10), history_line(2, 20), history_line(3, 30));
         assert_eq!(trend(&h, 2), vec![20, 30]);
         assert_eq!(trend("", 5), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn stderr_tail_is_one_line_and_bounded() {
+        assert_eq!(stderr_tail("a\n  b\n"), "a b");
+        let long = "é".repeat(1000);
+        let t = stderr_tail(&long);
+        assert!(t.len() <= TAIL_BYTES && t.chars().all(|c| c == 'é'));
+        assert_eq!(stderr_tail(""), "");
+    }
+
+    #[test]
+    fn a_release_tree_with_no_git_gets_a_checkout_the_sim_can_run_in() {
+        let tmp = testkit::TempDir::new("perf-watch-checkout");
+        let base = tmp.path().to_path_buf();
+        let (release, scratch) = (base.join("release"), base.join("scratch"));
+        std::fs::create_dir_all(release.join("spira/sim")).unwrap();
+        std::fs::create_dir_all(release.join("bin")).unwrap();
+        std::fs::write(release.join("Cargo.toml"), "x").unwrap();
+        std::fs::write(release.join("spira/sim/a.toml"), "x").unwrap();
+        std::fs::write(release.join("bin/big"), "x").unwrap();
+        let dir = checkout(&release, &scratch).unwrap();
+        assert!(git(&dir, &["rev-parse", "--show-toplevel"]).is_ok());
+        let files = git(&dir, &["ls-files"]).unwrap();
+        assert!(files.contains("spira/sim/a.toml") && files.contains("Cargo.toml") && !files.contains("bin/big"), "{files}");
+        let first = git(&dir, &["rev-parse", "HEAD"]).unwrap();
+        checkout(&release, &scratch).unwrap();
+        assert_eq!(git(&dir, &["rev-parse", "HEAD"]).unwrap(), first, "an unchanged tree is not recommitted");
+        std::fs::write(release.join("spira/sim/b.toml"), "y").unwrap();
+        checkout(&release, &scratch).unwrap();
+        assert_ne!(git(&dir, &["rev-parse", "HEAD"]).unwrap(), first);
+        assert_eq!(checkout(&base.join("nope"), &scratch).is_err(), true);
     }
 }
