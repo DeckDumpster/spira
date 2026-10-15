@@ -168,6 +168,8 @@ pub struct LcBeadRow {
     pub stack: Vec<String>,
     #[serde(default)]
     pub ejected_red_tip: Option<String>,
+    #[serde(default)]
+    pub holder: Option<String>,
 }
 
 fn stack_keys_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {

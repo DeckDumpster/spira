@@ -707,15 +707,16 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
 
 }
 
-/// Move a REWORK bead held by hand to SUBMITTED at a new tip with no gate verdict: the round it
-/// is admitted to certifies it. The machine refuses a row with no manual hold.
+/// Move a REWORK bead held by hand, or a READY bead nobody has claimed, to SUBMITTED at a new tip
+/// with no gate verdict: the round it is admitted to certifies it. The machine refuses a REWORK
+/// row with no manual hold.
 fn retip(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
     let Some((state, version, _)) = state_version(m, id) else {
         return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
     };
-    if state != "REWORK" {
+    if !matches!(state.as_str(), "REWORK" | "READY") {
         let mut a = Answer::cert(REFUSED, "skip", format!("retip: state={state} not eligible for tip={tip}"));
-        a.stderr = format!("spira-lc retip: {id} is {state}, not REWORK — nothing changed\n");
+        a.stderr = format!("spira-lc retip: {id} is {state}, not REWORK or READY — nothing changed\n");
         return a;
     }
     let kind = serde_json::to_string(&BeadEventKind::Resubmit { tip: tip.to_string() }).unwrap_or_default();

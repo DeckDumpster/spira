@@ -718,9 +718,23 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            Resubmit { .. } if holds_ask(row) => awaiting_reply(row, kind),
+            // Hand-built work on a bead nobody has claimed: no WORKING stage to pass through.
+            Resubmit { tip } => {
+                if row.holds.contains(&HoldKind::Wait) {
+                    return illegal(row, kind);
+                }
+                let mut new = row.clone();
+                new.state = BeadState::Submitted;
+                new.tip = Some(tip.clone());
+                new.gate_key = None;
+                new.reason = None;
+                new.version += 1;
+                Outcome::applied(new)
+            }
             Release | HolderDead | Submit { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } => illegal(row, kind),
         },
 
         BeadState::Open => illegal(row, kind),
@@ -1462,11 +1476,18 @@ mod tests {
         let out = apply(&unheld, &ev(BeadState::Rework, 0, kind()));
         assert!(!out.applied && out.refusal == Some(Refusal::NotManuallyHeld), "{:?}", out.refusal);
 
-        for state in ALL_STATES.into_iter().filter(|s| *s != BeadState::Rework) {
+        for state in ALL_STATES.into_iter().filter(|s| !matches!(s, BeadState::Rework | BeadState::Ready)) {
             let mut r = row(state);
             r.holds.insert(HoldKind::Manual);
             assert!(!apply(&r, &ev(state, 0, kind())).applied, "{state:?}");
         }
+
+        let ready = apply(&row(BeadState::Ready), &ev(BeadState::Ready, 0, kind()));
+        assert!(ready.applied, "{:?}", ready.refusal);
+        assert_eq!((ready.row.state, ready.row.tip.as_deref(), ready.row.gate_key.clone()), (BeadState::Submitted, Some(tip), None));
+        let mut waiting = row(BeadState::Ready);
+        waiting.holds.insert(HoldKind::Wait);
+        assert!(!apply(&waiting, &ev(BeadState::Ready, 0, kind())).applied, "a READY bead waiting on a prerequisite is not re-tipped");
 
         let bad = apply(&held, &ev(BeadState::Rework, 0, BeadEventKind::Resubmit { tip: "abc".into() }));
         assert!(matches!(bad.refusal, Some(Refusal::MalformedTip { .. })));

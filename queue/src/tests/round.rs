@@ -1189,6 +1189,34 @@ fn resubmit_fetches_an_absent_tip_and_refuses_when_the_fetch_brings_nothing() {
 }
 
 #[test]
+fn an_unclaimed_ready_bead_is_resubmitted_and_its_branch_set_to_the_tip() {
+    let t = rework_world(&[]);
+    t.git.set("refs/heads/spira/sp-a", "stale");
+    for r in t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().filter(|r| r.bead_id == "sp-a") {
+        r.state = "READY".into();
+    }
+    let tip_arg = format!("--tip={T_FIX}");
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built P0"]), 0, "{}", t.err());
+    assert!(t.lc.has(&format!("retip sp-a {T_FIX} concierge")), "{:?}", t.lc.calls.borrow());
+    let state = t.lc.rows.borrow().as_ref().unwrap().iter().find(|r| r.bead_id == "sp-a").map(|r| (r.state.clone(), r.tip.clone())).unwrap();
+    assert_eq!(state, ("SUBMITTED".to_string(), Some(T_FIX.to_string())));
+    assert_eq!(t.git.rev_parse(Path::new("/"), "refs/heads/spira/sp-a").as_deref(), Some(T_FIX));
+}
+
+#[test]
+fn a_bead_a_live_aeon_holds_is_not_resubmitted_and_the_refusal_names_the_holder() {
+    let t = rework_world(&[]);
+    for r in t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().filter(|r| r.bead_id == "sp-a") {
+        r.state = "WORKING".into();
+        r.holder = Some("aeon-7".into());
+    }
+    let tip_arg = format!("--tip={T_FIX}");
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built P0"]), 1);
+    assert!(t.err().contains("aeon-7"), "{}", t.err());
+    assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
 fn a_hand_mended_tip_that_fails_its_lint_is_not_retipped() {
     let t = rework_world(&["manual"]);
     t.scripts.lint_red.borrow_mut().insert(T_FIX.into(), "src/lib.rs:3:1".into());

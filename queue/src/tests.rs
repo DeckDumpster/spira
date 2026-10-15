@@ -753,7 +753,7 @@ impl Lc for FLc {
         let mut rows = self.rows.borrow_mut();
         let Ok(rows) = rows.as_mut() else { return Err((2, "cannot tell".into())) };
         let Some(r) = rows.iter_mut().find(|r| r.bead_id == bead) else { return Err((1, "no row".into())) };
-        if !r.holds.iter().any(|h| h == "manual") {
+        if r.state == "REWORK" && !r.holds.iter().any(|h| h == "manual") {
             return Err((3, "refused: NotManuallyHeld".into()));
         }
         r.state = "SUBMITTED".into();
@@ -969,7 +969,7 @@ impl T {
     }
     /// A spira-lc bead row entered at `since`.
     fn lc_row(&self, id: &str, state: &str, tip: &str, since: u64) {
-        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Vec::new(), ejected_red_tip: None };
+        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Vec::new(), ejected_red_tip: None, holder: None };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }
     fn open_record(&self, text: &str) {
