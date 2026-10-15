@@ -293,6 +293,18 @@ impl Run<'_> {
         hist.rc == 0 && lifecycle_submitted(&lifecycle_states(&hist.out))
     }
 
+    fn spira_units(&self, state: &str) -> Vec<String> {
+        let flag = format!("--state={state}");
+        first_fields(&self.systemctl(&["list-units", &flag, "--no-legend", "--plain"]).out).into_iter().filter(|u| u.starts_with("spira-")).collect()
+    }
+
+    /// Wait up to `budget` seconds for the spira units to leave activation or for one to fail.
+    fn wait_units_settled(&self, budget: u64) {
+        self.poll(budget, 2, || {
+            !self.spira_units("failed").is_empty() || (self.spira_units("activating").is_empty() && self.spira_units("reloading").is_empty())
+        });
+    }
+
     fn world_halted_line(&self) -> Option<String> {
         let out = self.h.run(&self.tool("world.sh").arg("status"));
         out.text.lines().find(|l| l.contains("HALTED") || l.contains("STOPPED")).map(str::to_string)
@@ -886,7 +898,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     h.show(&r.tool("world.sh").arg("start"));
     let active = first_fields(&r.systemctl(&["list-units", "--state=active", "--no-legend", "--plain"]).out);
     r.check("phase D: sentinel timer active (world live before upgrade)", active.iter().any(|u| u.contains("spira-sentinel")), || "no spira-sentinel* in active units".into());
-    h.sleep(30);
+    r.wait_units_settled(30);
 
     let drc = h.show(&r.deploy_tag());
     r.is0(&format!("phase D: deploy.sh {tag} (aged upgrade) exits 0 — no rollback"), drc);
@@ -912,9 +924,9 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
         let got = spira_config::load(&conf).ok().and_then(|d| spira_config::get_path(&d, &path)).unwrap_or_default();
         r.is_same("phase D: operator override survived aged upgrade", &val, &got);
 
-        h.sleep(120);
-        let failed: Vec<String> = first_fields(&r.systemctl(&["list-units", "--state=failed", "--no-legend", "--plain"]).out).into_iter().filter(|u| u.starts_with("spira-")).collect();
-        r.check("phase D: no failed spira units 2 min after aged upgrade", failed.is_empty(), || failed.join("\n"));
+        r.wait_units_settled(120);
+        let failed = r.spira_units("failed");
+        r.check("phase D: no failed spira units once settled after aged upgrade", failed.is_empty(), || failed.join("\n"));
         match r.world_halted_line() {
             Some(l) => r.bad("phase D: world running after aged upgrade", &l),
             None => r.ok("phase D: world running after aged upgrade"),

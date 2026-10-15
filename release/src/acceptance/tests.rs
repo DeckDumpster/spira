@@ -621,7 +621,7 @@ fn a_failed_unit_after_the_aged_upgrade_is_a_fail() {
     let mut f = b.fake();
     f.failed_unit = true;
     assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
-    assert_eq!(b.fails(), vec!["phase D: no failed spira units 2 min after aged upgrade: spira-ops-t.service".to_string()]);
+    assert_eq!(b.fails(), vec!["phase D: no failed spira units once settled after aged upgrade: spira-ops-t.service".to_string()]);
 }
 
 #[test]
