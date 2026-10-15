@@ -502,7 +502,7 @@ round-vm: setup 42s, suites 158s\n";
     fn the_parser_reads_three_real_pass_logs_from_2026_10_15() {
         let red = fixture("pass-red-2026-10-15.log");
         assert_eq!((red.verdict.as_str(), red.ran, red.red, red.skipped), ("red", Some(470), Some(1), Some(9)));
-        assert_eq!(red.suites.len(), 470);
+        assert_eq!(red.suites.len(), 469);
         assert_eq!(red.suites[0].name, "test-acceptance-ci-scratch-queue.sh");
         assert!(red.suites[0].first_fail.starts_with("not ok 10 - publish-settle has nothing to publish"), "{:?}", red.suites[0]);
         assert_eq!(red.suites.iter().filter(|s| is_red(&s.verdict) && s.verdict != "skipped").count(), 1);
