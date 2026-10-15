@@ -2,6 +2,7 @@
 //! `GET /api/ops` for the Spira ops dashboard, and `/units`, the per-unit run history. Every one reads the lifecycle read model or
 //! the collector's snapshot files; none reads `bd`.
 
+pub mod forge_rounds;
 pub mod now;
 pub mod ops;
 pub mod shell;
@@ -45,6 +46,8 @@ pub struct Config {
     /// The `duckdb` and `journalctl` the units page runs. Overridable in tests.
     pub duckdb: String,
     pub journalctl: String,
+    /// The `broker` the forge batch pages read CI detail through. Overridable in tests.
+    pub broker: String,
 }
 
 impl Config {
@@ -72,6 +75,7 @@ impl Config {
                 .unwrap_or_else(|| "systemctl".to_string()),
             duckdb: std::env::var("SPIRA_DUCKDB").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "duckdb".to_string()),
             journalctl: std::env::var("SPIRA_JOURNALCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "journalctl".to_string()),
+            broker: std::env::var("SPIRA_BROKER").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "broker".to_string()),
         })
     }
 }
@@ -84,6 +88,7 @@ pub struct Loom {
     /// concurrent viewers share one.
     units_cell: Mutex<Option<Arc<units::Snapshot>>>,
     units_refreshing: AtomicBool,
+    forge_ci: forge_rounds::Cache,
 }
 
 impl Loom {
@@ -93,6 +98,7 @@ impl Loom {
             ops_cell: Mutex::new(None),
             units_cell: Mutex::new(None),
             units_refreshing: AtomicBool::new(false),
+            forge_ci: forge_rounds::Cache::default(),
         }
     }
 
@@ -399,20 +405,58 @@ async fn now_route(State(loom): State<Arc<Loom>>) -> Response {
 }
 
 async fn rounds_route(State(loom): State<Arc<Loom>>) -> Response {
+    let forge = forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom)));
     match lifecycle_snapshot(&loom) {
-        Ok((snap, _)) => html_response(StatusCode::OK, shell::with_bar(&now::render_rounds(&cockpit_ops::lcview::view(&snap)), &now::bar(Some(&snap), now_s()))),
-        Err(e) => unavailable("rounds view", &e),
+        Ok((snap, _)) => {
+            let page = now::render_rounds(&cockpit_ops::lcview::view(&snap)).replacen("</main>", &format!("{forge}</main>"), 1);
+            html_response(StatusCode::OK, shell::with_bar(&page, &now::bar(Some(&snap), now_s())))
+        }
+        Err(e) => {
+            let page = shell::shell("rounds", "Rounds", 15, &format!("<header><h1>Rounds</h1></header><main><p class=dim>lifecycle view unavailable: {}</p>{forge}</main>", stuck::esc(&e)));
+            html_response(StatusCode::OK, shell::with_bar(&page, &shell::Bar::default()))
+        }
     }
 }
 
 async fn round_route(State(loom): State<Arc<Loom>>, axum::extract::Path((repo, batch)): axum::extract::Path<(String, String)>) -> Response {
+    if let Some(b) = forge_rounds::read_all(&forge_queue_dir(&loom)).into_iter().find(|b| b.repo == repo && b.key == batch) {
+        let target = format!("{}/{}", b.repo, b.run);
+        let ci = loom.forge_ci.ci(&b, broker_json(&loom, &["read", "run-jobs", &target])).await;
+        let page = forge_rounds::render_detail(now_s(), &b, &ci);
+        let bar = lifecycle_snapshot(&loom).map(|(snap, _)| now::bar(Some(&snap), now_s())).unwrap_or_default();
+        return html_response(StatusCode::OK, shell::with_bar(&page, &bar));
+    }
     match lifecycle_snapshot(&loom) {
         Ok((snap, _)) => match snap.batches.iter().find(|b| b.id == batch && b.repo == repo) {
             Some(b) => html_response(StatusCode::OK, shell::with_bar(&now::render_round(&snap, b), &now::bar(Some(&snap), now_s()))),
             None => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such round</p>".into()),
         },
-        Err(e) => unavailable("round view", &e),
+        Err(_) => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such round</p>".into()),
     }
+}
+
+async fn broker_json(loom: &Loom, args: &[&str]) -> Result<Value, String> {
+    let cfg = loom.config();
+    let bin = cfg.broker.clone();
+    let mut cmd = tokio::process::Command::new(&bin);
+    cmd.args(args)
+        .env("PATH", child_path(&cfg.extra_path))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let out = tokio::time::timeout(cfg.budget, cmd.output())
+        .await
+        .map_err(|_| format!("broker {} over its {} ms budget", args.join(" "), cfg.budget.as_millis()))?
+        .map_err(|e| format!("could not run {bin}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("broker {} exited {}: {}", args.join(" "), out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim().chars().take(300).collect::<String>()));
+    }
+    serde_json::from_slice(&out.stdout).map_err(|e| format!("broker {}: {e}", args.join(" ")))
+}
+
+fn forge_queue_dir(loom: &Loom) -> std::path::PathBuf {
+    std::path::Path::new(&loom.config().run).join("queue")
 }
 
 pub fn router(loom: Arc<Loom>) -> Router {
