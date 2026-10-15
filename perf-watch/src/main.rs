@@ -19,20 +19,50 @@ impl Clock for Wall {
     }
 }
 
-struct Spawn;
+const TIMER_PREFIX: &str = "PERFWATCH_MS=";
+
+// The probe runs in its own transient scope, outside this unit's CPU quota, and times itself
+// there: wall time across the throttled parent would read the throttle, not the store.
+const SCOPED: &str = "t0=$(date +%s%N); \"$@\"; rc=$?; t1=$(date +%s%N); echo \"PERFWATCH_MS=$(( (t1-t0)/1000000 ))\" >&2; exit $rc";
+
+struct Spawn {
+    scoped: bool,
+    measured: Option<u64>,
+}
+
+impl Spawn {
+    fn new() -> Spawn {
+        let scoped = Command::new("systemd-run").arg("--version").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        Spawn { scoped, measured: None }
+    }
+}
+
 impl Runner for Spawn {
+    fn measured_ms(&self) -> Option<u64> {
+        self.measured
+    }
+
     fn run(&mut self, argv: &[String]) -> Result<String, String> {
-        let mut child = Command::new(&argv[0])
-            .args(&argv[1..])
+        self.measured = None;
+        let mut cmd = if self.scoped {
+            let mut c = Command::new("systemd-run");
+            c.args(["--user", "--scope", "--quiet", "--collect", "--", "sh", "-c", SCOPED, "perf-probe"]).args(argv);
+            c
+        } else {
+            let mut c = Command::new(&argv[0]);
+            c.args(&argv[1..]);
+            c
+        };
+        let mut child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(if self.scoped { Stdio::piped() } else { Stdio::null() })
             .spawn()
             .map_err(|e| format!("{}: {e}", argv[0]))?;
         let start = Instant::now();
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(st)) => break st,
                 Ok(None) if start.elapsed() > DEADLINE => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -41,10 +71,18 @@ impl Runner for Spawn {
                 Ok(None) => std::thread::sleep(Duration::from_millis(5)),
                 Err(e) => return Err(format!("{}: {e}", argv[0])),
             }
-        }
+        };
         let mut out = String::new();
         if let Some(mut so) = child.stdout.take() {
             let _ = std::io::Read::read_to_string(&mut so, &mut out);
+        }
+        if let Some(mut se) = child.stderr.take() {
+            let mut err = String::new();
+            let _ = std::io::Read::read_to_string(&mut se, &mut err);
+            self.measured = err.lines().rev().find_map(|l| l.strip_prefix(TIMER_PREFIX)).and_then(|n| n.trim().parse().ok());
+        }
+        if self.scoped && status.code() == Some(127) {
+            return Err(format!("{}: not found", argv[0]));
         }
         Ok(out)
     }
@@ -86,7 +124,7 @@ fn run() -> Result<(), String> {
     };
     let prior = health.as_deref().and_then(|f| std::fs::read_to_string(f).ok()).map(|t| Health::parse(&t)).unwrap_or_default();
     let stats_argv: Vec<String> = stats.split_whitespace().map(String::from).collect();
-    let Some(out) = run_pass(&cfg, &probes, &stats_argv, &prior, &Wall(Instant::now()), &mut Spawn) else { return Ok(()) };
+    let Some(out) = run_pass(&cfg, &probes, &stats_argv, &prior, &Wall(Instant::now()), &mut Spawn::new()) else { return Ok(()) };
     let inbox = match inbox {
         Some(p) => p,
         None => spira_config::process::cfg("SPIRA_CONCIERGE_INBOX")?,

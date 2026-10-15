@@ -18,6 +18,10 @@ pub trait Clock {
 
 pub trait Runner {
     fn run(&mut self, argv: &[String]) -> Result<String, String>;
+    /// Time the last run measured itself where the caller's own throttle cannot reach.
+    fn measured_ms(&self) -> Option<u64> {
+        None
+    }
 }
 
 pub fn parse_probes(text: &str) -> Result<Vec<Probe>, String> {
@@ -81,7 +85,8 @@ pub fn time_probes(probes: &[Probe], clock: &dyn Clock, runner: &mut dyn Runner)
         .map(|p| {
             let t0 = clock.now_ms();
             let r = runner.run(&p.argv);
-            Timing { name: p.name.clone(), millis: clock.now_ms().saturating_sub(t0), error: r.err() }
+            let millis = runner.measured_ms().unwrap_or_else(|| clock.now_ms().saturating_sub(t0));
+            Timing { name: p.name.clone(), millis, error: r.err() }
         })
         .collect()
 }
@@ -339,6 +344,33 @@ mod tests {
         assert!(asked);
         assert!(lines.contains(&"PERF SLOW list 730ms (limit 500ms) top callers: watcher/list=28.0/min, cockpit/list=5.0/min, watcher/show=2.0/min".to_string()), "{lines:?}");
         assert!(lines.iter().all(|l| !l.contains(" show ")), "{lines:?}");
+    }
+
+    struct SelfTimed<'a> {
+        clock: &'a Stub,
+        inside: u64,
+    }
+    impl Runner for SelfTimed<'_> {
+        fn run(&mut self, _: &[String]) -> Result<String, String> {
+            self.clock.now.set(self.clock.now.get() + 610);
+            Ok(String::new())
+        }
+        fn measured_ms(&self) -> Option<u64> {
+            Some(self.inside)
+        }
+    }
+
+    #[test]
+    fn a_probe_that_timed_itself_is_charged_its_own_time_not_the_throttled_wall_clock() {
+        let probes = parse_probes("list\tlist --live\n").unwrap();
+        let clock = Stub { now: Cell::new(0), epoch: Cell::new(0) };
+        let mut r = SelfTimed { clock: &clock, inside: 16 };
+        let t = time_probes(&probes, &clock, &mut r);
+        assert_eq!(t[0].millis, 16);
+        assert!(alarms(&t, 500, &[]).is_empty());
+        r.inside = 700;
+        let t = time_probes(&probes, &clock, &mut r);
+        assert_eq!(alarms(&t, 500, &[]).len(), 1);
     }
 
     #[test]
