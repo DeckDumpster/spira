@@ -3,15 +3,14 @@
 //! follow: tail the user journal from the cursor last checkpointed, writing one record per
 //! unit execution to run/tsd/unit-run.jsonl. backfill: replay the journal from its oldest
 //! entry, writing only what the file lacks; seeds the follower's checkpoint when it has none.
-//! follow starts the same replay on a background thread until it has completed once, so a
-//! start never waits on the journal's size.
+//! follow never replays: with no checkpoint it starts at now.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
-use unit_run::{accounting_dropin_path, ensure_io_accounting, pass, written_ids, Clock, io_controller_available, own_controllers_file, Folder, Item, Proc, Sink, Source, Triggers, MESSAGE_IDS};
+use unit_run::{accounting_dropin_path, ensure_io_accounting, journal_args, pass, written_ids, Clock, io_controller_available, own_controllers_file, Folder, Item, Proc, Sink, Source, Triggers};
 
 struct Wall;
 impl Clock for Wall {
@@ -64,22 +63,7 @@ impl Source for Journal {
     fn open(&self, after_cursor: Option<&str>, follow: bool) -> Result<Box<dyn Iterator<Item = Item>>, String> {
         // batch-job: the journal follower and the backfill replay run until the journal ends or the unit stops
         let mut cmd = Command::new("journalctl");
-        cmd.args(["--user", "-o", "json", "--no-pager"]);
-        match (after_cursor, follow) {
-            (Some(c), _) => {
-                cmd.arg(format!("--after-cursor={c}"));
-            }
-            (None, true) => {
-                cmd.args(["-n", "0"]);
-            }
-            (None, false) => {}
-        }
-        if follow {
-            cmd.arg("-f");
-        }
-        for id in MESSAGE_IDS {
-            cmd.arg(format!("MESSAGE_ID={id}"));
-        }
+        cmd.args(journal_args(after_cursor, follow));
         let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().map_err(|e| format!("journalctl: {e}"))?;
         let out = child.stdout.take().ok_or("journalctl: no stdout")?;
         let (tx, rx) = mpsc::channel::<String>();
@@ -137,11 +121,6 @@ fn follow() -> Result<(), String> {
     let cp = checkpoint_path(&run);
     std::fs::create_dir_all(cp.parent().ok_or("no tsd dir")?).map_err(|e| e.to_string())?;
     let start = load_checkpoint(&cp)?.unwrap_or_default();
-    std::thread::spawn(|| {
-        if let Err(e) = backfill(false, false) {
-            eprintln!("unit-run: background backfill: {e}");
-        }
-    });
     let mut s = sink(&run, &Wall, &Spawn)?;
     pass(&Journal, start, true, &mut s, &mut |f| save_checkpoint(&cp, f))?;
     Err("journalctl ended".into())
