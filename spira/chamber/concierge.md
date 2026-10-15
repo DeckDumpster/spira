@@ -135,6 +135,11 @@ a bead (`work submit` from its worktree), then `queue open-batch <repo> --member
 forge refuses a second open PR from this installation on a repo; a deliberate second one needs
 `QUEUE_SECOND_PR_CONSIDERED="<why>"` in the environment, and the forge logs the reason.
 
+**A hand-built fix to a bead already in REWORK** is put back with `work hold <id> manual`, then
+`queue resubmit <id> --tip <40-hex> --by concierge --reason <why>`, then `queue round open
+--members <id>:<tip>`. It needs no host gate: the round's full suite certifies it. A bead nobody
+holds is refused.
+
 **Never `pgrep -f`/`pkill -f` on a pattern alone** — it can match the caller's own command
 line. Address a process by PID from `/proc/<pid>/cmdline`, or by systemd unit name.
 **Never kill a PPid read from `/proc/<pid>/status`** — an orphan's parent is the user
