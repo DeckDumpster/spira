@@ -187,7 +187,7 @@ plus one CI runner (`SPIRA_CI_RUNNER_MEM_MIB`) must fit in `SPIRA_HYPERVISOR_MEM
 at a time. `batcher rounds-forge` (spira-rounds-forge) runs `queue verdict <repo>` then `cut` for
 each queue.forge repo, which settles the open batch and opens the next. They are separate units
 so a VM round never delays a forge batch; a repo only ever gets its own mode's steps.
-`SPIRA_BATCHER_ENABLE=0` holds local rounds only. `batcher rounds` runs both, in order.
+`SPIRA_BATCHER_ENABLE=0` holds local rounds and forge batches alike. `batcher rounds` runs both, in order.
 
 ## 6. Pacing (`SPIRA_ROUNDS_PACING`, default off)
 
