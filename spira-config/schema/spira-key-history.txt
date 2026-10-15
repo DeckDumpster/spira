@@ -456,3 +456,4 @@ cert_prices
 aeon_warm_base
 aeon_warm_cap_mib
 batcher_forge_enable
+queue_rounds_max

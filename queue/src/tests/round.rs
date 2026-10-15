@@ -346,7 +346,8 @@ fn open_fails_and_does_not_claim_a_return_the_lifecycle_refused_or_ignored() {
 fn open_whose_record_cannot_be_written_abandons_the_batch_it_cut() {
     let t = round_world();
     fs::create_dir_all(t.qfile("round")).unwrap();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 1, "{}", t.err());
+    fs::create_dir_all(t.qfile("round.r-x")).unwrap();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b", "--name", "r-x"]), 1, "{}", t.err());
     let calls = t.lc.calls.borrow().clone();
     assert!(calls.iter().any(|c| c.starts_with("cut ")), "POSITIVE CONTROL: the cut ran first: {calls:?}");
     assert!(calls.iter().any(|c| c.starts_with("abandon-batch ") && c.contains("OPEN")), "the cut batch is released: {calls:?}");
@@ -1187,4 +1188,101 @@ fn resubmit_refuses_a_stranger_a_short_tip_an_unknown_commit_and_a_non_rework_ro
     assert_eq!(t.run(&["resubmit", "sp-b", &ok, "--by=concierge", "--reason=r"]), 1);
     assert_eq!(t.run(&["resubmit", "sp-a", &ok, "--by=concierge"]), 2, "a reason is required");
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
+}
+
+fn concurrent_world() -> T {
+    let mut t = round_world();
+    t.lib.s.rounds_max = 2;
+    *t.scripts.round_vm.borrow_mut() = RunOut::default();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    t
+}
+
+#[test]
+fn a_second_round_with_disjoint_members_opens_beside_the_first() {
+    let t = concurrent_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a", "--name", "r-1"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]), 0, "{}", t.err());
+    assert!(kv_of(&t, "round")["batch_id"] == "r-1" && kv_of(&t, "round.r-2")["batch_id"] == "r-2");
+    assert_ne!(kv_of(&t, "round")["worktree"], kv_of(&t, "round.r-2")["worktree"], "each round has its own worktree");
+    let out = t.io.out.borrow().len();
+    assert_eq!(t.run(&["round", "status"]), 0);
+    let status = t.out()[out..].to_string();
+    assert!(status.contains("rounds=2") && status.contains("open_batches=r-1 r-2"), "{status}");
+    assert!(status.contains("batch_id=r-1") && status.contains("round2_batch_id=r-2") && status.contains("round2_members=sp-b:tb"), "{status}");
+}
+
+#[test]
+fn a_second_round_naming_a_member_of_an_open_round_is_refused_naming_it() {
+    let t = concurrent_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a", "--name", "r-1"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b,sp-a", "--name", "r-2"]), 1);
+    assert!(t.err().contains("sp-a is already a member of open round r-1"), "{}", t.err());
+    assert!(!t.qfile("round.r-2").exists());
+}
+
+#[test]
+fn the_open_past_the_limit_is_refused() {
+    let t = concurrent_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a", "--name", "r-1"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-c", "--name", "r-3"]), 1);
+    assert!(t.err().contains("2 rounds are already open for spira (limit 2)"), "{}", t.err());
+}
+
+#[test]
+fn a_round_is_addressed_by_its_batch_id_and_the_oldest_record_follows_the_landed() {
+    let t = concurrent_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a", "--name", "r-1"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "abandon", "r-2", "--reason", "x"]), 0, "{}", t.err());
+    assert!(!t.qfile("round.r-2").exists() && kv_of(&t, "round")["batch_id"] == "r-1");
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b", "--name", "r-3"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "abandon", "r-1", "--reason", "x"]), 0, "{}", t.err());
+    assert_eq!(kv_of(&t, "round")["batch_id"], "r-3", "the surviving round takes over the round file");
+    assert!(!t.qfile("round.r-3").exists());
+}
+
+fn two_green_rounds(t: &T) {
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a", "--name", "r-1"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "certify", "r-1"]), 0, "{}", t.err());
+    t.git.heads_name_their_base.set(true);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "certify", "r-2"]), 0, "{}", t.err());
+    t.git.trees.borrow_mut().insert("merged-tb@merged-ta".into(), T_ROUND.into());
+    t.git.ancestor("ta", "merged-ta");
+    t.git.ancestor("tb", "merged-tb@merged-ta");
+}
+
+#[test]
+fn a_later_round_with_no_file_in_common_lands_on_its_evidence_after_the_earlier_one() {
+    let t = concurrent_world();
+    two_green_rounds(&t);
+    t.git.stat("b0", "merged-ta", &[("x.rs", 1, 0)]);
+    t.git.stat("b0", "merged-tb", &[("y.rs", 1, 0)]);
+    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"));
+    assert_eq!(t.run(&["round", "land", "r-2"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb@merged-ta"), "the later round lands on the new ref");
+    assert!(t.landing_log().contains("QUEUE ROUND-REMERGE") && t.landing_log().contains("shared=none"), "{}", t.landing_log());
+    assert!(t.lc.has("land r-2 4 merged-tb@merged-ta") || t.lc.calls.borrow().iter().any(|c| c.contains("land r-2")), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn a_later_round_sharing_a_file_with_the_landed_one_goes_back_to_certify_on_the_merged_tree() {
+    let t = concurrent_world();
+    two_green_rounds(&t);
+    t.git.stat("b0", "merged-ta", &[("x.rs", 1, 0), ("shared.rs", 1, 0)]);
+    t.git.stat("b0", "merged-tb", &[("shared.rs", 1, 0)]);
+    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "land", "r-2"]), 1);
+    assert!(t.err().contains("shares 1 file(s) with what landed (shared.rs)") && t.err().contains("it is not landed"), "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"), "nothing of the later round landed");
+    let rec = kv_of(&t, "round");
+    assert_eq!((rec["batch_id"].as_str(), rec["base"].as_str(), rec["head"].as_str()), ("r-2", "merged-ta", "merged-tb@merged-ta"));
+    assert_eq!(round_phase(&t), "REBUILDING");
+    assert_eq!(t.run(&["round", "certify", "r-2"]), 0, "{}", t.err());
+    assert_eq!(round_phase(&t), "GREEN");
+    assert_eq!(t.run(&["round", "land", "r-2"]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb@merged-ta"));
 }

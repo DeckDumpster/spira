@@ -251,6 +251,7 @@ qa_depth = "scars"
 quarantine_max_age = "604800"
 queue_actions_app_id = "15368"
 queue_batch_max = 500
+queue_rounds_max = 2
 queue_batch_wait = 31536000
 queue_capacity_backoff_max = "3600"
 queue_capacity_backoff_min = "300"

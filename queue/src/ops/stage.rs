@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::round::{assemble, certify, csv, finish, handle_of, local_ctx, lock, mark_running, phase_of, rounds_dir, set, set_phase, suite_statuses, tail, unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR, RECORD};
+use super::round::{assemble, certify, csv, finish, handle_of, local_ctx, lock, mark_running, phase_of, open_records, record_of, rounds_dir, save_record, set, set_phase, suite_statuses, tail, unjudgeable, BLOCKING, BUILD_RED, LC_ACTOR};
 use super::{actor, idents, landing_log, lc_cas, read_text, require_lc, Ctx, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::ident::bounded_text;
@@ -83,7 +83,7 @@ pub fn stage(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&st
         return FAIL;
     }
     let Ok(_g) = lock(w, label, &c) else { return FAIL };
-    let Ok(Some(running)) = records::read_kv(&c.queue_file(RECORD)) else {
+    let Some((_, running)) = open_records(&c).into_iter().next() else {
         w.err(format!("queue.sh {label}: no round is open for {repo_name} — there is nothing to stage behind; use round open"));
         return FAIL;
     };
@@ -201,13 +201,13 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
             return FAIL;
         };
         let parent = kv.get("parent").unwrap_or("").to_string();
-        match records::read_kv(&c.queue_file(RECORD)) {
-            Ok(Some(run)) if run.get("batch_id") == Some(parent.as_str()) && phase_of(w, &parent) == "green" => {}
-            Ok(Some(run)) if run.get("batch_id") == Some(parent.as_str()) => {
+        match record_of(&c, &parent).map(|(_, run)| run) {
+            Some(_) if phase_of(w, &parent) == "green" => {}
+            Some(_) => {
                 w.err(format!("queue.sh {label}: {parent} is {}, not green — the staged round is tested once it is", phase_of(w, &parent)));
                 return FAIL;
             }
-            _ => {
+            None => {
                 w.err(format!("queue.sh {label}: {parent} is no longer the open round — promote or discard the staged round"));
                 return FAIL;
             }
@@ -371,7 +371,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         };
         let batch = kv.get("batch_id").unwrap_or("").to_string();
         let parent = kv.get("parent").unwrap_or("").to_string();
-        if let Ok(Some(running)) = records::read_kv(&c.queue_file(RECORD)) {
+        if let Some((_, running)) = record_of(&c, &parent) {
             w.err(format!(
                 "queue.sh {label}: round {} is still open for {repo_name} (phase {}) — {batch} follows {parent} and is promoted once it has landed",
                 running.get("batch_id").unwrap_or("?"),
@@ -435,7 +435,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         round.push("worktree", &wt.display().to_string());
         round.push("actor", &actor(w));
         round.push("opened", &now);
-        if let Err(e) = write_atomic(&c.queue_file(RECORD), &round.render()) {
+        if let Err(e) = save_record(&c, &round) {
             w.err(format!("queue.sh {label}: {batch} is OPEN on spira-lc but its round record cannot be written: {e}"));
             return FAIL;
         }

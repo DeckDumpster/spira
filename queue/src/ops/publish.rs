@@ -365,9 +365,10 @@ fn round_pass_running(w: &World, c: &Ctx) -> bool {
     if progress_live(&c.s.run, w.clock.now()) {
         return true;
     }
-    let Some(kv) = records::read_kv(&c.queue_file(crate::ops::round::RECORD)).ok().flatten() else { return false };
-    let Some(batch) = kv.get("batch_id") else { return false };
-    w.lc.batch_state(batch).map_or(true, |(s, _)| s == "CI_RUNNING")
+    crate::ops::round::open_records(c)
+        .iter()
+        .filter_map(|(_, kv)| kv.get("batch_id"))
+        .any(|batch| w.lc.batch_state(batch).map_or(true, |(s, _)| s == "CI_RUNNING"))
 }
 
 fn progress_live(run: &std::path::Path, now: u64) -> bool {

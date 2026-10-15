@@ -49,6 +49,8 @@ pub struct Settings {
     /// `SPIRA_ROUND_CERTIFY_WALL_SECS` (declared value): the wall `round certify` allows the
     /// round VM's corpus.
     pub round_wall_secs: u64,
+    /// `SPIRA_QUEUE_ROUNDS_MAX` (declared value): how many rounds may be open at once per repo.
+    pub rounds_max: usize,
 }
 
 /// `SPIRA_QUEUE_CI_MAXSEC[_<NAME>]`, `SPIRA_QUEUE_CI_IDLE_SEC[_<NAME>]` (already resolved for

@@ -5,6 +5,7 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.scratch_max_age_hours" = 24
 "spira.sccache_dav_max_gb" = 40
 "spira.round_certify_wall_secs" = 900
+"spira.queue_rounds_max" = 2
 "spira.preflight_wall_secs" = "240"
 "spira.flow_window_hours" = "0.5"
 "spira.flow_baseline_hours" = "24"
