@@ -506,6 +506,25 @@ fn a_setup_red_is_rerun_once_then_abandoned_with_evidence_never_an_endless_defer
 }
 
 #[test]
+fn a_single_member_batch_red_at_the_same_step_after_the_rerun_bars_the_members_tip() {
+    let t = T::new(LandMode::Queue);
+    batch(&t);
+    let rec = record(&t).replace("members=sp-a:ta sp-b:tb", "members=sp-b:tb");
+    t.open_record(&format!("{rec}batch_id=spira-1\nversion=3\n"));
+    *t.forge.run.borrow_mut() = Some("77".into());
+    let red = "red\nfailed-step: gate / Lint\nstep-log: ##[error]I001 Organize imports\n";
+    t.forge.status.borrow_mut().push(Some(red.into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(!t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    t.clock.now.set(t.clock.now.get() + t.lib.s.verdict.ci_idle_sec + 1);
+    t.forge.status.borrow_mut().push(Some(red.into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lc.has("eject-member spira-1 sp-b"), "{:?}", t.lc.calls.borrow());
+    assert_eq!(fs::read_to_string(t.qfile("red-tips")).unwrap(), "sp-b tb\n");
+    assert!(!t.qfile("open").exists());
+}
+
+#[test]
 fn a_rerun_that_never_started_is_not_called_in_flight() {
     let t = T::new(LandMode::Queue);
     lc_batch(&t);
