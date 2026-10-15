@@ -142,26 +142,7 @@ pub fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-const CSS: &str = "body{margin:0;font:14px/1.35 system-ui,sans-serif;background:#10141a;color:#d8dee9}\
-header{padding:.6rem .8rem;position:sticky;top:0;background:#10141a;border-bottom:1px solid #2a323d}\
-h1{font-size:1rem;margin:0}.dim{color:#7d8896}a{color:inherit;text-decoration:none}\
-.row{display:block;padding:.5rem .8rem;border-bottom:1px solid #1d232b}.row.stuck{background:#1e1416}\
-.head{display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap}.id{font-weight:600}.t{flex:1 1 12rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
-.bar{position:relative;height:16px;margin-top:.3rem;background:#161b22;border-radius:3px}\
-.seg{position:absolute;top:0;bottom:0;border-radius:2px;box-sizing:border-box;min-width:3px}\
-.seg.over{outline:2px solid #ff4d4f;outline-offset:-1px;z-index:1}\
-.s-OPEN{background:#4a5568}.s-READY{background:#3b82c4}.s-WORKING{background:#3aa57a}.s-SUBMITTED{background:#8b6fd0}\
-.s-CERTIFIED{background:#d6a032}.s-IN_DELIVERY{background:#d9772b}.s-REWORK{background:#c25a8a}.s-LANDED{background:#2f6f4f}\
-.badge{font-size:.75rem;padding:0 .35rem;border-radius:3px;background:#2a323d}.red{color:#ff6b6d}.badge.red{background:#4a1f21}\
-table{border-collapse:collapse;width:100%}td{padding:.3rem .5rem;border-bottom:1px solid #1d232b;vertical-align:top;word-break:break-word}\
-tr.refused td{color:#ff6b6d}.legend{display:flex;gap:.6rem;flex-wrap:wrap;padding:.4rem .8rem;font-size:.75rem}.legend i{display:inline-block;width:.7rem;height:.7rem;margin-right:.25rem;border-radius:2px}";
-
-pub fn shell(title: &str, refresh_s: u32, body: &str) -> String {
-    format!(
-        "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta http-equiv=refresh content={refresh_s}><title>{}</title><style>{CSS}</style><body>{body}</body>",
-        esc(title)
-    )
-}
+pub use crate::shell::shell;
 
 pub fn render_page(now: i64, rows: &[Row]) -> String {
     let stuck = rows.iter().filter(|r| r.stuck).count();
@@ -203,7 +184,7 @@ pub fn render_page(now: i64, rows: &[Row]) -> String {
     if rows.is_empty() {
         b.push_str("<p class=dim style=\"padding:.8rem\">no bead touched in the last 24 h</p>");
     }
-    shell("Stuck", 30, &b)
+    shell("stuck", "Stuck", 30, &b)
 }
 
 /// Ids of the same family as `own` (same prefix before the first dash) named in `texts`.
@@ -305,7 +286,7 @@ pub fn render_bead(now: i64, id: &str, detail: &Value) -> String {
         b.push_str("</table></details></td></tr>");
     }
     b.push_str("</table>");
-    shell(id, 30, &b)
+    shell("stuck", id, 30, &b)
 }
 
 #[cfg(test)]

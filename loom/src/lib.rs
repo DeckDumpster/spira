@@ -2,7 +2,9 @@
 //! `GET /api/ops` for the Spira ops dashboard, and `/units`, the per-unit run history. Every one reads the lifecycle read model or
 //! the collector's snapshot files; none reads `bd`.
 
+pub mod now;
 pub mod ops;
+pub mod shell;
 pub mod stuck;
 pub mod units;
 
@@ -15,6 +17,7 @@ use ops::OpsSnapshot;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
@@ -80,6 +83,7 @@ pub struct Loom {
     /// The units snapshot, held for `cfg.cache`; the lock is kept across the refresh so
     /// concurrent viewers share one.
     units_cell: Mutex<Option<Arc<units::Snapshot>>>,
+    units_refreshing: AtomicBool,
 }
 
 impl Loom {
@@ -88,6 +92,7 @@ impl Loom {
             cfg,
             ops_cell: Mutex::new(None),
             units_cell: Mutex::new(None),
+            units_refreshing: AtomicBool::new(false),
         }
     }
 
@@ -111,6 +116,20 @@ impl Loom {
         let snap = Arc::new(units::take(&src, now_s()).await);
         *held = Some(snap.clone());
         snap
+    }
+
+    /// The units snapshot as held, never waiting on the source: a page with a latency budget
+    /// shows what it has (marked stale) and starts at most one refresh behind it.
+    pub fn units_held(self: &Arc<Self>) -> Option<Arc<units::Snapshot>> {
+        let held = self.units_cell.try_lock().ok().and_then(|h| h.clone());
+        if held.as_ref().map_or(true, |s| s.taken.elapsed() >= self.cfg.cache) && !self.units_refreshing.swap(true, Ordering::AcqRel) {
+            let me = self.clone();
+            tokio::spawn(async move {
+                me.units_snapshot().await;
+                me.units_refreshing.store(false, Ordering::Release);
+            });
+        }
+        held
     }
 
     /// Serve the ops dashboard, refreshing first if the held snapshot has aged out (5 s TTL).
@@ -168,7 +187,7 @@ fn lifecycle_snapshot(loom: &Loom) -> Result<(cockpit_ops::lcview::Snapshot, i64
 }
 
 /// Older than this, the page says the collector has stopped rather than showing old numbers as live.
-const LIFECYCLE_STALE_S: i64 = 60;
+pub(crate) const LIFECYCLE_STALE_S: i64 = 60;
 
 async fn lifecycle_page_route(
     State(loom): State<Arc<Loom>>,
@@ -193,7 +212,8 @@ async fn lifecycle_page_route(
             if fragment {
                 (StatusCode::OK, "application/json", cockpit_ops::lctui::render_fragment(&v, stale))
             } else {
-                (StatusCode::OK, "text/html; charset=utf-8", cockpit_ops::lcview::render_html(&v, stale, 5))
+                let html = cockpit_ops::lcview::render_html(&v, stale, 5);
+                (StatusCode::OK, "text/html; charset=utf-8", shell::wrap_foreign(&html, "lifecycle", &now::bar(Some(&snap), now_s())))
             }
         }
         Err(e) if fragment => (StatusCode::SERVICE_UNAVAILABLE, "application/json", serde_json::json!({ "banner": format!("<div class='line bad'>lifecycle view unavailable: {e}</div>"), "tree": "" }).to_string()),
@@ -207,7 +227,7 @@ async fn lifecycle_page_route(
         .expect("a response with a valid status and headers")
 }
 
-async fn rounds_route(State(loom): State<Arc<Loom>>, axum::extract::Path(batch): axum::extract::Path<String>) -> Response {
+async fn vm_round_route(State(loom): State<Arc<Loom>>, axum::extract::Path(batch): axum::extract::Path<String>) -> Response {
     const TAIL: u64 = 256 * 1024;
     let (snap, _) = match lifecycle_snapshot(&loom) {
         Ok(x) => x,
@@ -310,9 +330,13 @@ async fn stuck_rows(loom: &Loom) -> Result<(i64, Vec<stuck::Row>), String> {
     Ok((now, stuck::build(now, &rows(&gantt["events"]), &rows(&dwell), &stuck::p95_map(&rows(&p95)))))
 }
 
+fn page_bar(loom: &Loom) -> shell::Bar {
+    now::bar(lifecycle_snapshot(loom).ok().map(|(s, _)| s).as_ref(), now_s())
+}
+
 async fn stuck_page_route(State(loom): State<Arc<Loom>>) -> Response {
     match stuck_rows(&loom).await {
-        Ok((now, rows)) => html_response(StatusCode::OK, stuck::render_page(now, &rows)),
+        Ok((now, rows)) => html_response(StatusCode::OK, shell::with_bar(&stuck::render_page(now, &rows), &page_bar(&loom))),
         Err(e) => unavailable("stuck view", &e),
     }
 }
@@ -335,7 +359,7 @@ async fn stuck_bead_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id)
         return html_response(StatusCode::BAD_REQUEST, "<!doctype html><p>not a bead id</p>".into());
     }
     match lc_json(&loom, &["ops-bead", &id]).await {
-        Ok(d) if d.get("events").is_some() => html_response(StatusCode::OK, stuck::render_bead(stuck::num(&d["now"]).unwrap_or_else(now_s), &id, &d)),
+        Ok(d) if d.get("events").is_some() => html_response(StatusCode::OK, shell::with_bar(&stuck::render_bead(stuck::num(&d["now"]).unwrap_or_else(now_s), &id, &d), &page_bar(&loom))),
         Ok(_) => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such bead</p>".into()),
         Err(e) if e.contains("exited 1") => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such bead</p>".into()),
         Err(e) => unavailable("bead timeline", &e),
@@ -343,7 +367,7 @@ async fn stuck_bead_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id)
 }
 
 async fn units_page_route(State(loom): State<Arc<Loom>>) -> Response {
-    html_response(StatusCode::OK, units::render_page(loom.units_snapshot().await.as_ref()))
+    html_response(StatusCode::OK, shell::with_bar(&units::render_page(loom.units_snapshot().await.as_ref()), &page_bar(&loom)))
 }
 
 async fn units_api_route(State(loom): State<Arc<Loom>>) -> Response {
@@ -355,19 +379,46 @@ async fn units_api_route(State(loom): State<Arc<Loom>>) -> Response {
         .expect("a response with a valid status and headers")
 }
 
-async fn root_route() -> Response {
-    Response::builder()
-        .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, "/stuck")
-        .header(header::CACHE_CONTROL, "no-store")
-        .body(axum::body::Body::empty())
-        .expect("a redirect with a valid status and headers")
+async fn now_route(State(loom): State<Arc<Loom>>) -> Response {
+    match lifecycle_snapshot(&loom) {
+        Ok((snap, _)) => {
+            let view = cockpit_ops::lcview::view(&snap);
+            let held = loom.units_held();
+            let units = match held.as_deref() {
+                None => now::UnitsState::Pending,
+                Some(u) => {
+                    let age_s = u.taken.elapsed().as_secs() as i64;
+                    now::UnitsState::Held { snap: u, age_s, stale: u.taken.elapsed() >= loom.config().cache }
+                }
+            };
+            let page = now::render_now(&snap, &view, &units);
+            html_response(StatusCode::OK, shell::with_bar(&page, &now::bar(Some(&snap), now_s())))
+        }
+        Err(e) => unavailable("now view", &e),
+    }
+}
+
+async fn rounds_route(State(loom): State<Arc<Loom>>) -> Response {
+    match lifecycle_snapshot(&loom) {
+        Ok((snap, _)) => html_response(StatusCode::OK, shell::with_bar(&now::render_rounds(&cockpit_ops::lcview::view(&snap)), &now::bar(Some(&snap), now_s()))),
+        Err(e) => unavailable("rounds view", &e),
+    }
+}
+
+async fn round_route(State(loom): State<Arc<Loom>>, axum::extract::Path((repo, batch)): axum::extract::Path<(String, String)>) -> Response {
+    match lifecycle_snapshot(&loom) {
+        Ok((snap, _)) => match snap.batches.iter().find(|b| b.id == batch && b.repo == repo) {
+            Some(b) => html_response(StatusCode::OK, shell::with_bar(&now::render_round(&snap, b), &now::bar(Some(&snap), now_s()))),
+            None => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such round</p>".into()),
+        },
+        Err(e) => unavailable("round view", &e),
+    }
 }
 
 pub fn router(loom: Arc<Loom>) -> Router {
     Router::new()
         .route("/lifecycle", get(lifecycle_page_route))
-        .route("/rounds/{batch}", get(rounds_route))
+        .route("/rounds/{batch}", get(vm_round_route))
         .route("/api/lifecycle", get(lifecycle_api_route))
         .route("/stuck", get(stuck_page_route))
         .route("/api/stuck", get(stuck_api_route))
@@ -375,6 +426,8 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/units", get(units_page_route))
         .route("/api/units", get(units_api_route))
         .route("/api/ops", get(ops_route))
-        .route("/", get(root_route))
+        .route("/", get(now_route))
+        .route("/rounds", get(rounds_route))
+        .route("/rounds/{repo}/{batch}", get(round_route))
         .with_state(loom)
 }

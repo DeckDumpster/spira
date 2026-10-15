@@ -80,7 +80,7 @@ async fn the_retired_list_view_is_gone_and_no_loom_route_reads_bd_listings() {
     }
     let before = std::fs::read_to_string(&counter).unwrap();
     let (code, _) = get(addr, "/").await;
-    assert_eq!(code, 303, "/ hands over to the stuck page");
+    assert_eq!(code, 503, "/ is the Now page, which says so when no snapshot exists, and never redirects");
     assert_eq!(std::fs::read_to_string(&counter).unwrap(), before, "/ must not query the store");
     let calls = std::fs::read_to_string(&counter).unwrap();
     assert!(calls.contains("ops-gantt"), "the shim saw the stuck page's reads: {calls}");
@@ -465,4 +465,96 @@ async fn lifecycle_round_rows_are_links_and_a_vm_round_serves_its_log() {
     assert_eq!(code, 200, "{page}");
     assert!(page.contains("suite one ok") && page.contains("&lt;b&gt;red"), "{page}");
     assert_eq!(get(addr, "/rounds/nope").await.0, 404);
+}
+
+
+// ── Now and the shell ────────────────────────────────────────────────────────
+
+const FIVE: [&str; 5] = ["/", "/rounds", "/stuck", "/units", "/lifecycle"];
+
+fn write_snapshot(run: &std::path::Path, snap: &cockpit_ops::lcview::Snapshot) {
+    std::fs::create_dir_all(run.join("lcview")).unwrap();
+    std::fs::write(run.join("lcview").join("snapshot.json"), serde_json::to_string(snap).unwrap()).unwrap();
+}
+
+fn now_snapshot() -> cockpit_ops::lcview::Snapshot {
+    use cockpit_ops::lcview::*;
+    let now = now_s();
+    let row = |id: &str, state: &str, since: i64| Row { id: id.into(), state: state.into(), since, updated_at: since, ..Default::default() };
+    let mut s = Snapshot { now, release: "rel-abc".into(), world: "RUNNING".into(), ceiling: 4, forge_base: "https://forge.test/o".into(), ..Default::default() };
+    s.rows = vec![row("sp-late1", "WORKING", now - 36_000), row("sp-done1", "LANDED", now - 600), row("sp-done2", "LANDED", now - 90_000)];
+    s.meta.insert("sp-late1".into(), Meta { title: "the slow one".into(), ..Default::default() });
+    s.meta.insert("sp-done1".into(), Meta { title: "just landed".into(), ..Default::default() });
+    s.dwell = vec![
+        DwellRow { bead_id: "sp-late1".into(), state: "WORKING".into(), entered_at: now - 36_000, p95_s: Some(3600) },
+        DwellRow { bead_id: "sp-fine1".into(), state: "WORKING".into(), entered_at: now - 60, p95_s: Some(3600) },
+    ];
+    s.live = Some(vec![LiveAeon { unit: "spira-aeon-x.service".into(), pid: 7, started: now - 300, phase: "session".into() }]);
+    s.batches = vec![BatchRow {
+        id: "b-live1".into(), state: "CI_RUNNING".into(), repo: "dumpstar".into(), pr: 7, members: vec!["sp-m1".into(), "sp-m2".into()], ejected: vec!["sp-m2".into()],
+        opened_at: now - 900, last_at: now - 60, run_url: "https://forge.test/run/1".into(), ..Default::default()
+    }];
+    s
+}
+
+#[tokio::test]
+async fn now_shows_the_live_round_the_late_bead_the_failing_unit_and_what_landed() {
+    let fx = units_fixture(&fixture_rows());
+    let run = std::path::PathBuf::from(&fx.cfg.run);
+    write_snapshot(&run, &now_snapshot());
+    let addr = spawn(fx.cfg.clone()).await;
+
+    let mut page = String::new();
+    for _ in 0..50 {
+        page = get(addr, "/").await.1;
+        if page.contains("flaky.service") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(page.contains("href=\"/rounds/dumpstar/b-live1\""), "a card per live round: {page}");
+    assert!(page.contains("href=\"/stuck/sp-late1\"") && page.contains("10.0h in WORKING"), "the bead past p95: {page}");
+    assert!(!page.contains("/stuck/sp-fine1"), "positive control: a bead inside its p95 is not listed");
+    assert!(page.contains("flaky.service") && page.contains("dead.service"), "failing and stale units: {page}");
+    assert!(page.contains("aeons 1/4") && page.contains("rel-abc") && page.contains("world RUNNING"), "the top bar: {page}");
+    assert!(page.contains("1 in 24 h") && page.contains("just landed") && !page.contains("sp-done2"), "landed in the last day only: {page}");
+
+    let (code, round) = get(addr, "/rounds/dumpstar/b-live1").await;
+    assert_eq!(code, 200, "{round}");
+    assert!(round.contains("sp-m1") && round.contains("sp-m2") && round.contains("forge.test/o/dumpstar/pull/7") && round.contains("forge.test/run/1"), "{round}");
+    assert_eq!(get(addr, "/rounds/dumpstar/nope").await.0, 404);
+}
+
+#[tokio::test]
+async fn now_answers_from_cache_while_a_source_is_slow_and_says_it_is_loading() {
+    let fx = units_fixture(&fixture_rows());
+    script(&PathBuf::from(&fx.cfg.systemctl), "#!/bin/sh\nsleep 5\n");
+    write_snapshot(&PathBuf::from(&fx.cfg.run), &now_snapshot());
+    let addr = spawn(fx.cfg.clone()).await;
+    for _ in 0..3 {
+        let (code, page) = get(addr, "/").await;
+        assert_eq!(code, 200, "{page}");
+        assert!(page.contains("unit history is loading") && page.contains("/rounds/dumpstar/b-live1"), "{page}");
+    }
+}
+
+#[tokio::test]
+async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_all_five_sections_on_a_phone() {
+    let mut fx = units_fixture(&fixture_rows());
+    fx.cfg.lc = fake_lc(&fx.dir.to_path_buf());
+    write_snapshot(&PathBuf::from(&fx.cfg.run), &now_snapshot());
+    let addr = spawn(fx.cfg.clone()).await;
+    for path in FIVE.iter().chain(&["/stuck/sp-2cah6", "/rounds/dumpstar/b-live1"]) {
+        let (code, page) = get(addr, path).await;
+        assert_eq!(code, 200, "{path}");
+        assert!(page.contains("width=device-width") || *path == "/lifecycle", "{path}: viewport");
+        assert!(page.contains("<b>SPIRA</b>") && page.contains("refreshed"), "{path}: top bar");
+        for target in FIVE {
+            assert!(page.contains(&format!("<a href=\"{target}\"")), "{path}: tab {target}");
+        }
+        assert!(!page.contains("<!--lm-bar-->"), "{path}: the bar slot was filled");
+        let css = page.split("@media(max-width:639px)").nth(1).unwrap_or_else(|| panic!("{path}: no phone rule"));
+        assert!(css.contains(".lm-tabs{position:fixed;left:0;right:0;bottom:0") && css.contains("flex:1 1 0;min-width:0"), "{path}: bottom tab bar of five equal cells");
+        assert!(css.contains("body{overflow-x:hidden"), "{path}: no horizontal overflow");
+    }
 }

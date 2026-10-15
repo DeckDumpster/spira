@@ -366,7 +366,7 @@ pub fn render_page(s: &Snapshot) -> String {
         }
         b.push_str("</table></details>");
     }
-    shell("Units", 60, &b)
+    shell("units", "Units", 60, &b)
 }
 
 const TABLE_HEAD: &str = "<table class=units><tr class=head><td>unit</td><td>state</td><td>24 h</td><td>24 h</td><td>7 d</td><td>p50 / p95 (7 d)</td><td>last failure</td></tr>";
