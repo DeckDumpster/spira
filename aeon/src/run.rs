@@ -965,7 +965,7 @@ impl<'a> Run<'a> {
             }
         }
 
-        body = format!("{}{body}", brief::fast_tier_red_brief(crate::fast_tier::split_tip(&red).0));
+        body = format!("{}{body}", brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)));
 
         // A thrashed bead leads with its sticking point, while the tip has not moved.
         let mut banner = None;
