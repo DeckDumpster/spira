@@ -3,7 +3,7 @@
 // usage: cert-report --root <dir> [--day YYYY-MM-DD | --since <iso> --until <iso>] [--line] [--record]
 //                    [--prices type=usd_per_hour,...]
 //
-//   --root and --prices are passed by the caller from the resolved config (SPIRA_RUN, SPIRA_CERT_PRICES).
+//   --root and --prices are passed by the caller from the resolved config (spira.run, spira.cert_prices).
 //   (window)  defaults to the 24 hours ending now.
 //   --line    prints the one status line the Concierge's briefing reads.
 //   --record  also appends one cert-throughput row per cell.
