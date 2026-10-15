@@ -599,19 +599,34 @@ wake)
     # AN INJECTABLE CLOCK: a test that already serialises each poll via the hook above sets
     # these to 0 rather than also waiting out two real cadences on top of it.
     _wake_poll_secs="${CONCIERGE_WAKE_POLL_SECS:-2}"
-    _wake_settle_secs="${CONCIERGE_WAKE_SETTLE_SECS:-1}"
     _wake_warn_secs="${CONCIERGE_WAKE_WARN_SECS:-60}"
+    _wake_max_secs="${CONCIERGE_WAKE_MAX_SECS:-600}"
     _wake_t0=$SECONDS; _wake_warned=0
-    while _wake_input_busy; do
+    # Delivery needs the input line empty AND the pane's own cursor unmoved since the previous
+    # look: a cursor that moved means he is still typing. No fixed settle sleep; the wait is
+    # capped, and a capped wake fails loudly so the caller retries instead of blocking forever.
+    declare -F _wake_cursor >/dev/null || _wake_cursor() {
+        $TM display-message -p -t "$SESSION" '#{cursor_x}.#{cursor_y}' 2>/dev/null || true
+    }
+    _wake_prev="$(_wake_cursor)"
+    while :; do
+        if ! _wake_input_busy; then
+            _wake_now="$(_wake_cursor)"
+            [ "$_wake_now" = "$_wake_prev" ] && break
+            _wake_prev="$_wake_now"
+        else
+            _wake_prev="$(_wake_cursor)"
+        fi
+        if [ $((SECONDS - _wake_t0)) -ge "$_wake_max_secs" ]; then
+            printf 'concierge: wake abandoned after %ss — the input line of %s never went quiet\n' "$_wake_max_secs" "$SESSION" >&2
+            exit 1
+        fi
         if [ "$_wake_warned" = 0 ] && [ $((SECONDS - _wake_t0)) -ge "$_wake_warn_secs" ]; then
             printf 'concierge: wake held %ss — the input line of %s still holds text; delivery waits until it is cleared\n' "$_wake_warn_secs" "$SESSION" >&2
             _wake_warned=1
         fi
         sleep "$_wake_poll_secs"
     done
-    # SETTLE: he may be between keystrokes; require a second quiet check before delivering.
-    sleep "$_wake_settle_secs"
-    while _wake_input_busy; do sleep "$_wake_poll_secs"; done
     _wake_deliver "$2"
     ;;
 
