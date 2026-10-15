@@ -12,26 +12,34 @@ use crate::db::Conn;
 use crate::rows;
 
 const CANNOT_TELL: i32 = 2;
-/// The content store's database when the bead store names none: production's.
-pub const CONTENT_DB: &str = "spira";
-
 /// The content store's database: the one the bead store's own `.beads/metadata.json` names
-/// (`dolt_database`) under `spira.db`, resolved once per process; `spira` when it names none.
-/// Production's store names `spira`; a testdb fixture and a sim world name their own
-/// (`sptest_…`), on the same server lc-serve reaches, so a hardcoded name read a database
-/// that was not there.
-fn content_db() -> &'static str {
-    static DB: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    DB.get_or_init(|| {
-        spira_config::process::cfg("SPIRA_DB")
-            .ok()
-            .filter(|d| !d.trim().is_empty())
-            .and_then(|d| std::fs::read_to_string(std::path::Path::new(d.trim()).join(".beads/metadata.json")).ok())
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-            .and_then(|m| m.get("dolt_database").and_then(Value::as_str).map(str::to_string))
-            .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
-            .map_or_else(|| CONTENT_DB.to_string(), |n| format!("`{n}`"))
-    })
+/// (`dolt_database`) under `spira.db`, resolved once per process. Production's store names
+/// `spira`; a testdb fixture and a sim world name their own (`sptest_…`) on the server lc-serve
+/// reaches. A store that names none is refused by name, never defaulted
+/// (law-a-config-value-has-no-fallback): a guessed name reads some other database.
+fn content_db() -> Result<&'static str, String> {
+    static DB: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    DB.get_or_init(|| spira_config::process::cfg("SPIRA_DB").and_then(|db| database_of(std::path::Path::new(db.trim()))))
+        .as_deref()
+        .map_err(|e| format!("cannot tell: {e}"))
+}
+
+/// The `dolt_database` that `<db>/.beads/metadata.json` names, as a quoted identifier.
+pub fn database_of(db: &std::path::Path) -> Result<String, String> {
+    if db.as_os_str().is_empty() {
+        return Err("spira.db is empty: the content store's database is named by <spira.db>/.beads/metadata.json (dolt_database) — refusing".into());
+    }
+    let meta = db.join(".beads/metadata.json");
+    let text = std::fs::read_to_string(&meta).map_err(|e| format!("{}: {e} — it names the content store's database (dolt_database); refusing", meta.display()))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("{}: not JSON: {e}", meta.display()))?;
+    let name = v.get("dolt_database").and_then(Value::as_str).unwrap_or("");
+    if name.is_empty() {
+        return Err(format!("{} names no dolt_database: the content store's database is not declared — refusing", meta.display()));
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return Err(format!("{}: dolt_database {name:?} is not a plain database name — refusing", meta.display()));
+    }
+    Ok(format!("`{name}`"))
 }
 const RFC3339: &str = "%Y-%m-%dT%H:%i:%sZ";
 
@@ -99,7 +107,7 @@ pub fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
 const TEXT_COLUMNS: &str = ", description, notes, external_ref";
 
 fn by_external_ref(conn: &Conn, needle: &str, full: bool) -> Result<Vec<Value>, String> {
-    let cdb = content_db();
+    let cdb = content_db()?;
     if needle.is_empty() {
         return Err("content-rows: --external-contains needs a non-empty text".into());
     }
@@ -110,7 +118,7 @@ fn by_external_ref(conn: &Conn, needle: &str, full: bool) -> Result<Vec<Value>, 
 }
 
 fn fetch_with(conn: &Conn, ids: &[&str], full: bool) -> Result<Vec<Value>, String> {
-    let cdb = content_db();
+    let cdb = content_db()?;
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -164,7 +172,7 @@ pub fn cmd_pane_facets(args: &[String], conn: &Conn) -> (i32, String) {
 }
 
 fn inflow(conn: &Conn, window_secs: u32) -> Result<Value, String> {
-    let cdb = content_db();
+    let cdb = content_db()?;
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let work = "COALESCE(issue_type, 'task') <> 'event'";
     let fresh = format!("{work} AND {PANE_SCOPE} AND created_at >= UTC_TIMESTAMP() - INTERVAL {window_secs} SECOND");
@@ -189,7 +197,7 @@ fn inflow(conn: &Conn, window_secs: u32) -> Result<Value, String> {
 }
 
 fn repo_labels(conn: &Conn, valid: &str) -> Result<Value, String> {
-    let cdb = content_db();
+    let cdb = content_db()?;
     let live = format!("{cdb}.issues WHERE status <> 'closed'");
     let with_repo = format!("{live} AND id IN (SELECT issue_id FROM {cdb}.labels WHERE label LIKE 'repo:%')");
     let valid: Vec<String> = valid.split(',').filter(|v| !v.is_empty()).map(|v| format!("'repo:{}'", rows::escape(v))).collect();
@@ -209,6 +217,22 @@ mod tests {
 
     fn v(x: &str) -> Vec<Value> {
         serde_json::from_str(x).unwrap()
+    }
+
+    /// sp-jf7spl: the content database is the one the store declares, never a default.
+    #[test]
+    fn the_content_database_is_the_stores_own_and_an_undeclared_one_is_refused() {
+        let d = testkit::TempDir::new("content-db");
+        std::fs::create_dir_all(d.join(".beads")).unwrap();
+        let meta = d.join(".beads/metadata.json");
+        std::fs::write(&meta, r#"{"dolt_database":"sptest_x"}"#).unwrap();
+        assert_eq!(database_of(d.path()).unwrap(), "`sptest_x`");
+        std::fs::write(&meta, r#"{"dolt_mode":"server"}"#).unwrap();
+        let e = database_of(d.path()).unwrap_err();
+        assert!(e.contains("names no dolt_database") && e.contains(&meta.display().to_string()), "{e}");
+        std::fs::write(&meta, r#"{"dolt_database":"x`; DROP"}"#).unwrap();
+        assert!(database_of(d.path()).is_err());
+        assert!(database_of(std::path::Path::new("")).is_err());
     }
 
     #[test]
