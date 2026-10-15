@@ -2055,8 +2055,43 @@ fn a_forge_repo_runs_its_declared_tier_in_its_own_image() {
     assert_eq!(calls[0].image, "localhost/other-ci:9");
     assert_eq!(calls[0].workdir, "/src");
     assert_eq!(calls[0].argv, ["bash", "deploy/ci.sh", "unit"]);
-    assert_eq!(calls[0].env, [("INSTANCE".to_string(), "ci-x".to_string())]);
+    let env = |k: &str| calls[0].env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    assert_eq!(env("INSTANCE").as_deref(), Some("ci-x"));
+    assert_eq!(env("CARGO_TARGET_DIR").as_deref(), Some("/var/cache/spira-foreign/target"));
+    assert_eq!(env("CARGO_HOME").as_deref(), Some("/var/cache/spira-foreign/cargo"));
+    let run = w.root.path().join("run/foreign-cache");
+    assert_eq!(calls[0].mounts.len(), 2);
+    assert!(calls[0].mounts.iter().all(|(h, _)| h.starts_with(&run)), "{:?}", calls[0].mounts);
+    assert!(calls[0].mounts.iter().all(|(h, _)| h.is_dir()));
     assert!(rt.execs.lock().unwrap().is_empty(), "no spira fixture container is booted");
+}
+
+#[test]
+fn a_forge_repo_tier_waits_for_its_repos_lock_and_faults_at_the_deadline() {
+    let w = foreign_world("foreign-lock", Some(FOREIGN_DECL));
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let cache = w.root.path().join("run/foreign-cache").join(w.repo.file_name().unwrap());
+    fs::create_dir_all(&cache).unwrap();
+    let held = crate::worktree::try_lock(&cache.join("lock")).expect("lock is free");
+    assert_eq!(w.run(&rt, &b, &["--deadline", "1", "topic"], "", &w.root), 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=deadline-suites");
+    assert!(rt.once_calls.lock().unwrap().is_empty(), "no container runs while the lock is held");
+    drop(held);
+    assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0);
+    assert_eq!(rt.once_calls.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_tier_declared_cargo_variable_wins_over_the_warm_cache() {
+    let d = "image = \"i\"\n[tier.unit]\nargv = [\"x\"]\nenv = { CARGO_TARGET_DIR = \"/mine\" }\n";
+    let w = foreign_world("foreign-own-target", Some(d));
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0);
+    let calls = rt.once_calls.lock().unwrap();
+    let targets: Vec<_> = calls[0].env.iter().filter(|(k, _)| k == "CARGO_TARGET_DIR").collect();
+    assert_eq!(targets, [&("CARGO_TARGET_DIR".to_string(), "/mine".to_string())]);
 }
 
 #[test]

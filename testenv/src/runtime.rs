@@ -121,6 +121,8 @@ pub struct RunRequest {
     pub mount: PathBuf,
     pub workdir: String,
     pub env: Vec<(String, String)>,
+    /// Extra shared read-write volumes: (host path, container path).
+    pub mounts: Vec<(PathBuf, String)>,
     pub argv: Vec<String>,
     pub timeout: Option<Duration>,
     pub deadline: Option<Instant>,
@@ -133,6 +135,10 @@ pub fn podman_run_args(req: &RunRequest) -> Vec<String> {
         .map(|s| s.to_string())
         .collect();
     a.push(format!("{}:{}:Z", req.mount.display(), req.workdir));
+    for (host, ctr) in &req.mounts {
+        a.push("-v".into());
+        a.push(format!("{}:{ctr}:z", host.display()));
+    }
     a.push("-w".into());
     a.push(req.workdir.clone());
     for (k, v) in &req.env {
