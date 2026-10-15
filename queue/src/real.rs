@@ -1045,6 +1045,14 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
+    fn retip(&self, bead: &str, tip: &str, actor: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["retip", bead, tip, actor]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
 }
 
 // ------------------------------------------------------------ config (spira-config library)

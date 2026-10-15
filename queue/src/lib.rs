@@ -43,6 +43,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::OpenBatch { repo, members, skip_pregate, dry_run, replace, reason } => batch::open_batch(w, repo.as_deref(), members, *skip_pregate, *dry_run, replace.then_some(reason)),
         Cmd::Claim { repo, reason, force } => simple::claim(w, repo.as_deref(), reason, *force),
         Cmd::Release { repo } => simple::release(w, repo.as_deref()),
+        Cmd::Resubmit { id, repo, tip, by, reason } => simple::resubmit(w, id, repo.as_deref(), tip, by, reason),
         Cmd::LandLocal { repo, head, members, worktree } => land::land_local(w, repo.as_deref(), head, members, worktree.as_deref()),
         Cmd::Publish { repo } => publish::publish(w, repo.as_deref()),
         Cmd::PublishSettle { repo } => publish::publish_settle(w, repo.as_deref()),

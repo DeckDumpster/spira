@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use super::{idents, landing_log, read_text, repo_path, resolve, take_lock, Ctx, World, FAIL, OK, USAGE};
+use super::{idents, landing_log, read_text, repo_path, resolve, statute_gate, take_lock, Ctx, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::model::LandMode;
 use crate::ports::{ref_branch, Emit};
@@ -375,6 +375,72 @@ pub fn claim(w: &World, repo: Option<&str>, reason: &Text, force: bool) -> i32 {
     let was = if cur.is_empty() { "<none>".to_string() } else { cur };
     w.lib.notify(&c.s.mailbox, &c.r.name, "batch claimed for hand-edit", &format!("Claimed the open batch for {} (was: {was}). Reason: {reason}", c.r.name));
     w.out(format!("queue.sh claim: {} claimed for concierge (was: {was})", c.r.name));
+    OK
+}
+
+const SANCTIONED_RESUBMITTER: &str = "concierge";
+
+fn is_full_sha(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// The concierge's door for a hand-built fix to a bead it holds: record the new tip and move the
+/// row REWORK to SUBMITTED, so the round's full suite certifies it where the host gate cannot.
+pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, reason: &Text) -> i32 {
+    let reason = match read_text(w, reason) {
+        Ok(r) => r,
+        Err(e) => {
+            w.err(format!("queue.sh resubmit: cannot read the reason: {e}"));
+            return USAGE;
+        }
+    };
+    if reason.trim().is_empty() {
+        w.err("queue.sh resubmit: --reason is required — say what the hand-built fix is");
+        return USAGE;
+    }
+    if by != SANCTIONED_RESUBMITTER {
+        w.err(format!("queue.sh resubmit: refused — only {SANCTIONED_RESUBMITTER} may resubmit a held bead (--by {by})"));
+        return FAIL;
+    }
+    let reason = match statute_gate(w, "resubmit", &reason) {
+        Ok(Some(line)) => format!("{reason}\n\n{line}"),
+        Ok(None) => reason,
+        Err(rc) => return rc,
+    };
+    let Ok(c) = resolve(w, "resubmit", repo) else { return FAIL };
+    let Ok(path) = repo_path(w, "resubmit", &c) else { return FAIL };
+    if idents(w, "resubmit", &[("bead id", id), ("repo", &c.r.name), ("by", by)]).is_err() {
+        return FAIL;
+    }
+    if !is_full_sha(tip) {
+        w.err(format!("queue.sh resubmit: --tip {tip}: not a full 40-hex commit name — refused"));
+        return FAIL;
+    }
+    if !w.git.commit_exists(&path, tip) {
+        w.err(format!("queue.sh resubmit: --tip {tip}: no such commit in {} — refused", c.r.name));
+        return FAIL;
+    }
+    if super::require_lc(w, "resubmit").is_err() {
+        return FAIL;
+    }
+    let Some(row) = w.lc.bead_row(id) else {
+        w.err(format!("queue.sh resubmit: {id}: no lifecycle row — refused"));
+        return FAIL;
+    };
+    if row.state != "REWORK" {
+        w.err(format!("queue.sh resubmit: {id} is {}, not REWORK — refused, nothing changed", row.state));
+        return FAIL;
+    }
+    if !row.holds.iter().any(|h| h == "manual") {
+        w.err(format!("queue.sh resubmit: {id} is held by no one (no manual hold) — hold it first with a reason, then resubmit; refused"));
+        return FAIL;
+    }
+    if let Err((rc, e)) = w.lc.retip(id, tip, by) {
+        w.err(format!("queue.sh resubmit: spira-lc refused {id} (rc={rc}): {e}"));
+        return FAIL;
+    }
+    landing_log(&c.s.run, &format!("QUEUE RESUBMIT {} branch={id} tip={tip} by={by} reason={}", w.clock.now(), reason.lines().next().unwrap_or("")));
+    w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, REWORK -> SUBMITTED; admit it with `queue round open --members {id}:{tip}` — the round certifies it"));
     OK
 }
 
