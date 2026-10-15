@@ -700,7 +700,7 @@ fn forge_local_tier(
                 }
                 return Ok(None);
             }
-            println!("batcher {}: {} is red locally at {} — not batched", repo.name, m.id, m.tip);
+            println!("batcher {}: {} is red locally at {} — not batched ({})", repo.name, m.id, m.tip, evidence.lines().next().unwrap_or(""));
             io::bead_reopen(env_, &m.id, "local-tier-red", &format!("Reopened by the batcher: {}'s declared tiers are red locally at {} and never reached CI.\n{evidence}", repo.name, m.tip));
             red.push(m.id.clone());
         }

@@ -1325,7 +1325,22 @@ fn local_red_evidence(rc: Option<i32>, text: &str) -> String {
     let mut sites: Vec<&str> = text.lines().filter_map(|l| l.trim().strip_prefix("--> ")).collect();
     sites.dedup();
     let tail: Vec<&str> = text.lines().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
-    format!("testenv exited {}\nlocations: {}\n{}", rc.unwrap_or(-1), sites.join(", "), tail.join("\n"))
+    format!("{}\ntestenv exited {}\nlocations: {}\n{}", red_headline(text), rc.unwrap_or(-1), sites.join(", "), tail.join("\n"))
+}
+
+/// One line naming the tier that went red, its command and its first error, read from testenv's
+/// own `RED` tier line, `command (<tier>):` line and `first error (<tier>):` line.
+fn red_headline(text: &str) -> String {
+    let tier = text.lines().find_map(|l| {
+        let mut w = l.split_whitespace();
+        let name = w.next()?;
+        (w.next() == Some("RED")).then(|| name.to_string())
+    });
+    let after = |prefix: String| text.lines().find_map(|l| l.trim().strip_prefix(prefix.as_str()).map(|r| r.trim().to_string()));
+    let Some(tier) = tier else { return "red tier: unknown (testenv named none)".to_string() };
+    let command = after(format!("command ({tier}):")).unwrap_or_else(|| "unknown".into());
+    let first = after(format!("first error ({tier}):")).unwrap_or_else(|| "none reported".into());
+    format!("red tier: {tier}; command: {command}; first error: {first}")
 }
 
 /// The runner writes `<results>/<batch-key>/<suite>.<ext>` (testenv DESIGN.md §9 F1); older
@@ -3555,6 +3570,15 @@ mod local_tier_tests {
         let e = local_tier(&env, &repo, "abc").unwrap_err();
         assert!(e.contains("src/binder.rs:222:9"), "{e}");
         assert!(!local_pass_path(&env, &repo, "abc").exists());
+    }
+
+    #[test]
+    fn a_red_tip_names_its_tier_command_and_first_error() {
+        let script = "#!/bin/sh\necho '  clippy                           RED     after 3s'\necho '  command (clippy): cargo clippy -- -D warnings'\necho '  first error (clippy): src/binder.rs:222:9: error: unused variable'\nexit 1\n";
+        let (_d, env, repo) = fixture("lt-headline", script);
+        let e = local_tier(&env, &repo, "abc").unwrap_err();
+        let head = e.lines().next().unwrap();
+        assert!(head.contains("clippy") && head.contains("cargo clippy -- -D warnings") && head.contains("src/binder.rs:222:9"), "{head}");
     }
 
     #[test]

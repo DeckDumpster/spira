@@ -375,6 +375,7 @@ fn run_foreign(
         let (o, secs) = runner.run(t);
         (deps.out)(&foreign::tier_line(t, o, secs));
         if o == foreign::Outcome::Red {
+            (deps.out)(&format!("  command ({t}): {}", decl.tier[t].argv.join(" ")));
             let log = fs::read_to_string(results.join(format!("{t}.log"))).unwrap_or_default();
             if let Some(e) = foreign::first_error(&log) {
                 (deps.out)(&format!("  first error ({t}): {e}"));
