@@ -332,7 +332,7 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
         }
         let sent = suites_started(w, batch, false).and_then(|()| pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())));
         match sent {
-            Ok(()) => summon_mender(w, c, batch, suite, ""),
+            Ok(()) => summon_mender(w, c, batch, suite, "", None),
             Err((rc, e)) => w.err(format!("verdict {}: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}", c.r.name)),
         }
     }
