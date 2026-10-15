@@ -1161,13 +1161,23 @@ impl<'a> Run<'a> {
         // THE WARM TARGET: the session builds into its slot's directory, kept between sessions
         // and worktrees (cargo's fingerprints cover the different checkout), so a second session
         // on a bead recompiles only what changed. The slot's lock is held until this returns.
-        let warm_base = self.run_dir().join(spira_config::build::AEON_WARM_DIR);
+        let warm_base = self.conf.s(spira_config::build::AEON_WARM_BASE_ENV);
+        if warm_base.is_empty() {
+            return Err(Abort::Harness(format!("{} is not set — the aeon warm slots have no home; set aeon_warm_base in the config document", spira_config::build::AEON_WARM_BASE_ENV)));
+        }
+        let warm_base = PathBuf::from(warm_base);
+        let cap_mib = self.conf.i(spira_config::build::AEON_WARM_CAP_ENV).max(1) as u64;
+        if !spira_config::build::on_tmpfs(&warm_base) {
+            self.log(&format!("{}: warm base {} is not a tmpfs — builds write to its disk", self.f(), warm_base.display()));
+        }
+        let mut warm_slot = None;
         let _warm = match spira_config::build::acquire_warm(&warm_base, spira_config::build::AEON_WARM_SLOTS) {
             Some((dir, lock)) => {
-                if spira_config::build::reap_over_cap(&dir, spira_config::build::AEON_WARM_CAP_MIB) {
-                    self.log(&format!("{}: warm target {} was over {} MiB — started empty", self.f(), dir.display(), spira_config::build::AEON_WARM_CAP_MIB));
+                if spira_config::build::reap_over_cap(&dir, cap_mib) {
+                    self.log(&format!("{}: warm target {} was over {cap_mib} MiB — started empty", self.f(), dir.display()));
                 }
                 env.set("CARGO_TARGET_DIR", &dir.display().to_string());
+                warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY });
                 Some(lock)
             }
             None => {
@@ -1209,7 +1219,7 @@ impl<'a> Run<'a> {
             };
             (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
         };
-        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.fayth.timeout_seconds, halted: Some(self.run_dir().join("world.halted")) };
+        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.fayth.timeout_seconds, halted: Some(self.run_dir().join("world.halted")), warm: warm_slot };
         let rc = self.d.launcher.run(&spec, &self.stop);
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
         self.check_stop()?;

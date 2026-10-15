@@ -530,6 +530,14 @@ impl World for Real {
         spira_config::hostaddr::resolve_hostport(&v).ok()
     }
 
+    fn aeon_warm_base(&self) -> Option<PathBuf> {
+        spira_config::process::cfg(spira_config::build::AEON_WARM_BASE_ENV).ok().filter(|v| !v.is_empty()).map(PathBuf::from)
+    }
+
+    fn on_tmpfs(&self, p: &Path) -> bool {
+        spira_config::build::on_tmpfs(p)
+    }
+
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String> {
         let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
         rd.flatten()

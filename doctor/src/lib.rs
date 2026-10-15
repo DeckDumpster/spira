@@ -78,6 +78,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "time series query layer", lines: check_duckdb(w) },
         Section { title: "compilation cache", lines: check_sccache(w) },
         Section { title: "compilation cache backend", lines: check_sccache_backend(w) },
+        Section { title: "aeon warm slots", lines: check_aeon_warm(w) },
         Section { title: "round-vm mirror", lines: check_round_vm_mirror(w) },
         Section { title: "events substrate", lines: check_events_probe(w) },
         Section {
@@ -600,6 +601,23 @@ pub fn check_sccache_backend(w: &dyn World) -> Vec<Line> {
             ),
         )]
     }
+}
+
+// ============================================================================ aeon warm slots
+
+/// Detects drift, never repairs it: the base is a mount the operator owns, and a base that fell
+/// back to the root disk puts every aeon build's writes on the store's disk.
+pub fn check_aeon_warm(w: &dyn World) -> Vec<Line> {
+    let Some(base) = w.aeon_warm_base() else {
+        return vec![warn("SPIRA_AEON_WARM_BASE is not set", "aeon sessions refuse to start without it; set aeon_warm_base (the config document) to a directory on a tmpfs.")];
+    };
+    if !w.on_tmpfs(&base) {
+        return vec![warn(
+            format!("aeon warm base {} is not a tmpfs", base.display()),
+            "incremental builds write tens of MB/s there and starve the store's disk. Mount a tmpfs on it (fstab) or point aeon_warm_base at one.",
+        )];
+    }
+    vec![ok(format!("aeon warm base {} is a tmpfs", base.display()))]
 }
 
 // ============================================================================ round-vm mirror

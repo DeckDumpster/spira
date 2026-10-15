@@ -52,6 +52,8 @@ pub struct Fake {
     pub sccache_help: RefCell<Option<String>>,
     pub sccache_show_stats: RefCell<Option<String>>,
     pub sccache_dav_addr: RefCell<Option<String>>,
+    pub warm_base: RefCell<Option<PathBuf>>,
+    pub tmpfs: RefCell<Vec<PathBuf>>,
     pub daemon_bases: RefCell<Vec<String>>,
     pub hooks_path: RefCell<Option<String>>,
     pub env_provided: RefCell<Vec<String>>,
@@ -104,6 +106,8 @@ impl Default for Fake {
             sccache_help: RefCell::new(None),
             sccache_show_stats: RefCell::new(None),
             sccache_dav_addr: RefCell::new(None),
+            warm_base: RefCell::new(None),
+            tmpfs: RefCell::new(Vec::new()),
             daemon_bases: RefCell::new(Vec::new()),
             hooks_path: RefCell::new(None),
             env_provided: RefCell::new(Vec::new()),
@@ -241,6 +245,12 @@ impl World for Fake {
     }
     fn sccache_dav_addr(&self) -> Option<String> {
         self.sccache_dav_addr.borrow().clone()
+    }
+    fn aeon_warm_base(&self) -> Option<PathBuf> {
+        self.warm_base.borrow().clone()
+    }
+    fn on_tmpfs(&self, p: &Path) -> bool {
+        self.tmpfs.borrow().iter().any(|t| p.starts_with(t))
     }
     fn deps_provided_by_spira_env(&self) -> Vec<String> {
         self.env_provided.borrow().clone()
@@ -653,6 +663,24 @@ fn sccache_present_but_unresponsive_to_help_fails() {
     assert!(lines[0].msg.contains("did not answer --help"), "{:?}", lines[0].msg);
 }
 
+// -------------------------------------------------------- aeon warm slots
+
+#[test]
+fn warm_base_check_names_an_unset_key_a_base_off_tmpfs_and_a_good_one() {
+    let f = Fake::default();
+    let unset = check_aeon_warm(&f);
+    assert_eq!(levels(&unset), vec![Level::Warn]);
+    assert!(unset[0].msg.contains("SPIRA_AEON_WARM_BASE"), "{:?}", unset[0].msg);
+
+    *f.warm_base.borrow_mut() = Some("/var/warm".into());
+    let off = check_aeon_warm(&f);
+    assert_eq!(levels(&off), vec![Level::Warn], "planted offender: a base on the root disk must be caught");
+    assert!(off[0].msg.contains("not a tmpfs"), "{:?}", off[0].msg);
+
+    f.tmpfs.borrow_mut().push("/var".into());
+    assert_eq!(levels(&check_aeon_warm(&f)), vec![Level::Ok]);
+}
+
 // -------------------------------------------------------- compilation cache backend (sp-xtdqi)
 
 #[test]
@@ -1041,6 +1069,10 @@ fn concierge_singleton_no_concierge_sh_warns() {
 
 #[test]
 fn run_exit_code_reflects_fatal_count() {
+    let d = testkit::TempDir::new("doctor-run-complete");
+    let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let toml = spira_config::process::fixture_toml(d.path(), &[]);
+    let _env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
     let f = Fake::default();
     f.set("SPIRA_DB", "/db"); // store -> FAIL (no .beads, not installing)
     let rc = run(&f);

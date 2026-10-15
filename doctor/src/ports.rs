@@ -140,6 +140,11 @@ pub trait World {
     /// never exported) was invisible to the bash capture and this check passed blind.
     fn sccache_dav_addr(&self) -> Option<String>;
 
+    /// `SPIRA_AEON_WARM_BASE` through the one config door; None when unset or empty.
+    fn aeon_warm_base(&self) -> Option<PathBuf>;
+    /// Whether `p` is on a tmpfs.
+    fn on_tmpfs(&self, p: &Path) -> bool;
+
     /// The `--base-path` of every `git daemon` process serving `port`, read from the process
     /// table. Empty when none is.
     fn git_daemon_base_paths(&self, port: u16) -> Vec<String>;

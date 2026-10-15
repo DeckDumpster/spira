@@ -21,13 +21,11 @@ pub fn artifacts_dir(worktree: &Path, profile: &str) -> PathBuf {
     worktree.join("target").join(profile_dir(profile))
 }
 
-/// The caller's warm slot (`CARGO_TARGET_DIR` under the aeon warm directory): any other value
+/// The caller's warm slot (`CARGO_TARGET_DIR` under the configured warm base): any other value
 /// is ignored, so an inherited override can never redirect a build elsewhere.
-pub fn warm_target(var: Option<std::ffi::OsString>) -> Option<PathBuf> {
+pub fn warm_target(var: Option<std::ffi::OsString>, base: Option<&Path>) -> Option<PathBuf> {
     let p = PathBuf::from(var?);
-    let ours = p.is_absolute()
-        && p.is_dir()
-        && p.components().any(|c| c.as_os_str() == spira_config::build::AEON_WARM_DIR);
+    let ours = p.is_absolute() && p.is_dir() && base.is_some_and(|b| p != b && p.starts_with(b));
     ours.then_some(p)
 }
 
@@ -101,7 +99,14 @@ impl Builder for Cargo {
                 .map(Stdio::from)
                 .unwrap_or_else(|_| Stdio::null())
         };
-        let warm = warm_target(std::env::var_os("CARGO_TARGET_DIR"));
+        let warm = warm_target(
+            std::env::var_os("CARGO_TARGET_DIR"),
+            spira_config::process::cfg(spira_config::build::AEON_WARM_BASE_ENV)
+                .ok()
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+                .as_deref(),
+        );
         let mut cargo_cmd = Command::new("cargo");
         cargo_cmd
             .args(["build", "--profile", profile, "--workspace"])
@@ -224,20 +229,23 @@ mod tests {
     #[test]
     fn only_a_warm_slot_is_honoured_as_the_target() {
         let d = testkit::TempDir::new("warm-target");
-        let slot = d.join("aeon-warm").join("slot.1");
+        let base = d.join("warm-base");
+        let slot = base.join("slot.1");
         std::fs::create_dir_all(&slot).unwrap();
         let other = d.join("elsewhere");
         std::fs::create_dir_all(&other).unwrap();
-        assert_eq!(warm_target(Some(slot.clone().into())), Some(slot.clone()));
-        assert_eq!(warm_target(Some(other.into())), None);
-        assert_eq!(warm_target(Some("aeon-warm/slot.9".into())), None);
-        assert_eq!(warm_target(None), None);
+        assert_eq!(warm_target(Some(slot.clone().into()), Some(&base)), Some(slot.clone()));
+        assert_eq!(warm_target(Some(other.into()), Some(&base)), None);
+        assert_eq!(warm_target(Some("warm-base/slot.9".into()), Some(&base)), None);
+        assert_eq!(warm_target(Some(slot.clone().into()), None), None);
+        assert_eq!(warm_target(None, Some(&base)), None);
     }
 
     #[test]
     fn artifacts_resolve_into_the_warm_slot_replacing_a_stale_dir() {
         let d = testkit::TempDir::new("warm-link");
-        let slot = d.join("aeon-warm").join("slot.1");
+        let base = d.join("warm-base");
+        let slot = base.join("slot.1");
         std::fs::create_dir_all(slot.join("aeon")).unwrap();
         std::fs::write(slot.join("aeon").join("tool"), "x").unwrap();
         let wt = d.join("wt");

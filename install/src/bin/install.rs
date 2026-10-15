@@ -1101,6 +1101,12 @@ fn main() -> ExitCode {
             let _ = std::fs::create_dir_all(&run);
             let _ = std::fs::create_dir_all(Path::new(&run).join("watchd"));
         }
+        if let Some(base) = nonempty_env(spira_config::build::AEON_WARM_BASE_ENV) {
+            match spira_config::build::prepare_warm(Path::new(&base), spira_config::build::AEON_WARM_SLOTS) {
+                Ok(()) => info(&format!("aeon warm slots ready under {base}")),
+                Err(e) => eprintln!("install: cannot create the aeon warm slots under {base}: {e}"),
+            }
+        }
         let templates_dir = bootstrap::templates_dir();
         let suspended = bootstrap::suspended_set();
         let no = |s: &str| suspended.contains(s);
