@@ -524,6 +524,13 @@ pub(super) fn record_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<
     records::write_atomic(&path, &text).map_err(std::io::Error::other)
 }
 
+pub(super) fn forget_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<()> {
+    let path = c.queue_file(RED_TIPS);
+    let Ok(text) = fs::read_to_string(&path) else { return Ok(()) };
+    let kept: String = text.lines().filter(|l| l.split_once(' ') != Some((id, tip))).map(|l| format!("{l}\n")).collect();
+    records::write_atomic(&path, &kept).map_err(std::io::Error::other)
+}
+
 fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, worktree: Option<&Path>) -> i32 {
     let label = "round open";
     let text = match read_text(w, members_arg) {

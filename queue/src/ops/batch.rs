@@ -146,6 +146,14 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     // `bead_reopen` carries the suites a recertification must force.
     w.lib.cause_event(id, cause.as_str());
     let mut failed = false;
+    for m in &survivors {
+        let _ = super::round::forget_batch_red(&c, &m.id, &m.tip);
+    }
+    if cause == EjectCause::EjectRed {
+        if let Err(e) = super::round::record_batch_red(&c, &hit.id, &hit.tip) {
+            w.err(format!("queue.sh eject: cannot bar {id}'s red tip: {e}"));
+        }
+    }
     w.lib.release_claim(id);
     if !batch_id.is_empty() {
         let r = bounded_text(&why);
@@ -283,6 +291,9 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
         return FAIL;
     }
     let members = kv.members();
+    for m in &members {
+        let _ = super::round::forget_batch_red(c, &m.id, &m.tip);
+    }
     let stamp = w.clock.stamp();
     let archive = c.queue_file(&format!("closed-pr{pr}-{stamp}"));
     let reason_clean = one_line(reason);
