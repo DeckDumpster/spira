@@ -3,7 +3,7 @@
 # docs/landing-parity.md, and each cell is a real test, a reasoned n/a, or a gap with its bead.
 #
 # tier: T0
-# covers: docs/landing-parity.md spira/test-landing-parity.sh queue/src/** batcher-cut/src/** landing-pass/src/** round-vm/src/**
+# covers: docs/landing-parity.md spira/test-landing-parity.sh queue/src/** batcher-cut/src/** landing-pass/src/** round-vm/src/** spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
