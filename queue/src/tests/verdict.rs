@@ -574,6 +574,11 @@ fn a_lint_red_naming_a_members_file_ejects_that_member_and_bars_its_tip() {
     assert!(has_call(&t.forge.calls, "pr-close 12"));
     assert!(!t.qfile("open").exists());
     assert_eq!(fs::read_to_string(t.qfile("red-tips")).unwrap(), "sp-b tb\n");
+    let calls = t.lib.calls.borrow();
+    let bugs: Vec<&String> = calls.iter().filter(|c| c.starts_with("create_bug")).collect();
+    assert_eq!(bugs.len(), 1, "{bugs:?}");
+    assert!(bugs[0].contains("mender-failure") && bugs[0].contains("gate-lint") && bugs[0].contains("sp-b") && bugs[0].contains("I001") && !bugs[0].contains("sp-a"), "{}", bugs[0]);
+    assert!(t.lc.calls.borrow().iter().any(|c| c.contains("Failed") && c.contains("gate-lint")), "{:?}", t.lc.calls.borrow());
 }
 
 #[test]

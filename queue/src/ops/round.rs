@@ -155,9 +155,15 @@ fn failed_verb(w: &World, batch: &str, repo: Option<&str>, suite: &str) -> i32 {
     pass_verb(w, "round failed", batch, repo, |c, _| {
         suites_started(w, batch, false)?;
         pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string()))?;
-        summon_mender(w, c, batch, suite, "");
+        summon_mender(w, c, batch, suite, "", None);
         Ok(())
     })
+}
+
+/// A forge batch's red step enters the mending machine as a Failed event on the batch's current pass.
+pub(super) fn forge_failed(w: &World, batch: &str, suite: &str) -> Result<(), ()> {
+    let sent = suites_started(w, batch, false).and_then(|()| pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())));
+    sent.map_err(|(rc, e)| w.err(format!("queue.sh verdict: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}")))
 }
 
 /// A red pass records its verdict whoever cut the round, so every red suite the on-red hook did not
@@ -184,7 +190,7 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
     for suite in unreported {
         let sent = suites_started(w, batch, false).and_then(|()| pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())));
         match sent {
-            Ok(()) => summon_mender(w, c, batch, suite, &attribution),
+            Ok(()) => summon_mender(w, c, batch, suite, &attribution, None),
             Err((rc, e)) => w.err(format!("queue.sh round certify: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}")),
         }
     }
@@ -193,7 +199,7 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
 /// File the mender-lane bead for a failure whose MENDING row the event just opened. A marker
 /// per (batch, pass, suite) keeps a repeated report from filing twice; a filing that fails is
 /// said aloud and leaves no marker, so the next report of the same failure files it.
-fn summon_mender(w: &World, c: &Ctx, batch: &str, suite: &str, attribution: &str) {
+pub(super) fn summon_mender(w: &World, c: &Ctx, batch: &str, suite: &str, attribution: &str, output: Option<&str>) {
     let Some((pass, _)) = w.lc.batch_pass(batch) else {
         w.err(format!("queue.sh round failed: WARNING — no mender bead filed for {suite} of {batch}: spira-lc cannot say which pass it is on"));
         return;
@@ -203,7 +209,7 @@ fn summon_mender(w: &World, c: &Ctx, batch: &str, suite: &str, attribution: &str
         return;
     }
     let results = rounds_dir(c).join(format!("{batch}.results"));
-    let output = suite_output(&results, suite, 0).map(|o| tail(&o, 80)).unwrap_or_else(|| "(the suite left no output in the round's results)".into());
+    let output = output.map(str::to_string).or_else(|| suite_output(&results, suite, 0).map(|o| tail(&o, 80))).unwrap_or_else(|| "(the suite left no output in the round's results)".into());
     let body = format!(
         "A suite went red in pass {pass} of round {batch} ({repo}): {suite}.\n\nBatch: {batch}\nPass: {pass}\nSuite: {suite}\nDeadline: the machine stamps it when you claim this failure; list it with `spira-lc mending list --batch {batch} --live`. Record your outcome with `queue round mended|return|environment|flaky|unsure {batch} {suite}` before it passes.\n\nSuite output (tail):\n{output}\n",
         repo = c.r.name,
@@ -326,7 +332,7 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
         }
         let sent = suites_started(w, batch, false).and_then(|()| pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())));
         match sent {
-            Ok(()) => summon_mender(w, c, batch, suite, ""),
+            Ok(()) => summon_mender(w, c, batch, suite, "", None),
             Err((rc, e)) => w.err(format!("verdict {}: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}", c.r.name)),
         }
     }
