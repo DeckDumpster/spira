@@ -29,9 +29,8 @@ sending [--dry-run] [--no-fetch] [--status-from <file>] [--skip-queue|--queue-on
 | 1 | a deletion failed (a `FAILED` line names it) |
 | 2 | usage error, or the harness context could not be read — **nothing was judged** |
 
-**Callers.** The sentinel's CHECK 6b runs `sending --skip-queue` by bare name and parses
-`^SENT <id> <repo> <branch>` (act) and `^FAILED` (log); the daily
-`spira-straggler-sweep.service` runs `bin/sending --queue-only`; an operator runs
+**Callers.** `spira-straggler-sweep.service` runs `bin/sending --budget-secs 900` hourly over every
+repository — the only scheduled sweep of queue.local and push repos; an operator runs
 `sending --dry-run` or `sending <bead-id>` by hand (watchtower's escalations say so).
 
 **Scope.** Every repository `spira_repos` names; `--skip-queue` drops queue/queue.local
