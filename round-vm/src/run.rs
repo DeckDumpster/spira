@@ -1248,6 +1248,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
             return 2;
         }
     };
+    env.pool.label(&vm.handle, &run_label(args));
     let instance_type = (env.deps.factory)().ok().and_then(|a| a.provider.instance_type(&vm.handle));
     {
         let mut f = facts.lock().unwrap_or_else(|e| e.into_inner());
@@ -1570,6 +1571,11 @@ fn record_incomplete(env: &RunEnv, args: &RunArgs, why: &str) {
     }
 }
 
+/// What a lease serves: the round's batch, else the run's tree directory.
+fn run_label(args: &RunArgs) -> String {
+    args.round_batch.clone().unwrap_or_else(|| args.tree_dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default())
+}
+
 /// Marks the VM kept and takes it off this process's lease at once, so a signal arriving
 /// before `run` returns cannot release a VM that `run` has said it is keeping.
 fn keep_vm(env: &RunEnv, vm: &Vm, keep: &AtomicBool) {
@@ -1588,6 +1594,7 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, keep: &AtomicB
     if pull_retry(env.remote, env.cfg, &vm.addr, REMOTE_RESULTS, &scratch) {
         let n = stream_into(&scratch, results_dir).unwrap_or(0);
         eprintln!("round-vm run: INCOMPLETE: the batch's ssh dropped; salvaged {n} results");
+        env.pool.mark_pulled(&vm.handle);
     } else {
         eprintln!("round-vm run: INCOMPLETE: the batch's ssh dropped and the results pull failed");
     }

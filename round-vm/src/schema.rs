@@ -53,6 +53,12 @@ pub struct Lease {
     /// The process pulling this VM's results: no reaper may terminate the VM while it lives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pulling: Option<ProcId>,
+    /// The round or run this lease serves, so a lease that outlives its process still says what it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// Set once the results of a held lease are in: nothing is left to keep the VM for.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pulled: bool,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -61,6 +67,8 @@ fn is_zero(n: &u64) -> bool {
 
 /// How long a lease may name no owner and no holder before it counts as abandoned.
 pub const OWNERLESS_GRACE_SECS: u64 = 60;
+/// The longest a held lease outlives its hold, whether or not anyone pulled from it.
+pub const HELD_BOUND_SECS: u64 = 2 * 3600;
 /// How long a tagged cloud instance may go unheld, or sit on a kept lease, before the reconciler terminates it.
 pub const UNHELD_GRACE_SECS: u64 = 300;
 
@@ -73,6 +81,21 @@ impl Lease {
     pub fn shields_from_reaper(&self, t: u64) -> bool {
         let kept_from = if self.kept_at > 0 { self.kept_at } else { self.since };
         self.pull_in_flight() || (!self.stale() && (!self.held || kept_from + UNHELD_GRACE_SECS >= t))
+    }
+
+    /// Why a held lease must end now, or `None` while its results may still be wanted.
+    pub fn held_end(&self, t: u64) -> Option<&'static str> {
+        if !self.held || self.pull_in_flight() {
+            return None;
+        }
+        let kept_from = if self.kept_at > 0 { self.kept_at } else { self.since };
+        if self.pulled {
+            Some("its results were pulled")
+        } else if kept_from + HELD_BOUND_SECS < t {
+            Some("held past the bound without a pull")
+        } else {
+            None
+        }
     }
 
     pub fn stale(&self) -> bool {

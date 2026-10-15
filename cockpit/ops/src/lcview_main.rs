@@ -170,12 +170,12 @@ fn gather_vm_runs(s: &mut Snapshot) {
     };
     let strs = |x: &serde_json::Value| x.as_array().map(|a| a.iter().map(text).collect()).unwrap_or_default();
     for l in v["leases"].as_array().cloned().unwrap_or_default() {
-        s.vm_runs.push(VmRun { vm: text(&l["vm"]), age_secs: num(&l["age_secs"]).unwrap_or(0), owner: text(&l["owner"]), cmd: strs(&l["cmd"]), idle: false });
+        s.vm_runs.push(VmRun { vm: text(&l["vm"]), age_secs: num(&l["age_secs"]).unwrap_or(0), owner: text(&l["owner"]), cmd: strs(&l["cmd"]), idle: false, run: text(&l["run"]), held: l["held"].as_bool().unwrap_or(false), held_age_secs: num(&l["held_age_secs"]).unwrap_or(0) });
     }
     if let Some(r) = v["ready"].as_object().filter(|r| !r.is_empty()) {
         let handle = r.get("vm").map(text).unwrap_or_default();
         let since = v["vms"].as_array().and_then(|a| a.iter().find(|x| text(&x["vm"]) == handle)).and_then(|x| num(&x["age_secs"])).unwrap_or(0);
-        s.vm_runs.push(VmRun { vm: handle, age_secs: since, owner: String::new(), cmd: Vec::new(), idle: true });
+        s.vm_runs.push(VmRun { vm: handle, age_secs: since, owner: String::new(), cmd: Vec::new(), idle: true, ..Default::default() });
     }
 }
 
