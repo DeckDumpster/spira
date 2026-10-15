@@ -9,7 +9,7 @@
 # The key file is SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE; its expiry (epoch seconds) is recorded
 # beside it in <file>.expires, written by whoever pastes the key. A spilled pass cannot join the
 # tailnet with an expired key, so the warning comes SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS before.
-# Each pass reads the outcome of the latest real EC2 launch from `round-vm status --json`; only when none is
+# Each pass reads the outcome of the latest real EC2 launch from round-vm's pool record (SPIRA_ROUND_VM_STATE_DIR/pool.json, whole event log, no reap pass; `round-vm status --json` when the dir is unset); only when none is
 # within SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW does it run `round-vm ec2-probe --dry-run`, whose timeout is "could not decide". Silent while SPIRA_ROUND_VM_SPILL is not ec2, ec2-always or ec2-only. Each distinct condition is said once.
 #
 # covers: spira/round-spill-key.sh spira/watchers spira/conf.d/SPIRA_ROUND_VM_EC2_*
@@ -40,8 +40,12 @@ _RSK_LAUNCHES='
     | if $bad != null and ($ok == null or $bad.at > $ok) then "fail \($bad.reason)" elif $ok != null then "ok" else "none" end'
 
 _rsk_recent_launch() {
-    local json
-    json="$(timeout 5 round-vm status --json 2>/dev/null)" || { echo none; return 0; }
+    local json file="${SPIRA_ROUND_VM_STATE_DIR:-}/pool.json"
+    if [ -n "${SPIRA_ROUND_VM_STATE_DIR:-}" ]; then
+        json="$(cat "$file" 2>/dev/null)" || { echo none; return 0; }
+    else
+        json="$(timeout 5 round-vm status --json 2>/dev/null)" || { echo none; return 0; }
+    fi
     printf '%s' "$json" | jq -r --argjson since "$(( $(date +%s) - SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW ))" "$_RSK_LAUNCHES" 2>/dev/null || echo none
 }
 
