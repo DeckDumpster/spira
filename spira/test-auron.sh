@@ -78,7 +78,7 @@ auron() {   # auron [--report] — one run against the fixture, with a chosen da
     # SPIRA_DB is registered and auron resolves it via cfg(), not env (confirmed in
     # auron/src/main.rs) — the AURON_DB override must go through tl_config too, or the
     # fallback/saturation cases silently keep using the real, reachable database.
-    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" SPIRA_DB="${AURON_DB:-$SPIRA_DB}"
+    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" SPIRA_WIKI="" SPIRA_DB="${AURON_DB:-$SPIRA_DB}"
     SPIRA_HOME="$SH" \
     SPIRA_REPO="$TMP/repo" SPIRA_SYSTEMCTL=true \
     SPIRA_AURON_SENTINEL_LOG="$RUN/sentinel.log" \
@@ -430,7 +430,7 @@ chmod +x "$RESTART_SC"
 auron_restart() {
     # SPIRA_DB via tl_config too: auron resolves it via cfg(), not the plain env prefix
     # below (same gap as auron()'s own call above it, line 78).
-    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_EXPORTER="" SPIRA_WIKI="" \
         SPIRA_AURON_RESTARTS=3 SPIRA_AURON_RESTART_WINDOW=3600 \
         SPIRA_DB="${AURON_DB:-$SPIRA_DB}"
     SPIRA_HOME="$SH" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
