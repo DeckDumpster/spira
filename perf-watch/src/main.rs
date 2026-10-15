@@ -157,9 +157,9 @@ struct RealSim {
 }
 
 impl RealSim {
-    fn sim(&self, args: &[&str]) -> Command {
+    fn sim(&self, cwd: &std::path::Path, args: &[&str]) -> Command {
         let mut c = Command::new(&self.sim);
-        c.args(args).current_dir(&self.repo).env("TMPDIR", &self.scratch).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        c.args(args).current_dir(cwd).env("TMPDIR", &self.scratch).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         for k in PRODUCTION_LOCATORS {
             c.env_remove(k);
         }
@@ -187,7 +187,10 @@ impl Sim for RealSim {
     fn run(&mut self) -> Result<String, String> {
         std::fs::create_dir_all(&self.scratch).map_err(|e| e.to_string())?;
         let seed = self.seed.to_string();
-        let mut child = self.sim(&["run", &self.scenario, "--seed", &seed, "--keep"]).spawn().map_err(|e| format!("{}: {e}", self.sim))?;
+        let cwd = happy::checkout(std::path::Path::new(&self.repo), std::path::Path::new(&self.scratch))?;
+        let errfile = std::path::Path::new(&self.scratch).join("sim.stderr");
+        let errors = std::fs::File::create(&errfile).map_err(|e| format!("{}: {e}", errfile.display()))?;
+        let mut child = self.sim(&cwd, &["run", &self.scenario, "--seed", &seed, "--keep"]).stderr(errors).spawn().map_err(|e| format!("{}: {e}", self.sim))?;
         let start = Instant::now();
         let status = loop {
             match child.try_wait() {
@@ -207,12 +210,13 @@ impl Sim for RealSim {
             let n = e.file_name().to_string_lossy().into_owned();
             if n.starts_with("sim-run-") && n.ends_with(&suffix) {
                 log = std::fs::read_to_string(e.path().join("exec.log")).map_err(|e| format!("exec.log: {e}"));
-                let _ = self.sim(&["world", "down", &e.path().to_string_lossy()]).status();
+                let _ = self.sim(&cwd, &["world", "down", &e.path().to_string_lossy()]).status();
             }
         }
         let s = status?;
         if !s.success() {
-            return Err(format!("sim run exited {s}"));
+            let why = happy::stderr_tail(&std::fs::read_to_string(&errfile).unwrap_or_default());
+            return Err(format!("sim run exited {s}: {why}"));
         }
         log
     }
