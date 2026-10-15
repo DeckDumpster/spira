@@ -71,26 +71,9 @@ fn main() {
         }
     };
 
-    if verb == "submit" {
-        // `build_request_with_body` has already refused a submit with no tip.
-        let argv = work::lint_argv(tip.as_deref().unwrap_or_default());
-        match Command::new(&argv[0]).args(&argv[1..]).status() {
-            Ok(st) if st.success() => {}
-            Ok(st) if st.code() == Some(1) => std::process::exit(REFUSED),
-            Ok(st) => {
-                eprintln!("cannot tell: the compile-and-lint check could not run ({st})");
-                std::process::exit(CANNOT_TELL);
-            }
-            Err(e) => {
-                eprintln!("cannot tell: cannot run {}: {e}", argv[0]);
-                std::process::exit(CANNOT_TELL);
-            }
-        }
-    }
-
     // A harness tool (a groomer sweep, a queue step) reads the whole graph, and a filing verb
     // runs bead.sh; the broker bounds both at 300 s, so this client waits that long and no longer.
-    let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split");
+    let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split" | "submit");
     let wait = if runs_tool { TOOL_TIMEOUT } else { REPLY_WAIT };
     match send(&req, wait) {
         Ok((code, out)) => {

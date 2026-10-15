@@ -65,12 +65,6 @@ pub fn foreign_bead_reference<'a>(verb: &str, bound: &str, args: &'a [String]) -
 }
 
 /// The verbs bound to the summoned bead: they act on it and nothing else.
-/// The compile-and-lint check `work submit` runs on its tip before asking for the submission:
-/// the program and arguments, run from the worktree.
-pub fn lint_argv(tip: &str) -> Vec<String> {
-    ["testenv", "lint", tip, "."].iter().map(|s| s.to_string()).collect()
-}
-
 pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by"];
 
 /// The verbs that name their own target (sp-st0mm): reads of other beads, a lane persona's
@@ -285,11 +279,6 @@ mod tests {
     #[test]
     fn build_request_show_is_bare() {
         assert_eq!(build_request("sp-3m1p9", "show", &[], None, "a").unwrap(), vec!["work", "sp-3m1p9", "show"]);
-    }
-
-    #[test]
-    fn the_lint_check_names_the_exact_tip() {
-        assert_eq!(lint_argv("deadbeef"), vec!["testenv", "lint", "deadbeef", "."]);
     }
 
     #[test]

@@ -145,7 +145,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             ),
         );
     }
-    if let Some(refusal) = lint_refusal(&tip, &actor) {
+    if let Some(refusal) = lint_refusal(bead_id, &tip, &actor) {
         return refusal;
     }
     if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
@@ -154,13 +154,20 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip })
 }
 
-/// A tip is submitted only on a recorded pass of its repository's compile-and-lint check.
-fn lint_refusal(tip: &str, actor: &str) -> Option<(i32, String)> {
-    let args = ["lint".to_string(), "--verify".to_string(), tip.to_string(), ".".to_string()];
-    match crate::bd::tool("testenv", &args, None, actor, 30) {
+/// A tip is submitted only on a recorded pass of its repository's compile-and-lint check; the
+/// broker runs it (a model session has no `testenv`) and records the pass for that exact tip.
+fn lint_refusal(bead_id: &str, tip: &str, actor: &str) -> Option<(i32, String)> {
+    let repo = match crate::bd::repo_label(bead_id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return Some((CANNOT_TELL, format!("cannot tell: {bead_id} carries no repo: label"))),
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    };
+    let args = ["lint".to_string(), tip.to_string(), repo];
+    // batch-job: runs the repository's declared lint tiers, bounded just under the client's wait
+    match crate::bd::tool("testenv", &args, None, actor, 280) {
         (0, _) => None,
         (1, out) => Some((REFUSED, out.trim_end().to_string())),
-        (_, out) => Some((CANNOT_TELL, format!("cannot tell: the compile-and-lint record could not be read: {}", out.trim_end()))),
+        (_, out) => Some((CANNOT_TELL, format!("cannot tell: the compile-and-lint check could not run: {}", out.trim_end()))),
     }
 }
 
