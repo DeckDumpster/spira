@@ -38,7 +38,6 @@ use std::collections::BTreeSet;
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use spira_world::sysctl::{self, Plane, StartAction, PLANES};
 use spira_world::spira_prod_or_home;
