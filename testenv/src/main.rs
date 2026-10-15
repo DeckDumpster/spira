@@ -82,6 +82,22 @@ fn main() -> ExitCode {
         let rc = testenv::suites::main(&args[1..]);
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
+    // `testenv lint [--verify] <tip> [<repo>]` — the fast compile-and-lint check a tip passes
+    // before it may be submitted.
+    if args.first().map(String::as_str) == Some("lint") {
+        let env = |k: &str| std::env::var(k).ok();
+        let run = match testenv::settings::Settings::load(&testenv::settings::Source { env: &env }, testenv::batch::now_epoch()) {
+            Ok(s) => s.run,
+            Err(e) => {
+                eprintln!("lint: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        let home = Harness::locate(&env).map(|h| h.root).unwrap_or_default();
+        let registry = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+        let rc = testenv::lint::main(&args[1..], &run, &|n| registry.root(n).map(std::path::PathBuf::from));
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
     // `testenv status [--json] <results-dir>` — a run's recorded phases, suites and verdict.
     if args.first().map(String::as_str) == Some("status") {
         let rc = testenv::phase::main(&args[1..]);

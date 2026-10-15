@@ -72,7 +72,13 @@ directory runs the tiers it declares in `.spira/testenv.toml` — `image`, optio
 with the tree mounted at `workdir`, bounded by `--deadline`; `--suites` names tiers
 (`reason=unknown-suite` otherwise), output lands in `<results>/<tier>.log`, and the last line is
 the usual `VERDICT`. podman's own failure (rc 125) is `FAULT reason=container-run`, never RED. A
-tree with neither `spira/` nor a declaration is `FAULT reason=no-test-entry`. These runs are not
+red tier prints `first error (<tier>): <file:line>: <message>` after its line. `lint = [<tier>...]`
+names the declared tiers that are the repository's fast compile-and-lint check.
+`testenv lint [--verify] <tip> [<repo>]` runs them against that exact tip and records the pass in
+`$SPIRA_RUN/lint-pass/<tip>` (a repository declaring none records `none`); a red is refused with the
+first error's `file:line`, a fault records nothing, and `--verify` only reads the record. `work submit`,
+`queue submit`, `queue resubmit` and every round or batch admission require it. A tree with neither
+`spira/` nor a declaration is `FAULT reason=no-test-entry`. These runs are not
 verdict-cached.
 
 ### 2.2 Exit status (unchanged from testenv-batch.sh — every caller branches on it)

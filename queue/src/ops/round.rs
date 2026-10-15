@@ -648,6 +648,10 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
     let mut merged: Vec<Member> = Vec::new();
     let mut unreturned = false;
     for m in admitted {
+        if !super::simple::lint_passed(w, label, &path, &m.tip, false) {
+            skips.push(format!("{}: {} fails its compile-and-lint check — not admitted", m.id, m.tip));
+            continue;
+        }
         if let Some(b) = blocked_by.get(&m.id).and_then(|bs| bs.iter().find(|b| !merged.iter().any(|x| &x.id == *b))) {
             skips.push(format!("{}: blocked by {b}, which has not landed and is not merged ahead of it in this round — not admitted", m.id));
             continue;

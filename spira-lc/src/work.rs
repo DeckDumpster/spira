@@ -145,10 +145,23 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             ),
         );
     }
+    if let Some(refusal) = lint_refusal(&tip, &actor) {
+        return refusal;
+    }
     if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
         return refusal;
     }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip })
+}
+
+/// A tip is submitted only on a recorded pass of its repository's compile-and-lint check.
+fn lint_refusal(tip: &str, actor: &str) -> Option<(i32, String)> {
+    let args = ["lint".to_string(), "--verify".to_string(), tip.to_string(), ".".to_string()];
+    match crate::bd::tool("testenv", &args, None, actor, 30) {
+        (0, _) => None,
+        (1, out) => Some((REFUSED, out.trim_end().to_string())),
+        (_, out) => Some((CANNOT_TELL, format!("cannot tell: the compile-and-lint record could not be read: {}", out.trim_end()))),
+    }
 }
 
 /// A bead that declares a target closes only with a verdict (MET, CONTRADICTED, or SHORT with a

@@ -371,6 +371,12 @@ fn run_foreign(
     for t in &tiers {
         let (o, secs) = runner.run(t);
         (deps.out)(&foreign::tier_line(t, o, secs));
+        if o == foreign::Outcome::Red {
+            let log = fs::read_to_string(results.join(format!("{t}.log"))).unwrap_or_default();
+            if let Some(e) = foreign::first_error(&log) {
+                (deps.out)(&format!("  first error ({t}): {e}"));
+            }
+        }
         match o {
             foreign::Outcome::Pass => ran += 1,
             foreign::Outcome::Red => {

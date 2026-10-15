@@ -9,6 +9,7 @@ pub mod container;
 pub mod fixture;
 pub mod foreign;
 pub mod landed;
+pub mod lint;
 pub mod phase;
 pub mod plan;
 pub mod prebuilt;

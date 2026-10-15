@@ -214,6 +214,9 @@ pub trait Lib {
 
 /// The harness scripts and binaries queue runs as whole programs.
 pub trait Scripts {
+    /// `testenv lint [--verify] <tip> <repo path>`: the repository's declared compile-and-lint
+    /// check at that exact tip, run and recorded (or, with `verify`, only read back): (rc, output).
+    fn lint(&self, tip: &str, repo: &Path, verify: bool) -> (i32, String);
     /// `gate.sh <branch> <repo>` with SPIRA_GATE_BEAD / SPIRA_GATE_SUITES: (rc, output).
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
     /// `batcher judgement-ci <repo> --suites CSV --members CSV --evidence T --home --run --db`,
