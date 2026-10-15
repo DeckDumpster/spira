@@ -321,12 +321,31 @@ pub struct Sink<'a> {
     pub clock: &'a dyn Clock,
     pub triggers: Triggers<'a>,
     pub seen: BTreeSet<String>,
+    pub scanned: u64,
 }
 
 impl Sink<'_> {
+    /// Adopt the ids another writer appended since the last look, so two passes over one file
+    /// (the follower and a backfill) never write the same execution twice.
+    fn catch_up(&mut self) {
+        use std::io::{Read, Seek, SeekFrom};
+        let Ok(mut f) = std::fs::File::open(&self.path) else { return };
+        if f.seek(SeekFrom::Start(self.scanned)).is_err() {
+            return;
+        }
+        let mut tail = String::new();
+        if f.read_to_string(&mut tail).is_err() {
+            return;
+        }
+        let whole = tail.rfind('\n').map_or(0, |i| i + 1);
+        self.seen.extend(written_ids(&tail[..whole]));
+        self.scanned += whole as u64;
+    }
+
     pub fn write(&mut self, records: &[Record]) -> Result<usize, String> {
         let mut n = 0;
         for r in records {
+            self.catch_up();
             if !self.seen.insert(r.invocation_id.clone()) {
                 continue;
             }

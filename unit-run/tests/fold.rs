@@ -86,8 +86,9 @@ fn systemctl() -> Systemctl {
 }
 
 fn sink<'a>(file: &Path, clock: &'a dyn Clock, proc: &'a dyn Proc) -> Sink<'a> {
-    let seen = written_ids(&std::fs::read_to_string(file).unwrap_or_default());
-    Sink { path: file.to_path_buf(), host: "h1".into(), instance: "inst-x".into(), clock, triggers: Triggers::new(proc), seen }
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let seen = written_ids(&text);
+    Sink { path: file.to_path_buf(), host: "h1".into(), instance: "inst-x".into(), clock, triggers: Triggers::new(proc), seen, scanned: text.len() as u64 }
 }
 
 fn rows(file: &Path) -> Vec<Value> {
@@ -294,4 +295,17 @@ fn io_controller_presence_is_read_from_the_controllers_file() {
     std::fs::write(&f, "cpu io memory pids\n").unwrap();
     assert!(io_controller_available(&f));
     assert!(!io_controller_available(&d.path().join("absent")));
+}
+
+#[test]
+fn two_sinks_on_one_file_write_each_execution_once() {
+    let d = TempDir::new("unit-run-twosinks");
+    let file = d.path().join("unit-run.jsonl");
+    let (clock, sys) = (Fixed(1_792_100_000), systemctl());
+    let src = Fake { lines: fixture(), stop_after: None, idle_at_end: false };
+    let (mut a, mut b) = (sink(&file, &clock, &sys), sink(&file, &clock, &sys));
+    let first = pass(&src, Folder::default(), false, &mut a, &mut |_| Ok(())).unwrap().1;
+    let second = pass(&src, Folder::default(), false, &mut b, &mut |_| Ok(())).unwrap().1;
+    assert_eq!((first, second), (4, 0));
+    assert_eq!(rows(&file).len(), 4);
 }
