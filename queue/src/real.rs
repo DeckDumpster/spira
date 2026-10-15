@@ -671,6 +671,15 @@ impl Scripts for RealScripts {
             Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run release: {e}") },
         }
     }
+    fn unit_active_state(&self, unit: &str) -> String {
+        // batch-job: one systemctl read of one unit
+        Command::new("systemctl")
+            .args(["--user", "show", "-p", "ActiveState", "--value", unit])
+            .stdin(Stdio::null())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    }
     fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
         // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
         let spawned = Command::new("timeout")

@@ -16,6 +16,11 @@ use super::World;
 /// guess a timeout for. The bound covers all changed units together.
 pub const LAND_DRAIN_WAIT_SECS: u64 = 120;
 
+/// Cap on waiting for a unit that timed out or did not come up to leave a transitional
+/// `ActiveState` before activation is re-attempted.
+pub const UNIT_SETTLE_WAIT_SECS: u64 = 180;
+const UNIT_SETTLE_POLL_SECS: u64 = 3;
+
 /// `<releases>/current` is a symlink: a release is in force, so a landing activates its own.
 /// Absent: nothing runs a release yet (before the cutover), and the release step is skipped
 /// (§8 D13) — the first activation is the cutover's.
@@ -129,6 +134,51 @@ pub fn verify(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
 /// Switch the running system onto `sha` (`release activate`, which applies the hotfix
 /// supersede rule against `--landed-ref`).
 pub fn activate(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
+    let first = match activate_once(w, plan, sha) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    let units = transient_units(&first);
+    if units.is_empty() {
+        return Err(first);
+    }
+    w.err(format!("queue.sh land-local: activation hit a unit timeout ({}); waiting for it to settle, then re-attempting once", units.join(", ")));
+    for u in &units {
+        settle_unit(w, u);
+    }
+    activate_once(w, plan, sha).map_err(|second| format!("{first}; re-attempt after the units settled also failed: {second}"))
+}
+
+/// Units a failed activation names as having timed out on restart or not come up. Empty for
+/// any other failure, which is not retried.
+fn transient_units(err: &str) -> Vec<String> {
+    let mut units: Vec<String> = Vec::new();
+    for line in err.lines() {
+        let timed_out = line.contains(": restart failed:") && line.contains("exit status: 124");
+        if !(timed_out || line.contains(": did not come up")) {
+            continue;
+        }
+        let Some(cut) = line.find(": restart failed:").or_else(|| line.find(": did not come up")) else { continue };
+        let unit = line[..cut].rsplit(|c: char| c.is_whitespace()).next().unwrap_or("");
+        if unit.ends_with(".service") && !units.iter().any(|u| u == unit) {
+            units.push(unit.to_string());
+        }
+    }
+    units
+}
+
+fn settle_unit(w: &World, unit: &str) {
+    let deadline = w.clock.now() + UNIT_SETTLE_WAIT_SECS;
+    loop {
+        let st = w.scripts.unit_active_state(unit);
+        if matches!(st.as_str(), "active" | "failed" | "inactive" | "") || w.clock.now() >= deadline {
+            return;
+        }
+        w.clock.sleep(UNIT_SETTLE_POLL_SECS);
+    }
+}
+
+fn activate_once(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
     let bin = release_bin(w, plan.bins.as_deref());
     let out = step(
         w,
