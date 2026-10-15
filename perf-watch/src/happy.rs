@@ -79,6 +79,7 @@ pub fn alarm(outcome: &Outcome, goal_ms: u64, recent: &[u64]) -> Option<String> 
 const WORLD_DIRS: [&str; 6] = [".github", "lifecycle", "out", "sim", "spira", "systemd"];
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    // batch-job: git add/commit of a whole release tree takes as long as the tree is large
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -115,6 +116,7 @@ pub fn checkout(repo: &Path, scratch: &Path) -> Result<PathBuf, String> {
         let name = e.file_name();
         let wanted = if e.path().is_dir() { WORLD_DIRS.iter().any(|d| name == *d) } else { name != ".git" };
         if wanted {
+            // batch-job: copies a release directory, as long as it is large
             let st = Command::new("cp").arg("-a").arg(e.path()).arg(dir.join(&name)).status().map_err(|e| format!("cp: {e}"))?;
             if !st.success() {
                 return Err(format!("cp {}: {st}", name.to_string_lossy()));
