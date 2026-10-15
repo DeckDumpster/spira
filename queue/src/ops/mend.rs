@@ -8,8 +8,8 @@ use std::path::Path;
 
 use lifecycle::mending::{self, FileChange, MendFacts};
 
-use super::round::{load, local_ctx};
-use super::{actor, idents, read_text, require_lc, World, FAIL, OK, USAGE};
+use super::round::load_failed_batch;
+use super::{actor, czar_ok, idents, read_text, repo_path, require_lc, resolve, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::model::Member;
 
@@ -20,11 +20,15 @@ const SUITE_GLOB: &str = "**/test-*.sh";
 #[allow(clippy::too_many_arguments)]
 pub fn run(w: &World, outcome: &str, batch: &str, suite: &str, repo: Option<&str>, tips: &str, checked: &str, ask: Option<&str>, reason: &Text) -> i32 {
     let label = format!("round {outcome}");
-    let Ok((c, path)) = local_ctx(w, &label, repo) else { return FAIL };
+    if !czar_ok(w) {
+        return FAIL;
+    }
+    let Ok(c) = resolve(w, &label, repo) else { return FAIL };
+    let Ok(path) = repo_path(w, &label, &c) else { return FAIL };
     if idents(w, &label, &[("batch id", batch), ("suite", suite)]).is_err() || require_lc(w, &label).is_err() {
         return FAIL;
     }
-    let Ok(kv) = load(w, &label, &c, batch) else { return FAIL };
+    let Ok(kv) = load_failed_batch(w, &label, &c, batch) else { return FAIL };
     let Some((pass, _)) = w.lc.batch_pass(batch) else {
         w.err(format!("queue.sh {label}: spira-lc cannot say which pass {batch} is on"));
         return FAIL;

@@ -462,6 +462,23 @@ fn red_summons_judgement_once_with_the_suites_and_the_run() {
 }
 
 #[test]
+fn a_red_forge_batch_summons_a_mender_per_red_suite_once() {
+    let mut t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
+    *t.scripts.judgement.borrow_mut() = RunOut { rc: 0, out: "id=sp-j1\n".into(), err: String::new() };
+    t.forge.status.borrow_mut().push(Some("red\nred-suite: test-b.sh\nred-suite: test-a.sh\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    let events = |t: &T| t.lc.calls.borrow().iter().filter(|c| c.contains("\"Failed\"")).count();
+    assert_eq!(events(&t), 2);
+    assert!(t.lib.has("create_bug"), "{}", t.out());
+    assert_eq!(t.lib.calls.borrow().iter().filter(|c| c.starts_with("create_bug") && c.contains("mender-failure")).count(), 2);
+    t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert_eq!(events(&t), 2);
+}
+
+#[test]
 fn a_hand_cut_batch_red_goes_to_judgement_too() {
     // D1: verdict's own split/eject attribution is retired; owner is not consulted.
     let mut t = T::new(LandMode::Queue);

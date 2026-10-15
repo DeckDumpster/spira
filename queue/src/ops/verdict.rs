@@ -995,6 +995,7 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         }
         return setup_red(w, c, b, out, bo);
     }
+    super::round::raise_forge_reds(w, c, &b.kv, &suites);
     if c.s.batcher_off {
         let lead = if bo.is_empty() { String::new() } else { "batcher-owned but ".into() };
         w.err(format!("verdict {name}: PR {pr} red ({suites}) — {lead}the batcher is off (SPIRA_BATCHER_ENABLE=0); cannot summon judgement"));
