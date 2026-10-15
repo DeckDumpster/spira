@@ -63,6 +63,8 @@ git -C "$FAKE_REPO" remote add origin "$FAKE_ORIGIN"
 timeout 5 git -C "$FAKE_REPO" push -q origin main 2>/dev/null
 timeout 5 git -C "$FAKE_REPO" fetch -q origin 2>/dev/null
 git -C "$FAKE_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+# SPIRA_REPO resolves to the home repo, whose declared base is local/main; this fixture lands on origin/main.
+printf '[repo.spira]\npath = "%s"\nmode = "pr"\nbase = "origin/main"\n' "$FAKE_REPO" >> "$_TL_CONF_OVERRIDE"
 # The templates substitute @SPIRA_REPO@ in ExecStart lines; the ExecStart check requires
 # those targets to be executable. Symlink the two scripts that templates use this way.
 for _s in concierge.sh; do
@@ -220,7 +222,6 @@ drain_out="$(MOCK_AEONS= MOCK_IS_ACTIVE=active MOCK_FORCE= \
               MOCK_ONESHOT_SVC=spira-sentinel-prod.service inst)"
 drain_rc=$?
 drain_log="$(cat "$MOCK_LOG")"
-[ "$drain_rc" = 0 ] || printf "DBG %s\n" "$drain_out"
 
 isz     "drain: exit 0 after draining the oneshot"                  "$drain_rc"
 want    "drain: is-active was queried on the backing service"        "is-active spira-sentinel-prod.service" "$drain_log"
