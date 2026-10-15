@@ -162,6 +162,9 @@ inst() {
 
 mkdir -p "$TMP/home/.config/systemd/user" "$TMP/run"
 
+# SPIRA_REPO resolves to the home repo, whose declared base is local/main; these fixtures land on origin/main.
+printf '[repo.spira]\npath = "%s"\nmode = "pr"\nbase = "origin/main"\n' "$REPO" >> "$_TL_CONF_OVERRIDE"
+
 # ===========================================================================
 echo
 echo "POSITIVE CONTROL — wrong branch: fence fires and cannot be silent."
@@ -291,9 +294,7 @@ git -C "$LREPO" update-ref refs/remotes/origin/main "$(git -C "$CLONE" rev-parse
 git -C "$LREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 git -C "$LREPO" branch local/main main
 LTOML="$TMP/lrepo.toml"; printf '[spira]\n' > "$LTOML"
-spira-config set repo.lrepo.path "$LREPO" "$LTOML" >/dev/null
-spira-config set repo.lrepo.mode queue.local "$LTOML" >/dev/null
-spira-config set repo.lrepo.base local/main "$LTOML" >/dev/null
+printf '[repo.spira]\npath = "%s"\nmode = "queue.local"\nbase = "local/main"\n' "$LREPO" >> "$LTOML"
 INST_TOML="$SPIRA_TOML:$LTOML"
 clear_dest() { find "$TMP/home/.config/systemd/user" -maxdepth 1 \( -name '*.service' -o -name '*.timer' \) -delete; }
 clear_dest
