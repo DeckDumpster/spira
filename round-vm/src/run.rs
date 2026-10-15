@@ -984,6 +984,20 @@ pub trait Recorder: Sync {
     fn suites_started(&self, batch: &str, repo: Option<&str>) -> Result<(), String>;
     fn pass_incomplete(&self, batch: &str, repo: Option<&str>, reason: &str) -> Result<(), String>;
     fn progress(&self, batch: &str, body: &str) -> Result<(), String>;
+
+    /// The batch's current pass number and members, for the pass's record; `None` when the
+    /// lifecycle machine cannot say.
+    fn pass_context(&self, batch: &str) -> Option<(u64, Vec<String>)> {
+        let out = command("timeout").args(["-k", "5", "30", "spira-lc", "show-batch", batch]).stdin(Stdio::null()).output().ok()?;
+        let v: Value = serde_json::from_slice(&out.stdout).ok()?;
+        let members = v.get("members").and_then(Value::as_array).map(|a| a.iter().filter_map(|m| m.as_str().or_else(|| m.get("bead_id").and_then(Value::as_str)).map(str::to_string)).collect()).unwrap_or_default();
+        Some((v.get("pass")?.as_u64()?, members))
+    }
+
+    /// Appends the pass's one record under `<root>/tsd`.
+    fn pass_record(&self, root: &Path, rec: &tsd::pass::PassRecord) -> Result<(), String> {
+        rec.write(root, &tsd::default_host(), &tsd::now_iso())
+    }
 }
 
 /// `queue round suites-started`: the lifecycle machine's own verb, so a refusal names the phase.
@@ -1071,8 +1085,62 @@ fn settle_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress:
     }
 }
 
-/// `round-vm run`. Returns the process exit code (DESIGN.md §2.2).
+/// What the pass learned about the VM it ran on, for its record.
+#[derive(Default)]
+struct Facts {
+    started: Option<u64>,
+    wait_s: u64,
+    handle: Option<String>,
+    instance_type: Option<String>,
+    marks: Option<crate::progress::Marks>,
+}
+
+/// `round-vm run`. Returns the process exit code (DESIGN.md §2.2). A pass that began is recorded
+/// exactly once, whatever way it ended; a record that cannot be written ends the pass unjudged.
 pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
+    let facts = Mutex::new(Facts::default());
+    let code = run_pass(env, args, &facts);
+    let facts = facts.into_inner().unwrap_or_else(|e| e.into_inner());
+    let (Some(batch), Some(started)) = (args.round_batch.as_deref(), facts.started) else { return code };
+    let marks = facts.marks.clone().unwrap_or_default();
+    let (boot_s, build_s, suites_s) = marks.phases(facts.wait_s, crate::progress::now_secs());
+    let lost = marks.get().lost;
+    let place = if facts.handle.as_deref().is_some_and(crate::ec2::is_ec2_handle) { tsd::pass::Place::Ec2 } else { tsd::pass::Place::Proxmox };
+    let vcpus = match place {
+        tsd::pass::Place::Ec2 => facts.instance_type.as_deref().and_then(crate::ec2::vcpus_of),
+        _ => Some(env.cfg.vcpus),
+    };
+    let (pass, members) = match env.record.pass_context(batch) {
+        Some((n, m)) => (n.to_string(), m),
+        None => (format!("t{started}"), Vec::new()),
+    };
+    let record = tsd::pass::PassRecord {
+        repo: args.round_repo.clone().unwrap_or_else(|| "-".into()),
+        batch: batch.to_string(),
+        pass,
+        members,
+        instance_type: facts.instance_type.unwrap_or_default(),
+        vcpus,
+        place,
+        capacity_wait_s: facts.wait_s,
+        boot_s,
+        build_s,
+        suites_s,
+        cause: tsd::pass::Cause::from_exit(code, lost.is_some()),
+        detail: lost.unwrap_or_default(),
+    };
+    match env.record.pass_record(&env.cfg.run_dir, &record) {
+        Ok(()) => code,
+        Err(e) => {
+            let why = format!("the pass's record could not be written ({e}); its verdict is lost");
+            eprintln!("round-vm run: {why}");
+            record_incomplete(env, args, &why);
+            if code == 0 || code == 1 { 2 } else { code }
+        }
+    }
+}
+
+fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let cfg = env.cfg;
     if !env.host.is_checkout(&args.tree_dir) {
         eprintln!("round-vm run: not a git checkout: {}", args.tree_dir.display());
@@ -1139,6 +1207,12 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
             return 2;
         }
     }
+    let leased_from = Instant::now();
+    {
+        let mut f = facts.lock().unwrap_or_else(|e| e.into_inner());
+        f.started = Some(crate::progress::now_secs());
+        f.marks = Some(progress.lock().unwrap_or_else(|e| e.into_inner()).marks());
+    }
     let acquired = {
         let leasing = AtomicBool::new(true);
         std::thread::scope(|sc| {
@@ -1175,6 +1249,12 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         }
     };
     let instance_type = (env.deps.factory)().ok().and_then(|a| a.provider.instance_type(&vm.handle));
+    {
+        let mut f = facts.lock().unwrap_or_else(|e| e.into_inner());
+        f.wait_s = leased_from.elapsed().as_secs();
+        f.handle = Some(vm.handle.clone());
+        f.instance_type = instance_type.clone();
+    }
     match &instance_type {
         Some(t) => eprintln!("round-vm run: {} {} {} type={t}", vm.handle, vm.addr, mode.as_str()),
         None => eprintln!("round-vm run: {} {} {}", vm.handle, vm.addr, mode.as_str()),
@@ -1309,6 +1389,7 @@ fn on_vm_run(
     });
     if !reachable {
         eprintln!("round-vm run: VM {} at {} never became reachable over ssh", vm.handle, vm.addr);
+        progress.marks().lose("never reachable over ssh");
         progress.finish(&results_dir, 2);
         return 2;
     }
@@ -1349,6 +1430,7 @@ fn on_vm_run(
         let remote_rc = match streamed {
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
+                progress.marks().lose("ssh dropped");
                 keep_after_lost_ssh(env, vm, &results_dir, keep);
                 record_incomplete(env, args, "the batch's ssh dropped");
                 progress.finish(&results_dir, 2);
@@ -1407,6 +1489,7 @@ fn on_vm_run(
         let (code, usable) = match batch.join() {
             Ok(Ok(255)) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
+                progress.marks().lose("ssh dropped");
                 keep_after_lost_ssh(env, vm, &results_dir, keep);
                 record_incomplete(env, args, "the batch's ssh dropped");
                 (2, false)
@@ -2452,6 +2535,7 @@ mod tests {
         calls: Mutex<Vec<String>>,
         bodies: Mutex<Vec<(String, String)>>,
         refuse: bool,
+        refuse_record: bool,
     }
 
     impl Recorder for FakeRecorder {
@@ -2471,6 +2555,65 @@ mod tests {
             self.bodies.lock().unwrap().push((batch.to_string(), body.to_string()));
             Ok(())
         }
+        fn pass_context(&self, _: &str) -> Option<(u64, Vec<String>)> {
+            Some((3, vec!["m1".into(), "m2".into()]))
+        }
+        fn pass_record(&self, root: &Path, rec: &tsd::pass::PassRecord) -> Result<(), String> {
+            if self.refuse_record {
+                return Err("disk full".into());
+            }
+            rec.write(root, "h", "2026-10-14T00:00:00Z")
+        }
+    }
+
+    fn pass_rows(fx: &Fixture) -> Vec<Value> {
+        let text = fs::read_to_string(tsd::family_path(&fx.cfg.run_dir, tsd::pass::FAMILY)).unwrap_or_default();
+        text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+    }
+
+    fn batch_args(fx: &Fixture, batch: &str) -> RunArgs {
+        RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some(batch.into()), round_repo: Some("sp".into()), ..tree(fx) }
+    }
+
+    #[test]
+    fn every_pass_of_a_round_yields_exactly_one_record_with_its_cause() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let cases = [("b-green", 0, "green"), ("b-red", 1, "red-attributed"), ("b-cap", 124, "over-cap"), ("b-infra", 3, "infra")];
+        for (batch, rc, _) in cases {
+            let remote = FakeRemote { rc: Ok(rc), ..FakeRemote::green() };
+            go_recorded(&fx, &remote, &batch_args(&fx, batch), &rec);
+        }
+        let lost = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
+        assert_eq!(go_recorded(&fx, &lost, &batch_args(&fx, "b-lost"), &rec), 2);
+        let text = fs::read_to_string(tsd::family_path(&fx.cfg.run_dir, tsd::pass::FAMILY)).unwrap();
+        let expected: Vec<(&str, &str, &str)> = ["b-green", "b-red", "b-cap", "b-infra", "b-lost"].iter().map(|b| ("sp", *b, "3")).collect();
+        tsd::pass::exactly_one(&text, &expected).unwrap();
+        let rows = pass_rows(&fx);
+        let cause = |b: &str| rows.iter().find(|r| r["batch"] == b).unwrap()["cause"].as_str().unwrap().to_string();
+        for (batch, _, want) in cases {
+            assert_eq!(cause(batch), want, "{batch}");
+        }
+        assert_eq!(cause("b-lost"), "vm-lost");
+        let g = rows.iter().find(|r| r["batch"] == "b-green").unwrap();
+        assert_eq!((g["where"].as_str(), g["members"].as_array().map(Vec::len), g["verdict"].as_str()), (Some("proxmox"), Some(2), Some("green")));
+        assert_eq!(g["vcpus"], 16);
+    }
+
+    #[test]
+    fn a_pass_whose_record_cannot_be_written_is_a_loss_not_a_verdict() {
+        let fx = fixture();
+        let rec = FakeRecorder { refuse_record: true, ..Default::default() };
+        assert_eq!(go_recorded(&fx, &FakeRemote::green(), &batch_args(&fx, "b-1"), &rec), 2, "a green pass nobody can record is not judged");
+        assert_eq!(*rec.calls.lock().unwrap().last().unwrap(), "incomplete b-1");
+    }
+
+    #[test]
+    fn a_run_with_no_batch_writes_no_pass_record() {
+        let fx = fixture();
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), ..tree(&fx) };
+        assert_eq!(go(&fx, &FakeRemote::green(), &a), 0);
+        assert!(pass_rows(&fx).is_empty());
     }
 
     #[test]

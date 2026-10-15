@@ -1371,6 +1371,7 @@ dependencies = [
  "sha2",
  "spira-config",
  "testkit",
+ "tsd",
  "ureq",
 ]
 
