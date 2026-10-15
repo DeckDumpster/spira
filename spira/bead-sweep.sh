@@ -65,7 +65,7 @@ def details(x):
         except ValueError:
             return []
     if isinstance(x, dict):
-        return [x["detail"]] * isinstance(x.get("detail"), str) + [d for v in x.values() for d in details(v)]
+        return [v for k, v in x.items() if k == "detail" and isinstance(v, str)] + [d for v in x.values() for d in details(v)]
     return [d for v in x for d in details(v)] if isinstance(x, list) else []
 def held_reason(i, reason):
     if review_by(reason) is not None:
