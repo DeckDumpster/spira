@@ -156,12 +156,17 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
 
 /// A tip is submitted only on a recorded pass of its repository's compile-and-lint check; the
 /// broker runs it (a model session has no `testenv`) and records the pass for that exact tip.
-/// The repository comes from the bead's lifecycle row, never the content store: a world or a
-/// fixture holds lifecycle rows with no content behind them.
+/// The repository comes from the bead's lifecycle row: a world or a fixture holds lifecycle rows
+/// with no content behind them. Only a row that names none (one created at the claim, before
+/// `backfill-repos` reached it) falls back to the content store's repo: label.
 fn lint_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str) -> Option<(i32, String)> {
     let repo = match rows::bead_repo(conn, bead_id) {
         Ok(Some(r)) => r,
-        Ok(None) => return Some((CANNOT_TELL, format!("cannot tell: {bead_id}'s lifecycle row names no repository"))),
+        Ok(None) => match crate::bd::repo_label(bead_id) {
+            Ok(Some(r)) => r,
+            Ok(None) => return Some((CANNOT_TELL, format!("cannot tell: {bead_id} names no repository (no bead.repo, no repo: label)"))),
+            Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {bead_id}'s row names no repository and its label could not be read: {e}"))),
+        },
         Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e:?}"))),
     };
     let args = ["lint".to_string(), tip.to_string(), repo];
