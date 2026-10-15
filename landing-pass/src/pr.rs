@@ -53,6 +53,10 @@ impl<'a> PrPass<'a> {
 
     /// Returns (branches seen, branches acted on).
     pub fn run(&self) -> (u64, u64) {
+        if !self.s.batcher_enable {
+            self.log("landing-pass: SPIRA_BATCHER_ENABLE=0 — the operator lands by hand; the pr walk is held");
+            return (0, 0);
+        }
         let start = unix_now();
         let pr: Vec<&RepoRow> = self.repos.iter().filter(|r| r.mode == LandMode::Pr).collect();
         if pr.is_empty() {

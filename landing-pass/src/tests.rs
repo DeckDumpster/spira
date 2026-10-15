@@ -1432,6 +1432,38 @@ fn the_pr_pass_records_a_merged_pr_whose_bead_never_left_the_builder() {
 }
 
 #[test]
+fn the_batcher_switch_holds_the_pr_walk() {
+    let mut h = H::new(LandMode::Pr);
+    h.closed("sp-done", "t1");
+    h.tools.forge_pr_create_n.set(Some(1));
+    let tools = FakePr::default();
+    let files = Files::new(&h.s.run);
+    h.s.batcher_enable = false;
+    let walk = |h: &H| {
+        PrPass {
+            s: &h.s,
+            repos: &h.repos,
+            beads: &h.beads,
+            git: &h.git,
+            lib: &h.lib,
+            land_tools: &h.tools,
+            procs: &h.procs,
+            tools: &tools,
+            files: &files,
+            out: &h.out,
+            loud: Default::default(),
+        }
+        .run()
+    };
+    assert_eq!(walk(&h), (0, 0));
+    assert!(!h.lib.has("rebase"), "{:?}", h.lib.calls.borrow());
+    assert!(h.logged("SPIRA_BATCHER_ENABLE=0"));
+    h.s.batcher_enable = true;
+    assert_eq!(walk(&h), (1, 1), "the same branch is walked once the switch is on");
+    assert!(h.lib.has("rebase spira/sp-done"));
+}
+
+#[test]
 fn delivery_rows_accept_a_numeric_version() {
     assert_eq!(crate::pr::delivery_of(br#"{"delivery":{"state":"PR_OPEN","version":3}}"#), Some(("PR_OPEN".into(), "3".into())));
     assert_eq!(crate::pr::delivery_of(br#"{"delivery":{"state":"PR_OPEN","version":"4"}}"#), Some(("PR_OPEN".into(), "4".into())));
