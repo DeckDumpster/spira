@@ -768,7 +768,7 @@ export -f _wake_input_busy _wake_deliver
 # tl_config, not the env prefix below, which no process reads it from any more.
 tl_config SPIRA_RUN="$DET_RUN"
 (
-    CONCIERGE_WAKE_POLL_SECS=0 CONCIERGE_WAKE_SETTLE_SECS=0 \
+    CONCIERGE_WAKE_POLL_SECS=0 \
         CONCIERGE_SOCKET="$DET_SOCK" CONCIERGE_SESSION="$DET_SOCK" \
         timeout 30 bash "$HARNESS/concierge.sh" wake "the woken text" >"$TMP/wake-det.out" 2>&1 # batch-job: outer bound on a wake fed by a fake state feeder; a short one turns load into a false red
 ) &
