@@ -135,12 +135,14 @@ impl Pool {
             s.note(&id, VmState::Doomed, "its spilled provisioner died");
             s.doomed.push(id);
         }
+        let t_now = now();
         let (dead, live): (Vec<Lease>, Vec<Lease>) =
-            s.leases.drain(..).partition(|l| l.stale());
+            s.leases.drain(..).partition(|l| l.stale() || l.held_end(t_now).is_some());
         s.leases = live;
         for l in &dead {
-            eprintln!("round-vm: reaping VM {} (leased since {}): its lease holder is gone", l.vm.handle, l.since);
-            s.note(&l.vm.handle, VmState::Doomed, "its lease holder is gone");
+            let why = l.held_end(t_now).map_or("its lease holder is gone".to_string(), |w| format!("held lease ends: {w}"));
+            eprintln!("round-vm: reaping VM {} for {} (leased since {}): {why}", l.vm.handle, l.run.as_deref().unwrap_or("?"), l.since);
+            s.note(&l.vm.handle, VmState::Doomed, &why);
         }
         s.doomed.extend(dead.into_iter().map(|l| l.vm.handle));
         let doomed = std::mem::take(&mut s.doomed);
@@ -186,7 +188,7 @@ impl Pool {
     /// if nothing is ready or in flight (G1).
     fn hand_out(s: &mut PoolState, vm: &Vm, owner: Option<ProcId>, holder: Option<ProcId>, spawner: &dyn Spawner, why: &str) {
         s.note(&vm.handle, VmState::Leased, why);
-        s.leases.push(Lease { vm: vm.clone(), owner, since: now(), holder, held: false, kept_at: 0, pulling: None });
+        s.leases.push(Lease { vm: vm.clone(), owner, since: now(), holder, held: false, kept_at: 0, pulling: None, run: None, pulled: false });
         s.outage = None;
         if s.ready.is_none() && s.provisioning.is_none() {
             match spawner.spawn_next() {
@@ -441,7 +443,7 @@ impl Pool {
                 self.with_state(|s| {
                     s.spilled.retain(|pr| pr.vmid.as_deref() != Some(&vm.handle));
                     s.note(&vm.handle, VmState::Leased, &format!("{why} (provider: ec2)"));
-                    s.leases.push(Lease { vm: vm.clone(), owner, since: now(), holder, held: false, kept_at: 0, pulling: None });
+                    s.leases.push(Lease { vm: vm.clone(), owner, since: now(), holder, held: false, kept_at: 0, pulling: None, run: None, pulled: false });
                     s.outage = None;
                 })?;
                 Ok(vm)
@@ -560,8 +562,8 @@ impl Pool {
         }
     }
 
-    /// Keeps `handle` out of every reaper: its lease belongs to no process, so only a person
-    /// (or the run deadline's leak sweep) ends it.
+    /// Keeps `handle` out of the process reapers: its lease belongs to no process and ends
+    /// when its results are pulled (`mark_pulled`) or `HELD_BOUND_SECS` after the hold.
     pub fn hold(&self, handle: &str) -> Result<(), String> {
         self.with_state(|s| {
             for l in s.leases.iter_mut().filter(|l| l.vm.handle == handle) {
@@ -571,6 +573,24 @@ impl Pool {
                 l.kept_at = now();
             }
         })
+    }
+
+    /// Names the round or run `handle`'s lease serves.
+    pub fn label(&self, handle: &str, run: &str) {
+        let _ = self.with_state(|s| {
+            for l in s.leases.iter_mut().filter(|l| l.vm.handle == handle) {
+                l.run = Some(run.to_string());
+            }
+        });
+    }
+
+    /// Records that a held `handle`'s results are in; the next pool operation releases it.
+    pub fn mark_pulled(&self, handle: &str) {
+        let _ = self.with_state(|s| {
+            for l in s.leases.iter_mut().filter(|l| l.vm.handle == handle && l.held) {
+                l.pulled = true;
+            }
+        });
     }
 
     /// Marks `handle`'s lease as being pulled by this process until the returned pin drops.
@@ -770,7 +790,7 @@ impl Pool {
         let leases: Vec<_> = s
             .leases
             .iter()
-            .map(|l| serde_json::json!({"vm": l.vm.handle, "addr": l.vm.addr, "owner": l.owner.map(|o| o.to_string()), "cmd": l.owner.map(|o| owner_cmd(o.pid)), "since": l.since, "age_secs": age(l.since)}))
+            .map(|l| serde_json::json!({"vm": l.vm.handle, "addr": l.vm.addr, "owner": l.owner.map(|o| o.to_string()), "cmd": l.owner.map(|o| owner_cmd(o.pid)), "since": l.since, "age_secs": age(l.since), "run": l.run, "held": l.held, "held_age_secs": l.held.then(|| age(if l.kept_at > 0 { l.kept_at } else { l.since })), "why": l.held.then_some("held for results")}))
             .collect();
         let doomed: Vec<_> = s
             .doomed
@@ -1020,8 +1040,8 @@ mod tests {
         fp.plant("301", "round-301");
         fp.plant("302", "round-302");
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "301".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0, holder: None, held: false, kept_at: 0, pulling: None });
-            s.leases.push(Lease { vm: Vm { handle: "302".into(), addr: "y".into() }, owner: None, since: 0, holder: None, held: true, kept_at: 0, pulling: None });
+            s.leases.push(Lease { vm: Vm { handle: "301".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0, holder: None, held: false, kept_at: 0, pulling: None, run: None, pulled: false });
+            s.leases.push(Lease { vm: Vm { handle: "302".into(), addr: "y".into() }, owner: None, since: 0, holder: None, held: true, kept_at: now(), pulling: None, run: None, pulled: false });
         })
         .unwrap();
         let f = || Ok(attempt(&fp));
@@ -1039,8 +1059,8 @@ mod tests {
         fp.plant("402", "round-402");
         let old = now() - crate::schema::OWNERLESS_GRACE_SECS - 5;
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "401".into(), addr: "x".into() }, owner: None, since: old, holder: None, held: false, kept_at: 0, pulling: None });
-            s.leases.push(Lease { vm: Vm { handle: "402".into(), addr: "y".into() }, owner: None, since: now(), holder: None, held: false, kept_at: 0, pulling: None });
+            s.leases.push(Lease { vm: Vm { handle: "401".into(), addr: "x".into() }, owner: None, since: old, holder: None, held: false, kept_at: 0, pulling: None, run: None, pulled: false });
+            s.leases.push(Lease { vm: Vm { handle: "402".into(), addr: "y".into() }, owner: None, since: now(), holder: None, held: false, kept_at: 0, pulling: None, run: None, pulled: false });
         })
         .unwrap();
         let f = || Ok(attempt(&fp));
@@ -1187,7 +1207,7 @@ mod tests {
         fp.plant("321", "round-321");
         let pl = pool(&d, 1);
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "321".into(), addr: "x".into() }, owner: None, since: 0, holder: Some(dead_proc()), held: false, kept_at: 0, pulling: None });
+            s.leases.push(Lease { vm: Vm { handle: "321".into(), addr: "x".into() }, owner: None, since: 0, holder: Some(dead_proc()), held: false, kept_at: 0, pulling: None, run: None, pulled: false });
         })
         .unwrap();
         pl.begin_refresh(ProcId::current()).unwrap().unwrap();
@@ -1202,7 +1222,7 @@ mod tests {
         let d = TempDir::new();
         let pl = pool(&d, 1);
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "322".into(), addr: "x".into() }, owner: None, since: 0, holder: Some(ProcId::current()), held: false, kept_at: 0, pulling: None });
+            s.leases.push(Lease { vm: Vm { handle: "322".into(), addr: "x".into() }, owner: None, since: 0, holder: Some(ProcId::current()), held: false, kept_at: 0, pulling: None, run: None, pulled: false });
         })
         .unwrap();
         assert!(pl.begin_refresh(ProcId::current()).unwrap().is_err());
@@ -1215,7 +1235,7 @@ mod tests {
         fp.plant("311", "round-311");
         let pl = pool(&d, 1);
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "311".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0, holder: None, held: false, kept_at: 0, pulling: None })
+            s.leases.push(Lease { vm: Vm { handle: "311".into(), addr: "x".into() }, owner: Some(dead_proc()), since: 0, holder: None, held: false, kept_at: 0, pulling: None, run: None, pulled: false })
         })
         .unwrap();
         let f = || Ok(attempt(&fp));
@@ -1714,8 +1734,8 @@ mod tests {
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
         pl.with_state(|s| {
-            s.leases.push(Lease { vm: Vm { handle: "ec2-live".into(), addr: "x".into() }, owner: Some(ProcId::current()), since: old, holder: None, held: false, kept_at: 0, pulling: None });
-            s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: None, since: now(), holder: None, held: true, kept_at: 0, pulling: None });
+            s.leases.push(Lease { vm: Vm { handle: "ec2-live".into(), addr: "x".into() }, owner: Some(ProcId::current()), since: old, holder: None, held: false, kept_at: 0, pulling: None, run: None, pulled: false });
+            s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: None, since: now(), holder: None, held: true, kept_at: 0, pulling: None, run: None, pulled: false });
         })
         .unwrap();
         let att = spilling(&fp, ec2, None);
@@ -1733,7 +1753,7 @@ mod tests {
         fake.plant("i-kept", Some("ec2-kept"), "round-ec2-kept", old);
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
-        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: None, since: old, holder: None, held: true, kept_at: 0, pulling: None })).unwrap();
+        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: None, since: old, holder: None, held: true, kept_at: 0, pulling: None, run: None, pulled: false })).unwrap();
         assert_eq!(pl.reap_unheld(&spilling(&fp, ec2, None)), ["ec2-kept"]);
         assert!(fake.ids().is_empty());
     }
@@ -1746,7 +1766,7 @@ mod tests {
         fake.plant("i-kept", Some("ec2-kept"), "round-ec2-kept", old);
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
-        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: Some(ProcId::current()), since: old, holder: None, held: false, kept_at: 0, pulling: None })).unwrap();
+        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: Some(ProcId::current()), since: old, holder: None, held: false, kept_at: 0, pulling: None, run: None, pulled: false })).unwrap();
         pl.hold("ec2-kept").unwrap();
         assert!(pl.reap_unheld(&spilling(&fp, ec2, None)).is_empty(), "a run that ran past the grace and then kept its VM loses it at once");
         assert_eq!(fake.ids(), ["i-kept"]);
@@ -1760,7 +1780,7 @@ mod tests {
         fake.plant("i-kept", Some("ec2-kept"), "round-ec2-kept", old);
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
-        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: None, since: old, holder: None, held: true, kept_at: old, pulling: None })).unwrap();
+        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "ec2-kept".into(), addr: "y".into() }, owner: None, since: old, holder: None, held: true, kept_at: old, pulling: None, run: None, pulled: false })).unwrap();
         let att = spilling(&fp, ec2, None);
         {
             let _pin = pl.pin_pull("ec2-kept");
@@ -1778,7 +1798,7 @@ mod tests {
         fp.plant("112", "round-112");
         fp.plant_tagged("113", "round-113", "");
         let pl = pool(&d, 1);
-        let kept = |h: &str| Lease { vm: Vm { handle: h.into(), addr: "x".into() }, owner: None, since: now(), holder: None, held: true, kept_at: 0, pulling: None };
+        let kept = |h: &str| Lease { vm: Vm { handle: h.into(), addr: "x".into() }, owner: None, since: now(), holder: None, held: true, kept_at: 0, pulling: None, run: None, pulled: false };
         pl.with_state(|s| {
             for h in ["ec2-gone", "113", "112", "ec2-live"] {
                 s.leases.push(kept(h));
@@ -1795,5 +1815,40 @@ mod tests {
         assert!(s.doomed.is_empty());
         assert_eq!(fp.name("113").as_deref(), Some("round-113"), "the machine now holding the reused handle must survive");
         assert_eq!(fp.count("destroy"), 0);
+    }
+
+    #[test]
+    fn a_held_lease_whose_pull_completed_is_gone_at_the_next_pool_operation() {
+        let d = TempDir::new();
+        let (fp, pl) = (FakeProvider::new(), pool(&d, 1));
+        fp.plant("501", "round-501");
+        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "501".into(), addr: "x".into() }, owner: None, since: now(), holder: None, held: true, kept_at: now(), pulling: None, run: Some("r-auto-7".into()), pulled: false })).unwrap();
+        pl.reap_dead_holders(&attempt(&fp));
+        assert_eq!(read_state(&pl.state_file()).unwrap().leases.len(), 1, "a held lease whose results are wanted stays");
+        pl.mark_pulled("501");
+        pl.reap_dead_holders(&attempt(&fp));
+        assert!(read_state(&pl.state_file()).unwrap().leases.is_empty());
+    }
+
+    #[test]
+    fn a_held_lease_never_pulled_ends_at_the_bound_with_an_event() {
+        let d = TempDir::new();
+        let (fp, pl) = (FakeProvider::new(), pool(&d, 1));
+        fp.plant("502", "round-502");
+        let old = now() - crate::schema::HELD_BOUND_SECS - 5;
+        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "502".into(), addr: "x".into() }, owner: None, since: old, holder: None, held: true, kept_at: old, pulling: None, run: Some("r-auto-8".into()), pulled: false })).unwrap();
+        pl.reap_dead_holders(&attempt(&fp));
+        let s = read_state(&pl.state_file()).unwrap();
+        assert!(s.leases.is_empty());
+        assert!(s.events.iter().any(|e| e.vm == "502" && e.reason.contains("held past the bound")), "{:?}", s.events);
+    }
+
+    #[test]
+    fn the_status_names_the_run_a_lease_is_held_for() {
+        let d = TempDir::new();
+        let pl = pool(&d, 1);
+        pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "503".into(), addr: "x".into() }, owner: None, since: now(), holder: None, held: true, kept_at: now(), pulling: None, run: Some("r-auto-9".into()), pulled: false })).unwrap();
+        let j: serde_json::Value = serde_json::from_str(&pl.status_json().unwrap()).unwrap();
+        assert_eq!((j["leases"][0]["run"].as_str(), j["leases"][0]["held"].as_bool()), (Some("r-auto-9"), Some(true)));
     }
 }

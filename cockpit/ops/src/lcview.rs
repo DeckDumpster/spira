@@ -459,6 +459,13 @@ pub struct VmRun {
     #[serde(default)]
     pub cmd: Vec<String>,
     pub idle: bool,
+    /// The round or run a lease serves, and whether it is held for its results.
+    #[serde(default)]
+    pub run: String,
+    #[serde(default)]
+    pub held: bool,
+    #[serde(default)]
+    pub held_age_secs: i64,
 }
 
 /// A VM row of ROUNDS: who holds it and for what, or `idle (warm)`.
@@ -476,11 +483,18 @@ impl VmRunView {
         if self.phase == "idle (warm)" {
             return format!("VM {} · idle (warm) · {}", self.vm, self.age);
         }
+        if self.phase == "held" {
+            let who = if self.id.is_empty() { "an unnamed run" } else { &self.id };
+            return format!("VM {} · held for results of {} · {}", self.vm, who, self.age);
+        }
         format!("VM {} · {} · {} · {} · {}", self.vm, self.kind, self.id, self.phase, self.age)
     }
 }
 
 fn vm_run_view(r: &VmRun) -> VmRunView {
+    if r.held {
+        return VmRunView { vm: r.vm.clone(), kind: "held".into(), id: r.run.clone(), phase: "held".into(), age: age(r.held_age_secs) };
+    }
     let age = age(r.age_secs);
     if r.idle {
         return VmRunView { vm: r.vm.clone(), kind: "pool".into(), id: String::new(), phase: "idle (warm)".into(), age };
@@ -1904,13 +1918,15 @@ mod tests {
     fn rounds_show_every_vm_run_and_the_idle_vm_and_an_open_pr_is_not_stale() {
         let mut s = rounds_snap();
         s.vm_runs = vec![
-            VmRun { vm: "109".into(), age_secs: 700, owner: "5@1".into(), cmd: vec!["round-vm".into(), "run".into(), "/r/run/cert-sweep/tree".into(), "--maxpar".into(), "16".into()], idle: false },
-            VmRun { vm: "111".into(), age_secs: 90, owner: "6@1".into(), cmd: vec!["round-vm".into(), "run".into(), "/r/run/r-auto-143".into()], idle: false },
-            VmRun { vm: "112".into(), age_secs: 4000, owner: String::new(), cmd: vec![], idle: true },
+            VmRun { vm: "109".into(), age_secs: 700, owner: "5@1".into(), cmd: vec!["round-vm".into(), "run".into(), "/r/run/cert-sweep/tree".into(), "--maxpar".into(), "16".into()], idle: false, ..Default::default() },
+            VmRun { vm: "111".into(), age_secs: 90, owner: "6@1".into(), cmd: vec!["round-vm".into(), "run".into(), "/r/run/r-auto-143".into()], idle: false, ..Default::default() },
+            VmRun { vm: "112".into(), age_secs: 4000, owner: String::new(), cmd: vec![], idle: true, ..Default::default() },
+            VmRun { vm: "113".into(), age_secs: 33000, owner: String::new(), cmd: vec![], idle: false, run: "r-auto-141".into(), held: true, held_age_secs: 720 },
         ];
         let v = view(&s);
         let lines: Vec<String> = v.vm_runs.iter().map(|r| r.line()).collect();
-        assert_eq!(lines.len(), 2, "the batch pass is its batch's row: {lines:?}");
+        assert_eq!(lines.len(), 3, "the batch pass is its batch's row: {lines:?}");
+        assert_eq!(lines[2], "VM 113 · held for results of r-auto-141 · 12m", "{lines:?}");
         assert!(lines[0].contains("VM 109") && lines[0].contains("cert-sweep") && lines[0].contains("leased"), "{lines:?}");
         assert!(lines[1].contains("VM 112 · idle (warm)"), "{lines:?}");
         let text = render(&v, 120).join("\n");
