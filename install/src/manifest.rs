@@ -238,6 +238,7 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     }
 
     m.units.push(t("spira-loom.service", true));
+    m.units.push(t("spira-unit-run.service", true));
     m.units.push(t("spira-submission.service", true));
     m.units.push(t("spira-submission-provision.service", false));
     m.units.push(t("spira-submission-provision.timer", true));

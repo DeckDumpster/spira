@@ -2190,6 +2190,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "unit-run"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spira-config",
+ "testkit",
+ "tsd",
+]
+
+[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

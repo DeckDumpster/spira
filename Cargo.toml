@@ -80,6 +80,7 @@ members = [
     "refusal-watch",
     "spira-submission",
     "store-persist",
+    "unit-run",
 ]
 resolver = "2"
 

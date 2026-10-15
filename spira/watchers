@@ -162,6 +162,10 @@ supersede-duty|daemon|@SPIRA_HOME@/supersede-duty.sh watch --interval 60|@SPIRA_
 # quiet log means every path answered inside the limit.
 perf-watch|log|@SPIRA_RUN@/perf-watch.log
 
+# UNIT-RUN follows the user journal and writes one run/tsd/unit-run record per unit execution. Its
+# log holds only what went wrong (a journalctl that ended, a write refused), so any line is news.
+unit-run|log|@SPIRA_RUN@/unit-run.log
+
 # CONCIERGE-GUARD wakes the Concierge session when its inbox waiter has lapsed and mails the
 # operator when the wake does not take. Its log holds events only; health reads the state file
 # every check rewrites, so "not listening" and "no check lately" both show red.
