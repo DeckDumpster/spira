@@ -600,15 +600,17 @@ impl World for Real {
             .stderr(Stdio::null())
             .status();
     }
-    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) {
-        // spira-lc's caller verb (lifecycle-cert.sh's lc_certify until sp-arpjt): it reads
-        // the switch itself and answers "cannot tell" having touched nothing when it is off.
-        let _ = spira_config::bounded::bounded("spira-lc")
+    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) -> String {
+        // spira-lc's caller verb: it reads the switch itself and answers "cannot tell" having
+        // touched nothing when it is off.
+        spira_config::bounded::bounded("spira-lc")
             .args(["certify", bead, tip, outcome, detail, "gate"])
             .stdin(Stdio::null())
+            .stderr(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
+            .unwrap_or_default()
     }
     fn harness_hash(&self) -> Option<String> {
         let mut buf = Vec::new();

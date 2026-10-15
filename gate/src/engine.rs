@@ -1864,7 +1864,21 @@ impl<'w, W: World> Trial<'w, W> {
                 NOVERDICT | BASEFAIL => ("infra", vd.reason.clone()),
                 _ => ("red", vd.reason.clone()),
             };
-            w.lc_certify(&self.s.bead, &self.s.branch_tip, o, &d);
+            let refused = w.lc_certify(&self.s.bead, &self.s.branch_tip, o, &d);
+            if refused.contains("tip mismatch") && self.s.armed {
+                w.append(
+                    &self.s.gate_log,
+                    &format!(
+                        "{} {} {} tip-mismatch bead={} tested={} — the lifecycle row holds another tip; this {o} certifies nothing ({})\n",
+                        w.utc(),
+                        self.s.repo_name,
+                        self.a.branch,
+                        self.s.bead,
+                        self.s.branch_tip,
+                        refused.replace('\n', " ")
+                    ),
+                );
+            }
         }
         vd.status
     }

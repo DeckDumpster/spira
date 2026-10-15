@@ -44,6 +44,7 @@ struct Fake {
     tsd: RefCell<Vec<String>>,
     yields: RefCell<Vec<Vec<String>>>,
     lc: RefCell<Vec<Vec<String>>>,
+    lc_refusal: RefCell<String>,
     removed_trees: Cell<u32>,
     err: RefCell<Vec<String>>,
     clock: Cell<u64>,
@@ -227,6 +228,7 @@ impl Fake {
             tsd: RefCell::new(Vec::new()),
             yields: RefCell::new(Vec::new()),
             lc: RefCell::new(Vec::new()),
+            lc_refusal: RefCell::new(String::new()),
             removed_trees: Cell::new(0),
             err: RefCell::new(Vec::new()),
             clock: Cell::new(1_000_000),
@@ -431,13 +433,14 @@ impl World for Fake {
         v.extend(args.iter().map(|s| s.to_string()));
         self.yields.borrow_mut().push(v);
     }
-    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) {
+    fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) -> String {
         self.lc.borrow_mut().push(
             [bead, tip, outcome, detail]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
         );
+        self.lc_refusal.borrow().clone()
     }
     fn harness_hash(&self) -> Option<String> {
         Some("harness".into())
@@ -1917,6 +1920,25 @@ fn certification_events_follow_the_outcome() {
             assert_eq!(lc[3], key_for(&f, "", "sp-a"));
         }
     }
+}
+
+#[test]
+fn a_pass_the_row_refuses_for_its_tip_says_so_in_gate_log() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "test-a.sh ok".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (0, String::new()));
+    *f.lc_refusal.borrow_mut() = "spira-lc certify: sp-a refused: tip mismatch: held 9b8e, gated 30f5".into();
+    f.run();
+    let rows = f.appended.borrow().clone();
+    assert!(rows.iter().any(|r| r.contains("tip-mismatch bead=sp-a") && r.contains("held 9b8e")), "{rows:?}");
+
+    let g = Fake::new();
+    g.put_var("SPIRA_GATE_BEAD", "sp-a");
+    g.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "test-a.sh ok".into()));
+    g.runs.borrow_mut().insert(BASE.into(), (0, String::new()));
+    g.run();
+    assert!(!g.appended.borrow().iter().any(|r| r.contains("tip-mismatch")), "no refusal, no note");
 }
 
 #[test]

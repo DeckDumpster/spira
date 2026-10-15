@@ -1170,6 +1170,25 @@ fn a_rework_bead_held_manual_is_retipped_and_admitted_to_a_round() {
 }
 
 #[test]
+fn resubmit_moves_the_local_branch_to_the_new_tip() {
+    let t = rework_world(&["manual"]);
+    t.git.set("refs/heads/spira/sp-a", "9999999999999999999999999999999999999999");
+    let tip_arg = format!("--tip={T_FIX}");
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix"]), 0, "{}", t.err());
+    assert_eq!(t.git.get("refs/heads/spira/sp-a").as_deref(), Some(T_FIX));
+}
+
+#[test]
+fn resubmit_fetches_an_absent_tip_and_refuses_when_the_fetch_brings_nothing() {
+    let t = rework_world(&["manual"]);
+    let absent = "6".repeat(40);
+    assert_eq!(t.run(&["resubmit", "sp-a", &format!("--tip={absent}"), "--by=concierge", "--reason=r"]), 1);
+    assert!(t.git.calls.borrow().iter().any(|c| c.starts_with("fetch ") && c.ends_with("spira/sp-a")), "{:?}", t.git.calls.borrow());
+    assert_eq!(t.git.get("refs/heads/spira/sp-a").as_deref(), Some(T_FIX), "the branch is not moved");
+    assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
 fn a_hand_mended_tip_that_fails_its_lint_is_not_retipped() {
     let t = rework_world(&["manual"]);
     t.scripts.lint_red.borrow_mut().insert(T_FIX.into(), "src/lib.rs:3:1".into());
