@@ -405,14 +405,16 @@ async fn now_route(State(loom): State<Arc<Loom>>) -> Response {
 }
 
 async fn rounds_route(State(loom): State<Arc<Loom>>) -> Response {
+    let forge = forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom)));
     match lifecycle_snapshot(&loom) {
         Ok((snap, _)) => {
-            let page = now::render_rounds(&cockpit_ops::lcview::view(&snap));
-            let forge = forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom)));
-            let page = page.replacen("</main>", &format!("{forge}</main>"), 1);
+            let page = now::render_rounds(&cockpit_ops::lcview::view(&snap)).replacen("</main>", &format!("{forge}</main>"), 1);
             html_response(StatusCode::OK, shell::with_bar(&page, &now::bar(Some(&snap), now_s())))
         }
-        Err(e) => unavailable("rounds view", &e),
+        Err(e) => {
+            let page = shell::shell("rounds", "Rounds", 15, &format!("<header><h1>Rounds</h1></header><main><p class=dim>lifecycle view unavailable: {}</p>{forge}</main>", stuck::esc(&e)));
+            html_response(StatusCode::OK, shell::with_bar(&page, &shell::Bar::default()))
+        }
     }
 }
 
@@ -429,7 +431,7 @@ async fn round_route(State(loom): State<Arc<Loom>>, axum::extract::Path((repo, b
             Some(b) => html_response(StatusCode::OK, shell::with_bar(&now::render_round(&snap, b), &now::bar(Some(&snap), now_s()))),
             None => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such round</p>".into()),
         },
-        Err(e) => unavailable("round view", &e),
+        Err(_) => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such round</p>".into()),
     }
 }
 
