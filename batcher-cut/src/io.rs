@@ -450,8 +450,10 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     };
     let mut by_id: BTreeMap<String, (Option<u8>, String)> = BTreeMap::new();
     let mut texts: BTreeMap<String, (bool, String)> = BTreeMap::new();
+    let mut content_blockers: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for it in items {
         let Some(id) = it.get("id").and_then(|x| x.as_str()) else { continue };
+        content_blockers.insert(id.to_string(), blocks_edges(&it));
         let priority = it.get("priority").and_then(|p| p.as_u64()).map(|p| p.min(9) as u8);
         let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
         let own_ref = it.get("external_ref").and_then(|x| x.as_str()).unwrap_or("");
@@ -461,8 +463,13 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     }
     let fixes = base_fix_ids(env, repo, &texts);
     let mut out = Vec::new();
-    for (id, tip, epoch, express, blocked_by) in certified {
+    for (id, tip, epoch, express, mut blocked_by) in certified {
         let Some((priority, title)) = by_id.get(&id) else { continue };
+        for dep in content_blockers.get(&id).into_iter().flatten() {
+            if !blocked_by.contains(dep) && !prereq_is_finished(env, dep) {
+                blocked_by.push(dep.clone());
+            }
+        }
         let stack = read_stack(env, &id);
         let base_fix = fixes.contains(&id);
         let priority = if base_fix { Some(0) } else { *priority };
@@ -471,6 +478,18 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let stacked_on: Vec<String> = out.iter().flat_map(|m| m.stack.keys().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     barred.extend(barred_ids(env, &stacked_on)?);
     Ok(drop_stacked_on_barred(out, barred))
+}
+
+/// The ids a content row's `dependencies` block it on. The lifecycle mirror of an edge is
+/// best-effort, so the content store is read too: a lagging mirror must not admit a member.
+fn blocks_edges(row: &serde_json::Value) -> Vec<String> {
+    row.get("dependencies")
+        .and_then(|d| d.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|d| matches!(d.get("type").and_then(|t| t.as_str()), Some("blocks" | "blocked-by" | "depends-on")))
+        .filter_map(|d| d.get("depends_on_id").and_then(|i| i.as_str()).map(str::to_string))
+        .collect()
 }
 
 /// The certified ids that fix an open base-red bead of `repo`: a bead the basefail bead
@@ -2575,6 +2594,30 @@ mod pool_parity_tests {
         let (_d, _s, env, repo) = pool_fixture("lc-member", &["sp-c1"], &[("sp-c1", "CERTIFIED")], &[("sp-c1", "closed", "", "")]);
         let ids: Vec<String> = certified_pool(&env, &repo).unwrap().into_iter().map(|m| m.id).collect();
         assert_eq!(ids, vec!["sp-c1"]);
+    }
+
+    /// A blocks edge present in the content store but absent from the lifecycle row still keeps
+    /// the member out of a cut, naming the blocker; a landed prerequisite does not.
+    #[test]
+    fn a_content_store_blocks_edge_the_lifecycle_mirror_lacks_blocks_the_member() {
+        let (_d, stubs, env, repo) = pool_fixture("lc-edge", &["sp-a1", "sp-b1"], &[("sp-a1", "CERTIFIED"), ("sp-b1", "CERTIFIED")], &[("sp-a1", "open", "", ""), ("sp-b1", "open", "", "")]);
+        let edged = |dep: &str| {
+            format!(r#"{{"id":"sp-a1","title":"t","priority":2,"labels":[],"external_ref":"","description":"","dependencies":[{{"depends_on_id":"{dep}","type":"blocks"}},{{"depends_on_id":"sp-epic","type":"parent-child"}}]}}"#)
+        };
+        fs::write(stubs.join("show-sp-a1"), edged("sp-b1")).unwrap();
+        let blocked_of = |env: &Env| certified_pool(env, &repo).unwrap().into_iter().find(|m| m.id == "sp-a1").unwrap().blocked_by;
+        assert_eq!(blocked_of(&env), ["sp-b1"], "only the blocks edge counts, not parent-child");
+
+        fs::write(stubs.join("show-sp-a1"), edged("sp-done")).unwrap();
+        let sd = stubs.path().display().to_string();
+        testkit::write_exe(
+            stubs.join("spira-lc"),
+            &format!(
+                "#!/bin/bash\ncase \"$1\" in list) cat {sd}/lc-all ;; show*) if [ \"$2\" = sp-done ]; then echo '{{\"bead\":{{\"state\":\"LANDED\"}}}}'; else echo '{{\"bead\":{{\"state\":\"CERTIFIED\"}}}}'; fi ;; {} esac\n",
+                content_rows_arm(&sd)
+            ),
+        );
+        assert!(blocked_of(&env).is_empty(), "a landed prerequisite blocks nothing");
     }
 
     /// sp-mve9i: a base-red bead is open while its lifecycle row is not terminal — a bd row
