@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=batcher
+DOC=THE BATCHER'S FORGE BATCHES, on or off. 1: rounds-forge settles and opens every queue.forge repo's batch. 0: it opens none and says so.
+SCHEMA=The batcher's queue.forge batches on or off (`SPIRA_BATCHER_FORGE_ENABLE`, "1"/"0", default "1"). Separate from `batcher_enable`, which holds only queue.local rounds. "0": no forge batch is settled or opened, and the Concierge inbox names each repo with CERTIFIED work waiting.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE BATCHER'S FORGE BATCHES, on or off. 0 holds queue.forge batches only; the switch for
+    # queue.local rounds is SPIRA_BATCHER_ENABLE and neither implies the other.
+    : "${SPIRA_BATCHER_FORGE_ENABLE:=1}"
+SPIRA_CONF_DEFAULT_EOF
