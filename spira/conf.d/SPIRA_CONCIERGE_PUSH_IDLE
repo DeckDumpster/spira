@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=concierge
+DOC=PUSH FLUSH, seconds: the spool is delivered once no urgent line has arrived for this long (or PUSH_WINDOW has passed).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PUSH FLUSH, seconds: the spool is delivered once no urgent line has arrived for this long (or PUSH_WINDOW has passed).
+    : "${SPIRA_CONCIERGE_PUSH_IDLE:=1}"
+SPIRA_CONF_DEFAULT_EOF
