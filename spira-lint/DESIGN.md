@@ -855,6 +855,17 @@ per key, path `spira/config-delta.toml`.
 **Refuses:** no base, no registry keys here or at the base, an unparseable delta.
 **Positive control:** `fence: config-delta checked <n> registry keys`.
 
+## Rule `config-fixture`
+
+**Intent.** A registry key added under `spira/conf.d` or `spira/conf.toml.d` must also be a
+key of `[spira]` in `spira-config/tests/fixtures/complete.toml` and a line of
+`spira-config/schema/spira-key-history.txt`; without them every config-reading test in a
+round refuses the config as not declared, and the pass is lost. (`config-delta` covers
+`spira/config-delta.toml`.) One finding per key and file, naming both.
+
+**Refuses:** no registry keys, an unreadable or unparseable fixture or history.
+**Positive control:** `fence: config-fixture checked <n> registry keys`.
+
 ## Rules `tier-budget-allowlist`, `tier-budget-area-allowlist`
 
 Ported from `tier-budget.sh lint-allowlist [--area]` (sp-5m133; sp-ufbkh). The bash
