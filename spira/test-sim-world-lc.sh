@@ -103,7 +103,7 @@ world_up() {  # world_up <dir> — up, reported
 
 claim() {  # claim <world> <bead> — create the row and claim it
     local out rc
-    out="$(in_world "$1" spira-lc create-bead "$2" 2>&1)"; rc=$?
+    out="$(in_world "$1" spira-lc create-bead "$2" --repo sim 2>&1)"; rc=$?
     wantrc "create-bead $2 in the world" 0 "$rc"; [ "$rc" = 0 ] || printf '# %s\n' "$out"
     out="$(in_world "$1" spira-lc event bead "$2" --expect READY --version 0 --actor sim \
         --kind '{"Claim":{"holder":"aeon-1","lease_until":4102444800}}' 2>&1)"; rc=$?

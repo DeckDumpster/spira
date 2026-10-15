@@ -145,7 +145,7 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             ),
         );
     }
-    if let Some(refusal) = lint_refusal(bead_id, &tip, &actor) {
+    if let Some(refusal) = lint_refusal(conn, bead_id, &tip, &actor) {
         return refusal;
     }
     if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
@@ -156,11 +156,13 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
 
 /// A tip is submitted only on a recorded pass of its repository's compile-and-lint check; the
 /// broker runs it (a model session has no `testenv`) and records the pass for that exact tip.
-fn lint_refusal(bead_id: &str, tip: &str, actor: &str) -> Option<(i32, String)> {
-    let repo = match crate::bd::repo_label(bead_id) {
+/// The repository comes from the bead's lifecycle row, never the content store: a world or a
+/// fixture holds lifecycle rows with no content behind them.
+fn lint_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str) -> Option<(i32, String)> {
+    let repo = match rows::bead_repo(conn, bead_id) {
         Ok(Some(r)) => r,
-        Ok(None) => return Some((CANNOT_TELL, format!("cannot tell: {bead_id} carries no repo: label"))),
-        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+        Ok(None) => return Some((CANNOT_TELL, format!("cannot tell: {bead_id}'s lifecycle row names no repository"))),
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e:?}"))),
     };
     let args = ["lint".to_string(), tip.to_string(), repo];
     // batch-job: runs the repository's declared lint tiers, bounded just under the client's wait

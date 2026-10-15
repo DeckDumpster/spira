@@ -36,6 +36,13 @@ fn json_col(row: &Value, col: &str) -> Value {
     }
 }
 
+/// The repository the bead's lifecycle row names (`bead.repo`); `None` when the row names none
+/// or there is no row. The lifecycle row, not the content store, is what every caller can read.
+pub fn bead_repo(conn: &Conn, bead_id: &str) -> Result<Option<String>, DbError> {
+    let rows = conn.query(&format!("SELECT repo FROM bead WHERE bead_id = '{}'", escape(bead_id)))?;
+    Ok(rows.first().and_then(|r| text(r, "repo")))
+}
+
 pub fn fetch_bead(conn: &Conn, bead_id: &str) -> Result<Option<BeadRow>, DbError> {
     let rows = conn.query(&format!(
         "SELECT bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip FROM bead WHERE bead_id = '{}'",
