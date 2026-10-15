@@ -27,6 +27,7 @@ pub struct Sources {
 
 #[derive(Debug, Clone)]
 pub struct Exec {
+    pub unit: String,
     pub t: i64,
     pub result: String,
     pub duration_ms: Option<i64>,
@@ -45,6 +46,7 @@ pub struct Live {
 
 #[derive(Debug, Clone)]
 pub struct Failure {
+    pub unit: String,
     pub t: i64,
     pub result: String,
     pub log: Vec<String>,
@@ -53,6 +55,8 @@ pub struct Failure {
 #[derive(Debug, Clone)]
 pub struct Row {
     pub unit: String,
+    pub kind: &'static str,
+    pub instances: usize,
     pub listed: bool,
     pub active: String,
     pub sub: String,
@@ -109,6 +113,7 @@ pub fn parse_execs(rows: &[Value]) -> BTreeMap<String, Vec<Exec>> {
     for r in rows {
         let (Some(unit), Some(t)) = (r["unit"].as_str(), r["t"].as_i64()) else { continue };
         by.entry(unit.to_string()).or_default().push(Exec {
+            unit: unit.to_string(),
             t,
             result: r["result"].as_str().unwrap_or("unknown").to_string(),
             duration_ms: r["duration_ms"].as_i64(),
@@ -147,6 +152,54 @@ pub fn parse_show(text: &str) -> BTreeMap<String, Live> {
     out
 }
 
+pub struct Rule {
+    kind: &'static str,
+    glob: String,
+    label: String,
+}
+
+pub const DEFAULT_FAMILIES: &str = include_str!("../families.conf");
+
+pub fn parse_families(text: &str) -> Vec<Rule> {
+    text.lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            let kind = match w.next()? {
+                "session" => "session",
+                "system" => "system",
+                _ => return None,
+            };
+            let glob = w.next()?.to_string();
+            let label = w.next().map_or_else(|| glob.clone(), str::to_string);
+            Some(Rule { kind, glob, label })
+        })
+        .collect()
+}
+
+fn glob_match(g: &[u8], s: &[u8]) -> bool {
+    match g.split_first() {
+        None => s.is_empty(),
+        Some((b'*', rest)) => (0..=s.len()).any(|i| glob_match(rest, &s[i..])),
+        Some((b'#', rest)) => s.first().is_some_and(u8::is_ascii_digit) && glob_match(rest, &s[1..]),
+        Some((c, rest)) => s.first() == Some(c) && glob_match(rest, &s[1..]),
+    }
+}
+
+/// The family a unit name belongs to: a matching rule, else a template instance
+/// (`name@x.service` → `name@.service`), else the unit itself.
+pub fn family_of(rules: &[Rule], name: &str) -> (String, &'static str) {
+    if let Some(r) = rules.iter().find(|r| glob_match(r.glob.as_bytes(), name.as_bytes())) {
+        return (r.label.clone(), r.kind);
+    }
+    if let Some((base, rest)) = name.split_once('@') {
+        if let Some((_, ext)) = rest.rsplit_once('.') {
+            return (format!("{base}@.{ext}"), "template");
+        }
+    }
+    (name.to_string(), "plain")
+}
+
 pub fn parse_unit_files(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|l| l.split_whitespace().next())
@@ -155,7 +208,7 @@ pub fn parse_unit_files(text: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn build(now: i64, names: &[String], live: &BTreeMap<String, Live>, execs: &BTreeMap<String, Vec<Exec>>, logs: &BTreeMap<String, Vec<String>>) -> Vec<Row> {
+pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String, Live>, execs: &BTreeMap<String, Vec<Exec>>, logs: &BTreeMap<String, Vec<String>>) -> Vec<Row> {
     let listed: BTreeSet<&str> = names.iter().map(String::as_str).collect();
     let mut timer_of: BTreeMap<String, Live> = BTreeMap::new();
     let mut standalone = BTreeSet::new();
@@ -171,19 +224,27 @@ pub fn build(now: i64, names: &[String], live: &BTreeMap<String, Live>, execs: &
     let mut units: BTreeSet<String> = names.iter().filter(|n| n.ends_with(".service")).cloned().collect();
     units.extend(standalone.iter().cloned());
     units.extend(execs.keys().cloned());
-    let none: Vec<Exec> = Vec::new();
-    let mut rows: Vec<Row> = units
+    let mut groups: BTreeMap<String, (&'static str, Vec<String>)> = BTreeMap::new();
+    for unit in units {
+        let (label, kind) = if standalone.contains(&unit) { (unit.clone(), "plain") } else { family_of(rules, &unit) };
+        groups.entry(label).or_insert((kind, Vec::new())).1.push(unit);
+    }
+    let mut rows: Vec<Row> = groups
         .into_iter()
-        .map(|unit| {
-            let ex = execs.get(&unit).unwrap_or(&none);
+        .map(|(unit, (kind, members))| {
+            let mut ex: Vec<Exec> = members.iter().flat_map(|m| execs.get(m).into_iter().flatten().cloned()).collect();
+            ex.sort_by_key(|e| e.t);
+            let grouped = kind != "plain";
+            let first = members[0].clone();
+            let is_listed = members.iter().any(|m| listed.contains(m.as_str()));
             let ex7: Vec<&Exec> = ex.iter().filter(|e| e.t >= now - WEEK).collect();
             let ex24: Vec<&Exec> = ex7.iter().copied().filter(|e| e.t >= now - DAY).collect();
             let mut durs: Vec<i64> = ex7.iter().filter_map(|e| e.duration_ms).collect();
             durs.sort_unstable();
             let times: Vec<i64> = ex7.iter().map(|e| e.t).collect();
             let last_success = ex7.iter().rev().find(|e| is_ok(e)).map(|e| e.t);
-            let is_timer = standalone.contains(&unit);
-            let timer = if is_timer { live.get(&unit).cloned() } else { timer_of.get(&unit).cloned() };
+            let is_timer = !grouped && standalone.contains(&unit);
+            let timer = if grouped { None } else if is_timer { live.get(&unit).cloned() } else { timer_of.get(&unit).cloned() };
             let interval_s = median_gap(&times);
             let timer_active = timer.as_ref().is_some_and(|t| t.active == "active");
             let stale = timer_active
@@ -192,12 +253,21 @@ pub fn build(now: i64, names: &[String], live: &BTreeMap<String, Live>, execs: &
                     (Some(i), Some(s)) => now - s > STALE_INTERVALS * i,
                     (None, Some(_)) => false,
                 };
-            let failure = ex7.iter().rev().find(|e| !is_ok(e)).map(|e| Failure { t: e.t, result: e.result.clone(), log: logs.get(&e.invocation).cloned().unwrap_or_default() });
-            let own = if is_timer { timer.as_ref() } else { live.get(&unit) };
+            let failure = ex7.iter().rev().find(|e| !is_ok(e)).map(|e| Failure { unit: e.unit.clone(), t: e.t, result: e.result.clone(), log: logs.get(&e.invocation).cloned().unwrap_or_default() });
+            let own = if grouped {
+                let lives: Vec<&Live> = members.iter().filter_map(|m| live.get(m)).collect();
+                lives.iter().find(|l| l.active == "failed").or_else(|| lives.iter().find(|l| l.active == "active")).or(lives.first()).copied()
+            } else if is_timer {
+                timer.as_ref()
+            } else {
+                live.get(&first)
+            };
             let (active, sub, unit_file) = own.map(|l| (l.active.clone(), l.sub.clone(), l.unit_file.clone())).unwrap_or_default();
             Row {
-                listed: listed.contains(unit.as_str()),
-                active: if active.is_empty() && !listed.contains(unit.as_str()) { "not-listed".into() } else { active },
+                listed: is_listed,
+                kind,
+                instances: members.len(),
+                active: if active.is_empty() && !is_listed { "not-listed".into() } else { active },
                 sub,
                 unit_file,
                 timer,
@@ -217,13 +287,15 @@ pub fn build(now: i64, names: &[String], live: &BTreeMap<String, Live>, execs: &
             }
         })
         .collect();
-    rows.sort_by(|a, b| (!a.stale, a.active != "failed", &a.unit).cmp(&(!b.stale, b.active != "failed", &b.unit)));
+    rows.sort_by(|a, b| (a.kind == "system", !a.stale, a.active != "failed", &a.unit).cmp(&(b.kind == "system", !b.stale, b.active != "failed", &b.unit)));
     rows
 }
 
 pub fn row_json(r: &Row) -> Value {
     json!({
         "unit": r.unit,
+        "kind": r.kind,
+        "instances": r.instances,
         "listed": r.listed,
         "state": { "active": r.active, "sub": r.sub, "unit_file": r.unit_file },
         "timer": r.timer.as_ref().map(|t| json!({ "active": t.active, "sub": t.sub, "unit_file": t.unit_file, "next": t.next, "last_trigger": t.last_trigger })),
@@ -238,7 +310,7 @@ pub fn row_json(r: &Row) -> Value {
         "last_success": r.last_success,
         "interval_s": r.interval_s,
         "stale": r.stale,
-        "last_failure": r.failure.as_ref().map(|f| json!({ "at": f.t, "result": f.result, "log": f.log })),
+        "last_failure": r.failure.as_ref().map(|f| json!({ "at": f.t, "unit": f.unit, "result": f.result, "log": f.log })),
     })
 }
 
@@ -263,44 +335,63 @@ const CSS: &str = "<style>.tick{display:inline-block;width:4px;height:14px;margi
 tr.stale td{background:#1e1416}pre{margin:.2rem 0;white-space:pre-wrap;color:#9aa5b1}.st-failed{color:#ff6b6d}.st-active{color:#3aa57a}</style>";
 
 pub fn render_page(s: &Snapshot) -> String {
-    let stale = s.rows.iter().filter(|r| r.stale).count();
-    let failed = s.rows.iter().filter(|r| r.active == "failed").count();
+    let shown: Vec<&Row> = s.rows.iter().filter(|r| r.kind != "system").collect();
+    let system = s.rows.len() - shown.len();
+    let stale = shown.iter().filter(|r| r.stale).count();
+    let failed = shown.iter().filter(|r| r.active == "failed").count();
     let mut b = format!(
-        "{CSS}<header><h1>Units <span class=dim>— {} units · <span class=\"{}\">{stale} stale</span> · <span class=\"{}\">{failed} failed</span> · <a href=/stuck>stuck</a></span></h1></header>",
-        s.rows.len(),
+        "{CSS}<header><h1>Units <span class=dim>— {} unit families · <span class=\"{}\">{stale} stale</span> · <span class=\"{}\">{failed} failed</span> · <a href=/stuck>stuck</a></span></h1></header>",
+        shown.len(),
         if stale > 0 { "red" } else { "dim" },
         if failed > 0 { "red" } else { "dim" },
     );
     for e in &s.errors {
         b.push_str(&format!("<p class=red style=\"padding:.4rem .8rem\">{}</p>", esc(e)));
     }
-    b.push_str("<table><tr><td>unit</td><td>state</td><td>24 h</td><td>24 h</td><td>7 d</td><td>p50 / p95 (7 d)</td><td>last failure</td></tr>");
-    for r in &s.rows {
+    b.push_str(TABLE_HEAD);
+    for r in &shown {
+        b.push_str(&row_html(s.now, r));
+    }
+    b.push_str("</table>");
+    if system > 0 {
+        b.push_str(&format!("<details><summary class=dim>{system} OS-owned unit families</summary>{TABLE_HEAD}"));
+        for r in s.rows.iter().filter(|r| r.kind == "system") {
+            b.push_str(&row_html(s.now, r));
+        }
+        b.push_str("</table></details>");
+    }
+    shell("Units", 60, &b)
+}
+
+const TABLE_HEAD: &str = "<table><tr><td>unit</td><td>state</td><td>24 h</td><td>24 h</td><td>7 d</td><td>p50 / p95 (7 d)</td><td>last failure</td></tr>";
+
+fn row_html(now: i64, r: &Row) -> String {
+    {
         let mut state = format!("<span class=\"st-{a}\">{a}</span> {sub}", a = esc(&r.active), sub = esc(&r.sub));
         if let Some(t) = &r.timer {
             state.push_str(&format!("<br><span class=dim>timer {} · next {} · last {}</span>", esc(&t.active), esc(&t.next), esc(&t.last_trigger)));
         }
         if r.stale {
-            state.push_str(&format!("<br><span class=\"badge red\">stale — last success {}</span>", ago(s.now, r.last_success)));
+            state.push_str(&format!("<br><span class=\"badge red\">stale — last success {}</span>", ago(now, r.last_success)));
         }
         let strip: String = r.strip.iter().map(|x| format!("<i class=\"tick{}\" title=\"{}\"></i>", if x == "success" { "" } else { " bad" }, esc(x))).collect();
         let fail = r.failure.as_ref().map_or("<span class=dim>none in 7 d</span>".to_string(), |f| {
-            format!("{} · {}<pre>{}</pre>", ago(s.now, Some(f.t)), esc(&f.result), esc(&f.log.join("\n")))
+            let inst = if r.kind == "plain" { String::new() } else { format!(" · {}", esc(&f.unit)) };
+            format!("{} · {}{inst}<pre>{}</pre>", ago(now, Some(f.t)), esc(&f.result), esc(&f.log.join("\n")))
         });
-        b.push_str(&format!(
+        let name = if r.kind == "plain" { esc(&r.unit) } else { format!("{} <span class=dim>({} · {} instances)</span>", esc(&r.unit), r.kind, r.instances) };
+        format!(
             "<tr class=\"{}\"><td class=u>{}</td><td>{state}</td><td><div class=strip>{strip}</div></td><td>{} runs · {}</td><td>{} runs · {}</td><td>{} / {}</td><td>{fail}</td></tr>",
             if r.stale { "stale" } else { "" },
-            esc(&r.unit),
+            name,
             r.runs_24h,
             pct(r.ok_24h, r.runs_24h),
             r.runs_7d,
             pct(r.ok_7d, r.runs_7d),
             ms(r.p50_ms),
             ms(r.p95_ms),
-        ));
+        )
     }
-    b.push_str("</table>");
-    shell("Units", 60, &b)
 }
 
 async fn run_cmd(program: &str, args: &[String], path: &str, budget: Duration) -> Result<String, String> {
@@ -392,5 +483,5 @@ pub async fn take(src: &Sources, now: i64) -> Snapshot {
     recent.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
     let wanted: Vec<String> = recent.into_iter().take(LOG_LOOKUPS).map(|(i, _)| i.to_string()).collect();
     let logs = invocation_logs(src, &path, wanted).await;
-    Snapshot { taken: Instant::now(), now, rows: build(now, &names, &live, &execs, &logs), errors }
+    Snapshot { taken: Instant::now(), now, rows: build(now, &parse_families(DEFAULT_FAMILIES), &names, &live, &execs, &logs), errors }
 }
