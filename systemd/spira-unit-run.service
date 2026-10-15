@@ -11,6 +11,8 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 Type=simple
 TimeoutStartSec=600
 CPUQuota=20%
+IOWeight=10
+IOReadBandwidthMax=/ 10M
 MemoryMax=256M
 ExecStartPre=-@SPIRA_PROD_ROOT@/bin/unit-run ensure-accounting
 ExecStart=@SPIRA_PROD_ROOT@/bin/unit-run follow

@@ -309,3 +309,27 @@ fn two_sinks_on_one_file_write_each_execution_once() {
     assert_eq!((first, second), (4, 0));
     assert_eq!(rows(&file).len(), 4);
 }
+
+#[test]
+fn follow_never_reads_the_journal_from_its_start() {
+    let with = journal_args(Some("c0042"), true);
+    assert!(with.contains(&"--after-cursor=c0042".to_string()));
+    let none = journal_args(None, true);
+    let n = none.iter().position(|a| a == "-n").expect("no cursor must bound the read");
+    assert_eq!(none[n + 1], "0");
+    assert!(!journal_args(None, false).iter().any(|a| a == "-n" || a.starts_with("--after-cursor")), "positive control: backfill is the unbounded read");
+}
+
+#[test]
+fn follow_does_not_spawn_a_backfill() {
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs")).unwrap();
+    let body = src.split("fn follow()").nth(1).unwrap().split("\nfn ").next().unwrap();
+    assert!(!body.contains("backfill("));
+}
+
+#[test]
+fn unit_file_fences_io() {
+    let u = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../systemd/spira-unit-run.service")).unwrap();
+    assert!(u.lines().any(|l| l.starts_with("IOReadBandwidthMax=")));
+    assert!(u.lines().any(|l| l.starts_with("IOWeight=")));
+}

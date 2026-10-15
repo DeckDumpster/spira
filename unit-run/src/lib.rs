@@ -22,6 +22,22 @@ pub const ID_RESOURCES: &str = "ae8f7b866b0347b9af31fe1c80b127c0";
 /// The `MESSAGE_ID=` matches handed to journalctl: the only entries the fold reads.
 pub const MESSAGE_IDS: [&str; 6] = [ID_STARTING, ID_STARTED, ID_EXIT, ID_SUCCESS, ID_FAILURE, ID_RESOURCES];
 
+/// The journalctl argv for one read. A follow with no cursor starts at now; only a
+/// non-follow (backfill) read starts at the journal's first entry.
+pub fn journal_args(after_cursor: Option<&str>, follow: bool) -> Vec<String> {
+    let mut a: Vec<String> = ["--user", "-o", "json", "--no-pager"].iter().map(|s| s.to_string()).collect();
+    match (after_cursor, follow) {
+        (Some(c), _) => a.push(format!("--after-cursor={c}")),
+        (None, true) => a.extend(["-n".to_string(), "0".to_string()]),
+        (None, false) => {}
+    }
+    if follow {
+        a.push("-f".to_string());
+    }
+    a.extend(MESSAGE_IDS.iter().map(|id| format!("MESSAGE_ID={id}")));
+    a
+}
+
 /// How long past its close an execution waits for its `Consumed` line before it is written
 /// without accounting.
 pub const ACCOUNTING_GRACE_US: u64 = 2_000_000;
