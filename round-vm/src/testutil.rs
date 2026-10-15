@@ -255,6 +255,8 @@ struct Ec2Inner {
     never_joins: bool,
     fail_run: bool,
     refused_types: Vec<String>,
+    vanishing: Vec<(String, String)>,
+    ended: std::collections::HashMap<String, String>,
     launched_types: Vec<String>,
     images: Vec<crate::ec2::Image>,
     launched_amis: Vec<String>,
@@ -279,6 +281,9 @@ impl FakeEc2 {
     }
     pub fn refuse_type(&self, t: &str) {
         self.0.lock().unwrap().refused_types.push(t.to_string());
+    }
+    pub fn vanish_type(&self, t: &str, reason: &str) {
+        self.0.lock().unwrap().vanishing.push((t.to_string(), reason.to_string()));
     }
     pub fn launched_types(&self) -> Vec<String> {
         self.0.lock().unwrap().launched_types.clone()
@@ -314,6 +319,10 @@ impl crate::ec2::Ec2Api for FakeEc2 {
         g.n += 1;
         let id = format!("i-{:04}", g.n);
         g.user_data.push(user_data.to_string());
+        if let Some((_, reason)) = g.vanishing.iter().find(|(t, _)| t == instance_type).cloned() {
+            g.ended.insert(handle.to_string(), format!("state terminated, reason {reason} (fake), transition \"\""));
+            return Ok(id);
+        }
         g.insts.push(FakeEc2Inst { id: id.clone(), tag: Some(handle.into()), name: name.into(), launched_at: crate::schema::now(), instance_type: instance_type.to_string() });
         Ok(id)
     }
@@ -339,6 +348,9 @@ impl crate::ec2::Ec2Api for FakeEc2 {
                 i.tag.as_ref().map(|t| crate::ec2::Inst { id: i.id.clone(), handle: t.clone(), name: i.name.clone(), running: true, launched_at: i.launched_at, instance_type: i.instance_type.clone() })
             })
             .collect())
+    }
+    fn end_reason(&self, handle: &str) -> Result<Option<String>, String> {
+        Ok(self.0.lock().unwrap().ended.get(handle).cloned())
     }
     fn terminate(&self, id: &str) -> Result<(), String> {
         self.0.lock().unwrap().insts.retain(|i| i.id != id);
