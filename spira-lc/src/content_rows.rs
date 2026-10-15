@@ -1,7 +1,7 @@
 //! `content-rows --ids a,b,…` — the bead-content fields a claim decision reads (labels, type,
 //! priority, defer, blockers), straight from the content store over this connection: no bd,
 //! no git. `--full` adds description, notes and external_ref; `--external-contains S` selects
-//! by external_ref instead of by id. Read-only; spira_lc holds SELECT on these three tables and
+//! by external_ref instead of by id; `--open` drops the closed rows. Read-only; spira_lc holds SELECT on these three tables and
 //! nothing else there.
 
 use std::collections::BTreeMap;
@@ -88,9 +88,10 @@ pub fn assemble(issues: &[Value], labels: &[Value], deps: &[Value]) -> Vec<Value
 pub fn cmd_content_rows(args: &[String], conn: &Conn) -> (i32, String) {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
     let full = args.iter().any(|a| a == "--full");
+    let open = args.iter().any(|a| a == "--open");
     let found: Result<Vec<Value>, String> = match (flag("--ids"), flag("--external-contains")) {
-        (Some(ids), None) => fetch_with(conn, &ids.split(',').filter(|x| !x.is_empty()).collect::<Vec<_>>(), full),
-        (None, Some(needle)) => by_external_ref(conn, needle, full),
+        (Some(ids), None) => fetch_with(conn, &ids.split(',').filter(|x| !x.is_empty()).collect::<Vec<_>>(), full, open),
+        (None, Some(needle)) => by_external_ref(conn, needle, full, open),
         _ => Err("content-rows: exactly one of --ids <a,b,…> or --external-contains <text> is required".into()),
     };
     match found {
@@ -101,12 +102,12 @@ pub fn cmd_content_rows(args: &[String], conn: &Conn) -> (i32, String) {
 
 /// The content rows of `ids`.
 pub fn fetch(conn: &Conn, ids: &[&str]) -> Result<Vec<Value>, String> {
-    fetch_with(conn, ids, false)
+    fetch_with(conn, ids, false, false)
 }
 
 const TEXT_COLUMNS: &str = ", description, notes, external_ref";
 
-fn by_external_ref(conn: &Conn, needle: &str, full: bool) -> Result<Vec<Value>, String> {
+fn by_external_ref(conn: &Conn, needle: &str, full: bool, open: bool) -> Result<Vec<Value>, String> {
     let cdb = content_db()?;
     if needle.is_empty() {
         return Err("content-rows: --external-contains needs a non-empty text".into());
@@ -114,10 +115,10 @@ fn by_external_ref(conn: &Conn, needle: &str, full: bool) -> Result<Vec<Value>, 
     let sql = format!("SELECT id FROM {cdb}.issues WHERE LOCATE('{}', external_ref) > 0 ORDER BY id", rows::escape(needle));
     let found = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
-    fetch_with(conn, &ids, full)
+    fetch_with(conn, &ids, full, open)
 }
 
-fn fetch_with(conn: &Conn, ids: &[&str], full: bool) -> Result<Vec<Value>, String> {
+fn fetch_with(conn: &Conn, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {
     // An empty id list is an empty answer: it needs no store, so it is decided before the
     // content database is resolved (r-auto-148: an unconfigured test process was refused here).
     if ids.is_empty() {
@@ -127,9 +128,10 @@ fn fetch_with(conn: &Conn, ids: &[&str], full: bool) -> Result<Vec<Value>, Strin
     let list = ids.iter().map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",");
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let text = if full { TEXT_COLUMNS } else { "" };
+    let live = if open { " AND status <> 'closed'" } else { "" };
     let issues = q(format!(
         "SELECT id, title, priority, issue_type, status, DATE_FORMAT(defer_until, '{RFC3339}') AS defer_until, DATE_FORMAT(created_at, '{RFC3339}') AS created_at, DATE_FORMAT(updated_at, '{RFC3339}') AS updated_at{text} \
-         FROM {cdb}.issues WHERE id IN ({list}) ORDER BY id"
+         FROM {cdb}.issues WHERE id IN ({list}){live} ORDER BY id"
     ))?;
     let labels = q(format!("SELECT issue_id, label FROM {cdb}.labels WHERE issue_id IN ({list}) ORDER BY issue_id, label"))?;
     // beads' column is depends_on_issue_id (beside depends_on_wisp_id / depends_on_external);

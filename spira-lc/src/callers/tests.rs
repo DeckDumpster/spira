@@ -82,7 +82,13 @@ impl Machine for Fake {
             },
             "content-rows" => {
                 let ids = flag(args, "--ids").unwrap_or_default();
-                let rows: Vec<Value> = ids.split(',').filter_map(|i| self.content.get(i).map(|st| json!({"id": i, "status": st}))).collect();
+                let only_open = args.iter().any(|a| a == "--open");
+                let rows: Vec<Value> = ids
+                    .split(',')
+                    .filter_map(|i| self.content.get(i).map(|st| (i, st)))
+                    .filter(|(_, st)| !only_open || st.as_str() != "closed")
+                    .map(|(i, st)| json!({"id": i, "status": st}))
+                    .collect();
                 (0, Value::Array(rows).to_string())
             }
             "list" => {
