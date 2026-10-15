@@ -22,6 +22,8 @@ pub struct RegistryKey {
     pub ty: String,
     pub group: String,
     pub doc: String,
+    /// `SCHEMA=REQUIRED: …`: no default, and the key must be set in the config for the box to run.
+    pub required: bool,
     /// The raw text between the `DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'` / `SPIRA_CONF_DEFAULT_EOF`
     /// markers, exactly as `conf-gen.sh`'s own `parse_one` reads it (comments and at most one
     /// `: "${KEY:=...}"` statement).
@@ -121,6 +123,7 @@ fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
     let mut ty = String::new();
     let mut group = String::new();
     let mut doc = String::new();
+    let mut required = false;
     let mut body = String::new();
     let mut in_default = false;
     let mut closed = true;
@@ -141,6 +144,8 @@ fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
             group = v.to_string();
         } else if let Some(v) = line.strip_prefix("DOC=") {
             doc = v.to_string();
+        } else if let Some(v) = line.strip_prefix("SCHEMA=") {
+            required = v.starts_with("REQUIRED:");
         } else if line == "DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'" {
             in_default = true;
             closed = false;
@@ -150,7 +155,7 @@ fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
     if !closed {
         return Err(format!("{name}: DEFAULT heredoc never closed (missing SPIRA_CONF_DEFAULT_EOF)"));
     }
-    Ok(RegistryKey { name: name.to_string(), ty, group, doc, default_body: body })
+    Ok(RegistryKey { name: name.to_string(), ty, group, doc, required, default_body: body })
 }
 
 /// The keys that carry a real default statement, in the same deterministic topological order
@@ -227,6 +232,7 @@ mod tests {
             ty: "string".into(),
             group: "test".into(),
             doc: String::new(),
+            required: false,
             default_body: body.to_string(),
         }
     }
