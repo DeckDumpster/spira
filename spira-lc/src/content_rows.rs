@@ -118,10 +118,12 @@ fn by_external_ref(conn: &Conn, needle: &str, full: bool) -> Result<Vec<Value>, 
 }
 
 fn fetch_with(conn: &Conn, ids: &[&str], full: bool) -> Result<Vec<Value>, String> {
-    let cdb = content_db()?;
+    // An empty id list is an empty answer: it needs no store, so it is decided before the
+    // content database is resolved (r-auto-148: an unconfigured test process was refused here).
     if ids.is_empty() {
         return Ok(Vec::new());
     }
+    let cdb = content_db()?;
     let list = ids.iter().map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",");
     let q = |sql: String| conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"));
     let text = if full { TEXT_COLUMNS } else { "" };
