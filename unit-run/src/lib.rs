@@ -42,6 +42,10 @@ pub fn journal_args(after_cursor: Option<&str>, follow: bool) -> Vec<String> {
 /// without accounting.
 pub const ACCOUNTING_GRACE_US: u64 = 2_000_000;
 
+/// An execution with no close this long after its last entry is dropped, so the open map
+/// (and the checkpoint that serialises it) stays bounded by live executions.
+pub const STALE_OPEN_US: u64 = 7 * 86_400 * 1_000_000;
+
 pub trait Clock {
     fn now_epoch(&self) -> u64;
 }
@@ -134,6 +138,8 @@ struct Open {
     exit_code: Option<String>,
     exit_status: Option<i64>,
     main_exit: bool,
+    #[serde(default)]
+    last_us: u64,
     end: Option<End>,
     acct: Option<Acct>,
 }
@@ -168,6 +174,7 @@ impl Folder {
         self.latest_us = self.latest_us.max(e.at_us);
         let o = self.open.entry(e.invocation.clone()).or_default();
         o.unit = e.unit.clone();
+        o.last_us = e.at_us;
         match e.message_id.as_str() {
             ID_STARTING => o.started_us = Some(o.started_us.map_or(e.at_us, |s| s.min(e.at_us))),
             ID_STARTED => {
@@ -212,6 +219,13 @@ impl Folder {
     }
 
     fn drain(&mut self, now_us: u64, all: bool) -> Vec<Record> {
+        if !all {
+            let latest = self.latest_us;
+            for o in self.open.values_mut().filter(|o| o.last_us == 0) {
+                o.last_us = latest;
+            }
+            self.open.retain(|_, o| o.end.is_some() || latest.saturating_sub(o.last_us) <= STALE_OPEN_US);
+        }
         let due: Vec<String> = self
             .open
             .iter()
