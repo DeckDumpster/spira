@@ -515,6 +515,15 @@ mod tests {
     }
 
     #[test]
+    fn the_straggler_sweep_covers_every_repository() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
+        let svc = std::fs::read_to_string(root.join("spira-straggler-sweep.service")).unwrap();
+        let exec = svc.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
+        assert!(exec.contains("sending --budget-secs"));
+        assert!(!exec.contains("--queue-only") && !exec.contains("--skip-queue"), "{exec}");
+    }
+
+    #[test]
     fn dolt_beads_is_included_and_enabled_only_when_dolt_data_is_set() {
         let m = build(&inputs()).unwrap();
         assert!(m.units.iter().any(|u| u.name == "dolt-beads.service" && u.enable));
