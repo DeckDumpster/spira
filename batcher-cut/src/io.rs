@@ -1331,6 +1331,99 @@ pub fn local_tier_member(env: &Env, repo: &Repo, base_sha: &str, tip: &str) -> R
     local_tier_keyed(env, repo, &rev, mark).map_err(MemberTier::Red)
 }
 
+/// How a group check of several members ended short of green.
+#[derive(Debug, PartialEq, Eq)]
+pub enum GroupTier {
+    /// This member's tip does not merge onto the group built so far; the merge reports it.
+    Conflict(String),
+    /// The merged head is red: its sha and the tier evidence.
+    Red { head: String, evidence: String },
+}
+
+/// Where a red group head is recorded, so the same set is never checked as a group twice.
+pub fn group_red_path(env: &Env, repo: &Repo, head: &str) -> PathBuf {
+    env.run.join("local-red").join(&repo.name).join(head)
+}
+
+/// sp-cfni99: the merged head of `tips` onto `base_sha`, built in the object store with fixed
+/// dates (so the same set on the same base is always the same sha), with no worktree.
+pub fn group_head(repo: &Repo, base_sha: &str, tips: &[String]) -> Result<String, GroupTier> {
+    let git = |args: &[&str]| {
+        Command::new("timeout")
+            .args(["5", "git", "-C"])
+            .arg(&repo.path)
+            .args(["-c", "user.name=spira", "-c", "user.email=spira@localhost"])
+            .args(args)
+            .env("GIT_AUTHOR_DATE", "@0 +0000")
+            .env("GIT_COMMITTER_DATE", "@0 +0000")
+            .output()
+    };
+    let red = |what: &str, e: String| GroupTier::Red { head: String::new(), evidence: format!("{what}: {e}") };
+    let mut head = base_sha.to_string();
+    for tip in tips {
+        let m = git(&["merge-tree", "--write-tree", &head, tip]).map_err(|e| red("git merge-tree", e.to_string()))?;
+        if m.status.code() == Some(1) {
+            return Err(GroupTier::Conflict(tip.clone()));
+        }
+        if !m.status.success() {
+            return Err(red("git merge-tree", String::from_utf8_lossy(&m.stderr).into_owned()));
+        }
+        let tree = String::from_utf8_lossy(&m.stdout).lines().next().unwrap_or("").trim().to_string();
+        let c = git(&["commit-tree", &tree, "-p", &head, "-p", tip, "-m", &format!("group member {tip} on {base_sha}")])
+            .map_err(|e| red("git commit-tree", e.to_string()))?;
+        if !c.status.success() {
+            return Err(red("git commit-tree", String::from_utf8_lossy(&c.stderr).into_owned()));
+        }
+        head = String::from_utf8_lossy(&c.stdout).trim().to_string();
+    }
+    Ok(head)
+}
+
+/// One local check of the group's merged head. Green records a pass for every member on
+/// `base_sha` (so the batcher batches them all) and for the head itself; red records the head
+/// as red and returns the evidence.
+pub fn local_tier_group(env: &Env, repo: &Repo, base_sha: &str, tips: &[String]) -> Result<String, GroupTier> {
+    let head = group_head(repo, base_sha, tips)?;
+    let red_mark = group_red_path(env, repo, &head);
+    if let Ok(evidence) = fs::read_to_string(&red_mark) {
+        return Err(GroupTier::Red { head, evidence });
+    }
+    match local_tier_keyed(env, repo, &head, local_pass_path(env, repo, &format!("group-{head}"))) {
+        Ok(()) => {
+            for tip in tips {
+                let mark = local_pass_path(env, repo, &format!("{tip}@{base_sha}"));
+                if let Some(dir) = mark.parent() {
+                    let _ = fs::create_dir_all(dir);
+                }
+                let _ = fs::write(&mark, format!("{} group {head}\n", now()));
+            }
+            Ok(head)
+        }
+        Err(evidence) => {
+            if let Some(dir) = red_mark.parent() {
+                let _ = fs::create_dir_all(dir);
+            }
+            let _ = fs::write(&red_mark, &evidence);
+            Err(GroupTier::Red { head, evidence })
+        }
+    }
+}
+
+/// The files a red check's evidence names: its `locations:` line (`path:line:col`, comma
+/// separated), path only.
+pub fn red_locations(evidence: &str) -> Vec<String> {
+    evidence
+        .lines()
+        .find_map(|l| l.strip_prefix("locations:"))
+        .map(|rest| {
+            rest.split(',')
+                .filter_map(|loc| loc.trim().split(':').next().map(|p| p.trim().to_string()))
+                .filter(|p| !p.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn local_tier_keyed(env: &Env, repo: &Repo, rev: &str, mark: PathBuf) -> Result<(), String> {
     if mark.is_file() {
         return Ok(());

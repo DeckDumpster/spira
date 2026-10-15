@@ -755,11 +755,7 @@ fn checks_forge(o: &Opts) -> Result<(), String> {
                 Some(ob) => ob.head,
                 None => io::resolve_base_sha(&repo)?,
             };
-            for m in pool.iter().filter(|m| !io::member_pass_recorded(&env_, &repo, &base, &m.tip)) {
-                if check_forge_member(&env_, &repo, &base, m) {
-                    break;
-                }
-            }
+            check_forge_pool(&env_, &repo, &base, &pool);
             Ok(())
         };
         if let Err(e) = one() {
@@ -771,6 +767,70 @@ fn checks_forge(o: &Opts) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("failed for: {}", failed.join(", ")))
+    }
+}
+
+/// One invocation's local-tier work for a forge repo's certified pool on `base` (sp-cfni99):
+/// the members with no recorded pass are checked ONCE, merged together onto `base` — green
+/// records every one of them, so they batch together. A red names its member through the
+/// evidence's file:line locations and that member alone goes back to rework; a red no
+/// location can attribute is recorded against that exact set, and the members are then checked
+/// one per invocation as before. A single pending member is checked alone, as before.
+fn check_forge_pool(env_: &Env, repo: &Repo, base: &str, pool: &[Member]) {
+    let mut pending: Vec<&Member> = pool.iter().filter(|m| !io::member_pass_recorded(env_, repo, base, &m.tip)).collect();
+    while pending.len() >= 2 {
+        let tips: Vec<String> = pending.iter().map(|m| m.tip.clone()).collect();
+        match io::local_tier_group(env_, repo, base, &tips) {
+            Ok(head) => {
+                println!("batcher {}: {} members passed one local check of their merged head {head} on {base}", repo.name, pending.len());
+                return;
+            }
+            Err(io::GroupTier::Conflict(tip)) => {
+                println!("batcher {}: {tip} does not merge with the rest of the group on {base} — checked on its own later", repo.name);
+                pending.retain(|m| m.tip != tip);
+            }
+            Err(io::GroupTier::Red { head, evidence }) => {
+                if head.is_empty() {
+                    println!("batcher {}: group check could not be built ({}) — checking members one at a time", repo.name, evidence.lines().next().unwrap_or(""));
+                    break;
+                }
+                if let Some((fault, first)) = io::landing_ref_fault(env_, repo, base) {
+                    println!("batcher {}: FAULT the declared tiers are red on the landing ref {base} itself — no member is blamed", repo.name);
+                    if first {
+                        let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
+                        let reason = format!("landing-ref-red {first_error}");
+                        match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], base, &fault, &reason) {
+                            Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
+                            Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+                        }
+                    }
+                    return;
+                }
+                let locs = io::red_locations(&evidence);
+                let guilty: Vec<&Member> = pending
+                    .iter()
+                    .copied()
+                    .filter(|m| {
+                        let changed = io::changed_paths(repo, base, &m.tip);
+                        locs.iter().any(|l| changed.iter().any(|c| c == l || c.ends_with(&format!("/{l}")) || l.ends_with(&format!("/{c}"))))
+                    })
+                    .collect();
+                if guilty.is_empty() || guilty.len() == pending.len() {
+                    println!("batcher {}: merged head {head} of {} members is red and its evidence names no single member — checking members one at a time", repo.name, pending.len());
+                    break;
+                }
+                for m in &guilty {
+                    println!("batcher {}: {} is red locally — the group check's error is in a file it changes ({}) — not batched ({})", repo.name, m.id, locs.join(", "), evidence.lines().next().unwrap_or(""));
+                    io::bead_reopen(env_, &m.id, "local-tier-red", &format!("Reopened by the batcher: {}'s declared tiers are red with {} merged onto {base} beside the other ready members (head {head}); the error is in a file this tip changes and it never reached CI.\n{evidence}", repo.name, m.tip));
+                }
+                return;
+            }
+        }
+    }
+    for m in pending {
+        if check_forge_member(env_, repo, base, m) {
+            break;
+        }
     }
 }
 
@@ -1855,6 +1915,107 @@ mod base_conflict_handling {
         check_forge_member(&e, &repo, &base, &members[2]);
         let r = stabilize_round(&e, &repo, &wt, &base, members, None, &[]).unwrap().unwrap();
         assert_eq!(r.members.len(), 3);
+    }
+
+    /// sp-cfni99: ten ready members cost ONE local check of their merged head, not ten
+    /// serial checks, and every one of them is then batchable.
+    #[test]
+    fn ten_ready_members_take_one_local_check_of_their_merged_head() {
+        let d = testkit::TempDir::new("batcher-cut-group");
+        let [base, _a, _b, _c, _root] = fixture(&d);
+        let mut members = Vec::new();
+        for i in 0..10 {
+            let name = format!("g{i}");
+            git(&d, &["checkout", "-q", "-b", &name, &base]);
+            fs::write(d.join(&name), "x\n").unwrap();
+            git(&d, &["add", &name]);
+            git(&d, &["commit", "-qm", &name]);
+            members.push(member(&format!("sp-{i}"), &git(&d, &["rev-parse", "HEAD"])));
+        }
+        git(&d, &["checkout", "-q", "--detach", &base]);
+        let mut e = io::lifecycle_tests_env(&d);
+        fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
+        e.run = d.to_path_buf();
+        e.home = d.to_path_buf();
+        let runs = d.join("testenv.runs");
+        testkit::write_exe(&e.testenv_bin, &format!("#!/bin/sh\necho \"$1\" >> '{}'\nexit 0\n", runs.display()));
+        let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Forge };
+        check_forge_pool(&e, &repo, &base, &members);
+        let ran = fs::read_to_string(&runs).unwrap_or_default();
+        assert_eq!(ran.lines().count(), 1, "one check of the merged head, not one per member: {ran}");
+        for m in &members {
+            assert!(io::member_pass_recorded(&e, &repo, &base, &m.tip), "{} batchable after the group pass", m.id);
+        }
+        let wt = d.join("wt");
+        let r = stabilize_round(&e, &repo, &wt, &base, members, None, &[]).unwrap().unwrap();
+        assert_eq!(r.members.len(), 10, "one batch of all ten");
+    }
+
+    fn group_fixture(tag: &str, n: usize) -> (testkit::TempDir, String, Vec<Member>, Env, Repo) {
+        let d = testkit::TempDir::new(tag);
+        let [base, _a, _b, _c, _root] = fixture(&d);
+        let mut members = Vec::new();
+        for i in 0..n {
+            let name = format!("g{i}");
+            git(&d, &["checkout", "-q", "-b", &name, &base]);
+            fs::write(d.join(&name), "x\n").unwrap();
+            git(&d, &["add", &name]);
+            git(&d, &["commit", "-qm", &name]);
+            members.push(member(&format!("sp-{i}"), &git(&d, &["rev-parse", "HEAD"])));
+        }
+        git(&d, &["checkout", "-q", "--detach", &base]);
+        let mut e = io::lifecycle_tests_env(&d);
+        e.run = d.to_path_buf();
+        e.home = d.to_path_buf();
+        let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Forge };
+        (d, base, members, e, repo)
+    }
+
+    /// sp-cfni99: a red merged head whose error is in a file one member changes sends that
+    /// member back alone; the rest pass their next group check together.
+    #[test]
+    fn a_red_group_check_attributed_by_file_line_returns_only_that_member() {
+        let (d, base, members, mut e, repo) = group_fixture("batcher-cut-group-red", 4);
+        let log = d.join("calls");
+        fs::write(d.join("lib.sh"), format!("bead_reopen() {{ echo reopen \"$1\" >> '{}'; }}\n", log.display())).unwrap();
+        let runs = d.join("testenv.runs");
+        testkit::write_exe(
+            &e.testenv_bin,
+            &format!("#!/bin/sh\necho \"$1\" >> '{r}'\ngit -C '{d}' cat-file -e \"$1:g2\" 2>/dev/null && {{ echo 'lint RED'; echo '  --> g2:1:1'; exit 1; }}\nexit 0\n", r = runs.display(), d = d.display()),
+        );
+        e.run = d.to_path_buf();
+        check_forge_pool(&e, &repo, &base, &members);
+        assert_eq!(fs::read_to_string(&log).unwrap_or_default().trim(), "reopen sp-2", "only the member whose file the error names is reopened");
+        for m in &members {
+            assert!(!io::member_pass_recorded(&e, &repo, &base, &m.tip), "nothing is recorded from a red group");
+        }
+        let rest: Vec<Member> = members.iter().filter(|m| m.id != "sp-2").cloned().collect();
+        check_forge_pool(&e, &repo, &base, &rest);
+        for m in &rest {
+            assert!(io::member_pass_recorded(&e, &repo, &base, &m.tip), "{} passes in the second group check", m.id);
+        }
+        assert_eq!(fs::read_to_string(&runs).unwrap().lines().count(), 3, "two group checks plus the landing ref's own (sp-bvpayb) — not four member checks");
+    }
+
+    /// sp-cfni99: a red head no location attributes is remembered for that exact set, and the
+    /// members are then checked one at a time — the old path — so the red one is still found.
+    #[test]
+    fn an_unattributed_red_group_falls_back_to_member_checks_and_is_not_rechecked_as_a_group() {
+        let (d, base, members, e, repo) = group_fixture("batcher-cut-group-unattr", 3);
+        fs::write(d.join("lib.sh"), "bead_reopen() { :; }\n").unwrap();
+        let runs = d.join("testenv.runs");
+        testkit::write_exe(
+            &e.testenv_bin,
+            &format!("#!/bin/sh\necho \"$1\" >> '{r}'\ngit -C '{d}' cat-file -e \"$1:g1\" 2>/dev/null && {{ echo 'lint RED'; exit 1; }}\nexit 0\n", r = runs.display(), d = d.display()),
+        );
+        check_forge_pool(&e, &repo, &base, &members);
+        assert_eq!(fs::read_to_string(&runs).unwrap().lines().count(), 3, "the group check, the landing ref's own (sp-bvpayb), then the first member alone");
+        assert!(io::member_pass_recorded(&e, &repo, &base, &members[0].tip));
+        let before = fs::read_to_string(&runs).unwrap();
+        check_forge_pool(&e, &repo, &base, &members);
+        assert!(!fs::read_to_string(&runs).unwrap()[before.len()..].contains(&base), "the landing ref is not rechecked");
+        assert_eq!(fs::read_to_string(&runs).unwrap().lines().count(), 5, "the remaining two are a new set: one group check (red), then the next member alone; the green landing ref is not rechecked");
+        assert!(!io::member_pass_recorded(&e, &repo, &base, &members[1].tip), "the red member is still caught");
     }
 
     #[test]
