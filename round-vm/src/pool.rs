@@ -213,11 +213,36 @@ impl Pool {
             eprintln!("round-vm: still failing: {reason}");
         }
         *attempts += 1;
+        let signature = self.slot_signature()?;
         if self.max_retries > 0 && *attempts >= self.max_retries {
             return Err(format!("round-vm: acquire: giving up after {attempts} attempt(s): {reason}"));
         }
-        std::thread::sleep(self.retry_interval);
-        Ok(())
+        self.wait_for_freed_slot(signature)
+    }
+
+    fn slot_signature(&self) -> Result<Vec<String>, String> {
+        self.with_state(|s| {
+            let mut sig: Vec<String> = s.leases.iter().map(|l| format!("lease:{}", l.vm.handle)).collect();
+            sig.extend(s.ready.iter().map(|v| format!("ready:{}", v.handle)));
+            sig.push(format!("provisioning:{}", s.provisioning.is_some()));
+            sig.sort();
+            sig
+        })
+    }
+
+    /// Waits for the pool to change (a lease released, a VM made ready), capped at `retry_interval`.
+    fn wait_for_freed_slot(&self, before: Vec<String>) -> Result<(), String> {
+        let started = std::time::Instant::now();
+        loop {
+            let left = self.retry_interval.saturating_sub(started.elapsed());
+            if left.is_zero() {
+                return Ok(());
+            }
+            std::thread::sleep(self.wait_poll.min(left));
+            if self.slot_signature()? != before {
+                return Ok(());
+            }
+        }
     }
 
     /// Hands out a VM, leased to `owner` (None: an external caller who will `release` it).
@@ -831,6 +856,29 @@ mod tests {
     fn dead_proc() -> ProcId {
         let me = ProcId::current();
         ProcId { pid: me.pid, start: me.start + 12345 }
+    }
+
+    #[test]
+    fn a_failed_attempt_wakes_on_a_freed_slot_not_the_retry_interval() {
+        let d = TempDir::new();
+        let mut pl = pool(&d, 1);
+        pl.retry_interval = Duration::from_secs(60);
+        let before = pl.slot_signature().unwrap();
+        pl.with_state(|s| s.provisioning = Some(Provisioning { owner: ProcId::current(), vmid: None, since: now() })).unwrap();
+        let started = std::time::Instant::now();
+        pl.wait_for_freed_slot(before).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5), "a changed pool must end the wait");
+    }
+
+    #[test]
+    fn an_unchanged_pool_waits_out_the_retry_interval_cap() {
+        let d = TempDir::new();
+        let mut pl = pool(&d, 1);
+        pl.retry_interval = Duration::from_millis(60);
+        let before = pl.slot_signature().unwrap();
+        let started = std::time::Instant::now();
+        pl.wait_for_freed_slot(before).unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(60));
     }
 
     #[test]
