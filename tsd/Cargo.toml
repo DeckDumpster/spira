@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "tsd-write"
 path = "src/main.rs"
 
+[[bin]]
+name = "cert-report"
+path = "src/report_main.rs"
+
 [dependencies]
 serde_json = "1"
 
