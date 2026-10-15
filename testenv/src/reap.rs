@@ -204,6 +204,69 @@ pub fn reap_idle(
     Ok(out)
 }
 
+/// The bead id a `/tmp/<id>-target` directory is named after: lowercase base36, optional
+/// `.<n>` children, with or without the `sp-` prefix.
+pub fn tmp_target_id(name: &str) -> Option<&str> {
+    let id = name.strip_suffix("-target")?;
+    let core = id.strip_prefix("sp-").unwrap_or(id);
+    let mut parts = core.split('.');
+    let head = parts.next().unwrap_or("");
+    let ok = !head.is_empty()
+        && head.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    ok.then_some(id)
+}
+
+/// Remove every `<tmp>/<id>-target` whose bead is not WORKING. `state(x)` is the record's
+/// state word for `x` (`Some("")` no row, `None` unanswerable); the bare and `sp-` forms of the
+/// id are both asked, and either one WORKING or unanswerable keeps the directory, as does a
+/// live process holding it open.
+pub fn reap_tmp_targets(
+    tmp: &Path,
+    dry_run: bool,
+    state: &dyn Fn(&str) -> Option<String>,
+    busy: &dyn Fn(&Path) -> bool,
+) -> Result<Reaped, String> {
+    let mut out = Reaped::default();
+    let mut found: Vec<(String, PathBuf)> = fs::read_dir(tmp)
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    let id = tmp_target_id(&name)?.to_string();
+                    fs::symlink_metadata(e.path()).ok()?.is_dir().then_some((id, e.path()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    found.sort();
+    for (id, path) in found {
+        let bare = id.strip_prefix("sp-").unwrap_or(&id).to_string();
+        let states = [state(&bare), state(&format!("sp-{bare}"))];
+        if states.iter().any(Option::is_none) {
+            out.kept_unknown.push(id);
+            continue;
+        }
+        if states.iter().flatten().any(|s| s == "WORKING") {
+            out.kept_active += 1;
+            continue;
+        }
+        if busy(&path) {
+            out.kept_busy += 1;
+            continue;
+        }
+        let n = size_of(&path);
+        if !dry_run {
+            if let Err(e) = fs::remove_dir_all(&path) {
+                return Err(format!("cannot remove {}: {e}", path.display()));
+            }
+        }
+        out.bytes += n;
+        out.removed.push(id);
+    }
+    Ok(out)
+}
+
 /// Bytes available to this user on the filesystem holding `p`.
 pub fn free_bytes(p: &Path) -> Option<u64> {
     let o = spira_config::bounded::bounded("df").args(["-Pk"]).arg(p).output().ok()?;
@@ -340,6 +403,35 @@ mod tests {
         assert_eq!(r.removed, Vec::<String>::new());
         assert_eq!(r.kept_unknown, vec!["sp-done".to_string()]);
         assert!(s.1.join("sp-done/target/aeon/x").is_file());
+    }
+
+    #[test]
+    fn tmp_targets_of_a_non_working_bead_go_and_a_working_ones_stays() {
+        let s = scratch("tmp");
+        for d in ["ld1o9n-target", "sp-2t7etd-target", "sp-live-target", "lgt1ia-target", "sp-ghost-target", "sp-held-target", "other-dir", "spira-gate-target-ab"] {
+            fs::create_dir_all(s.1.join(d)).unwrap();
+            fs::write(s.1.join(d).join("x"), "bytes").unwrap();
+        }
+        let state = |id: &str| -> Option<String> {
+            match id {
+                "ld1o9n" | "sp-ld1o9n" => Some("SUBMITTED".into()),
+                "sp-2t7etd" | "2t7etd" => Some("READY".into()),
+                "live" => Some(String::new()),
+                "sp-live" => Some("WORKING".into()),
+                "lgt1ia" => Some(String::new()),
+                "sp-lgt1ia" => Some("WORKING".into()),
+                "sp-held" | "held" => Some("DONE".into()),
+                _ => None,
+            }
+        };
+        let busy = |p: &Path| p.ends_with("sp-held-target");
+        let r = reap_tmp_targets(&s.1, false, &state, &busy).unwrap();
+        assert_eq!(r.removed, vec!["ld1o9n".to_string(), "sp-2t7etd".to_string()]);
+        for kept in ["sp-live-target", "lgt1ia-target", "sp-ghost-target", "sp-held-target", "other-dir", "spira-gate-target-ab"] {
+            assert!(s.1.join(kept).join("x").is_file() || kept == "spira-gate-target-ab" && s.1.join(kept).is_dir(), "{kept}");
+        }
+        assert!(!s.1.join("ld1o9n-target").exists() && !s.1.join("sp-2t7etd-target").exists());
+        assert_eq!((r.kept_active, r.kept_busy, r.kept_unknown.clone()), (2, 1, vec!["sp-ghost".to_string()]));
     }
 
     #[test]
