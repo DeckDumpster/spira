@@ -41,6 +41,9 @@ pub struct Tier {
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub timeout: Option<u64>,
+    /// Overrides the repository's `image` for this tier only (a Node check beside Rust tiers).
+    #[serde(default)]
+    pub image: Option<String>,
 }
 
 fn default_workdir() -> String {
@@ -67,6 +70,9 @@ impl Decl {
             if t.argv.is_empty() {
                 return Err(format!("{DECL}: tier {n} has no argv"));
             }
+            if t.image.as_deref().is_some_and(|i| i.trim().is_empty()) {
+                return Err(format!("{DECL}: tier {n}: image is empty"));
+            }
         }
         if let Some(n) = d.default.iter().find(|n| !d.tier.contains_key(*n)) {
             return Err(format!("{DECL}: default names undeclared tier {n}"));
@@ -75,6 +81,11 @@ impl Decl {
             return Err(format!("{DECL}: lint names undeclared tier {n}"));
         }
         Ok(d)
+    }
+
+    /// The image tier `name` runs in: its own when it names one, else the repository's.
+    pub fn image_for(&self, name: &str) -> &str {
+        self.tier.get(name).and_then(|t| t.image.as_deref()).unwrap_or(&self.image)
     }
 
     pub fn known(&self, name: &str) -> bool {
@@ -182,7 +193,7 @@ impl TierRun<'_> {
         }
         let req = RunRequest {
             name: cname.clone(),
-            image: self.decl.image.clone(),
+            image: self.decl.image_for(name).to_string(),
             mount: self.tree.to_path_buf(),
             workdir: self.decl.workdir.clone(),
             env,
@@ -266,6 +277,15 @@ mod tests {
         assert_eq!(first_error(log).unwrap(), "src/binder.rs:222:9: error: this argument is a mutable reference");
         assert_eq!(first_error("ok\nboom\n").unwrap(), "boom");
         assert_eq!(first_error(""), None);
+    }
+
+    #[test]
+    fn a_tier_image_overrides_the_repo_image_for_that_tier_only() {
+        let d = Decl::parse("image = \"r\"\n[tier.a]\nargv=[\"x\"]\n[tier.b]\nargv=[\"x\"]\nimage = \"n\"\n").unwrap();
+        assert_eq!(d.image_for("a"), "r");
+        assert_eq!(d.image_for("b"), "n");
+        let e = Decl::parse("image = \"r\"\n[tier.a]\nargv=[\"x\"]\nimage = \" \"\n").unwrap_err();
+        assert!(e.contains("tier a: image is empty"), "{e}");
     }
 
     #[test]

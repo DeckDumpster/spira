@@ -68,8 +68,9 @@ options. An unknown option prints `batch: unknown option: X` and the usage line,
 `[repo.*]`; an unknown name is still `FAULT rc=2 reason=repo`. A tree that has no `spira/`
 directory runs the tiers it declares in `.spira/testenv.toml` — `image`, optional `workdir`
 (default `/work`) and `timeout`, `default` (tiers run with no `--suites`; absent = all), and
-`[tier.<name>]` with `argv`, `env`, `timeout`. Each tier is one `podman run --rm` of that image
-with the tree mounted at `workdir`, bounded by `--deadline`; `--suites` names tiers
+`[tier.<name>]` with `argv`, `env`, `timeout` and an optional `image` that overrides the repository's
+for that tier only (a Node check beside Rust tiers; an empty one is refused). Each tier is one
+`podman run --rm` of its image with the tree mounted at `workdir`, bounded by `--deadline`; `--suites` names tiers
 (`reason=unknown-suite` otherwise), output lands in `<results>/<tier>.log`, and the last line is
 the usual `VERDICT`. podman's own failure (rc 125) is `FAULT reason=container-run`, never RED. A
 red tier prints `first error (<tier>): <file:line>: <message>` after its line. `lint = [<tier>...]`
