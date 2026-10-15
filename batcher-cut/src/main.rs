@@ -197,6 +197,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
         queue_bin: PathBuf::from("queue"),
         rebase_stale_bin: PathBuf::from("rebase-stale"),
+        testenv_bin: PathBuf::from("testenv"),
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
         hypervisor: io::Hypervisor {
             host_mib: cfg_parse::<u64>("SPIRA_HYPERVISOR_MEM_MIB")?,
@@ -600,9 +601,8 @@ fn stabilize_round(
     }
     let suites = ordered.list;
     if suites.is_empty() && repo.land == Land::Forge {
-        println!("batcher {}: no test-*.sh corpus — CI is the gate; opening on the merged tree", repo.name);
-        let head = io::head_of(wt)?;
-        return Ok(Some(StableRound { members, head, green_branch: round_branch, attribution_seconds: None, regreen_seconds: None, staged: None }));
+        println!("batcher {}: no test-*.sh corpus — the repo's declared tiers run locally before the merged tree reaches CI", repo.name);
+        return forge_local_tier(env_, repo, wt, start_sha, members, round_branch);
     }
     if suites.is_empty() {
         println!("batcher {}: round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing", repo.name);
@@ -672,6 +672,48 @@ fn stabilize_round(
             Ok(None)
         }
     }
+}
+
+/// A forge repo's merged tree reaches CI only when every member's tip, and then the merged tree,
+/// has passed the repo's declared tiers in testenv on this host. A red member is returned to
+/// rework with the compiler's locations; a red merge holds the round.
+fn forge_local_tier(
+    env_: &Env,
+    repo: &Repo,
+    wt: &Path,
+    start_sha: &str,
+    members: Vec<Member>,
+    round_branch: String,
+) -> Result<Option<StableRound>, String> {
+    let mut red = Vec::new();
+    for m in &members {
+        if let Err(evidence) = io::local_tier(env_, repo, &m.tip) {
+            println!("batcher {}: {} is red locally at {} — not batched", repo.name, m.id, m.tip);
+            io::bead_reopen(env_, &m.id, "local-tier-red", &format!("Reopened by the batcher: {}'s declared tiers are red locally at {} and never reached CI.\n{evidence}", repo.name, m.tip));
+            red.push(m.id.clone());
+        }
+    }
+    let members = if red.is_empty() {
+        members
+    } else {
+        let kept: Vec<Member> = members.into_iter().filter(|m| !red.contains(&m.id)).collect();
+        merge_round(env_, repo, wt, start_sha, kept)?
+    };
+    if members.is_empty() {
+        println!("{}", skipped_event("round emptied by local tier reds").text);
+        return Ok(None);
+    }
+    let head = io::head_of(wt)?;
+    io::set_branch(repo, &round_branch, &head);
+    if let Err(evidence) = io::local_tier(env_, repo, &head) {
+        println!("batcher {}: merged round is red locally — held before reaching CI", repo.name);
+        match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], &round_branch, &evidence, "local-tier") {
+            Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
+            Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+        }
+        return Ok(None);
+    }
+    Ok(Some(StableRound { members, head, green_branch: round_branch, attribution_seconds: None, regreen_seconds: None, staged: None }))
 }
 
 /// The round's corpus died in the container install, so no suite is red to follow: bisect
@@ -1664,6 +1706,7 @@ mod base_conflict_handling {
             git(&d, &["checkout", "-q", "--detach", &base]);
             let mut e = io::lifecycle_tests_env(&d);
             fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
+            testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 0\n");
             e.run = d.to_path_buf();
             e.home = d.to_path_buf();
             let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land };
@@ -1676,6 +1719,39 @@ mod base_conflict_handling {
                 assert_eq!(s.head, io::head_of(&wt).unwrap());
             }
         }
+    }
+
+    #[test]
+    fn a_forge_member_red_in_testenv_never_reaches_the_batch_and_a_red_merge_holds_the_round() {
+        let d = testkit::TempDir::new("batcher-cut-localred");
+        let [base, _a, _b, _c, _root] = fixture(&d);
+        git(&d, &["checkout", "-q", "-b", "m1", &base]);
+        fs::write(d.join("one"), "1\n").unwrap();
+        git(&d, &["add", "one"]);
+        git(&d, &["commit", "-qm", "m1"]);
+        let t1 = git(&d, &["rev-parse", "HEAD"]);
+        git(&d, &["checkout", "-q", "-b", "m2", &base]);
+        fs::write(d.join("two"), "2\n").unwrap();
+        git(&d, &["add", "two"]);
+        git(&d, &["commit", "-qm", "m2"]);
+        let t2 = git(&d, &["rev-parse", "HEAD"]);
+        git(&d, &["checkout", "-q", "--detach", &base]);
+        let mut e = io::lifecycle_tests_env(&d);
+        fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
+        e.run = d.to_path_buf();
+        e.home = d.to_path_buf();
+        let repo = Repo { name: "deck".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Forge };
+        let wt = d.join("wt");
+        testkit::write_exe(&e.testenv_bin, &format!("#!/bin/sh\ncase \"$1\" in {t1}) echo '  --> src/x.rs:1:1'; exit 1;; esac\nexit 0\n"));
+        let r = stabilize_round(&e, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap().unwrap();
+        let ids: Vec<&str> = r.members.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["sp-2"]);
+        assert!(!io::local_pass_path(&e, &repo, &t1).exists());
+        assert!(io::local_pass_path(&e, &repo, &t2).is_file());
+
+        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 1\n");
+        let e2 = Env { run: d.join("fresh"), ..e.clone() };
+        assert!(stabilize_round(&e2, &repo, &wt, &base, vec![member("sp-1", &t1), member("sp-2", &t2)], None, &[]).unwrap().is_none());
     }
 
     #[test]
