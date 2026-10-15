@@ -35,7 +35,7 @@ async fn main() -> ExitCode {
     // a log line naming what was ASKED FOR cannot be used to reach the thing that is running.
     match listener.local_addr() {
         Ok(a) => eprintln!(
-            "loom: serving http://{a}/stuck, /lifecycle, /units and /api/ops — budget {} ms",
+            "loom: serving http://{a}/ (Now), /rounds, /stuck, /units, /lifecycle and /api/ops — budget {} ms",
             cfg.budget.as_millis()
         ),
         Err(e) => eprintln!("loom: listening, but cannot name the address: {e}"),
