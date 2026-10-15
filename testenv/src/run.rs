@@ -369,6 +369,7 @@ fn run_foreign(
         results: &results,
         key: &key,
         deadline: args.deadline.map(|d| Instant::now() + Duration::from_secs(d)),
+        log: &|m| deps.log(m),
     };
     let (mut ran, mut red) = (0, 0);
     for t in &tiers {

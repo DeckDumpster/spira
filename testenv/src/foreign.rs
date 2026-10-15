@@ -114,7 +114,10 @@ const CACHE_CARGO: &str = "/var/cache/spira-foreign/cargo";
 const LOCK_POLL: Duration = Duration::from_secs(2);
 
 /// A repository's warm build state on the host, kept between runs: cargo's target dir and
-/// registry, and the lock that lets one tier of that repository run at a time.
+/// registry. A run never builds in the warm target: it seeds a private copy (reflink where the
+/// filesystem has it), builds there, and swaps the copy in as the new warm target only when it
+/// passes and no other run is seeding. The lock is shared to seed and exclusive to swap, so
+/// tiers overlap and only the swap is serial.
 pub struct Cache {
     dir: PathBuf,
 }
@@ -130,27 +133,46 @@ impl Cache {
 
     fn prepare(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(self.dir.join("target"))?;
+        std::fs::create_dir_all(self.dir.join("runs"))?;
         std::fs::create_dir_all(self.dir.join("cargo"))
     }
 
-    /// The volumes and variables a tier's cargo runs on; a variable the tier declares wins.
-    fn mounts(&self) -> Vec<(PathBuf, String)> {
-        vec![
-            (self.dir.join("target"), CACHE_TARGET.into()),
-            (self.dir.join("cargo"), CACHE_CARGO.into()),
-        ]
+    fn run_target(&self, cname: &str) -> PathBuf {
+        self.dir.join("runs").join(cname)
+    }
+
+    fn mounts(&self, run_target: &Path) -> Vec<(PathBuf, String)> {
+        vec![(run_target.to_path_buf(), CACHE_TARGET.into()), (self.dir.join("cargo"), CACHE_CARGO.into())]
     }
 
     fn env(&self) -> [(&'static str, &'static str); 2] {
         [("CARGO_TARGET_DIR", CACHE_TARGET), ("CARGO_HOME", CACHE_CARGO)]
     }
 
-    /// Wait for this repository's lock; Err names the fault when the deadline passes or the
-    /// run is cancelled first.
-    fn lock(&self, deadline: Option<Instant>) -> Result<std::fs::File, &'static str> {
-        loop {
-            if let Some(f) = crate::worktree::try_lock(&self.dir.join("lock")) {
-                return Ok(f);
+    fn flock(&self, op: i32) -> Option<std::fs::File> {
+        use std::os::fd::AsRawFd;
+        let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(self.dir.join("lock")).ok()?;
+        // SAFETY: flock on a descriptor we own; released when the File is dropped.
+        (unsafe { libc::flock(f.as_raw_fd(), op | libc::LOCK_NB) } == 0).then_some(f)
+    }
+
+    fn holder_path(&self) -> PathBuf {
+        self.dir.join("holder")
+    }
+
+    /// Seed `dest` from the warm target under a shared lock, naming the holder of the exclusive
+    /// swap while it waits. Err names the fault when the deadline passes or the run is cancelled.
+    fn seed(&self, dest: &Path, who: &str, deadline: Option<Instant>, log: &dyn Fn(&str)) -> Result<(), &'static str> {
+        let since = Instant::now();
+        let mut told = false;
+        let _shared = loop {
+            if let Some(f) = self.flock(libc::LOCK_SH) {
+                break f;
+            }
+            if !told {
+                let holder = std::fs::read_to_string(self.holder_path()).unwrap_or_default();
+                log(&format!("{who}: waiting for the warm cache swap held by {}", holder.trim()));
+                told = true;
             }
             if crate::runtime::cancelled() {
                 return Err("cancelled");
@@ -159,7 +181,35 @@ impl Cache {
                 return Err("deadline-suites");
             }
             std::thread::sleep(LOCK_POLL);
+        };
+        if told {
+            log(&format!("{who}: warm cache free after {}s", since.elapsed().as_secs()));
         }
+        let _ = std::fs::remove_dir_all(dest);
+        let ok = std::process::Command::new("cp")
+            .arg("-a")
+            .arg("--reflink=auto")
+            .arg(self.dir.join("target"))
+            .arg(dest)
+            .status()
+            .is_ok_and(|s| s.success());
+        if ok { Ok(()) } else { Err("cache-dir") }
+    }
+
+    /// Make the run's target the warm one if nobody is seeding right now; otherwise leave the
+    /// warm target as it was. Either way the run's copy is gone afterwards.
+    fn publish(&self, run_target: &Path, who: &str) {
+        if let Some(_ex) = self.flock(libc::LOCK_EX) {
+            let _ = std::fs::write(self.holder_path(), who);
+            let old = self.dir.join("target.old");
+            let _ = std::fs::remove_dir_all(&old);
+            if std::fs::rename(self.dir.join("target"), &old).is_ok() && std::fs::rename(run_target, self.dir.join("target")).is_err() {
+                let _ = std::fs::rename(&old, self.dir.join("target"));
+            }
+            let _ = std::fs::remove_dir_all(&old);
+            let _ = std::fs::remove_file(self.holder_path());
+        }
+        let _ = std::fs::remove_dir_all(run_target);
     }
 }
 
@@ -171,6 +221,7 @@ pub struct TierRun<'a> {
     pub results: &'a Path,
     pub key: &'a str,
     pub deadline: Option<Instant>,
+    pub log: &'a dyn Fn(&str),
 }
 
 impl TierRun<'_> {
@@ -180,11 +231,11 @@ impl TierRun<'_> {
         if self.cache.prepare().is_err() {
             return (Outcome::Fault("cache-dir"), 0);
         }
-        let _held = match self.cache.lock(self.deadline) {
-            Ok(f) => f,
-            Err(reason) => return (Outcome::Fault(reason), t0.elapsed().as_secs()),
-        };
         let cname = format!("testenv-foreign-{}-{name}", &self.key[..self.key.len().min(12)]);
+        let run_target = self.cache.run_target(&cname);
+        if let Err(reason) = self.cache.seed(&run_target, &cname, self.deadline, self.log) {
+            return (Outcome::Fault(reason), t0.elapsed().as_secs());
+        }
         let mut env: Vec<(String, String)> = tier.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         for (k, v) in self.cache.env() {
             if !tier.env.contains_key(k) {
@@ -197,7 +248,7 @@ impl TierRun<'_> {
             mount: self.tree.to_path_buf(),
             workdir: self.decl.workdir.clone(),
             env,
-            mounts: self.cache.mounts(),
+            mounts: self.cache.mounts(&run_target),
             argv: tier.argv.clone(),
             timeout: tier.timeout.or(self.decl.timeout).map(Duration::from_secs),
             deadline: self.deadline,
@@ -205,6 +256,11 @@ impl TierRun<'_> {
         };
         let rc = self.rt.run_once(&req).rc;
         self.rt.purge(&cname);
+        if rc == 0 {
+            self.cache.publish(&run_target, &cname);
+        } else {
+            let _ = std::fs::remove_dir_all(&run_target);
+        }
         let outcome = match rc {
             0 => Outcome::Pass,
             RC_DEADLINE => Outcome::Fault("deadline-suites"),

@@ -2076,24 +2076,33 @@ fn a_forge_repo_runs_its_declared_tier_in_its_own_image() {
     let run = w.root.path().join("run/foreign-cache");
     assert_eq!(calls[0].mounts.len(), 2);
     assert!(calls[0].mounts.iter().all(|(h, _)| h.starts_with(&run)), "{:?}", calls[0].mounts);
-    assert!(calls[0].mounts.iter().all(|(h, _)| h.is_dir()));
+    assert!(calls[0].mounts.iter().all(|(h, _)| !h.starts_with(run.join(w.repo.file_name().unwrap()).join("target"))), "a run builds in its own copy");
     assert!(rt.execs.lock().unwrap().is_empty(), "no spira fixture container is booted");
 }
 
 #[test]
-fn a_forge_repo_tier_waits_for_its_repos_lock_and_faults_at_the_deadline() {
+fn a_forge_repo_tier_runs_beside_another_reader_and_waits_only_for_a_swap() {
     let w = foreign_world("foreign-lock", Some(FOREIGN_DECL));
     let rt = runtime();
     let b = FakeBuilder::new(None);
     let cache = w.root.path().join("run/foreign-cache").join(w.repo.file_name().unwrap());
     fs::create_dir_all(&cache).unwrap();
+    {
+        use std::os::fd::AsRawFd;
+        let f = fs::OpenOptions::new().create(true).write(true).truncate(false).open(cache.join("lock")).unwrap();
+        assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) }, 0);
+        assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0, "{:?}", w.lines.lock().unwrap());
+        assert_eq!(rt.once_calls.lock().unwrap().len(), 1, "a shared holder does not block a run");
+    }
+    fs::write(cache.join("holder"), "testenv-foreign-swapper-lint").unwrap();
     let held = crate::worktree::try_lock(&cache.join("lock")).expect("lock is free");
     assert_eq!(w.run(&rt, &b, &["--deadline", "1", "topic"], "", &w.root), 2);
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=deadline-suites");
-    assert!(rt.once_calls.lock().unwrap().is_empty(), "no container runs while the lock is held");
+    assert!(w.lines.lock().unwrap().iter().any(|l| l.contains("held by testenv-foreign-swapper-lint")), "the wait names its holder");
+    assert_eq!(rt.once_calls.lock().unwrap().len(), 1, "no container runs while a swap holds the lock");
     drop(held);
     assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0);
-    assert_eq!(rt.once_calls.lock().unwrap().len(), 1);
+    assert_eq!(rt.once_calls.lock().unwrap().len(), 2);
 }
 
 #[test]
