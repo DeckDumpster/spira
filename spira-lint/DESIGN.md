@@ -1299,3 +1299,26 @@ the publish rehearsal.
 | bare binary | a command whose name is a release binary (a hyphenated crate, `[[bin]]` or `src/bin` name in the tree) on a line before the script puts its release `bin/` on PATH (a `PATH=…bin…` assignment) or sources `conf.sh`. A call inside a function body counts as ready when the file sets PATH up anywhere |
 | unsourced function | a command naming a function defined in some non-test shell file, but not in this file nor any file it sources (followed transitively, by basename, preferring the same directory) |
 | undefaulted read | `$SPIRA_TOML` / `$SPIRA_RELEASES` expanded without a non-empty default (`${VAR:-…}`) in an entry point |
+
+## Rule `time-only-wait`
+
+Mechanism for law-a-wait-names-what-it-waits-for.
+
+**Intent.** A wait gates on the thing it waits for, bounded by a cap; a bare time window is a
+guess about something observable.
+
+**Scope.** `*.sh` and `*.rs` outside `tests/`, `testlib/`, `perf-checks/`, `test-*` and `target/`;
+Rust test regions are skipped.
+
+**Violation.** Shell: a `sleep` outside any loop; a `for` loop of sleeps with no `break`/`return`/
+`exit`; a `while`/`until` poll with no cap keyword (deadline, tries, `SECONDS`, `-lt`, …) in its
+header or body. `while true`/`while :` ticks are not waits. Rust: a `sleep(…)` call outside a
+`loop`/`while`/`for`/`(0..n)` body, other than a `sleep(d)` pass-through or a function named
+`sleep*`/`wait`. Both: an `expires` stamp written into a string, or a `*drain|gate|hold|pause|
+stamp*_ttl` name. A line marked `# waits-on: <object>; cap <bound>` (on it or the line above) is exempt.
+
+**Allow list.** `spira-lint/time-only-wait-allow`, `<count> <path> <converting-bead>`, shrink-only;
+a count above the file's findings is itself a finding. Inventory: `docs/time-only-waits.md`.
+
+**Known limits.** Keyword and brace heuristics: a cap keyword near an unrelated poll passes, and a
+fixed backoff inside a loop is not flagged.

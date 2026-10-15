@@ -1,0 +1,17 @@
+# time-only-wait: files that wait or gate on the clock alone and predate the rule, as
+# `<count> <path> <converting-bead>`. The inventory with what each really waits for is
+# docs/time-only-waits.md.
+#
+# SHRINK-ONLY. A count goes down as the wait is converted to a named, capped wait (or the line
+# carries `# waits-on: <object>; cap <bound>`); nothing is raised for a NEW wait.
+2 auron/src/gather.rs sp-qse6cn
+2 auron/src/main.rs sp-qse6cn
+2 sentinel/src/cfg.rs sp-qse6cn
+2 sentinel/src/summon.rs sp-qse6cn
+4 concierge.sh sp-4gcxuz.2
+2 release/src/acceptance/phases.rs sp-4gcxuz.3
+1 release/src/activate.rs sp-4gcxuz.4
+1 release/src/install.rs sp-4gcxuz.4
+1 round-vm/src/pool.rs sp-4gcxuz.5
+1 spira/inbox-append.sh sp-4gcxuz.6
+2 store-persist/probe/probe.sh sp-4gcxuz.7
