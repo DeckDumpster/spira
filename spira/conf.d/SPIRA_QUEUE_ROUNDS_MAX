@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=round
+DOC=HOW MANY ROUNDS MAY BE OPEN AT ONCE FOR ONE queue.local REPOSITORY, each with members no other open round holds
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY ROUNDS MAY BE OPEN AT ONCE FOR ONE queue.local REPOSITORY, each with members no
+    # other open round holds. Landing stays serial. Each round certifies on its own instance,
+    # so this is bounded by the EC2 vCPU quota, not by the host.
+    : "${SPIRA_QUEUE_ROUNDS_MAX:=2}"
+SPIRA_CONF_DEFAULT_EOF

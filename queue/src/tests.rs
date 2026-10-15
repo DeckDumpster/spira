@@ -40,6 +40,9 @@ struct FGit {
     /// needle -> suites that reference it.
     greps: RefCell<BTreeMap<String, Vec<String>>>,
     calls: RefCell<Vec<String>>,
+    /// The base the last worktree was cut at, and whether a merge then names it in the head it makes.
+    cut_on: RefCell<String>,
+    heads_name_their_base: Cell<bool>,
 }
 
 impl FGit {
@@ -139,6 +142,7 @@ impl Git for FGit {
     fn worktree_prune(&self, _: &Path) {}
     fn worktree_add_detached(&self, _: &Path, p: &Path, sha: &str) -> bool {
         self.refs.borrow_mut().insert(format!("{}:HEAD", p.display()), sha.into());
+        *self.cut_on.borrow_mut() = sha.into();
         true
     }
     fn worktree_remove(&self, _: &Path, _: &Path) {}
@@ -147,7 +151,10 @@ impl Git for FGit {
         if self.merge_fail.borrow().contains(tip) {
             return false;
         }
-        self.refs.borrow_mut().insert("HEAD".into(), format!("merged-{tip}"));
+        let base = self.cut_on.borrow().clone();
+        let head = if self.heads_name_their_base.get() && base != "b0" { format!("merged-{tip}@{base}") } else { format!("merged-{tip}") };
+        self.anc.borrow_mut().insert((base, head.clone()));
+        self.refs.borrow_mut().insert("HEAD".into(), head);
         let _ = wt;
         true
     }
@@ -648,6 +655,7 @@ impl Lc for FLc {
                 "PassGreen" => ("GREEN", view.2, ""),
                 "PassRed" | "PassIncomplete" | "PassPreempted" => ("ATTRIBUTING", view.2, ""),
                 "PassRebuilt" => ("OPEN", view.2, ""),
+                "" if kind == "\"BaseMoved\"" => ("REBUILDING", view.2, ""),
                 _ => (view.0.as_str(), view.2, view.3.as_str()),
             };
             *view = (state.to_string(), view.1 + 1, pass, phase.to_string());
@@ -853,6 +861,7 @@ impl T {
             git_email: "spira@spira.invalid".into(),
             mailbox: "concierge".into(),
             round_wall_secs: 900,
+            rounds_max: 1,
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
         let landref = match mode {

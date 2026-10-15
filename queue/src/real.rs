@@ -390,6 +390,7 @@ impl Lib for RealLib {
         let git_email = spira_config::process::cfg("SPIRA_GIT_EMAIL")?;
         let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
         let round_wall_secs = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
+        let rounds_max = spira_config::process::cfg_parse::<usize>("SPIRA_QUEUE_ROUNDS_MAX")?;
         let s = Settings {
             home: PathBuf::from(g("home")),
             run: PathBuf::from(g("run")),
@@ -425,6 +426,7 @@ impl Lib for RealLib {
             git_email,
             mailbox,
             round_wall_secs,
+            rounds_max,
         };
         let path = reg.root(&name);
         let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());

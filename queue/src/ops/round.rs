@@ -332,22 +332,64 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
     }
 }
 
-pub(super) fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
-    match records::read_kv(&c.queue_file(RECORD)) {
-        Ok(Some(kv)) if kv.get("batch_id") == Some(batch) => Ok(kv),
-        Ok(Some(kv)) => {
-            w.err(format!("queue.sh {label}: the open round for {} is {}, not {batch}", c.r.name, kv.get("batch_id").unwrap_or("?")));
-            Err(FAIL)
-        }
-        _ => {
-            w.err(format!("queue.sh {label}: no open round for {}", c.r.name));
-            Err(FAIL)
+const EXTRA_PREFIX: &str = "round.";
+
+/// Every open round of the repo, oldest first. The oldest sits in `round`, which the tools
+/// outside the queue read; any other is `round.<batch>`.
+pub(crate) fn open_records(c: &Ctx) -> Vec<(PathBuf, Kv)> {
+    let mut extras: Vec<(u64, PathBuf, Kv)> = fs::read_dir(c.queue_file(""))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(EXTRA_PREFIX)))
+        .filter_map(|e| records::read_kv(&e.path()).ok().flatten().map(|kv| (kv.get("opened").and_then(|v| v.parse().ok()).unwrap_or(0), e.path(), kv)))
+        .collect();
+    extras.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    let primary = c.queue_file(RECORD);
+    records::read_kv(&primary).ok().flatten().map(|kv| (primary, kv)).into_iter().chain(extras.into_iter().map(|(_, p, kv)| (p, kv))).collect()
+}
+
+pub(super) fn record_of(c: &Ctx, batch: &str) -> Option<(PathBuf, Kv)> {
+    open_records(c).into_iter().find(|(_, kv)| kv.get("batch_id") == Some(batch))
+}
+
+pub(super) fn save_record(c: &Ctx, kv: &Kv) -> Result<(), String> {
+    let batch = kv.get("batch_id").unwrap_or("");
+    let path = match record_of(c, batch) {
+        Some((p, _)) => p,
+        None if c.queue_file(RECORD).exists() => c.queue_file(&format!("{EXTRA_PREFIX}{batch}")),
+        None => c.queue_file(RECORD),
+    };
+    write_atomic(&path, &kv.render())
+}
+
+/// Removes the round's record; the oldest round left takes over `round`.
+pub(super) fn drop_record(c: &Ctx, batch: &str) {
+    if let Some((p, _)) = record_of(c, batch) {
+        let _ = fs::remove_file(p);
+    }
+    if !c.queue_file(RECORD).exists() {
+        if let Some((p, _)) = open_records(c).into_iter().next() {
+            let _ = fs::rename(p, c.queue_file(RECORD));
         }
     }
 }
 
+pub(super) fn load(w: &World, label: &str, c: &Ctx, batch: &str) -> Result<Kv, i32> {
+    if let Some((_, kv)) = record_of(c, batch) {
+        return Ok(kv);
+    }
+    let open: Vec<String> = open_records(c).iter().map(|(_, kv)| kv.get("batch_id").unwrap_or("?").to_string()).collect();
+    match open.as_slice() {
+        [] => w.err(format!("queue.sh {label}: no open round for {}", c.r.name)),
+        [one] => w.err(format!("queue.sh {label}: the open round for {} is {one}, not {batch}", c.r.name)),
+        many => w.err(format!("queue.sh {label}: the open rounds for {} are {}, not {batch}", c.r.name, many.join(" "))),
+    }
+    Err(FAIL)
+}
+
 fn save(w: &World, label: &str, c: &Ctx, kv: &Kv) -> Result<(), i32> {
-    write_atomic(&c.queue_file(RECORD), &kv.render()).map_err(|e| {
+    save_record(c, kv).map_err(|e| {
         w.err(format!("queue.sh {label}: cannot write the round record: {e}"));
         FAIL
     })
@@ -512,14 +554,22 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
         return FAIL;
     }
     let Ok(_g) = lock(w, label, &c) else { return FAIL };
-    let record = c.queue_file(RECORD);
-    if let Ok(Some(kv)) = records::read_kv(&record) {
-        w.err(format!(
-            "queue.sh {label}: a round is already open for {repo_name} ({}, phase {}) — land or abandon it first",
-            kv.get("batch_id").unwrap_or("?"),
-            phase_of(w, kv.get("batch_id").unwrap_or(""))
-        ));
+    let open_now = open_records(&c);
+    let limit = c.s.rounds_max.max(1);
+    if open_now.len() >= limit {
+        let held: Vec<String> = open_now.iter().map(|(_, kv)| format!("{} (phase {})", kv.get("batch_id").unwrap_or("?"), phase_of(w, kv.get("batch_id").unwrap_or("")))).collect();
+        w.err(if limit == 1 {
+            format!("queue.sh {label}: a round is already open for {repo_name} ({}) — land or abandon it first", held.join(", "))
+        } else {
+            format!("queue.sh {label}: {} rounds are already open for {repo_name} (limit {limit}): {} — land or abandon one first", open_now.len(), held.join(", "))
+        });
         return FAIL;
+    }
+    for m in &wanted {
+        if let Some((_, kv)) = open_now.iter().find(|(_, kv)| kv.members().iter().any(|h| h.id == m.id)) {
+            w.err(format!("queue.sh {label}: {} is already a member of open round {} — rounds hold disjoint members; refused", m.id, kv.get("batch_id").unwrap_or("?")));
+            return FAIL;
+        }
     }
     let Some(base) = c.r.landref.clone() else {
         w.err(format!("queue.sh {label}: cannot resolve landing ref for {repo_name}"));
@@ -531,7 +581,9 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
     };
     if let Ok(Some(orphan)) = records::read_kv(&c.queue_file(stage::STAGED)) {
         let parent = orphan.get("parent").unwrap_or("?").to_string();
-        stage::discard_behind(w, &c, &path, &parent, "round open cut a round of its own: the round it followed is gone");
+        if open_now.iter().all(|(_, kv)| kv.get("batch_id") != Some(parent.as_str())) {
+            stage::discard_behind(w, &c, &path, &parent, "round open cut a round of its own: the round it followed is gone");
+        }
     }
 
     let mut skips: Vec<String> = Vec::new();
@@ -562,7 +614,11 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
         }
     }
 
-    let wt = worktree.map(Path::to_path_buf).unwrap_or_else(|| c.s.run.join("worktree").join(format!(".round-{repo_name}")));
+    let batch = name.map(str::to_string).unwrap_or_else(|| format!("{repo_name}-{}", w.clock.stamp()));
+    let wt = worktree.map(Path::to_path_buf).unwrap_or_else(|| {
+        let leaf = if open_now.is_empty() { format!(".round-{repo_name}") } else { format!(".round-{batch}") };
+        c.s.run.join("worktree").join(leaf)
+    });
     w.git.worktree_prune(&path);
     w.git.worktree_remove(&path, &wt);
     if let Some(p) = wt.parent() {
@@ -627,7 +683,6 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
         return FAIL;
     }
     let head = w.git.rev_parse(&wt, "HEAD").unwrap_or_default();
-    let batch = name.map(str::to_string).unwrap_or_else(|| format!("{repo_name}-{}", w.clock.stamp()));
     let cut_members: Vec<Member> = merged.iter().map(|m| Member { id: m.id.clone(), tip: certified.get(&m.id).cloned().unwrap_or_else(|| m.tip.clone()) }).collect();
     if let Err((rc, out)) = super::batch::cut_settled(w, &batch, &repo_name, &head, &base_sha, &csv(&cut_members), LC_ACTOR) {
         w.err(format!("queue.sh {label}: spira-lc cut refused for {batch} (rc={rc}): {out}"));
@@ -666,14 +721,14 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
 fn status(w: &World, repo: Option<&str>) -> i32 {
     let label = "round status";
     let Ok(c) = resolve(w, label, repo) else { return FAIL };
-    let kv = match records::read_kv(&c.queue_file(RECORD)) {
-        Ok(Some(kv)) => kv,
-        _ => {
-            w.out(format!("round=none\nrepo={}", c.r.name));
-            return OK;
-        }
+    let open = open_records(&c);
+    let Some((_, kv)) = open.first() else {
+        w.out(format!("round=none\nrepo={}", c.r.name));
+        return OK;
     };
-    let since = |k: &str| kv.get(k).and_then(|v| v.parse::<u64>().ok()).map_or(0, |t| w.clock.now().saturating_sub(t));
+    let since = |kv: &Kv, k: &str| kv.get(k).and_then(|v| v.parse::<u64>().ok()).map_or(0, |t| w.clock.now().saturating_sub(t));
+    let batches: Vec<&str> = open.iter().map(|(_, kv)| kv.get("batch_id").unwrap_or("")).collect();
+    w.out(format!("rounds={}\nopen_batches={}", open.len(), batches.join(" ")));
     w.out("round=open");
     w.out(format!("phase={}", phase_of(w, kv.get("batch_id").unwrap_or(""))));
     for k in ["batch_id", "repo", "head", "base", "members"] {
@@ -682,7 +737,18 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {
         w.out(format!("red={red}"));
     }
-    w.out(format!("wall_secs={}", since("opened")));
+    w.out(format!("wall_secs={}", since(kv, "opened")));
+    for (i, (_, kv)) in open.iter().enumerate().skip(1) {
+        let n = i + 1;
+        w.out(format!("round{n}=open\nround{n}_phase={}", phase_of(w, kv.get("batch_id").unwrap_or(""))));
+        for k in ["batch_id", "repo", "head", "base", "members"] {
+            w.out(format!("round{n}_{k}={}", kv.get(k).unwrap_or("")));
+        }
+        if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {
+            w.out(format!("round{n}_red={red}"));
+        }
+        w.out(format!("round{n}_wall_secs={}", since(kv, "opened")));
+    }
     if let Ok(Some(st)) = records::read_kv(&c.queue_file(stage::STAGED)) {
         for (k, v) in [("staged_batch", "batch_id"), ("staged_phase", "phase"), ("staged_head", "head"), ("staged_members", "members")] {
             w.out(format!("{k}={}", st.get(v).unwrap_or("")));
@@ -1047,7 +1113,7 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         if let Err((rc, out)) = lc_abandon(w, batch, LC_ACTOR, &emptied) {
             w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for the emptied round {batch} (rc={rc}): {out}"));
         }
-        let _ = fs::remove_file(c.queue_file(RECORD));
+        drop_record(&c, batch);
         w.git.worktree_remove(&path, &wt);
         finish(&c, batch, &format!("emptied: {id} ejected, no member remains"));
         stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was emptied"));
@@ -1181,13 +1247,13 @@ fn preempt(w: &World, batch: &str, repo: Option<&str>, eject_arg: &str, reason: 
     w.out(format!("queue.sh {label}: pass of round {batch} stopped at {done}/{total} suites, red so far: {}", if reds.is_empty() { "none".to_string() } else { reds.join(",") }));
 
     for id in &ids {
-        match records::read_kv(&c.queue_file(RECORD)) {
-            Ok(Some(kv)) if kv.get("batch_id") == Some(batch) && kv.members().iter().any(|m| &m.id == id) => {}
-            Ok(Some(kv)) if kv.get("batch_id") == Some(batch) => {
+        match record_of(&c, batch).map(|(_, kv)| kv) {
+            Some(kv) if kv.members().iter().any(|m| &m.id == id) => {}
+            Some(_) => {
                 w.out(format!("queue.sh {label}: {id} already left round {batch} with an earlier eject"));
                 continue;
             }
-            _ => break,
+            None => break,
         }
         let rc = eject(w, batch, id, repo, &Text::Arg(reason.clone()), suites, !suites.is_empty(), false, true);
         if rc != OK {
@@ -1196,7 +1262,7 @@ fn preempt(w: &World, batch: &str, repo: Option<&str>, eject_arg: &str, reason: 
         }
     }
 
-    let Ok(Some(kv)) = records::read_kv(&c.queue_file(RECORD)) else {
+    let Some((_, kv)) = record_of(&c, batch) else {
         w.out(format!("queue.sh {label}: round {batch} has no member left; no pass to start"));
         return OK;
     };
@@ -1250,11 +1316,14 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     let Ok(_g) = lock(w, label, &c) else { return FAIL };
-    let Ok(kv) = load(w, label, &c, batch) else { return FAIL };
+    let Ok(mut kv) = load(w, label, &c, batch) else { return FAIL };
     let phase = phase_of(w, batch);
     if phase != "green" {
         w.err(format!("queue.sh {label}: round {batch} is {phase}, not green — certify it first"));
         return FAIL;
+    }
+    if let Some(rc) = remerge_if_moved(w, label, &c, &path, batch, &mut kv) {
+        return rc;
     }
     let head = kv.get("head").unwrap_or("").to_string();
     let members = kv.members();
@@ -1274,7 +1343,7 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
             false
         }
     };
-    let _ = fs::remove_file(c.queue_file(RECORD));
+    drop_record(&c, batch);
     w.git.worktree_remove(&path, &wt);
     finish(&c, batch, &format!("landed {head} members={}", csv(&members)));
     landing_log(&c.s.run, &format!("QUEUE ROUND-LAND {} repo={} batch={batch} head={head} members={}", w.clock.now(), c.r.name, csv(&members)));
@@ -1284,6 +1353,62 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         return if rc == OK { FAIL } else { rc };
     }
     rc
+}
+
+/// A round is cut from the landing ref and lands only on top of it. When an earlier round has
+/// landed since, this one is re-merged onto the new ref: with no file in common with what landed
+/// it lands on its own evidence, otherwise it goes back to certify on the merged tree. `None`
+/// means the round may land now (its kv holds the head to land).
+fn remerge_if_moved(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, kv: &mut Kv) -> Option<i32> {
+    let base = c.r.landref.clone().unwrap_or_default();
+    let base_now = w.git.rev_parse(path, &base)?;
+    let head = kv.get("head").unwrap_or("").to_string();
+    if w.git.is_ancestor(path, &base_now, &head) {
+        return None;
+    }
+    let old_base = kv.get("base").unwrap_or("").to_string();
+    let wt = worktree_of(kv);
+    let members = kv.members();
+    let files = |a: &str, b: &str| w.git.numstat(path, a, b).map(|v| v.into_iter().map(|(f, _, _)| f).collect::<std::collections::BTreeSet<String>>());
+    let (Ok(landed), Ok(mine)) = (files(&old_base, &base_now), files(&old_base, &head)) else {
+        w.err(format!("queue.sh {label}: cannot list the files of round {batch} or of what landed since it was cut — refused, nothing changed"));
+        return Some(FAIL);
+    };
+    let shared: Vec<&String> = landed.intersection(&mine).collect();
+    let new_head = match assemble(w, c, path, &wt, &base_now, &members, &head) {
+        Ok(h) => h,
+        Err(why) => {
+            w.err(format!("queue.sh {label}: round {batch} no longer merges onto {base} ({base_now}): {why} — nothing changed; eject the member and certify again"));
+            return Some(FAIL);
+        }
+    };
+    set(kv, "head", &new_head);
+    set(kv, "base", &base_now);
+    kv.remove("red");
+    if shared.is_empty() {
+        if save(w, label, c, kv).is_err() {
+            return Some(FAIL);
+        }
+        landing_log(&c.s.run, &format!("QUEUE ROUND-REMERGE {} repo={} batch={batch} head={new_head} base={base_now} shared=none", w.clock.now(), c.r.name));
+        w.out(format!("queue.sh {label}: round {batch} re-merged onto {base} ({base_now}) with no file in common with what landed — landing on its own evidence"));
+        let rc = finish_green(w, label, c, path, batch, &new_head, &actor(w), "remerge");
+        return (rc != OK).then_some(rc);
+    }
+    let moved = lc_cas(w, batch, |s, v| w.lc.batch_event(batch, s, v, LC_ACTOR, "\"BaseMoved\""));
+    if let Err((rc, out)) = moved {
+        w.err(format!("queue.sh {label}: spira-lc refused BaseMoved for {batch} (rc={rc}): {out} — the round worktree was rebuilt at {new_head}; certify it again"));
+    }
+    if save(w, label, c, kv).is_err() {
+        return Some(FAIL);
+    }
+    mark_running(c, batch);
+    landing_log(&c.s.run, &format!("QUEUE ROUND-REMERGE {} repo={} batch={batch} head={new_head} base={base_now} shared={}", w.clock.now(), c.r.name, shared.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(",")));
+    w.err(format!(
+        "queue.sh {label}: round {batch} was cut before {base} moved to {base_now} and shares {} file(s) with what landed ({}) — re-merged to {new_head}; run `queue round certify {batch}`, it is not landed",
+        shared.len(),
+        shared.iter().take(5).map(|f| f.as_str()).collect::<Vec<_>>().join(" ")
+    ));
+    Some(FAIL)
 }
 
 fn requeue_stranded(w: &World, label: &str, id: &str, tip: &str) -> Option<String> {
@@ -1329,7 +1454,7 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
         }
         w.out(format!("queue.sh {label}: {}: {state}", m.id));
     }
-    let _ = fs::remove_file(c.queue_file(RECORD));
+    drop_record(&c, batch);
     w.git.worktree_remove(&path, &worktree_of(&kv));
     finish(&c, batch, &format!("abandoned: {}", one_line(&reason)));
     stage::discard_behind(w, &c, &path, batch, &format!("round {batch} was abandoned: {}", one_line(&reason)));
