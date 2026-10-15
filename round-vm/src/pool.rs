@@ -1773,6 +1773,7 @@ mod tests {
     fn a_held_lease_whose_pull_completed_is_gone_at_the_next_pool_operation() {
         let d = TempDir::new();
         let (fp, pl) = (FakeProvider::new(), pool(&d, 1));
+        fp.plant("501", "round-501");
         pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "501".into(), addr: "x".into() }, owner: None, since: now(), holder: None, held: true, kept_at: now(), pulling: None, run: Some("r-auto-7".into()), pulled: false })).unwrap();
         pl.reap_dead_holders(&attempt(&fp));
         assert_eq!(read_state(&pl.state_file()).unwrap().leases.len(), 1, "a held lease whose results are wanted stays");
@@ -1785,6 +1786,7 @@ mod tests {
     fn a_held_lease_never_pulled_ends_at_the_bound_with_an_event() {
         let d = TempDir::new();
         let (fp, pl) = (FakeProvider::new(), pool(&d, 1));
+        fp.plant("502", "round-502");
         let old = now() - crate::schema::HELD_BOUND_SECS - 5;
         pl.with_state(|s| s.leases.push(Lease { vm: Vm { handle: "502".into(), addr: "x".into() }, owner: None, since: old, holder: None, held: true, kept_at: old, pulling: None, run: Some("r-auto-8".into()), pulled: false })).unwrap();
         pl.reap_dead_holders(&attempt(&fp));
