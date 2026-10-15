@@ -21,6 +21,15 @@ DOLT="${DOLT:-dolt}"
 
 _cli() { local port="$1" db="$2"; shift 2; "$DOLT" --host 127.0.0.1 --port "$port" -u root -p "" --no-tls --use-db "$db" sql "$@"; }
 
+_await_exit() {
+    local pid="$1" tries="$2" step="$3"
+    while kill -0 "$pid" 2>/dev/null; do
+        tries=$((tries - 1))
+        [ "$tries" -gt 0 ] || { echo "pid $pid still running after the wait cap" >&2; return 1; }
+        sleep "$step"
+    done
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
 up)
@@ -46,9 +55,9 @@ YAML
     done
     echo "never came up: $(tail -5 "$dir/server.log")" >&2; exit 1 ;;
 down)
-    pid="$(cat "$1/server.pid")"; kill "$pid" 2>/dev/null; while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done ;;
+    pid="$(cat "$1/server.pid")"; kill "$pid" 2>/dev/null; _await_exit "$pid" 100 0.1 ;;
 kill9)
-    pid="$(cat "$1/server.pid")"; kill -9 "$pid" 2>/dev/null; while kill -0 "$pid" 2>/dev/null; do sleep 0.05; done ;;
+    pid="$(cat "$1/server.pid")"; kill -9 "$pid" 2>/dev/null; _await_exit "$pid" 200 0.05 ;;
 seed)
     dir="$1" db="$2"
     mkdir -p "$dir/data/$db" && ( cd "$dir/data/$db" && "$DOLT" init --name probe --email probe@localhost >/dev/null ) || exit 1 ;;
