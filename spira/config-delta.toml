@@ -104,3 +104,5 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.statute_guards" = ""
 "spira.round_vm_ec2_launch_window" = 3600
 "spira.round_max_open" = 1
+"spira.no_progress_breaker_claims" = 4
+"spira.no_progress_breaker_window_minutes" = 180

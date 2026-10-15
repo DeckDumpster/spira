@@ -241,6 +241,7 @@ fn hold_event_is_byte_identical_to_the_shell_librarys() {
     go(&mut f, "hold", &["sp-j", "poison", "seed \"quoted\"", "test"]);
     go(&mut f, "unhold", &["sp-j", "poison"]);
     go(&mut f, "hold", &["sp-j", "wait", ""]);
+    go(&mut f, "hold", &["sp-j", "wait", "snooze-until:99 no-progress: stuck"]);
     let kinds: Vec<&str> = f.events.iter().map(|e| e.5.as_str()).collect();
     assert_eq!(
         kinds,
@@ -248,6 +249,7 @@ fn hold_event_is_byte_identical_to_the_shell_librarys() {
             r#"{"Hold":{"kind":"Poison","cause":"attempts-exhausted","detail":"seed \"quoted\""}}"#,
             r#"{"Unhold":{"kind":"Poison"}}"#,
             r#"{"Hold":{"kind":"Wait","cause":"unlanded-blocker","detail":""}}"#,
+            r#"{"Hold":{"kind":"Wait","cause":"no-progress-backoff","detail":"snooze-until:99 no-progress: stuck"}}"#,
         ]
     );
     // CAS from the same read; default actor "sentinel", as lc.sh.

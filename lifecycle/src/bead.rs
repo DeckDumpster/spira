@@ -2019,10 +2019,11 @@ mod tests {
     }
 
     const ALL_DROP_REASONS: [DropReason; 2] = [DropReason::ClosedNoBranch, DropReason::Unwanted];
-    const ALL_HOLD_CAUSES: [HoldCause; 5] = [
+    const ALL_HOLD_CAUSES: [HoldCause; 6] = [
         HoldCause::AttemptsExhausted,
         HoldCause::OperatorQuestion,
         HoldCause::UnlandedBlocker,
+        HoldCause::NoProgressBackoff,
         HoldCause::SupersedeRequest,
         HoldCause::ManualHold,
     ];
