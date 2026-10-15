@@ -102,6 +102,8 @@ fn ops_cfg(run: &str) -> Config {
         run: run.to_string(),
         instance: "test".to_string(),
         systemctl: "systemctl".to_string(),
+        duckdb: "duckdb".to_string(),
+        journalctl: "journalctl".to_string(),
     }
 }
 
@@ -207,4 +209,191 @@ async fn the_stuck_page_leads_with_the_bead_past_its_p95_and_a_row_opens_its_tim
     assert!(detail.contains("refused: no-edge"));
     assert_eq!(get(addr, "/stuck/sp-nope1").await.0, 404);
     assert_eq!(get(addr, "/stuck/a%20b").await.0, 400);
+}
+
+// ── /units ───────────────────────────────────────────────────────────────────
+
+fn now_s() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
+}
+
+fn exec_row(unit: &str, ago_s: i64, result: &str, duration_ms: i64, inv: &str) -> String {
+    format!(r#"{{"unit":"{unit}","t":{},"result":"{result}","duration_ms":{duration_ms},"invocation_id":"{inv}"}}"#, now_s() - ago_s)
+}
+
+const SHOW: &str = "Id=ok.service\nActiveState=inactive\nSubState=dead\nUnitFileState=static\n\n\
+Id=ok.timer\nActiveState=active\nSubState=waiting\nUnitFileState=enabled\nUnit=ok.service\nNextElapseUSecRealtime=soon\nLastTriggerUSec=just now\n\n\
+Id=dead.service\nActiveState=inactive\nSubState=dead\nUnitFileState=static\n\n\
+Id=dead.timer\nActiveState=active\nSubState=waiting\nUnitFileState=enabled\nUnit=dead.service\nNextElapseUSecRealtime=n/a\nLastTriggerUSec=15h ago\n\n\
+Id=never.service\nActiveState=inactive\nSubState=dead\nUnitFileState=static\n\n\
+Id=flaky.service\nActiveState=failed\nSubState=failed\nUnitFileState=static\n\n\
+Id=dur.service\nActiveState=inactive\nSubState=dead\nUnitFileState=static\n";
+
+struct UnitsFixture {
+    dir: testkit::TempDir,
+    cfg: Config,
+}
+
+fn units_fixture(rows: &[String]) -> UnitsFixture {
+    let dir = scratch("units");
+    let rows_file = dir.join("rows.json");
+    std::fs::write(&rows_file, format!("[{}]", rows.join(","))).unwrap();
+    let show_file = dir.join("show.txt");
+    std::fs::write(&show_file, SHOW).unwrap();
+    let run = dir.join("run");
+    std::fs::create_dir_all(run.join("tsd")).unwrap();
+    std::fs::write(run.join("tsd").join("unit-run.jsonl"), b"{}\n").unwrap();
+    let systemctl = dir.join("systemctl");
+    script(
+        &systemctl,
+        &format!(
+            "#!/bin/sh\ncase \"$2\" in\nlist-unit-files) printf 'ok.service static -\\nok.timer enabled -\\ndead.service static -\\ndead.timer enabled -\\nnever.service static -\\nflaky.service static -\\ndur.service static -\\ntmpl@.service static -\\n';;\nshow) cat {};;\nesac\n",
+            show_file.display()
+        ),
+    );
+    let duckdb = dir.join("duckdb");
+    script(&duckdb, &format!("#!/bin/sh\ncat {}\n", rows_file.display()));
+    let journalctl = dir.join("journalctl");
+    script(&journalctl, "#!/bin/sh\ncase \"$*\" in *inv-bad*) printf 'starting\\nboom: it broke\\n';; esac\n");
+    let mut cfg = ops_cfg(&run.to_string_lossy());
+    cfg.systemctl = systemctl.to_string_lossy().into_owned();
+    cfg.duckdb = duckdb.to_string_lossy().into_owned();
+    cfg.journalctl = journalctl.to_string_lossy().into_owned();
+    UnitsFixture { dir, cfg }
+}
+
+fn fixture_rows() -> Vec<String> {
+    let mut rows = Vec::new();
+    for h in 0..24 {
+        rows.push(exec_row("ok.service", 600 + h * 3600, "success", 800, &format!("ok-{h}")));
+    }
+    for h in 15..40 {
+        rows.push(exec_row("dead.service", h * 3600, "success", 800, &format!("dead-{h}")));
+    }
+    for i in 1..=10 {
+        rows.push(exec_row("dur.service", i * 60, "success", i * 100, &format!("dur-{i}")));
+    }
+    for (i, r) in ["success", "success", "exit-code", "success"].iter().enumerate() {
+        let inv = if *r == "success" { format!("flaky-{i}") } else { "inv-bad".into() };
+        rows.push(exec_row("flaky.service", 3600 + i as i64 * 600, r, 100, &inv));
+    }
+    rows
+}
+
+async fn units_json(addr: SocketAddr) -> Value {
+    let (code, body) = get(addr, "/api/units").await;
+    assert_eq!(code, 200, "{body}");
+    serde_json::from_str(&body).unwrap_or_else(|e| panic!("not JSON ({e}): {body}"))
+}
+
+fn unit<'a>(v: &'a Value, name: &str) -> &'a Value {
+    v["units"].as_array().unwrap().iter().find(|u| u["unit"] == name).unwrap_or_else(|| panic!("{name} missing from {v}"))
+}
+
+#[tokio::test]
+async fn units_lists_every_unit_with_rates_percentiles_and_the_stale_flag() {
+    let fx = units_fixture(&fixture_rows());
+    let addr = spawn(fx.cfg.clone()).await;
+    let v = units_json(addr).await;
+    assert_eq!(v["errors"].as_array().unwrap().len(), 0, "{v}");
+
+    let names: Vec<&str> = v["units"].as_array().unwrap().iter().map(|u| u["unit"].as_str().unwrap()).collect();
+    for n in ["ok.service", "dead.service", "never.service", "flaky.service", "dur.service"] {
+        assert!(names.contains(&n), "{n} in {names:?}");
+    }
+    assert!(!names.iter().any(|n| n.ends_with(".timer") || n.contains('@')), "timers fold into their service, templates are not units: {names:?}");
+
+    let never = unit(&v, "never.service");
+    assert_eq!((never["runs_24h"].as_i64(), never["runs_7d"].as_i64()), (Some(0), Some(0)));
+    assert!(never["success_rate_7d"].is_null() && never["last_failure"].is_null() && never["strip"].as_array().unwrap().is_empty());
+
+    let dur = unit(&v, "dur.service");
+    assert_eq!((dur["p50_ms"].as_i64(), dur["p95_ms"].as_i64()), (Some(500), Some(1000)));
+
+    let flaky = unit(&v, "flaky.service");
+    assert_eq!(flaky["runs_24h"], 4);
+    assert_eq!(flaky["success_rate_24h"].as_f64(), Some(0.75));
+    assert_eq!(flaky["state"]["active"], "failed");
+    assert_eq!(flaky["last_failure"]["result"], "exit-code");
+    assert_eq!(flaky["last_failure"]["log"][1], "boom: it broke");
+    assert_eq!(flaky["strip"].as_array().unwrap().iter().filter(|r| *r != "success").count(), 1);
+
+    let ok = unit(&v, "ok.service");
+    assert_eq!(ok["stale"], false, "a timer whose last success is ten minutes old is not stale");
+    assert_eq!(ok["timer"]["active"], "active");
+    assert_eq!(ok["runs_24h"], 24);
+
+    let dead = unit(&v, "dead.service");
+    assert_eq!(dead["stale"], true, "last success 15 h ago on an hourly timer");
+    assert_eq!(dead["interval_s"], 3600);
+    assert_eq!(v["units"][0]["unit"], "dead.service", "stale units sort first");
+}
+
+#[tokio::test]
+async fn units_page_renders_the_same_rows_and_is_cached() {
+    let fx = units_fixture(&fixture_rows());
+    let addr = spawn(fx.cfg.clone()).await;
+    let (code, html) = get(addr, "/units").await;
+    assert_eq!(code, 200);
+    for n in ["ok.service", "dead.service", "never.service", "flaky.service", "dur.service"] {
+        assert!(html.contains(n), "{n} in the page");
+    }
+    assert!(html.contains("stale — last success") && html.contains("boom: it broke"), "{html}");
+
+    let swapped = fx.dir.join("duckdb");
+    script(&swapped, "#!/bin/sh\necho '[]'\n");
+    let v = units_json(addr).await;
+    assert_eq!(unit(&v, "dur.service")["runs_7d"], 10, "inside the cache window the held snapshot answers");
+}
+
+#[tokio::test]
+async fn units_without_a_unit_run_file_still_lists_the_units_and_names_nothing_missing() {
+    let fx = units_fixture(&[]);
+    std::fs::remove_file(std::path::Path::new(&fx.cfg.run).join("tsd").join("unit-run.jsonl")).unwrap();
+    let addr = spawn(fx.cfg.clone()).await;
+    let v = units_json(addr).await;
+    assert_eq!(v["errors"].as_array().unwrap().len(), 0);
+    assert_eq!(unit(&v, "never.service")["runs_7d"], 0);
+    assert_eq!(unit(&v, "dead.service")["stale"], true, "an active timer with no success at all is flagged");
+}
+
+#[tokio::test]
+async fn units_reports_a_failing_source_instead_of_hiding_the_rows() {
+    let mut fx = units_fixture(&fixture_rows());
+    fx.cfg.duckdb = "/nonexistent/duckdb".into();
+    let addr = spawn(fx.cfg.clone()).await;
+    let v = units_json(addr).await;
+    assert!(v["errors"][0].as_str().unwrap().contains("unit-run"), "{v}");
+    assert!(unit(&v, "never.service")["runs_7d"] == 0);
+}
+
+#[tokio::test]
+async fn units_reads_the_real_unit_run_file_through_duckdb() {
+    if std::process::Command::new("duckdb").arg("--version").output().is_err() {
+        eprintln!("duckdb is not on PATH: the real-query check runs in the test container");
+        return;
+    }
+    let mut fx = units_fixture(&[]);
+    let run = std::path::PathBuf::from(&fx.cfg.run);
+    let line = |unit: &str, ago: i64, result: &str, ms: i64, inv: &str| {
+        format!(r#"{{"family":"unit-run","unit":"{unit}","ts":"{}","result":"{result}","duration_ms":{ms},"invocation_id":"{inv}"}}"#, tsd::iso_utc((now_s() - ago) as u64))
+    };
+    let mut text = String::new();
+    for i in 1..=10 {
+        text.push_str(&line("dur.service", i * 60, "success", i * 100, &format!("d{i}")));
+        text.push('\n');
+    }
+    text.push_str(&line("flaky.service", 120, "exit-code", 5, "inv-bad"));
+    text.push('\n');
+    text.push_str(&line("flaky.service", 9 * 86_400, "success", 5, "too-old"));
+    text.push('\n');
+    std::fs::write(run.join("tsd").join("unit-run.jsonl"), text).unwrap();
+    fx.cfg.duckdb = "duckdb".into();
+    let addr = spawn(fx.cfg.clone()).await;
+    let v = units_json(addr).await;
+    assert_eq!(v["errors"].as_array().unwrap().len(), 0, "{v}");
+    let dur = unit(&v, "dur.service");
+    assert_eq!((dur["runs_7d"].as_i64(), dur["p50_ms"].as_i64(), dur["p95_ms"].as_i64()), (Some(10), Some(500), Some(1000)));
+    let flaky = unit(&v, "flaky.service");
+    assert_eq!((flaky["runs_7d"].as_i64(), flaky["last_failure"]["result"].as_str()), (Some(1), Some("exit-code")), "the nine-day-old row is outside the window");
 }

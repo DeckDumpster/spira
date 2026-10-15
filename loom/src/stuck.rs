@@ -156,7 +156,7 @@ h1{font-size:1rem;margin:0}.dim{color:#7d8896}a{color:inherit;text-decoration:no
 table{border-collapse:collapse;width:100%}td{padding:.3rem .5rem;border-bottom:1px solid #1d232b;vertical-align:top;word-break:break-word}\
 tr.refused td{color:#ff6b6d}.legend{display:flex;gap:.6rem;flex-wrap:wrap;padding:.4rem .8rem;font-size:.75rem}.legend i{display:inline-block;width:.7rem;height:.7rem;margin-right:.25rem;border-radius:2px}";
 
-fn shell(title: &str, refresh_s: u32, body: &str) -> String {
+pub fn shell(title: &str, refresh_s: u32, body: &str) -> String {
     format!(
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta http-equiv=refresh content={refresh_s}><title>{}</title><style>{CSS}</style><body>{body}</body>",
         esc(title)

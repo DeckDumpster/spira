@@ -16,6 +16,7 @@ cockpit-ops = { path = "../cockpit/ops" }
 # query that overruns is KILLED rather than awaited, and `kill_on_drop` on a tokio child is
 # what makes dropping the timed-out future actually end the `bd` process.
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tsd = { path = "../tsd" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "net", "sync"] }
 serde_json = "1"
 

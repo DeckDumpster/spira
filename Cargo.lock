@@ -847,6 +847,7 @@ dependencies = [
  "spira-config",
  "testkit",
  "tokio",
+ "tsd",
 ]
 
 [[package]]
