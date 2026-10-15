@@ -187,6 +187,7 @@ async fn lifecycle_page_route(
                 snap.progress = Some(p);
                 snap.now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(snap.now);
             }
+            snap.loom_base = Some(String::new());
             let v = cockpit_ops::lcview::view(&snap);
             let stale = (age > LIFECYCLE_STALE_S).then_some(age);
             if fragment {
@@ -204,6 +205,49 @@ async fn lifecycle_page_route(
         .header(header::CACHE_CONTROL, "no-store")
         .body(body.into())
         .expect("a response with a valid status and headers")
+}
+
+async fn rounds_route(State(loom): State<Arc<Loom>>, axum::extract::Path(batch): axum::extract::Path<String>) -> Response {
+    const TAIL: u64 = 256 * 1024;
+    let (snap, _) = match lifecycle_snapshot(&loom) {
+        Ok(x) => x,
+        Err(e) => return unavailable("round view", &e),
+    };
+    let Some(b) = snap.batches.iter().find(|b| b.id == batch && !b.log.is_empty()) else {
+        return html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such round</p>".into());
+    };
+    let vm = snap
+        .vm_runs
+        .iter()
+        .filter(|r| r.run == b.id || r.cmd.iter().any(|a| a.contains(&b.id)))
+        .map(|r| r.vm.clone())
+        .next()
+        .unwrap_or_default();
+    let log = match std::fs::File::open(&b.log) {
+        Ok(mut f) => {
+            use std::io::{Read, Seek, SeekFrom};
+            let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+            let _ = f.seek(SeekFrom::Start(len.saturating_sub(TAIL)));
+            let mut buf = Vec::new();
+            let _ = f.read_to_end(&mut buf);
+            String::from_utf8_lossy(&buf).into_owned()
+        }
+        Err(e) => format!("(log not readable: {e})"),
+    };
+    let members = b.members.iter().filter(|m| !b.ejected.contains(m)).map(|m| format!("<a href=/stuck/{0}>{0}</a>", stuck::esc(m))).collect::<Vec<_>>().join(" ");
+    let live = snap.vm_runs.iter().any(|r| !r.idle && !r.held && r.run == b.id);
+    let refresh = if live { "<meta http-equiv=refresh content=5>" } else { "" };
+    html_response(
+        StatusCode::OK,
+        format!(
+            "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>{refresh}<title>{id}</title><style>body{{font:14px monospace;margin:8px;background:#111;color:#ddd}}a{{color:#8cf}}pre{{white-space:pre-wrap;word-break:break-all}}</style><h3>{repo} · {id}</h3><p>{phase} · VM {vm}</p><p>members {members}</p><p><a href=/lifecycle>back</a></p><pre>{log}</pre>",
+            id = stuck::esc(&b.id),
+            repo = stuck::esc(&b.repo),
+            phase = stuck::esc(&b.phase),
+            vm = if vm.is_empty() { "—".to_string() } else { stuck::esc(&vm) },
+            log = stuck::esc(&log),
+        ),
+    )
 }
 
 async fn lifecycle_api_route(State(loom): State<Arc<Loom>>) -> Response {
@@ -323,6 +367,7 @@ async fn root_route() -> Response {
 pub fn router(loom: Arc<Loom>) -> Router {
     Router::new()
         .route("/lifecycle", get(lifecycle_page_route))
+        .route("/rounds/{batch}", get(rounds_route))
         .route("/api/lifecycle", get(lifecycle_api_route))
         .route("/stuck", get(stuck_page_route))
         .route("/api/stuck", get(stuck_api_route))
