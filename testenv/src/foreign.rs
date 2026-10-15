@@ -27,6 +27,9 @@ pub struct Decl {
     pub timeout: Option<u64>,
     #[serde(default)]
     pub default: Vec<String>,
+    /// The fast compile-and-lint tiers a tip must pass before it may be submitted.
+    #[serde(default)]
+    pub lint: Vec<String>,
     pub tier: BTreeMap<String, Tier>,
 }
 
@@ -67,6 +70,9 @@ impl Decl {
         }
         if let Some(n) = d.default.iter().find(|n| !d.tier.contains_key(*n)) {
             return Err(format!("{DECL}: default names undeclared tier {n}"));
+        }
+        if let Some(n) = d.lint.iter().find(|n| !d.tier.contains_key(*n)) {
+            return Err(format!("{DECL}: lint names undeclared tier {n}"));
         }
         Ok(d)
     }
@@ -130,6 +136,31 @@ impl TierRun<'_> {
     }
 }
 
+/// The first thing a failed tier's log says to fix: a compiler diagnostic with its
+/// `file:line`, else the first error line, else the log's last line.
+pub fn first_error(log: &str) -> Option<String> {
+    let lines: Vec<&str> = log.lines().collect();
+    let at = |from: usize| {
+        lines[from..].iter().find_map(|l| l.trim_start().strip_prefix("--> ").map(|loc| loc.trim().to_string()))
+    };
+    if let Some(i) = lines.iter().position(|l| {
+        let t = l.trim_start();
+        t.starts_with("error") && !t.starts_with("error: could not compile") && !t.starts_with("error: aborting")
+    }) {
+        let msg = lines[i].trim();
+        return Some(match at(i) {
+            Some(loc) => format!("{loc}: {msg}"),
+            None => msg.to_string(),
+        });
+    }
+    if let Some(i) = lines.iter().position(|l| l.trim_start().starts_with("warning") && !l.contains("generated")) {
+        if let Some(loc) = at(i) {
+            return Some(format!("{loc}: {}", lines[i].trim()));
+        }
+    }
+    lines.iter().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string())
+}
+
 pub fn tier_line(name: &str, o: Outcome, secs: u64) -> String {
     match o {
         Outcome::Pass => format!("  {name:<32} ok      {secs}s"),
@@ -150,6 +181,22 @@ mod tests {
         assert_eq!(d.default_tiers(), vec!["unit"]);
         assert!(d.known("ui") && !d.known("nosuch"));
         assert_eq!(d.workdir, "/work");
+    }
+
+    #[test]
+    fn lint_names_only_declared_tiers() {
+        let d = Decl::parse("image = \"i\"\nlint = [\"a\"]\n[tier.a]\nargv=[\"x\"]\n").unwrap();
+        assert_eq!(d.lint, vec!["a"]);
+        let e = Decl::parse("image = \"i\"\nlint = [\"z\"]\n[tier.a]\nargv=[\"x\"]\n").unwrap_err();
+        assert!(e.contains("undeclared tier z"), "{e}");
+    }
+
+    #[test]
+    fn the_first_error_names_file_and_line() {
+        let log = "   Compiling x\nerror: this argument is a mutable reference\n  --> src/binder.rs:222:9\n   |\nerror: could not compile `x`\n";
+        assert_eq!(first_error(log).unwrap(), "src/binder.rs:222:9: error: this argument is a mutable reference");
+        assert_eq!(first_error("ok\nboom\n").unwrap(), "boom");
+        assert_eq!(first_error(""), None);
     }
 
     #[test]

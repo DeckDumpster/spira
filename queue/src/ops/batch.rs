@@ -549,6 +549,10 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             skips.push(format!("{id}: not a valid id:tip"));
             continue;
         }
+        if !super::simple::lint_passed(w, "open-batch", &path, &tip, false) {
+            skips.push(format!("{id}: {tip} fails its compile-and-lint check — not admitted"));
+            continue;
+        }
         if super::round::merge_member(w, &c, &wt, &id, &tip) {
             members.push(Member { id, tip });
         } else {

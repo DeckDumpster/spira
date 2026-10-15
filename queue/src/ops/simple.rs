@@ -43,6 +43,10 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
     let mut tip = w.git.rev_parse(&path, branch).unwrap_or_default();
     let id = branch.strip_prefix("spira/").unwrap_or(branch).to_string();
 
+    if !lint_passed(w, "submit", &path, &tip, false) {
+        return FAIL;
+    }
+
     let suites = c.s.certify_suites.clone();
     let start = w.clock.now();
     let (rc, out) = w.scripts.gate(branch, &name, &id, &suites);
@@ -99,6 +103,16 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
         }
     }
     OK
+}
+
+/// The tip's repository-declared compile-and-lint check, refused with its first error before a
+/// bead is certified or re-tipped; with `verify`, only a pass already on record is accepted.
+pub fn lint_passed(w: &World, verb: &str, path: &std::path::Path, tip: &str, verify: bool) -> bool {
+    let (rc, out) = w.scripts.lint(tip, path, verify);
+    if rc != 0 {
+        w.err(format!("queue.sh {verb}: {}", out.trim_end_matches('\n')));
+    }
+    rc == 0
 }
 
 /// Record the gate pass on spira-lc; a refusal is reported and the submit does not certify.
@@ -418,6 +432,9 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
     }
     if !w.git.commit_exists(&path, tip) {
         w.err(format!("queue.sh resubmit: --tip {tip}: no such commit in {} — refused", c.r.name));
+        return FAIL;
+    }
+    if !lint_passed(w, "resubmit", &path, tip, false) {
         return FAIL;
     }
     if super::require_lc(w, "resubmit").is_err() {

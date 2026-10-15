@@ -145,10 +145,37 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             ),
         );
     }
+    if let Some(refusal) = lint_refusal(conn, bead_id, &tip, &actor) {
+        return refusal;
+    }
     if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
         return refusal;
     }
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip })
+}
+
+/// A tip is submitted only on a recorded pass of its repository's compile-and-lint check; the
+/// broker runs it (a model session has no `testenv`) and records the pass for that exact tip.
+/// The repository comes from the bead's lifecycle row: a world or a fixture holds lifecycle rows
+/// with no content behind them. Only a row that names none (one created at the claim, before
+/// `backfill-repos` reached it) falls back to the content store's repo: label.
+fn lint_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str) -> Option<(i32, String)> {
+    let repo = match rows::bead_repo(conn, bead_id) {
+        Ok(Some(r)) => r,
+        Ok(None) => match crate::bd::repo_label(bead_id) {
+            Ok(Some(r)) => r,
+            Ok(None) => return Some((CANNOT_TELL, format!("cannot tell: {bead_id} names no repository (no bead.repo, no repo: label)"))),
+            Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {bead_id}'s row names no repository and its label could not be read: {e}"))),
+        },
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e:?}"))),
+    };
+    let args = ["lint".to_string(), tip.to_string(), repo];
+    // batch-job: runs the repository's declared lint tiers, bounded just under the client's wait
+    match crate::bd::tool("testenv", &args, None, actor, 280) {
+        (0, _) => None,
+        (1, out) => Some((REFUSED, out.trim_end().to_string())),
+        (_, out) => Some((CANNOT_TELL, format!("cannot tell: the compile-and-lint check could not run: {}", out.trim_end()))),
+    }
 }
 
 /// A bead that declares a target closes only with a verdict (MET, CONTRADICTED, or SHORT with a

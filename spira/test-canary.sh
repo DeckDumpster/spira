@@ -293,7 +293,7 @@ printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
     # Create an unparented plan bead (there is no goal epic, sp-k6m1m)
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
     bead="$(timeout 5 bd -C "$SPIRA_DB" create "t6 task" --type task \
-        --labels "spira,plan" --silent 2>/dev/null | tr -d '[:space:]')"
+        --labels "spira,plan,repo:$(basename "$SPIRA_REPO")" --silent 2>/dev/null | tr -d '[:space:]')"
     [ -n "$bead" ] || { printf '  FATAL: could not create bead\n'; exit 1; }
 
     # Its lifecycle row, as release canary files it. POSITIVE CONTROL: READY before the

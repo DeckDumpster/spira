@@ -319,6 +319,8 @@ impl Lib for FLib {
 #[derive(Default)]
 struct FScripts {
     gate_rc: Cell<i32>,
+    /// What `testenv lint` answers by tip (absent = pass); `verify` answers only for recorded tips.
+    lint_red: RefCell<BTreeMap<String, String>>,
     /// Set once `release activate` ran; the store's fake reads it to begin its outage.
     activated: std::rc::Rc<Cell<bool>>,
     /// `release <sub>` exit status by subcommand (absent = 0), and the stderr line it prints.
@@ -353,6 +355,13 @@ struct FScripts {
 }
 
 impl Scripts for FScripts {
+    fn lint(&self, tip: &str, _: &Path, verify: bool) -> (i32, String) {
+        self.calls.borrow_mut().push(format!("lint {tip} verify={verify}"));
+        match self.lint_red.borrow().get(tip) {
+            Some(first) => (1, format!("refused: {tip} failed its compile-and-lint check at {first}")),
+            None => (0, String::new()),
+        }
+    }
     fn gate(&self, br: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
         self.calls.borrow_mut().push(format!("gate {br} {repo} bead={bead} suites={suites}"));
         (self.gate_rc.get(), "gate says".into())
@@ -1018,6 +1027,21 @@ fn submit_red_gate_logs_caught_and_propagates_the_gate_code() {
     assert!(!t.lc.has("certify") && !t.lc.has("event"));
 }
 
+
+#[test]
+fn submit_of_a_tip_that_fails_its_lint_is_refused_naming_file_and_line_before_the_gate() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("refs/heads/spira/sp-a", "t1");
+    t.scripts.lint_red.borrow_mut().insert("t1".into(), "src/binder.rs:222:9".into());
+    assert_eq!(t.run(&["submit", "spira/sp-a"]), 1);
+    assert!(t.err().contains("src/binder.rs:222:9"), "{}", t.err());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("gate ")), "no gate ran");
+    assert!(!t.lc.has("certify"));
+
+    t.scripts.lint_red.borrow_mut().clear();
+    assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
+    assert!(t.lc.has("certify sp-a t1"));
+}
 
 #[test]
 fn submit_push_mode_rebases_pushes_and_closes() {
@@ -2806,7 +2830,8 @@ fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its
     t.git.set("refs/heads/spira/sp-a", "t1");
     t.lib.s.certify_suites = "off".into();
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0);
-    assert_eq!(t.scripts.calls.borrow()[0], "gate spira/sp-a spira bead=sp-a suites=off");
+    assert_eq!(t.scripts.calls.borrow()[0], "lint t1 verify=false");
+    assert_eq!(t.scripts.calls.borrow()[1], "gate spira/sp-a spira bead=sp-a suites=off");
     assert!(t.lc.has("certify sp-a t1"));
     assert!(!t.s().queue_dir.join("sp-a").exists(), "the lifecycle row is the only certification record");
     assert!(t.landing_log().contains("QUEUE GATE_COST 1000 branch=sp-a seconds=0"));

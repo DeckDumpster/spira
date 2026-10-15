@@ -601,6 +601,14 @@ pub struct RealScripts {
 }
 
 impl Scripts for RealScripts {
+    fn lint(&self, tip: &str, repo: &Path, verify: bool) -> (i32, String) {
+        let mut c = Command::new("testenv");
+        c.arg("lint");
+        if verify {
+            c.arg("--verify");
+        }
+        run_combined(c.arg(tip).arg(repo))
+    }
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
         run_combined(
             Command::new("gate.sh")

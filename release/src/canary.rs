@@ -216,6 +216,8 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     // there is no goal epic to hang it under (sp-k6m1m).
     let scope = get("SPIRA_SCOPE_LABEL");
     let labels = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
+    let repo_name = Path::new(&get("SPIRA_REPO")).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let labels = if repo_name.is_empty() { labels } else { format!("{labels},repo:{repo_name}") };
     let bead_out = run(
         Command::new(&bd).arg("-C").arg(&db).args(["create", "canary: synthetic pipeline test", "--type", "task", "--labels", &labels, "--silent"]),
         "bd create (bead)",
