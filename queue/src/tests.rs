@@ -515,6 +515,7 @@ struct FLc {
     land_refused: Cell<Option<&'static str>>,
     promote_refused: Cell<Option<&'static str>>,
     cut_refused: Cell<Option<&'static str>>,
+    cut_refuses_member: Cell<Option<&'static str>>,
     /// The next write of this verb (cut, abandon-batch, eject-member) applies, then reports a deadline.
     deadline_after_write: Cell<Option<&'static str>>,
     /// Per-batch answers to `show-batch`, ahead of `batch_view`.
@@ -546,7 +547,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), deadline_after_write: Cell::new(None), down_for: Cell::new(0), no_batch_row: Cell::new(false), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), batch_event_times_out: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
+        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), cut_refuses_member: Cell::new(None), deadline_after_write: Cell::new(None), down_for: Cell::new(0), no_batch_row: Cell::new(false), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), batch_event_times_out: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -603,6 +604,9 @@ impl Lc for FLc {
         self.calls.borrow_mut().push(format!("cut {id} {members}"));
         if let Some(why) = self.cut_refused.get() {
             return Err((3, why.into()));
+        }
+        if let Some(bad) = self.cut_refuses_member.get().filter(|b| members.split(',').any(|m| m.split(':').next() == Some(*b))) {
+            return Err((2, format!("cut: Deliver refused unexpectedly for {bad}: Some(EjectedRedTip {{ tip: \"x\" }})")));
         }
         self.batch_view.borrow_mut().get_or_insert(("OPEN".into(), 1, 0, String::new()));
         if self.deadline_after_write.get() == Some("cut") {
