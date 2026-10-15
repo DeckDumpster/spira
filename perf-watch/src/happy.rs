@@ -11,6 +11,8 @@ pub trait Sim {
     fn round_open(&mut self) -> Result<bool, String>;
     /// Run the scenario to its end and return the world's `exec.log`.
     fn run(&mut self) -> Result<String, String>;
+    /// Wait before the next fixture start attempt.
+    fn backoff(&mut self) {}
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -18,6 +20,14 @@ pub enum Outcome {
     Skipped,
     Measured { millis: u64, slowest: Option<(String, u64)> },
     Failed(String),
+    FixtureDown(String),
+}
+
+pub const FIXTURE_ATTEMPTS: usize = 3;
+
+/// A failure of the world's database fixture to start, not of the sim under test.
+pub fn is_fixture_failure(err: &str) -> bool {
+    err.contains("testdb up")
 }
 
 const PHASE_WIDTH: usize = 44;
@@ -42,12 +52,20 @@ pub fn measure(clock: &dyn Clock, sim: &mut dyn Sim) -> Outcome {
         Ok(true) => return Outcome::Skipped,
         Err(e) => return Outcome::Failed(format!("round state unknown, run withheld: {e}")),
     }
-    let t0 = clock.now_ms();
-    let r = sim.run();
-    let millis = clock.now_ms().saturating_sub(t0);
-    match r {
-        Ok(log) => Outcome::Measured { millis, slowest: slowest_phase(&log) },
-        Err(e) => Outcome::Failed(e),
+    let mut attempt = 1;
+    loop {
+        let t0 = clock.now_ms();
+        let r = sim.run();
+        let millis = clock.now_ms().saturating_sub(t0);
+        match r {
+            Ok(log) => return Outcome::Measured { millis, slowest: slowest_phase(&log) },
+            Err(e) if is_fixture_failure(&e) && attempt < FIXTURE_ATTEMPTS => {
+                attempt += 1;
+                sim.backoff();
+            }
+            Err(e) if is_fixture_failure(&e) => return Outcome::FixtureDown(format!("{e} (after {attempt} attempts)")),
+            Err(e) => return Outcome::Failed(e),
+        }
     }
 }
 
@@ -66,6 +84,7 @@ pub fn alarm(outcome: &Outcome, goal_ms: u64, recent: &[u64]) -> Option<String> 
     match outcome {
         Outcome::Skipped => None,
         Outcome::Failed(e) => Some(format!("PERF UNRUNNABLE happy-path: {e}")),
+        Outcome::FixtureDown(e) => Some(format!("PERF FIXTURE-DOWN happy-path: {e}")),
         Outcome::Measured { millis, slowest } if *millis > goal_ms => {
             let phase = slowest.as_ref().map_or("unknown".to_string(), |(c, ms)| format!("{c} {ms}ms"));
             let tr = recent.iter().map(u64::to_string).collect::<Vec<_>>().join(" ");
@@ -164,6 +183,8 @@ mod tests {
         cost: u64,
         log: Result<String, String>,
         ran: bool,
+        runs: usize,
+        flaky: usize,
     }
     impl Sim for FakeSim<'_> {
         fn round_open(&mut self) -> Result<bool, String> {
@@ -171,6 +192,10 @@ mod tests {
         }
         fn run(&mut self) -> Result<String, String> {
             self.ran = true;
+            self.runs += 1;
+            if self.runs <= self.flaky {
+                return Err("testdb up: i/o timeout".into());
+            }
             self.clock.0.set(self.clock.0.get() + self.cost);
             self.log.clone()
         }
@@ -179,7 +204,7 @@ mod tests {
     const LOG: &str = "=== t=1 file bead exit status: 0 in 900ms\n=== t=2 gate-worker pass --all exit status: 0 in 41000ms\n=== t=3 publish exit status: 0 in 2500ms\nnoise\n";
 
     fn sim<'a>(clock: &'a Stub, round: Result<bool, String>, cost: u64) -> FakeSim<'a> {
-        FakeSim { clock, round, cost, log: Ok(LOG.to_string()), ran: false }
+        FakeSim { clock, round, cost, log: Ok(LOG.to_string()), ran: false, runs: 0, flaky: 0 }
     }
 
     #[test]
@@ -232,6 +257,25 @@ mod tests {
         s.log = Err("sim exited 1".into());
         let o = measure(&clock, &mut s);
         assert_eq!(alarm(&o, 60_000, &[]), Some("PERF UNRUNNABLE happy-path: sim exited 1".to_string()));
+    }
+
+    #[test]
+    fn a_fixture_that_cannot_start_is_retried_then_reported_as_its_own_state() {
+        let clock = Stub(Cell::new(0));
+        let mut s = sim(&clock, Ok(false), 5);
+        s.log = Err("sim: testdb up: bd init failed".into());
+        let o = measure(&clock, &mut s);
+        assert_eq!(s.runs, FIXTURE_ATTEMPTS);
+        assert!(alarm(&o, 60_000, &[]).unwrap().starts_with("PERF FIXTURE-DOWN happy-path: sim: testdb up"));
+    }
+
+    #[test]
+    fn a_fixture_that_starts_on_a_retry_is_measured() {
+        let clock = Stub(Cell::new(0));
+        let mut s = sim(&clock, Ok(false), 5);
+        s.flaky = 1;
+        let o = measure(&clock, &mut s);
+        assert!(matches!(o, Outcome::Measured { millis: 5, .. }), "{o:?}");
     }
 
     #[test]
