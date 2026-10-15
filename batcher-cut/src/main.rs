@@ -688,6 +688,18 @@ fn forge_local_tier(
     let mut red = Vec::new();
     for m in &members {
         if let Err(evidence) = io::local_tier(env_, repo, &m.tip) {
+            if let Some((fault, first)) = io::landing_ref_fault(env_, repo, start_sha) {
+                println!("batcher {}: FAULT the declared tiers are red on the landing ref {start_sha} itself — {} is not blamed, round held", repo.name, m.id);
+                if first {
+                    let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
+                    let reason = format!("landing-ref-red {first_error}");
+                    match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], start_sha, &fault, &reason) {
+                        Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
+                        Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+                    }
+                }
+                return Ok(None);
+            }
             println!("batcher {}: {} is red locally at {} — not batched", repo.name, m.id, m.tip);
             io::bead_reopen(env_, &m.id, "local-tier-red", &format!("Reopened by the batcher: {}'s declared tiers are red locally at {} and never reached CI.\n{evidence}", repo.name, m.tip));
             red.push(m.id.clone());
