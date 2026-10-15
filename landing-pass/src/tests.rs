@@ -999,6 +999,19 @@ fn a_clean_sweep_rebase_carries_a_certified_verdict_to_the_new_tip() {
 }
 
 #[test]
+fn a_maintenance_freeze_holds_the_push_walk() {
+    let mut h = H::new(LandMode::Push);
+    h.s.batcher_enable = false;
+    h.git.tree.set(true);
+    let b = h.bead("sp-b", "closed", &[]);
+    h.beads.rows.borrow_mut().insert("sp-b".into(), b);
+    h.git.add("spira/sp-b", "t0");
+    h.run();
+    assert!(!h.mailbox().contains("landed"), "{}", h.mailbox());
+    assert!(h.out.lines().join("\n").contains("SPIRA_BATCHER_ENABLE=0"), "{:?}", h.out.lines());
+}
+
+#[test]
 fn push_lands_records_first_and_closes_and_rebases_survivors_once_per_pass() {
     let h = H::new(LandMode::Push);
     h.git.tree.set(true);

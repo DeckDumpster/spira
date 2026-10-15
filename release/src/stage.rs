@@ -293,6 +293,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         ("SPIRA_FAYTHS".to_string(), "canary".to_string()),
         ("SPIRA_MAX_AEONS".to_string(), "1".to_string()),
         ("SPIRA_NOTIFY".to_string(), "/bin/true".to_string()),
+        ("SPIRA_BATCHER_ENABLE".to_string(), "1".to_string()),
         ("SPIRA_SUMMON".to_string(), sh.join("fake-summon.sh").display().to_string()),
         ("SPIRA_LAUNCH".to_string(), sh.join("fake-launch.sh").display().to_string()),
         ("PATH".to_string(), path_env),

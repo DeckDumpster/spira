@@ -60,7 +60,7 @@ import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
 
-tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO="$REPONAME" \
+tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh"
 landing() {
     rm -f "$RUN/landing.progress"

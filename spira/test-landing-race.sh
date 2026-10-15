@@ -82,7 +82,7 @@ print(d[0].get("status") or "")'; }
 
 # The mailbox is drained by the sentinel in production, so each run here starts from empty —
 # otherwise every assertion after the first would be reading an earlier run's lines.
-tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map"
+tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map"
 landing() {
     rm -f "$RUN/landing.progress"
     # SPIRA_REPO_MAP EXPLICITLY, never left to the fallback chain, and nothing else inherited.
