@@ -615,6 +615,11 @@ has "the brief tells the archivist to use a relates edge for a rollup" \
 has "the brief forbids an untyped dependency between two ask-labelled beads" \
     "$briefed" "Never wire an untyped dependency between two beads"
 
+has "the brief tells the archivist to close an answered ask with the operator's words" \
+    "$briefed" "work close-ask <ask-id> --exit answered --source"
+has "the brief closes only on an unambiguous answer" "$briefed" "only when his answer in"
+has "the brief forbids taking an ask's default" "$briefed" "never take its default"
+
 # POSITIVE CONTROL: the check must be able to fail. Strip the phrase and confirm it is gone,
 # so a `has` that never fires would not pass every assertion above for the wrong reason.
 stripped="${briefed//work relate <rollup> <ask>/}"
