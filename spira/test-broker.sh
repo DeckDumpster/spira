@@ -156,4 +156,46 @@ want "gh called with run view 12345" "run view 12345" "$(cat "$GH_LOG" 2>/dev/nu
 
 # =========================================================================
 echo
+echo "SMOKE — pr-close on a batch PR cancels its in-progress runs first, and a run that will"
+echo "not cancel leaves the PR open."
+# =========================================================================
+RUNS_STATE="$T/runs-state"
+cat > "$GH_STUB" << 'ENDGH3'
+#!/usr/bin/env bash
+printf 'stub-gh: %s\n' "$*" >> "$SPIRA_BROKER_GH_LOG"
+case "$1 $2" in
+    "pr view") echo "spira/queue/20261015T081340Z" ;;
+    "run list") printf '[{"databaseId":38704330755,"status":"%s"}]\n' "$(cat "$RUNS_STATE")" ;;
+    "run cancel") [ -f "$CANCEL_FAIL" ] && { echo "boom" >&2; exit 1; }; echo completed > "$RUNS_STATE" ;;
+esac
+exit 0
+ENDGH3
+chmod +x "$GH_STUB"
+close_env() { base_env RUNS_STATE="$RUNS_STATE" CANCEL_FAIL="$T/cancel-fail" "$@"; }
+
+echo in_progress > "$RUNS_STATE"; > "$GH_LOG"
+close_id="$(close_env FAYTH_NAME=czar SPIRA_AEON=czar-1 broker submit pr-close test-repo/58 \
+    --reason "superseded" --bead sp-close --class deadlock 2>&1)"
+close_env broker execute >/dev/null 2>&1
+close_line="$(grep "$close_id" "$audit" 2>/dev/null || echo "")"
+want "pr-close with an active run → DONE" '"DONE"' "$close_line"
+want "the audit names the cancelled run" "38704330755" "$close_line"
+gh_calls="$(cat "$GH_LOG")"
+want "gh was asked to cancel the run" "run cancel 38704330755" "$gh_calls"
+cancel_at="$(grep -n 'run cancel' "$GH_LOG" | head -1 | cut -d: -f1)"
+close_at="$(grep -n 'pr close' "$GH_LOG" | head -1 | cut -d: -f1)"
+[ -n "$cancel_at" ] && [ -n "$close_at" ] && [ "$cancel_at" -lt "$close_at" ] \
+    && ok "the run is cancelled before the PR closes" \
+    || bad "the run is cancelled before the PR closes" "cancel line [$cancel_at] close line [$close_at]"
+
+echo in_progress > "$RUNS_STATE"; > "$GH_LOG"; : > "$T/cancel-fail"
+stuck_id="$(close_env FAYTH_NAME=czar SPIRA_AEON=czar-1 broker submit pr-close test-repo/59 \
+    --reason "superseded" --bead sp-close --class deadlock 2>&1)"
+close_env broker execute >/dev/null 2>&1
+stuck_line="$(grep "$stuck_id" "$audit" 2>/dev/null || echo "")"
+want "an uncancellable run refuses the close" '"REFUSED"' "$stuck_line"
+lack "gh never closes the PR over a live run" "pr close" "$(cat "$GH_LOG")"
+
+# =========================================================================
+echo
 tl_summary
