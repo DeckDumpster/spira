@@ -86,7 +86,7 @@ pub fn ensure(
 }
 
 fn git_show(repo: &Path, tip: &str) -> Option<String> {
-    let o = Command::new("git").arg("-C").arg(repo).args(["show", &format!("{tip}:{}", foreign::DECL)]).output().ok()?;
+    let o = Command::new("timeout").arg("5").arg("git").arg("-C").arg(repo).args(["show", &format!("{tip}:{}", foreign::DECL)]).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
