@@ -1,0 +1,23 @@
+[Unit]
+After=lc-serve.service
+Wants=lc-serve.service
+Description=Spira bead mirror — regenerate the wiki's raw/spira-beads/spira.jsonl from the stores
+Documentation=file://@SPIRA_HOME@/export-beads.sh
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD@/export-beads.sh
+TimeoutStartSec=900
+StandardOutput=append:@SPIRA_RUN@/export-beads.log
+StandardError=append:@SPIRA_RUN@/export-beads.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance

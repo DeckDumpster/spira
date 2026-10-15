@@ -121,7 +121,11 @@ fn main() {
     let run_dir = PathBuf::from(cfg_or_die!("SPIRA_RUN"));
     let db = cfg_or_die!("SPIRA_DB");
     let repo = repo_path.to_string_lossy().into_owned();
-    let exporter = cfg_or_die!("SPIRA_EXPORTER");
+    let wiki = cfg_or_die!("SPIRA_WIKI");
+    let exporter = match cfg_or_die!("SPIRA_EXPORTER") {
+        e if e.is_empty() && !wiki.is_empty() => home.join("export-beads.sh").display().to_string(),
+        e => e,
+    };
     let systemctl_bin = env_or(&original, "SPIRA_SYSTEMCTL", "systemctl");
     let instance = cfg_or_die!("SPIRA_INSTANCE");
     let tz = cfg_or_die!("SPIRA_TZ");
@@ -131,7 +135,7 @@ fn main() {
     let fallback_path = PathBuf::from(env_or(&original, "SPIRA_AURON_FALLBACK", &run_dir.join("auron.alerts.json").display().to_string()));
     let sentinel_log_path = PathBuf::from(env_or(&original, "SPIRA_AURON_SENTINEL_LOG", &run_dir.join("sentinel.log").display().to_string()));
     let strands_path = PathBuf::from(env_or(&original, "SPIRA_AURON_STRANDS", &run_dir.join("strands.json").display().to_string()));
-    let mirror_path = PathBuf::from(env_or(&original, "SPIRA_AURON_MIRROR", &format!("{repo}/raw/spira-beads/spira.jsonl")));
+    let mirror_path = PathBuf::from(env_or(&original, "SPIRA_AURON_MIRROR", &format!("{}/raw/spira-beads/spira.jsonl", if wiki.is_empty() { &repo } else { &wiki })));
     let tail_bytes = env_n(&original, "SPIRA_AURON_TAIL_BYTES", 262_144).max(0) as u64;
     let confirm = env_n(&original, "SPIRA_AURON_CONFIRM", 2);
     let clear_n = env_n(&original, "SPIRA_AURON_CLEAR", 2);
