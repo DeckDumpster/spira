@@ -104,6 +104,8 @@ pub struct Ec2Config {
     pub recipe_sha: String,
 }
 
+const LAUNCH_CONFIRM_TRIES: u32 = 3;
+
 /// The ordered launch candidates: the list key if it names any, else the single key, else the default.
 pub fn instance_types(list: &str, single: &str) -> Vec<String> {
     let listed: Vec<String> = list.split(',').map(str::trim).filter(|t| !t.is_empty()).map(String::from).collect();
@@ -115,7 +117,7 @@ pub fn instance_types(list: &str, single: &str) -> Vec<String> {
 
 /// Whether AWS refused a launch for want of quota or capacity, which a smaller type may not share.
 pub fn refused_for_capacity(err: &str) -> bool {
-    ["VcpuLimitExceeded", "InsufficientInstanceCapacity", "InstanceLimitExceeded"].iter().any(|c| err.contains(c))
+    ["VcpuLimitExceeded", "InsufficientInstanceCapacity", "InstanceLimitExceeded", "SpotInstanceTermination", "capacity-not-available"].iter().any(|c| err.contains(c))
 }
 
 /// Tries each type in order, moving on only when `launch` is refused for capacity; the type that
@@ -197,6 +199,7 @@ pub struct Ec2<A: Ec2Api> {
     instance_types: Vec<String>,
     recipe_sha: String,
     resolved: std::sync::Mutex<Option<String>>,
+    confirm_poll: Duration,
 }
 
 impl<A: Ec2Api> Ec2<A> {
@@ -215,6 +218,7 @@ impl<A: Ec2Api> Ec2<A> {
             instance_types: cfg.instance_types.clone(),
             recipe_sha: cfg.recipe_sha.clone(),
             resolved: std::sync::Mutex::new(None),
+            confirm_poll: if cfg!(test) { Duration::ZERO } else { Duration::from_secs(2) },
         })
     }
 
@@ -274,6 +278,28 @@ impl<A: Ec2Api> Ec2<A> {
         self.api.find(handle)?.ok_or_else(|| format!("no EC2 instance tagged {TAG_KEY}={handle}"))
     }
 
+    fn with_end_reason(&self, handle: &str, what: String) -> String {
+        match self.api.end_reason(handle) {
+            Ok(Some(r)) => format!("{what}; AWS reports {r}"),
+            Ok(None) => format!("{what}; describe-instances found no instance at all"),
+            Err(e) => format!("{what}; end reason unreadable: {e}"),
+        }
+    }
+
+    /// A launch that returned an id has not launched until a live instance carries its tag; one
+    /// AWS ended at once (spot reclaim, capacity) is reported with AWS's reason so the ladder can move on.
+    fn confirm_launched(&self, id: &str, handle: &str, instance_type: &str) -> Result<(), String> {
+        for i in 0..LAUNCH_CONFIRM_TRIES {
+            if self.api.find(handle)?.is_some() {
+                return Ok(());
+            }
+            if i + 1 < LAUNCH_CONFIRM_TRIES {
+                std::thread::sleep(self.confirm_poll);
+            }
+        }
+        Err(self.with_end_reason(handle, format!("RunInstances returned {id} for {instance_type} but no live instance is tagged {TAG_KEY}={handle}")))
+    }
+
     fn script(&self, handle: &str, script: &str) -> Result<(i32, String), String> {
         let i = self.inst(handle)?;
         self.api.ssm(&i.id, script)
@@ -308,7 +334,10 @@ impl<A: Ec2Api> Provider for Ec2<A> {
             return Err(format!("EC2 instance {vmid} already exists"));
         }
         let ami = self.image()?;
-        let (chosen, _) = first_accepted(&self.instance_types, |t| self.api.run(&ami, t, vmid, name, &user_data(&self.tailscale_key, name)))?;
+        let (chosen, _) = first_accepted(&self.instance_types, |t| {
+            let id = self.api.run(&ami, t, vmid, name, &user_data(&self.tailscale_key, name))?;
+            self.confirm_launched(&id, vmid, t)
+        })?;
         eprintln!("round-vm: EC2 instance type {chosen} for {vmid}");
         Ok(())
     }
@@ -318,7 +347,7 @@ impl<A: Ec2Api> Provider for Ec2<A> {
     }
 
     fn start(&self, vmid: &str) -> Result<(), String> {
-        self.inst(vmid).map(|_| ())
+        self.inst(vmid).map(|_| ()).map_err(|e| self.with_end_reason(vmid, e))
     }
 
     fn guest_addr(&self, vmid: &str, _iface: &str) -> Result<Option<String>, String> {
@@ -1043,6 +1072,30 @@ mod tests {
         all.refuse_type("c7i.4xlarge");
         let e = provision(&Ec2::new(all.clone(), &c).unwrap(), &spec(), &mut |_| {}).err().expect("refused");
         assert!(all.launched_types().is_empty() && format!("{e:?}").contains("c7i.4xlarge"), "{e:?}");
+    }
+
+    #[test]
+    fn an_instance_ended_at_launch_names_its_aws_reason_and_the_ladder_moves_on() {
+        let d = TempDir::new();
+        let mut c = config(&d);
+        c.instance_types = vec!["c7i.8xlarge".into(), "c7i.4xlarge".into()];
+        let fake = FakeEc2::default();
+        fake.vanish_type("c7i.8xlarge", "Server.InsufficientInstanceCapacity");
+        let ec2 = Ec2::new(fake.clone(), &c).unwrap();
+        let vm = provision(&ec2, &spec(), &mut |_| {}).unwrap();
+        assert_eq!(ec2.instance_type(&vm.handle).as_deref(), Some("c7i.4xlarge"));
+
+        let all = FakeEc2::default();
+        all.vanish_type("c7i.8xlarge", "Server.InsufficientInstanceCapacity");
+        all.vanish_type("c7i.4xlarge", "Server.InsufficientInstanceCapacity");
+        let e = provision(&Ec2::new(all, &c).unwrap(), &spec(), &mut |_| {}).err().expect("refused");
+        let e = format!("{e:?}");
+        assert!(e.contains("InsufficientInstanceCapacity") && e.contains("i-0001") && e.contains("c7i.4xlarge"), "{e}");
+
+        let other = FakeEc2::default();
+        other.vanish_type("c7i.8xlarge", "Client.InternalError");
+        let e = provision(&Ec2::new(other.clone(), &c).unwrap(), &spec(), &mut |_| {}).err().expect("refused");
+        assert!(format!("{e:?}").contains("Client.InternalError") && other.launched_types() == ["c7i.8xlarge"], "{e:?}");
     }
 
     #[test]
