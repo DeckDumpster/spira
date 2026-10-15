@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -43,7 +44,48 @@ pub fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct MarkTimes {
+    pub started: u64,
+    pub build_at: Option<u64>,
+    pub suites_at: Option<u64>,
+    pub ended: Option<u64>,
+    pub lost: Option<String>,
+}
+
+/// The pass's phase clock, shared with whoever must still describe the pass after `Progress`
+/// has been consumed by the VM run.
+#[derive(Debug, Default, Clone)]
+pub struct Marks(Arc<Mutex<MarkTimes>>);
+
+impl Marks {
+    pub fn get(&self) -> MarkTimes {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn with(&self, f: impl FnOnce(&mut MarkTimes)) {
+        f(&mut self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// The VM was lost under the pass (unreachable, or its ssh dropped); the first reason stands.
+    pub fn lose(&self, why: &str) {
+        self.with(|m| {
+            m.lost.get_or_insert_with(|| why.to_string());
+        });
+    }
+
+    /// (boot, build, suites) seconds; `wait` is the lease time already spent in the `vm` phase.
+    pub fn phases(&self, wait: u64, now: u64) -> (u64, u64, u64) {
+        let m = self.get();
+        let end = m.ended.unwrap_or(now);
+        let build_at = m.build_at.unwrap_or(end);
+        let suites_at = m.suites_at.unwrap_or(end);
+        (build_at.saturating_sub(m.started).saturating_sub(wait), suites_at.saturating_sub(build_at), end.saturating_sub(suites_at))
+    }
+}
+
 pub struct Progress {
+    marks: Marks,
     path: PathBuf,
     round: String,
     pass: String,
@@ -105,7 +147,10 @@ impl Progress {
         clock: Box<dyn Fn() -> u64 + Send>,
     ) -> Progress {
         let t0 = clock();
+        let marks = Marks::default();
+        marks.with(|m| m.started = t0);
         let mut p = Progress {
+            marks,
             path: run_dir.join(FILE),
             round: round.to_string(),
             pass: pass.to_string(),
@@ -135,6 +180,10 @@ impl Progress {
 
     /// `argv` is run once per suite that goes red, with the suite's name appended; the pass
     /// does not wait for it.
+    pub fn marks(&self) -> Marks {
+        self.marks.clone()
+    }
+
     pub fn on_red(mut self, argv: Option<Vec<String>>) -> Progress {
         self.on_red = argv.filter(|a| !a.is_empty());
         self
@@ -199,6 +248,15 @@ impl Progress {
         if (matches!(phase, "suites" | "unit-tests") || past_build) && self.suites_started.is_none() {
             self.suites_started = Some(now);
         }
+        self.marks.with(|m| {
+            if phase != "vm" && m.build_at.is_none() {
+                m.build_at = Some(now);
+            }
+            m.suites_at = m.suites_at.or(self.suites_started);
+            if verdict.is_some() {
+                m.ended = Some(now);
+            }
+        });
         let detail_changed = self.seen_detail != self.detail;
         self.seen_detail = self.detail.clone();
         if phase != self.current {

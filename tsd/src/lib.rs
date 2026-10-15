@@ -129,6 +129,93 @@ pub fn iso_utc(epoch: u64) -> String {
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::unix::io::AsRawFd;
+use std::process::Command;
+
+extern "C" {
+    fn flock(fd: i32, operation: i32) -> i32;
+}
+const LOCK_EX: i32 = 2;
+const LOCK_UN: i32 = 8;
+
+pub mod pass;
+
+pub fn default_host() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .unwrap_or_else(|| "unknown-host".to_string())
+}
+
+pub fn now_iso() -> String {
+    Command::new("timeout").arg("5").arg("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
+}
+
+/// A row is one whole line: a JSON object with no newline inside it. Refused before any byte
+/// reaches the file, so a malformed row can never be the torn line a reader trips over.
+fn check_line(line: &str) -> Result<(), String> {
+    if line.contains('\n') || line.contains('\r') {
+        return Err("row contains a line break".to_string());
+    }
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(serde_json::Value::Object(_)) => Ok(()),
+        Ok(_) => Err("row is not a JSON object".to_string()),
+        Err(e) => Err(format!("row is not valid JSON: {e}")),
+    }
+}
+
+/// True when the file's last byte is not a newline — an earlier writer died mid-line.
+fn tail_is_torn(f: &mut std::fs::File) -> std::io::Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    let len = f.metadata()?.len();
+    if len == 0 {
+        return Ok(false);
+    }
+    f.seek(SeekFrom::Start(len - 1))?;
+    let mut b = [0u8; 1];
+    f.read_exact(&mut b)?;
+    Ok(b[0] != b'\n')
+}
+
+pub fn append_line(path: &Path, line: &str) -> Result<(), String> {
+    check_line(line).map_err(|e| format!("{}: refused: {e}", path.display()))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let mut f = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let fd = f.as_raw_fd();
+    if unsafe { flock(fd, LOCK_EX) } != 0 {
+        return Err(format!("{}: flock failed", path.display()));
+    }
+    let result = (|| {
+        let mut buf = Vec::with_capacity(line.len() + 2);
+        if tail_is_torn(&mut f)? {
+            buf.push(b'\n');
+        }
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(b'\n');
+        f.write_all(&buf)
+    })()
+    .map_err(|e| format!("{}: {e}", path.display()));
+    let _ = unsafe { flock(fd, LOCK_UN) };
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

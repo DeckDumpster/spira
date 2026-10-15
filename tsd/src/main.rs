@@ -14,17 +14,10 @@
 //   --field-str keeps its value a string regardless of shape (a SHA, an id).
 
 use std::env;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::os::unix::io::AsRawFd;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
-
-extern "C" {
-    fn flock(fd: i32, operation: i32) -> i32;
-}
-const LOCK_EX: i32 = 2;
-const LOCK_UN: i32 = 8;
+use std::process::ExitCode;
+use tsd::{append_line, default_host, now_iso};
 
 fn usage() -> &'static str {
     "usage: tsd-write --family <name> [--root <dir>] [--host <id>] [--ts <iso8601>] \
@@ -38,7 +31,11 @@ const ESCAPE_CLASSES: &[&str] = &["mapping_gap", "gate_gap", "environment_gap", 
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    let result = if args.first().map(String::as_str) == Some("escape") { run_escape(&args[1..]) } else { run(&args) };
+    let result = match args.first().map(String::as_str) {
+        Some("escape") => run_escape(&args[1..]),
+        Some("pass") => run_pass(&args[1..]),
+        _ => run(&args),
+    };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -46,6 +43,15 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// `tsd-write pass --repo R --batch B --pass N --where ec2|proxmox|local --cause <cause> [...]` — one
+/// certification-pass record from a lane that is not round-vm (a forge batch's per-run record).
+fn run_pass(args: &[String]) -> Result<(), String> {
+    let Some(root) = env::var("SPIRA_RUN").ok().filter(|v| !v.is_empty()).map(PathBuf::from) else {
+        return Err("SPIRA_RUN is not set — refusing to write a pass record to a relative path".into());
+    };
+    tsd::pass::from_args(args)?.write(&root, &default_host(), &now_iso())
 }
 
 /// `tsd-write escape <member> <suite> <class> [batch_id]` — `_tsd_escape`'s own door: one
@@ -133,80 +139,6 @@ fn run(args: &[String]) -> Result<(), String> {
     let line = tsd::build_row(&ts, &host, &family, &fields)?;
     let path = tsd::family_path(&root, &family);
     append_line(&path, &line)
-}
-
-fn default_host() -> String {
-    fs::read_to_string("/proc/sys/kernel/hostname")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| env::var("HOSTNAME").ok())
-        .unwrap_or_else(|| "unknown-host".to_string())
-}
-
-fn now_iso() -> String {
-    Command::new("timeout").arg("5").arg("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
-}
-
-/// A row is one whole line: a JSON object with no newline inside it. Refused before any byte
-/// reaches the file, so a malformed row can never be the torn line a reader trips over.
-fn check_line(line: &str) -> Result<(), String> {
-    if line.contains('\n') || line.contains('\r') {
-        return Err("row contains a line break".to_string());
-    }
-    match serde_json::from_str::<serde_json::Value>(line) {
-        Ok(serde_json::Value::Object(_)) => Ok(()),
-        Ok(_) => Err("row is not a JSON object".to_string()),
-        Err(e) => Err(format!("row is not valid JSON: {e}")),
-    }
-}
-
-/// True when the file's last byte is not a newline — an earlier writer died mid-line.
-fn tail_is_torn(f: &mut fs::File) -> std::io::Result<bool> {
-    use std::io::{Read, Seek, SeekFrom};
-    let len = f.metadata()?.len();
-    if len == 0 {
-        return Ok(false);
-    }
-    f.seek(SeekFrom::Start(len - 1))?;
-    let mut b = [0u8; 1];
-    f.read_exact(&mut b)?;
-    Ok(b[0] != b'\n')
-}
-
-fn append_line(path: &Path, line: &str) -> Result<(), String> {
-    check_line(line).map_err(|e| format!("{}: refused: {e}", path.display()))?;
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    let mut f = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    let fd = f.as_raw_fd();
-    if unsafe { flock(fd, LOCK_EX) } != 0 {
-        return Err(format!("{}: flock failed", path.display()));
-    }
-    let result = (|| {
-        let mut buf = Vec::with_capacity(line.len() + 2);
-        if tail_is_torn(&mut f)? {
-            buf.push(b'\n');
-        }
-        buf.extend_from_slice(line.as_bytes());
-        buf.push(b'\n');
-        f.write_all(&buf)
-    })()
-    .map_err(|e| format!("{}: {e}", path.display()));
-    let _ = unsafe { flock(fd, LOCK_UN) };
-    result
 }
 
 #[cfg(test)]

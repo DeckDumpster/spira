@@ -104,6 +104,16 @@ walk of `base..HEAD`) whose diff touches the file — `the base itself` when non
 step's wall time is reported as `LINT: <n>s of the 900s cap`. Without `--base` no lint runs.
 `queue round certify` and `batcher-cut` both pass it.
 
+#### The pass record
+
+A `run` with `--round-batch` appends exactly one row to `$SPIRA_RUN/tsd/cert-pass.jsonl` however
+it ends: repo, batch, pass (the batch's current pass), members, instance type, vcpus,
+where (`ec2`|`proxmox`), capacity wait (the lease), boot, build and suites seconds, verdict and a
+cause from the closed set `green, red-attributed, over-cap, vm-lost, infra, contention-flake`
+(exit 0, 1, 124, ssh lost or unreachable, else). A record that cannot be written ends a judged
+pass as exit 2 and records the batch's pass incomplete. A lane that is not `round-vm` writes the
+same row with `tsd-write pass --repo R --batch B --pass N --where W --cause C [...]`.
+
 ### 2.2a `run --attr-spool <dir>` — streaming and attribution reruns (sp-hvtgs)
 
 The batcher attributes a red round **while its corpus runs** (batcher-cut DESIGN.md §4). Two
