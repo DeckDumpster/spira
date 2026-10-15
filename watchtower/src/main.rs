@@ -406,6 +406,8 @@ fn main() {
                 unit_glob: reg("SPIRA_RELEASE_CURRENCY_UNITS"),
                 stale_release_secs: reg_i64("SPIRA_RELEASE_STALE_SECS"),
                 failed_runs: reg_i64("SPIRA_FAILED_UNIT_RUNS"),
+                oom_glob: getenv("SPIRA_OOM_UNITS").unwrap_or_else(|| "spira-*".to_string()),
+                oom_hold_secs: getenv_i64("SPIRA_OOM_HOLD_SECS", 21600),
                 tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| "/tmp".to_string()),
                 tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
                 df_bin: getenv("SPIRA_DF").unwrap_or_else(|| "df".to_string()),
@@ -421,6 +423,7 @@ fn main() {
             let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, bd: "bd", lc_bin: &lc_bin };
             conditions::reconcile(n, &ctx, "release-currency", probes::release_currency(&cfg));
             conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
+            conditions::reconcile(n, &ctx, "oom-restarts", probes::oom_restarts(&cfg, n, &run));
             conditions::reconcile(n, &ctx, "pressure", probes::pressure(&cfg));
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
             let rowless_cfg = probes::RowlessCfg {

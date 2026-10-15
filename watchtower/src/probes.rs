@@ -17,6 +17,8 @@ pub struct Cfg {
     pub unit_glob: String,
     pub stale_release_secs: i64,
     pub failed_runs: i64,
+    pub oom_glob: String,
+    pub oom_hold_secs: i64,
     pub tmp_path: String,
     pub tmp_floor_mib: i64,
     pub df_bin: String,
@@ -182,6 +184,95 @@ pub fn failing_units(cfg: &Cfg, run_dir: &Path) -> Reading {
     }
     let _ = std::fs::create_dir_all(path.parent().unwrap());
     let _ = std::fs::write(&path, render_tally(&next));
+    Reading::Standing(standing)
+}
+
+// ---- (b2) a Restart= unit killed by the OOM killer ------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OomRow {
+    pub restarts: i64,
+    pub last_oom: i64,
+}
+
+/// What `systemctl show` reports for one unit: a restart counter that survives the restart
+/// and the result of its latest stop, which the restart itself erases.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OomShow {
+    pub unit: String,
+    pub restarts: i64,
+    pub result: String,
+}
+
+pub fn parse_oom_show(show: &str) -> Vec<OomShow> {
+    show.split("\n\n")
+        .filter_map(|block| {
+            let get = |k: &str| block.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string());
+            Some(OomShow { unit: get("Id=")?, restarts: get("NRestarts=")?.parse().ok()?, result: get("Result=").unwrap_or_default() })
+        })
+        .collect()
+}
+
+/// `oom_in_journal` is asked only when the counter grew and the result alone does not say.
+pub fn oom_decide(now: i64, prev: Option<&OomRow>, s: &OomShow, oom_in_journal: &dyn Fn(i64) -> bool) -> OomRow {
+    let last = prev.map_or(0, |p| p.last_oom);
+    let grew = prev.is_some_and(|p| s.restarts > p.restarts);
+    let hit = s.result == "oom-kill" || (grew && oom_in_journal(prev.map_or(now, |p| p.last_oom.max(0))));
+    OomRow { restarts: s.restarts, last_oom: if hit { now } else { last } }
+}
+
+fn parse_oom_state(text: &str) -> BTreeMap<String, OomRow> {
+    text.lines()
+        .filter_map(|l| {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            if p.len() != 3 {
+                return None;
+            }
+            Some((p[0].to_string(), OomRow { restarts: p[1].parse().ok()?, last_oom: p[2].parse().ok()? }))
+        })
+        .collect()
+}
+
+fn journal_has_oom(cfg: &Cfg, unit: &str, since: i64) -> bool {
+    crate::deadline::output(
+        "oom journal",
+        Command::new(&cfg.journalctl).args(["--user", "-u", unit, "--since", &format!("@{since}"), "--no-pager", "-o", "cat"]),
+    )
+    .map(|o| {
+        let t = String::from_utf8_lossy(&o.stdout);
+        t.contains("oom-kill") || t.contains("OOM killer")
+    })
+    .unwrap_or(false)
+}
+
+pub fn oom_restarts(cfg: &Cfg, now: i64, run_dir: &Path) -> Reading {
+    let Some(show) = systemctl_show(cfg, &[&cfg.oom_glob, "-p", "Id", "-p", "NRestarts", "-p", "Result"]) else { return Reading::Unknown };
+    let path = run_dir.join("conditions").join("oom-restarts.state");
+    let prev = parse_oom_state(&std::fs::read_to_string(&path).unwrap_or_default());
+    let mut next = BTreeMap::new();
+    let mut standing = Vec::new();
+    for s in parse_oom_show(&show) {
+        let row = oom_decide(now, prev.get(&s.unit), &s, &|since| journal_has_oom(cfg, &s.unit, since));
+        if row.last_oom > 0 && now - row.last_oom < cfg.oom_hold_secs {
+            standing.push(Cond {
+                key: s.unit.clone(),
+                reference: format!("incident:oom-killed-{}", s.unit),
+                title: format!("OOM KILLED: {} was killed for memory and restarted ({} restarts)", s.unit, s.restarts),
+                body: format!(
+                    "{} was last OOM-killed {}s ago and has restarted {} times; Restart= hides this from the failed-unit list.\n\nIts MemoryMax is too low for what it does: `systemctl --user show {} -p MemoryMax -p MemoryPeak`, `journalctl --user -u {} | grep -i oom`.\n",
+                    s.unit, now - row.last_oom, s.restarts, s.unit, s.unit
+                ),
+                priority: 2,
+                sustain_secs: 0,
+            });
+        }
+        next.insert(s.unit, row);
+    }
+    let _ = std::fs::create_dir_all(path.parent().unwrap());
+    let _ = std::fs::write(&path, next.iter().fold(String::new(), |mut a, (u, r)| {
+        a.push_str(&format!("{u} {} {}\n", r.restarts, r.last_oom));
+        a
+    }));
     Reading::Standing(standing)
 }
 
@@ -479,6 +570,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_oom_kill_is_seen_through_the_restart_that_erases_it() {
+        let show = "Id=spira-a.service\nNRestarts=4\nResult=success\n\nId=spira-b.service\nNRestarts=0\nResult=oom-kill\n";
+        let rows = parse_oom_show(show);
+        assert_eq!(rows.len(), 2);
+        let a = &rows[0];
+        let yes = |_: i64| true;
+        let no = |_: i64| false;
+        assert_eq!(oom_decide(100, None, a, &yes).last_oom, 0, "first sight has no baseline to grow from");
+        let prev = OomRow { restarts: 3, last_oom: 0 };
+        assert_eq!(oom_decide(100, Some(&prev), a, &yes), OomRow { restarts: 4, last_oom: 100 });
+        assert_eq!(oom_decide(100, Some(&prev), a, &no).last_oom, 0, "a restart the journal does not blame on the OOM killer");
+        assert_eq!(oom_decide(100, Some(&OomRow { restarts: 4, last_oom: 0 }), a, &yes).last_oom, 0, "no new restart, nothing to ask");
+        assert_eq!(oom_decide(100, None, &rows[1], &no).last_oom, 100, "Result=oom-kill alone is evidence");
+        assert_eq!(oom_decide(200, Some(&OomRow { restarts: 4, last_oom: 100 }), a, &no).last_oom, 100, "a past hit is held");
+    }
+
+    #[test]
     fn a_sigterm_stop_is_not_a_failed_run() {
         let term = Run { result: "signal".into(), exec_status: "15".into(), ..run("failed", "i2") };
         assert_eq!(tally(Some(("i1", 2)), &term), None);
@@ -675,6 +783,8 @@ mod tests {
             unit_glob: "spira-*-prod.service".into(),
             stale_release_secs: 3600,
             failed_runs: 3,
+            oom_glob: "spira-*".into(),
+            oom_hold_secs: 21600,
             tmp_path: "/tmp".into(),
             tmp_floor_mib: 100,
             df_bin: "/nonexistent/df".into(),
