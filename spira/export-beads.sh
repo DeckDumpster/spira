@@ -11,7 +11,7 @@
 # fewer than half the beads already mirrored is refused, not written.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-. "$HERE/lib.sh"
+. "$HERE/lib.sh" || exit 1
 
 if [ -z "${SPIRA_WIKI:-}" ]; then
     echo "export-beads: SPIRA_WIKI is not configured — nothing to mirror."

@@ -26,7 +26,7 @@ export STUB_DIR="$TMP"
 printf '[{"id":"sp-b","title":"B","status":"open"},{"id":"sp-a","title":"A","status":"open"},{"id":"other-1","title":"x"}]' >"$TMP/content.json"
 printf 'sp-a\tDROPPED\t\nsp-b\tLANDED\t\nbead:\tDROPPED\t\n' >"$TMP/state.tsv"
 
-run() { env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin:$PATH" STUB_DIR="$TMP" SPIRA_WIKI="$WIKI" SPIRA_RUN="$RUN" bash "$HERE/export-beads.sh" 2>&1; }
+run() { PATH="$BIN:$PATH" STUB_DIR="$TMP" SPIRA_TOML="$(tl_layer SPIRA_WIKI="${WIKI_FOR_RUN-$WIKI}" SPIRA_RUN="$RUN")" bash "$HERE/export-beads.sh" 2>&1; }
 OUT="$WIKI/raw/spira-beads/spira.jsonl"
 
 r=$(run); wantrc "first run exits 0" 0 $?
@@ -51,4 +51,4 @@ is "mirror untouched on refusal" "$before" "$(cat "$OUT")"
 printf '[]' >"$TMP/content.json"; r=$(run); rc=$?
 [ "$rc" -ne 0 ] && ok "empty store refused" || bad "empty store accepted"
 
-r=$(env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_WIKI= SPIRA_RUN="$RUN" bash "$HERE/export-beads.sh" 2>&1); wantrc "no wiki is a quiet no-op" 0 $?
+r=$(WIKI_FOR_RUN= run); wantrc "no wiki is a quiet no-op" 0 $?
