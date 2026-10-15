@@ -125,6 +125,14 @@ fn result_names(dir: &Path) -> Vec<(String, String)> {
     v
 }
 
+fn hook_failure(suite: &str, code: Option<i32>, stderr: &[u8]) -> Option<String> {
+    if code == Some(0) {
+        return None;
+    }
+    let rc = code.map_or("signal".to_string(), |c| c.to_string());
+    Some(format!("round-vm run: --on-red hook for {suite} exited rc={rc}: {}", String::from_utf8_lossy(stderr).trim()))
+}
+
 fn total_done(fresh: &[(String, String)], total: usize) -> bool {
     total > 0 && fresh.len() >= total
 }
@@ -201,14 +209,21 @@ impl Progress {
                 .arg(suite)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
                 .spawn()
             {
-                Ok(mut child) => {
-                    std::thread::spawn(move || {
-                        let _ = child.wait();
+                Ok(child) => {
+                    let suite = suite.to_string();
+                    std::thread::spawn(move || match child.wait_with_output() {
+                        Ok(o) => {
+                            if let Some(line) = hook_failure(&suite, o.status.code(), &o.stderr) {
+                                eprintln!("{line}");
+                            }
+                        }
+                        Err(e) => eprintln!("round-vm run: --on-red hook for {suite} lost: {e}"),
                     });
                 }
-                Err(e) => eprintln!("round-vm run: --on-red {}: {e}", argv[0]),
+                Err(e) => eprintln!("round-vm run: --on-red hook for {suite}: {}: {e}", argv[0]),
             }
         }
     }
@@ -440,6 +455,14 @@ mod tests {
         fs::write(res.join("test-c.sh.result"), "timeout 1 12 fp p e 1\n").unwrap();
         p.finish(&res, 1);
         assert_eq!(wait_for(2), ["test-b.sh", "test-c.sh"], "in the order they failed, none twice");
+    }
+
+    #[test]
+    fn a_failing_hook_is_reported_with_its_suite_and_rc() {
+        assert_eq!(hook_failure("test-a.sh", Some(0), b""), None);
+        let line = hook_failure("test-a.sh", Some(3), b"boom\n").unwrap();
+        assert!(line.contains("test-a.sh") && line.contains("rc=3") && line.contains("boom"), "{line}");
+        assert!(hook_failure("test-a.sh", None, b"").unwrap().contains("rc=signal"));
     }
 
     #[test]
