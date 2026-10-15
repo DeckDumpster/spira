@@ -185,7 +185,7 @@ impl Sim for RealSim {
     }
 
     fn backoff(&mut self) {
-        std::thread::sleep(Duration::from_secs(20));
+        std::thread::sleep(Duration::from_secs(20)); // waits-on: the Dolt server to drain its load before the fixture retry; cap bounded by the caller's retry deadline
     }
 
     fn run(&mut self) -> Result<String, String> {
