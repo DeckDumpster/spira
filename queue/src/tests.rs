@@ -452,6 +452,8 @@ struct FForge {
     pr: RefCell<Option<String>>,
     /// Open `spira/queue/*` PRs as `(number, branch)`.
     queue_prs: RefCell<Vec<(String, String)>>,
+    /// Open `spira/publish/*` PRs as `(number, branch)`.
+    publish_prs: RefCell<Vec<(String, String)>>,
     calls: RefCell<Vec<String>>,
     /// check-status answers in order; when none is left the answer is `pending`. A `None`
     /// entry is a failed call.
@@ -481,6 +483,9 @@ impl Forge for FForge {
     }
     fn queue_prs(&self, _: &Path, _: &Path) -> Option<Vec<(String, String)>> {
         Some(self.queue_prs.borrow().clone())
+    }
+    fn publish_prs(&self, _: &Path, _: &Path) -> Option<Vec<(String, String)>> {
+        Some(self.publish_prs.borrow().clone())
     }
     fn pr_comment(&self, _: &Path, _: &Path, pr: &str, line: &str) {
         self.calls.borrow_mut().push(format!("pr-comment {pr} {line}"));
@@ -3125,4 +3130,22 @@ fn a_plain_eject_reason_contradicting_a_statute_is_refused_before_anything_is_to
     t.env.vars.borrow_mut().insert("BEAD_STATUTE_CONSIDERED".into(), "why".into());
     assert_eq!(t.run(&["eject", "sp-a", "--reason", "rebase by hand"]), 0, "{}", t.err());
     assert!(t.lib.has("cause_event sp-a eject"));
+}
+
+#[test]
+fn settle_adopts_a_green_forge_publish_the_record_does_not_know_then_opens_the_next() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    t.git.set("refs/remotes/origin/spira/publish/OLD", "m2");
+    t.git.ancestor("f0", "m2");
+    *t.forge.publish_prs.borrow_mut() = vec![("587".into(), "spira/publish/OLD".into())];
+    t.forge.status.borrow_mut().push(Some("green\n".into()));
+    *t.forge.pr.borrow_mut() = Some("588".into());
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    let calls = t.forge.calls.borrow().clone();
+    assert!(calls.contains(&"pr-close 587".to_string()), "{calls:?}");
+    assert!(t.lib.has("notify spira publish PR 587 merged"));
+    assert!(calls.iter().any(|c| c.starts_with("pr-create spira/publish/")), "{calls:?}");
+    assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=588\nhead=m3\n"));
+    assert!(t.out().contains("adopted open publish PR 587"), "{}", t.out());
 }

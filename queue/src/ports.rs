@@ -274,6 +274,8 @@ pub trait Forge {
     fn pr_automerge(&self, forge: &Path, repo: &Path, pr: &str) -> bool;
     /// `(pr, head branch)` of every open `spira/queue/*` PR; None when the forge cannot say.
     fn queue_prs(&self, forge: &Path, repo: &Path) -> Option<Vec<(String, String)>>;
+    /// Open `spira/publish/*` PRs as `(number, branch)`; None when the forge cannot be listed.
+    fn publish_prs(&self, forge: &Path, repo: &Path) -> Option<Vec<(String, String)>>;
     /// One bounded line (DESIGN.md §5).
     fn pr_comment(&self, forge: &Path, repo: &Path, pr: &str, line: &str);
     fn branch_protect(&self, forge: &Path, repo: &Path, branch: &str) -> bool;

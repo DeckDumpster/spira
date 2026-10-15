@@ -852,6 +852,16 @@ impl Forge for RealForge {
                 .collect(),
         )
     }
+    fn publish_prs(&self, forge: &Path, repo: &Path) -> Option<Vec<(String, String)>> {
+        let out = stdout_of(Command::new(forge).arg("pr-list-open").arg(repo))?;
+        Some(
+            out.lines()
+                .filter_map(|l| l.split_once(' '))
+                .filter(|(_, b)| b.starts_with("spira/publish/"))
+                .map(|(n, b)| (n.to_string(), b.to_string()))
+                .collect(),
+        )
+    }
     fn pr_comment(&self, forge: &Path, repo: &Path, pr: &str, line: &str) {
         let _ = ok(Command::new(forge).arg("pr-comment").arg(repo).arg(pr).arg(line).stderr(Stdio::null()));
     }
