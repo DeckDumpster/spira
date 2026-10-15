@@ -1,9 +1,9 @@
 // cert-report — certification throughput per repo and instance type, from run/tsd/cert-pass.jsonl.
 //
-// usage: cert-report [--root <dir>] [--day YYYY-MM-DD | --since <iso> --until <iso>] [--line] [--record]
+// usage: cert-report --root <dir> [--day YYYY-MM-DD | --since <iso> --until <iso>] [--line] [--record]
 //                    [--prices type=usd_per_hour,...]
 //
-//   --root    defaults to $SPIRA_RUN.        --prices defaults to $SPIRA_CERT_PRICES.
+//   --root and --prices are passed by the caller from the resolved config (SPIRA_RUN, SPIRA_CERT_PRICES).
 //   (window)  defaults to the 24 hours ending now.
 //   --line    prints the one status line the Concierge's briefing reads.
 //   --record  also appends one cert-throughput row per cell.
@@ -41,10 +41,8 @@ fn run(args: &[String]) -> Result<(), String> {
             other => return Err(format!("unknown argument {other}")),
         }
     }
-    let root = root
-        .or_else(|| env::var("SPIRA_RUN").ok().filter(|v| !v.is_empty()).map(PathBuf::from))
-        .ok_or("no --root and SPIRA_RUN is unset")?;
-    let prices = report::parse_prices(&prices.or_else(|| env::var("SPIRA_CERT_PRICES").ok()).unwrap_or_default())?;
+    let root = root.ok_or("--root is required")?;
+    let prices = report::parse_prices(&prices.unwrap_or_default())?;
     let ts = |s: &str| tsd::parse_ts(s).ok_or_else(|| format!("{s:?} is not YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ"));
     let (from, to) = match (day, since, until) {
         (Some(d), None, None) => {

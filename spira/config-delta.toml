@@ -38,6 +38,7 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.forge_workflows" = ""
 "spira.hypervisor_mem_mib" = 0
 "spira.round_vm_mem_mib" = 0
+"spira.cert_prices" = "c7i.large=0.08925,c7i.xlarge=0.1785,c7i.2xlarge=0.357,c7i.4xlarge=0.714,c7i.8xlarge=1.428"
 "spira.ci_runner_mem_mib" = 16384
 "spira.mender_max" = 8
 "spira.mender_deadline_secs" = 300
