@@ -294,7 +294,17 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
         }
     };
     let pfile = c.queue_file("publish");
-    let kv = records::read_kv(&pfile).ok().flatten();
+    let mut kv = records::read_kv(&pfile).ok().flatten();
+    if kv.is_none() {
+        match adopt_forge_publish(w, c, &path, &pfile) {
+            Ok(false) => {}
+            Ok(true) => {
+                super::verdict::settle_publish(w, c, &path);
+                kv = records::read_kv(&pfile).ok().flatten();
+            }
+            Err(()) => return FAIL,
+        }
+    }
     let pr = kv.as_ref().map(|kv| observe(w, c, &path, kv));
     let action = decide(pr);
     if !matches!(action, Settle::Wait | Settle::Parked | Settle::Alarm) && round_pass_running(w, c) {
@@ -318,6 +328,60 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
             publish_with(w, Some(&name), true)
         }
     }
+}
+
+/// An open `spira/publish/*` PR the record does not know is recorded (the newest; any older
+/// one is closed), so the one-PR guard's refusal becomes settlement. Ok(true): adopted.
+fn adopt_forge_publish(w: &World, c: &Ctx, path: &std::path::Path, pfile: &std::path::Path) -> Result<bool, ()> {
+    let name = &c.r.name;
+    let Some(mut open) = w.forge.publish_prs(&c.s.forge, path) else {
+        w.err(format!("queue.sh publish-settle: {name}: cannot list open publish PRs on the forge; continuing without adoption"));
+        return Ok(false);
+    };
+    open.sort_by_key(|(n, _)| n.parse::<u64>().unwrap_or(0));
+    let Some((pr, branch)) = open.pop() else { return Ok(false) };
+    let Some((remote, forge_branch)) = c.r.publish.clone() else { return Ok(false) };
+    let fail = |why: String| {
+        w.err(format!("queue.sh publish-settle: {name}: open publish PR {pr} ({branch}) is not in the record and cannot be adopted: {why}"));
+        w.lib.notify(&c.s.mailbox, name, &format!("publish PR {pr} cannot be adopted"), &format!("PR {pr} ({branch}) is open for {name} but publish-settle has no record of it and could not adopt it: {why}"));
+        Err(())
+    };
+    if idents(w, "publish-settle", &[("remote", &remote), ("forge branch", &forge_branch), ("branch", &branch)]).is_err() {
+        return Err(());
+    }
+    if !w.git.fetch(path, &remote, &branch) || !w.git.fetch(path, &remote, &forge_branch) {
+        return fail(format!("could not fetch {remote}/{branch}"));
+    }
+    let (Some(head), Some(base)) = (
+        w.git.rev_parse(path, &format!("refs/remotes/{remote}/{branch}")),
+        w.git.rev_parse(path, &format!("refs/remotes/{remote}/{forge_branch}")),
+    ) else {
+        return fail(format!("cannot resolve {remote}/{branch}"));
+    };
+    let members = range_members(w, path, &base, &head).unwrap_or_default();
+    let mut rec = Kv::default();
+    for (k, v) in [
+        ("pr", pr.clone()),
+        ("head", head),
+        ("base", base),
+        ("members", crate::model::render_members(&members)),
+        ("opened", w.clock.now().to_string()),
+        ("branch", branch.clone()),
+        ("remote", remote),
+        ("forge_branch", forge_branch),
+    ] {
+        rec.push(k, &v);
+    }
+    if let Err(e) = write_atomic(pfile, &rec.render()) {
+        w.err(format!("queue.sh publish-settle: {e}"));
+        return Err(());
+    }
+    for (n, _) in &open {
+        w.forge.pr_close(&c.s.forge, path, n);
+    }
+    landing_log(&c.s.run, &format!("QUEUE PUBLISH_ADOPTED {} repo={name} pr={pr} branch={branch} closed={}", w.clock.now(), open.len()));
+    w.out(format!("publish-settle {name}: adopted open publish PR {pr} ({branch}) from the forge"));
+    Ok(true)
 }
 
 fn rerun_or_alarm(w: &World, c: &Ctx, path: &std::path::Path, pfile: &std::path::Path, kv: Option<&Kv>, action: Settle) -> i32 {
