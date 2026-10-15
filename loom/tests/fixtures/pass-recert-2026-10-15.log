@@ -93,7 +93,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-aeon-worktree-collision.sh  ok      49s
   test-aeon-resume.sh              ok      51s
   test-aeon-wiki-dirty.sh          ok      18s
-  test-aeon-world-stop.sh          ok      25s
+  test-aeon-halt-all.sh          ok      25s
   test-skew-refresh.sh             ok      7s
   test-commit-cite.sh              ok      13s
   test-epic-claim-order.sh         ok      51s

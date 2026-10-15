@@ -72,7 +72,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-sim-long-gate-interleaving.sh ok      19s
   test-census-events.sh            ok      44s
   test-queue-open-batch.sh         ok      20s
-  test-aeon-world-stop.sh          ok      17s
+  test-aeon-halt-all.sh          ok      17s
   test-config-compat-master-base.sh ok      11s
   test-aeon-prod-dirty-rest.sh     ok      46s
   test-fayth.sh                    ok      3s

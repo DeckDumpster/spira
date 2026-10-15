@@ -110,7 +110,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-landing-base-fail.sh        ok      10s
   test-watchtower-lapse.sh         ok      5s
   test-aeon-wiki-dirty.sh          ok      23s
-  test-aeon-world-stop.sh          ok      29s
+  test-aeon-halt-all.sh          ok      29s
   test-sim-world-lc.sh             ok      2s
   test-install-aeons.sh            ok      53s
   test-sim-world-prebuilt.sh       ok      0s
