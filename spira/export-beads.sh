@@ -25,9 +25,9 @@ mkdir -p "$(dirname "$OUT")" || exit 1
 WORK="$(mktemp -d)" || exit 1
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
-timeout 300 spira-lc content list --all --json >"$WORK/content.json" || { echo "export-beads: content list failed" >&2; exit 1; }
-timeout 120 spira-lc list-all >"$WORK/state.tsv" || { echo "export-beads: lifecycle list failed" >&2; exit 1; }
-timeout 60 spira-lc content memories --json >"$WORK/memories.json" || echo '{}' >"$WORK/memories.json"
+timeout 300 spira-lc content list --all --json >"$WORK/content.json" || { echo "export-beads: content list failed" >&2; exit 1; } # batch-job: full-store dump on a timer
+timeout 120 spira-lc list-all >"$WORK/state.tsv" || { echo "export-beads: lifecycle list failed" >&2; exit 1; } # batch-job: full-store dump on a timer
+timeout 60 spira-lc content memories --json >"$WORK/memories.json" || echo '{}' >"$WORK/memories.json" # batch-job: full-store dump on a timer
 
 previous=0
 [ -f "$OUT" ] && previous=$(grep -c '"id": *"sp-' "$OUT" 2>/dev/null || echo 0)
