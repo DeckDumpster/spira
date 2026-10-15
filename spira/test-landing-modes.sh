@@ -163,6 +163,8 @@ closed_branch sp-frz
 out="$(BATCHER_ENABLE=0 runpass pr)"
 want    "freeze: the pass says the walk is held" "the pr walk is held" "$out"
 nowant  "freeze: no pull request opened"        "pr-create" "$(cat "$FORGE_LOG")"
+timeout 5 git -C "$REMOTE" rev-parse --verify -q refs/heads/spira/sp-frz >/dev/null \
+    && bad "freeze: the branch was not pushed" "$out" || ok "freeze: the branch was not pushed"
 out="$(runpass pr)"
 want    "freeze lifted: the pull request is opened" "opened a pull request for spira/sp-frz" "$out"
 
