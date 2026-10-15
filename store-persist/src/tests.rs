@@ -349,3 +349,28 @@ fn compaction_rebuilds_only_a_copy_past_its_ratio_and_swaps_it_whole() {
     assert_eq!(fs::read_to_string(l.db("spira").join("payload")).unwrap(), "beads-v1");
     assert!(!l.compact_dir().join("spira").exists(), "the superseded copy is removed");
 }
+
+#[test]
+fn a_stop_time_pass_syncs_only_a_database_written_since_the_last_pass() {
+    let w = seeded();
+    restore(&w.cfg, &w.dolt).unwrap();
+    live_server(&w, 4242);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    w.clock.0.set(now + 60_000);
+    pass(&w.cfg, Mode::Online, &w.dolt, &w.clock).unwrap();
+    w.dolt.live.borrow_mut().clear();
+    w.dolt.syncs.borrow_mut().clear();
+    w.clock.0.set(now + 120_000);
+    pass(&w.cfg, Mode::Offline, &w.dolt, &w.clock).unwrap();
+    assert!(w.dolt.syncs.borrow().is_empty(), "nothing written since the daemon's pass: nothing to copy");
+    assert_eq!(read_state(&layout(&w)).unwrap().start_ms, now + 120_000);
+
+    put(&w.cfg.data.join("spira/.dolt/noms/payload"), "beads-v9");
+    let later = std::time::UNIX_EPOCH + std::time::Duration::from_millis(now + 300_000);
+    fs::File::options().write(true).open(w.cfg.data.join("spira/.dolt/noms/payload")).unwrap().set_modified(later).unwrap();
+    w.clock.0.set(now + 400_000);
+    pass(&w.cfg, Mode::Offline, &w.dolt, &w.clock).unwrap();
+    let synced: Vec<String> = w.dolt.syncs.borrow().iter().map(|s| s.1.clone()).collect();
+    assert_eq!(synced, ["spira"], "only the database written since the last pass is copied");
+    assert_eq!(fs::read_to_string(layout(&w).db("spira").join("payload")).unwrap(), "beads-v9");
+}
