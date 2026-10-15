@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use reconciler_engine::holds::{Action, AskMail, Env, Hold, Kind};
+use reconciler_engine::holds::{Action, AskMail, Env, Exit, Hold, Kind};
 use serde_json::Value;
 
 /// Mailboxes a question can be delivered to: an out-of-class ask is rerouted to the Concierge.
@@ -83,6 +83,48 @@ pub fn live_hold_from_history(history_json: &str, kind: Kind) -> Result<Option<H
         }
     }
     Ok(live)
+}
+
+/// Who places the snooze that ends a session which moved nothing.
+const NO_PROGRESS_ACTOR: &str = "aeon";
+
+/// The claims on a bead that ended in a no-progress snooze since its last Submit or answer,
+/// oldest first. A session the machinery could not judge leaves no snooze, so it is not here.
+/// Empty while an ask on the bead is live.
+pub fn exits_from_history(history_json: &str) -> Result<Vec<Exit>, String> {
+    let v: Value = serde_json::from_str(history_json.trim()).map_err(|e| format!("spira-lc history: not JSON: {e}"))?;
+    let events = v.as_array().ok_or("spira-lc history: not a JSON array")?;
+    let (mut exits, mut ask_live) = (Vec::new(), false);
+    for e in events {
+        if text(e, "applied").is_some_and(|a| a == "0" || a == "false") {
+            continue;
+        }
+        let evidence = match field(e, "evidence") {
+            Some(Value::String(s)) => serde_json::from_str::<Value>(s).unwrap_or(Value::Null),
+            Some(other) => other.clone(),
+            None => Value::Null,
+        };
+        let name = text(e, "event").unwrap_or_default();
+        let body = evidence.get(&name).cloned().unwrap_or(Value::Null);
+        let kind = text(&body, "kind").unwrap_or_default();
+        match name.as_str() {
+            "Submit" => exits.clear(),
+            "Reply" | "AskWithdrawn" => {
+                exits.clear();
+                ask_live = false;
+            }
+            "Hold" if same_kind(&kind, Kind::Ask) => ask_live = true,
+            "Unhold" if same_kind(&kind, Kind::Ask) => ask_live = false,
+            "Hold" if same_kind(&kind, Kind::Wait) && text(e, "actor").is_some_and(|a| a == NO_PROGRESS_ACTOR) => {
+                let detail = text(&body, "detail").unwrap_or_default();
+                if spira_config::lc_state::snooze_until(&detail).is_some() && !spira_config::lc_state::is_checkpoint(&detail) {
+                    exits.push(Exit { ended_at: epoch(e, "at").unwrap_or(0), note: detail });
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(if ask_live { Vec::new() } else { exits })
 }
 
 /// True when the last applied event left the bead in a terminal state: the machine refuses
@@ -204,6 +246,24 @@ impl Live {
         Ok(())
     }
 
+    fn send_question(&self, bead: &str, subject: &str, body: &str) -> Result<(), String> {
+        let mut child = spira_config::bounded::bounded(&self.mail_sh)
+            .args(["send", "concierge", "--from", "Reconciler <reconciler@spira>", "--subject", subject, "--kind", "question", "--default", "drop or split the bead; it cannot progress with unchanged inputs", "--bead", bead])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("{}: {e}", self.mail_sh))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(body.as_bytes());
+        }
+        let out = child.wait_with_output().map_err(|e| format!("{}: {e}", self.mail_sh))?;
+        if !out.status.success() {
+            return Err(format!("{} send concierge: exit {}: {}", self.mail_sh, out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        Ok(())
+    }
+
     fn mailbox_exists(&self, mailbox: &str) -> bool {
         self.mail_root.join(mailbox).join("new").is_dir()
     }
@@ -236,12 +296,33 @@ impl Env for Live {
         scan_asks(&self.mail_root, &ASK_MAILBOXES)
     }
 
+    fn exits(&mut self, bead: &str) -> Result<Vec<Exit>, String> {
+        exits_from_history(&lc(&self.lc_bin, &["history", bead, "--machine", "bead"])?)
+    }
+
     fn act(&mut self, hold: &Hold, action: &Action) -> Result<(), String> {
         let bead = hold.bead.as_str();
         let reason = hold.detail.as_deref().unwrap_or("(no reason recorded)");
         let age_h = |t: Option<u64>, now: u64| t.map(|s| format!("{}h", now.saturating_sub(s) / 3600)).unwrap_or_else(|| "unknown".into());
         let now = self.now;
         match action {
+            Action::TripBreaker { exits, window_secs } => {
+                let evidence: String = exits
+                    .iter()
+                    .map(|x| format!("  epoch {} no-progress (unjudged-no-progress): {}\n", x.ended_at, x.note))
+                    .collect();
+                let last = exits.last().map(|x| x.note.as_str()).unwrap_or("");
+                let n = exits.len();
+                let question = format!("{n} claims ended without progress inside {}m; last: {last}", window_secs / 60);
+                lc(&self.lc_bin, &["hold", bead, "ask", &question, &self.actor])?;
+                self.send_question(
+                    bead,
+                    &format!("NO-PROGRESS BREAKER: {bead} had {n} claims end without progress inside {}m", window_secs / 60),
+                    &format!(
+                        "bead     {bead}\n\nEach claim ended without a Submit and nothing it did moved the branch:\n{evidence}\nThe last aeon's final word: {last}\n\nThe lifecycle has stopped re-summoning it. Only your answer lifts the hold: change an input the aeon was blocked on, split or drop the bead.\n"
+                    ),
+                )
+            }
             Action::LiftWait { until } => lift_wait_result(lc(&self.lc_bin, &["unhold", bead, "wait", &self.actor]), *until),
             Action::RaiseAsk => self.send(
                 "concierge",
@@ -376,6 +457,89 @@ mod tests {
     fn no_readable_mailbox_is_cannot_tell() {
         let dir = testkit::TempDir::new("hold-sweep-nomail");
         assert!(scan_asks(&dir, &ASK_MAILBOXES).is_err());
+    }
+
+    fn ev(seq: usize, event: &str, actor: &str, at: u64, body: &str) -> String {
+        format!(r#"{{"seq":{seq},"event":"{event}","applied":1,"actor":"{actor}","at":{at},"evidence":{{"{event}":{body}}}}}"#)
+    }
+
+    /// One claim that ends in the no-progress snooze the aeon places, as sp-6rejya's history recorded them.
+    fn no_progress_cycle(events: &mut Vec<String>, at: u64) {
+        let n = events.len();
+        events.push(ev(n + 1, "Claim", "aeon", at, "{}"));
+        events.push(ev(n + 2, "Release", "aeon", at + 60, "null"));
+        let hold = format!(r#"{{"kind":"Wait","cause":"unlanded-blocker","detail":"snooze-until:{} no-progress: needs the Concierge"}}"#, at + 1800);
+        events.push(ev(n + 3, "Hold", "aeon", at + 61, &hold));
+        events.push(ev(n + 4, "Unhold", "reconciler", at + 1900, r#"{"kind":"Wait"}"#));
+    }
+
+    fn breaker() -> reconciler_engine::holds::Breaker {
+        reconciler_engine::holds::Breaker::new(4, 180).unwrap()
+    }
+
+    fn trips(events: &[String]) -> bool {
+        let history = format!("[{}]", events.join(","));
+        breaker().tripped(&exits_from_history(&history).unwrap()).is_some()
+    }
+
+    #[test]
+    fn replaying_a_history_of_no_progress_claims_trips_on_the_fourth_and_not_before() {
+        let mut events = Vec::new();
+        let mut first_trip = None;
+        for cycle in 0..8u64 {
+            no_progress_cycle(&mut events, 1_000_000 + cycle * 2000);
+            if first_trip.is_none() && trips(&events) {
+                first_trip = Some(cycle + 1);
+            }
+        }
+        assert_eq!(first_trip, Some(4));
+    }
+
+    #[test]
+    fn once_the_ask_is_placed_the_same_history_trips_no_more() {
+        let mut events = Vec::new();
+        for cycle in 0..4u64 {
+            no_progress_cycle(&mut events, 1_000_000 + cycle * 2000);
+        }
+        assert!(trips(&events));
+        events.push(ev(events.len() + 1, "Hold", "reconciler", 1_010_000, r#"{"kind":"Ask","cause":"operator-question","detail":"q"}"#));
+        assert!(!trips(&events));
+        events.push(ev(events.len() + 1, "Reply", "concierge", 1_011_000, r#"{"message_id":"m"}"#));
+        assert!(!trips(&events), "an answer clears the count it answered");
+    }
+
+    #[test]
+    fn a_harness_fault_exit_is_not_a_no_progress_claim() {
+        let mut events = Vec::new();
+        for cycle in 0..3u64 {
+            no_progress_cycle(&mut events, 1_000_000 + cycle * 2000);
+        }
+        let n = events.len();
+        events.push(ev(n + 1, "Claim", "aeon", 1_006_000, "{}"));
+        events.push(ev(n + 2, "Release", "aeon", 1_006_060, "null"));
+        assert!(!trips(&events));
+        no_progress_cycle(&mut events, 1_007_000);
+        assert!(trips(&events), "positive control: a fourth no-progress exit does trip");
+    }
+
+    #[test]
+    fn four_claims_spread_over_more_than_the_window_do_not_trip() {
+        let mut events = Vec::new();
+        for cycle in 0..4u64 {
+            no_progress_cycle(&mut events, 1_000_000 + cycle * 4000);
+        }
+        assert!(!trips(&events));
+    }
+
+    #[test]
+    fn a_submit_ends_the_count() {
+        let mut events = Vec::new();
+        for cycle in 0..3u64 {
+            no_progress_cycle(&mut events, 1_000_000 + cycle * 2000);
+        }
+        events.push(ev(events.len() + 1, "Submit", "aeon", 1_006_000, r#"{"tip":"t"}"#));
+        no_progress_cycle(&mut events, 1_007_000);
+        assert!(!trips(&events));
     }
 
     #[test]

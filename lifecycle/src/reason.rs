@@ -153,6 +153,9 @@ pub enum HoldCause {
     OperatorQuestion,
     /// CHECK 3b: blocked on a dependency that has not landed.
     UnlandedBlocker,
+    /// a session ended without moving the branch: the timed snooze before the bead is
+    /// offered again, with no blocking edge behind it.
+    NoProgressBackoff,
     /// an aeon's own request that the bead be superseded, pending confirmation.
     SupersedeRequest,
     /// an operator's own manual hold, for no mechanically-detected cause.
@@ -165,6 +168,7 @@ impl HoldCause {
             HoldCause::AttemptsExhausted => "attempts-exhausted",
             HoldCause::OperatorQuestion => "operator-question",
             HoldCause::UnlandedBlocker => "unlanded-blocker",
+            HoldCause::NoProgressBackoff => "no-progress-backoff",
             HoldCause::SupersedeRequest => "supersede-request",
             HoldCause::ManualHold => "manual-hold",
         }
@@ -176,6 +180,7 @@ impl HoldCause {
             "attempts-exhausted" => HoldCause::AttemptsExhausted,
             "operator-question" => HoldCause::OperatorQuestion,
             "unlanded-blocker" => HoldCause::UnlandedBlocker,
+            "no-progress-backoff" => HoldCause::NoProgressBackoff,
             "supersede-request" => HoldCause::SupersedeRequest,
             "manual-hold" => HoldCause::ManualHold,
             _ => return None,
@@ -204,10 +209,11 @@ mod tests {
         GateRedReason::Confine,
     ];
     const ALL_DROP: [DropReason; 2] = [DropReason::ClosedNoBranch, DropReason::Unwanted];
-    const ALL_HOLD_CAUSE: [HoldCause; 5] = [
+    const ALL_HOLD_CAUSE: [HoldCause; 6] = [
         HoldCause::AttemptsExhausted,
         HoldCause::OperatorQuestion,
         HoldCause::UnlandedBlocker,
+        HoldCause::NoProgressBackoff,
         HoldCause::SupersedeRequest,
         HoldCause::ManualHold,
     ];

@@ -459,3 +459,5 @@ batcher_forge_enable
 queue_rounds_max
 round_max_open
 concierge_push_idle
+no_progress_breaker_claims
+no_progress_breaker_window_minutes

@@ -1,0 +1,4 @@
+TYPE=u32
+GROUP=toml
+DOC=spira.toml-only key: no spira.conf spelling, not in conf.sh allowlist.
+SCHEMA=How many claims on one bead may end without progress (no Submit) inside the breaker window before the lifecycle stops re-summoning it and asks the Concierge. No default: unset refuses.

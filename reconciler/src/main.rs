@@ -1560,7 +1560,17 @@ fn run_hold_sweep(cfg: &Config, pending: &mut PendingMap) {
         now: cfg.now_secs,
     };
     let shadow = is_shadowed(&cfg.shadow_kinds, "holds");
-    match holds::sweep(cfg.now_secs, &mut live, &mut state, shadow) {
+    let breaker = spira_config::process::cfg_parse::<u32>("SPIRA_NO_PROGRESS_BREAKER_CLAIMS")
+        .and_then(|claims| Ok((claims, spira_config::process::cfg_parse::<u32>("SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES")?)))
+        .and_then(|(claims, minutes)| holds::Breaker::new(claims, minutes));
+    let breaker = match breaker {
+        Ok(b) => b,
+        Err(e) => {
+            log_print(cfg, &format!("reconciler: holds: no-progress breaker unconfigured, sweep refused: {e}"));
+            return;
+        }
+    };
+    match holds::sweep(cfg.now_secs, &mut live, &mut state, shadow, breaker) {
         Err(e) => {
             log_print(cfg, &format!("reconciler: holds: cannot tell, nothing acted on: {e}"));
             state.last_pass = cfg.now_secs;

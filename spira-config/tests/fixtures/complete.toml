@@ -432,6 +432,8 @@ workflow_only_paths = "spira/acceptance-ci.sh spira/acceptance-agent.sh spira/bu
 workspaces = "/fixture/userhome/spira"
 work_close_types = "task bug feature"
 world_stop_label = "world-stop"
+no_progress_breaker_claims = 4
+no_progress_breaker_window_minutes = 180
 
 [repo.spira]
 path = "/fixture/userhome/spira/harness"

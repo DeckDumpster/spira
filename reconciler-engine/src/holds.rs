@@ -64,8 +64,45 @@ pub struct AskMail {
     pub mailbox: String,
 }
 
+/// One claim that ended without a Submit and without a fault of the machinery's own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Exit {
+    pub ended_at: u64,
+    pub note: String,
+}
+
+/// `claims` no-progress exits inside `window_secs` trip the breaker. Neither is defaulted:
+/// [`Breaker::new`] refuses a zero, and the caller reads both from the config.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Breaker {
+    claims: usize,
+    window_secs: u64,
+}
+
+impl Breaker {
+    pub fn new(claims: u32, window_minutes: u32) -> Result<Breaker, String> {
+        if claims == 0 || window_minutes == 0 {
+            return Err(format!("no-progress breaker needs claims >= 1 and a window >= 1 minute, got {claims} and {window_minutes}"));
+        }
+        Ok(Breaker { claims: claims as usize, window_secs: u64::from(window_minutes) * 60 })
+    }
+
+    pub fn window_secs(&self) -> u64 {
+        self.window_secs
+    }
+
+    /// The first run of `claims` consecutive exits, oldest first, whose ends fit the window.
+    pub fn tripped(&self, exits: &[Exit]) -> Option<Vec<Exit>> {
+        exits
+            .windows(self.claims)
+            .find(|w| w[self.claims - 1].ended_at.saturating_sub(w[0].ended_at) <= self.window_secs)
+            .map(<[Exit]>::to_vec)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
+    TripBreaker { exits: Vec<Exit>, window_secs: u64 },
     LiftWait { until: u64 },
     RaiseAsk,
     ResurfaceAsk { delivered_at: u64, mailbox: String },
@@ -76,6 +113,7 @@ pub enum Action {
 impl Action {
     pub fn name(&self) -> &'static str {
         match self {
+            Action::TripBreaker { .. } => "trip-breaker",
             Action::LiftWait { .. } => "lift-wait",
             Action::RaiseAsk => "raise-ask",
             Action::ResurfaceAsk { .. } => "resurface-ask",
@@ -142,6 +180,9 @@ pub trait Env {
     fn holds(&mut self) -> Result<Vec<Hold>, String>;
     /// The newest delivered question per bead.
     fn asks(&mut self) -> Result<BTreeMap<String, AskMail>, String>;
+    /// The bead's no-progress exits since its last sign of progress or answer; empty while an
+    /// ask on it is live, so a tripped bead is not tripped again.
+    fn exits(&mut self, bead: &str) -> Result<Vec<Exit>, String>;
     fn act(&mut self, hold: &Hold, action: &Action) -> Result<(), String>;
 }
 
@@ -175,7 +216,7 @@ pub struct Report {
 }
 
 /// Visits every hold once. `shadow` records what would be done and does none of it.
-pub fn sweep(now: u64, env: &mut dyn Env, state: &mut SweepState, shadow: bool) -> Result<Report, String> {
+pub fn sweep(now: u64, env: &mut dyn Env, state: &mut SweepState, shadow: bool, breaker: Breaker) -> Result<Report, String> {
     let holds = env.holds()?;
     let asks = env.asks();
     let mut report = Report { visited: holds.len(), ..Report::default() };
@@ -190,7 +231,21 @@ pub fn sweep(now: u64, env: &mut dyn Env, state: &mut SweepState, shadow: bool) 
             (Kind::Ask, Ok(m)) => m.get(&hold.bead),
             _ => None,
         };
-        let Some(action) = decide(now, hold, ask, state.acted.get(&key).copied()) else { continue };
+        let tripped = match hold.kind {
+            Kind::Wait => match env.exits(&hold.bead) {
+                Ok(exits) => breaker.tripped(&exits),
+                Err(e) => {
+                    report.skipped.push(format!("{key}: history unreadable: {e}"));
+                    continue;
+                }
+            },
+            _ => None,
+        };
+        let action = match tripped {
+            Some(exits) => Some(Action::TripBreaker { exits, window_secs: breaker.window_secs() }),
+            None => decide(now, hold, ask, state.acted.get(&key).copied()),
+        };
+        let Some(action) = action else { continue };
         report.wanted.insert(key.clone());
         let outcome = if shadow {
             Outcome::Shadowed

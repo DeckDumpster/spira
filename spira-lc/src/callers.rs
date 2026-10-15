@@ -441,6 +441,15 @@ fn hold_cause(k: HoldKind) -> HoldCause {
     }
 }
 
+/// A timed snooze is a backoff, not a blocker: only a wait the caller gave no snooze is
+/// `unlanded-blocker`.
+fn hold_cause_for(k: HoldKind, reason: &str) -> HoldCause {
+    if k == HoldKind::Wait && reason.starts_with(lc_state::SNOOZE_PREFIX) {
+        return HoldCause::NoProgressBackoff;
+    }
+    hold_cause(k)
+}
+
 fn hold(m: &mut dyn Machine, id: &str, kind: &str, cause: &str, actor: &str) -> Answer {
     with_row(m, id, actor, |_| match HoldKind::from_str(kind) {
         Some(HoldKind::Wait) if lc_state::names_directive(cause) && lc_state::snooze_until(cause).is_none() => Err(Answer {
@@ -448,7 +457,7 @@ fn hold(m: &mut dyn Machine, id: &str, kind: &str, cause: &str, actor: &str) -> 
             stderr: format!("lc: wait hold reason {cause:?} is not understood; a timed snooze is \"snooze-until:<epoch seconds>[ explanation]\"; no hold was applied\n"),
             ..Default::default()
         }),
-        Some(k) => Ok(BeadEventKind::Hold { kind: k, cause: hold_cause(k), detail: Some(cause.to_string()) }),
+        Some(k) => Ok(BeadEventKind::Hold { kind: k, cause: hold_cause_for(k, cause), detail: Some(cause.to_string()) }),
         None => Err(unknown_kind(kind)),
     })
 }
