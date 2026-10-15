@@ -260,7 +260,7 @@ async fn vm_round_route(State(loom): State<Arc<Loom>>, axum::extract::Path(batch
         }
         Err(e) => format!("(log not readable: {e})"),
     };
-    let members = b.members.iter().filter(|m| !b.ejected.contains(m)).map(|m| format!("<a href=/stuck/{0}>{0}</a>", stuck::esc(m))).collect::<Vec<_>>().join(" ");
+    let members = b.members.iter().filter(|m| !b.ejected.contains(m)).map(|m| format!("<a href=/beads/{0}>{0}</a>", stuck::esc(m))).collect::<Vec<_>>().join(" ");
     let live = snap.vm_runs.iter().any(|r| !r.idle && !r.held && r.run == b.id);
     let refresh = if live { "<meta http-equiv=refresh content=5>" } else { "" };
     html_response(
@@ -360,12 +360,45 @@ async fn stuck_api_route(State(loom): State<Arc<Loom>>) -> Response {
         .expect("a response with a valid status and headers")
 }
 
-async fn stuck_bead_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id): axum::extract::Path<String>) -> Response {
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.') {
+fn valid_bead_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+}
+
+async fn stuck_bead_redirect(axum::extract::Path(id): axum::extract::Path<String>) -> Response {
+    if !valid_bead_id(&id) {
         return html_response(StatusCode::BAD_REQUEST, "<!doctype html><p>not a bead id</p>".into());
     }
+    Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .header(header::LOCATION, format!("/beads/{id}"))
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(axum::body::Body::empty())
+        .expect("a redirect with a valid status and headers")
+}
+
+fn bead_rounds_html(snap: &cockpit_ops::lcview::Snapshot, id: &str) -> String {
+    let mut rows: Vec<_> = snap.batches.iter().filter(|b| b.members.iter().any(|m| m == id)).collect();
+    rows.sort_by_key(|b| std::cmp::Reverse(b.opened_at.max(b.last_at)));
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("<div style=\"padding:.5rem .8rem\"><div class=dim>rounds</div>");
+    for b in rows {
+        let name = if b.log.is_empty() { stuck::esc(&b.id) } else { format!("<a href=/rounds/{0}>{0}</a>", stuck::esc(&b.id)) };
+        let outcome = if b.ejected.iter().any(|m| m == id) { "<span class=red>ejected</span>" } else { "in round" };
+        out.push_str(&format!("<div>{name} · {} · {} · {outcome}</div>", stuck::esc(&b.repo), stuck::esc(&b.state)));
+    }
+    out.push_str("</div>");
+    out
+}
+
+async fn stuck_bead_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id): axum::extract::Path<String>) -> Response {
+    if !valid_bead_id(&id) {
+        return html_response(StatusCode::BAD_REQUEST, "<!doctype html><p>not a bead id</p>".into());
+    }
+    let rounds = lifecycle_snapshot(&loom).map(|(s, _)| bead_rounds_html(&s, &id)).unwrap_or_default();
     match lc_json(&loom, &["ops-bead", &id]).await {
-        Ok(d) if d.get("events").is_some() => html_response(StatusCode::OK, shell::with_bar(&stuck::render_bead(stuck::num(&d["now"]).unwrap_or_else(now_s), &id, &d), &page_bar(&loom))),
+        Ok(d) if d.get("events").is_some() => html_response(StatusCode::OK, shell::with_bar(&stuck::render_bead(stuck::num(&d["now"]).unwrap_or_else(now_s), &id, &d, &rounds), &page_bar(&loom))),
         Ok(_) => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such bead</p>".into()),
         Err(e) if e.contains("exited 1") => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such bead</p>".into()),
         Err(e) => unavailable("bead timeline", &e),
@@ -466,7 +499,8 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/api/lifecycle", get(lifecycle_api_route))
         .route("/stuck", get(stuck_page_route))
         .route("/api/stuck", get(stuck_api_route))
-        .route("/stuck/{id}", get(stuck_bead_route))
+        .route("/stuck/{id}", get(stuck_bead_redirect))
+        .route("/beads/{id}", get(stuck_bead_route))
         .route("/units", get(units_page_route))
         .route("/api/units", get(units_api_route))
         .route("/api/ops", get(ops_route))
@@ -474,4 +508,24 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/rounds", get(rounds_route))
         .route("/rounds/{repo}/{batch}", get(round_route))
         .with_state(loom)
+}
+
+#[cfg(test)]
+mod bead_page_tests {
+    use super::*;
+    use cockpit_ops::lcview::{BatchRow, Snapshot};
+
+    #[test]
+    fn a_bead_ejected_from_one_round_and_landed_in_another_lists_both() {
+        let row = |id: &str, ejected: &[&str], log: &str, at: i64| BatchRow {
+            id: id.into(), members: vec!["sp-x".into(), "sp-y".into()], ejected: ejected.iter().map(|s| s.to_string()).collect(),
+            log: log.into(), opened_at: at, repo: "r".into(), state: "x".into(), ..Default::default()
+        };
+        let snap = Snapshot { batches: vec![row("b-1", &["sp-x"], "/l/1", 1), row("b-2", &[], "", 2), BatchRow { id: "b-3".into(), members: vec!["sp-z".into()], ..Default::default() }], ..Default::default() };
+        let html = bead_rounds_html(&snap, "sp-x");
+        assert!(html.contains("href=/rounds/b-1") && html.contains("ejected"), "{html}");
+        assert!(html.contains("b-2") && !html.contains("href=/rounds/b-2"), "{html}");
+        assert!(!html.contains("b-3"), "positive control: a round without the bead is absent: {html}");
+        assert!(bead_rounds_html(&snap, "sp-none").is_empty());
+    }
 }

@@ -38,6 +38,17 @@ async fn spawn(cfg: Config) -> SocketAddr {
 
 /// A GET over a real socket, so the routing and the status line are under test rather than a
 /// handler called directly.
+async fn get_location(addr: SocketAddr, path: &str) -> (u16, String) {
+    let mut s = TcpStream::connect(addr).await.expect("a connection");
+    s.write_all(format!("GET {path} HTTP/1.1\r\nHost: loom\r\nConnection: close\r\n\r\n").as_bytes()).await.expect("a request");
+    let mut buf = Vec::new();
+    s.read_to_end(&mut buf).await.expect("a response");
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    let code = text.split_whitespace().nth(1).and_then(|c| c.parse().ok()).expect("a status");
+    let loc = text.lines().find_map(|l| l.to_ascii_lowercase().starts_with("location:").then(|| l[9..].trim().to_string())).unwrap_or_default();
+    (code, loc)
+}
+
 async fn get(addr: SocketAddr, path: &str) -> (u16, String) {
     let mut s = TcpStream::connect(addr).await.expect("a connection");
     s.write_all(
@@ -200,16 +211,19 @@ async fn the_stuck_page_leads_with_the_bead_past_its_p95_and_a_row_opens_its_tim
 
     let (status, page) = get(addr, "/stuck").await;
     assert_eq!(status, 200, "{page}");
-    let (stuck_at, fine_at) = (page.find("/stuck/sp-2cah6").expect("stuck row"), page.find("/stuck/sp-fine").expect("healthy row"));
+    let (stuck_at, fine_at) = (page.find("/beads/sp-2cah6").expect("stuck row"), page.find("/beads/sp-fine").expect("healthy row"));
     assert!(stuck_at < fine_at, "the stuck bead is listed first");
     assert!(page.contains("seg s-CERTIFIED over"), "its bar is outlined");
     assert!(!page.contains("seg s-WORKING over"), "positive control: the healthy bar is not");
 
-    let (status, detail) = get(addr, "/stuck/sp-2cah6").await;
+    let (status, detail) = get(addr, "/beads/sp-2cah6").await;
     assert_eq!(status, 200, "{detail}");
     assert!(detail.contains("refused: no-edge"));
-    assert_eq!(get(addr, "/stuck/sp-nope1").await.0, 404);
+    assert_eq!(get(addr, "/beads/sp-nope1").await.0, 404);
+    assert_eq!(get(addr, "/beads/a%20b").await.0, 400);
     assert_eq!(get(addr, "/stuck/a%20b").await.0, 400);
+    let (status, loc) = get_location(addr, "/stuck/sp-2cah6").await;
+    assert_eq!((status, loc.as_str()), (301, "/beads/sp-2cah6"));
 }
 
 // ── /units ───────────────────────────────────────────────────────────────────
@@ -545,7 +559,7 @@ async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_all_five_sections_
     fx.cfg.lc = fake_lc(&fx.dir.to_path_buf());
     write_snapshot(&PathBuf::from(&fx.cfg.run), &now_snapshot());
     let addr = spawn(fx.cfg.clone()).await;
-    for path in FIVE.iter().chain(&["/stuck/sp-2cah6", "/rounds/dumpstar/b-live1"]) {
+    for path in FIVE.iter().chain(&["/beads/sp-2cah6", "/rounds/dumpstar/b-live1"]) {
         let (code, page) = get(addr, path).await;
         assert_eq!(code, 200, "{path}");
         assert!(page.contains("width=device-width") || *path == "/lifecycle", "{path}: viewport");

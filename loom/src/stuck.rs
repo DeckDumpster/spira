@@ -164,7 +164,7 @@ pub fn render_page(now: i64, rows: &[Row]) -> String {
             _ => format!(" <span class=dim>{} {}</span>", esc(&r.state), dur(r.dwell_s)),
         };
         b.push_str(&format!(
-            "<a class=\"row{}\" href=\"/stuck/{id}\"><div class=head><span class=id>{id}</span><span class=dim>{p}</span><span class=t>{}</span></div><div>{over}{holds}</div><div class=bar>",
+            "<a class=\"row{}\" href=\"/beads/{id}\"><div class=head><span class=id>{id}</span><span class=dim>{p}</span><span class=t>{}</span></div><div>{over}{holds}</div><div class=bar>",
             if r.stuck { " stuck" } else { "" },
             esc(&r.title),
             id = esc(&r.bead_id),
@@ -204,7 +204,7 @@ pub fn blockers(own: &str, texts: &[String]) -> Vec<String> {
     out.into_iter().collect()
 }
 
-pub fn render_bead(now: i64, id: &str, detail: &Value) -> String {
+pub fn render_bead(now: i64, id: &str, detail: &Value, rounds: &str) -> String {
     let bead = &detail["bead"];
     let mut b = format!("<header><h1><a href=/stuck>← stuck</a> <span class=dim>/</span> {}</h1><div class=dim>{}</div></header>", esc(id), esc(&text(&bead["title"])));
     let state = text(&bead["state"]);
@@ -225,11 +225,12 @@ pub fn render_bead(now: i64, id: &str, detail: &Value) -> String {
     if !links.is_empty() {
         b.push_str("<div>blockers: ");
         for l in &links {
-            b.push_str(&format!("<a class=id href=\"/stuck/{0}\" style=\"text-decoration:underline\">{0}</a> ", esc(l)));
+            b.push_str(&format!("<a class=id href=\"/beads/{0}\" style=\"text-decoration:underline\">{0}</a> ", esc(l)));
         }
         b.push_str("</div>");
     }
     b.push_str("</div>");
+    b.push_str(rounds);
     // Newest first. An applied move that stays in its state (a lease Renew, a note) is detail of
     // the move that entered the state, so it folds under it; a refusal stays on its own line.
     let mut evs: Vec<&Value> = detail["events"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
@@ -340,7 +341,7 @@ mod tests {
     fn the_page_outlines_the_stuck_bars_and_links_every_row() {
         let html = render_page(NOW, &intent());
         assert!(html.contains("seg s-CERTIFIED over"));
-        assert!(html.contains("href=\"/stuck/sp-h4umcj\""));
+        assert!(html.contains("href=\"/beads/sp-h4umcj\""));
         assert!(html.contains("width=device-width"));
         let quiet = render_page(NOW, &[]);
         assert!(!quiet.contains(" over\""), "positive control: no stuck row, no outline");
@@ -358,10 +359,10 @@ mod tests {
         let d = json!({"bead": {"state": "WORKING", "holder": "aeon-1", "lease_until": NOW - 600, "holds": "[]", "title": "x", "gate_key": "waits on sp-abcd12"},
             "events": [{"seq": 1, "event": "Claim", "from_state": "READY", "to_state": "WORKING", "applied": 1, "actor": "a", "at": NOW - 900},
                        {"seq": 2, "event": "Certify", "from_state": "WORKING", "to_state": "WORKING", "applied": 0, "refusal": "wrong-state", "actor": "b", "at": NOW - 60}]});
-        let html = render_bead(NOW, "sp-self9", &d);
+        let html = render_bead(NOW, "sp-self9", &d, "");
         assert!(html.contains("tr class=\"refused\"") && html.contains("refused: wrong-state"));
         assert!(html.contains("LEASE EXPIRED 10m ago"));
-        assert!(html.contains("href=\"/stuck/sp-abcd12\""));
+        assert!(html.contains("href=\"/beads/sp-abcd12\""));
     }
 
     #[test]
@@ -372,7 +373,7 @@ mod tests {
         let d = json!({"bead": {"state": "SUBMITTED", "holds": "[]", "title": "x"},
             "events": [e(1, "Claim", "READY", "WORKING", 1), e(2, "Renew", "WORKING", "WORKING", 1), e(3, "Renew", "WORKING", "WORKING", 1),
                        e(4, "Certify", "WORKING", "WORKING", 0), e(5, "Renew", "WORKING", "WORKING", 1), e(6, "Submit", "WORKING", "SUBMITTED", 1)]});
-        let html = render_bead(NOW, "sp-fold1", &d);
+        let html = render_bead(NOW, "sp-fold1", &d, "");
         assert!(html.contains("3 update(s) in WORKING — Renew×3"), "{html}");
         let (submit, refusal, claim) = (html.find(">Submit<").unwrap(), html.find(">Certify<").unwrap(), html.find(">Claim<").unwrap());
         assert!(submit < refusal && refusal < claim, "newest first, with the refusal on its own line");

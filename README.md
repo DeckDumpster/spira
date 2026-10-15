@@ -211,7 +211,7 @@ Two mechanisms worth knowing:
 
 `loom/` is a Rust read endpoint over the lifecycle store's read model. It never reads `bd`.
 
-- `GET /stuck` — a per-bead Gantt of the last day, stuck rows first; `GET /stuck/{id}` is one
+- `GET /stuck` — a per-bead Gantt of the last day, stuck rows first; `GET /beads/{id}` (with `/stuck/{id}` redirecting to it) is one
   bead's timeline and `GET /api/stuck` the same rows as JSON.
 - `GET /lifecycle` and `GET /api/lifecycle` — the lifecycle view the cockpit pane draws.
 - `GET /api/ops` — the ops dashboard, a mirror of the cockpit's health column, readable on a phone.
