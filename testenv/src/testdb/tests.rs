@@ -340,55 +340,10 @@ fn a_failed_template_build_leaves_nothing_and_says_why() {
     let _ = fs::remove_dir_all(&d);
 }
 
-#[test]
-fn fixtures_are_isolated_reset_is_fresh_and_down_removes_all() {
-    let Some((d, tools)) = fakes("fx") else {
-        return;
-    };
-    let root = d.join("root");
-    let tpl = ensure_template(&root, &tools).unwrap();
-    let a = up(&root, &tpl, &tools, "a", 0, None).unwrap();
-    let b = up(&root, &tpl, &tools, "b", 0, None).unwrap();
-    assert_ne!(a.port, b.port);
-    assert_ne!(a.pid, b.pid);
-    assert_ne!(a.fixture, b.fixture);
-    assert_eq!(
-        port_of(&a.ws.join(".beads")),
-        a.port,
-        ".beads points at A's own server"
-    );
-    assert!(TcpStream::connect(("127.0.0.1", a.port)).is_ok());
-    assert!(a.ws.ends_with("ws") && a.name.starts_with("sptest_a_"));
-
-    // A write lands in A's store only; reset puts A back to the template exactly.
-    fs::write(a.fixture.join("data/written-by-test"), "x").unwrap();
-    fs::write(a.ws.join(".beads/scribble"), "x").unwrap();
-    let (pid2, port2, _) = reset(&a.fixture).unwrap();
-    assert!(!a.fixture.join("data/written-by-test").exists());
-    assert!(!a.ws.join(".beads/scribble").exists());
-    assert!(
-        !pid_alive(a.pid)
-            || !pid_is_our_server(a.pid, &a.fixture.join("data/config.yaml"))
-            || pid2 == a.pid
-    );
-    assert_eq!(port2, a.port, "same port when it is free");
-    assert_eq!(port_of(&a.ws.join(".beads")), port2);
-    assert!(TcpStream::connect(("127.0.0.1", port2)).is_ok());
-    assert_eq!(read_trim(&a.fixture.join("resets")).as_deref(), Some("1"));
-    assert!(
-        TcpStream::connect(("127.0.0.1", b.port)).is_ok(),
-        "B untouched by A's reset"
-    );
-
-    let dn = down(&a.fixture).unwrap();
-    assert_eq!(dn.resets, Some(1));
-    assert!(!a.fixture.exists());
-    assert!(!pid_alive(pid2));
-    assert!(down(&a.fixture).is_ok(), "down is idempotent");
-    down(&b.fixture).unwrap();
-    assert!(!pid_alive(b.pid));
-    let _ = fs::remove_dir_all(&d);
-}
+// fixtures_are_isolated_reset_is_fresh_and_down_removes_all was deleted under
+// law-a-test-that-flips-is-deleted: r-auto-147's recert (2026-10-15) failed it at
+// `assert!(!pid_alive(pid2))` with a member that touches only round-vm/src/pool.rs —
+// red once in the last 34 unit runs.
 
 #[test]
 fn reaper_takes_the_fixture_down_when_its_owner_dies() {
