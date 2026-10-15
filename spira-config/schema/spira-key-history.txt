@@ -455,3 +455,4 @@ round_vm_ec2_launch_window
 cert_prices
 aeon_warm_base
 aeon_warm_cap_mib
+batcher_forge_enable
