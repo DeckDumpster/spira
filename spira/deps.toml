@@ -763,3 +763,10 @@ tier = "release"
 purpose = "Spira's spira-submission binary, from the release's bin/ — authenticated SMTPS submission on the tailnet, handing replies from a mail client to mail sendmail."
 version_min = ""
 version_probe = "readlink -f \"$(command -v spira-submission)\""
+
+[[dep]]
+name = "cert-report"
+tier = "release"
+purpose = "Spira's cert-report binary, from the release's bin/ — certification throughput per repo and instance type from the cert-pass records"
+version_min = ""
+version_probe = "readlink -f \"$(command -v cert-report)\""

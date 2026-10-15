@@ -114,6 +114,10 @@ cause from the closed set `green, red-attributed, over-cap, vm-lost, infra, cont
 pass as exit 2 and records the batch's pass incomplete. A lane that is not `round-vm` writes the
 same row with `tsd-write pass --repo R --batch B --pass N --where W --cause C [...]`.
 
+`cert-report [--day D] [--line] [--record]` reads those rows alone and reports, per repo and instance type,
+beads landed per hour, first-pass-to-landed p50/p95, passes per landed bead, capacity-wait share, lost
+passes by cause and EC2 cost per landed bead (priced by `SPIRA_CERT_PRICES`), each with its sample size.
+
 ### 2.2a `run --attr-spool <dir>` — streaming and attribution reruns (sp-hvtgs)
 
 The batcher attributes a red round **while its corpus runs** (batcher-cut DESIGN.md §4). Two

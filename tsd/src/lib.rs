@@ -141,6 +141,7 @@ const LOCK_EX: i32 = 2;
 const LOCK_UN: i32 = 8;
 
 pub mod pass;
+pub mod report;
 
 pub fn default_host() -> String {
     std::fs::read_to_string("/proc/sys/kernel/hostname")
