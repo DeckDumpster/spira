@@ -19,7 +19,7 @@ printf '#!/usr/bin/env bash\n[ "$1 $2 $3 $4" = "list --state CERTIFIED --repo" ]
 sed -i "s|SPIRAON|$TMP/spiraon|" "$TMP/bin/spira-lc"
 printf 'spira | %s | queue.local | local/main | |\ndeckdumpster | %s | queue.forge | origin/main | |\n' "$TMP/repo" "$TMP/repo" > "$TMP/rows"
 : > "$TMP/spiraon"
-printf '#!/usr/bin/env bash\n[ "$1 $2" = "round status" ] || exit 2\ncase "$(cat QMODE)" in\n open) printf "round=open\\nbatch_id=r-1\\n" ;;\n none) echo round=none ;;\n garbage) echo hello ;;\n fail) echo boom >&2; exit 1 ;;\nesac\n' > "$TMP/bin/queue"
+printf '#!/usr/bin/env bash\n[ "$1 $2" = "round status" ] || exit 2\ncase "$(cat QMODE)" in\n open) printf "round=open\\nbatch_id=r-1\\n" ;;\n none) echo round=none ;;\n garbage) echo hello ;;\n two) printf "round=open\\nbatch_id=r-1\\n\\nround=open\\nbatch_id=r-2\\n" ;;\n fail) echo boom >&2; exit 1 ;;\nesac\n' > "$TMP/bin/queue"
 sed -i "s|QMODE|$TMP/qmode|" "$TMP/bin/queue"
 chmod +x "$TMP/bin/spira-lc" "$TMP/bin/queue"
 PATH="$TMP/bin:$PATH"
@@ -42,6 +42,21 @@ nowant "ROUND DUE does not count the forge repo" "deckdumpster" "$out"
 rm -f "$M" "$TMP/spiraon"
 nowant "certified forge beads alone raise nothing" "ROUND DUE" "$(run watch --interval 1 --ticks 1)"
 : > "$TMP/spiraon"
+
+mrun() {
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 SPIRA_REPO_MAP="$TMP/rows" SPIRA_ROUND_MAX_OPEN=1 "$@"
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/repo" \
+        bash "$HERE/round-duty.sh" watch --interval 1 --ticks 1 2>&1
+}
+echo open > "$TMP/qmode"
+nowant "one open round with the default cap of one raises nothing" "ROUND DUE" "$(mrun)"
+out="$(mrun SPIRA_ROUND_MAX_OPEN=2)"
+want "a free slot calls a second round due" "ROUND DUE: 1 certified" "$out"
+want "ROUND DUE reports the open count" "1 of 2 rounds open" "$out"
+echo two > "$TMP/qmode"
+nowant "two open rounds fill a cap of two" "ROUND DUE" "$(mrun SPIRA_ROUND_MAX_OPEN=2)"
+want "the third slot opens once the cap allows" "2 of 3 rounds open" "$(mrun SPIRA_ROUND_MAX_OPEN=3)"
+mrun >/dev/null
 
 for m in fail garbage; do
     echo "$m" > "$TMP/qmode"

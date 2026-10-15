@@ -43,16 +43,23 @@ _rd_certified() {
     done
 }
 
-# Sets _rd_state to open, none or unknown.
+# Sets _rd_state to open, none or unknown, and _rd_open to the number of rounds status reports
+# open (every `round=open` line counts, not just the first).
 _rd_round_state() {
     local out rc
     out="$(queue round status 2>/dev/null)"; rc=$?
-    _rd_state=unknown
+    _rd_state=unknown _rd_open=0
     [ "$rc" -eq 0 ] || return 0
-    case "$(printf '%s\n' "$out" | sed -n 's/^round=//p' | head -n1)" in
-        open) _rd_state=open ;;
-        none) _rd_state=none ;;
-    esac
+    _rd_open="$(printf '%s\n' "$out" | grep -c '^round=open$')"
+    if [ "$_rd_open" -gt 0 ]; then _rd_state=open
+    elif printf '%s\n' "$out" | grep -q '^round=none$'; then _rd_state=none
+    fi
+}
+
+# Open rounds are bounded by the cap alone; VM capacity is the scheduler's concern, never checked here.
+_rd_may_cut() {
+    [ "$_rd_state" = none ] && return 0
+    [ "$_rd_state" = open ] && [ "$_rd_open" -lt "$SPIRA_ROUND_MAX_OPEN" ]
 }
 
 _rd_tick() {
@@ -85,10 +92,10 @@ _rd_tick() {
         return 0
     fi
     _rd_last_unknown=0
-    if [ "$_rd_state" = none ] && { [ "$c" -ge "$SPIRA_ROUND_MIN" ] \
+    if _rd_may_cut && { [ "$c" -ge "$SPIRA_ROUND_MIN" ] \
             || { [ "$c" -ge 1 ] && [ "$idle" -ge "$SPIRA_ROUND_IDLE_CUT" ]; }; }; then
         if [ $((now - _rd_last_due)) -ge "$SPIRA_ROUND_DUE_REMIND" ]; then
-            _rd_say "ROUND DUE: $c certified waiting [$_rd_by_repo] (idle ${idle}s), no round running — cut the next round"
+            _rd_say "ROUND DUE: $c certified waiting [$_rd_by_repo] (idle ${idle}s), $_rd_open of $SPIRA_ROUND_MAX_OPEN rounds open — cut the next round"
             _rd_last_due=$now
         fi
     else
