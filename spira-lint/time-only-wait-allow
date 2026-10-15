@@ -8,10 +8,4 @@
 2 auron/src/main.rs sp-qse6cn
 2 sentinel/src/cfg.rs sp-qse6cn
 2 sentinel/src/summon.rs sp-qse6cn
-4 concierge.sh sp-4gcxuz.2
-2 release/src/acceptance/phases.rs sp-4gcxuz.3
-1 release/src/activate.rs sp-4gcxuz.4
-1 release/src/install.rs sp-4gcxuz.4
-1 round-vm/src/pool.rs sp-4gcxuz.5
-1 spira/inbox-append.sh sp-4gcxuz.6
-2 store-persist/probe/probe.sh sp-4gcxuz.7
+2 concierge.sh sp-4gcxuz.2

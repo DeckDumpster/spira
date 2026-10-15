@@ -1,7 +1,7 @@
 TYPE=u32
 GROUP=concierge
-DOC=PUSH COALESCING, seconds: urgent lines arriving within this window of the first are delivered as ONE wake.
+DOC=PUSH CAP, seconds: the longest an urgent burst is held before it is delivered as ONE wake, however steadily lines keep arriving.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # PUSH COALESCING, seconds: urgent lines arriving within this window of the first are delivered as ONE wake.
+    # PUSH CAP, seconds: the longest an urgent burst is held before it is delivered as ONE wake, however steadily lines keep arriving.
     : "${SPIRA_CONCIERGE_PUSH_WINDOW:=5}"
 SPIRA_CONF_DEFAULT_EOF

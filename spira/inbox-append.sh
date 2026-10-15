@@ -7,7 +7,8 @@
 # inbox-triage Monitor tails SPIRA_CONCIERGE_INBOX and is the normal reader.
 #
 # A line matching SPIRA_CONCIERGE_PUSH_PATTERN is also pushed: queued to a spool, and one
-# detached flusher per window delivers the whole burst as ONE `concierge.sh wake` (held by
+# detached flusher delivers the whole burst, once the spool is quiet for SPIRA_CONCIERGE_PUSH_IDLE
+# (capped at SPIRA_CONCIERGE_PUSH_WINDOW), as ONE `concierge.sh wake` (held by
 # the wake until the input line is empty, so it cannot split the operator's half-written
 # message). The urgent class then does not depend on the Monitor being armed.
 set -uo pipefail
@@ -23,7 +24,14 @@ SPOOL="$SPIRA_CONCIERGE_INBOX.push"
 printf '%s\n' "$line" >> "$SPOOL"
 
 flush() {
-    sleep "$SPIRA_CONCIERGE_PUSH_WINDOW"
+    local waited=0 quiet=0 size last=-1
+    while [ "$waited" -lt "$((SPIRA_CONCIERGE_PUSH_WINDOW * 5))" ] && [ "$quiet" -lt "$((SPIRA_CONCIERGE_PUSH_IDLE * 5))" ]; do
+        sleep 0.2
+        waited=$((waited + 1))
+        size="$(stat -c %s "$SPOOL" 2>/dev/null || echo 0)"
+        if [ "$size" = "$last" ]; then quiet=$((quiet + 1)); else quiet=0; fi
+        last="$size"
+    done
     local batch="$SPOOL.$$" n text
     mv "$SPOOL" "$batch" 2>/dev/null || return 0
     n="$(wc -l < "$batch")"

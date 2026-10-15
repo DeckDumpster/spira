@@ -93,6 +93,7 @@ concierge_inbox_stall = 600
 concierge_push_pattern = "\\bP0\\b|RED on|PAUSED|UNDRIVEN|unread (operator )?verdict"
 concierge_push_wake = "/fixture/userhome/spira/spira-releases/current/concierge.sh wake"
 concierge_push_window = 5
+concierge_push_idle = 1
 ctrl = "/fixture/userhome/spira/run/control"
 ctx_high = "400000"
 ctx_limit = "1000000"

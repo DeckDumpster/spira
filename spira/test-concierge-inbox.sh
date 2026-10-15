@@ -133,7 +133,7 @@ cat > "$TMP/elsewhere/fake-wake" <<WEOF
 printf '%s\n' "\$*" >> "$PUSHLOG"
 WEOF
 chmod +x "$TMP/elsewhere/fake-wake"
-tl_config SPIRA_CONCIERGE_PUSH_WAKE="$TMP/elsewhere/fake-wake" SPIRA_CONCIERGE_PUSH_WINDOW=6 \
+tl_config SPIRA_CONCIERGE_PUSH_WAKE="$TMP/elsewhere/fake-wake" SPIRA_CONCIERGE_PUSH_WINDOW=6 SPIRA_CONCIERGE_PUSH_IDLE=2 \
     SPIRA_CONCIERGE_PUSH_PATTERN='URGENT-[0-9]+'
 : > "$PUSHLOG"
 inbox-append.sh "plain event, not urgent"
