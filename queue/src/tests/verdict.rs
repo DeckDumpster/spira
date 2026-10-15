@@ -462,6 +462,19 @@ fn red_summons_judgement_once_with_the_suites_and_the_run() {
 }
 
 #[test]
+fn a_red_batch_bars_every_member_tip_until_an_abandon_or_an_eject_attributes_it() {
+    let mut t = T::new(LandMode::Queue);
+    batch(&t);
+    t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
+    *t.scripts.judgement.borrow_mut() = RunOut { rc: 0, out: "filed\nid=sp-j1\n".into(), err: String::new() };
+    t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(fs::read_to_string(t.qfile("red-tips")).unwrap(), "sp-a ta\nsp-b tb\n");
+    assert_eq!(t.run(&["abandon", "--reason", "flake"]), 0, "{}", t.err());
+    assert_eq!(fs::read_to_string(t.qfile("red-tips")).unwrap(), "");
+}
+
+#[test]
 fn a_red_forge_batch_summons_a_mender_per_red_suite_once() {
     let mut t = T::new(LandMode::Queue);
     lc_batch(&t);
