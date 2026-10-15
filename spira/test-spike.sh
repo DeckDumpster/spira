@@ -253,7 +253,7 @@ lc_path_stub "$SH" "$TMP/lcfix"
 
 land() {
     rm -f "$RUN/landing.progress"
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO=home \
+    tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO=home \
         SPIRA_REPO_MAP="$SH/repo-map" SPIRA_SPIKE_LABEL="$SPIRA_SPIKE_LABEL" \
         SPIRA_SPIKE_DIR="$SPIRA_SPIKE_DIR" SPIRA_SPIKE_PATHS="$SPIRA_SPIKE_PATHS"
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$LREPO" \
