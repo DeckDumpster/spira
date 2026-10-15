@@ -1301,8 +1301,8 @@ pub fn local_tier_member(env: &Env, repo: &Repo, base_sha: &str, tip: &str) -> R
         return Ok(());
     }
     let git = |args: &[&str]| {
-        Command::new("git")
-            .arg("-C")
+        Command::new("timeout")
+            .args(["5", "git", "-C"])
             .arg(&repo.path)
             .args(["-c", "user.name=spira", "-c", "user.email=spira@localhost"])
             .args(args)
