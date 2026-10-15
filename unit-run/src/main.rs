@@ -3,6 +3,8 @@
 //! follow: tail the user journal from the cursor last checkpointed, writing one record per
 //! unit execution to run/tsd/unit-run.jsonl. backfill: replay the journal from its oldest
 //! entry, writing only what the file lacks; seeds the follower's checkpoint when it has none.
+//! follow starts the same replay on a background thread until it has completed once, so a
+//! start never waits on the journal's size.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -118,6 +120,7 @@ fn save_checkpoint(path: &Path, f: &Folder) -> Result<(), String> {
 fn sink<'a>(run: &Path, clock: &'a dyn Clock, proc: &'a dyn Proc) -> Result<Sink<'a>, String> {
     let path = tsd::family_path(run, unit_run::FAMILY);
     let seen = written_ids(&std::fs::read_to_string(&path).unwrap_or_default());
+    let scanned = std::fs::metadata(&path).map_or(0, |m| m.len());
     Ok(Sink {
         path,
         host: tsd::default_host(),
@@ -125,6 +128,7 @@ fn sink<'a>(run: &Path, clock: &'a dyn Clock, proc: &'a dyn Proc) -> Result<Sink
         clock,
         triggers: Triggers::new(proc),
         seen,
+        scanned,
     })
 }
 
@@ -133,12 +137,17 @@ fn follow() -> Result<(), String> {
     let cp = checkpoint_path(&run);
     std::fs::create_dir_all(cp.parent().ok_or("no tsd dir")?).map_err(|e| e.to_string())?;
     let start = load_checkpoint(&cp)?.unwrap_or_default();
+    std::thread::spawn(|| {
+        if let Err(e) = backfill(false, false) {
+            eprintln!("unit-run: background backfill: {e}");
+        }
+    });
     let mut s = sink(&run, &Wall, &Spawn)?;
     pass(&Journal, start, true, &mut s, &mut |f| save_checkpoint(&cp, f))?;
     Err("journalctl ended".into())
 }
 
-fn backfill(force: bool) -> Result<(), String> {
+fn backfill(force: bool, seed: bool) -> Result<(), String> {
     let run = run_dir()?;
     let cp = checkpoint_path(&run);
     let marker = run.join("tsd").join(".unit-run-backfilled");
@@ -149,7 +158,7 @@ fn backfill(force: bool) -> Result<(), String> {
     std::fs::create_dir_all(cp.parent().ok_or("no tsd dir")?).map_err(|e| e.to_string())?;
     let mut s = sink(&run, &Wall, &Spawn)?;
     let (folder, n) = pass(&Journal, Folder::default(), false, &mut s, &mut |_| Ok(()))?;
-    if load_checkpoint(&cp)?.is_none() {
+    if seed && load_checkpoint(&cp)?.is_none() {
         let fresh = std::fs::OpenOptions::new().write(true).create_new(true).open(&cp);
         if fresh.is_ok() {
             save_checkpoint(&cp, &folder)?;
@@ -182,7 +191,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("follow") => follow(),
-        Some("backfill") => backfill(args.iter().any(|a| a == "--force")),
+        Some("backfill") => backfill(args.iter().any(|a| a == "--force"), true),
         Some("ensure-accounting") => ensure_accounting(args.iter().position(|a| a == "--dir").and_then(|i| args.get(i + 1)).cloned()),
         _ => {
             eprintln!("usage: unit-run <follow|backfill [--force]|ensure-accounting [--dir DIR]>");

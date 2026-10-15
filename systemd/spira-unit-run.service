@@ -13,7 +13,6 @@ TimeoutStartSec=600
 CPUQuota=20%
 MemoryMax=256M
 ExecStartPre=-@SPIRA_PROD_ROOT@/bin/unit-run ensure-accounting
-ExecStartPre=-@SPIRA_PROD_ROOT@/bin/unit-run backfill
 ExecStart=@SPIRA_PROD_ROOT@/bin/unit-run follow
 Restart=always
 RestartSec=10
