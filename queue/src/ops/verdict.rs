@@ -956,8 +956,11 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
         "a different failing step on the re-run"
     };
     if rerun_at.is_some() && first == step && b.members.len() == 1 {
-        let tail: Vec<String> = log.lines().rev().take(5).map(str::to_string).collect::<Vec<_>>().into_iter().rev().collect();
-        let lines = if tail.is_empty() { vec![format!("failed step: {shown}")] } else { tail };
+        let mut lines: Vec<String> = log.lines().rev().take(5).map(str::to_string).collect();
+        lines.reverse();
+        if lines.is_empty() {
+            lines.push(format!("failed step: {shown}"));
+        }
         return eject_red_members(w, c, b, &[(b.members[0].clone(), lines)], bo);
     }
     let evidence = format!("no suite annotations ({same}); failed step: {shown}; log tail:\n{log}");
