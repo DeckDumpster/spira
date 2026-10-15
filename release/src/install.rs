@@ -179,8 +179,12 @@ pub fn install(cfg: &Config, sc: &dyn Systemctl, un: &dyn Unpack, tarball: &Path
                 if !restart_failed.is_empty() {
                     eprintln!("release: WARN: some units failed to restart: {}", restart_failed.join("; "));
                 }
-                if !o.settle.is_zero() {
-                    std::thread::sleep(o.settle);
+                for (u, st) in crate::systemctl::await_settled(sc, &restarted, o.settle) {
+                    match st {
+                        Ok(s) if s.active == "active" => {}
+                        Ok(s) => eprintln!("release: WARN: {u} is {} after restart (Result={})", s.active, s.result),
+                        Err(e) => eprintln!("release: WARN: cannot read the state of {u}: {e}"),
+                    }
                 }
             }
             Err(e) => eprintln!("release: WARN: could not list active spira-*.service units — continuing: {e}"),

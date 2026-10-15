@@ -28,7 +28,7 @@ pub struct Ctx<'a> {
     pub repo: Option<PathBuf>,
     /// The ref a hotfix commit must be contained in to count as landed.
     pub landed_ref: String,
-    /// How long restarted units get to come up before they are checked.
+    /// The cap on waiting for restarted units to reach `active` (or `failed`).
     pub settle: Duration,
     /// How long a running oneshot whose unit changed gets to finish its in-flight work and
     /// exit before activation stops waiting for it.
@@ -328,11 +328,8 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
         }
     }
     if failed.is_empty() && !out.restarted.is_empty() {
-        if !ctx.settle.is_zero() {
-            std::thread::sleep(ctx.settle);
-        }
-        for u in &out.restarted {
-            match ctx.sc.state(u) {
+        for (u, st) in crate::systemctl::await_settled(ctx.sc, &out.restarted, ctx.settle) {
+            match st {
                 Ok(st) if st.active == "active" => {}
                 Ok(st) => failed.push(format!("{u}: did not come up (ActiveState={}, Result={})", st.active, st.result)),
                 Err(e) => failed.push(format!("{u}: cannot read its state: {e}")),
