@@ -1554,6 +1554,12 @@ pub fn exit_for_remote(rc: i32) -> i32 {
     }
 }
 
+/// A failed workspace build (testenv's code 4) ran no suite, so missing results are the verdict's
+/// whole story, not a pull fault: the VM has nothing to re-pull.
+fn build_failed_without_results(remote_rc: i32, has_results: bool) -> bool {
+    remote_rc == 4 && !has_results
+}
+
 /// One pull, retried: a dropped ssh must not cost a finished corpus its results.
 fn pull_retry(remote: &dyn Remote, cfg: &Config, addr: &str, remote_path: &str, local: &Path) -> bool {
     let tries = cfg.ssh_tries.max(3);
@@ -1675,6 +1681,13 @@ fn after_batch(
         (results_ok, tsd_pull.join().unwrap_or(false))
     });
     let leaf = results_leaf(&pulled);
+    if build_failed_without_results(remote_rc, leaf.is_some()) {
+        eprintln!("round-vm run: the workspace build failed on {}: no suite ran, so there is nothing to pull; releasing it", vm.handle);
+        for d in [&pulled, &tsd, &bins] {
+            let _ = fs::remove_dir_all(d);
+        }
+        return 4;
+    }
     if let Some(leaf) = &leaf {
         if let Err(e) = copy_tree(leaf, &results_dir) {
             eprintln!("round-vm run: {e}");
@@ -1774,6 +1787,14 @@ mod tests {
         assert_eq!(spilled_maxpar(Some(8), Some("c7i.4xlarge"), false), None);
         assert_eq!(spilled_maxpar(None, Some("c7i.4xlarge"), true), None);
         assert_eq!(spilled_maxpar(None, None, false), None);
+    }
+
+    #[test]
+    fn a_failed_build_with_no_results_is_a_verdict_not_a_pull_fault() {
+        assert!(build_failed_without_results(4, false));
+        assert!(!build_failed_without_results(4, true));
+        assert!(!build_failed_without_results(1, false));
+        assert!(!build_failed_without_results(0, false));
     }
 
     #[test]
