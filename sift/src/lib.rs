@@ -57,6 +57,8 @@ pub trait Store {
     /// When a mend was filed for `(id, tip)`, if one was.
     fn mending_since(&self, id: &str, tip: &str) -> Option<u64>;
     fn record_mending(&self, id: &str, tip: &str, bead: &str) -> Result<(), String>;
+    /// The mend bead last filed for `id` at any tip.
+    fn last_mend(&self, id: &str) -> Option<String>;
     /// True the first time `(id, tip)` is reported as capped; records the `capped` event.
     fn first_cap_report(&self, id: &str, tip: &str) -> bool;
 }
@@ -65,8 +67,10 @@ pub trait Acts {
     fn note(&mut self, id: &str, text: &str) -> Result<(), String>;
     fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String>;
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String>;
-    /// Files the mender's bead for a branch that does not merge onto the landing ref; returns its id.
-    fn mend(&mut self, id: &str, tip: &str, files: &[String]) -> Result<String, String>;
+    /// The mender's bead for a branch that does not merge onto the landing ref; returns its id.
+    /// `prior` is the mend last filed for `id`: while it is open it is amended to the new tip and
+    /// returned, so a bead has at most one open mend.
+    fn mend(&mut self, id: &str, tip: &str, files: &[String], prior: Option<&str>) -> Result<String, String>;
     /// Records that `tip` passed, on the lifecycle store.
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String>;
     fn tell(&mut self, msg: &str);
@@ -248,7 +252,7 @@ pub fn screen_with(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, po
                     continue;
                 }
                 Some(_) => acts.tell(&format!("SIFT mend of {} missed its deadline; sending it to REWORK", c.id)),
-                None => match acts.mend(&c.id, &c.tip, files) {
+                None => match acts.mend(&c.id, &c.tip, files, store.last_mend(&c.id).as_deref()) {
                     Ok(mend) => {
                         if let Err(e) = store.record_mending(&c.id, &c.tip, &mend) {
                             out.errors.push(format!("sift: {} mend {mend} not recorded ({e})", c.id));

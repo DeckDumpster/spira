@@ -112,6 +112,13 @@ impl Store for FileStore {
         self.record(id, SiftEvent::Mending { tip: tip.to_string(), bead: bead.to_string() }).map(|_| ())
     }
 
+    fn last_mend(&self, id: &str) -> Option<String> {
+        self.load(id)?.events.iter().rev().find_map(|r| match &r.event {
+            SiftEvent::Mending { bead, .. } => Some(bead.clone()),
+            _ => None,
+        })
+    }
+
     fn first_cap_report(&self, id: &str, tip: &str) -> bool {
         self.record(id, SiftEvent::Capped { tip: tip.to_string() }).unwrap_or(false)
     }
