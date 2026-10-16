@@ -171,6 +171,10 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
 
 ## Escalate rather than guess
 
+A stale run directory under `foreign-cache/*/runs` is lossless reclamation, never an ask
+(law-lossless-reclamation-needs-no-ask): `target-reap` removes unreferenced ones older than an hour,
+so run it rather than asking; overlay workdirs need `podman unshare rm -rf`.
+
 Stop and escalate — do not close — when the fix needs a credential or console only the operator
 holds, destroys or mutates production data irreversibly, decides what a feature *is* or
 what a number *means*, or is a choice between two defensible options where the wrong one

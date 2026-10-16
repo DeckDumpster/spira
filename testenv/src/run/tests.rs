@@ -2175,6 +2175,20 @@ fn a_forge_repo_podman_failure_is_a_fault_not_a_red() {
 }
 
 #[test]
+fn a_forge_tier_that_faults_or_is_cancelled_leaves_no_run_dir() {
+    for rc in [125, -124, 130, 3] {
+        let w = foreign_world("foreign-leak", Some(FOREIGN_DECL));
+        let rt = runtime();
+        rt.once_rc.lock().unwrap().insert("unit".into(), rc);
+        let b = FakeBuilder::new(None);
+        w.run(&rt, &b, &["topic"], "", &w.root);
+        let runs = w.root.path().join("run/foreign-cache").join(w.repo.file_name().unwrap()).join("runs");
+        let left: Vec<_> = fs::read_dir(&runs).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+        assert!(left.is_empty(), "rc={rc} left {left:?}");
+    }
+}
+
+#[test]
 fn a_forge_repo_unknown_tier_and_missing_declaration_fault_by_name() {
     let w = foreign_world("foreign-unknown", Some(FOREIGN_DECL));
     let rt = runtime();
