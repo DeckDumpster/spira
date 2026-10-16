@@ -100,7 +100,7 @@ is "the shipped Containerfile: every curl fetch is bounded" "" "$out"
 # ---------------------------------------------------------------------------------------
 # THE FLAGS ACTUALLY BOUND A REAL CONNECTION. 192.0.2.1 is RFC 5737 TEST-NET-1: reserved,
 # never routed, guaranteed not to answer. Extract the exact flags the Containerfile ships
-# for the duckdb fetch and fire them at that address — if the flags were typos or the
+# for the gh keyring fetch and fire them at that address — if the flags were typos or the
 # wrong curl option names, this is where that would show up instead of at a hung gate.
 #
 # --retry-all-errors resends the connect attempt on a connect-timeout too, so the
@@ -109,10 +109,10 @@ is "the shipped Containerfile: every curl fetch is bounded" "" "$out"
 # deterministic ~47s, never observed here past 90s. Bounded and finite is the bar —
 # the defect this suite guards against is unbounded, not merely slow.
 # ---------------------------------------------------------------------------------------
-flags="$(join_continuations "$CONTAINERFILE" | grep -oE 'curl +-fsSL[^|&]*duckdb\.gz' \
-    | sed -E 's/-o [^ ]+//; s/"[^"]*"//; s/curl //')"
+flags="$(join_continuations "$CONTAINERFILE" | grep -oE 'curl +-fsSL[^|&]*githubcli-archive-keyring\.gpg' \
+    | sed -E 's/https?:[^ ]+//; s/curl //')"
 if [ -z "$flags" ]; then
-    bad "duckdb curl flags extracted from the Containerfile for the live probe" \
+    bad "shipped curl flags extracted from the Containerfile for the live probe" \
         "no matching curl invocation found"
 else
     start=$SECONDS

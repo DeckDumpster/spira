@@ -135,6 +135,7 @@ RUN apt-get update -q && \
         inotify-tools \
         aerc \
         nodejs \
+        unzip \
         locales \
         inotify-tools \
         aerc \
