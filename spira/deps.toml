@@ -219,6 +219,13 @@ purpose = "building the pinned bd from source when no prebuilt exists for this p
 version_min = ""
 version_probe = "go version"
 
+[[dep]]
+name = "nix"
+tier = "dev"
+purpose = "builds the pinned spira-env (flake.nix) that build-bd.sh --from-flake and build-aerc.sh take bd and go from at release-build time"
+version_min = ""
+version_probe = "nix --version"
+
 # ── Spira's own binaries (tier release, sp-gypjk) ─────────────────────────────────
 
 [[dep]]

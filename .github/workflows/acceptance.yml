@@ -214,22 +214,20 @@ jobs:
           fi
 
       - name: Install bd
-        # build-bd.sh --from-release downloads the pinned release binary (SPIRA_BD_TAG
-        # from conf.sh) and installs it to $HOME/.local/bin/bd and bd-embedded.
+        # build-bd.sh --from-flake takes bd from the flake's spira-env and installs it to
+        # $HOME/.local/bin/bd and bd-embedded.
         # The schema check is skipped when no existing store is present — correct for a
         # fresh machine where the db has not been created yet.
-        run: bash spira/build-bd.sh --from-release --install
+        run: |
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          bash spira/build-bd.sh --from-flake --install
 
       - name: Install dolt
-        # Dolt version is pinned in testenv/Containerfile (DOLT_VERSION) to keep
-        # the acceptance test environment consistent with the suite container.
+        # dolt comes from the harness flake's spira-env, pinned by flake.lock.
         run: |
-          _dolt_ver="$(grep '^ARG DOLT_VERSION=' spira/testenv/Containerfile | cut -d= -f2)"
-          _arch="$(uname -m)"; [ "$_arch" = x86_64 ] && _arch=amd64
-          curl -fsSL \
-            "https://github.com/dolthub/dolt/releases/download/v${_dolt_ver}/dolt-linux-${_arch}.tar.gz" \
-            | tar -xz -C /tmp
-          sudo install -m 0755 "/tmp/dolt-linux-${_arch}/bin/dolt" /usr/local/bin/dolt
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          _env="$(nix --extra-experimental-features 'nix-command flakes' build "path:$PWD#spira-env" --no-link --print-out-paths)"
+          sudo install -m 0755 "$_env/bin/dolt" /usr/local/bin/dolt
 
       - name: Stage the candidate's release binary
         # `release acceptance` is the candidate's own bin/release, taken from the tarball

@@ -21,7 +21,7 @@
 #   crosses into the runtime stage. rm -rf in a later layer never shrinks an
 #   image — only not writing the bytes does.
 #
-# rust-builder: rustup installer and any download cache. The toolchain itself
+# rust-builder: the pinned official rust image. The toolchain itself
 #   must survive into the runtime image because build.sh compiles
 #   $SPIRA_REPO/loom at runtime from a bind-mounted candidate branch and the
 #   source does not exist at image-build time. So the builder stage is used for
@@ -34,34 +34,29 @@
 # test-rust-toolchain-pin.sh: a different local cargo can rewrite Cargo.lock to crates CI
 # cannot build (PR 361).
 ARG RUST_VERSION=1.82.0
+ARG GO_VERSION=1.26.5
+ARG DOLT_VERSION=2.2.3
+ARG AWS_CLI_VERSION=2.37.1
 
 # ── Stage 1: build bd ─────────────────────────────────────────────────────────
-FROM docker.io/library/ubuntu:24.04 AS bd-builder
+FROM docker.io/library/golang:${GO_VERSION} AS bd-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ARG GO_VERSION=1.26.5
 ARG BD_TAG=v1.2.1
 ARG BD_REPO=https://github.com/steveyegge/beads.git
 # TARGETARCH is populated by the builder from --platform (amd64, arm64, ...) and matches
 # Go's own release naming, so no translation table is needed here.
 ARG TARGETARCH
 
-# Minimal toolchain for the build: curl+ca-certificates to download Go,
-# git to clone the source, build-essential for CGO_ENABLED=1 (gcc).
+# Go comes from the pinned official golang image above. git clones the source,
+# build-essential supplies gcc for CGO_ENABLED=1.
 RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends \
-        curl \
         ca-certificates \
         git \
         build-essential \
     && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 300 \
-    -o /tmp/go.tar.gz \
-    "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" && \
-    tar -C /usr/local -xzf /tmp/go.tar.gz && \
-    rm /tmp/go.tar.gz
 
 # CGO_ENABLED=1: embedded Dolt is opened through cgo; a pure-Go build refuses
 # at runtime. -tags gms_pure_go: avoids ICU linking failures via go-mysql-server.
@@ -73,26 +68,19 @@ RUN mkdir /out && \
     cd /tmp/bd-src && \
     CGO_ENABLED=1 /usr/local/go/bin/go build -tags gms_pure_go -o /out/bd ./cmd/bd
 
-# ── Stage 2: acquire Rust toolchain via rustup ────────────────────────────────
-# ACQUISITION ONLY. The rustup installer, its download cache, and the registry
-# cache are discarded by the cleanup step and never reach the runtime image.
+# ── Stage 2: Rust toolchain from the pinned official rust image ───────────────
+# ACQUISITION ONLY: only /usr/local/cargo and /usr/local/rustup cross into the runtime stage.
 #
 # The toolchain must survive into the runtime image — build.sh compiles
 # $SPIRA_REPO/loom at runtime from a bind-mounted candidate branch and the
 # source does not exist at image-build time. This differs from the bd-builder
 # stage, which is discarded whole because bd is compiled once from a pinned
 # tag and only the binary is needed afterwards.
-FROM docker.io/library/ubuntu:24.04 AS rust-builder
-ARG RUST_VERSION
-RUN apt-get update -q && \
-    apt-get install -yq --no-install-recommends curl ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf \
-        --retry 3 --retry-all-errors --connect-timeout 10 --max-time 300 \
-        https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal --default-toolchain "$RUST_VERSION" \
-                     --no-modify-path && \
-    rm -rf /root/.cargo/registry /root/.rustup/downloads
+FROM docker.io/library/rust:${RUST_VERSION}-slim AS rust-builder
+
+FROM docker.io/dolthub/dolt:${DOLT_VERSION} AS dolt-src
+
+FROM docker.io/amazon/aws-cli:${AWS_CLI_VERSION} AS aws-src
 
 # ── Stage 3: runtime image ────────────────────────────────────────────────────
 FROM docker.io/library/ubuntu:24.04
@@ -109,8 +97,8 @@ ARG TARGETARCH
 # CARGO_HOME (set below to /var/spira/cargo) is a separate path used for
 #   project-level crate registries and build artefacts — it is not where the
 #   toolchain binaries live, and no apt cargo or rustc is installed alongside.
-COPY --from=rust-builder /root/.cargo /usr/local/cargo
-COPY --from=rust-builder /root/.rustup /usr/local/rustup
+COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
+COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
 ENV RUSTUP_HOME=/usr/local/rustup \
     PATH=/usr/local/cargo/bin:$PATH \
     RUSTUP_TOOLCHAIN=${RUST_VERSION}
@@ -147,6 +135,7 @@ RUN apt-get update -q && \
         inotify-tools \
         aerc \
         nodejs \
+        unzip \
         locales \
         inotify-tools \
         aerc \
@@ -186,54 +175,24 @@ https://cli.github.com/packages stable main" \
 # ── dolt — SQL server for bd's server-backed testdb mode ──────────────────
 # Pinned to the same version as the operator's install to avoid schema drift
 # between server and client during server-mode test runs.
-ARG DOLT_VERSION=2.2.3
-RUN curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 300 \
-    -o /tmp/dolt.tar.gz \
-    "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-${TARGETARCH}.tar.gz" && \
-    tar -C /tmp -xzf /tmp/dolt.tar.gz && \
-    install -m 0755 "/tmp/dolt-linux-${TARGETARCH}/bin/dolt" /usr/local/bin/dolt && \
-    rm -rf /tmp/dolt.tar.gz "/tmp/dolt-linux-${TARGETARCH}"
+COPY --from=dolt-src /usr/local/bin/dolt /usr/local/bin/dolt
 
 # ── duckdb — the query layer over run/tsd/'s JSONL files (sp-sbc6o) ───────────────────────
-# A single static binary from the project's own GitHub releases; gzip-compressed, no package
-# manager involved. Runtime-tier in deps.toml: tsd-query.sh has no fallback path, so an
-# image without it fails the doctor-check step below rather than shipping a silent gap.
+# The DuckDB Foundation's duckdb-cli wheel, pinned. Runtime-tier in deps.toml: tsd-query.sh has no
+# fallback path, so an image without it fails the doctor-check step below rather than shipping a gap.
 ARG DUCKDB_VERSION=1.5.5
-RUN curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 300 \
-    -o /tmp/duckdb.gz \
-    "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-${TARGETARCH}.gz" && \
-    gunzip -c /tmp/duckdb.gz > /usr/local/bin/duckdb && \
-    chmod 0755 /usr/local/bin/duckdb && \
-    rm -f /tmp/duckdb.gz
+RUN apt-get update -q && \
+    apt-get install -yq --no-install-recommends python3-pip && \
+    pip install --no-cache-dir --break-system-packages --target /opt/duckdb-cli "duckdb-cli==${DUCKDB_VERSION}" && \
+    chmod 0755 /opt/duckdb-cli/duckdb_cli/duckdb && \
+    ln -s /opt/duckdb-cli/duckdb_cli/duckdb /usr/local/bin/duckdb && \
+    apt-get purge -y python3-pip && apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
 
-# ── aws CLI v2 ────────────────────────────────────────────────────────────
-# Required when the runner pool spills to EC2. Installed system-wide.
-# Key fingerprint: FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C
-# Key embedded from keyserver.ubuntu.com — awscli.amazonaws.com/awscli.pub
-# returns 404 as of 2026-09-23; the embedded key avoids the external dependency.
-ARG AWS_CLI_VERSION=2.37.1
-COPY testenv/awscli.pub /tmp/awscli.pub
-# awscli publishes under uname's arch names, not Debian's: x86_64 for amd64, aarch64 for arm64.
-RUN case "$TARGETARCH" in \
-        amd64) awscli_arch=x86_64 ;; \
-        arm64) awscli_arch=aarch64 ;; \
-        *) echo "testenv: no awscli build for TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
-    esac && \
-    apt-get update -q && \
-    apt-get install -yq --no-install-recommends unzip && \
-    rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 300 \
-        -o /tmp/awscliv2.zip \
-        "https://awscli.amazonaws.com/awscli-exe-linux-${awscli_arch}-${AWS_CLI_VERSION}.zip" && \
-    curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 300 \
-        -o /tmp/awscliv2.zip.sig \
-        "https://awscli.amazonaws.com/awscli-exe-linux-${awscli_arch}-${AWS_CLI_VERSION}.zip.sig" && \
-    mkdir -p /tmp/.gnupg && chmod 700 /tmp/.gnupg && \
-    GNUPGHOME=/tmp/.gnupg gpg --batch --no-autostart --import /tmp/awscli.pub && \
-    GNUPGHOME=/tmp/.gnupg gpg --batch --no-autostart --verify /tmp/awscliv2.zip.sig /tmp/awscliv2.zip && \
-    unzip -q /tmp/awscliv2.zip -d /tmp && \
-    /tmp/aws/install --install-dir /usr/local/aws-cli --bin-dir /usr/local/bin && \
-    rm -rf /tmp/aws /tmp/awscliv2.zip /tmp/awscliv2.zip.sig /tmp/awscli.pub /tmp/.gnupg
+# ── aws CLI v2 — from the pinned official amazon/aws-cli image ──────────────
+# Required when the runner pool spills to EC2.
+COPY --from=aws-src /usr/local/aws-cli /usr/local/aws-cli
+RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws
 
 # ── bd — copied from builder stage ────────────────────────────────────────
 # The bd-builder stage compiled bd and was then discarded: Go toolchain,

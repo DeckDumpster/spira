@@ -3,14 +3,14 @@
 # build-bd.sh — build or download the one bd binary this box runs, from a RELEASE TAG,
 # and install it.
 #
-#   build-bd.sh [--tag <tag>] [--probe] [--install] [--from-release]
+#   build-bd.sh [--tag <tag>] [--probe] [--install] [--from-flake]
 #
 #     --probe         build and verify; install nothing (default).
 #     --install       install after every check passes.
 #     --tag           override the pin below. You almost never want this.
-#     --from-release  download a prebuilt release tarball instead of building from source.
-#                     Requires curl. The tag is the same pin; BD_RELEASE_URL overrides the
-#                     derived URL if the upstream naming convention differs.
+#     --from-flake    take bd from the harness flake's spira-env (the nixpkgs revision pinned by
+#                     flake.lock) instead of building from source. BD_FLAKE_ENV names a
+#                     prebuilt environment directory to use in place of `nix build`.
 #
 # THE PIN IS A TAG, NOT A COMMIT AND NOT main.
 BD_TAG_PIN="v1.2.1"
@@ -58,64 +58,22 @@ while [ $# -gt 0 ]; do
         --tag)          TAG="${2:?--tag needs a value}"; shift 2 ;;
         --probe)        MODE=probe;   shift ;;
         --install)      MODE=install; shift ;;
-        --from-release) MODE=install; RELEASE_MODE=1; shift ;;
+        --from-flake)   MODE=install; RELEASE_MODE=1; shift ;;
         *) echo "build-bd.sh: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
 
 if [ "$RELEASE_MODE" = 1 ]; then
-    command -v curl      >/dev/null 2>&1 || { echo "build-bd.sh: --from-release needs curl" >&2; exit 1; }
-    command -v sha256sum >/dev/null 2>&1 || { echo "build-bd.sh: --from-release needs sha256sum" >&2; exit 1; }
-    _rel_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-    _rel_arch="$(uname -m)"
-    case "$_rel_arch" in
-        x86_64)  _rel_arch=amd64 ;;
-        aarch64) _rel_arch=arm64 ;;
-        *) echo "build-bd.sh: --from-release: unsupported architecture: $_rel_arch" >&2; exit 1 ;;
-    esac
-    # Upstream publishes beads_${version}_${os}_${arch}.tar.gz (project name, version without
-    # the v prefix, underscores). BD_RELEASE_BASE_URL overrides the GitHub base for testing.
-    _rel_asset="beads_${TAG#v}_${_rel_os}_${_rel_arch}.tar.gz"
-    if [ -n "${BD_RELEASE_URL:-}" ]; then
-        _rel_url="$BD_RELEASE_URL"
-        _rel_checksum_url=""
-    else
-        _rel_base="${BD_RELEASE_BASE_URL:-https://github.com/steveyegge/beads/releases/download/$TAG}"
-        _rel_url="$_rel_base/$_rel_asset"
-        _rel_checksum_url="$_rel_base/checksums.txt"
+    env_dir="${BD_FLAKE_ENV:-}"
+    if [ -z "$env_dir" ]; then
+        command -v nix >/dev/null 2>&1 || { echo "build-bd.sh: --from-flake needs nix" >&2; exit 1; }
+        flake_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+        env_dir="$(nix --extra-experimental-features 'nix-command flakes' build "path:$flake_dir#spira-env" --no-link --print-out-paths)" \
+            || { echo "build-bd.sh: nix build of spira-env failed" >&2; exit 1; }
     fi
-    _rel_tmp="$(mktemp -d)"
-    echo "build-bd.sh: downloading $TAG from $_rel_url" >&2
-    # batch-job: release download
-    if ! curl -fsSL --retry 3 -o "$_rel_tmp/bd.tar.gz" "$_rel_url"; then
-        echo "build-bd.sh: download failed — $_rel_url" >&2
-        rm -rf "$_rel_tmp"
-        exit 1
-    fi
-    if [ -n "${_rel_checksum_url:-}" ]; then
-        # batch-job: checksum download
-        if ! curl -fsSL --retry 3 -o "$_rel_tmp/checksums.txt" "$_rel_checksum_url"; then
-            echo "build-bd.sh: checksum download failed — $_rel_checksum_url" >&2
-            rm -rf "$_rel_tmp"; exit 1
-        fi
-        _dl_sha256="$(sha256sum "$_rel_tmp/bd.tar.gz" | awk '{print $1}')"
-        _exp_sha256="$(grep "$_rel_asset" "$_rel_tmp/checksums.txt" | awk '{print $1}')"
-        if [ -z "${_exp_sha256:-}" ]; then
-            echo "build-bd.sh: no checksum entry for $_rel_asset in checksums.txt" >&2
-            rm -rf "$_rel_tmp"; exit 1
-        fi
-        if [ "$_dl_sha256" != "$_exp_sha256" ]; then
-            echo "build-bd.sh: checksum mismatch for $_rel_asset: expected $_exp_sha256, got $_dl_sha256" >&2
-            rm -rf "$_rel_tmp"; exit 1
-        fi
-    fi
-    tar -xzf "$_rel_tmp/bd.tar.gz" -C "$_rel_tmp" || {
-        echo "build-bd.sh: failed to unpack $_rel_tmp/bd.tar.gz" >&2; rm -rf "$_rel_tmp"; exit 1; }
-    OUT="$(find "$_rel_tmp" -maxdepth 2 -name bd -perm /111 | head -1)"
-    if [ -z "${OUT:-}" ]; then
-        echo "build-bd.sh: no bd binary found in tarball" >&2; rm -rf "$_rel_tmp"; exit 1; fi
-    echo "build-bd.sh: downloaded $TAG to $OUT" >&2
-    # Fall through to the verification block below; skip the source build.
+    OUT="$env_dir/bin/bd"
+    [ -x "$OUT" ] || { echo "build-bd.sh: no bd in $env_dir/bin" >&2; exit 1; }
+    echo "build-bd.sh: using flake-pinned bd at $OUT" >&2
 else
     command -v "$GO" >/dev/null 2>&1 || { echo "build-bd.sh: no go toolchain at $GO" >&2; exit 1; }
     command -v gcc  >/dev/null 2>&1 || { echo "build-bd.sh: CGO_ENABLED=1 needs gcc; none found" >&2; exit 1; }

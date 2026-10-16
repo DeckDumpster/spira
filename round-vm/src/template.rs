@@ -146,14 +146,8 @@ pub const TEMPLATE_WORK: &str = "/root/template-work";
 /// a working `sccache` on its disk without reinstalling it per round; REMOTE_SCRIPT only
 /// has to point it at the store and set `CARGO_HOME` to match.
 ///
-/// The toolchain install is a STANDALONE tarball from static.rust-lang.org, not `rustup
-/// toolchain install`: measured on this box's own template, `rustup toolchain install`
-/// refuses with `rustup is not installed at '/root/.cargo'` — a pre-existing defect in how
-/// this template's rustup was provisioned, reproduced even under rustup's own ambient
-/// default `CARGO_HOME`, nothing to do with this script overriding it. A plain `rustc`/
-/// `cargo` binary has no such self-location check (confirmed on the host, which runs the
-/// identical rustup), so installing the exact release tarball directly avoids the defect
-/// rather than working around it.
+/// The toolchain comes from the distro's `rustup` package, never a downloaded tarball or
+/// installer script: every dependency is installed by a package manager.
 pub const TEMPLATE_SCRIPT: &str = include_str!("template.sh");
 
 /// The image ref TEMPLATE_SCRIPT reported, if it did.
@@ -524,7 +518,7 @@ mod tests {
         // see REMOTE_SCRIPT's own test and sccache-dav/DESIGN.md for why that path must be
         // byte-identical.
         let cargo_home = TEMPLATE_SCRIPT.find("export CARGO_HOME=\"${cache_home:-$HOME/.cargo}\"").expect("CARGO_HOME comes from the operator's own env (cache_home), never a hardcoded literal — a literal names one operator's box");
-        let toolchain = TEMPLATE_SCRIPT.find("static.rust-lang.org/dist/rust-${toolchain}-").expect("a standalone toolchain, not rustup (its own toolchain-install is broken on this template)");
+        let toolchain = TEMPLATE_SCRIPT.find("rustup toolchain install \"$toolchain\"").expect("the toolchain comes from the rustup package, not a downloaded tarball");
         let install = TEMPLATE_SCRIPT.find("build \"path:$work#spira-env\"").expect("sccache comes from spira-env, built from the tree's own flake.lock");
         let endpoint = TEMPLATE_SCRIPT.find("export SCCACHE_WEBDAV_ENDPOINT=\"http://${host_addr}:9431\"").expect("the cache endpoint is this box's own address, empty host_addr skips it");
         let spira_config_build = TEMPLATE_SCRIPT.find("cargo build -q --locked --release -p testenv -p spira-config").expect("spira-config must be built explicitly: `cargo run -p testenv` alone never builds it, and the image's doctor-check step needs the sibling binary sp-xjnzl's container.rs stages");
@@ -533,7 +527,7 @@ mod tests {
             cargo_home < toolchain && toolchain < install && install < endpoint && endpoint < spira_config_build && spira_config_build < image,
             "the cache, the matching toolchain and the spira-config sibling must all be in place before the image build they are meant to warm or unblock"
         );
-        assert!(!TEMPLATE_SCRIPT.contains("rustup toolchain install"), "rustup's own toolchain-install refuses on this template (measured: \"rustup is not installed at ...\") — never reintroduce it here");
+        assert!(!TEMPLATE_SCRIPT.contains("static.rust-lang.org"), "no downloaded toolchain tarball");
         assert!(TEMPLATE_SCRIPT.contains("sccache\" --stop-server"), "the template never ships a running sccache server baked into its disk image");
         assert!(!TEMPLATE_SCRIPT.contains("/home/"), "no literal home directory — cache_home is an operator-supplied argument, not a hardcoded path");
     }

@@ -34,6 +34,7 @@
             aerc
             hunk
             go
+            tailscale
             nodejs
             openssl
           ];
