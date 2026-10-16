@@ -106,3 +106,4 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.round_max_open" = 1
 "spira.no_progress_breaker_claims" = 4
 "spira.no_progress_breaker_window_minutes" = 180
+"spira.dolt_maintenance_units" = "lc-backup.service lc-backup-drill.service dolt-persist-compact.service"
