@@ -114,8 +114,20 @@ pub fn workspace_dirs(manifest: &str) -> Vec<String> {
 }
 
 fn make_writable(path: &Path) -> Result<(), String> {
-    let st = Command::new("chmod").arg("-R").arg("u+w").arg(path).status().map_err(|e| format!("chmod: {e}"))?;
-    if st.success() { Ok(()) } else { Err(format!("chmod u+w {}: {st}", path.display())) }
+    use std::os::unix::fs::PermissionsExt;
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if meta.file_type().is_symlink() {
+        return Ok(());
+    }
+    let mut perms = meta.permissions();
+    perms.set_mode(perms.mode() | 0o200);
+    std::fs::set_permissions(path, perms).map_err(|e| format!("{}: {e}", path.display()))?;
+    if meta.is_dir() {
+        for e in std::fs::read_dir(path).map_err(|e| format!("{}: {e}", path.display()))?.flatten() {
+            make_writable(&e.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
