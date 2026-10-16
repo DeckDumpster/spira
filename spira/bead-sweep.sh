@@ -90,7 +90,7 @@ for i, b in content.items():
     if i not in rows and i not in term and b.get("issue_type") not in ("epic", "event") and ask not in b.get("labels", []):
         out["SUSPECT"].append(f"{i} ROWLESS open bead with no lifecycle row")
         if b.get("status") == "open":
-            repo = next((l[5:] for l in b.get("labels", []) if l.startswith("repo:")), "")
+            repo = next((l[5:] for l in b.get("labels", []) if l.startswith("repo:")), "-")
             rowless.append("\t".join((i, str(b.get("priority", 2)), repo, (b.get("title") or "").replace("\t", " ").replace("\n", " "))))
 for i, r in sorted(rows.items()):
     st = r["state"]
@@ -156,10 +156,10 @@ _bs_converge_rowless() {
     while IFS=$'\t' read -r id prio repo title; do
         [ -n "$id" ] || continue
         args=(create-bead "$id" --priority "$prio" --title "$title")
-        [ -n "$repo" ] && args+=(--repo "$repo")
+        [ "$repo" != "-" ] && args+=(--repo "$repo")
         # batch-job: one point write per rowless bead, bounded by timeout(1)
         if timeout 30 spira-lc "${args[@]}" >/dev/null 2>&1; then
-            _bs_say "REPAIRED $id open bead had no lifecycle row; created it (priority $prio, repo ${repo:-none})"
+            _bs_say "REPAIRED $id open bead had no lifecycle row; created it (priority $prio, repo ${repo/#-/none})"
             REPAIRED_IDS+=("$id")
         fi
     done < "$f"
