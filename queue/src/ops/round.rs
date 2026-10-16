@@ -850,6 +850,17 @@ fn over_cap_why(err: &str, cap: u64) -> String {
     }
 }
 
+/// The first compiler error in a failed build's output, with the `file:line` that follows it.
+fn first_build_error(err: &str) -> Option<String> {
+    let mut lines = err.lines();
+    let head = lines.find(|l| l.starts_with("error") && !l.starts_with("error: could not compile") && !l.starts_with("error: aborting"))?;
+    let at = lines.next().map(str::trim).filter(|l| l.starts_with("-->")).map(|l| l.trim_start_matches("-->").trim());
+    Some(match at {
+        Some(a) => format!("{head} at {a}"),
+        None => head.to_string(),
+    })
+}
+
 pub(super) fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
@@ -936,6 +947,9 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
             124 | 137 if !out.err.contains("OVER-CAP") && wall_complete(&wt, &found, &out.err) => None,
             4 => {
                 reds.push(BUILD_RED.into());
+                if let Some(e) = first_build_error(&out.err) {
+                    w.out(format!("build-error={e}"));
+                }
                 None
             }
             124 | 137 if out.err.contains("OVER-CAP") => Some(over_cap_why(&out.err, c.s.round_wall_secs)),

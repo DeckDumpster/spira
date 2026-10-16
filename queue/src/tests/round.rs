@@ -1074,6 +1074,18 @@ fn certify_reds_a_pass_whose_unit_tests_failed_though_every_suite_is_ok() {
 }
 
 #[test]
+fn certify_reds_a_failed_workspace_build_naming_the_first_compiler_error() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let err = "round-vm: building\nerror[E0063]: missing field `cpus` in initializer of `RunRequest`\n   --> testenv/src/shots.rs:224:9\nerror: could not compile `testenv`\nround-vm: the round's workspace build failed";
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 4, out: String::new(), err: err.into() };
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert!(t.out().contains("red=workspace-build"), "{}", t.out());
+    assert!(t.out().contains("build-error=error[E0063]: missing field `cpus`") && t.out().contains("testenv/src/shots.rs:224"), "{}", t.out());
+}
+
+#[test]
 fn certify_judges_a_wall_killed_run_whose_results_and_unit_tests_are_complete() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
