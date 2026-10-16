@@ -201,6 +201,11 @@ pub struct BeadRow {
     /// The tip the pre-round screen last passed; the batcher cuts only a bead whose current tip is this.
     #[serde(default)]
     pub sifted_tip: Option<String>,
+    /// The state the current claim was taken from (READY or REWORK); set only while WORKING.
+    /// An un-claim returns the bead there, so rework is never demoted to new work. `None` on
+    /// a row claimed before the field existed, which reads as READY.
+    #[serde(default)]
+    pub claimed_from: Option<BeadState>,
 }
 
 impl BeadRow {
@@ -227,6 +232,7 @@ impl BeadRow {
             disposition_note: None,
             ejected_red_tip: None,
             sifted_tip: None,
+            claimed_from: None,
         }
     }
 }
@@ -429,6 +435,9 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         out.row.phase = (out.row.state == BeadState::Working).then_some(AeonPhase::Claimed);
         out.row.disposition = None;
         out.row.disposition_note = None;
+        if out.row.state != BeadState::Working {
+            out.row.claimed_from = None;
+        }
     }
     if out.applied && entered && out.row.state == BeadState::Rework {
         out.row.holder = None;
@@ -685,6 +694,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 }
                 let mut new = row.clone();
                 new.state = BeadState::Working;
+                new.claimed_from = Some(BeadState::Ready);
                 new.holder = Some(holder.clone());
                 new.persona = persona.clone();
                 new.lease_until = Some(*lease_until);
@@ -742,7 +752,10 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
         BeadState::Working => match kind {
             Release | HolderDead => {
                 let mut new = row.clone();
-                new.state = BeadState::Ready;
+                new.state = match row.claimed_from {
+                    Some(BeadState::Rework) => BeadState::Rework,
+                    _ => BeadState::Ready,
+                };
                 new.holder = None;
                 new.persona = None;
                 new.lease_until = None;
@@ -1026,6 +1039,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 }
                 let mut new = row.clone();
                 new.state = BeadState::Working;
+                new.claimed_from = Some(BeadState::Rework);
                 new.holder = Some(holder.clone());
                 new.persona = persona.clone();
                 new.lease_until = Some(*lease_until);
@@ -2561,6 +2575,46 @@ mod tests {
         let out = apply(&succ, &renew_by("aeon-mindy", &succ, 5_000));
         assert!(!out.applied);
         assert_eq!(out.row.lease_until, Some(900));
+    }
+
+    fn rework_claimed(holder: &str) -> BeadRow {
+        let mut r = BeadRow::filed("sp-test");
+        r.state = BeadState::InDelivery;
+        let back = apply(&r, &ev(BeadState::InDelivery, r.version, BeadEventKind::Returned { reason: ReturnedReason::BatchEjectedRed }));
+        assert_eq!(back.row.state, BeadState::Rework);
+        let k = BeadEventKind::Claim { holder: holder.into(), lease_until: 600, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None };
+        apply(&back.row, &BeadEvent { actor: holder.into(), ..ev(BeadState::Rework, back.row.version, k) }).row
+    }
+
+    #[test]
+    fn an_unclaim_returns_a_bead_to_the_state_it_was_claimed_from() {
+        for kind in [BeadEventKind::HolderDead, BeadEventKind::Release] {
+            let from_rework = rework_claimed("aeon-a");
+            assert_eq!((from_rework.state, from_rework.claimed_from), (BeadState::Working, Some(BeadState::Rework)));
+            let out = apply(&from_rework, &BeadEvent { actor: "sentinel".into(), ..ev(BeadState::Working, from_rework.version, kind.clone()) });
+            assert!(out.applied);
+            assert_eq!((out.row.state, out.row.claimed_from, out.row.holder), (BeadState::Rework, None, None));
+
+            let from_ready = claimed("aeon-b");
+            assert_eq!(from_ready.claimed_from, Some(BeadState::Ready));
+            let out = apply(&from_ready, &BeadEvent { actor: "sentinel".into(), ..ev(BeadState::Working, from_ready.version, kind) });
+            assert_eq!((out.row.state, out.row.claimed_from), (BeadState::Ready, None));
+        }
+    }
+
+    #[test]
+    fn a_row_claimed_before_the_field_existed_is_released_to_ready() {
+        let mut r = claimed("aeon-a");
+        r.claimed_from = None;
+        let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Release));
+        assert_eq!(out.row.state, BeadState::Ready);
+    }
+
+    #[test]
+    fn leaving_working_by_submit_clears_claimed_from() {
+        let r = rework_claimed("aeon-a");
+        let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() }));
+        assert_eq!((out.row.state, out.row.claimed_from), (BeadState::Submitted, None));
     }
 
     fn claimed(holder: &str) -> BeadRow {

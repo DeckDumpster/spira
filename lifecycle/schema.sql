@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS bead (
     ejected_red_tip VARCHAR(64) NULL,
     -- The tip the pre-round screen last passed (Sifted event); migrations/0023-sifted-tip.sql for an existing database.
     sifted_tip  VARCHAR(64) NULL,
+    -- The state the current claim was taken from (READY or REWORK), set only while WORKING; an un-claim returns the bead there. migrations/0027-claimed-from.sql for an existing database.
+    claimed_from VARCHAR(16) NULL,
     updated_at  BIGINT NOT NULL
 );
 
