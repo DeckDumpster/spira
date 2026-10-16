@@ -139,6 +139,58 @@ pub struct Cache {
     dir: PathBuf,
 }
 
+/// How old an unreferenced run directory must be before the reaper takes it: past any tier's cap.
+pub const STALE_RUN_AGE: Duration = Duration::from_secs(3600);
+
+/// Remove a run directory, falling back to `podman unshare` for overlay workdirs owned by the
+/// container's user namespace. True when nothing is left.
+pub fn remove_run_dir(run: &Path) -> bool {
+    let _ = std::fs::remove_dir_all(run);
+    if !run.exists() {
+        return true;
+    }
+    // batch-job: removing a multi-gigabyte run directory takes as long as its size
+    let _ = std::process::Command::new("podman").args(["unshare", "rm", "-rf"]).arg(run).status();
+    !run.exists()
+}
+
+/// Removes the run directory on every exit from a tier's run, including a panic.
+struct RunDirGuard(PathBuf);
+
+impl Drop for RunDirGuard {
+    fn drop(&mut self) {
+        remove_run_dir(&self.0);
+    }
+}
+
+/// Run directories under `<root>/<repo>/runs` that nothing references and that are older than
+/// `min_age`: the leftovers of a run killed before it could clean up. Returns `(path, bytes)`
+/// for each one removed (or that would be, when `dry`).
+pub fn reap_stale_runs(
+    root: &Path,
+    min_age: Duration,
+    dry: bool,
+    busy: &dyn Fn(&Path) -> bool,
+) -> Vec<(PathBuf, u64)> {
+    let mut out = Vec::new();
+    let Ok(repos) = std::fs::read_dir(root) else { return out };
+    for repo in repos.flatten() {
+        let Ok(runs) = std::fs::read_dir(repo.path().join("runs")) else { continue };
+        for run in runs.flatten() {
+            let path = run.path();
+            let age = std::fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+            if !path.is_dir() || age.is_none_or(|a| a < min_age) || busy(&path) {
+                continue;
+            }
+            let bytes = crate::reap::size_of(&path);
+            if dry || remove_run_dir(&path) {
+                out.push((path, bytes));
+            }
+        }
+    }
+    out
+}
+
 pub struct Attached {
     _shared: std::fs::File,
     pub overlay: Overlay,
@@ -208,9 +260,10 @@ impl Cache {
             log(&format!("{cname}: warm cache free after {}s", since.elapsed().as_secs()));
         }
         let run = self.run_dir(cname);
-        let _ = std::fs::remove_dir_all(&run);
+        remove_run_dir(&run);
         let (upper, work) = (run.join("upper"), run.join("work"));
         if std::fs::create_dir_all(&upper).is_err() || std::fs::create_dir_all(&work).is_err() {
+            remove_run_dir(&run);
             return Err("cache-dir");
         }
         Ok(Attached { _shared: shared, overlay: Overlay { lower: self.dir.join("target"), upper, work, ctr: CACHE_TARGET.into() } })
@@ -253,7 +306,7 @@ impl Cache {
             }
             std::thread::sleep(LOCK_POLL);
         }
-        let _ = std::fs::remove_dir_all(&run);
+        remove_run_dir(&run);
     }
 }
 
@@ -287,6 +340,7 @@ impl TierRun<'_> {
             Ok(a) => a,
             Err(reason) => return (Outcome::Fault(reason), t0.elapsed().as_secs()),
         };
+        let _run_dir = RunDirGuard(self.cache.run_dir(&cname));
         let mut env: Vec<(String, String)> = tier.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         for (k, v) in self.cache.env() {
             if !tier.env.contains_key(k) {
@@ -312,7 +366,7 @@ impl TierRun<'_> {
         if rc == 0 {
             self.cache.publish(&cname, self.deadline, self.log);
         } else {
-            let _ = std::fs::remove_dir_all(self.cache.run_dir(&cname));
+            remove_run_dir(&self.cache.run_dir(&cname));
         }
         let outcome = match rc {
             0 => Outcome::Pass,
@@ -369,6 +423,43 @@ pub fn tier_line(name: &str, o: Outcome, secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run_dir_in(root: &Path, name: &str) -> PathBuf {
+        let d = root.join("repo/runs").join(name);
+        std::fs::create_dir_all(d.join("upper")).unwrap();
+        std::fs::write(d.join("upper/f"), vec![0u8; 8192]).unwrap();
+        d
+    }
+
+    #[test]
+    fn the_reaper_takes_an_aged_unreferenced_run_dir_and_keeps_a_referenced_or_fresh_one() {
+        let tmp = testkit::TempDir::new("foreign-reap");
+        let root = tmp.path().to_path_buf();
+        let (aged, held, work) = (run_dir_in(&root, "aged"), run_dir_in(&root, "held"), run_dir_in(&root, "work"));
+        std::fs::create_dir_all(work.join("work/work")).unwrap();
+        let none = |_: &Path| false;
+        let held2 = held.clone();
+        let busy = move |p: &Path| p == held2;
+        assert!(reap_stale_runs(&root, Duration::from_secs(3600), false, &none).is_empty(), "fresh dirs stay");
+        std::thread::sleep(Duration::from_millis(30));
+        let gone = reap_stale_runs(&root, Duration::from_millis(10), true, &busy);
+        assert_eq!(gone.len(), 2, "a dry run reports without removing");
+        assert!(aged.exists());
+        let gone = reap_stale_runs(&root, Duration::from_millis(10), false, &busy);
+        assert_eq!(gone.len(), 2);
+        assert!(gone.iter().all(|(_, b)| *b >= 8192), "{gone:?}");
+        assert!(!aged.exists() && !work.exists(), "aged dirs, overlay workdir included, are gone");
+        assert!(held.exists(), "a referenced dir stays");
+    }
+
+    #[test]
+    fn the_run_dir_guard_removes_the_dir_on_drop() {
+        let tmp = testkit::TempDir::new("foreign-guard");
+        let root = tmp.path().to_path_buf();
+        let d = run_dir_in(&root, "x");
+        drop(RunDirGuard(d.clone()));
+        assert!(!d.exists());
+    }
 
     const OK: &str = "image = \"localhost/x:1\"\ndefault = [\"unit\"]\n[tier.unit]\nargv = [\"bash\", \"deploy/ci.sh\", \"unit\"]\n[tier.ui]\nargv = [\"bash\", \"deploy/ci.sh\", \"ui\"]\ntimeout = 5\n";
 

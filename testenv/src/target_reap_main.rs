@@ -86,6 +86,15 @@ fn main() -> ExitCode {
         }
     };
 
+    let foreign_root = PathBuf::from(spira_config::process::cfg("SPIRA_RUN").unwrap_or_default()).join("foreign-cache");
+    let gone = testenv::foreign::reap_stale_runs(&foreign_root, testenv::foreign::STALE_RUN_AGE, dry, &busy_fn);
+    println!(
+        "target-reap: {} {} stale foreign-cache run dir(s), {} MiB",
+        if dry { "would remove" } else { "removed" },
+        gone.len(),
+        gone.iter().map(|(_, b)| b).sum::<u64>() / (1024 * 1024)
+    );
+
     if if_below_floor {
         match free() {
             Some(f) if f >= floor_bytes => return ExitCode::SUCCESS,
