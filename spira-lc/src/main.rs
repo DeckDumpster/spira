@@ -664,7 +664,10 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return (CANNOT_TELL, format!("cannot tell: {e:?}"));
         }
-        return (REFUSED, format!("refused: {:?}", outcome.refusal));
+        return match &outcome.refusal {
+            Some(lifecycle::Refusal::BreakGlassIncomplete { missing }) => (REFUSED, format!("refused: BreakGlassIncomplete: missing {missing}")),
+            other => (REFUSED, format!("refused: {other:?}")),
+        };
     }
     let set = rows::bead_set_clause(&outcome.row);
     let result = conn.cas_update_and_log("bead", "bead_id", key, version, &set, &rec, outcome.row.state.as_str());
@@ -820,7 +823,7 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::MalformedTip { .. } => "MalformedTip".to_string(),
         lifecycle::Refusal::StackUnchanged { .. } => "StackUnchanged".to_string(),
         lifecycle::Refusal::NotManuallyHeld => "NotManuallyHeld".to_string(),
-        lifecycle::Refusal::BreakGlassIncomplete { missing } => format!("BreakGlassIncomplete: missing {missing}"),
+        lifecycle::Refusal::BreakGlassIncomplete { .. } => "BreakGlassIncomplete".to_string(),
         lifecycle::Refusal::DeadlinePassed { .. } => "DeadlinePassed".to_string(),
         lifecycle::Refusal::MendRefused { .. } => "MendRefused".to_string(),
         lifecycle::Refusal::MendCap { .. } => "MendCap".to_string(),
@@ -831,6 +834,28 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_refusal_name_fits_the_event_column() {
+        let s = || String::new();
+        let all = vec![
+            lifecycle::Refusal::BreakGlassIncomplete { missing: "reason (--reason) and more text well past the column".into() },
+            lifecycle::Refusal::NotManuallyHeld,
+            lifecycle::Refusal::ManualHoldReason { reason: s(), exit: s() },
+            lifecycle::Refusal::MalformedTip { tip: s() },
+            lifecycle::Refusal::EjectedRedTip { tip: s() },
+            lifecycle::Refusal::StackUnchanged { prereqs: vec![] },
+            lifecycle::Refusal::StackStale { prereqs: vec![] },
+            lifecycle::Refusal::MendRefused { reasons: vec![] },
+            lifecycle::Refusal::DeadlinePassed { deadline: 0, at: 0 },
+            lifecycle::Refusal::AwaitingReply { event: s(), exit: s() },
+            lifecycle::Refusal::NotHolder { actor: s(), holder: None },
+        ];
+        for r in all {
+            let n = refusal_name(&r);
+            assert!(n.len() <= 32 && !n.contains(' '), "{n}");
+        }
+    }
 
     fn unreachable_conn_with_live(rows: Vec<Value>) -> Conn {
         let mut conn = Conn::unreachable();
