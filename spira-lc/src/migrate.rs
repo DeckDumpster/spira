@@ -318,8 +318,9 @@ fn plain_ident(tok: &str) -> Option<String> {
 const CONVERGE_TRIES: u32 = 5;
 
 /// A probe read that hit its call deadline is asked again this many times in all: probes
-/// are reads, so a retry cannot double a write; a cold, loaded store answers the second ask.
-const DEADLINE_TRIES: u32 = 4;
+/// are reads, so a retry cannot double a write. The backoffs alone total minutes, so a
+/// store that is slow but healthy is waited out; only a store that never answers fails.
+const DEADLINE_TRIES: u32 = 12;
 
 fn deadline_backoff(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_secs(2u64 << (attempt - 1).min(4))
@@ -1136,6 +1137,13 @@ mod tests {
         assert!(out.contains("cannot tell whether it is applied") && out.contains("deadline"), "{out}");
         assert_eq!(dead.asked.get(), DEADLINE_TRIES, "bounded");
         assert_eq!(naps.borrow().len() as u32, DEADLINE_TRIES - 1);
+        let waited: u64 = naps.borrow().iter().map(|d| d.as_secs()).sum();
+        assert!(waited >= 180, "the retry budget spans minutes, not seconds: {waited}s");
+
+        naps.borrow_mut().clear();
+        let loaded = SlowStore { inner: &inner, slow: (DEADLINE_TRIES - 1).into(), asked: 0.into() };
+        let (rc, out) = migrate_paced(GRANTS_SQL, &real_steps(), &loaded, None, &pause);
+        assert_eq!(rc, 0, "a store that answers on the last try passes: {out}");
     }
 
     #[test]
