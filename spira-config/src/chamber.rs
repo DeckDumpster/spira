@@ -665,6 +665,7 @@ mod tests {
             lane: None,
             lease: None,
             system_prompt: None,
+            escalation_model: None,
         });
         assert_eq!(persona_model_from_doc(Some(&doc), "builder", "claude-opus-5"), "claude-opus-5");
         assert_eq!(persona_model_from_doc(Some(&doc), "ops", "claude-opus-5"), "claude-opus-5");
@@ -680,6 +681,7 @@ mod tests {
             lane: None,
             lease: None,
             system_prompt: None,
+            escalation_model: None,
         });
         assert_eq!(persona_model_from_doc(Some(&doc), "builder", "claude-opus-5"), "claude-sonnet-5");
     }

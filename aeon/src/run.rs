@@ -97,6 +97,9 @@ pub struct State {
     /// add nothing (sp-iku03, sp-al5ng).
     pub session_start_tip: String,
     pub lc_model_restricted: bool,
+    /// The stronger model this claim runs on, and the rejection history its brief carries.
+    pub model_override: Option<String>,
+    pub rejection_brief: String,
     pub requeue_cause: Option<String>,
     pub requeue_why: String,
     pub session_epoch: i64,
@@ -266,6 +269,35 @@ impl<'a> Run<'a> {
             "spira_event",
             &s(&["aeon.rapid", &id, &format!("Rapid-recur: {id} — {count} consecutive sub-10s aeon summons (setup loop) — parked")]),
         );
+    }
+
+    /// A bead rejected twice claims on the persona's stronger model with its history in the
+    /// brief; at the third rejection it is released and held for the Concierge instead of run.
+    fn escalation_gate(&mut self, id: &str) -> Option<i32> {
+        use spira_config::escalation::{self, Tier};
+        let o = self.d.exec.exec("spira-claim", &s(&["rejections", id]), None, None);
+        let st: escalation::Standing = o.success().then(|| serde_json::from_str(o.stdout.trim()).ok()).flatten()?;
+        match escalation::tier(st.rejections) {
+            Tier::Normal => None,
+            Tier::Stronger => {
+                let model = conf::persona_escalation_model(self.f(), &self.conf.s("SPIRA_TOML"))?;
+                self.log(&format!("{}: {id} rejected {} times — claim runs on {model}", self.f(), st.rejections));
+                self.record_fact(escalation::ESCALATED, &format!("model={model} rejections={}", st.rejections));
+                self.s.rejection_brief = escalation::history_brief(&st.history, &model);
+                self.s.model_override = Some(model);
+                None
+            }
+            Tier::Hold => {
+                self.release();
+                let reason = escalation::hold_reason(st.rejections);
+                self.record_fact(escalation::ESCALATED, &format!("hold rejections={}", st.rejections));
+                let _ = self.d.exec.exec("spira-lc", &s(&["hold", id, "manual", &reason, escalation::HOLD_ACTOR]), None, None);
+                self.note(&reason);
+                self.log(&format!("{}: {id} {reason}", self.f()));
+                self.ledger_done(0, "escalation-hold");
+                Some(0)
+            }
+        }
     }
 
     fn check_stop(&self) -> Result<(), Abort> {
@@ -557,6 +589,10 @@ impl<'a> Run<'a> {
             self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
             self.ledger_done(0, "hold-raced");
             return Err(0);
+        }
+
+        if let Some(rc) = self.escalation_gate(&c.id) {
+            return Err(rc);
         }
 
         let occupants = worktree::live_occupants(std::path::Path::new("/proc"), &self.run_dir().join("worktree").join(&c.id), self.pid);
@@ -1032,6 +1068,7 @@ impl<'a> Run<'a> {
         let prompt = brief::render_prompt(&chamber, &tokens, banner.as_deref());
         let statutes = self.statutes().map_err(Abort::Die)?;
         let (sys, mut task) = brief::split(&statutes, &prompt);
+        task.push_str(&self.s.rejection_brief);
         task.push_str(&brief::dirty_brief(dirty));
         task.push_str(resume);
         task.push_str(slain);
@@ -1088,7 +1125,10 @@ impl<'a> Run<'a> {
             SystemPrompt::Replace => "--system-prompt-file",
             SystemPrompt::Append => "--append-system-prompt-file",
         };
-        let model = conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML"))?;
+        let model = match &self.s.model_override {
+            Some(m) => m.clone(),
+            None => conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML"))?,
+        };
         let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
         a.extend(s(&["--model", &model, "--allowedTools", &self.fayth.tools, "--dangerously-skip-permissions"]));
         if self.fayth.project_instructions == "none" {

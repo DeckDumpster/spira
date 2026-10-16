@@ -38,6 +38,9 @@ impl World for Fake {
     fn record_failing(&mut self, id: &str, suites: &str) {
         self.log(format!("record_failing {id} {suites}"));
     }
+    fn record_rejection(&mut self, id: &str, r: &spira_config::escalation::Rejection) {
+        self.log(format!("record_rejection {id} {}|{}|{}", r.cause, r.suites, r.reason));
+    }
     fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String> {
         self.log(format!("lc_reopen {id} {cause}"));
         if self.reopen_fails {
@@ -76,6 +79,7 @@ fn happy_path_every_step_in_order() {
         *w.calls.borrow(),
         vec![
             "stop_holder sp-a gate-red",
+            "record_rejection sp-a gate-red||",
             "lc_reopen sp-a gate-red",
             "write_reopen_event sp-a gate-red",
         ]
@@ -223,9 +227,10 @@ fn live_reopen_writes_sidecar_reopens_strips_label_releases_notes() {
     // bd sees only the note.
     let lc_log = std::fs::read_to_string(dir.join("lc.log")).unwrap();
     let lc_argv: Vec<&str> = lc_log.lines().filter(|l| l.starts_with("ARGV")).collect();
-    assert_eq!(lc_argv.len(), 2, "{lc_log}");
-    assert_eq!(lc_argv[0], "ARGV [reopen] [sp-a] [batch-eject] [harness]", "{lc_log}");
-    assert!(lc_argv[1].starts_with("ARGV [fact] [sp-a] [--kind] [reopen] [--actor] [harness] [--cause] [batch-eject]"), "{lc_log}");
+    assert_eq!(lc_argv.len(), 4, "{lc_log}");
+    assert!(lc_argv[1].starts_with("ARGV [fact] [sp-a] [--kind] [rejection] [--actor] [harness] [--cause] "), "{lc_log}");
+    assert_eq!(lc_argv[2], "ARGV [reopen] [sp-a] [batch-eject] [harness]", "{lc_log}");
+    assert!(lc_argv[3].starts_with("ARGV [fact] [sp-a] [--kind] [reopen] [--actor] [harness] [--cause] [batch-eject]"), "{lc_log}");
     let bd_argv: Vec<&str> = bd_log.lines().filter(|l| l.starts_with("ARGV")).collect();
     assert_eq!(bd_argv.len(), 1, "{bd_log}");
     for gone in ["[reopen]", "[assign]", "[label]", "[--status]", "INSERT INTO events"] {
@@ -314,6 +319,7 @@ fn a_refused_stop_leaves_the_bead_working() {
     impl World for Stuck {
         fn write_ejected(&mut self, i: &str, s: &str) { self.0.write_ejected(i, s) }
         fn record_failing(&mut self, i: &str, s: &str) { self.0.record_failing(i, s) }
+        fn record_rejection(&mut self, i: &str, r: &spira_config::escalation::Rejection) { self.0.record_rejection(i, r) }
         fn lc_reopen(&mut self, i: &str, c: &str) -> Result<(), String> { self.0.lc_reopen(i, c) }
         fn stop_holder(&mut self, _: &str, _: &str) -> Result<(), String> { Err("still running".into()) }
         fn write_reopen_event(&mut self, i: &str, c: &str) { self.0.write_reopen_event(i, c) }
@@ -348,4 +354,17 @@ fn only_a_red_ejection_records_failing_checks() {
     let mut w = Fake::default();
     assert_eq!(run(&plain, &mut w), 0);
     assert!(!w.calls.borrow().iter().any(|c| c.starts_with("record_failing")), "a harness eject judges nothing");
+}
+
+#[test]
+fn a_judged_reopen_records_a_rejection_and_a_harness_one_does_not() {
+    let mut w = Fake::default();
+    let red = Opts { id: "sp-a".into(), cause: "eject-red".into(), note: "five tests failed".into(), suites: "test-x.sh".into() };
+    assert_eq!(run(&red, &mut w), 0);
+    assert!(w.has("record_rejection sp-a eject-red|test-x.sh|five tests failed"), "{:?}", w.calls.borrow());
+    for cause in ["eject", "gate-no-verdict", "gate-base-red", "queue-eject"] {
+        let mut w = Fake::default();
+        assert_eq!(run(&Opts { cause: cause.into(), ..red.clone() }, &mut w), 0);
+        assert!(!w.calls.borrow().iter().any(|c| c.starts_with("record_rejection")), "{cause} is not a rejection");
+    }
 }

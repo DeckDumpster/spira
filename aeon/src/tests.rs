@@ -51,6 +51,8 @@ struct World {
     lc: BTreeMap<String, String>,
     /// `spira-lc facts`' JSON answer.
     facts: String,
+    /// `spira-claim rejections`' JSON answer; none answers a bead never rejected.
+    rejections: Option<String>,
     /// The disposition (status, note) the row carries per bead, as `spira-lc show` answers it.
     disposition: BTreeMap<String, (String, String)>,
     /// `gate-run.sh --status`' answer (exit code, text); `None` answers "no gate known" (rc 0).
@@ -227,6 +229,7 @@ impl Exec for FakeExec {
                 "epics" => Out::ok(r#"{"prio":{},"started":[]}"#),
                 "select" if args.contains(&"--top-tier".to_string()) => Out::ok(ids.iter().map(|i| format!("{i}||fixture|2|1|2\n")).collect::<String>()),
                 "select" => Out::ok(ids.iter().map(|i| format!("2\t1\t2\t1\tt\t{i}\t\n")).collect::<String>()),
+                "rejections" => Out::ok(self.0.lock().unwrap().rejections.clone().unwrap_or_else(|| r#"{"rejections":0,"history":[]}"#.into())),
                 "stack" => Out::ok(self.0.lock().unwrap().stack_answer.clone().unwrap_or_else(|| "{}".into())),
                 _ => Out::ok("{}"),
             };
@@ -1081,6 +1084,56 @@ fn the_launch_model_is_the_toml_persona_model_not_a_fayth_declaration() {
     let a = o.seen[0].args.join(" ");
     assert!(a.contains("--model toml-override-model "), "{a}");
     assert!(!a.contains("fayth-declared-model"), "{a}");
+}
+
+fn rejected(f: &Fx, n: usize) -> String {
+    let history: Vec<_> = (1..=n).map(|i| spira_config::escalation::Rejection::new("eject-red", "test-x.sh", &format!("tip{i}"), &format!("reason {i}: five tests failed"))).collect();
+    f.w.lock().unwrap().rejections = Some(serde_json::json!({"rejections": n, "history": history}).to_string());
+    let over = f._dir.join("escalation.toml");
+    std::fs::write(&over, "[persona.builder]\nmodel = \"builder-model\"\nescalation_model = \"stronger-model\"\n").unwrap();
+    format!("{}:{}", complete_vars()["SPIRA_TOML"], over.display())
+}
+
+#[test]
+fn a_second_rejection_runs_the_next_claim_on_the_stronger_model_with_the_history_in_the_brief() {
+    let f = fx("esc-two");
+    let spec = rejected(&f, 2);
+    seed(&f, "sp-e");
+    let o = go(&f, "spira,plan", &[("SPIRA_TOML", spec.as_str())], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert_eq!(o.code, 0, "{}", o.log);
+    let a = o.seen[0].args.join(" ");
+    assert!(a.contains("--model stronger-model ") && !a.contains("builder-model"), "{a}");
+    let task = std::fs::read_to_string(f.run.join("sp-e.task.md")).unwrap();
+    for want in ["Rejection history", "stronger-model", "test-x.sh", "tip1", "tip2", "reason 2: five tests failed"] {
+        assert!(task.contains(want), "{want}: {task}");
+    }
+    let facts: Vec<_> = o.w.lock().unwrap().exec_calls.iter().filter(|c| c.1.first().map(String::as_str) == Some("fact")).map(|c| c.1.join(" ")).collect();
+    assert!(facts.iter().any(|c| c.contains("--kind escalated") && c.contains("model=stronger-model")), "{facts:?}");
+}
+
+#[test]
+fn a_first_rejection_keeps_the_personas_own_model_and_adds_nothing_to_the_brief() {
+    let f = fx("esc-one");
+    let spec = rejected(&f, 1);
+    seed(&f, "sp-e");
+    let o = go(&f, "spira,plan", &[("SPIRA_TOML", spec.as_str())], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert_eq!(o.code, 0, "{}", o.log);
+    assert!(o.seen[0].args.join(" ").contains("--model builder-model "));
+    assert!(!std::fs::read_to_string(f.run.join("sp-e.task.md")).unwrap().contains("Rejection history"));
+}
+
+#[test]
+fn a_third_rejection_holds_the_bead_for_the_concierge_and_runs_no_session() {
+    let f = fx("esc-three");
+    let spec = rejected(&f, 3);
+    seed(&f, "sp-e");
+    let o = go(&f, "spira,plan", &[("SPIRA_TOML", spec.as_str())], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert_eq!(o.code, 0, "{}", o.log);
+    assert!(o.seen.is_empty(), "a held bead is not claimed again");
+    assert!(ledger_lines(&o).iter().any(|l| l.contains("status=escalation-hold")), "{:?}", ledger_lines(&o));
+    let calls = o.w.lock().unwrap().exec_calls.iter().map(|c| c.1.join(" ")).collect::<Vec<_>>();
+    assert!(calls.iter().any(|c| c.starts_with("hold sp-e manual escalation-ceiling: 3 rejections")), "{calls:?}");
+    assert!(calls.iter().any(|c| c.contains("--kind escalated") && c.contains("hold rejections=3")), "{calls:?}");
 }
 
 /// The model's stand-in for a close with nothing committed: closes the bead, optionally

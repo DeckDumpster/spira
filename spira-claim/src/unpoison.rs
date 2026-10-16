@@ -586,6 +586,14 @@ impl crate::reopen::World for Live {
         let _ = spira_config::proof::record_failing(&self.run_dir, id, &checks);
     }
 
+    fn record_rejection(&mut self, id: &str, rejection: &spira_config::escalation::Rejection) {
+        let mut r = rejection.clone();
+        if r.tip.is_empty() {
+            r.tip = self.store.lifecycle_of(&[id.to_string()]).ok().and_then(|m| m.get(id).and_then(|row| row.tip.clone())).unwrap_or_default();
+        }
+        let _ = self.lc(&["fact", id, "--kind", spira_config::escalation::REJECTION, "--actor", &self.beads_actor, "--cause", &r.encode()]);
+    }
+
     fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String> {
         self.store.lc_reopen(id, cause, &self.beads_actor)
     }

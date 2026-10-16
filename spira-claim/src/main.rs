@@ -4,6 +4,7 @@
 mod audit;
 mod counters;
 mod deadlock;
+mod escalation;
 mod decide;
 mod events;
 mod rank;
@@ -73,6 +74,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim deadlocked [--apply] --merge-status F [--actor NAME]     (§9; the git check is groomer's)
        spira-claim write-event <bead> <event-type> [cause]                 (lib.sh _bump_write_event_try's one INSERT; wave 4.18)
        spira-claim count-events <bead> <event-type>                        (lib.sh _counter_events_query: raw COUNT(*), no exemption)
+       spira-claim rejections <bead>                                       (JSON: how many times the bead was rejected, and the recorded detail)
        spira-claim lapse-record <bead> <quiet-s> <last-action> <tip>       (lib.sh write_lapse_record)
        spira-claim bead-metadata <bead> <key>                              (lib.sh bead_metadata)
        spira-claim thrash-streak-bump <bead> [tip] [note]                  (lib.sh thrash_streak_bump)
@@ -245,6 +247,7 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "deadlocked" => cmd_deadlocked(&a, &mut env),
         "write-event" => cmd_write_event(&a, &env),
         "count-events" => cmd_count_events(&a, &env),
+        "rejections" => cmd_rejections(&a, &env),
         "lapse-record" => cmd_lapse_record(&a, &env),
         "bead-metadata" => cmd_bead_metadata(&a, &env),
         "thrash-streak-bump" => cmd_thrash_streak_bump(&a, &env),
@@ -1257,6 +1260,24 @@ fn cmd_count_events(a: &Args, env: &Env) -> Outcome {
     };
     match counters::count_events(&st, &id, &etype) {
         Ok(n) => Outcome::ok(format!("{n}\n")),
+        Err(e) => Outcome::cannot_tell(e),
+    }
+}
+
+fn cmd_rejections(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    let id = match one_bead(a) {
+        Ok(b) => b,
+        Err(o) => return o,
+    };
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    match st.facts(std::slice::from_ref(&id)) {
+        Ok(rows) => Outcome::ok(format!("{}\n", serde_json::to_string(&escalation::standing(&rows)).unwrap_or_default())),
         Err(e) => Outcome::cannot_tell(e),
     }
 }
