@@ -238,6 +238,7 @@ fn run_container(rt: &dyn ContainerRuntime, decl: &Decl, shots: &Shots, tree: &P
         timeout: Some(Duration::from_secs(shots.timeout.or(decl.timeout).unwrap_or(600))),
         deadline: None,
         output: log.to_path_buf(),
+        ..RunRequest::default()
     };
     let o = rt.run_once(&req);
     rt.purge(&req.name);

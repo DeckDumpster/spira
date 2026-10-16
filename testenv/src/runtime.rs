@@ -114,7 +114,7 @@ impl ExecOutcome {
 
 /// One throwaway container for a foreign repository's tier (`podman run --rm`): the tree
 /// mounted at `workdir`, the declared argv, bounded like an exec.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RunRequest {
     pub name: String,
     pub image: String,
