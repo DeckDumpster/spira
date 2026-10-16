@@ -52,7 +52,7 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 | UC-instance-lifecycle-02 | `build-tarball.sh` produces `spira-YYYYMMDDTHHMMSSZ.tar.gz` from a clean checkout, unpacking to a same-named dir. MANIFEST records the source SHA, and `--name` pins stem and timestamp. | COR, CON | T2 / cert |
 | UC-instance-lifecycle-03 | The tarball ships every `@*_BIN@` binary that a non-optional unit's ExecStart references, executable. The build refuses without `--supervise-bin`, and no `sp-*` or `*.fixed` scratch files ship. | FC, CON | T0 (token scan) + T2 (refusal) / cert |
 | UC-instance-lifecycle-04 | `build-tarball.sh verify` accepts a MANIFEST whose commit exists in the source repo and refuses one that does not. | FC | T2 / cert |
-| UC-instance-lifecycle-05 | `build-bd.sh --from-release` derives `beads_<ver>_<os>_<arch>.tar.gz` and refuses a checksum mismatch before unpacking. | FC, COR | T2 / cert |
+| UC-instance-lifecycle-05 | `build-bd.sh --from-flake` takes bd from the flake environment and refuses an environment with no bd. | FC, COR | T2 / cert |
 | UC-instance-lifecycle-06 | `release.sh cut` creates an annotated tag listing the bead ids landed since the previous tag, on the repo-map base ref (not hardcoded `main`). A no-op cut creates no tag, and `show` reads the tag back. | COR, CFG | T2 / cert |
 | UC-instance-lifecycle-07 | `review.sh` records a ship/block verdict per release unit, files a finding bead on block, and never duplicates it. *(misfiled; price only)* | COR, IDEM | T2 / batch |
 

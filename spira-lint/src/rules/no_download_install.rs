@@ -2,17 +2,15 @@
 //! manifest, never by piping `curl`/`wget` into `tar`/`sh`/`bash`, or by running, unpacking
 //! or copying a file it just downloaded.
 
-use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::{allow_lines, Entry, Finding, LintError, Rule, Tree};
+use crate::{Entry, Finding, LintError, Rule, Tree};
 
 pub struct NoDownloadInstall;
 
 const NAME: &str = "no-download-install";
-const ALLOW_FILE: &str = "spira-lint/no-download-install-allow";
 
 fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
     cell.get_or_init(|| Regex::new(pat).expect("static regex"))
@@ -73,13 +71,16 @@ fn downloaded_file(line: &str) -> Option<String> {
     None
 }
 
+/// The one bootstrap: installing the package manager itself. Nix's own versioned installer,
+/// downloaded to a file and verified by `sha256sum -c` before it runs.
+fn is_checksummed_nix_bootstrap(line: &str, later: &[(usize, String)]) -> bool {
+    static NIX: OnceLock<Regex> = OnceLock::new();
+    re(&NIX, r"https://releases\.nixos\.org/nix/nix-\d+\.\d+\.\d+/install\b").is_match(line) && later.iter().any(|(_, l)| l.contains("sha256sum -c"))
+}
+
 impl Rule for NoDownloadInstall {
     fn name(&self) -> &'static str {
         NAME
-    }
-
-    fn allow_file(&self) -> Option<&'static str> {
-        Some(ALLOW_FILE)
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
@@ -93,9 +94,7 @@ impl Rule for NoDownloadInstall {
         let subst = re(&SUBST, r#"\b(?:sh|bash|zsh|source)\s+(?:-\w+\s+)*(?:<\(|-c\s+["']?\$\()\s*(?:curl|wget)\b"#);
 
         let files = crate::scope(tree, self)?;
-        let allow = allow_lines(&tree.read_text(ALLOW_FILE));
         let mut out = Vec::new();
-        let mut offenders = BTreeSet::new();
         for e in files {
             let Some(src) = tree.content(e) else { continue };
             let lines = logical_lines(&String::from_utf8_lossy(src));
@@ -108,35 +107,19 @@ impl Rule for NoDownloadInstall {
                 let Some(f) = downloaded_file(l) else { continue };
                 let q = regex::escape(&f);
                 let used = Regex::new(&format!(
-                    r"\b(?:tar|unzip|dpkg\s+-i|install|cp|mv|sh|bash|chmod\s+\S*\+x)\b[^\n]*{q}(?:[\s\x22\x27;&|]|$)"
+                    r"\b(?:tar|unzip|gunzip|gzip|zcat|xz|unxz|dpkg\s+-i|install|cp|mv|sh|bash|chmod\s+\S*\+x)\b[^\n]*{q}(?:[\s\x22\x27;&|]|$)"
                 ))
                 .expect("escaped pattern");
-                if lines[n + 1..].iter().any(|(_, later)| used.is_match(later)) {
+                if lines[n + 1..].iter().any(|(_, later)| used.is_match(later)) && !is_checksummed_nix_bootstrap(l, &lines[n + 1..]) {
                     hits.push((*at, "downloads a file and then unpacks, installs or runs it"));
                 }
             }
             if hits.is_empty() {
                 continue;
             }
-            offenders.insert(e.path.clone());
-            if allow.iter().any(|p| p == &e.path) {
-                continue;
-            }
             for (line, what) in hits {
                 out.push(Finding { rule: NAME, path: e.path.clone(), line: Some(line), message: format!("{what} — declare the tool in a package manager's pinned manifest and install it from there") });
             }
-        }
-        for (i, p) in tree.read_text(ALLOW_FILE).lines().enumerate() {
-            let t = p.trim();
-            if t.is_empty() || t.starts_with('#') || offenders.contains(t) {
-                continue;
-            }
-            out.push(Finding {
-                rule: NAME,
-                path: ALLOW_FILE.to_string(),
-                line: Some(i + 1),
-                message: format!("lists {t}, which no longer needs an exception — remove the line (the list only shrinks)"),
-            });
         }
         Ok(out)
     }
@@ -146,8 +129,8 @@ impl Rule for NoDownloadInstall {
 in a package manager's manifest (Cargo.toml or a cargo-binstall entry, package.json plus \
 lockfile, an apt package list read by runner-deps) and installed only from it. A download piped \
 into tar or a shell has no pin and no checksum, and a wrong URL fails silently into whatever \
-fallback follows. spira-lint/no-download-install-allow lists files that predate the rule; it \
-only shrinks."
+fallback follows. The only bootstrap is Nix itself, from its versioned installer URL, \
+downloaded to a file and verified with sha256sum -c before it runs."
     }
 }
 
@@ -166,7 +149,6 @@ mod tests {
     #[test]
     fn a_planted_download_install_is_caught_and_named_by_line() {
         let t = TempDir::new("nodl-fail");
-        t.write(ALLOW_FILE, "");
         t.write("ci.sh", PIPE_TAR);
         t.write("setup.sh", "#!/bin/sh\ncurl -fsSL https://x.invalid/i.sh \\\n  | sudo bash -s -- --yes\n");
         t.write("sub.sh", "bash <(curl -s https://x.invalid/i.sh)\nsh -c \"$(wget -qO- https://x.invalid/i.sh)\"\n");
@@ -192,7 +174,6 @@ mod tests {
     #[test]
     fn manifest_declared_installs_and_innocent_curl_pass() {
         let t = TempDir::new("nodl-pass");
-        t.write(ALLOW_FILE, "");
         t.write(
             "ci.sh",
             "#!/bin/sh\ncargo binstall --locked --no-confirm --manifest-path tools/Cargo.toml cargo-nextest\n\
@@ -208,15 +189,17 @@ curl -fsS -o /tmp/out.json https://x.invalid/data\njq . /tmp/out.json\n",
     }
 
     #[test]
-    fn a_listed_exception_passes_and_a_stale_one_is_refused() {
-        let t = TempDir::new("nodl-allow");
-        t.write("old.sh", PIPE_TAR);
-        t.write("fixed.sh", "#!/bin/sh\ncargo binstall cargo-nextest\n");
-        t.write(ALLOW_FILE, "# header\nold.sh\nfixed.sh\n");
-        assert_eq!(
-            run(&t, &["old.sh", "fixed.sh"]).unwrap(),
-            vec!["no-download-install: spira-lint/no-download-install-allow:3: lists fixed.sh, which no longer needs an exception — remove the line (the list only shrinks)"]
-        );
+    fn only_the_checksummed_nix_bootstrap_is_waived() {
+        let t = TempDir::new("nodl-nix");
+        let url = "https://releases.nixos.org/nix/nix-2.28.3/install";
+        t.write("ok.sh", &format!("curl -fsSL -o \"$i\" {url}\necho \"abc  $i\" | sha256sum -c -\nsh \"$i\" --daemon\n"));
+        t.write("unverified.sh", &format!("curl -fsSL -o \"$i\" {url}\nsh \"$i\" --daemon\n"));
+        t.write("piped.sh", &format!("curl -fsSL {url} | sh\nsha256sum -c x\n"));
+        t.write("other.sh", "curl -fsSL -o \"$i\" https://x.invalid/install\necho a | sha256sum -c -\nsh \"$i\"\n");
+        t.write("gz.sh", "curl -fsSL -o /tmp/t.gz https://x.invalid/t.gz\ngunzip -c /tmp/t.gz > /usr/local/bin/t\n");
+        let got = run(&t, &["ok.sh", "unverified.sh", "piped.sh", "other.sh", "gz.sh"]).unwrap();
+        let hits: Vec<String> = got.iter().map(|g| g.split(" — ").next().unwrap().split(": ").nth(1).unwrap().to_string()).collect();
+        assert_eq!(hits, vec!["gz.sh:1", "other.sh:1", "piped.sh:1", "unverified.sh:1"]);
     }
 
     #[test]

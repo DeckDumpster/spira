@@ -24,7 +24,7 @@ statement = "`build-tarball.sh verify` accepts a MANIFEST whose commit exists in
 [[use_case]]
 id = "UC-instance-lifecycle-05"
 tier = "T2"
-statement = "`build-bd.sh --from-release` derives `beads_<ver>_<os>_<arch>.tar.gz` and refuses a checksum mismatch before unpacking"
+statement = "`build-bd.sh --from-flake` takes bd from the flake environment and refuses an environment with no bd"
 
 [[use_case]]
 id = "UC-instance-lifecycle-06"

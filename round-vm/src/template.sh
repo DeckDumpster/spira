@@ -7,12 +7,11 @@ cd "$work"
 export CARGO_HOME="${cache_home:-$HOME/.cargo}"
 mkdir -p "$CARGO_HOME/bin"
 if [ -n "$toolchain" ] && [ ! -x "$CARGO_HOME/bin/rustc" ]; then
-    echo "round-vm template: installing rust $toolchain standalone into $CARGO_HOME (must match the host's rustc byte-for-byte, sp-xjnzl)" >&2
-    tmp="$(mktemp -d)"
-    curl -fsSL "https://static.rust-lang.org/dist/rust-${toolchain}-x86_64-unknown-linux-gnu.tar.gz" -o "$tmp/rust.tar.gz"
-    tar -xzf "$tmp/rust.tar.gz" -C "$tmp" --strip-components=1
-    "$tmp/install.sh" --prefix="$CARGO_HOME" --destdir="" --disable-ldconfig >&2
-    rm -rf "$tmp"
+    echo "round-vm template: installing rust $toolchain with rustup into $CARGO_HOME (must match the host's rustc byte-for-byte, sp-xjnzl)" >&2
+    command -v rustup >/dev/null 2>&1 || apt-get install -y -qq rustup >&2
+    export RUSTUP_HOME="$CARGO_HOME/rustup"
+    rustup toolchain install "$toolchain" --profile minimal --no-self-update >&2
+    for b in "$RUSTUP_HOME"/toolchains/"$toolchain"-*/bin/*; do ln -sfn "$b" "$CARGO_HOME/bin/${b##*/}"; done
 fi
 export PATH="$CARGO_HOME/bin:$PATH"
 export SPIRA_HOME="$work/spira"
@@ -27,7 +26,10 @@ export SPIRA_TOML="$work/spira-config/tests/fixtures/complete.toml:$work/templat
 nix_bin=/nix/var/nix/profiles/default/bin
 if [ ! -x "$nix_bin/nix" ]; then
     echo "round-vm template: installing nix (multi-user)" >&2
-    curl -fsSL https://nixos.org/nix/install | sh -s -- --daemon --yes >&2
+    nix_installer="$(mktemp -d)/install"
+    curl -fsSL -o "$nix_installer" https://releases.nixos.org/nix/nix-2.28.3/install
+    echo "46b8d7165dceb471f4346366b3a93f1009407b99729b843b8664918f4cc800a0  $nix_installer" | sha256sum -c - >&2
+    sh "$nix_installer" --daemon --yes >&2
 fi
 export PATH="$nix_bin:$PATH"
 echo "round-vm template: building spira-env from this tree's flake.lock" >&2

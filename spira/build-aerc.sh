@@ -24,11 +24,10 @@
 # now only ever COPIES the binary this script produces.
 #
 # Usage: build-aerc.sh <vendor-bin-dir>
-#   Builds aerc at exactly AERC_VERSION into <vendor-bin-dir>/aerc (GOBIN). Reuses an
-#   already-usable go (>= GO_MIN_MAJOR.GO_MIN_MINOR) when one is already on this build
-#   machine — env GO, $HOME/.local/go/bin/go, or PATH, the same candidate order install's
-#   own (removed, sp-41so3) find_usable_go used — and fetches a pinned, checksummed
-#   go.dev/dl toolchain into $HOME/.cache/spira-build-tarball only when none is usable.
+#   Builds aerc at exactly AERC_VERSION into <vendor-bin-dir>/aerc (GOBIN). Uses an
+#   already-usable go (>= GO_MIN_MAJOR.GO_MIN_MINOR) when one is on this build machine — env
+#   GO, $HOME/.local/go/bin/go, or PATH — and otherwise the go in the harness flake's
+#   spira-env, pinned by flake.lock. The aerc source is the pinned git tag.
 #
 # EXIT
 #   0  <vendor-bin-dir>/aerc built and reports exactly AERC_VERSION
@@ -43,21 +42,12 @@ set -uo pipefail
 # The pinned aerc tag (git.sr.ht/~rjarry/aerc). NOT a "v"-prefixed go module version (its
 # tags are bare "0.22.0", which `go install git.sr.ht/~rjarry/aerc@0.22.0` cannot resolve —
 # go module version queries require a canonical `vX.Y.Z` — and aerc publishes no prebuilt
-# binary release either), so this fetches the tag's own source archive and builds it from
+# binary release either), so this clones the tag and builds it from
 # a local checkout instead, where no VCS tag lookup is needed at all.
 AERC_VERSION="0.22.0"
 
-# The pinned Go toolchain (go.dev/dl), fetched ONLY when no usable go (>=
-# GO_MIN_MAJOR.GO_MIN_MINOR — aerc's own go.mod says `go 1.25.0`) is already reachable on
-# this build machine.
-GO_VERSION="1.27.1"
 GO_MIN_MAJOR=1
 GO_MIN_MINOR=25
-# go.dev/dl's published sha256 for go${GO_VERSION}.linux-{amd64,arm64}.tar.gz — checked
-# after download, because this one tarball becomes the compiler the rest of this script
-# trusts.
-GO_SHA256_AMD64="63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
-GO_SHA256_ARM64="3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec"
 
 VENDOR_BIN="${1:?usage: build-aerc.sh <vendor-bin-dir>}"
 
@@ -77,16 +67,6 @@ _go_version_at_least() {
     [ "$major" -eq "$2" ] && [ "$minor" -ge "$3" ]
 }
 
-goarch=""
-case "$(uname -m)" in
-    x86_64) goarch=amd64 ;;
-    aarch64) goarch=arm64 ;;
-    *)
-        printf 'build-aerc.sh: no go toolchain build for architecture %s\n' "$(uname -m)" >&2
-        exit 1
-        ;;
-esac
-
 # The first already-usable go found among: $GO, the conventional $HOME/.local/go/bin/go, or
 # PATH — the same candidate order doctor's own go check and install's own (removed,
 # sp-41so3) find_usable_go used, so this reuses exactly what an operator or a prior run
@@ -101,80 +81,23 @@ for candidate in "${GO:-}" "${HOME:-}/.local/go/bin/go" "$(command -v go 2>/dev/
 done
 
 if [ -z "$go" ]; then
-    cache="${HOME:-/tmp}/.cache/spira-build-tarball"
-    mkdir -p "$cache"
-    go_dest="$cache/go-$GO_VERSION"
-    if [ ! -x "$go_dest/bin/go" ]; then
-        url="https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz"
-        want=""
-        case "$goarch" in
-            amd64) want="$GO_SHA256_AMD64" ;;
-            arm64) want="$GO_SHA256_ARM64" ;;
-        esac
-        tgz="$cache/.go-toolchain.download.$$.tar.gz"
-        printf 'build-aerc.sh: fetching go %s to build aerc (release-build time only)\n' "$GO_VERSION" >&2
-        # batch-job: the release build fetches a pinned Go toolchain once per release
-        # machine, only when aerc needs building and no usable go is already present;
-        # bounded by curl --max-time 300.
-        if ! curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 300 -o "$tgz" "$url"; then
-            printf 'build-aerc.sh: cannot fetch go toolchain from %s\n' "$url" >&2
-            rm -f "$tgz"
-            exit 1
-        fi
-        got="$(sha256sum "$tgz" | awk '{print $1}')"
-        if [ "$got" != "$want" ]; then
-            rm -f "$tgz"
-            printf 'build-aerc.sh: go toolchain checksum mismatch for %s: got %s, want %s\n' "$url" "$got" "$want" >&2
-            exit 1
-        fi
-        tmp="$cache/.go.new.$$"
-        rm -rf "$tmp"
-        mkdir -p "$tmp"
-        # batch-job: unpacking the fetched go toolchain tree (~210 MB uncompressed) once per
-        # release build; bounded at 180 s.
-        if ! timeout 180 tar -xzf "$tgz" -C "$tmp"; then
-            rm -f "$tgz"
-            rm -rf "$tmp"
-            printf 'build-aerc.sh: cannot unpack go toolchain from %s\n' "$url" >&2
-            exit 1
-        fi
-        rm -f "$tgz"
-        newgo="$tmp/go/bin/go"
-        newgv="$(timeout 5 "$newgo" version 2>/dev/null)" || newgv=""
-        if ! _go_version_at_least "$newgv" "$GO_MIN_MAJOR" "$GO_MIN_MINOR"; then
-            rm -rf "$tmp"
-            printf 'build-aerc.sh: fetched go toolchain at %s does not run or is below go%s.%s\n' \
-                "$newgo" "$GO_MIN_MAJOR" "$GO_MIN_MINOR" >&2
-            exit 1
-        fi
-        rm -rf "$go_dest"
-        mv "$tmp/go" "$go_dest"
-        rm -rf "$tmp"
-        printf 'build-aerc.sh: installed go %s at %s\n' "$GO_VERSION" "$go_dest" >&2
-    fi
-    go="$go_dest/bin/go"
+    command -v nix >/dev/null 2>&1 || { printf 'build-aerc.sh: no usable go and no nix to provide one\n' >&2; exit 1; }
+    flake_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+    env_dir="$(nix --extra-experimental-features 'nix-command flakes' build "path:$flake_dir#spira-env" --no-link --print-out-paths)" \
+        || { printf 'build-aerc.sh: nix build of spira-env failed\n' >&2; exit 1; }
+    go="$env_dir/bin/go"
+    gv="$(timeout 5 "$go" version 2>/dev/null)" || gv=""
+    _go_version_at_least "$gv" "$GO_MIN_MAJOR" "$GO_MIN_MINOR" || { printf 'build-aerc.sh: flake go %s is below go%s.%s\n' "$go" "$GO_MIN_MAJOR" "$GO_MIN_MINOR" >&2; exit 1; }
 fi
 
 src="$(mktemp -d)"
 trap 'rm -rf "$src"' EXIT INT TERM
-url="https://git.sr.ht/~rjarry/aerc/archive/${AERC_VERSION}.tar.gz"
-tgz="$(mktemp)"
 printf 'build-aerc.sh: building aerc %s (git.sr.ht/~rjarry/aerc) for the release tarball\n' "$AERC_VERSION" >&2
-# batch-job: the release build downloads the pinned aerc source archive once per release;
-# bounded by curl --max-time 300.
-if ! curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 300 -o "$tgz" "$url"; then
-    printf 'build-aerc.sh: cannot fetch aerc source from %s\n' "$url" >&2
-    rm -f "$tgz"
+# batch-job: the release build clones the pinned aerc tag once per release.
+if ! timeout 300 git clone -q --depth 1 --branch "$AERC_VERSION" https://git.sr.ht/~rjarry/aerc "$src"; then
+    printf 'build-aerc.sh: cannot clone aerc %s\n' "$AERC_VERSION" >&2
     exit 1
 fi
-# batch-job: unpacking the aerc source archive (a few hundred KB) once per release; bounded
-# at 60 s.
-if ! timeout 60 tar -xzf "$tgz" -C "$src" --strip-components=1; then
-    rm -f "$tgz"
-    printf 'build-aerc.sh: cannot unpack aerc source from %s\n' "$url" >&2
-    exit 1
-fi
-rm -f "$tgz"
 
 mkdir -p "$VENDOR_BIN"
 # batch-job: `go install` resolves and compiles aerc's own module dependencies over the
