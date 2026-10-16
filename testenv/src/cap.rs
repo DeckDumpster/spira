@@ -130,7 +130,8 @@ pub fn arm(limit: Duration) -> Armed {
             kill_descendants(std::process::id());
             println!("{}", over_cap_line(&what, limit.as_secs()));
             println!("VERDICT FAULT rc=2 ran=0 reason=over-cap");
-            std::process::exit(2);
+            // SAFETY: a watchdog thread has no caller to return to; _exit skips atexit handlers, stdout is line-buffered and already flushed.
+            unsafe { libc::_exit(2) };
         }
     });
     Armed(done, trip)
