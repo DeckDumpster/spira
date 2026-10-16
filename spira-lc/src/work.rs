@@ -293,6 +293,15 @@ fn apply_ask_hold(conn: &Conn, bead_id: &str, actor: &str, hold: BeadEventKind) 
     out
 }
 
+/// A child's repo is always named by the caller, never inherited from the parent: a child's
+/// work often lives in a different repository than the bead it was split from.
+fn child_repo(args: &[String]) -> Result<String, String> {
+    match flag(args, "--repo") {
+        Some(r) if !r.trim().is_empty() && !r.starts_with('-') => Ok(r),
+        _ => Err("--repo <name> is required: the child's repository is not inherited from the parent; name the repo its work lives in".into()),
+    }
+}
+
 fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, String) {
     let Some(title) = args.first() else {
         return (CANNOT_TELL, format!("work {verb}: missing <title>"));
@@ -300,10 +309,9 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
     let Some(persona) = flag(args, "--for") else {
         return (CANNOT_TELL, format!("work {verb}: --for <persona> is required"));
     };
-    let repo = match crate::bd::repo_label(bead_id) {
-        Ok(Some(r)) => r,
-        Ok(None) => return (CANNOT_TELL, format!("work {verb}: {bead_id} carries no repo: label")),
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    let repo = match child_repo(args) {
+        Ok(r) => r,
+        Err(e) => return (CANNOT_TELL, format!("refused: work {verb}: {e}")),
     };
     // A child of a bead that carries spira-open-children cannot land after it, so a
     // follow-up that needs this bead landed first is filed unparented and blocked on it.
@@ -1137,6 +1145,15 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_child_names_its_repo_and_never_inherits_the_parents() {
+        let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(child_repo(&v(&["dumpstar browse tiles"])).is_err());
+        assert!(child_repo(&v(&["t", "--repo"])).is_err());
+        assert!(child_repo(&v(&["t", "--repo", "--after-landing"])).is_err());
+        assert_eq!(child_repo(&v(&["t", "--repo", "dumpstar"])).unwrap(), "dumpstar");
+    }
+
     #[test]
     fn a_line_of_prose_or_a_truncated_prefix_is_not_a_bead_id() {
         for bad in ["SPIRA_BEAD_LANE_OVERRIDE=1", "bead:", "override:", "sp-", "sp", "", "sp-a b", "sp-x/y", "x-abc"] {

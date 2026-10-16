@@ -273,7 +273,7 @@ after_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/dev
     || bad "blocked: an ask landed in the operator's mailbox" "count did not increase ($before_unread -> $after_unread)"
 
 # ── file-followup: filed through bead.sh's contract, parent set by the layer ─────────
-out="$(work_as "$BID" file-followup "a followup filed by the container-tier suite" 2>&1)"; rc=$?
+out="$(work_as "$BID" file-followup "a followup filed by the container-tier suite" --repo testrepo 2>&1)"; rc=$?
 is "file-followup: exits 0" "0" "$rc"
 new_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
 [ -n "$new_id" ] || bail "file-followup produced no new bead id"
@@ -281,8 +281,13 @@ child_json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$new_id" --json 2>&1)" # ba
 want "file-followup: the new bead's parent is the bound bead, not asked for" "\"parent\": \"$BID\"" "$child_json"
 nowant "file-followup: did not inherit the bound bead's branch label" "branch:" "$child_json"
 
+out="$(work_as "$BID" split "a dumpstar piece with no repo named" 2>&1)"; rc=$?
+[ "$rc" != 0 ] && ok_ref=1 || ok_ref=0
+is "split without --repo: refused (nonzero)" "1" "$ok_ref"
+want "split without --repo: says --repo is required" "--repo" "$out"
+
 # ── file-followup --after-landing: unparented, blocked on the bound bead ─────────────
-out="$(work_as "$BID" file-followup "a followup that needs the parent landed" --after-landing 2>&1)"; rc=$?
+out="$(work_as "$BID" file-followup "a followup that needs the parent landed" --repo testrepo --after-landing 2>&1)"; rc=$?
 is "after-landing: exits 0" "0" "$rc"
 al_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
 [ -n "$al_id" ] || bail "after-landing produced no new bead id"
@@ -292,7 +297,7 @@ want   "after-landing: blocked on the bound bead" "\"id\": \"$BID\"" "$al_json"
 want   "after-landing: the edge is a blocking one" "\"dependency_type\": \"blocks\"" "$al_json"
 
 # ── split: same mechanism, its own bead ───────────────────────────────────────────────
-out="$(work_as "$BID" split "a split piece filed by the container-tier suite" 2>&1)"; rc=$?
+out="$(work_as "$BID" split "a split piece filed by the container-tier suite" --repo testrepo 2>&1)"; rc=$?
 is "split: exits 0" "0" "$rc"
 
 # ── superseded-by: a hold plus a confirmation ask, never bd supersede directly ───────
