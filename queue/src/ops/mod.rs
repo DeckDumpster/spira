@@ -136,13 +136,19 @@ pub fn converge_orphans(w: &World) {
     }
 }
 
+fn batch_abandoned(w: &World, batch_id: &str) -> bool {
+    matches!(w.lc.batch_state(batch_id), Some((s, _)) if matches!(s.as_str(), "ABANDONED" | "DISCARDED"))
+}
+
+/// An abandon already recorded is the abandon done: a terminal row answers success.
 pub fn lc_abandon(w: &World, batch_id: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
-    lc_cas_settled(
-        w,
-        batch_id,
-        |s, v| w.lc.abandon_batch(batch_id, s, v, actor, reason),
-        |w| matches!(w.lc.batch_state(batch_id), Some((s, _)) if matches!(s.as_str(), "ABANDONED" | "DISCARDED")),
-    )
+    if w.lc.available() && batch_abandoned(w, batch_id) {
+        return Ok(());
+    }
+    match lc_cas_settled(w, batch_id, |s, v| w.lc.abandon_batch(batch_id, s, v, actor, reason), |w| batch_abandoned(w, batch_id)) {
+        Err(_) if batch_abandoned(w, batch_id) => Ok(()),
+        r => r,
+    }
 }
 
 pub fn lc_eject_member(w: &World, batch_id: &str, bead: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {

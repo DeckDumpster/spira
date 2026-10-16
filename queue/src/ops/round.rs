@@ -760,7 +760,8 @@ fn open(w: &World, repo: Option<&str>, members_arg: &Text, name: Option<&str>, w
 fn status(w: &World, repo: Option<&str>) -> i32 {
     let label = "round status";
     let Ok(c) = resolve(w, label, repo) else { return FAIL };
-    let open = open_records(&c);
+    let mut open = open_records(&c);
+    open.retain(|(_, kv)| !matches!(w.lc.batch_state(kv.get("batch_id").unwrap_or("")), Some((s, _)) if matches!(s.as_str(), "ABANDONED" | "DISCARDED")));
     let Some((_, kv)) = open.first() else {
         w.out(format!("round=none\nrepo={}", c.r.name));
         return OK;
