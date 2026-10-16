@@ -14,7 +14,7 @@
 use lifecycle::{batch, bead, delivery};
 
 use crate::db::{CascadeStep, Conn, DbError, EventRecord};
-use crate::rows;
+use crate::{refusal_name, rows};
 
 const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
@@ -1675,32 +1675,6 @@ fn cascade_step(
         applied_to_state: applied_to_state.to_string(),
         event: EventRecord::of_apply(machine, key, event_name, from_state, from_state, None, serde_json::to_value(evidence_kind).unwrap_or_default(), actor, at),
     }
-}
-
-fn refusal_name(r: &lifecycle::Refusal) -> String {
-    match r {
-        lifecycle::Refusal::ExpectMismatch { .. } => "ExpectMismatch".to_string(),
-        lifecycle::Refusal::StaleVersion { .. } => "StaleVersion".to_string(),
-        lifecycle::Refusal::IllegalTransition { .. } => "IllegalTransition".to_string(),
-        lifecycle::Refusal::TipMismatch { .. } => "TipMismatch".to_string(),
-        lifecycle::Refusal::Terminal { .. } => "Terminal".to_string(),
-        lifecycle::Refusal::DepthExceeded { .. } => "DepthExceeded".to_string(),
-        lifecycle::Refusal::NotInStack { .. } => "NotInStack".to_string(),
-        lifecycle::Refusal::StackStale { .. } => "StackStale".to_string(),
-        lifecycle::Refusal::AwaitingReply { .. } => "AwaitingReply".to_string(),
-        lifecycle::Refusal::NotHolder { .. } => "NotHolder".to_string(),
-        lifecycle::Refusal::ManualHoldReason { .. } => "ManualHoldReason".to_string(),
-        lifecycle::Refusal::EjectedRedTip { .. } => "EjectedRedTip".to_string(),
-        lifecycle::Refusal::MalformedTip { .. } => "MalformedTip".to_string(),
-        lifecycle::Refusal::StackUnchanged { .. } => "StackUnchanged".to_string(),
-        lifecycle::Refusal::NotManuallyHeld => "NotManuallyHeld".to_string(),
-        lifecycle::Refusal::BreakGlassIncomplete { missing } => format!("BreakGlassIncomplete: missing {missing}"),
-        lifecycle::Refusal::DeadlinePassed { .. } => "DeadlinePassed".to_string(),
-        lifecycle::Refusal::MendRefused { .. } => "MendRefused".to_string(),
-        lifecycle::Refusal::MendCap { .. } => "MendCap".to_string(),
-        lifecycle::Refusal::StaleTip { .. } => "StaleTip".to_string(),
-    }
-
 }
 
 /// `event-continuity`: for each (machine, lc_key), every applied event's from_state must equal
