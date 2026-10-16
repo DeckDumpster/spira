@@ -1354,3 +1354,34 @@ fn ready_count_with_a_zero_ttl_recomputes_every_call() {
     assert_eq!(first.out, "1", "{}", first.err);
     assert_eq!((second.code, second.out.as_str()), (0, "0"), "{}", second.err);
 }
+
+#[test]
+fn urgent_names_the_claimable_p0_and_rework_beads_with_their_kind() {
+    let lc = |id: &str, state: &str| format!(r#"{{"bead_id":"{id}","state":"{state}","holds":"[]"}}"#);
+    let rows = r#"[{"id":"p0x","priority":0,"labels":["plan"]},{"id":"p2","priority":2,"labels":["plan"]},{"id":"rw","priority":3,"labels":["plan"]},{"id":"p0","priority":0,"labels":["plan"]}]"#;
+    let dir = testkit::TempDir::new("spira-claim-urgent-lc");
+    testkit::write_exe(
+        dir.join("spira-lc"),
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in\ncontent-rows*) cat <<'EOF'\n{rows}\nEOF\n;;\n*--express*) echo '[{x}]';;\n*REWORK,*|*READY,REWORK*) echo '[{a},{b},{c},{d}]';;\n*REWORK*) echo '[{c}]';;\n*) echo '[]';;\nesac\n",
+            rows = rows,
+            x = r#"{"bead_id":"p0x","state":"READY","express":"1","holds":"[]"}"#,
+            a = lc("p0x", "READY"),
+            b = lc("p2", "READY"),
+            c = lc("rw", "REWORK"),
+            d = lc("p0", "READY"),
+        ),
+    );
+    let path = format!("{}:/usr/bin:/bin", dir.to_string_lossy());
+    let bd = sh("echo '[]'");
+    let o = run_cfg(
+        &["urgent"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_SCOPE_LABEL", "")],
+        &[("PATH", Some(path.as_str()))],
+    );
+    assert_eq!(o.code, 0, "{}", o.err);
+    let mut got: Vec<&str> = o.out.lines().collect();
+    got.sort();
+    assert_eq!(got, vec!["p0\t0\t0\t0", "p0x\t0\t0\t1", "rw\t3\t1\t0"], "{}", o.out);
+}
