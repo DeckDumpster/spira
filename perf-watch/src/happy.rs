@@ -97,6 +97,39 @@ pub fn alarm(outcome: &Outcome, goal_ms: u64, recent: &[u64]) -> Option<String> 
 /// Directories of a release tree a sim world reads from its checkout.
 const WORLD_DIRS: [&str; 6] = [".github", "lifecycle", "out", "sim", "spira", "systemd"];
 
+/// Top-level directories named by the workspace `members` of a Cargo.toml.
+pub fn workspace_dirs(manifest: &str) -> Vec<String> {
+    let Some(at) = manifest.find("members") else { return Vec::new() };
+    let rest = &manifest[at..];
+    let Some(open) = rest.find('[') else { return Vec::new() };
+    let Some(close) = rest[open..].find(']') else { return Vec::new() };
+    rest[open + 1..open + close]
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|m| m.split('/').next())
+        .filter(|d| !d.is_empty() && *d != "*" && *d != "." && *d != "..")
+        .map(str::to_string)
+        .collect()
+}
+
+fn make_writable(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if meta.file_type().is_symlink() {
+        return Ok(());
+    }
+    let mut perms = meta.permissions();
+    perms.set_mode(perms.mode() | 0o200);
+    std::fs::set_permissions(path, perms).map_err(|e| format!("{}: {e}", path.display()))?;
+    if meta.is_dir() {
+        for e in std::fs::read_dir(path).map_err(|e| format!("{}: {e}", path.display()))?.flatten() {
+            make_writable(&e.path())?;
+        }
+    }
+    Ok(())
+}
+
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     // batch-job: git add/commit of a whole release tree takes as long as the tree is large
     let out = Command::new("git")
@@ -128,18 +161,25 @@ pub fn checkout(repo: &Path, scratch: &Path) -> Result<PathBuf, String> {
     for e in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
         if e.file_name() != ".git" {
             let p = e.path();
-            if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) }.map_err(|e| e.to_string())?;
+            make_writable(&p)?;
+            if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) }.map_err(|e| format!("{}: {e}", p.display()))?;
         }
     }
+    let members = workspace_dirs(&std::fs::read_to_string(repo.join("Cargo.toml")).unwrap_or_default());
     for e in std::fs::read_dir(repo).map_err(|e| format!("{}: {e}", repo.display()))?.flatten() {
         let name = e.file_name();
-        let wanted = if e.path().is_dir() { WORLD_DIRS.iter().any(|d| name == *d) } else { name != ".git" };
+        let wanted = if e.path().is_dir() {
+            WORLD_DIRS.iter().any(|d| name == *d) || members.iter().any(|d| name == d.as_str())
+        } else {
+            name != ".git"
+        };
         if wanted {
             // batch-job: copies a release directory, as long as it is large
             let st = Command::new("cp").arg("-a").arg(e.path()).arg(dir.join(&name)).status().map_err(|e| format!("cp: {e}"))?;
             if !st.success() {
-                return Err(format!("cp {}: {st}", name.to_string_lossy()));
+                return Err(format!("cp {}: {st}", e.path().display()));
             }
+            make_writable(&dir.join(&name))?;
         }
     }
     git(&dir, &["add", "-A", "-f"])?;
@@ -315,5 +355,33 @@ mod tests {
         checkout(&release, &scratch).unwrap();
         assert_ne!(git(&dir, &["rev-parse", "HEAD"]).unwrap(), first);
         assert_eq!(checkout(&base.join("nope"), &scratch).is_err(), true);
+    }
+
+    #[test]
+    fn every_workspace_member_of_the_copied_manifest_exists_in_the_checkout() {
+        let tmp = testkit::TempDir::new("perf-watch-members");
+        let base = tmp.path().to_path_buf();
+        let (release, scratch) = (base.join("release"), base.join("scratch"));
+        let manifest = "[workspace]\nmembers = [\n  \"mail\",\n  \"crates/auron\",\n]\n";
+        for d in ["mail", "crates/auron", "bin"] {
+            std::fs::create_dir_all(release.join(d)).unwrap();
+            std::fs::write(release.join(d).join("Cargo.toml"), "x").unwrap();
+        }
+        std::fs::write(release.join("mail/Cargo.toml"), "x").unwrap();
+        std::fs::write(release.join("Cargo.toml"), manifest).unwrap();
+        let mut perms = std::fs::metadata(release.join("mail/Cargo.toml")).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o444);
+        std::fs::set_permissions(release.join("mail/Cargo.toml"), perms).unwrap();
+        for _ in 0..2 {
+            let dir = checkout(&release, &scratch).unwrap();
+            let copied = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+            let members = workspace_dirs(&copied);
+            assert_eq!(members, vec!["mail", "crates"]);
+            for m in members {
+                assert!(dir.join(&m).is_dir(), "member {m} missing");
+            }
+            assert!(dir.join("crates/auron/Cargo.toml").exists());
+            assert!(!dir.join("bin").exists());
+        }
     }
 }
