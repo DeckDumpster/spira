@@ -43,6 +43,9 @@ pub struct Decl {
     /// Declaring it makes a change under `frontend/` carry screenshots to be submitted.
     #[serde(default)]
     pub shots: Option<Shots>,
+    /// How to run this repository's Playwright specs in a container (`testenv ui`).
+    #[serde(default)]
+    pub ui: Option<Ui>,
     pub tier: BTreeMap<String, Tier>,
 }
 
@@ -57,6 +60,23 @@ pub struct Shots {
     /// The viewport widths a submission must hold an image for.
     #[serde(default = "default_widths")]
     pub widths: Vec<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ui {
+    /// Builds and serves the fixture site, then runs Playwright over `$UI_SPECS`. Unset: install
+    /// the Playwright project's dependencies and run it, for a config that starts its own server.
+    #[serde(default)]
+    pub argv: Vec<String>,
+    /// Overrides the Playwright image pinned from the project's `@playwright/test` version.
+    #[serde(default)]
+    pub image: Option<String>,
+    /// The directory holding `playwright.config.*`, relative to the tree root.
+    #[serde(default)]
+    pub dir: Option<String>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
 }
 
 fn default_widths() -> Vec<u32> {
@@ -107,6 +127,11 @@ impl Decl {
         if let Some(sh) = &d.shots {
             if sh.argv.is_empty() || sh.widths.is_empty() || sh.widths.contains(&0) || sh.image.as_deref().is_some_and(|i| i.trim().is_empty()) {
                 return Err(format!("{DECL}: shots needs an argv, an image that is not empty, and non-zero widths"));
+            }
+        }
+        if let Some(ui) = &d.ui {
+            if ui.image.as_deref().is_some_and(|i| i.trim().is_empty()) || ui.dir.as_deref().is_some_and(|x| x.trim().is_empty() || x.starts_with('/') || x.split('/').any(|c| c == "..")) {
+                return Err(format!("{DECL}: ui image must not be empty and dir must be a path inside the tree"));
             }
         }
         if let Some(n) = d.default.iter().find(|n| !d.tier.contains_key(*n)) {

@@ -197,6 +197,7 @@ fi
 if [ "$rc" -ne 0 ]; then
     printf 'runner-deps: this machine cannot run the suites. The gaps above are host\n' >&2
     printf 'runner-deps: configuration, not a fault in the branch under test.\n' >&2
+    printf 'runner-deps: UI (Playwright) specs need no host packages: testenv ui <repo-path> [spec...]\n' >&2
     exit 1
 fi
 note "ok"

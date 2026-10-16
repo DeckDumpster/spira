@@ -720,7 +720,10 @@ mod tests {
             // pre-close run duplicates the gate's work outside its admission (sp-4vq2q follow-up).
             assert!(p.contains("    testenv --suites <suite> spira/sp-a spira\n"), "{p}");
             assert!(!p.contains("    testenv spira/sp-a spira\n"), "{p}");
-            assert!(runner_lines(&p, "    testenv ").iter().all(|l| l.contains(" --suites <suite> ")));
+            assert!(runner_lines(&p, "    testenv ")
+                .iter()
+                .all(|l| l.contains(" --suites <suite> ") || l.starts_with("    testenv ui ")));
+            assert!(p.contains("    testenv ui <repo-path> [spec...]\n"), "{p}");
             assert!(p.contains("do not run the suites"));
             assert!(!p.contains("exactly the selection"));
             assert!(!p.contains("{{TESTENV}}") && !p.contains("{{FOLLOWUP}}"));

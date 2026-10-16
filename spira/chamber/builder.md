@@ -90,6 +90,17 @@ The runner is that absolute path and nothing else (law-tests-run-only-through-te
 `sleep`/`until` loop: each iteration is a model turn carrying your entire context, and that
 polling alone was a fifth of all tool time.
 
+**UI (Playwright) specs** never run on the host, which lacks the browser libraries and is not a
+test machine. From your committed worktree:
+
+    testenv ui <repo-path> [spec...]
+
+It runs the specs in the official Playwright image pinned to the repo's `@playwright/test`
+version, prints the Playwright summary and exits with its status. A red UI check is proven fixed
+only by this command passing at your tip; do not resubmit without having run it. The repo
+declares how its fixture site is built and served under `[ui]` in `.spira/testenv.toml`; if it
+declares none and the specs need a server, say so in the bead.
+
 <!-- task -->
 
 ## The bead
