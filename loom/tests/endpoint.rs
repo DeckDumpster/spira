@@ -647,6 +647,20 @@ async fn a_green_batch_page_has_no_failed_step_and_ci_detail_is_cached_per_batch
 }
 
 #[tokio::test]
+async fn a_batch_with_no_ci_run_shows_the_local_check_detail_the_closed_outcome_and_a_pr_link() {
+    let (addr, run) = forge_loom().await;
+    let q = run.join("queue").join("dumpstar");
+    std::fs::write(q.join("local-verdict"), "verdict=red\nat=1\ndetail=suite test-widgets red\n").unwrap();
+    std::fs::write(q.join("forge-state"), "").unwrap();
+    write_snapshot(&run, &cockpit_ops::lcview::Snapshot { forge_base: "https://forge.test/o".into(), ..Default::default() });
+    let (_, page) = get(addr, "/rounds/dumpstar/20261015T000000Z").await;
+    assert!(page.contains("red — suite test-widgets red"), "{page}");
+    assert!(page.contains("href=\"https://forge.test/o/dumpstar/pull/66\""), "{page}");
+    let (_, closed) = get(addr, "/rounds/dumpstar/20261014T000000Z").await;
+    assert!(closed.contains("closed without merging — re-cut the same members"), "{closed}");
+}
+
+#[tokio::test]
 async fn a_failing_broker_says_ci_detail_is_unavailable_and_still_serves_the_members() {
     let (addr, _run) = forge_loom().await;
     let (code, page) = get(addr, "/rounds/pokedumpster/20261015T020000Z").await;

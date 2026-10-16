@@ -30,6 +30,7 @@ pub struct Batch {
     pub step: String,
     pub wall: i64,
     pub local_verdict: String,
+    pub local_detail: String,
     pub reason: String,
 }
 
@@ -84,7 +85,9 @@ pub fn read_all(queue: &Path) -> Vec<Batch> {
                     b.state = "merged".into();
                 }
             }
-            b.local_verdict = kv(&dir.join("local-verdict")).remove("verdict").unwrap_or_default();
+            let mut lv = kv(&dir.join("local-verdict"));
+            b.local_verdict = lv.remove("verdict").unwrap_or_default();
+            b.local_detail = lv.remove("detail").unwrap_or_default();
             out.push(b);
         }
         let mut closed: Vec<Batch> = std::fs::read_dir(&dir)
@@ -194,7 +197,7 @@ fn pr_url(run_url: &str, pr: &str) -> Option<String> {
     run_url.split_once("/actions/").map(|(base, _)| format!("{base}/pull/{pr}"))
 }
 
-pub fn render_detail(now: i64, b: &Batch, ci: &CiView) -> String {
+pub fn render_detail(now: i64, b: &Batch, ci: &CiView, forge_base: &str) -> String {
     let (cls, label) = badge(b);
     let sv = |v: &Value| v.as_str().unwrap_or("").to_string();
     let json = match ci {
@@ -202,17 +205,18 @@ pub fn render_detail(now: i64, b: &Batch, ci: &CiView) -> String {
         _ => None,
     };
     let run_url = json.map(|j| sv(&j["run"]["url"])).unwrap_or_default();
-    let pr = match pr_url(&run_url, &b.pr) {
+    let pr_href = pr_url(&run_url, &b.pr).or_else(|| (!forge_base.is_empty()).then(|| format!("{forge_base}/{}/pull/{}", b.repo, b.pr)));
+    let pr = match pr_href {
         Some(u) => format!("<a href=\"{}\">PR #{}</a>", esc(&u), esc(&b.pr)),
         None => format!("PR #{}", esc(&b.pr)),
     };
     let mut h = format!("{CSS}<header><h1>{repo} · {pr} <span class=\"{cls}\">{label}</span> <span class=dim>— <a href=/rounds>rounds</a></span></h1></header>", repo = esc(&b.repo));
     h.push_str(&format!("<div class=card><b>batch</b>{} <span class=dim>opened {} ago</span></div>", esc(&b.branch), dur(now - b.opened)));
     if !b.local_verdict.is_empty() {
-        h.push_str(&format!("<div class=card><b>local check</b>{}</div>", esc(&b.local_verdict)));
+        h.push_str(&format!("<div class=card><b>local check</b>{}{}</div>", esc(&b.local_verdict), if b.local_detail.is_empty() { String::new() } else { format!(" — {}", esc(&b.local_detail)) }));
     }
     if !b.reason.is_empty() {
-        h.push_str(&format!("<div class=card><b>outcome</b>closed — {}</div>", esc(&b.reason)));
+        h.push_str(&format!("<div class=card><b>outcome</b>closed without merging — {}</div>", esc(&b.reason)));
     }
     let outcome = if b.state == "closed" { "dropped with the batch" } else if b.state == "merged" { "landed" } else { "in the batch" };
     h.push_str(&format!("<h2>Members ({})</h2>", b.members.len()));
@@ -221,7 +225,7 @@ pub fn render_detail(now: i64, b: &Batch, ci: &CiView) -> String {
     }
     h.push_str("<h2>CI</h2>");
     match ci {
-        CiView::NoRun => h.push_str("<div class=card><span class=dim>no CI run recorded for this batch</span></div>"),
+        CiView::NoRun => h.push_str("<div class=card><span class=dim>no CI run recorded for this batch — the verdict above is the local check's</span></div>"),
         CiView::Unavailable(e) => h.push_str(&format!("<div class=card><span class=red>CI detail unavailable:</span> {}</div>", esc(e))),
         CiView::Fresh(c) | CiView::Stale(c, _) => {
             if let CiView::Stale(c, e) = ci {

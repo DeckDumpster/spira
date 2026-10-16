@@ -466,8 +466,9 @@ async fn round_route(State(loom): State<Arc<Loom>>, axum::extract::Path((repo, b
     if let Some(b) = forge_rounds::read_all(&forge_queue_dir(&loom)).into_iter().find(|b| b.repo == repo && b.key == batch) {
         let target = format!("{}/{}", b.repo, b.run);
         let ci = loom.forge_ci.ci(&b, broker_json(&loom, &["read", "run-jobs", &target])).await;
-        let page = forge_rounds::render_detail(now_s(), &b, &ci);
-        let bar = lifecycle_snapshot(&loom).map(|(snap, _)| now::bar(Some(&snap), now_s())).unwrap_or_default();
+        let snap = lifecycle_snapshot(&loom).ok().map(|(snap, _)| snap);
+        let page = forge_rounds::render_detail(now_s(), &b, &ci, snap.as_ref().map_or("", |s| s.forge_base.as_str()));
+        let bar = snap.map(|snap| now::bar(Some(&snap), now_s())).unwrap_or_default();
         return html_response(StatusCode::OK, shell::with_bar(&page, &bar));
     }
     match lifecycle_snapshot(&loom) {
