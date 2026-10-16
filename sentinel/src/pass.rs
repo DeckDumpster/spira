@@ -105,6 +105,9 @@ pub struct Sentinel<'a> {
     pub mode: Mode,
     pub acted: Cell<u32>,
     pub progressed: Cell<u32>,
+    /// Set while this CHECK 7 pass has yielded the lanes to an urgent bead: the lane-last-slot
+    /// reservation must not hold a task persona back for a lane that will not be summoned.
+    pub lanes_yielding: Cell<bool>,
     /// The seams' act/progress mailbox (DESIGN.md §6).
     pub tally_file: PathBuf,
     pub lib: PathBuf,
@@ -140,6 +143,7 @@ impl<'a> Sentinel<'a> {
             mode,
             acted: Cell::new(0),
             progressed: Cell::new(0),
+            lanes_yielding: Cell::new(false),
             tally_file,
             lib,
             pass_id,

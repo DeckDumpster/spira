@@ -62,6 +62,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
        spira-claim shared-exclude                                            (ready_shared_exclude)
        spira-claim ready-count <labels> [<exclude-labels>] [--json] [--express]          (ready_count; prints '0' on a failed query too; --json: the rows)
+       spira-claim urgent                                                    (claimable P0 and REWORK beads: id, priority, rework 0|1, express 0|1, tab-separated)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
        spira-claim fayth-ready <fayth> [--json] [--express]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
@@ -235,6 +236,7 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "ready-args" => cmd_ready_args(&a, &mut env),
         "shared-exclude" => cmd_shared_exclude(&a, &env),
         "ready-count" => cmd_ready_count(&a, &mut env),
+        "urgent" => cmd_urgent(&a, &mut env),
         "fayth-exclude" => cmd_fayth_exclude(&a, &mut env),
         "fayth-ready" => cmd_fayth_ready(&a, &mut env),
         "bulk-ready-by-fayth" => cmd_bulk_ready_by_fayth(&a, &mut env),
@@ -722,6 +724,39 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
         Ok(rows) => Outcome::ok(ready::count_matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude)).to_string()),
         Err(e) => Outcome { code: 1, out: "0".into(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
     }
+}
+
+/// `urgent`: the claimable beads that outrank the lanes — P0, or in REWORK. A machine that
+/// cannot answer is a refusal, never an empty list.
+fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
+        return Outcome::usage(e);
+    }
+    let fail = |e: String| Outcome { code: 1, out: String::new(), err: format!("spira-claim: urgent: {}", first_line(&e)) };
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return fail(e),
+    };
+    let rows = match machine_claimable(a, env) {
+        Ok(r) => r,
+        Err(e) => return fail(e),
+    };
+    let rework = match st.lifecycle_in_states(&["REWORK"]) {
+        Ok(m) => m,
+        Err(e) => return fail(e),
+    };
+    let express = match st.express_ids() {
+        Ok(e) => e,
+        Err(e) => return fail(e),
+    };
+    let mut out = String::new();
+    for r in rows.iter().filter(|r| !rank::is_container(r)) {
+        let (p0, rw) = (r.prio() == 0, rework.contains_key(&r.id));
+        if p0 || rw {
+            out.push_str(&format!("{}\t{}\t{}\t{}\n", r.id, r.prio(), u8::from(rw), u8::from(express.contains(&r.id))));
+        }
+    }
+    Outcome::ok(out)
 }
 
 /// `ready-count --json`: [`machine_claimable`]'s rows matching the labels. A machine that

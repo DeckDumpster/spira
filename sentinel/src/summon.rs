@@ -26,6 +26,12 @@ pub fn render_cache(counts: &[(String, usize)]) -> String {
     })
 }
 
+struct Urgent {
+    id: String,
+    p0: bool,
+    express: bool,
+}
+
 impl<'a> Sentinel<'a> {
     /// ready_cache_populate: never hand back an empty-but-existing file, because fayth_ready
     /// trusts the cache unconditionally once it exists.
@@ -400,6 +406,87 @@ impl<'a> Sentinel<'a> {
         false
     }
 
+    /// `spira-claim urgent`: the claimable P0 and REWORK beads. `None` when the machine
+    /// cannot answer — the caller yields the lanes, never reads that as "nothing urgent".
+    fn urgent_beads(&self) -> Option<Vec<Urgent>> {
+        let o = self.h.run(Spec::args_owned(self.cfg.claim_bin.clone(), vec!["urgent".into()]));
+        if o.rc != 0 {
+            self.h.log_err(&format!("CHECK7 lanes: CLAIM-ERROR: urgent: {}", o.stderr.trim()));
+            return None;
+        }
+        Some(
+            o.stdout
+                .lines()
+                .filter_map(|l| {
+                    let f: Vec<&str> = l.split('\t').collect();
+                    let [id, prio, _, express] = f[..] else { return None };
+                    Some(Urgent { id: id.to_string(), p0: prio == "0", express: express == "1" })
+                })
+                .collect(),
+        )
+    }
+
+    /// The youngest live lane aeon: (lane fayth, bead). Only lanes are ever candidates.
+    fn youngest_lane_aeon(&self, lane_fayths: &[String]) -> Option<(String, String)> {
+        let mut best: Option<(std::time::SystemTime, String, String)> = None;
+        let rd = std::fs::read_dir(&self.cfg.run).ok()?;
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(stem) = name.strip_prefix("aeon-").and_then(|n| n.strip_suffix(".pid")) else { continue };
+            let Some(lane) = lane_fayths.iter().find(|l| {
+                let unit = spira_config::chamber::fayth_get(&self.cfg.home, l, "FAYTH_NAME", l);
+                stem.starts_with(&format!("{unit}-"))
+            }) else {
+                continue;
+            };
+            let unit = spira_config::chamber::fayth_get(&self.cfg.home, lane, "FAYTH_NAME", lane);
+            let bead = stem[unit.len() + 1..].to_string();
+            if bead.starts_with("sweep-") || !sending::reap::aeon_alive(&e.path()) {
+                continue;
+            }
+            let Ok(started) = e.metadata().and_then(|m| m.modified()) else { continue };
+            if best.as_ref().is_none_or(|(t, _, _)| started > *t) {
+                best = Some((started, lane.clone(), bead));
+            }
+        }
+        best.map(|(_, lane, bead)| (lane, bead))
+    }
+
+    /// A P0 express bead is waiting and the fleet is full: stop the youngest lane aeon
+    /// through slay so a builder can take the slot this pass. Builders and rounds are never
+    /// candidates.
+    fn preempt_lane_for(&self, express: &str, task_fayths: &[String], lane_fayths: &[String]) {
+        let Some(max_live) = self.cfg.max_live_aeons else { return };
+        let live = self.live_total() as i64;
+        if live < max_live {
+            return;
+        }
+        let ready_builder = task_fayths.iter().any(|f| {
+            matches!(self.fayth_ready(f), ReadyAnswer::Count(n) if n > 0) && self.fayth_free(f, None, None) > 0
+        });
+        if !ready_builder {
+            self.log(&format!("CHECK7 lanes: express {express} waits but no task persona can take a slot — no lane preempted"));
+            return;
+        }
+        let Some((lane, bead)) = self.youngest_lane_aeon(lane_fayths) else {
+            self.log(&format!("CHECK7 lanes: express {express} waits, {live}/{max_live} live, no lane aeon to preempt"));
+            return;
+        };
+        let why = format!("preempted for P0 express {express}: lane yields its slot");
+        let o = self.h.run(
+            Spec::args_owned(self.cfg.slay_bin.clone(), vec!["--bead".into(), bead.clone(), "--why".into(), why]).err(Io::Null),
+        );
+        if !o.ok() {
+            self.log(&format!("CHECK7 lanes: could not preempt {lane} aeon on {bead} for express {express}"));
+            return;
+        }
+        self.act(&format!("preempted a {lane} lane aeon on {bead} for P0 express {express}"));
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.cfg.lane_preemptions) {
+            use std::io::Write;
+            let _ = writeln!(f, "{}\t{lane}\t{bead}\t{express}", self.h.now());
+        }
+    }
+
     /// This process's release when it is not the one `current` names. Spawning from it
     /// would keep that release alive past the landing that replaced it.
     pub fn release_skew(&self) -> Option<spira_config::release_skew::Skew> {
@@ -541,7 +628,7 @@ impl<'a> Sentinel<'a> {
                     }
                 } else {
                     let inv_slots_free = max_live - live_all;
-                    if inv_slots_free == 1 {
+                    if inv_slots_free == 1 && !self.lanes_yielding.get() {
                         let (_, lane_fayths) = self.task_and_lane_fayths();
                         let live_lanes = self.lanes_live_total(&lane_fayths);
                         if live_lanes < lanes_max {
@@ -660,7 +747,26 @@ impl<'a> Sentinel<'a> {
             self.log(&format!("CHECK7 lanes ({} declared): {}", self.cfg.lanes_declared, lane_fayths.join(" ")));
         }
         let last = std::fs::read_to_string(&self.cfg.lane_round_robin).unwrap_or_default();
-        let rotated_lanes = lane_rotate(last.trim(), &lane_fayths);
+        let mut rotated_lanes = lane_rotate(last.trim(), &lane_fayths);
+        self.lanes_yielding.set(false);
+        if !lane_fayths.is_empty() {
+            match self.urgent_beads() {
+                Some(u) if u.is_empty() => {}
+                Some(u) => {
+                    let ids: Vec<&str> = u.iter().map(|b| b.id.as_str()).collect();
+                    self.log(&format!("CHECK7 lanes: yielding — urgent bead(s) unclaimed: {}", ids.join(" ")));
+                    if let Some(x) = u.iter().find(|b| b.express && b.p0) {
+                        self.preempt_lane_for(&x.id, &task_fayths, &lane_fayths);
+                    }
+                    rotated_lanes.clear();
+                    self.lanes_yielding.set(true);
+                }
+                None => {
+                    rotated_lanes.clear();
+                    self.lanes_yielding.set(true);
+                }
+            }
+        }
         let start = self.h.now();
         let budget = self.cfg.pass_budget_secs;
         for f in &rotated_lanes {

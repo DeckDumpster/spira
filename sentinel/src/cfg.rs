@@ -318,6 +318,8 @@ pub struct Cfg {
     /// The landing worker CHECK 6 dispatches (`landing-pass land`, landing-pass/DESIGN.md §7.1).
     pub landing_bin: String,
     pub claim_bin: String,
+    pub slay_bin: String,
+    pub lane_preemptions: PathBuf,
     pub strand_bin: String,
     /// The Sending CHECK 6b runs (`sending --skip-queue`, sending/DESIGN.md).
     pub sending_bin: String,
@@ -448,6 +450,8 @@ impl Cfg {
             lc_bin: "spira-lc".into(),
             landing_bin: "landing-pass".into(),
             claim_bin: "spira-claim".into(),
+            slay_bin: "slay.sh".into(),
+            lane_preemptions: run.join("lane-preemptions"),
             strand_bin: "strand".into(),
             sending_bin: "sending".into(),
             // SPIRA_INCIDENT_SH stays a test seam (a mock incident.sh); unset, the release's

@@ -61,7 +61,7 @@ impl ReadyRow {
     pub fn label_value(&self, prefix: &str) -> Option<&str> {
         self.labels.iter().find_map(|l| l.strip_prefix(prefix))
     }
-    fn prio(&self) -> i64 {
+    pub fn prio(&self) -> i64 {
         self.priority.unwrap_or(99)
     }
 }
@@ -173,7 +173,7 @@ pub fn rank(rows: &[ReadyRow], lookup: &EpicLookup, resumable: &BTreeSet<String>
     v
 }
 
-fn is_container(r: &ReadyRow) -> bool {
+pub fn is_container(r: &ReadyRow) -> bool {
     matches!(r.issue_type.as_deref(), Some("epic") | Some("event"))
 }
 

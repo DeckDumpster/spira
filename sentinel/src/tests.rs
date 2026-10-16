@@ -2056,3 +2056,122 @@ fn on_check2d_an_unresolved_repo_map_hold_stands() {
     run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "event"), 0, "{}", sink.text());
 }
+
+// ---------------------------------------------------------------------------------------
+// P0 express preempts a running lane aeon; any P0 or rework bead makes lanes yield
+
+struct UrgentFleet {
+    w: World,
+    r: FakeRunner,
+    sink: FakeSink,
+    clock: FakeClock,
+    live: std::rc::Rc<RefCell<Vec<String>>>,
+    path: String,
+}
+
+fn urgent_fleet(tag: &str, urgent_row: &str, units: &[&str]) -> UrgentFleet {
+    let (w, r, sink, clock) = setup(tag);
+    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
+    std::fs::write(w.home.join("chamber/builder.fayth"), "FAYTH_LABELS=spira,plan\nFAYTH_MAX_CONCURRENT=4\n").unwrap();
+    std::fs::write(w.home.join("chamber/ops.fayth"), "FAYTH_LANE=ops\nFAYTH_LABELS=spira,incident\nFAYTH_MAX_CONCURRENT=2\n").unwrap();
+    let bin = w.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    exe(&bin.join("aeon"));
+    let base = std::time::SystemTime::now() - std::time::Duration::from_secs(1000);
+    for (i, (lane, bead)) in [("ops", "sp-lo"), ("ops", "sp-lg")].iter().enumerate() {
+        if units.iter().filter(|u| u.starts_with(lane)).count() <= i {
+            continue;
+        }
+        let pf = w.run.join(format!("aeon-{lane}-{bead}.pid"));
+        std::fs::write(&pf, "1\n").unwrap();
+        std::fs::write(pf.with_extension("lease"), "99999999999\n").unwrap();
+        std::fs::File::options().write(true).open(&pf).unwrap().set_modified(base + std::time::Duration::from_secs(i as u64 * 100)).unwrap();
+    }
+    let live: std::rc::Rc<RefCell<Vec<String>>> = std::rc::Rc::new(RefCell::new(units.iter().map(|s| s.to_string()).collect()));
+    let row = urgent_row.to_string();
+    r.on(move |s| {
+        if s.prog != "spira-claim" {
+            return None;
+        }
+        match s.args.first().map(String::as_str).unwrap_or("") {
+            "urgent" => ok(&row),
+            "fayth-exclude" => ok(""),
+            "fayth-ready" | "ready-count" => ok("1"),
+            _ => None,
+        }
+    });
+    let live_c = live.clone();
+    r.on(move |s| {
+        if s.args.iter().any(|a| a == "list-units") {
+            let glob = s.args.iter().find(|a| a.starts_with("spira-aeon-")).cloned().unwrap_or_default();
+            let prefix = glob.trim_end_matches('*').trim_start_matches("spira-aeon-").to_string();
+            let lines: String = live_c
+                .borrow()
+                .iter()
+                .filter(|u| prefix.is_empty() || u.starts_with(&prefix))
+                .map(|u| format!("spira-aeon-{u}.service loaded active\n"))
+                .collect();
+            return ok(&lines);
+        }
+        None
+    });
+    let live_c = live.clone();
+    r.on(move |s| {
+        if s.prog == "slay.sh" {
+            let bead = s.args.get(1).cloned().unwrap_or_default();
+            let victim = if bead == "sp-lo" { "ops-3" } else { "ops-4" };
+            live_c.borrow_mut().retain(|u| u != victim);
+            return ok("");
+        }
+        None
+    });
+    r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    UrgentFleet { w, r, sink, clock, live, path }
+}
+
+fn run_urgent(f: &UrgentFleet) {
+    let extra: Vec<(&str, &str)> = vec![("PATH", &f.path), ("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    assert_eq!(run_mode(&f.w, &f.r, &f.sink, &f.clock, Mode::SummonPass, &extra, None), 0);
+}
+
+const FULL: &[&str] = &["builder-1", "builder-2", "ops-3", "ops-4"];
+
+#[test]
+fn a_p0_express_with_a_full_fleet_preempts_the_youngest_lane_and_a_builder_takes_its_slot() {
+    let f = urgent_fleet("preempt-express", "sp-x\t0\t1\t1\n", FULL);
+    run_urgent(&f);
+    assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 1, "{}", f.sink.text());
+    let slay = f.r.find(|s| s.prog == "slay.sh").unwrap();
+    assert_eq!(slay.args[..2], ["--bead".to_string(), "sp-lg".to_string()], "the youngest lane aeon, never a builder");
+    assert!(f.sink.has("ACT preempted a ops lane aeon on sp-lg for P0 express sp-x"), "{}", f.sink.text());
+    assert!(f.sink.has("ACT summoned a builder aeon"), "{}", f.sink.text());
+    assert!(!f.sink.has("summoned a ops lane aeon"), "{}", f.sink.text());
+    assert!(std::fs::read_to_string(f.w.run.join("lane-preemptions")).unwrap().contains("ops\tsp-lg\tsp-x"));
+    assert_eq!(f.live.borrow().iter().filter(|u| u.starts_with("builder")).count(), 2, "builders were not touched");
+}
+
+#[test]
+fn a_p0_that_is_not_express_makes_lanes_yield_and_stops_nothing() {
+    let f = urgent_fleet("yield-p0", "sp-x\t0\t0\t0\n", &["builder-1", "builder-2", "ops-3"]);
+    run_urgent(&f);
+    assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0, "{}", f.sink.text());
+    assert!(f.sink.has("CHECK7 lanes: yielding"), "{}", f.sink.text());
+    assert!(!f.sink.has("lane aeon"), "no lane may be summoned while a P0 waits: {}", f.sink.text());
+}
+
+#[test]
+fn a_rework_bead_makes_lanes_yield() {
+    let f = urgent_fleet("yield-rework", "sp-w\t2\t1\t0\n", &["builder-1"]);
+    run_urgent(&f);
+    assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0);
+    assert!(!f.sink.has("lane aeon"), "{}", f.sink.text());
+}
+
+#[test]
+fn with_nothing_urgent_lanes_are_summoned_as_before() {
+    let f = urgent_fleet("no-urgent", "", &["builder-1"]);
+    run_urgent(&f);
+    assert!(f.sink.has("lane aeon"), "positive control: {}", f.sink.text());
+    assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0);
+}
