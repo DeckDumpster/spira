@@ -235,6 +235,7 @@ fn only_leases_with_a_live_or_absent_owner_are_held() {
 #[test]
 fn a_scratch_short_refusal_is_a_deferral_and_other_faults_are_not() {
     assert!(runner_declined("x\nVERDICT FAULT rc=2 ran=0 reason=scratch-short\n"));
+    assert!(runner_declined("x\nVERDICT FAULT rc=2 ran=0 reason=image-not-ready\n"));
     assert!(!runner_declined("VERDICT FAULT rc=2 ran=0 reason=deadline-build\n"));
     assert!(!runner_declined("nothing here\n"));
 }

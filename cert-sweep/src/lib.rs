@@ -92,10 +92,10 @@ pub fn runner_verdict(text: &str) -> Option<&str> {
     text.lines().rev().map(str::trim).find(|l| l.starts_with("VERDICT "))
 }
 
-/// The runner declined to start because the host's scratch space is short: a deliberate
-/// refusal that the next tick retries, not a fault of the sweep.
+/// The runner declined to start (scratch space short, or the testenv image not built yet): a
+/// deliberate, waiting state that the next tick retries, not a fault of the sweep.
 pub fn runner_declined(text: &str) -> bool {
-    runner_verdict(text).is_some_and(|v| v.split_whitespace().any(|w| w == "reason=scratch-short"))
+    runner_verdict(text).is_some_and(|v| v.split_whitespace().any(|w| w == "reason=scratch-short" || w == "reason=image-not-ready"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
