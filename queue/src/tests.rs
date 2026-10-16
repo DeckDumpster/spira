@@ -565,6 +565,8 @@ struct FLc {
     batch_event_times_out: Cell<Option<&'static str>>,
     /// Bead events report success and change nothing.
     event_ignored: Cell<bool>,
+    /// The next bead event finds the row already moved: its version bumped, the call refused.
+    event_races: RefCell<Option<(String, String)>>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
     row_fails: Cell<bool>,
     /// When set, the batch answers (state, version, pass, phase) and follows the pass events it is sent.
@@ -578,7 +580,7 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), cut_refuses_member: Cell::new(None), deadline_after_write: Cell::new(None), down_for: Cell::new(0), no_batch_row: Cell::new(false), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), batch_event_times_out: Cell::new(None), event_ignored: Cell::new(false), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
+        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), cut_refuses_member: Cell::new(None), deadline_after_write: Cell::new(None), down_for: Cell::new(0), no_batch_row: Cell::new(false), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), batch_event_times_out: Cell::new(None), event_ignored: Cell::new(false), event_races: RefCell::default(), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
     }
 }
 
@@ -706,6 +708,10 @@ impl Lc for FLc {
     }
     fn bead_event(&self, bead: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("event bead {bead} {s} {v} {kind}"));
+        if let Some((state, version)) = self.event_races.borrow_mut().take() {
+            self.bead_rows.borrow_mut().insert(bead.into(), (state, version));
+            return Err((1, "stale version".into()));
+        }
         match self.event_refused.get() {
             Some(why) => Err((1, why.into())),
             None => {

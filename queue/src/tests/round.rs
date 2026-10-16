@@ -241,6 +241,36 @@ fn abandon_requeues_a_member_the_batch_abandon_left_in_delivery() {
 }
 
 #[test]
+fn abandon_rereads_and_retries_a_requeue_refused_for_a_stale_version() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]), 0, "{}", t.err());
+    for r in t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut() {
+        r.state = "IN_DELIVERY".into();
+    }
+    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    t.lc.bead_rows.borrow_mut().insert("sp-b".into(), ("IN_DELIVERY".into(), "7".into()));
+    *t.lc.event_races.borrow_mut() = Some(("IN_DELIVERY".into(), "8".into()));
+    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow();
+    assert!(calls.iter().any(|c| c == "event bead sp-a IN_DELIVERY 7 {\"Requeued\":{\"tip\":\"ta\"}}"), "{calls:?}");
+    assert!(calls.iter().any(|c| c == "event bead sp-a IN_DELIVERY 8 {\"Requeued\":{\"tip\":\"ta\"}}"), "{calls:?}");
+}
+
+#[test]
+fn abandon_accepts_a_member_another_writer_moved_out_of_delivery() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]), 0, "{}", t.err());
+    for r in t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut() {
+        r.state = "IN_DELIVERY".into();
+    }
+    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    *t.lc.event_races.borrow_mut() = Some(("REWORK".into(), "8".into()));
+    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "base moved"]), 0, "{}", t.err());
+    assert_eq!(t.lc.calls.borrow().iter().filter(|c| c.starts_with("event bead sp-a")).count(), 1);
+    assert!(t.out().contains("sp-a: REWORK"), "{}", t.out());
+}
+
+#[test]
 fn open_skips_what_is_not_certified_or_does_not_merge() {
     let t = round_world();
     t.lc_row("sp-d", "REWORK", "td", 100);
