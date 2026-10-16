@@ -1322,3 +1322,18 @@ a count above the file's findings is itself a finding. Inventory: `docs/time-onl
 
 **Known limits.** Keyword and brace heuristics: a cap keyword near an unrelated poll passes, and a
 fixed backoff inside a loop is not flagged.
+
+## Rule `one-runtime`
+
+A repository holds source and test files for one language runtime (law-one-language-runtime-per-repo).
+The repository declares `runtime = "<name>"` in `.spira/testenv.toml`, plus optional
+`build_tools = [..]` for a frontend toolchain that is the build tool of the same service.
+
+- A file's runtime comes from its extension (`.py`, `.rs`, `.ts`, `.java`, `.go`, …) or, for an
+  extensionless file, its shebang. Shell, data and prose are no runtime.
+- Any file whose runtime is neither `runtime` nor in `build_tools` is a finding naming the file.
+- **No allowlist and no exception list.** Existing code is not exempt; it is ported or deleted.
+  The override is the declaration itself.
+- A repository declaring no `runtime` is not under the rule (clean, not a refusal); a malformed
+  declaration refuses (exit 3).
+- A forge repository runs it as `spira-lint --root .` from its CI select step.

@@ -21,6 +21,12 @@ const RC_PODMAN: i32 = 125;
 #[serde(deny_unknown_fields)]
 pub struct Decl {
     pub image: String,
+    /// The repository's one language runtime, enforced by spira-lint's `one-runtime` rule.
+    #[serde(default)]
+    pub runtime: Option<String>,
+    /// Toolchains that are the build tool of the same service (a frontend's node).
+    #[serde(default)]
+    pub build_tools: Vec<String>,
     #[serde(default = "default_workdir")]
     pub workdir: String,
     #[serde(default)]
