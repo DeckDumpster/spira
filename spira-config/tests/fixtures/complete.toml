@@ -37,6 +37,7 @@ pass_rate_max_pct = 150
 pass_rate_window = 86400
 lc_backup_url = ""
 lc_backup_db = "spira_lifecycle"
+dolt_maintenance_units = "lc-backup.service lc-backup-drill.service dolt-persist-compact.service"
 lc_backup_max_age = 25200
 lc_backup_allow_local = false
 lc_backup_drill_dir = "/dev/shm/spira-lc-drill"
