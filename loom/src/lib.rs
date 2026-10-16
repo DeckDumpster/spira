@@ -619,8 +619,32 @@ async fn round_log_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id):
     }
 }
 
+/// The file a `/shots/<bead>/<tip>/<file>` request names under `run/shots`, or `None` for anything
+/// that is not a bead id, a full commit name and a plain `.png` name.
+pub fn shot_path(run: &str, bead: &str, tip: &str, file: &str) -> Option<std::path::PathBuf> {
+    let plain = |s: &str, extra: &[char]| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || extra.contains(&c));
+    let stem = file.strip_suffix(".png")?;
+    let ok = !run.is_empty() && plain(bead, &['-', '.']) && !bead.starts_with('.') && tip.len() == 40 && tip.bytes().all(|b| b.is_ascii_hexdigit()) && plain(stem, &['-', '_']);
+    ok.then(|| std::path::Path::new(run).join("shots").join(bead).join(tip).join(file))
+}
+
+async fn shot_route(State(loom): State<Arc<Loom>>, axum::extract::Path((bead, tip, file)): axum::extract::Path<(String, String, String)>) -> Response {
+    let status = |code: StatusCode| Response::builder().status(code).body(axum::body::Body::empty()).expect("a response with a valid status");
+    let Some(path) = shot_path(&loom.config().run, &bead, &tip, &file) else { return status(StatusCode::BAD_REQUEST) };
+    match tokio::task::spawn_blocking(move || std::fs::read(path)).await.unwrap_or_else(|_| Err(std::io::ErrorKind::Other.into())) {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/png")
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(bytes.into())
+            .expect("a response with a valid status and headers"),
+        Err(_) => status(StatusCode::NOT_FOUND),
+    }
+}
+
 pub fn router(loom: Arc<Loom>) -> Router {
     Router::new()
+        .route("/shots/{bead}/{tip}/{file}", get(shot_route))
         .route("/lifecycle", get(lifecycle_page_route))
         .route("/rounds/{batch}", get(vm_round_route))
         .route("/api/lifecycle", get(lifecycle_api_route))
@@ -638,6 +662,23 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/", get(now_route))
         .route("/rounds/{repo}/{batch}", get(round_route))
         .with_state(loom)
+}
+
+#[cfg(test)]
+mod shot_path_tests {
+    use super::shot_path;
+
+    const TIP: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[test]
+    fn only_a_bead_a_full_tip_and_a_plain_png_name_resolve() {
+        let ok = shot_path("/r", "sp-ab.1", TIP, "index-390.png").expect("a valid shot");
+        assert_eq!(ok, std::path::Path::new("/r/shots/sp-ab.1").join(TIP).join("index-390.png"));
+        for (b, t, f) in [("..", TIP, "a.png"), ("sp-a", "abc", "a.png"), ("sp-a", TIP, "../a.png"), ("sp-a", TIP, "a.txt"), ("sp-a/b", TIP, "a.png"), ("sp-a", TIP, ".png")] {
+            assert!(shot_path("/r", b, t, f).is_none(), "{b} {t} {f}");
+        }
+        assert!(shot_path("", "sp-a", TIP, "a.png").is_none());
+    }
 }
 
 #[cfg(test)]

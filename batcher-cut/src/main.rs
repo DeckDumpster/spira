@@ -1258,7 +1258,8 @@ fn open_round_pr(
     let prr = pr_record(merged);
     let base_branch = repo.base.rsplit('/').next().unwrap_or(&repo.base).to_string();
     let title = format!("queue: {} beads for {}", merged.len(), repo.name);
-    let body = format!("Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n", merged.len(), repo.name, base_branch, prr.body);
+    let shots = io::shots_section(&env_.run, spira_config::process::cfg("SPIRA_LOOM_ADDR").ok().as_deref(), &merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>());
+    let body = format!("Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n{shots}", merged.len(), repo.name, base_branch, prr.body);
     let pr_n = io::forge_pr_create(repo, &batch_br, &base_branch, &title, &body)?;
 
     // spira-lc's own OPEN-batch lifecycle. Best-effort and additive, never blocking the PR or

@@ -114,6 +114,15 @@ pub fn crates_words(crates: &[String]) -> String {
     crates.iter().map(|c| format!("-p {c}")).collect::<Vec<_>>().join(" ")
 }
 
+/// `SPIRA_SHOTS_WAIVED=<reason>` in the caller's environment travels with a `submit` as
+/// `--shots-waived <reason>`, where the broker records it.
+pub fn with_shots_waiver(verb: &str, mut args: Vec<String>, waived: Option<&str>) -> Vec<String> {
+    if let Some(reason) = waived.filter(|_| verb == "submit") {
+        args.extend(["--shots-waived".to_string(), reason.to_string()]);
+    }
+    args
+}
+
 /// The tokens the client appends itself; a caller typing one could otherwise name another
 /// persona (`--actor`) or smuggle a body (`--stdin`) past the broker's trailer parse.
 pub const RESERVED: &[&str] = &["--actor", "--stdin"];
@@ -236,6 +245,14 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shots_waiver_rides_only_a_submit() {
+        let w = Some("no rendered effect");
+        assert_eq!(with_shots_waiver("submit", vec![], w), ["--shots-waived", "no rendered effect"]);
+        assert!(with_shots_waiver("note", vec![], w).is_empty());
+        assert!(with_shots_waiver("submit", vec![], None).is_empty());
+    }
 
     #[test]
     fn accepts_bound_bead_everywhere() {

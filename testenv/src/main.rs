@@ -98,6 +98,28 @@ fn main() -> ExitCode {
         let rc = testenv::lint::main(&args[1..], &run, &|n| registry.root(n).map(std::path::PathBuf::from));
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
+    // `testenv shots …` — viewport captures of a tree's pages, and the submission guard that asks for them.
+    if args.first().map(String::as_str) == Some("shots") {
+        let env = |k: &str| std::env::var(k).ok();
+        let run = match testenv::settings::Settings::load(&testenv::settings::Source { env: &env }, testenv::batch::now_epoch()) {
+            Ok(s) => s.run,
+            Err(e) => {
+                eprintln!("shots: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        let harness = Harness::locate(&env).map(|h| h.root);
+        let home = harness.clone().unwrap_or_default();
+        let registry = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+        let resolve = |n: &str| {
+            registry
+                .root(n)
+                .map(|p| (std::path::PathBuf::from(p), registry.field(n, spira_config::repos::Column::Base).unwrap_or_default()))
+        };
+        let rt = harness.as_ref().and_then(|h| Some(Podman { exe: std::env::current_exe().ok()?, harness: h.clone() }));
+        let rc = testenv::shots::main(&args[1..], &run, &resolve, rt.as_ref().map(|r| r as &dyn runtime::ContainerRuntime), harness.as_deref());
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
     // `testenv preflight --suites <list>` — the selected suites' host dependencies, before any build.
     if args.first().map(String::as_str) == Some("preflight") {
         let rc = testenv::preflight::main(&args[1..]);

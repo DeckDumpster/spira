@@ -63,6 +63,8 @@ fn main() {
         }
     };
 
+    let verb_args = work::with_shots_waiver(&verb, verb_args, std::env::var("SPIRA_SHOTS_WAIVED").ok().as_deref());
+
     let req = match work::build_request_with_body(&bound, &verb, &verb_args, tip.as_deref(), &actor, body.as_deref()) {
         Ok(r) => r,
         Err(e) => {
