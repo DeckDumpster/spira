@@ -142,6 +142,8 @@ the tip, command and result> --evidence-tip <the same 40-hex>`, then `queue roun
 break-glass move and is refused without every field; the event records actor, reason, evidence and
 tip. It needs no host gate: the round's full suite certifies it. A bead a live aeon holds is refused.
 
+Lifting the manual hold on a REWORK bead whose tip a round ejected as red is the same kind of move: `spira-lc unhold <id> manual concierge --reason <why> --evidence <checks run on the tip, command and result> --evidence-tip <the bead's tip>`. It is refused without every flag, and the row records actor, reason, evidence and tip.
+
 **Never `pgrep -f`/`pkill -f` on a pattern alone** — it can match the caller's own command
 line. Address a process by PID from `/proc/<pid>/cmdline`, or by systemd unit name.
 **Never kill a PPid read from `/proc/<pid>/status`** — an orphan's parent is the user
