@@ -1820,6 +1820,28 @@ pub fn write_local_verdict(env: &Env, repo: &str, verdict: &str, detail: &str) {
 // The forge seam: open a PR, exactly as batch.sh's own pr-create call.
 // ---------------------------------------------------------------------------------------
 
+/// The PR body's screenshot section: every PNG a member bead's shots directory holds at the member's
+/// tip, linked through Loom when its address is known. Empty when no member has any.
+pub fn shots_section(run: &Path, loom_addr: Option<&str>, members: &[(String, String)]) -> String {
+    let mut lines = Vec::new();
+    for (bead, tip) in members {
+        let Ok(rd) = fs::read_dir(run.join("shots").join(bead).join(tip)) else { continue };
+        let mut names: Vec<String> = rd.flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.ends_with(".png")).collect();
+        names.sort();
+        for n in names {
+            let path = format!("/shots/{bead}/{tip}/{n}");
+            lines.push(match loom_addr {
+                Some(a) => format!("- {bead} {n}: http://{a}{path}"),
+                None => format!("- {bead} {n}: {path}"),
+            });
+        }
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!("\nScreenshots:\n{}\n", lines.join("\n"))
+}
+
 pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
     forge_pr_create_on(repo, head, base, title, body, None)
 }
@@ -3884,5 +3906,24 @@ mod fences_verdict_tests {
         assert!(fences_judged_nothing(capped));
         assert!(fences_judged_nothing("gate: VERDICT=NO_VERDICT reason=died"));
         assert!(!fences_judged_nothing("gate: VERDICT=FAIL reason=fence branch=b repo=r suite=gate-fences"));
+    }
+}
+
+#[cfg(test)]
+mod shots_tests {
+    use super::*;
+
+    #[test]
+    fn a_members_pngs_are_linked_and_a_member_without_any_adds_nothing() {
+        let tmp = testkit::TempDir::new("pr-shots");
+        let d = tmp.path().join("shots/sp-a/abc");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("index-390.png"), b"x").unwrap();
+        fs::write(d.join("note.txt"), b"x").unwrap();
+        let members = vec![("sp-a".to_string(), "abc".to_string()), ("sp-b".to_string(), "def".to_string())];
+        let with = shots_section(tmp.path(), Some("host:1"), &members);
+        assert!(with.contains("sp-a index-390.png: http://host:1/shots/sp-a/abc/index-390.png") && !with.contains("note.txt") && !with.contains("sp-b"), "{with}");
+        assert!(shots_section(tmp.path(), None, &members).contains("- sp-a index-390.png: /shots/sp-a/abc/index-390.png"));
+        assert_eq!(shots_section(tmp.path(), None, &members[1..]), "");
     }
 }

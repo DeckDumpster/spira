@@ -1178,3 +1178,11 @@ phase> was still running at the <N>s cap`; the verdict is recorded in `run.event
 unwound 30 s later it kills its descendants and exits itself. `testenv-cap` (a `watchd` daemon
 row) scans live runs and kills any past cap + 60 s by pid, after re-reading the cmdline and start
 time, and appends one line to the concierge inbox with the tier and wall.
+
+## Screenshots (`testenv shots`)
+
+A repository that declares `[shots]` in `.spira/testenv.toml` (`argv`, optional `image`, `timeout`, `widths`, default 390 and 1280) is a site repository: a change under its top-level `frontend/` is submitted with an image per width, or with `SPIRA_SHOTS_WAIVED=<reason>`, which `work submit` forwards and the broker records as a bead note.
+
+- `testenv shots <repo> <path>... [--widths a,b]` runs the declared `argv` in the repository's image with `SHOTS_PAGES` (`slug=path` words), `SHOTS_WIDTHS`, `SHOTS_OUT` and `SHOTS_CAPTURE` (the shipped Playwright script, `spira/testenv/shots-capture.mjs`). The argv builds and serves the fixture site, then runs the script. Images land in `run/shots/<bead>/<tip>/<slug>-<width>.png`; any page without one fails the run, names the page, and removes the directory.
+- `testenv shots --verify <tip> <repo> --bead <id> [--waived <reason>]` is the guard `work submit` runs. It lists the directory and reads file sizes only. No image is ever opened or compared, and no baseline exists.
+- The batch PR body links each member's images through Loom (`/shots/<bead>/<tip>/<file>`, at `SPIRA_LOOM_ADDR`).

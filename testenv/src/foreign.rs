@@ -39,7 +39,28 @@ pub struct Decl {
     /// The fast compile-and-lint tiers a tip must pass before it may be submitted.
     #[serde(default)]
     pub lint: Vec<String>,
+    /// How to build and serve this repository's pages and capture them (`testenv shots`).
+    /// Declaring it makes a change under `frontend/` carry screenshots to be submitted.
+    #[serde(default)]
+    pub shots: Option<Shots>,
     pub tier: BTreeMap<String, Tier>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Shots {
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
+    /// The viewport widths a submission must hold an image for.
+    #[serde(default = "default_widths")]
+    pub widths: Vec<u32>,
+}
+
+fn default_widths() -> Vec<u32> {
+    vec![390, 1280]
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,6 +102,11 @@ impl Decl {
             }
             if t.image.as_deref().is_some_and(|i| i.trim().is_empty()) {
                 return Err(format!("{DECL}: tier {n}: image is empty"));
+            }
+        }
+        if let Some(sh) = &d.shots {
+            if sh.argv.is_empty() || sh.widths.is_empty() || sh.widths.contains(&0) || sh.image.as_deref().is_some_and(|i| i.trim().is_empty()) {
+                return Err(format!("{DECL}: shots needs an argv, an image that is not empty, and non-zero widths"));
             }
         }
         if let Some(n) = d.default.iter().find(|n| !d.tier.contains_key(*n)) {
