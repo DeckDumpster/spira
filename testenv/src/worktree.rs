@@ -352,7 +352,11 @@ fn head_of(wt: &Path) -> Option<String> {
 /// differ, so cargo's fingerprints keep `target/` warm; everything else untracked or ignored
 /// is removed, so the slot is the commit and nothing else.
 pub(crate) fn prepare_slot(repo: &Path, slot: &Path, commit: &str) -> Result<(), String> {
-    let registered = slot.join(".git").exists() && head_of(slot).is_some();
+    let mut registered = slot.join(".git").exists() && head_of(slot).is_some();
+    if registered && git(slot, &["cat-file", "-e", &format!("{commit}^{{tree}}")]).is_err() {
+        // The slot's object store lacks the commit's objects: rebuild it from the repo's.
+        registered = false;
+    }
     if !registered {
         let _ = git(repo, &["worktree", "prune"]);
         let _ = fs::remove_dir_all(slot);

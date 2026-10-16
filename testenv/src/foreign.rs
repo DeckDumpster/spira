@@ -310,6 +310,14 @@ impl Cache {
     }
 }
 
+/// Whole cores each of `tiers` concurrent containers may use on a `cores`-core host: the
+/// cores split evenly, never fewer than one.
+pub fn thread_share(cores: usize, tiers: usize) -> usize {
+    (cores / tiers.max(1)).max(1)
+}
+
+const THREAD_ENV: [&str; 3] = ["CARGO_BUILD_JOBS", "RUST_TEST_THREADS", "NEXTEST_TEST_THREADS"];
+
 pub struct TierRun<'a> {
     pub cache: &'a Cache,
     pub rt: &'a dyn ContainerRuntime,
@@ -319,6 +327,9 @@ pub struct TierRun<'a> {
     pub key: &'a str,
     pub deadline: Option<Instant>,
     pub log: &'a (dyn Fn(&str) + Sync),
+    /// The host's cores, split across the tiers a run starts together.
+    pub cores: usize,
+    pub concurrent: usize,
 }
 
 impl TierRun<'_> {
@@ -347,6 +358,12 @@ impl TierRun<'_> {
                 env.push((k.into(), v.into()));
             }
         }
+        let share = thread_share(self.cores, self.concurrent);
+        for k in THREAD_ENV {
+            if !tier.env.contains_key(k) {
+                env.push((k.into(), share.to_string()));
+            }
+        }
         let req = RunRequest {
             name: cname.clone(),
             image: self.decl.image_for(name).to_string(),
@@ -359,6 +376,7 @@ impl TierRun<'_> {
             timeout: tier.timeout.or(self.decl.timeout).map(Duration::from_secs),
             deadline: self.deadline,
             output: self.results.join(format!("{name}.log")),
+            cpus: Some(share.to_string()),
         };
         let rc = self.rt.run_once(&req).rc;
         self.rt.purge(&cname);
@@ -450,6 +468,15 @@ mod tests {
         assert!(gone.iter().all(|(_, b)| *b >= 8192), "{gone:?}");
         assert!(!aged.exists() && !work.exists(), "aged dirs, overlay workdir included, are gone");
         assert!(held.exists(), "a referenced dir stays");
+    }
+
+    #[test]
+    fn concurrent_tiers_split_the_cores_and_none_gets_fewer_than_one() {
+        assert_eq!(thread_share(4, 3), 1);
+        assert_eq!(thread_share(8, 2), 4);
+        assert_eq!(thread_share(4, 1), 4);
+        assert_eq!(thread_share(2, 5), 1);
+        assert_eq!(thread_share(4, 0), 4);
     }
 
     #[test]

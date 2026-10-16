@@ -130,6 +130,8 @@ pub struct RunRequest {
     pub timeout: Option<Duration>,
     pub deadline: Option<Instant>,
     pub output: PathBuf,
+    /// `podman run --cpus`: the container's share of the host's cores.
+    pub cpus: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -153,6 +155,10 @@ pub fn podman_run_args(req: &RunRequest) -> Vec<String> {
     for o in &req.overlays {
         a.push("-v".into());
         a.push(format!("{}:{}:O,upperdir={},workdir={}", o.lower.display(), o.ctr, o.upper.display(), o.work.display()));
+    }
+    if let Some(c) = &req.cpus {
+        a.push("--cpus".into());
+        a.push(c.clone());
     }
     a.push("-w".into());
     a.push(req.workdir.clone());
@@ -496,8 +502,12 @@ mod tests {
             timeout: None,
             deadline: None,
             output: "/o".into(),
+            cpus: Some("1.5".into()),
         };
         assert!(podman_run_args(&req).contains(&"/l:/c:O,upperdir=/u,workdir=/k".to_string()));
+        let a = podman_run_args(&req);
+        let i = a.iter().position(|x| x == "--cpus").expect("--cpus passed");
+        assert_eq!(a[i + 1], "1.5");
     }
 
     use super::*;

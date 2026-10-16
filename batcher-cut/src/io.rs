@@ -1289,8 +1289,40 @@ pub fn local_pass_path(env: &Env, repo: &Repo, tip: &str) -> PathBuf {
 /// A forge repo's declared tiers (`testenv <rev> <repo>`, no `--suites`: the repo's own default,
 /// compile and lint included) run in testenv on this host, once per tip. A green is recorded under
 /// [`local_pass_path`]; a red returns the compiler/linter's `file:line` locations and the output tail.
-pub fn local_tier(env: &Env, repo: &Repo, rev: &str) -> Result<(), String> {
+pub fn local_tier(env: &Env, repo: &Repo, rev: &str) -> Result<(), TierEnd> {
     local_tier_keyed(env, repo, rev, local_pass_path(env, repo, rev))
+}
+
+/// How a local check ended short of green. `Unjudged`: testenv was cut at its wall cap while the
+/// host was loaded past its cores, so the tiers judged nothing — no pass, no red, no incident;
+/// the next invocation checks again.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TierEnd {
+    Red(String),
+    Unjudged(String),
+}
+
+impl TierEnd {
+    pub fn evidence(&self) -> &str {
+        match self {
+            TierEnd::Red(e) | TierEnd::Unjudged(e) => e,
+        }
+    }
+}
+
+/// True when `text` is testenv's FAULT verdict for a run cut at its wall cap.
+pub fn testenv_cut_at_cap(text: &str) -> bool {
+    text.lines().any(|l| l.starts_with("VERDICT FAULT") && (l.contains("reason=deadline-suites") || l.contains("reason=over-cap")))
+}
+
+/// A cap breach is the host's when the 1-minute load average exceeds the cores.
+pub fn over_cap_from_load(text: &str, load: Option<f64>, cores: usize) -> bool {
+    testenv_cut_at_cap(text) && load.is_some_and(|l| l > cores as f64)
+}
+
+fn host_load() -> (Option<f64>, usize) {
+    let load = fs::read_to_string("/proc/loadavg").ok().and_then(|t| t.split_whitespace().next().and_then(|w| w.parse().ok()));
+    (load, std::thread::available_parallelism().map_or(1, |n| n.get()))
 }
 
 /// Why a member's local check did not run: its tip does not merge onto the base (a conflict is
@@ -1299,6 +1331,7 @@ pub fn local_tier(env: &Env, repo: &Repo, rev: &str) -> Result<(), String> {
 pub enum MemberTier {
     Conflict,
     Red(String),
+    Unjudged(String),
 }
 
 pub fn member_pass_recorded(env: &Env, repo: &Repo, base_sha: &str, tip: &str) -> bool {
@@ -1336,7 +1369,10 @@ pub fn local_tier_member(env: &Env, repo: &Repo, base_sha: &str, tip: &str) -> R
         return Err(MemberTier::Red(format!("git commit-tree: {}", String::from_utf8_lossy(&c.stderr))));
     }
     let rev = String::from_utf8_lossy(&c.stdout).trim().to_string();
-    local_tier_keyed(env, repo, &rev, mark).map_err(MemberTier::Red)
+    local_tier_keyed(env, repo, &rev, mark).map_err(|e| match e {
+        TierEnd::Red(e) => MemberTier::Red(e),
+        TierEnd::Unjudged(e) => MemberTier::Unjudged(e),
+    })
 }
 
 /// How a group check of several members ended short of green.
@@ -1346,6 +1382,8 @@ pub enum GroupTier {
     Conflict(String),
     /// The merged head is red: its sha and the tier evidence.
     Red { head: String, evidence: String },
+    /// The head's check was cut at the cap under host load: nothing is recorded.
+    Unjudged(String),
 }
 
 /// Where a red group head is recorded, so the same set is never checked as a group twice.
@@ -1407,7 +1445,8 @@ pub fn local_tier_group(env: &Env, repo: &Repo, base_sha: &str, tips: &[String])
             }
             Ok(head)
         }
-        Err(evidence) => {
+        Err(TierEnd::Unjudged(why)) => Err(GroupTier::Unjudged(why)),
+        Err(TierEnd::Red(evidence)) => {
             if let Some(dir) = red_mark.parent() {
                 let _ = fs::create_dir_all(dir);
             }
@@ -1432,12 +1471,12 @@ pub fn red_locations(evidence: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn local_tier_keyed(env: &Env, repo: &Repo, rev: &str, mark: PathBuf) -> Result<(), String> {
+fn local_tier_keyed(env: &Env, repo: &Repo, rev: &str, mark: PathBuf) -> Result<(), TierEnd> {
     if mark.is_file() {
         return Ok(());
     }
     // batch-job: runs the repo's declared tiers, as long as they take
-    let out = Command::new(&env.testenv_bin).arg(rev).arg(&repo.name).output().map_err(|e| format!("testenv: {e}"))?;
+    let out = Command::new(&env.testenv_bin).arg(rev).arg(&repo.name).output().map_err(|e| TierEnd::Red(format!("testenv: {e}")))?;
     if out.status.success() {
         if let Some(dir) = mark.parent() {
             let _ = fs::create_dir_all(dir);
@@ -1447,7 +1486,11 @@ fn local_tier_keyed(env: &Env, repo: &Repo, rev: &str, mark: PathBuf) -> Result<
     }
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&out.stderr));
-    Err(local_red_evidence(out.status.code(), &text))
+    let (load, cores) = host_load();
+    if over_cap_from_load(&text, load, cores) {
+        return Err(TierEnd::Unjudged(format!("testenv cut at its wall cap with load {} on {cores} cores", load.unwrap_or(0.0))));
+    }
+    Err(TierEnd::Red(local_red_evidence(out.status.code(), &text)))
 }
 
 /// Where a local red of the landing ref's own tiers is recorded, one file per ref sha.
@@ -1458,17 +1501,22 @@ pub fn local_fault_path(env: &Env, repo: &Repo, base: &str) -> PathBuf {
 /// A member's red is the member's only when the landing ref is green on the same tiers; a red
 /// landing ref is a fault of the check. Returns that fault's evidence and whether this call
 /// is the first to see it for `base`, so the alarm is raised once per landing-ref sha.
-pub fn landing_ref_fault(env: &Env, repo: &Repo, base: &str) -> Option<(String, bool)> {
+/// `Err` is a landing-ref check cut at the cap under host load: it neither clears nor blames.
+pub fn landing_ref_fault(env: &Env, repo: &Repo, base: &str) -> Result<Option<(String, bool)>, String> {
     let mark = local_fault_path(env, repo, base);
     if let Ok(evidence) = fs::read_to_string(&mark) {
-        return Some((evidence, false));
+        return Ok(Some((evidence, false)));
     }
-    let evidence = local_tier(env, repo, base).err()?;
+    let evidence = match local_tier(env, repo, base) {
+        Ok(()) => return Ok(None),
+        Err(TierEnd::Unjudged(why)) => return Err(why),
+        Err(TierEnd::Red(e)) => e,
+    };
     if let Some(dir) = mark.parent() {
         let _ = fs::create_dir_all(dir);
     }
     let _ = fs::write(&mark, &evidence);
-    Some((evidence, true))
+    Ok(Some((evidence, true)))
 }
 
 /// The recorded fault of the landing ref's own tiers for `base`, if one was seen. Reads only.
@@ -3832,7 +3880,7 @@ mod local_tier_tests {
     fn a_red_tip_is_refused_with_its_locations_and_records_no_pass() {
         let (_d, env, repo) = fixture("lt-red", "#!/bin/sh\necho '   --> src/binder.rs:222:9'\nexit 1\n");
         let e = local_tier(&env, &repo, "abc").unwrap_err();
-        assert!(e.contains("src/binder.rs:222:9"), "{e}");
+        assert!(e.evidence().contains("src/binder.rs:222:9"), "{e:?}");
         assert!(!local_pass_path(&env, &repo, "abc").exists());
     }
 
@@ -3841,7 +3889,7 @@ mod local_tier_tests {
         let script = "#!/bin/sh\necho '  clippy                           RED     after 3s'\necho '  command (clippy): cargo clippy -- -D warnings'\necho '  first error (clippy): src/binder.rs:222:9: error: unused variable'\nexit 1\n";
         let (_d, env, repo) = fixture("lt-headline", script);
         let e = local_tier(&env, &repo, "abc").unwrap_err();
-        let head = e.lines().next().unwrap();
+        let head = e.evidence().lines().next().unwrap();
         assert!(head.contains("clippy") && head.contains("cargo clippy -- -D warnings") && head.contains("src/binder.rs:222:9"), "{head}");
     }
 
@@ -3858,12 +3906,12 @@ mod local_tier_tests {
     #[test]
     fn a_red_landing_ref_is_a_fault_reported_once_and_a_green_one_is_not() {
         let (_d, env, repo) = fixture("lt-fault", "#!/bin/sh\necho 'tier X red'\nexit 1\n");
-        let (ev, first) = landing_ref_fault(&env, &repo, "base1").unwrap();
+        let (ev, first) = landing_ref_fault(&env, &repo, "base1").unwrap().unwrap();
         assert!(ev.contains("tier X red") && first);
-        let (_, again) = landing_ref_fault(&env, &repo, "base1").unwrap();
+        let (_, again) = landing_ref_fault(&env, &repo, "base1").unwrap().unwrap();
         assert!(!again);
         let (_d2, env2, repo2) = fixture("lt-nofault", "#!/bin/sh\nexit 0\n");
-        assert!(landing_ref_fault(&env2, &repo2, "base1").is_none());
+        assert!(landing_ref_fault(&env2, &repo2, "base1").unwrap().is_none());
     }
 
     #[test]
@@ -3876,7 +3924,18 @@ mod local_tier_tests {
 
 #[cfg(test)]
 mod fences_verdict_tests {
-    use super::fences_judged_nothing;
+    use super::{fences_judged_nothing, over_cap_from_load};
+
+    #[test]
+    fn a_testenv_cap_cut_is_unjudged_only_while_the_host_is_loaded_past_its_cores() {
+        let cut = "  rust  FAULT deadline-suites after 900s\nVERDICT FAULT rc=2 ran=0 reason=deadline-suites\n";
+        assert!(over_cap_from_load(cut, Some(32.9), 4));
+        assert!(!over_cap_from_load(cut, Some(3.9), 4), "an idle host's cap breach is the tier's");
+        assert!(!over_cap_from_load(cut, None, 4));
+        assert!(!over_cap_from_load("VERDICT RED ran=1 red=1\n", Some(32.9), 4));
+        assert!(!over_cap_from_load("VERDICT FAULT rc=2 ran=0 reason=container-run\n", Some(32.9), 4));
+        assert!(over_cap_from_load("VERDICT FAULT rc=2 ran=0 reason=over-cap\n", Some(32.9), 4));
+    }
 
     #[test]
     fn an_over_cap_fences_log_judged_nothing_and_a_real_fail_did_not() {
