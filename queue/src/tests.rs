@@ -321,6 +321,7 @@ struct FScripts {
     gate_rc: Cell<i32>,
     /// What `testenv lint` answers by tip (absent = pass); `verify` answers only for recorded tips.
     lint_red: RefCell<BTreeMap<String, String>>,
+    suite_red: RefCell<Vec<String>>,
     /// Set once `release activate` ran; the store's fake reads it to begin its outage.
     activated: std::rc::Rc<Cell<bool>>,
     /// `release <sub>` exit status by subcommand (absent = 0), and the stderr line it prints.
@@ -360,6 +361,14 @@ impl Scripts for FScripts {
         match self.lint_red.borrow().get(tip) {
             Some(first) => (1, format!("refused: {tip} failed its compile-and-lint check at {first}")),
             None => (0, String::new()),
+        }
+    }
+    fn suite_run(&self, check: &str, tip: &str, repo: &str) -> (i32, String) {
+        self.calls.borrow_mut().push(format!("suite_run {check} {tip} {repo}"));
+        if self.suite_red.borrow().iter().any(|c| c == check) {
+            (1, format!("{check}: 2 failed"))
+        } else {
+            (0, format!("{check}: all passed"))
         }
     }
     fn gate(&self, br: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
@@ -1353,7 +1362,7 @@ fn eject_red_records_eject_red() {
     assert!(t.lib.has("cause_event sp-a eject-red"));
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
-    assert_eq!(t.run(&["eject", "sp-a", "--red"]), 0);
+    assert_eq!(t.run(&["eject", "sp-a", "--red", "--suites", "test-x.sh"]), 0);
     assert!(t.lib.has("cause_event sp-a eject-red"));
     let calls = t.lc.calls.borrow().clone();
     assert!(calls.contains(&"event bead sp-a IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected-red\"}}".to_string()), "{calls:?}");
@@ -1363,7 +1372,7 @@ fn eject_red_records_eject_red() {
 fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
-    assert_eq!(t.run(&["eject", "sp-c", "--red", "--reason-file", "-"]), 0);
+    assert_eq!(t.run(&["eject", "sp-c", "--red", "--suites", "test-x.sh", "--reason-file", "-"]), 0);
     assert!(t.lib.has("bead_reopen sp-c eject-red "));
     assert!(t.out().contains("ejected sp-c (certified, not yet batched) for spira (withdrawn)"));
 }
@@ -1372,7 +1381,7 @@ fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
 fn eject_of_a_submitted_unbatched_bead_withdraws_it_to_rework_at_its_red_tip() {
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-s", "SUBMITTED", "ts", 5);
-    assert_eq!(t.run(&["eject", "sp-s", "--red", "--reason-file", "-"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["eject", "sp-s", "--red", "--suites", "test-x.sh", "--reason-file", "-"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_reopen sp-s eject-red "));
     let calls = t.lc.calls.borrow().clone();
     assert!(calls.iter().any(|c| c.contains("sp-s ") && c.contains("Deliver")), "{calls:?}");
@@ -1385,7 +1394,7 @@ fn eject_of_a_certified_unbatched_bead_is_not_blocked_by_an_unrelated_open_batch
     let rec = "pr=12\nmembers=sp-a:ta,sp-b:tb\nbatch_id=spira-1\nversion=3\n";
     t.open_record(rec);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
-    assert_eq!(t.run(&["eject", "sp-c", "--red", "--reason-file", "-"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["eject", "sp-c", "--red", "--suites", "test-x.sh", "--reason-file", "-"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_reopen sp-c eject-red "));
     assert_eq!(fs::read_to_string(t.qfile("open")).unwrap(), rec);
     assert!(!t.lc.has("abandon-batch"));
@@ -1397,7 +1406,7 @@ fn ejecting_a_non_member_returns_it_to_rework_and_leaves_the_open_batch_and_its_
     let rec = "pr=460\nmembers=sp-a:ta,sp-b:tb\nbatch_id=spira-1\nversion=3\n";
     t.open_record(rec);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
-    assert_eq!(t.run(&["eject", "sp-c", "--red", "--reason", "withdrawn"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["eject", "sp-c", "--red", "--suites", "test-x.sh", "--reason", "withdrawn"]), 0, "{}", t.err());
     let calls = t.lc.calls.borrow().join("\n");
     assert!(calls.contains("event bead sp-c") && calls.contains("Returned"), "{calls}");
     assert!(!calls.contains("abandon-batch") && !calls.contains("eject-member"), "{calls}");
@@ -1472,7 +1481,7 @@ fn a_forge_eject_returns_the_member_to_rework_only_after_eject_member_requeues_i
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
     t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
-    assert_eq!(t.run(&["eject", "sp-a", "--red", "--reason", "PR red"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["eject", "sp-a", "--red", "--suites", "test-x.sh", "--reason", "PR red"]), 0, "{}", t.err());
     let calls = t.lc.calls.borrow().clone();
     let e = calls.iter().position(|c| c.starts_with("eject-member spira-1 sp-a")).unwrap_or_else(|| panic!("{calls:?}"));
     let r = calls.iter().position(|c| c.contains("event bead sp-a") && c.contains("Returned")).unwrap_or_else(|| panic!("no Returned: {calls:?}"));
@@ -1484,7 +1493,7 @@ fn a_forge_eject_of_a_red_member_requeued_to_submitted_still_ends_in_rework() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
     t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("SUBMITTED".into(), "7".into()));
-    assert_eq!(t.run(&["eject", "sp-a", "--red", "--reason", "PR red"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["eject", "sp-a", "--red", "--suites", "test-x.sh", "--reason", "PR red"]), 0, "{}", t.err());
     let calls = t.lc.calls.borrow().clone();
     assert!(calls.contains(&"event bead sp-a SUBMITTED 7 \"Deliver\"".to_string()), "{calls:?}");
     assert!(calls.contains(&"event bead sp-a IN_DELIVERY 8 {\"Returned\":{\"reason\":\"batch-ejected-red\"}}".to_string()), "{calls:?}");
@@ -1496,7 +1505,7 @@ fn a_forge_eject_whose_return_write_is_refused_exits_nonzero_naming_the_write() 
     t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
     t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
     t.lc.event_refused.set(Some("stale version"));
-    assert_ne!(t.run(&["eject", "sp-a", "--red", "--reason", "PR red"]), 0);
+    assert_ne!(t.run(&["eject", "sp-a", "--red", "--suites", "test-x.sh", "--reason", "PR red"]), 0);
     assert!(t.err().contains("Returned refused"), "{}", t.err());
 }
 

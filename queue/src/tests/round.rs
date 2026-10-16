@@ -1455,3 +1455,30 @@ fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
     assert!(t.lc.calls.borrow().iter().any(|c| c.contains("\"tip\":\"tc\"")), "{:?}", t.lc.calls.borrow());
     assert_eq!(t.lc.bead_state("sp-c").unwrap().0, "REWORK");
 }
+
+fn proof_run(t: &T) -> std::path::PathBuf {
+    t.s().run.clone()
+}
+
+#[test]
+fn a_resubmit_is_refused_naming_an_ejected_suite_that_does_not_pass_at_the_new_tip_and_accepted_when_it_does() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["test-x.sh".to_string()]).unwrap();
+    t.scripts.suite_red.borrow_mut().push("test-x.sh".into());
+    let tip_arg = format!("--tip={T_FIX}");
+    let args = ["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix", "--evidence=npm test 1/0", &ev_tip()];
+    assert_eq!(t.run(&args), 1);
+    assert!(t.err().contains("test-x.sh failed at") && t.err().contains("refused"), "{}", t.err());
+    assert!(!t.lc.calls.borrow().iter().any(|c| c.starts_with("retip")), "a refused resubmit must not move the bead");
+
+    t.scripts.suite_red.borrow_mut().clear();
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert!(spira_config::proof::proven(&proof_run(&t), "sp-a", T_FIX, "test-x.sh"));
+}
+
+#[test]
+fn a_hand_eject_for_red_must_name_the_failing_suite() {
+    let t = rework_world(&[]);
+    assert_eq!(t.run(&["eject", "sp-a", "--red", "--reason", "red"]), 2);
+    assert!(t.err().contains("--suites"), "{}", t.err());
+}

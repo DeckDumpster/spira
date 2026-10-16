@@ -115,6 +115,29 @@ pub fn lint_passed(w: &World, verb: &str, path: &std::path::Path, tip: &str, ver
     rc == 0
 }
 
+/// The checks an ejection named must each pass at `tip` before the bead is resubmitted: the
+/// missing ones are run here, recorded with their summary line, and any still red or unrun
+/// refuses by name.
+fn checks_proven(w: &World, verb: &str, run: &std::path::Path, repo: &str, id: &str, tip: &str) -> bool {
+    use spira_config::proof;
+    let mut notes = Vec::new();
+    for check in proof::unproven(run, id, tip) {
+        let (rc, out) = w.scripts.suite_run(&check, tip, repo);
+        if let Err(e) = proof::record_run(run, id, tip, &check, rc, &out) {
+            w.err(format!("queue.sh {verb}: cannot record the run of {check}: {e} — refused"));
+            return false;
+        }
+        if rc != 0 {
+            notes.push(format!("{check} failed at {tip} (rc={rc}): {}", out.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no output")));
+        }
+    }
+    if notes.is_empty() {
+        return true;
+    }
+    w.err(format!("queue.sh {verb}: {id} was ejected for failing checks that still do not pass at {tip} — refused:\n  {}", notes.join("\n  ")));
+    false
+}
+
 /// Record the gate pass on spira-lc; a refusal is reported and the submit does not certify.
 fn lc_certify(w: &World, id: &str, tip: &str) -> Result<(), ()> {
     w.lc.certify(id, tip, "queue-submit", &super::actor(w)).map_err(|(rc, e)| {
@@ -455,6 +478,9 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         }
     }
     if !lint_passed(w, "resubmit", &path, tip, false) {
+        return FAIL;
+    }
+    if !checks_proven(w, "resubmit", &c.s.run, &c.r.name, id, tip) {
         return FAIL;
     }
     if super::require_lc(w, "resubmit").is_err() {

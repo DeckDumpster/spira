@@ -148,10 +148,78 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     if let Some(refusal) = lint_refusal(conn, bead_id, &tip, &actor) {
         return refusal;
     }
+    let run = spira_config::process::cfg("SPIRA_RUN").ok().filter(|r| !r.is_empty()).map(std::path::PathBuf::from);
+    if let Some(run) = &run {
+        let repo = match submit_repo(conn, bead_id) {
+            Ok(r) => r,
+            Err(refusal) => return refusal,
+        };
+        let runner = |check: &str, secs: u64| {
+            // batch-job: one named suite in a container, bounded by what is left of the submit's budget
+            let args = ["--suites".to_string(), check.to_string(), tip.clone(), repo.clone()];
+            crate::bd::tool("testenv", &args, None, &actor, secs)
+        };
+        if let Some(refusal) = proof_refusal(run, bead_id, &tip, PROOF_BUDGET_SECS, &runner) {
+            return refusal;
+        }
+    }
     if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
         return refusal;
     }
-    apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip })
+    let done = apply_bead_event(conn, bead_id, &actor, BeadEventKind::Submit { tip });
+    if let (0, Some(run)) = (done.0, &run) {
+        spira_config::proof::clear_failing(run, bead_id);
+    }
+    done
+}
+
+/// What `work submit` may spend running the checks an ejection named; a retry resumes, because
+/// every pass is recorded as it happens.
+const PROOF_BUDGET_SECS: u64 = 270;
+
+/// A bead whose ejection named failing checks is submitted only when each has a passing run
+/// recorded at `tip`. The broker runs the missing ones itself (the aeon has no testenv), records
+/// the exit code and the check's own summary line, and refuses naming whatever is still unproven.
+fn proof_refusal(run: &std::path::Path, bead_id: &str, tip: &str, budget: u64, runner: &dyn Fn(&str, u64) -> (i32, String)) -> Option<(i32, String)> {
+    use spira_config::proof;
+    let missing = proof::unproven(run, bead_id, tip);
+    if missing.is_empty() {
+        return None;
+    }
+    let started = std::time::Instant::now();
+    let mut notes = Vec::new();
+    for check in &missing {
+        let left = budget.saturating_sub(started.elapsed().as_secs());
+        if left == 0 {
+            break;
+        }
+        let (rc, out) = runner(check, left);
+        match rc {
+            0 | 1 => {
+                if let Err(e) = proof::record_run(run, bead_id, tip, check, rc, &out) {
+                    return Some((CANNOT_TELL, format!("cannot tell: the run of {check} could not be recorded: {e}")));
+                }
+                if rc == 1 {
+                    notes.push(format!("{check} FAILED at {tip}: {}", out.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no output")));
+                }
+            }
+            _ => notes.push(format!("{check} could not run (rc={rc}): {}", out.trim_end())),
+        }
+    }
+    let still = proof::unproven(run, bead_id, tip);
+    if still.is_empty() {
+        return None;
+    }
+    let mut msg = format!(
+        "refused: {bead_id} was ejected for failing {}; no passing run is recorded at {tip} for: {}.",
+        proof::failing(run, bead_id).join(", "),
+        still.join(", ")
+    );
+    for n in notes {
+        msg.push_str(&format!("\n  {n}"));
+    }
+    msg.push_str(&format!("\nFix the failure, commit, and run `work submit` again — it runs: testenv --suites <check> {tip} <repo> for each unproven check."));
+    Some((REFUSED, msg))
 }
 
 fn submit_repo(conn: &Conn, bead_id: &str) -> Result<String, (i32, String)> {
@@ -1254,6 +1322,48 @@ mod tests {
     }
 
     // ---- the gate ----
+
+    fn proof_dir(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(tag)
+    }
+
+    const TIP: &str = "3333333333333333333333333333333333333333";
+
+    #[test]
+    fn a_resubmit_without_a_passing_run_of_the_ejected_suite_is_refused_naming_it() {
+        let dir = proof_dir("refuse");
+        let run = dir.path().to_path_buf();
+        spira_config::proof::record_failing(&run, "sp-a", &["test-x.sh".into()]).unwrap();
+        let red = |_: &str, _: u64| (1, "test-x: 2 failed\n".to_string());
+        let (code, msg) = proof_refusal(&run, "sp-a", TIP, 60, &red).expect("a red run must not prove");
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("test-x.sh") && msg.contains("FAILED"), "{msg}");
+        let broken = |_: &str, _: u64| (2, "no container".to_string());
+        assert!(proof_refusal(&run, "sp-a", TIP, 60, &broken).is_some(), "a check that could not run is unproven");
+    }
+
+    #[test]
+    fn a_resubmit_with_a_passing_run_at_the_new_tip_is_accepted_and_the_run_is_recorded() {
+        let dir = proof_dir("accept");
+        let run = dir.path().to_path_buf();
+        spira_config::proof::record_failing(&run, "sp-a", &["test-x.sh".into()]).unwrap();
+        let green = |c: &str, _: u64| (0, format!("{c}: 12 passed\n"));
+        assert!(proof_refusal(&run, "sp-a", TIP, 60, &green).is_none());
+        let rec = std::fs::read_to_string(run.join("proof/sp-a/pass").join(TIP).join("test-x.sh")).unwrap();
+        assert_eq!(rec, "exit=0\nsummary=test-x.sh: 12 passed\n");
+        let never = |_: &str, _: u64| -> (i32, String) { panic!("a proven check is not re-run") };
+        assert!(proof_refusal(&run, "sp-a", TIP, 60, &never).is_none());
+        let other = "4444444444444444444444444444444444444444";
+        assert!(proof_refusal(&run, "sp-a", other, 60, &green).is_none(), "a new tip is proven afresh");
+    }
+
+    #[test]
+    fn a_bead_with_no_named_checks_owes_no_proof() {
+        let dir = proof_dir("none");
+        let run = dir.path().to_path_buf();
+        let never = |_: &str, _: u64| -> (i32, String) { panic!("nothing to run") };
+        assert!(proof_refusal(&run, "sp-a", TIP, 60, &never).is_none());
+    }
 
     #[test]
     fn every_allow_row_names_a_known_verb() {
