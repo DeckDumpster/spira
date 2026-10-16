@@ -500,6 +500,57 @@ pub fn reap_landed_branch(
     ReapOutcome::Done
 }
 
+/// Pids of live processes whose working directory is `work` or inside it.
+pub fn occupants(proc_root: &Path, work: &Path) -> Vec<u32> {
+    let Ok(rd) = std::fs::read_dir(proc_root) else { return Vec::new() };
+    let mut pids: Vec<u32> = rd
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|p| std::fs::read_link(proc_root.join(p.to_string()).join("cwd")).is_ok_and(|c| c.starts_with(work)))
+        .collect();
+    pids.sort_unstable();
+    pids
+}
+
+/// The `spira-aeon-*.service` units the given pids run under, from their cgroups.
+pub fn aeon_units(proc_root: &Path, pids: &[u32]) -> Vec<String> {
+    let mut units: Vec<String> = pids
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(proc_root.join(p.to_string()).join("cgroup")).ok())
+        .flat_map(|t| t.split(|c: char| c == '/' || c.is_whitespace()).map(str::to_string).collect::<Vec<_>>())
+        .filter(|seg| seg.starts_with("spira-aeon-") && seg.ends_with(".service"))
+        .collect();
+    units.sort();
+    units.dedup();
+    units
+}
+
+/// A lease that lapsed does not mean the aeon exited. Stop the unit of every process still
+/// working in `work`, then wait for them to leave; `Err` carries the pids that did not.
+pub fn stop_occupants(
+    proc_root: &Path,
+    work: &Path,
+    stop: &mut dyn FnMut(&str),
+    tries: u32,
+    settle: &dyn Fn(),
+) -> Result<(), Vec<u32>> {
+    let mut pids = occupants(proc_root, work);
+    if pids.is_empty() {
+        return Ok(());
+    }
+    for unit in aeon_units(proc_root, &pids) {
+        stop(&unit);
+    }
+    for _ in 0..tries {
+        pids = occupants(proc_root, work);
+        if pids.is_empty() {
+            return Ok(());
+        }
+        settle();
+    }
+    Err(pids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -725,4 +776,34 @@ mod tests {
         assert_eq!(holder_witnesses(&run, "sp-w5", &FakeBd { state: Some(String::new()) }), None);
     }
 
+
+    #[test]
+    fn stop_occupants_stops_the_unit_of_a_process_in_the_worktree_and_waits_for_it_to_leave() {
+        let t = tempdir();
+        let proc = t.join("proc");
+        let work = t.join("worktree/sp-a");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(proc.join("100")).unwrap();
+        std::os::unix::fs::symlink(&work, proc.join("100/cwd")).unwrap();
+        std::fs::write(proc.join("100/cgroup"), "0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-aeon-shiva-sp-a-1.service\n").unwrap();
+        std::fs::create_dir_all(proc.join("200")).unwrap();
+        std::os::unix::fs::symlink(t.join("elsewhere"), proc.join("200/cwd")).unwrap();
+        let mut stopped = Vec::new();
+        let p = proc.clone();
+        let r = stop_occupants(&proc, &work, &mut |u| { stopped.push(u.to_string()); std::fs::remove_dir_all(p.join("100")).unwrap(); }, 3, &|| {});
+        assert_eq!(r, Ok(()));
+        assert_eq!(stopped, vec!["spira-aeon-shiva-sp-a-1.service"]);
+        assert!(stop_occupants(&proc, &work, &mut |_| panic!("nothing to stop"), 3, &|| {}).is_ok());
+    }
+
+    #[test]
+    fn stop_occupants_reports_a_process_that_will_not_leave() {
+        let t = tempdir();
+        let proc = t.join("proc");
+        let work = t.join("worktree/sp-a");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(proc.join("100")).unwrap();
+        std::os::unix::fs::symlink(&work, proc.join("100/cwd")).unwrap();
+        assert_eq!(stop_occupants(&proc, &work, &mut |_| {}, 2, &|| {}), Err(vec![100]));
+    }
 }

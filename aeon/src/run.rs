@@ -241,7 +241,7 @@ impl<'a> Run<'a> {
         }
         let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return };
         let needle = regex::Regex::new(&format!(r" done \S+ {} ", regex::escape(&id))).unwrap();
-        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l)).collect();
+        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l) && !l.contains(" status=worktree-held ")).collect();
         let tail = &matches[matches.len().saturating_sub(threshold)..];
         let count = decide::rapid_recur_streak(tail);
         if count < threshold as i64 {

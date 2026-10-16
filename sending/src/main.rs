@@ -30,6 +30,7 @@
 //! environment, exactly as the bash functions they replace did:
 //!
 //!   sending hold-alive <pidfile>          sending holder-alive <id>
+//!   sending stop-holder <id>
 //!   sending worktree-of <branch> [<repo>] sending caller
 //!   sending reaplog <verb> <id> [<detail>]
 //!
@@ -227,6 +228,25 @@ fn cmd_holder_alive(args: Vec<String>) -> ExitCodeLike {
     i32::from(!reap::holder_alive(&run, &args[0]))
 }
 
+fn cmd_stop_holder(args: Vec<String>) -> ExitCodeLike {
+    if args.len() != 1 {
+        return die("stop-holder <id>");
+    }
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into());
+    let work = run.join("worktree").join(&args[0]);
+    let mut stop = |unit: &str| {
+        let _ = std::process::Command::new(&systemctl).args(["--user", "stop", unit]).status();
+    };
+    match reap::stop_occupants(Path::new("/proc"), &work, &mut stop, 20, &|| std::thread::sleep(std::time::Duration::from_millis(500))) {
+        Ok(()) => 0,
+        Err(pids) => fail(&format!("{} still has live process(es) {pids:?} in its worktree after the unit stop", args[0])),
+    }
+}
+
 fn cmd_worktree_of(args: Vec<String>) -> ExitCodeLike {
     if args.is_empty() || args.len() > 2 {
         return die("worktree-of <branch> [<repo>]");
@@ -331,6 +351,7 @@ fn main() {
             "witness" => Some(cmd_witness(rest())),
             "hold-alive" => Some(cmd_hold_alive(rest())),
             "holder-alive" => Some(cmd_holder_alive(rest())),
+            "stop-holder" => Some(cmd_stop_holder(rest())),
             "worktree-of" => Some(cmd_worktree_of(rest())),
             "caller" => Some(cmd_caller(rest())),
             "reaplog" => Some(cmd_reaplog(rest())),
