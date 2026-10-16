@@ -288,7 +288,7 @@ impl Pool {
                 if let Place::Ec2(reason) = decide(&plan.rule, wait_since.map(|t| t.elapsed()), (plan.pressure)()) {
                     match self.spill(&attempt, plan, owner, holder, &reason) {
                         Ok(vm) => return Ok((vm, AcquireMode::Cold)),
-                        Err(e) if plan.only => return Err(format!("round-vm: acquire: EC2 launch failed ({reason}), placement ec2-only has no local fallback: {e}")),
+                        Err(e) if plan.only || plan.rule.always => return Err(format!("round-vm: acquire: EC2 launch failed ({reason}), placement {} has no local fallback: {e}", if plan.only { "ec2-only" } else { "ec2-always" })),
                         Err(e) => {
                             eprintln!("round-vm: spill to EC2 failed, staying local: {e}");
                             fallback = format!("; ec2 unavailable ({reason}): {e}");
@@ -1602,10 +1602,10 @@ mod tests {
         let ec2 = ec2_provider(&d, &fake);
         let pl = pool(&d, 1);
         let f = || Ok(always(&fp, ec2.clone()));
-        let (vm, _) = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap();
-        assert!(!crate::ec2::is_ec2_handle(&vm.handle));
-        let why = lease_reason(&pl, &vm.handle);
-        assert!(why.contains("provider: proxmox") && why.contains("ec2 unavailable (placement ec2-always)"), "{why}");
+        let err = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap_err();
+        assert!(err.contains("ec2-always") && err.contains("no local fallback") && err.contains("fake run-instances refused"), "{err}");
+        let s = read_state(&pl.state_file()).unwrap();
+        assert!(s.ready.is_none() && s.leases.is_empty() && s.spilled.is_empty(), "nothing local was leased or started");
     }
 
     fn two_type_ec2(d: &TempDir, fake: &crate::testutil::FakeEc2) -> Arc<dyn Provider> {

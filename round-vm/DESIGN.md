@@ -243,15 +243,15 @@ the template with round-vm template`.
 A pass runs on EC2 instead of the local pool when `SPIRA_ROUND_VM_SPILL=ec2` and either the
 pass has waited `SPIRA_ROUND_VM_SPILL_WAIT_SECS` (30) without a local lease, or this box's
 `/proc/pressure/io` `full avg60` is above `SPIRA_ROUND_VM_SPILL_IO_FULL_AVG60` (30). An unreadable
-pressure never spills; a spill that fails falls back to local for that acquire. The lease event
+pressure never spills; under `ec2` a spill that fails falls back to local for that acquire. The lease event
 records the provider and the reason (`spilled to ec2: ...`, `provider: proxmox`), and the manifest
 carries `provider`. A spilled pass is not the pool of one (G1): it is recorded in `spilled` before
 its instance exists and leased on success, so G2 holds. It starts no local background provision.
 
 `SPIRA_ROUND_VM_SPILL=ec2-always` skips the rule: every pass leases on EC2 first, whatever the pool
-or the pressure reading; only a failed EC2 acquire falls back to local, and the lease event says why.
+or the pressure reading; a failed EC2 acquire is the pass's error naming the AWS reason, never a local lease. SSM key delivery retries `InvalidInstanceId` (instance not yet registered) for a bounded number of tries.
 
-`SPIRA_ROUND_VM_SPILL=ec2-only` is `ec2-always` with no fallback: a failed EC2 acquire (or a provider
+`SPIRA_ROUND_VM_SPILL=ec2-only` is `ec2-always` that also refuses to start without a working provider: a failed EC2 acquire (or a provider
 that cannot start) is the pass's error, never a local lease. `round-vm ec2-probe` acquires one
 instance through the production launch path, waits for SSM to run `true` on it, terminates it and
 confirms it gone; `--dry-run` issues the same RunInstances under `--dry-run` and passes only on

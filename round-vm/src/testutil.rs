@@ -253,6 +253,7 @@ struct Ec2Inner {
     scripts: Vec<String>,
     user_data: Vec<String>,
     never_joins: bool,
+    unregistered_calls: u32,
     fail_run: bool,
     refused_types: Vec<String>,
     vanishing: Vec<(String, String)>,
@@ -275,6 +276,9 @@ impl FakeEc2 {
     }
     pub fn launched_amis(&self) -> Vec<String> {
         self.0.lock().unwrap().launched_amis.clone()
+    }
+    pub fn ssm_unregistered_for(&self, calls: u32) {
+        self.0.lock().unwrap().unregistered_calls = calls;
     }
     pub fn never_joins_tailnet(&self) {
         self.0.lock().unwrap().never_joins = true;
@@ -360,6 +364,10 @@ impl crate::ec2::Ec2Api for FakeEc2 {
         let mut g = self.0.lock().unwrap();
         if !g.insts.iter().any(|i| i.id == id) {
             return Err(format!("{id} is not a managed instance"));
+        }
+        if g.unregistered_calls > 0 {
+            g.unregistered_calls -= 1;
+            return Err(format!("aws ssm SendCommand: InvalidInstanceId: {id}"));
         }
         g.scripts.push(script.to_string());
         Ok((0, "diagnostic output".into()))
