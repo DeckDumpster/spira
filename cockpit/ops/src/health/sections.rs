@@ -334,39 +334,85 @@ fn unread_row(label: &str, what: &str) -> String {
     format!(" {DIM}{label:<6}{RST} {BAD}{B}?{RST} {DIM}{what}{RST}")
 }
 
+/// One aeon as NOW reads it from the snapshot: the single source for the pane's rows and
+/// Loom's Aeons page.
+#[derive(Debug, Clone)]
+pub struct AeonRow {
+    pub name: String,
+    pub faith: String,
+    pub model: String,
+    pub bead: String,
+    pub title: String,
+    pub priority: String,
+    pub repo: String,
+    pub phase: String,
+    pub minutes: String,
+    pub turns: String,
+    pub ctx: String,
+    pub files: String,
+    pub lease: String,
+    pub quiet: String,
+    pub act: String,
+    pub said: String,
+    /// Trace moments, oldest first.
+    pub trail: Vec<String>,
+}
+
+pub fn aeon_row(snap: &Snapshot, i: usize, working: &[(String, String)]) -> AeonRow {
+    let g = |k: &str| snap.q(&format!("SP_AEON{i}_{k}")).to_string();
+    let o = |k: &str| snap.get(&format!("SP_AEON{i}_{k}")).unwrap_or("").to_string();
+    let md = g("MODEL");
+    let fm = g("FAYTH_MODEL");
+    let mut model = model_short(&md);
+    if md != "?" && md != "-" && fm != "?" && fm != "-" && md != fm {
+        model = format!("{model} \u{26a0}{}", model_short(&fm));
+    }
+    if o("MODEL_OVERRIDE") == "1" {
+        model.push_str(" (toml)");
+    }
+    let bead = g("BEAD");
+    let phase = working.iter().find(|(b, _)| *b == bead).map_or("?", |(_, p)| p.as_str()).to_string();
+    let mut trail = Vec::new();
+    while !o(&format!("ACT{}", trail.len())).is_empty() {
+        trail.push(o(&format!("ACT{}", trail.len())));
+    }
+    AeonRow {
+        name: g("NAME"),
+        faith: g("FAYTH"),
+        model,
+        bead,
+        title: o("TITLE"),
+        priority: g("PRI"),
+        repo: g("PARTITION"),
+        phase,
+        minutes: g("MIN"),
+        turns: g("TURNS"),
+        ctx: g("CTX"),
+        files: g("FILES"),
+        lease: g("LEASE"),
+        quiet: g("QUIET"),
+        act: o("ACT"),
+        said: o("SAID"),
+        trail,
+    }
+}
+
+/// Every aeon in the snapshot, in the order NOW draws them.
+pub fn aeon_rows(snap: &Snapshot, working: &[(String, String)]) -> Vec<AeonRow> {
+    let n: usize = snap.get("SP_AEON_N").and_then(|v| v.parse().ok()).unwrap_or(0);
+    (0..n).map(|i| aeon_row(snap, i, working)).collect()
+}
+
 /// One aeon's four rows for `now_section`. `lease` is `?` or minutes. Trailing moments
 /// (`SP_AEON{i}_ACT{j}`) are rendered newest-last when present; otherwise the single
 /// `SP_AEON{i}_ACT` plus `SP_AEON{i}_SAID` fall back to the original single-line shape.
 fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lines: i64, working: &[(String, String)]) -> Vec<String> {
-    let g = |k: &str| snap.q(&format!("SP_AEON{i}_{k}")).to_string();
-    let nm = g("NAME");
-    let fy = g("FAYTH");
-    let bd = g("BEAD");
-    let mn = g("MIN");
-    let ac = snap.get(&format!("SP_AEON{i}_ACT")).unwrap_or("").to_string();
-    let ti = snap.get(&format!("SP_AEON{i}_TITLE")).unwrap_or("").to_string();
-    let pr = g("PRI");
-    let pa = g("PARTITION");
-    let tn = g("TURNS");
-    let cx = g("CTX");
-    let md = g("MODEL");
-    let fm = g("FAYTH_MODEL");
-    let fl = g("FILES");
-    let qt = g("QUIET");
-    let sd = snap.get(&format!("SP_AEON{i}_SAID")).unwrap_or("").to_string();
-    let lease = g("LEASE");
-
-    let mut model_disp = model_short(&md);
-    if md != "?" && md != "-" && fm != "?" && fm != "-" && md != fm {
-        model_disp = format!("{model_disp} \u{26a0}{}", model_short(&fm));
-    }
-    if snap.get(&format!("SP_AEON{i}_MODEL_OVERRIDE")).unwrap_or("0") == "1" {
-        model_disp.push_str(" (toml)");
-    }
+    let r = aeon_row(snap, i, working);
+    let (nm, fy, bd, mn, ac, ti, pr, pa, tn, cx, fl, qt, sd, lease, phase, model_disp) =
+        (r.name, r.faith, r.bead, r.minutes, r.act, r.title, r.priority, r.repo, r.turns, r.ctx, r.files, r.quiet, r.said, r.lease, r.phase, r.model);
 
     let mut out = Vec::new();
     let label = if is_first { "NOW" } else { "   " };
-    let phase = working.iter().find(|(b, _)| *b == bd).map_or("?", |(_, p)| p.as_str());
     let tail = fit(
         &format!("the {fy} on {model_disp} \u{b7} {phase} \u{b7} {mn}m \u{b7} {tn} turns \u{b7} ctx {} \u{b7} {fl} files", tok(&cx)),
         cols - 9 - nm.chars().count() as i64,

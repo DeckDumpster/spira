@@ -4,6 +4,7 @@ use crate::stuck::esc;
 
 pub const SECTIONS: [(&str, &str, &str); 6] = [
     ("now", "Now", "/"),
+    ("aeons", "Aeons", "/aeons"),
     ("rounds", "Rounds", "/rounds"),
     ("stuck", "Stuck", "/stuck"),
     ("units", "Units", "/units"),

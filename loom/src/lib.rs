@@ -2,6 +2,7 @@
 //! `GET /api/ops` for the Spira ops dashboard, and `/units`, the per-unit run history. Every one reads the lifecycle read model or
 //! the collector's snapshot files; none reads `bd`.
 
+pub mod aeons;
 pub mod forge_rounds;
 pub mod now;
 pub mod ops;
@@ -467,6 +468,48 @@ async fn states_api_route(State(loom): State<Arc<Loom>>) -> Response {
         .expect("a response with a valid status and headers")
 }
 
+/// The `(bead, phase)` WORKING rows the pane reads, or why they could not be read.
+async fn working_rows(loom: &Loom) -> (Vec<(String, String)>, Option<String>) {
+    match lc_json(loom, &["list", "--state", "WORKING"]).await.and_then(|v| spira_config::lc_state::parse_rows(&v.to_string())) {
+        Ok(rows) => (rows.into_iter().map(|r| (r.bead_id, r.phase.unwrap_or_else(|| "?".into()))).collect(), None),
+        Err(e) => (Vec::new(), Some(format!("phases unknown: {e}"))),
+    }
+}
+
+async fn aeons_data(loom: &Loom) -> Result<(cockpit_ops::health::model::Snapshot, Vec<(String, String)>, Option<String>), String> {
+    let path = std::path::Path::new(&loom.config().run).join("cockpit.env");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let (working, note) = working_rows(loom).await;
+    Ok((cockpit_ops::health::model::Snapshot::parse(&text), working, note))
+}
+
+async fn aeons_page_route(State(loom): State<Arc<Loom>>) -> Response {
+    match aeons_data(&loom).await {
+        Ok((snap, working, note)) => {
+            let bar = lifecycle_snapshot(&loom).map_or_else(|_| shell::Bar::default(), |(s, _)| now::bar(Some(&s), now_s()));
+            html_response(StatusCode::OK, shell::with_bar(&aeons::render_page(&snap, &working, note.as_deref()), &bar))
+        }
+        Err(e) => unavailable("aeons view", &e),
+    }
+}
+
+async fn aeons_api_route(State(loom): State<Arc<Loom>>) -> Response {
+    let (status, body) = match aeons_data(&loom).await {
+        Ok((snap, working, note)) => {
+            let mut v = aeons::render_json(&snap, &working);
+            v["note"] = serde_json::json!(note);
+            (StatusCode::OK, v.to_string())
+        }
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, serde_json::json!({ "error": e }).to_string()),
+    };
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body.into())
+        .expect("a response with a valid status and headers")
+}
+
 async fn now_route(State(loom): State<Arc<Loom>>) -> Response {
     match lifecycle_snapshot(&loom) {
         Ok((snap, _)) => {
@@ -685,6 +728,8 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/rounds/spira/{id}/log", get(round_log_route))
         .route("/api/rounds/spira/{id}", get(round_api_route))
         .route("/api/ops", get(ops_route))
+        .route("/aeons", get(aeons_page_route))
+        .route("/api/aeons", get(aeons_api_route))
         .route("/", get(now_route))
         .route("/rounds/{repo}/{batch}", get(round_route))
         .with_state(loom)

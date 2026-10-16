@@ -486,7 +486,7 @@ async fn lifecycle_round_rows_are_links_and_a_vm_round_serves_its_log() {
 
 // ── Now and the shell ────────────────────────────────────────────────────────
 
-const FIVE: [&str; 6] = ["/", "/rounds", "/stuck", "/units", "/states", "/lifecycle"];
+const FIVE: [&str; 7] = ["/", "/aeons", "/rounds", "/stuck", "/units", "/states", "/lifecycle"];
 
 fn write_snapshot(run: &std::path::Path, snap: &cockpit_ops::lcview::Snapshot) {
     std::fs::create_dir_all(run.join("lcview")).unwrap();
@@ -555,10 +555,11 @@ async fn now_answers_from_cache_while_a_source_is_slow_and_says_it_is_loading() 
 }
 
 #[tokio::test]
-async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_all_five_sections_on_a_phone() {
+async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_every_section_on_a_phone() {
     let mut fx = units_fixture(&fixture_rows());
     fx.cfg.lc = fake_lc(&fx.dir.to_path_buf());
     write_snapshot(&PathBuf::from(&fx.cfg.run), &now_snapshot());
+    std::fs::write(PathBuf::from(&fx.cfg.run).join("cockpit.env"), "SP_AEON_N='0'\n").unwrap();
     let addr = spawn(fx.cfg.clone()).await;
     for path in FIVE.iter().chain(&["/beads/sp-2cah6", "/rounds/dumpstar/b-live1"]) {
         let (code, page) = get(addr, path).await;
@@ -852,4 +853,75 @@ async fn a_failing_lifecycle_read_serves_the_last_good_rounds_page_marked_stale(
     let (code, stale) = get(addr, "/rounds").await;
     assert_eq!(code, 200);
     assert!(stale.contains("r-auto-194") && stale.contains("last good read"), "{stale}");
+}
+
+
+const AEON_ENV: &str = "SP_AEON_N='2'
+SP_SLOTS_LIVE='2'
+SP_SLOTS_CEILING='4'
+SP_SLOTS_FREE='2'
+SP_SLOTS_POOL='4'
+SP_AEON0_NAME='tidus'
+SP_AEON0_FAYTH='guardian'
+SP_AEON0_BEAD='sp-aaa11'
+SP_AEON0_TITLE='first <b>title</b>'
+SP_AEON0_PRI='1'
+SP_AEON0_PARTITION='spira'
+SP_AEON0_MIN='17'
+SP_AEON0_TURNS='33'
+SP_AEON0_CTX='45000'
+SP_AEON0_MODEL='claude-sonnet-5-5'
+SP_AEON0_FAYTH_MODEL='claude-sonnet-5-5'
+SP_AEON0_FILES='3'
+SP_AEON0_QUIET='20'
+SP_AEON0_LEASE='9'
+SP_AEON0_ACT0='read lib.rs'
+SP_AEON0_ACT1='edit lib.rs'
+SP_AEON1_NAME='yuna'
+SP_AEON1_FAYTH='sift'
+SP_AEON1_BEAD='sp-bbb22'
+SP_AEON1_TITLE='second one'
+SP_AEON1_PRI='2'
+SP_AEON1_PARTITION='deckdump'
+SP_AEON1_MIN='4'
+SP_AEON1_TURNS='5'
+SP_AEON1_CTX='9000'
+SP_AEON1_MODEL='claude-opus-5-5'
+SP_AEON1_FAYTH_MODEL='claude-opus-5-5'
+SP_AEON1_FILES='0'
+SP_AEON1_QUIET='700'
+SP_AEON1_LEASE='2'
+SP_AEON1_ACT='running tests'
+";
+
+#[tokio::test]
+async fn the_aeons_page_shows_each_live_aeon_as_the_pane_renders_it() {
+    use cockpit_ops::health::{model::Snapshot, sections::now_section};
+    let dir = scratch("aeons");
+    let run = ops_run_dir();
+    std::fs::write(run.join("cockpit.env"), AEON_ENV).unwrap();
+    let lc = dir.join("spira-lc");
+    script(&lc, "#!/bin/sh\ncase \"$1 $2 $3\" in\n  \"list --state WORKING\") echo '[{\"bead_id\":\"sp-aaa11\",\"state\":\"WORKING\",\"aeon_phase\":\"session\"},{\"bead_id\":\"sp-bbb22\",\"state\":\"WORKING\",\"aeon_phase\":\"testing\"}]' ;;\n  *) exit 1 ;;\nesac\n");
+    let mut c = ops_cfg(run.to_str().unwrap());
+    c.lc = lc.to_string_lossy().into_owned();
+    let addr = spawn(c).await;
+
+    let working = vec![("sp-aaa11".to_string(), "session".to_string()), ("sp-bbb22".to_string(), "testing".to_string())];
+    let pane = loom::aeons::strip_ansi(&now_section(&Snapshot::parse(AEON_ENV), 200, Some(&working), 2).join("\n"));
+
+    let (code, page) = get(addr, "/aeons").await;
+    assert_eq!(code, 200, "{page}");
+    assert!(page.contains("SLOTS   2/4  2 free"), "{page}");
+    assert!(page.contains("first &lt;b&gt;title&lt;/b&gt;") && page.contains("<a class=id href=\"/beads/sp-aaa11\">"), "{page}");
+    assert!(page.contains("edit lib.rs") && page.contains("running tests"), "{page}");
+
+    let (code, api) = get(addr, "/api/aeons").await;
+    assert_eq!(code, 200, "{api}");
+    let v: Value = serde_json::from_str(&api).expect("json");
+    let list = v["aeons"].as_array().expect("aeons");
+    assert_eq!(list.len(), 2);
+    for (a, bead, phase, min) in [(&list[0], "sp-aaa11", "session", "17"), (&list[1], "sp-bbb22", "testing", "4")] {
+        assert_eq!((a["bead"].as_str(), a["phase"].as_str(), a["minutes"].as_str()), (Some(bead), Some(phase), Some(min)));
+        assert!(pane.contains(bead) && pane.contains(&format!("\u{b7} {phase} \u{b7} {min}m")), "pane row for {bead} in {pane}");
+    }
 }
