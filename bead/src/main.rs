@@ -1515,11 +1515,45 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
         return 0;
     }
 
+    if let Some(repo) = label.strip_prefix("repo:") {
+        if let Err(code) = mirror_repo(verb, &id, repo) {
+            return code;
+        }
+    }
+
     let rc = bdq_status(home, &s(&["label", verb, &id, &label]));
     if rc == 0 {
         println!("{verb}ed label: {id} {label}");
     }
     rc
+}
+
+/// Point the lifecycle row at the repo a `repo:` label names, before the label moves: claims,
+/// worktrees and rounds read the row, and a WORKING bead is refused by it.
+fn mirror_repo(verb: &str, id: &str, repo: &str) -> Result<(), i32> {
+    let mut args = vec!["30".to_string(), "spira-lc".into(), "set-repo".into(), id.to_string()];
+    if verb == "add" {
+        args.push(repo.to_string());
+    } else {
+        args.extend(["--clear".to_string(), "--only-if".into(), repo.to_string()]);
+    }
+    // batch-job: one point write, bounded by timeout(1)
+    let out = Command::new("timeout")
+        .args(&args)
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .stdin(Stdio::null())
+        .output();
+    match out {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) if o.status.code() == Some(1) => {
+            eprint!("bead: label {verb}: refusing — {}", String::from_utf8_lossy(&o.stdout));
+            Err(1)
+        }
+        _ => {
+            eprintln!("bead: label {verb}: the lifecycle row of {id} could not be updated; nothing changed. Retry, or `spira-lc set-repo {id} <repo>`");
+            Err(1)
+        }
+    }
 }
 
 const DROPPED_LABEL: &str = "spira-dropped";
