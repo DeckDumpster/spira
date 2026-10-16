@@ -10,9 +10,10 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write as _};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration};
@@ -73,6 +74,7 @@ pub struct Env {
     pub rebase_stale_bin: PathBuf,
     /// The `testenv` program (by name on the launcher's PATH): a forge repo's own declared tiers, run locally.
     pub testenv_bin: PathBuf,
+    pub checks_bin: PathBuf,
     /// The round's slot budget for concurrent attribution (DESIGN.md §4.2):
     /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
     pub round_slots: Option<u32>,
@@ -1463,6 +1465,11 @@ pub fn landing_ref_fault(env: &Env, repo: &Repo, base: &str) -> Option<(String, 
     Some((evidence, true))
 }
 
+/// The recorded fault of the landing ref's own tiers for `base`, if one was seen. Reads only.
+pub fn landing_ref_known_fault(env: &Env, repo: &Repo, base: &str) -> Option<(String, bool)> {
+    fs::read_to_string(local_fault_path(env, repo, base)).ok().map(|e| (e, false))
+}
+
 fn local_red_evidence(rc: Option<i32>, text: &str) -> String {
     let mut sites: Vec<&str> = text.lines().filter_map(|l| l.trim().strip_prefix("--> ")).collect();
     sites.dedup();
@@ -2426,21 +2433,74 @@ const LOCK_EX: i32 = 2;
 const LOCK_NB: i32 = 4;
 
 pub struct Lock {
-    _file: fs::File,
+    file: fs::File,
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = self.file.set_len(0);
+    }
+}
+
+fn lock_at(path: &Path, verb: &str) -> Result<Option<Lock>, String> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let f = fs::OpenOptions::new().create(true).write(true).truncate(false).open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if unsafe { flock(f.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
+        return Ok(None);
+    }
+    let _ = f.set_len(0);
+    let _ = (&f).write_all(format!("pid={} verb={verb}\n", std::process::id()).as_bytes());
+    Ok(Some(Lock { file: f }))
 }
 
 /// None means another operation already holds the lock — not an error, the caller should
-/// simply skip this pass, same as batch.sh's own `flock -n` behaviour.
+/// simply skip this pass, same as batch.sh's own `flock -n` behaviour. The holder is recorded
+/// in the lock file so a waiter can name it.
 pub fn try_lock(env: &Env, repo: &str) -> Result<Option<Lock>, String> {
-    let dir = env.queue_dir.join(repo);
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let path = dir.join("lock");
-    let f = fs::OpenOptions::new().create(true).write(true).truncate(false).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    if unsafe { flock(f.as_raw_fd(), LOCK_EX | LOCK_NB) } == 0 {
-        Ok(Some(Lock { _file: f }))
-    } else {
-        Ok(None)
+    lock_at(&env.queue_dir.join(repo).join("lock"), "batcher")
+}
+
+fn check_lock_path(env: &Env, repo: &Repo) -> PathBuf {
+    env.run.join("local-check-lock").join(&repo.name)
+}
+
+/// One local-tier check at a time per repo: the scheduled checks and a batcher pass both go through it.
+pub fn try_check_lock(env: &Env, repo: &Repo) -> Result<Option<Lock>, String> {
+    lock_at(&check_lock_path(env, repo), "forge local check")
+}
+
+/// A holder that is merely mid-fork elsewhere in this process releases within moments, so a short
+/// wait tells that from a check that is really running.
+pub fn wait_check_lock(env: &Env, repo: &Repo, wait_secs: u64) -> Result<Option<Lock>, String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(wait_secs);
+    loop {
+        if let Some(l) = try_check_lock(env, repo)? {
+            return Ok(Some(l));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// Starts the repo's local checks detached, unless one is already running. The pass never waits
+/// on it: it holds the queue lock, and a tier run takes as long as it takes.
+pub fn start_check(env: &Env, repo: &Repo) -> Result<bool, String> {
+    if try_check_lock(env, repo)?.is_none() {
+        return Ok(false);
+    }
+    let mut cmd = Command::new(&env.checks_bin);
+    cmd.args(["checks-forge", "--repo", &repo.name, "--home"]).arg(&env.home).arg("--run").arg(&env.run);
+    if let Some(db) = &env.db {
+        cmd.arg("--db").arg(db);
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.process_group(0);
+    cmd.spawn().map_err(|e| format!("{}: {e}", env.checks_bin.display()))?;
+    Ok(true)
 }
 
 /// Like `try_lock` but polls for up to `wait_secs`, for the hand path: a routine sweep's
@@ -3655,6 +3715,7 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         queue_bin: dir.join("queue"),
         rebase_stale_bin: dir.join("rebase-stale"),
         testenv_bin: dir.join("testenv"),
+        checks_bin: dir.join("checks"),
         round_slots: None,
         hypervisor: Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
         poll: std::time::Duration::from_secs(1),

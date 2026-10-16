@@ -189,6 +189,7 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         queue_bin: root.join("queue"),
         rebase_stale_bin: root.join("rebase-stale"),
         testenv_bin: root.join("testenv"),
+        checks_bin: root.join("checks"),
         round_slots: Some(4),
         hypervisor: crate::io::Hypervisor { host_mib: 0, round_vm_mib: 0, runner_mib: 0 },
         poll: std::time::Duration::from_secs(1),
