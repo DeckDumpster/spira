@@ -384,6 +384,7 @@ fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, String)], r: &mu
                 continue;
             }
             let _ = ctx.systemctl.disable_now(u);
+            let _ = fs::remove_dir_all(ctx.unit_dir.join(format!("{u}.d")));
             match fs::remove_file(ctx.unit_dir.join(u)) {
                 Ok(()) => r.retired.push(u.to_string()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => r.retired.push(u.to_string()),
@@ -592,6 +593,32 @@ mod tests {
         let ledger = fs::read_to_string(unit_dir.join(LEDGER)).unwrap();
         assert!(ledger.contains("spira-sentinel-prod.timer") && !ledger.contains("beads-push"));
         assert!(run(&ctx).retired.is_empty());
+    }
+
+    #[test]
+    fn an_upgrade_removes_a_retired_round_template_unit_and_its_dropin() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(unit_dir.join("spira-round-template-prod.service.d")).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        fs::write(unit_dir.join("spira-round-template-prod.service"), "x").unwrap();
+        fs::write(unit_dir.join("spira-round-template-prod.timer"), "x").unwrap();
+        fs::write(unit_dir.join("spira-round-template-prod.service.d/retired.conf"), "[Unit]\n").unwrap();
+        fs::write(unit_dir.join(LEDGER), "spira-round-template-prod.service\nspira-round-template-prod.timer\n").unwrap();
+
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.retired.contains(&"spira-round-template-prod.timer".to_string()), "{:?}", r.retired);
+        assert!(!unit_dir.join("spira-round-template-prod.service").exists());
+        assert!(!unit_dir.join("spira-round-template-prod.timer").exists());
+        assert!(!unit_dir.join("spira-round-template-prod.service.d").exists());
+        assert!(sc.disabled_now.borrow().contains(&"spira-round-template-prod.timer".to_string()));
     }
 
     #[test]
