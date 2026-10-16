@@ -375,6 +375,10 @@ pub struct Item {
     pub state: String,
     pub persona: String,
     pub rework: bool,
+    #[serde(default)]
+    pub repo: String,
+    #[serde(default)]
+    pub holds: Vec<String>,
     /// The aeon's last output lines, how old, and ok|warn|bad|none.
     pub out: Vec<String>,
     pub out_age: String,
@@ -1092,6 +1096,8 @@ pub fn view(s: &Snapshot) -> View {
         state: r.state.clone(),
         persona: r.persona.clone().filter(|p| !p.is_empty()).unwrap_or_else(|| "—".into()),
         rework: r.rework,
+        repo: r.repo.clone(),
+        holds: r.holds.clone(),
         ..Default::default()
     };
 
