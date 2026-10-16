@@ -105,6 +105,7 @@ pub struct Ec2Config {
 }
 
 const LAUNCH_CONFIRM_TRIES: u32 = 3;
+const SSM_REGISTER_TRIES: u32 = 90;
 
 /// The ordered launch candidates: the list key if it names any, else the single key, else the default.
 pub fn instance_types(list: &str, single: &str) -> Vec<String> {
@@ -302,7 +303,17 @@ impl<A: Ec2Api> Ec2<A> {
 
     fn script(&self, handle: &str, script: &str) -> Result<(i32, String), String> {
         let i = self.inst(handle)?;
-        self.api.ssm(&i.id, script)
+        let mut last = String::new();
+        for n in 0..SSM_REGISTER_TRIES {
+            match self.api.ssm(&i.id, script) {
+                Err(e) if e.contains("InvalidInstanceId") => last = e,
+                other => return other,
+            }
+            if n + 1 < SSM_REGISTER_TRIES {
+                std::thread::sleep(self.confirm_poll);
+            }
+        }
+        Err(format!("{} never registered with SSM after {SSM_REGISTER_TRIES} tries: {last}", i.id))
     }
 }
 
@@ -897,6 +908,19 @@ mod tests {
         let denied = "aws ec2: An error occurred (UnauthorizedOperation) when calling the RunInstances operation: not authorized";
         assert_eq!(dry_run_verdict(Err(denied.into())).unwrap_err(), denied);
         assert!(dry_run_verdict(Ok("i-1".into())).unwrap_err().contains("launched instance i-1"));
+    }
+
+    #[test]
+    fn ssm_retries_invalid_instance_id_until_registered_then_gives_up() {
+        let d = TempDir::new();
+        let fake = FakeEc2::default();
+        let p = Ec2::new(fake.clone(), &config(&d)).unwrap();
+        p.clone_to("h1", "n1").unwrap();
+        fake.ssm_unregistered_for(5);
+        assert_eq!(p.guest_exec("h1", &["true"]).unwrap(), 0);
+        fake.ssm_unregistered_for(SSM_REGISTER_TRIES + 1);
+        let e = p.guest_exec("h1", &["true"]).unwrap_err();
+        assert!(e.contains("never registered with SSM") && e.contains("InvalidInstanceId"), "{e}");
     }
 
     #[test]
