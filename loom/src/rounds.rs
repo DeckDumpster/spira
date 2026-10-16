@@ -153,7 +153,7 @@ fn squash(id: &str) -> String {
 
 /// The pass logs of a round, oldest first: named by a pass head, by the batch id, or
 /// `cert-<batch id without dashes>`, or a re-certification `cert-auto-<batch id>[-suffix]`.
-pub fn pass_logs(run: &str, batch: &str, heads: &[String]) -> Vec<PathBuf> {
+pub fn pass_logs(run: &str, batch: &str, heads: &[String], own: &str) -> Vec<PathBuf> {
     let squashed = squash(batch);
     let mut found: Vec<(SystemTime, PathBuf)> = std::fs::read_dir(results_dir(run))
         .into_iter()
@@ -175,6 +175,12 @@ pub fn pass_logs(run: &str, batch: &str, heads: &[String]) -> Vec<PathBuf> {
             hit.then(|| (e.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH), path))
         })
         .collect();
+    let own = Path::new(own);
+    if !own.as_os_str().is_empty() && own.extension().is_some() && !found.iter().any(|(_, p)| p == own) {
+        if let Ok(modified) = std::fs::metadata(own).and_then(|m| m.modified()) {
+            found.push((modified, own.to_path_buf()));
+        }
+    }
     found.sort();
     found.into_iter().map(|(_, p)| p).collect()
 }
@@ -464,6 +470,18 @@ pub fn detail_json(d: &Detail) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rounds_own_recorded_log_is_a_pass_log_even_when_vm_results_has_none() {
+        let dir = testkit::TempDir::new("loom-own-log");
+        let own = dir.join("elsewhere").join("r-own.log");
+        std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+        std::fs::write(&own, "round-vm: x\n").unwrap();
+        let run = dir.to_string_lossy().into_owned();
+        assert!(pass_logs(&run, "r-own", &[], "").is_empty(), "positive control: no recorded log, none found");
+        assert_eq!(pass_logs(&run, "r-own", &[], &own.to_string_lossy()), vec![own.clone()]);
+        assert!(pass_logs(&run, "r-own", &[], &dir.join("gone.log").to_string_lossy()).is_empty());
+    }
 
     const RED: &str = "round-vm: EC2 instance type c7i.8xlarge for ec2-x\n\
 \x20\x20test-ops-read-model.sh           ok      22s\n\
