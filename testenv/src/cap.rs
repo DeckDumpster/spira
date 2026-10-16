@@ -29,6 +29,12 @@ thread_local! {
     pub static OBSERVE_CAP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Ignores the per-thread opt-in: for a fake that stands in for a process outside the run.
+#[cfg(test)]
+pub fn tripped_anywhere() -> bool {
+    TRIPPED.load(Ordering::SeqCst)
+}
+
 #[cfg(not(test))]
 pub fn tripped() -> bool {
     TRIPPED.load(Ordering::SeqCst)

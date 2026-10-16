@@ -1168,7 +1168,7 @@ pub mod fake {
             let tier = req.name.rsplit('-').next().unwrap_or("").to_string();
             if self.once_hang.lock().unwrap().contains(&tier) {
                 let end = Instant::now() + Duration::from_secs(20);
-                while !crate::runtime::cancelled() && Instant::now() < end {
+                while !crate::cap::tripped_anywhere() && Instant::now() < end {
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 return ExecOutcome { rc: crate::runtime::RC_CANCELLED, output: String::new() };
