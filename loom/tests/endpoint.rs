@@ -670,6 +670,24 @@ async fn a_failing_broker_says_ci_detail_is_unavailable_and_still_serves_the_mem
     assert_eq!(code, 404);
 }
 
+#[tokio::test]
+async fn a_cold_batch_page_answers_inside_the_budget_while_a_slow_broker_fetches_behind_it() {
+    let run = ops_run_dir();
+    let p = PathBuf::from(run.to_path_buf());
+    batch_files(&p, "dumpstar", "66", "20261015T000000Z", "red", "9001", "gate / svelte-check");
+    let slow = p.join("slow-broker");
+    script(&slow, "#!/bin/sh\nsleep 2\ncat <<'EOF'\n{\"run\":{\"id\":9001,\"url\":\"https://github.com/o/dumpstar/actions/runs/9001\",\"status\":\"completed\",\"conclusion\":\"failure\"},\"jobs\":[]}\nEOF\n");
+    let mut cfg = ops_cfg(&run.to_string_lossy());
+    cfg.broker = slow.to_string_lossy().into_owned();
+    let addr = spawn(cfg).await;
+    let (code, page) = get(addr, "/rounds/dumpstar/20261015T000000Z").await;
+    assert_eq!(code, 200);
+    assert!(page.contains("CI detail loading") && page.contains("sp-aaa"), "{page}");
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let (_, page) = get(addr, "/rounds/dumpstar/20261015T000000Z").await;
+    assert!(page.contains("actions/runs/9001") && !page.contains("loading"), "{page}");
+}
+
 // ── /rounds ──────────────────────────────────────────────────────────────────
 
 fn fixture_log(name: &str) -> String {

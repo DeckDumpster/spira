@@ -161,33 +161,82 @@ pub struct Ci {
 pub enum CiView {
     Fresh(Ci),
     Stale(Ci, String),
+    Refreshing(Ci),
+    Loading,
     Unavailable(String),
     NoRun,
 }
 
+/// How long a page waits on the broker before answering with what it holds; the fetch keeps going behind it.
+pub const CI_WAIT: Duration = Duration::from_millis(250);
+
 #[derive(Default)]
-pub struct Cache(Mutex<HashMap<(String, String), Arc<Ci>>>);
+struct Entry {
+    ci: Option<Arc<Ci>>,
+    err: Option<String>,
+    fetching: bool,
+}
+
+#[derive(Default, Clone)]
+pub struct Cache(Arc<Mutex<HashMap<(String, String), Entry>>>);
 
 impl Cache {
-    pub async fn ci(&self, b: &Batch, fetch: impl std::future::Future<Output = Result<Value, String>>) -> CiView {
+    pub async fn ci(&self, b: &Batch, fetch: impl std::future::Future<Output = Result<Value, String>> + Send + 'static) -> CiView {
         if b.run.is_empty() {
             return CiView::NoRun;
         }
         let key = (b.repo.clone(), b.key.clone());
-        let held = self.0.lock().await.get(&key).cloned();
-        if let Some(c) = held.as_ref().filter(|c| c.taken.elapsed() < CI_TTL) {
-            return CiView::Fresh((**c).clone());
-        }
-        match fetch.await {
-            Ok(json) => {
-                let c = Ci { json, taken: Instant::now() };
-                self.0.lock().await.insert(key, Arc::new(c.clone()));
-                CiView::Fresh(c)
+        let rx = {
+            let mut map = self.0.lock().await;
+            let e = map.entry(key.clone()).or_default();
+            if let Some(c) = e.ci.as_ref().filter(|c| c.taken.elapsed() < CI_TTL) {
+                return CiView::Fresh((**c).clone());
             }
-            Err(e) => match held {
-                Some(c) => CiView::Stale((*c).clone(), e),
-                None => CiView::Unavailable(e),
-            },
+            if e.fetching {
+                None
+            } else {
+                e.fetching = true;
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let cache = self.0.clone();
+                let key = key.clone();
+                tokio::spawn(async move {
+                    let res = fetch.await;
+                    let mut map = cache.lock().await;
+                    let e = map.entry(key).or_default();
+                    e.fetching = false;
+                    match &res {
+                        Ok(json) => {
+                            e.ci = Some(Arc::new(Ci { json: json.clone(), taken: Instant::now() }));
+                            e.err = None;
+                        }
+                        Err(err) => e.err = Some(err.clone()),
+                    }
+                    let _ = tx.send(res);
+                });
+                Some(rx)
+            }
+        };
+        if let Some(rx) = rx {
+            if let Ok(Ok(res)) = tokio::time::timeout(CI_WAIT, rx).await {
+                return match res {
+                    Ok(json) => CiView::Fresh(Ci { json, taken: Instant::now() }),
+                    Err(e) => self.fallback(&key, Some(e)).await,
+                };
+            }
+        }
+        self.fallback(&key, None).await
+    }
+
+    async fn fallback(&self, key: &(String, String), err: Option<String>) -> CiView {
+        let map = self.0.lock().await;
+        let e = map.get(key);
+        let held = e.and_then(|e| e.ci.clone());
+        let err = err.or_else(|| e.and_then(|e| e.err.clone()));
+        match (held, err) {
+            (Some(c), Some(err)) => CiView::Stale((*c).clone(), err),
+            (Some(c), None) => CiView::Refreshing((*c).clone()),
+            (None, Some(err)) => CiView::Unavailable(err),
+            (None, None) => CiView::Loading,
         }
     }
 }
@@ -201,7 +250,7 @@ pub fn render_detail(now: i64, b: &Batch, ci: &CiView, forge_base: &str) -> Stri
     let (cls, label) = badge(b);
     let sv = |v: &Value| v.as_str().unwrap_or("").to_string();
     let json = match ci {
-        CiView::Fresh(c) | CiView::Stale(c, _) => Some(&c.json),
+        CiView::Fresh(c) | CiView::Stale(c, _) | CiView::Refreshing(c) => Some(&c.json),
         _ => None,
     };
     let run_url = json.map(|j| sv(&j["run"]["url"])).unwrap_or_default();
@@ -226,8 +275,12 @@ pub fn render_detail(now: i64, b: &Batch, ci: &CiView, forge_base: &str) -> Stri
     h.push_str("<h2>CI</h2>");
     match ci {
         CiView::NoRun => h.push_str("<div class=card><span class=dim>no CI run recorded for this batch — the verdict above is the local check's</span></div>"),
+        CiView::Loading => h.push_str("<div class=card><span class=amber>CI detail loading — reload in a few seconds</span></div>"),
         CiView::Unavailable(e) => h.push_str(&format!("<div class=card><span class=red>CI detail unavailable:</span> {}</div>", esc(e))),
-        CiView::Fresh(c) | CiView::Stale(c, _) => {
+        CiView::Fresh(c) | CiView::Stale(c, _) | CiView::Refreshing(c) => {
+            if let CiView::Refreshing(c) = ci {
+                h.push_str(&format!("<div class=card><span class=amber>fetched {} ago, refreshing</span></div>", dur(c.taken.elapsed().as_secs() as i64)));
+            }
             if let CiView::Stale(c, e) = ci {
                 h.push_str(&format!("<div class=card><span class=amber>stale — fetched {} ago, refresh failed:</span> {}</div>", dur(c.taken.elapsed().as_secs() as i64), esc(e)));
             }
