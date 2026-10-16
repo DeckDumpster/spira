@@ -149,6 +149,7 @@ pub fn remove_run_dir(run: &Path) -> bool {
     if !run.exists() {
         return true;
     }
+    // batch-job: removing a multi-gigabyte run directory takes as long as its size
     let _ = std::process::Command::new("podman").args(["unshare", "rm", "-rf"]).arg(run).status();
     !run.exists()
 }
