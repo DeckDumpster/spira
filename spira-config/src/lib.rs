@@ -35,6 +35,7 @@ pub mod legacy_map;
 pub mod lc_state;
 pub mod lifecycle_row;
 pub mod local_pass;
+pub mod escalation;
 pub mod locate;
 pub mod nonwork;
 pub mod process;
@@ -492,6 +493,10 @@ pub struct PersonaSection {
     #[serde(default)]
     pub lease: Option<Lease>,
     pub system_prompt: Option<SystemPromptMode>,
+    /// The model a bead's claim runs on once it has been rejected twice (`escalation`); unset, the
+    /// persona has no stronger model and its claims keep `model`.
+    #[serde(default)]
+    pub escalation_model: Option<String>,
 }
 
 /// The JSON Schema for [`SpiraToml`], generated from the same types `validate` deserializes

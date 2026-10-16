@@ -508,6 +508,7 @@ pub fn persona_section(
             lane,
             lease,
             system_prompt,
+            escalation_model: None,
         },
     )
 }

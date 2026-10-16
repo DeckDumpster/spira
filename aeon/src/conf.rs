@@ -268,6 +268,13 @@ pub fn persona_model(name: &str, spec: &str) -> Result<String, String> {
         .ok_or_else(|| format!("persona.{name}.model is not declared in {spec}"))
 }
 
+/// `persona.<name>.escalation_model`: the model a twice-rejected bead's claim runs on; `None`
+/// when the persona declares none (its claims then keep the persona's own model).
+pub fn persona_escalation_model(name: &str, spec: &str) -> Option<String> {
+    let doc = spira_config::load(Path::new(&spec)).ok()?;
+    doc.persona.get(name)?.escalation_model.clone().filter(|m| !m.is_empty())
+}
+
 /// Where the harness's `spira/` directory is (DESIGN.md §2.1).
 pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>, exe: Option<&Path>) -> Option<PathBuf> {
     let ok = |p: &Path| p.join("lib.sh").is_file() && p.join("chamber").is_dir();

@@ -65,6 +65,9 @@ pub trait World {
     /// The checks a red ejection names, kept where `work submit` reads them back
     /// (`spira_config::proof`). Best-effort like the sidecar.
     fn record_failing(&mut self, id: &str, suites: &str);
+    /// Append the rejection's detail as a fact (the tip is filled in from the row); best-effort,
+    /// because the count itself is read from the `reopen` facts every path writes.
+    fn record_rejection(&mut self, id: &str, rejection: &spira_config::escalation::Rejection);
     /// The machine's return-to-rework (`spira-lc reopen`): the lifecycle row records the
     /// event its state implies and the bead is claimable again. A bead with no row has no
     /// state to diverge and is `Ok`; a terminal row is refused.
@@ -101,6 +104,7 @@ pub const FAILURE_REASON: &str = "the lifecycle machine refused the reopen, or b
 pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
     let mut rc = 0;
     let exempt = admission_exempt(&o.cause);
+    let rejected = !exempt && crate::events::classify(&o.cause) == crate::events::ReturnClass::Judged;
 
     if !o.suites.is_empty() {
         w.write_ejected(&o.id, &o.suites);
@@ -116,6 +120,10 @@ pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
     }
 
     // A deliberate conversion carries the bead's row forward untouched.
+    if rejected {
+        w.record_rejection(&o.id, &spira_config::escalation::Rejection::new(&o.cause, &o.suites, "", &o.note));
+    }
+
     if !exempt && w.lc_reopen(&o.id, &o.cause).is_err() {
         rc = 1;
     }

@@ -33,6 +33,7 @@ lanes = ["plan"]
 
 [persona.builder]
 model = "claude-sonnet-5"
+escalation_model = "claude-opus-5-5"
 tools = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "TodoWrite"]
 labels = ["myproject", "plan"]
 system_prompt = "append"

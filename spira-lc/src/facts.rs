@@ -11,13 +11,13 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 /// Closed: a kind outside this list is refused, so a typo cannot start a new history.
-pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "blind-rework", "__doctor_probe__"];
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "blind-rework", "rejection", "escalated", "__doctor_probe__"];
 
 pub const MACHINE: &str = "fact";
 pub const CAUSE_MAX: usize = 200;
 pub const READ_MAX: usize = 120;
 /// Kinds whose cause is a multi-line digest rather than a one-line token.
-pub const LONG_KINDS: &[&str] = &["fast-tier-red"];
+pub const LONG_KINDS: &[&str] = &["fast-tier-red", "rejection"];
 pub const LONG_MAX: usize = 6000;
 
 fn flag(args: &[String], name: &str) -> Option<String> {
