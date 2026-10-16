@@ -1,0 +1,9 @@
+TYPE=u64
+GROUP=testenv
+DOC=Wall-clock cap, in seconds, on any testenv run that has no --deadline
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Wall-clock cap, in seconds, on a testenv run with no --deadline (batch-head local checks,
+    # aeon runs). At the cap testenv kills its containers and exits FAULT reason=over-cap naming
+    # what was running; the testenv-cap watcher kills a run that outlives it by the grace.
+    : "${SPIRA_TESTENV_SUITE_CAP:=900}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=testenv
+DOC=Wall-clock cap, in seconds, on a testenv run that carries --deadline (a gate tier)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Wall-clock cap, in seconds, on a testenv run that carries --deadline (the gate's tiers).
+    # The run's own deadline cuts its suites first; this cap is the hard stop behind it.
+    : "${SPIRA_TESTENV_GATE_CAP:=300}"
+SPIRA_CONF_DEFAULT_EOF

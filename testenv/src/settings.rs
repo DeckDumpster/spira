@@ -40,6 +40,8 @@ pub struct Settings {
     pub repeat_reason: Option<String>,
     /// 0 disables.
     pub suite_timeout: u64,
+    pub suite_cap: u64,
+    pub gate_cap: u64,
     pub maxpar_requested: Option<i64>,
     /// Set when SPIRA_BATCH_MAXPAR (declared in spira.toml) was given but is not usable:
     /// zero, negative, or not a whole number. Absent is never folded in here — only a given,
@@ -154,6 +156,8 @@ impl Settings {
             quarantine_max_age: cfg_parse("SPIRA_QUARANTINE_MAX_AGE")?,
             repeat_reason: src.get("SPIRA_VERDICT_REPEAT_CONSIDERED"),
             suite_timeout: cfg_parse("SPIRA_SUITE_TIMEOUT")?,
+            suite_cap: cfg_parse("SPIRA_TESTENV_SUITE_CAP")?,
+            gate_cap: cfg_parse("SPIRA_TESTENV_GATE_CAP")?,
             maxpar_requested,
             maxpar_refusal,
             maxpar_ceiling: optional_num("SPIRA_BATCH_MAXPAR_CEILING", &cfg("SPIRA_BATCH_MAXPAR_CEILING")?)?,
