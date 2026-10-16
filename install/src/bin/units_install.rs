@@ -309,6 +309,9 @@ fn main() -> ExitCode {
     for u in &report.retired {
         println!("retired   {u} (a previous release installed it; this one does not ship it)");
     }
+    for u in &report.drift {
+        println!("drift     {u} (on this box, not shipped by this release, not installed by Spira's ledger; left in place)");
+    }
     for u in &report.written {
         println!("installed {u}");
     }
