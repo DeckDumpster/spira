@@ -114,14 +114,17 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             hold(m, &at(0), &at(1), &cause, &actor_or(pos.get(actor_ix), "sentinel"))
         }
         "unhold" => {
-            if !need(2) {
-                return usage("unhold <bead-id> <kind> [actor]");
+            let (pos, glass) = match unhold_flags(args) {
+                Ok(x) => x,
+                Err(a) => return a,
+            };
+            if pos.len() < 2 || pos[..2].iter().any(|s| s.is_empty()) {
+                return usage("unhold <bead-id> <kind> [actor] [--reason <why> --evidence <checks run on the tip> --evidence-tip <tip>]\n  lifting the manual hold on a REWORK bead whose tip a gate or round ejected as red is break-glass: it needs all three flags");
             }
-            let kind = a(1);
-            let actor = actor_or(args.get(2), "sentinel");
-            with_row(m, &a(0), &actor, |_| match HoldKind::from_str(&kind) {
-                Some(k) => Ok(BeadEventKind::Unhold { kind: k }),
-                None => Err(unknown_kind(&kind)),
+            let actor = actor_or(pos.get(2), "sentinel");
+            with_row(m, &pos[0], &actor, |_| match HoldKind::from_str(&pos[1]) {
+                Some(k) => Ok(BeadEventKind::Unhold { kind: k, break_glass: glass }),
+                None => Err(unknown_kind(&pos[1])),
             })
         }
         "reply" => {
@@ -267,6 +270,28 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
 
 /// The reason prefix the bead-sweep reads as a manual hold's review date.
 const REVIEW_BY_PREFIX: &str = "review-by:";
+
+/// Split `--reason` / `--evidence` / `--evidence-tip` out of an unhold's argv.
+fn unhold_flags(args: &[String]) -> Result<(Vec<String>, BreakGlass), Answer> {
+    let (mut pos, mut glass) = (Vec::new(), BreakGlass::default());
+    let mut it = args.iter();
+    while let Some(x) = it.next() {
+        match x.as_str() {
+            "--reason" | "--evidence" | "--evidence-tip" => {
+                let Some(v) = it.next().filter(|v| !v.is_empty()) else {
+                    return Err(usage(&format!("unhold: {x} needs a value")));
+                };
+                match x.as_str() {
+                    "--reason" => glass.reason = v.clone(),
+                    "--evidence" => glass.evidence = v.clone(),
+                    _ => glass.evidence_tip = v.clone(),
+                }
+            }
+            _ => pos.push(x.clone()),
+        }
+    }
+    Ok((pos, glass))
+}
 
 type HoldArgs = (Vec<String>, Option<String>, Option<String>);
 
