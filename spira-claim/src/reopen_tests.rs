@@ -35,6 +35,9 @@ impl World for Fake {
     fn write_ejected(&mut self, id: &str, suites: &str) {
         self.log(format!("write_ejected {id} {suites}"));
     }
+    fn record_failing(&mut self, id: &str, suites: &str) {
+        self.log(format!("record_failing {id} {suites}"));
+    }
     fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String> {
         self.log(format!("lc_reopen {id} {cause}"));
         if self.reopen_fails {
@@ -310,6 +313,7 @@ fn a_refused_stop_leaves_the_bead_working() {
     struct Stuck(Fake);
     impl World for Stuck {
         fn write_ejected(&mut self, i: &str, s: &str) { self.0.write_ejected(i, s) }
+        fn record_failing(&mut self, i: &str, s: &str) { self.0.record_failing(i, s) }
         fn lc_reopen(&mut self, i: &str, c: &str) -> Result<(), String> { self.0.lc_reopen(i, c) }
         fn stop_holder(&mut self, _: &str, _: &str) -> Result<(), String> { Err("still running".into()) }
         fn write_reopen_event(&mut self, i: &str, c: &str) { self.0.write_reopen_event(i, c) }
@@ -332,4 +336,16 @@ fn the_stop_comes_before_the_state_leaves_working() {
     let mut w = Fake::default();
     assert_eq!(run(&opts("sp-a", "work-close-converted"), &mut w), 0);
     assert!(!w.has("stop_holder sp-a work-close-converted"), "a conversion is the holder's own hand-off");
+}
+
+#[test]
+fn only_a_red_ejection_records_failing_checks() {
+    let red = Opts { id: "sp-a".into(), cause: "eject-red".into(), note: String::new(), suites: "test-x.sh,test-y.sh".into() };
+    let mut w = Fake::default();
+    assert_eq!(run(&red, &mut w), 0);
+    assert!(w.has("record_failing sp-a test-x.sh,test-y.sh"), "{:?}", w.calls.borrow());
+    let plain = Opts { cause: "eject".into(), ..red };
+    let mut w = Fake::default();
+    assert_eq!(run(&plain, &mut w), 0);
+    assert!(!w.calls.borrow().iter().any(|c| c.starts_with("record_failing")), "a harness eject judges nothing");
 }

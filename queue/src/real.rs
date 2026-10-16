@@ -609,6 +609,9 @@ impl Scripts for RealScripts {
         }
         run_combined(c.arg(tip).arg(repo))
     }
+    fn suite_run(&self, check: &str, tip: &str, repo: &str) -> (i32, String) {
+        run_combined(Command::new("testenv").args(["--suites", check, tip, repo]))
+    }
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
         run_combined(
             Command::new("gate.sh")

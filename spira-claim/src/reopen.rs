@@ -62,6 +62,9 @@ pub trait World {
     /// The `$SPIRA_RUN/ejected/<id>` sidecar the gate reads unconditionally — best-effort
     /// (bash: `printf ... && mv -f ... || true`).
     fn write_ejected(&mut self, id: &str, suites: &str);
+    /// The checks a red ejection names, kept where `work submit` reads them back
+    /// (`spira_config::proof`). Best-effort like the sidecar.
+    fn record_failing(&mut self, id: &str, suites: &str);
     /// The machine's return-to-rework (`spira-lc reopen`): the lifecycle row records the
     /// event its state implies and the bead is claimable again. A bead with no row has no
     /// state to diverge and is `Ok`; a terminal row is refused.
@@ -101,6 +104,9 @@ pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
 
     if !o.suites.is_empty() {
         w.write_ejected(&o.id, &o.suites);
+        if o.cause == RED_CAUSE {
+            w.record_failing(&o.id, &o.suites);
+        }
     }
 
     // A deliberate conversion is the holder's own hand-off; every other reopen is the
@@ -122,6 +128,9 @@ pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
 
     rc
 }
+
+/// The reopen cause of a red ejection; only it names failing checks that a resubmit must prove.
+pub const RED_CAUSE: &str = "eject-red";
 
 /// How long a harness release waits for the holder to exit after asking it to stop.
 pub const STOP_WAIT_S: u64 = 120;

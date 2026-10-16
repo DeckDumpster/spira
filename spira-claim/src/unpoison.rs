@@ -581,6 +581,11 @@ impl crate::reopen::World for Live {
         }
     }
 
+    fn record_failing(&mut self, id: &str, suites: &str) {
+        let checks: Vec<String> = suites.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
+        let _ = spira_config::proof::record_failing(&self.run_dir, id, &checks);
+    }
+
     fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String> {
         self.store.lc_reopen(id, cause, &self.beads_actor)
     }
