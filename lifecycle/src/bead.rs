@@ -272,7 +272,7 @@ pub enum BeadEventKind {
     /// split as `gate_red`'s `tip` versus its `reason`). It becomes the row's own `reason`
     /// display when given, falling back to the category's own name otherwise.
     Hold { kind: HoldKind, cause: HoldCause, #[serde(default)] detail: Option<String> },
-    Unhold { kind: HoldKind },
+    Unhold { kind: HoldKind, #[serde(default, skip_serializing_if = "BreakGlass::is_empty")] break_glass: BreakGlass },
     /// Machine-emitted (design §1), same transaction as the prerequisite's backwards move,
     /// for every dependent whose `stack` names `(prereq, tip)`. Per-state outcomes: READY
     /// re-applies the wait hold; WORKING/IN_DELIVERY/REWORK record it in `reason` and stay
@@ -327,6 +327,10 @@ pub struct BreakGlass {
 }
 
 impl BreakGlass {
+    pub fn is_empty(&self) -> bool {
+        *self == BreakGlass::default()
+    }
+
     /// The first missing or contradicted field of a move admitting `tip` as `actor`, by name.
     pub fn gap(&self, actor: &str, tip: &str) -> Option<String> {
         if actor.trim().is_empty() {
@@ -606,15 +610,25 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             new.version += 1;
             Outcome::applied(new)
         }
-        BeadEventKind::Unhold { kind } => {
+        BeadEventKind::Unhold { kind, break_glass } => {
             if row.state.is_terminal() {
                 return terminal(row);
             }
             if *kind == HoldKind::Ask {
                 return awaiting_reply(row, &ev.kind);
             }
+            let gate_hold = *kind == HoldKind::Manual && row.state == BeadState::Rework && row.ejected_red_tip.is_some() && row.ejected_red_tip == row.tip;
+            if gate_hold {
+                let tip = row.tip.clone().unwrap_or_default();
+                if let Some(missing) = break_glass.gap(&ev.actor, &tip) {
+                    return Outcome::refuse(row.clone(), Refusal::BreakGlassIncomplete { missing });
+                }
+            }
             let mut new = row.clone();
             new.holds.remove(kind);
+            if gate_hold {
+                new.reason = Some(break_glass.stamp(&ev.actor, row.tip.as_deref().unwrap_or_default()));
+            }
             new.version += 1;
             Outcome::applied(new)
         }
@@ -1306,7 +1320,7 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::Supersede { by: "sp-2".into() },
         BeadEventKind::Drop { reason: DropReason::Unwanted },
         BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None },
-        BeadEventKind::Unhold { kind: HoldKind::Poison },
+        BeadEventKind::Unhold { kind: HoldKind::Poison, break_glass: BreakGlass::default() },
         BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "t1".into() },
         BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
         BeadEventKind::Renew { lease_until: 2 },
@@ -1415,7 +1429,7 @@ mod tests {
             BeadEventKind::Supersede { by: "sp-2".into() },
             BeadEventKind::Drop { reason: DropReason::Unwanted },
             BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None },
-            BeadEventKind::Unhold { kind: HoldKind::Poison },
+            BeadEventKind::Unhold { kind: HoldKind::Poison, break_glass: BreakGlass::default() },
             BeadEventKind::Renew { lease_until: 2 },
         ]
     }
@@ -1597,6 +1611,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn unholding_a_gate_hold_by_hand_is_break_glass_and_other_unholds_are_not() {
+        let tip = "2222222222222222222222222222222222222222";
+        let mut gate = row(BeadState::Rework);
+        gate.holds.insert(HoldKind::Manual);
+        gate.tip = Some(tip.into());
+        gate.ejected_red_tip = Some(tip.into());
+        let unhold = |g: BreakGlass| BeadEventKind::Unhold { kind: HoldKind::Manual, break_glass: g };
+        let cases: [(BreakGlass, &str, &str); 4] = [
+            (BreakGlass { reason: String::new(), ..bg(tip) }, "concierge", "reason"),
+            (BreakGlass { evidence: " ".into(), ..bg(tip) }, "concierge", "evidence ("),
+            (bg("3333333333333333333333333333333333333333"), "concierge", "evidence tip"),
+            (bg(tip), "", "actor"),
+        ];
+        for (g, actor, field) in &cases {
+            let mut e = ev(BeadState::Rework, 0, unhold(g.clone()));
+            e.actor = actor.to_string();
+            let out = apply(&gate, &e);
+            assert!(!out.applied && matches!(&out.refusal, Some(Refusal::BreakGlassIncomplete { missing }) if missing.contains(field)), "{field}: {:?}", out.refusal);
+        }
+        let bare = apply(&gate, &ev(BeadState::Rework, 0, unhold(BreakGlass::default())));
+        assert!(!bare.applied, "an automated unhold of a gate hold is refused");
+
+        let out = apply(&gate, &ev(BeadState::Rework, 0, unhold(bg(tip))));
+        assert!(out.applied, "{:?}", out.refusal);
+        assert!(out.row.holds.is_empty());
+        let stamp = out.row.reason.unwrap_or_default();
+        assert!(stamp.contains("break_glass=true") && stamp.contains("npm test 101/0") && stamp.contains(tip), "{stamp}");
+
+        let mut other_tip = gate.clone();
+        other_tip.ejected_red_tip = Some("3333333333333333333333333333333333333333".into());
+        assert!(apply(&other_tip, &ev(BeadState::Rework, 0, unhold(BreakGlass::default()))).applied, "a hold on a tip no round ejected is not a gate hold");
+        let mut ready = row(BeadState::Ready);
+        ready.holds.insert(HoldKind::Manual);
+        assert!(apply(&ready, &ev(BeadState::Ready, 0, unhold(BreakGlass::default()))).applied);
+        let wire = serde_json::to_string(&unhold(BreakGlass::default())).unwrap();
+        assert_eq!(wire, r#"{"Unhold":{"kind":"Manual"}}"#);
     }
 
     #[test]
@@ -1802,7 +1855,7 @@ mod tests {
         assert_eq!(out.row.state, BeadState::Submitted);
         assert!(out.row.holds.contains(&HoldKind::Ask));
 
-        let out2 = apply(&out.row, &ev(BeadState::Submitted, out.row.version, BeadEventKind::Unhold { kind: HoldKind::Wait }));
+        let out2 = apply(&out.row, &ev(BeadState::Submitted, out.row.version, BeadEventKind::Unhold { kind: HoldKind::Wait, break_glass: BreakGlass::default() }));
         assert!(out2.applied);
         assert_eq!(out2.row.state, BeadState::Submitted);
         assert!(out2.row.holds.contains(&HoldKind::Ask));
@@ -1822,7 +1875,7 @@ mod tests {
             BeadEventKind::Drop { reason: DropReason::Unwanted },
             BeadEventKind::Supersede { by: "sp-2".into() },
             BeadEventKind::ContentOnBase { proof: "p".into() },
-            BeadEventKind::Unhold { kind: HoldKind::Ask },
+            BeadEventKind::Unhold { kind: HoldKind::Ask, break_glass: BreakGlass::default() },
         ] {
             let out = apply(&r, &ev(BeadState::Working, 0, kind.clone()));
             assert!(!out.applied, "{kind:?}");

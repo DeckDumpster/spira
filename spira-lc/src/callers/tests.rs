@@ -647,6 +647,24 @@ fn retip_moves_ready_and_held_rework_beads_to_submitted_and_refuses_a_working_on
 }
 
 #[test]
+fn unholding_a_red_rework_bead_by_hand_needs_provenance() {
+    let mut f = Fake::default();
+    let tip = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+    let r = f.bead("sp-g", BeadState::Rework);
+    r.tip = Some(tip.into());
+    r.ejected_red_tip = Some(tip.into());
+    r.holds.insert(HoldKind::Manual);
+    let a = go(&mut f, "unhold", &["sp-g", "manual", "concierge"]);
+    assert!(a.code != APPLIED && f.beads["sp-g"].holds.contains(&HoldKind::Manual), "{}", a.stderr);
+    let a = go(&mut f, "unhold", &["sp-g", "manual", "concierge", "--reason", "hand-mended", "--evidence", "npm test 101/0", "--evidence-tip", "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"]);
+    assert!(a.code != APPLIED && f.beads["sp-g"].holds.contains(&HoldKind::Manual), "{}", a.stderr);
+    let a = go(&mut f, "unhold", &["sp-g", "manual", "concierge", "--reason", "hand-mended", "--evidence", "npm test 101/0", "--evidence-tip", tip]);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert!(f.beads["sp-g"].holds.is_empty());
+    assert!(f.beads["sp-g"].reason.as_deref().unwrap_or("").contains("break_glass=true"));
+}
+
+#[test]
 fn retip_refuses_without_provenance_naming_the_missing_field() {
     let mut f = Fake::default();
     f.bead("sp-r", BeadState::Ready);

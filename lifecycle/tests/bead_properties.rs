@@ -25,7 +25,7 @@ fn kind() -> impl Strategy<Value = BeadEventKind> {
         Just(BeadEventKind::Supersede { by: "sp-2".into() }),
         Just(BeadEventKind::Drop { reason: DropReason::Unwanted }),
         Just(BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None }),
-        Just(BeadEventKind::Unhold { kind: HoldKind::Poison }),
+        Just(BeadEventKind::Unhold { kind: HoldKind::Poison, break_glass: Default::default() }),
         Just(BeadEventKind::Reply { message_id: "m".into() }),
         Just(BeadEventKind::AskWithdrawn),
         Just(BeadEventKind::Renew { lease_until: 2 }),
