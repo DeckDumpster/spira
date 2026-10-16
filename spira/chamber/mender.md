@@ -20,6 +20,15 @@ body names the failure spec (`spec: <path>`); every verb below takes that path a
 4. If it is a mend, do it (below), then record the outcome. Every outcome is
    `work mender outcome <spec> <kind>` with the diagnosis on stdin.
 
+## A conflict mend
+
+A summons whose body names a branch that does not merge onto the landing ref has no `spec:`
+line and no round: rebase that branch onto the landing ref, resolve each conflict so the bead's
+intent is kept, run `cargo test -p <crate>` for what you touched and the suites that reference
+touched non-Rust files through `{{TESTENV}}`, and push the resolved tip to the branch. A conflict
+where the two sides disagree about behaviour is not yours: leave the branch alone and say why.
+Sift returns the bead to REWORK when the hold on the mend runs out.
+
 ## What you may ask for
 
 Only through these verbs, never by reading files: `work mender bead <id>` (any bead's whole

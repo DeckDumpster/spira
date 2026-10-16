@@ -938,7 +938,7 @@ fn summon_forge_mender(w: &World, c: &Ctx, b: &Batch, faulty: &[(Member, Vec<Str
     }
     let suite = step.split(|ch: char| !ch.is_ascii_alphanumeric()).filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-").to_ascii_lowercase();
     let suite = if suite.is_empty() { "forge-step".to_string() } else { suite };
-    if super::round::forge_failed(w, batch_id, &suite).is_err() {
+    if super::round::forge_failed(w, batch_id, &b.head, &suite).is_err() {
         return;
     }
     let evidence: String = faulty.iter().map(|(m, lines)| format!("Member {} (tip {}):\n{}", m.id, m.tip, lines.join("\n"))).collect::<Vec<_>>().join("\n\n");
