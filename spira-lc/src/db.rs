@@ -551,7 +551,7 @@ impl Conn {
     ) -> Result<bool, DbError> {
         let script = format!(
             "START TRANSACTION;\n\
-             UPDATE {table} SET {set_clause} WHERE {key_column} = {key_q} AND version = {old_version};\n\
+             UPDATE {table} SET {set_clause} WHERE {guard};\n\
              INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at)\n\
              SELECT {machine}, {lc_key}, {event}, {expect}, {from_state},\n\
                     IF(ROW_COUNT() = 1, {to_state}, {from_state}),\n\
@@ -561,9 +561,7 @@ impl Conn {
              SELECT applied FROM event WHERE seq = LAST_INSERT_ID();\n\
              COMMIT;\n",
             table = table,
-            key_column = key_column,
-            key_q = sql_str(key),
-            old_version = old_version,
+            guard = cas_guard(key_column, key, old_version, &ev.from_state),
             set_clause = set_clause,
             machine = sql_str(&ev.machine),
             lc_key = sql_str(&ev.key),
@@ -710,7 +708,7 @@ impl Conn {
         script.push_str(preamble);
         for step in steps {
             script.push_str(&format!(
-                "UPDATE {table} SET {set_clause} WHERE {key_column} = {key_q} AND version = {old_version};\n\
+                "UPDATE {table} SET {set_clause} WHERE {guard};\n\
                  INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at)\n\
                  SELECT {machine}, {lc_key}, {event}, {expect}, {from_state},\n\
                         IF(ROW_COUNT() = 1, {to_state}, {from_state}),\n\
@@ -719,9 +717,7 @@ impl Conn {
                         {evidence}, {actor}, {at};\n\
                  SELECT applied FROM event WHERE seq = LAST_INSERT_ID();\n",
                 table = step.table,
-                key_column = step.key_column,
-                key_q = sql_str(&step.key),
-                old_version = step.old_version,
+                guard = cas_guard(step.key_column, &step.key, step.old_version, &step.event.from_state),
                 set_clause = step.set_clause,
                 machine = sql_str(&step.event.machine),
                 lc_key = sql_str(&step.event.key),
@@ -944,6 +940,24 @@ pub(crate) fn password_from(
     match file.filter(|p| !p.is_empty()) {
         Some(path) => Ok(read(&path).map_err(|e| format!("reading {path}: {e}"))?.trim().to_string()),
         None => Ok(password.unwrap_or_default()),
+    }
+}
+
+/// The row must still be at the version AND in the state the transition was computed from;
+/// either moving makes the update touch nothing and the event log as refused.
+fn cas_guard(key_column: &str, key: &str, old_version: u64, from_state: &str) -> String {
+    format!("{key_column} = {} AND version = {old_version} AND state = {}", sql_str(key), sql_str(from_state))
+}
+
+#[cfg(test)]
+mod cas_guard_tests {
+    use super::cas_guard;
+
+    #[test]
+    fn a_transition_is_guarded_on_the_state_it_was_computed_from() {
+        let g = cas_guard("bead_id", "sp-a", 7, "SUBMITTED");
+        assert_eq!(g, "bead_id = 'sp-a' AND version = 7 AND state = 'SUBMITTED'");
+        assert!(!cas_guard("bead_id", "sp-a", 7, "IN_DELIVERY").contains("'SUBMITTED'"), "positive control: the state is the argument");
     }
 }
 
