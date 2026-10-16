@@ -2492,6 +2492,7 @@ pub fn start_check(env: &Env, repo: &Repo) -> Result<bool, String> {
     if try_check_lock(env, repo)?.is_none() {
         return Ok(false);
     }
+    // batch-job: detached tier run lasts as long as the tiers do
     let mut cmd = Command::new(&env.checks_bin);
     cmd.args(["checks-forge", "--repo", &repo.name, "--home"]).arg(&env.home).arg("--run").arg(&env.run);
     if let Some(db) = &env.db {
