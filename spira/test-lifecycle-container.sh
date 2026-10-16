@@ -191,6 +191,9 @@ is "pane-facets refuses a store whose metadata names no database (exit 2)" "2" "
 root_sql sql -q "INSERT INTO spira.issues (id, title, priority, issue_type, status, defer_until, created_at, updated_at, closed_at, description, notes, external_ref) VALUES ('sp-row-a','a',1,'task','open',NULL,NOW(),NOW(),NULL,'the body','the notes','basefail:rr:t.sh'),('sp-row-b','b',1,'task','open',NULL,NOW(),NOW(),NULL,NULL,NULL,NULL),('sp-row-bug','c',0,'bug','open',NULL,NOW(),NOW(),NULL,NULL,NULL,NULL),('sp-row-ev','e',2,'event','open',NULL,NOW(),NOW(),NULL,NULL,NULL,NULL),('sp-row-old','o',2,'task','closed',NULL,NOW() - INTERVAL 3 DAY,NOW(),NOW() - INTERVAL 2 DAY,NULL,NULL,NULL); INSERT INTO spira.labels (issue_id, label) VALUES ('sp-row-a','repo:known'),('sp-row-b','repo:stray'),('sp-row-bug','incident'); INSERT INTO spira.dependencies (id, issue_id, type, depends_on_issue_id) VALUES ('d1','sp-row-a','blocks','sp-row-b'); INSERT INTO spira.dependencies (id, issue_id, type, depends_on_external) VALUES ('d2','sp-row-a','blocks','ext:x')" >/dev/null 2>&1
 out="$("$BIN" content-rows --ids sp-row-a 2>&1)"
 want "content-rows reads depends_on_issue_id (beads' real column)" '"depends_on_id":"sp-row-b"' "$out"
+"$BIN" dep-add sp-row-bug sp-row-b >/dev/null 2>&1
+out="$("$BIN" content-rows --ids sp-row-bug 2>&1)"
+want "content-rows carries an edge written only by dep-add, so a claim sees it" '"depends_on_id":"sp-row-b"' "$out"
 out_full="$("$BIN" content-rows --full --ids sp-row-a 2>&1)"
 want "content-rows --full carries the description" '"description":"the body"' "$out_full"
 want "content-rows --full carries the notes" '"notes":"the notes"' "$out_full"
