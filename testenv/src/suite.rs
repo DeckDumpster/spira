@@ -8,6 +8,10 @@ use std::collections::BTreeMap;
 pub struct SuiteHeaders {
     /// `# requires: a, b` — tokens checked with `command -v` inside the container.
     pub requires: Vec<String>,
+    /// `# host-requires: cmd py:module` — what the machine running testenv must have, checked
+    /// by `testenv preflight` before anything is built.
+    #[serde(default)]
+    pub host_requires: Vec<String>,
     /// `# exclusive: <reason>` — drains the pool and runs alone.
     pub exclusive: Option<String>,
     /// `# tier: T0..T4`, empty when undeclared.
@@ -78,6 +82,12 @@ impl SuiteHeaders {
             let v = header_value(l, "testdb-mode")?;
             v.split(|c: char| !c.is_ascii_alphanumeric()).next()
         }
+        h.host_requires = text
+            .lines()
+            .take_while(|l| !l.starts_with("set -"))
+            .find_map(|l| header_value(l, "host-requires"))
+            .map(|v| v.replace(',', " ").split_whitespace().map(str::to_string).collect())
+            .unwrap_or_default();
         h.pids = text
             .lines()
             .take_while(|l| !l.starts_with("set -"))
@@ -236,6 +246,13 @@ mod tests {
             h.checkable_requires().collect::<Vec<_>>(),
             vec!["jq", "dolt"]
         );
+    }
+
+    #[test]
+    fn host_requires_is_read_before_set_and_is_not_requires() {
+        let h = SuiteHeaders::parse("# host-requires: jq, py:jwt\n# requires: dolt\nset -u\n# host-requires: late\n");
+        assert_eq!(h.host_requires, vec!["jq", "py:jwt"]);
+        assert_eq!(h.requires, vec!["dolt"]);
     }
 
     #[test]

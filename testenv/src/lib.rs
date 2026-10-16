@@ -12,6 +12,7 @@ pub mod landed;
 pub mod lint;
 pub mod phase;
 pub mod plan;
+pub mod preflight;
 pub mod prebuilt;
 pub mod reap;
 pub mod record;

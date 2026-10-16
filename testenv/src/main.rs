@@ -98,6 +98,11 @@ fn main() -> ExitCode {
         let rc = testenv::lint::main(&args[1..], &run, &|n| registry.root(n).map(std::path::PathBuf::from));
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
+    // `testenv preflight --suites <list>` — the selected suites' host dependencies, before any build.
+    if args.first().map(String::as_str) == Some("preflight") {
+        let rc = testenv::preflight::main(&args[1..]);
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
     // `testenv status [--json] <results-dir>` — a run's recorded phases, suites and verdict.
     if args.first().map(String::as_str) == Some("status") {
         let rc = testenv::phase::main(&args[1..]);
