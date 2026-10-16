@@ -228,6 +228,18 @@ fn abandon_returns_the_members_and_closes_the_round() {
 }
 
 #[test]
+fn abandon_of_a_batch_the_lifecycle_already_abandoned_drops_the_record() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta", "--name", "hand-1"]), 0, "{}", t.err());
+    t.lc.batch_states.borrow_mut().insert("hand-1".into(), ("ABANDONED".into(), "9".into()));
+    assert_eq!(t.run(&["round", "status"]), 0, "{}", t.err());
+    assert!(t.out().contains("round=none"), "{}", t.out());
+    assert_eq!(t.run(&["round", "abandon", "hand-1", "--reason", "retry"]), 0, "{}", t.err());
+    assert!(!t.qfile("round").exists() && !marker(&t, "hand-1", "running").exists());
+    assert!(fs::read_to_string(marker(&t, "hand-1", "result")).unwrap().starts_with("abandoned: retry"));
+}
+
+#[test]
 fn abandon_requeues_a_member_the_batch_abandon_left_in_delivery() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-1"]), 0, "{}", t.err());
