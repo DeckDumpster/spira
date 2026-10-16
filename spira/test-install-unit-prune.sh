@@ -154,7 +154,7 @@ prune_log="$(cat "$SCTL_LOG")"
 iszero "prune: install.sh exits 0 when pruning an orphan" "$prune_rc"
 want   "prune: disable called on orphan"            "disable" "$prune_log"
 want   "prune: orphan unit named in disable call"   "$ORPHAN_UNIT" "$prune_log"
-want   "prune: output says 'pruned'"                "pruned" "$prune_out"
+want   "prune: output says 'retired'"               "retired" "$prune_out"
 want   "prune: orphan unit named in prune output"   "$ORPHAN_UNIT" "$prune_out"
 
 _post="$(systemctl --user is-enabled "$ORPHAN_UNIT" 2>/dev/null || true)"
