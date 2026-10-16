@@ -1,0 +1,11 @@
+# no-download-install: files that predate the rule and still fetch software with
+# curl/wget piped into an interpreter or unpacker. One repo-relative path per line; blank
+# lines and `#` comments are ignored. Read by spira-lint's no-download-install rule.
+#
+# SHRINK-ONLY. A line leaves when the file installs from a pinned manifest instead.
+.github/workflows/acceptance.yml
+round-vm/ami-setup.sh
+round-vm/src/template.sh
+spira/build-aerc.sh
+spira/build-bd.sh
+spira/testenv/Containerfile
