@@ -317,6 +317,35 @@ want "lifecycle: as the service user, its credential file kept" "user=spira_lc p
 
 want "lifecycle: backfills the mirrored titles after the migrations" "backfill-titles" "$(cat "$TMP/lc-argv")"
 
+# Only migrations new or changed since the live release (the sibling releases/current) are
+# probed: that release passed this check against this store before it went live, and a data
+# correction's probe scans its whole table (0019 outgrew the timeout and refused every landing).
+LIVEDIR="$TMP/releases"; mkdir -p "$LIVEDIR"
+mkrel "$LIVEDIR/live"; mkdir -p "$LIVEDIR/live/lifecycle/migrations"
+printf 'SELECT 1;\n' > "$LIVEDIR/live/lifecycle/migrations/0001-a.sql"
+printf 'SELECT 2;\n' > "$LIVEDIR/live/lifecycle/migrations/0002-b.sql"
+ln -sfn "$LIVEDIR/live" "$LIVEDIR/current"
+REL="$LIVEDIR/next"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
+cp "$LIVEDIR/live/lifecycle/migrations/"*.sql "$REL/lifecycle/migrations/"
+cat > "$REL/bin/spira-lc" <<EOF2
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP/lc-argv"
+echo "admin-migrate: applied"
+exit 0
+EOF2
+chmod +x "$REL/bin/spira-lc"
+rm -f "$TMP/lc-argv"; run "$REL"
+is     "lifecycle, unchanged from live: exit 0" 0 "$rc"
+want   "lifecycle, unchanged from live: says why nothing was probed" "ok   lifecycle (every migration carried unchanged from the live release live" "$out"
+nowant "lifecycle, unchanged from live: admin-migrate not called" "admin-migrate" "$(cat "$TMP/lc-argv")"
+want   "lifecycle, unchanged from live: backfills still run" "backfill-titles" "$(cat "$TMP/lc-argv")"
+printf 'SELECT 3;\n' > "$REL/lifecycle/migrations/0002-b.sql"
+printf 'SELECT 4;\n' > "$REL/lifecycle/migrations/0003-c.sql"
+rm -f "$TMP/lc-argv"; run "$REL"
+is     "lifecycle, changed and new: exit 0" 0 "$rc"
+want   "lifecycle, changed and new: exactly those are passed" "admin-migrate $REL/lifecycle/migrations/0002-b.sql $REL/lifecycle/migrations/0003-c.sql" "$(cat "$TMP/lc-argv")"
+nowant "lifecycle, changed and new: the unchanged one is not" "0001-a.sql" "$(cat "$TMP/lc-argv")"
+
 REL="$TMP/rel-lc-bad"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
 printf '#!/usr/bin/env bash\necho "admin-migrate: 0003-x.sql FAILED" >&2\nexit 2\n' > "$REL/bin/spira-lc"
 chmod +x "$REL/bin/spira-lc"
