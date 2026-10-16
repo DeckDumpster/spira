@@ -1461,12 +1461,13 @@ fn the_pr_pass_records_a_merged_pr_whose_bead_never_left_the_builder() {
 }
 
 #[test]
-fn the_batcher_switch_holds_the_pr_walk() {
+fn the_forge_switch_holds_the_pr_walk_and_the_local_switch_does_not() {
     let mut h = H::new(LandMode::Pr);
     h.closed("sp-done", "t1");
     h.tools.forge_pr_create_n.set(Some(1));
     let tools = FakePr::default();
     let files = Files::new(&h.s.run);
+    h.s.batcher_forge_enable = false;
     h.s.batcher_enable = false;
     let walk = |h: &H| {
         PrPass {
@@ -1486,8 +1487,8 @@ fn the_batcher_switch_holds_the_pr_walk() {
     };
     assert_eq!(walk(&h), (0, 0));
     assert!(!h.lib.has("rebase"), "{:?}", h.lib.calls.borrow());
-    assert!(h.logged("SPIRA_BATCHER_ENABLE=0"));
-    h.s.batcher_enable = true;
+    assert!(h.logged("SPIRA_BATCHER_FORGE_ENABLE=0"));
+    h.s.batcher_forge_enable = true;
     assert_eq!(walk(&h), (1, 1), "the same branch is walked once the switch is on");
     assert!(h.lib.has("rebase spira/sp-done"));
 }

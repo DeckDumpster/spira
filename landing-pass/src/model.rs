@@ -100,8 +100,10 @@ pub struct Settings {
     /// `SPIRA_PR_REFRESH_MAX` (default 5): how many times the pr pass rebases and re-pushes
     /// an open pull request before escalating (sp-t4y60, `needs_refresh`).
     pub pr_refresh_max: u32,
-    /// `SPIRA_BATCHER_ENABLE` is not `0`: the operator's switch for cutting by hand holds the pr pass too.
+    /// `SPIRA_BATCHER_ENABLE` is not `0`: the operator cuts local rounds by hand.
     pub batcher_enable: bool,
+    /// `SPIRA_BATCHER_FORGE_ENABLE` is not `0`: the forge switch, which alone holds the pr walk.
+    pub batcher_forge_enable: bool,
     /// The config document conf.sh resolved (`SPIRA_TOML_FILE`).
     pub toml: Option<PathBuf>,
     /// `SPIRA_ASK_LABEL` (sp-31hjr): the label an operator ask carries — `ask_already_open`'s
@@ -165,6 +167,7 @@ impl Settings {
             bdjson_fixture: None,
             pr_refresh_max: 5,
             batcher_enable: true,
+            batcher_forge_enable: true,
             toml: None,
             ask_label: String::new(),
             noverdict_max: 3,

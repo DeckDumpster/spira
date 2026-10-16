@@ -149,6 +149,52 @@ pub fn gather_stalled(reg: &spira_config::repos::Registry, now: i64, cfg: &Cfg) 
     Some(out)
 }
 
+/// Beads CERTIFIED for longer than `stall_secs` in a pr-mode repo with no PR_OPEN delivery:
+/// the landing pass never opened their pull request. Pure over its inputs.
+pub fn unopened(
+    certified: &[lc::BeadRow],
+    open_ids: &[String],
+    repo_of: &dyn Fn(&str) -> Option<String>,
+    is_pr: &dyn Fn(&str) -> bool,
+    now: i64,
+    stall_secs: i64,
+) -> Vec<(String, String, i64)> {
+    certified
+        .iter()
+        .filter(|b| !open_ids.contains(&b.id))
+        .filter_map(|b| {
+            let age = now - b.since?;
+            if age < stall_secs {
+                return None;
+            }
+            let repo = repo_of(&b.id)?;
+            is_pr(&repo).then(|| (b.id.clone(), repo, age))
+        })
+        .collect()
+}
+
+fn escalate_unopened(reg: &spira_config::repos::Registry, now: i64, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
+    let (Some(certified), Some(open)) = (lc::beads_in("CERTIFIED"), lc::pr_open()) else { return };
+    let open_ids: Vec<String> = open.into_iter().map(|r| r.id).collect();
+    let repo_of = |id: &str| {
+        let refname = format!("refs/heads/spira/{id}");
+        reg.all().into_iter().find(|n| reg.root(n).map(|r| crate::git::ref_exists(Some(&r), &refname)).unwrap_or(false))
+    };
+    let is_pr = |repo: &str| reg.land(repo) == "pr";
+    for (id, repo, age) in unopened(&certified, &open_ids, &repo_of, &is_pr, now, (30 * 60).min(cfg.stall_secs)) {
+        let body = format!(
+            "PR stall: bead {id} in pr-mode repo {repo} has been CERTIFIED for {} minutes and no pull request is open.\n\nThe landing pass opens it; check that its walk is not held (SPIRA_BATCHER_FORGE_ENABLE) and that the branch exists in the repository checkout.\n",
+            age / 60
+        );
+        let f = Finding::new(db, home_repo, &format!("PR STALL: {id} in {repo} is certified with no pull request"), &body)
+            .priority(1)
+            .reference(format!("incident:pr-stall-unopened:{repo}:{id}"))
+            .cause("pr-stall-unopened");
+        incident::alarm(incident_sh, &f);
+        log(&format!("watchtower: pr-stall-check: {id} in {repo} certified {age}s with no pull request — escalated"));
+    }
+}
+
 pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
     if !incident::is_usable(incident_sh) {
         log(&format!(
@@ -158,6 +204,7 @@ pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &
         return;
     }
     let reg = seams::registry(spira_home);
+    escalate_unopened(&reg, now, db, home_repo, incident_sh, cfg);
     let Some(stalled) = gather_stalled(&reg, now, cfg) else {
         log("watchtower: pr-stall-check skipped — spira-lc is unreachable");
         return;
@@ -315,6 +362,16 @@ mod tests {
         assert_eq!(parse_bool("null\n"), None);
         assert_eq!(parse_bool(""), None);
         assert_eq!(parse_bool("true\n"), Some(true));
+    }
+
+    #[test]
+    fn a_certified_bead_with_no_pull_request_is_a_stall_only_in_a_pr_repo() {
+        let row = |id: &str, since| lc::BeadRow { id: id.into(), tip: "t".into(), since: Some(since) };
+        let certified = [row("sp-old", 0), row("sp-new", 3000), row("sp-open", 0), row("sp-q", 0)];
+        let repo_of = |id: &str| Some(if id == "sp-q" { "qrepo" } else { "prrepo" }.to_string());
+        let is_pr = |r: &str| r == "prrepo";
+        let got = unopened(&certified, &["sp-open".to_string()], &repo_of, &is_pr, 3600, 1800);
+        assert_eq!(got, vec![("sp-old".to_string(), "prrepo".to_string(), 3600)]);
     }
 
     #[test]

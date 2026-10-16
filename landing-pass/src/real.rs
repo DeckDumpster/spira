@@ -188,6 +188,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         bdjson_fixture: path_opt("bdjson_fixture"),
         pr_refresh_max: num("pr_refresh_max", 5).max(0) as u32,
         batcher_enable: kv.get("batcher_enable").map(|v| v.trim() != "0").unwrap_or(true),
+        batcher_forge_enable: kv.get("batcher_forge_enable").map(|v| v.trim() != "0").unwrap_or(true),
         toml: path_opt("toml"),
         // Empty only when conf.sh itself did not run (a stand-in lib.sh in a unit test);
         // in production conf.sh always sets SPIRA_ASK_LABEL before this seam reads it, so
