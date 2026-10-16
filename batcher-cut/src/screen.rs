@@ -27,7 +27,12 @@ impl Acts for Live<'_> {
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         io::lc_supersede(self.env, id, keeper)
     }
-    fn mend(&mut self, id: &str, tip: &str, files: &[String]) -> Result<String, String> {
+    fn mend(&mut self, id: &str, tip: &str, files: &[String], prior: Option<&str>) -> Result<String, String> {
+        if let Some(open) = prior.filter(|p| io::bead_open(self.env, p)) {
+            let note = format!("Bead {id} has a new tip {tip}, still not merging onto {}. Conflicting files: {}. This mend now stands for that tip.", self.repo.base, files.join(", "));
+            io::bead_note(self.env, open, &note)?;
+            return Ok(open.to_string());
+        }
         io::file_conflict_mend(self.env, self.repo, id, tip, files)
     }
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {

@@ -2403,6 +2403,14 @@ fn bead_id(out: &str) -> Result<String, String> {
     v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("bead.sh file: no id in output: {out}"))
 }
 
+/// Whether `id` is still open; a bead that cannot be read counts as closed, so a fresh one is filed.
+pub fn bead_open(env: &Env, id: &str) -> bool {
+    bd_show(env, &[id.to_string()])
+        .ok()
+        .and_then(|v| v.as_array().and_then(|a| a.first().cloned()))
+        .is_some_and(|b| !spira_config::nonwork::row_closed(spira_config::nonwork::Kind::Hold, &b))
+}
+
 /// File the mender's bead for a branch that does not merge onto the landing ref; returns its id.
 pub fn file_conflict_mend(env: &Env, repo: &Repo, id: &str, tip: &str, files: &[String]) -> Result<String, String> {
     let title = format!("mend {id}: does not merge onto {}", repo.base);
