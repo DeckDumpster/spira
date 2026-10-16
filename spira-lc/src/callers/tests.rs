@@ -1109,6 +1109,8 @@ fn reconcile_content_closes_the_store_bead_of_every_terminal_state_and_only_thos
         let state = f.state(id);
         assert!(reason.contains(&format!("the lifecycle row is {state}")), "{id}: {reason}");
     }
+    let done = &b.closed.iter().find(|(i, _)| i == "sp-done").unwrap().1;
+    assert!(done.contains("done-without-landing") && !done.starts_with("OUTCOME: done\n"), "{done}");
     assert!(f.events.is_empty(), "the row is never written");
     for (id, _) in &b.closed {
         f.content.insert(id.clone(), "closed".into());
