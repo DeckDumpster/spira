@@ -215,7 +215,22 @@ pub fn render(template_name: &str, text: &str, rel: &Path, host: &BTreeMap<Strin
         }
         host.get(k).cloned()
     };
-    render_from_lookup(template_name, text, lookup, watcher, instance)
+    render_from_lookup(template_name, text, lookup, watcher, instance).map(|out| pin_documentation(&out, rel))
+}
+
+/// `Documentation=` lines name the release by its `current` link, not its sha: they are the one
+/// per-release difference in a unit whose behaviour did not change.
+fn pin_documentation(text: &str, rel: &Path) -> String {
+    let Some(parent) = rel.parent() else { return text.to_string() };
+    let (from, to) = (rel.display().to_string(), parent.join("current").display().to_string());
+    let mut out: String = text.lines().map(|l| if l.starts_with("Documentation=") { l.replace(&from, &to) } else { l.to_string() }).collect::<Vec<_>>().join("\n");
+    out.push('\n');
+    out
+}
+
+/// A unit's text without its `Documentation=` lines: what decides whether it changed.
+pub fn without_documentation(text: &str) -> String {
+    text.lines().filter(|l| !l.starts_with("Documentation=")).map(|l| format!("{l}\n")).collect()
 }
 
 /// The shared core of [`render`] and of `install`'s general-purpose renderer (which has no

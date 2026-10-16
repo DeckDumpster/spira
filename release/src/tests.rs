@@ -2307,3 +2307,16 @@ fn systemd_timespans_parse_into_a_start_budget() {
     assert_eq!(parse_timespan("infinity"), None);
     assert_eq!(crate::systemctl::budget_from_show("RestartUSec=5s\nTimeoutStartUSec=15min\n"), Some(Duration::from_secs(905)));
 }
+
+#[test]
+fn a_documentation_line_names_current_so_two_releases_render_one_unit() {
+    let text = "[Unit]\nDocumentation=file://@SPIRA_HOME@/README.md\n[Service]\nExecStart=@SPIRA_RELEASE@/bin/x\n";
+    let host = BTreeMap::new();
+    let a = units::render("x.service", text, Path::new("/r/spira-releases/aaa"), &host, None, "prod").unwrap();
+    let b = units::render("x.service", text, Path::new("/r/spira-releases/bbb"), &host, None, "prod").unwrap();
+    assert!(a.contains("Documentation=file:///r/spira-releases/current/spira/README.md\n"), "{a}");
+    assert!(a.contains("ExecStart=/r/spira-releases/aaa/bin/x"), "Exec lines still name the sha: {a}");
+    assert_eq!(units::without_documentation(&a).replace("aaa", "R"), units::without_documentation(&b).replace("bbb", "R"));
+    let stale = a.replace("current", "0ldsha");
+    assert_eq!(units::without_documentation(&stale), units::without_documentation(&a), "a Documentation-only difference is not a change");
+}

@@ -246,7 +246,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
         };
         let path = cfg.unit_dir.join(&m.installed);
         let old = fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        if units::normalize(&old) != new {
+        if units::without_documentation(&old) != units::without_documentation(&new) {
             changes.push(Change { unit: m.installed, path, old, new });
         }
     }

@@ -196,7 +196,7 @@ pub fn run(ctx: &Ctx) -> Report {
             }
         }
         match fs::read_to_string(&dest) {
-            Ok(installed) if installed == *text => r.unchanged += 1,
+            Ok(installed) if release::units::without_documentation(&installed) == release::units::without_documentation(text) => r.unchanged += 1,
             existing => {
                 if existing.is_err() {
                     new_units.insert(inst.clone());
