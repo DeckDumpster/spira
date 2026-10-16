@@ -1179,6 +1179,12 @@ unwound 30 s later it kills its descendants and exits itself. `testenv-cap` (a `
 row) scans live runs and kills any past cap + 60 s by pid, after re-reading the cmdline and start
 time, and appends one line to the concierge inbox with the tier and wall.
 
+## UI specs (`testenv ui`)
+
+`testenv ui <repo-path|name> [spec...]` runs a repository's Playwright specs in `mcr.microsoft.com/playwright:v<version>-noble`, the version read from the project's `package-lock.json` (else the exact version in `package.json`), so a host needs no browser libraries. The tree is an overlay lower layer: installs and reports land in a per-run upper layer and the checkout is never written. The project directory is the first of `tests/visual`, `tests/ui`, `tests/e2e`, `e2e`, `frontend`, `.` holding a `playwright.config.*`.
+
+Without `[ui]` it runs `npm ci && npx playwright test $UI_SPECS` there, which suits a config that starts its own server. A repository whose specs need a fixture site declares `[ui]` in `.spira/testenv.toml`: `argv` (builds and serves the site, then runs Playwright over `$UI_SPECS`; `$UI_DIR` is the project directory; cwd is the tree root), and optionally `image`, `dir`, `timeout`. Output is printed and kept at `run/ui/<name>.log`; the exit status is the command's.
+
 ## Screenshots (`testenv shots`)
 
 A repository that declares `[shots]` in `.spira/testenv.toml` (`argv`, optional `image`, `timeout`, `widths`, default 390 and 1280) is a site repository. Screenshots are evidence for review, never a gate: nothing refuses a submission for lacking them, and no image is opened or compared.

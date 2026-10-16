@@ -29,6 +29,7 @@ pub mod suites;
 pub mod testdb;
 pub mod tap;
 pub mod timing;
+pub mod ui;
 pub mod util;
 pub mod verdict;
 pub mod wait;
