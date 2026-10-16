@@ -33,7 +33,9 @@ pub fn missing(
 
 pub fn host_has(token: &str) -> bool {
     let ok = |prog: &str, args: &[&str]| {
-        Command::new(prog)
+        Command::new("timeout")
+            .arg("5")
+            .arg(prog)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
