@@ -216,6 +216,10 @@ check_self_test() {
 # --- lifecycle: pending schema migrations, applied before the flip; failure refuses it ---
 check_lifecycle() {
     local lc="$REL/bin/spira-lc" mig="$REL/lifecycle/migrations"
+    lc_backfill() {
+        out="$("$lc" backfill-deps 2>&1)" || printf 'pre-activate: warn: %s\n' "$out"
+        out="$("$lc" backfill-titles 2>&1)" || printf 'pre-activate: warn: %s\n' "$out"
+    }
     if [ "$FAIL" -ne 0 ]; then
         printf 'pre-activate: skip lifecycle (another check failed; migrations not applied)\n'
         return
@@ -224,16 +228,34 @@ check_lifecycle() {
         ok "lifecycle (release carries no spira-lc or migrations)"
         return
     fi
-    local out rc
+    local out rc live f pending=()
+    # The release live now passed this same check against this store before it went live,
+    # so every migration it carries unchanged is applied: only new or changed files are
+    # probed. A data correction's applied-probe scans its whole table, and 0019's outgrew
+    # the probe timeout and refused every landing (sp-eetimm). No live sibling (round VM,
+    # sim world, fresh install): every file is probed.
+    live="$(readlink -f "$(dirname "$REL")/current" 2>/dev/null)"
+    if [ -n "$live" ] && [ "$live" != "$(readlink -f "$REL")" ] && [ -d "$live/lifecycle/migrations" ]; then
+        for f in "$mig"/*.sql; do
+            [ -e "$f" ] || continue
+            cmp -s "$f" "$live/lifecycle/migrations/${f##*/}" || pending+=("$f")
+        done
+        if [ "${#pending[@]}" -eq 0 ]; then
+            ok "lifecycle (every migration carried unchanged from the live release ${live##*/}, applied when it went live)"
+            lc_backfill
+            return
+        fi
+    else
+        pending=("$mig")
+    fi
     # The environment's own lifecycle identity, untouched: admin-migrate probes as it and
     # reads SPIRA_LC_ADMIN_USER/PASSWORD itself, only when a migration is pending (sp-p1z81).
     # No --if-enforced: there is no off to gate on (sp-v62vn).
-    out="$("$lc" admin-migrate "$mig" 2>&1)"
+    out="$("$lc" admin-migrate "${pending[@]}" 2>&1)"
     rc=$?
     if [ "$rc" -eq 0 ]; then
         ok "lifecycle ($(printf '%s' "$out" | tail -1))"
-        out="$("$lc" backfill-deps 2>&1)" || printf 'pre-activate: warn: %s\n' "$out"
-        out="$("$lc" backfill-titles 2>&1)" || printf 'pre-activate: warn: %s\n' "$out"
+        lc_backfill
     else
         fail lifecycle "$out"
     fi
