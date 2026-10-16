@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::process::Stdio;
 
-use test_plan::{build_matrix, load_catalogues, orphan_violations, render_markdown, SuiteCoverage};
+use test_plan::{build_matrix, coverage_gaps, load_catalogues, orphan_violations, render_markdown, SuiteCoverage};
 
 use crate::rules::covers_entries::covers_of;
 use crate::{direct_child, Entry, Finding, LintError, Rule, Tree};
@@ -144,7 +144,11 @@ impl Rule for PlanMatrix {
         if use_cases == 0 {
             return Err(LintError::Refused(format!("{CATALOGUE_DIR} declares no use case — nothing to check")));
         }
-        let out: Vec<Finding> = orphan_violations(&cats, &prev, &cur).into_iter().map(finding).collect();
+        let orphans = orphan_violations(&cats, &prev, &cur);
+        let gaps = coverage_gaps(&cats, &cur)
+            .into_iter()
+            .filter(|g| !orphans.iter().any(|o| g.starts_with(&format!("gap: {} ", o.split(':').next().unwrap_or("")))));
+        let out: Vec<Finding> = orphans.iter().cloned().chain(gaps).map(finding).collect();
         // The matrix is built and rendered in memory, as plan-matrix.sh does to disk: a
         // catalogue that loads but cannot be rendered is caught here, not by the next reader.
         let doc = build_matrix(&cats, &cur, &BTreeMap::new());
@@ -164,7 +168,7 @@ impl Rule for PlanMatrix {
     }
 
     fn hint(&self) -> &'static str {
-        "a use case lost its last covering suite: cover it again, or mark it [use_case.uncovered] in its catalogue"
+        "a use case lost its last covering suite or has none: cover it again, or mark it [use_case.uncovered] in its catalogue"
     }
 }
 
@@ -213,6 +217,15 @@ mod tests {
         assert_eq!(out.len(), 1, "{out:?}");
         assert!(out[0].message.starts_with("UC-demo-02: lost its last covering suite"), "{}", out[0]);
         assert_eq!(checked, None, "no positive control on a red");
+    }
+
+    #[test]
+    fn a_use_case_with_no_cover_at_all_is_a_finding_naming_it() {
+        let t = repo();
+        t.write("docs/test-plan/demo.toml", &format!("{CAT}\n[[use_case]]\nid = \"UC-demo-03\"\ntier = \"T2\"\nstatement = \"three\"\n"));
+        let out = check(&t, Some("base")).0.unwrap();
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(out[0].message.starts_with("gap: UC-demo-03"), "{}", out[0]);
     }
 
     #[test]
