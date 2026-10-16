@@ -338,6 +338,10 @@ impl<'a> Sentinel<'a> {
                 self.log(&format!("CHECK2 {id}: skipped HolderDead — the bead moved to {now_state} since the sweep read it"));
                 continue;
             }
+            if !self.stop_holder(&id) {
+                self.log(&format!("CHECK2 {id}: NOT reclaimed — the lease lapsed but a live process still works in its worktree and its unit did not stop"));
+                continue;
+            }
             if !self.lc_apply(&id, HOLDER_DEAD) {
                 continue;
             }
@@ -354,6 +358,11 @@ impl<'a> Sentinel<'a> {
         if n > 0 {
             self.progress(&format!("reclaimed {n} stale lease(s)"));
         }
+    }
+
+    /// Stop whatever still works in the bead's worktree before the bead goes back to READY.
+    fn stop_holder(&self, id: &str) -> bool {
+        self.h.run(Spec::args_owned(self.cfg.sending_bin.clone(), vec!["stop-holder".into(), id.to_string()]).err(Io::Null)).ok()
     }
 
     /// One attempt-history fact appended to the lifecycle event log, best-effort.

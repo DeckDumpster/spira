@@ -1449,6 +1449,30 @@ fn on_check2_skips_a_stale_holder_whose_bead_moved_since_the_read() {
 }
 
 #[test]
+fn check2_stops_a_live_holder_before_reclaiming_and_refuses_when_it_will_not_stop() {
+    for (stop_rc, reclaimed) in [(0, true), (1, false)] {
+        let (w, r, sink, clock) = setup("check2-stop");
+        let lease = NOW - 20_000;
+        r.on(move |s| {
+            if s.prog == "spira-lc" && s.args[0] == "list" {
+                return ok(&format!(r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"3"}}]"#));
+            }
+            if s.prog == "spira-lc" && s.args[0] == "show" {
+                return ok(r#"{"bead":{"state":"WORKING","version":"3"}}"#);
+            }
+            if s.args.first().map(String::as_str) == Some("stop-holder") {
+                return Some(Out { rc: stop_rc, stdout: String::new(), stderr: String::new() });
+            }
+            None
+        });
+        run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+        let stop = r.find(|s| s.args.first().map(String::as_str) == Some("stop-holder")).expect("the holder is stopped first");
+        assert_eq!(stop.args, vec!["stop-holder", "sp-b"]);
+        assert_eq!(r.find(|s| s.prog == "spira-lc" && s.args[0] == "event").is_some(), reclaimed, "{}", sink.text());
+    }
+}
+
+#[test]
 fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
     let (w, r, sink, clock) = setup("check2");
     let lease = NOW - 20_000;

@@ -1744,6 +1744,20 @@ fn rapid_recur_does_not_park_a_bead_with_real_prior_runs() {
     assert!(!w.labels.get("sp-rr2").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr2")); // literal-ok: fixture/fallback
 }
 
+// A refusal because another process holds the worktree is a wait, not a setup loop.
+#[test]
+fn rapid_recur_ignores_worktree_held_refusals() {
+    let f = fx("rapidrecur-held");
+    seed(&f, "sp-rr3");
+    std::fs::create_dir_all(&f.run).unwrap();
+    let held = |n: u8| format!("2026-09-27T00:00:0{n}Z done builder sp-rr3 rc=0 status=worktree-held wall_s=1 api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01\n");
+    std::fs::write(f.run.join("aeon-ledger.log"), format!("{}{}{}", held(0), held(1), held(2))).unwrap();
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
+    let w = o.w.lock().unwrap();
+    assert!(!o.log.contains("RAPID-RECUR"), "{}", o.log);
+    assert!(!w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("hold")), "{:?}", w.exec_calls);
+}
+
 // ---- spira-lc is the only state source ------------------------------------------------
 
 fn reads_pre_lifecycle_state(src: &str) -> bool {

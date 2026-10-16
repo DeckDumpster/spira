@@ -600,15 +600,29 @@ impl crate::reopen::World for Live {
 
 pub fn live_stop_holder(run: &std::path::Path, id: &str, why: &str) -> Result<(), String> {
     let epoch = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let own_aeon = std::env::var("SPIRA_AEON").is_ok_and(|v| !v.is_empty());
     crate::reopen::stop_holder_in(
         run,
         id,
         why,
-        std::env::var("SPIRA_AEON").is_ok_and(|v| !v.is_empty()),
+        own_aeon,
         crate::reopen::STOP_WAIT_S,
         &epoch,
         &|| std::thread::sleep(std::time::Duration::from_millis(500)),
-    )
+    )?;
+    if own_aeon {
+        return Ok(());
+    }
+    let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into());
+    let mut stop = |unit: &str| {
+        // batch-job: a unit stop lasts as long as the aeon takes to exit
+        let _ = std::process::Command::new(&systemctl).args(["--user", "stop", unit]).status();
+    };
+    sending::reap::stop_occupants(std::path::Path::new("/proc"), &run.join("worktree").join(id), &mut stop, 20, &|| {
+        // waits-on: worktree occupants exiting; cap 20 polls
+        std::thread::sleep(std::time::Duration::from_millis(500))
+    })
+    .map_err(|pids| format!("process(es) {pids:?} still work in {id}'s worktree after their unit was stopped"))
 }
 
 #[cfg(test)]
