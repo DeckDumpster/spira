@@ -615,9 +615,11 @@ pub fn live_stop_holder(run: &std::path::Path, id: &str, why: &str) -> Result<()
     }
     let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into());
     let mut stop = |unit: &str| {
+        // batch-job: a unit stop lasts as long as the aeon takes to exit
         let _ = std::process::Command::new(&systemctl).args(["--user", "stop", unit]).status();
     };
     sending::reap::stop_occupants(std::path::Path::new("/proc"), &run.join("worktree").join(id), &mut stop, 20, &|| {
+        // waits-on: worktree occupants exiting; cap 20 polls
         std::thread::sleep(std::time::Duration::from_millis(500))
     })
     .map_err(|pids| format!("process(es) {pids:?} still work in {id}'s worktree after their unit was stopped"))

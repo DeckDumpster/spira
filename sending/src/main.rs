@@ -239,9 +239,10 @@ fn cmd_stop_holder(args: Vec<String>) -> ExitCodeLike {
     let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into());
     let work = run.join("worktree").join(&args[0]);
     let mut stop = |unit: &str| {
+        // batch-job: a unit stop lasts as long as the aeon takes to exit
         let _ = std::process::Command::new(&systemctl).args(["--user", "stop", unit]).status();
     };
-    match reap::stop_occupants(Path::new("/proc"), &work, &mut stop, 20, &|| std::thread::sleep(std::time::Duration::from_millis(500))) {
+    match reap::stop_occupants(Path::new("/proc"), &work, &mut stop, 20, &|| std::thread::sleep(std::time::Duration::from_millis(500)) /* waits-on: worktree occupants exiting; cap 20 polls */) {
         Ok(()) => 0,
         Err(pids) => fail(&format!("{} still has live process(es) {pids:?} in its worktree after the unit stop", args[0])),
     }
