@@ -85,6 +85,16 @@ pub fn assemble(issues: &[Value], labels: &[Value], deps: &[Value]) -> Vec<Value
         .collect()
 }
 
+/// The content store's edges plus the lifecycle's mirrored ones (`spira-lc dep-add` writes only
+/// the latter), one per `(issue, target)`; the content store's row wins.
+pub fn union_edges(deps: Vec<Value>, mirrored: Vec<Value>) -> Vec<Value> {
+    let key = |d: &Value| (s(d, "issue_id").map(str::to_string), s(d, "depends_on_id").map(str::to_string));
+    let seen: std::collections::BTreeSet<_> = deps.iter().map(key).collect();
+    let mut out = deps;
+    out.extend(mirrored.into_iter().filter(|d| !seen.contains(&key(d))));
+    out
+}
+
 pub fn cmd_content_rows(args: &[String], conn: &Conn) -> (i32, String) {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
     let full = args.iter().any(|a| a == "--full");
@@ -138,7 +148,8 @@ fn fetch_with(conn: &Conn, ids: &[&str], full: bool, open: bool) -> Result<Vec<V
     // the claim decision only follows issue-to-issue edges. sp-9j0937: the query named a
     // depends_on_id column that no beads schema has, and every claim check failed in prod.
     let deps = q(format!("SELECT issue_id, depends_on_issue_id AS depends_on_id, `type` FROM {cdb}.dependencies WHERE issue_id IN ({list}) AND depends_on_issue_id IS NOT NULL ORDER BY issue_id, depends_on_issue_id"))?;
-    let mut out = assemble(&issues, &labels, &deps);
+    let mirrored = q(format!("SELECT bead_id AS issue_id, depends_on AS depends_on_id, dep_type AS `type` FROM bead_dep WHERE bead_id IN ({list}) ORDER BY bead_id, depends_on"))?;
+    let mut out = assemble(&issues, &labels, &union_edges(deps, mirrored));
     if full {
         for (row, issue) in out.iter_mut().zip(issues.iter().filter(|i| s(i, "id").is_some())) {
             for col in ["description", "notes", "external_ref"] {
@@ -265,5 +276,21 @@ mod tests {
         let c = Conn::unreachable();
         assert_eq!(cmd_content_rows(&["--ids".into(), "".into()], &c), (0, "[]".into()));
         assert_eq!(cmd_content_rows(&[], &c).0, CANNOT_TELL);
+    }
+}
+
+#[cfg(test)]
+mod union_tests {
+    use super::*;
+
+    #[test]
+    fn a_mirrored_edge_blocks_and_a_duplicate_is_not_doubled() {
+        let deps = vec![json!({"issue_id": "sp-b", "depends_on_id": "sp-a", "type": "blocks"})];
+        let mirrored = vec![
+            json!({"issue_id": "sp-b", "depends_on_id": "sp-a", "type": "blocks"}),
+            json!({"issue_id": "sp-b", "depends_on_id": "sp-c", "type": "blocks"}),
+        ];
+        let rows = assemble(&[json!({"id": "sp-b"})], &[], &union_edges(deps, mirrored));
+        assert_eq!(rows[0]["dependencies"].as_array().unwrap().len(), 2);
     }
 }
