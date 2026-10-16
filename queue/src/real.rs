@@ -815,7 +815,7 @@ const REBASE_WIDTH: usize = 4;
 pub struct RealForge;
 
 impl Forge for RealForge {
-    fn pr_create(&self, forge: &Path, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<String> {
+    fn pr_create(&self, forge: &Path, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
         let mut child = spira_config::bounded::bounded(forge)
             .arg("pr-create")
             .arg(repo)
@@ -824,17 +824,19 @@ impl Forge for RealForge {
             .arg(title)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
-            .ok()?;
+            .map_err(|e| format!("could not run the forge: {e}"))?;
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(body.as_bytes());
         }
-        let o = child.wait_with_output().ok()?;
+        let o = child.wait_with_output().map_err(|e| format!("forge wait failed: {e}"))?;
         if !o.status.success() {
-            return None;
+            let err = String::from_utf8_lossy(&o.stderr);
+            let err = err.trim();
+            return Err(format!("rc={}: {}", o.status.code().unwrap_or(-1), if err.is_empty() { "(no stderr)" } else { err }));
         }
-        Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+        Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
     }
     fn pr_automerge(&self, forge: &Path, repo: &Path, pr: &str) -> bool {
         ok(Command::new(forge).arg("pr-automerge").arg(repo).arg(pr).arg("merge").stderr(Stdio::null()))

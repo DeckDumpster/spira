@@ -467,12 +467,18 @@ struct FForge {
     /// What `fail-lines` answers.
     fails: RefCell<String>,
     arm_fails: std::cell::Cell<bool>,
+    /// pr-create makes this PR number upstream, then reports this error.
+    create_then_err: RefCell<Option<(String, String)>>,
 }
 
 impl Forge for FForge {
-    fn pr_create(&self, _: &Path, _: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<String> {
+    fn pr_create(&self, _: &Path, _: &Path, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
         self.calls.borrow_mut().push(format!("pr-create {head} {base} {title}\n{body}"));
-        self.pr.borrow().clone()
+        if let Some((n, e)) = self.create_then_err.borrow().clone() {
+            self.queue_prs.borrow_mut().push((n, head.to_string()));
+            return Err(e);
+        }
+        self.pr.borrow().clone().ok_or_else(|| "rc=1: stub".to_string())
     }
     fn pr_automerge(&self, _: &Path, _: &Path, pr: &str) -> bool {
         self.calls.borrow_mut().push(format!("pr-automerge {pr}"));
@@ -1738,6 +1744,35 @@ fn a_deadline_on_the_cut_that_wrote_the_row_opens_the_pr_on_that_row() {
     assert_eq!(cuts, 1, "{:?}", t.lc.calls.borrow());
     assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")));
     assert!(fs::read_to_string(t.qfile("open")).unwrap().contains("batch_id=spira-20260929T010203Z"));
+}
+
+#[test]
+fn open_batch_adopts_a_pr_the_forge_made_while_reporting_failure() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
+    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    *t.forge.create_then_err.borrow_mut() = Some(("236".into(), "rc=1: deadline".into()));
+    assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
+    let calls = t.forge.calls.borrow().clone();
+    assert!(!calls.iter().any(|c| c.starts_with("pr-close")), "{calls:?}");
+    assert!(calls.iter().any(|c| c == "pr-automerge 236"), "{calls:?}");
+    assert!(fs::read_to_string(t.qfile("open")).unwrap().contains("pr=236\n"));
+    assert!(!t.lc.calls.borrow().iter().any(|c| c.contains("abandon")), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn open_batch_pr_create_failure_with_no_pr_carries_the_forge_error_and_rolls_back() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
+    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
+    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    *t.forge.pr.borrow_mut() = None;
+    assert_ne!(t.run(&["open-batch", "--skip-pregate"]), 0);
+    assert!(t.err().contains("rc=1: stub"), "{}", t.err());
+    assert!(!t.qfile("open").exists());
 }
 
 #[test]

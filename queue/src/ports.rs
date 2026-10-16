@@ -267,8 +267,8 @@ pub struct RunOut {
 }
 
 pub trait Forge {
-    /// `pr-create <repo> <head> <base> <title>`, body on stdin → the PR number.
-    fn pr_create(&self, forge: &Path, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Option<String>;
+    /// `pr-create <repo> <head> <base> <title>`, body on stdin → the PR number, or the forge's own error.
+    fn pr_create(&self, forge: &Path, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Result<String, String>;
     fn pr_close(&self, forge: &Path, repo: &Path, pr: &str);
     /// `pr-automerge <repo> <pr> merge` → armed?
     fn pr_automerge(&self, forge: &Path, repo: &Path, pr: &str) -> bool;

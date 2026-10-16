@@ -645,10 +645,22 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         body.push_str(&format!("- {id} — {}\n", title_line(&titles, id)));
     }
     let title = format!("queue: {} beads for {name}", members.len());
-    let Some(pr) = w.forge.pr_create(&c.s.forge, &path, &batch_br, &base_branch, &title, body.trim_end_matches('\n')) else {
-        w.err(format!("queue.sh open-batch: forge pr-create failed for {batch_br}"));
-        undo("open-batch could not open the PR");
-        return FAIL;
+    let pr = match w.forge.pr_create(&c.s.forge, &path, &batch_br, &base_branch, &title, body.trim_end_matches('\n')) {
+        Ok(pr) => pr,
+        Err(e) => {
+            let adopted = w.forge.queue_prs(&c.s.forge, &path).and_then(|prs| prs.into_iter().find(|(_, b)| *b == batch_br).map(|(n, _)| n));
+            match adopted {
+                Some(n) => {
+                    w.err(format!("queue.sh open-batch: forge pr-create reported failure for {batch_br} ({e}) but PR {n} is open on it — adopting it"));
+                    n
+                }
+                None => {
+                    w.err(format!("queue.sh open-batch: forge pr-create failed for {batch_br}: {e}"));
+                    undo("open-batch could not open the PR");
+                    return FAIL;
+                }
+            }
+        }
     };
     if pr.is_empty() {
         w.err(format!("queue.sh open-batch: forge returned no PR number for {batch_br}"));

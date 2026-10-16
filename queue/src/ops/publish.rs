@@ -141,9 +141,12 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         body.push_str(&format!("- {id} — {}\n", title_line(&titles, id)));
     }
     let title = format!("publish: {} bead(s) for {name}", ids.len());
-    let Some(pr) = w.forge.pr_create(&c.s.forge, &path, &branch, &forge_branch, &title, body.trim_end_matches('\n')) else {
-        w.err(format!("queue.sh publish: forge pr-create failed for {branch}"));
-        return FAIL;
+    let pr = match w.forge.pr_create(&c.s.forge, &path, &branch, &forge_branch, &title, body.trim_end_matches('\n')) {
+        Ok(pr) => pr,
+        Err(e) => {
+            w.err(format!("queue.sh publish: forge pr-create failed for {branch}: {e}"));
+            return FAIL;
+        }
     };
     if pr.is_empty() {
         w.err(format!("queue.sh publish: forge returned no PR number for {branch}"));
