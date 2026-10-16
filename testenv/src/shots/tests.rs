@@ -1,5 +1,4 @@
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 
 const TIP: &str = "0123456789abcdef0123456789abcdef01234567";
 const DECL: &str = "image = \"i\"\n[shots]\nargv = [\"serve\"]\n[tier.t]\nargv = [\"x\"]\n";
@@ -76,78 +75,30 @@ fn a_prior_image_is_cleared_and_never_stands_in_for_a_capture() {
     assert_eq!(capture(tmp.path(), "sp-b", TIP, &["/".to_string()], &[390, 1280], &nothing).0, 1);
 }
 
-fn verify_with(run: &Path, decl: Option<&str>, changed: Option<&str>, waived: Option<&str>) -> (i32, String) {
-    verify(run, "sp-b", TIP, decl, changed, waived)
+#[test]
+fn a_changed_page_is_named_by_its_url_and_assets_fall_back_to_the_index() {
+    assert_eq!(pages_for("README.md\nfrontend/cards/index.html\nfrontend/about.html\nfrontend/index.html\nfrontend/a.css\n"), ["/", "/about.html", "/cards/"]);
+    assert_eq!(pages_for("frontend/a.css\nsrc/x.rs\n"), ["/"]);
 }
 
 #[test]
-fn a_frontend_change_without_images_is_refused_naming_both_exits() {
-    let tmp = dir("refuse");
-    let (rc, msg) = verify_with(tmp.path(), Some(DECL), Some("README.md\nfrontend/src/a.ts\n"), None);
-    assert_eq!(rc, 1);
-    assert!(msg.contains("testenv shots") && msg.contains("SPIRA_SHOTS_WAIVED=<reason>") && msg.contains("[390, 1280]"), "{msg}");
+fn only_a_top_level_frontend_change_is_a_site_change() {
+    assert!(touches_frontend("README.md\nfrontend/a.ts\n"));
+    assert!(!touches_frontend("docs/frontend/x.md\nsrc/a.rs\n"));
 }
 
 #[test]
-fn images_at_every_width_admit_and_one_width_does_not() {
-    let tmp = dir("admit");
-    let changed = Some("frontend/a.css\n");
-    let d = shot_dir(tmp.path(), "sp-b", TIP);
-    std::fs::create_dir_all(&d).unwrap();
-    std::fs::write(d.join("index-390.png"), PNG).unwrap();
-    let (rc, msg) = verify_with(tmp.path(), Some(DECL), changed, None);
-    assert_eq!(rc, 1);
-    assert!(msg.contains("[1280]") && !msg.contains("[390"), "{msg}");
-    std::fs::write(d.join("index-1280.png"), PNG).unwrap();
-    assert_eq!(verify_with(tmp.path(), Some(DECL), changed, None).0, 0);
-}
-
-#[test]
-fn images_of_another_tip_do_not_admit() {
-    let tmp = dir("tip");
-    let other = shot_dir(tmp.path(), "sp-b", &"f".repeat(40));
-    std::fs::create_dir_all(&other).unwrap();
-    for w in [390, 1280] {
-        std::fs::write(other.join(format!("index-{w}.png")), PNG).unwrap();
-    }
-    assert_eq!(verify_with(tmp.path(), Some(DECL), Some("frontend/a\n"), None).0, 1);
-}
-
-#[test]
-fn a_waiver_with_a_reason_admits_and_one_without_does_not() {
-    let tmp = dir("waive");
-    let changed = Some("frontend/a\n");
-    let (rc, msg) = verify_with(tmp.path(), Some(DECL), changed, Some("comment-only change"));
-    assert_eq!(rc, 0);
-    assert!(msg.contains("comment-only change"), "{msg}");
-    assert_eq!(verify_with(tmp.path(), Some(DECL), changed, Some("  ")).0, 1);
-}
-
-#[test]
-fn a_change_outside_frontend_or_in_a_repo_without_shots_is_not_asked_for_images() {
-    let tmp = dir("scope");
-    assert_eq!(verify_with(tmp.path(), Some(DECL), Some("docs/frontend/x.md\nsrc/a.rs\n"), None).0, 0);
-    assert_eq!(verify_with(tmp.path(), Some("image = \"i\"\n[tier.t]\nargv = [\"x\"]\n"), Some("frontend/a\n"), None).0, 0);
-    assert_eq!(verify_with(tmp.path(), None, Some("frontend/a\n"), None).0, 0);
-}
-
-#[test]
-fn a_diff_git_cannot_produce_is_a_fault_not_an_admission() {
-    let tmp = dir("fault");
-    assert_eq!(verify_with(tmp.path(), Some(DECL), None, None).0, 2);
-}
-
-#[test]
-fn the_guard_admits_images_it_cannot_open() {
-    let tmp = dir("unread");
-    let d = shot_dir(tmp.path(), "sp-b", TIP);
-    std::fs::create_dir_all(&d).unwrap();
-    for w in [390, 1280] {
-        let f = d.join(format!("index-{w}.png"));
-        std::fs::write(&f, PNG).unwrap();
-        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0)).unwrap();
-    }
-    assert_eq!(verify_with(tmp.path(), Some(DECL), Some("frontend/a\n"), None).0, 0);
+fn a_repository_without_shots_is_a_clean_no_op() {
+    let tmp = dir("noop");
+    let repo = tmp.path().join("r");
+    std::fs::create_dir_all(&repo).unwrap();
+    let g = |a: &[&str]| assert!(Command::new("git").arg("-C").arg(&repo).args(a).status().unwrap().success());
+    g(&["init", "-q"]);
+    g(&["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "x"]);
+    let (rc, msg) = batch(&repo, tmp.path(), "HEAD", "HEAD", None, None);
+    assert_eq!(rc, 0, "{msg}");
+    assert!(msg.contains("declares no shots capture"), "{msg}");
+    assert!(!tmp.path().join("shots").exists());
 }
 
 #[test]

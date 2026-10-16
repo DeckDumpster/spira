@@ -1181,8 +1181,8 @@ time, and appends one line to the concierge inbox with the tier and wall.
 
 ## Screenshots (`testenv shots`)
 
-A repository that declares `[shots]` in `.spira/testenv.toml` (`argv`, optional `image`, `timeout`, `widths`, default 390 and 1280) is a site repository: a change under its top-level `frontend/` is submitted with an image per width, or with `SPIRA_SHOTS_WAIVED=<reason>`, which `work submit` forwards and the broker records as a bead note.
+A repository that declares `[shots]` in `.spira/testenv.toml` (`argv`, optional `image`, `timeout`, `widths`, default 390 and 1280) is a site repository. Screenshots are evidence for review, never a gate: nothing refuses a submission for lacking them, and no image is opened or compared.
 
 - `testenv shots <repo> <path>... [--widths a,b]` runs the declared `argv` in the repository's image with `SHOTS_PAGES` (`slug=path` words), `SHOTS_WIDTHS`, `SHOTS_OUT` and `SHOTS_CAPTURE` (the shipped Playwright script, `spira/testenv/shots-capture.mjs`). The argv builds and serves the fixture site, then runs the script. Images land in `run/shots/<bead>/<tip>/<slug>-<width>.png`; any page without one fails the run, names the page, and removes the directory.
-- `testenv shots --verify <tip> <repo> --bead <id> [--waived <reason>]` is the guard `work submit` runs. It lists the directory and reads file sizes only. No image is ever opened or compared, and no baseline exists.
-- The batch PR body links each member's images through Loom (`/shots/<bead>/<tip>/<file>`, at `SPIRA_LOOM_ADDR`).
+- `testenv shots --batch <repo> <base> <head>` is what the batcher runs when it opens a batch PR: it captures the pages the batch's `frontend/` changes name, at `<base>` and at `<head>`, into `run/shots/batch-before/<base>/` and `run/shots/batch-after/<head>/`. A repository without `[shots]`, or a batch with no `frontend/` change, is a no-op.
+- The batch PR body links those images through Loom (`/shots/<label>/<sha>/<file>`, at `SPIRA_LOOM_ADDR`), or carries a `capture failed: <reason>` line. A capture failure is logged and fails nothing.

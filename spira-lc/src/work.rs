@@ -148,9 +148,6 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     if let Some(refusal) = lint_refusal(conn, bead_id, &tip, &actor) {
         return refusal;
     }
-    if let Some(refusal) = shots_refusal(conn, bead_id, &tip, &actor, args) {
-        return refusal;
-    }
     if let Err(refusal) = record_target_verdict(bead_id, "submit", args) {
         return refusal;
     }
@@ -185,33 +182,6 @@ fn lint_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str) -> Option<(i
         (0, _) => None,
         (1, out) => Some((REFUSED, out.trim_end().to_string())),
         (_, out) => Some((CANNOT_TELL, format!("cannot tell: the compile-and-lint check could not run: {}", out.trim_end()))),
-    }
-}
-
-/// A tip that changes a site repository's `frontend/` is submitted with a screenshot at each
-/// declared width, or with `SPIRA_SHOTS_WAIVED=<reason>`, which is recorded on the bead. The images
-/// are evidence for review: the check counts files and never opens one.
-fn shots_refusal(conn: &Conn, bead_id: &str, tip: &str, actor: &str, args: &[String]) -> Option<(i32, String)> {
-    let repo = match submit_repo(conn, bead_id) {
-        Ok(r) => r,
-        Err(refusal) => return Some(refusal),
-    };
-    let waived = flag(args, "--shots-waived");
-    let mut argv = ["shots", "--verify", tip, &repo, "--bead", bead_id].map(String::from).to_vec();
-    if let Some(w) = &waived {
-        argv.extend(["--waived".to_string(), w.clone()]);
-    }
-    match crate::bd::tool("testenv", &argv, None, actor, 60) {
-        (0, out) => {
-            if out.starts_with("shots: waived") {
-                if let Err(e) = crate::bd::note(bead_id, &format!("{}", out.trim_end().replacen("shots: waived:", "screenshots waived:", 1))) {
-                    return Some((CANNOT_TELL, format!("cannot tell: the screenshot waiver could not be recorded: {e}")));
-                }
-            }
-            None
-        }
-        (1, out) => Some((REFUSED, out.trim_end().to_string())),
-        (_, out) => Some((CANNOT_TELL, format!("cannot tell: the screenshot check could not run: {}", out.trim_end()))),
     }
 }
 
