@@ -1083,8 +1083,8 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn retip(&self, bead: &str, tip: &str, actor: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["retip", bead, tip, actor]);
+    fn retip(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["retip", bead, tip, actor, reason, evidence, evidence_tip]);
         if rc == 0 {
             Ok(())
         } else {

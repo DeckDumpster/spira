@@ -36,7 +36,7 @@ pub enum Cmd {
     Claim { repo: Option<String>, reason: Text, force: bool },
     Release { repo: Option<String> },
     /// `resubmit <id> --tip <40-hex> --by concierge --reason <why>`: re-tip a REWORK bead held manual and admit it to a round.
-    Resubmit { id: String, repo: Option<String>, tip: String, by: String, reason: Text },
+    Resubmit { id: String, repo: Option<String>, tip: String, by: String, reason: Text, evidence: Text, evidence_tip: String },
     /// `rework <id> --by <actor> --reason <evidence>`: send a SUBMITTED/CERTIFIED bead outside any round to REWORK.
     Rework { id: String, repo: Option<String>, by: String, reason: Text },
     LandLocal { repo: Option<String>, head: String, members: Text, worktree: Option<PathBuf> },
@@ -388,9 +388,13 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
             let id = pos(0).ok_or_else(|| Usage("queue.sh resubmit: bead id required".into()))?;
             let mut w = Walk { cmd: "resubmit", args: &args[1..], i: 0 };
             let (mut repo, mut tip, mut by, mut reason) = (None, String::new(), String::new(), Text::None);
+            let (mut evidence, mut evidence_tip) = (Text::None, String::new());
             while let Some(t) = w.next() {
                 match t {
                     Tok::Opt(k, v) if reason_opt(&mut w, k, v.clone(), &mut reason) => {}
+                    Tok::Opt("evidence", v) => evidence = Text::Arg(w.value(v)),
+                    Tok::Opt("evidence-file", v) => evidence = text_file(w.value(v)),
+                    Tok::Opt("evidence-tip", v) => evidence_tip = w.value(v),
                     Tok::Opt("tip", v) => tip = w.value(v),
                     Tok::Opt("by", v) => by = w.value(v),
                     Tok::Opt(k, _) => return Err(w.unknown(k)),
@@ -403,7 +407,7 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
             if by.is_empty() {
                 return Err(Usage("queue.sh resubmit: --by is required".into()));
             }
-            Ok(Cmd::Resubmit { id, repo, tip, by, reason })
+            Ok(Cmd::Resubmit { id, repo, tip, by, reason, evidence, evidence_tip })
         }
         "rework" => {
             let id = pos(0).ok_or_else(|| Usage("queue.sh rework: bead id required".into()))?;

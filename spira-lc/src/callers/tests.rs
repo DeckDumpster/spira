@@ -633,15 +633,33 @@ fn resubmit_on_a_rework_bead_names_its_refusal() {
 }
 
 #[test]
-fn retip_moves_a_ready_bead_to_submitted_and_refuses_a_working_one() {
+fn retip_moves_ready_and_held_rework_beads_to_submitted_and_refuses_a_working_one() {
     let mut f = Fake::default();
     f.bead("sp-r", BeadState::Ready);
     f.bead("sp-w", BeadState::Working);
     let tip = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
-    let a = go(&mut f, "retip", &["sp-r", tip]);
+    let glass = |t: &'static str| ["concierge", "hand-mended", "npm test 101/0", t];
+    let call = |id: &'static str, g: [&'static str; 4]| [&[id, tip][..], &g[..]].concat();
+    let a = go(&mut f, "retip", &call("sp-r", glass(tip)));
     assert_eq!((a.code, f.state("sp-r"), f.beads["sp-r"].tip.as_deref()), (APPLIED, "SUBMITTED", Some(tip)));
-    let a = go(&mut f, "retip", &["sp-w", tip]);
+    let a = go(&mut f, "retip", &call("sp-w", glass(tip)));
     assert_eq!((a.code, f.state("sp-w")), (REFUSED, "WORKING"));
+}
+
+#[test]
+fn retip_refuses_without_provenance_naming_the_missing_field() {
+    let mut f = Fake::default();
+    f.bead("sp-r", BeadState::Ready);
+    let tip = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+    let other = "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4";
+    for (args, field) in [
+        (vec!["sp-r", tip, "concierge", "why", "x", other], "evidence tip"),
+        (vec!["sp-r", tip, "concierge", "why", "", tip], "evidence"),
+        (vec!["sp-r", tip, "concierge", "", "ran", tip], "reason"),
+    ] {
+        let a = go(&mut f, "retip", &args);
+        assert!(a.code == REFUSED && a.stderr.contains(field) && f.state("sp-r") == "READY", "{field}: code={} {}", a.code, a.stderr);
+    }
 }
 
 #[test]

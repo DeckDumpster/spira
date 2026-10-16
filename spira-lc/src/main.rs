@@ -819,6 +819,7 @@ pub(crate) fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::MalformedTip { .. } => "MalformedTip".to_string(),
         lifecycle::Refusal::StackUnchanged { .. } => "StackUnchanged".to_string(),
         lifecycle::Refusal::NotManuallyHeld => "NotManuallyHeld".to_string(),
+        lifecycle::Refusal::BreakGlassIncomplete { missing } => format!("BreakGlassIncomplete: missing {missing}"),
         lifecycle::Refusal::DeadlinePassed { .. } => "DeadlinePassed".to_string(),
         lifecycle::Refusal::MendRefused { .. } => "MendRefused".to_string(),
         lifecycle::Refusal::MendCap { .. } => "MendCap".to_string(),

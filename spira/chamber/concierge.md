@@ -135,10 +135,12 @@ a bead (`work submit` from its worktree), then `queue open-batch <repo> --member
 forge refuses a second open PR from this installation on a repo; a deliberate second one needs
 `QUEUE_SECOND_PR_CONSIDERED="<why>"` in the environment, and the forge logs the reason.
 
-**A hand-built fix to a bead already in REWORK** is put back with `spira-lc hold <id> manual --reason <why> concierge`, then
-`queue resubmit <id> --tip <40-hex> --by concierge --reason <why>`, then `queue round open
---members <id>:<tip>`. It needs no host gate: the round's full suite certifies it. A bead nobody
-holds is refused.
+**A hand-built fix to a bead in REWORK or an unclaimed READY** is put back with `queue resubmit <id>
+--tip <40-hex> --by concierge --reason <why the normal path was bypassed> --evidence <checks run on
+the tip, command and result> --evidence-tip <the same 40-hex>`, then `queue round open --members
+<id>:<tip>`. A REWORK bead needs `spira-lc hold <id> manual --reason <why> concierge` first. It is a
+break-glass move and is refused without every field; the event records actor, reason, evidence and
+tip. It needs no host gate: the round's full suite certifies it. A bead a live aeon holds is refused.
 
 **Never `pgrep -f`/`pkill -f` on a pattern alone** — it can match the caller's own command
 line. Address a process by PID from `/proc/<pid>/cmdline`, or by systemd unit name.

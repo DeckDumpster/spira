@@ -400,7 +400,8 @@ fn is_full_sha(s: &str) -> bool {
 
 /// The concierge's door for a hand-built fix: record the new tip and move a manually held REWORK
 /// row, or an unclaimed READY one, to SUBMITTED, so the round's full suite certifies it where the host gate cannot.
-pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, reason: &Text) -> i32 {
+#[allow(clippy::too_many_arguments)]
+pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, reason: &Text, evidence: &Text, evidence_tip: &str) -> i32 {
     let reason = match read_text(w, reason) {
         Ok(r) => r,
         Err(e) => {
@@ -409,8 +410,23 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         }
     };
     if reason.trim().is_empty() {
-        w.err("queue.sh resubmit: --reason is required — say what the hand-built fix is");
+        w.err("queue.sh resubmit: --reason is required — say why the normal path was bypassed");
         return USAGE;
+    }
+    let evidence = match read_text(w, evidence) {
+        Ok(e) => e,
+        Err(e) => {
+            w.err(format!("queue.sh resubmit: cannot read the evidence: {e}"));
+            return USAGE;
+        }
+    };
+    if evidence.trim().is_empty() {
+        w.err("queue.sh resubmit: --evidence is required — the checks run on the tip, command and result (break-glass carries provenance)");
+        return USAGE;
+    }
+    if evidence_tip != tip {
+        w.err(format!("queue.sh resubmit: --evidence-tip must equal --tip {tip} — the checks must have run on the tip admitted (got {evidence_tip:?}) — refused"));
+        return FAIL;
     }
     if by != SANCTIONED_RESUBMITTER {
         w.err(format!("queue.sh resubmit: refused — only {SANCTIONED_RESUBMITTER} may resubmit a held bead (--by {by})"));
@@ -469,7 +485,7 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         w.err(format!("queue.sh resubmit: could not move {local} to {tip} in {} — refused, nothing changed", c.r.name));
         return FAIL;
     }
-    if let Err((rc, e)) = w.lc.retip(id, tip, by) {
+    if let Err((rc, e)) = w.lc.retip(id, tip, by, reason.trim(), evidence.trim(), evidence_tip) {
         w.err(format!("queue.sh resubmit: spira-lc refused {id} (rc={rc}): {e}"));
         return FAIL;
     }

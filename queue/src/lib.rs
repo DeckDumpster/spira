@@ -44,7 +44,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::Claim { repo, reason, force } => simple::claim(w, repo.as_deref(), reason, *force),
         Cmd::Release { repo } => simple::release(w, repo.as_deref()),
         Cmd::Rework { id, repo, by, reason } => simple::rework(w, id, repo.as_deref(), by, reason),
-        Cmd::Resubmit { id, repo, tip, by, reason } => simple::resubmit(w, id, repo.as_deref(), tip, by, reason),
+        Cmd::Resubmit { id, repo, tip, by, reason, evidence, evidence_tip } => simple::resubmit(w, id, repo.as_deref(), tip, by, reason, evidence, evidence_tip),
         Cmd::LandLocal { repo, head, members, worktree } => land::land_local(w, repo.as_deref(), head, members, worktree.as_deref()),
         Cmd::Publish { repo } => publish::publish(w, repo.as_deref()),
         Cmd::PublishSettle { repo } => publish::publish_settle(w, repo.as_deref()),

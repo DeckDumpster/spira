@@ -312,8 +312,41 @@ pub enum BeadEventKind {
     /// that tip; the state does not move. A rework verdict is a `GateRed`, not this.
     Sifted { tip: String },
     /// A REWORK bead held manual is re-tipped and put back to SUBMITTED, with no gate verdict:
-    /// the round it is admitted to certifies it. Refused without a manual hold.
-    Resubmit { tip: String },
+    /// the round it is admitted to certifies it. Refused without a manual hold. A break-glass
+    /// move: refused unless `break_glass` is complete.
+    Resubmit { tip: String, #[serde(default)] break_glass: BreakGlass },
+}
+
+/// The provenance a past-the-gate move carries: why the normal path was bypassed, and the
+/// checks (command and result) that ran on `evidence_tip`, which must be the tip admitted.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BreakGlass {
+    pub reason: String,
+    pub evidence: String,
+    pub evidence_tip: String,
+}
+
+impl BreakGlass {
+    /// The first missing or contradicted field of a move admitting `tip` as `actor`, by name.
+    pub fn gap(&self, actor: &str, tip: &str) -> Option<String> {
+        if actor.trim().is_empty() {
+            return Some("actor (--by)".into());
+        }
+        if self.reason.trim().is_empty() {
+            return Some("reason (--reason)".into());
+        }
+        if self.evidence.trim().is_empty() {
+            return Some("evidence (--evidence: the checks run on the tip, command and result)".into());
+        }
+        if self.evidence_tip != tip {
+            return Some(format!("evidence tip (--evidence-tip must equal the tip {tip}, got {:?})", self.evidence_tip));
+        }
+        None
+    }
+
+    pub fn stamp(&self, actor: &str, tip: &str) -> String {
+        format!("break_glass=true actor={actor} tip={tip} reason={} evidence={}", self.reason.trim(), self.evidence.trim())
+    }
 }
 
 /// The classifier's no-evidence default for a closed bead; the one terminal reason a
@@ -467,7 +500,7 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         );
     }
 
-    if let BeadEventKind::Submit { tip } | BeadEventKind::Resubmit { tip } = &ev.kind {
+    if let BeadEventKind::Submit { tip } | BeadEventKind::Resubmit { tip, .. } = &ev.kind {
         if !is_full_sha(tip) {
             return Outcome::refuse(row.clone(), Refusal::MalformedTip { tip: tip.clone() });
         }
@@ -628,8 +661,20 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         | BeadEventKind::Returned { .. }
         | BeadEventKind::Requeued { .. }
         | BeadEventKind::BaseWithdrawn { .. }
-        | BeadEventKind::PrereqLanded { .. }
-        | BeadEventKind::Resubmit { .. } => primary_transition(row, &ev.kind),
+        | BeadEventKind::PrereqLanded { .. } => primary_transition(row, &ev.kind),
+
+        BeadEventKind::Resubmit { tip, break_glass } => {
+            if matches!(row.state, BeadState::Ready | BeadState::Rework) {
+                if let Some(missing) = break_glass.gap(&ev.actor, tip) {
+                    return Outcome::refuse(row.clone(), Refusal::BreakGlassIncomplete { missing });
+                }
+            }
+            let mut out = primary_transition(row, &ev.kind);
+            if out.applied {
+                out.row.reason = Some(break_glass.stamp(&ev.actor, tip));
+            }
+            out
+        }
 
         BeadEventKind::Phase { phase } => {
             if row.state.is_terminal() {
@@ -730,7 +775,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Resubmit { .. } if holds_ask(row) => awaiting_reply(row, kind),
             // Hand-built work on a bead nobody has claimed: no WORKING stage to pass through.
-            Resubmit { tip } => {
+            Resubmit { tip, .. } => {
                 if row.holds.contains(&HoldKind::Wait) {
                     return illegal(row, kind);
                 }
@@ -1066,7 +1111,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             // The concierge re-tips a bead it holds and admits it to a round: the round's full
             // suite is the certification, so no gate verdict is needed. Refused unless the row
             // carries a manual hold, so a bead nobody holds cannot be re-tipped this way.
-            Resubmit { tip } => {
+            Resubmit { tip, .. } => {
                 if !row.holds.contains(&HoldKind::Manual) {
                     return Outcome::refuse(row.clone(), Refusal::NotManuallyHeld);
                 }
@@ -1258,7 +1303,7 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::Express,
         BeadEventKind::Unexpress,
         BeadEventKind::Sifted { tip: "t1".into() },
-        BeadEventKind::Resubmit { tip: "t1".into() },
+        BeadEventKind::Resubmit { tip: "t1".into(), break_glass: BreakGlass::default() },
     ]
 }
 
@@ -1339,7 +1384,7 @@ mod tests {
             BeadEventKind::Express,
             BeadEventKind::Unexpress,
             BeadEventKind::Sifted { tip: "1111111111111111111111111111111111111111".into() },
-            BeadEventKind::Resubmit { tip: "1111111111111111111111111111111111111111".into() },
+            BeadEventKind::Resubmit { tip: "1111111111111111111111111111111111111111".into(), break_glass: BreakGlass::default() },
             BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
             BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "1111111111111111111111111111111111111111".into() },
             BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
@@ -1475,16 +1520,22 @@ mod tests {
         assert!(!apply(&r, &classifier_ev(BeadState::Dropped, reclassify(BeadState::Dropped, RESIDUE_RULE))).applied);
     }
 
+    fn bg(tip: &str) -> BreakGlass {
+        BreakGlass { reason: "hand-mended".into(), evidence: "npm test 101/0".into(), evidence_tip: tip.into() }
+    }
+
     #[test]
     fn a_manually_held_rework_row_is_resubmitted_to_submitted_and_no_other_is() {
         let tip = "2222222222222222222222222222222222222222";
-        let kind = || BeadEventKind::Resubmit { tip: tip.into() };
+        let kind = || BeadEventKind::Resubmit { tip: tip.into(), break_glass: bg(tip) };
         let mut held = row(BeadState::Rework);
         held.holds.insert(HoldKind::Manual);
         held.gate_key = Some("k".into());
         let out = apply(&held, &ev(BeadState::Rework, 0, kind()));
         assert!(out.applied, "{:?}", out.refusal);
         assert_eq!((out.row.state, out.row.tip.as_deref(), out.row.gate_key.clone()), (BeadState::Submitted, Some(tip), None));
+        let stamp = out.row.reason.unwrap_or_default();
+        assert!(stamp.contains("break_glass=true") && stamp.contains("npm test 101/0") && stamp.contains(tip), "{stamp}");
 
         let unheld = row(BeadState::Rework);
         let out = apply(&unheld, &ev(BeadState::Rework, 0, kind()));
@@ -1495,6 +1546,9 @@ mod tests {
             r.holds.insert(HoldKind::Manual);
             assert!(!apply(&r, &ev(state, 0, kind())).applied, "{state:?}");
         }
+        let mut live = row(BeadState::Working);
+        live.holder = Some("aeon-7".into());
+        assert!(!apply(&live, &ev(BeadState::Working, 0, kind())).applied, "a live holder is never raced");
 
         let ready = apply(&row(BeadState::Ready), &ev(BeadState::Ready, 0, kind()));
         assert!(ready.applied, "{:?}", ready.refusal);
@@ -1503,8 +1557,34 @@ mod tests {
         waiting.holds.insert(HoldKind::Wait);
         assert!(!apply(&waiting, &ev(BeadState::Ready, 0, kind())).applied, "a READY bead waiting on a prerequisite is not re-tipped");
 
-        let bad = apply(&held, &ev(BeadState::Rework, 0, BeadEventKind::Resubmit { tip: "abc".into() }));
+        let bad = apply(&held, &ev(BeadState::Rework, 0, BeadEventKind::Resubmit { tip: "abc".into(), break_glass: bg("abc") }));
         assert!(matches!(bad.refusal, Some(Refusal::MalformedTip { .. })));
+    }
+
+    #[test]
+    fn a_resubmit_without_its_provenance_is_refused_naming_the_missing_field() {
+        let tip = "2222222222222222222222222222222222222222";
+        let mut held = row(BeadState::Rework);
+        held.holds.insert(HoldKind::Manual);
+        let cases: [(BreakGlass, &str, &str); 4] = [
+            (BreakGlass { reason: String::new(), ..bg(tip) }, "concierge", "reason"),
+            (BreakGlass { evidence: " ".into(), ..bg(tip) }, "concierge", "evidence ("),
+            (bg("3333333333333333333333333333333333333333"), "concierge", "evidence tip"),
+            (bg(tip), "", "actor"),
+        ];
+        for r in [row(BeadState::Ready), held] {
+            for (g, actor, field) in &cases {
+                let mut e = ev(r.state, 0, BeadEventKind::Resubmit { tip: tip.into(), break_glass: g.clone() });
+                e.actor = actor.to_string();
+                let out = apply(&r, &e);
+                assert!(
+                    !out.applied && matches!(&out.refusal, Some(Refusal::BreakGlassIncomplete { missing }) if missing.contains(field)),
+                    "{:?} {field}: {:?}",
+                    r.state,
+                    out.refusal
+                );
+            }
+        }
     }
 
     #[test]

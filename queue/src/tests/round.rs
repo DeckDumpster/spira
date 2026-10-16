@@ -1155,6 +1155,10 @@ fn rework_world(holds: &[&str]) -> T {
     t
 }
 
+fn ev_tip() -> String {
+    format!("--evidence-tip={T_FIX}")
+}
+
 #[test]
 fn a_rework_bead_held_manual_is_retipped_and_admitted_to_a_round() {
     let t = rework_world(&["manual"]);
@@ -1162,8 +1166,8 @@ fn a_rework_bead_held_manual_is_retipped_and_admitted_to_a_round() {
     t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]);
     assert!(t.err().contains("nothing admissible") && !t.qfile("round").exists(), "a REWORK row is not admitted: {}", t.err());
 
-    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix"]), 0, "{}", t.err());
-    assert!(t.lc.has(&format!("retip sp-a {T_FIX} concierge")), "{:?}", t.lc.calls.borrow());
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix", "--evidence=npm test 1/0", &ev_tip()]), 0, "{}", t.err());
+    assert!(t.lc.has(&format!("retip sp-a {T_FIX} concierge [hand-built fix] [npm test 1/0] {T_FIX}")), "{:?}", t.lc.calls.borrow());
 
     assert_eq!(t.run(&["round", "open", "--members", &format!("sp-a:{T_FIX}")]), 0, "{}", t.err());
     assert!(t.out().contains(&format!("sp-a:{T_FIX}")), "{}", t.out());
@@ -1174,7 +1178,7 @@ fn resubmit_moves_the_local_branch_to_the_new_tip() {
     let t = rework_world(&["manual"]);
     t.git.set("refs/heads/spira/sp-a", "9999999999999999999999999999999999999999");
     let tip_arg = format!("--tip={T_FIX}");
-    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix", "--evidence=npm test 1/0", &ev_tip()]), 0, "{}", t.err());
     assert_eq!(t.git.get("refs/heads/spira/sp-a").as_deref(), Some(T_FIX));
 }
 
@@ -1182,7 +1186,7 @@ fn resubmit_moves_the_local_branch_to_the_new_tip() {
 fn resubmit_fetches_an_absent_tip_and_refuses_when_the_fetch_brings_nothing() {
     let t = rework_world(&["manual"]);
     let absent = "6".repeat(40);
-    assert_eq!(t.run(&["resubmit", "sp-a", &format!("--tip={absent}"), "--by=concierge", "--reason=r"]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", &format!("--tip={absent}"), "--by=concierge", "--reason=r", "--evidence=npm test 1/0", &format!("--evidence-tip={absent}")]), 1);
     assert!(t.git.calls.borrow().iter().any(|c| c.starts_with("fetch ") && c.ends_with("spira/sp-a")), "{:?}", t.git.calls.borrow());
     assert_eq!(t.git.get("refs/heads/spira/sp-a").as_deref(), Some(T_FIX), "the branch is not moved");
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
@@ -1196,8 +1200,8 @@ fn an_unclaimed_ready_bead_is_resubmitted_and_its_branch_set_to_the_tip() {
         r.state = "READY".into();
     }
     let tip_arg = format!("--tip={T_FIX}");
-    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built P0"]), 0, "{}", t.err());
-    assert!(t.lc.has(&format!("retip sp-a {T_FIX} concierge")), "{:?}", t.lc.calls.borrow());
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built P0", "--evidence=npm test 1/0", &ev_tip()]), 0, "{}", t.err());
+    assert!(t.lc.has(&format!("retip sp-a {T_FIX} concierge [hand-built P0] [npm test 1/0] {T_FIX}")), "{:?}", t.lc.calls.borrow());
     let state = t.lc.rows.borrow().as_ref().unwrap().iter().find(|r| r.bead_id == "sp-a").map(|r| (r.state.clone(), r.tip.clone())).unwrap();
     assert_eq!(state, ("SUBMITTED".to_string(), Some(T_FIX.to_string())));
     assert_eq!(t.git.rev_parse(Path::new("/"), "refs/heads/spira/sp-a").as_deref(), Some(T_FIX));
@@ -1211,7 +1215,7 @@ fn a_bead_a_live_aeon_holds_is_not_resubmitted_and_the_refusal_names_the_holder(
         r.holder = Some("aeon-7".into());
     }
     let tip_arg = format!("--tip={T_FIX}");
-    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built P0"]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built P0", "--evidence=npm test 1/0", &ev_tip()]), 1);
     assert!(t.err().contains("aeon-7"), "{}", t.err());
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
@@ -1221,7 +1225,7 @@ fn a_hand_mended_tip_that_fails_its_lint_is_not_retipped() {
     let t = rework_world(&["manual"]);
     t.scripts.lint_red.borrow_mut().insert(T_FIX.into(), "src/lib.rs:3:1".into());
     let tip_arg = format!("--tip={T_FIX}");
-    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix"]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix", "--evidence=npm test 1/0", &ev_tip()]), 1);
     assert!(t.err().contains("src/lib.rs:3:1"), "{}", t.err());
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
@@ -1230,7 +1234,7 @@ fn a_hand_mended_tip_that_fails_its_lint_is_not_retipped() {
 fn a_bead_held_by_no_one_is_not_retipped() {
     let t = rework_world(&[]);
     let tip_arg = format!("--tip={T_FIX}");
-    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix"]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", &tip_arg, "--by=concierge", "--reason=hand-built fix", "--evidence=npm test 1/0", &ev_tip()]), 1);
     assert!(t.err().contains("held by no one"), "{}", t.err());
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
@@ -1239,11 +1243,25 @@ fn a_bead_held_by_no_one_is_not_retipped() {
 fn resubmit_refuses_a_stranger_a_short_tip_an_unknown_commit_and_a_non_rework_row() {
     let t = rework_world(&["manual"]);
     let ok = format!("--tip={T_FIX}");
-    assert_eq!(t.run(&["resubmit", "sp-a", &ok, "--by=aeon-x", "--reason=r"]), 1);
-    assert_eq!(t.run(&["resubmit", "sp-a", "--tip=abc", "--by=concierge", "--reason=r"]), 1);
-    assert_eq!(t.run(&["resubmit", "sp-a", &format!("--tip={}", "5".repeat(40)), "--by=concierge", "--reason=r"]), 1);
-    assert_eq!(t.run(&["resubmit", "sp-b", &ok, "--by=concierge", "--reason=r"]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", &ok, "--by=aeon-x", "--reason=r", "--evidence=npm test 1/0", &ev_tip()]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", "--tip=abc", "--by=concierge", "--reason=r", "--evidence=npm test 1/0", &ev_tip()]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-a", &format!("--tip={}", "5".repeat(40)), "--by=concierge", "--reason=r", "--evidence=npm test 1/0", &ev_tip()]), 1);
+    assert_eq!(t.run(&["resubmit", "sp-b", &ok, "--by=concierge", "--reason=r", "--evidence=npm test 1/0", &ev_tip()]), 1);
     assert_eq!(t.run(&["resubmit", "sp-a", &ok, "--by=concierge"]), 2, "a reason is required");
+    assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
+}
+
+#[test]
+fn a_resubmit_without_evidence_or_with_an_evidence_tip_that_is_not_the_tip_is_refused() {
+    let t = rework_world(&["manual"]);
+    let tip_arg = format!("--tip={T_FIX}");
+    let base = ["resubmit", "sp-a", tip_arg.as_str(), "--by=concierge", "--reason=hand-built fix"];
+    assert_eq!(t.run(&base), 2);
+    assert!(t.err().contains("--evidence is required"), "{}", t.err());
+    let other = format!("--evidence-tip={}", "7".repeat(40));
+    assert_eq!(t.run(&[&base[..], &["--evidence=npm test 1/0", other.as_str()]].concat()), 1);
+    assert!(t.err().contains("--evidence-tip must equal --tip"), "{}", t.err());
+    assert_eq!(t.run(&[&base[..], &["--evidence=npm test 1/0"]].concat()), 1, "no evidence tip at all");
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
 
