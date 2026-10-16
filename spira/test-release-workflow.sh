@@ -244,7 +244,7 @@ _g="$(cat "$GATE_WORKFLOW")"
 _fs="$(awk '/^      force_spill:$/{f=1;next} f&&/^      [a-z_]+:$/{exit} f' "$GATE_WORKFLOW")"
 want "gate.yml force_spill input exists (positive control)" "type: boolean" "$_fs"
 want "force_spill defaults false" "default: false" "$_fs"
-want "provision spill is ec2-only only for a true force_spill" "spill:              \${{ inputs.force_spill && 'ec2-only' || 'ec2' }}" "$_g"
+want "provision always goes straight to EC2 (Ryan 2026-10-15: all test runs on EC2)" "spill:              ec2-only" "$_g"
 
 # ============================================================================
 tl_summary
