@@ -885,7 +885,7 @@ mod tests {
             if sql.starts_with("SELECT 1 FROM bead WHERE") || sql.starts_with("SELECT 1 FROM bead JOIN") {
                 return Ok(if st.stale_terminal_rows { vec![serde_json::json!({ "1": "1" })] } else { vec![] });
             }
-            if sql.starts_with("SELECT 1 FROM event WHERE") {
+            if sql.starts_with("SELECT 1 FROM event WHERE") || sql.starts_with("SELECT 1 FROM event JOIN") {
                 return Ok(vec![]);
             }
             Err(format!("fake: unexpected read {sql}"))
@@ -1115,6 +1115,16 @@ mod tests {
         fn exec(&self, sql: &str) -> Result<(), String> {
             self.inner.exec(sql)
         }
+    }
+
+    #[test]
+    fn the_event_continuity_probe_has_no_correlated_subquery_over_event() {
+        let steps = real_steps();
+        let (_, st) = steps.iter().find(|(n, _)| n.starts_with("0019-")).expect("0019 ships");
+        let Probe::NoRowMatches(q) = probe_for(st) else { panic!("0019's first statement is probed by a read") };
+        assert!(q.starts_with("SELECT 1 FROM event JOIN (") && q.contains("OVER (PARTITION BY"), "{q}");
+        assert_eq!(q.matches("(SELECT").count(), 1, "one derived pass over event, no per-row subquery: {q}");
+        assert!(!q.to_ascii_uppercase().contains("EXISTS"), "{q}");
     }
 
     #[test]
