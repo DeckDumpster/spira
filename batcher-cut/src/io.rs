@@ -1890,6 +1890,21 @@ pub fn shots_section(run: &Path, loom_addr: Option<&str>, members: &[(String, St
     format!("\nScreenshots:\n{}\n", lines.join("\n"))
 }
 
+/// The batch PR body's screenshot section: `testenv shots --batch` captures the pages the batch's
+/// frontend changes name, before and after, and the section links them. A failed capture is logged
+/// and becomes a `capture failed: <reason>` line; nothing here can fail the batch.
+pub fn batch_shots_section(testenv_bin: &Path, run_dir: &Path, loom_addr: Option<&str>, repo: &str, base: &str, head: &str) -> String {
+    let mut cmd = Command::new("timeout");
+    cmd.arg("1500").arg(testenv_bin).args(["shots", "--batch", repo, base, head]);
+    if let Err(e) = run(&mut cmd, "testenv shots --batch") {
+        eprintln!("batcher {repo}: screenshot capture failed: {e}");
+        let reason = e.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim().to_string();
+        return format!("\ncapture failed: {reason}\n");
+    }
+    let pairs = [("batch-before".to_string(), base.to_string()), ("batch-after".to_string(), head.to_string())];
+    shots_section(run_dir, loom_addr, &pairs)
+}
+
 pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
     forge_pr_create_on(repo, head, base, title, body, None)
 }
@@ -3984,5 +3999,24 @@ mod shots_tests {
         assert!(with.contains("sp-a index-390.png: http://host:1/shots/sp-a/abc/index-390.png") && !with.contains("note.txt") && !with.contains("sp-b"), "{with}");
         assert!(shots_section(tmp.path(), None, &members).contains("- sp-a index-390.png: /shots/sp-a/abc/index-390.png"));
         assert_eq!(shots_section(tmp.path(), None, &members[1..]), "");
+    }
+
+    fn stub(dir: &Path, body: &str) -> PathBuf {
+        let p = dir.join("testenv");
+        testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
+        p
+    }
+
+    #[test]
+    fn a_batch_section_links_the_captures_and_a_failure_is_a_line_not_an_error() {
+        let tmp = testkit::TempDir::new("batch-shots");
+        let run = tmp.path().join("run");
+        let (base, head) = ("b".repeat(40), "a".repeat(40));
+        let ok = stub(tmp.path(), &format!("d=\"{r}/shots/batch-before/{base}\"; mkdir -p \"$d\"; echo x > \"$d/index-390.png\"", r = run.display()));
+        let with = batch_shots_section(&ok, &run, Some("host:1"), "site", &base, &head);
+        assert!(with.contains(&format!("http://host:1/shots/batch-before/{base}/index-390.png")), "{with}");
+        let bad = stub(tmp.path(), "echo 'no image for / at 390px' >&2; exit 1");
+        let failed = batch_shots_section(&bad, &run, None, "site", &base, &head);
+        assert!(failed.contains("capture failed: ") && failed.contains("no image for / at 390px"), "{failed}");
     }
 }

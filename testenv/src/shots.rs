@@ -1,9 +1,8 @@
 //! `testenv shots <repo> <path>... [--widths 390,1280]` captures viewport PNGs of a tree's pages;
-//! `testenv shots --verify <tip> <repo> --bead <id> [--waived <reason>]` is the submission guard.
+//! `testenv shots --batch <repo> <base> <head>` captures the pages a batch changed, before and after.
 //!
-//! The images are evidence for a reviewer: nothing here opens or compares
-//! one. The only failure is a capture that produced no file, and the guard looks at directory
-//! entries and file sizes alone.
+//! The images are evidence for a reviewer, never a gate: nothing here opens or compares one.
+//! The only failure is a capture that produced no file.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,7 +11,9 @@ use std::time::Duration;
 use crate::foreign::{self, Decl, Shots};
 use crate::runtime::{ContainerRuntime, RunRequest};
 
-pub const USAGE: &str = "usage: testenv shots <repo> <path>... [--widths 390,1280]\n       testenv shots --verify <40-hex tip> <repo> --bead <id> [--waived <reason>]";
+pub const USAGE: &str = "usage: testenv shots <repo> <path>... [--widths 390,1280]\n       testenv shots --batch <repo> <base> <head>";
+pub const BEFORE: &str = "batch-before";
+pub const AFTER: &str = "batch-after";
 const RC_RED: i32 = 1;
 const RC_FAULT: i32 = 2;
 const FRONTEND: &str = "frontend/";
@@ -38,50 +39,24 @@ pub fn touches_frontend(changed: &str) -> bool {
     changed.lines().any(|l| l.starts_with(FRONTEND))
 }
 
-/// Widths with no non-empty `*-<width>.png` in `dir`.
-pub fn widths_missing(dir: &Path, widths: &[u32]) -> Vec<u32> {
-    let files: Vec<String> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.metadata().map(|m| m.is_file() && m.len() > 0).unwrap_or(false))
-        .filter_map(|e| e.file_name().into_string().ok())
+/// The pages a change under `frontend/` can alter: each changed `.html` file's own URL, or `/`
+/// when only assets (styles, scripts) changed.
+pub fn pages_for(changed: &str) -> Vec<String> {
+    let mut pages: Vec<String> = changed
+        .lines()
+        .filter_map(|l| l.strip_prefix(FRONTEND))
+        .filter(|p| p.ends_with(".html"))
+        .map(|p| match p.strip_suffix("index.html") {
+            Some(dir) => format!("/{dir}"),
+            None => format!("/{p}"),
+        })
         .collect();
-    widths.iter().copied().filter(|w| !files.iter().any(|f| f.ends_with(&format!("-{w}.png")))).collect()
-}
-
-/// The submission guard. `changed` is the branch's changed paths; `None` when git could not say.
-pub fn verify(run: &Path, bead: &str, tip: &str, decl_text: Option<&str>, changed: Option<&str>, waived: Option<&str>) -> (i32, String) {
-    let shots = match decl_text.map(Decl::parse) {
-        None => return (0, "shots: its repository declares no shots capture".into()),
-        Some(Err(e)) => return (RC_FAULT, format!("shots: {e}")),
-        Some(Ok(d)) => match d.shots {
-            None => return (0, "shots: its repository declares no shots capture".into()),
-            Some(s) => s,
-        },
-    };
-    let Some(changed) = changed else { return (RC_FAULT, "shots: cannot tell what the branch changes".into()) };
-    if !touches_frontend(changed) {
-        return (0, format!("shots: {bead} changes nothing under {FRONTEND}"));
+    pages.sort();
+    pages.dedup();
+    if pages.is_empty() {
+        pages.push("/".into());
     }
-    if let Some(reason) = waived {
-        return match reason.trim() {
-            "" => (RC_RED, "refused: SPIRA_SHOTS_WAIVED needs a reason".into()),
-            r => (0, format!("shots: waived: {r}")),
-        };
-    }
-    let dir = shot_dir(run, bead, tip);
-    let missing = widths_missing(&dir, &shots.widths);
-    if missing.is_empty() {
-        return (0, format!("shots: {} holds an image at each of {:?}px", dir.display(), shots.widths));
-    }
-    (
-        RC_RED,
-        format!(
-            "refused: {bead} changes {FRONTEND} and has no screenshot at {:?}px for {tip} — attach them with `testenv shots <repo> <path>...` from your worktree, or set SPIRA_SHOTS_WAIVED=<reason> for a change with no rendered effect",
-            missing
-        ),
-    )
+    pages
 }
 
 /// Clears the tip's directory, runs `capture` into it, and requires one non-empty file per page
@@ -148,14 +123,10 @@ pub fn main(
         eprintln!("{m}");
         RC_FAULT
     };
-    if args.iter().any(|a| a == "--verify") {
-        let pos: Vec<&String> = args.iter().filter(|a| *a != "--verify").collect();
-        let (Some(tip), Some(repo_arg), Some(bead)) = (pos.first(), pos.get(1), flag_value(args, "--bead")) else { return fault(USAGE.into()) };
-        let Some((repo, base)) = resolve(repo_arg) else { return fault(format!("shots: unknown repository {repo_arg}")) };
-        let decl = git(&repo, &["show", &format!("{tip}:{}", foreign::DECL)]);
-        let changed = changed_paths(&repo, tip, &[&base, "local/main", "main"]);
-        let waived = flag_value(args, "--waived");
-        let (rc, msg) = verify(run, &bead, tip, decl.as_deref(), changed.as_deref(), waived.as_deref());
+    if args.first().map(String::as_str) == Some("--batch") {
+        let (Some(repo_arg), Some(base), Some(head)) = (args.get(1), args.get(2), args.get(3)) else { return fault(USAGE.into()) };
+        let Some((repo, _)) = resolve(repo_arg) else { return fault(format!("shots: unknown repository {repo_arg}")) };
+        let (rc, msg) = batch(&repo, run, base, head, rt, harness);
         if rc == 0 {
             println!("{msg}");
         } else {
@@ -216,6 +187,54 @@ pub fn main(
         eprintln!("{msg}");
     }
     rc
+}
+
+fn worktree_add(repo: &Path, tree: &Path, sha: &str) -> bool {
+    // batch-job: a checkout takes as long as the tree is large
+    let mut c = Command::new("git");
+    c.arg("-C").arg(repo).args(["worktree", "add", "-q", "--detach"]).arg(tree).arg(sha);
+    c.status().is_ok_and(|s| s.success())
+}
+
+fn worktree_remove(repo: &Path, tree: &Path) {
+    // batch-job: removal takes as long as the tree is large
+    let mut c = Command::new("git");
+    c.arg("-C").arg(repo).args(["worktree", "remove", "-f"]).arg(tree);
+    let _ = c.status();
+}
+
+fn batch(repo: &Path, run: &Path, base: &str, head: &str, rt: Option<&dyn ContainerRuntime>, harness: Option<&Path>) -> (i32, String) {
+    let Some(decl_text) = git(repo, &["show", &format!("{head}:{}", foreign::DECL)]) else { return (0, "shots: its repository declares no shots capture".into()) };
+    let decl = match Decl::parse(&decl_text) {
+        Ok(d) => d,
+        Err(e) => return (RC_FAULT, format!("shots: {e}")),
+    };
+    let Some(shots) = decl.shots.as_ref() else { return (0, "shots: its repository declares no shots capture".into()) };
+    let Some(changed) = git(repo, &["diff", "--name-only", &format!("{base}...{head}")]) else { return (RC_FAULT, "shots: cannot tell what the batch changes".into()) };
+    if !touches_frontend(&changed) {
+        return (0, format!("shots: the batch changes nothing under {FRONTEND}"));
+    }
+    let (Some(rt), Some(harness)) = (rt, harness) else { return (RC_FAULT, "shots: cannot find the harness (SPIRA_TESTENV_HARNESS)".into()) };
+    let pages = pages_for(&changed);
+    let mut lines = Vec::new();
+    for (label, sha) in [(BEFORE, base), (AFTER, head)] {
+        let tree = run.join("shots-tree").join(format!("{label}-{}", std::process::id()));
+        let added = std::fs::create_dir_all(tree.parent().unwrap_or(run)).is_ok()
+            && worktree_add(repo, &tree, sha);
+        if !added {
+            return (RC_FAULT, format!("shots: cannot check out {sha} for the {label} capture"));
+        }
+        let log = run.join("shots").join(label).join(format!("{sha}.log"));
+        let _ = std::fs::create_dir_all(log.parent().unwrap_or(run));
+        let (rc, msg) = capture(run, label, sha, &pages, &shots.widths, &|out| run_container(rt, &decl, shots, &tree, out, harness, &pages, &shots.widths, &log));
+        worktree_remove(repo, &tree);
+        let _ = std::fs::remove_dir_all(&tree);
+        if rc != 0 {
+            return (rc, format!("{label}: {msg}"));
+        }
+        lines.push(msg);
+    }
+    (0, lines.join("\n"))
 }
 
 #[allow(clippy::too_many_arguments)]
