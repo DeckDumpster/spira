@@ -155,6 +155,12 @@ run watch --interval 5 --ticks 1 >/dev/null
 want "a rowless open bead is given a row from its title, priority and repo" "create-bead sp-orph --priority 0 --title fix the thing --repo widgets" "$(cat "$STUB_DIR/creates.log")"
 want "the repair is reported" "REPAIRED sp-orph" "$(cat "$TMP/inbox")"
 nowant "a repaired bead is not left as a SUSPECT" "ROWLESS" "$(cat "$TMP/inbox")"
+norepo() { printf '{"id":"%s","labels":["spira"],"issue_type":"task","status":"open","priority":3,"title":"Warden sweep landed"}' "$1"; }
+: > "$TMP/inbox"; : > "$STUB_DIR/creates.log"
+board -- "$(norepo sp-norepo)"
+run watch --interval 5 --ticks 1 >/dev/null
+want "a rowless bead with no repo label keeps its title out of the repo" "create-bead sp-norepo --priority 3 --title Warden sweep landed" "$(cat "$STUB_DIR/creates.log")"
+nowant "a rowless bead with no repo label is given no --repo" "--repo" "$(cat "$STUB_DIR/creates.log")"
 board "$(row sp-orph READY "$NOW" '[]')" -- "$(ropen sp-orph)"
 : > "$STUB_DIR/creates.log"; : > "$TMP/inbox"
 run watch --interval 5 --ticks 1 >/dev/null
