@@ -235,8 +235,48 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         if let Err(refusal) = record_target_verdict(bead_id, "done", args) {
             return refusal;
         }
+        if flag(args, "--after-ask").is_none() && released_on_ask_history(conn, bead_id) {
+            return (
+                REFUSED,
+                format!(
+                    "refused: work done: {bead_id} was released on an unanswered-or-answered ask and has not landed anything; DONE would read as success. \
+                     Submit the work, ask again with `work blocked`, or state what the answer settled with --after-ask \"<what the reply decided>\""
+                ),
+            );
+        }
     }
+    let delivers = match flag(args, "--after-ask") {
+        Some(settled) => format!("{delivers} (after ask: {settled})"),
+        None => delivers,
+    };
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Done { delivers })
+}
+
+fn released_on_ask_history(conn: &Conn, bead_id: &str) -> bool {
+    let sql = format!(
+        "SELECT event, evidence FROM event WHERE machine = 'bead' AND lc_key = '{}' AND applied = 1 ORDER BY seq",
+        rows::escape(bead_id)
+    );
+    let Ok(found) = conn.query(&sql) else { return true };
+    let history: Vec<(String, String)> = found
+        .iter()
+        .map(|r| (r.get("event").and_then(|v| v.as_str()).unwrap_or("").to_string(), r.get("evidence").and_then(|v| v.as_str()).unwrap_or("").to_string()))
+        .collect();
+    released_on_ask(&history)
+}
+
+/// True when an applied operator-question Hold is followed by a Release: the holder gave the
+/// bead back on a question rather than finishing it.
+fn released_on_ask(history: &[(String, String)]) -> bool {
+    let mut asked = false;
+    for (event, evidence) in history {
+        match event.as_str() {
+            "Hold" if evidence.contains("\"operator-question\"") => asked = true,
+            "Release" if asked => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The label groom-trigger.sh stamps on the beads it files; the groom label alone also
@@ -1145,6 +1185,16 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_release_after_an_ask_is_seen_and_a_plain_release_is_not() {
+        let h = |xs: &[(&str, &str)]| xs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
+        let ask = r#"{"Hold":{"cause":"operator-question","detail":"q"}}"#;
+        assert!(released_on_ask(&h(&[("Claim", "{}"), ("Hold", ask), ("Release", "\"Release\"")])));
+        assert!(!released_on_ask(&h(&[("Claim", "{}"), ("Release", "\"Release\"")])));
+        assert!(!released_on_ask(&h(&[("Claim", "{}"), ("Hold", ask)])), "an ask still held is refused by the machine itself");
+        assert!(!released_on_ask(&h(&[("Release", "\"Release\""), ("Hold", ask)])));
+    }
+
     #[test]
     fn a_child_names_its_repo_and_never_inherits_the_parents() {
         let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();

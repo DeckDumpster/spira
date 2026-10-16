@@ -1201,6 +1201,7 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
         return cannot("lifecycle list is not a JSON array".into());
     };
+    let reasons: BTreeMap<String, String> = rows.iter().map(|r| (s(r, "bead_id"), s(r, "reason"))).collect();
     let terminal: BTreeMap<String, String> = rows
         .iter()
         .filter(|r| matches!(s(r, "state").as_str(), "LANDED" | "DONE" | "DROPPED" | "SUPERSEDED") && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id"))))
@@ -1226,7 +1227,9 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
             done += 1;
             continue;
         }
-        let reason = format!("OUTCOME: {}\nClosed by reconcile-content: the lifecycle row is {state}, so the content bead ends with it.\n", state.to_lowercase());
+        let why = reasons.get(&id).map(|r| r.trim()).filter(|r| !r.is_empty()).map(|r| format!(" Row reason: {r}\n")).unwrap_or_default();
+        let outcome = if state == "DONE" { "done-without-landing (no commit landed; the row says delivered by hand)" } else { &state.to_lowercase() };
+        let reason = format!("OUTCOME: {outcome}\nClosed by reconcile-content: the lifecycle row is {state}, so the content bead ends with it.\n{why}");
         match bd.close(&id, &reason) {
             Ok(()) => {
                 lines.push(format!("closed {id} (lifecycle {state})"));
