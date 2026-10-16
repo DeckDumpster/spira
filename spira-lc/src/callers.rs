@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use lifecycle::bead::{AeonPhase, BeadEventKind, BeadState, DispositionStatus, HoldKind};
+use lifecycle::bead::{AeonPhase, BeadEventKind, BeadState, BreakGlass, DispositionStatus, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use serde_json::Value;
@@ -253,9 +253,10 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
         }
         "retip" => {
             if !need(2) {
-                return usage("retip <bead-id> <tip> [actor]");
+                return usage("retip <bead-id> <tip> <actor> <reason> <evidence> <evidence-tip>");
             }
-            retip(m, &a(0), &a(1), &actor_or(args.get(2), "concierge"))
+            let glass = BreakGlass { reason: a(3), evidence: a(4), evidence_tip: a(5) };
+            retip(m, &a(0), &a(1), &a(2), glass)
         }
         "renew" => renew(m, args),
         "phase" => phase(m, args),
@@ -719,7 +720,7 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
 /// Move a REWORK bead held by hand, or a READY bead nobody has claimed, to SUBMITTED at a new tip
 /// with no gate verdict: the round it is admitted to certifies it. The machine refuses a REWORK
 /// row with no manual hold.
-fn retip(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
+fn retip(m: &mut dyn Machine, id: &str, tip: &str, actor: &str, glass: BreakGlass) -> Answer {
     let Some((state, version, _)) = state_version(m, id) else {
         return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
     };
@@ -728,7 +729,12 @@ fn retip(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
         a.stderr = format!("spira-lc retip: {id} is {state}, not REWORK or READY — nothing changed\n");
         return a;
     }
-    let kind = serde_json::to_string(&BeadEventKind::Resubmit { tip: tip.to_string() }).unwrap_or_default();
+    if let Some(missing) = glass.gap(actor, tip) {
+        let mut a = Answer::cert(REFUSED, "refused", format!("retip tip={tip}"));
+        a.stderr = format!("spira-lc retip: {id} refused: break-glass needs {missing} — nothing changed\n");
+        return a;
+    }
+    let kind = serde_json::to_string(&BeadEventKind::Resubmit { tip: tip.to_string(), break_glass: glass }).unwrap_or_default();
     let (rc, out) = event(m, "bead", id, &state, &version, actor, &kind);
     if rc == 0 {
         return Answer::cert(APPLIED, "applied", format!("retip tip={tip}"));

@@ -346,9 +346,10 @@ pub trait Lc {
     }
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.
     fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)>;
-    /// `retip <bead> <tip> <actor>`: a REWORK bead held manual moves to SUBMITTED at `tip`, no
-    /// gate verdict. The machine refuses a row with no manual hold.
-    fn retip(&self, bead: &str, tip: &str, actor: &str) -> Result<(), (i32, String)>;
+    /// `retip <bead> <tip> <actor> <reason> <evidence> <evidence-tip>`: a REWORK bead held manual,
+    /// or an unclaimed READY one, moves to SUBMITTED at `tip`, no gate verdict. Break-glass: the
+    /// machine refuses a move without its provenance, or a REWORK row with no manual hold.
+    fn retip(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)>;
 }
 
 /// The config documents, through the spira-config library only

@@ -753,8 +753,8 @@ impl Lc for FLc {
         }
         Ok(())
     }
-    fn retip(&self, bead: &str, tip: &str, actor: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("retip {bead} {tip} {actor}"));
+    fn retip(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!("retip {bead} {tip} {actor} [{reason}] [{evidence}] {evidence_tip}"));
         let mut rows = self.rows.borrow_mut();
         let Ok(rows) = rows.as_mut() else { return Err((2, "cannot tell".into())) };
         let Some(r) = rows.iter_mut().find(|r| r.bead_id == bead) else { return Err((1, "no row".into())) };
