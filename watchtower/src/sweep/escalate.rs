@@ -70,7 +70,7 @@ fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
         if should_escalate {
             if let Some(inc) = inc {
                 let logs = spira_config::bounded::bounded(&cfg.journalctl)
-                    .args(["--user", "-u", unit, "-n", "3", "--no-pager"])
+                    .args(crate::probes::journal_args(unit, crate::probes::LOG_LOOKBACK, &["-n", "3"]))
                     .output()
                     .map(|o| {
                         String::from_utf8_lossy(&o.stdout).into_owned()

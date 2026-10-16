@@ -143,8 +143,15 @@ fn unit_run(cfg: &Cfg, unit: &str) -> Option<Run> {
     Some(Run { active_state: get("ActiveState="), invocation: get("InvocationID="), result: get("Result="), exec_status: get("ExecMainStatus=") })
 }
 
+pub const LOG_LOOKBACK: &str = "-6h";
+const OOM_LOOKBACK_SECS: i64 = 900;
+
+pub fn journal_args(unit: &str, since: &str, rest: &[&str]) -> Vec<String> {
+    ["--user", "-u", unit, "--since", since, "--no-pager"].iter().chain(rest).map(|s| s.to_string()).collect()
+}
+
 fn last_log_lines(cfg: &Cfg, unit: &str) -> String {
-    crate::deadline::output("conditions journal", Command::new(&cfg.journalctl).args(["--user", "-u", unit, "-n", "5", "--no-pager"]))
+    crate::deadline::output("conditions journal", Command::new(&cfg.journalctl).args(journal_args(unit, LOG_LOOKBACK, &["-n", "5"])))
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr))
         .unwrap_or_default()
 }
@@ -171,11 +178,13 @@ pub fn failing_units(cfg: &Cfg, run_dir: &Path) -> Reading {
         };
         let Some((inv, n)) = tally(prev.get(&unit).map(|(i, n)| (i.as_str(), *n)), &run) else { continue };
         if n >= cfg.failed_runs {
+            let opened = prev.get(&unit).is_some_and(|(_, pn)| *pn >= cfg.failed_runs);
+            let logs = if opened { "(unchanged since the incident was filed)".to_string() } else { last_log_lines(cfg, &unit) };
             standing.push(Cond {
                 key: unit.clone(),
                 reference: format!("incident:failed-unit-{unit}"),
                 title: format!("FAILED UNIT: {unit} failed {n} consecutive runs"),
-                body: format!("{unit} has failed {n} consecutive runs.\n\nLast log lines:\n{}\n\nCheck: journalctl --user -u {unit} -n 50\n", last_log_lines(cfg, &unit)),
+                body: format!("{unit} has failed {n} consecutive runs.\n\nLast log lines:\n{logs}\n\nCheck: journalctl --user -u {unit} -n 50\n"),
                 priority: 1,
                 sustain_secs: 0,
             });
@@ -217,7 +226,7 @@ pub fn parse_oom_show(show: &str) -> Vec<OomShow> {
 pub fn oom_decide(now: i64, prev: Option<&OomRow>, s: &OomShow, oom_in_journal: &dyn Fn(i64) -> bool) -> OomRow {
     let last = prev.map_or(0, |p| p.last_oom);
     let grew = prev.is_some_and(|p| s.restarts > p.restarts);
-    let hit = s.result == "oom-kill" || (grew && oom_in_journal(prev.map_or(now, |p| p.last_oom.max(0))));
+    let hit = s.result == "oom-kill" || (grew && oom_in_journal(now - OOM_LOOKBACK_SECS));
     OomRow { restarts: s.restarts, last_oom: if hit { now } else { last } }
 }
 
@@ -236,7 +245,7 @@ fn parse_oom_state(text: &str) -> BTreeMap<String, OomRow> {
 fn journal_has_oom(cfg: &Cfg, unit: &str, since: i64) -> bool {
     crate::deadline::output(
         "oom journal",
-        Command::new(&cfg.journalctl).args(["--user", "-u", unit, "--since", &format!("@{since}"), "--no-pager", "-o", "cat"]),
+        Command::new(&cfg.journalctl).args(journal_args(unit, &format!("@{since}"), &["-o", "cat"])),
     )
     .map(|o| {
         let t = String::from_utf8_lossy(&o.stdout);
@@ -567,6 +576,22 @@ pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_journalctl_argv_is_bounded() {
+        assert!(journal_args("u", LOG_LOOKBACK, &["-n", "5"]).contains(&"--since".to_string()));
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut seen = 0;
+        for f in ["probes.rs", "sweep/escalate.rs"] {
+            let text = std::fs::read_to_string(src.join(f)).unwrap();
+            let prod = text.split("mod tests {").next().unwrap();
+            for l in prod.lines().filter(|l| l.contains("\"--user\", \"-u\"") && l.contains("args(")) {
+                seen += 1;
+                assert!(l.contains("--since"), "unbounded journalctl argv in {f}: {l}");
+            }
+        }
+        assert_eq!(seen, 0, "journalctl argv is built only by journal_args");
+    }
+
     use super::*;
 
     #[test]
