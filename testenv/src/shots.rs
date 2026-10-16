@@ -118,7 +118,7 @@ pub fn capture(
 }
 
 fn git(repo: &Path, args: &[&str]) -> Option<String> {
-    let o = Command::new("timeout").arg("10").arg("git").arg("-C").arg(repo).args(args).output().ok()?;
+    let o = Command::new("timeout").arg("5").arg("git").arg("-C").arg(repo).args(args).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
