@@ -189,6 +189,20 @@ pub fn main(
     rc
 }
 
+fn worktree_add(repo: &Path, tree: &Path, sha: &str) -> bool {
+    // batch-job: a checkout takes as long as the tree is large
+    let mut c = Command::new("git");
+    c.arg("-C").arg(repo).args(["worktree", "add", "-q", "--detach"]).arg(tree).arg(sha);
+    c.status().is_ok_and(|s| s.success())
+}
+
+fn worktree_remove(repo: &Path, tree: &Path) {
+    // batch-job: removal takes as long as the tree is large
+    let mut c = Command::new("git");
+    c.arg("-C").arg(repo).args(["worktree", "remove", "-f"]).arg(tree);
+    let _ = c.status();
+}
+
 fn batch(repo: &Path, run: &Path, base: &str, head: &str, rt: Option<&dyn ContainerRuntime>, harness: Option<&Path>) -> (i32, String) {
     let Some(decl_text) = git(repo, &["show", &format!("{head}:{}", foreign::DECL)]) else { return (0, "shots: its repository declares no shots capture".into()) };
     let decl = match Decl::parse(&decl_text) {
@@ -206,14 +220,14 @@ fn batch(repo: &Path, run: &Path, base: &str, head: &str, rt: Option<&dyn Contai
     for (label, sha) in [(BEFORE, base), (AFTER, head)] {
         let tree = run.join("shots-tree").join(format!("{label}-{}", std::process::id()));
         let added = std::fs::create_dir_all(tree.parent().unwrap_or(run)).is_ok()
-            && Command::new("git").arg("-C").arg(repo).args(["worktree", "add", "-q", "--detach"]).arg(&tree).arg(sha).status().is_ok_and(|s| s.success());
+            && worktree_add(repo, &tree, sha);
         if !added {
             return (RC_FAULT, format!("shots: cannot check out {sha} for the {label} capture"));
         }
         let log = run.join("shots").join(label).join(format!("{sha}.log"));
         let _ = std::fs::create_dir_all(log.parent().unwrap_or(run));
         let (rc, msg) = capture(run, label, sha, &pages, &shots.widths, &|out| run_container(rt, &decl, shots, &tree, out, harness, &pages, &shots.widths, &log));
-        let _ = Command::new("git").arg("-C").arg(repo).args(["worktree", "remove", "-f"]).arg(&tree).status();
+        worktree_remove(repo, &tree);
         let _ = std::fs::remove_dir_all(&tree);
         if rc != 0 {
             return (rc, format!("{label}: {msg}"));
