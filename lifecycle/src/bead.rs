@@ -814,7 +814,8 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. }
+            Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
+            Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver
             | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Resubmit { .. } => illegal(row, kind),
         },
@@ -1078,8 +1079,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
-            | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
+            | GateInfra { .. } | Deliver | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } => illegal(row, kind),
         },
 
@@ -1096,6 +1098,16 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Resubmit { .. } => terminal(row),
         },
     }
+}
+
+/// A round delivered a bead an aeon holds or has been handed back for rework: the landed
+/// content decides, the row closes LANDED and the holder finds a terminal row.
+fn landed_under_holder(row: &BeadRow, merge_sha: &str) -> Outcome<BeadRow> {
+    let mut new = row.clone();
+    new.state = BeadState::Landed;
+    new.reason = Some(merge_sha.to_string());
+    new.version += 1;
+    Outcome::applied(new)
 }
 
 /// One entry of a proposed stack that no longer matches its prerequisite's live row —
@@ -2820,4 +2832,18 @@ mod tests {
         assert!(apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Submit { tip: "a".repeat(40) })).applied);
     }
 
+
+    #[test]
+    fn delivered_with_a_live_holder_closes_landed_and_leaves_the_holder_a_terminal_row() {
+        for from in [BeadState::Working, BeadState::Rework] {
+            let mut r = claimed_row(from, "sp-a", "1111111111111111111111111111111111111111");
+            r.holder = Some("aeon-1".into());
+            let out = apply(&r, &ev(from, r.version, BeadEventKind::Delivered { merge_sha: "m1".into(), proof: "p".into() }));
+            assert!(out.applied, "{from:?}: {:?}", out.refusal);
+            assert_eq!(out.row.state, BeadState::Landed, "{from:?}");
+            assert_eq!(out.row.reason.as_deref(), Some("m1"));
+            let again = apply(&out.row, &ev(BeadState::Landed, out.row.version, BeadEventKind::Release));
+            assert!(!again.applied, "{from:?}: the holder's release finds a terminal row");
+        }
+    }
 }
