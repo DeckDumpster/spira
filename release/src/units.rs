@@ -281,6 +281,12 @@ pub fn exec_lines(text: &str) -> Vec<String> {
     text.lines().filter(|l| l.starts_with("Exec") && l.contains('=')).map(str::to_string).collect()
 }
 
+/// A unit that opts out of the activation drain: it touches no state an activation swaps, so
+/// waiting for it to exit buys nothing.
+pub fn undrained(text: &str) -> bool {
+    text.lines().any(|l| l.trim().replace(' ', "").eq_ignore_ascii_case("X-Spira-NoDrain=true"))
+}
+
 /// A service whose `Exec*=` lines differ between two renderings.
 pub fn exec_changed(old: &str, new: &str) -> bool {
     exec_lines(old) != exec_lines(new)

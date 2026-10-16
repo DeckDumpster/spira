@@ -2028,6 +2028,26 @@ fn activate_waits_for_a_running_oneshot_to_exit() {
     assert!(sc.exits_after.borrow()["spira-job-prod.service"] == 0, "activation polled the oneshot until it exited");
 }
 
+#[test]
+fn activate_does_not_wait_for_a_running_oneshot_that_opts_out_of_the_drain() {
+    let git = FakeGit {
+        extra_only: vec![(B.into(), "systemd/spira-job.service".into(), format!("[Unit]\nX-Spira-NoDrain=true\n{JOB}"))],
+        ..Default::default()
+    };
+    let w = World::with_git(git);
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    w.install_units(A);
+    sc.exits_after.borrow_mut().insert("spira-job-prod.service".into(), 1000);
+    let mut c = ctx(&w, &sc);
+    c.drain = Duration::from_secs(5);
+    let s = activate::activate(&c, B, None).unwrap();
+    assert_eq!(sc.state("spira-job-prod.service").unwrap().active, "active", "the drain did not wait for it");
+    assert!(s.deferred.contains(&"spira-job-prod.service".to_string()));
+}
+
 // ---------------------------------------------------------------- activation installs new units
 
 fn build_with_unit_ensure(w: &World, sha: &str, body: String) {
