@@ -313,7 +313,7 @@ fn mend(args: &[String], conn: &Conn) -> Reply {
         return Err(refuse_logged(conn, &row, outcome.refusal.unwrap_or(Refusal::IllegalTransition { state: row.state.as_str().into(), event: "Mended".into() }), &actor));
     }
     let evidence = serde_json::json!({"Mended": {"at": at, "members": members.iter().map(|m| format!("{}:{}:{}", m.bead, m.from, m.to)).collect::<Vec<_>>(), "ask": facts.ask, "checked": facts.checked}});
-    let rec = EventRecord::of_apply("mending", row.key(), "Mended", row.state.as_str(), outcome.row.state.as_str(), None, evidence, &actor, at);
+    let rec = EventRecord::of_apply("mending", row.key(), "Mended", row.state.as_str(), row.state.as_str(), None, evidence, &actor, at);
     let checked = facts.checked.join(",");
     let inserts: String = members
         .iter()
