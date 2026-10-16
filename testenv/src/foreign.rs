@@ -219,23 +219,36 @@ impl Cache {
     /// Merge a passing run's upper layer into the warm target once no other run reads it.
     /// Whiteouts are not merged: a file the run deleted stays in the warm target, which costs
     /// disk and never a wrong build. Either way the run's layer is gone afterwards.
-    fn publish(&self, cname: &str, deadline: Option<Instant>) {
+    fn publish(&self, cname: &str, deadline: Option<Instant>, log: &dyn Fn(&str)) {
         let run = self.run_dir(cname);
-        let give_up = Instant::now() + PUBLISH_WAIT;
+        let began = Instant::now();
+        let give_up = began + PUBLISH_WAIT;
         loop {
             if let Some(_ex) = self.flock(libc::LOCK_EX) {
+                let (waited, held) = (began.elapsed().as_secs(), Instant::now());
                 let _ = std::fs::write(self.holder_path(), cname);
                 let upper = run.join("upper");
                 let _ = std::process::Command::new("find").arg(&upper).args(["-type", "c", "-delete"]).status();
-                let _ = std::process::Command::new("cp")
+                let merged = std::process::Command::new("cp")
                     .args(["-a", "--reflink=auto", "--no-preserve=xattr"])
                     .arg(format!("{}/.", upper.display()))
                     .arg(self.dir.join("target"))
-                    .status();
+                    .output();
                 let _ = std::fs::remove_file(self.holder_path());
+                match merged {
+                    Ok(o) if o.status.success() => {}
+                    Ok(o) => log(&format!(
+                        "{cname}: warm cache publish failed (not a verdict; the warm target is stale): cp rc={} {}",
+                        o.status.code().unwrap_or(-1),
+                        String::from_utf8_lossy(&o.stderr).lines().next().unwrap_or("").trim()
+                    )),
+                    Err(e) => log(&format!("{cname}: warm cache publish failed (not a verdict; the warm target is stale): {e}")),
+                }
+                log(&format!("{cname}: warm cache merge waited {waited}s, held the lock {}s", held.elapsed().as_secs()));
                 break;
             }
             if crate::runtime::cancelled() || Instant::now() >= give_up || deadline.is_some_and(|d| Instant::now() >= d) {
+                log(&format!("{cname}: warm cache publish skipped after {}s waiting for the lock (not a verdict)", began.elapsed().as_secs()));
                 break;
             }
             std::thread::sleep(LOCK_POLL);
@@ -263,7 +276,13 @@ impl TierRun<'_> {
         if self.cache.prepare().is_err() {
             return (Outcome::Fault("cache-dir"), 0);
         }
-        let cname = format!("testenv-foreign-{}-{name}", &self.key[..self.key.len().min(12)]);
+        static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let cname = format!(
+            "testenv-foreign-{}-{}-{}-{name}",
+            &self.key[..self.key.len().min(12)],
+            std::process::id(),
+            RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
         let attached = match self.cache.attach(&cname, self.deadline, self.log) {
             Ok(a) => a,
             Err(reason) => return (Outcome::Fault(reason), t0.elapsed().as_secs()),
@@ -291,7 +310,7 @@ impl TierRun<'_> {
         self.rt.purge(&cname);
         drop(attached);
         if rc == 0 {
-            self.cache.publish(&cname, self.deadline);
+            self.cache.publish(&cname, self.deadline, self.log);
         } else {
             let _ = std::fs::remove_dir_all(self.cache.run_dir(&cname));
         }
@@ -375,6 +394,19 @@ mod tests {
         assert_eq!(first_error(log).unwrap(), "src/binder.rs:222:9: error: this argument is a mutable reference");
         assert_eq!(first_error("ok\nboom\n").unwrap(), "boom");
         assert_eq!(first_error(""), None);
+    }
+
+    #[test]
+    fn a_failed_publish_is_logged_as_its_own_non_verdict_line() {
+        let root = testkit::TempDir::new("foreign-pub-fail");
+        let cache = Cache::new(root.path(), "r");
+        cache.prepare().unwrap();
+        let lines = std::sync::Mutex::new(Vec::<String>::new());
+        let log = |l: &str| lines.lock().unwrap().push(l.to_string());
+        cache.publish("c1", None, &log);
+        let got = lines.lock().unwrap().join("\n");
+        assert!(got.contains("c1: warm cache publish failed (not a verdict"), "{got}");
+        assert!(got.contains("merge waited"), "{got}");
     }
 
     #[test]
