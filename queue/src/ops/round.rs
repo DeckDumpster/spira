@@ -1451,16 +1451,25 @@ fn remerge_if_moved(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, k
 }
 
 fn requeue_stranded(w: &World, label: &str, id: &str, tip: &str) -> Option<String> {
-    let (state, version) = w.lc.bead_state(id)?;
-    if state != "IN_DELIVERY" {
-        return Some(state);
-    }
     let kind = serde_json::json!({"Requeued": {"tip": tip}}).to_string();
-    if let Err((rc, e)) = w.lc.bead_event(id, &state, &version, LC_ACTOR, &kind) {
-        w.err(format!("queue.sh {label}: {id} is still IN_DELIVERY after the abandon and the requeue was refused (rc={rc}): {e}"));
-        return None;
+    let (mut state, mut version) = w.lc.bead_state(id)?;
+    for attempt in 0..2 {
+        if state != "IN_DELIVERY" {
+            return Some(state);
+        }
+        let Err((rc, e)) = w.lc.bead_event(id, &state, &version, LC_ACTOR, &kind) else {
+            return w.lc.bead_state(id).map(|(s, _)| s);
+        };
+        let reread = w.lc.bead_state(id);
+        match reread {
+            Some((s, v)) if attempt == 0 && (s != state || v != version) => (state, version) = (s, v),
+            _ => {
+                w.err(format!("queue.sh {label}: {id} is still IN_DELIVERY after the abandon and the requeue was refused (rc={rc}): {e}"));
+                return None;
+            }
+        }
     }
-    w.lc.bead_state(id).map(|(s, _)| s)
+    None
 }
 
 fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
