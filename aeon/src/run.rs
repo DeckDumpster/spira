@@ -559,6 +559,16 @@ impl<'a> Run<'a> {
             return Err(0);
         }
 
+        let occupants = worktree::live_occupants(std::path::Path::new("/proc"), &self.run_dir().join("worktree").join(&c.id), self.pid);
+        if !occupants.is_empty() {
+            self.release();
+            let pids = occupants.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+            self.log(&format!("{who}: {} worktree is held by live process(es) {pids} — released, one aeon per worktree", c.id));
+            self.note(&format!("Released by aeon: live process(es) {pids} have their working directory in this bead's worktree. Claiming it would put two sessions in one checkout; it is claimable again once they exit."));
+            self.ledger_done(0, "worktree-held");
+            return Err(0);
+        }
+
         // ---- world-stop fence ----
         let label = self.conf.s("SPIRA_WORLD_STOP_LABEL");
         let has = bd::show(self.d.bd, &c.id).is_some_and(|r| r.has_label(&label));

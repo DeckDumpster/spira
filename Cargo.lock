@@ -1711,6 +1711,7 @@ version = "1.0.0"
 dependencies = [
  "bead",
  "lifecycle",
+ "sending",
  "serde",
  "serde_json",
  "spira-config",

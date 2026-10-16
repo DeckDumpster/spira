@@ -585,6 +585,10 @@ impl crate::reopen::World for Live {
         self.store.lc_reopen(id, cause, &self.beads_actor)
     }
 
+    fn stop_holder(&mut self, id: &str, cause: &str) -> Result<(), String> {
+        live_stop_holder(&self.run_dir, id, cause)
+    }
+
     fn write_reopen_event(&mut self, id: &str, cause: &str) {
         let _ = crate::counters::write_event(&self.store, &self.beads_actor, id, "reopen", cause);
     }
@@ -592,6 +596,19 @@ impl crate::reopen::World for Live {
     fn note(&mut self, id: &str, text: &str) -> Result<(), String> {
         self.bd_ok(&["note", id, "--stdin"], Some(text.as_bytes())).map(|_| ())
     }
+}
+
+pub fn live_stop_holder(run: &std::path::Path, id: &str, why: &str) -> Result<(), String> {
+    let epoch = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    crate::reopen::stop_holder_in(
+        run,
+        id,
+        why,
+        std::env::var("SPIRA_AEON").is_ok_and(|v| !v.is_empty()),
+        crate::reopen::STOP_WAIT_S,
+        &epoch,
+        &|| std::thread::sleep(std::time::Duration::from_millis(500)),
+    )
 }
 
 #[cfg(test)]

@@ -43,6 +43,10 @@ impl World for Fake {
             Ok(())
         }
     }
+    fn stop_holder(&mut self, id: &str, cause: &str) -> Result<(), String> {
+        self.log(format!("stop_holder {id} {cause}"));
+        Ok(())
+    }
     fn write_reopen_event(&mut self, id: &str, cause: &str) {
         self.log(format!("write_reopen_event {id} {cause}"));
     }
@@ -68,6 +72,7 @@ fn happy_path_every_step_in_order() {
     assert_eq!(
         *w.calls.borrow(),
         vec![
+            "stop_holder sp-a gate-red",
             "lc_reopen sp-a gate-red",
             "write_reopen_event sp-a gate-red",
         ]
@@ -244,4 +249,87 @@ fn live_a_bead_with_no_row_reopens_and_a_refused_row_fails() {
     assert_eq!(run(&o("sp-a"), &mut terminal), 1, "a terminal row is refused");
     let (mut down, _d3) = live_lc("down", RECORD, 2);
     assert_eq!(run(&o("sp-a"), &mut down), 1, "an unreachable machine is a failure");
+}
+
+// ---------------------------------------------------------------------------------------
+// the harness stops the holding aeon before the bead leaves WORKING
+
+fn fake_aeon(run: &std::path::Path, bead: &str, lease_until: i64) {
+    std::fs::create_dir_all(run).unwrap();
+    let pf = run.join(format!("aeon-builder-{bead}.pid"));
+    std::fs::write(&pf, "1\n").unwrap();
+    std::fs::write(pf.with_extension("lease"), lease_until.to_string()).unwrap();
+}
+
+#[test]
+fn a_live_holder_gets_a_stop_request_and_is_waited_for() {
+    let dir = testkit::TempDir::new("spira-claim-stop-holder");
+    let run = dir.join("run");
+    fake_aeon(&run, "sp-a", 10_000);
+    let clock = std::cell::Cell::new(100i64);
+    let ticks = std::cell::Cell::new(0);
+    let r = stop_holder_in(&run, "sp-a", "local-tier-red", false, 60, &|| clock.get(), &|| {
+        clock.set(clock.get() + 1);
+        ticks.set(ticks.get() + 1);
+        // the aeon sees the request on its next beat and tears down
+        if run.join("aeon/sp-a.stop").is_file() && ticks.get() == 3 {
+            let _ = std::fs::remove_file(run.join("aeon-builder-sp-a.lease"));
+        }
+    });
+    assert!(r.is_ok(), "{r:?}");
+    assert!(ticks.get() >= 3, "returned before the aeon exited");
+    let said = std::fs::read_to_string(run.join("aeon/sp-a.stop")).unwrap();
+    assert!(said.contains("local-tier-red"), "{said}");
+}
+
+#[test]
+fn a_holder_that_will_not_exit_refuses_the_release() {
+    let dir = testkit::TempDir::new("spira-claim-stop-stuck");
+    let run = dir.join("run");
+    fake_aeon(&run, "sp-a", 1_000_000);
+    let clock = std::cell::Cell::new(100i64);
+    let r = stop_holder_in(&run, "sp-a", "gate-red", false, 5, &|| clock.get(), &|| clock.set(clock.get() + 1));
+    assert!(r.unwrap_err().contains("did not exit"));
+}
+
+#[test]
+fn no_live_holder_and_an_aeons_own_call_wait_for_nothing() {
+    let dir = testkit::TempDir::new("spira-claim-stop-none");
+    let run = dir.join("run");
+    let never = || panic!("must not wait");
+    assert!(stop_holder_in(&run, "sp-a", "x", false, 5, &|| 100, &never).is_ok());
+    fake_aeon(&run, "sp-a", 10_000);
+    assert!(stop_holder_in(&run, "sp-a", "x", true, 5, &|| 100, &never).is_ok());
+    assert!(!run.join("aeon/sp-a.stop").exists(), "an aeon's own hand-back must not stop itself");
+    fake_aeon(&run, "sp-b", 50);
+    assert!(stop_holder_in(&run, "sp-b", "x", false, 5, &|| 100, &never).is_ok(), "an expired lease is not a live holder");
+}
+
+#[test]
+fn a_refused_stop_leaves_the_bead_working() {
+    struct Stuck(Fake);
+    impl World for Stuck {
+        fn write_ejected(&mut self, i: &str, s: &str) { self.0.write_ejected(i, s) }
+        fn lc_reopen(&mut self, i: &str, c: &str) -> Result<(), String> { self.0.lc_reopen(i, c) }
+        fn stop_holder(&mut self, _: &str, _: &str) -> Result<(), String> { Err("still running".into()) }
+        fn write_reopen_event(&mut self, i: &str, c: &str) { self.0.write_reopen_event(i, c) }
+        fn note(&mut self, i: &str, t: &str) -> Result<(), String> { self.0.note(i, t) }
+    }
+    let mut w = Stuck(Fake::default());
+    assert_eq!(run(&opts("sp-a", "local-tier-red"), &mut w), 1);
+    assert!(w.0.calls.borrow().is_empty(), "the row moved with the aeon still running: {:?}", w.0.calls.borrow());
+}
+
+#[test]
+fn the_stop_comes_before_the_state_leaves_working() {
+    let mut w = Fake::default();
+    assert_eq!(run(&opts("sp-a", "local-tier-red"), &mut w), 0);
+    let calls = w.calls.borrow();
+    let stop = calls.iter().position(|c| c.starts_with("stop_holder")).unwrap();
+    let lc = calls.iter().position(|c| c.starts_with("lc_reopen")).unwrap();
+    assert!(stop < lc);
+    drop(calls);
+    let mut w = Fake::default();
+    assert_eq!(run(&opts("sp-a", "work-close-converted"), &mut w), 0);
+    assert!(!w.has("stop_holder sp-a work-close-converted"), "a conversion is the holder's own hand-off");
 }
