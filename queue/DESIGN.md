@@ -527,7 +527,7 @@ data, not the code; the refusal is the contract).
      the tree in another repository, and for a round's `local-verdict` file (it records no
      tree).
   5. **The exit (law-a-refusal-names-its-exit):** `SPIRA_LAND_UNGATED=<reason>` lands without
-     a certificate. The reason is bounded to one line and must not be empty; an empty value
+     a certificate. It is break-glass and carries provenance: `SPIRA_LAND_UNGATED_BY` must be `concierge` or `operator`, and `SPIRA_LAND_UNGATED_EVIDENCE` a rev that resolves and is an ancestor of the head (the lost evidence is recorded in the tip's own history); either missing or failing refuses, nothing changed. `by` and `evidence` are logged with the reason. The reason is bounded to one line and must not be empty; an empty value
      is the same as unset. The override is loud in four places: a `queue.sh land-local:
      UNGATED LANDING …` line on stderr; `ungated: <reason>` as every member's LANDED
      landstate reason (the record read later; re-written after `bead_close_on_land`, whose own

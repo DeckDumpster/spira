@@ -2050,14 +2050,36 @@ fn land_local_ungated_override_lands_and_logs_the_reason() {
     t.var("SPIRA_LAND_UNGATED", "");
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1, "an empty reason is no override");
     t.var("SPIRA_LAND_UNGATED", "operator: gate host down\nsecond line");
+    t.var("SPIRA_LAND_UNGATED_BY", "operator");
+    t.var("SPIRA_LAND_UNGATED_EVIDENCE", "b0");
     assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     let reason = "operator: gate host down second line";
     assert!(t.err().contains(&format!("UNGATED LANDING of h1 (tree {T1}) onto local/main")), "{}", t.err());
-    assert!(t.err().contains(&format!("SPIRA_LAND_UNGATED={reason}")), "{}", t.err());
-    assert!(t.landing_log().contains(&format!("QUEUE UNGATED 1000 repo=spira head=h1 tree={T1} reason={reason}")), "{}", t.landing_log());
+    assert!(t.err().contains(&format!("SPIRA_LAND_UNGATED={reason} by=operator evidence=b0")), "{}", t.err());
+    assert!(t.landing_log().contains(&format!("QUEUE UNGATED 1000 repo=spira head=h1 tree={T1} by=operator evidence=b0 reason={reason}")), "{}", t.landing_log());
 }
 
+#[test]
+fn land_local_ungated_override_refuses_without_by_or_evidence_on_the_tip() {
+    let t = T::new(LandMode::QueueLocal);
+    uncertified_local_repo(&t);
+    t.git.set("elsewhere", "x9");
+    t.var("SPIRA_LAND_UNGATED", "gate host down");
+    for (by, ev, want) in [
+        (None, Some("b0"), "SPIRA_LAND_UNGATED_BY must be concierge or operator"),
+        (Some("aeon"), Some("b0"), "SPIRA_LAND_UNGATED_BY must be concierge or operator"),
+        (Some("operator"), None, "SPIRA_LAND_UNGATED_EVIDENCE"),
+        (Some("operator"), Some("nope"), "does not resolve"),
+        (Some("concierge"), Some("elsewhere"), "is not on the tip"),
+    ] {
+        t.var("SPIRA_LAND_UNGATED_BY", by.unwrap_or(""));
+        t.var("SPIRA_LAND_UNGATED_EVIDENCE", ev.unwrap_or(""));
+        assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+        assert!(t.err().contains(want) && t.err().contains("refused, nothing changed"), "{want}: {}", t.err());
+        assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing moved");
+    }
+}
 
 #[test]
 fn land_local_delivers_each_member_at_its_version() {

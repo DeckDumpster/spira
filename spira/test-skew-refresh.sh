@@ -374,6 +374,8 @@ run_lq() {
         SPIRA_REPO="$LREPO" \
         SPIRA_SYSTEMCTL="$TMP/mock-sc" \
         SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
+        SPIRA_LAND_UNGATED_BY=operator \
+        SPIRA_LAND_UNGATED_EVIDENCE=local/main \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" queue "$@" 2>&1
 }
