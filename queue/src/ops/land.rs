@@ -60,10 +60,37 @@ pub fn certified(w: &World, path: &Path, repo: &str, s: &crate::ports::Settings,
             Ok(())
         }
         None => Err(format!(
-            "no round GREEN for {head}'s tree {tree} in {repo} — {}nothing ran the full suite on it; cut a round with batcher (a gate PASS is a budgeted selection and does not certify a landing), or SPIRA_LAND_UNGATED=<reason> to land it ungated, logged",
+            "no round GREEN for {head}'s tree {tree} in {repo} — {}nothing ran the full suite on it; cut a round with batcher (a gate PASS is a budgeted selection and does not certify a landing), or SPIRA_LAND_UNGATED=<reason> with SPIRA_LAND_UNGATED_BY=<concierge|operator> and SPIRA_LAND_UNGATED_EVIDENCE=<rev on the tip> to land it ungated, logged",
             if gate_only { "only a budgeted gate PASS exists, and " } else { "" }
         )),
     }
+}
+
+/// An ungated landing's provenance: who broke the glass, why, and the commit in the head's
+/// own history that records the lost evidence.
+pub struct BreakGlass {
+    pub reason: String,
+    pub by: String,
+    pub evidence: String,
+}
+
+fn break_glass(w: &World, repo: &Path, head: &str, reason: String) -> Result<BreakGlass, String> {
+    let by = w.var("SPIRA_LAND_UNGATED_BY").unwrap_or_default();
+    if by != "concierge" && by != "operator" {
+        return Err(format!("SPIRA_LAND_UNGATED_BY must be concierge or operator (got {by:?})"));
+    }
+    let spec = w.var("SPIRA_LAND_UNGATED_EVIDENCE").unwrap_or_default();
+    if spec.is_empty() {
+        return Err("SPIRA_LAND_UNGATED_EVIDENCE=<rev in the head's history> is required".into());
+    }
+    crate::ident::check("evidence", &spec)?;
+    let Some(evidence) = w.git.rev_parse(repo, &spec) else {
+        return Err(format!("evidence {spec} does not resolve"));
+    };
+    if !w.git.is_ancestor(repo, &evidence, head) {
+        return Err(format!("evidence {evidence} is not on the tip {head}"));
+    }
+    Ok(BreakGlass { reason, by, evidence })
 }
 
 /// Members from `--members`: `id:tip` tokens, comma or space separated; a token with no
@@ -164,7 +191,13 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
     let ungated = match certified(w, &path, &name, &c.s, &head, head_arg) {
         Ok(()) => None,
         Err(refusal) => match w.var("SPIRA_LAND_UNGATED").map(|r| crate::ident::bounded_text(&r)).filter(|r| !r.is_empty()) {
-            Some(reason) => Some(reason),
+            Some(reason) => match break_glass(w, &path, &head, reason) {
+                Ok(bg) => Some(bg),
+                Err(why) => {
+                    w.err(format!("queue.sh land-local: {refusal}; SPIRA_LAND_UNGATED is set but {why}; refused, nothing changed"));
+                    return FAIL;
+                }
+            },
             None => {
                 w.err(format!("queue.sh land-local: {refusal}; refused, nothing changed"));
                 return FAIL;
@@ -229,12 +262,12 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
         w.err(format!("queue.sh land-local: {base} moved concurrently — refused, nothing changed"));
         return FAIL;
     }
-    if let Some(reason) = &ungated {
+    if let Some(BreakGlass { reason, by, evidence }) = &ungated {
         let tree = w.git.rev_parse(&path, &format!("{head}^{{tree}}")).unwrap_or_else(|| "-".into());
         w.err(format!(
-            "queue.sh land-local: UNGATED LANDING of {head} (tree {tree}) onto {base} — no gate PASS or round GREEN certified it; SPIRA_LAND_UNGATED={reason}"
+            "queue.sh land-local: UNGATED LANDING of {head} (tree {tree}) onto {base} — no gate PASS or round GREEN certified it; SPIRA_LAND_UNGATED={reason} by={by} evidence={evidence}"
         ));
-        super::landing_log(&c.s.run, &format!("QUEUE UNGATED {} repo={name} head={head} tree={tree} reason={reason}", w.clock.now()));
+        super::landing_log(&c.s.run, &format!("QUEUE UNGATED {} repo={name} head={head} tree={tree} by={by} evidence={evidence} reason={reason}", w.clock.now()));
     }
 
     let seqfile = c.queue_file("round-seq");
@@ -282,7 +315,7 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
         &format!("local landing (round {n})"),
         &format!(
             "{base} fast-forwarded to {head} (round {n}, archived at {archive}). Members: {listed}{}{deploy_note}",
-            ungated.as_ref().map(|r| format!(". UNGATED — no gate PASS or round GREEN for this tree; SPIRA_LAND_UNGATED={r}")).unwrap_or_default()
+            ungated.as_ref().map(|r| format!(". UNGATED — no gate PASS or round GREEN for this tree; SPIRA_LAND_UNGATED={} by={} evidence={}", r.reason, r.by, r.evidence)).unwrap_or_default()
         ),
     );
     w.out(format!("queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"));

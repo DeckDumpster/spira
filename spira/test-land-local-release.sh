@@ -115,6 +115,8 @@ run_q() {
     SPIRA_REPO="$REPO" \
     SPIRA_UNIT_DIR="$UNITS" \
     SPIRA_LAND_UNGATED="fixture: hand-built heads no gate judged (queue/DESIGN.md §8 D12)" \
+    SPIRA_LAND_UNGATED_BY=operator \
+    SPIRA_LAND_UNGATED_EVIDENCE=local/main \
     SPIRA_SYSTEMCTL="$MOCK_SC" \
         PATH="$SH:$PATH" queue "$@" 2>&1
 }

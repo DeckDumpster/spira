@@ -83,6 +83,8 @@ run() {
     SPIRA_HOME="$SH" \
     SPIRA_REPO="$REPO" \
     SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
+    SPIRA_LAND_UNGATED_BY=operator \
+    SPIRA_LAND_UNGATED_EVIDENCE=local/main \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 run_lockheld() {
@@ -91,6 +93,8 @@ run_lockheld() {
     SPIRA_REPO="$REPO" \
     SPIRA_QUEUE_LOCK_HELD=1 \
     SPIRA_LAND_UNGATED="${LAND_UNGATED-fixture: hand-built heads no gate judged}" \
+    SPIRA_LAND_UNGATED_BY=operator \
+    SPIRA_LAND_UNGATED_EVIDENCE=local/main \
         SPIRA_HOME="$SH" queue "$@" 2>&1
 }
 localmain() { git -C "$REPO" rev-parse local/main; }
