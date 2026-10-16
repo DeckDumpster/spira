@@ -1615,6 +1615,22 @@ pub fn record_escape(
     }
 }
 
+#[cfg(test)]
+mod local_red_ref_tests {
+    use super::local_red_ref;
+
+    #[test]
+    fn key_is_bounded_and_distinguishes_detail() {
+        let long = format!("landing-ref-red red tier: lint; command: {}", "x".repeat(2000));
+        let s = vec!["local-tier".to_string()];
+        let a = local_red_ref("dumpstar", &s, &long);
+        assert!(a.len() <= 160, "{a}");
+        assert!(a.starts_with("basefail-local:dumpstar:local-tier:landing-ref-red:"));
+        assert_ne!(a, local_red_ref("dumpstar", &s, &format!("{long}y")));
+        assert_eq!(a, local_red_ref("dumpstar", &s, &long));
+    }
+}
+
 /// The first line of a suite's output that reports a failure, trimmed and bounded.
 pub fn first_fail_line(out: &str) -> Option<String> {
     let l = out.lines().map(str::trim).find(|l| l.starts_with("FAIL") || l.contains("FAIL:") || l.starts_with("not ok"))?;
@@ -1624,6 +1640,15 @@ pub fn first_fail_line(out: &str) -> Option<String> {
 /// The first FAIL line of `suite`'s output in the round's results, for an ejection's reason.
 pub fn suite_first_fail(results_dir: &Path, suite: &str) -> Option<String> {
     first_fail_line(&fs::read_to_string(locate(results_dir, suite, "out")?).ok()?)
+}
+
+/// The incident key for a local red: a bounded identity plus a short hash of the full reason,
+/// because external_ref is a fixed-width column and the reason carries command and error text.
+pub fn local_red_ref(repo: &str, suites: &[String], reason: &str) -> String {
+    let kind: String = reason.split_whitespace().next().unwrap_or("").chars().take(40).collect();
+    let hash = reason.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
+    let suites: String = suites.join(",").chars().take(60).collect();
+    format!("basefail-local:{repo}:{suites}:{kind}:{:08x}", hash & 0xffff_ffff)
 }
 
 /// File an Ops incident for a local red the round could not resolve mechanically: a suite red
@@ -1650,7 +1675,7 @@ pub fn file_local_red_incident(
             "1",
         ).env("SPIRA_INCIDENT_ACTOR", "batcher").env("SPIRA_INCIDENT_REPO", &repo.name).env(
             "SPIRA_INCIDENT_REF",
-            format!("basefail-local:{}:{}:{reason}", repo.name, suites.join(",")),
+            local_red_ref(&repo.name, suites, reason),
         ).env("SPIRA_INCIDENT_CAUSE", "local-round-red"),
         "incident.sh file",
     );
