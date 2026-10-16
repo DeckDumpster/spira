@@ -317,6 +317,36 @@ fn plain_ident(tok: &str) -> Option<String> {
 
 const CONVERGE_TRIES: u32 = 5;
 
+/// A probe read that hit its call deadline is asked again this many times in all: probes
+/// are reads, so a retry cannot double a write; a cold, loaded store answers the second ask.
+const DEADLINE_TRIES: u32 = 4;
+
+fn deadline_backoff(attempt: u32) -> std::time::Duration {
+    std::time::Duration::from_secs(2u64 << (attempt - 1).min(4))
+}
+
+fn is_deadline(e: &str) -> bool {
+    e.starts_with(crate::db::DEADLINE_MESSAGE)
+}
+
+/// `f`, retried with backoff while it fails on the call deadline; every attempt is logged on
+/// stderr. A real answer (Ok, or any other error) returns at once.
+fn retry_deadline<T>(what: &str, pause: &dyn Fn(std::time::Duration), mut f: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    let mut attempt = 1;
+    loop {
+        match f() {
+            Err(e) if is_deadline(&e) && attempt < DEADLINE_TRIES => {
+                let wait = deadline_backoff(attempt);
+                eprintln!("admin-migrate: {what}: attempt {attempt}/{DEADLINE_TRIES} hit the call deadline; retrying in {}s", wait.as_secs());
+                pause(wait);
+                attempt += 1;
+            }
+            Err(e) if is_deadline(&e) => return Err(format!("{e} (after {attempt} attempts, each ending at the call deadline)")),
+            other => return other,
+        }
+    }
+}
+
 /// The read that decides whether `st` is already applied (see [`Probe`]).
 pub fn probe_for(st: &Stmt) -> Probe {
     let sql = match st {
@@ -520,6 +550,11 @@ pub fn migrate(steps: &[(String, Stmt)], service: &dyn Sql, admin: Option<&dyn S
 }
 
 pub fn migrate_with(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, admin: Option<&dyn Sql>) -> (i32, String) {
+    migrate_paced(grants, steps, service, admin, &std::thread::sleep)
+}
+
+fn migrate_paced(grants: &str, steps: &[(String, Stmt)], service: &dyn Sql, admin: Option<&dyn Sql>, pause: &dyn Fn(std::time::Duration)) -> (i32, String) {
+    let is_applied = |db: &dyn Sql, st: &Stmt| retry_deadline("probe", pause, || is_applied(db, st));
     let mut report = Vec::new();
     let needs_admin = |name: &str, st: &Stmt, why: &str| {
         (2, format!("admin-migrate: {name} is pending ({}) and applying it needs a database admin — set {ADMIN_VARS} (no admin credential is configured{why})", what(st, false)))
@@ -1059,6 +1094,58 @@ mod tests {
         let (rc, out) = migrate(&real_steps(), &svc, Some(&root));
         assert_eq!(rc, 0, "{out}");
         assert!(db.borrow().writes.iter().all(|w| w.starts_with("root: ")), "{:?}", db.borrow().writes);
+    }
+
+    /// A store whose reads time out `slow` times before it answers.
+    struct SlowStore<'a> {
+        inner: &'a FakeConn,
+        slow: std::cell::Cell<u32>,
+        asked: std::cell::Cell<u32>,
+    }
+    impl Sql for SlowStore<'_> {
+        fn rows(&self, sql: &str) -> Result<Vec<Value>, String> {
+            self.asked.set(self.asked.get() + 1);
+            if self.slow.get() > 0 {
+                self.slow.set(self.slow.get() - 1);
+                return Err(crate::db::DEADLINE_MESSAGE.to_string());
+            }
+            self.inner.rows(sql)
+        }
+        fn exec(&self, sql: &str) -> Result<(), String> {
+            self.inner.exec(sql)
+        }
+    }
+
+    #[test]
+    fn a_probe_that_hits_the_deadline_is_asked_again_and_a_dead_store_fails_naming_it() {
+        let db = migrated();
+        let inner = service(&db);
+        let naps = RefCell::new(Vec::new());
+        let pause = |d: std::time::Duration| naps.borrow_mut().push(d);
+
+        let slow = SlowStore { inner: &inner, slow: 2.into(), asked: 0.into() };
+        let (rc, out) = migrate_paced(GRANTS_SQL, &real_steps(), &slow, None, &pause);
+        assert_eq!(rc, 0, "{out}");
+        assert_eq!(naps.borrow().len(), 2, "one backoff per timed-out read");
+        assert!(naps.borrow()[1] > naps.borrow()[0], "backoff grows");
+
+        naps.borrow_mut().clear();
+        let dead = SlowStore { inner: &inner, slow: u32::MAX.into(), asked: 0.into() };
+        let (rc, out) = migrate_paced(GRANTS_SQL, &real_steps(), &dead, None, &pause);
+        assert_eq!(rc, 2, "{out}");
+        assert!(out.contains("cannot tell whether it is applied") && out.contains("deadline"), "{out}");
+        assert_eq!(dead.asked.get(), DEADLINE_TRIES, "bounded");
+        assert_eq!(naps.borrow().len() as u32, DEADLINE_TRIES - 1);
+    }
+
+    #[test]
+    fn a_real_probe_error_is_not_retried() {
+        let db = migrated();
+        let inner = admin(&db, true);
+        let naps = RefCell::new(0u32);
+        let (rc, _) = migrate_paced(GRANTS_SQL, &real_steps(), &inner, None, &|_| *naps.borrow_mut() += 1);
+        assert_eq!(rc, 2);
+        assert_eq!(*naps.borrow(), 0);
     }
 
     #[test]
