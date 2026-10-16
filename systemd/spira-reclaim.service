@@ -9,7 +9,7 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/reclaim pass --require @SPIRA_RUN@/worktree --lease-dir @SPIRA_RUN@/aeon --glob @SPIRA_RUN@/worktree/.tgt-* --glob @SPIRA_RUN@/tgt-* --glob @SPIRA_RUN@/cargo-target-bins --glob @SPIRA_RUN@/worktree/*/target --cache-dir @SPIRA_RUN@/sccache-dav --podman podman --podman-dir %h/.local/share/containers/storage --podman-cap-gib 40
 CPUQuota=50%
-TimeoutStartSec=900
+TimeoutStartSec=infinity
 StandardOutput=append:@SPIRA_RUN@/reclaim.log
 StandardError=append:@SPIRA_RUN@/reclaim.log
 
