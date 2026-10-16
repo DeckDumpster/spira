@@ -15,6 +15,19 @@ use std::path::{Path, PathBuf};
 
 use crate::ports::Git;
 
+/// Pids of live processes, other than `me`, whose working directory is `work` or inside it.
+pub fn live_occupants(proc_root: &Path, work: &Path, me: u32) -> Vec<u32> {
+    let Ok(rd) = std::fs::read_dir(proc_root) else { return Vec::new() };
+    let mut pids: Vec<u32> = rd
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|p| *p != me)
+        .filter(|p| std::fs::read_link(proc_root.join(p.to_string()).join("cwd")).is_ok_and(|c| c.starts_with(work)))
+        .collect();
+    pids.sort_unstable();
+    pids
+}
+
 /// `worktree_move_aside <work> <suffix>`: `git worktree move`, else a plain rename plus a
 /// best-effort `worktree repair`. None when the tree could not be moved at all.
 pub fn move_aside(git: &dyn Git, work: &Path, suffix: &str, now: i64) -> Option<PathBuf> {
@@ -204,6 +217,25 @@ pub fn holder(git: &dyn Git, repo: &Path, branch: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_process_standing_in_the_worktree_is_an_occupant() {
+        let t = testkit::TempDir::new("aeon-occupants");
+        let work = t.join("worktree/sp-a");
+        let other = t.join("worktree/sp-b");
+        std::fs::create_dir_all(work.join("sub")).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let proc = t.join("proc");
+        for (pid, cwd) in [("100", work.join("sub")), ("200", other.clone()), ("300", work.clone())] {
+            std::fs::create_dir_all(proc.join(pid)).unwrap();
+            std::os::unix::fs::symlink(&cwd, proc.join(pid).join("cwd")).unwrap();
+        }
+        std::fs::create_dir_all(proc.join("self")).unwrap();
+        assert_eq!(live_occupants(&proc, &work, 999), vec![100, 300]);
+        assert_eq!(live_occupants(&proc, &work, 300), vec![100], "the caller is not its own occupant");
+        assert!(live_occupants(&proc, &t.join("worktree/sp-none"), 999).is_empty());
+    }
+
     use crate::ports::{Env, RealGit};
     use std::collections::BTreeMap;
     use std::process::Command;

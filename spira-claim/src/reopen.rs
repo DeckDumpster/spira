@@ -66,6 +66,9 @@ pub trait World {
     /// event its state implies and the bead is claimable again. A bead with no row has no
     /// state to diverge and is `Ok`; a terminal row is refused.
     fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String>;
+    /// Stop the live aeon holding `id` and wait for it to exit; `Err` when it is still
+    /// running, in which case the bead must not leave WORKING.
+    fn stop_holder(&mut self, id: &str, cause: &str) -> Result<(), String>;
     /// `_bump_write_event "$id" reopen "$cause"` — ALWAYS treated as succeeded. The bash
     /// wrapper it shims (`_bump_write_event`, lib.sh) swallows its child's own output and
     /// exit code and unconditionally `return 0`s, so `bead_reopen`'s trailing `|| rc=1`
@@ -100,6 +103,12 @@ pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
         w.write_ejected(&o.id, &o.suites);
     }
 
+    // A deliberate conversion is the holder's own hand-off; every other reopen is the
+    // harness acting on a bead whose aeon may still be editing its worktree.
+    if !exempt && w.stop_holder(&o.id, &o.cause).is_err() {
+        return 1;
+    }
+
     // A deliberate conversion carries the bead's row forward untouched.
     if !exempt && w.lc_reopen(&o.id, &o.cause).is_err() {
         rc = 1;
@@ -112,6 +121,50 @@ pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
     }
 
     rc
+}
+
+/// How long a harness release waits for the holder to exit after asking it to stop.
+pub const STOP_WAIT_S: u64 = 120;
+
+/// Ask the aeon whose lease is running on `id` to stop (the `aeon stop` request file its
+/// heartbeat reads) and wait until that lease is gone. `Ok` when no aeon holds the bead, or
+/// when the caller is itself an aeon (`SPIRA_AEON` set): an aeon's own hand-back never waits
+/// on itself.
+pub fn stop_holder_in(
+    run: &std::path::Path,
+    id: &str,
+    why: &str,
+    own_aeon: bool,
+    wait_s: u64,
+    now: &dyn Fn() -> i64,
+    sleep: &dyn Fn(),
+) -> Result<(), String> {
+    if own_aeon {
+        return Ok(());
+    }
+    let suffix = format!("-{id}.pid");
+    let live = || -> Option<std::path::PathBuf> {
+        std::fs::read_dir(run).ok()?.flatten().map(|e| e.path()).find(|p| {
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("aeon-") && n.ends_with(&suffix))
+                && sending::reap::lease_live(p, now())
+        })
+    };
+    if live().is_none() {
+        return Ok(());
+    }
+    let req = run.join("aeon").join(format!("{id}.stop"));
+    if let Some(d) = req.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    std::fs::write(&req, format!("released by the harness: {why}\n")).map_err(|e| format!("cannot record the stop: {e}"))?;
+    let deadline = now() + wait_s as i64;
+    while live().is_some() {
+        if now() >= deadline {
+            return Err(format!("the aeon on {id} did not exit within {wait_s}s of the stop request"));
+        }
+        sleep();
+    }
+    Ok(())
 }
 
 #[cfg(test)]

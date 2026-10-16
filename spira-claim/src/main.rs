@@ -1424,6 +1424,9 @@ fn cmd_release(a: &Args, env: &Env) -> Outcome {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
+    if let Err(e) = unpoison::live_stop_holder(&resolved_run_dir(env), &id, "release") {
+        return Outcome { code: 1, out: String::new(), err: format!("spira-claim: release: {e}") };
+    }
     match st.release_claim(&id, &env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into())) {
         Ok(()) => Outcome::ok(String::new()),
         Err(e) => Outcome { code: 1, out: String::new(), err: format!("spira-claim: release: {e}") },
