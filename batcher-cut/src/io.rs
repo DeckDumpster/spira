@@ -1261,11 +1261,17 @@ pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), FencesEnd>
     let path = dir.join(format!("{}-{}-fences.log", repo.name, now()));
     let _ = fs::write(&path, &text);
     let at = path.display().to_string();
-    if text.contains("VERDICT=NO_VERDICT") {
+    if fences_judged_nothing(&text) {
         Err(FencesEnd::Refused(at))
     } else {
         Err(FencesEnd::Red(at))
     }
+}
+
+/// A gate killed at its wall cap judged nothing, however loaded the host made it; only a
+/// gate that reached a verdict files a red.
+pub fn fences_judged_nothing(text: &str) -> bool {
+    text.contains("VERDICT=NO_VERDICT") || text.contains("VERDICT=FAIL reason=over-cap")
 }
 
 /// `Refused`: the gate judged nothing (NO_VERDICT, e.g. an unresolvable ref) — never a red.
@@ -3832,5 +3838,18 @@ mod local_tier_tests {
         let (_d, mut env, repo) = fixture("lt-missing", "#!/bin/sh\nexit 0\n");
         env.testenv_bin = env.run.join("no-such-testenv");
         assert!(local_tier(&env, &repo, "abc").is_err());
+    }
+}
+
+#[cfg(test)]
+mod fences_verdict_tests {
+    use super::fences_judged_nothing;
+
+    #[test]
+    fn an_over_cap_fences_log_judged_nothing_and_a_real_fail_did_not() {
+        let capped = "gate: VERDICT=PASS reason=syntax-only branch=b repo=r suite=-\ngate: VERDICT=FAIL reason=over-cap branch=b repo=r suite=- (killed at the 300s hard cap)\n";
+        assert!(fences_judged_nothing(capped));
+        assert!(fences_judged_nothing("gate: VERDICT=NO_VERDICT reason=died"));
+        assert!(!fences_judged_nothing("gate: VERDICT=FAIL reason=fence branch=b repo=r suite=gate-fences"));
     }
 }
