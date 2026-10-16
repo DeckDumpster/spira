@@ -7,6 +7,7 @@
 #   lc-backup.sh drill [--db NAME] [TARBALL]   per database: restore a snapshot into a scratch dir under SPIRA_RUN; row counts must equal live
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
+#   lc-backup.sh explain             after a failed run: put the log's last error line on stderr and in the journal
 #
 # SPIRA_LC_BACKUP_URL is s3://bucket/prefix/ (credentials and region from the environment, which
 # the service loads from the operator's env file) or file://dir. The key is write-only: the
@@ -129,9 +130,21 @@ _lcb_run_db_locked() {
 cmd_run() {
     _lcb_refuse_unconfigured || return 1
     _lcb_refuse_same_disk || return 1
-    local db rc=0
+    local db rc=0 mlock="$SPIRA_RUN/maintenance/lc-backup.lock"
+    mkdir -p "$SPIRA_RUN/maintenance" || return 1
+    exec 8>"$mlock" && flock -n 8 || { echo "lc-backup: another run holds $mlock" >&2; return 1; }
     for db in $(_lcb_dbs); do _lcb_run_db "$db" || rc=1; done
     return "$rc"
+}
+
+cmd_explain() {
+    [ "${SERVICE_RESULT:-}" != success ] || return 0
+    local line
+    line="$(grep '^lc-backup:' "$SPIRA_RUN/lc-backup.log" 2>/dev/null | tail -n1)"
+    [ -n "$line" ] || line="lc-backup: failed with no error line in $SPIRA_RUN/lc-backup.log"
+    printf '%s\n' "$line" >&2
+    command -v systemd-cat >/dev/null 2>&1 && printf '%s\n' "$line" | systemd-cat -t lc-backup -p err
+    return 0
 }
 
 # _lcb_measure_db db [now] -> "ok <age>" | "stale <age>" | "never"; non-zero when the stamp cannot be read
@@ -328,7 +341,8 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         drill)  shift; cmd_drill "$@"; exit $? ;;
         watch)  shift; cmd_watch "$@" ;;
         health) cmd_health; exit $? ;;
-        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [--db NAME] [TARBALL] | watch [--interval S] [--ticks N] | health" >&2
+        explain) cmd_explain; exit $? ;;
+        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [--db NAME] [TARBALL] | watch [--interval S] [--ticks N] | health | explain" >&2
            exit 2 ;;
     esac
 fi

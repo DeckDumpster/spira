@@ -10,6 +10,7 @@ EnvironmentFile=-%h/.config/lc-backup.env
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_HOME@/lc-backup.sh run
+ExecStopPost=@SPIRA_HOME@/lc-backup.sh explain
 TimeoutStartSec=1800
 IOSchedulingClass=idle
 Nice=19
