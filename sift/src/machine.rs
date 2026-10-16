@@ -11,6 +11,7 @@ pub enum SiftEvent {
     Screened { tip: String },
     SentBack { n: u32, tip: String, reason: String },
     Capped { tip: String },
+    Mending { tip: String, bead: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +19,7 @@ pub enum SiftState {
     Screened,
     SentBack(u32),
     Capped,
+    Mending,
 }
 
 impl SiftState {
@@ -26,6 +28,7 @@ impl SiftState {
             SiftState::Screened => "screened".into(),
             SiftState::SentBack(n) => format!("sent_back({n})"),
             SiftState::Capped => "capped".into(),
+            SiftState::Mending => "mending".into(),
         }
     }
 }
@@ -36,12 +39,13 @@ impl SiftEvent {
             SiftEvent::Screened { .. } => "screened",
             SiftEvent::SentBack { .. } => "sent_back",
             SiftEvent::Capped { .. } => "capped",
+            SiftEvent::Mending { .. } => "mending",
         }
     }
 
     pub fn tip(&self) -> &str {
         match self {
-            SiftEvent::Screened { tip } | SiftEvent::SentBack { tip, .. } | SiftEvent::Capped { tip } => tip,
+            SiftEvent::Screened { tip } | SiftEvent::SentBack { tip, .. } | SiftEvent::Capped { tip } | SiftEvent::Mending { tip, .. } => tip,
         }
     }
 
@@ -50,6 +54,7 @@ impl SiftEvent {
             SiftEvent::Screened { .. } => SiftState::Screened,
             SiftEvent::SentBack { n, .. } => SiftState::SentBack(*n),
             SiftEvent::Capped { .. } => SiftState::Capped,
+            SiftEvent::Mending { .. } => SiftState::Mending,
         }
     }
 }
@@ -83,7 +88,7 @@ impl Sifted {
     /// Whether `event` is a move from the recorded state.
     pub fn refusal(&self, event: &SiftEvent) -> Option<String> {
         let ok = match (self.state(), event) {
-            (_, SiftEvent::Screened { .. }) => true,
+            (_, SiftEvent::Screened { .. } | SiftEvent::Mending { .. }) => true,
             (Some(SiftState::Capped), SiftEvent::SentBack { .. }) => false,
             (_, SiftEvent::SentBack { n, .. }) => *n == self.send_backs() + 1 && *n <= SEND_BACK_CAP,
             (_, SiftEvent::Capped { .. }) => self.send_backs() >= SEND_BACK_CAP,
@@ -101,7 +106,7 @@ impl Sifted {
         if let Some(e) = self.refusal(&event) {
             return Err(e);
         }
-        let repeats = self.events.last().is_some_and(|r| matches!(event, SiftEvent::Screened { .. } | SiftEvent::Capped { .. }) && r.event == event);
+        let repeats = self.events.last().is_some_and(|r| matches!(event, SiftEvent::Screened { .. } | SiftEvent::Capped { .. } | SiftEvent::Mending { .. }) && r.event == event);
         if repeats {
             return Ok(false);
         }
@@ -117,6 +122,7 @@ impl Sifted {
                     SiftEvent::Screened { tip } => json!({"event": "screened", "tip": tip, "at": r.at}),
                     SiftEvent::SentBack { n, tip, reason } => json!({"event": "sent_back", "n": n, "tip": tip, "reason": reason, "at": r.at}),
                     SiftEvent::Capped { tip } => json!({"event": "capped", "tip": tip, "at": r.at}),
+                    SiftEvent::Mending { tip, bead } => json!({"event": "mending", "tip": tip, "bead": bead, "at": r.at}),
                 })
                 .collect(),
         )
@@ -136,6 +142,7 @@ impl Sifted {
                 Some("screened") => SiftEvent::Screened { tip: s("tip") },
                 Some("sent_back") => SiftEvent::SentBack { n: e.get("n").and_then(Value::as_u64).unwrap_or(0) as u32, tip: s("tip"), reason: s("reason") },
                 Some("capped") => SiftEvent::Capped { tip: s("tip") },
+                Some("mending") => SiftEvent::Mending { tip: s("tip"), bead: s("bead") },
                 _ => return Err(format!("sift record of {id} has an event of an unknown kind")),
             };
             out.events.push(Recorded { event, at: e.get("at").and_then(Value::as_u64).unwrap_or(0) });

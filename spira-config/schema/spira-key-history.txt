@@ -462,3 +462,4 @@ concierge_push_idle
 no_progress_breaker_claims
 no_progress_breaker_window_minutes
 dolt_maintenance_units
+sift_mend_hold_secs

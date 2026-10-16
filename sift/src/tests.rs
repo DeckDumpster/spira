@@ -52,6 +52,7 @@ struct Mem {
     verdicts: RefCell<BTreeMap<(String, String), Verdict>>,
     counts: RefCell<BTreeMap<String, u32>>,
     reported: RefCell<Vec<(String, String)>>,
+    mending: RefCell<BTreeMap<(String, String), u64>>,
 }
 
 impl Store for Mem {
@@ -73,6 +74,13 @@ impl Store for Mem {
         let n = c.entry(id.to_string()).or_insert(0);
         *n += 1;
         Ok(*n)
+    }
+    fn mending_since(&self, id: &str, tip: &str) -> Option<u64> {
+        self.mending.borrow().get(&(id.to_string(), tip.to_string())).copied()
+    }
+    fn record_mending(&self, id: &str, tip: &str, _: &str) -> Result<(), String> {
+        self.mending.borrow_mut().insert((id.to_string(), tip.to_string()), spira_config::vtime::now_epoch());
+        Ok(())
     }
     fn first_cap_report(&self, id: &str, tip: &str) -> bool {
         let k = (id.to_string(), tip.to_string());
@@ -103,6 +111,10 @@ impl Acts for Rec {
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         self.log.push(format!("supersede {id} by {keeper}"));
         Ok(())
+    }
+    fn mend(&mut self, id: &str, tip: &str, files: &[String]) -> Result<String, String> {
+        self.log.push(format!("mend {id} {tip} {}", files.join(",")));
+        Ok(format!("mend-{id}"))
     }
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
         self.log.push(format!("pass {id} {tip}"));
@@ -364,6 +376,9 @@ fn a_pass_the_store_refuses_is_not_a_sifted_candidate() {
         fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
             self.0.supersede(id, keeper)
         }
+        fn mend(&mut self, id: &str, tip: &str, files: &[String]) -> Result<String, String> {
+            self.0.mend(id, tip, files)
+        }
         fn pass(&mut self, _: &str, _: &str) -> Result<(), String> {
             Err("tip moved".into())
         }
@@ -522,4 +537,34 @@ fn an_identity_check_whose_git_diff_timed_out_holds_the_bead_and_never_sends_it_
     assert!(o.pass.is_empty());
     assert!(o.errors.iter().any(|e| e.contains("exited 124")));
     assert_eq!(reds(&r), ["red b t-b policy-violation"]);
+}
+
+#[test]
+fn a_conflict_files_a_mend_and_is_held_not_sent_back_until_the_deadline_passes() {
+    let mut f = fake();
+    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
+    let store = Mem::default();
+    let mut r = Rec::default();
+    let o = screen_with(&f, &store, &mut r, &[c("a"), c("b")], &[], 600);
+    assert_eq!((o.pass.as_slice(), o.mending.as_slice(), o.sent_back.len()), (&["b".to_string()][..], &["a".to_string()][..], 0));
+    assert!(r.log.contains(&"mend a t-a x.rs".to_string()) && reds(&r).is_empty(), "{:?}", r.log);
+
+    let o = screen_with(&f, &store, &mut r, &[c("a")], &[], 600);
+    assert_eq!((o.mending.as_slice(), o.held.as_slice()), (&["a".to_string()][..], &["a".to_string()][..]));
+    assert_eq!(r.log.iter().filter(|l| l.starts_with("mend ")).count(), 1, "one mend per tip");
+
+    store.mending.borrow_mut().insert(("a".into(), "t-a".into()), 1);
+    let o = screen_with(&f, &store, &mut r, &[c("a")], &[], 600);
+    assert_eq!(o.sent_back, ["a"]);
+    assert_eq!(reds(&r), ["red a t-a no-rebase"]);
+}
+
+#[test]
+fn a_conflict_goes_straight_to_rework_when_mending_is_off() {
+    let mut f = fake();
+    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
+    let mut r = Rec::default();
+    let o = screen_with(&f, &Mem::default(), &mut r, &[c("a")], &[], 0);
+    assert_eq!(o.sent_back, ["a"]);
+    assert!(!r.log.iter().any(|l| l.starts_with("mend ")));
 }

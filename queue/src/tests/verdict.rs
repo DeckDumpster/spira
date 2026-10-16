@@ -492,6 +492,22 @@ fn a_red_forge_batch_summons_a_mender_per_red_suite_once() {
 }
 
 #[test]
+fn a_red_forge_batch_starts_its_pass_before_the_failed_event_because_its_row_is_open() {
+    let mut t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 3, 0, String::new()));
+    t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
+    *t.scripts.judgement.borrow_mut() = RunOut { rc: 0, out: "id=sp-j1\n".into(), err: String::new() };
+    t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\nred-suite: test-b.sh\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    let at = |needle: &str| calls.iter().position(|c| c.starts_with("event batch") && c.contains(needle));
+    assert!(at("\"PassStarted\"").is_some() && at("\"PassStarted\"") < at("\"Failed\""), "{calls:?}");
+    assert_eq!(calls.iter().filter(|c| c.contains("\"PassStarted\"")).count(), 1, "the second red finds the pass already running");
+    assert!(!t.err().contains("no mender for"), "{}", t.err());
+}
+
+#[test]
 fn a_hand_cut_batch_red_goes_to_judgement_too() {
     // D1: verdict's own split/eject attribution is retired; owner is not consulted.
     let mut t = T::new(LandMode::Queue);

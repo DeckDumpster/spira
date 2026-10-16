@@ -13,6 +13,7 @@ use crate::io::{self, Env, OpenBatch, Repo};
 
 struct Live<'a> {
     env: &'a Env,
+    repo: &'a Repo,
     sifted: BTreeMap<String, String>,
 }
 
@@ -25,6 +26,9 @@ impl Acts for Live<'_> {
     }
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         io::lc_supersede(self.env, id, keeper)
+    }
+    fn mend(&mut self, id: &str, tip: &str, files: &[String]) -> Result<String, String> {
+        io::file_conflict_mend(self.env, self.repo, id, tip, files)
     }
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
         if self.sifted.get(id).map(String::as_str) == Some(tip) {
@@ -74,8 +78,9 @@ pub fn sift_repo(env: &Env, repo: &Repo, open: Option<&OpenBatch>) -> Result<sif
     };
     let candidates: Vec<Candidate> = pool.iter().map(|m| Candidate { id: m.id.clone(), tip: m.tip.clone() }).collect();
     let open_round: Vec<Candidate> = open.map(|o| o.members.iter().map(|(id, tip)| Candidate { id: id.clone(), tip: tip.clone() }).collect()).unwrap_or_default();
-    let mut live = Live { env, sifted: io::sifted_tips(env)? };
-    let out = sift::screen(&probe, &FileStore::new(work), &mut live, &candidates, &open_round);
+    let mut live = Live { env, repo, sifted: io::sifted_tips(env)? };
+    let hold = cfg("SPIRA_SIFT_MEND_HOLD_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+    let out = sift::screen_with(&probe, &FileStore::new(work), &mut live, &candidates, &open_round, hold);
     for e in &out.errors {
         eprintln!("batcher {}: {e}", repo.name);
     }

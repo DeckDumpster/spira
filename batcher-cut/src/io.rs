@@ -2372,6 +2372,27 @@ fn bead_id(out: &str) -> Result<String, String> {
     v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("bead.sh file: no id in output: {out}"))
 }
 
+/// File the mender's bead for a branch that does not merge onto the landing ref; returns its id.
+pub fn file_conflict_mend(env: &Env, repo: &Repo, id: &str, tip: &str, files: &[String]) -> Result<String, String> {
+    let title = format!("mend {id}: does not merge onto {}", repo.base);
+    let body = format!(
+        "Bead {id} (branch spira/{id}, tip {tip}) does not merge onto {base} in {repo}.\n\nConflicting files: {files}\n\nRebase the branch onto {base}, resolve each conflict so the bead's intent is kept, run the repo's local checks for what you touched, and resubmit the new tip. If the conflict is not mechanical (the two sides disagree about behaviour), say so in your diagnosis and leave the branch alone: Sift returns the bead to REWORK when this mend's hold runs out.\n",
+        base = repo.base,
+        repo = repo.name,
+        files = files.join(", "),
+    );
+    let tmp_dir = env.run.join("tmp");
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
+    let tmp = tmp_dir.join(format!("conflict-mend-{id}-{}.txt", now()));
+    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let out = run(
+        Command::new("bead.sh").args(["file", &title, "--for", "mender", "--repo", &repo.name, "--harness-title", "--body-file"]).arg(&tmp).arg("--json"),
+        "bead.sh file",
+    );
+    let _ = fs::remove_file(&tmp);
+    bead_id(&out?)
+}
+
 /// File the follow-up bead for a deleted flip and return its id.
 pub fn file_flip_bead(env: &Env, repo: &Repo, suite: &str, round_branch: &str) -> Result<String, String> {
     let title = format!("{}: {suite} flipped in a batcher round and was deleted — restore it fixed", repo.name);

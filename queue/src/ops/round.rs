@@ -160,10 +160,17 @@ fn failed_verb(w: &World, batch: &str, repo: Option<&str>, suite: &str) -> i32 {
     })
 }
 
+/// A forge batch's row stays OPEN while its PR's CI runs, and Failed is legal only from a running
+/// pass, so the pass is started from the batch's head first; a row already running is left alone.
+fn send_failed(w: &World, batch: &str, head: &str, suite: &str) -> Result<(), (i32, String)> {
+    pass_event(w, batch, |s, n, _| (s == "OPEN").then(|| serde_json::json!({"PassStarted": {"n": n + 1, "head": head}}).to_string()))?;
+    suites_started(w, batch, false)?;
+    pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string()))
+}
+
 /// A forge batch's red step enters the mending machine as a Failed event on the batch's current pass.
-pub(super) fn forge_failed(w: &World, batch: &str, suite: &str) -> Result<(), ()> {
-    let sent = suites_started(w, batch, false).and_then(|()| pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())));
-    sent.map_err(|(rc, e)| w.err(format!("queue.sh verdict: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}")))
+pub(super) fn forge_failed(w: &World, batch: &str, head: &str, suite: &str) -> Result<(), ()> {
+    send_failed(w, batch, head, suite).map_err(|(rc, e)| w.err(format!("queue.sh verdict: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}")))
 }
 
 /// A red pass records its verdict whoever cut the round, so every red suite the on-red hook did not
@@ -330,7 +337,7 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
         if marker.exists() {
             continue;
         }
-        let sent = suites_started(w, batch, false).and_then(|()| pass_event(w, batch, |_, n, _| Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())));
+        let sent = send_failed(w, batch, kv.get("head").unwrap_or(""), suite);
         match sent {
             Ok(()) => summon_mender(w, c, batch, suite, "", None),
             Err((rc, e)) => w.err(format!("verdict {}: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}", c.r.name)),

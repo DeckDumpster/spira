@@ -104,6 +104,14 @@ impl Store for FileStore {
         Ok(n)
     }
 
+    fn mending_since(&self, id: &str, tip: &str) -> Option<u64> {
+        self.load(id)?.events.iter().rev().find_map(|r| matches!(&r.event, SiftEvent::Mending { tip: t, .. } if t == tip).then_some(r.at))
+    }
+
+    fn record_mending(&self, id: &str, tip: &str, bead: &str) -> Result<(), String> {
+        self.record(id, SiftEvent::Mending { tip: tip.to_string(), bead: bead.to_string() }).map(|_| ())
+    }
+
     fn first_cap_report(&self, id: &str, tip: &str) -> bool {
         self.record(id, SiftEvent::Capped { tip: tip.to_string() }).unwrap_or(false)
     }
