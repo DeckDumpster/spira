@@ -95,9 +95,10 @@ pub fn no_bd_brief() -> String {
 /// parent the child for the model and never copy its `branch:` label (sp-o4co5).
 pub fn followup_brief(bead_id: &str) -> String {
     format!(
-        "**File it as a bead** — `work file-followup \"<title>\"` for work that follows from
-  this one, `work split \"<title>\"` for a piece of this bead's own scope. Both are parented
-  to `{bead_id}` for you and never carry its `branch:` label."
+        "**File it as a bead** — `work file-followup \"<title>\" --repo <name>` for work that follows
+  from this one, `work split \"<title>\" --repo <name>` for a piece of this bead's own scope.
+  Both are parented to `{bead_id}` for you and never carry its `branch:` label. `--repo` is
+  required and is the repo the child's work lives in; it is never copied from this bead."
     )
 }
 
@@ -127,8 +128,8 @@ This both holds the bead and files the ask; you do not also send mail yourself.
 
 When you discover other work rather than doing it:
 
-    work file-followup \"<title>\"
-    work split \"<title>\"
+    work file-followup \"<title>\" --repo <name>
+    work split \"<title>\" --repo <name>
 
 Both file through `bead.sh`'s own contract, parented to `{bead_id}` — you never name the
 parent yourself.
