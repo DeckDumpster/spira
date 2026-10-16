@@ -198,6 +198,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         queue_bin: PathBuf::from("queue"),
         rebase_stale_bin: PathBuf::from("rebase-stale"),
         testenv_bin: PathBuf::from("testenv"),
+        checks_bin: env::current_exe().map_err(|e| format!("current_exe: {e}"))?,
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
         hypervisor: io::Hypervisor {
             host_mib: cfg_parse::<u64>("SPIRA_HYPERVISOR_MEM_MIB")?,
@@ -675,8 +676,9 @@ fn stabilize_round(
 }
 
 /// A forge repo's merged tree reaches CI only with members whose declared-tier pass is already
-/// recorded for (tip, base). The pass never runs a check: a member whose check is pending is left
-/// out and joins a later batch once `checks-forge` records it.
+/// recorded for (tip, base). The pass never waits on a check: when members are pending it starts
+/// the repo's checks detached (one at a time per repo) and cuts what is already recorded; the
+/// pending members join the batch of the first pass after the check records them.
 fn forge_local_tier(
     env_: &Env,
     repo: &Repo,
@@ -688,6 +690,16 @@ fn forge_local_tier(
     let (passed, pending): (Vec<Member>, Vec<Member>) = members.into_iter().partition(|m| io::member_pass_recorded(env_, repo, start_sha, &m.tip));
     for m in &pending {
         println!("batcher {}: {} has no recorded local check at {} on {start_sha} — left for the next batch", repo.name, m.id, m.tip);
+    }
+    if !pending.is_empty() {
+        match io::start_check(env_, repo) {
+            Ok(true) => println!("batcher {}: started the local check for {} pending member(s) on {start_sha}", repo.name, pending.len()),
+            Ok(false) => println!("batcher {}: a local check is already running — {} member(s) wait on it", repo.name, pending.len()),
+            Err(e) => println!("batcher {}: could not start the local check: {e} — {} member(s) wait", repo.name, pending.len()),
+        }
+        if let Some((evidence, _)) = io::landing_ref_known_fault(env_, repo, start_sha) {
+            println!("batcher {}: the declared tiers are red on the landing ref {start_sha} itself — pending members cannot be checked until it is green ({})", repo.name, evidence.lines().next().unwrap_or(""));
+        }
     }
     let members = if pending.is_empty() { passed } else { merge_round(env_, repo, wt, start_sha, passed)? };
     if members.is_empty() {
@@ -746,7 +758,7 @@ fn checks_forge(o: &Opts) -> Result<(), String> {
     let reg = io::registry(&env_);
     io::lc_forget(&env_);
     let mut failed = Vec::new();
-    for name in reg.all().into_iter().filter(|n| reg.land(n) == "queue") {
+    for name in reg.all().into_iter().filter(|n| reg.land(n) == "queue" && (o.repo.is_empty() || *n == o.repo)) {
         let one = || -> Result<(), String> {
             let repo = find_repo(&env_, &name)?;
             let pool = topo_order(&screen::cut_pool(io::certified_pool(&env_, &repo)?, &io::sifted_tips(&env_)?));
@@ -777,6 +789,17 @@ fn checks_forge(o: &Opts) -> Result<(), String> {
 /// location can attribute is recorded against that exact set, and the members are then checked
 /// one per invocation as before. A single pending member is checked alone, as before.
 fn check_forge_pool(env_: &Env, repo: &Repo, base: &str, pool: &[Member]) {
+    let _one_check = match io::wait_check_lock(env_, repo, 3) {
+        Ok(Some(l)) => l,
+        Ok(None) => {
+            println!("batcher {}: a local check is already running — not starting another", repo.name);
+            return;
+        }
+        Err(e) => {
+            println!("batcher {}: could not take the local-check lock: {e}", repo.name);
+            return;
+        }
+    };
     let mut pending: Vec<&Member> = pool.iter().filter(|m| !io::member_pass_recorded(env_, repo, base, &m.tip)).collect();
     while pending.len() >= 2 {
         let tips: Vec<String> = pending.iter().map(|m| m.tip.clone()).collect();
@@ -1915,6 +1938,41 @@ mod base_conflict_handling {
         check_forge_member(&e, &repo, &base, &members[2]);
         let r = stabilize_round(&e, &repo, &wt, &base, members, None, &[]).unwrap().unwrap();
         assert_eq!(r.members.len(), 3);
+    }
+
+    #[test]
+    fn a_pass_with_unchecked_members_starts_exactly_one_check_and_the_next_pass_after_green_cuts() {
+        let (d, base, members, mut e, repo) = group_fixture("batcher-cut-start-check", 2);
+        fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
+        let started = d.join("checks.runs");
+        testkit::write_exe(&e.checks_bin, &format!("#!/bin/sh\necho \"$@\" >> '{}'\n", started.display()));
+        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 0\n");
+        let wt = d.join("wt");
+        assert!(stabilize_round(&e, &repo, &wt, &base, members.clone(), None, &[]).unwrap().is_none(), "nothing recorded, nothing cut");
+        let ran = fs::read_to_string(&started).unwrap_or_default();
+        assert_eq!(ran.lines().count(), 1, "one check started: {ran}");
+        assert!(ran.starts_with("checks-forge --repo deck"), "{ran}");
+
+        let held = io::try_check_lock(&e, &repo).unwrap().unwrap();
+        assert!(stabilize_round(&e, &repo, &wt, &base, members.clone(), None, &[]).unwrap().is_none());
+        assert_eq!(fs::read_to_string(&started).unwrap().lines().count(), 1, "a running check is not started twice");
+        drop(held);
+
+        check_forge_pool(&e, &repo, &base, &members);
+        let r = stabilize_round(&e, &repo, &wt, &base, members, None, &[]).unwrap().unwrap();
+        assert_eq!(r.members.len(), 2, "the pass after the recorded green cuts the batch");
+        e.checks_bin = d.join("absent");
+    }
+
+    #[test]
+    fn a_lock_waiter_can_name_the_batcher_holding_the_queue_lock() {
+        let d = testkit::TempDir::new("batcher-cut-lock-holder");
+        let e = io::lifecycle_tests_env(&d);
+        let held = io::try_lock(&e, "deck").unwrap().unwrap();
+        let text = fs::read_to_string(d.join("queue/deck/lock")).unwrap();
+        assert!(text.contains(&format!("pid={}", std::process::id())) && text.contains("verb=batcher"), "{text}");
+        drop(held);
+        assert_eq!(fs::read_to_string(d.join("queue/deck/lock")).unwrap(), "");
     }
 
     /// sp-cfni99: ten ready members cost ONE local check of their merged head, not ten
