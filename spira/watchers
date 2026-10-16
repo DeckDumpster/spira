@@ -191,6 +191,8 @@ bead-sweep|daemon|@SPIRA_HOME@/bead-sweep.sh watch --interval 1800|@SPIRA_HOME@/
 # instances join the tailnet with expires (the expiry is recorded in <key file>.expires). It says
 # nothing while SPIRA_ROUND_VM_SPILL is unset.
 round-spill-key|daemon|@SPIRA_HOME@/round-spill-key.sh watch --interval 3600|@SPIRA_HOME@/round-spill-key.sh health
+ci-spill-guard|daemon|@SPIRA_HOME@/ci-spill-guard.sh watch --interval 900|@SPIRA_HOME@/ci-spill-guard.sh health
+
 pass-rate|daemon|@SPIRA_HOME@/pass-rate.sh watch --interval 900|@SPIRA_HOME@/pass-rate.sh health
 
 # MEND-WATCH is the alarm for the mender bounds: spira-mend-watch.timer appends one line per

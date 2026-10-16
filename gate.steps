@@ -44,6 +44,8 @@ step "$SPIRA_LINT_BIN"
 bin SPIRA_GUARD_BIN lifecycle-guard
 step "$SPIRA_GUARD_BIN" --gate .
 step bash spira/build-fence.sh
+# Every provisioned CI workflow spills to EC2 only; prints `fence: ci-spill-guard checked <n> provision steps`.
+step bash spira/ci-spill-guard.sh --gate .
 # README is rendered from spira/boundary; the suite selector runs test-boundary.sh only when a
 # boundary file is touched, so a change to what ships would otherwise land with a stale README.
 step bash spira/boundary.sh check
