@@ -531,7 +531,7 @@ async fn round_detail(loom: &Loom, id: &str) -> Result<Option<(Value, Option<Str
     let (rows, stale) = loom.batches(&["--batch", id]).await?;
     let Some(batch) = rows.into_iter().next() else { return Ok(None) };
     let heads: Vec<String> = batch["passes"].as_array().into_iter().flatten().filter_map(|p| p["head"].as_str().map(str::to_string)).collect();
-    let logs = rounds::pass_logs(&loom.config().run, id, &heads);
+    let logs = rounds::pass_logs(&loom.config().run, id, &heads, batch["log"].as_str().unwrap_or(""));
     Ok(Some((batch, stale, logs)))
 }
 
@@ -605,8 +605,9 @@ async fn round_log_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id):
     if !safe_id(&id) {
         return plain(StatusCode::BAD_REQUEST, "not a round id".into());
     }
-    let heads = loom.batches(&["--batch", &id]).await.ok().and_then(|(rows, _)| rows.into_iter().next()).map(|b| b["passes"].as_array().into_iter().flatten().filter_map(|p| p["head"].as_str().map(str::to_string)).collect::<Vec<_>>()).unwrap_or_default();
-    let logs = rounds::pass_logs(&loom.config().run, &id, &heads);
+    let batch = loom.batches(&["--batch", &id]).await.ok().and_then(|(rows, _)| rows.into_iter().next()).unwrap_or(Value::Null);
+    let heads = batch["passes"].as_array().into_iter().flatten().filter_map(|p| p["head"].as_str().map(str::to_string)).collect::<Vec<_>>();
+    let logs = rounds::pass_logs(&loom.config().run, &id, &heads, batch["log"].as_str().unwrap_or(""));
     match pick_log(&logs, log_param(&uri).as_deref()) {
         Some(p) => plain(StatusCode::OK, rounds::tail(p)),
         None => plain(StatusCode::NOT_FOUND, "no such pass log".into()),
