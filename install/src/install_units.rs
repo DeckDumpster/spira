@@ -37,6 +37,7 @@ pub struct Report {
     pub migrated_cockpit_state: Vec<String>,
     pub pruned: Vec<String>,
     pub retired: Vec<String>,
+    pub drift: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -394,12 +395,47 @@ fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, String)], r: &mu
             }
         }
     }
+    retire_unledgered_units(ctx, &now, &mut keep, r);
     if !r.retired.is_empty() {
         let _ = ctx.systemctl.daemon_reload();
     }
     let body: String = keep.iter().map(|u| format!("{u}\n")).collect();
     if fs::read_to_string(&ledger).ok().as_deref() != Some(body.as_str()) {
         let _ = fs::write(&ledger, body);
+    }
+}
+
+/// A unit installed before the ledger existed is absent from it. A `spira-*` unit carrying this
+/// instance's suffix is Spira's by name and is retired like a ledgered one; any other `spira-*`
+/// unit the manifest does not ship is reported as drift and left alone.
+fn retire_unledgered_units(ctx: &Ctx, now: &std::collections::BTreeSet<String>, keep: &mut std::collections::BTreeSet<String>, r: &mut Report) {
+    const EXTS: [&str; 4] = [".service", ".timer", ".socket", ".path"];
+    let Ok(entries) = fs::read_dir(ctx.unit_dir) else { return };
+    let mut found: std::collections::BTreeSet<String> = Default::default();
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let stem = name.strip_suffix(".d").unwrap_or(&name);
+        if stem.starts_with("spira-") && EXTS.iter().any(|x| stem.ends_with(x)) && !stem.contains('@') {
+            found.insert(stem.to_string());
+        }
+    }
+    for u in found {
+        if now.contains(&u) || r.retired.contains(&u) || is_masked(&ctx.unit_dir.join(&u)) {
+            continue;
+        }
+        if !EXTS.iter().any(|x| u.strip_suffix(x).is_some_and(|b| b.ends_with(&format!("-{}", ctx.host.instance)))) {
+            r.drift.push(u);
+            continue;
+        }
+        let _ = ctx.systemctl.disable_now(&u);
+        let _ = fs::remove_dir_all(ctx.unit_dir.join(format!("{u}.d")));
+        match fs::remove_file(ctx.unit_dir.join(&u)) {
+            Ok(()) => r.retired.push(u),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => r.retired.push(u),
+            Err(_) => {
+                keep.insert(u);
+            }
+        }
     }
 }
 
@@ -619,6 +655,38 @@ mod tests {
         assert!(!unit_dir.join("spira-round-template-prod.timer").exists());
         assert!(!unit_dir.join("spira-round-template-prod.service.d").exists());
         assert!(sc.disabled_now.borrow().contains(&"spira-round-template-prod.timer".to_string()));
+    }
+
+    #[test]
+    fn a_dropped_unit_is_retired_though_the_ledger_never_listed_it() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(unit_dir.join("spira-gone-prod.service.d")).unwrap();
+        fs::create_dir_all(unit_dir.join("spira-orphan-prod.timer.d")).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        fs::write(unit_dir.join("spira-gone-prod.service"), "x").unwrap();
+        fs::write(unit_dir.join("spira-gone-prod.timer"), "x").unwrap();
+        fs::write(unit_dir.join("spira-gone-prod.service.d/retired.conf"), "[Unit]\n").unwrap();
+        fs::write(unit_dir.join("spira-orphan-prod.timer.d/x.conf"), "[Unit]\n").unwrap();
+        fs::write(unit_dir.join("spira-other-test.timer"), "x").unwrap();
+        fs::write(unit_dir.join("mine.service"), "x").unwrap();
+
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        for u in ["spira-gone-prod.service", "spira-gone-prod.timer", "spira-orphan-prod.timer"] {
+            assert!(r.retired.contains(&u.to_string()), "{u}: {:?}", r.retired);
+            assert!(!unit_dir.join(u).exists() && !unit_dir.join(format!("{u}.d")).exists());
+            assert!(sc.disabled_now.borrow().contains(&u.to_string()));
+        }
+        assert_eq!(r.drift, vec!["spira-other-test.timer".to_string()]);
+        assert!(unit_dir.join("spira-other-test.timer").exists() && unit_dir.join("mine.service").exists());
     }
 
     #[test]
