@@ -469,8 +469,9 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         };
         let mut ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
         ids.extend(rank::all_blockers(&rows));
-        let lc_rows = match a.get("--lifecycle") {
-            Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_lifecycle(&t)),
+        let lc_text = a.get("--lifecycle").map(|p| read_source(p, env.stdin));
+        let lc_rows = match &lc_text {
+            Some(t) => t.clone().and_then(|t| rank::parse_lifecycle(&t)),
             None => st.lifecycle_of(&ids),
         };
         let mut lc = match lc_rows {
@@ -482,6 +483,10 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             }
         };
         rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
+        match lc_text.map_or_else(|| st.express_ids(), |t| t.and_then(|t| rank::express_ids(&t))) {
+            Ok(e) => rank::mark_express(&mut rows, &e),
+            Err(e) => return Outcome::cannot_tell(format!("{fayth}: express set: {e}")),
+        }
         let wanted = rank::all_blockers(&rows);
         let recs = match a.get("--blocker-records") {
             Some(p) => read_source(p, env.stdin).and_then(|t| rank::parse_ready(&t)),

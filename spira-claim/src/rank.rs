@@ -15,6 +15,9 @@ pub struct ReadyRow {
     /// names each bead without a second read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Set from the lifecycle row by [`mark_express`]; never read from bd.
+    #[serde(default, skip_serializing)]
+    pub express: bool,
     #[serde(default, deserialize_with = "lenient_i64")]
     pub priority: Option<i64>,
     #[serde(default)]
@@ -118,6 +121,8 @@ pub fn epic_started(children: &[ReadyRow], lc: &HashMap<String, LifecycleRow>) -
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Ranked {
     pub epic_priority: i64,
+    /// 0 = Express: ahead of every non-Express bead of the same effective priority.
+    pub express: u8,
     /// 0 = the epic has started (sorts first).
     pub epic_started: u8,
     pub bead_priority: i64,
@@ -132,14 +137,14 @@ pub struct Ranked {
 }
 
 impl Ranked {
-    fn tier(&self) -> (u8, i64, u8, i64) {
+    fn tier(&self) -> (u8, i64, u8, u8, i64) {
         if self.rework == 0 {
-            (0, 0, 0, self.bead_priority)
+            (0, 0, 0, 0, self.bead_priority)
         } else {
-            (1, self.epic_priority, self.epic_started, self.bead_priority)
+            (1, self.epic_priority, self.express, self.epic_started, self.bead_priority)
         }
     }
-    fn key(&self) -> ((u8, i64, u8, i64), u8, &str, &str, &str) {
+    fn key(&self) -> ((u8, i64, u8, u8, i64), u8, &str, &str, &str) {
         (self.tier(), self.resumable, &self.age, &self.id, &self.epic_id)
     }
     pub fn tsv(&self) -> String {
@@ -156,6 +161,7 @@ pub fn rank_one(r: &ReadyRow, lookup: &EpicLookup, resumable: &BTreeSet<String>,
     let epic_priority = if pid.is_empty() { r.prio() } else { (*lookup.prio.get(&pid).unwrap_or(&r.prio())).min(r.prio()) };
     Ranked {
         epic_priority,
+        express: if r.express { 0 } else { 1 },
         epic_started: if started.contains(pid.as_str()) { 0 } else { 1 },
         bead_priority: r.prio(),
         rework: if rework.contains(&r.id) { 0 } else { 1 },
@@ -187,7 +193,7 @@ pub fn top_tier(rows: &[ReadyRow], lookup: &EpicLookup, rework: &BTreeSet<String
     let Some(best) = ranked.iter().map(|(_, k)| k.tier()).min() else {
         return Vec::new();
     };
-    let top = (best.1, best.2, best.3);
+    let top = (best.1, best.3, best.4);
     ranked
         .iter()
         .filter(|(_, k)| k.tier() == best)
@@ -233,6 +239,12 @@ pub struct LifecycleRow {
     /// queue — what the machine's REWORK `Claim` compares a proposal against.
     pub stack: Stack,
     pub reason: Option<String>,
+}
+
+pub fn mark_express(rows: &mut [ReadyRow], express: &BTreeSet<String>) {
+    for r in rows {
+        r.express = express.contains(&r.id);
+    }
 }
 
 /// The beads whose lifecycle row carries Express (`spira-lc list`'s `express` column,
@@ -565,6 +577,26 @@ mod tests {
         e.issue_type = Some("epic".into());
         assert!(rank(&[e.clone()], &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new()).is_empty());
         assert!(top_tier(&[e], &EpicLookup::default(), &BTreeSet::new()).is_empty());
+    }
+
+    #[test]
+    fn express_ranks_right_after_priority_whatever_its_id() {
+        let mut x = row("p0-z", 0, None, "2026-03-01");
+        x.express = true;
+        let rows = vec![row("p0-a", 0, None, "2026-01-01"), row("p0-b", 0, None, "2026-02-01"), x, row("p1-e", 1, None, "2026-01-01")];
+        let r = rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!(ids(&r), ["p0-z", "p0-a", "p0-b", "p1-e"]);
+        let mut p1x = row("p1-x", 1, None, "2026-01-01");
+        p1x.express = true;
+        let r = rank(&[row("p0-a", 0, None, "2026-01-01"), p1x], &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!(ids(&r), ["p0-a", "p1-x"], "express never outranks a better priority");
+    }
+
+    #[test]
+    fn equal_priority_non_express_takes_the_older_not_the_lower_id() {
+        let rows = vec![row("a-new", 0, None, "2026-02-01"), row("z-old", 0, None, "2026-01-01")];
+        assert_eq!(ids(&rank(&rows, &EpicLookup::default(), &BTreeSet::new(), &BTreeSet::new())), ["z-old", "a-new"]);
+        assert_eq!(top_tier(&rows, &EpicLookup::default(), &BTreeSet::new()).len(), 2);
     }
 
     #[test]
