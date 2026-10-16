@@ -324,16 +324,14 @@ jobs:
     # Proxmox VM for six hours before anything noticed. Pushes no longer cancel one
     # another either, so several could stack up behind a single wedge.
     #
-    # 45 is roughly double the only measured pass: the first full run took 24
-    # minutes for all 276 suites. Tight enough that a wedge is caught within the
-    # hour, loose enough not to red a merely slow run. Revisit once there are
-    # several completed runs to size from -- one observation is a number, not a
-    # distribution.
+    # 25 is sized from the EC2 wall: 470 suites in ~4 min, the bare-host step
+    # ~4.3 min, and an image build of ~11 min when the registry misses -- about
+    # 20 min worst case. It is not raised to absorb host contention.
     #
     # This bounds the JOB. testenv-batch already bounds each SUITE at
     # SPIRA_SUITE_TIMEOUT (600s default), so one hung suite is caught long before
     # this fires; what this catches is the case that never reaches a suite at all.
-    timeout-minutes: 45
+    timeout-minutes: 25
     permissions:
       contents: read
       # To pull the test image, AND to push it back. The package inherits the
