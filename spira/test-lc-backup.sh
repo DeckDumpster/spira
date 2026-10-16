@@ -139,12 +139,29 @@ rm -f "$RUN"/lc-backup.*.ok; out="$(unset AWS_SECRET_ACCESS_KEY; URL="s3://bkt/s
 wantrc "s3 run without credentials fails" 1 $rc
 [ -z "$(ls "$RUN"/lc-backup.*.ok 2>/dev/null)" ] && ok "failed upload writes no stamp" || bad "failed upload writes no stamp"
 
+echo; echo "drill failure records its step and stderr:"
+rm -f "$RUN"/lc-backup/*/drill.verdict; DBS=spira lcb run >/dev/null
+printf '%s deadbeef\n' "$(date +%s)" > "$RUN/lc-backup.spira.ok"
+out="$(DBS=spira lcb drill)"; rc=$?; wantrc "a wrong stamped head fails the drill" 1 $rc
+want "the verdict file names the step" "stamped head" "$(cat "$RUN/lc-backup/spira/drill.verdict")"
+printf 'x\n' > "$RUN/lc-backup/spira/latest.tar.zst"; printf 'x\n' > "$RUN/lc-backup/spira/latest.tar.gz"
+out="$(DBS=spira lcb drill)"; rc=$?; wantrc "an unpackable snapshot fails the drill" 1 $rc
+want "unpack failure is recorded with tar's stderr" "unpack: cannot unpack" "$(cat "$RUN/lc-backup/spira/drill.verdict")"
+rm -f "$RUN/lc-backup/spira"/latest.tar.*; DBS=spira lcb run >/dev/null; DBS=spira lcb drill >/dev/null; wantrc "a good drill passes again" 0 $?
+want "verdict file records the pass" "drill ok" "$(cat "$RUN/lc-backup/spira/drill.verdict")"
+printf 'lc-backup: drill: spira: planted failure\n' > "$RUN/lc-backup/spira/drill.verdict"
+out="$(SERVICE_RESULT=exit-code DBS=spira lcb explain-drill)"; want "explain-drill surfaces the verdict" "planted failure" "$out"
+out="$(SERVICE_RESULT=success DBS=spira lcb explain-drill)"; [ -z "$out" ] && ok "explain-drill is silent on success" || bad "explain-drill is silent on success"
+
 echo; echo "units and rows:"
 grep -q '^ExecStart=@SPIRA_HOME@/lc-backup.sh run' "$HERE/../systemd/lc-backup.service" && ok "service runs the backup" || bad "service runs the backup"
 ! grep -q '^ExecStartPost=' "$HERE/../systemd/lc-backup.service" && ok "backup service carries no drill" || bad "backup service carries no drill"
 grep -q '^ExecStart=@SPIRA_HOME@/lc-backup.sh drill' "$HERE/../systemd/lc-backup-drill.service" && ok "drill is its own unit" || bad "drill is its own unit"
 grep -q '^IOWeight=' "$HERE/../systemd/lc-backup-drill.service" && ok "drill unit is I/O weighted" || bad "drill unit is I/O weighted"
 grep -q '^Unit=lc-backup-drill.service' "$HERE/../systemd/lc-backup-drill.timer" && grep -q 'lc-backup-drill.timer", true' "$HERE/../install/src/manifest.rs" && ok "drill has its own enabled timer" || bad "drill has its own enabled timer"
+grep -q '^X-Spira-NoDrain=true' "$HERE/../systemd/lc-backup-drill.service" && ok "drill opts out of the activation drain" || bad "drill opts out of the activation drain"
+! grep -q '^X-Spira-NoDrain' "$HERE/../systemd/lc-backup.service" && ok "backup run still drains" || bad "backup run still drains"
+grep -q '^ExecStopPost=@SPIRA_HOME@/lc-backup.sh explain-drill' "$HERE/../systemd/lc-backup-drill.service" && ok "drill failure is explained on stop" || bad "drill failure is explained on stop"
 grep -q '^Unit=lc-backup.service' "$HERE/../systemd/lc-backup.timer" && ok "timer starts the service" || bad "timer starts the service"
 grep -q 'lc-backup.timer", true' "$HERE/../install/src/manifest.rs" && ok "manifest enables the timer" || bad "manifest enables the timer"
 grep -q '^lc-backup|daemon|' "$HERE/watchers" && ok "age alarm has a watcher row" || bad "age alarm has a watcher row"

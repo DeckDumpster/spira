@@ -306,7 +306,7 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
         match ctx.sc.state(&c.unit) {
             Ok(st) if is_up(&st.active) && st.kind != "oneshot" => out.restarted.push(c.unit.clone()),
             Ok(st) => {
-                if st.kind == "oneshot" && is_up(&st.active) {
+                if st.kind == "oneshot" && is_up(&st.active) && !units::undrained(&c.new) {
                     draining.push(c.unit.clone());
                 }
                 out.deferred.push(c.unit.clone());

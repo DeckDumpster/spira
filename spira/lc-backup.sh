@@ -8,6 +8,7 @@
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
 #   lc-backup.sh explain             after a failed run: put the log's last error line on stderr and in the journal
+#   lc-backup.sh explain-drill       after a failed drill: journal each database's drill.verdict and mail it to the operator
 #
 # SPIRA_LC_BACKUP_URL is s3://bucket/prefix/ (credentials and region from the environment, which
 # the service loads from the operator's env file) or file://dir. The key is write-only: the
@@ -147,6 +148,20 @@ cmd_explain() {
     return 0
 }
 
+cmd_explain_drill() {
+    [ "${SERVICE_RESULT:-}" != success ] || return 0
+    local db f msg=""
+    for db in $(_lcb_dbs); do
+        f="$(_lcb_verdict "$db")"
+        [ -s "$f" ] && ! grep -q 'drill ok' "$f" && msg="$msg$(cat "$f")"$'\n'
+    done
+    [ -n "$msg" ] || msg="lc-backup: drill: failed with no verdict recorded (see $SPIRA_RUN/lc-backup.log)"
+    printf '%s' "$msg" >&2
+    command -v systemd-cat >/dev/null 2>&1 && printf '%s' "$msg" | systemd-cat -t lc-backup-drill -p err
+    _lcb_report "restore drill FAILED — $(printf '%s' "$msg" | tr '\n' ';' | cut -c1-1500)" >/dev/null
+    return 0
+}
+
 # _lcb_measure_db db [now] -> "ok <age>" | "stale <age>" | "never"; non-zero when the stamp cannot be read
 _lcb_measure_db() {
     local db="$1" now="${2:-$(date +%s)}" t head age stamp
@@ -199,41 +214,55 @@ _lcb_drill_db() {
     fi
 }
 
+_lcb_verdict() { printf '%s/lc-backup/%s/drill.verdict' "$SPIRA_RUN" "$1"; }
+
+_lcb_drill_fail() {
+    local db="$1"; shift
+    echo "lc-backup: drill: $*" >&2
+    printf 'lc-backup: drill: %s\n' "$*" >> "$(_lcb_verdict "$db")"
+    return 1
+}
+
 _lcb_drill_db_locked() {
-    local db="$1" tarball="$2" stamp
+    local db="$1" tarball="$2" stamp verdict
     stamp="$(_lcb_stamp "$db")"
     _lcb_require_db "$db" || return 1
+    verdict="$(_lcb_verdict "$db")"
+    mkdir -p "$(dirname "$verdict")" && : > "$verdict" || return 1
     [ -n "$tarball" ] || tarball="$(ls "$SPIRA_RUN/lc-backup/$db"/latest.tar.zst "$SPIRA_RUN/lc-backup/$db"/latest.tar.gz 2>/dev/null | head -1)"
-    local t head scratch rc=0 tables tbl live restored live_head
-    [ -r "$tarball" ] || { echo "lc-backup: drill: no snapshot at $tarball" >&2; return 1; }
-    [ -r "$stamp" ] || { echo "lc-backup: drill: $db: no stamp — nothing has been backed up" >&2; return 1; }
+    local t head scratch rc=0 tables tbl live restored live_head err
+    [ -r "$tarball" ] || { _lcb_drill_fail "$db" "$db: no snapshot at $tarball"; return 1; }
+    [ -r "$stamp" ] || { _lcb_drill_fail "$db" "$db: no stamp — nothing has been backed up"; return 1; }
     read -r t head < "$stamp"
     local need=$(( $(stat -c %s "$tarball") * 4 / 1024 )) have
-    mkdir -p "$SPIRA_LC_BACKUP_DRILL_DIR" && scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/$db.XXXXXX")" || return 1
+    mkdir -p "$SPIRA_LC_BACKUP_DRILL_DIR" && scratch="$(mktemp -d "$SPIRA_LC_BACKUP_DRILL_DIR/$db.XXXXXX")" \
+        || { _lcb_drill_fail "$db" "$db: cannot make a scratch dir under $SPIRA_LC_BACKUP_DRILL_DIR"; return 1; }
     have="$(df -Pk "$scratch" | awk 'NR==2{print $4}')"
     [ "${have:-0}" -ge "$need" ] \
-        || { echo "lc-backup: drill: $SPIRA_LC_BACKUP_DRILL_DIR has ${have:-0}KiB free, the restore needs ~${need}KiB" >&2; rm -rf "$scratch"; return 1; }
-    mkdir "$scratch/snap" && tar -C "$scratch/snap" -xaf "$tarball" \
-        || { echo "lc-backup: drill: cannot unpack $tarball" >&2; rm -rf "$scratch"; return 1; }
+        || { _lcb_drill_fail "$db" "$SPIRA_LC_BACKUP_DRILL_DIR has ${have:-0}KiB free, the restore needs ~${need}KiB"; rm -rf "$scratch"; return 1; }
+    err="$(mkdir "$scratch/snap" && tar -C "$scratch/snap" -xaf "$tarball" 2>&1)" \
+        || { _lcb_drill_fail "$db" "unpack: cannot unpack $tarball: $err"; rm -rf "$scratch"; return 1; }
     # batch-job: restoring a snapshot into the scratch dir
     ( cd "$scratch" && dolt backup restore "file://$scratch/snap" "$db" ) >"$scratch/restore.log" 2>&1 \
-        || { echo "lc-backup: drill: restore failed: $(cat "$scratch/restore.log")" >&2; rm -rf "$scratch"; return 1; }
+        || { _lcb_drill_fail "$db" "restore failed: $(cat "$scratch/restore.log")"; rm -rf "$scratch"; return 1; }
     # batch-job: reads of the restored scratch copy
-    live_head="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" | tail -n +2 )"
+    live_head="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT commit_hash FROM dolt_log LIMIT 1" 2>"$scratch/sql.err" | tail -n +2 )"
     [ "$live_head" = "$head" ] \
-        || { echo "lc-backup: drill: restored head ${live_head:-?} is not the stamped head $head" >&2; rm -rf "$scratch"; return 1; }
-    tables="$(_lcb_sql "$db" -r csv -q "SELECT table_name FROM information_schema.tables WHERE table_schema='$db' AND table_type='BASE TABLE' ORDER BY 1" | tail -n +2)"
-    [ -n "$tables" ] || { echo "lc-backup: drill: live store lists no tables" >&2; rm -rf "$scratch"; return 1; }
+        || { _lcb_drill_fail "$db" "restored head ${live_head:-?} is not the stamped head $head: $(cat "$scratch/sql.err")"; rm -rf "$scratch"; return 1; }
+    tables="$(_lcb_sql "$db" -r csv -q "SHOW FULL TABLES AS OF '$head' WHERE Table_type='BASE TABLE'" 2>"$scratch/sql.err" | awk -F, 'NR>1{print $1}')"
+    [ -n "$tables" ] || { _lcb_drill_fail "$db" "list tables as of $head: none listed: $(cat "$scratch/sql.err")"; rm -rf "$scratch"; return 1; }
     for tbl in $tables; do
-        live="$(_lcb_sql "$db" -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" | tail -n +2)"
+        live="$(_lcb_sql "$db" -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" 2>"$scratch/live.err" | tail -n +2)"
         # batch-job: reads of the restored scratch copy
-        restored="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" | tail -n +2 )"
+        restored="$( cd "$scratch/$db" && dolt sql -r csv -q "SELECT COUNT(*) FROM \`$tbl\` AS OF '$head'" 2>"$scratch/restored.err" | tail -n +2 )"
         if [ -z "$live" ] || [ "$live" != "$restored" ]; then
-            echo "lc-backup: drill: $tbl live ${live:-?} != restored ${restored:-?}" >&2; rc=1
+            _lcb_drill_fail "$db" "count $tbl: live ${live:-?} != restored ${restored:-?}: $(cat "$scratch/live.err" "$scratch/restored.err" 2>/dev/null | tr '\n' ' ')"; rc=1
         fi
     done
     rm -rf "$scratch"
-    [ "$rc" = 0 ] && echo "lc-backup: drill ok — $db: $(printf '%s\n' "$tables" | wc -l) table(s) identical at $head"
+    if [ "$rc" = 0 ]; then
+        echo "lc-backup: drill ok — $db: $(printf '%s\n' "$tables" | wc -l) table(s) identical at $head" | tee "$verdict"
+    fi
     return "$rc"
 }
 
@@ -342,7 +371,8 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         watch)  shift; cmd_watch "$@" ;;
         health) cmd_health; exit $? ;;
         explain) cmd_explain; exit $? ;;
-        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [--db NAME] [TARBALL] | watch [--interval S] [--ticks N] | health | explain" >&2
+        explain-drill) cmd_explain_drill; exit $? ;;
+        *) echo "usage: lc-backup.sh run | age [--now EPOCH] | drill [--db NAME] [TARBALL] | watch [--interval S] [--ticks N] | health | explain | explain-drill" >&2
            exit 2 ;;
     esac
 fi
