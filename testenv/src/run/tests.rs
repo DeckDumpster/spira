@@ -143,6 +143,8 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         quarantine_max_age: num!("SPIRA_QUARANTINE_MAX_AGE").unwrap_or(604_800),
         repeat_reason: get("SPIRA_VERDICT_REPEAT_CONSIDERED"),
         suite_timeout: num!("SPIRA_SUITE_TIMEOUT").unwrap_or(600),
+        suite_cap: num!("SPIRA_TESTENV_SUITE_CAP").unwrap_or(900),
+        gate_cap: num!("SPIRA_TESTENV_GATE_CAP").unwrap_or(300),
         maxpar_requested,
         maxpar_refusal,
         maxpar_ceiling: num!("SPIRA_BATCH_MAXPAR_CEILING"),
@@ -2214,4 +2216,31 @@ fn a_registered_name_outside_spira_toml_resolves_through_the_repo_map() {
     let r = resolve_repo(Some("registered"), &deps).unwrap();
     assert_eq!((r.name.as_str(), r.path.as_path()), ("registered", w.repo.as_path()));
     assert!(resolve_repo(Some("nosuch"), &deps).err().unwrap().contains("cannot find repo nosuch"));
+}
+
+#[test]
+fn a_tier_past_the_cap_is_killed_at_it_and_the_run_exits_over_cap_naming_the_tier() {
+    crate::cap::OBSERVE_CAP.with(|o| o.set(true));
+    let mut w = foreign_world("foreign-over-cap", Some(FOREIGN_DECL));
+    w.env.insert("SPIRA_TESTENV_SUITE_CAP".into(), "1".into());
+    let rt = runtime();
+    rt.once_hang.lock().unwrap().insert("unit".into());
+    let b = FakeBuilder::new(None);
+    let t0 = Instant::now();
+    let rc = w.run(&rt, &b, &["topic"], "", &w.root);
+    assert!(t0.elapsed() < Duration::from_secs(10), "the hung tier was cut at the cap, not left to its own 20s");
+    assert_eq!(rc, 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=over-cap");
+    assert!(w.has_line(|l| l.contains("over-cap: tier/suite") && l.contains("unit") && l.contains("1s cap")), "{:?}", w.lines.lock().unwrap());
+}
+
+#[test]
+fn a_run_under_its_cap_is_not_cut() {
+    crate::cap::OBSERVE_CAP.with(|o| o.set(true));
+    let mut w = foreign_world("foreign-under-cap", Some(FOREIGN_DECL));
+    w.env.insert("SPIRA_TESTENV_SUITE_CAP".into(), "30".into());
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1");
 }

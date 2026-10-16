@@ -463,3 +463,5 @@ no_progress_breaker_claims
 no_progress_breaker_window_minutes
 dolt_maintenance_units
 sift_mend_hold_secs
+testenv_gate_cap
+testenv_suite_cap

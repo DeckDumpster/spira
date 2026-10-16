@@ -222,6 +222,7 @@ impl Shared<'_> {
         req.deadline = self.deadline_at;
         let raw = self.raw_path(suite);
         req.output = Some(raw.clone());
+        let _running = crate::cap::running(suite);
         let t0 = Instant::now();
         let out = self.session.rt.exec(&req);
         let secs = t0.elapsed().as_secs();

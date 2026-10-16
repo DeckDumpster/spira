@@ -1167,3 +1167,14 @@ out, loudly. The fixture container sets `SPIRA_BUILD_CACHE=off` (it has no sccac
 builds on the host). The crate also ships **`target-reap`** (`src/reap.rs`): the `target/`
 of every `$SPIRA_RUN/worktree/<bead id>` whose bead is closed is removed, on one `bd show`;
 an unreadable answer removes nothing. The landing pass runs it once per pass.
+
+## Wall-clock cap (sp-dhvak1)
+
+Every run carries a cap from config, with no Rust-side default: `SPIRA_TESTENV_SUITE_CAP` for a
+run without `--deadline`, `SPIRA_TESTENV_GATE_CAP` (+30 s settle, so the run's own deadline cuts
+first) for one with it. At the cap the run cancels through the signal path, killing its
+containers, and finishes `VERDICT FAULT rc=2 reason=over-cap`, logging `over-cap: <tier/suite or
+phase> was still running at the <N>s cap`; the verdict is recorded in `run.events`. If it has not
+unwound 30 s later it kills its descendants and exits itself. `testenv-cap` (a `watchd` daemon
+row) scans live runs and kills any past cap + 60 s by pid, after re-reading the cmdline and start
+time, and appends one line to the concierge inbox with the tier and wall.

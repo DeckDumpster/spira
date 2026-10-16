@@ -201,3 +201,5 @@ mend-watch|log|@SPIRA_RUN@/mend-watch.log
 # spira-submission is its own systemd unit; health TLS-connects to the configured address and
 # requires the SMTP banner. Unconfigured (SPIRA_SUBMISSION_ADDR empty) health exits 0 and serve idles.
 spira-submission|extern|spira-submission|spira-submission health
+
+testenv-cap|daemon|testenv-cap watch --interval 15|testenv-cap health

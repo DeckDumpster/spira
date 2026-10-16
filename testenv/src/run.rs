@@ -6,6 +6,7 @@ use std::process::Command;
 use spira_config::admission;
 use crate::batch::{self, now_epoch, BatchCfg, Hooks};
 use crate::build::{artifacts_dir, profile_dir, BuildError, Builder};
+use crate::cap;
 use crate::cli::{Invocation, RunArgs, SuitesArg};
 use crate::fixture::{Fixtures, Session, SetupFault, WORKSPACE};
 use crate::foreign;
@@ -702,6 +703,7 @@ impl Phases {
     }
     /// Close the phase that ran since the previous mark.
     fn mark(&mut self, name: &'static str) {
+        cap::phase(name);
         let now = Instant::now();
         self.done
             .push((name, now.saturating_duration_since(self.last).as_secs_f64()));
@@ -768,7 +770,13 @@ fn note(r: Result<(), String>) {
 /// Runs, then records the verdict in the run's event file once one was started.
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let results = std::cell::RefCell::new(None);
-    let fin = run_recorded(args, deps, &results);
+    let cap = cap::limit(deps.settings.suite_cap, deps.settings.gate_cap, args.deadline);
+    let armed = cap::arm(Duration::from_secs(cap));
+    let mut fin = run_recorded(args, deps, &results);
+    if let Some((what, secs)) = armed.finish() {
+        deps.log(&cap::over_cap_line(&what, secs));
+        fin = Finish::fault(2, "over-cap", fin.ran);
+    }
     if let Some(dir) = results.into_inner() {
         let (word, reason) = fin.verdict_parts();
         note(RunLog::in_dir(&dir).record(RunEvent::Verdict { word, reason }, now_epoch()));

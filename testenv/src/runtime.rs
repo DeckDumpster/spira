@@ -14,7 +14,7 @@ pub static CANCEL: AtomicBool = AtomicBool::new(false);
 
 #[cfg(not(test))]
 pub fn cancelled() -> bool {
-    CANCEL.load(Ordering::SeqCst)
+    CANCEL.load(Ordering::SeqCst) || crate::cap::tripped()
 }
 
 // The flag is process-global; tests that flip it would cancel every concurrent test, so
@@ -26,7 +26,7 @@ thread_local! {
 
 #[cfg(test)]
 pub fn cancelled() -> bool {
-    OBSERVE_CANCEL.with(|o| o.get()) && CANCEL.load(Ordering::SeqCst)
+    (OBSERVE_CANCEL.with(|o| o.get()) && CANCEL.load(Ordering::SeqCst)) || crate::cap::tripped()
 }
 
 extern "C" fn on_signal(_: libc::c_int) {

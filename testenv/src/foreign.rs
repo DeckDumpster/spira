@@ -257,6 +257,7 @@ pub struct TierRun<'a> {
 
 impl TierRun<'_> {
     pub fn run(&self, name: &str) -> (Outcome, u64) {
+        let _running = crate::cap::running(name);
         let tier = &self.decl.tier[name];
         let t0 = Instant::now();
         if self.cache.prepare().is_err() {

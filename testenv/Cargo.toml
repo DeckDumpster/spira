@@ -20,6 +20,11 @@ path = "src/bd_meter_main.rs"
 test = false
 
 [[bin]]
+name = "testenv-cap"
+path = "src/cap_main.rs"
+test = false
+
+[[bin]]
 name = "target-reap"
 path = "src/target_reap_main.rs"
 test = false

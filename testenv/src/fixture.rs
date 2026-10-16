@@ -1053,6 +1053,8 @@ pub mod fake {
         /// Foreign-repository tiers run (`run_once`), and the rc each tier name answers.
         pub once_calls: Mutex<Vec<crate::runtime::RunRequest>>,
         pub once_rc: Mutex<std::collections::HashMap<String, i32>>,
+        /// Tiers that run until the run is cancelled, then answer the cancelled rc.
+        pub once_hang: Mutex<std::collections::HashSet<String>>,
     }
 
     impl FakeRuntime {
@@ -1164,6 +1166,13 @@ pub mod fake {
         fn run_once(&self, req: &crate::runtime::RunRequest) -> ExecOutcome {
             self.once_calls.lock().unwrap().push(req.clone());
             let tier = req.name.rsplit('-').next().unwrap_or("").to_string();
+            if self.once_hang.lock().unwrap().contains(&tier) {
+                let end = Instant::now() + Duration::from_secs(20);
+                while !crate::runtime::cancelled() && Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                return ExecOutcome { rc: crate::runtime::RC_CANCELLED, output: String::new() };
+            }
             let rc = self.once_rc.lock().unwrap().get(&tier).copied().unwrap_or(0);
             let _ = std::fs::write(&req.output, format!("fake tier {tier} rc={rc}\n"));
             ExecOutcome { rc, output: String::new() }
