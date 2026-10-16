@@ -1,9 +1,10 @@
-//! The layout every Loom page shares: top bar, six-section navigation, one stylesheet.
+//! The layout every Loom page shares: top bar, seven-section navigation, one stylesheet.
 
 use crate::stuck::esc;
 
-pub const SECTIONS: [(&str, &str, &str); 6] = [
+pub const SECTIONS: [(&str, &str, &str); 7] = [
     ("now", "Now", "/"),
+    ("aeons", "Aeons", "/aeons"),
     ("rounds", "Rounds", "/rounds"),
     ("stuck", "Stuck", "/stuck"),
     ("units", "Units", "/units"),
