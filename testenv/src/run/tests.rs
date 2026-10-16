@@ -2074,9 +2074,14 @@ fn a_forge_repo_runs_its_declared_tier_in_its_own_image() {
     assert_eq!(env("CARGO_TARGET_DIR").as_deref(), Some("/var/cache/spira-foreign/target"));
     assert_eq!(env("CARGO_HOME").as_deref(), Some("/var/cache/spira-foreign/cargo"));
     let run = w.root.path().join("run/foreign-cache");
-    assert_eq!(calls[0].mounts.len(), 2);
+    assert_eq!(env("CARGO_INCREMENTAL").as_deref(), Some("0"));
+    assert_eq!(calls[0].mounts.len(), 1);
     assert!(calls[0].mounts.iter().all(|(h, _)| h.starts_with(&run)), "{:?}", calls[0].mounts);
-    assert!(calls[0].mounts.iter().all(|(h, _)| !h.starts_with(run.join(w.repo.file_name().unwrap()).join("target"))), "a run builds in its own copy");
+    let warm = run.join(w.repo.file_name().unwrap()).join("target");
+    let o = &calls[0].overlays;
+    assert_eq!(o.len(), 1, "the warm target is mounted as an overlay, never copied");
+    assert_eq!(o[0].lower, warm);
+    assert!(!o[0].upper.starts_with(&warm) && o[0].upper.starts_with(&run), "a run writes to its own layer");
     assert!(rt.execs.lock().unwrap().is_empty(), "no spira fixture container is booted");
 }
 
@@ -2104,6 +2109,33 @@ fn a_forge_repo_tier_runs_beside_another_reader_and_waits_only_for_a_swap() {
     drop(held);
     assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0);
     assert_eq!(rt.once_calls.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn a_forge_check_runs_its_tiers_at_once() {
+    let d = "image = \"i\"\n[tier.a]\nargv = [\"x\"]\n[tier.b]\nargv = [\"x\"]\n";
+    let w = foreign_world("foreign-parallel", Some(d));
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0, "{:?}", w.lines.lock().unwrap());
+    assert_eq!(rt.once_calls.lock().unwrap().len(), 2);
+    assert_eq!(w.last(), "VERDICT GREEN ran=2");
+}
+
+#[test]
+fn a_forge_check_with_no_deadline_gets_the_declared_cap() {
+    let d = "image = \"i\"\ncap = 1\n[tier.unit]\nargv = [\"x\"]\n";
+    let w = foreign_world("foreign-cap", Some(d));
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let cache = w.root.path().join("run/foreign-cache").join(w.repo.file_name().unwrap());
+    fs::create_dir_all(&cache).unwrap();
+    slot_lock_free(&cache.join("lock"));
+    let held = crate::worktree::try_lock(&cache.join("lock")).expect("lock is free");
+    assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 2);
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=deadline-suites");
+    assert!(w.lines.lock().unwrap().iter().any(|l| l.contains("over the 1s cap")), "{:?}", w.lines.lock().unwrap());
+    drop(held);
 }
 
 #[test]

@@ -123,10 +123,21 @@ pub struct RunRequest {
     pub env: Vec<(String, String)>,
     /// Extra shared read-write volumes: (host path, container path).
     pub mounts: Vec<(PathBuf, String)>,
+    /// Read-through overlay volumes: the run writes to its own upper layer and the lower
+    /// directory is never touched, so nothing is copied.
+    pub overlays: Vec<Overlay>,
     pub argv: Vec<String>,
     pub timeout: Option<Duration>,
     pub deadline: Option<Instant>,
     pub output: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct Overlay {
+    pub lower: PathBuf,
+    pub upper: PathBuf,
+    pub work: PathBuf,
+    pub ctr: String,
 }
 
 pub fn podman_run_args(req: &RunRequest) -> Vec<String> {
@@ -138,6 +149,10 @@ pub fn podman_run_args(req: &RunRequest) -> Vec<String> {
     for (host, ctr) in &req.mounts {
         a.push("-v".into());
         a.push(format!("{}:{ctr}:z", host.display()));
+    }
+    for o in &req.overlays {
+        a.push("-v".into());
+        a.push(format!("{}:{}:O,upperdir={},workdir={}", o.lower.display(), o.ctr, o.upper.display(), o.work.display()));
     }
     a.push("-w".into());
     a.push(req.workdir.clone());
@@ -467,6 +482,24 @@ pub fn capture_bounded(mut cmd: Command, deadline: Option<Instant>) -> ExecOutco
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_overlay_volume_names_its_own_layers() {
+        let req = RunRequest {
+            name: "n".into(),
+            image: "i".into(),
+            mount: "/t".into(),
+            workdir: "/w".into(),
+            env: vec![],
+            mounts: vec![],
+            overlays: vec![Overlay { lower: "/l".into(), upper: "/u".into(), work: "/k".into(), ctr: "/c".into() }],
+            argv: vec!["x".into()],
+            timeout: None,
+            deadline: None,
+            output: "/o".into(),
+        };
+        assert!(podman_run_args(&req).contains(&"/l:/c:O,upperdir=/u,workdir=/k".to_string()));
+    }
+
     use super::*;
 
     /// `install_signal_handlers` must cover HUP, not just INT/TERM (sp-tcarr: testenv was

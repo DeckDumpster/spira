@@ -361,6 +361,9 @@ fn run_foreign(
     }
     *started.borrow_mut() = Some(results.clone());
     let cache = foreign::Cache::new(&s.run.join("foreign-cache"), repo);
+    let cap = args.deadline.or(decl.cap).unwrap_or(foreign::DEFAULT_CAP);
+    let t0 = Instant::now();
+    let pending = std::sync::Mutex::new(Vec::<String>::new());
     let runner = foreign::TierRun {
         cache: &cache,
         rt: deps.rt,
@@ -368,12 +371,16 @@ fn run_foreign(
         tree: wt,
         results: &results,
         key: &key,
-        deadline: args.deadline.map(|d| Instant::now() + Duration::from_secs(d)),
-        log: &|m| deps.log(m),
+        deadline: Some(t0 + Duration::from_secs(cap)),
+        log: &|m| pending.lock().unwrap().push(m.to_string()),
     };
+    let outcomes = runner.run_all(&tiers);
+    for m in pending.lock().unwrap().drain(..) {
+        deps.log(&m);
+    }
     let (mut ran, mut red) = (0, 0);
-    for t in &tiers {
-        let (o, secs) = runner.run(t);
+    let mut fault = None;
+    for (t, (o, secs)) in tiers.iter().zip(outcomes) {
         (deps.out)(&foreign::tier_line(t, o, secs));
         if o == foreign::Outcome::Red {
             (deps.out)(&format!("  command ({t}): {}", decl.tier[t].argv.join(" ")));
@@ -388,8 +395,16 @@ fn run_foreign(
                 ran += 1;
                 red += 1;
             }
-            foreign::Outcome::Fault(reason) => return Finish::fault(2, reason, ran),
+            foreign::Outcome::Fault(reason) => {
+                fault.get_or_insert(reason);
+            }
         }
+    }
+    if let Some(reason) = fault {
+        if reason == "deadline-suites" {
+            (deps.out)(&format!("  over the {cap}s cap after {}s", t0.elapsed().as_secs()));
+        }
+        return Finish::fault(2, reason, ran);
     }
     if red == 0 {
         Finish::green(ran)
