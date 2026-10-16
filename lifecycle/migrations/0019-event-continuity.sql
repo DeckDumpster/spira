@@ -4,7 +4,7 @@
 UPDATE event
   JOIN (SELECT seq AS pseq, LAG(to_state) OVER (PARTITION BY machine, lc_key ORDER BY seq) AS prev FROM event WHERE applied = 1) s ON s.pseq = event.seq
    SET event.from_state = s.prev, event.expect = s.prev
- WHERE event.applied = 1 AND ((event.machine = 'bead' AND event.event = 'Deliver') OR (event.machine = 'delivery' AND event.event = 'Cut'))
+ WHERE event.applied = 1 AND ((event.machine = 'bead' AND event.`event` = 'Deliver') OR (event.machine = 'delivery' AND event.`event` = 'Cut'))
    AND s.prev IS NOT NULL AND event.from_state <> s.prev;
 
 UPDATE event
