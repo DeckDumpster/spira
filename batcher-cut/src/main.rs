@@ -724,8 +724,19 @@ fn check_forge_member(env_: &Env, repo: &Repo, start_sha: &str, m: &Member) -> b
             println!("batcher {}: {} conflicts with {start_sha} — not checked locally; the merge reports it", repo.name, m.id);
             false
         }
+        Err(io::MemberTier::Unjudged(why)) => {
+            println!("batcher {}: {} held at {} on {start_sha} — {why}; no verdict, no incident, checked again next invocation", repo.name, m.id, m.tip);
+            true
+        }
         Err(io::MemberTier::Red(evidence)) => {
-            if let Some((fault, first)) = io::landing_ref_fault(env_, repo, start_sha) {
+            let landing = match io::landing_ref_fault(env_, repo, start_sha) {
+                Ok(l) => l,
+                Err(why) => {
+                    println!("batcher {}: {} red locally but the landing ref {start_sha} could not be judged ({why}) — held, not blamed", repo.name, m.id);
+                    return true;
+                }
+            };
+            if let Some((fault, first)) = landing {
                 println!("batcher {}: FAULT the declared tiers are red on the landing ref {start_sha} itself — {} is not blamed", repo.name, m.id);
                 if first {
                     let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
@@ -808,6 +819,10 @@ fn check_forge_pool(env_: &Env, repo: &Repo, base: &str, pool: &[Member]) {
                 println!("batcher {}: {} members passed one local check of their merged head {head} on {base}", repo.name, pending.len());
                 return;
             }
+            Err(io::GroupTier::Unjudged(why)) => {
+                println!("batcher {}: group check of {} members held on {base} — {why}; no verdict, no incident, checked again next invocation", repo.name, pending.len());
+                return;
+            }
             Err(io::GroupTier::Conflict(tip)) => {
                 println!("batcher {}: {tip} does not merge with the rest of the group on {base} — checked on its own later", repo.name);
                 pending.retain(|m| m.tip != tip);
@@ -817,7 +832,14 @@ fn check_forge_pool(env_: &Env, repo: &Repo, base: &str, pool: &[Member]) {
                     println!("batcher {}: group check could not be built ({}) — checking members one at a time", repo.name, evidence.lines().next().unwrap_or(""));
                     break;
                 }
-                if let Some((fault, first)) = io::landing_ref_fault(env_, repo, base) {
+                let landing = match io::landing_ref_fault(env_, repo, base) {
+                    Ok(l) => l,
+                    Err(why) => {
+                        println!("batcher {}: group head red but the landing ref {base} could not be judged ({why}) — held, no member blamed", repo.name);
+                        return;
+                    }
+                };
+                if let Some((fault, first)) = landing {
                     println!("batcher {}: FAULT the declared tiers are red on the landing ref {base} itself — no member is blamed", repo.name);
                     if first {
                         let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
