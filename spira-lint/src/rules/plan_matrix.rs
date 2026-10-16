@@ -54,7 +54,10 @@ fn suites_at(tree: &Tree, rev: &str) -> Result<Vec<SuiteCoverage>, String> {
     if paths.is_empty() {
         return Ok(Vec::new());
     }
-    let mut child = spira_config::bounded::bounded("git")
+    // batch-job: reads every suite blob in one process; stalls for tens of seconds on a loaded host; hang guard only
+    let mut child = std::process::Command::new("timeout")
+        .arg(crate::GIT_HANG_GUARD_SECS)
+        .arg("git")
         .arg("-C")
         .arg(&tree.root)
         .args(["cat-file", "--batch"])
