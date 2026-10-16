@@ -1191,6 +1191,19 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         return Finish::green(0);
     }
 
+    // ---- preflight: every host dependency of the suites about to run, before any container ----
+    {
+        let wanted: Vec<(String, SuiteHeaders)> =
+            active.iter().map(|n| (n.clone(), headers[n].clone())).collect();
+        let gaps = crate::preflight::missing(&wanted, &crate::preflight::host_has);
+        if !gaps.is_empty() {
+            for l in crate::preflight::report(&gaps).lines() {
+                deps.log(l);
+            }
+            return Finish::fault(1, "preflight", 0);
+        }
+    }
+
     // ---- verdict cache: before anything is built -----------------------------------
     let verdict_path = s.verdicts.join(format!("batch-{key}"));
     let prior = fs::read_to_string(&verdict_path)

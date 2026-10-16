@@ -254,6 +254,7 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
     j.want(GATE, "the runner identity is checked", "RUNNER_NAME", g);
     // 10. host dependencies are installed
     j.want(GATE, "host dependencies are installed", "runner-deps.sh", g);
+    j.want(GATE, "the selected suites are preflighted", "testenv preflight", g);
     // 11. the test image is acquired, not built
     j.want(GATE, "the gate names a registry", "SPIRA_TESTENV_REGISTRY", g);
     j.want(GATE, "the gate authenticates to it", "podman login", g);
