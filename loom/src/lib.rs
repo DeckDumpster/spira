@@ -7,6 +7,7 @@ pub mod now;
 pub mod ops;
 pub mod shell;
 pub mod rounds;
+pub mod states;
 pub mod stuck;
 pub mod units;
 
@@ -443,6 +444,29 @@ async fn units_api_route(State(loom): State<Arc<Loom>>) -> Response {
         .expect("a response with a valid status and headers")
 }
 
+async fn states_page_route(State(loom): State<Arc<Loom>>) -> Response {
+    match lifecycle_snapshot(&loom) {
+        Ok((snap, _)) => {
+            let view = cockpit_ops::lcview::view(&snap);
+            html_response(StatusCode::OK, shell::with_bar(&states::render_page(&view), &now::bar(Some(&snap), now_s())))
+        }
+        Err(e) => unavailable("states view", &e),
+    }
+}
+
+async fn states_api_route(State(loom): State<Arc<Loom>>) -> Response {
+    let (status, body) = match lifecycle_snapshot(&loom) {
+        Ok((snap, age)) => (StatusCode::OK, states::api_json(&cockpit_ops::lcview::view(&snap), age).to_string()),
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, json!({ "error": e }).to_string()),
+    };
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body.into())
+        .expect("a response with a valid status and headers")
+}
+
 async fn now_route(State(loom): State<Arc<Loom>>) -> Response {
     match lifecycle_snapshot(&loom) {
         Ok((snap, _)) => {
@@ -654,6 +678,8 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/beads/{id}", get(stuck_bead_route))
         .route("/units", get(units_page_route))
         .route("/api/units", get(units_api_route))
+        .route("/states", get(states_page_route))
+        .route("/api/states", get(states_api_route))
         .route("/rounds", get(rounds_page_route))
         .route("/rounds/spira/{id}", get(round_page_route))
         .route("/rounds/spira/{id}/log", get(round_log_route))

@@ -486,7 +486,7 @@ async fn lifecycle_round_rows_are_links_and_a_vm_round_serves_its_log() {
 
 // ── Now and the shell ────────────────────────────────────────────────────────
 
-const FIVE: [&str; 5] = ["/", "/rounds", "/stuck", "/units", "/lifecycle"];
+const FIVE: [&str; 6] = ["/", "/rounds", "/stuck", "/units", "/states", "/lifecycle"];
 
 fn write_snapshot(run: &std::path::Path, snap: &cockpit_ops::lcview::Snapshot) {
     std::fs::create_dir_all(run.join("lcview")).unwrap();
@@ -570,8 +570,50 @@ async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_all_five_sections_
         }
         assert!(!page.contains("<!--lm-bar-->"), "{path}: the bar slot was filled");
         let css = page.split("@media(max-width:639px)").nth(1).unwrap_or_else(|| panic!("{path}: no phone rule"));
-        assert!(css.contains(".lm-tabs{position:fixed;left:0;right:0;bottom:0") && css.contains("flex:1 1 0;min-width:0"), "{path}: bottom tab bar of five equal cells");
+        assert!(css.contains(".lm-tabs{position:fixed;left:0;right:0;bottom:0") && css.contains("flex:1 1 0;min-width:0"), "{path}: bottom tab bar of equal cells");
         assert!(css.contains("body{overflow-x:hidden"), "{path}: no horizontal overflow");
+    }
+}
+
+#[tokio::test]
+async fn states_page_and_api_carry_the_counts_the_panes_states_section_shows() {
+    use cockpit_ops::lcview::*;
+    let fx = units_fixture(&fixture_rows());
+    let run = std::path::PathBuf::from(&fx.cfg.run);
+    let mut snap = now_snapshot();
+    snap.rows[0].repo = "dumpstar".into();
+    snap.rows[0].holds = vec!["wait".into()];
+    write_snapshot(&run, &snap);
+    let addr = spawn(fx.cfg.clone()).await;
+    let view = view(&snap);
+    let pane = cockpit_ops::lctui::tree(&view);
+    let states = pane.iter().find(|n| n.key == "state").expect("the STATES section").kids.clone();
+
+    let (code, body) = get(addr, "/api/states").await;
+    assert_eq!(code, 200, "{body}");
+    let api: Value = serde_json::from_str(&body).unwrap();
+    let listed = api["states"].as_array().unwrap();
+    assert_eq!(listed.len(), view.machine.len());
+    assert!(view.machine.iter().any(|s| s.count > 0), "positive control: some state is populated");
+    for st in listed {
+        let name = st["name"].as_str().unwrap();
+        let node = states.iter().find(|n| n.key == format!("state/{name}")).unwrap_or_else(|| panic!("{name} in the pane"));
+        let line = cockpit_ops::lctui::strip_for_test(&node.line);
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let count = st["count"].as_u64().unwrap().to_string();
+        assert!(words.iter().skip_while(|w| **w != name).nth(1) == Some(&count.as_str()), "{name}: pane `{line}` vs api {count}");
+    }
+    let working = listed.iter().find(|s| s["name"] == "WORKING").unwrap();
+    assert_eq!(working["count"], 1);
+    assert_eq!(working["beads"][0]["id"], "sp-late1");
+    assert_eq!(working["beads"][0]["repo"], "dumpstar");
+    assert_eq!(working["beads"][0]["holds"][0], "wait");
+
+    let (code, page) = get(addr, "/states").await;
+    assert_eq!(code, 200, "{page}");
+    assert!(page.contains("href=\"/beads/sp-late1\"") && page.contains("the slow one") && page.contains("width=device-width"), "{page}");
+    for st in &view.machine {
+        assert!(page.contains(&format!(">{}</span><span class=n>{}</span>", st.name, st.count)), "{}: {page}", st.name);
     }
 }
 
