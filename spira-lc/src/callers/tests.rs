@@ -1390,6 +1390,22 @@ fn reopen_names_a_red_eject_so_the_tip_is_barred() {
     assert_eq!(f.beads["sp-r"].ejected_red_tip.as_deref(), Some("red1"));
 }
 
+#[test]
+fn reopen_is_refused_while_a_live_round_holds_the_bead() {
+    let mut f = Fake::default();
+    f.bead("sp-b", BeadState::InDelivery);
+    let mut d = DeliveryRow::start_local("sp-b");
+    d.state = DeliveryState::Batched;
+    f.deliveries.insert("sp-b".into(), d);
+    let mut bd = FakeBd::default();
+    let a = reopen_cmd(&v(&["sp-b", "push-rejected", "aeon-1"]), &mut f, &mut bd);
+    assert_eq!(a.code, REFUSED, "{}", a.stderr);
+    assert_eq!(f.state("sp-b"), "IN_DELIVERY");
+    assert!(f.events.is_empty() && bd.reopened.is_empty());
+    assert_eq!(reopen_cmd(&v(&["sp-b", "eject", "queue"]), &mut f, &mut bd).code, APPLIED, "the round's own eject still returns it");
+    assert_eq!(f.state("sp-b"), "REWORK");
+}
+
 // ---- external provenance ------------------------------------------------------------------
 
 fn external_world() -> (Fake, FakeBd) {

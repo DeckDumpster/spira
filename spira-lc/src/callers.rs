@@ -813,6 +813,10 @@ fn reopen_returned_reason(cause: &str) -> ReturnedReason {
     }
 }
 
+fn round_owned_cause(cause: &str) -> bool {
+    reopen_returned_reason(cause) != ReturnedReason::PushRejected
+}
+
 /// `reopen <id> [cause] [actor]` — hand a bead back to its builder: the machine's
 /// return-to-rework, recording the event the row's own state implies. SUBMITTED GateRed ·
 /// CERTIFIED Deliver then Returned · IN_DELIVERY Returned · WORKING Release · READY or REWORK
@@ -842,7 +846,13 @@ fn reopen(m: &mut dyn Machine, id: &str, cause: &str, actor: &str) -> Answer {
             let kind = BeadEventKind::GateRed { tip: bead_field(&v, "tip"), reason: gate_red_reason(cause) };
             send(m, &state, &version, kind).0
         }
-        "IN_DELIVERY" => send(m, &state, &version, returned).0,
+        "IN_DELIVERY" => {
+            let batched = v.get("delivery").is_some_and(|d| s(d, "state") == "BATCHED");
+            if batched && !round_owned_cause(cause) {
+                return refuse("a live round holds it (BATCHED); the round's verdict decides — only an eject returns it".into());
+            }
+            send(m, &state, &version, returned).0
+        }
         "CERTIFIED" => match send(m, &state, &version, BeadEventKind::Deliver).0 {
             APPLIED => match state_version(m, id) {
                 Some((st, ver, _)) if st == "IN_DELIVERY" => send(m, &st, &ver, returned).0,
