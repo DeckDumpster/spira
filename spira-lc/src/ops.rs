@@ -318,12 +318,16 @@ pub fn repo_label(bd_show_json: &str) -> Option<String> {
     doc.get("labels")?.as_array()?.iter().filter_map(Value::as_str).find_map(|l| l.strip_prefix("repo:")).map(str::to_string)
 }
 
-/// `backfill-repos`: fills `bead.repo` once from the content store's label on every live row without one.
-pub fn cmd_backfill_repos(_args: &[String], conn: &Conn) -> (i32, String) {
-    let sql = format!("SELECT bead_id FROM bead WHERE repo IS NULL AND state IN ({LIVE_STATES})");
-    let ids: Vec<String> = match conn.query(&sql) {
-        Ok(rows) => rows.iter().filter_map(|r| r.get("bead_id").and_then(|v| v.as_str()).map(str::to_string)).collect(),
-        Err(e) => return (2, format!("cannot tell: {e:?}")),
+/// `backfill-repos [id...]`: fills `bead.repo` from the content store's label on the named rows, or on every live row without one.
+pub fn cmd_backfill_repos(args: &[String], conn: &Conn) -> (i32, String) {
+    let ids: Vec<String> = if args.is_empty() {
+        let sql = format!("SELECT bead_id FROM bead WHERE repo IS NULL AND state IN ({LIVE_STATES})");
+        match conn.query(&sql) {
+            Ok(rows) => rows.iter().filter_map(|r| r.get("bead_id").and_then(|v| v.as_str()).map(str::to_string)).collect(),
+            Err(e) => return (2, format!("cannot tell: {e:?}")),
+        }
+    } else {
+        args.to_vec()
     };
     let (mut filled, mut missed) = (0, Vec::new());
     for id in &ids {
@@ -331,7 +335,8 @@ pub fn cmd_backfill_repos(_args: &[String], conn: &Conn) -> (i32, String) {
             missed.push(id.clone());
             continue;
         };
-        match crate::cutover::cmd_create_bead(&[id.clone(), "--repo".into(), repo], conn) {
+        let done = if args.is_empty() { crate::cutover::cmd_create_bead(&[id.clone(), "--repo".into(), repo], conn) } else { cmd_set_repo(&[id.clone(), repo], conn) };
+        match done {
             (0, _) => filled += 1,
             (_, why) => missed.push(format!("{id} ({why})")),
         }
@@ -340,9 +345,52 @@ pub fn cmd_backfill_repos(_args: &[String], conn: &Conn) -> (i32, String) {
     (code, format!("backfill-repos: {filled} of {} filled{}", ids.len(), if missed.is_empty() { String::new() } else { format!("; not filled: {}", missed.join(", ")) }))
 }
 
+/// The refusal for a repo change on a bead a session is working.
+pub fn working_refusal(id: &str) -> String {
+    format!("set-repo: {id} is WORKING in a worktree of its current repo; release the claim first (spira-lc unclaim {id} <actor>), then change the repo label")
+}
+
+/// `set-repo <bead-id> <repo>|--clear [--only-if <repo>]`: points the lifecycle row at a new repo, which claims,
+/// worktrees and rounds read. Refused for a WORKING row; a bead with no row is left alone.
+pub fn cmd_set_repo(args: &[String], conn: &Conn) -> (i32, String) {
+    use crate::cutover::{is_row_key, q};
+    let (Some(id), Some(target)) = (args.first(), args.get(1)) else {
+        return (2, "set-repo: usage: set-repo <bead-id> <repo>|--clear [--only-if <repo>]".into());
+    };
+    if !is_row_key(id) {
+        return (2, format!("set-repo: {id:?} is not a bead id"));
+    }
+    let only_if = args.iter().position(|a| a == "--only-if").and_then(|i| args.get(i + 1));
+    let value = if target == "--clear" { "NULL".to_string() } else { q(target) };
+    let rows = match conn.query(&format!("SELECT state, repo FROM bead WHERE bead_id = {}", q(id))) {
+        Ok(r) => r,
+        Err(e) => return (2, format!("cannot tell: {e:?}")),
+    };
+    let Some(row) = rows.first() else { return (0, format!("set-repo: {id} has no lifecycle row")) };
+    if let Some(want) = only_if {
+        if row.get("repo").and_then(|v| v.as_str()) != Some(want.as_str()) {
+            return (0, format!("set-repo: {id} does not name {want}; unchanged"));
+        }
+    }
+    if row.get("state").and_then(|v| v.as_str()) == Some("WORKING") {
+        return (1, working_refusal(id));
+    }
+    let sql = format!("UPDATE bead SET repo = {value} WHERE bead_id = {} AND state <> 'WORKING';\n", q(id));
+    match conn.run_plain_touching(&sql, crate::live::Touch::Keys(vec![id.clone()])) {
+        Ok(()) => (0, format!("set-repo: {id} -> {}", if target == "--clear" { "(none)" } else { target })),
+        Err(e) => (2, format!("cannot tell: {e:?}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_working_refusal_names_the_release_step() {
+        let m = working_refusal("sp-x");
+        assert!(m.contains("release the claim") && m.contains("unclaim sp-x"), "{m}");
+    }
 
     fn grouped(repo: &str, series: &str, state: &str, held: Option<&str>, n: i64, since: i64) -> Value {
         serde_json::json!({"repo": repo, "series": series, "state": state, "held_reason": held, "n": n.to_string(), "since": since})
