@@ -443,6 +443,14 @@ jobs:
         # a rootless container, rather than inferring it from a package list.
         run: bash spira/runner-deps.sh
 
+      - name: Preflight the selected suites
+        # Every dependency the selected suites declare on `# host-requires:`, named
+        # together, before the image pull, the build and the corpus. A gap found by a
+        # suite mid-run costs the run's whole wall clock on a paid machine.
+        env:
+          SELECTED: ${{ needs.select.outputs.suites }}
+        run: testenv preflight --suites "$SELECTED" --dir spira
+
       - name: Resolve the registry path
         id: reg
         # A registry path must be lowercase; the organisation name arrives spelled
