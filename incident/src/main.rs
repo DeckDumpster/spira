@@ -293,7 +293,7 @@ fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, pat
     };
     if entry.body.is_empty() {
         entry.body = format!(
-            "The intake gathered NO payload for {}.\nsystemctl/journalctl produced nothing — suspect the unit name or a journal this user cannot read.\n",
+            "The intake gathered NO payload for {}.\nsystemctl produced nothing — suspect the unit name.\n",
             entry.reference
         )
         .into_bytes();
@@ -334,6 +334,10 @@ fn require_db(env: &Env) -> ExitCode {
     ExitCode::FAILURE
 }
 
+fn systemd_payload(unit: &str, host: &str, when: &str, systemctl: &str) -> String {
+    format!("unit: {unit}\nhost: {host}\nwhen: {when}\n\n## systemctl\n{systemctl}\nlog: systemctl --user status {unit}\n")
+}
+
 fn cmd_systemd(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, unit: &str) -> ExitCode {
     let reference = format!("incident:{unit}");
     let when = now_iso();
@@ -347,14 +351,7 @@ fn cmd_systemd(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, u
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_else(|| "(systemctl unavailable)\n".to_string());
-    let journal = spira_config::bounded::bounded("journalctl")
-        .args(["--user", "-u", unit, "-n", "40", "--no-pager"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_else(|| "(journal unavailable)\n".to_string());
-    let payload = format!("unit: {unit}\nhost: {}\nwhen: {when}\n\n## systemctl\n{systemctl}\n## journal (last 40)\n{journal}", hostname());
+    let payload = systemd_payload(unit, &hostname(), &when, &systemctl);
 
     let entry = spool::SpoolEntry {
         reference: reference.clone(),
@@ -677,6 +674,14 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn systemd_payload_carries_the_systemctl_facts_and_reads_no_journal() {
+        let p = systemd_payload("spira-x.service", "h", "2026-01-01T00:00:00Z", "Result=exit-code\nExecMainStatus=3\n");
+        assert!(p.contains("Result=exit-code") && p.contains("ExecMainStatus=3"), "{p}");
+        assert!(p.contains("systemctl --user status spira-x.service"), "{p}");
+        assert!(!p.contains("journal"), "{p}");
+    }
 
     /// A NON-registered name still falls back to `spira_config::resolve()` between the raw
     /// environment and the caller's own default — unchanged by the `SPIRA_WATCHER_INTERVAL_S`
