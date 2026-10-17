@@ -284,10 +284,12 @@ impl<'a> Run<'a> {
                 self.log(&format!("{}: {id} rejected {} times — claim runs on {model}", self.f(), st.rejections));
                 self.record_fact(escalation::ESCALATED, &format!("model={model} rejections={}", st.rejections));
                 self.s.rejection_brief = escalation::history_brief(&st.history, &model);
+                spira_otel::run::event("escalated", &[("fayth", self.f()), ("model", &model)]);
                 self.s.model_override = Some(model);
                 None
             }
             Tier::Hold => {
+                spira_otel::run::event("held", &[("fayth", self.f())]);
                 self.release();
                 let reason = escalation::hold_reason(st.stronger_rejections);
                 self.record_fact(escalation::ESCALATED, &format!("hold rejections={}", st.stronger_rejections));
@@ -360,6 +362,7 @@ impl<'a> Run<'a> {
             return self.dry_run();
         }
         if let Err(code) = self.claim() { return code }
+        spira_otel::run::event("summon", &[("fayth", self.f())]);
         // ---- armed: every exit from here runs the teardown ----
         std::thread::scope(|sc| {
             let rc = match self.work(sc) {
@@ -1129,6 +1132,7 @@ impl<'a> Run<'a> {
             Some(m) => m.clone(),
             None => conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML"))?,
         };
+        spira_otel::run::event("attempt", &[("fayth", self.f()), ("model", &model), ("rework", if self.s.model_override.is_some() { "escalated" } else { "first" })]);
         let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
         a.extend(s(&["--model", &model, "--allowedTools", &self.fayth.tools, "--dangerously-skip-permissions"]));
         if self.fayth.project_instructions == "none" {

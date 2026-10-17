@@ -53,16 +53,23 @@ fn parse(args: &[String]) -> Result<Config, String> {
 }
 
 fn main() -> ExitCode {
+    spira_otel::run::begin("reclaim", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
+    let code = pass();
+    spira_otel::run::finish(i32::from(code));
+    ExitCode::from(code)
+}
+
+fn pass() -> u8 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) != Some("pass") {
         eprintln!("reclaim: unknown command\n{USAGE}");
-        return ExitCode::from(2);
+        return 2;
     }
     let cfg = match parse(&args[1..]) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("reclaim: {e}\n{USAGE}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -73,11 +80,11 @@ fn main() -> ExitCode {
     match run(&cfg, now, &held, &free, &mut |l| println!("reclaim: {l}")) {
         Ok(b) => {
             println!("reclaim: freed {} MiB", b >> 20);
-            ExitCode::SUCCESS
+            0
         }
         Err(e) => {
             eprintln!("reclaim: {e}");
-            ExitCode::from(3)
+            3
         }
     }
 }

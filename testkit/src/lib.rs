@@ -452,3 +452,66 @@ impl OtlpSink {
         String::from_utf8_lossy(&self.handle.join().unwrap_or_default()).into_owned()
     }
 }
+
+/// A fixture OTLP/HTTP metrics endpoint: accepts every push, answers 204 and keeps the bodies.
+pub mod otlp {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    pub struct Sink {
+        pub addr: String,
+        got: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Sink {
+        pub fn start() -> Sink {
+            let l = TcpListener::bind("127.0.0.1:0").expect("bind the fixture sink");
+            let addr = l.local_addr().expect("sink addr").to_string();
+            let got = Arc::new(Mutex::new(Vec::new()));
+            let keep = Arc::clone(&got);
+            std::thread::spawn(move || {
+                for c in l.incoming().flatten() {
+                    let keep = Arc::clone(&keep);
+                    std::thread::spawn(move || serve(c, &keep));
+                }
+            });
+            Sink { addr, got }
+        }
+
+        /// Waits up to `within` for every needle to appear in the pushed bodies; panics naming the missing ones.
+        pub fn expect(&self, needles: &[&str], within: Duration) -> String {
+            let end = Instant::now() + within;
+            loop {
+                let text = String::from_utf8_lossy(&self.got.lock().expect("sink lock")).into_owned();
+                let missing: Vec<&&str> = needles.iter().filter(|n| !text.contains(**n)).collect();
+                if missing.is_empty() {
+                    return text;
+                }
+                assert!(Instant::now() < end, "the sink never received {missing:?}; got {text:?}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+
+    fn serve(mut c: std::net::TcpStream, keep: &Mutex<Vec<u8>>) {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let Ok(n) = c.read(&mut chunk) else { return };
+            if n == 0 {
+                return;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+            let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+            let len: usize = head.split("content-length: ").nth(1).and_then(|s| s.split("\r\n").next()).and_then(|s| s.parse().ok()).unwrap_or(0);
+            if buf.len() >= i + 4 + len {
+                keep.lock().expect("sink lock").extend_from_slice(&buf[i + 4..]);
+                let _ = c.write_all(b"HTTP/1.1 204 No Content\r\n\r\n");
+                return;
+            }
+        }
+    }
+}

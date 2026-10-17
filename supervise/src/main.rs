@@ -126,18 +126,18 @@ mod tests {
     }
 }
 
-fn main() -> ExitCode {
+fn supervise() -> u8 {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("spira-supervise: usage: spira-supervise <cmd> [args...]");
-        return ExitCode::from(2);
+        return 2;
     }
 
     let spira_run = match spira_config::process::cfg("SPIRA_RUN") {
         Ok(r) => r,
         Err(e) => {
             eprintln!("spira-supervise: {e}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
 
@@ -145,7 +145,7 @@ fn main() -> ExitCode {
         Ok(v) => v,
         Err(e) => {
             eprintln!("spira-supervise: {e}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
 
@@ -177,7 +177,7 @@ fn main() -> ExitCode {
         Ok(c) => c,
         Err(e) => {
             eprintln!("spira-supervise: spawn {}: {}", &args[1], e);
-            return ExitCode::FAILURE;
+            return 1;
         }
     };
 
@@ -194,7 +194,7 @@ fn main() -> ExitCode {
         if SIGTERM_RECEIVED.load(Ordering::Acquire) {
             // SIGTERM already forwarded to child by the handler; wait for it to exit.
             let _ = child.wait();
-            return ExitCode::SUCCESS;
+            return 0;
         }
 
         match child.try_wait() {
@@ -203,12 +203,12 @@ fn main() -> ExitCode {
                     "spira-supervise: child exited {}",
                     status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into())
                 );
-                return ExitCode::from(1);
+                return 1;
             }
             Ok(None) => {}
             Err(e) => {
                 eprintln!("spira-supervise: waitpid: {}", e);
-                return ExitCode::FAILURE;
+                return 1;
             }
         }
 
@@ -227,4 +227,11 @@ fn main() -> ExitCode {
             }
         }
     }
+}
+
+fn main() -> ExitCode {
+    spira_otel::run::begin("supervise", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
+    let code = supervise();
+    spira_otel::run::finish(i32::from(code));
+    ExitCode::from(code)
 }

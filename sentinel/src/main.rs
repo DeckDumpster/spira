@@ -165,29 +165,31 @@ fn fatal(msg: &str) -> i32 {
 }
 
 fn main() {
+    spira_otel::run::begin("sentinel", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     temps::install_handlers();
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    spira_otel::run::operation(argv.first().and_then(|a| a.strip_prefix("--")).unwrap_or("pass"));
     let mode = Mode::from_argv(&argv);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sentinel"));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
-        std::process::exit(fatal("cannot find lib.sh (set SPIRA_HOME)"));
+        { let code = fatal("cannot find lib.sh (set SPIRA_HOME)"); spira_otel::run::finish(code); std::process::exit(code) };
     };
     let ctx = match probe(&RealRunner { base_env: None }, &home) {
         Ok(c) => c,
-        Err(e) => std::process::exit(fatal(&e)),
+        Err(e) => { let code = fatal(&e); spira_otel::run::finish(code); std::process::exit(code) },
     };
     // One source of config (per Ryan 2026-10-05): every registered key `Cfg` needs, read
     // once here via spira_config::process::cfg/cfg_parse — never defaulted, never a second
     // reading off the probe's own Context.
     let declared = match Declared::resolve() {
         Ok(d) => d,
-        Err(e) => std::process::exit(fatal(&e)),
+        Err(e) => { let code = fatal(&e); spira_otel::run::finish(code); std::process::exit(code) },
     };
     // The retired lifecycle switch (sp-v62vn): a unit environment saying off is refused.
     match spira_config::check_lifecycle_switch_env(std::env::var(spira_config::LIFECYCLE_ENFORCE_ENV).ok().as_deref()) {
         Ok(Some(w)) => eprintln!("sentinel: {w}"),
         Ok(None) => {}
-        Err(e) => std::process::exit(fatal(&e)),
+        Err(e) => { let code = fatal(&e); spira_otel::run::finish(code); std::process::exit(code) },
     }
     let runner = RealRunner {
         base_env: Some(ctx.env.clone()),
@@ -205,5 +207,5 @@ fn main() {
     );
     let code = s.run();
     temps::cleanup();
-    std::process::exit(code);
+    { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
 }

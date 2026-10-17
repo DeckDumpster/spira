@@ -1490,13 +1490,15 @@ fn cmd_deliberate_exempt(a: &Args) -> Outcome {
 }
 
 fn main() {
+    spira_otel::run::begin("spira-claim", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     let args: Vec<String> = std::env::args().skip(1).collect();
+    spira_otel::run::operation(args.first().map_or("none", String::as_str));
     let o = dispatch(&args, &mut std::io::stdin());
     print!("{}", o.out);
     if !o.err.is_empty() {
         eprintln!("{}", o.err.trim_end());
     }
-    std::process::exit(o.code);
+    { let code = o.code; spira_otel::run::finish(code); std::process::exit(code) };
 }
 
 #[cfg(test)]

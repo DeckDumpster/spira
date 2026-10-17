@@ -59,12 +59,14 @@ fn conf_env() -> (String, String) {
 }
 
 fn main() {
+    spira_otel::run::begin("groomer", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (cmd, rest) = match args.split_first() {
         Some((c, r)) => (c.clone(), r.to_vec()),
         None => usage(),
     };
 
+    spira_otel::run::operation(&cmd);
     let (bd_bin, db) = conf_env();
     let bd = RealBd { bd: bd_bin, db };
 
@@ -84,7 +86,7 @@ fn main() {
                 Ok(out) => print!("{out}"),
                 Err((code, msg)) => {
                     eprintln!("groomer: {msg}");
-                    std::process::exit(code);
+                    { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
                 }
             }
         }
@@ -131,7 +133,7 @@ fn main() {
             let opts = unpoison::parse(id, flags.values.get("--cause").map(String::as_str), flags.values.get("--evidence").map(String::as_str)).unwrap_or_else(|e| die(&e));
             let (code, out) = unpoison::run("spira-claim", &opts);
             print!("{out}");
-            std::process::exit(code);
+            { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
         }
         "triage-poison" => {
             let Some((id, tail)) = rest.split_first() else {
@@ -148,7 +150,7 @@ fn main() {
                 Ok(out) => print!("{out}"),
                 Err((code, msg)) => {
                     eprintln!("groomer: {msg}");
-                    std::process::exit(code);
+                    { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
                 }
             }
         }
@@ -157,7 +159,7 @@ fn main() {
             for a in &rest {
                 if a != "--apply" {
                     eprintln!("groomer: deadlocked: unknown option: {a}");
-                    std::process::exit(1);
+                    { let code = 1; spira_otel::run::finish(code); std::process::exit(code) };
                 }
             }
             let Some(home) = home else {
@@ -166,12 +168,12 @@ fn main() {
             let seam = LibSeam::new(home.join("lib.sh"));
             let (code, out) = deadlocked::run(&seam, &bd.db, apply, "spira-claim");
             print!("{out}");
-            std::process::exit(code);
+            { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
         }
         "unwanted" => match cmds::unwanted() {
             Err((code, msg)) => {
                 eprintln!("{msg}");
-                std::process::exit(code);
+                { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
             }
             Ok(_) => unreachable!("unwanted always refuses"),
         },
@@ -187,6 +189,7 @@ fn main() {
         }
         _ => usage(),
     }
+    spira_otel::run::finish(0);
 }
 
 fn die_str(msg: &str) -> ! {

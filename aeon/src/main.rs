@@ -145,7 +145,9 @@ fn run_fast_tier(args: &[String]) -> i32 {
 }
 
 fn main() {
+    spira_otel::run::begin("aeon", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     let t0 = util::now_epoch();
+    spira_otel::run::operation(&operation_of(&std::env::args().skip(1).collect::<Vec<_>>()));
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `aeon aeon-named <pidfile>` (wave 4.23, sp-0ffox): lib.sh's own one-line shim target
     // for `aeon_named` — the only caller left after aeon_name_take's in-process switch is
@@ -156,16 +158,16 @@ fn main() {
             fatal("usage: aeon aeon-named <pidfile>");
         };
         print!("{}", aeon::naming::aeon_named(Path::new(pf)));
-        std::process::exit(0);
+        { let code = 0; spira_otel::run::finish(code); std::process::exit(code) };
     }
     if args.first().map(String::as_str) == Some("fast-tier") {
-        std::process::exit(run_fast_tier(&args[1..]));
+        { let code = run_fast_tier(&args[1..]); spira_otel::run::finish(code); std::process::exit(code) };
     }
     if args.first().map(String::as_str) == Some("stop") {
-        std::process::exit(run_stop(&args[1..]));
+        { let code = run_stop(&args[1..]); spira_otel::run::finish(code); std::process::exit(code) };
     }
     if args.first().map(String::as_str) == Some("capacity") {
-        std::process::exit(run_capacity(&args[1..]));
+        { let code = run_capacity(&args[1..]); spira_otel::run::finish(code); std::process::exit(code) };
     }
     let mut cli = match parse(&args) {
         Ok(c) => c,
@@ -227,7 +229,7 @@ fn main() {
         let sink = StdSink;
         let summon_bin = original.get("SPIRA_SUMMON").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemd-run".to_string());
         let rc = aeon::escape::run(&seam, &exec, &env, &sink, &conf, &summon_bin, &home, &cli.fayth, cli.escape_dry_run, util::now_epoch());
-        std::process::exit(rc);
+        { let code = rc; spira_otel::run::finish(code); std::process::exit(code) };
     }
     // SPIRA_BD is registered but carries no conf.d default ("resolves empty unless set via
     // environment or the config file") — the real config file always sets it explicitly (per Ryan
@@ -273,7 +275,18 @@ fn main() {
         s: State::default(),
     };
     let code = run.main();
-    std::process::exit(code);
+    { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
+}
+
+/// The bounded operation label of an argv: a subcommand, `escape`, or the run mode.
+fn operation_of(args: &[String]) -> String {
+    match args.first().map(String::as_str) {
+        Some(c @ ("aeon-named" | "fast-tier" | "stop" | "capacity")) => c.to_string(),
+        _ if args.iter().any(|a| a == "--escape") => "escape".into(),
+        _ if args.iter().any(|a| a == "--sweep") => "sweep".into(),
+        _ if args.iter().any(|a| a == "--dry-run") => "dry-run".into(),
+        _ => "claim".into(),
+    }
 }
 
 /// `aeon_own_unit`: the spira-aeon-*.service this process runs under, from its cgroup.
