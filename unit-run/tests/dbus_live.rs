@@ -86,3 +86,26 @@ fn real_transient_units_yield_one_record_each_with_the_managers_result_and_statu
     assert_eq!(r.invocation_id.len(), 32);
     assert_eq!(*idle_io.lock().unwrap(), Some(0), "an idle listener read from storage");
 }
+
+#[test]
+fn a_run_that_ended_while_the_listener_was_stopped_is_recorded_once_on_catch_up() {
+    if !user_manager() {
+        assert!(std::env::var_os("UNIT_RUN_REQUIRE_BUS").is_none(), "UNIT_RUN_REQUIRE_BUS is set but there is no systemd user manager");
+        eprintln!("SKIP: no systemd user manager on this host");
+        return;
+    }
+    let now_us = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros() as u64;
+    let unit = format!("ur-gap-{}-{}", std::process::id(), now_us() % 1_000_000);
+    let since = now_us();
+    let _ = Command::new("systemd-run").args(["--user", "--wait", "--quiet", &format!("--unit={unit}"), "sh", "-c", "exit 3"]).status();
+
+    let mut conn = Conn::connect(&bus_path().unwrap()).unwrap();
+    watch::arm(&mut conn).unwrap();
+    let mut tracker = watch::Tracker::new(since);
+    let got = watch::catch_up(&mut conn, &mut tracker, now_us).unwrap();
+    let _ = Command::new("systemctl").args(["--user", "reset-failed", &format!("{unit}.service")]).status();
+    let mine: Vec<&Record> = got.iter().filter(|r| r.unit == format!("{unit}.service")).collect();
+    assert_eq!(mine.len(), 1, "{got:?}");
+    assert_eq!((mine[0].result.as_str(), mine[0].exit_status), ("exit-code", Some(3)), "{:?}", mine[0]);
+    assert!(watch::catch_up(&mut conn, &mut tracker, now_us).unwrap().iter().all(|r| r.unit != format!("{unit}.service")), "a second catch-up recorded the run again");
+}
