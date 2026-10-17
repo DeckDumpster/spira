@@ -1,6 +1,6 @@
 //! Escalation after repeated rejection: a bead's red ejections are recorded as `rejection`
 //! facts; the second makes its next claim run on the persona's stronger model with the history
-//! in the brief, the third holds it for the Concierge instead of another claim.
+//! in the brief, the third rejection on that stronger model holds it for the Concierge instead of another claim.
 
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +42,8 @@ pub fn parse_all(causes: &[String]) -> Vec<Rejection> {
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Standing {
     pub rejections: usize,
+    #[serde(default)]
+    pub stronger_rejections: usize,
     pub history: Vec<Rejection>,
 }
 
@@ -52,16 +54,18 @@ pub enum Tier {
     Hold,
 }
 
-pub fn tier(rejections: usize) -> Tier {
-    match rejections {
-        n if n >= HOLD_AT => Tier::Hold,
-        n if n >= ESCALATE_AT => Tier::Stronger,
-        _ => Tier::Normal,
+pub fn tier(st: &Standing) -> Tier {
+    if st.stronger_rejections >= HOLD_AT {
+        Tier::Hold
+    } else if st.rejections >= ESCALATE_AT {
+        Tier::Stronger
+    } else {
+        Tier::Normal
     }
 }
 
 pub fn hold_reason(rejections: usize) -> String {
-    format!("escalation-ceiling: {rejections} rejections — Concierge: mend it, split it or report it, then lift this hold")
+    format!("escalation-ceiling: {rejections} rejections on the stronger model — Concierge: mend it, split it or report it, then lift this hold")
 }
 
 /// The brief section of an escalated claim: every rejection, so the aeon starts from what went wrong.
@@ -85,8 +89,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_second_rejection_escalates_and_the_third_holds() {
-        assert_eq!([0, 1, 2, 3, 9].map(tier), [Tier::Normal, Tier::Normal, Tier::Stronger, Tier::Hold, Tier::Hold]);
+    fn the_second_rejection_escalates_and_the_third_on_the_stronger_model_holds() {
+        let st = |rejections, stronger_rejections| Standing { rejections, stronger_rejections, history: vec![] };
+        assert_eq!(
+            [st(0, 0), st(1, 0), st(2, 0), st(3, 1), st(9, 2), st(5, 3)].map(|s| tier(&s)),
+            [Tier::Normal, Tier::Normal, Tier::Stronger, Tier::Stronger, Tier::Stronger, Tier::Hold]
+        );
     }
 
     #[test]

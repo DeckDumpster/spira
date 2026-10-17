@@ -277,7 +277,7 @@ impl<'a> Run<'a> {
         use spira_config::escalation::{self, Tier};
         let o = self.d.exec.exec("spira-claim", &s(&["rejections", id]), None, None);
         let st: escalation::Standing = o.success().then(|| serde_json::from_str(o.stdout.trim()).ok()).flatten()?;
-        match escalation::tier(st.rejections) {
+        match escalation::tier(&st) {
             Tier::Normal => None,
             Tier::Stronger => {
                 let model = conf::persona_escalation_model(self.f(), &self.conf.s("SPIRA_TOML"))?;
@@ -289,8 +289,8 @@ impl<'a> Run<'a> {
             }
             Tier::Hold => {
                 self.release();
-                let reason = escalation::hold_reason(st.rejections);
-                self.record_fact(escalation::ESCALATED, &format!("hold rejections={}", st.rejections));
+                let reason = escalation::hold_reason(st.stronger_rejections);
+                self.record_fact(escalation::ESCALATED, &format!("hold rejections={}", st.stronger_rejections));
                 let _ = self.d.exec.exec("spira-lc", &s(&["hold", id, "manual", &reason, escalation::HOLD_ACTOR]), None, None);
                 self.note(&reason);
                 self.log(&format!("{}: {id} {reason}", self.f()));
