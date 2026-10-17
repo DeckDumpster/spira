@@ -829,4 +829,14 @@ mod tests {
         assert_eq!(repos_section(&repos), "  custrepo-one\n");
         assert_eq!(repos_section(&BTreeMap::new()), "  (no repository map)\n");
     }
+
+    #[test]
+    fn a_stack_base_must_be_live_same_repo_work() {
+        let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into() };
+        assert_eq!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), "r"), None);
+        assert!(stack_after_refusal("sp-a", None, "r").is_some());
+        assert!(stack_after_refusal("sp-a", Some(&row("epic", "open", "repo:r")), "r").is_some());
+        assert!(stack_after_refusal("sp-a", Some(&row("task", "closed", "repo:r")), "r").is_some());
+        assert!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:other")), "r").is_some());
+    }
 }
