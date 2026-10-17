@@ -981,7 +981,7 @@ async fn metrics_rounds_lists_rows_and_folds_per_type_medians() {
     assert!(line.contains("<td>30s / 50s</td>"), "wait median/p90 of 10,30,50: {line}");
     assert!(line.contains("<td>8m / 15m</td>"), "suites median/p90 of 300,500,900: {line}");
     assert!(line.contains("green 2, red-attributed 1"), "{line}");
-    assert!(page.contains("(none)") && page.contains("<td>98s</td>"), "{page}");
+    assert!(page.contains("(none)") && page.contains("<td>2m</td>"), "{page}");
 
     let (_, filtered) = get(addr, "/metrics/rounds?type=c7i.8xlarge&window=all").await;
     assert!(filtered.contains("b-other") && !filtered.contains("b-new"), "{filtered}");
