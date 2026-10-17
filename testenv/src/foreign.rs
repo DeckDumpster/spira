@@ -505,7 +505,17 @@ pub fn first_error(log: &str) -> Option<String> {
             return Some(format!("{loc}: {}", lines[i].trim()));
         }
     }
-    lines.iter().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string())
+    let failure = |l: &str| {
+        let t = l.trim();
+        let low = t.to_lowercase();
+        !is_yaml_fragment(t)
+            && (t.starts_with(['✘', '✗', '×']) || low.contains("error:") || low.contains("failed") || low.contains("failing"))
+    };
+    lines
+        .iter()
+        .find(|l| failure(l))
+        .or_else(|| lines.iter().rev().find(|l| !l.trim().is_empty()))
+        .map(|l| l.trim().to_string())
 }
 
 fn is_yaml_fragment(t: &str) -> bool {
@@ -596,6 +606,9 @@ mod tests {
         assert_eq!(first_error("ok\nboom\n").unwrap(), "boom");
         assert_eq!(first_error("  error: |-\n    npm ERR! missing\nerror: ENOENT x\n").unwrap(), "error: ENOENT x");
         assert_eq!(first_error(""), None);
+        let pw = "Running 2 tests\n  ✘  1 a.spec.ts:3:1 › loads (1.2s)\n  Error: expect(received).toBe(expected)\n  1 failed\n  1 passed\nserving on http://127.0.0.1:18080\n";
+        assert_eq!(first_error(pw).unwrap(), "✘  1 a.spec.ts:3:1 › loads (1.2s)");
+        assert_eq!(first_error("Running\n  1 failed\nserving on http://x\n").unwrap(), "1 failed");
     }
 
     #[test]
