@@ -224,6 +224,35 @@ fn read_back(conn: &mut Conn, t: &mut Tracker, path: &str) {
     }
 }
 
+/// The latest `ended_at` in a family file's text, in microseconds: where a restarted listener
+/// resumes from.
+pub fn last_ended_us(text: &str) -> Option<u64> {
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| tsd::parse_ts(v.get("ended_at")?.as_str()?))
+        .max()
+        .map(|s| s.saturating_mul(1_000_000))
+}
+
+/// Records for the runs that ended since the tracker's `since_us` while nobody was listening,
+/// read from the manager's loaded units. Call after `arm`, so a run ending during the catch-up is
+/// a signal rather than a gap; the caller's dedupe on invocation id absorbs any overlap.
+pub fn catch_up(conn: &mut Conn, t: &mut Tracker, now_us: impl Fn() -> u64) -> Result<Vec<Record>, String> {
+    let listed = conn.call(MANAGER, "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "ListUnits", None)?;
+    let Some(Val::Arr(units)) = listed.first() else { return Err("ListUnits: unexpected reply".into()) };
+    let mut out = Vec::new();
+    for u in units {
+        let Val::Struct(f) = u else { continue };
+        let (Some(name), Some(path)) = (f.first().and_then(Val::as_str), f.get(6).and_then(Val::as_str)) else { continue };
+        if !is_run(name) || !matches!(f.get(3).and_then(Val::as_str), Some("inactive" | "failed")) {
+            continue;
+        }
+        read_back(conn, t, path);
+        out.extend(t.finish(path, now_us()));
+    }
+    Ok(out)
+}
+
 pub fn subscribe(conn: &mut Conn) -> Result<(), String> {
     conn.call(MANAGER, "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "Subscribe", None)?;
     Ok(())
@@ -378,6 +407,13 @@ mod tests {
         assert!(matches!(t.apply(P, UNIT_IFACE, &[("Description".into(), s("d"))], true), Next::Nothing));
         assert!(t.finish(P, 1).is_none());
         assert!(matches!(t.apply(P, UNIT_IFACE, &[("ActiveState".into(), s("inactive"))], true), Next::Nothing), "an inactive state seen before any live one is not a run's end");
+    }
+
+    #[test]
+    fn the_resume_point_is_the_latest_recorded_end() {
+        let text = "{\"ended_at\":\"2026-10-17T10:00:05Z\"}\nnot json\n{\"ended_at\":\"2026-10-17T10:00:01Z\"}\n{\"unit\":\"x\"}\n";
+        assert_eq!(last_ended_us(text), tsd::parse_ts("2026-10-17T10:00:05Z").map(|s| s * 1_000_000));
+        assert_eq!(last_ended_us(""), None);
     }
 
     #[test]

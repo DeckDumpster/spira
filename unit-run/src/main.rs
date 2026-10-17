@@ -157,18 +157,26 @@ fn watch_cmd(family: &str) -> Result<(), String> {
     let mut conn = unit_run::dbus::Conn::connect(&unit_run::dbus::bus_path()?)?;
     watch::arm(&mut conn)?;
     let now_us = || spira_config::vtime::now_epoch().saturating_mul(1_000_000);
-    let mut tracker = watch::Tracker::new(now_us());
-    eprintln!("unit-run watch: armed on the user manager; writing {}", path.display());
+    let started_us = now_us();
+    let mut tracker = watch::Tracker::new(watch::last_ended_us(&std::fs::read_to_string(&path).unwrap_or_default()).unwrap_or(started_us));
+    let mut record = |r: unit_run::Record| -> Result<(), String> {
+        if !seen.insert(r.invocation_id.clone()) {
+            return Ok(());
+        }
+        let trig = triggers.of(&r.unit);
+        let fields = unit_run::record_fields(&r, trig.as_deref(), &instance);
+        let row = tsd::build_row(&tsd::iso_utc(Wall.now_epoch()), &host, family, &fields)?;
+        tsd::append_line(&path, &row)?;
+        push_metrics(&metrics, &r);
+        Ok(())
+    };
+    for r in watch::catch_up(&mut conn, &mut tracker, now_us)? {
+        record(r)?;
+    }
+    eprintln!("unit-run watch: armed on the user manager; writing {}", tsd::family_path(&run, family).display());
     loop {
         for r in watch::step(&mut conn, &mut tracker, now_us, Duration::from_secs(60))? {
-            if !seen.insert(r.invocation_id.clone()) {
-                continue;
-            }
-            let trig = triggers.of(&r.unit);
-            let fields = unit_run::record_fields(&r, trig.as_deref(), &instance);
-            let row = tsd::build_row(&tsd::iso_utc(Wall.now_epoch()), &host, family, &fields)?;
-            tsd::append_line(&path, &row)?;
-            push_metrics(&metrics, &r);
+            record(r)?;
         }
     }
 }
