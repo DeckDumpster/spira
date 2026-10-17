@@ -166,6 +166,11 @@ perf-watch|log|@SPIRA_RUN@/perf-watch.log
 # log holds only what went wrong (a journalctl that ended, a write refused), so any line is news.
 unit-run|log|@SPIRA_RUN@/unit-run.log
 
+# UNIT-RUN-DBUS learns the same runs from the user manager's D-Bus signals instead of the journal and
+# writes run/tsd/unit-run-dbus.jsonl beside it until `unit-run compare` shows the two agree. Its log
+# holds only what went wrong (a lost bus connection, a refused write), so any line is news.
+unit-run-dbus|log|@SPIRA_RUN@/unit-run-dbus.log
+
 # CONCIERGE-GUARD wakes the Concierge session when its inbox waiter has lapsed and mails the
 # operator when the wake does not take. Its log holds events only; health reads the state file
 # every check rewrites, so "not listening" and "no check lately" both show red.

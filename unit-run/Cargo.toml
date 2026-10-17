@@ -2,7 +2,7 @@
 name = "unit-run"
 version = "1.0.0"
 edition = "2021"
-description = "unit-run — the one writer of run/tsd/'s unit-run family: one record per systemd user-unit execution, folded from the user journal (follow, resuming from its cursor; backfill, idempotent on invocation_id)."
+description = "unit-run — the one writer of run/tsd/'s unit-run family: one record per systemd user-unit execution, folded from the user journal (follow, resuming from its cursor; backfill, idempotent on invocation_id) or learned from the manager's D-Bus signals (watch)."
 
 [lib]
 name = "unit_run"
@@ -17,6 +17,7 @@ test = false
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
 tsd = { path = "../tsd" }
 
 [dev-dependencies]

@@ -1,4 +1,8 @@
-//! unit-run follow | backfill [--force] | ensure-accounting [--dir DIR]
+//! unit-run follow | watch [--family F] | compare [--from TS] [--to TS] | backfill [--force] | ensure-accounting [--dir DIR]
+//!
+//! watch: learn unit runs from the user manager's D-Bus signals — no journal read — writing one
+//! record per run to run/tsd/<family>.jsonl and pushing it to the metrics store. compare: join
+//! the journal family and the watch family on invocation id and report every disagreement.
 //!
 //! follow: tail the user journal from the cursor last checkpointed, writing one record per
 //! unit execution to run/tsd/unit-run.jsonl. backfill: replay the journal from its oldest
@@ -10,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
+use unit_run::watch;
 use unit_run::{accounting_dropin_path, ensure_io_accounting, journal_args, pass, written_ids, Clock, io_controller_available, own_controllers_file, Folder, Item, Proc, Sink, Source, Triggers};
 
 struct Wall;
@@ -128,6 +133,68 @@ fn follow() -> Result<(), String> {
     Err("journalctl ended".into())
 }
 
+const WATCH_FAMILY: &str = "unit-run-dbus";
+
+fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &unit_run::Record) {
+    use spira_otel::metrics::Point;
+    let unit = watch::metric_unit(&r.unit);
+    let mut points = vec![Point::Count { name: "spira_unit_runs", value: 1 }];
+    if let Some(s) = r.started_us {
+        points.push(Point::Seconds { name: "spira_unit_run_seconds", value: r.ended_us.saturating_sub(s) as f64 / 1e6 });
+    }
+    sink.push(&points, &[("unit", &unit), ("result", &r.result)]);
+}
+
+fn watch_cmd(family: &str) -> Result<(), String> {
+    let run = run_dir()?;
+    let path = tsd::family_path(&run, family);
+    let mut seen = written_ids(&std::fs::read_to_string(&path).unwrap_or_default());
+    let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
+    let host = tsd::default_host();
+    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+    let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-unit-run", Duration::from_secs(2));
+    let mut triggers = Triggers::new(&Spawn);
+    let mut conn = unit_run::dbus::Conn::connect(&unit_run::dbus::bus_path()?)?;
+    watch::arm(&mut conn)?;
+    let now_us = || spira_config::vtime::now_epoch().saturating_mul(1_000_000);
+    let mut tracker = watch::Tracker::new(now_us());
+    eprintln!("unit-run watch: armed on the user manager; writing {}", path.display());
+    loop {
+        for r in watch::step(&mut conn, &mut tracker, now_us, Duration::from_secs(60))? {
+            if !seen.insert(r.invocation_id.clone()) {
+                continue;
+            }
+            let trig = triggers.of(&r.unit);
+            let fields = unit_run::record_fields(&r, trig.as_deref(), &instance);
+            let row = tsd::build_row(&tsd::iso_utc(Wall.now_epoch()), &host, family, &fields)?;
+            tsd::append_line(&path, &row)?;
+            push_metrics(&metrics, &r);
+        }
+    }
+}
+
+fn compare_cmd(args: &[String]) -> Result<(), String> {
+    let run = run_dir()?;
+    let read = |f: &str| std::fs::read_to_string(tsd::family_path(&run, f)).unwrap_or_default();
+    let (journal, dbus) = (read(unit_run::FAMILY), read(WATCH_FAMILY));
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let dbus_ends: Vec<String> = dbus.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter_map(|v| v.get("ended_at")?.as_str().map(String::from)).collect();
+    let from = flag("--from").or_else(|| dbus_ends.iter().min().cloned()).ok_or("the watch family is empty: nothing to compare")?;
+    let to = flag("--to").or_else(|| dbus_ends.iter().max().cloned()).ok_or("the watch family is empty: nothing to compare")?;
+    let c = watch::compare(&journal, &dbus, &from, &to);
+    println!("window {from} .. {to}: agree={} disagree={} only-journal={} only-dbus={}", c.agree, c.disagree.len(), c.only_a.len(), c.only_b.len());
+    for (tag, lines) in [("disagree", &c.disagree), ("only-journal", &c.only_a), ("only-dbus", &c.only_b)] {
+        for l in lines {
+            println!("{tag}: {l}");
+        }
+    }
+    if c.disagree.is_empty() && c.only_a.is_empty() && c.only_b.is_empty() {
+        Ok(())
+    } else {
+        Err("the journal reader and the D-Bus listener disagree".into())
+    }
+}
+
 fn backfill(force: bool, seed: bool) -> Result<(), String> {
     let run = run_dir()?;
     let cp = checkpoint_path(&run);
@@ -172,10 +239,12 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("follow") => follow(),
+        Some("watch") => watch_cmd(args.iter().position(|a| a == "--family").and_then(|i| args.get(i + 1)).map_or(WATCH_FAMILY, String::as_str)),
+        Some("compare") => compare_cmd(&args),
         Some("backfill") => backfill(args.iter().any(|a| a == "--force"), true),
         Some("ensure-accounting") => ensure_accounting(args.iter().position(|a| a == "--dir").and_then(|i| args.get(i + 1)).cloned()),
         _ => {
-            eprintln!("usage: unit-run <follow|backfill [--force]|ensure-accounting [--dir DIR]>");
+            eprintln!("usage: unit-run <follow|watch [--family F]|compare [--from TS] [--to TS]|backfill [--force]|ensure-accounting [--dir DIR]>");
             std::process::exit(2);
         }
     };
