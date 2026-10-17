@@ -34,7 +34,7 @@ pub fn certified_rows(lc: &dyn Lc, branches: &[(String, String)]) -> Vec<(String
 
 /// The `state` rows whose bead has a `spira/<id>` branch among `branches`.
 pub fn state_rows(lc: &dyn Lc, branches: &[(String, String)], state: &str) -> Vec<(String, String, u64)> {
-    let rows = lc.bead_rows(Some(state)).unwrap_or_default();
+    let rows = lc.polled_rows(state).unwrap_or_default();
     let mut out = Vec::new();
     for (branch, _) in branches {
         let Some(id) = branch.strip_prefix("spira/") else { continue };

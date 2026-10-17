@@ -178,7 +178,7 @@ impl Store {
 
     /// The lifecycle rows in `states`. Never the whole store: it holds every bead ever.
     pub fn lifecycle_in_states(&self, states: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {
-        self.lc_list(&["--state", &states.join(",")])
+        self.lc_list(&["--state", &states.join(","), "--snapshot"])
     }
 
     /// The lifecycle rows of exactly `ids`, one `spira-lc list --ids` per [`EVENT_CHUNK`].
@@ -191,7 +191,7 @@ impl Store {
     }
 
     pub fn express_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
-        Ok(self.lc_list(&["--express"])?.into_keys().collect())
+        Ok(self.lc_list(&["--express", "--live", "--snapshot"])?.into_keys().collect())
     }
 
     fn lc_list(&self, filter: &[&str]) -> Result<HashMap<String, LifecycleRow>, String> {

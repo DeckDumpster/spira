@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=lifecycle
+DOC=Path of the shared bead-state snapshot lc-serve writes and the list pollers read.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_SNAPSHOT:=$SPIRA_RUN/bead-snapshot.json}"
+SPIRA_CONF_DEFAULT_EOF

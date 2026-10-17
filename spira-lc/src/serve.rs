@@ -104,6 +104,19 @@ pub fn run(args: &[String]) -> i32 {
             std::thread::sleep(check_every);
             live_tick(&checker);
         });
+        match (spira_config::process::cfg_parse::<u64>("SPIRA_LC_SNAPSHOT_SECS"), spira_config::process::cfg("SPIRA_LC_SNAPSHOT")) {
+            (Ok(secs), Ok(path)) if secs > 0 && !path.is_empty() => {
+                let refresher = Arc::clone(&conn);
+                scope.spawn(move || loop {
+                    if let Err(e) = crate::snapshot::write(&refresher, &path) {
+                        eprintln!("spira-lc serve: snapshot {path}: {e}");
+                    }
+                    std::thread::sleep(Duration::from_secs(secs));
+                });
+            }
+            (Ok(_), Ok(_)) => {}
+            (Err(e), _) | (_, Err(e)) => eprintln!("spira-lc serve: snapshot not written: {e}"),
+        }
         let sweeper = Arc::clone(&conn);
         scope.spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
