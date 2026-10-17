@@ -105,6 +105,8 @@ pub trait World {
     fn sweep(&self, sweep: &Path, repo: &Path);
     /// `SPIRA_RUN=<run> bash yield.sh <args…>`, output discarded.
     fn yield_sh(&self, yield_sh: &Path, run: &str, args: &[&str]);
+    /// Pushes the finished trial's metrics; a world with no metrics store pushes nothing.
+    fn push_metrics(&self, _run: &crate::telemetry::GateRun) {}
     /// `spira-lc certify <bead> <tip> <outcome> <detail> gate` (the machine reads its switch).
     /// Returns spira-lc's stderr when it refused (a tip the row does not hold), else empty.
     fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) -> String;

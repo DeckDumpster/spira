@@ -13,7 +13,30 @@ fn bd_bin() -> Result<String, String> {
     spira_config::process::cfg("SPIRA_BD").map(|b| if b.trim().is_empty() { "bd".to_string() } else { b })
 }
 
+/// Pushes one bead-store call's count and duration, labelled by its bd verb (the first
+/// non-flag word) and whether it succeeded; a failed push is counted, never raised.
+fn verb_of<'a>(args: &[&'a str]) -> &'a str {
+    args.iter().find(|a| !a.starts_with('-')).copied().unwrap_or("unknown")
+}
+
+fn record_call(args: &[&str], started: std::time::Instant, ok: bool) {
+    use spira_otel::metrics::{MetricsSink, Point};
+    let Ok(endpoint) = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT") else { return };
+    let verb = verb_of(args);
+    MetricsSink::new(Some(&endpoint), "spira-lc", std::time::Duration::from_millis(250)).push(
+        &[Point::Count { name: "spira_bead_store_calls", value: 1 }, Point::Seconds { name: "spira_bead_store_call_seconds", value: started.elapsed().as_secs_f64() }],
+        &[("verb", verb), ("outcome", if ok { "ok" } else { "error" })],
+    );
+}
+
 pub fn run(args: &[&str]) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let res = run_read(args);
+    record_call(args, started, res.is_ok());
+    res
+}
+
+fn run_read(args: &[&str]) -> Result<String, String> {
     let mut cmd = spira_config::bounded::bounded(bd_bin()?);
     let db = spira_config::process::cfg("SPIRA_DB")?;
     if !db.is_empty() {
@@ -32,6 +55,13 @@ const WRITE_SECS: u64 = 60;
 
 // A write runs the schema gate and a Dolt commit; the 5 s read cap kills it mid-commit though it lands.
 fn run_write(args: &[&str]) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let res = run_write_unrecorded(args);
+    record_call(args, started, res.is_ok());
+    res
+}
+
+fn run_write_unrecorded(args: &[&str]) -> Result<String, String> {
     let mut cmd = std::process::Command::new("timeout");
     cmd.arg(WRITE_SECS.to_string()).arg(bd_bin()?);
     let db = spira_config::process::cfg("SPIRA_DB")?;
@@ -229,6 +259,14 @@ pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, bod
 /// `bd <args>` with `stdin` piped in when given — the lane verbs' one door to bd
 /// (sp-st0mm). Same `SPIRA_BD`/`SPIRA_DB` resolution as [`run`].
 pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let res = run_stdin_unrecorded(args, stdin);
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    record_call(&words, started, res.is_ok());
+    res
+}
+
+fn run_stdin_unrecorded(args: &[String], stdin: Option<&str>) -> Result<String, String> {
     let mut cmd = Command::new(bd_bin()?);
     let db = spira_config::process::cfg("SPIRA_DB")?;
     if !db.is_empty() {
@@ -362,5 +400,17 @@ impl crate::ask::AskSource for LiveBd {
                 Some((id, works))
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod verb_tests {
+    use super::verb_of;
+
+    #[test]
+    fn the_verb_is_the_first_word_that_is_not_a_flag() {
+        assert_eq!(verb_of(&["--json", "show", "sp-1"]), "show");
+        assert_eq!(verb_of(&["update", "sp-1"]), "update");
+        assert_eq!(verb_of(&["--version"]), "unknown");
     }
 }
