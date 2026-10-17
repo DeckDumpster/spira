@@ -98,7 +98,8 @@ fn step(w: &World, plan: &Plan, bin: &Path, what: &str, mut a: Vec<String>) -> R
         w.err(err);
     }
     if r.rc != 0 {
-        let why = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output").trim().to_string();
+        let lines: Vec<&str> = err.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        let why = if lines.is_empty() { "no output".to_string() } else { lines.join(" | ") };
         return Err(format!("release {what} exited {}: {why}", r.rc));
     }
     Ok(r.out)

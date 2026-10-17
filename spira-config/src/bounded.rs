@@ -12,6 +12,13 @@ pub fn bounded(program: impl AsRef<OsStr>) -> Command {
     c
 }
 
+/// [`bounded`] with a deadline of the caller's own, in seconds as `timeout` takes them.
+pub fn bounded_for(program: impl AsRef<OsStr>, secs: &str) -> Command {
+    let mut c = Command::new("timeout");
+    c.arg(secs).arg(program);
+    c
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

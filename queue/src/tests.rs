@@ -2385,6 +2385,23 @@ fn land_local_build_or_verify_failure_refuses_and_leaves_the_ref_where_it_was() 
 }
 
 #[test]
+fn land_local_deploy_fault_reports_the_first_failure_before_the_rollback_one() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.submitted(&["sp-a", "sp-b"]);
+    let wts = harness_world(&mut t);
+    release_in_force(&t);
+    t.scripts.release_rc.borrow_mut().insert(
+        "activate".into(),
+        (1, "activating h1 failed, rolled back to r1:\n  u.service: restart failed: exit 124\n  UNDO INCOMPLETE:\n    restart u.service on the previous release: exit 124\n".into()),
+    );
+    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
+    let e = t.err();
+    let fault = e.lines().find(|l| l.contains("LAND DEPLOY FAILED")).unwrap();
+    let (first, second) = (fault.find("u.service: restart failed").expect(fault), fault.find("on the previous release").expect(fault));
+    assert!(first < second, "{fault}");
+}
+
+#[test]
 fn land_local_activate_failure_is_a_deploy_fault_and_keeps_the_landing() {
     let mut t = T::new(LandMode::QueueLocal);
     t.submitted(&["sp-a", "sp-b"]);
