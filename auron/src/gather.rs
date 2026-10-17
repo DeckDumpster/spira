@@ -1,4 +1,4 @@
-//! File reads and systemctl/journalctl questions — auron.sh's own "GATHER" section. Every
+//! File reads and systemctl questions — auron.sh's own "GATHER" section. Every
 //! value that could not be read is reported AS unreadable rather than as a benign default,
 //! because a probe that fails quietly is indistinguishable from a healthy reading.
 
@@ -48,11 +48,6 @@ pub trait Systemctl: Send + Sync {
     fn spira_services(&self) -> Vec<String>;
     /// `NRestarts` for each of `units` that answered.
     fn nrestarts(&self, units: &[String]) -> BTreeMap<String, i64>;
-}
-
-pub trait Journal: Send + Sync {
-    /// The last `n` lines of `unit`'s journal.
-    fn tail(&self, unit: &str, n: u32) -> String;
 }
 
 pub struct RealSystemctl {
@@ -114,18 +109,6 @@ fn parse_show_id_nrestarts(text: &str, out: &mut BTreeMap<String, i64>) {
         } else if line.is_empty() {
             id = None;
         }
-    }
-}
-
-pub struct RealJournal {
-    pub bin: String,
-    pub timeout: Duration,
-}
-
-impl Journal for RealJournal {
-    fn tail(&self, unit: &str, n: u32) -> String {
-        let o = util::run(Spec { prog: &self.bin, args: vec!["--user".into(), "--no-pager".into(), "-n".into(), n.to_string(), format!("--unit={unit}")], env: None, cwd: None, stdin: None, timeout: Some(self.timeout) });
-        o.stdout
     }
 }
 

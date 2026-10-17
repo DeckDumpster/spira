@@ -11,8 +11,6 @@ use tokio::process::Command;
 const DAY: i64 = 86_400;
 const WEEK: i64 = 7 * DAY;
 const STRIP_MAX: usize = 120;
-const LOG_LINES: usize = 5;
-const LOG_LOOKUPS: usize = 20;
 const STALE_INTERVALS: i64 = 3;
 const MIN_RUNS_FOR_INTERVAL: usize = 3;
 
@@ -20,7 +18,6 @@ pub struct Sources {
     pub run: String,
     pub systemctl: String,
     pub duckdb: String,
-    pub journalctl: String,
     pub extra_path: String,
     pub budget: Duration,
 }
@@ -49,7 +46,6 @@ pub struct Failure {
     pub unit: String,
     pub t: i64,
     pub result: String,
-    pub log: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -208,7 +204,7 @@ pub fn parse_unit_files(text: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String, Live>, execs: &BTreeMap<String, Vec<Exec>>, logs: &BTreeMap<String, Vec<String>>) -> Vec<Row> {
+pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String, Live>, execs: &BTreeMap<String, Vec<Exec>>) -> Vec<Row> {
     let listed: BTreeSet<&str> = names.iter().map(String::as_str).collect();
     let mut timer_of: BTreeMap<String, Live> = BTreeMap::new();
     let mut standalone = BTreeSet::new();
@@ -253,7 +249,7 @@ pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String,
                     (Some(i), Some(s)) => now - s > STALE_INTERVALS * i,
                     (None, Some(_)) => false,
                 };
-            let failure = ex7.iter().rev().find(|e| !is_ok(e)).map(|e| Failure { unit: e.unit.clone(), t: e.t, result: e.result.clone(), log: logs.get(&e.invocation).cloned().unwrap_or_default() });
+            let failure = ex7.iter().rev().find(|e| !is_ok(e)).map(|e| Failure { unit: e.unit.clone(), t: e.t, result: e.result.clone() });
             let own = if grouped {
                 let lives: Vec<&Live> = members.iter().filter_map(|m| live.get(m)).collect();
                 lives.iter().find(|l| l.active == "failed").or_else(|| lives.iter().find(|l| l.active == "active")).or(lives.first()).copied()
@@ -310,7 +306,7 @@ pub fn row_json(r: &Row) -> Value {
         "last_success": r.last_success,
         "interval_s": r.interval_s,
         "stale": r.stale,
-        "last_failure": r.failure.as_ref().map(|f| json!({ "at": f.t, "unit": f.unit, "result": f.result, "log": f.log })),
+        "last_failure": r.failure.as_ref().map(|f| json!({ "at": f.t, "unit": f.unit, "result": f.result })),
     })
 }
 
@@ -383,7 +379,7 @@ fn row_html(now: i64, r: &Row) -> String {
         let strip: String = r.strip.iter().map(|x| format!("<i class=\"tick{}\" title=\"{}\"></i>", if x == "success" { "" } else { " bad" }, esc(x))).collect();
         let fail = r.failure.as_ref().map_or("<span class=dim>none in 7 d</span>".to_string(), |f| {
             let inst = if r.kind == "plain" { String::new() } else { format!(" · {}", esc(&f.unit)) };
-            format!("{} · {}{inst}<pre>{}</pre>", ago(now, Some(f.t)), esc(&f.result), esc(&f.log.join("\n")))
+            format!("{} · {}{inst}", ago(now, Some(f.t)), esc(&f.result))
         });
         let name = if r.kind == "plain" { esc(&r.unit) } else { format!("{} <span class=dim>({} · {} instances)</span>", esc(&r.unit), r.kind, r.instances) };
         format!(
@@ -450,23 +446,6 @@ async fn executions(src: &Sources, path: &str, now: i64) -> Result<Vec<Value>, S
     serde_json::from_str(text).map_err(|e| format!("{}: unparsable json: {e}", src.duckdb))
 }
 
-async fn invocation_logs(src: &Sources, path: &str, invocations: Vec<String>) -> BTreeMap<String, Vec<String>> {
-    let mut set = tokio::task::JoinSet::new();
-    for inv in invocations {
-        let (jc, path, budget) = (src.journalctl.clone(), path.to_string(), src.budget);
-        set.spawn(async move {
-            let args = vec!["--user".to_string(), format!("_SYSTEMD_INVOCATION_ID={inv}"), "-n".into(), LOG_LINES.to_string(), "-o".into(), "cat".into(), "--no-pager".into()];
-            let lines = run_cmd(&jc, &args, &path, budget).await.map(|t| t.lines().map(str::to_string).collect()).unwrap_or_default();
-            (inv, lines)
-        });
-    }
-    let mut out = BTreeMap::new();
-    while let Some(Ok((inv, lines))) = set.join_next().await {
-        out.insert(inv, lines);
-    }
-    out
-}
-
 pub async fn take(src: &Sources, now: i64) -> Snapshot {
     let path = {
         let inherited = std::env::var("PATH").unwrap_or_default();
@@ -483,12 +462,5 @@ pub async fn take(src: &Sources, now: i64) -> Snapshot {
         Vec::new()
     });
     let execs = parse_execs(&rows);
-    let mut recent: Vec<(&str, i64)> = execs
-        .values()
-        .filter_map(|v| v.iter().rev().find(|e| e.result != "success" && !e.invocation.is_empty()).map(|e| (e.invocation.as_str(), e.t)))
-        .collect();
-    recent.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
-    let wanted: Vec<String> = recent.into_iter().take(LOG_LOOKUPS).map(|(i, _)| i.to_string()).collect();
-    let logs = invocation_logs(src, &path, wanted).await;
-    Snapshot { taken: Instant::now(), now, rows: build(now, &parse_families(DEFAULT_FAMILIES), &names, &live, &execs, &logs), errors }
+    Snapshot { taken: Instant::now(), now, rows: build(now, &parse_families(DEFAULT_FAMILIES), &names, &live, &execs), errors }
 }

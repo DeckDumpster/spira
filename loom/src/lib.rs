@@ -46,9 +46,8 @@ pub struct Config {
     pub instance: String,
     /// The `systemctl` binary to use for sentinel-active checks. Overridable in tests.
     pub systemctl: String,
-    /// The `duckdb` and `journalctl` the units page runs. Overridable in tests.
+    /// The `duckdb` the units page runs. Overridable in tests.
     pub duckdb: String,
-    pub journalctl: String,
     /// The `broker` the forge batch pages read CI detail through. Overridable in tests.
     pub broker: String,
 }
@@ -77,7 +76,6 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "systemctl".to_string()),
             duckdb: std::env::var("SPIRA_DUCKDB").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "duckdb".to_string()),
-            journalctl: std::env::var("SPIRA_JOURNALCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "journalctl".to_string()),
             broker: std::env::var("SPIRA_BROKER").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "broker".to_string()),
         })
     }
@@ -121,7 +119,6 @@ impl Loom {
             run: self.cfg.run.clone(),
             systemctl: self.cfg.systemctl.clone(),
             duckdb: self.cfg.duckdb.clone(),
-            journalctl: self.cfg.journalctl.clone(),
             extra_path: self.cfg.extra_path.join(":"),
             budget: self.cfg.budget,
         };
