@@ -76,6 +76,32 @@ pub fn normalize_status(s: &str) -> &str {
     }
 }
 
+const INFRA_LOG_SIGNATURES: [&str; 11] = [
+    "timed out waiting for server startup",
+    "sccache: error",
+    "tls handshake timeout",
+    "i/o timeout",
+    "connection timed out",
+    "connection reset by peer",
+    "could not resolve host",
+    "temporary failure in name resolution",
+    "no space left on device",
+    "toomanyrequests",
+    "error response from daemon: get https",
+];
+const INFRA_STEPS: [&str; 2] = ["set up runner", "set up job"];
+
+/// A red that names no suite and whose failed step or log tail is the CI infrastructure's own,
+/// never the members'. Such a red is never pinned on a member's tip.
+pub fn infra_red(out: &str) -> bool {
+    let step = tagged(out, "failed-step: ").first().map(|s| s.trim().to_ascii_lowercase()).unwrap_or_default();
+    if INFRA_STEPS.iter().any(|s| step.contains(s)) {
+        return true;
+    }
+    let log = tagged(out, "step-log: ").join("\n").to_ascii_lowercase();
+    INFRA_LOG_SIGNATURES.iter().any(|sig| log.contains(sig))
+}
+
 fn first_line(s: &str) -> &str {
     s.lines().next().unwrap_or("").trim_end()
 }
@@ -1020,7 +1046,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
     } else {
         "a different failing step on the re-run"
     };
-    if rerun_at.is_some() && first == step && b.members.len() == 1 {
+    if rerun_at.is_some() && first == step && b.members.len() == 1 && !infra_red(out) {
         let mut lines: Vec<String> = log.lines().rev().take(5).map(str::to_string).collect();
         lines.reverse();
         if lines.is_empty() {
@@ -1062,6 +1088,9 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         suites = test_red_csv(out);
     }
     if suites.is_empty() {
+        if infra_red(out) {
+            return setup_red(w, c, b, out, bo);
+        }
         let faulty = member_lint_reds(w, b, out);
         if !faulty.is_empty() {
             let step = tagged(out, "failed-step: ").first().map(|s| s.trim().to_string()).unwrap_or_default();

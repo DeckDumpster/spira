@@ -1495,3 +1495,23 @@ fn a_hand_eject_for_red_must_name_the_failing_suite() {
     assert_eq!(t.run(&["eject", "sp-a", "--red", "--reason", "red"]), 2);
     assert!(t.err().contains("--suites"), "{}", t.err());
 }
+
+#[test]
+fn absolve_refuses_without_evidence_and_with_it_readmits_a_red_tip() {
+    let t = round_world();
+    t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().find(|r| r.bead_id == "sp-b").unwrap().ejected_red_tip = Some("tb".into());
+    fs::write(t.qfile("red-tips"), "sp-b tb\n").unwrap();
+    assert_eq!(t.run(&["absolve", "sp-b", "--by=concierge", "--reason=infra red"]), 2, "{}", t.err());
+    assert_eq!(t.run(&["absolve", "sp-b", "--by=concierge", "--reason=infra red", "--evidence=sccache startup timeout", "--evidence-tip=other"]), 1, "{}", t.err());
+    assert_eq!(t.run(&["absolve", "sp-b", "--by=aeon", "--reason=infra red", "--evidence=e", "--evidence-tip=tb"]), 1, "{}", t.err());
+    assert!(!t.lc.has("absolve"), "{:?}", t.lc.calls.borrow());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b:tb"]), 1);
+    assert!(format!("{}{}", t.out(), t.err()).contains("sp-b: tb is a recorded ejected-red tip"), "positive control: {}{}", t.out(), t.err());
+
+    assert_eq!(t.run(&["absolve", "sp-b", "--by=concierge", "--reason=infra red", "--evidence=sccache startup timeout, no suite ran", "--evidence-tip=tb"]), 0, "{}", t.err());
+    assert!(t.lc.has("absolve sp-b tb concierge [infra red] [sccache startup timeout, no suite ran] tb"), "{:?}", t.lc.calls.borrow());
+    assert!(fs::read_to_string(t.qfile("red-tips")).unwrap().is_empty());
+    assert_eq!(t.run(&["absolve", "sp-b", "--by=concierge", "--reason=r", "--evidence=e", "--evidence-tip=tb"]), 1, "nothing left to absolve: {}", t.err());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-b:tb"]), 0, "{}", t.err());
+    assert!(t.out().contains("members=sp-b:tb"), "{}", t.out());
+}

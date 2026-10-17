@@ -1096,6 +1096,14 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
+    fn absolve(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["absolve", bead, tip, actor, reason, evidence, evidence_tip]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
 }
 
 // ------------------------------------------------------------ config (spira-config library)

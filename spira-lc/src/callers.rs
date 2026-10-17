@@ -77,6 +77,7 @@ pub const VERBS: &[&str] = &[
     "certify",
     "resubmit",
     "retip",
+    "absolve",
     "renew",
     "phase",
     "disposition",
@@ -260,6 +261,13 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             }
             let glass = BreakGlass { reason: a(3), evidence: a(4), evidence_tip: a(5) };
             retip(m, &a(0), &a(1), &a(2), glass)
+        }
+        "absolve" => {
+            if !need(3) {
+                return usage("absolve <bead-id> <tip> <actor> <reason> <evidence> <evidence-tip>");
+            }
+            let glass = BreakGlass { reason: a(3), evidence: a(4), evidence_tip: a(5) };
+            absolve(m, &a(0), &a(1), &a(2), glass)
         }
         "renew" => renew(m, args),
         "phase" => phase(m, args),
@@ -766,6 +774,22 @@ fn retip(m: &mut dyn Machine, id: &str, tip: &str, actor: &str, glass: BreakGlas
     }
     let mut a = Answer::cert(REFUSED, "refused", format!("retip tip={tip}"));
     a.stderr = format!("spira-lc retip: {id} refused: {} — nothing changed\n", out.trim());
+    a
+}
+
+/// Withdraw a red recorded against `tip` that was not the tree's fault. The machine refuses a row
+/// whose recorded red is not `tip`, and a move without its provenance.
+fn absolve(m: &mut dyn Machine, id: &str, tip: &str, actor: &str, glass: BreakGlass) -> Answer {
+    let Some((state, version, _)) = state_version(m, id) else {
+        return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
+    };
+    let kind = serde_json::to_string(&BeadEventKind::Absolve { tip: tip.to_string(), break_glass: glass }).unwrap_or_default();
+    let (rc, out) = event(m, "bead", id, &state, &version, actor, &kind);
+    if rc == 0 {
+        return Answer::cert(APPLIED, "applied", format!("absolve tip={tip}"));
+    }
+    let mut a = Answer::cert(REFUSED, "refused", format!("absolve tip={tip}"));
+    a.stderr = format!("spira-lc absolve: {id} refused: {} — nothing changed\n", out.trim());
     a
 }
 

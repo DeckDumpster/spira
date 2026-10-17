@@ -352,6 +352,9 @@ pub trait Lc {
     /// or an unclaimed READY one, moves to SUBMITTED at `tip`, no gate verdict. Break-glass: the
     /// machine refuses a move without its provenance, or a REWORK row with no manual hold.
     fn retip(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)>;
+    /// `absolve <bead> <tip> <actor> <reason> <evidence> <evidence-tip>`: withdraw the red recorded
+    /// against `tip`. The machine refuses a row whose recorded red is not `tip`, or no provenance.
+    fn absolve(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)>;
 }
 
 /// The config documents, through the spira-config library only

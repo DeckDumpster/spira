@@ -2,7 +2,7 @@
 //! crate's world of fakes.
 
 use super::*;
-use crate::ops::verdict::{classify_fault_rerun, classify_pending, normalize_status, parse_declared_timeout, parse_run_metadata, Pending};
+use crate::ops::verdict::{classify_fault_rerun, classify_pending, infra_red, normalize_status, parse_declared_timeout, parse_run_metadata, Pending};
 
 fn has_call(v: &RefCell<Vec<String>>, prefix: &str) -> bool {
     v.borrow().iter().any(|c| c.starts_with(prefix))
@@ -568,6 +568,37 @@ fn a_single_member_batch_red_at_the_same_step_after_the_rerun_bars_the_members_t
     assert!(t.lc.has("eject-member spira-1 sp-b"), "{:?}", t.lc.calls.borrow());
     assert_eq!(fs::read_to_string(t.qfile("red-tips")).unwrap(), "sp-b tb\n");
     assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn an_image_build_red_with_an_infra_signature_never_bars_the_single_members_tip() {
+    let t = T::new(LandMode::Queue);
+    batch(&t);
+    let rec = record(&t).replace("members=sp-a:ta sp-b:tb", "members=sp-b:tb");
+    t.open_record(&format!("{rec}batch_id=spira-1\nversion=3\n"));
+    t.git.stat("b0", "tb", &[("deploy/image-lib.sh", 3, 1)]);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    let red = "red\nfailed-step: gate / Build image\nstep-log: deploy/image-lib.sh:68: sccache: error: Timed out waiting for server startup\n";
+    t.forge.status.borrow_mut().push(Some(red.into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("workflow-rerun 77")), "the infra red is re-run first: {:?}", t.forge.calls.borrow());
+    t.clock.now.set(t.clock.now.get() + t.lib.s.verdict.ci_idle_sec + 1);
+    t.forge.status.borrow_mut().push(Some(red.into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(!t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    assert!(!t.lc.calls.borrow().iter().any(|c| c.contains("batch-ejected")), "{:?}", t.lc.calls.borrow());
+    assert!(t.lc.calls.borrow().iter().any(|c| c.starts_with("abandon-batch spira-1")), "{:?}", t.lc.calls.borrow());
+    assert!(!t.qfile("red-tips").exists() || fs::read_to_string(t.qfile("red-tips")).unwrap().is_empty());
+    assert!(!t.qfile("open").exists(), "the record goes so the members are re-cut");
+}
+
+#[test]
+fn infra_red_reads_signatures_and_runner_provisioning_and_nothing_else() {
+    assert!(infra_red("red\nfailed-step: build / Build image\nstep-log: sccache: error: Timed out waiting for server startup\n"));
+    assert!(infra_red("red\nfailed-step: gate / Set up runner\n"));
+    assert!(infra_red("red\nfailed-step: x\nstep-log: dial tcp: TLS handshake timeout\n"));
+    assert!(!infra_red("red\nfailed-step: gate / Lint\nstep-log: ##[error]I001 Organize imports\n"));
+    assert!(!infra_red("red\nfailed-step: build / Build image\nstep-log: error[E0308]: mismatched types\n"));
 }
 
 #[test]

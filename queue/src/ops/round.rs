@@ -559,7 +559,7 @@ pub(super) fn record_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<
 pub(super) fn forget_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<()> {
     let path = c.queue_file(RED_TIPS);
     let Ok(text) = fs::read_to_string(&path) else { return Ok(()) };
-    let kept: String = text.lines().filter(|l| l.split_once(' ') != Some((id, tip))).map(|l| format!("{l}\n")).collect();
+    let kept: String = text.lines().filter(|l| !l.split_once(' ').is_some_and(|(i, t)| i == id && !t.is_empty() && (tip.starts_with(t) || t.starts_with(tip)))).map(|l| format!("{l}\n")).collect();
     records::write_atomic(&path, &kept).map_err(std::io::Error::other)
 }
 
