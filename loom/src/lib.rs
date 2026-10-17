@@ -7,6 +7,7 @@ pub mod forge_rounds;
 pub mod now;
 pub mod ops;
 pub mod shell;
+pub mod metrics;
 pub mod rounds;
 pub mod states;
 pub mod stuck;
@@ -92,6 +93,7 @@ pub struct Loom {
     units_cell: Mutex<Option<Arc<units::Snapshot>>>,
     units_refreshing: AtomicBool,
     forge_ci: forge_rounds::Cache,
+    metrics: metrics::Cache,
     /// `spira-lc` batch reads by query, each held for `cfg.cache`; a failed refresh serves the last good read, marked stale.
     batches_cell: Mutex<std::collections::HashMap<String, (std::time::Instant, Value)>>,
 }
@@ -104,6 +106,7 @@ impl Loom {
             units_cell: Mutex::new(None),
             units_refreshing: AtomicBool::new(false),
             forge_ci: forge_rounds::Cache::default(),
+            metrics: metrics::Cache::default(),
             batches_cell: Mutex::new(Default::default()),
         }
     }
@@ -575,9 +578,24 @@ fn forge_queue_dir(loom: &Loom) -> std::path::PathBuf {
     std::path::Path::new(&loom.config().run).join("queue")
 }
 
+async fn metrics_rounds_route(State(loom): State<Arc<Loom>>, uri: axum::http::Uri) -> Response {
+    let run = loom.config().run.clone();
+    let filter = metrics::Filter::parse(uri.query().unwrap_or(""));
+    let page = tokio::task::spawn_blocking({
+        let loom = loom.clone();
+        move || {
+            let (cert, batch, gate) = (loom.metrics.read(&run, "cert-pass"), loom.metrics.read(&run, "batch-round"), loom.metrics.read(&run, "gate-run"));
+            metrics::render(now_s(), &cert, &batch, &gate, &filter)
+        }
+    })
+    .await
+    .unwrap_or_default();
+    html_response(StatusCode::OK, shell::with_bar(&page, &page_bar(&loom)))
+}
+
 async fn rounds_page_route(State(loom): State<Arc<Loom>>) -> Response {
     let window = rounds::WINDOW_S.to_string();
-    let forge = forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom)));
+    let forge = format!("<p><a href=/metrics/rounds>round and CI metrics</a></p>{}", forge_rounds::render_list(now_s(), &forge_rounds::read_all(&forge_queue_dir(&loom))));
     match loom.batches(&["--window", &window]).await {
         Ok((batches, stale)) => {
             let page = rounds::render_list(now_s(), &batches, stale.as_deref()).replacen("</main>", &format!("{forge}</main>"), 1);
@@ -724,6 +742,7 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/states", get(states_page_route))
         .route("/api/states", get(states_api_route))
         .route("/rounds", get(rounds_page_route))
+        .route("/metrics/rounds", get(metrics_rounds_route))
         .route("/rounds/spira/{id}", get(round_page_route))
         .route("/rounds/spira/{id}/log", get(round_log_route))
         .route("/api/rounds/spira/{id}", get(round_api_route))
