@@ -189,7 +189,7 @@ impl Tree {
 
 /// Rules that already judge the branch against the base themselves; `--diff` leaves their
 /// findings whole.
-pub const BASE_RELATIVE: &[&str] = &["plan-matrix", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config"];
+pub const BASE_RELATIVE: &[&str] = &["plan-matrix", "lockfile-lint", "config-delta", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "otel-binaries"];
 
 /// What a branch changed relative to `git merge-base <base> HEAD`: per touched file, the
 /// new-side line ranges it adds or changes (`None` for a whole file: untracked, or binary).
@@ -649,7 +649,7 @@ mod tests {
         t.write("spira-lint/testlib-migrated-allow", "");
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "gate-state-readers", "aeon-state-readers", "release-state-readers", "sift-state-readers", "testenv-result-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "no-download-install", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "config-fixture", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "fresh-host-entry"];
+        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "gate-state-readers", "aeon-state-readers", "release-state-readers", "sift-state-readers", "testenv-result-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "no-download-install", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "config-fixture", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "fresh-host-entry", "otel-binaries"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();
