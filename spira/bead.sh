@@ -4,6 +4,10 @@
 #
 #   bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--submitted --tip <sha>] [--json] [--parent <id>] [--target "<metric> <op> <value>"]
 #   bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--submitted --tip <sha>] [--json] [--parent <id>] [--target "<metric> <op> <value>"]
+#   bead.sh file ... --stack-after <id>
+#                                     stack the new bead on <id> (same repo, live work): a blocks
+#                                     edge, so the claim cuts its branch from <id>'s tip and a
+#                                     stack lands bottom first
 #   bead.sh lint [--all|<id>...]     check that beads in the store satisfy the contract
 #   bead.sh contract                 legal personas, repos and kinds, read from source
 #   bead.sh amend <id> [--note "<text>"] [--body-file F --replace | --append-body F] [--express] [--priority N]

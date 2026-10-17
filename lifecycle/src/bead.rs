@@ -311,6 +311,11 @@ pub enum BeadEventKind {
     /// The pre-round screen passed `tip`. Recorded only against a SUBMITTED or CERTIFIED row at
     /// that tip; the state does not move. A rework verdict is a `GateRed`, not this.
     Sifted { tip: String },
+    /// A SUBMITTED or CERTIFIED row is re-cut onto a prerequisite's tip: records `stack` and
+    /// `stack_depth` and the new `tip` in one step. The row returns to SUBMITTED with its
+    /// certification and screen verdict dropped, because both were for the old tip. `stack` must name
+    /// at least one prerequisite and no bead twice over itself; `stack_depth` is the caller's.
+    Restack { tip: String, stack: Stack, stack_depth: u32 },
     /// A REWORK bead held manual is re-tipped and put back to SUBMITTED, with no gate verdict:
     /// the round it is admitted to certifies it. Refused without a manual hold. A break-glass
     /// move: refused unless `break_glass` is complete.
@@ -508,7 +513,7 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         );
     }
 
-    if let BeadEventKind::Submit { tip } | BeadEventKind::Resubmit { tip, .. } = &ev.kind {
+    if let BeadEventKind::Submit { tip } | BeadEventKind::Resubmit { tip, .. } | BeadEventKind::Restack { tip, .. } = &ev.kind {
         if !is_full_sha(tip) {
             return Outcome::refuse(row.clone(), Refusal::MalformedTip { tip: tip.clone() });
         }
@@ -611,6 +616,23 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             }
             let mut new = row.clone();
             new.sifted_tip = Some(tip.clone());
+            new.version += 1;
+            Outcome::applied(new)
+        }
+        BeadEventKind::Restack { tip, stack, stack_depth } => {
+            if !matches!(row.state, BeadState::Submitted | BeadState::Certified) {
+                return illegal(row, &ev.kind);
+            }
+            if stack.is_empty() || *stack_depth == 0 || stack.contains_key(&row.bead_id) {
+                return illegal(row, &ev.kind);
+            }
+            let mut new = row.clone();
+            new.state = BeadState::Submitted;
+            new.tip = Some(tip.clone());
+            new.stack = stack.clone();
+            new.stack_depth = *stack_depth;
+            new.gate_key = None;
+            new.sifted_tip = None;
             new.version += 1;
             Outcome::applied(new)
         }
@@ -827,7 +849,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Absolve { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } => illegal(row, kind),
         },
 
         BeadState::Open => illegal(row, kind),
@@ -900,7 +922,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
             Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
         },
 
         BeadState::Submitted => match kind {
@@ -982,7 +1004,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
         },
 
         BeadState::Certified => match kind {
@@ -1040,7 +1062,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Absolve { .. } | Resubmit { .. } => {
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => {
                 illegal(row, kind)
             }
         },
@@ -1110,7 +1132,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateInfra { .. } | Deliver
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
@@ -1165,7 +1187,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Delivered { merge_sha, proof: _ } => landed_under_holder(row, merge_sha),
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Absolve { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } => illegal(row, kind),
         },
 
         // Terminal states: every one of the 19 events is illegal here, because there is no
@@ -1178,7 +1200,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Absolve { .. } | Resubmit { .. } => terminal(row),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => terminal(row),
         },
     }
 }
@@ -1317,6 +1339,7 @@ fn kind_name(kind: &BeadEventKind) -> &'static str {
         BeadEventKind::Express => "Express",
         BeadEventKind::Unexpress => "Unexpress",
         BeadEventKind::Sifted { .. } => "Sifted",
+        BeadEventKind::Restack { .. } => "Restack",
         BeadEventKind::Absolve { .. } => "Absolve",
         BeadEventKind::Resubmit { .. } => "Resubmit",
     }
@@ -1354,6 +1377,7 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::Express,
         BeadEventKind::Unexpress,
         BeadEventKind::Sifted { tip: "t1".into() },
+        BeadEventKind::Restack { tip: "t1".into(), stack: Stack::from([("sp-base".to_string(), "t0".to_string())]), stack_depth: 1 },
         BeadEventKind::Absolve { tip: "t1".into(), break_glass: BreakGlass::default() },
         BeadEventKind::Resubmit { tip: "t1".into(), break_glass: BreakGlass::default() },
     ]
@@ -1436,6 +1460,7 @@ mod tests {
             BeadEventKind::Express,
             BeadEventKind::Unexpress,
             BeadEventKind::Sifted { tip: "1111111111111111111111111111111111111111".into() },
+            BeadEventKind::Restack { tip: "1111111111111111111111111111111111111111".into(), stack: Stack::from([("sp-base".to_string(), "t0".to_string())]), stack_depth: 1 },
             BeadEventKind::Absolve { tip: "1111111111111111111111111111111111111111".into(), break_glass: BreakGlass::default() },
             BeadEventKind::Resubmit { tip: "1111111111111111111111111111111111111111".into(), break_glass: BreakGlass::default() },
             BeadEventKind::Claim { holder: "h".into(), lease_until: 1, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None },
@@ -1704,6 +1729,36 @@ mod tests {
                 assert!(!apply(&r, &ev(state, 0, BeadEventKind::Sifted { tip: "old".into() })).applied, "a pass at a moved tip is refused");
             }
         }
+    }
+
+    #[test]
+    fn a_restack_records_the_edge_and_the_new_tip_on_a_submitted_or_certified_row() {
+        let new_tip = "2222222222222222222222222222222222222222";
+        let stack = Stack::from([("sp-base".to_string(), "3333333333333333333333333333333333333333".to_string())]);
+        for state in ALL_STATES {
+            let mut r = row(state);
+            r.tip = Some("1111111111111111111111111111111111111111".into());
+            r.gate_key = Some("k".into());
+            r.sifted_tip = r.tip.clone();
+            let kind = || BeadEventKind::Restack { tip: new_tip.into(), stack: stack.clone(), stack_depth: 1 };
+            let out = apply(&r, &ev(state, 0, kind()));
+            let live = matches!(state, BeadState::Submitted | BeadState::Certified);
+            assert_eq!(out.applied, live, "{state:?}");
+            if live {
+                assert_eq!(out.row.state, BeadState::Submitted);
+                assert_eq!(out.row.tip.as_deref(), Some(new_tip));
+                assert_eq!(out.row.stack, stack);
+                assert_eq!(out.row.stack_depth, 1);
+                assert!(out.row.gate_key.is_none() && out.row.sifted_tip.is_none());
+            }
+        }
+        let mut r = row(BeadState::Submitted);
+        r.tip = Some("1111111111111111111111111111111111111111".into());
+        let bad = |tip: &str, stack: Stack, depth: u32| apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::Restack { tip: tip.into(), stack, stack_depth: depth }));
+        assert!(!bad(new_tip, Stack::new(), 1).applied, "an empty stack is no edge");
+        assert!(!bad(new_tip, stack.clone(), 0).applied, "a stacked row has depth >= 1");
+        assert!(!bad("short", stack.clone(), 1).applied, "a malformed tip is refused");
+        assert!(!bad(new_tip, Stack::from([(r.bead_id.clone(), "t".to_string())]), 1).applied, "a bead cannot stack on itself");
     }
 
     #[test]
