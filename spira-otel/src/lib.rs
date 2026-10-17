@@ -5,6 +5,7 @@
 
 pub mod fixture;
 pub mod metrics;
+pub mod oneshot;
 pub mod run;
 
 use std::fs::{self, File, OpenOptions};

@@ -24,6 +24,7 @@ path = "src/bin/slay.rs"
 test = false
 
 [dependencies]
+spira-otel = { path = "../spira-otel" }
 spira-ctrl = { path = "../spira-ctrl" }
 spira-config = { path = "../spira-config" }
 sending = { path = "../sending" }

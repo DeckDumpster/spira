@@ -164,6 +164,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-otel",
  "strand",
  "testkit",
 ]
@@ -1412,6 +1413,7 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -1691,6 +1693,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "spira-config",
+ "spira-otel",
  "testkit",
  "toml",
 ]
@@ -1733,6 +1736,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -1773,6 +1777,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -1821,6 +1826,7 @@ dependencies = [
 name = "spira-otel"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "opentelemetry-proto",
  "prost",
  "serde",
@@ -1837,6 +1843,7 @@ dependencies = [
  "serde_json",
  "sim",
  "spira-config",
+ "spira-otel",
  "testkit",
  "toml",
 ]
@@ -1872,6 +1879,7 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-ctrl",
+ "spira-otel",
  "testkit",
 ]
 

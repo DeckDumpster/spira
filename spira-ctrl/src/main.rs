@@ -24,7 +24,7 @@ use spira_ctrl::{self as ctrl, CtrlData};
 
 fn die(msg: &str) -> ! {
     eprintln!("ctrl: FATAL: {msg}");
-    std::process::exit(1);
+    spira_otel::oneshot::exit(1);
 }
 
 /// `spira.instance`, resolved once through [`spira_config::process::cfg`] — the one door to
@@ -90,7 +90,7 @@ fn usage() -> ! {
     eprintln!("  ctrl.sh list");
     eprintln!("  ctrl.sh suspended     every suspended subject, `subject\\treason` per line");
     eprintln!("  ctrl.sh divergence");
-    std::process::exit(1);
+    spira_otel::oneshot::exit(1);
 }
 
 fn load_or_die() -> CtrlData {
@@ -98,7 +98,7 @@ fn load_or_die() -> CtrlData {
         Ok(d) => d,
         Err(e) => {
             eprintln!("ctrl: cannot read control file: {e}");
-            std::process::exit(1);
+            spira_otel::oneshot::exit(1);
         }
     }
 }
@@ -175,6 +175,7 @@ fn cmd_suspend(args: &[String]) -> ExitCode {
         eprintln!("ctrl: failed to update control file: {e}");
         return ExitCode::from(1);
     }
+    spira_otel::oneshot::event("spira_ctrl_state_changes", 1, &[("change", "suspended")]);
     println!("ctrl: suspended {subject} (owner: {owner})");
     ExitCode::SUCCESS
 }
@@ -196,6 +197,7 @@ fn cmd_resume(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
     if was {
+        spira_otel::oneshot::event("spira_ctrl_state_changes", 1, &[("change", "resumed")]);
         println!("ctrl: resumed {subject}");
     } else {
         println!("ctrl: {subject} was not suspended");
@@ -319,8 +321,12 @@ fn cmd_divergence() -> ExitCode {
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let Some(cmd) = args.first() else { usage() };
-    let rest = &args[1..];
-    match cmd.as_str() {
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-ctrl", cmd);
+    spira_otel::oneshot::finish(dispatch(cmd, &args[1..]))
+}
+
+fn dispatch(cmd: &str, rest: &[String]) -> ExitCode {
+    match cmd {
         "suspend" => cmd_suspend(rest),
         "resume" => cmd_resume(rest),
         "check" => cmd_check(rest),

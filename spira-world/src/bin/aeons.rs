@@ -60,7 +60,7 @@ fn lane_caps(lib_sh: Option<&std::path::Path>) -> (u32, String) {
 
 fn die(msg: &str) -> ! {
     eprintln!("aeons.sh: {msg}");
-    std::process::exit(1);
+    spira_otel::oneshot::exit(1);
 }
 
 fn cmd_status() -> i32 {
@@ -172,6 +172,7 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let cmd = args.first().cloned().unwrap_or_else(|| "status".to_string());
     let rest: Vec<String> = if args.is_empty() { Vec::new() } else { args[1..].to_vec() };
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-aeons", &cmd);
     let rc = match cmd.as_str() {
         "status" => cmd_status(),
         "set" => cmd_set(&rest),
@@ -187,5 +188,5 @@ fn main() {
         }
         other => die(&format!("unknown command '{other}' — try: status | set <n> | unset | pool <n>")),
     };
-    std::process::exit(rc);
+    spira_otel::oneshot::exit(rc);
 }

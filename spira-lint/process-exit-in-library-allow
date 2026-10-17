@@ -6,7 +6,6 @@
 aeon/src/conf.rs
 aeon/src/main.rs
 archivist/src/main.rs
-bead/src/main.rs
 beads-store/src/main.rs
 census/src/main.rs
 cockpit-collect/src/probes/mod.rs
@@ -20,12 +19,6 @@ install/src/bootstrap.rs
 landing-pass/src/signals.rs
 maechen-trigger/src/real.rs
 round-vm/src/cli.rs
-sop/src/main.rs
-spira-ctrl/src/main.rs
-spira-world/src/bin/aeons.rs
-spira-world/src/bin/slay.rs
-spira-world/src/bin/world.rs
-spira/sim/src/main.rs
 strand/src/main.rs
 watchd/src/main.rs
 watchtower/src/main.rs

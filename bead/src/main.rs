@@ -31,6 +31,7 @@ fn main() {
     let cmd = args.next().unwrap_or_default();
     let rest: Vec<String> = args.collect();
 
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-bead", &cmd);
     let rc = match cmd.as_str() {
         "file" => cmd_file(&home, &rest),
         "amend" => cmd_amend(&home, &rest),
@@ -57,7 +58,7 @@ fn main() {
             2
         }
     };
-    std::process::exit(rc);
+    spira_otel::oneshot::exit(rc);
 }
 
 // =========================================================================================
@@ -503,7 +504,7 @@ fn cfg_label(key: &str) -> String {
         Ok(v) => v,
         Err(e) => {
             eprintln!("bead: {e}");
-            std::process::exit(1);
+            spira_otel::oneshot::exit(1);
         }
     }
 }
@@ -771,7 +772,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("--no-inherit-labels".into());
         }
         let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
-        bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref(), Some(repo.as_str()))
+        let rc = bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref(), Some(repo.as_str()));
+        if rc == 0 {
+            spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_fayth), ("repo", &repo), ("kind", "work")]);
+        }
+        rc
     } else {
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
@@ -813,7 +818,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_create(home, &bd_args, incident_parent.as_deref(), None, express, None, None)
+        let rc = bdq_create(home, &bd_args, incident_parent.as_deref(), None, express, None, None);
+        if rc == 0 {
+            spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
+        }
+        rc
     }
 }
 
