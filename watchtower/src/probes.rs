@@ -511,6 +511,7 @@ pub struct ContentDriftCfg {
     pub lc_bin: String,
     pub slack: usize,
     pub sustain_secs: i64,
+    pub state: std::path::PathBuf,
 }
 
 pub fn content_drift_cond(drifted: usize, slack: usize, sustain_secs: i64) -> Option<Cond> {
@@ -529,19 +530,56 @@ pub fn content_drift_cond(drifted: usize, slack: usize, sustain_secs: i64) -> Op
     })
 }
 
-fn drifted_count(stdout: &[u8]) -> Option<usize> {
-    let text = String::from_utf8_lossy(stdout);
-    let last = text.lines().rev().find(|l| !l.trim().is_empty())?;
-    last.strip_prefix("reconcile-content: ")?.split_whitespace().next()?.parse().ok()
+/// What a `reconcile-content --since-seq` dry run said: the newest event seq it read through
+/// and the beads it would close.
+#[derive(Debug, PartialEq)]
+pub struct DriftRead {
+    pub through: u64,
+    pub drifted: Vec<String>,
 }
 
+fn drift_read(stdout: &[u8]) -> Option<DriftRead> {
+    let text = String::from_utf8_lossy(stdout);
+    text.lines().rev().find(|l| !l.trim().is_empty())?.strip_prefix("reconcile-content: ")?;
+    let through = text.lines().find_map(|l| l.strip_prefix("through-seq: "))?.trim().parse().ok()?;
+    let drifted = text.lines().filter_map(|l| l.strip_prefix("would close ")?.split_whitespace().next().map(String::from)).collect();
+    Some(DriftRead { through, drifted })
+}
+
+fn load_drift_state(path: &Path) -> Option<(u64, Vec<String>)> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut lines = text.lines();
+    Some((lines.next()?.parse().ok()?, lines.filter(|l| !l.is_empty()).map(String::from).collect()))
+}
+
+fn save_drift_state(path: &Path, read: &DriftRead) {
+    let mut text = format!("{}\n", read.through);
+    for id in &read.drifted {
+        text.push_str(id);
+        text.push('\n');
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+/// Reads content rows only for beads with a lifecycle event since the last pass plus those
+/// still drifted then; a pass over an unchanged store reads none.
 pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
-    let drifted = crate::deadline::output("content drift (reconcile-content dry run)", Command::new(&cfg.lc_bin).args(["reconcile-content"]))
+    let (since, carried) = load_drift_state(&cfg.state).unwrap_or((0, Vec::new()));
+    let mut cmd = Command::new(&cfg.lc_bin);
+    cmd.args(["reconcile-content", "--since-seq", &since.to_string()]).args(&carried);
+    let read = crate::deadline::output("content drift (reconcile-content dry run)", &mut cmd)
         .ok()
         .filter(|o| o.status.success())
-        .and_then(|o| drifted_count(&o.stdout));
-    let Some(drifted) = drifted else { return Reading::Unknown };
-    Reading::Standing(content_drift_cond(drifted, cfg.slack, cfg.sustain_secs).into_iter().collect())
+        .and_then(|o| drift_read(&o.stdout));
+    let Some(read) = read else { return Reading::Unknown };
+    save_drift_state(&cfg.state, &read);
+    Reading::Standing(content_drift_cond(read.drifted.len(), cfg.slack, cfg.sustain_secs).into_iter().collect())
 }
 
 #[cfg(test)]
@@ -675,21 +713,35 @@ mod tests {
             testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
             p.to_string_lossy().into_owned()
         };
-        let lc = write("lc", "echo 'would close sp-1 (lifecycle DONE)'; echo 'reconcile-content: 5 would close (dry run; --apply to write)'");
-        let mut cfg = ContentDriftCfg { lc_bin: lc, slack: 3, sustain_secs: 0 };
+        let lc = write(
+            "lc",
+            "echo \"$@\" >> \"$0.args\"; echo 'would close sp-1 (lifecycle DONE)'; echo 'through-seq: 42'; echo 'reconcile-content: 5 would close (dry run; --apply to write)'",
+        );
+        let mut cfg = ContentDriftCfg { lc_bin: lc.clone(), slack: 3, sustain_secs: 0, state: t.path().join("sub").join("drift.state") };
         match content_drift(&cfg) {
-            Reading::Standing(v) => assert_eq!(v.len(), 1, "5 drifted is past a slack of 3"),
+            Reading::Standing(v) => assert_eq!(v.len(), 0, "one named bead is within a slack of 3"),
             Reading::Unknown => panic!("the verb answered"),
         }
-        cfg.slack = 5;
+        cfg.slack = 0;
         match content_drift(&cfg) {
-            Reading::Standing(v) => assert!(v.is_empty()),
+            Reading::Standing(v) => assert_eq!(v.len(), 1, "one drifted is past a slack of 0"),
             Reading::Unknown => panic!("the verb answered"),
         }
+        let args = std::fs::read_to_string(format!("{lc}.args")).unwrap();
+        assert_eq!(args.lines().collect::<Vec<_>>(), ["reconcile-content --since-seq 0", "reconcile-content --since-seq 42 sp-1"], "the second pass asks only after seq 42 and re-reads the carried bead");
+        let state = cfg.state.clone();
         cfg.lc_bin = write("lc-down", "exit 2");
         assert!(matches!(content_drift(&cfg), Reading::Unknown));
         cfg.lc_bin = write("lc-garbled", "echo nonsense");
         assert!(matches!(content_drift(&cfg), Reading::Unknown));
+        assert_eq!(load_drift_state(&state), Some((42, vec!["sp-1".to_string()])), "a pass that could not read keeps the last good state");
+    }
+
+    #[test]
+    fn a_dry_run_reads_through_its_seq_and_the_beads_it_would_close() {
+        let out = b"would close sp-a (lifecycle LANDED)\nthrough-seq: 9\nreconcile-content: 1 would close (dry run; --apply to write)\n";
+        assert_eq!(drift_read(out), Some(DriftRead { through: 9, drifted: vec!["sp-a".into()] }));
+        assert_eq!(drift_read(b"reconcile-content: 0 would close (dry run; --apply to write)\n"), None, "no seq, no state to advance");
     }
 
     #[test]

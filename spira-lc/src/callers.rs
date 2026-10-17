@@ -12,7 +12,7 @@
 //!
 //! There is no off mode (sp-v62vn): every verb reaches the machine.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lifecycle::bead::{AeonPhase, BeadEventKind, BeadState, BreakGlass, DispositionStatus, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
@@ -1210,13 +1210,26 @@ pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) ->
 /// and the store is made to agree. Dry run unless `--apply`. Without ids, a bd that reports
 /// none of the terminal rows open is the normal steady state; a bd that cannot answer is not.
 ///
+/// `--since-seq N` reads only the beads with a bead-machine event after seq N, plus any ids
+/// named, and prints `through-seq: M` (the newest seq) before the summary: a pass over an
+/// unchanged store reads no content rows at all.
+///
 /// Exit: 0 done (or listed) · 2 cannot tell · 3 a store close failed.
 pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     let apply = args.iter().any(|a| a == "--apply");
-    if let Some(bad) = args.iter().find(|a| a.starts_with('-') && *a != "--apply") {
-        return usage(&format!("reconcile-content [--apply] [<bead-id>...] (unknown flag {bad})"));
+    let since = args.iter().position(|a| a == "--since-seq").map(|i| args.get(i + 1).cloned().unwrap_or_default());
+    let mut only: Vec<&String> = Vec::new();
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--apply" => {}
+            "--since-seq" => {
+                rest.next();
+            }
+            f if f.starts_with('-') => return usage(&format!("reconcile-content [--apply] [--since-seq N] [<bead-id>...] (unknown flag {f})")),
+            _ => only.push(a),
+        }
     }
-    let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
     let cannot = |why: String| Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-content: {why}\n"), ..Default::default() };
     let (rc, out) = m.call(&["list".into()]);
     if rc != 0 {
@@ -1225,10 +1238,33 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
     let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
         return cannot("lifecycle list is not a JSON array".into());
     };
+    let mut through = None;
+    let mut scope: Option<BTreeSet<String>> = None;
+    if let Some(since) = &since {
+        if since.parse::<u64>().is_err() {
+            return usage("reconcile-content [--apply] [--since-seq N] [<bead-id>...] (--since-seq wants a number)");
+        }
+        let (rc, out) = m.call(&["event-seq".into(), "--since".into(), since.clone()]);
+        let tail = if rc == 0 { serde_json::from_str::<Value>(out.trim()).ok() } else { None };
+        let Some(tail) = tail else {
+            return cannot(format!("event-seq unreadable: {}", out.trim()));
+        };
+        through = tail["seq"].as_u64();
+        let mut keys: BTreeSet<String> = tail["keys"].as_array().into_iter().flatten().filter_map(|k| k.as_str().map(str::to_string)).collect();
+        keys.extend(only.iter().map(|i| i.to_string()));
+        scope = Some(keys);
+    }
     let reasons: BTreeMap<String, String> = rows.iter().map(|r| (s(r, "bead_id"), s(r, "reason"))).collect();
     let terminal: BTreeMap<String, String> = rows
         .iter()
-        .filter(|r| matches!(s(r, "state").as_str(), "LANDED" | "DONE" | "DROPPED" | "SUPERSEDED") && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id"))))
+        .filter(|r| {
+            let id = s(r, "bead_id");
+            matches!(s(r, "state").as_str(), "LANDED" | "DONE" | "DROPPED" | "SUPERSEDED")
+                && match &scope {
+                    Some(keys) => keys.contains(&id),
+                    None => only.is_empty() || only.iter().any(|i| **i == id),
+                }
+        })
         .map(|r| (s(r, "bead_id"), s(r, "state")))
         .collect();
     let ids: Vec<String> = terminal.keys().cloned().collect();
@@ -1264,6 +1300,9 @@ pub fn reconcile_content(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) 
                 code = REFUSED;
             }
         }
+    }
+    if let Some(seq) = through {
+        lines.push(format!("through-seq: {seq}"));
     }
     lines.push(format!("reconcile-content: {done} {}", if apply { "closed" } else { "would close (dry run; --apply to write)" }));
     Answer::out(code, lines.join("\n"))
