@@ -6,6 +6,7 @@ description = "Broker — aeons submit forge-write intents; a credentialed execu
 
 [dependencies]
 spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
 serde_json = "1"
 
 [profile.release]

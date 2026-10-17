@@ -3,9 +3,10 @@ mod policy;
 mod read;
 mod repo_map;
 mod submit;
+mod telemetry;
 mod token;
 
-use std::process::ExitCode;
+use spira_otel::exit::ExitCode;
 
 /// `SPIRA_*` values a bash process this binary spawns must never see pre-set — the same
 /// per-copy-fact / host-policy keys `cockpit-collect`'s `bootstrap_config` names
@@ -47,7 +48,12 @@ fn merge_resolved_env() -> Result<(), String> {
     Ok(())
 }
 
-fn main() -> ExitCode {
+fn main() -> std::process::ExitCode {
+    let first = std::env::args().nth(1);
+    spira_otel::exit::finish(telemetry::run(&telemetry::sink(), first.as_deref(), || dispatch().code()))
+}
+
+fn dispatch() -> ExitCode {
     if let Err(e) = merge_resolved_env() {
         eprintln!("broker: refusing to run on unresolved config: {e}");
         return ExitCode::from(1);

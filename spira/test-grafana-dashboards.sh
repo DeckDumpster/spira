@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: grafana/** tsd/src/pass.rs spira-otel/src/** auron/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs
+# covers: grafana/** tsd/src/pass.rs spira-otel/src/** auron/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs
 #
 # The provisioned Grafana dashboards parse, read their data source from a variable, carry no
 # annotations or text panels, and every cert-pass series they query is one the producer pushes.
@@ -26,7 +26,7 @@ print("\n".join(bad))
 PY
 }
 
-for want_f in rounds site-ci bead-store components gate-tooling runs; do
+for want_f in rounds site-ci bead-store components gate-tooling runs queue-landing; do
   f="$DASH/$want_f.json"
   is "$want_f.json is valid and clean" "" "$(check "$f" 2>&1)"
 done
@@ -52,5 +52,11 @@ run_pushed="$(grep -ohE '(RUNS|RUN_SECONDS|EVENTS): &str = "spira_component_[a-z
 run_queried="$(grep -o 'spira_component_[a-z_]*' "$DASH/runs.json" | sed -E 's/_bucket$//' | sort -u)"
 is "runs.json queries only series spira-otel's run module pushes" "" "$(comm -13 <(printf '%s\n' "$run_pushed") <(printf '%s\n' "$run_queried"))"
 [ -n "$run_pushed" ] && ok "positive control: the run module's series were found" || bad "no run-module series found"
+
+ql="$(grep -o 'spira_[a-z_]*' "$DASH/queue-landing.json" | sed -E 's/_bucket$//' | sort -u)"
+undeclared=""
+for m in $ql; do grep -rqF "\"$m\"" "$ROOT"/{queue,landing-pass,rebase-stale}/src/telemetry.rs "$ROOT/spira-otel/src/metrics.rs" || undeclared="$undeclared $m"; done
+is "queue-landing.json queries only series the components push" "" "$undeclared"
+[ -n "$ql" ] && ok "positive control: queue-landing series were found" || bad "no queue-landing series found"
 
 tl_summary

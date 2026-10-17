@@ -13,7 +13,7 @@
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use spira_otel::exit::ExitCode;
 use std::time::Duration;
 
 use rebase_stale::branch::{self, BranchConfig};
@@ -90,7 +90,12 @@ fn cmd_recut_onto(args: Vec<String>) -> ExitCode {
     ExitCode::from(if r.ok { 0 } else { 1 })
 }
 
-fn main() -> ExitCode {
+fn main() -> std::process::ExitCode {
+    let first = std::env::args().nth(1);
+    spira_otel::exit::finish(rebase_stale::telemetry::run(&rebase_stale::telemetry::sink(), first.as_deref(), || dispatch().code()))
+}
+
+fn dispatch() -> ExitCode {
     let argv: Vec<String> = env::args().skip(1).collect();
     match argv.first().map(String::as_str) {
         Some("rebase-branch") => return cmd_rebase_branch(argv[1..].to_vec()),

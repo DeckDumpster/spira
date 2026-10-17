@@ -38,12 +38,13 @@ mod io;
 mod order;
 mod pace;
 mod screen;
+mod telemetry;
 mod vm;
 
 use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use spira_otel::exit::ExitCode;
 
 use batcher::core::{
     combine, cut_event, ejected_event, opened_event, pr_record, should_cut, skipped_event, stack_sequencing,
@@ -1694,7 +1695,12 @@ fn path_attribute(o: &Opts) -> Result<ExitCode, String> {
     Ok(ExitCode::from(code))
 }
 
-fn main() -> ExitCode {
+fn main() -> std::process::ExitCode {
+    let first = std::env::args().nth(1);
+    spira_otel::exit::finish(telemetry::run(&telemetry::sink(), first.as_deref(), || dispatch().code()))
+}
+
+fn dispatch() -> ExitCode {
     let o = match parse() {
         Ok(o) => o,
         Err(e) => {

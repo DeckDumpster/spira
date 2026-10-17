@@ -195,6 +195,32 @@ pub fn outcome_of_exit(code: std::process::ExitCode) -> &'static str {
     if format!("{code:?}").contains("(0)") { "ok" } else { "error" }
 }
 
+pub const RUNS: &str = "spira_component_invocations";
+pub const RUN_SECONDS: &str = "spira_component_duration_seconds";
+
+/// `arg` when it is one of `allowed`, else `other`: keeps an operation label bounded when it
+/// comes from argv.
+pub fn operation<'a>(arg: Option<&str>, allowed: &[&'a str]) -> &'a str {
+    arg.and_then(|a| allowed.iter().copied().find(|x| *x == a)).unwrap_or("other")
+}
+
+/// The `SPIRA_METRICS_ENDPOINT` sink for `component`; disabled when unset.
+pub fn sink_for(endpoint: Option<&str>, component: &str) -> MetricsSink {
+    MetricsSink::new(endpoint, &format!("spira-{component}"), RUN_DEADLINE)
+}
+
+/// Runs `f`, then pushes one invocation and its duration labelled `component`, `operation` and
+/// the outcome of the returned code. The code is returned unchanged; a failed push never reaches it.
+pub fn timed(sink: &MetricsSink, component: &str, operation: &str, f: impl FnOnce() -> i32) -> i32 {
+    let start = Instant::now();
+    let code = f();
+    sink.push(
+        &[Point::Count { name: RUNS, value: 1 }, Point::Seconds { name: RUN_SECONDS, value: start.elapsed().as_secs_f64() }],
+        &[("component", component), ("operation", operation), ("outcome", outcome_of(code))],
+    );
+    code
+}
+
 /// A sink for tests: a local HTTP listener that records every metric pushed to it.
 pub mod fixture {
     use super::*;
@@ -215,6 +241,21 @@ pub mod fixture {
         let mut c = std::process::Command::new("env");
         c.arg("-i").arg("PATH=/usr/bin:/bin").arg(format!("SPIRA_HOME={}", home.display())).arg(format!("SPIRA_TOML={}", toml.display())).arg(bin);
         c
+    }
+
+    impl Sample {
+        pub fn label(&self, k: &str) -> Option<&str> {
+            self.labels.get(k).map(String::as_str)
+        }
+    }
+
+    /// Hands `f` a sink aimed at a fresh [`Capture`]; returns `f`'s result and every sample
+    /// received once it has returned.
+    pub fn capture<R>(f: impl FnOnce(&MetricsSink) -> R) -> (R, Vec<Sample>) {
+        let cap = Capture::start();
+        let r = f(&MetricsSink::new(Some(&cap.addr), "fixture", RUN_DEADLINE));
+        std::thread::sleep(Duration::from_millis(200));
+        (r, cap.samples(0))
     }
 
     pub struct Capture {

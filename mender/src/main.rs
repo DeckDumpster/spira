@@ -67,11 +67,17 @@ fn run(args: &[String]) -> Result<String, String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match run(&args) {
-        Ok(out) => println!("{out}"),
+    let code = mender::telemetry::run(&mender::telemetry::sink(), args.first().map(String::as_str), || match run(&args) {
+        Ok(out) => {
+            println!("{out}");
+            0
+        }
         Err(e) => {
             eprintln!("mender: {e}");
-            std::process::exit(2);
+            2
         }
+    });
+    if code != 0 {
+        std::process::exit(code);
     }
 }

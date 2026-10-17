@@ -337,7 +337,7 @@ fn cmd_reap_landed_branch(mut args: Vec<String>) -> ExitCodeLike {
     }
 }
 
-fn main() {
+fn dispatch() -> i32 {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(verb) = args.first().cloned() {
         let mut rest = || args.split_off(1);
@@ -359,26 +359,26 @@ fn main() {
             _ => None,
         };
         if let Some(rc) = rc {
-            std::process::exit(rc);
+            return rc;
         }
     }
 
     if args.is_empty() {
         eprintln!("usage: sending <verb> | sending [--dry-run] [--no-fetch] [--skip-queue|--queue-only] [--budget-secs <n>] [<bead-id|branch>]");
         eprintln!("       verbs: reap-terminal destroy-worktree destroy-branch reap-landed-branch prune salvage witness");
-        std::process::exit(2);
+        return 2;
     }
     let (opts, status) = match parse(&args) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("sending: {e}");
-            std::process::exit(2);
+            return 2;
         }
     };
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sending"));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
         eprintln!("sending: cannot find lib.sh (set SPIRA_HOME)");
-        std::process::exit(2);
+        return 2;
     };
     let (w, repos) = match Real::new(home, status) {
         Ok(x) => x,
@@ -386,10 +386,16 @@ fn main() {
             // FAIL CLOSED: a sweep that cannot read which repositories exist deletes nothing
             // and says so, rather than reporting a clean pass over none of them.
             eprintln!("sending: cannot read the harness context: {e}");
-            std::process::exit(2);
+            return 2;
         }
     };
     let label = w.submitted_label.clone();
     let mut s = Sweep { w: &w, opts, submitted_label: label, tally: Default::default(), deadline: None, truncated: false };
-    std::process::exit(s.run(&repos));
+    s.run(&repos)
+}
+
+fn main() {
+    let first = std::env::args().nth(1);
+    let code = sending::telemetry::run(&sending::telemetry::sink(), first.as_deref(), dispatch);
+    std::process::exit(code);
 }

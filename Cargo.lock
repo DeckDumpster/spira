@@ -151,6 +151,7 @@ dependencies = [
  "serde_json",
  "sift",
  "spira-config",
+ "spira-otel",
  "suite-select",
  "testkit",
  "tsd",
@@ -199,6 +200,7 @@ version = "1.0.0"
 dependencies = [
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -400,6 +402,7 @@ version = "1.0.0"
 dependencies = [
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -789,6 +792,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
  "tsd",
 ]
@@ -915,6 +919,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "suite-select",
  "testkit",
 ]
@@ -1150,6 +1155,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
  "tsd",
 ]
@@ -1256,6 +1262,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -1534,6 +1541,7 @@ version = "1.0.0"
 dependencies = [
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 

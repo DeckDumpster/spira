@@ -36,6 +36,6 @@ fn main() -> ExitCode {
     };
     let (git, scripts, forge, config, clock, env, io) = (RealGit, RealScripts { home }, RealForge, RealConfig, SysClock, SysEnv, StdEmit::new());
     let w = World { git: &git, bd: &bd, lib: &lib, scripts: &scripts, forge: &forge, lc: &lc, config: &config, clock: &clock, env: &env, io: &io };
-    let rc = queue::dispatch(&w, &cmd);
+    let rc = queue::telemetry::run(&queue::telemetry::sink(), argv.first().map(String::as_str), || queue::dispatch(&w, &cmd));
     ExitCode::from(u8::try_from(rc.clamp(0, 255)).unwrap_or(1))
 }
