@@ -46,7 +46,15 @@ fn usage() -> i32 {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    const OPS: [&str; 8] = ["once", "history", "sweep-temps", "collect", "merge", "probe", "--supervised-run", "_probe_body_test"];
+    let op = match args.get(1).map(String::as_str) {
+        None => "once",
+        Some(a) if OPS.contains(&a) => a,
+        Some(_) => "other",
+    };
+    let metered = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cockpit-collect", op);
     let code = run(&args[1..]);
+    metered.end(spira_otel::metrics::outcome_of(code));
     std::process::exit(code);
 }
 

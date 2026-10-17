@@ -30,6 +30,16 @@ fn main() -> ExitCode {
     let cmd = it.next().map(String::as_str).unwrap_or("");
     let rest: Vec<String> = it.cloned().collect();
 
+    const OPS: [&str; 12] = ["send", "template", "list", "read", "count", "unread-age", "done", "sendmail", "reconcile", "tidy", "ensure", "sweep-dismissed"];
+    let op = if OPS.contains(&cmd) { cmd } else { "unknown" };
+    let run = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "mail", op);
+    let code = dispatch(cmd, &rest);
+    run.end(spira_otel::metrics::outcome_of_exit(code));
+    code
+}
+
+fn dispatch(cmd: &str, rest: &[String]) -> ExitCode {
+    let rest = rest.to_vec();
     match cmd {
         "send" => run_send(&rest),
         "template" => run_template(&rest),

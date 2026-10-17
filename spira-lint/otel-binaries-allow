@@ -6,16 +6,13 @@
 
 aeon sp-vpfp3i.2
 archivist sp-vpfp3i.2
-auron sp-vpfp3i.2
 batcher-cut sp-vpfp3i.2
 bead sp-vpfp3i.2
 beads-store sp-vpfp3i.2
 broker sp-vpfp3i.2
 census sp-vpfp3i.2
 cert-sweep sp-vpfp3i.2
-cockpit-collect sp-vpfp3i.2
 cockpit/ops sp-vpfp3i.2
-cockpit/panel sp-vpfp3i.2
 concierge-guard sp-vpfp3i.2
 czar-pass sp-vpfp3i.2
 desired-state sp-vpfp3i.2
@@ -25,17 +22,12 @@ gate-check sp-vpfp3i.2
 gate-diag sp-vpfp3i.2
 gate-run sp-vpfp3i.2
 gate-worker sp-vpfp3i.2
-gh-intake sp-vpfp3i.2
 groomer sp-vpfp3i.2
-inbox-triage sp-vpfp3i.2
 incident sp-vpfp3i.2
 install sp-vpfp3i.2
-intent-report sp-vpfp3i.2
 landing-pass sp-vpfp3i.2
 lifecycle-guard sp-vpfp3i.2
-loom sp-vpfp3i.2
 maechen-trigger sp-vpfp3i.2
-mail sp-vpfp3i.2
 mender sp-vpfp3i.2
 perf-watch sp-vpfp3i.2
 queue sp-vpfp3i.2

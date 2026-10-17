@@ -41,7 +41,7 @@ async fn main() -> ExitCode {
         Err(e) => eprintln!("loom: listening, but cannot name the address: {e}"),
     }
 
-    let app = router(Arc::new(Loom::new(cfg)));
+    let app = loom::telemetry::metered(router(Arc::new(Loom::new(cfg))), spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok());
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("loom: stopped serving: {e}");
         return ExitCode::from(1);

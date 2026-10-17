@@ -17,9 +17,13 @@ test = false
 serde_json = "1"
 tsd = { path = "../tsd" }
 spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
 
 [profile.release]
 opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

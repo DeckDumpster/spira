@@ -25,6 +25,11 @@ fn load_config() -> Result<Config, String> {
     })
 }
 
+fn triage_points(passed: u64, dropped: u64) -> [spira_otel::metrics::Point<'static>; 2] {
+    use spira_otel::metrics::Point;
+    [Point::Count { name: "spira_inbox_events_passed", value: passed }, Point::Count { name: "spira_inbox_events_dropped", value: dropped }]
+}
+
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -54,6 +59,7 @@ fn main() {
     // Monitor, not a replay tool.
     let mut offset = file.metadata().map(|m| m.len()).unwrap_or(0);
 
+    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
     let mut dedup = inbox_rules::Dedup::default();
     let stdout = std::io::stdout();
     loop {
@@ -61,12 +67,20 @@ fn main() {
             offset = new_offset;
             let now = now_secs();
             let mut out = stdout.lock();
+            let run = (!lines.is_empty()).then(|| spira_otel::metrics::Run::begin(endpoint.as_deref(), "inbox-triage", "triage"));
+            let (mut passed, mut dropped) = (0u64, 0u64);
             for line in lines {
                 if let Some(body) = dedup.pass(&line, now, cfg.dedup) {
                     let _ = writeln!(out, "{body}");
+                    passed += 1;
+                } else {
+                    dropped += 1;
                 }
             }
             let _ = out.flush();
+            if let Some(run) = run {
+                std::thread::spawn(move || run.end_with("ok", &triage_points(passed, dropped)));
+            }
         }
         std::thread::sleep(Duration::from_millis(200));
     }
