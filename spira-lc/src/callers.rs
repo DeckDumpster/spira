@@ -946,6 +946,56 @@ pub trait Bd {
     fn external(&mut self, id: &str) -> Result<bool, String>;
     /// The open beads that `blocks`-depend on `id`.
     fn blocking_dependents(&mut self, id: &str) -> Result<Vec<String>, String>;
+    /// The beads whose `parent-child` edge names `id` as their parent.
+    fn children(&mut self, id: &str) -> Result<Vec<String>, String>;
+}
+
+/// An epic's children by lifecycle state; `pending` names those not yet terminal. A child with
+/// no lifecycle row counts as `CLOSED` when bd holds it closed.
+struct Tally {
+    counts: BTreeMap<String, usize>,
+    pending: Vec<String>,
+}
+
+impl Tally {
+    fn summary(&self) -> String {
+        self.counts.iter().map(|(k, n)| format!("{n} {k}")).collect::<Vec<_>>().join(", ")
+    }
+}
+
+fn tally_children(m: &mut dyn Machine, bd: &mut dyn Bd, id: &str) -> Result<Tally, String> {
+    let kids = bd.children(id)?;
+    let mut t = Tally { counts: BTreeMap::new(), pending: Vec::new() };
+    if kids.is_empty() {
+        return Ok(t);
+    }
+    let (rc, out) = m.call(&["list".into(), "--ids".into(), kids.join(",")]);
+    if rc != 0 {
+        return Err(format!("lifecycle list failed: {}", out.trim()));
+    }
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(out.trim()) else {
+        return Err("lifecycle list is not a JSON array".into());
+    };
+    let states: BTreeMap<String, String> = rows.iter().map(|r| (s(r, "bead_id"), s(r, "state"))).collect();
+    let mut rowless = Vec::new();
+    for k in &kids {
+        match states.get(k) {
+            Some(st) if BeadState::from_str(st).is_some_and(|b| b.is_terminal()) => *t.counts.entry(st.clone()).or_default() += 1,
+            Some(_) => t.pending.push(k.clone()),
+            None => rowless.push(k.clone()),
+        }
+    }
+    if !rowless.is_empty() {
+        let closed: Vec<String> = bd.closed(&rowless)?.into_iter().map(|(i, _)| i).collect();
+        for k in rowless {
+            if closed.contains(&k) {
+                *t.counts.entry("CLOSED".into()).or_default() += 1;
+            } else {
+                t.pending.push(k);
+            }
+        }
+    }
+    Ok(t)
 }
 
 /// Why `kind` may not end the external bead `id`, as an answer; `None` when it may go ahead or
@@ -1155,10 +1205,10 @@ pub fn reconcile_closed(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -
     Answer::out(code, lines.join("\n"))
 }
 
-/// `reconcile-epics [--apply] [<id>...]` — move every non-terminal epic's row off READY (and any
-/// other non-OPEN state the classifier would not give a container) to OPEN. Dry run unless
-/// `--apply`. Only rows the epic rule may correct are touched, and only the READY/OPEN rows
-/// are asked of bd, so the cost is one `issue_type` read per READY row, never a full roster.
+/// `reconcile-epics [--apply] [<id>...]` — move every non-terminal epic's row off READY to
+/// OPEN (the epic rule), and every OPEN epic whose children are all terminal to DONE
+/// (`epic-complete`, the counts by state in the reason). Dry run unless `--apply`. Only
+/// READY/OPEN rows are asked of bd: one `issue_type` read per row, never a full roster.
 ///
 /// Exit: 0 done (or listed) · 2 cannot tell · 3 an event was refused.
 pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
@@ -1167,7 +1217,7 @@ pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) ->
         return usage(&format!("reconcile-epics [--apply] [<bead-id>...] (unknown flag {bad})"));
     }
     let only: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-    let (rc, out) = m.call(&["list".into(), "--state".into(), "READY".into()]);
+    let (rc, out) = m.call(&["list".into(), "--state".into(), "READY,OPEN".into()]);
     if rc != 0 {
         return Answer { code: rc.max(CANNOT_TELL), stderr: format!("spira-lc reconcile-epics: lifecycle list failed: {}\n", out.trim()), ..Default::default() };
     }
@@ -1175,23 +1225,36 @@ pub fn reconcile_epics(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) ->
         return Answer { code: CANNOT_TELL, stderr: "spira-lc reconcile-epics: lifecycle list is not a JSON array\n".into(), ..Default::default() };
     };
     let (mut lines, mut code, mut done) = (Vec::new(), APPLIED, 0usize);
-    for r in rows.iter().filter(|r| s(r, "state") == "READY" && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")))) {
-        let id = s(r, "bead_id");
+    for r in rows.iter().filter(|r| matches!(s(r, "state").as_str(), "READY" | "OPEN") && (only.is_empty() || only.iter().any(|i| **i == s(r, "bead_id")))) {
+        let (id, from) = (s(r, "bead_id"), s(r, "state"));
         match bd.issue_type(&id) {
             Ok(t) if t == "epic" => {}
             Ok(_) => continue,
             Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-epics: bd unreadable for {id}: {}\n", e.trim()), ..Default::default() },
         }
+        let (to, rule) = if from == "READY" {
+            ("OPEN", "epic-container".to_string())
+        } else {
+            let t = match tally_children(m, bd, &id) {
+                Ok(t) => t,
+                Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc reconcile-epics: children of {id} unreadable: {}\n", e.trim()), ..Default::default() },
+            };
+            if t.counts.is_empty() || !t.pending.is_empty() {
+                continue;
+            }
+            ("DONE", format!("epic-complete: {}", t.summary()))
+        };
         if !apply {
-            lines.push(format!("would move {id} READY -> OPEN (epic-container)"));
+            lines.push(format!("would move {id} {from} -> {to} ({rule})"));
             done += 1;
             continue;
         }
-        let kind = BeadEventKind::Reclassify { state: BeadState::Open, rule: "epic-container".into() };
+        let state = if to == "DONE" { BeadState::Done } else { BeadState::Open };
+        let kind = BeadEventKind::Reclassify { state, rule: rule.clone() };
         let (version, kind_json) = (s(r, "version"), serde_json::to_string(&kind).unwrap_or_default());
-        match event(m, "bead", &id, "READY", &version, "classifier", &kind_json).0 {
+        match event(m, "bead", &id, &from, &version, "classifier", &kind_json).0 {
             APPLIED => {
-                lines.push(format!("moved {id} READY -> OPEN (epic-container)"));
+                lines.push(format!("moved {id} {from} -> {to} ({rule})"));
                 done += 1;
             }
             rc => {
@@ -1401,28 +1464,59 @@ pub fn unclaim(args: &[String], m: &mut dyn Machine) -> Answer {
     }
 }
 
-/// `close-epic <id> <reason>` — close an EPIC bead in bd (pilgrimage.sh's completion close,
-/// sp-hyo5e). An epic is a grouping, never a lifecycle bead: it is excluded from every claim
-/// (`--exclude-type epic`), so it has no READY..LANDED path and bd's open/closed is its only
-/// state. This verb is the one door for that close, and it refuses anything that is not an
-/// epic — a work bead's end is the machine's `done`/delivery, never a bd close.
+/// `close-epic <id> <reason>` — close an EPIC bead: the lifecycle row first (DONE, rule
+/// `epic-complete`, through the machine), then the store. Refuses anything that is not an
+/// epic, and an epic with a child that is not terminal — a work bead's end is the machine's
+/// `done`/delivery, never a bd close. An epic with no row is closed in the store alone.
 ///
-/// Exit: 0 closed · 2 cannot tell (bd unreadable, or the close failed) · 3 refused (not an epic).
-pub fn close_epic(args: &[String], bd: &mut dyn Bd) -> Answer {
+/// Exit: 0 closed · 2 cannot tell (bd or the machine unreadable, or the close failed) · 3 refused
+/// (not an epic, a child still open, or the event lost its CAS).
+pub fn close_epic(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     let (Some(id), Some(reason)) = (args.first().filter(|s| !s.is_empty()), args.get(1)) else {
         return usage("close-epic <bead-id> <reason>");
     };
+    let cannot = |why: String| Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: {why}\n"), ..Default::default() };
     match bd.issue_type(id) {
-        Err(e) => Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: cannot read {id}: {}\n", e.trim()), ..Default::default() },
-        Ok(t) if t != "epic" => Answer {
+        Err(e) => return cannot(format!("cannot read {id}: {}", e.trim())),
+        Ok(t) if t != "epic" => {
+            return Answer {
+                code: REFUSED,
+                stderr: format!("spira-lc close-epic: {id} is a {t}, not an epic — a work bead ends through the lifecycle machine, never a bd close\n"),
+                ..Default::default()
+            }
+        }
+        Ok(_) => {}
+    }
+    let t = match tally_children(m, bd, id) {
+        Ok(t) => t,
+        Err(e) => return cannot(format!("children of {id} unreadable: {}", e.trim())),
+    };
+    if !t.pending.is_empty() {
+        return Answer {
             code: REFUSED,
-            stderr: format!("spira-lc close-epic: {id} is a {t}, not an epic — a work bead ends through the lifecycle machine, never a bd close\n"),
+            stderr: format!("spira-lc close-epic: {id} has children not yet terminal: {}\n", t.pending.join(", ")),
             ..Default::default()
-        },
-        Ok(_) => match bd.close(id, reason) {
-            Ok(()) => Answer::code(APPLIED),
-            Err(e) => Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: bd close {id} failed: {}\n", e.trim()), ..Default::default() },
-        },
+        };
+    }
+    match show(m, id) {
+        Err(NO_ROW) => {}
+        Err(rc) => return Answer::code(rc),
+        Ok(v) => {
+            let (state, version) = (bead_field(&v, "state"), bead_field(&v, "version"));
+            if !BeadState::from_str(&state).is_some_and(|b| b.is_terminal()) {
+                let why = if t.counts.is_empty() { "epic-complete".to_string() } else { format!("epic-complete: {}", t.summary()) };
+                let kind = BeadEventKind::Reclassify { state: BeadState::Done, rule: why };
+                match event(m, "bead", id, &state, &version, "classifier", &serde_json::to_string(&kind).unwrap_or_default()).0 {
+                    APPLIED => {}
+                    REFUSED => return Answer { code: REFUSED, stderr: format!("spira-lc close-epic: {id}: the row move lost a race or was refused — nothing closed\n"), ..Default::default() },
+                    rc => return Answer::code(rc),
+                }
+            }
+        }
+    }
+    match bd.close(id, reason) {
+        Ok(()) => Answer::code(APPLIED),
+        Err(e) => cannot(format!("bd close {id} failed: {}", e.trim())),
     }
 }
 

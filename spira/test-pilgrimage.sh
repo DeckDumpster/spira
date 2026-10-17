@@ -50,11 +50,15 @@ SPIRA_DB="$TMP/no-such-db"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN" "$TMP/bin"
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$SPIRA_RUN"
 LCSTATE="$TMP/lc-state"
-# The stub answers `state` from the fixture; every other verb (T3's `close-epic`, sp-hyo5e)
-# is the tree's own spira-lc, found on PATH before the stub shadows it.
+# The stub closes an epic in the store alone (no lifecycle service runs here); other verbs are the real spira-lc.
 REAL_LC="$(command -v spira-lc 2>/dev/null || true)"
-printf '#!/usr/bin/env bash\nif [ "$1" = state ]; then [ -s "%s/$2" ] && cat "%s/$2"; exit; fi\n[ -n "%s" ] && exec "%s" "$@"\nexit 2\n' \
-    "$LCSTATE" "$LCSTATE" "$REAL_LC" "$REAL_LC" > "$TMP/bin/spira-lc"
+cat > "$TMP/bin/spira-lc" <<STUB
+#!/usr/bin/env bash
+if [ "\$1" = state ]; then [ -s "$LCSTATE/\$2" ] && cat "$LCSTATE/\$2"; exit; fi
+if [ "\$1" = close-epic ]; then exec "\$SPIRA_TEST_BD" -C "\$SPIRA_TEST_DB" close "\$2" --force --reason "\$3"; fi
+[ -n "$REAL_LC" ] && exec "$REAL_LC" "\$@"
+exit 2
+STUB
 chmod +x "$TMP/bin/spira-lc"; mkdir -p "$LCSTATE"
 PATH="$TMP/bin:$PATH"
 
@@ -164,6 +168,7 @@ tl_config SPIRA_DB="$DB" SPIRA_MAIL="$MAILDIR" SPIRA_MAIL_INDEX="$MAILDIR/index"
     SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_MAIL_MUTE=0 \
     SPIRA_CONCIERGE_INBOX="$SPIRA_RUN/watchd/concierge-inbox.log"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite" SPIRA_MAIL_OPERATOR_CONSIDERED="test-suite"
+export SPIRA_TEST_BD="$BD" SPIRA_TEST_DB="$DB"
 run() { pilgrimage.sh check 2>&1; }
 
 # One seed, three epics: a finished one (announce/close), one still going (silence), and
