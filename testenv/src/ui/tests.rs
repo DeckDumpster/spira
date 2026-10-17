@@ -41,9 +41,19 @@ fn the_image_is_pinned_to_the_version_unless_declared() {
 
 #[test]
 fn a_declared_argv_replaces_the_default() {
-    let a = argv_for(None, "tests/visual");
+    let a = argv_for(None, Path::new("/nonexistent"), "tests/visual");
     assert!(a[2].starts_with("cd tests/visual && npm ci") && a[2].contains("$UI_SPECS"), "{a:?}");
-    assert_eq!(argv_for(Some(&ui(&["serve"], None)), "d"), vec!["serve".to_string()]);
+    assert_eq!(argv_for(Some(&ui(&["serve"], None)), Path::new("/nonexistent"), "d"), vec!["serve".to_string()]);
+}
+
+#[test]
+fn a_dir_holding_run_sh_runs_it_not_a_bare_playwright() {
+    let d = testkit::TempDir::new("ui-run-sh");
+    std::fs::create_dir_all(d.join("tests/ui")).unwrap();
+    std::fs::write(d.join("tests/ui/run.sh"), "#!/bin/sh\n").unwrap();
+    let a = argv_for(None, &d, "tests/ui");
+    assert_eq!(a[2], "cd tests/ui && bash run.sh $UI_SPECS", "{a:?}");
+    assert!(argv_for(None, &d, "tests/visual")[2].contains("npx playwright test"));
 }
 
 #[test]

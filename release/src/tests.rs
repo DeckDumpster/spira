@@ -565,9 +565,11 @@ fn build_refuses_a_tree_that_tracks_a_manifest_header_name_or_bin() {
 fn git_with_work() -> FakeGit {
     FakeGit {
         extra: vec![
-            ("Cargo.toml".into(), "[workspace]\nmembers = [\"tool\", \"work\"]\n".into(), false),
+            ("Cargo.toml".into(), "[workspace]\nmembers = [\"tool\", \"work\", \"testenv\"]\n".into(), false),
             ("work/Cargo.toml".into(), "[package]\nname = \"work\"\nversion = \"0.0.0\"\n".into(), false),
             ("work/src/main.rs".into(), "fn main() {}\n".into(), false),
+            ("testenv/Cargo.toml".into(), "[package]\nname = \"testenv\"\nversion = \"0.0.0\"\n".into(), false),
+            ("testenv/src/main.rs".into(), "fn main() {}\n".into(), false),
         ],
         ..Default::default()
     }
@@ -579,12 +581,14 @@ fn git_with_work() -> FakeGit {
 fn build_links_model_bin_holding_only_work() {
     let mb = spira_config::release_env::MODEL_BIN_DIR;
     let w = World::with_git(git_with_work());
-    w.build_with(A, &FakeCargo { bins: vec!["tool", "work"], bodies: vec![] }, vec![]).unwrap();
+    w.build_with(A, &FakeCargo { bins: vec!["tool", "work", "testenv"], bodies: vec![] }, vec![]).unwrap();
     let link = w.rel(A).join(mb).join("work");
     assert_eq!(fs::read_link(&link).unwrap(), Path::new("../bin/work"));
     assert!(fsutil::is_executable(&link));
     let names: Vec<String> = fs::read_dir(w.rel(A).join(mb)).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
-    assert_eq!(names, vec!["work".to_string()], "model-bin holds work and nothing else");
+    let mut names = names;
+    names.sort();
+    assert_eq!(names, vec!["testenv".to_string(), "work".to_string()], "model-bin holds the model binaries and nothing else");
     let m = Manifest::load(&w.rel(A)).unwrap();
     assert_eq!(m.entries.get(&format!("{mb}/work")), Some(&Entry::Link("../bin/work".into())));
     assert_eq!(verify::verify(&w.cfg, A, &no_pre()).unwrap(), Vec::<String>::new());

@@ -13,6 +13,7 @@ const RC_FAULT: i32 = 2;
 const CONFIGS: [&str; 3] = ["playwright.config.ts", "playwright.config.js", "playwright.config.mjs"];
 const SEARCH: [&str; 6] = ["tests/visual", "tests/ui", "tests/e2e", "e2e", "frontend", "."];
 const IMAGE: &str = "mcr.microsoft.com/playwright";
+const RUN_SH: &str = "run.sh";
 const SRC: &str = "/src";
 const DEFAULT_ARGV: &str = "npm ci --no-audit --no-fund && npx playwright test $UI_SPECS";
 
@@ -51,9 +52,10 @@ pub fn image_for(ui: Option<&Ui>, version: Option<&str>) -> Result<String, Strin
         .ok_or_else(|| "ui: cannot pin the Playwright image: no @playwright/test version in package-lock.json or package.json".into())
 }
 
-pub fn argv_for(ui: Option<&Ui>, dir: &str) -> Vec<String> {
+pub fn argv_for(ui: Option<&Ui>, tree: &Path, dir: &str) -> Vec<String> {
     match ui.filter(|u| !u.argv.is_empty()) {
         Some(u) => u.argv.clone(),
+        None if tree.join(dir).join(RUN_SH).is_file() => vec!["bash".into(), "-c".into(), format!("cd {dir} && bash {RUN_SH} $UI_SPECS")],
         None => vec!["bash".into(), "-c".into(), format!("cd {dir} && {DEFAULT_ARGV}")],
     }
 }
@@ -108,7 +110,7 @@ pub fn main(args: &[String], run: &Path, resolve: &dyn Fn(&str) -> Option<PathBu
         workdir: "/work".into(),
         overlays: vec![Overlay { lower: tree.clone(), upper: scratch.join("upper"), work: scratch.join("work"), ctr: SRC.into() }],
         env: vec![("UI_SPECS".into(), specs.join(" ")), ("UI_DIR".into(), dir.clone()), ("CI".into(), "1".into())],
-        argv: in_tree(argv_for(ui, &dir)),
+        argv: in_tree(argv_for(ui, &tree, &dir)),
         timeout: Some(Duration::from_secs(ui.and_then(|u| u.timeout).or(decl.as_ref().and_then(|d| d.timeout)).unwrap_or(1800))),
         output: log.clone(),
         ..RunRequest::default()
