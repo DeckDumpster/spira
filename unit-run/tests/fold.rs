@@ -373,3 +373,27 @@ fn follow_saves_the_checkpoint_at_most_once_per_interval() {
     .unwrap();
     assert!(saves <= 2, "{saves} saves for a pass shorter than the save interval");
 }
+
+#[test]
+fn journal_argv_carries_no_field_match() {
+    for (c, f) in [(Some("c1"), true), (None, true), (None, false)] {
+        let a = journal_args(c, f);
+        assert!(!a.iter().any(|x| x.starts_with("MESSAGE_ID=") || x.contains('=') && !x.starts_with("--")), "{a:?}");
+        assert!(a.iter().any(|x| x.starts_with("--output-fields=MESSAGE_ID,")));
+    }
+}
+
+#[test]
+fn checkpoint_advances_past_lines_the_fold_ignores() {
+    let ignored = json!({"__CURSOR": "c-ignored", "MESSAGE": "noise"}).to_string();
+    assert_eq!(line_cursor(&ignored).as_deref(), Some("c-ignored"));
+    let mut f = Folder::default();
+    f.advance("c-ignored".into());
+    assert_eq!(f.cursor.as_deref(), Some("c-ignored"));
+    let (clock, sys) = (Fixed(1_792_100_000), systemctl());
+    let tmp = TempDir::new("unit-run-adv");
+    let mut s = sink(&tmp.path().join("u.jsonl"), &clock, &sys);
+    let src = Fake { lines: vec![ignored], stop_after: None, idle_at_end: false };
+    let (end, _) = pass(&src, Folder::default(), false, &mut s, &mut |_| Ok(())).unwrap();
+    assert_eq!(end.cursor.as_deref(), Some("c-ignored"));
+}
