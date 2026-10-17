@@ -910,6 +910,7 @@ fn a_rebase_conflict_with_a_file_no_blocker_changed_reopens_as_a_fast_tier_red()
     let reopens: Vec<_> = w.seam_calls.iter().filter(|c| c.0 == "bead_reopen").collect();
     assert_eq!(reopens.len(), 1, "{:?}", w.seam_calls);
     assert_eq!(reopens[0].1[1], "fast-tier-red", "{:?}", reopens);
+    assert!(ledger_lines(&o).iter().any(|l| l == "reopened builder sp-b fast-tier-red"), "{:?}", ledger_lines(&o));
     assert!(!spira_config::stack_conflict::holds(&f.run, "sp-a", &tip_a));
 }
 

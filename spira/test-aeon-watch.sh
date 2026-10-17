@@ -20,13 +20,6 @@ case "$*" in
     *show*) date -u -d '-30 min' '+%a %Y-%m-%d %H:%M:%S UTC' ;;
 esac
 STUB
-cat > "$TMP/bin/journalctl" <<'STUB'
-#!/usr/bin/env bash
-case "$*" in
-    *" -u "*) cat "$STUB_CLAIMS" ;;
-    *) cat "$STUB_JOURNAL" ;;
-esac
-STUB
 cat > "$TMP/bin/ps" <<'STUB'
 #!/usr/bin/env bash
 cat "$STUB_PS"
@@ -35,17 +28,20 @@ chmod +x "$TMP/bin/"*
 echo '0::/user.slice/spira-aeon-ifrit-1.service' > "$TMP/proc/4242/cgroup"
 echo '0::/user.slice/spira-aeon-ifrit-1.service' > "$TMP/proc/4343/cgroup"
 
-export STUB_UNITS="$TMP/units" STUB_CLAIMS="$TMP/claims" STUB_JOURNAL="$TMP/journal" STUB_PS="$TMP/ps"
+export STUB_UNITS="$TMP/units" STUB_PS="$TMP/ps"
 printf 'spira-aeon-ifrit-1.service loaded active running aeon\n' > "$TMP/units"
-printf 'guardian/ifrit: claimed sp-test1\n' > "$TMP/claims"
-: > "$TMP/journal"; : > "$TMP/ps"
+claim() { echo 4242 > "$TMP/run/aeon-$2-$1.pid"; printf '%s' "$3" > "$TMP/run/aeon-$2-$1.name"; }
+claim sp-test1 guardian ifrit
+LEDGER="$TMP/run/aeon-ledger.log"
+ledger_at() { printf '%s %s\n' "$(date -u -d "$1" +%Y-%m-%dT%H:%M:%SZ)" "$2" >> "$LEDGER"; }
+: > "$LEDGER"; : > "$TMP/ps"
 : > "$TMP/run/sp-test1.log"
 
 run() {
     tl_config SPIRA_RUN="$TMP/run"
     env -i PATH="$TMP/bin:$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" AEON_WATCH_PROC="$TMP/proc" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        STUB_UNITS="$STUB_UNITS" STUB_CLAIMS="$STUB_CLAIMS" STUB_JOURNAL="$STUB_JOURNAL" STUB_PS="$STUB_PS" \
+        STUB_UNITS="$STUB_UNITS" STUB_PS="$STUB_PS" \
         bash "$HERE/aeon-watch.sh" "$@" 2>&1
 }
 
@@ -73,15 +69,20 @@ out="$(run --show)"
 case "$out" in *GATE*|*TESTENV*) bad=1 ;; *) bad=0 ;; esac
 is "short gate and testenv runs stay silent" "0" "$bad"
 
-for i in 1 2 3 4 5; do echo 'builder: nothing ready to claim'; done > "$TMP/journal"
+for i in 1 2 3 4; do ledger_at '-1 min' 'awake builder idle'; done
+ledger_at '-30 min' 'awake builder idle'
+case "$(run --show)" in *CHURN*) bad=1 ;; *) bad=0 ;; esac
+is "CHURN stays silent below 5 inside the window" "0" "$bad"
+ledger_at '-1 min' 'awake builder idle'
 want "CHURN fires at 5" "CHURN 5" "$(run --show)"
-for i in 1 2 3; do echo 'REOPENED — fast tier red, handoff refused'; done > "$TMP/journal"
+: > "$LEDGER"
+for i in 1 2 3; do ledger_at '-1 min' 'reopened builder sp-x fast-tier-red'; done
 out="$(run --show)"
 want "REOPENS fires at 3" "REOPENS 3" "$out"
 case "$out" in *CHURN*) bad=1 ;; *) bad=0 ;; esac
 is "REOPENS alone does not raise CHURN" "0" "$bad"
 
-printf 'guardian/ifrit: claimed xx-test2\n' > "$TMP/claims"
+rm -f "$TMP"/run/aeon-*-sp-test1.*; claim xx-test2 guardian ifrit
 : > "$TMP/run/xx-test2.log"; touch -d '-40 min' "$TMP/run/xx-test2.log"
 tl_config SPIRA_ID_PREFIX=xx
 out="$(run --show)"
@@ -89,7 +90,7 @@ tl_config SPIRA_ID_PREFIX=sp
 want "a non-sp prefix finds the claimed bead" "xx-test2" "$out"
 want "and its stalled log is flagged" "STALL" "$out"
 
-: > "$TMP/claims"
+rm -f "$TMP"/run/aeon-*.pid
 want "an unclaimed aeon is not a stall" "no claim seen yet" "$(run --show)"
 
 : > "$TMP/units"

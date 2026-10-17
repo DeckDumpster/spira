@@ -120,7 +120,6 @@ OPS_TOOLS="$(fayth_tools ops)"
 
 OPS_ALLOW="systemctl status spira-aeon-builder.service|systemctl status
 systemctl show spira-sentinel.service|systemctl show
-journalctl -u spira-sentinel.service --since '1 hour ago'|journalctl
 cat /var/log/spira/ops.log|cat
 grep -r 'error' /var/log/spira/|grep
 ls -la /srv/spira/run/worktree|ls
@@ -141,7 +140,7 @@ persona_table ops "$OPS_TOOLS" "$OPS_ALLOW" "$OPS_DENY"
 # ==========================================================================================
 # czar.fayth — the second restricted persona (UC-safety-fences-30's extension, gap 11).
 # czar carries its own destructive-vocabulary surface (queue eject, landing halt), so its
-# allow rows exercise those instead of Ops's systemctl/journalctl diagnostics.
+# allow rows exercise those instead of Ops's systemctl diagnostics.
 # ==========================================================================================
 CZAR_TOOLS="$(fayth_tools czar)"
 [ -n "$CZAR_TOOLS" ] || bail "czar.fayth not found or FAYTH_TOOLS unset"

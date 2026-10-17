@@ -7,7 +7,7 @@
 #   aeon-watch.sh watch [--interval S] [--ticks N]
 #   aeon-watch.sh health
 #
-# STATUS ONLY: log mtimes, process ages, systemd, the journal's own claim lines. An aeon's
+# STATUS ONLY: log mtimes, process ages, systemd, the claim pidfiles and the aeon ledger. An aeon's
 # session transcript is its work and is never read. A process is matched on comm and printed as
 # pid, age and unit — never its argv, which carries credentials.
 #
@@ -19,6 +19,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 HEALTH_FILE="$SPIRA_RUN/watchd/aeon-watch.health"
 PROC="${AEON_WATCH_PROC:-/proc}"
+LEDGER="${SPIRA_AEON_LEDGER:-$SPIRA_RUN/aeon-ledger.log}"
 STALL_MIN="${AEON_WATCH_STALL_MIN:-15}"
 GATE_MIN="${AEON_WATCH_GATE_MIN:-5}"
 TEST_MIN="${AEON_WATCH_TEST_MIN:-15}"
@@ -32,14 +33,26 @@ _aw_unit_of() {
 }
 
 _aw_count() {
-    local n
-    n="$(timeout 5 journalctl --user --since "-${WINDOW}s" -g "$1" -o cat --no-pager 2>/dev/null \
-        | grep -cF -- "$1")"
-    printf '%s' "${n:-0}"
+    local since
+    since="$(date -u -d "-${WINDOW} sec" +%Y-%m-%dT%H:%M:%SZ)"
+    awk -v since="$since" -v pat="$1" '$1 >= since && index($0, pat) { n++ } END { print n + 0 }' "$LEDGER" 2>/dev/null
+}
+
+_aw_claim_of() {
+    local pf pid
+    for pf in "$SPIRA_RUN"/aeon-*-"$ID_PREFIX"-*.pid; do
+        [ -f "$pf" ] || continue
+        pid="$(cat "$pf" 2>/dev/null)"
+        [ -n "$pid" ] || continue
+        if [ "$(_aw_unit_of "$pid")" = "$1" ]; then
+            printf '%s\n' "${pf##*/}"
+            return
+        fi
+    done
 }
 
 _aw_tick() {
-    local now ts u n=0 unknown=0 st stS who bead fayth age idle flag
+    local now ts u n=0 unknown=0 st stS pfname role name bead fayth age idle flag
     now="$(date +%s)"; ts="$(date -u +%H:%MZ)"
     local lines=""
     while read -r u; do
@@ -47,10 +60,12 @@ _aw_tick() {
         n=$((n + 1))
         st="$(systemctl --user show "$u" -p ActiveEnterTimestamp --value 2>/dev/null)"
         stS="$(date -d "$st" +%s 2>/dev/null || echo "$now")"
-        who="$(timeout 5 journalctl --user -u "$u" --since "@$stS" -g "(claiming|claimed|resuming) $ID_PREFIX-" -o cat --no-pager 2>/dev/null \
-            | grep -oE "[a-z]+/[a-z]+: (claiming|claimed|resuming) $ID_PREFIX-[a-z0-9.]+" | tail -1)"
-        bead="$(printf '%s' "$who" | grep -oE "$ID_PREFIX-[a-z0-9.]+")"
-        fayth="${who%%:*}"
+        pfname="$(_aw_claim_of "$u")"
+        bead="${pfname#aeon-*-}"; bead="${bead%.pid}"
+        [ -n "$pfname" ] || bead=""
+        role="${pfname#aeon-}"; role="${role%%-*}"
+        name="$(cat "$SPIRA_RUN/${pfname%.pid}.name" 2>/dev/null)"
+        fayth="${role:-?}/${name:-?}"
         age=$(( (now - stS) / 60 )); idle="?"; flag=""
         if [ -n "$bead" ] && [ -f "$SPIRA_RUN/$bead.log" ]; then
             idle=$(( (now - $(stat -c %Y "$SPIRA_RUN/$bead.log")) / 60 ))
@@ -58,7 +73,7 @@ _aw_tick() {
         fi
         if [ -z "$bead" ]; then flag=" (no claim seen yet)"; unknown=$((unknown + 1)); fi
         lines="$lines
-  ${fayth:-?} ${bead:-?}: ${age}m on it, log idle ${idle}m$flag"
+  ${fayth} ${bead:-?}: ${age}m on it, log idle ${idle}m$flag"
     done < <(systemctl --user list-units 'spira-aeon-*' --state=active --no-legend --plain 2>/dev/null | awk '{print $1}')
 
     local pid et comm m long=""
@@ -76,8 +91,8 @@ _aw_tick() {
     done < <(ps -eo pid=,etimes=,comm= 2>/dev/null | awk '$3=="gate"||$3=="testenv"')
 
     local churn reopen
-    churn="$(_aw_count 'nothing ready to claim')"
-    reopen="$(_aw_count 'REOPENED — fast tier red')"
+    churn="$(_aw_count ' awake builder idle')"
+    reopen="$(_aw_count ' reopened ')"
     [ "$churn" -ge "$CHURN_MIN_COUNT" ] && long="$long
   CHURN $churn builders exited 'nothing ready to claim' in the last $((WINDOW / 60))m"
     [ "$reopen" -ge "$REOPEN_MIN_COUNT" ] && long="$long

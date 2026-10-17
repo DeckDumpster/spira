@@ -6,10 +6,6 @@
 install/src/bin/install.rs sp-k0ous3
 install/src/bin/units_install.rs sp-k0ous3
 release/src/acceptance/mod.rs sp-11pn0c
-spira/aeon-watch.sh sp-vu5uhg
-spira/chamber/ops.fayth sp-vu5uhg
-spira/chamber/warden.fayth sp-vu5uhg
-spira/watchers sp-vu5uhg
 spira/deploy.sh sp-k0ous3
 spira/deps.toml sp-k0ous3
 spira/first-run.sh sp-k0ous3

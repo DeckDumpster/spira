@@ -83,6 +83,7 @@ impl Run<'_> {
         self.record_fact(crate::fast_tier::KIND, &crate::fast_tier::with_tip(&digest, &self.head_tip()));
         self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{digest}"));
         self.log(&format!("{}: {} REOPENED — fast tier red, handoff refused", self.f(), self.s.bead));
+        self.ledger.write(self.now(), &format!("reopened {} {} fast-tier-red", self.f(), self.s.bead));
     }
 
     /// The unlanded prerequisite this claim was stacked on whose certified tip changed a file

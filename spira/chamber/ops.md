@@ -89,7 +89,7 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
    overwrites, ask what it does if your classifier is wrong about every input — because
    that one asked a command a question it could not answer and read the silence as permission.
 
-   Reading is unrestricted: `systemctl status`, `journalctl`, the logs, the unit files,
+   Reading is unrestricted: `systemctl status`, the logs, the unit files,
    the graph. Read as much as you like. Change nothing.
 
 5. **Write an SOP when you learned something.** This used to be enforced — an incident
