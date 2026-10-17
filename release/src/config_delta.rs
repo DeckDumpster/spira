@@ -50,6 +50,7 @@ impl Delta {
                 (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `added` (a table of key = value) and `removed` (a list of keys) are allowed")),
             }
         }
+        spira_config::placeholder_paths(d.added.iter().map(|(k, v)| (k.as_str(), v)))?;
         for k in d.added.keys().chain(d.removed.iter()) {
             if k.split('.').any(str::is_empty) {
                 return Err(format!("{k:?} is not a dotted key path"));
