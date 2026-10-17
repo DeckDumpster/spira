@@ -174,6 +174,14 @@ impl crate::callers::Bd for LiveBd {
         }
         self.open_among(&ids)
     }
+    fn children(&mut self, id: &str) -> Result<Vec<String>, String> {
+        let out = run(&["dep", "list", id, "--direction", "up", "--type", "parent-child", "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd dep list --json: {e}"))?;
+        Ok(parsed
+            .as_array()
+            .map(|a| a.iter().filter_map(|d| d.get("id").or_else(|| d.get("issue_id")).and_then(|x| x.as_str())).filter(|s| !s.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default())
+    }
     fn external(&mut self, id: &str) -> Result<bool, String> {
         let out = run(&["show", id, "--json"])?;
         let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;

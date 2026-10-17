@@ -41,7 +41,7 @@ nothing in shell writes a claim, a status or a close around the machine any more
 | verb | replaces | exit |
 |---|---|---|
 | `unclaim <id> <actor>` | `release_own_claim`'s `lc_release_bead` + `bdq update --status open --assignee ""` | the machine's `Release` when the row is WORKING under `<actor>`, refused when another holder has it, success when the claim is already over; bd is not written (the row is the claim). 0 released · 1 another holder, or no such bead · 2 cannot tell, usage |
-| `close-epic <id> <reason>` | pilgrimage.sh's `bdq close` | `bd close` only when bd's `issue_type` is `epic` (a grouping, never claimed, no lifecycle row). 0 closed · 2 cannot tell / usage · 3 refused (not an epic) |
+| `close-epic <id> <reason>` | pilgrimage.sh's `bdq close` | moves the epic's lifecycle row to DONE (`epic-complete`), then `bd close`; only for an `epic` whose children are all terminal. `reconcile-epics` does the same for any OPEN epic once its children finish (run by the reconcile-content timer). 0 closed · 2 cannot tell / usage · 3 refused (not an epic, a child not terminal) |
 
 **Two verbs touch no lifecycle state.** `content-landed <repo> <branch> <base>`
 (0 base holds every change the branch makes · 1 not · 2 usage) and `close-on-land <id> [sha]` (closes a
