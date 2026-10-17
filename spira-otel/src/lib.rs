@@ -4,6 +4,7 @@
 //! caller beyond one short append: an error is counted and dropped.
 
 pub mod metrics;
+pub mod run;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;

@@ -26,7 +26,7 @@ print("\n".join(bad))
 PY
 }
 
-for want_f in rounds site-ci bead-store components gate-tooling; do
+for want_f in rounds site-ci bead-store components gate-tooling runs; do
   f="$DASH/$want_f.json"
   is "$want_f.json is valid and clean" "" "$(check "$f" 2>&1)"
 done
@@ -47,5 +47,10 @@ queried_c="$(grep -o 'spira_[a-z_]*' "$DASH/components.json" | sort -u)"
 missing_c="$(comm -13 <(printf '%s\n' "$pushed_otel") <(printf '%s\n' "$queried_c"))"
 is "components.json queries only series the components push" "" "$missing_c"
 want "positive control: the component series were found" "spira_component_invocations" "$pushed_otel"
+
+run_pushed="$(grep -ohE '(RUNS|RUN_SECONDS|EVENTS): &str = "spira_component_[a-z_]*"' "$ROOT/spira-otel/src/run.rs" | grep -o 'spira_component_[a-z_]*' | sort -u)"
+run_queried="$(grep -o 'spira_component_[a-z_]*' "$DASH/runs.json" | sed -E 's/_bucket$//' | sort -u)"
+is "runs.json queries only series spira-otel's run module pushes" "" "$(comm -13 <(printf '%s\n' "$run_pushed") <(printf '%s\n' "$run_queried"))"
+[ -n "$run_pushed" ] && ok "positive control: the run module's series were found" || bad "no run-module series found"
 
 tl_summary

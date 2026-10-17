@@ -116,6 +116,7 @@ fn subcommand_args() -> Vec<String> {
 }
 
 fn main() {
+    spira_otel::run::begin("maechen-trigger", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     if let Some(h) = parse_home_flag() {
         let _ = HOME_OVERRIDE.set(h);
     }
@@ -123,7 +124,7 @@ fn main() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("maechen-trigger: {e}");
-            std::process::exit(1);
+            { let code = 1; spira_otel::run::finish(code); std::process::exit(code) };
         }
     };
     let spira_home = home_dir();
@@ -133,34 +134,38 @@ fn main() {
     // lock file below; `groom-trigger.sh` calling `lane-admitted` must never contend with, or
     // wait on, a concurrent Maechen sweep.
     let sub_args = subcommand_args();
+    spira_otel::run::operation(match sub_args.first().map(String::as_str) {
+        Some(c @ ("repo-lanes" | "lane-admitted" | "open-trigger-count")) => c,
+        _ => "sweep",
+    });
     match sub_args.first().map(String::as_str) {
         Some("repo-lanes") => {
             let name = sub_args.get(1).cloned().unwrap_or_default();
             match world.repo_lanes(&name) {
                 Ok(s) => {
                     println!("{s}");
-                    return;
+                    { spira_otel::run::finish(0); return; }
                 }
                 Err(e) => {
                     eprintln!("{e}");
-                    std::process::exit(1);
+                    { let code = 1; spira_otel::run::finish(code); std::process::exit(code) };
                 }
             }
         }
         Some("lane-admitted") => {
             let lane = sub_args.get(1).cloned().unwrap_or_default();
-            std::process::exit(if world.lane_admitted(&lane) { 0 } else { 1 });
+            { let code = if world.lane_admitted(&lane) { 0 } else { 1 }; spira_otel::run::finish(code); std::process::exit(code) };
         }
         Some("open-trigger-count") => {
             let labels = sub_args.get(1).cloned().unwrap_or_default();
             match world.open_trigger_count(&labels) {
                 Ok(n) => {
                     println!("{n}");
-                    return;
+                    { spira_otel::run::finish(0); return; }
                 }
                 Err(e) => {
                     eprintln!("maechen-trigger: cannot count open triggers: {e}");
-                    std::process::exit(1);
+                    { let code = 1; spira_otel::run::finish(code); std::process::exit(code) };
                 }
             }
         }
@@ -177,7 +182,7 @@ fn main() {
             if unsafe { flock(lock_file.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
                 world.log("another instance holds the lock — skipping to avoid a duplicate trigger");
                 std::mem::forget(lock_file);
-                return;
+                { spira_otel::run::finish(0); return; }
             }
             std::mem::forget(lock_file);
         }
@@ -187,8 +192,9 @@ fn main() {
     }
 
     if !run(&world, &cfg) {
-        std::process::exit(1);
+        { let code = 1; spira_otel::run::finish(code); std::process::exit(code) };
     }
+    spira_otel::run::finish(0);
 }
 
 /// Returns `false` only on a filing failure (bash exit 1); every other path — dedup skip,

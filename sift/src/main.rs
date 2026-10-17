@@ -51,15 +51,18 @@ fn run() -> Result<String, (u8, String)> {
 }
 
 fn main() -> ExitCode {
+    spira_otel::run::begin("sift", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     match run() {
         Ok(out) => {
             if !out.is_empty() {
                 println!("{out}");
             }
+            spira_otel::run::finish(0);
             ExitCode::SUCCESS
         }
         Err((code, msg)) => {
             eprintln!("{msg}");
+            spira_otel::run::finish(i32::from(code));
             ExitCode::from(code)
         }
     }

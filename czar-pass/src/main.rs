@@ -26,24 +26,33 @@ const LOCK_EX: i32 = 2;
 const LOCK_NB: i32 = 4;
 
 fn main() -> ExitCode {
+    spira_otel::run::begin("czar-pass", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
+    let code = pass_main();
+    spira_otel::run::finish(code);
+    ExitCode::from(code as u8)
+}
+
+fn pass_main() -> i32 {
     let args: Vec<String> = env::args().collect();
     if args.get(1).map(String::as_str) == Some("--lint-default") {
+        spira_otel::run::operation("lint-default");
         let text = args.get(2).map(String::as_str).unwrap_or("");
         if default_relaxes_a_check(text) {
             eprintln!("czar-pass: refused — a default may not disable or relax a check; restore the component, or escalate the restoration as the operator's order");
-            return ExitCode::FAILURE;
+            return 1;
         }
-        return ExitCode::SUCCESS;
+        return 0;
     }
     if args.get(1).map(String::as_str) != Some("--pass") {
         eprintln!("usage: czar-pass --pass");
-        return ExitCode::from(2);
+        return 2;
     }
+    spira_otel::run::operation("pass");
     match run_pass() {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => 0,
         Err(e) => {
             eprintln!("czar-pass: {}", e);
-            ExitCode::FAILURE
+            1
         }
     }
 }
@@ -248,6 +257,9 @@ fn telem(cfg: &Config, class: &str, verdict: &Verdict, remedy: &str, tier: &str)
         cfg.now_iso, class, detected, status_word(verdict), remedy, tier, lat
     );
     append_czar_log(&cfg.czar_log, &line);
+    if verdict.is_gap {
+        spira_otel::run::event("detected", &[("class", class), ("remedy", remedy), ("tier", tier)]);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

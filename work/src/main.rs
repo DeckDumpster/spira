@@ -27,14 +27,16 @@ const READ_SLICE: Duration = Duration::from_secs(2);
 const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
 
 fn main() {
+    spira_otel::run::begin("work", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(verb) = args.first().cloned() else {
         eprintln!("usage: work <verb> [args...] (verbs: {}, {})", work::VERBS.join(", "), work::LOCAL_VERBS.join(", "));
-        std::process::exit(CANNOT_TELL);
+        { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
     };
     let verb_args = args[1..].to_vec();
+    spira_otel::run::operation(if work::VERBS.contains(&verb.as_str()) || work::LOCAL_VERBS.contains(&verb.as_str()) { &verb } else { "unknown" });
     if work::LOCAL_VERBS.contains(&verb.as_str()) {
-        std::process::exit(crates(&verb_args));
+        { let code = crates(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
     }
 
     // A lane verb (sp-st0mm) runs unbound too — the archivist has no bead of its own — and
@@ -44,7 +46,7 @@ fn main() {
         _ if !work::needs_binding(&verb) => "-".to_string(),
         _ => {
             eprintln!("cannot tell: SPIRA_WORK_BEAD_ID is not set — this environment is not bound to a bead");
-            std::process::exit(CANNOT_TELL);
+            { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
         }
     };
     let actor = std::env::var("SPIRA_FAYTH").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
@@ -59,7 +61,7 @@ fn main() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
-            std::process::exit(REFUSED);
+            { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
         }
     };
 
@@ -67,7 +69,7 @@ fn main() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
-            std::process::exit(REFUSED);
+            { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
         }
     };
 
@@ -78,13 +80,14 @@ fn main() {
     match send(&req, wait) {
         Ok((code, out)) => {
             spira_config::lc_call::print_answer(code, &out);
-            std::process::exit(code);
+            { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
         }
         Err(e) => {
             eprintln!("cannot tell: {e}");
-            std::process::exit(CANNOT_TELL);
+            { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
         }
     }
+    spira_otel::run::finish(0);
 }
 
 /// `submit` never takes a tip argument (design §3.5): it is read here, the only place this

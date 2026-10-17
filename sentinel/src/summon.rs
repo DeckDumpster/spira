@@ -703,6 +703,7 @@ impl<'a> Sentinel<'a> {
                 .out(Io::Inherit)
                 .err(Io::Null),
         );
+        spira_otel::run::event("summon", &[("fayth", f), ("result", if o.ok() { "ok" } else { "failed" })]);
         if o.ok() {
             Attempt { summoned: true, ready: Some((ready - 1).max(0)) }
         } else {

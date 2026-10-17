@@ -38,13 +38,16 @@ fn real_seam() -> (RealSeam, PathBuf) {
 }
 
 fn main() {
+    spira_otel::run::begin("archivist", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `case "${1:-sweep}"` — no argument at all defaults to a sweep.
     let (cmd, rest): (String, Vec<String>) = match args.split_first() {
         Some((c, r)) => (c.clone(), r.to_vec()),
         None => ("sweep".to_string(), Vec::new()),
     };
+    spira_otel::run::operation(&cmd);
     dispatch(&cmd, &rest);
+    spira_otel::run::finish(0);
 }
 
 /// `config::resolve()` (the one door, `spira_config::process::cfg`/`cfg_parse`) or a named
