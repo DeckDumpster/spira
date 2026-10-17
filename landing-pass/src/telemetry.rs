@@ -34,7 +34,7 @@ mod tests {
         assert_eq!(code, 1);
         let runs = got.iter().find(|c| c.name == metrics::RUNS).expect("run count pushed");
         assert_eq!((runs.label("component"), runs.label("operation"), runs.label("outcome")), (Some("landing-pass"), Some("pass"), Some("error")));
-        assert!(got.iter().any(|c| c.name == metrics::RUN_SECONDS), "run seconds pushed");
+        assert!(got.iter().any(|c| c.name == metrics::RUN_DURATION), "run seconds pushed");
     }
 
     #[test]

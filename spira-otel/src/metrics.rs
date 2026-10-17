@@ -196,7 +196,7 @@ pub fn outcome_of_exit(code: std::process::ExitCode) -> &'static str {
 }
 
 pub const RUNS: &str = "spira_component_invocations";
-pub const RUN_SECONDS: &str = "spira_component_duration_seconds";
+pub const RUN_DURATION: &str = "spira_component_duration_seconds";
 
 /// `arg` when it is one of `allowed`, else `other`: keeps an operation label bounded when it
 /// comes from argv.
@@ -215,7 +215,7 @@ pub fn timed_as(sink: &MetricsSink, component: &str, operation: &str, outcome: i
     let start = Instant::now();
     let code = f();
     sink.push(
-        &[Point::Count { name: RUNS, value: 1 }, Point::Seconds { name: RUN_SECONDS, value: start.elapsed().as_secs_f64() }],
+        &[Point::Count { name: RUNS, value: 1 }, Point::Seconds { name: RUN_DURATION, value: start.elapsed().as_secs_f64() }],
         &[("component", component), ("operation", operation), ("outcome", outcome(code))],
     );
     code
@@ -487,8 +487,12 @@ mod instrument_tests {
         let sink = MetricsSink::for_component(Some(fx.addr()), "spira-x");
         assert_eq!(instrument(&sink, "x", "pass", || 3), 3);
         assert_eq!(instrument_result(&sink, "x", "other", || Ok::<_, String>(7)), Ok(7));
-        std::thread::sleep(Duration::from_millis(200));
-        let got = fx.received(Duration::from_secs(2));
+        let end = Instant::now() + Duration::from_secs(2);
+        let mut got = fx.received(Duration::from_secs(2));
+        while !["pass", "other"].iter().all(|op| got.iter().any(|s| s.name == INVOCATIONS && s.label("operation") == Some(*op))) && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+            got = fx.received(Duration::from_secs(2));
+        }
         let fail = got.iter().find(|s| s.name == INVOCATIONS && s.label("operation") == Some("pass")).unwrap();
         assert_eq!((fail.service.as_str(), fail.label("component"), fail.label("outcome")), ("spira-x", Some("x"), Some("exit_3")));
         assert!(got.iter().any(|s| s.name == RUN_SECONDS && s.label("operation") == Some("pass")));
