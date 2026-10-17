@@ -489,7 +489,10 @@ pub fn first_error(log: &str) -> Option<String> {
     };
     if let Some(i) = lines.iter().position(|l| {
         let t = l.trim_start();
-        t.starts_with("error") && !t.starts_with("error: could not compile") && !t.starts_with("error: aborting")
+        t.starts_with("error")
+            && !t.starts_with("error: could not compile")
+            && !t.starts_with("error: aborting")
+            && !is_yaml_fragment(t)
     }) {
         let msg = lines[i].trim();
         return Some(match at(i) {
@@ -503,6 +506,11 @@ pub fn first_error(log: &str) -> Option<String> {
         }
     }
     lines.iter().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string())
+}
+
+fn is_yaml_fragment(t: &str) -> bool {
+    let rest = t.trim_start_matches("error").trim_start_matches(|c: char| c == ':' || c.is_whitespace());
+    matches!(rest, "" | "|" | "|-" | "|+" | ">" | ">-" | ">+")
 }
 
 pub fn tier_line(name: &str, o: Outcome, secs: u64) -> String {
@@ -586,6 +594,7 @@ mod tests {
         let log = "   Compiling x\nerror: this argument is a mutable reference\n  --> src/binder.rs:222:9\n   |\nerror: could not compile `x`\n";
         assert_eq!(first_error(log).unwrap(), "src/binder.rs:222:9: error: this argument is a mutable reference");
         assert_eq!(first_error("ok\nboom\n").unwrap(), "boom");
+        assert_eq!(first_error("  error: |-\n    npm ERR! missing\nerror: ENOENT x\n").unwrap(), "error: ENOENT x");
         assert_eq!(first_error(""), None);
     }
 
