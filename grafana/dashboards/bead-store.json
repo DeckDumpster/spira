@@ -46,7 +46,7 @@
     {
       "id": 1,
       "type": "timeseries",
-      "title": "call rate by verb",
+      "title": "calls per interval by verb",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -59,7 +59,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ops"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -69,7 +69,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (verb) (rate(spira_bead_store_calls{verb=~\"$verb\"}[$__rate_interval]))",
+          "expr": "sum by (verb) (sum_over_time(spira_bead_store_calls{verb=~\"$verb\"}[$__interval]))",
           "legendFormat": "{{verb}}",
           "refId": "A"
         }
@@ -101,7 +101,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.5, sum by (le, verb) (rate(spira_bead_store_call_seconds_bucket{verb=~\"$verb\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.5, spira_bead_store_call_seconds{verb=~\"$verb\"}[$__interval])",
           "legendFormat": "{{verb}}",
           "refId": "A"
         }
@@ -133,7 +133,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le, verb) (rate(spira_bead_store_call_seconds_bucket{verb=~\"$verb\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.9, spira_bead_store_call_seconds{verb=~\"$verb\"}[$__interval])",
           "legendFormat": "{{verb}}",
           "refId": "A"
         }
@@ -165,7 +165,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.99, sum by (le, verb) (rate(spira_bead_store_call_seconds_bucket{verb=~\"$verb\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.99, spira_bead_store_call_seconds{verb=~\"$verb\"}[$__interval])",
           "legendFormat": "{{verb}}",
           "refId": "A"
         }

@@ -69,7 +69,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le, repo) (rate(spira_gate_run_seconds_bucket{repo=~\"$repo\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.9, spira_gate_run_seconds{repo=~\"$repo\"}[$__interval])",
           "legendFormat": "p90 {{repo}}",
           "refId": "A"
         }
@@ -101,7 +101,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.5, sum by (le, repo) (rate(spira_gate_run_seconds_bucket{repo=~\"$repo\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.5, spira_gate_run_seconds{repo=~\"$repo\"}[$__interval])",
           "legendFormat": "p50 {{repo}}",
           "refId": "A"
         }
@@ -133,7 +133,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le, repo) (rate(spira_gate_queue_seconds_bucket{repo=~\"$repo\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.9, spira_gate_queue_seconds{repo=~\"$repo\"}[$__interval])",
           "legendFormat": "{{repo}}",
           "refId": "A"
         }
@@ -165,7 +165,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le, repo) (rate(spira_gate_wait_seconds_bucket{repo=~\"$repo\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.9, spira_gate_wait_seconds{repo=~\"$repo\"}[$__interval])",
           "legendFormat": "{{repo}}",
           "refId": "A"
         }
@@ -197,7 +197,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (repo) (increase(spira_gate_runs{repo=~\"$repo\",verdict=\"red\"}[$__range])) / sum by (repo) (increase(spira_gate_runs{repo=~\"$repo\"}[$__range]))",
+          "expr": "sum by (repo) (sum_over_time(spira_gate_runs{repo=~\"$repo\",verdict=\"red\"}[$__range])) / sum by (repo) (sum_over_time(spira_gate_runs{repo=~\"$repo\"}[$__range]))",
           "legendFormat": "{{repo}}",
           "refId": "A"
         }
@@ -229,7 +229,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (verdict) (increase(spira_gate_runs{repo=~\"$repo\"}[$__interval]))",
+          "expr": "sum by (verdict) (sum_over_time(spira_gate_runs{repo=~\"$repo\"}[$__interval]))",
           "legendFormat": "{{verdict}}",
           "refId": "A"
         }
