@@ -1828,6 +1828,7 @@ impl<'w, W: World> Trial<'w, W> {
                     .unwrap_or_default(),
             };
             crate::telemetry::append(w, &self.s.run, &w.utc(), &run);
+            w.push_metrics(&run);
             if let Some(y) = w.which("yield.sh") {
                 if vd.status == PASS {
                     w.yield_sh(

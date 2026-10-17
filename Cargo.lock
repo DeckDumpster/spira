@@ -477,6 +477,7 @@ dependencies = [
  "sha2",
  "spira-config",
  "spira-lint",
+ "spira-otel",
  "suite-select",
  "testkit",
  "tsd",

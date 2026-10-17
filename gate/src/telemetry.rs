@@ -143,9 +143,64 @@ pub fn append<W: World>(w: &W, run: &str, ts: &str, r: &GateRun) {
     }
 }
 
+/// Pushes the trial's run, queue and wait seconds and a run count to the metrics store; the
+/// TSD row stays the record. Labels are bounded: no branch or bead.
+pub fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &GateRun) {
+    use spira_otel::metrics::Point;
+    let mode = if r.gate_mode.is_empty() { "unknown" } else { &r.gate_mode };
+    let bt = if r.branch_type.is_empty() { "unknown" } else { &r.branch_type };
+    let secs = |name, v: u64| Point::Seconds { name, value: v as f64 };
+    sink.push(
+        &[
+            secs("spira_gate_run_seconds", r.ran_secs),
+            secs("spira_gate_queue_seconds", r.queue_secs),
+            secs("spira_gate_wait_seconds", r.waited_secs),
+            Point::Count { name: "spira_gate_runs", value: 1 },
+        ],
+        &[("repo", &r.repo), ("status", &r.status), ("gate_mode", mode), ("branch_type", bt)],
+    );
+}
+
+/// The sink for `SPIRA_METRICS_ENDPOINT`; disabled when the config does not resolve.
+pub fn metrics_sink() -> spira_otel::metrics::MetricsSink {
+    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+    spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-gate", std::time::Duration::from_secs(2))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_trial_pushes_its_run_queue_and_wait_seconds_and_one_run() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let h = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut c, _) = l.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = c.read(&mut chunk).unwrap();
+                buf.extend_from_slice(&chunk[..n]);
+                let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                let len: usize = head.split("content-length: ").nth(1).unwrap().split("\r\n").next().unwrap().parse().unwrap();
+                if buf.len() >= i + 4 + len {
+                    break;
+                }
+            }
+            c.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").unwrap();
+            String::from_utf8_lossy(&buf).into_owned()
+        });
+        let sink = spira_otel::metrics::MetricsSink::new(Some(&addr), "spira-gate", std::time::Duration::from_secs(2));
+        let r = GateRun { repo: "r".into(), status: "PASS".into(), ran_secs: 40, queue_secs: 3, waited_secs: 7, ..Default::default() };
+        push_metrics(&sink, &r);
+        let body = h.join().unwrap();
+        for name in ["spira_gate_run_seconds", "spira_gate_queue_seconds", "spira_gate_wait_seconds", "spira_gate_runs", "gate_mode", "branch_type"] {
+            assert!(body.contains(name), "{name} missing from the push");
+        }
+    }
 
     #[test]
     fn branch_types_follow_the_unit_composition() {

@@ -589,6 +589,9 @@ impl World for Real {
             .stderr(Stdio::null())
             .status();
     }
+    fn push_metrics(&self, run: &crate::telemetry::GateRun) {
+        crate::telemetry::push_metrics(&crate::telemetry::metrics_sink(), run);
+    }
     fn yield_sh(&self, y: &Path, run: &str, args: &[&str]) {
         // batch-job: the yield script runs whatever the gate hands it
         let _ = Command::new("bash")
