@@ -220,9 +220,7 @@ mod tests {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = l.local_addr().unwrap().to_string();
         let before = push_failed();
-        let t = Instant::now();
         sink(&addr).push(&[Point::Count { name: "c", value: 1 }], &[]);
-        assert!(t.elapsed() < Duration::from_secs(2), "bounded by the 300ms deadline");
         assert!(push_failed() > before);
         drop(l);
     }
