@@ -27,7 +27,6 @@ pub struct RestartAlert {
     pub baseline: i64,
     pub delta: i64,
     pub window: i64,
-    pub journal: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -91,7 +90,7 @@ impl Observation {
             "strands": self.strands,
             "restart_alerts": self.restart_alerts.iter().map(|a| json!({
                 "unit": a.unit, "current": a.current, "baseline": a.baseline,
-                "delta": a.delta, "window": a.window, "journal": a.journal,
+                "delta": a.delta, "window": a.window,
             })).collect::<Vec<_>>(),
             "world_halted": self.world_halted,
             "world_halt_at": self.world_halt_at,

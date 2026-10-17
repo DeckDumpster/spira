@@ -342,7 +342,6 @@ def main():
             continue
         current = int(ra.get("current") or 0)
         window = int(ra.get("window") or 3600)
-        journal = (ra.get("journal") or "").strip()
         key = "restart-loop:" + unit
         alert(key,
               "%s restarted %d time(s) in the last %s" % (unit, delta, fmt_age(window)),
@@ -350,8 +349,8 @@ def main():
               "RESTARTS  %d in this %s window (running total %d, threshold %d)\n\n"
               "A Restart=always unit never reaches 'failed' — incident intake misses it.\n"
               "This is Auron's notification of an active restart loop.\n\n"
-              "--- last journal lines ---\n%s"
-              % (unit, delta, fmt_age(window), current, restart_threshold, journal))
+              "Read the unit's own log with: systemctl --user status %s\n"
+              % (unit, delta, fmt_age(window), current, restart_threshold, unit))
 
     for a in out:
         sys.stdout.write(json.dumps(a, sort_keys=True) + "\n")

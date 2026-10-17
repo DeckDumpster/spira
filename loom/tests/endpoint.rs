@@ -114,7 +114,6 @@ fn ops_cfg(run: &str) -> Config {
         instance: "test".to_string(),
         systemctl: "systemctl".to_string(),
         duckdb: "duckdb".to_string(),
-        journalctl: "journalctl".to_string(),
         broker: fake_broker().0.to_string_lossy().into_owned(),
     }
 }
@@ -269,12 +268,9 @@ fn units_fixture(rows: &[String]) -> UnitsFixture {
     );
     let duckdb = dir.join("duckdb");
     script(&duckdb, &format!("#!/bin/sh\ncat {}\n", rows_file.display()));
-    let journalctl = dir.join("journalctl");
-    script(&journalctl, "#!/bin/sh\ncase \"$*\" in *inv-bad*) printf 'starting\\nboom: it broke\\n';; esac\n");
     let mut cfg = ops_cfg(&run.to_string_lossy());
     cfg.systemctl = systemctl.to_string_lossy().into_owned();
     cfg.duckdb = duckdb.to_string_lossy().into_owned();
-    cfg.journalctl = journalctl.to_string_lossy().into_owned();
     UnitsFixture { dir, cfg }
 }
 
@@ -331,7 +327,7 @@ async fn units_lists_every_unit_with_rates_percentiles_and_the_stale_flag() {
     assert_eq!(flaky["success_rate_24h"].as_f64(), Some(0.75));
     assert_eq!(flaky["state"]["active"], "failed");
     assert_eq!(flaky["last_failure"]["result"], "exit-code");
-    assert_eq!(flaky["last_failure"]["log"][1], "boom: it broke");
+    assert!(flaky["last_failure"].get("log").is_none(), "no journal text rides the failure: {flaky}");
     assert_eq!(flaky["strip"].as_array().unwrap().iter().filter(|r| *r != "success").count(), 1);
 
     let ok = unit(&v, "ok.service");
@@ -354,7 +350,7 @@ async fn units_page_renders_the_same_rows_and_is_cached() {
     for n in ["ok.service", "dead.service", "never.service", "flaky.service", "dur.service"] {
         assert!(html.contains(n), "{n} in the page");
     }
-    assert!(html.contains("stale — last success") && html.contains("boom: it broke"), "{html}");
+    assert!(html.contains("stale — last success") && !html.contains("boom"), "{html}");
     assert!(html.contains("@media(max-width:639px)") && html.contains("class=\"u\" title=\"ok.service\"") || html.contains("class=u title=\"ok.service\""), "narrow viewports stack each family as a card: {html}");
     assert!(html.contains("<td class=sr><div class=strip>"), "{html}");
 

@@ -76,7 +76,7 @@ unchanged in shape. Each arrow-side is a module:
 
 | module | auron.sh section | pure? |
 |---|---|---|
-| `gather.rs` | GATHER | no — file reads, systemctl, journalctl |
+| `gather.rs` | GATHER | no — file reads, systemctl |
 | `restart.rs` | the restart-baseline arithmetic inside GATHER | **yes** |
 | `classify.rs` | the JSON built for the classifier, and parsing its answer | mostly (the JSON build is pure; the subprocess call is not) |
 | `reconcile.rs` | the confirm/clear/refresh loop | **yes** — the whole debounce state machine, no IO |

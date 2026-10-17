@@ -9,7 +9,7 @@ use auron::alerts::{self, ProbeOutcome};
 use auron::bdops::{BdOps, SeamBdOps};
 use auron::classify::{self, Mirror as ObsMirror, Observation, RestartAlert as ObsRestartAlert, Thresholds};
 use auron::fallback;
-use auron::gather::{self, Journal, RealJournal, RealSystemctl, Systemctl};
+use auron::gather::{self, RealSystemctl, Systemctl};
 use auron::heartbeat::{self, Heartbeat};
 use auron::reconcile::{self, Trigger};
 use auron::seam::BashSeam;
@@ -162,7 +162,6 @@ fn main() {
     // ---- gather ------------------------------------------------------------------------
     let log_tail = gather::read_log_tail(&sentinel_log_path, tail_bytes);
     let sc = RealSystemctl { bin: systemctl_bin.clone(), timeout: Duration::from_secs(5) };
-    let journal = RealJournal { bin: "journalctl".to_string(), timeout: Duration::from_secs(5) };
     let sentinel_timer = gather::sentinel_timer_status(&sc, &instance);
     let mirror = gather::check_mirror(&exporter, &mirror_path);
     let world = gather::world_state(&run_dir, now, drain_ttl);
@@ -176,7 +175,7 @@ fn main() {
             let (base, delta) = auron::restart::update(state.restarts.get(unit), *cur, now, restart_window);
             state.restarts.insert(unit.clone(), base);
             if delta > restarts_threshold {
-                restart_alerts.push(ObsRestartAlert { unit: unit.clone(), current: *cur, baseline: state.restarts[unit].baseline, delta, window: restart_window, journal: journal.tail(unit, 10) });
+                restart_alerts.push(ObsRestartAlert { unit: unit.clone(), current: *cur, baseline: state.restarts[unit].baseline, delta, window: restart_window });
             }
         }
     }
