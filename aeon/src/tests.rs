@@ -1088,7 +1088,7 @@ fn the_launch_model_is_the_toml_persona_model_not_a_fayth_declaration() {
 
 fn rejected(f: &Fx, n: usize) -> String {
     let history: Vec<_> = (1..=n).map(|i| spira_config::escalation::Rejection::new("eject-red", "test-x.sh", &format!("tip{i}"), &format!("reason {i}: five tests failed"))).collect();
-    f.w.lock().unwrap().rejections = Some(serde_json::json!({"rejections": n, "history": history}).to_string());
+    f.w.lock().unwrap().rejections = Some(serde_json::json!({"rejections": n, "stronger_rejections": n.saturating_sub(2), "history": history}).to_string());
     let over = f._dir.join("escalation.toml");
     std::fs::write(&over, "[persona.builder]\nmodel = \"builder-model\"\nescalation_model = \"stronger-model\"\n").unwrap();
     format!("{}:{}", complete_vars()["SPIRA_TOML"], over.display())
@@ -1123,16 +1123,16 @@ fn a_first_rejection_keeps_the_personas_own_model_and_adds_nothing_to_the_brief(
 }
 
 #[test]
-fn a_third_rejection_holds_the_bead_for_the_concierge_and_runs_no_session() {
+fn a_third_stronger_rejection_holds_the_bead_for_the_concierge_and_runs_no_session() {
     let f = fx("esc-three");
-    let spec = rejected(&f, 3);
+    let spec = rejected(&f, 5);
     seed(&f, "sp-e");
     let o = go(&f, "spira,plan", &[("SPIRA_TOML", spec.as_str())], Mode::Claim, BTreeMap::new(), commits_and_closes());
     assert_eq!(o.code, 0, "{}", o.log);
     assert!(o.seen.is_empty(), "a held bead is not claimed again");
     assert!(ledger_lines(&o).iter().any(|l| l.contains("status=escalation-hold")), "{:?}", ledger_lines(&o));
     let calls = o.w.lock().unwrap().exec_calls.iter().map(|c| c.1.join(" ")).collect::<Vec<_>>();
-    assert!(calls.iter().any(|c| c.starts_with("hold sp-e manual escalation-ceiling: 3 rejections")), "{calls:?}");
+    assert!(calls.iter().any(|c| c.starts_with("hold sp-e manual escalation-ceiling: 3 rejections on the stronger model")), "{calls:?}");
     assert!(calls.iter().any(|c| c.contains("--kind escalated") && c.contains("hold rejections=3")), "{calls:?}");
 }
 
