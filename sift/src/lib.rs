@@ -71,6 +71,11 @@ pub trait Acts {
     /// `prior` is the mend last filed for `id`: while it is open it is amended to the new tip and
     /// returned, so a bead has at most one open mend.
     fn mend(&mut self, id: &str, tip: &str, files: &[String], prior: Option<&str>) -> Result<String, String>;
+    /// Retires `mend`, filed for `id` while its branch did not merge: `tip` now does. A no-op
+    /// when the mend is already closed.
+    fn retire_mend(&mut self, _id: &str, _mend: &str, _tip: &str) -> Result<(), String> {
+        Ok(())
+    }
     /// Records that `tip` passed, on the lifecycle store.
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String>;
     fn tell(&mut self, msg: &str);
@@ -233,6 +238,11 @@ pub fn screen_with(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, po
             Err(e) => findings.push(Finding { reason: "policy-violation", text: format!("identity check refused: {e}") }),
         }
         if findings.is_empty() {
+            if let Some(mend) = store.last_mend(&c.id) {
+                if let Err(e) = acts.retire_mend(&c.id, &mend, &c.tip) {
+                    out.errors.push(format!("sift: {} mend {mend} not retired ({e})", c.id));
+                }
+            }
             if let Err(e) = store.record_screened(&c.id, &c.tip) {
                 out.errors.push(format!("sift: {} screened not recorded ({e})", c.id));
             }

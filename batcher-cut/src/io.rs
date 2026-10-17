@@ -1040,6 +1040,12 @@ pub fn lc_supersede(env: &Env, id: &str, keeper: &str) -> Result<(), String> {
     spira_config::lifecycle_row::close_with(&bin.to_string_lossy(), id, &reason, "sift", Some(keeper))
 }
 
+/// Close a mend bead whose conflict is gone, through the lifecycle's own close.
+pub fn retire_mend(env: &Env, mend: &str, reason: &str) -> Result<(), String> {
+    let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
+    spira_config::lifecycle_row::close_with(&bin.to_string_lossy(), mend, reason, "sift", None)
+}
+
 /// The evidence a send-back stands on, written on the bead before the GateRed.
 pub fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
     // batch-job: bead.sh amend is a bead-store write that takes as long as the store does

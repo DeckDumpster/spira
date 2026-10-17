@@ -30,6 +30,7 @@ mod git_evidence;
 mod group;
 mod legacy_files;
 mod live;
+mod mend_retire;
 mod mend_watch;
 mod mending;
 mod migrate;
@@ -677,6 +678,9 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
     // transaction that recorded the cascade (design §1: "WORKING stays WORKING, holder
     // told"). Best-effort: a note that fails to post is not a reason to undo an applied
     // machine transition.
+    if matches!(result, Ok(true)) && outcome.row.state != row.state {
+        mend_retire::retire_for(key, outcome.row.state, &mut mend_retire::Live(conn));
+    }
     if matches!(result, Ok(true)) && matches!(kind, bead::BeadEventKind::BaseWithdrawn { .. }) && outcome.row.state == bead::BeadState::Working {
         if let bead::BeadEventKind::BaseWithdrawn { prereq, tip } = &kind {
             let holder = outcome.row.holder.as_deref().unwrap_or("its holder");

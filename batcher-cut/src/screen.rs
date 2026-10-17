@@ -35,6 +35,12 @@ impl Acts for Live<'_> {
         }
         io::file_conflict_mend(self.env, self.repo, id, tip, files)
     }
+    fn retire_mend(&mut self, id: &str, mend: &str, tip: &str) -> Result<(), String> {
+        if !io::bead_open(self.env, mend) {
+            return Ok(());
+        }
+        io::retire_mend(self.env, mend, &format!("Bead {id} has a new tip {tip} that merges onto {}; the conflict this mend was filed for is gone.", self.repo.base))
+    }
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
         if self.sifted.get(id).map(String::as_str) == Some(tip) {
             return Ok(());
