@@ -212,6 +212,7 @@ pub(super) fn summon_mender(w: &World, c: &Ctx, batch: &str, suite: &str, attrib
         return;
     };
     let marker = rounds_dir(c).join(format!("{batch}.mender-{pass}-{suite}"));
+    sweep_menders(w, c);
     if marker.exists() {
         return;
     }
@@ -241,14 +242,24 @@ pub(super) fn summon_mender(w: &World, c: &Ctx, batch: &str, suite: &str, attrib
 }
 
 /// Close every mender bead filed for a batch that is closing: the failure it was filed for ends
-/// with the batch. Idempotent; a close that fails is said aloud and retried by the next call.
+/// with the batch. Idempotent; a close that fails says why and is retried by the next call, and
+/// every call also retires the menders of any other batch the lifecycle already holds terminal.
 pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
-    let prefix = format!("{batch}.mender-");
+    retire_marked(w, c, |b| b == batch, why);
+    sweep_menders(w, c);
+}
+
+pub(super) fn sweep_menders(w: &World, c: &Ctx) {
+    retire_marked(w, c, |b| matches!(w.lc.batch_state(b), Some((s, _)) if super::reconcile::terminal(&s)), "batch already closed");
+}
+
+fn retire_marked(w: &World, c: &Ctx, ended: impl Fn(&str) -> bool, why: &str) {
     let Ok(rd) = fs::read_dir(rounds_dir(c)) else { return };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
+        let Some((batch, _)) = name.split_once(".mender-") else { continue };
         let done = e.path().with_file_name(format!("{name}.retired"));
-        if !name.starts_with(&prefix) || name.ends_with(".retired") || done.exists() {
+        if name.ends_with(".retired") || done.exists() || !ended(batch) {
             continue;
         }
         let Ok(id) = fs::read_to_string(e.path()) else { continue };
@@ -256,11 +267,12 @@ pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
         if id.is_empty() {
             continue;
         }
-        if w.lib.bead_close(id, &format!("Batch {batch} closed ({why}); the failure this mender bead was filed for ended with it.")) {
-            let _ = write_atomic(&done, "");
-            w.out(format!("queue.sh: mender bead {id} retired — batch {batch} closed"));
-        } else {
-            w.err(format!("queue.sh: WARNING — mender bead {id} of closed batch {batch} could not be closed"));
+        match w.lib.bead_retire(id, &format!("Batch {batch} closed ({why}); the failure this mender bead was filed for ended with it.")) {
+            Ok(()) => {
+                let _ = write_atomic(&done, "");
+                w.out(format!("queue.sh: mender bead {id} retired — batch {batch} closed"));
+            }
+            Err(e) => w.err(format!("queue.sh: WARNING — mender bead {id} of closed batch {batch} could not be closed: {e}")),
         }
     }
 }

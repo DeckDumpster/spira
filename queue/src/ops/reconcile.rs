@@ -65,7 +65,7 @@ fn cannot_act(w: &World, c: &Ctx, file: &Path, kv: &Kv, what: &str) -> i32 {
     FAIL
 }
 
-fn terminal(state: &str) -> bool {
+pub(super) fn terminal(state: &str) -> bool {
     matches!(state, "LANDED" | "SETTLED" | "ABANDONED" | "DISCARDED")
 }
 
