@@ -163,7 +163,7 @@ _deploy_tick() {
     now="$(date +%s)"
     while IFS=$'\t' read -r sha n at title beads; do
         [ -n "$sha" ] || continue
-        json="$(cd "$repo_dir" && timeout 10 gh run list --workflow deploy.yml --commit "$sha" \
+        json="$(cd "$repo_dir" && timeout 5 gh run list --workflow deploy.yml --commit "$sha" \
             --json status,conclusion,url,createdAt,updatedAt 2>/dev/null)"; rc=$?
         res=""
         [ "$rc" -eq 0 ] && res="$(python3 -c "$_RUN_PY" <<< "$json")"
