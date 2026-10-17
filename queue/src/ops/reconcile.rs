@@ -89,22 +89,11 @@ fn land(w: &World, c: &Ctx, path: &Path, file: &Path, kv: &Kv, pr: &str, members
                 w.out(format!("verdict {name}: reconcile: PR {pr} merged but batch {id} was {s}; members landed from the merge at {sha}"));
             }
             Some((s, _)) if terminal(&s) => return cannot_act(w, c, file, kv, &format!("PR {pr} merged but batch {id} is already {s} on spira-lc")),
-            Some((mut s, v)) => {
-                let Ok(mut v) = v.trim().parse::<u64>() else { return cannot_act(w, c, file, kv, &format!("batch {id}: unreadable version {v:?}")) };
-                let run = format!("{{\"CiStarted\":{{\"run\":\"{pr}\"}}}}");
-                let walk: &[(&str, &str, &str)] = &[("OPEN", &run, "CI_RUNNING"), ("CI_RUNNING", "\"Green\"", "GREEN")];
-                for (from, kind, to) in walk {
-                    if s == *from {
-                        if let Err((rc, e)) = w.lc.batch_event(id, &s, &v.to_string(), "reconcile", kind) {
-                            return cannot_act(w, c, file, kv, &format!("spira-lc refused {kind} for batch {id} (rc={rc}): {e}"));
-                        }
-                        s = (*to).to_string();
-                        v += 1;
-                    }
-                }
-                if s != "GREEN" {
-                    return cannot_act(w, c, file, kv, &format!("batch {id} is {s} on spira-lc, not a state a merged PR can land from"));
-                }
+            Some(_) => {
+                let v = match super::verdict::walk_to_green(w, id, pr, "reconcile") {
+                    Ok(v) => v,
+                    Err((_, why)) => return cannot_act(w, c, file, kv, &why),
+                };
                 if let Err((rc, e)) = w.lc.land_batch(id, &v.to_string(), "reconcile", &sha) {
                     return cannot_act(w, c, file, kv, &format!("spira-lc refused land for batch {id} (rc={rc}): {e}"));
                 }
