@@ -14,6 +14,9 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// The yield record follows the verdict row; a stall there must not outlive the gate's own cap.
+const YIELD_DEADLINE_SECS: &str = "60";
+
 static SIGNALLED: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_signal(_: libc::c_int) {
@@ -593,8 +596,9 @@ impl World for Real {
         crate::telemetry::push_metrics(&crate::telemetry::metrics_sink(), run);
     }
     fn yield_sh(&self, y: &Path, run: &str, args: &[&str]) {
-        // batch-job: the yield script runs whatever the gate hands it
-        let _ = Command::new("bash")
+        let _ = Command::new("timeout")
+            .arg(YIELD_DEADLINE_SECS)
+            .arg("bash")
             .arg(y)
             .args(args)
             .env("SPIRA_RUN", run)
