@@ -122,7 +122,7 @@ fn the_sweep_visits_every_kind_and_acts_on_the_ones_at_threshold() {
         named("m-old", hold(Kind::Operator, Some(NOW - 4 * 24 * H), Some("why"))),
     ]);
     let mut state = SweepState::default();
-    let report = sweep(NOW, &mut env, &mut state, false, breaker()).unwrap();
+    let report = sweep(NOW, &mut env, &mut state, false, Some(breaker())).unwrap();
     assert_eq!(report.visited, 6);
     let mut acts = env.acts.clone();
     acts.sort();
@@ -145,9 +145,9 @@ fn a_second_pass_does_not_repeat_what_the_first_did() {
         named("p-old", hold(Kind::Poison, Some(NOW - 2 * 24 * H), None)),
     ]);
     let mut state = SweepState::default();
-    sweep(NOW, &mut env, &mut state, false, breaker()).unwrap();
+    sweep(NOW, &mut env, &mut state, false, Some(breaker())).unwrap();
     env.acts.clear();
-    let again = sweep(NOW + 600, &mut env, &mut state, false, breaker()).unwrap();
+    let again = sweep(NOW + 600, &mut env, &mut state, false, Some(breaker())).unwrap();
     assert!(env.acts.is_empty(), "{:?}", env.acts);
     assert!(again.wanted.is_empty());
 }
@@ -157,11 +157,11 @@ fn a_failed_action_is_retried_and_stays_wanted() {
     let mut env = Fake::new(vec![named("a-silent", hold(Kind::Ask, Some(0), Some("q")))]);
     env.fail = true;
     let mut state = SweepState::default();
-    let report = sweep(NOW, &mut env, &mut state, false, breaker()).unwrap();
+    let report = sweep(NOW, &mut env, &mut state, false, Some(breaker())).unwrap();
     assert!(matches!(report.taken[0].outcome, Outcome::Failed(_)));
     assert!(state.acted.is_empty(), "a failed step is not recorded as taken");
     env.fail = false;
-    sweep(NOW + 600, &mut env, &mut state, false, breaker()).unwrap();
+    sweep(NOW + 600, &mut env, &mut state, false, Some(breaker())).unwrap();
     assert_eq!(env.acts, vec![("a-silent".to_string(), "raise-ask")]);
 }
 
@@ -173,7 +173,7 @@ fn unreadable_mailboxes_skip_asks_instead_of_raising_every_one() {
     ]);
     env.asks = Err("no mailbox".into());
     let mut state = SweepState::default();
-    let report = sweep(NOW, &mut env, &mut state, false, breaker()).unwrap();
+    let report = sweep(NOW, &mut env, &mut state, false, Some(breaker())).unwrap();
     assert_eq!(report.skipped.len(), 1);
     assert_eq!(env.acts, vec![("p-old".to_string(), "diagnose-poison")]);
 }
@@ -182,7 +182,7 @@ fn unreadable_mailboxes_skip_asks_instead_of_raising_every_one() {
 fn an_unreadable_store_fails_the_sweep_and_acts_on_nothing() {
     let mut env = Fake::new(vec![]);
     env.holds = Err("store down".into());
-    assert!(sweep(NOW, &mut env, &mut SweepState::default(), false, breaker()).is_err());
+    assert!(sweep(NOW, &mut env, &mut SweepState::default(), false, Some(breaker())).is_err());
     assert!(env.acts.is_empty());
 }
 
@@ -190,7 +190,7 @@ fn an_unreadable_store_fails_the_sweep_and_acts_on_nothing() {
 fn shadow_records_the_step_and_does_none_of_it() {
     let mut env = Fake::new(vec![named("a-silent", hold(Kind::Ask, Some(0), Some("q")))]);
     let mut state = SweepState::default();
-    let report = sweep(NOW, &mut env, &mut state, true, breaker()).unwrap();
+    let report = sweep(NOW, &mut env, &mut state, true, Some(breaker())).unwrap();
     assert_eq!(report.taken[0].outcome, Outcome::Shadowed);
     assert!(env.acts.is_empty() && state.acted.is_empty());
 }
@@ -199,7 +199,7 @@ fn shadow_records_the_step_and_does_none_of_it() {
 fn state_for_a_hold_that_is_gone_is_forgotten() {
     let mut state = SweepState::default();
     state.acted.insert("holds:sp-gone:poison".into(), 5);
-    sweep(NOW, &mut Fake::new(vec![]), &mut state, false, breaker()).unwrap();
+    sweep(NOW, &mut Fake::new(vec![]), &mut state, false, Some(breaker())).unwrap();
     assert!(state.acted.is_empty());
 }
 
@@ -252,7 +252,7 @@ fn a_breaker_with_no_claims_or_no_window_is_refused() {
 fn a_tripped_wait_is_asked_about_even_when_its_snooze_has_expired() {
     let mut env = Fake::new(vec![hold(Kind::Wait, Some(NOW - 7200), Some("snooze-until:100 no-progress: stuck"))]);
     env.exits = exits_at(&[0, 1, 2, 3]);
-    let report = sweep(NOW, &mut env, &mut SweepState::default(), false, breaker()).unwrap();
+    let report = sweep(NOW, &mut env, &mut SweepState::default(), false, Some(breaker())).unwrap();
     assert_eq!(env.acts, vec![("sp-x".to_string(), "trip-breaker")], "{report:?}");
 }
 
@@ -260,6 +260,16 @@ fn a_tripped_wait_is_asked_about_even_when_its_snooze_has_expired() {
 fn an_untripped_wait_is_lifted_as_before() {
     let mut env = Fake::new(vec![hold(Kind::Wait, Some(NOW - 7200), Some("snooze-until:100"))]);
     env.exits = exits_at(&[0, 1, 2]);
-    sweep(NOW, &mut env, &mut SweepState::default(), false, breaker()).unwrap();
+    sweep(NOW, &mut env, &mut SweepState::default(), false, Some(breaker())).unwrap();
     assert_eq!(env.acts[0].1, "lift-wait");
+}
+
+#[test]
+fn an_unconfigured_breaker_does_not_stop_an_expired_wait_being_lifted() {
+    let mut env = Fake::new(vec![
+        named("w-due", hold(Kind::Wait, Some(0), Some(&format!("snooze-until:{}", NOW - 1)))),
+        named("w-early", hold(Kind::Wait, Some(0), Some(&format!("snooze-until:{}", NOW + 60)))),
+    ]);
+    let report = sweep(NOW, &mut env, &mut SweepState::default(), false, None).unwrap();
+    assert_eq!(env.acts, vec![("w-due".to_string(), "lift-wait")], "{report:?}");
 }

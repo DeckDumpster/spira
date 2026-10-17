@@ -216,7 +216,7 @@ pub struct Report {
 }
 
 /// Visits every hold once. `shadow` records what would be done and does none of it.
-pub fn sweep(now: u64, env: &mut dyn Env, state: &mut SweepState, shadow: bool, breaker: Breaker) -> Result<Report, String> {
+pub fn sweep(now: u64, env: &mut dyn Env, state: &mut SweepState, shadow: bool, breaker: Option<Breaker>) -> Result<Report, String> {
     let holds = env.holds()?;
     let asks = env.asks();
     let mut report = Report { visited: holds.len(), ..Report::default() };
@@ -233,7 +233,7 @@ pub fn sweep(now: u64, env: &mut dyn Env, state: &mut SweepState, shadow: bool, 
         };
         let tripped = match hold.kind {
             Kind::Wait => match env.exits(&hold.bead) {
-                Ok(exits) => breaker.tripped(&exits),
+                Ok(exits) => breaker.and_then(|b| b.tripped(&exits).map(|t| (t, b.window_secs()))),
                 Err(e) => {
                     report.skipped.push(format!("{key}: history unreadable: {e}"));
                     continue;
@@ -242,7 +242,7 @@ pub fn sweep(now: u64, env: &mut dyn Env, state: &mut SweepState, shadow: bool, 
             _ => None,
         };
         let action = match tripped {
-            Some(exits) => Some(Action::TripBreaker { exits, window_secs: breaker.window_secs() }),
+            Some((exits, window_secs)) => Some(Action::TripBreaker { exits, window_secs }),
             None => decide(now, hold, ask, state.acted.get(&key).copied()),
         };
         let Some(action) = action else { continue };

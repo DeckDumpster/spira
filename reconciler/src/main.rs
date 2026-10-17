@@ -1564,10 +1564,10 @@ fn run_hold_sweep(cfg: &Config, pending: &mut PendingMap) {
         .and_then(|claims| Ok((claims, spira_config::process::cfg_parse::<u32>("SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES")?)))
         .and_then(|(claims, minutes)| holds::Breaker::new(claims, minutes));
     let breaker = match breaker {
-        Ok(b) => b,
+        Ok(b) => Some(b),
         Err(e) => {
-            log_print(cfg, &format!("reconciler: holds: no-progress breaker unconfigured, sweep refused: {e}"));
-            return;
+            log_print(cfg, &format!("reconciler: holds: no-progress breaker unconfigured, breaker off, expired snoozes still lifted: {e}"));
+            None
         }
     };
     match holds::sweep(cfg.now_secs, &mut live, &mut state, shadow, breaker) {
