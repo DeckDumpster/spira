@@ -606,6 +606,10 @@ fn stabilize_round(
         println!("batcher {}: no test-*.sh corpus — the repo's declared tiers run locally before the merged tree reaches CI", repo.name);
         return forge_local_tier(env_, repo, wt, start_sha, members, round_branch);
     }
+    if suites.is_empty() && repo.land == Land::Local && gate::own::declares_own_testenv(wt) {
+        let head = io::head_of(wt)?;
+        return Ok(Some(StableRound { members, head, green_branch: round_branch, attribution_seconds: None, regreen_seconds: None, staged: None }));
+    }
     if suites.is_empty() {
         println!("batcher {}: round blocked — the merged tree has no test-*.sh suites; an empty corpus certifies nothing", repo.name);
         return Ok(None);
@@ -930,7 +934,7 @@ fn finish_local_round(
 ) -> Result<Option<io::Promotion>, String> {
     let head = io::head_of(wt)?;
     let named = io::named_ids(repo, base_sha, &head, &stable.members);
-    let bins_ok = io::bins_present(repo, wt, &head);
+    let bins_ok = io::bins_present(repo, wt, &head) || gate::own::declares_own_testenv(wt);
 
     let refuse = |msg: String| {
         println!("{msg}");
@@ -1895,6 +1899,29 @@ mod base_conflict_handling {
                 assert_eq!(s.head, io::head_of(&wt).unwrap());
             }
         }
+    }
+
+    #[test]
+    fn a_local_round_of_a_repo_declaring_its_own_testenv_is_stable_with_no_spira_corpus() {
+        let d = testkit::TempDir::new("batcher-cut-owntestenv");
+        let [base, _a, _b, _c, _root] = fixture(&d);
+        git(&d, &["checkout", "-q", "-b", "m1", &base]);
+        fs::create_dir_all(d.join(".spira")).unwrap();
+        fs::write(d.join(".spira").join("testenv.toml"), "").unwrap();
+        git(&d, &["add", ".spira"]);
+        git(&d, &["commit", "-qm", "m1"]);
+        let t1 = git(&d, &["rev-parse", "HEAD"]);
+        git(&d, &["checkout", "-q", "--detach", &base]);
+        let mut e = io::lifecycle_tests_env(&d);
+        fs::write(d.join("gate.sh"), "exit 0\n").unwrap();
+        testkit::write_exe(&e.testenv_bin, "#!/bin/sh\nexit 0\n");
+        e.run = d.to_path_buf();
+        e.home = d.to_path_buf();
+        let repo = Repo { name: "sibling".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local };
+        let wt = d.join("wt");
+        let r = stabilize_round(&e, &repo, &wt, &base, vec![member("sp-1", &t1)], None, &[]).unwrap();
+        let s = r.expect("a repo that judges itself is not blocked for lacking spira/test-*.sh");
+        assert_eq!(s.head, io::head_of(&wt).unwrap());
     }
 
     #[test]

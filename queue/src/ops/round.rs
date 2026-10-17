@@ -31,6 +31,8 @@ const PREEMPT_POLLS: u32 = 120;
 pub(super) const RECORD: &str = "round";
 pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const UNIT_RED: &str = "unit-tests";
+/// The one red a repository that judges itself reports: its testenv run as a whole.
+pub(super) const REPO_TESTENV_RED: &str = "testenv";
 pub(super) const LC_ACTOR: &str = "queue.sh";
 const PASSING: [&str; 2] = ["ok", "skip"];
 pub const BLOCKING: [&str; 5] = ["red", "timeout", "unreached", "deferred", "fault"];
@@ -960,7 +962,29 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
 
     let mut reds: Vec<String> = Vec::new();
     let mut timings = Timings { suites_s: 0, build_s: 0 };
-    if attest.is_none() {
+    if attest.is_none() && gate::own::declares_own_testenv(&wt) {
+        let results = rounds_dir(&c).join(format!("{batch}.results"));
+        let _ = fs::remove_dir_all(&results);
+        let _ = fs::create_dir_all(&results);
+        let began = w.clock.now();
+        let out = w.scripts.repo_testenv(&head, &c.r.name, c.s.round_wall_secs, &handle_of(&c, batch));
+        let _ = fs::remove_file(handle_of(&c, batch));
+        if preempt_marker(&c, batch).exists() {
+            w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
+            return PREEMPTED;
+        }
+        let wall = w.clock.now().saturating_sub(began);
+        timings = Timings { suites_s: wall, build_s: 0 };
+        if out.rc == 1 {
+            let _ = fs::write(results.join(format!("{REPO_TESTENV_RED}.out")), format!("{}{}", out.out, out.err));
+            reds.push(REPO_TESTENV_RED.into());
+        } else if out.rc != 0 {
+            let why = if matches!(out.rc, 124 | 137) { format!("testenv hung past its guard (elapsed={wall}s cap {}s)", c.s.round_wall_secs) } else { format!("testenv exited {}", out.rc) };
+            warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false));
+            w.err(format!("queue.sh {label}: {why}; the round is not judged\n{}", tail(&format!("{}{}", out.out, out.err), 20)));
+            return FAULT;
+        }
+    } else if attest.is_none() {
         let results = rounds_dir(&c).join(format!("{batch}.results"));
         let _ = fs::remove_dir_all(&results);
         let Some(base) = c.r.landref.clone() else {

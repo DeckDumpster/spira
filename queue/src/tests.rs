@@ -346,6 +346,7 @@ struct FScripts {
     judgement: RefCell<RunOut>,
     /// What `round-vm run` answers, and the `<suite>.result` files it leaves in --results-dir.
     round_vm: RefCell<RunOut>,
+    repo_testenv: RefCell<RunOut>,
     round_vm_results: RefCell<Vec<(String, String)>>,
     /// The `runner.meta` it leaves beside them (empty = none).
     round_vm_meta: RefCell<String>,
@@ -441,6 +442,11 @@ impl Scripts for FScripts {
             fs::write(results.join("runner.meta"), &*self.round_vm_meta.borrow()).unwrap();
         }
         self.round_vm.borrow().clone()
+    }
+    fn repo_testenv(&self, head: &str, repo: &str, wall_secs: u64, handle: &Path) -> RunOut {
+        self.calls.borrow_mut().push(format!("repo-testenv {head} {repo} wall={wall_secs}"));
+        fs::write(handle, "777").unwrap();
+        self.repo_testenv.borrow().clone()
     }
     fn unit_active_state(&self, unit: &str) -> String {
         self.unit_asked.borrow_mut().push(unit.to_string());
