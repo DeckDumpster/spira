@@ -383,7 +383,7 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
 /// commits into a batch.
 fn barred_prereq(w: &World, row: &crate::model::LcBeadRow) -> Option<String> {
     let mut seen = std::collections::HashSet::new();
-    let mut todo: Vec<String> = row.stack.clone();
+    let mut todo: Vec<String> = row.stack.keys().cloned().collect();
     while let Some(p) = todo.pop() {
         if !seen.insert(p.clone()) {
             continue;
@@ -391,7 +391,7 @@ fn barred_prereq(w: &World, row: &crate::model::LcBeadRow) -> Option<String> {
         match w.lc.bead_row(&p) {
             None => return Some(p),
             Some(pr) if !pr.holds.is_empty() || (pr.ejected_red_tip.is_some() && pr.ejected_red_tip == pr.tip) => return Some(p),
-            Some(pr) => todo.extend(pr.stack),
+            Some(pr) => todo.extend(pr.stack.into_keys()),
         }
     }
     None

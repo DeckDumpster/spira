@@ -1013,7 +1013,7 @@ impl T {
     }
     /// A spira-lc bead row entered at `since`.
     fn lc_row(&self, id: &str, state: &str, tip: &str, since: u64) {
-        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Vec::new(), ejected_red_tip: None, holder: None };
+        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Default::default(), ejected_red_tip: None, holder: None };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }
     fn open_record(&self, text: &str) {
@@ -1961,7 +1961,7 @@ fn open_batch_skips_a_certified_bead_stacked_on_a_held_prerequisite_until_the_ho
         let mut rows = t.lc.rows.borrow_mut();
         let rows = rows.as_mut().unwrap();
         rows[0].holds = vec!["manual".into()];
-        rows[1].stack = vec!["sp-p".into()];
+        rows[1].stack = [("sp-p".to_string(), "t0".to_string())].into();
     }
     t.bd.rows.borrow_mut().push(BeadRow { id: "sp-q".into(), status: Some("closed".into()), ..Default::default() });
     assert_eq!(t.run(&["open-batch", "--members", "sp-q"]), 1);
@@ -3255,4 +3255,97 @@ fn settle_adopts_a_green_forge_publish_the_record_does_not_know_then_opens_the_n
     assert!(calls.iter().any(|c| c.starts_with("pr-create spira/publish/")), "{calls:?}");
     assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=588\nhead=m3\n"));
     assert!(t.out().contains("adopted open publish PR 587"), "{}", t.out());
+}
+
+// ------------------------------------------------------------------------------ auto-stack
+
+fn waiting_fixture(t: &T, beads: &[(&str, &str, &[&str])]) {
+    t.var("SPIRA_STACK_SHARED_FILES", "Cargo.lock spira/conf.d/");
+    t.var("SPIRA_STACK_MAX_DEPTH", "4");
+    t.git.set("local/main", "m1");
+    for (n, (id, tip, files)) in beads.iter().enumerate() {
+        t.lc_row(id, "SUBMITTED", tip, 10 + n as u64);
+        t.git.set(&format!("refs/heads/spira/{id}"), tip);
+        t.git.branches.borrow_mut().push((format!("spira/{id}"), tip.to_string()));
+        t.git.bases.borrow_mut().insert(("m1".into(), tip.to_string()), "m1".into());
+        let stat: Vec<(&str, u32, u32)> = files.iter().map(|f| (*f, 1, 0)).collect();
+        t.git.stat("m1", tip, &stat);
+    }
+}
+
+fn restacks(t: &T) -> Vec<String> {
+    t.lc.calls.borrow().iter().filter(|c| c.contains("\"Restack\"")).cloned().collect()
+}
+
+#[test]
+fn three_beads_that_each_add_a_dependency_are_stacked_into_one_chain() {
+    let t = T::new(LandMode::QueueLocal);
+    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock", "a/Cargo.toml"]), ("sp-b", "tb", &["Cargo.lock", "b/Cargo.toml"]), ("sp-c", "tc", &["Cargo.lock", "c/Cargo.toml"])]);
+    assert_eq!(t.run(&["rebase-waiting"]), 0);
+    let r = restacks(&t);
+    assert_eq!(r.len(), 2, "{r:?}");
+    assert!(r[0].contains("event bead sp-b") && r[0].contains("\"stack\":{\"sp-a\":\"ta\"}") && r[0].contains("\"stack_depth\":1") && r[0].contains("rebased-tb"), "{}", r[0]);
+    assert!(r[1].contains("event bead sp-c") && r[1].contains("\"stack\":{\"sp-b\":\"rebased-tb\"}") && r[1].contains("\"stack_depth\":2"), "{}", r[1]);
+    assert_eq!(t.git.get("refs/heads/spira/sp-b").as_deref(), Some("rebased-tb"));
+    assert_eq!(t.git.get("refs/heads/spira/sp-a").as_deref(), Some("ta"), "the bottom bead is not moved");
+}
+
+#[test]
+fn beads_that_share_no_shared_file_are_left_alone() {
+    let t = T::new(LandMode::QueueLocal);
+    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["b/src/lib.rs"]), ("sp-c", "tc", &["c/src/lib.rs", "Cargo.toml"])]);
+    assert_eq!(t.run(&["rebase-waiting"]), 0);
+    assert!(restacks(&t).is_empty(), "{:?}", restacks(&t));
+}
+
+#[test]
+fn an_empty_shared_file_list_turns_auto_stack_off() {
+    let t = T::new(LandMode::QueueLocal);
+    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"])]);
+    t.var("SPIRA_STACK_SHARED_FILES", "");
+    assert_eq!(t.run(&["rebase-waiting"]), 0);
+    assert!(restacks(&t).is_empty());
+}
+
+#[test]
+fn a_conflicting_cut_leaves_the_later_bead_unstacked_and_its_branch_alone() {
+    let t = T::new(LandMode::QueueLocal);
+    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"])]);
+    t.git.rebase_fail.borrow_mut().insert("tb".into(), vec!["Cargo.lock".into()]);
+    assert_eq!(t.run(&["rebase-waiting"]), 0);
+    assert!(restacks(&t).is_empty());
+    assert_eq!(t.git.get("refs/heads/spira/sp-b").as_deref(), Some("tb"));
+    assert!(t.out().contains("sp-b: not-stacked: conflict files=Cargo.lock"), "{}", t.out());
+}
+
+#[test]
+fn a_refused_restack_puts_the_branch_back() {
+    let t = T::new(LandMode::QueueLocal);
+    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"])]);
+    t.lc.event_refused.set(Some("IllegalTransition"));
+    assert_eq!(t.run(&["rebase-waiting"]), 0);
+    assert_eq!(t.git.get("refs/heads/spira/sp-b").as_deref(), Some("tb"));
+}
+
+#[test]
+fn the_depth_cap_stops_a_chain() {
+    let t = T::new(LandMode::QueueLocal);
+    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"]), ("sp-c", "tc", &["Cargo.lock"])]);
+    t.var("SPIRA_STACK_MAX_DEPTH", "1");
+    assert_eq!(t.run(&["rebase-waiting"]), 0);
+    assert_eq!(restacks(&t).len(), 1);
+    assert!(t.out().contains("sp-c: not-stacked: depth 2 over SPIRA_STACK_MAX_DEPTH 1"), "{}", t.out());
+}
+
+#[test]
+fn a_stacked_bead_is_recut_when_its_prerequisite_tip_moved() {
+    let t = T::new(LandMode::QueueLocal);
+    waiting_fixture(&t, &[("sp-a", "ta2", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"])]);
+    t.lc.rows.borrow_mut().as_mut().unwrap()[1].stack = [("sp-a".to_string(), "ta1".to_string())].into();
+    assert_eq!(t.run(&["rebase-waiting"]), 0);
+    let r = restacks(&t);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].contains("event bead sp-b") && r[0].contains("\"stack\":{\"sp-a\":\"ta2\"}"), "{}", r[0]);
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.contains("rebase-stale sp-b")), "a stacked bead is cut onto its prerequisite, not the landing ref");
+    assert!(t.out().contains("sp-b: recut onto sp-a"), "{}", t.out());
 }

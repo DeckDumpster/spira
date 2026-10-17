@@ -3,6 +3,7 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 [added]
 "spira.gate_deadline" = 300
 "spira.git_lock_stale_secs" = 600
+"spira.stack_shared_files" = "Cargo.lock Cargo.toml spira/config-delta.toml spira/conf.d/ spira-lint/"
 "spira.scratch_max_age_hours" = 24
 "spira.sccache_dav_max_gb" = 40
 "spira.round_certify_wall_secs" = 900
