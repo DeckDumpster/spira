@@ -17,5 +17,8 @@ RestartSec=30
 StandardOutput=append:@SPIRA_RUN@/spira-metrics-vm.log
 StandardError=append:@SPIRA_RUN@/spira-metrics-vm.log
 
+[X-Spira]
+Plane=observability
+
 [Install]
 WantedBy=default.target
