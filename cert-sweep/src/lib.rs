@@ -448,3 +448,28 @@ pub fn red_body(e: &Event, first_fail: Option<&str>, note: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+/// The cgroup.procs file of the `spira-cert-sweep-*` service this process runs in, from the text
+/// of /proc/self/cgroup; None anywhere else, so a manual run never reaps a shell's cgroup.
+pub fn own_unit_procs(proc_cgroup: &str) -> Option<String> {
+    let path = proc_cgroup.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
+    let unit = path.rsplit('/').next()?;
+    (unit.starts_with("spira-cert-sweep-") && unit.ends_with(".service")).then(|| format!("/sys/fs/cgroup{path}/cgroup.procs"))
+}
+
+#[cfg(test)]
+mod unit_cgroup_tests {
+    use super::own_unit_procs;
+
+    #[test]
+    fn only_a_cert_sweep_service_cgroup_is_reaped() {
+        let svc = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-cert-sweep-sample-prod.service\n";
+        assert_eq!(
+            own_unit_procs(svc).unwrap(),
+            "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/spira-cert-sweep-sample-prod.service/cgroup.procs"
+        );
+        assert!(own_unit_procs("0::/user.slice/user-1000.slice/session-3.scope\n").is_none());
+        assert!(own_unit_procs("0::/user.slice/user@1000.service/app.slice/other.service\n").is_none());
+        assert!(own_unit_procs("").is_none());
+    }
+}

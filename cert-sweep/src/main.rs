@@ -29,6 +29,21 @@ extern "C" {
 }
 const LOCK_EX: i32 = 2;
 
+extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+
+/// Podman conmon/exec processes outlive the runner in the unit's cgroup and time out the stop
+/// path, failing a green sweep; kill everything but ourselves once the runner has returned.
+fn reap_unit_leftovers() {
+    let Some(procs) = fs::read_to_string("/proc/self/cgroup").ok().and_then(|c| cert_sweep::own_unit_procs(&c)) else { return };
+    let me = std::process::id() as i32;
+    for pid in fs::read_to_string(procs).unwrap_or_default().lines().filter_map(|l| l.trim().parse::<i32>().ok()).filter(|p| *p != me) {
+        // SAFETY: plain kill(2) on a pid read from our own cgroup.
+        unsafe { kill(pid, 9) };
+    }
+}
+
 const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME] [--start-deadline SECS] [--round-wait SECS] [--round-poll SECS]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
 
 fn main() -> ExitCode {
@@ -517,6 +532,7 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
+    reap_unit_leftovers();
     Ok((results_in(&rd), fs::read_to_string(&log).unwrap_or_default()))
 }
 
@@ -540,5 +556,6 @@ fn run_on_host(f: &Flags, repo: &str, tip: &str, picks: &[String]) -> Result<(Ve
     child.stdout.take().unwrap().read_to_string(&mut out).map_err(|e| e.to_string())?;
     let st = child.wait().map_err(|e| e.to_string())?;
     eprintln!("cert-sweep: testenv exited {:?}", st.code());
+    reap_unit_leftovers();
     Ok((parse_testenv_stdout(&out), out))
 }
