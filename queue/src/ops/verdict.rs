@@ -833,20 +833,39 @@ fn reap_stale_queue_refs(w: &World, c: &Ctx, path: &Path, base: &str) {
     }
 }
 
+/// Walks the batch's lifecycle row from wherever it stands to GREEN, recording every transition it
+/// passes through: a forge batch's row stays OPEN while its PR's CI runs, so landing is the first
+/// time CI_RUNNING and Green are written, and a row a red already started is only missing Green.
+/// Returns the row's version at GREEN.
+pub(super) fn walk_to_green(w: &World, id: &str, pr: &str, actor: &str) -> Result<u64, (String, String)> {
+    let Some((mut s, v)) = w.lc.batch_state(id) else { return Err((String::new(), format!("spira-lc has no readable row for batch {id}"))) };
+    let Ok(mut v) = v.trim().parse::<u64>() else { return Err((s, format!("batch {id}: unreadable version {v:?}"))) };
+    let run = format!("{{\"CiStarted\":{{\"run\":\"{pr}\"}}}}");
+    for (from, kind, to) in [("OPEN", run.as_str(), "CI_RUNNING"), ("CI_RUNNING", "\"Green\"", "GREEN")] {
+        if s == from {
+            if let Err((rc, e)) = w.lc.batch_event(id, &s, &v.to_string(), actor, kind) {
+                return Err((s, format!("spira-lc refused {kind} for batch {id} (rc={rc}): {e}")));
+            }
+            s = to.to_string();
+            v += 1;
+        }
+    }
+    if s != "GREEN" {
+        return Err((s.clone(), format!("batch {id} is {s} on spira-lc, not a state a merged PR can land from")));
+    }
+    Ok(v)
+}
+
 /// The lifecycle's GREEN → LANDED walk (D3); best-effort, never blocks.
 fn lc_land(w: &World, b: &Batch) -> bool {
-    let (Some(id), Some(v)) = (b.kv.get("batch_id"), b.kv.get("version").and_then(|v| v.trim().parse::<u64>().ok())) else {
-        return true;
-    };
-    let steps = [("OPEN", format!("{{\"CiStarted\":{{\"run\":\"{}\"}}}}", b.pr)), ("CI_RUNNING", "\"Green\"".to_string())];
-    let mut v = v;
-    for (expect, kind) in steps {
-        if let Err((rc, e)) = w.lc.batch_event(id, expect, &v.to_string(), "verdict.sh", &kind) {
-            w.err(format!("verdict: spira-lc event batch {id} ({kind}) refused (rc={rc}): {e}"));
+    let Some(id) = b.kv.get("batch_id") else { return true };
+    let v = match walk_to_green(w, id, &b.pr, "verdict.sh") {
+        Ok(v) => v,
+        Err((_, e)) => {
+            w.err(format!("verdict: spira-lc event batch {id} refused: {e}"));
             return false;
         }
-        v += 1;
-    }
+    };
     match w.lc.land_batch(id, &v.to_string(), "verdict.sh", &b.head) {
         Ok(()) => {
             w.out(format!("verdict: {id} landed on spira-lc (sha={})", b.head));

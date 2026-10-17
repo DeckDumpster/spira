@@ -382,6 +382,7 @@ fn green_with_lifecycle_on_walks_the_batch_to_landed_on_spira_lc() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta\nbranch=\nbatch_id=B1\nversion=3\n");
     t.git.set("origin/main", "b0");
+    t.lc.batch_states.borrow_mut().insert("B1".into(), ("OPEN".into(), "3".into()));
     t.forge.status.borrow_mut().push(Some("green\nhead-sha: h1\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     let lc = t.lc.calls.borrow().clone();
@@ -389,6 +390,20 @@ fn green_with_lifecycle_on_walks_the_batch_to_landed_on_spira_lc() {
     assert!(lc.contains(&"event batch B1 CI_RUNNING 4 \"Green\"".to_string()), "{lc:?}");
     assert!(lc.contains(&"land B1 5 h1".to_string()), "{lc:?}");
     assert!(t.out().contains("verdict: B1 landed on spira-lc (sha=h1)"));
+}
+
+#[test]
+fn green_on_a_batch_a_red_already_started_records_green_with_no_gap_and_no_second_ci_started() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta\nbranch=\nbatch_id=B1\nversion=3\n");
+    t.git.set("origin/main", "b0");
+    t.lc.batch_states.borrow_mut().insert("B1".into(), ("CI_RUNNING".into(), "4".into()));
+    t.forge.status.borrow_mut().push(Some("green\nhead-sha: h1\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    let lc = t.lc.calls.borrow().clone();
+    assert!(!lc.iter().any(|c| c.contains("CiStarted")), "{lc:?}");
+    assert!(lc.contains(&"event batch B1 CI_RUNNING 4 \"Green\"".to_string()), "{lc:?}");
+    assert!(lc.contains(&"land B1 5 h1".to_string()), "{lc:?}");
 }
 
 #[test]
