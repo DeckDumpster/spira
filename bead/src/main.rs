@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use bead::claimdesc::notify_live_aeon;
 use bead::{
     branch_candidate, branch_label, chamber_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
-    awaits_dispatch, lane_check, find_id_by_title, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    awaits_dispatch, lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -146,8 +146,8 @@ fn is_incident(home: &str, id: &str) -> bool {
 /// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
-fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
-    if incident.is_none() && mirror.is_none() && !express {
+fn bdq_create(home: &str, args: &[String], incident: Option<&str>, stack_after: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
+    if incident.is_none() && stack_after.is_none() && mirror.is_none() && !express {
         return bdq_status(home, args);
     }
     let (code, mut stdout) = bdq_capture_with(home, args, Stdio::inherit());
@@ -214,6 +214,13 @@ fn bdq_create(home: &str, args: &[String], incident: Option<&str>, mirror: Optio
         let r = bdq_status(home, &s(&["dep", "add", incident, &new_id, "--type", "blocks"]));
         if r != 0 {
             eprintln!("bead: file: {new_id} filed but the blocks edge {incident} -> {new_id} failed; add it: bd dep add {incident} {new_id}");
+        }
+        rc |= r;
+    }
+    if let Some(base) = stack_after {
+        let r = bdq_status(home, &s(&["dep", "add", &new_id, base, "--type", "blocks"]));
+        if r != 0 {
+            eprintln!("bead: file: {new_id} filed but the stack edge {new_id} -> {base} failed; add it: bead.sh dep add {new_id} {base}");
         }
         rc |= r;
     }
@@ -542,6 +549,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut json = false;
     let mut parent: Option<String> = None;
     let mut target: Option<String> = None;
+    let mut stack_after: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -549,6 +557,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             "--target" => {
                 i += 1;
                 target = args.get(i).cloned();
+            }
+            "--stack-after" => {
+                i += 1;
+                stack_after = args.get(i).cloned();
             }
             "--for" => {
                 i += 1;
@@ -743,6 +755,14 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
 
+        if let Some(base) = &stack_after {
+            let (_, shown) = bdq_capture(home, &s(&["show", base, "--json"]));
+            if let Some(why) = stack_after_refusal(base, parse_show_row(&shown).as_ref(), &repo) {
+                eprintln!("bead: {why}");
+                return 2;
+            }
+        }
+
         let mut labels = work_labels(&fayth_labels, &repo);
         if submitted {
             labels.push(',');
@@ -772,12 +792,16 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push("--no-inherit-labels".into());
         }
         let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
-        let rc = bdq_create(home, &bd_args, incident_parent.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref(), Some(repo.as_str()));
+        let rc = bdq_create(home, &bd_args, incident_parent.as_deref(), stack_after.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref(), Some(repo.as_str()));
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_fayth), ("repo", &repo), ("kind", "work")]);
         }
         rc
     } else {
+        if stack_after.is_some() {
+            eprintln!("bead: --stack-after applies only to work beads");
+            return 2;
+        }
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
             Some(schema_name(home, "insight"))
@@ -818,7 +842,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        let rc = bdq_create(home, &bd_args, incident_parent.as_deref(), None, express, None, None);
+        let rc = bdq_create(home, &bd_args, incident_parent.as_deref(), None, None, express, None, None);
         if rc == 0 {
             spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", ""), ("repo", repo.as_deref().unwrap_or("")), ("kind", &kind)]);
         }

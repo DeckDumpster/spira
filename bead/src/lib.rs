@@ -115,6 +115,24 @@ pub fn work_labels(fayth_labels: &str, repo: &str) -> String {
     format!("{fayth_labels},repo:{repo}")
 }
 
+/// Why `base` cannot be stacked under a new bead of `repo`, or `None` when it can: only a
+/// live work bead of the same repo carries commits the new branch can be cut from.
+pub fn stack_after_refusal(base: &str, row: Option<&ShowRow>, repo: &str) -> Option<String> {
+    let Some(row) = row else {
+        return Some(format!("--stack-after {base}: no such bead"));
+    };
+    if matches!(row.issue_type.as_str(), "epic" | "decision" | "event" | "molecule" | "gate") {
+        return Some(format!("--stack-after {base}: a {} carries no commits to stack on", row.issue_type));
+    }
+    if row.status == "closed" {
+        return Some(format!("--stack-after {base}: already closed; file without --stack-after"));
+    }
+    if !row.labels.iter().any(|l| l == &format!("repo:{repo}")) {
+        return Some(format!("--stack-after {base}: not a repo:{repo} bead; a stack stays within one repo"));
+    }
+    None
+}
+
 /// The `-l` label list for a non-`work` kind: the scope label, `insight` for the `insight`
 /// kind, and `repo:<repo>` when a repo was given.
 pub fn non_work_labels(scope_label: &str, insight_label: Option<&str>, repo: Option<&str>) -> String {

@@ -80,6 +80,14 @@ cat > "$STUB_BD" <<'STUB'
 [ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
     create) printf '%s\n' "$*" >> "$BD_LOG_PATH"; printf 'sp-test\n'; exit 0 ;;
+    dep)    printf '%s\n' "$*" >> "$BD_LOG_PATH"; exit 0 ;;
+    show)   case "${2:-}" in
+                sp-base)  echo '[{"id":"sp-base","status":"open","issue_type":"task","labels":["plan","repo:testrepo"]}]' ;;
+                sp-other) echo '[{"id":"sp-other","status":"open","issue_type":"task","labels":["develop","repo:dev-repo"]}]' ;;
+                sp-epic)  echo '[{"id":"sp-epic","status":"open","issue_type":"epic","labels":["repo:testrepo"]}]' ;;
+                sp-done)  echo '[{"id":"sp-done","status":"closed","issue_type":"task","labels":["repo:testrepo"]}]' ;;
+                *)        exit 1 ;;
+            esac; exit 0 ;;
     *)      exit 0 ;;
 esac
 STUB
@@ -294,6 +302,22 @@ out="$(run_bead "no parent given" --for builder --repo testrepo)"; rc=$?
 is     "no parent: exits 0"                     "0"                   "$rc"
 nowant "no parent: --parent NOT passed"         "--parent"            "$(cat "$BD_LOG")"
 nowant "no parent: --no-inherit-labels NOT passed" "--no-inherit-labels" "$(cat "$BD_LOG")"
+
+# --stack-after: the new bead depends on the named base through a blocks edge, which is
+# what lets the claim cut its branch from the base's tip; a base that cannot be stacked
+# under refuses before anything is created.
+out="$(run_bead "stacked piece" --for builder --repo testrepo --stack-after sp-base)"; rc=$?
+is   "stack-after: exits 0"                  "0"                              "$rc"
+want "stack-after: blocks edge to the base"  "dep add sp-test sp-base --type blocks" "$(cat "$BD_LOG")"
+out="$(run_bead "no stack" --for builder --repo testrepo)"
+nowant "no stack-after: no dep edge"         "dep add"                        "$(cat "$BD_LOG")"
+for bad in sp-other sp-epic sp-done sp-missing; do
+    out="$(run_bead "stacked piece" --for builder --repo testrepo --stack-after $bad)"; rc=$?
+    is     "stack-after $bad: refused"       "2"       "$rc"
+    nowant "stack-after $bad: nothing created" "create" "$(cat "$BD_LOG")"
+done
+out="$(run_bead "an insight" --kind insight --repo testrepo --stack-after sp-base)"; rc=$?
+is   "stack-after: refused on a non-work kind" "2" "$rc"
 
 # a title that begins with its --repo name files: the repo is a required field, not a title rule
 out="$(run_bead "testrepo x: y" --for builder --repo testrepo 2>&1)"; rc=$?
