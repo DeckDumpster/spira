@@ -79,15 +79,24 @@ pub trait Systemctl {
 
 pub struct RealSystemctl {
     pub program: String,
+    /// The generic per-call deadline, in `timeout` seconds.
+    pub call_secs: String,
 }
 
 impl RealSystemctl {
     pub fn from_env() -> RealSystemctl {
-        RealSystemctl { program: std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into()) }
+        RealSystemctl {
+            program: std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into()),
+            call_secs: spira_config::bounded::CALL_TIMEOUT_SECS.into(),
+        }
     }
 
     fn run(&self, args: &[&str]) -> Result<String, String> {
-        let out = spira_config::bounded::bounded(&self.program)
+        self.run_for(args, &self.call_secs)
+    }
+
+    fn run_for(&self, args: &[&str], secs: &str) -> Result<String, String> {
+        let out = spira_config::bounded::bounded_for(&self.program, secs)
             .arg("--user")
             .args(args)
             .output()
@@ -145,6 +154,20 @@ pub fn budget_from_show(text: &str) -> Option<std::time::Duration> {
     Some(restart? + start?)
 }
 
+/// `TimeoutStopUSec` + `TimeoutStartUSec` from `systemctl show` text: what a restart job may
+/// take. None if either is infinite.
+pub fn restart_budget_from_show(text: &str) -> Option<std::time::Duration> {
+    let (mut stop, mut start) = (None, None);
+    for line in text.lines() {
+        match line.split_once('=') {
+            Some(("TimeoutStopUSec", v)) => stop = parse_timespan(v),
+            Some(("TimeoutStartUSec", v)) => start = parse_timespan(v),
+            _ => {}
+        }
+    }
+    Some(stop? + start?)
+}
+
 pub fn parse_show(text: &str) -> UnitState {
     let mut s = UnitState::default();
     for line in text.lines() {
@@ -171,7 +194,17 @@ impl Systemctl for RealSystemctl {
         self.run(&["show", unit, "-p", "RestartUSec", "-p", "TimeoutStartUSec"]).ok().and_then(|t| budget_from_show(&t))
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
-        self.run(&["restart", unit]).map(|_| ())
+        let budget = self
+            .run(&["show", unit, "-p", "TimeoutStopUSec", "-p", "TimeoutStartUSec"])
+            .ok()
+            .and_then(|t| restart_budget_from_show(&t))
+            .map(|b| b.min(MAX_UNIT_WAIT));
+        match budget {
+            Some(b) if b.as_secs_f64() > self.call_secs.parse::<f64>().unwrap_or(0.0) => {
+                self.run_for(&["restart", unit], &format!("{:.1}", b.as_secs_f64())).map(|_| ())
+            }
+            _ => self.run(&["restart", unit]).map(|_| ()),
+        }
     }
     fn kill(&self, unit: &str) -> Result<(), String> {
         self.run(&["kill", unit]).map(|_| ())

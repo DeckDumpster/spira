@@ -2324,3 +2324,33 @@ fn a_documentation_line_names_current_so_two_releases_render_one_unit() {
     let stale = a.replace("current", "0ldsha");
     assert_eq!(units::without_documentation(&stale), units::without_documentation(&a), "a Documentation-only difference is not a change");
 }
+
+// ---------------------------------------------------------------- restart budget
+
+fn fake_systemctl_script(dir: &Path, restart_sleep: &str) -> String {
+    let p = dir.join("systemctl");
+    fs::write(
+        &p,
+        format!("#!/bin/sh\ncase \"$2\" in\n  show) printf 'TimeoutStopUSec=1min 30s\\nTimeoutStartUSec=1min 30s\\n';;\n  restart) sleep {restart_sleep};;\nesac\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+    p.display().to_string()
+}
+
+#[test]
+fn a_restart_longer_than_the_call_deadline_but_within_the_units_budget_succeeds() {
+    let d = TempDir::new("restart-budget");
+    let sc = crate::systemctl::RealSystemctl { program: fake_systemctl_script(d.path(), "0.6"), call_secs: "0.2".into() };
+    sc.restart("u.service").unwrap();
+}
+
+#[test]
+fn a_restart_past_the_units_own_budget_still_fails() {
+    let d = TempDir::new("restart-budget-over");
+    let p = d.path().join("systemctl");
+    fs::write(&p, "#!/bin/sh\ncase \"$2\" in\n  show) printf 'TimeoutStopUSec=100ms\\nTimeoutStartUSec=100ms\\n';;\n  restart) sleep 5;;\nesac\n").unwrap();
+    fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+    let sc = crate::systemctl::RealSystemctl { program: p.display().to_string(), call_secs: "0.1".into() };
+    assert!(sc.restart("u.service").unwrap_err().contains("124"));
+}
