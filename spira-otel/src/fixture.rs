@@ -65,6 +65,7 @@ impl Sink {
     /// Runs `exe args` in a minimal environment whose config (`toml`) points the metrics endpoint
     /// at this sink, then returns what was pushed. `extra_env` is added to that environment.
     pub fn run(&self, exe: &str, args: &[&str], toml: &std::path::Path, home: &str, extra_env: &[(&str, &str)]) -> Vec<Seen> {
+        // batch-job: runs the binary under test to completion
         std::process::Command::new(exe)
             .args(args)
             .env_clear()
