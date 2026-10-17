@@ -108,60 +108,55 @@ pub fn ensure_reader_mailboxes() -> Result<(), String> {
 /// upstream now: the predecessor sets `$SPIRA_TOML` to the right file, rather than this
 /// binary trusting an exported override on top of whatever `$SPIRA_TOML` says.
 pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
-    let repo_env = nonempty_env("SPIRA_REPO");
-    let home = resolve_home(nonempty_env("SPIRA_HOME"), repo_env.clone(), argv0_path().as_deref())?;
+    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+    let cfg = |k: &str| spira_config::process::cfg(k);
+    host_from(instance, &env_map, &cfg, spira_config::process::spec()?, crate::orchestrate::path_tail().unwrap_or_default())
+}
+
+/// [`host_from_env`] over explicit inputs: the environment, the config door and the values
+/// read from process state are all passed in, so a test never edits the process environment.
+pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, String>, cfg: &dyn Fn(&str) -> Result<String, String>, toml: String, path_tail: String) -> Result<HostValues, String> {
+    let get = |k: &str| env_map.get(k).filter(|v| !v.is_empty()).cloned();
+    let repo_env = get("SPIRA_REPO");
+    let home = resolve_home(get("SPIRA_HOME"), repo_env.clone(), argv0_path().as_deref())?;
     let repo = repo_env.unwrap_or_else(|| {
-        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
         let mapped = spira_config::repos::Registry::from_env(env_map.clone(), Path::new(&home)).root("");
-        let derived = spira_config::resolve::derive_repo_filesystem(Path::new(&home), &env_map).to_string_lossy().into_owned();
+        let derived = spira_config::resolve::derive_repo_filesystem(Path::new(&home), env_map).to_string_lossy().into_owned();
         units_repo(mapped, derived, |p| p.join(".git").exists())
     });
-    let cockpit = spira_config::process::cfg("SPIRA_COCKPIT")?;
-    let dav_addr = sccache_dav_addr()?;
-    let env_bin = nonempty_env("HOME").map(|h| spira_config::spira_env_bin(&h)).unwrap_or_default();
+    let cockpit = cfg("SPIRA_COCKPIT")?;
+    let dav_addr = cfg(release::units::SCCACHE_DAV_ADDR_KEY)?;
+    let env_bin = get("HOME").map(|h| spira_config::spira_env_bin(&h)).unwrap_or_default();
     let env_dolt = Path::new(&env_bin).join("dolt");
-    let dolt = nonempty_env("DOLT").or_else(|| env_dolt.is_file().then(|| env_dolt.to_string_lossy().into_owned())).or_else(|| which("dolt")).unwrap_or_default();
+    let dolt = get("DOLT").or_else(|| env_dolt.is_file().then(|| env_dolt.to_string_lossy().into_owned())).or_else(|| which("dolt")).unwrap_or_default();
     // SPIRA_LC_PASSWORD_FILE is PROCEDURAL (spira/conf.d): its default depends on whether
-    // the same-user credential file exists RIGHT NOW, which a value baked into `$SPIRA_TOML`
-    // at generation time could not track — `spira_config::resolve::lc_credential_default`
-    // (not `cfg`) is this key's own correct door, same as before this bead, minus the
-    // environment-override rung.
-    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-    let lc_password_file = spira_config::resolve::lc_credential_default(&env_map);
+    // the same-user credential file exists RIGHT NOW, so it has its own door, not `cfg`.
+    let lc_password_file = spira_config::resolve::lc_credential_default(env_map);
     // `resolve_run_dir` (not bare `cfg("SPIRA_RUN")`) because it also runs the
-    // instance-containment check `cfg()` does not; its own doc now says "no environment
-    // override" too, so no override rung remains here either.
-    let run = spira_config::resolve::resolve_run_dir(&env_map, Path::new(&home)).map(|p| p.to_string_lossy().into_owned())?;
+    // instance-containment check `cfg()` does not.
+    let run = spira_config::resolve::resolve_run_dir(env_map, Path::new(&home)).map(|p| p.to_string_lossy().into_owned())?;
     if run.is_empty() {
         return Err("SPIRA_RUN is unset and spira.run resolved empty — refusing to render units that would log to the filesystem root".to_string());
     }
-    let db = spira_config::process::cfg("SPIRA_DB")?;
-    let repo_map = spira_config::process::cfg("SPIRA_REPO_MAP")?;
-    let dolt_data = spira_config::process::cfg("SPIRA_DOLT_DATA")?;
-    let testdb_data = spira_config::process::cfg("SPIRA_TESTDB_DATA")?;
-    // The units run under the same one source this installer runs under — named, required.
-    let toml = spira_config::process::spec()?;
     Ok(HostValues {
         home,
         lc_password_file,
         toml,
         repo,
         run,
-        db,
-        repo_map,
+        db: cfg("SPIRA_DB")?,
+        repo_map: cfg("SPIRA_REPO_MAP")?,
         cockpit,
-        dolt_data,
-        testdb_data,
+        dolt_data: cfg("SPIRA_DOLT_DATA")?,
+        testdb_data: cfg("SPIRA_TESTDB_DATA")?,
         dolt,
-        prod: spira_config::process::cfg("SPIRA_PROD")?,
+        prod: cfg("SPIRA_PROD")?,
         instance: instance.to_string(),
-        testdb_port: spira_config::process::cfg("SPIRA_TESTDB_PORT")?,
-        snap_stale_s: spira_config::process::cfg("SPIRA_SNAP_STALE_S")?,
-        watchtower_start_timeout_s: spira_config::process::cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
-        path_tail: crate::orchestrate::path_tail().unwrap_or_default(),
+        testdb_port: cfg("SPIRA_TESTDB_PORT")?,
+        snap_stale_s: cfg("SPIRA_SNAP_STALE_S")?,
+        watchtower_start_timeout_s: cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
+        path_tail,
         env_bin,
-        // sp-xtdqi-2: the key name lives once, in `release::units` — `release`'s own
-        // activate/render gate reads the same constant, never a second hand-written literal.
         sccache_dav_addr: dav_addr,
     })
 }
@@ -453,49 +448,45 @@ mod stale_release_tests {
 #[cfg(test)]
 mod host_from_env_tests {
     use super::*;
+    use std::collections::BTreeMap;
 
-    /// sp-xp0u2: an upgrade's re-render reaches units-install with SPIRA_HOME pointing into
-    /// the release and NO `SPIRA_RUN` in the environment (the predecessor's deploy.sh
-    /// re-renders under `env -i <orig env>`). The run dir must still resolve to a real
-    /// directory — before the fix it rendered empty, and every unit logged to
-    /// `append:/<name>.log`. Per Ryan 2026-10-05 (one source of config), the fix for a
-    /// predecessor's trimmed environment is `$SPIRA_TOML` pointing at the right file, not an
-    /// environment override on top of it — so this now declares `spira.run` in a real
-    /// fixture document instead of leaving config unset and relying on an ambient guess.
+    fn resolve_with(t: &testkit::TempDir, declared_run: &Path, env: &[(&str, &str)]) -> Result<HostValues, String> {
+        let toml = spira_config::process::fixture_toml(t.path(), &[("SPIRA_RUN", &declared_run.display().to_string())]);
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("spira");
+        let mut map: BTreeMap<String, String> = env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        map.insert("SPIRA_HOME".into(), home.display().to_string());
+        map.insert("SPIRA_TOML".into(), toml.display().to_string());
+        let resolved = spira_config::resolve::resolve_for_process(&home, &spira_config::resolve::derive_home_repo(&home, &map), &map)?;
+        let cfg = |k: &str| resolved.values.get(k).cloned().ok_or_else(|| format!("{k} is not registered"));
+        host_from("prod", &map, &cfg, toml.display().to_string(), String::new())
+    }
+
     #[test]
     fn run_resolves_from_config_when_the_environment_carries_none() {
         let t = testkit::TempDir::new("host-env-run");
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("spira");
         let run_dir = t.join("run");
-        let toml = spira_config::process::fixture_toml(t.path(), &[("SPIRA_RUN", &run_dir.display().to_string())]);
-        let _env = testkit::env(&[
-            ("SPIRA_HOME", Some(home.to_str().unwrap())),
-            ("SPIRA_RUN", None),
-            ("SPIRA_REPO", None),
-            ("SPIRA_TOML", toml.to_str()),
-            ("SPIRA_CONF", None),
-        ]);
-        let host = host_from_env("prod").expect("host values resolve");
-        assert_eq!(host.run, run_dir.display().to_string(), "the declared spira.run must reach host_from_env");
+        let host = resolve_with(&t, &run_dir, &[]).expect("host values resolve");
+        assert_eq!(host.run, run_dir.display().to_string(), "the declared spira.run must reach host_from");
         assert!(Path::new(&host.run).is_absolute(), "run dir {} is not absolute", host.run);
     }
 
-    /// The companion regression guard: an explicit `SPIRA_RUN` in the environment must NOT
-    /// win over the declared config anymore — the opposite of this test's name before this
-    /// bead, when "the environment wins" was still host_from_env's own contract.
     #[test]
     fn the_declared_run_wins_over_a_stale_environment_value() {
         let t = testkit::TempDir::new("host-env-run-declared-wins");
-        let home = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("spira");
         let run_dir = t.join("declared-run");
-        let toml = spira_config::process::fixture_toml(t.path(), &[("SPIRA_RUN", &run_dir.display().to_string())]);
-        let _env = testkit::env(&[
-            ("SPIRA_HOME", Some(home.to_str().unwrap())),
-            ("SPIRA_RUN", Some("/explicit/run")),
-            ("SPIRA_REPO", None),
-            ("SPIRA_TOML", toml.to_str()),
-        ]);
-        assert_eq!(host_from_env("prod").expect("host values resolve").run, run_dir.display().to_string());
+        let host = resolve_with(&t, &run_dir, &[("SPIRA_RUN", "/explicit/run")]).expect("host values resolve");
+        assert_eq!(host.run, run_dir.display().to_string());
+    }
+
+    #[test]
+    fn the_resolver_ignores_the_process_environment_when_given_an_explicit_map() {
+        let t = testkit::TempDir::new("host-env-explicit");
+        let run_dir = t.join("run");
+        let elsewhere = t.join("process-home");
+        let _env = testkit::env(&[("SPIRA_HOME", elsewhere.to_str()), ("SPIRA_RUN", Some("/process/run"))]);
+        let host = resolve_with(&t, &run_dir, &[]).expect("host values resolve");
+        assert_ne!(host.home, elsewhere.display().to_string(), "the process SPIRA_HOME leaked into an explicit map");
+        assert_eq!(host.run, run_dir.display().to_string());
     }
 }
 
