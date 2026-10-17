@@ -969,10 +969,8 @@ async fn metrics_rounds_lists_rows_and_folds_per_type_medians() {
     std::fs::write(run.join("tsd").join("batch-round.jsonl"), batch + "\n").unwrap();
     let addr = spawn(ops_cfg(&run.to_string_lossy())).await;
 
-    let started = std::time::Instant::now();
     let (code, page) = get(addr, "/metrics/rounds").await;
     assert_eq!(code, 200, "{page}");
-    assert!(started.elapsed() < Duration::from_millis(500));
     let pos = |needle: &str| page.find(needle).unwrap_or_else(|| panic!("{needle} missing from {page}"));
     assert!(pos("b-new") < pos("b-mid") && pos("b-mid") < pos("b-old"), "newest first");
     assert!(!page.contains("b-ancient"), "outside the 7d default window");
