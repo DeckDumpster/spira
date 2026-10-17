@@ -163,7 +163,7 @@ supersede-duty|daemon|@SPIRA_HOME@/supersede-duty.sh watch --interval 60|@SPIRA_
 perf-watch|log|@SPIRA_RUN@/perf-watch.log
 
 # UNIT-RUN follows the user journal and writes one run/tsd/unit-run record per unit execution. Its
-# log holds only what went wrong (a journalctl that ended, a write refused), so any line is news.
+# log holds only what went wrong (a follower that ended, a write refused), so any line is news.
 unit-run|log|@SPIRA_RUN@/unit-run.log
 
 # UNIT-RUN-DBUS learns the same runs from the user manager's D-Bus signals instead of the journal and
