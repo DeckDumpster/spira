@@ -97,7 +97,7 @@ fn git(repo: &Path, args: &[&str]) -> Option<String> {
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
-fn changed_paths(repo: &Path, tip: &str, bases: &[&str]) -> Option<String> {
+pub(crate) fn changed_paths(repo: &Path, tip: &str, bases: &[&str]) -> Option<String> {
     let base = bases.iter().find(|b| !b.is_empty() && git(repo, &["rev-parse", "--verify", "--quiet", &format!("{b}^{{commit}}")]).is_some())?;
     git(repo, &["diff", "--name-only", &format!("{base}...{tip}")])
 }
