@@ -145,6 +145,8 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
         suite_timeout: num!("SPIRA_SUITE_TIMEOUT").unwrap_or(600),
         suite_cap: num!("SPIRA_TESTENV_SUITE_CAP").unwrap_or(900),
         gate_cap: num!("SPIRA_TESTENV_GATE_CAP").unwrap_or(300),
+        load_max_pct: num!("SPIRA_TESTENV_LOAD_MAX_PCT").unwrap_or(0),
+        load_wait: num!("SPIRA_TESTENV_LOAD_WAIT").unwrap_or(0),
         maxpar_requested,
         maxpar_refusal,
         maxpar_ceiling: num!("SPIRA_BATCH_MAXPAR_CEILING"),

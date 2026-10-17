@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=testenv
+DOC=Longest, in seconds, a capped testenv run waits for host load to fall before starting anyway
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The wait counts against the run's own cap, so keep it well under SPIRA_TESTENV_SUITE_CAP.
+    # Past it the run starts regardless and logs that it did. 0 disables the wait.
+    : "${SPIRA_TESTENV_LOAD_WAIT:=240}"
+SPIRA_CONF_DEFAULT_EOF

@@ -10,6 +10,7 @@ use crate::cap;
 use crate::cli::{Invocation, RunArgs, SuitesArg};
 use crate::fixture::{Fixtures, Session, SetupFault, WORKSPACE};
 use crate::foreign;
+use crate::load;
 use crate::phase::{RunEvent, RunLog};
 use crate::prebuilt::{self, Prebuilt};
 use crate::record::{suite_line, Mode, Producer, ResultRecord, Status};
@@ -786,6 +787,22 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let results = std::cell::RefCell::new(None);
     let cap = cap::limit(deps.settings.suite_cap, deps.settings.gate_cap, args.deadline);
     let armed = cap::arm(Duration::from_secs(cap));
+    if args.deadline.is_none() {
+        let say = |l: &str| deps.log(l);
+        match load::admit(
+            deps.settings.load_max_pct,
+            deps.settings.load_wait,
+            util::nproc(),
+            &timing::load1,
+            &|d| std::thread::sleep(d),
+            &cancelled,
+            &mut |l: &str| say(l),
+        ) {
+            load::Admit::Waited(s) => deps.log(&format!("load-wait: admitted after {s}s")),
+            load::Admit::GaveUp(s, l) => deps.log(&format!("load-wait: starting after {s}s with load1={l:.2} still over the ceiling")),
+            load::Admit::Immediate => {}
+        }
+    }
     let mut fin = run_recorded(args, deps, &results);
     if let Some((what, secs)) = armed.finish() {
         deps.log(&cap::over_cap_line(&what, secs));

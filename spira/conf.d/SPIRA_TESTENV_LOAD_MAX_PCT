@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=testenv
+DOC=Per-core 1-minute load ceiling, percent, a capped testenv run waits under before starting
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # A testenv run with no --deadline waits until load1 <= this percent of the core count before
+    # starting, so a loaded host delays the run instead of eating its wall-clock cap. 0 disables.
+    : "${SPIRA_TESTENV_LOAD_MAX_PCT:=75}"
+SPIRA_CONF_DEFAULT_EOF
