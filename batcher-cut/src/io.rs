@@ -1533,7 +1533,7 @@ pub fn landing_ref_known_fault(env: &Env, repo: &Repo, base: &str) -> Option<(St
 fn local_red_evidence(rc: Option<i32>, text: &str) -> String {
     let mut sites: Vec<&str> = text.lines().filter_map(|l| l.trim().strip_prefix("--> ")).collect();
     sites.dedup();
-    let tail: Vec<&str> = text.lines().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: Vec<&str> = text.lines().rev().take(40).collect::<Vec<_>>().into_iter().rev().collect();
     format!("{}\ntestenv exited {}\nlocations: {}\n{}", red_headline(text), rc.unwrap_or(-1), sites.join(", "), tail.join("\n"))
 }
 
