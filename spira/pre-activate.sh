@@ -137,10 +137,16 @@ check_config() {
     local out rc
     out="$("$bin" validate "$toml" 2>&1)"
     rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fail config "$toml: $out"
+        return
+    fi
+    out="$(SPIRA_HOME="$REL/spira" SPIRA_REPO="${SPIRA_REPO:-$REL}" "$bin" resolve --sh-all --conf-d "$REL/spira/conf.d" "$toml" 2>&1 >/dev/null)"
+    rc=$?
     if [ "$rc" -eq 0 ]; then
         ok config
     else
-        fail config "$toml: $out"
+        fail config "$toml does not resolve under this release: $out"
     fi
 }
 
