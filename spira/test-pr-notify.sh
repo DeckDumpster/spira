@@ -154,7 +154,11 @@ case "$1 $2" in
         ;;
     "pr view")
         n="$3"
+        case "$*" in *mergeCommit*) cat "$(pwd)/.gh-pr-merge.json" 2>/dev/null; exit 0 ;; esac
         awk -v n="$n" '$1==n{print $2; exit}' "$(pwd)/.gh-pr-state" 2>/dev/null
+        ;;
+    "run list")
+        cat "$(pwd)/.gh-runs.json" 2>/dev/null || printf '[]\n'
         ;;
     *) printf '[]\n' ;;
 esac
@@ -259,6 +263,62 @@ done
 # --- TICK 7: nothing left to track — silent -----------------------------------------
 run --show
 is "tick7: nothing tracked, nothing reported" "" "$(cat "$TMP/out")"
+
+# --- MERGE AND DEPLOY NOTIFICATIONS TO THE OPERATOR (sha-keyed, exactly one each) --------
+op_count() { ls "$RUN/mail/operator/new" 2>/dev/null | wc -l | tr -d ' '; }
+op_text()  { cat "$RUN"/mail/operator/new/* 2>/dev/null; }
+DR="$TMP/repos/queue-repo"
+SHA=0123456789abcdef0123456789abcdef01234567
+rm -f "$RUN"/mail/operator/new/* "$DR"/.gh-pr-state "$DR"/.gh-runs.json
+pending_json 7 "queue: 2 beads for site" > "$DR/.gh-pr-list.json"
+run --show
+printf '[]\n' > "$DR/.gh-pr-list.json"
+printf '7 MERGED\n' > "$DR/.gh-pr-state"
+cat > "$DR/.gh-pr-merge.json" <<JSON
+{"mergeCommit":{"oid":"$SHA"},"body":"Merge-queue batch: 2 beads.\n\n- sp-aaa11 — First change\n- sp-bbb22 — Second change"}
+JSON
+run --show
+is "merge: exactly one operator note on merge" "1" "$(op_count)"
+txt="$(op_text)"
+has "merge note names the PR"      "$txt" "PR #7"
+has "merge note carries the sha"   "$txt" "$SHA"
+has "merge note names bead 1"      "$txt" "sp-aaa11 — First change"
+has "merge note names bead 2"      "$txt" "sp-bbb22 — Second change"
+run --show
+is "deploy still running: no further operator note" "1" "$(op_count)"
+rm -f "$RUN"/mail/operator/new/*
+cat > "$DR/.gh-runs.json" <<'JSON'
+[{"status":"completed","conclusion":"success","url":"https://example.test/run/1","createdAt":"2026-10-16T18:00:00Z","updatedAt":"2026-10-16T18:07:30Z"}]
+JSON
+run --show
+is "deploy complete: exactly one operator note" "1" "$(op_count)"
+txt="$(op_text)"
+has "deployed note says DEPLOYED"    "$txt" "DEPLOYED: PR #7"
+has "deployed note carries duration" "$txt" "7m30s"
+has "deployed note carries run url"  "$txt" "https://example.test/run/1"
+has "deployed note names the beads"  "$txt" "sp-bbb22 — Second change"
+run --show; run --show
+is "deploy notified once, deduped by sha" "1" "$(op_count)"
+
+rm -f "$RUN"/mail/operator/new/*
+SHA2=fedcba9876543210fedcba9876543210fedcba98
+pending_json 8 "queue: 1 beads for site" > "$DR/.gh-pr-list.json"
+run --show
+printf '[]\n' > "$DR/.gh-pr-list.json"
+printf '8 MERGED\n' > "$DR/.gh-pr-state"
+cat > "$DR/.gh-pr-merge.json" <<JSON
+{"mergeCommit":{"oid":"$SHA2"},"body":"- sp-ccc33 — Third change"}
+JSON
+cat > "$DR/.gh-runs.json" <<'JSON'
+[{"status":"completed","conclusion":"failure","url":"https://example.test/run/2","createdAt":"2026-10-16T19:00:00Z","updatedAt":"2026-10-16T19:09:00Z"}]
+JSON
+run --show
+run --show
+txt="$(op_text)"
+is "failed deploy: one merge note and one deploy note" "2" "$(op_count)"
+has "failed run says DEPLOY FAILED" "$txt" "DEPLOY FAILED: PR #8"
+has "failed run carries the run url" "$txt" "https://example.test/run/2"
+rm -f "$DR"/.gh-pr-state "$DR"/.gh-runs.json "$DR"/.gh-pr-merge.json
 
 # --- A NEW PR OPENS ALREADY RED — the exact shape of the reported incident: a daemon
 #     that only just started (or a PR that resolved before the next tick) discovering a
