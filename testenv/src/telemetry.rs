@@ -27,6 +27,11 @@ pub fn red_class(rc: i32) -> &'static str {
 }
 
 pub fn push_finish(sink: &MetricsSink, rc: i32, ran: usize, red: usize, skipped: usize, reason: Option<&str>) {
+    let waits = std::mem::take(&mut *QUEUE_WAITS.lock().unwrap_or_else(|e| e.into_inner()));
+    push_run(sink, rc, ran, red, skipped, reason, waits);
+}
+
+fn push_run(sink: &MetricsSink, rc: i32, ran: usize, red: usize, skipped: usize, reason: Option<&str>, waits: Vec<(&'static str, u64)>) {
     let base = [("component", "testenv")];
     sink.push(
         &[
@@ -40,7 +45,6 @@ pub fn push_finish(sink: &MetricsSink, rc: i32, ran: usize, red: usize, skipped:
         let value = if rc == 1 { red as u64 } else { 1 };
         sink.push(&[Point::Count { name: "spira_testenv_reds", value }], &[("component", "testenv"), ("class", class), ("reason", reason.unwrap_or("-"))]);
     }
-    let waits = std::mem::take(&mut *QUEUE_WAITS.lock().unwrap_or_else(|e| e.into_inner()));
     for (pool, secs) in waits {
         sink.push(&[Point::Seconds { name: "spira_testenv_queue_wait_seconds", value: secs as f64 }], &[("component", "testenv"), ("pool", pool)]);
     }
@@ -59,9 +63,8 @@ mod tests {
     fn a_red_run_pushes_suites_reds_by_class_queue_wait_and_over_cap() {
         let sink_srv = testkit::OtlpSink::start();
         let sink = MetricsSink::new(Some(&sink_srv.addr), "spira-testenv", std::time::Duration::from_secs(2));
-        note_queue_wait("test", 7);
-        push_finish(&sink, 1, 5, 2, 1, None);
-        push_finish(&sink, 2, 0, 0, 0, Some("over-cap"));
+        push_run(&sink, 1, 5, 2, 1, None, vec![("test", 7)]);
+        push_run(&sink, 2, 0, 0, 0, Some("over-cap"), vec![]);
         push_over_cap(&sink, "gate");
         let body = sink_srv.body();
         for want in ["spira_testenv_suites_run", "spira_testenv_reds", "real", "harness", "over-cap", "spira_testenv_queue_wait_seconds", "test", "spira_testenv_over_cap_kills", "gate"] {
