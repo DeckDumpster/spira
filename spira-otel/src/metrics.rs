@@ -258,8 +258,7 @@ pub mod fixture {
     pub fn capture<R>(f: impl FnOnce(&MetricsSink) -> R) -> (R, Vec<Sample>) {
         let cap = Capture::start();
         let r = f(&MetricsSink::new(Some(&cap.addr), "fixture", RUN_DEADLINE));
-        std::thread::sleep(Duration::from_millis(200));
-        (r, cap.samples(0))
+        (r, cap.settled())
     }
 
     pub struct Capture {
@@ -318,6 +317,19 @@ pub mod fixture {
                 }
             });
             Capture { addr, seen }
+        }
+
+        /// Samples once the count has stopped growing for three polls, capped at two seconds.
+        pub fn settled(&self) -> Vec<Sample> {
+            let end = Instant::now() + Duration::from_secs(2);
+            let (mut last, mut stable) = (0, 0);
+            while stable < 3 && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(20));
+                let n = self.seen.lock().unwrap().len();
+                stable = if n > 0 && n == last { stable + 1 } else { 0 };
+                last = n;
+            }
+            self.seen.lock().unwrap().clone()
         }
 
         /// Samples received so far, waiting up to two seconds for at least `n`.
