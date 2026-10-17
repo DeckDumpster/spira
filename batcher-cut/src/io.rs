@@ -1318,7 +1318,7 @@ impl TierEnd {
 
 /// True when `text` is testenv's FAULT verdict for a run cut at its wall cap.
 pub fn testenv_cut_at_cap(text: &str) -> bool {
-    text.lines().any(|l| l.starts_with("VERDICT FAULT") && (l.contains("reason=deadline-suites") || l.contains("reason=over-cap")))
+    text.lines().map(str::trim).any(|l| l.starts_with("VERDICT FAULT") && (l.contains("reason=deadline-suites") || l.contains("reason=over-cap")))
 }
 
 /// A cap breach is the host's when the 1-minute load average exceeds the cores.
@@ -3985,6 +3985,8 @@ mod fences_verdict_tests {
         assert!(over_cap_from_load("VERDICT FAULT rc=2 ran=1 reason=over-cap\n", Some(32.9), 4));
         assert_eq!(super::max_load("2.0 58.9 51.5 3/900 1234\n"), Some(58.9));
         assert!(super::testenv_cut_at_cap("x\nVERDICT FAULT rc=2 ran=1 reason=over-cap"));
+        assert!(super::testenv_cut_at_cap("x\n  VERDICT FAULT rc=2 ran=3 reason=deadline-suites\r\n"));
+        assert!(!super::testenv_cut_at_cap("  VERDICT FAULT rc=2 ran=0 reason=container-run"));
     }
 
     #[test]
