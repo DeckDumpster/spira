@@ -126,6 +126,10 @@ impl Acts for Rec {
         }
         Ok(format!("mend-{id}-{tip}"))
     }
+    fn retire_mend(&mut self, id: &str, mend: &str, tip: &str) -> Result<(), String> {
+        self.log.push(format!("retire {mend} for {id} at {tip}"));
+        Ok(())
+    }
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
         self.log.push(format!("pass {id} {tip}"));
         Ok(())
@@ -589,6 +593,21 @@ fn a_new_tip_amends_the_open_mend_and_a_closed_one_is_replaced() {
     a3.tip = "t-a3".into();
     screen_with(&f, &store, &mut r, &[a3], &[], 600);
     assert_eq!(store.last_mend("a").as_deref(), Some("mend-a-t-a3"));
+}
+
+#[test]
+fn a_new_tip_that_merges_retires_the_mend_filed_for_the_old_one() {
+    let mut f = fake();
+    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
+    let store = Mem::default();
+    let mut r = Rec::default();
+    screen_with(&f, &store, &mut r, &[c("a")], &[], 600);
+    assert!(!r.log.iter().any(|l| l.starts_with("retire ")), "{:?}", r.log);
+    let mut a2 = c("a");
+    a2.tip = "t-a2".into();
+    let o = screen_with(&f, &store, &mut r, &[a2], &[], 600);
+    assert_eq!(o.pass, ["a"]);
+    assert!(r.log.contains(&"retire mend-a-t-a for a at t-a2".to_string()), "{:?}", r.log);
 }
 
 #[test]
