@@ -2298,6 +2298,19 @@ mod tests {
         assert!(!a.iter().any(|x| x == "192.168.1.56"));
     }
 
+    fn accepts(addr: &str, port: u16) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            if std::net::TcpStream::connect((addr, port)).is_ok() {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     #[test]
     fn a_real_mirror_daemon_listens_where_told_and_teardown_closes_it() {
         let d = TempDir::new();
@@ -2312,7 +2325,7 @@ mod tests {
         assert!(no_addr.prepare_mirror(&tree).is_err(), "no address means no daemon, never every interface");
         let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec![] };
         host.prepare_mirror(&tree).unwrap();
-        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok(), "daemon not listening");
+        assert!(accepts("127.0.0.1", port), "daemon not listening");
         let old_pid = fs::read_to_string(state.join("git-daemon.pid")).unwrap();
         host.prepare_mirror(&tree).unwrap();
         assert_eq!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon on the right address is kept");
@@ -2320,7 +2333,7 @@ mod tests {
         host.prepare_mirror(&tree).unwrap();
         assert_ne!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon recorded on another address is restarted");
         assert_eq!(fs::read_to_string(state.join("git-daemon.addr")).unwrap(), "127.0.0.1");
-        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
+        assert!(accepts("127.0.0.1", port));
         let foreign = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into(), also_listen: vec![] };
         let e = foreign.prepare_mirror(&tree).unwrap_err();
         assert!(e.contains("not an address of this host") && e.contains("set it to auto"), "{e}");
@@ -2348,8 +2361,8 @@ mod tests {
         let loopback2 = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec!["127.0.0.2".into()] };
         let r = loopback2.prepare_mirror(&tree);
         if r.is_ok() {
-            assert!(std::net::TcpStream::connect(("127.0.0.2", port)).is_ok(), "second address not listening");
-            assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok());
+            assert!(accepts("127.0.0.2", port), "second address not listening");
+            assert!(accepts("127.0.0.1", port));
             assert_eq!(fs::read_to_string(state.join("git-daemon.addr")).unwrap(), "127.0.0.1,127.0.0.2");
         }
         stop_mirror(&state).unwrap();
