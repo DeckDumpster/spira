@@ -52,3 +52,17 @@ printf '[]' >"$TMP/content.json"; r=$(run); rc=$?
 [ "$rc" -ne 0 ] && ok "empty store refused" || bad "empty store accepted"
 
 r=$(WIKI_FOR_RUN= run); wantrc "no wiki is a quiet no-op" 0 $?
+
+printf '[{"id":"sp-b","title":"B2"},{"id":"sp-a","title":"A"}]' >"$TMP/content.json"
+before=$(git -C "$WIKI" rev-list --count HEAD)
+touch "$WIKI/.git/index.lock"; (sleep 2; rm -f "$WIKI/.git/index.lock") &
+r=$(SPIRA_EXPORT_GIT_RETRY_WAIT=1 run); wantrc "index.lock held briefly: export still succeeds" 0 $?
+wait
+is "commit landed after the lock cleared" $((before + 1)) "$(git -C "$WIKI" rev-list --count HEAD)"
+
+printf '[{"id":"sp-b","title":"B3"},{"id":"sp-a","title":"A"}]' >"$TMP/content.json"
+git -C "$WIKI" config user.useConfigOnly true; git -C "$WIKI" config --unset user.email
+r=$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null EMAIL= SPIRA_EXPORT_GIT_RETRY_WAIT=1 run); rc=$?
+[ "$rc" -ne 0 ] && ok "real commit failure exits non-zero" || bad "real failure swallowed"
+want "journal line names the git command" "git commit failed" "$r"
+want "journal line carries git's stderr" "email" "$r"
