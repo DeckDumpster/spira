@@ -159,7 +159,11 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
             let args = ["--suites".to_string(), check.to_string(), tip.clone(), repo.clone()];
             crate::bd::tool("testenv", &args, None, &actor, secs)
         };
-        if let Some(refusal) = proof_refusal(run, bead_id, &tip, PROOF_BUDGET_SECS, &runner) {
+        let owed = match owed_tiers(&tip, &repo, &actor) {
+            Ok(o) => o,
+            Err(refusal) => return refusal,
+        };
+        if let Some(refusal) = proof_refusal(run, bead_id, &tip, &owed, PROOF_BUDGET_SECS, &runner) {
             return refusal;
         }
     }
@@ -180,9 +184,19 @@ const PROOF_BUDGET_SECS: u64 = 270;
 /// A bead whose ejection named failing checks is submitted only when each has a passing run
 /// recorded at `tip`. The broker runs the missing ones itself (the aeon has no testenv), records
 /// the exit code and the check's own summary line, and refuses naming whatever is still unproven.
-fn proof_refusal(run: &std::path::Path, bead_id: &str, tip: &str, budget: u64, runner: &dyn Fn(&str, u64) -> (i32, String)) -> Option<(i32, String)> {
+fn proof_refusal(run: &std::path::Path, bead_id: &str, tip: &str, owed: &[String], budget: u64, runner: &dyn Fn(&str, u64) -> (i32, String)) -> Option<(i32, String)> {
     use spira_config::proof;
-    let missing = proof::unproven(run, bead_id, tip);
+    let unproven = || {
+        let mut all = proof::failing(run, bead_id);
+        for o in owed {
+            if !all.contains(o) {
+                all.push(o.clone());
+            }
+        }
+        all.retain(|c| !proof::proven(run, bead_id, tip, c));
+        all
+    };
+    let missing = unproven();
     if missing.is_empty() {
         return None;
     }
@@ -206,20 +220,34 @@ fn proof_refusal(run: &std::path::Path, bead_id: &str, tip: &str, budget: u64, r
             _ => notes.push(format!("{check} could not run (rc={rc}): {}", out.trim_end())),
         }
     }
-    let still = proof::unproven(run, bead_id, tip);
+    let still = unproven();
     if still.is_empty() {
         return None;
     }
-    let mut msg = format!(
-        "refused: {bead_id} was ejected for failing {}; no passing run is recorded at {tip} for: {}.",
-        proof::failing(run, bead_id).join(", "),
-        still.join(", ")
-    );
+    let ejected = proof::failing(run, bead_id);
+    let mut msg = format!("refused: no passing run is recorded at {tip} for: {}.", still.join(", "));
+    if !ejected.is_empty() {
+        msg.push_str(&format!(" {bead_id} was ejected for failing {}.", ejected.join(", ")));
+    }
+    if !owed.is_empty() {
+        msg.push_str(&format!(" The diff obliges its repository's own CI tiers: {}.", owed.join(", ")));
+    }
     for n in notes {
         msg.push_str(&format!("\n  {n}"));
     }
     msg.push_str(&format!("\nFix the failure, commit, and run `work submit` again — it runs: testenv --suites <check> {tip} <repo> for each unproven check."));
     Some((REFUSED, msg))
+}
+
+/// The tiers its repository's own declaration says this tip's diff obliges it to have passed;
+/// the repository decides, so a harness bead or a repository declaring none owes nothing.
+fn owed_tiers(tip: &str, repo: &str, actor: &str) -> Result<Vec<String>, (i32, String)> {
+    let args = ["owed".to_string(), tip.to_string(), repo.to_string()];
+    // batch-job: one git diff and one git show
+    match crate::bd::tool("testenv", &args, None, actor, 60) {
+        (0, out) => Ok(out.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()),
+        (_, out) => Err((CANNOT_TELL, format!("cannot tell: the CI tiers this diff obliges could not be determined: {}", out.trim_end()))),
+    }
 }
 
 fn submit_repo(conn: &Conn, bead_id: &str) -> Result<String, (i32, String)> {
@@ -1335,11 +1363,11 @@ mod tests {
         let run = dir.path().to_path_buf();
         spira_config::proof::record_failing(&run, "sp-a", &["test-x.sh".into()]).unwrap();
         let red = |_: &str, _: u64| (1, "test-x: 2 failed\n".to_string());
-        let (code, msg) = proof_refusal(&run, "sp-a", TIP, 60, &red).expect("a red run must not prove");
+        let (code, msg) = proof_refusal(&run, "sp-a", TIP, &[], 60, &red).expect("a red run must not prove");
         assert_eq!(code, REFUSED);
         assert!(msg.contains("test-x.sh") && msg.contains("FAILED"), "{msg}");
         let broken = |_: &str, _: u64| (2, "no container".to_string());
-        assert!(proof_refusal(&run, "sp-a", TIP, 60, &broken).is_some(), "a check that could not run is unproven");
+        assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &broken).is_some(), "a check that could not run is unproven");
     }
 
     #[test]
@@ -1348,13 +1376,35 @@ mod tests {
         let run = dir.path().to_path_buf();
         spira_config::proof::record_failing(&run, "sp-a", &["test-x.sh".into()]).unwrap();
         let green = |c: &str, _: u64| (0, format!("{c}: 12 passed\n"));
-        assert!(proof_refusal(&run, "sp-a", TIP, 60, &green).is_none());
+        assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &green).is_none());
         let rec = std::fs::read_to_string(run.join("proof/sp-a/pass").join(TIP).join("test-x.sh")).unwrap();
         assert_eq!(rec, "exit=0\nsummary=test-x.sh: 12 passed\n");
         let never = |_: &str, _: u64| -> (i32, String) { panic!("a proven check is not re-run") };
-        assert!(proof_refusal(&run, "sp-a", TIP, 60, &never).is_none());
+        assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &never).is_none());
         let other = "4444444444444444444444444444444444444444";
-        assert!(proof_refusal(&run, "sp-a", other, 60, &green).is_none(), "a new tip is proven afresh");
+        assert!(proof_refusal(&run, "sp-a", other, &[], 60, &green).is_none(), "a new tip is proven afresh");
+    }
+
+    #[test]
+    fn a_diff_that_owes_a_tier_is_refused_until_it_passes_and_names_the_tier() {
+        let dir = proof_dir("owed");
+        let run = dir.path().to_path_buf();
+        let owed = vec!["frontend".to_string()];
+        let red = |_: &str, _: u64| (1, "svelte-check found 1 error\n".to_string());
+        let (code, msg) = proof_refusal(&run, "sp-a", TIP, &owed, 60, &red).expect("an unproven owed tier refuses");
+        assert_eq!(code, REFUSED);
+        assert!(msg.contains("frontend") && msg.contains("FAILED") && msg.contains(&format!("testenv --suites <check> {TIP}")), "{msg}");
+        let green = |c: &str, _: u64| (0, format!("{c}: ok\n"));
+        assert!(proof_refusal(&run, "sp-a", TIP, &owed, 60, &green).is_none());
+        assert!(run.join("proof/sp-a/pass").join(TIP).join("frontend").is_file());
+    }
+
+    #[test]
+    fn a_diff_that_owes_nothing_runs_nothing() {
+        let dir = proof_dir("owes-nothing");
+        let run = dir.path().to_path_buf();
+        let never = |_: &str, _: u64| -> (i32, String) { panic!("a backend-only diff owes no frontend run") };
+        assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &never).is_none());
     }
 
     #[test]
@@ -1362,7 +1412,7 @@ mod tests {
         let dir = proof_dir("none");
         let run = dir.path().to_path_buf();
         let never = |_: &str, _: u64| -> (i32, String) { panic!("nothing to run") };
-        assert!(proof_refusal(&run, "sp-a", TIP, 60, &never).is_none());
+        assert!(proof_refusal(&run, "sp-a", TIP, &[], 60, &never).is_none());
     }
 
     #[test]

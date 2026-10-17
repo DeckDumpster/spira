@@ -98,6 +98,19 @@ fn main() -> ExitCode {
         let rc = testenv::lint::main(&args[1..], &run, &|n| registry.root(n).map(std::path::PathBuf::from));
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
+    // `testenv owed <tip> <repo>` — the declared tiers a tip's diff obliges it to have passed.
+    if args.first().map(String::as_str) == Some("owed") {
+        let env = |k: &str| std::env::var(k).ok();
+        let home = Harness::locate(&env).map(|h| h.root).unwrap_or_default();
+        let registry = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+        let resolve = |n: &str| {
+            registry
+                .root(n)
+                .map(|p| (std::path::PathBuf::from(p), registry.field(n, spira_config::repos::Column::Base).unwrap_or_default()))
+        };
+        let rc = testenv::owed::main(&args[1..], &resolve);
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
     // `testenv shots …` — viewport captures of a tree's pages, and the submission guard that asks for them.
     if args.first().map(String::as_str) == Some("shots") {
         let env = |k: &str| std::env::var(k).ok();

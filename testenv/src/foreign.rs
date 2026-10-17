@@ -94,6 +94,18 @@ pub struct Tier {
     /// Overrides the repository's `image` for this tier only (a Node check beside Rust tiers).
     #[serde(default)]
     pub image: Option<String>,
+    /// Paths this tier covers: a submit whose diff touches one owes a recorded passing run of it.
+    /// `dir/` is a prefix, `*.ext` a suffix, anything else an exact path.
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
+fn path_covers(pattern: &str, path: &str) -> bool {
+    match pattern.strip_prefix('*') {
+        Some(suffix) => path.ends_with(suffix),
+        None if pattern.ends_with('/') => path.starts_with(pattern),
+        None => path == pattern,
+    }
 }
 
 fn default_workdir() -> String {
@@ -123,6 +135,9 @@ impl Decl {
             if t.image.as_deref().is_some_and(|i| i.trim().is_empty()) {
                 return Err(format!("{DECL}: tier {n}: image is empty"));
             }
+            if t.paths.iter().any(|p| p.trim().is_empty() || p.starts_with('/') || p.split('/').any(|c| c == "..")) {
+                return Err(format!("{DECL}: tier {n}: paths must be non-empty paths inside the tree"));
+            }
         }
         if let Some(sh) = &d.shots {
             if sh.argv.is_empty() || sh.widths.is_empty() || sh.widths.contains(&0) || sh.image.as_deref().is_some_and(|i| i.trim().is_empty()) {
@@ -146,6 +161,15 @@ impl Decl {
     /// The image tier `name` runs in: its own when it names one, else the repository's.
     pub fn image_for(&self, name: &str) -> &str {
         self.tier.get(name).and_then(|t| t.image.as_deref()).unwrap_or(&self.image)
+    }
+
+    /// The tiers a diff over `changed` obliges a submit to have passed, in declaration order.
+    pub fn owed(&self, changed: &[&str]) -> Vec<String> {
+        self.tier
+            .iter()
+            .filter(|(_, t)| t.paths.iter().any(|p| changed.iter().any(|c| path_covers(p, c))))
+            .map(|(n, _)| n.clone())
+            .collect()
     }
 
     pub fn known(&self, name: &str) -> bool {
