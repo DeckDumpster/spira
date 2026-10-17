@@ -76,9 +76,11 @@ MAILEOF
 
 # _operator <subject> <body> — a merge or deploy outcome, mailed to the operator as a note:
 # the channel that reaches his phone. --digest because the operator mailbox otherwise admits
-# only class-bearing asks and reroutes a note to the concierge. Failure is remembered like _report's, never dropped.
+# only class-bearing asks and reroutes a note to the concierge; the repeat guard is
+# overridden because consecutive merges normalise to one subject. Failure is remembered like _report's, never dropped.
 _operator() {
     local subject="$1" body="$2"
+    SPIRA_MAIL_REPEAT_CONSIDERED="pr-notify deduplicates by merge sha; subjects differ only in PR number and sha" \
     mail send operator \
         --from "PR Notify <pr-notify@spira>" \
         --subject "$subject" \
