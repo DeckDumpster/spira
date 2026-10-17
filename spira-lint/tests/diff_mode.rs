@@ -129,7 +129,8 @@ fn a_stale_journal_allow_line_reds_every_run_not_only_a_change_to_its_file() {
     std::fs::create_dir_all(d.join("spira-lint")).unwrap();
     std::fs::write(d.join("spira/probe.sh"), "#!/bin/bash\ntrue\n").unwrap();
     std::fs::write(d.join("spira/other.sh"), "#!/bin/bash\ntrue\n").unwrap();
-    std::fs::write(d.join("spira-lint/journal-readers-allow"), "# h\nspira/probe.sh sp-x\n").unwrap();
+    std::fs::create_dir_all(d.join("spira-lint/journal-readers-allow.d/spira")).unwrap();
+    std::fs::write(d.join("spira-lint/journal-readers-allow.d/spira/probe.sh"), "sp-x\n").unwrap();
     git(&d, &["init", "-q", "-b", "main"]);
     git(&d, &["add", "."]);
     git(&d, &["commit", "-q", "-m", "base"]);
@@ -139,4 +140,50 @@ fn a_stale_journal_allow_line_reds_every_run_not_only_a_change_to_its_file() {
     let (rc, out) = lint_rule(&d, "journal-reads", &["--diff", "main"]);
     assert_eq!(rc, 1, "{out}");
     assert!(out.contains("no longer reads the journal"), "{out}");
+}
+
+fn allow_dir_fixture(allow: &str, entries: &[(&str, &str)]) -> testkit::TempDir {
+    let d = testkit::TempDir::new("spira-lint-allow-merge");
+    for (k, b) in entries {
+        let p = d.join(format!("spira-lint/{allow}/{k}"));
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, format!("{b}\n")).unwrap();
+    }
+    git(&d, &["init", "-q", "-b", "main"]);
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-q", "-m", "base"]);
+    d
+}
+
+#[test]
+fn two_branches_removing_different_allow_entries_merge_cleanly() {
+    for allow in ["otel-binaries-allow.d", "journal-readers-allow.d"] {
+        let d = allow_dir_fixture(allow, &[("a/one", "sp-x"), ("b/two", "sp-y"), ("c/three", "sp-z")]);
+        for (branch, gone) in [("one", "a/one"), ("two", "b/two")] {
+            git(&d, &["checkout", "-q", "-b", branch, "main"]);
+            git(&d, &["rm", "-q", &format!("spira-lint/{allow}/{gone}")]);
+            git(&d, &["commit", "-q", "-m", branch]);
+        }
+        git(&d, &["checkout", "-q", "one"]);
+        git(&d, &["merge", "-q", "--no-edit", "two"]);
+        assert!(d.join(format!("spira-lint/{allow}/c/three")).exists());
+        assert!(!d.join(format!("spira-lint/{allow}/a/one")).exists() && !d.join(format!("spira-lint/{allow}/b/two")).exists());
+    }
+}
+
+#[test]
+fn the_single_file_format_conflicts_where_the_directory_does_not() {
+    let d = testkit::TempDir::new("spira-lint-allow-single");
+    std::fs::write(d.join("allow"), "# h\nx sp-1\ny sp-2\nz sp-3\n").unwrap();
+    git(&d, &["init", "-q", "-b", "main"]);
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-q", "-m", "base"]);
+    for (branch, body) in [("one", "# h\ny sp-2\nz sp-3\n"), ("two", "# h\nx sp-1\nz sp-3\n")] {
+        git(&d, &["checkout", "-q", "-b", branch, "main"]);
+        std::fs::write(d.join("allow"), body).unwrap();
+        git(&d, &["commit", "-qam", branch]);
+    }
+    git(&d, &["checkout", "-q", "one"]);
+    let ok = std::process::Command::new("git").arg("-C").arg(&*d).args(["-c", "user.email=t@example.com", "-c", "user.name=t", "merge", "-q", "--no-edit", "two"]).output().unwrap().status.success();
+    assert!(!ok, "adjacent removals in one file must conflict");
 }
