@@ -696,9 +696,9 @@ pub fn check_failed_units(w: &dyn World) -> Vec<Line> {
             .into_iter()
             .map(|unit| {
                 if install {
-                    warn(format!("{unit} is a failed systemd unit — pre-existing, predates this install"), format!("Check: journalctl --user -u {unit} -n 20"))
+                    warn(format!("{unit} is a failed systemd unit — pre-existing, predates this install"), format!("Check: systemctl --user status {unit}"))
                 } else {
-                    fail(format!("{unit} is a failed systemd unit"), format!("Check: journalctl --user -u {unit} -n 20"))
+                    fail(format!("{unit} is a failed systemd unit"), format!("Check: systemctl --user status {unit}"))
                 }
             })
             .collect(),
@@ -810,7 +810,7 @@ pub fn check_submission(w: &dyn World) -> Vec<Line> {
     if get("listening") != "1" {
         out.push(fail(
             format!("spira-submission is configured for {addr} but not listening"),
-            "journalctl --user -u spira-submission.service; the log is spira-submission.log under SPIRA_RUN",
+            "Check: systemctl --user status spira-submission.service; the log is spira-submission.log under SPIRA_RUN",
         ));
     } else {
         match get("firewall") {

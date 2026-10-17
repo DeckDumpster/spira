@@ -845,6 +845,20 @@ fn failed_units_during_install_warns() {
 }
 
 #[test]
+fn failed_unit_hint_names_no_journal_read() {
+    for installing in [false, true] {
+        let f = Fake::default();
+        if installing {
+            f.set("SPIRA_DOCTOR_INSTALLING", "1");
+        }
+        *f.failed_units.borrow_mut() = Ok(vec!["spira-gate-prod.service".into()]);
+        let hint = check_failed_units(&f)[0].detail.clone().unwrap_or_default();
+        assert!(hint.contains("systemctl --user status spira-gate-prod.service"), "{hint}");
+        assert!(!hint.contains("journal"), "{hint}");
+    }
+}
+
+#[test]
 fn failed_units_query_fault_fails() {
     let f = Fake::default();
     *f.failed_units.borrow_mut() = Err("Failed to connect to bus".into());
@@ -1337,6 +1351,14 @@ fn submission_absent_binary_is_silent() {
 #[test]
 fn submission_healthy_is_all_ok() {
     assert!(submission(HEALTHY).iter().all(|l| l.level == Level::Ok));
+}
+
+#[test]
+fn submission_not_listening_hint_points_at_the_producers_log() {
+    let out = submission(&HEALTHY.replace("listening=1", "listening=0"));
+    let hint = out.iter().find(|l| l.msg.contains("not listening")).and_then(|l| l.detail.clone()).unwrap_or_default();
+    assert!(hint.contains("spira-submission.log"), "{hint}");
+    assert!(!hint.contains("journal"), "{hint}");
 }
 
 #[test]
