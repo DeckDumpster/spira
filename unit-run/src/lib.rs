@@ -22,8 +22,13 @@ pub const ID_RESOURCES: &str = "ae8f7b866b0347b9af31fe1c80b127c0";
 /// The `MESSAGE_ID=` matches handed to journalctl: the only entries the fold reads.
 pub const MESSAGE_IDS: [&str; 6] = [ID_STARTING, ID_STARTED, ID_EXIT, ID_SUCCESS, ID_FAILURE, ID_RESOURCES];
 
+/// The fields the fold reads; journalctl is asked for nothing else.
+pub const OUTPUT_FIELDS: &str = "MESSAGE_ID,USER_UNIT,USER_INVOCATION_ID,EXIT_CODE,EXIT_STATUS,COMMAND,MESSAGE,JOB_RESULT,UNIT_RESULT,CPU_USAGE_NSEC,MEMORY_PEAK,IO_METRIC_READ_BYTES,IO_METRIC_WRITE_BYTES";
+
 /// The journalctl argv for one read. A follow with no cursor starts at now; only a
-/// non-follow (backfill) read starts at the journal's first entry.
+/// non-follow (backfill) read starts at the journal's first entry. It carries no field match:
+/// any match makes journalctl rescan the journal files continuously, so entries are selected
+/// by `parse_entry` instead.
 pub fn journal_args(after_cursor: Option<&str>, follow: bool) -> Vec<String> {
     let mut a: Vec<String> = ["--user", "-o", "json", "--no-pager"].iter().map(|s| s.to_string()).collect();
     match (after_cursor, follow) {
@@ -34,8 +39,14 @@ pub fn journal_args(after_cursor: Option<&str>, follow: bool) -> Vec<String> {
     if follow {
         a.push("-f".to_string());
     }
-    a.extend(MESSAGE_IDS.iter().map(|id| format!("MESSAGE_ID={id}")));
+    a.push(format!("--output-fields={OUTPUT_FIELDS}"));
     a
+}
+
+/// The cursor of a journal line the fold does not read, so a checkpoint still advances past it.
+pub fn line_cursor(line: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(line).ok()?;
+    field(&v, "__CURSOR").map(String::from)
 }
 
 /// How long past its close an execution waits for its `Consumed` line before it is written
@@ -169,6 +180,10 @@ pub struct Folder {
 }
 
 impl Folder {
+    pub fn advance(&mut self, cursor: String) {
+        self.cursor = Some(cursor);
+    }
+
     pub fn push(&mut self, e: &Entry) -> Vec<Record> {
         self.cursor = Some(e.cursor.clone());
         self.latest_us = self.latest_us.max(e.at_us);
@@ -417,7 +432,13 @@ pub fn pass(
             Item::Idle => (folder.tick(sink.clock.now_epoch().saturating_mul(1_000_000)), Kind::Idle),
             Item::Line(l) => match parse_entry(&l) {
                 Some(e) => (folder.push(&e), Kind::Line),
-                None => continue,
+                None => {
+                    if let Some(c) = line_cursor(&l) {
+                        folder.advance(c);
+                        dirty = true;
+                    }
+                    continue;
+                }
             },
         };
         let wrote = sink.write(&records)?;
