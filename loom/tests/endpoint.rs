@@ -262,8 +262,9 @@ fn units_fixture(rows: &[String]) -> UnitsFixture {
     script(
         &systemctl,
         &format!(
-            "#!/bin/sh\ncase \"$2\" in\nlist-unit-files) printf 'ok.service static -\\nok.timer enabled -\\ndead.service static -\\ndead.timer enabled -\\nnever.service static -\\nflaky.service static -\\ndur.service static -\\ntmpl@.service static -\\n';;\nshow) cat {};;\nesac\n",
-            show_file.display()
+            "#!/bin/sh\ncase \"$2\" in\nlist-unit-files) printf 'ok.service static -\\nok.timer enabled -\\ndead.service static -\\ndead.timer enabled -\\nnever.service static -\\nflaky.service static -\\ndur.service static -\\ntmpl@.service static -\\n';;\nshow) cat {};;\nlist-timers) printf '[{{\"next\":{},\"unit\":\"ok.timer\"}},{{\"next\":0,\"unit\":\"dead.timer\"}}]';;\nesac\n",
+            show_file.display(),
+            (now_s() + 60) * 1_000_000
         ),
     );
     let duckdb = dir.join("duckdb");
@@ -331,6 +332,9 @@ async fn units_lists_every_unit_with_rates_percentiles_and_the_stale_flag() {
     assert_eq!(flaky["strip"].as_array().unwrap().iter().filter(|r| *r != "success").count(), 1);
 
     let ok = unit(&v, "ok.service");
+    assert!(ok["timer"]["next"].as_i64().is_some_and(|n| n > now_s()), "a timer with a next elapse reports it: {ok}");
+    assert!(unit(&v, "dead.service")["timer"]["next"].is_null());
+    assert_eq!(ok["verdict"], "healthy");
     assert_eq!(ok["stale"], false, "a timer whose last success is ten minutes old is not stale");
     assert_eq!(ok["timer"]["active"], "active");
     assert_eq!(ok["runs_24h"], 24);
@@ -338,7 +342,11 @@ async fn units_lists_every_unit_with_rates_percentiles_and_the_stale_flag() {
     let dead = unit(&v, "dead.service");
     assert_eq!(dead["stale"], true, "last success 15 h ago on an hourly timer");
     assert_eq!(dead["interval_s"], 3600);
-    assert_eq!(v["units"][0]["unit"], "dead.service", "stale units sort first");
+    assert_eq!(dead["verdict"], "late");
+    assert_eq!(flaky["verdict"], "failing");
+    assert_eq!(unit(&v, "never.service")["verdict"], "never ran");
+    assert_eq!(v["units"][0]["unit"], "flaky.service", "failing sorts first, then late");
+    assert_eq!(v["units"][1]["unit"], "dead.service");
 }
 
 #[tokio::test]
@@ -350,9 +358,9 @@ async fn units_page_renders_the_same_rows_and_is_cached() {
     for n in ["ok.service", "dead.service", "never.service", "flaky.service", "dur.service"] {
         assert!(html.contains(n), "{n} in the page");
     }
-    assert!(html.contains("stale — last success") && !html.contains("boom"), "{html}");
-    assert!(html.contains("@media(max-width:639px)") && html.contains("class=\"u\" title=\"ok.service\"") || html.contains("class=u title=\"ok.service\""), "narrow viewports stack each family as a card: {html}");
-    assert!(html.contains("<td class=sr><div class=strip>"), "{html}");
+    assert!(html.contains("last ok") && html.contains("overdue") && !html.contains("boom"), "{html}");
+    assert!(html.contains("class=\"unit v-failing\"") && html.contains("class=\"unit v-late\"") && html.contains("class=u title=\"ok.service\""), "one card per family: {html}");
+    assert!(html.contains("<div class=strip>") && html.contains("<summary>details</summary>"), "{html}");
 
     let swapped = fx.dir.join("duckdb");
     script(&swapped, "#!/bin/sh\necho '[]'\n");
@@ -368,7 +376,7 @@ async fn units_without_a_unit_run_file_still_lists_the_units_and_names_nothing_m
     let v = units_json(addr).await;
     assert_eq!(v["errors"].as_array().unwrap().len(), 0);
     assert_eq!(unit(&v, "never.service")["runs_7d"], 0);
-    assert_eq!(unit(&v, "dead.service")["stale"], true, "an active timer with no success at all is flagged");
+    assert_eq!(unit(&v, "dead.service")["verdict"], "never ran", "an active timer that has not run at all is flagged");
 }
 
 #[tokio::test]

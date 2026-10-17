@@ -36,7 +36,7 @@ pub struct Live {
     pub active: String,
     pub sub: String,
     pub unit_file: String,
-    pub next: String,
+    pub next_at: Option<i64>,
     pub last_trigger: String,
     pub target: String,
 }
@@ -46,6 +46,41 @@ pub struct Failure {
     pub unit: String,
     pub t: i64,
     pub result: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Failing,
+    Late,
+    NeverRan,
+    Healthy,
+    OneOff,
+}
+
+impl Verdict {
+    pub fn word(self) -> &'static str {
+        match self {
+            Verdict::Failing => "failing",
+            Verdict::Late => "late",
+            Verdict::NeverRan => "never ran",
+            Verdict::Healthy => "healthy",
+            Verdict::OneOff => "one-off",
+        }
+    }
+
+    fn class(self) -> &'static str {
+        match self {
+            Verdict::Failing => "failing",
+            Verdict::Late => "late",
+            Verdict::NeverRan => "never",
+            Verdict::Healthy => "healthy",
+            Verdict::OneOff => "oneoff",
+        }
+    }
+
+    fn rank(self) -> u8 {
+        self as u8
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +104,8 @@ pub struct Row {
     pub last_success: Option<i64>,
     pub interval_s: Option<i64>,
     pub stale: bool,
+    pub verdict: Verdict,
+    pub failing_since: Option<i64>,
     pub failure: Option<Failure>,
 }
 
@@ -135,7 +172,6 @@ pub fn parse_show(text: &str) -> BTreeMap<String, Live> {
                 "ActiveState" => l.active = v.to_string(),
                 "SubState" => l.sub = v.to_string(),
                 "UnitFileState" => l.unit_file = v.to_string(),
-                "NextElapseUSecRealtime" => l.next = v.to_string(),
                 "LastTriggerUSec" => l.last_trigger = v.to_string(),
                 "Unit" => l.target = v.to_string(),
                 _ => {}
@@ -243,12 +279,7 @@ pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String,
             let timer = if grouped { None } else if is_timer { live.get(&unit).cloned() } else { timer_of.get(&unit).cloned() };
             let interval_s = median_gap(&times);
             let timer_active = timer.as_ref().is_some_and(|t| t.active == "active");
-            let stale = timer_active
-                && match (interval_s, last_success) {
-                    (_, None) => true,
-                    (Some(i), Some(s)) => now - s > STALE_INTERVALS * i,
-                    (None, Some(_)) => false,
-                };
+            let stale = timer_active && matches!((interval_s, last_success), (Some(i), Some(s)) if now - s > STALE_INTERVALS * i);
             let failure = ex7.iter().rev().find(|e| !is_ok(e)).map(|e| Failure { unit: e.unit.clone(), t: e.t, result: e.result.clone() });
             let own = if grouped {
                 let lives: Vec<&Live> = members.iter().filter_map(|m| live.get(m)).collect();
@@ -257,6 +288,25 @@ pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String,
                 timer.as_ref()
             } else {
                 live.get(&first)
+            };
+            let failed_now = own.is_some_and(|l| l.active == "failed");
+            let latest_bad = ex7.last().is_some_and(|e| !is_ok(e));
+            let verdict = if kind == "session" {
+                Verdict::OneOff
+            } else if failed_now || latest_bad {
+                Verdict::Failing
+            } else if stale {
+                Verdict::Late
+            } else if ex7.is_empty() {
+                Verdict::NeverRan
+            } else {
+                Verdict::Healthy
+            };
+            let failing_since = if verdict == Verdict::Failing {
+                let streak = ex7.iter().rev().take_while(|e| !is_ok(e)).last().map(|e| e.t);
+                streak.or(failure.as_ref().map(|f| f.t))
+            } else {
+                None
             };
             let (active, sub, unit_file) = own.map(|l| (l.active.clone(), l.sub.clone(), l.unit_file.clone())).unwrap_or_default();
             Row {
@@ -278,12 +328,14 @@ pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String,
                 last_success,
                 interval_s,
                 stale,
+                verdict,
+                failing_since,
                 failure,
                 unit,
             }
         })
         .collect();
-    rows.sort_by(|a, b| (a.kind == "system", !a.stale, a.active != "failed", &a.unit).cmp(&(b.kind == "system", !b.stale, b.active != "failed", &b.unit)));
+    rows.sort_by(|a, b| (a.kind == "system", a.verdict.rank(), &a.unit).cmp(&(b.kind == "system", b.verdict.rank(), &b.unit)));
     rows
 }
 
@@ -294,7 +346,7 @@ pub fn row_json(r: &Row) -> Value {
         "instances": r.instances,
         "listed": r.listed,
         "state": { "active": r.active, "sub": r.sub, "unit_file": r.unit_file },
-        "timer": r.timer.as_ref().map(|t| json!({ "active": t.active, "sub": t.sub, "unit_file": t.unit_file, "next": t.next, "last_trigger": t.last_trigger })),
+        "timer": r.timer.as_ref().map(|t| json!({ "active": t.active, "sub": t.sub, "unit_file": t.unit_file, "next": t.next_at, "last_trigger": t.last_trigger })),
         "strip": r.strip,
         "runs_24h": r.runs_24h,
         "success_rate_24h": rate(r.ok_24h, r.runs_24h),
@@ -306,6 +358,8 @@ pub fn row_json(r: &Row) -> Value {
         "last_success": r.last_success,
         "interval_s": r.interval_s,
         "stale": r.stale,
+        "verdict": r.verdict.word(),
+        "failing_since": r.failing_since,
         "last_failure": r.failure.as_ref().map(|f| json!({ "at": f.t, "unit": f.unit, "result": f.result })),
     })
 }
@@ -326,75 +380,137 @@ fn ago(now: i64, t: Option<i64>) -> String {
     t.map_or("never".into(), |t| format!("{} ago", dur(now - t)))
 }
 
-const CSS: &str = "<style>.tick{display:inline-block;width:4px;height:14px;margin-right:1px;background:#3aa57a}\
-.tick.bad{background:#ff4d4f}.strip{white-space:nowrap;overflow:hidden;max-width:30rem}td.u{font-weight:600}\
-tr.stale td{background:#1e1416}pre{margin:.2rem 0;white-space:pre-wrap;color:#9aa5b1}.st-failed{color:#ff6b6d}.st-active{color:#3aa57a}\
-header h1{overflow-wrap:anywhere}\
-@media(max-width:639px){body{overflow-x:hidden}table.units,table.units tbody{display:block}table.units tr.head{display:none}\
-table.units tr{display:flex;flex-wrap:wrap;gap:.1rem .8rem;padding:.5rem .8rem;border-bottom:1px solid #1d232b}\
-table.units td{display:block;padding:0;border:0;min-width:0}table.units td.u{flex:0 0 100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
-table.units td.st{flex:0 0 100%}table.units td.sr{flex:0 0 100%;order:5}table.units td.sr .strip{max-width:100%;display:flex;justify-content:flex-end}table.units .strip i{flex:none}\
-table.units td.fl{flex:0 0 100%;order:6}table.units td.m::before{content:attr(data-l) \" \";color:#7d8896}}</style>";
+pub fn plain(s: i64) -> String {
+    let s = s.max(0);
+    match s {
+        0..=59 => format!("{s} sec"),
+        60..=5399 => format!("{} min", (s + 30) / 60),
+        5400..=172_799 => format!("{} h", (s + 1800) / 3600),
+        _ => format!("{} d", (s + 43_200) / 86_400),
+    }
+}
+
+/// One sentence of schedule facts: cadence, last success, next run.
+pub fn timing(now: i64, r: &Row) -> String {
+    let mut parts = Vec::new();
+    if r.verdict == Verdict::OneOff {
+        parts.push(format!("{} runs in 7 d", r.runs_7d));
+        parts.push(format!("{} failed", r.runs_7d - r.ok_7d));
+        if let Some(t) = r.last_run {
+            parts.push(format!("last {} ago", plain(now - t)));
+        }
+        return parts.join(" · ");
+    }
+    if let Some(i) = r.interval_s.filter(|_| r.timer.is_some()) {
+        parts.push(format!("every {}", plain(i)));
+    }
+    parts.push(match r.last_success {
+        Some(t) if r.stale => format!("last ok {} ago — overdue", plain(now - t)),
+        Some(t) => format!("last ok {} ago", plain(now - t)),
+        None if r.runs_7d == 0 => "no runs in 7 d".into(),
+        None => "no success in 7 d".into(),
+    });
+    if let Some(t) = &r.timer {
+        parts.push(match (t.active == "active", t.next_at) {
+            (false, _) => "timer not active".into(),
+            (true, Some(n)) if n > now => format!("next in {}", plain(n - now)),
+            (true, Some(n)) => format!("next was due {} ago", plain(now - n)),
+            (true, None) => "next run pending".into(),
+        });
+    }
+    parts.join(" · ")
+}
+
+const CSS: &str = "<style>.units-page{padding:.4rem .8rem}.unit{padding:.55rem 0;border-bottom:1px solid #1d232b}.unit .top{display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}\
+.unit .u{font-weight:600;overflow-wrap:anywhere}.unit .tm,.unit .why{margin-top:.15rem}.unit .why{color:#ff6b6d}\
+.vd{display:inline-block;min-width:5.2rem;text-align:center;padding:0 .5rem;border-radius:3px;font-size:.85em;font-weight:600;color:#0b0e12}\
+.v-failing .vd{background:#ff6b6d}.v-late .vd{background:#e0a030}.v-never .vd{background:#8a96a5}.v-healthy .vd{background:#3aa57a}.v-oneoff .vd{background:#4a5563;color:#d6dde6}\
+.tick{display:inline-block;width:4px;height:14px;margin-right:1px;background:#3aa57a}.tick.bad{background:#ff4d4f}\
+.strip{white-space:nowrap;overflow:hidden;max-width:100%;margin-top:.25rem}\
+.unit details{margin-top:.25rem}.unit summary{color:#7d8896;cursor:pointer}.unit dl{display:grid;grid-template-columns:max-content 1fr;gap:.1rem .8rem;margin:.3rem 0}\
+.unit dt{color:#7d8896}.unit dd{margin:0;overflow-wrap:anywhere}.legend{margin:.3rem 0}header h1{overflow-wrap:anywhere}\
+.st-failed{color:#ff6b6d}.st-active{color:#3aa57a}</style>";
 
 pub fn render_page(s: &Snapshot) -> String {
     let shown: Vec<&Row> = s.rows.iter().filter(|r| r.kind != "system").collect();
     let system = s.rows.len() - shown.len();
-    let stale = shown.iter().filter(|r| r.stale).count();
-    let failed = shown.iter().filter(|r| r.active == "failed").count();
+    let count = |v: Verdict| shown.iter().filter(|r| r.verdict == v).count();
+    let (failing, late, never, healthy, oneoff) = (count(Verdict::Failing), count(Verdict::Late), count(Verdict::NeverRan), count(Verdict::Healthy), count(Verdict::OneOff));
+    let tone = |n: usize| if n > 0 { "red" } else { "dim" };
     let mut b = format!(
-        "{CSS}<header><h1>Units <span class=dim>— {} unit families · <span class=\"{}\">{stale} stale</span> · <span class=\"{}\">{failed} failed</span> · <a href=/stuck>stuck</a></span></h1></header>",
-        shown.len(),
-        if stale > 0 { "red" } else { "dim" },
-        if failed > 0 { "red" } else { "dim" },
+        "{CSS}<header><h1>Units <span class=dim>— <span class=\"{}\">{failing} failing</span> · <span class=\"{}\">{late} late</span> · <span class=dim>{never} never ran</span> · <span class=dim>{healthy} healthy</span> · <a href=/stuck>stuck</a></span></h1></header><div class=units-page>",
+        tone(failing),
+        tone(late),
     );
     for e in &s.errors {
-        b.push_str(&format!("<p class=red style=\"padding:.4rem .8rem\">{}</p>", esc(e)));
+        b.push_str(&format!("<p class=red>{}</p>", esc(e)));
     }
-    b.push_str(TABLE_HEAD);
-    for r in &shown {
+    b.push_str("<p class=\"dim legend\"><b>failing</b>: its last run failed or systemd marks it failed · <b>late</b>: its timer should have run it by now · <b>never ran</b>: no run in 7 d · <b>healthy</b>: running to schedule. Open <i>details</i> for systemd's own state and the 24 h / 7 d success rates.</p>");
+    let group = |v: Verdict| shown.iter().filter(move |r| r.verdict == v);
+    for r in shown.iter().filter(|r| matches!(r.verdict, Verdict::Failing | Verdict::Late | Verdict::NeverRan)) {
         b.push_str(&row_html(s.now, r));
     }
-    b.push_str("</table>");
+    if failing + late + never == 0 {
+        b.push_str("<p class=dim>nothing needs attention</p>");
+    }
+    if healthy > 0 {
+        b.push_str(&format!("<details><summary class=dim>{healthy} healthy</summary>"));
+        group(Verdict::Healthy).for_each(|r| b.push_str(&row_html(s.now, r)));
+        b.push_str("</details>");
+    }
+    if oneoff > 0 {
+        b.push_str(&format!("<details><summary class=dim>{oneoff} one-off unit families (per-run sessions; not judged)</summary>"));
+        group(Verdict::OneOff).for_each(|r| b.push_str(&row_html(s.now, r)));
+        b.push_str("</details>");
+    }
     if system > 0 {
-        b.push_str(&format!("<details><summary class=dim>{system} OS-owned unit families</summary>{TABLE_HEAD}"));
+        b.push_str(&format!("<details><summary class=dim>{system} OS-owned unit families</summary>"));
         for r in s.rows.iter().filter(|r| r.kind == "system") {
             b.push_str(&row_html(s.now, r));
         }
-        b.push_str("</table></details>");
+        b.push_str("</details>");
     }
+    b.push_str("</div>");
     shell("units", "Units", 60, &b)
 }
 
-const TABLE_HEAD: &str = "<table class=units><tr class=head><td>unit</td><td>state</td><td>24 h</td><td>24 h</td><td>7 d</td><td>p50 / p95 (7 d)</td><td>last failure</td></tr>";
-
 fn row_html(now: i64, r: &Row) -> String {
-    {
-        let mut state = format!("<span class=\"st-{a}\">{a}</span> {sub}", a = esc(&r.active), sub = esc(&r.sub));
-        if let Some(t) = &r.timer {
-            state.push_str(&format!("<br><span class=dim>timer {} · next {} · last {}</span>", esc(&t.active), esc(&t.next), esc(&t.last_trigger)));
+    let strip: String = r.strip.iter().map(|x| format!("<i class=\"tick{}\" title=\"{}\"></i>", if x == "success" { "" } else { " bad" }, esc(x))).collect();
+    let name = if r.kind == "plain" { esc(&r.unit) } else { format!("{} <span class=dim>({} · {} instances)</span>", esc(&r.unit), r.kind, r.instances) };
+    let why = match (r.verdict, &r.failure) {
+        (Verdict::Failing, f) => {
+            let since = r.failing_since.map_or("failing now".to_string(), |t| format!("failing since {} ago", plain(now - t)));
+            let err = f.as_ref().map_or(String::new(), |f| format!(" · last error: {}", esc(&f.result)));
+            format!("<div class=why>{since}{err}</div>")
         }
-        if r.stale {
-            state.push_str(&format!("<br><span class=\"badge red\">stale — last success {}</span>", ago(now, r.last_success)));
-        }
-        let strip: String = r.strip.iter().map(|x| format!("<i class=\"tick{}\" title=\"{}\"></i>", if x == "success" { "" } else { " bad" }, esc(x))).collect();
-        let fail = r.failure.as_ref().map_or("<span class=dim>none in 7 d</span>".to_string(), |f| {
-            let inst = if r.kind == "plain" { String::new() } else { format!(" · {}", esc(&f.unit)) };
-            format!("{} · {}{inst}", ago(now, Some(f.t)), esc(&f.result))
-        });
-        let name = if r.kind == "plain" { esc(&r.unit) } else { format!("{} <span class=dim>({} · {} instances)</span>", esc(&r.unit), r.kind, r.instances) };
-        format!(
-            "<tr class=\"{}\"><td class=u title=\"{}\">{}</td><td class=st>{state}</td><td class=sr><div class=strip>{strip}</div></td><td class=m data-l=\"24 h\">{} runs · {}</td><td class=m data-l=\"7 d\">{} runs · {}</td><td class=m data-l=\"p50/p95\">{} / {}</td><td class=fl>{fail}</td></tr>",
-            if r.stale { "stale" } else { "" },
-            esc(&r.unit),
-            name,
-            r.runs_24h,
-            pct(r.ok_24h, r.runs_24h),
-            r.runs_7d,
-            pct(r.ok_7d, r.runs_7d),
-            ms(r.p50_ms),
-            ms(r.p95_ms),
-        )
-    }
+        _ => String::new(),
+    };
+    let last_failure = r.failure.as_ref().map_or("none in 7 d".to_string(), |f| {
+        let inst = if r.kind == "plain" { String::new() } else { format!(" · {}", esc(&f.unit)) };
+        format!("{} · {}{inst}", ago(now, Some(f.t)), esc(&f.result))
+    });
+    let timer = r.timer.as_ref().map_or(String::new(), |t| {
+        format!("<dt>timer</dt><dd>{} {} · last trigger {}</dd>", esc(&t.active), esc(&t.sub), esc(&t.last_trigger))
+    });
+    format!(
+        "<div class=\"unit v-{cls}\"><div class=top><span class=vd>{word}</span><span class=u title=\"{full}\">{name}</span></div>\
+<div class=\"tm dim\">{tm}</div>{why}<div class=strip>{strip}</div>\
+<details><summary>details</summary><dl><dt>systemd</dt><dd><span class=\"st-{a}\">{a}</span> {sub} · {uf}</dd>{timer}\
+<dt>24 h</dt><dd>{r24} runs · {p24}</dd><dt>7 d</dt><dd>{r7} runs · {p7}</dd><dt>p50 / p95 (7 d)</dt><dd>{p50} / {p95}</dd><dt>last failure</dt><dd>{last_failure}</dd></dl></details></div>",
+        cls = r.verdict.class(),
+        word = r.verdict.word(),
+        full = esc(&r.unit),
+        tm = esc(&timing(now, r)),
+        a = esc(&r.active),
+        sub = esc(&r.sub),
+        uf = esc(&r.unit_file),
+        r24 = r.runs_24h,
+        p24 = pct(r.ok_24h, r.runs_24h),
+        r7 = r.runs_7d,
+        p7 = pct(r.ok_7d, r.runs_7d),
+        p50 = ms(r.p50_ms),
+        p95 = ms(r.p95_ms),
+    )
 }
 
 async fn run_cmd(program: &str, args: &[String], path: &str, budget: Duration) -> Result<String, String> {
@@ -420,10 +536,29 @@ async fn unit_list(src: &Sources, path: &str) -> Result<(Vec<String>, BTreeMap<S
     if names.is_empty() {
         return Ok((names, BTreeMap::new()));
     }
-    let mut args = strs(&["--user", "show", "--no-pager", "-p", "Id,ActiveState,SubState,UnitFileState,NextElapseUSecRealtime,LastTriggerUSec,Unit"]);
+    let mut args = strs(&["--user", "show", "--no-pager", "-p", "Id,ActiveState,SubState,UnitFileState,LastTriggerUSec,Unit"]);
     args.extend(names.iter().cloned());
     let shown = run_cmd(&src.systemctl, &args, path, src.budget).await?;
     Ok((names, parse_show(&shown)))
+}
+
+async fn timer_nexts(src: &Sources, path: &str) -> Result<BTreeMap<String, i64>, String> {
+    let text = run_cmd(&src.systemctl, &strs(&["--user", "list-timers", "--all", "--output=json", "--no-pager"]), path, src.budget).await?;
+    parse_timer_nexts(&text)
+}
+
+/// `list-timers --output=json`: `next` is microseconds since the epoch, 0 or absent when no elapse is scheduled.
+pub fn parse_timer_nexts(text: &str) -> Result<BTreeMap<String, i64>, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let v: Value = serde_json::from_str(text).map_err(|e| format!("list-timers: unparsable json: {e}"))?;
+    Ok(v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| Some((t["unit"].as_str()?.to_string(), t["next"].as_i64().filter(|n| *n > 0)? / 1_000_000)))
+        .collect())
 }
 
 async fn executions(src: &Sources, path: &str, now: i64) -> Result<Vec<Value>, String> {
@@ -451,16 +586,122 @@ pub async fn take(src: &Sources, now: i64) -> Snapshot {
         let inherited = std::env::var("PATH").unwrap_or_default();
         if src.extra_path.is_empty() { inherited } else { format!("{}:{inherited}", src.extra_path) }
     };
-    let (list, rows) = tokio::join!(unit_list(src, &path), executions(src, &path, now));
+    let (list, rows, nexts) = tokio::join!(unit_list(src, &path), executions(src, &path, now), timer_nexts(src, &path));
     let mut errors = Vec::new();
-    let (names, live) = list.unwrap_or_else(|e| {
+    let (names, mut live) = list.unwrap_or_else(|e| {
         errors.push(format!("unit list: {e}"));
         (Vec::new(), BTreeMap::new())
     });
+    match nexts {
+        Ok(n) => n.into_iter().for_each(|(timer, at)| {
+            if let Some(l) = live.get_mut(&timer) {
+                l.next_at = Some(at);
+            }
+        }),
+        Err(e) => errors.push(format!("timers: {e}")),
+    }
     let rows = rows.unwrap_or_else(|e| {
         errors.push(format!("unit-run: {e}"));
         Vec::new()
     });
     let execs = parse_execs(&rows);
     Snapshot { taken: Instant::now(), now, rows: build(now, &parse_families(DEFAULT_FAMILIES), &names, &live, &execs), errors }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NOW: i64 = 1_800_000_000;
+
+    fn ex(unit: &str, ago: i64, result: &str) -> Exec {
+        Exec { unit: unit.into(), t: NOW - ago, result: result.into(), duration_ms: Some(100), invocation: String::new() }
+    }
+
+    fn live(active: &str, sub: &str) -> Live {
+        Live { active: active.into(), sub: sub.into(), ..Default::default() }
+    }
+
+    fn timer(next_in: Option<i64>) -> Live {
+        Live { next_at: next_in.map(|n| NOW + n), target: String::new(), ..live("active", "waiting") }
+    }
+
+    fn rows(names: &[&str], lives: &[(&str, Live)], runs: Vec<Exec>) -> Vec<Row> {
+        let names: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+        let live: BTreeMap<String, Live> = lives.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        build(NOW, &parse_families(DEFAULT_FAMILIES), &names, &live, &parse_execs(&runs.iter().map(|e| json!({"unit": e.unit, "t": e.t, "result": e.result})).collect::<Vec<_>>()))
+    }
+
+    fn every_5_min(unit: &str, last_ago: i64, n: i64) -> Vec<Exec> {
+        (0..n).map(|i| ex(unit, last_ago + i * 300, "success")).collect()
+    }
+
+    fn by<'a>(rs: &'a [Row], name: &str) -> &'a Row {
+        rs.iter().find(|r| r.unit == name).unwrap_or_else(|| panic!("{name} missing"))
+    }
+
+    fn fixture() -> Vec<Row> {
+        let mut runs = every_5_min("between.service", 540, 20);
+        runs.extend(every_5_min("overdue.service", 6 * 3600, 20));
+        runs.extend([ex("broken.service", 1800, "success"), ex("broken.service", 900, "exit-code"), ex("broken.service", 600, "exit-code")]);
+        runs.extend(every_5_min("old-timeout.service", 120_000, 1));
+        runs.push(ex("old-timeout.service", 119_000, "timeout"));
+        runs.extend(every_5_min("old-timeout.service", 60, 1));
+        runs.push(ex("concierge-1799990000.service", 3 * DAY, "exit-code"));
+        rows(
+            &["between.service", "between.timer", "overdue.service", "overdue.timer", "broken.service", "never.service", "never.timer", "old-timeout.service", "concierge-1799990000.service"],
+            &[
+                ("between.service", live("inactive", "dead")),
+                ("between.timer", timer(Some(60))),
+                ("overdue.service", live("inactive", "dead")),
+                ("overdue.timer", timer(Some(10))),
+                ("broken.service", live("failed", "failed")),
+                ("never.service", live("inactive", "dead")),
+                ("never.timer", timer(Some(30))),
+                ("old-timeout.service", live("inactive", "dead")),
+                ("concierge-1799990000.service", live("failed", "failed")),
+            ],
+            runs,
+        )
+    }
+
+    #[test]
+    fn verdicts_and_attention_order_for_each_case() {
+        let rs = fixture();
+        let v = |n: &str| by(&rs, n).verdict;
+        assert_eq!(v("between.service"), Verdict::Healthy, "a timer job between runs is healthy, not 'inactive dead'");
+        assert_eq!(v("broken.service"), Verdict::Failing);
+        assert_eq!(v("overdue.service"), Verdict::Late);
+        assert_eq!(v("never.service"), Verdict::NeverRan);
+        assert_eq!(v("old-timeout.service"), Verdict::Healthy, "an old failure in a recovered job is not a current problem");
+        assert_eq!(v("concierge-run"), Verdict::OneOff, "a past transient failure is not a failure");
+        let order: Vec<&str> = rs.iter().map(|r| r.verdict.word()).collect();
+        let mut sorted = order.clone();
+        sorted.sort_by_key(|w| ["failing", "late", "never ran", "healthy", "one-off"].iter().position(|x| x == w));
+        assert_eq!(order, sorted, "failing, late, never ran, healthy, one-off");
+        assert_eq!(rs[0].unit, "broken.service");
+    }
+
+    #[test]
+    fn failing_rows_say_since_when_and_timing_is_plain() {
+        let rs = fixture();
+        let broken = by(&rs, "broken.service");
+        assert_eq!(broken.failing_since, Some(NOW - 900), "the start of the unbroken failure streak");
+        let page = render_page(&Snapshot { taken: Instant::now(), now: NOW, rows: rs.clone(), errors: vec![] });
+        assert!(page.contains("failing since 15 min ago · last error: exit-code"), "{page}");
+        assert_eq!(timing(NOW, by(&rs, "between.service")), "every 5 min · last ok 9 min ago · next in 1 min");
+        assert!(timing(NOW, by(&rs, "overdue.service")).contains("overdue"));
+        assert_eq!(timing(NOW, by(&rs, "never.service")), "no runs in 7 d · next in 30 sec");
+        assert!(page.contains("<summary class=dim>"), "healthy rows are collapsed behind a count: {page}");
+        assert!(page.contains("2 healthy"), "{page}");
+    }
+
+    #[test]
+    fn next_is_read_for_monotonic_and_calendar_timers_alike() {
+        let json = r#"[{"next":1800000060000000,"left":1,"unit":"a.timer","activates":"a.service"},{"next":0,"unit":"b.timer"},{"unit":"c.timer"}]"#;
+        let m = parse_timer_nexts(json).unwrap();
+        assert_eq!(m.get("a.timer"), Some(&1_800_000_060));
+        assert!(!m.contains_key("b.timer") && !m.contains_key("c.timer"));
+        assert!(parse_timer_nexts("not json").is_err());
+    }
 }

@@ -91,13 +91,13 @@ pub fn render_now(snap: &Snapshot, view: &View, units: &UnitsState) -> String {
             if *stale {
                 b.push_str(&format!("<p class=\"badge red\">stale: unit history is {} old, refreshing</p>", dur(*age_s)));
             }
-            let mut bad: Vec<&units::Row> = u.rows.iter().filter(|r| r.kind != "system" && (r.stale || r.active == "failed")).collect();
-            bad.sort_by(|a, b| (b.active == "failed").cmp(&(a.active == "failed")).then(a.unit.cmp(&b.unit)));
+            let mut bad: Vec<&units::Row> = u.rows.iter().filter(|r| r.kind != "system" && matches!(r.verdict, units::Verdict::Failing | units::Verdict::Late)).collect();
+            bad.sort_by(|a, b| (a.verdict as u8, &a.unit).cmp(&(b.verdict as u8, &b.unit)));
             if bad.is_empty() {
                 b.push_str("<p class=dim>every unit is running to schedule</p>");
             }
             for r in bad.iter().take(TOP) {
-                let why = if r.active == "failed" { "failed".to_string() } else { format!("stale — last success {}", r.last_success.map_or("never".into(), |t| format!("{} ago", dur(u.now - t)))) };
+                let why = if r.verdict == units::Verdict::Failing { "failing".to_string() } else { format!("late — last success {}", r.last_success.map_or("never".into(), |t| format!("{} ago", dur(u.now - t)))) };
                 b.push_str(&format!("<a class=card href=\"/units\"><div class=head><span class=id>{}</span><span class=\"badge red\">{}</span></div></a>", esc(&r.unit), esc(&why)));
             }
         }
