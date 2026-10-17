@@ -315,7 +315,7 @@ JSON
 run --show
 run --show
 txt="$(op_text)"
-is "failed deploy: one merge note and one deploy note" "2" "$(op_count)"
+is "failed deploy: one merge note and one deploy note [$(op_count): $(ls $RUN/mail/operator/new | tr "\n" " ") $(cat $TMP/err)]" "2" "$(op_count)"
 has "failed run says DEPLOY FAILED" "$txt" "DEPLOY FAILED: PR #8"
 has "failed run carries the run url" "$txt" "https://example.test/run/2"
 rm -f "$DR"/.gh-pr-state "$DR"/.gh-runs.json "$DR"/.gh-pr-merge.json
