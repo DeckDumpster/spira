@@ -69,18 +69,10 @@ fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
         let should_escalate = decided || (row.escalated && !tracked_by_open_bead(cfg, unit));
         if should_escalate {
             if let Some(inc) = inc {
-                let logs = spira_config::bounded::bounded(&cfg.journalctl)
-                    .args(crate::probes::journal_args(unit, crate::probes::LOG_LOOKBACK, &["-n", "3"]))
-                    .output()
-                    .map(|o| {
-                        String::from_utf8_lossy(&o.stdout).into_owned()
-                            + &String::from_utf8_lossy(&o.stderr)
-                    })
-                    .unwrap_or_default();
                 let first_disp = crate::log::fmt_iso(row.first_seen);
                 let age_mins = (d.now - row.first_seen) / 60;
                 let body = format!(
-                    "{unit} has been failing for {age_mins}m (first seen failing {first_disp})\n\nLast 3 log lines:\n{logs}\n\nCheck: journalctl --user -u {unit} -n 50\n"
+                    "{unit} has been failing for {age_mins}m (first seen failing {first_disp})\n\nCheck: systemctl --user status {unit}\n"
                 );
                 let f = Finding::new(
                     &cfg.db,
@@ -437,7 +429,6 @@ mod tests {
             drain_warn_mins: 15,
             idle_while_ready_n: 5,
             systemctl: "systemctl".into(),
-            journalctl: "journalctl".into(),
             prompt_file: None,
             lapsed_dir: None,
             lapsed_marker: None,
