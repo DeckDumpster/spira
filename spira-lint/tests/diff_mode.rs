@@ -121,3 +121,22 @@ fn an_edit_above_an_allowlisted_wait_does_not_move_the_finding_into_the_diff() {
     let (rc, out) = lint_rule(&d, "time-only-wait", &["--diff", "main"]);
     assert_eq!((rc, out.as_str()), (0, ""));
 }
+
+#[test]
+fn a_stale_journal_allow_line_reds_every_run_not_only_a_change_to_its_file() {
+    let d = testkit::TempDir::new("spira-lint-diff-journal");
+    std::fs::create_dir_all(d.join("spira")).unwrap();
+    std::fs::create_dir_all(d.join("spira-lint")).unwrap();
+    std::fs::write(d.join("spira/probe.sh"), "#!/bin/bash\ntrue\n").unwrap();
+    std::fs::write(d.join("spira/other.sh"), "#!/bin/bash\ntrue\n").unwrap();
+    std::fs::write(d.join("spira-lint/journal-readers-allow"), "# h\nspira/probe.sh sp-x\n").unwrap();
+    git(&d, &["init", "-q", "-b", "main"]);
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-q", "-m", "base"]);
+    git(&d, &["checkout", "-q", "-b", "branch"]);
+    std::fs::write(d.join("spira/other.sh"), "#!/bin/bash\ntrue\ntrue\n").unwrap();
+    git(&d, &["commit", "-qam", "unrelated edit"]);
+    let (rc, out) = lint_rule(&d, "journal-reads", &["--diff", "main"]);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("no longer reads the journal"), "{out}");
+}
