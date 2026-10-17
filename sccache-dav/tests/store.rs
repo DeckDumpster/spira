@@ -19,9 +19,13 @@ fn scratch() -> testkit::TempDir {
 }
 
 async fn spawn(root: std::path::PathBuf, token: Option<&str>) -> SocketAddr {
+    spawn_tallied(root, token, Arc::new(sccache_dav::telemetry::Tally::default())).await
+}
+
+async fn spawn_tallied(root: std::path::PathBuf, token: Option<&str>, tally: Arc<sccache_dav::telemetry::Tally>) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
     let addr = listener.local_addr().expect("its address");
-    let state = Arc::new(AppState { root, token: token.map(str::to_string) });
+    let state = Arc::new(AppState { root, token: token.map(str::to_string), tally });
     let app = router(state);
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
@@ -240,4 +244,24 @@ async fn a_get_marks_the_entry_read_so_it_outlives_an_unread_newer_one() {
 
     assert!(d.path().join("a/hit").exists(), "read just now");
     assert!(!d.path().join("b/unread").exists());
+}
+
+#[tokio::test]
+async fn served_requests_are_tallied_and_flushed_as_hits_and_misses() {
+    let t = scratch();
+    let tally = Arc::new(sccache_dav::telemetry::Tally::default());
+    let addr = spawn_tallied(t.path().to_path_buf(), None, tally.clone()).await;
+    assert_eq!(req(addr, "PUT", "/k", None, b"v").await.code, 201);
+    assert_eq!(req(addr, "GET", "/k", None, b"").await.code, 200);
+    assert_eq!(req(addr, "GET", "/absent", None, b"").await.code, 404);
+    let (sink_addr, h) = spira_otel::metrics::run::fixture_sink();
+    let sink = spira_otel::metrics::MetricsSink::new(Some(&sink_addr), "spira-sccache-dav", std::time::Duration::from_secs(2));
+    let flushed = tokio::task::spawn_blocking(move || {
+        tally.flush(&sink);
+    });
+    let body = h.join().unwrap();
+    flushed.await.unwrap();
+    for want in ["spira_component_runs", "spira_component_run_seconds", "sccache-dav"] {
+        assert!(body.contains(want), "{want} missing from the push");
+    }
 }

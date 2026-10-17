@@ -11,6 +11,10 @@ use install::systemctl::RealSystemctl;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    install::telemetry::metered_exit("unit-ensure", run_main)
+}
+
+fn run_main() -> ExitCode {
     let diff = std::env::args().skip(1).any(|a| a == "--diff");
     let instance = bootstrap::nonempty_env("SPIRA_INSTANCE").unwrap_or_else(|| "prod".into());
 

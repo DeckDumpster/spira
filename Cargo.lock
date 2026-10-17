@@ -742,6 +742,7 @@ dependencies = [
  "release",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -1379,6 +1380,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-otel",
  "testkit",
  "toml",
 ]
@@ -1408,6 +1410,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-otel",
  "testkit",
  "tsd",
  "ureq",
@@ -1501,6 +1504,7 @@ dependencies = [
  "axum",
  "httpdate",
  "spira-config",
+ "spira-otel",
  "testkit",
  "tokio",
 ]
@@ -1709,6 +1713,7 @@ version = "1.0.0"
 dependencies = [
  "libc",
  "spira-config",
+ "spira-otel",
 ]
 
 [[package]]
@@ -1794,6 +1799,7 @@ dependencies = [
  "serde_path_to_error",
  "sha2",
  "spira-config",
+ "spira-otel",
  "testkit",
  "toml",
 ]

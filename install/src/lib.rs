@@ -21,4 +21,5 @@ pub mod orchestrate;
 pub mod populate;
 pub mod seed_instance;
 pub mod systemctl;
+pub mod telemetry;
 pub mod values;

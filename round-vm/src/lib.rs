@@ -19,6 +19,7 @@ pub mod run;
 pub mod schema;
 pub mod spill;
 pub mod spool;
+pub mod telemetry;
 pub mod template;
 
 #[cfg(test)]

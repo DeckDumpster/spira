@@ -99,9 +99,12 @@ pub fn tailnet_addr_from_config() -> Result<String, String> {
     spira_config::process::cfg("SPIRA_SCCACHE_DAV_TAILNET_ADDR")
 }
 
+pub mod telemetry;
+
 pub struct AppState {
     pub root: PathBuf,
     pub token: Option<String>,
+    pub tally: Arc<telemetry::Tally>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -149,6 +152,14 @@ fn percent_decode(s: &str) -> String {
 }
 
 async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Response {
+    let method = req.method().to_string();
+    let started = std::time::Instant::now();
+    let resp = dispatch(&state, req).await;
+    state.tally.record(&method, resp.status().as_u16(), started.elapsed());
+    resp
+}
+
+async fn dispatch(state: &AppState, req: Request) -> Response {
     if let Some(tok) = &state.token {
         let want = format!("Bearer {tok}");
         let got_ok = req

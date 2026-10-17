@@ -32,6 +32,7 @@ test = false
 [dependencies]
 release = { path = "../release" }
 spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
 serde_json = "1"
 
 [dev-dependencies]

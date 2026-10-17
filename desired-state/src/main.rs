@@ -143,6 +143,10 @@ fn cmd_schema() -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
+    spira_desired_state::telemetry::metered_exit(&args, || run_main(&args))
+}
+
+fn run_main(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("apply") => cmd_apply(args.get(1)),
         Some("compose") => cmd_compose(&args[1..]),

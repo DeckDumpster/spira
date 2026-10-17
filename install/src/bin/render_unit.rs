@@ -13,6 +13,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    install::telemetry::metered_exit("render-unit", run_main)
+}
+
+fn run_main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(template) = args.next() else {
         eprintln!("usage: render-unit <template> --home H --repo R ...");
