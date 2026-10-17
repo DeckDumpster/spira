@@ -92,7 +92,7 @@ fn ledger_path() -> PathBuf {
     let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let run = spira_config::resolve::resolve_run_dir(&env_map, &harness_home()).unwrap_or_else(|e| {
         eprintln!("sop: FATAL: {e}");
-        spira_otel::process::exit(1);
+        spira_otel::oneshot::exit(1);
     });
     run.join("sop").join("applied.jsonl")
 }
@@ -137,7 +137,7 @@ fn make_clock() -> Result<RealClock, ExitCode> {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let op = args.first().cloned().unwrap_or_else(|| "usage".into());
-    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sop", &op);
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sop", &op);
     let code = dispatch(&args);
     let ok = format!("{code:?}") == format!("{:?}", ExitCode::SUCCESS);
     if ok && matches!(op.as_str(), "write" | "retire" | "applied") {
@@ -146,9 +146,9 @@ fn main() -> ExitCode {
             "retire" => "spira_sops_retired",
             _ => "spira_sops_applied",
         };
-        spira_otel::process::event(name, 1, &[]);
+        spira_otel::oneshot::event(name, 1, &[]);
     }
-    spira_otel::process::finish(code)
+    spira_otel::oneshot::finish(code)
 }
 
 fn dispatch(args: &[String]) -> ExitCode {

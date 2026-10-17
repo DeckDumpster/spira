@@ -5,15 +5,15 @@ use std::path::PathBuf;
 fn main() {
     let mut prompt = String::new();
     let _ = std::io::stdin().read_to_string(&mut prompt);
-    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sim-agent", "play");
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sim-agent", "play");
     match run() {
         Ok(()) => {
             println!("{RESULT}");
-            spira_otel::process::end(0);
+            spira_otel::oneshot::end(0);
         }
         Err(e) => {
             eprintln!("sim-agent: {e}");
-            spira_otel::process::exit(1);
+            spira_otel::oneshot::exit(1);
         }
     }
 }

@@ -16,8 +16,8 @@ fn main() -> ExitCode {
         *slot = args.next().map(PathBuf::from);
     }
     let (Some(gate), Some(land), Some(out)) = (gate, land, out) else { return usage() };
-    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sim-fit", "fit");
-    spira_otel::process::finish(fit(&gate, &land, &out))
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sim-fit", "fit");
+    spira_otel::oneshot::finish(fit(&gate, &land, &out))
 }
 
 fn fit(gate: &PathBuf, land: &PathBuf, out: &PathBuf) -> ExitCode {

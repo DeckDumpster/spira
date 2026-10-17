@@ -49,7 +49,7 @@ fn main() {
     // but test-render-memories.sh's seam cases deliberately never set one. SPIRA_DB is a
     // registered config key (spira/conf.d) — resolved only for the commands that need it, via
     // the one source of config, never a process-environment read.
-    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-rule", &cmd);
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-rule", &cmd);
     let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "audit");
     let reads_book = matches!(cmd.as_str(), "list" | "show");
     let db = if needs_db {
@@ -57,7 +57,7 @@ fn main() {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("rule: {e}");
-                spira_otel::process::exit(1);
+                spira_otel::oneshot::exit(1);
             }
         }
     } else if reads_book {
@@ -67,7 +67,7 @@ fn main() {
     };
     if needs_db && !Path::new(&format!("{db}/.beads")).is_dir() {
         eprintln!("rule: {db} has no .beads — refusing to guess a database");
-        spira_otel::process::exit(1);
+        spira_otel::oneshot::exit(1);
     }
 
     let rc = match cmd.as_str() {
@@ -84,9 +84,9 @@ fn main() {
         }
     };
     if rc == 0 && matches!(cmd.as_str(), "enact" | "retire") {
-        spira_otel::process::event("spira_statutes_changed", 1, &[("change", if cmd == "enact" { "enacted" } else { "retired" })]);
+        spira_otel::oneshot::event("spira_statutes_changed", 1, &[("change", if cmd == "enact" { "enacted" } else { "retired" })]);
     }
-    spira_otel::process::exit(rc);
+    spira_otel::oneshot::exit(rc);
 }
 
 /// `bd -C <db> <args...>` — never `$SPIRA_BD` (DESIGN.md "Decisions": `rule.sh` didn't

@@ -58,7 +58,7 @@ EXIT
 fn usage_err(msg: &str) -> ! {
     eprintln!("slay.sh: {msg}");
     eprint!("{}", usage_text());
-    spira_otel::process::exit(2);
+    spira_otel::oneshot::exit(2);
 }
 
 struct Args {
@@ -104,7 +104,7 @@ fn parse_args(argv: &[String]) -> Args {
             }
             "-h" | "--help" => {
                 print!("{}", usage_text());
-                spira_otel::process::exit(0);
+                spira_otel::oneshot::exit(0);
             }
             other if other.starts_with('-') => {
                 usage_err(&format!("unknown flag {other}"));
@@ -112,7 +112,7 @@ fn parse_args(argv: &[String]) -> Args {
             other => {
                 eprintln!("slay.sh: unexpected argument \"{other}\" — this tool takes named arguments only.");
                 eprintln!("slay.sh: the bead goes in --bead, a reason goes in --why.");
-                spira_otel::process::exit(2);
+                spira_otel::oneshot::exit(2);
             }
         }
     }
@@ -131,7 +131,7 @@ fn say(s: &str) {
 fn spira_run() -> PathBuf {
     spira_world::spira_run().unwrap_or_else(|e| {
         eprintln!("spira: FATAL slay: {e}");
-        spira_otel::process::exit(1);
+        spira_otel::oneshot::exit(1);
     })
 }
 
@@ -163,14 +163,14 @@ fn main() {
     let argv: Vec<String> = env::args().skip(1).collect();
     let args = parse_args(&argv);
     let id = &args.id;
-    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-slay", "slay");
+    spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-slay", "slay");
     let run = spira_run();
     // `SLAY_FINISH` reads this itself (bdq label add) — resolved here, at the top, and
     // handed in explicitly rather than left for the seam's bash to inherit from whatever
     // happens to be in the ambient environment (per Ryan 2026-10-05: one source of config).
     let submitted_label = spira_config::process::cfg("SPIRA_SUBMITTED_LABEL").unwrap_or_else(|e| {
         eprintln!("slay.sh: FATAL: {e}");
-        spira_otel::process::exit(1);
+        spira_otel::oneshot::exit(1);
     });
     let exe = env::current_exe().ok();
     let lib_sh = exe.as_deref().and_then(spira_world::locate_home).map(|h| h.join("lib.sh"));
@@ -188,7 +188,7 @@ fn main() {
         if !found.is_empty() {
             eprintln!("slay.sh: the store answered with {found} instead (prefix match)");
         }
-        spira_otel::process::exit(2);
+        spira_otel::oneshot::exit(2);
     }
 
     let mut fail = false;
@@ -338,8 +338,8 @@ fn main() {
 
     if fail {
         say(&format!("slay: INCOMPLETE for {id} — see above"));
-        spira_otel::process::exit(1);
+        spira_otel::oneshot::exit(1);
     }
     say(&format!("slain: {id}"));
-    spira_otel::process::end(0);
+    spira_otel::oneshot::end(0);
 }
