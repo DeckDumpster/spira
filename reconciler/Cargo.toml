@@ -5,6 +5,7 @@ edition = "2021"
 description = "Structural-invariant control loop: desired state vs observed state, gaps and deterministic remedies."
 
 [dependencies]
+spira-otel = { path = "../spira-otel" }
 spira-config = { path = "../spira-config" }
 spira-ctrl = { path = "../spira-ctrl" }
 reconciler-engine = { path = "../reconciler-engine" }

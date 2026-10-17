@@ -29,6 +29,8 @@ pub enum Point<'a> {
     Count { name: &'a str, value: u64 },
     /// One duration sample in seconds.
     Seconds { name: &'a str, value: f64 },
+    /// A gauge: the latest value of `name`.
+    Gauge { name: &'a str, value: f64 },
 }
 
 pub struct MetricsSink {
@@ -42,6 +44,11 @@ impl MetricsSink {
     pub fn new(endpoint: Option<&str>, service: &str, deadline: Duration) -> MetricsSink {
         let endpoint = endpoint.map(str::trim).filter(|e| !e.is_empty()).map(|e| e.trim_start_matches("http://").trim_end_matches('/').to_string());
         MetricsSink { endpoint, service: service.to_string(), deadline }
+    }
+
+    /// A sink for one component's own runs: `component` is the OTLP service name, the deadline short.
+    pub fn for_component(endpoint: Option<&str>, component: &str) -> MetricsSink {
+        MetricsSink::new(endpoint, component, Duration::from_secs(2))
     }
 
     /// Pushes `points`, all carrying `labels`; a failure is counted, never returned.
@@ -65,6 +72,7 @@ impl MetricsSink {
                 let (name, unit, value) = match p {
                     Point::Count { name, value } => (*name, "", Num::AsInt(*value as i64)),
                     Point::Seconds { name, value } => (*name, "s", Num::AsDouble(*value)),
+                    Point::Gauge { name, value } => (*name, "", Num::AsDouble(*value)),
                 };
                 Metric {
                     name: name.into(),
@@ -82,6 +90,41 @@ impl MetricsSink {
             }],
         }
     }
+}
+
+pub const INVOCATIONS: &str = "spira_component_invocations";
+pub const RUN_SECONDS: &str = "spira_component_run_seconds";
+
+/// Runs one unit of work and pushes its invocation count and duration, labelled by
+/// `component`, `operation` and `outcome` (`ok`, or `exit_<code>` for a non-zero exit code).
+/// `f` returns the exit code; the push is fire-and-forget and never changes it.
+pub fn instrument(sink: &MetricsSink, component: &str, operation: &str, f: impl FnOnce() -> i32) -> i32 {
+    instrument_with(sink, component, operation, &[], || (f(), Vec::new()))
+}
+
+/// [`instrument`] for a `Result`: the outcome is `ok` or `error`.
+pub fn instrument_result<T>(sink: &MetricsSink, component: &str, operation: &str, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let mut out = None;
+    instrument(sink, component, operation, || {
+        let r = f();
+        let code = i32::from(r.is_err());
+        out = Some(r);
+        code
+    });
+    out.expect("instrument ran f")
+}
+
+/// [`instrument`] where `f` also returns extra points describing the work it did, pushed with the same labels.
+pub fn instrument_with(sink: &MetricsSink, component: &str, operation: &str, extra_labels: &[(&str, &str)], f: impl FnOnce() -> (i32, Vec<(String, f64)>)) -> i32 {
+    let start = Instant::now();
+    let (code, counts) = f();
+    let outcome = if code == 0 { "ok".to_string() } else { format!("exit_{code}") };
+    let mut points = vec![Point::Count { name: INVOCATIONS, value: 1 }, Point::Seconds { name: RUN_SECONDS, value: start.elapsed().as_secs_f64() }];
+    points.extend(counts.iter().map(|(name, value)| Point::Gauge { name, value: *value }));
+    let mut labels = vec![("component", component), ("operation", operation), ("outcome", outcome.as_str())];
+    labels.extend_from_slice(extra_labels);
+    sink.push(&points, &labels);
+    code
 }
 
 fn kv(k: &str, v: &str) -> KeyValue {
@@ -136,6 +179,7 @@ impl Run {
         points.extend(extra.iter().map(|p| match p {
             Point::Count { name, value } => Point::Count { name, value: *value },
             Point::Seconds { name, value } => Point::Seconds { name, value: *value },
+            Point::Gauge { name, value } => Point::Gauge { name, value: *value },
         }));
         self.sink.push(&points, &[("component", &self.component), ("operation", &self.operation), ("outcome", outcome)]);
     }
@@ -373,5 +417,31 @@ mod tests {
         let before = push_failed();
         Run::begin(None, "mail", "send").end("ok");
         assert_eq!(push_failed(), before);
+    }
+}
+
+#[cfg(test)]
+mod instrument_tests {
+    use super::*;
+
+    #[test]
+    fn a_run_pushes_its_invocation_duration_and_outcome_and_keeps_its_exit_code() {
+        let fx = crate::fixture::Sink::start();
+        let sink = MetricsSink::for_component(Some(fx.addr()), "spira-x");
+        assert_eq!(instrument(&sink, "x", "pass", || 3), 3);
+        assert_eq!(instrument_result(&sink, "x", "other", || Ok::<_, String>(7)), Ok(7));
+        std::thread::sleep(Duration::from_millis(200));
+        let got = fx.received(Duration::from_secs(2));
+        let fail = got.iter().find(|s| s.name == INVOCATIONS && s.label("operation") == Some("pass")).unwrap();
+        assert_eq!((fail.service.as_str(), fail.label("component"), fail.label("outcome")), ("spira-x", Some("x"), Some("exit_3")));
+        assert!(got.iter().any(|s| s.name == RUN_SECONDS && s.label("operation") == Some("pass")));
+        assert!(got.iter().any(|s| s.name == INVOCATIONS && s.label("operation") == Some("other") && s.label("outcome") == Some("ok")));
+    }
+
+    #[test]
+    fn a_gauge_point_round_trips() {
+        let req = MetricsSink::new(None, "s", Duration::from_millis(50)).encode(&[Point::Gauge { name: "g", value: 2.5 }], &[], UNIX_EPOCH);
+        let Some(Data::Gauge(g)) = &req.resource_metrics[0].scope_metrics[0].metrics[0].data else { panic!() };
+        assert_eq!(g.data_points[0].value, Some(Num::AsDouble(2.5)));
     }
 }

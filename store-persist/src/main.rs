@@ -87,11 +87,17 @@ fn config() -> Result<Config, String> {
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    let sink = spira_otel::metrics::MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-store-persist");
+    let operation = argv.first().map_or("none", String::as_str).to_string();
+    ExitCode::from(spira_otel::metrics::instrument(&sink, "store-persist", &operation, || i32::from(run(&argv, &sink))) as u8)
+}
+
+fn run(argv: &[String], sink: &spira_otel::metrics::MetricsSink) -> u8 {
     let cfg = match config() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("store-persist: {e}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
     let (dolt, clock) = (RealDolt, RealClock);
@@ -114,14 +120,17 @@ fn main() -> ExitCode {
         ["seed", "--from", dir] => store_persist::seed(&cfg, &PathBuf::from(dir), &dolt, &clock)
             .map(|st| vec![format!("store-persist: seeded {} from {dir}", st.dbs.join(","))]),
         ["compact"] => store_persist::compact(&cfg, &dolt).map(|v| v.into_iter().map(|l| format!("store-persist: {l}")).collect()),
-        ["age"] => match store_persist::age(&cfg, clock.now_ms()) {
-            Ok((lag, false)) => Ok(vec![format!("store-persist: newest pass began {lag} ms ago (bound {}s)", cfg.max_lag_secs)]),
-            Ok((lag, true)) => Err(format!("newest pass began {lag} ms ago, past the {}s bound — writes since then are not durable", cfg.max_lag_secs)),
-            Err(e) => Err(e),
-        },
+        ["age"] => store_persist::age(&cfg, clock.now_ms()).and_then(|(lag, stale)| {
+            sink.push(&[spira_otel::metrics::Point::Gauge { name: "spira_store_persist_lag_seconds", value: lag as f64 / 1000.0 }], &[("component", "store-persist")]);
+            if stale {
+                Err(format!("newest pass began {lag} ms ago, past the {}s bound — writes since then are not durable", cfg.max_lag_secs))
+            } else {
+                Ok(vec![format!("store-persist: newest pass began {lag} ms ago (bound {}s)", cfg.max_lag_secs)])
+            }
+        }),
         _ => {
             eprintln!("store-persist: {USAGE}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
     match result {
@@ -129,11 +138,11 @@ fn main() -> ExitCode {
             for l in lines {
                 println!("{l}");
             }
-            ExitCode::SUCCESS
+            0
         }
         Err(e) => {
             eprintln!("store-persist: {e}");
-            ExitCode::from(1)
+            1
         }
     }
 }
