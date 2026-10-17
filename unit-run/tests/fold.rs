@@ -349,3 +349,27 @@ fn an_execution_that_never_closes_is_dropped_after_the_stale_window() {
     assert_eq!(open_count(&f), 2, "the one silent past the window is dropped, the rest kept");
     assert!(!serde_json::to_string(&f).unwrap().contains("inv-stale"));
 }
+
+struct Ticking(std::cell::Cell<u64>);
+impl Clock for Ticking {
+    fn now_epoch(&self) -> u64 {
+        self.0.set(self.0.get() + 1);
+        self.0.get()
+    }
+}
+
+#[test]
+fn follow_saves_the_checkpoint_at_most_once_per_interval() {
+    let d = TempDir::new("unit-run-save-rate");
+    let file = d.path().join("unit-run.jsonl");
+    let (clock, sys) = (Ticking(std::cell::Cell::new(1_792_100_000)), systemctl());
+    let mut s = sink(&file, &clock, &sys);
+    let mut saves = 0;
+    let src = Fake { lines: fixture(), stop_after: None, idle_at_end: true };
+    pass(&src, Folder::default(), true, &mut s, &mut |_| {
+        saves += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert!(saves <= 2, "{saves} saves for a pass shorter than the save interval");
+}
