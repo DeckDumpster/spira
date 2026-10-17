@@ -925,3 +925,68 @@ async fn the_aeons_page_shows_each_live_aeon_as_the_pane_renders_it() {
         assert!(pane.contains(bead) && pane.contains(&format!("\u{b7} {phase} \u{b7} {min}m")), "pane row for {bead} in {pane}");
     }
 }
+
+// ── /metrics/rounds ──────────────────────────────────────────────────────────
+
+fn iso(ago_s: i64) -> String {
+    let t = now_s() - ago_s;
+    let (d, r) = (t.div_euclid(86_400), t.rem_euclid(86_400));
+    let z = d + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{day:02}T{:02}:{:02}:{:02}Z", r / 3600, r % 3600 / 60, r % 60)
+}
+
+fn cert_row(ago: i64, repo: &str, itype: &str, wait: i64, suites: i64, verdict: &str, cause: &str, batch: &str) -> String {
+    let place = if itype.is_empty() { "local" } else { "ec2" };
+    format!(
+        r#"{{"ts":"{}","family":"cert-pass","repo":"{repo}","batch":"{batch}","pass":"1","instance_type":"{itype}","where":"{place}","capacity_wait_s":{wait},"boot_s":4,"build_s":100,"suites_s":{suites},"verdict":"{verdict}","cause":"{cause}","detail":""}}"#,
+        iso(ago)
+    )
+}
+
+#[tokio::test]
+async fn metrics_rounds_lists_rows_and_folds_per_type_medians() {
+    let dir = scratch("metrics");
+    let run = dir.join("run");
+    std::fs::create_dir_all(run.join("tsd")).unwrap();
+    let rows = [
+        cert_row(600, "spira", "c7i.2xlarge", 10, 300, "green", "green", "b-new"),
+        cert_row(1200, "spira", "c7i.2xlarge", 30, 500, "green", "green", "b-mid"),
+        cert_row(1800, "spira", "c7i.2xlarge", 50, 900, "red", "red-attributed", "b-old"),
+        cert_row(2400, "other", "c7i.8xlarge", 7, 77, "incomplete", "infra", "b-other"),
+        cert_row(3000, "spira", "", 0, 40, "green", "green", "b-local"),
+        cert_row(40 * 86_400, "spira", "c7i.2xlarge", 0, 9999, "green", "green", "b-ancient"),
+    ];
+    std::fs::write(run.join("tsd").join("cert-pass.jsonl"), rows.join("\n") + "\nnot json\n").unwrap();
+    let batch = format!(r#"{{"ts":"{}","repo":"spira","verdict":"blocked","duration_ms":"98000"}}"#, iso(100));
+    std::fs::write(run.join("tsd").join("batch-round.jsonl"), batch + "\n").unwrap();
+    let addr = spawn(ops_cfg(&run.to_string_lossy())).await;
+
+    let started = std::time::Instant::now();
+    let (code, page) = get(addr, "/metrics/rounds").await;
+    assert_eq!(code, 200, "{page}");
+    assert!(started.elapsed() < Duration::from_millis(500));
+    let pos = |needle: &str| page.find(needle).unwrap_or_else(|| panic!("{needle} missing from {page}"));
+    assert!(pos("b-new") < pos("b-mid") && pos("b-mid") < pos("b-old"), "newest first");
+    assert!(!page.contains("b-ancient"), "outside the 7d default window");
+    let agg = &page[pos("c7i.2xlarge</td><td>3</td>")..];
+    let line = &agg[..agg.find("</tr>").unwrap()];
+    assert!(line.contains("<td>30s / 50s</td>"), "wait median/p90 of 10,30,50: {line}");
+    assert!(line.contains("<td>8m / 15m</td>"), "suites median/p90 of 300,500,900: {line}");
+    assert!(line.contains("green 2, red-attributed 1"), "{line}");
+    assert!(page.contains("(none)") && page.contains("<td>98s</td>"), "{page}");
+
+    let (_, filtered) = get(addr, "/metrics/rounds?type=c7i.8xlarge&window=all").await;
+    assert!(filtered.contains("b-other") && !filtered.contains("b-new"), "{filtered}");
+    let (_, all) = get(addr, "/metrics/rounds?window=all").await;
+    assert!(all.contains("b-ancient"), "positive control: the window is what hid it");
+    let (_, rounds) = get(addr, "/rounds").await;
+    assert!(rounds.contains("/metrics/rounds"));
+}
