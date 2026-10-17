@@ -14,8 +14,16 @@ use rules::{Rules, GATE_CLASSES};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use spira_otel::metrics::{instrument, MetricsSink};
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let sink = MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-lifecycle-guard");
+    let operation = if args.iter().any(|a| a == "--gate") { "gate" } else { "scan" };
+    ExitCode::from(instrument(&sink, "lifecycle-guard", operation, || i32::from(run(args))) as u8)
+}
+
+fn run(args: Vec<String>) -> u8 {
     let mut json = false;
     let mut gate = false;
     let mut rules_path: Option<PathBuf> = None;
@@ -32,7 +40,7 @@ fn main() -> ExitCode {
                     Some(p) => rules_path = Some(PathBuf::from(p)),
                     None => {
                         eprintln!("--rules requires a path");
-                        return ExitCode::from(2);
+                        return 2;
                     }
                 }
             }
@@ -43,7 +51,7 @@ fn main() -> ExitCode {
 
     if paths.is_empty() {
         eprintln!("usage: lifecycle-guard [--json] [--gate] [--rules <file>] <path>...");
-        return ExitCode::from(2);
+        return 2;
     }
 
     let rules = match rules_path {
@@ -51,7 +59,7 @@ fn main() -> ExitCode {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("{e}");
-                return ExitCode::from(2);
+                return 2;
             }
         },
         None => Rules::default(),
@@ -67,7 +75,7 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("{e}");
-                return ExitCode::from(2);
+                return 2;
             }
         }
     }
@@ -81,7 +89,7 @@ fn main() -> ExitCode {
             Ok(s) => println!("{s}"),
             Err(e) => {
                 eprintln!("serializing findings: {e}");
-                return ExitCode::from(2);
+                return 2;
             }
         }
     } else {
@@ -91,9 +99,9 @@ fn main() -> ExitCode {
     }
 
     if findings.is_empty() {
-        ExitCode::SUCCESS
+        0
     } else {
-        ExitCode::from(1)
+        1
     }
 }
 
@@ -106,14 +114,14 @@ fn main() -> ExitCode {
 /// `fence: lifecycle-guard checked <n> files` (gate/DESIGN.md "Every fence proves it
 /// checked"), and one line counting what the other classes still find, so their backlog is
 /// visible at every gate without failing it.
-fn gate_verdict(scanned: usize, findings: &[Finding]) -> ExitCode {
+fn gate_verdict(scanned: usize, findings: &[Finding]) -> u8 {
     if scanned == 0 {
         eprintln!(
             "lifecycle-guard: REFUSED — checked 0 files: the gate's tree has no shell, Rust or persona \
              file under the path given, so the lifecycle barrier cannot be judged. Run it from the \
              tree's root (gate.steps: step \"$SPIRA_GUARD_BIN\" --gate .)."
         );
-        return ExitCode::from(2);
+        return 2;
     }
     let (enforced, other): (Vec<&Finding>, Vec<&Finding>) =
         findings.iter().partition(|f| GATE_CLASSES.contains(&f.class));
@@ -134,7 +142,7 @@ fn gate_verdict(scanned: usize, findings: &[Finding]) -> ExitCode {
     }
     if enforced.is_empty() {
         println!("fence: lifecycle-guard checked {scanned} files");
-        return ExitCode::SUCCESS;
+        return 0;
     }
     for f in &enforced {
         println!("{f}");
@@ -152,7 +160,7 @@ fn gate_verdict(scanned: usize, findings: &[Finding]) -> ExitCode {
          a certificate, an operator sets SPIRA_LAND_UNGATED=<reason> (queue/DESIGN.md D12).",
         enforced.len()
     );
-    ExitCode::from(1)
+    1
 }
 
 fn run_one(root: &Path, rules: &Rules, gate: bool) -> Result<(usize, Vec<Finding>), String> {

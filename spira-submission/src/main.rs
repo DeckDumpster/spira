@@ -5,7 +5,8 @@ use std::sync::Arc;
 fn main() {
     let cmd = std::env::args().nth(1).unwrap_or_default();
     if cmd == "provision" || cmd == "status" {
-        std::process::exit(operate(&cmd));
+        let sink = metrics();
+        std::process::exit(spira_otel::metrics::instrument(&sink, "spira-submission", &cmd, || operate(&cmd)));
     }
     let cfg = match Config::from_spira() {
         Ok(Some(c)) => c,
@@ -45,13 +46,17 @@ fn main() {
             };
             eprintln!("spira-submission: listening on {} (implicit TLS)", cfg.socket());
             let sink = Arc::new(SendmailSink { argv: cfg.sendmail.clone() });
-            serve(listener, cfg, sink);
+            serve(listener, cfg, sink, std::sync::Arc::new(metrics()));
         }
         other => {
             eprintln!("spira-submission: unknown subcommand {other:?} (serve | health | provision | status)");
             std::process::exit(2);
         }
     }
+}
+
+fn metrics() -> spira_otel::metrics::MetricsSink {
+    spira_otel::metrics::MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-submission")
 }
 
 fn operate(cmd: &str) -> i32 {

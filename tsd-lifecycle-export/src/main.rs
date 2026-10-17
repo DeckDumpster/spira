@@ -22,15 +22,13 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = args.first().map(String::as_str);
     let since = flag(&args, "--since");
-    let result = match mode {
+    let sink = spira_otel::metrics::MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-tsd-lifecycle-export");
+    let result = spira_otel::metrics::instrument_result(&sink, "tsd-lifecycle-export", mode.unwrap_or("none"), || match mode {
         Some("legacy") => run_legacy("legacy", since.as_deref().unwrap_or("now")),
         Some("backfill") => run_legacy("backfill", since.as_deref().unwrap_or("2026-09-15T00:00:00Z")),
         Some("lifecycle") => run_lifecycle(),
-        _ => {
-            eprintln!("usage: tsd-lifecycle-export <legacy|backfill|lifecycle> [--since <ISO8601>]");
-            std::process::exit(2);
-        }
-    };
+        _ => Err("usage: tsd-lifecycle-export <legacy|backfill|lifecycle> [--since <ISO8601>]".to_string()),
+    });
     if let Err(e) = result {
         eprintln!("tsd-lifecycle-export: {e}");
         std::process::exit(1);

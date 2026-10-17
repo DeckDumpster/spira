@@ -5,6 +5,8 @@ edition = "2021"
 description = "lifecycle-guard — static analyser: refuses any path that reaches spira_lifecycle by anything but the machine."
 
 [dependencies]
+spira-otel = { path = "../spira-otel" }
+spira-config = { path = "../spira-config" }
 tree-sitter = "=0.22.6"
 tree-sitter-bash = "=0.21.0"
 serde = { version = "1", features = ["derive"] }

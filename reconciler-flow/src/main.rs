@@ -47,7 +47,8 @@ fn main() -> ExitCode {
         eprintln!("usage: reconciler-flow --pass");
         return ExitCode::from(2);
     }
-    match run_pass() {
+    let sink = spira_otel::metrics::MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-reconciler-flow");
+    match spira_otel::metrics::instrument_result(&sink, "reconciler-flow", "pass", run_pass) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("reconciler-flow: {e}");

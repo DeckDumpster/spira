@@ -86,11 +86,12 @@ fn main() -> ExitCode {
     let sub = argv.first().map(String::as_str);
     let rest: Vec<String> = argv.iter().skip(1).cloned().collect();
     let seams = Seams::production();
-    let result = match sub {
+    let sink = spira_otel::metrics::MetricsSink::for_component(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-reconciler-alert");
+    let result = spira_otel::metrics::instrument_result(&sink, "reconciler-alert", sub.unwrap_or("none"), || match sub {
         Some("gap") => run_gap(&seams, &Args::parse(&rest)),
         Some("escalate") => run_escalate(&seams, &Args::parse(&rest)),
         _ => Err("usage: reconciler-alert gap|escalate ...".to_string()),
-    };
+    });
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

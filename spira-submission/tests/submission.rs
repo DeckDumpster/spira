@@ -67,7 +67,7 @@ fn start_logged(sendmail_body: &str) -> (Harness, Arc<Mutex<Vec<String>>>) {
     };
     let lines = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::new(LogSink { inner: SendmailSink { argv: cfg.sendmail.clone() }, lines: lines.clone() });
-    std::thread::spawn(move || serve(listener, cfg, sink));
+    std::thread::spawn(move || serve(listener, cfg, sink, std::sync::Arc::new(spira_otel::metrics::MetricsSink::new(None, "t", std::time::Duration::from_secs(1)))));
     (Harness { dir, addr }, lines)
 }
 
