@@ -74,6 +74,116 @@ $line
 MAILEOF
 }
 
+# _operator <subject> <body> — a merge or deploy outcome, mailed to the operator as a note:
+# the channel that reaches his phone. Failure is remembered like _report's, never dropped.
+_operator() {
+    local subject="$1" body="$2"
+    mail send operator \
+        --from "PR Notify <pr-notify@spira>" \
+        --subject "$subject" \
+        --kind note <<MAILEOF >/dev/null || { _MAIL_FAILED=1; printf 'pr-notify: operator mail failed for: %s\n' "$subject" >&2; }
+## Note
+$body
+MAILEOF
+}
+
+# _MERGE_PY — `gh pr view --json mergeCommit,body` on stdin -> "<sha>" then one "- id — title"
+# bead line per bullet in the PR body (the batch PR body lists its members that way).
+_MERGE_PY='
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+print((d.get("mergeCommit") or {}).get("oid") or "")
+for l in (d.get("body") or "").splitlines():
+    if l.startswith("- "):
+        print(l)
+'
+
+# _RUN_PY — `gh run list --json` on stdin -> "<conclusion>\t<seconds>\t<url>" for the first
+# completed run; nothing while no run is complete.
+_RUN_PY='
+import json, sys
+from datetime import datetime
+try:
+    runs = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+def t(s):
+    return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ")
+for r in runs:
+    if r.get("status") == "completed":
+        try:
+            secs = int((t(r["updatedAt"]) - t(r["createdAt"])).total_seconds())
+        except Exception:
+            secs = 0
+        c = r.get("conclusion") or "unknown"
+        u = r.get("url") or ""
+        print(c + "\t" + str(secs) + "\t" + u)
+        break
+'
+
+_deploy_file() { printf '%s/%s.deploy.tsv' "$STATE_DIR" "$1"; }
+
+# _merged_report <repo-dir> <repo> <pr> <title> — the operator's MERGED note, and the merge sha
+# queued for the deploy leg. A merge whose sha gh cannot give yet is still announced; with no
+# sha there is nothing to key a deploy on.
+_merged_report() {
+    local repo_dir="$1" repo_name="$2" n="$3" title="$4" out sha beads
+    out="$(cd "$repo_dir" && timeout 5 gh pr view "$n" --json mergeCommit,body 2>/dev/null | python3 -c "$_MERGE_PY")"
+    sha="$(head -n1 <<< "$out")"
+    beads="$(tail -n +2 <<< "$out")"
+    _operator "MERGED #$n [$repo_name]${sha:+ ${sha:0:9}}" "PR #$n $title [$repo_name] merged${sha:+ at $sha}.
+${beads:+
+Beads:
+$beads
+}"
+    [ -n "$sha" ] || return 0
+    mkdir -p "$STATE_DIR"
+    local f; f="$(_deploy_file "$repo_name")"
+    grep -q "^$sha	" "$f" 2>/dev/null && return 0
+    printf '%s\t%s\t%s\t%s\t%s\n' "$sha" "$n" "$(date +%s)" "${title//$'\t'/ }" \
+        "$(tr '\n\t' '|' <<< "$beads" | sed 's/|$//')" >> "$f"
+}
+
+# _deploy_tick <repo-dir> <repo> — one DEPLOYED / DEPLOY FAILED note per queued merge sha, from
+# the deploy.yml run for that sha once it completes. A sha with no completed run stays queued;
+# a gh failure keeps it for the next tick; after SPIRA_PR_DEPLOY_GIVEUP seconds with no
+# completed run it is dropped, so a repo with no deploy workflow does not poll forever.
+_deploy_tick() {
+    local repo_dir="$1" repo_name="$2" f keep rc
+    f="$(_deploy_file "$repo_name")"
+    [ -s "$f" ] || return 0
+    keep="$f.tmp"; : > "$keep"
+    local sha n at title beads json res concl secs url verdict now
+    now="$(date +%s)"
+    while IFS=$'\t' read -r sha n at title beads; do
+        [ -n "$sha" ] || continue
+        json="$(cd "$repo_dir" && timeout 10 gh run list --workflow deploy.yml --commit "$sha" \
+            --json status,conclusion,url,createdAt,updatedAt 2>/dev/null)"; rc=$?
+        res=""
+        [ "$rc" -eq 0 ] && res="$(python3 -c "$_RUN_PY" <<< "$json")"
+        if [ -z "$res" ]; then
+            [ $(( now - at )) -gt "${SPIRA_PR_DEPLOY_GIVEUP:-10800}" ] \
+                || printf '%s\t%s\t%s\t%s\t%s\n' "$sha" "$n" "$at" "$title" "$beads" >> "$keep"
+            continue
+        fi
+        IFS=$'\t' read -r concl secs url <<< "$res"
+        if [ "$concl" = success ]; then verdict="DEPLOYED"; else verdict="DEPLOY FAILED"; fi
+        _operator "$verdict #$n [$repo_name] ${sha:0:9}" "$verdict: PR #$n $title [$repo_name]
+Merge: $sha
+Run: $concl in $((secs / 60))m$((secs % 60))s
+$url
+${beads:+
+Beads:
+$(tr '|' '\n' <<< "$beads")
+}"
+        _emit "$verdict #$n $title [$repo_name]: $concl in ${secs}s $url"
+    done < "$f"
+    mv "$keep" "$f"
+}
+
 # _PR_STATUS_PY — Python3 script to classify every open PR from `gh pr list --json` output.
 #
 # Reads JSON from stdin, writes one tab-separated line per PR: number, status
@@ -161,7 +271,10 @@ _pr_transitions() {
         [ -n "${cur_status[$m]+x}" ] && continue
         final="$(cd "$repo_dir" && timeout 5 gh pr view "$m" --json state -q .state 2>/dev/null)"
         case "$final" in
-            MERGED) _report "MERGED #$m ${prev_title[$m]} [$repo_name]" ;;
+            MERGED)
+                _report "MERGED #$m ${prev_title[$m]} [$repo_name]"
+                _merged_report "$repo_dir" "$repo_name" "$m" "${prev_title[$m]}"
+                ;;
             CLOSED) _report "CLOSED #$m ${prev_title[$m]} [$repo_name]" ;;
             # Unresolved (gh unreachable, or the PR vanished from both calls): keep tracking
             # it rather than drop it silently — the next tick gets another chance to resolve
@@ -209,6 +322,7 @@ _pr_notify_tick() {
         [ -d "$repo/.git" ] || continue
         land="$(repo_land "$name" 2>/dev/null)"
         _pr_transitions "$repo" "$name"
+        _deploy_tick "$repo" "$name"
         if [ "$land" = pr ]; then
             base="$(repo_base "$name" 2>/dev/null)"; [ -n "$base" ] || base="main"
             _branchless_prs "$repo" "$name" "$base"
