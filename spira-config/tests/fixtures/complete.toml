@@ -170,6 +170,7 @@ gh_intake_priority = "1"
 gh_intake_repo = "DeckDumpster/spira"
 gh_repo = ""
 git_email = "spira@spira.invalid"
+git_lock_stale_secs = 600
 git_name = "spira"
 groomer_label = "groom"
 groom_ask_label = "groom-asked"
