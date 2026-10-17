@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 pub const MODEL_BIN_DIR: &str = "model-bin";
 
 /// What `MODEL_BIN_DIR` holds: every binary a model may run, and nothing else.
-pub const MODEL_BINS: &[&str] = &["work"];
+pub const MODEL_BINS: &[&str] = &["work", "testenv"];
 
 /// The one exit from the aeon's refusal to start a restricted session in a release with no
 /// `model-bin/`: set it to a directory you have CONSIDERED and that holds only what a model

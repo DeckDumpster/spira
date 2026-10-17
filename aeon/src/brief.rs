@@ -60,8 +60,8 @@ branch reaches `{base_branch}` from there is described above, and none of it nee
     }
 }
 
-/// `{{TESTENV}}`: the testenv runner, by bare name (sp-gypjk). The aeon's environment carries
-/// the launcher's PATH, so `testenv` is the release's binary — never a path relative to the
+/// `{{TESTENV}}`: the testenv runner, by bare name (sp-gypjk). A restricted session's PATH
+/// names the release's `model-bin/`, which links `testenv`, so it is the release's binary — never a path relative to the
 /// aeon's worktree (an aeon told `{{SPIRA_HOME}}/../bin/testenv` once ran
 /// `./spira/testenv.sh`, the container helper, instead: sp-4vq2q).
 pub const TESTENV: &str = "testenv";
