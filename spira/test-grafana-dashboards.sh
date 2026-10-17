@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: grafana/** tsd/src/pass.rs spira-otel/src/**
+# covers: grafana/** tsd/src/pass.rs spira-otel/src/** auron/src/main.rs inbox-triage/src/main.rs
 #
 # The provisioned Grafana dashboards parse, read their data source from a variable, carry no
 # annotations or text panels, and every cert-pass series they query is one the producer pushes.
@@ -26,7 +26,7 @@ print("\n".join(bad))
 PY
 }
 
-for want_f in rounds site-ci bead-store; do
+for want_f in rounds site-ci bead-store components; do
   f="$DASH/$want_f.json"
   is "$want_f.json is valid and clean" "" "$(check "$f" 2>&1)"
 done
@@ -41,5 +41,11 @@ queried="$(grep -o 'spira_cert_pass_[a-z_]*' "$DASH/rounds.json" | sed -E 's/_bu
 missing="$(comm -13 <(printf '%s\n' "$pushed") <(printf '%s\n' "$queried"))"
 is "rounds.json queries only series cert-pass pushes" "" "$missing"
 [ -n "$pushed" ] && ok "positive control: the producer's series were found" || bad "no pushed series found"
+
+pushed_otel="$(grep -ho '"spira_[a-z_]*"' "$ROOT/spira-otel/src/metrics.rs" "$ROOT/auron/src/main.rs" "$ROOT/inbox-triage/src/main.rs" | tr -d '"' | sort -u)"
+queried_c="$(grep -o 'spira_[a-z_]*' "$DASH/components.json" | sort -u)"
+missing_c="$(comm -13 <(printf '%s\n' "$pushed_otel") <(printf '%s\n' "$queried_c"))"
+is "components.json queries only series the components push" "" "$missing_c"
+want "positive control: the component series were found" "spira_component_invocations" "$pushed_otel"
 
 tl_summary

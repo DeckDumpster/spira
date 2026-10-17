@@ -12,16 +12,19 @@ const USAGE: &str =
     "usage: intent-report [--run <dir>] [--since <dur|ISO>] [--until <dur|ISO>] [--no-backfill] [--round-vm-timing <file>]";
 
 fn main() -> ExitCode {
-    match run(std::env::args().skip(1).collect()) {
+    let metered = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "intent-report", "report");
+    let (outcome, code) = match run(std::env::args().skip(1).collect()) {
         Ok(out) => {
             print!("{out}");
-            ExitCode::SUCCESS
+            ("ok", ExitCode::SUCCESS)
         }
         Err(e) => {
             eprintln!("intent-report: {e}");
-            ExitCode::from(2)
+            ("error", ExitCode::from(2))
         }
-    }
+    };
+    metered.end(outcome);
+    code
 }
 
 fn run(args: Vec<String>) -> Result<String, String> {

@@ -69,6 +69,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -254,6 +255,7 @@ dependencies = [
  "bead",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "strand",
  "testkit",
 ]
@@ -562,6 +564,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-otel",
  "testkit",
  "ureq",
 ]
@@ -693,6 +696,7 @@ dependencies = [
  "inbox-rules",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -734,6 +738,8 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "spira-config",
+ "spira-otel",
+ "testkit",
  "tsd",
 ]
 
@@ -846,6 +852,7 @@ dependencies = [
  "cockpit-ops",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
  "tokio",
  "tsd",
@@ -872,6 +879,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -990,6 +998,7 @@ dependencies = [
  "crossterm",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 

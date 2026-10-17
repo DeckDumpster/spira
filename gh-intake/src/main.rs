@@ -242,6 +242,20 @@ fn ports(db: String, bd_bin: String, home: String) -> (RealBd, RealGh, RealGit, 
 }
 
 fn main() -> ExitCode {
+    let op = match std::env::args().nth(1).as_deref() {
+        Some("closeout") => "closeout",
+        Some("unlanded-scan") => "unlanded-scan",
+        Some("backfill") => "backfill",
+        Some("provenance") => "provenance",
+        _ => "intake",
+    };
+    let run = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "gh-intake", op);
+    let code = dispatch();
+    run.end(spira_otel::metrics::outcome_of_exit(code));
+    code
+}
+
+fn dispatch() -> ExitCode {
     let all_args: Vec<String> = std::env::args().skip(1).collect();
     match all_args.first().map(String::as_str) {
         Some("closeout") => return closeout_cmd(&all_args[1..]),

@@ -106,6 +106,160 @@ fn post(addr: &str, body: &[u8], deadline: Duration) -> std::io::Result<()> {
     }
 }
 
+pub const RUN_DEADLINE: Duration = Duration::from_secs(1);
+
+/// One run or unit of work of a component: `end` pushes `spira_component_invocations`,
+/// `spira_component_duration_seconds` and any extra points, labelled by component, operation and
+/// outcome. Labels stay bounded — an operation is a subcommand or route, never an id.
+pub struct Run {
+    sink: MetricsSink,
+    component: String,
+    operation: String,
+    start: Instant,
+}
+
+impl Run {
+    pub fn begin(endpoint: Option<&str>, component: &str, operation: &str) -> Run {
+        Run { sink: MetricsSink::new(endpoint, &format!("spira-{component}"), RUN_DEADLINE), component: component.into(), operation: operation.into(), start: Instant::now() }
+    }
+
+    pub fn end(self, outcome: &str) {
+        self.end_with(outcome, &[]);
+    }
+
+    pub fn end_with(self, outcome: &str, extra: &[Point]) {
+        let mut points = vec![Point::Count { name: "spira_component_invocations", value: 1 }, Point::Seconds { name: "spira_component_duration_seconds", value: self.start.elapsed().as_secs_f64() }];
+        points.extend(extra.iter().map(|p| match p {
+            Point::Count { name, value } => Point::Count { name, value: *value },
+            Point::Seconds { name, value } => Point::Seconds { name, value: *value },
+        }));
+        self.sink.push(&points, &[("component", &self.component), ("operation", &self.operation), ("outcome", outcome)]);
+    }
+}
+
+/// `ok` for exit 0, `error` otherwise.
+pub fn outcome_of(code: i32) -> &'static str {
+    if code == 0 { "ok" } else { "error" }
+}
+
+/// [`outcome_of`] for a `std::process::ExitCode`, which exposes no accessor or equality: read from its `Debug` form.
+pub fn outcome_of_exit(code: std::process::ExitCode) -> &'static str {
+    if format!("{code:?}").contains("(0)") { "ok" } else { "error" }
+}
+
+/// A sink for tests: a local HTTP listener that records every metric pushed to it.
+pub mod fixture {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Sample {
+        pub name: String,
+        pub value: f64,
+        pub labels: BTreeMap<String, String>,
+    }
+
+    /// `bin` under `env -i`, with only the config document in force and the harness home it names.
+    /// The caller declares `SPIRA_METRICS_ENDPOINT` in the document (`spira_config::process::fixture_toml`).
+    pub fn bare(bin: &std::path::Path, toml: &std::path::Path, home: &std::path::Path) -> std::process::Command {
+        let mut c = std::process::Command::new("env");
+        c.arg("-i").arg("PATH=/usr/bin:/bin").arg(format!("SPIRA_HOME={}", home.display())).arg(format!("SPIRA_TOML={}", toml.display())).arg(bin);
+        c
+    }
+
+    pub struct Capture {
+        pub addr: String,
+        seen: Arc<Mutex<Vec<Sample>>>,
+    }
+
+    impl Capture {
+        pub fn start() -> Capture {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = l.local_addr().unwrap().to_string();
+            let seen: Arc<Mutex<Vec<Sample>>> = Arc::default();
+            let out = seen.clone();
+            std::thread::spawn(move || {
+                for c in l.incoming() {
+                    let Ok(mut c) = c else { break };
+                    let _ = c.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    let body = loop {
+                        let Ok(n) = c.read(&mut chunk) else { break None };
+                        if n == 0 {
+                            break None;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                        let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                        let len: usize = head.split("content-length: ").nth(1).and_then(|r| r.split("\r\n").next()).and_then(|v| v.parse().ok()).unwrap_or(0);
+                        if buf.len() >= i + 4 + len {
+                            break Some(buf[i + 4..i + 4 + len].to_vec());
+                        }
+                    };
+                    let _ = c.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                    let Some(body) = body else { continue };
+                    let Ok(req) = ExportMetricsServiceRequest::decode(body.as_slice()) else { continue };
+                    let mut v = out.lock().unwrap();
+                    for rm in req.resource_metrics {
+                        for sm in rm.scope_metrics {
+                            for m in sm.metrics {
+                                let Some(Data::Gauge(g)) = m.data else { continue };
+                                for dp in g.data_points {
+                                    let value = match dp.value {
+                                        Some(Num::AsInt(i)) => i as f64,
+                                        Some(Num::AsDouble(d)) => d,
+                                        None => continue,
+                                    };
+                                    let labels = dp.attributes.iter().filter_map(|a| match a.value.as_ref()?.value.as_ref()? {
+                                        Value::StringValue(s) => Some((a.key.clone(), s.clone())),
+                                        _ => None,
+                                    });
+                                    v.push(Sample { name: m.name.clone(), value, labels: labels.collect() });
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            Capture { addr, seen }
+        }
+
+        /// Samples received so far, waiting up to two seconds for at least `n`.
+        pub fn samples(&self, n: usize) -> Vec<Sample> {
+            let end = Instant::now() + Duration::from_secs(2);
+            while self.seen.lock().unwrap().len() < n && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            self.seen.lock().unwrap().clone()
+        }
+
+        /// A run of `component`/`operation` was pushed, whatever its outcome.
+        pub fn assert_ran(&self, component: &str, operation: &str) {
+            let all = self.samples(2);
+            for name in ["spira_component_invocations", "spira_component_duration_seconds"] {
+                assert!(
+                    all.iter().any(|s| s.name == name && s.labels.get("component").map(String::as_str) == Some(component) && s.labels.get("operation").map(String::as_str) == Some(operation) && s.labels.contains_key("outcome")),
+                    "{name}{{component={component},operation={operation}}} not pushed; got {all:?}"
+                );
+            }
+        }
+
+        /// The standard run metrics for `component`/`operation`/`outcome` were pushed.
+        pub fn assert_run(&self, component: &str, operation: &str, outcome: &str) {
+            let all = self.samples(2);
+            for name in ["spira_component_invocations", "spira_component_duration_seconds"] {
+                assert!(
+                    all.iter().any(|s| s.name == name && s.labels.get("component").map(String::as_str) == Some(component) && s.labels.get("operation").map(String::as_str) == Some(operation) && s.labels.get("outcome").map(String::as_str) == Some(outcome)),
+                    "{name}{{component={component},operation={operation},outcome={outcome}}} not pushed; got {all:?}"
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +347,27 @@ mod tests {
         let before = push_failed();
         MetricsSink::new(None, "s", Duration::from_millis(50)).push(&[Point::Count { name: "c", value: 1 }], &[]);
         MetricsSink::new(Some("  "), "s", Duration::from_millis(50)).push(&[Point::Count { name: "c", value: 1 }], &[]);
+        assert_eq!(push_failed(), before);
+    }
+
+    #[test]
+    fn a_run_pushes_invocation_duration_and_extras_labelled_by_component_operation_outcome() {
+        let cap = fixture::Capture::start();
+        Run::begin(Some(&cap.addr), "mail", "send").end_with("error", &[Point::Count { name: "spira_mail_sent", value: 3 }]);
+        cap.assert_run("mail", "send", "error");
+        let all = cap.samples(3);
+        assert!(all.iter().any(|s| s.name == "spira_mail_sent" && s.value == 3.0));
+        assert_eq!(outcome_of(0), "ok");
+        assert_eq!(outcome_of(2), "error");
+        assert_eq!(outcome_of_exit(std::process::ExitCode::SUCCESS), "ok");
+        assert_eq!(outcome_of_exit(std::process::ExitCode::FAILURE), "error");
+        assert_eq!(outcome_of_exit(std::process::ExitCode::from(10)), "error");
+    }
+
+    #[test]
+    fn a_run_with_no_endpoint_pushes_nothing() {
+        let before = push_failed();
+        Run::begin(None, "mail", "send").end("ok");
         assert_eq!(push_failed(), before);
     }
 }

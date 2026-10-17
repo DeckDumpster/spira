@@ -44,7 +44,16 @@ fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>) -> Option<Pa
     None
 }
 
+static FIRING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn main() {
+    let run = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "auron", "pass");
+    let code = pass();
+    run.end_with(spira_otel::metrics::outcome_of(code), &[spira_otel::metrics::Point::Count { name: "spira_auron_firing_alerts", value: FIRING.load(std::sync::atomic::Ordering::Relaxed) }]);
+    std::process::exit(code);
+}
+
+fn pass() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let report = args.iter().any(|a| a == "--report");
     let mut home_flag = None;
@@ -58,7 +67,7 @@ fn main() {
     let original: BTreeMap<String, String> = std::env::vars().collect();
     let Some(home) = resolve_home(home_flag.as_deref(), &original) else {
         eprintln!("auron: cannot find the harness's spira/ directory (pass --home, or set SPIRA_HOME/SPIRA_RELEASE)");
-        std::process::exit(1);
+        return 1;
     };
 
     // THE DATABASE GETS TEN SECONDS, NOT bdq's usual 180 (auron.sh's own reasoning,
@@ -96,7 +105,7 @@ fn main() {
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("auron: {e}");
-                    std::process::exit(1);
+                    return 1;
                 }
             }
         };
@@ -107,7 +116,7 @@ fn main() {
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("auron: {e}");
-                    std::process::exit(1);
+                    return 1;
                 }
             }
         };
@@ -247,7 +256,7 @@ fn main() {
                 println!("\n=== {} ===\n{}\n\n{}\n", f.key, f.title, f.evidence);
             }
         }
-        std::process::exit(0);
+        return 0;
     }
 
     // ---- reconcile -------------------------------------------------------------------
@@ -338,6 +347,7 @@ fn main() {
     let db_read_status = heartbeat::db_read_status(db_reachable, db_saturated);
     let db_write_status = heartbeat::db_write_status(probe.write_ok, db_saturated);
     let firing_keys_vec: Vec<String> = firing_keys.iter().cloned().collect();
+    FIRING.store(firing_keys_vec.len() as u64, std::sync::atomic::Ordering::Relaxed);
     let hb = Heartbeat { at: now, firing_keys: &firing_keys_vec, db_read: db_read_status, db_write: db_write_status, db_saturated, fallback_written: fallback_needed, acted };
     let _ = heartbeat::write(&status_path, &hb.render());
 
@@ -352,6 +362,7 @@ fn main() {
             db_write_status.as_str()
         ),
     ));
+    0
 }
 
 #[cfg(test)]

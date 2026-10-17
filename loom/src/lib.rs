@@ -10,6 +10,7 @@ pub mod shell;
 pub mod rounds;
 pub mod states;
 pub mod stuck;
+pub mod telemetry;
 pub mod units;
 
 use axum::extract::State;
