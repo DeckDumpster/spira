@@ -70,7 +70,6 @@ supervise sp-vpfp3i.2
 test-plan sp-vpfp3i.2
 testenv sp-vpfp3i.2
 tsd-lifecycle-export sp-vpfp3i.2
-unit-run sp-vpfp3i.2
 watchd sp-vpfp3i.2
 watchtower sp-vpfp3i.2
 work sp-vpfp3i.2
