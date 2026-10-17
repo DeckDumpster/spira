@@ -75,9 +75,23 @@ a store reset, never current. Each bead carries \`lifecycle_state\` (authoritati
 content store's \`status\`; dependencies and comments are not mirrored.
 MANIFEST
 
+# git_step retries only on index.lock contention; any other failure, or the last try, reports git's own stderr.
+git_step() {
+    local tries=3 n err
+    for ((n = 1; n <= tries; n++)); do
+        err=$(git -C "$SPIRA_WIKI" "$@" 2>&1) && return 0
+        if [ "$n" -lt "$tries" ] && grep -q 'index\.lock' <<<"$err"; then
+            sleep "${SPIRA_EXPORT_GIT_RETRY_WAIT:-10}"
+            continue
+        fi
+        echo "export-beads: git $1 failed (try $n of $tries): $err" >&2
+        return 1
+    done
+}
+
 if git -C "$SPIRA_WIKI" rev-parse --git-dir >/dev/null 2>&1; then
-    git -C "$SPIRA_WIKI" add -- "$REL" raw/spira-beads/manifest.md \
-        && git -C "$SPIRA_WIKI" commit -q -m "chore: spira beads JSONL mirror $(date +%F) ($count beads)" -- "$REL" raw/spira-beads/manifest.md \
-        || { echo "export-beads: commit failed" >&2; exit 1; }
+    git_step add -- "$REL" raw/spira-beads/manifest.md \
+        && git_step commit -q -m "chore: spira beads JSONL mirror $(date +%F) ($count beads)" -- "$REL" raw/spira-beads/manifest.md \
+        || exit 1
 fi
 echo "export-beads: wrote $count beads"
