@@ -42,6 +42,7 @@ mkbd 0
 # default. Callers override one probe at a time to isolate that check's failure.
 #   DEP_VMIN DEP_PROBE_OUT DEP_PROBE_RC   deps.toml's single runtime dep
 #   CONFIG_RC                             spira-config stub's exit code
+#   RESOLVE_RC                            its exit code for `resolve` (a key the release requires)
 #   UNITS_OUT UNITS_RC                    units-install --render stub
 #   SELFTEST_RC                           self-test.sh stub
 mkrel() {
@@ -80,6 +81,7 @@ version_probe = "false"
 EOF
     cat > "$dir/bin/spira-config" <<EOF
 #!/usr/bin/env bash
+if [ "\$1" = resolve ]; then echo "SPIRA_METRICS_ENDPOINT is not declared" >&2; exit ${RESOLVE_RC:-0}; fi
 exit ${CONFIG_RC:-0}
 EOF
     chmod +x "$dir/bin/spira-config"
@@ -188,6 +190,15 @@ out="$(
 )"; rc=$?
 is   "config: invalid spira.toml: exit 1"   1 "$rc"
 want "config: invalid spira.toml: FAILs"    "FAIL config" "$out"
+
+REL="$TMP/rel-config-unresolved"; RESOLVE_RC=1 mkrel "$REL"
+out="$(
+    HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" SPIRA_REPO="$TMP/emptyrepo" \
+    SPIRA_TOML="$TMP/spira.toml" PATH="$TMP/binstub:$PATH" \
+    pre-activate.sh "$REL" 2>&1
+)"; rc=$?
+is   "config: valid but unresolvable under the release: exit 1" 1 "$rc"
+want "config: unresolvable: FAILs naming the key" "does not resolve under this release" "$out"
 
 # ── store: bead store reachability/schema, via the bd on PATH ────────────────────────
 REL="$TMP/rel-store"; mkrel "$REL"

@@ -7,7 +7,10 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
-. "$HERE/lib.sh"
+. "$HERE/lib.sh" || {
+    printf '%s warden-trigger: ERROR: lib.sh refused to load (config unresolved) — no sweep filed; see the refusal above\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+    exit 1
+}
 
 BD="${SPIRA_BD:-bd}"
 DB="${SPIRA_DB:-.}"
