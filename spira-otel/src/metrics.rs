@@ -210,15 +210,19 @@ pub fn sink_for(endpoint: Option<&str>, component: &str) -> MetricsSink {
 }
 
 /// Runs `f`, then pushes one invocation and its duration labelled `component`, `operation` and
-/// the outcome of the returned code. The code is returned unchanged; a failed push never reaches it.
-pub fn timed(sink: &MetricsSink, component: &str, operation: &str, f: impl FnOnce() -> i32) -> i32 {
+/// the outcome class `outcome(code)`. The code is returned unchanged; a failed push never reaches it.
+pub fn timed_as(sink: &MetricsSink, component: &str, operation: &str, outcome: impl Fn(i32) -> &'static str, f: impl FnOnce() -> i32) -> i32 {
     let start = Instant::now();
     let code = f();
     sink.push(
         &[Point::Count { name: RUNS, value: 1 }, Point::Seconds { name: RUN_SECONDS, value: start.elapsed().as_secs_f64() }],
-        &[("component", component), ("operation", operation), ("outcome", outcome_of(code))],
+        &[("component", component), ("operation", operation), ("outcome", outcome(code))],
     );
     code
+}
+
+pub fn timed(sink: &MetricsSink, component: &str, operation: &str, f: impl FnOnce() -> i32) -> i32 {
+    timed_as(sink, component, operation, outcome_of, f)
 }
 
 /// A sink for tests: a local HTTP listener that records every metric pushed to it.
