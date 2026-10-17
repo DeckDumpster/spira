@@ -434,13 +434,34 @@ pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo:
     reaplog(reaplog_path, "REMOVING", id, &format!("branch {br} ({why})"));
     // SPIRA_REF_SANCTIONED is what the reference-transaction hook reads, set ONLY on this
     // one command: every guard that makes this deletion safe has already run by this line.
-    let err = g.branch_delete_sanctioned(br);
+    let err = delete_branch_recovering(&g, br, reaplog_path, id, lock_stale_secs());
     if g.branch_exists(br) {
         reaplog(reaplog_path, "FAILED", id, &format!("branch {br} survived deletion: {err}"));
         return Err(DestroyBranchErr::Failed(err));
     }
     reaplog(reaplog_path, "REMOVED", id, &format!("branch {br}"));
     Ok(())
+}
+
+/// 0 (recovery off) when the key cannot be read: a lock is never moved on a guessed threshold.
+fn lock_stale_secs() -> u64 {
+    spira_config::process::cfg_parse::<u64>("SPIRA_GIT_LOCK_STALE_SECS").unwrap_or(0)
+}
+
+/// `branch -D`, and when it fails on a stale git lock, move the lock aside (logged) and
+/// retry once. A fresh lock or a live git in the repo is left alone and the error returned.
+fn delete_branch_recovering(g: &Git, br: &str, reaplog_path: &Path, id: &str, stale_secs: u64) -> String {
+    let err = g.branch_delete_sanctioned(br);
+    if !g.branch_exists(br) {
+        return err;
+    }
+    match g.recover_stale_lock(&err, stale_secs) {
+        Some(note) => {
+            reaplog(reaplog_path, "UNLOCKED", id, &note);
+            g.branch_delete_sanctioned(br)
+        }
+        None => err,
+    }
 }
 
 /// The outcome of `reap_landed_branch`. Unlike `sending`'s own `World::send` (which rechecks
@@ -744,6 +765,65 @@ mod tests {
         let res = destroy_branch(&run, &run.join("reap.log"), "sp-bypass", "spira/sp-bypass", &repo, "why", "sending", None, &open());
         assert!(res.is_ok());
         assert!(!Git(&repo).branch_exists("spira/sp-bypass"));
+    }
+
+    fn locked_repo(branch: &str, age_secs: u64) -> (TempDir, PathBuf) {
+        let repo = tempdir();
+        init_repo(&repo);
+        git(&repo, &["branch", branch]);
+        let lock = repo.join(".git").join("packed-refs.lock");
+        let f = std::fs::File::create(&lock).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs)).unwrap();
+        (repo, lock)
+    }
+
+    #[test]
+    fn a_stale_packed_refs_lock_is_moved_aside_logged_and_the_delete_retried() {
+        let (repo, lock) = locked_repo("spira/sp-stale", 7200);
+        let log = tempdir().join("reap.log");
+        let err = delete_branch_recovering(&Git(&repo), "spira/sp-stale", &log, "sp-stale", 600);
+        assert!(!Git(&repo).branch_exists("spira/sp-stale"), "still there: {err}");
+        assert!(!lock.exists());
+        let said = std::fs::read_to_string(&log).unwrap();
+        assert!(said.contains("UNLOCKED") && said.contains("packed-refs.lock") && said.contains("age 7"), "{said}");
+        let kept = std::fs::read_dir(repo.join(".git")).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("packed-refs.lock.stale-"));
+        assert!(kept, "the lock is moved aside, not deleted");
+    }
+
+    #[test]
+    fn a_lock_younger_than_the_threshold_is_left_alone() {
+        let (repo, lock) = locked_repo("spira/sp-fresh", 5);
+        let log = tempdir().join("reap.log");
+        delete_branch_recovering(&Git(&repo), "spira/sp-fresh", &log, "sp-fresh", 600);
+        assert!(Git(&repo).branch_exists("spira/sp-fresh"));
+        assert!(lock.exists());
+        assert!(!log.exists());
+    }
+
+    #[test]
+    fn recovery_off_at_zero_leaves_even_an_old_lock() {
+        let (repo, lock) = locked_repo("spira/sp-off", 7200);
+        let log = tempdir().join("reap.log");
+        delete_branch_recovering(&Git(&repo), "spira/sp-off", &log, "sp-off", 0);
+        assert!(Git(&repo).branch_exists("spira/sp-off") && lock.exists());
+    }
+
+    #[test]
+    fn an_old_lock_is_left_alone_while_a_git_process_is_in_the_repo() {
+        let (repo, lock) = locked_repo("spira/sp-live", 7200);
+        let mut live = std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["hash-object", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let log = tempdir().join("reap.log");
+        delete_branch_recovering(&Git(&repo), "spira/sp-live", &log, "sp-live", 600);
+        let _ = live.kill();
+        let _ = live.wait();
+        assert!(Git(&repo).branch_exists("spira/sp-live"));
+        assert!(lock.exists());
     }
 
     impl std::fmt::Debug for DestroyBranchErr {

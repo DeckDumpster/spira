@@ -177,6 +177,34 @@ impl Git<'_> {
         }
     }
 
+    /// The `.lock` file git's `Unable to create '<path>.lock': File exists` names, when it is
+    /// inside this repository's git dir (or common dir) and has sat untouched for at least
+    /// `stale_secs` with no git process in the repo: moved aside to `<path>.stale-<epoch>`.
+    /// A fresh lock, a held repo, a path outside the git dirs, or `stale_secs == 0` leaves it
+    /// alone. Returns the log line for a lock it moved.
+    pub fn recover_stale_lock(&self, err: &str, stale_secs: u64) -> Option<String> {
+        if stale_secs == 0 {
+            return None;
+        }
+        let lock = lock_named_in(err)?;
+        let inside = [self.out(&["rev-parse", "--absolute-git-dir"]), self.git_common_dir().map(|p| p.to_string_lossy().into_owned())]
+            .into_iter()
+            .flatten()
+            .any(|d| lock.starts_with(Path::new(d.trim())));
+        if !inside {
+            return None;
+        }
+        let age = std::fs::metadata(&lock).ok()?.modified().ok()?.elapsed().ok()?.as_secs();
+        if age < stale_secs || git_process_in(self.0) {
+            return None;
+        }
+        let epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+        let mut aside = lock.clone().into_os_string();
+        aside.push(format!(".stale-{epoch}"));
+        std::fs::rename(&lock, &aside).ok()?;
+        Some(format!("moved stale git lock {} (age {age}s, no live git in {}) to {}", lock.display(), self.0.display(), PathBuf::from(aside).display()))
+    }
+
     /// `push -q <remote> --delete <branch>`.
     pub fn push_delete(&self, remote: &str, branch: &str) -> bool {
         self.ok(&["push", "-q", remote, "--delete", branch])
@@ -241,4 +269,36 @@ impl Git<'_> {
     pub fn ls_files_others_nul(&self) -> Vec<u8> {
         self.cmd(&["ls-files", "--others", "--exclude-standard", "-z"]).output().map(|o| o.stdout).unwrap_or_default()
     }
+}
+
+fn lock_named_in(err: &str) -> Option<PathBuf> {
+    let rest = err.split("Unable to create '").nth(1)?;
+    let path = rest.split('\'').next()?;
+    path.ends_with(".lock").then(|| PathBuf::from(path))
+}
+
+/// Any `git` process whose working directory is in `repo` or whose command line names it.
+/// An unreadable /proc as a whole counts as live; one unreadable process (another uid, or
+/// exited mid-scan) is judged by its command line alone.
+fn git_process_in(repo: &Path) -> bool {
+    let repo = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+    let needle = repo.to_string_lossy().into_owned();
+    let Ok(procs) = std::fs::read_dir("/proc") else { return true };
+    let me = std::process::id().to_string();
+    for p in procs.flatten() {
+        let name = p.file_name().to_string_lossy().into_owned();
+        if !name.bytes().all(|b| b.is_ascii_digit()) || name == me {
+            continue;
+        }
+        let comm = std::fs::read_to_string(p.path().join("comm")).unwrap_or_default();
+        if !comm.trim().starts_with("git") {
+            continue;
+        }
+        let in_cwd = std::fs::read_link(p.path().join("cwd")).map(|c| c.starts_with(&repo)).unwrap_or(false);
+        let cmdline = std::fs::read(p.path().join("cmdline")).unwrap_or_default();
+        if in_cwd || String::from_utf8_lossy(&cmdline).contains(&needle) {
+            return true;
+        }
+    }
+    false
 }

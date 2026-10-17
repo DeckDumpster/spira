@@ -472,3 +472,4 @@ testenv_load_wait
 metrics_endpoint
 metrics_data
 metrics_grafana_addr
+git_lock_stale_secs
