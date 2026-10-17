@@ -81,9 +81,9 @@ MOCK
     chmod +x "$BIN/systemctl"
 }
 
-cat > "$BIN/journalctl" <<'MOCK'
+cat > "$BIN/journalctl" <<MOCK
 #!/usr/bin/env bash
-printf 'line one\nline two\nline three\n'
+echo called >> "$TMP/journalctl-called"
 MOCK
 chmod +x "$BIN/journalctl"
 
@@ -94,12 +94,12 @@ WT_HOME="$TMP/wt-home"; mkdir -p "$WT_HOME"; ln -s "$HERE/conf.d" "$WT_HOME/conf
 # wt_show -> the --show snapshot (touches nothing: no incident.sh, no state write)
 wt_show() {
     tl_config SPIRA_RUN="$TMP/run"
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i PATH="$BIN:$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$WT_HOME" \
         SPIRA_CONF=/nonexistent \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \
+        SPIRA_SYSTEMCTL="$BIN/systemctl" \
         watchtower --show 2>/dev/null
 }
 fu_row() { printf '%s\n' "$1" | sed -n 's/^  FAILED UNITS  *//p' | head -1; }
@@ -115,12 +115,12 @@ printf '%s\t%s\n' "\$2" "\${SPIRA_INCIDENT_REF:-}" >> "$TMP/inc-calls"
 MOCK
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i PATH="$BIN:$PATH" HOME="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$WT_HOME" \
         SPIRA_CONF=/nonexistent \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \
+        SPIRA_SYSTEMCTL="$BIN/systemctl" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         watchtower >/dev/null 2>&1
@@ -144,7 +144,8 @@ want "positive control: fires" "spira-czar-pass-prod.service" "$calls"
 is   "positive control: exactly one incident" "1" "$(wc -l < "$TMP/inc-calls" 2>/dev/null || echo 0)"
 body="$(cat "$TMP/inc-bodies" 2>/dev/null || echo "")"
 want "body names the unit"        "spira-czar-pass-prod.service" "$body"
-want "body carries the log lines" "line one"                     "$body"
+want "body names the human command" "systemctl --user status"   "$body"
+is   "no journal read" "0" "$(ls "$TMP/journalctl-called" 2>/dev/null | wc -l)"
 want "body states first-failed"   "first seen failing"            "$body"
 
 # ==========================================================================

@@ -10,7 +10,6 @@ use std::process::Command;
 
 pub struct Cfg {
     pub systemctl: String,
-    pub journalctl: String,
     pub releases: Option<String>,
     pub keep: usize,
     pub store_slack: usize,
@@ -143,19 +142,6 @@ fn unit_run(cfg: &Cfg, unit: &str) -> Option<Run> {
     Some(Run { active_state: get("ActiveState="), invocation: get("InvocationID="), result: get("Result="), exec_status: get("ExecMainStatus=") })
 }
 
-pub const LOG_LOOKBACK: &str = "-6h";
-const OOM_LOOKBACK_SECS: i64 = 900;
-
-pub fn journal_args(unit: &str, since: &str, rest: &[&str]) -> Vec<String> {
-    ["--user", "-u", unit, "--since", since, "--no-pager"].iter().chain(rest).map(|s| s.to_string()).collect()
-}
-
-fn last_log_lines(cfg: &Cfg, unit: &str) -> String {
-    crate::deadline::output("conditions journal", Command::new(&cfg.journalctl).args(journal_args(unit, LOG_LOOKBACK, &["-n", "5"])))
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr))
-        .unwrap_or_default()
-}
-
 pub fn failing_units(cfg: &Cfg, run_dir: &Path) -> Reading {
     let Some(failed) = crate::failed_units::gather(&cfg.systemctl) else { return Reading::Unknown };
     let path = run_dir.join("conditions").join("failed-runs.tally");
@@ -178,13 +164,11 @@ pub fn failing_units(cfg: &Cfg, run_dir: &Path) -> Reading {
         };
         let Some((inv, n)) = tally(prev.get(&unit).map(|(i, n)| (i.as_str(), *n)), &run) else { continue };
         if n >= cfg.failed_runs {
-            let opened = prev.get(&unit).is_some_and(|(_, pn)| *pn >= cfg.failed_runs);
-            let logs = if opened { "(unchanged since the incident was filed)".to_string() } else { last_log_lines(cfg, &unit) };
             standing.push(Cond {
                 key: unit.clone(),
                 reference: format!("incident:failed-unit-{unit}"),
                 title: format!("FAILED UNIT: {unit} failed {n} consecutive runs"),
-                body: format!("{unit} has failed {n} consecutive runs.\n\nLast log lines:\n{logs}\n\nCheck: journalctl --user -u {unit} -n 50\n"),
+                body: format!("{unit} has failed {n} consecutive runs.\n\nCheck: systemctl --user status {unit}\n"),
                 priority: 1,
                 sustain_secs: 0,
             });
@@ -222,11 +206,9 @@ pub fn parse_oom_show(show: &str) -> Vec<OomShow> {
         .collect()
 }
 
-/// `oom_in_journal` is asked only when the counter grew and the result alone does not say.
-pub fn oom_decide(now: i64, prev: Option<&OomRow>, s: &OomShow, oom_in_journal: &dyn Fn(i64) -> bool) -> OomRow {
+pub fn oom_decide(now: i64, prev: Option<&OomRow>, s: &OomShow) -> OomRow {
     let last = prev.map_or(0, |p| p.last_oom);
-    let grew = prev.is_some_and(|p| s.restarts > p.restarts);
-    let hit = s.result == "oom-kill" || (grew && oom_in_journal(now - OOM_LOOKBACK_SECS));
+    let hit = s.result == "oom-kill";
     OomRow { restarts: s.restarts, last_oom: if hit { now } else { last } }
 }
 
@@ -242,18 +224,6 @@ fn parse_oom_state(text: &str) -> BTreeMap<String, OomRow> {
         .collect()
 }
 
-fn journal_has_oom(cfg: &Cfg, unit: &str, since: i64) -> bool {
-    crate::deadline::output(
-        "oom journal",
-        Command::new(&cfg.journalctl).args(journal_args(unit, &format!("@{since}"), &["-o", "cat"])),
-    )
-    .map(|o| {
-        let t = String::from_utf8_lossy(&o.stdout);
-        t.contains("oom-kill") || t.contains("OOM killer")
-    })
-    .unwrap_or(false)
-}
-
 pub fn oom_restarts(cfg: &Cfg, now: i64, run_dir: &Path) -> Reading {
     let Some(show) = systemctl_show(cfg, &[&cfg.oom_glob, "-p", "Id", "-p", "NRestarts", "-p", "Result"]) else { return Reading::Unknown };
     let path = run_dir.join("conditions").join("oom-restarts.state");
@@ -261,15 +231,15 @@ pub fn oom_restarts(cfg: &Cfg, now: i64, run_dir: &Path) -> Reading {
     let mut next = BTreeMap::new();
     let mut standing = Vec::new();
     for s in parse_oom_show(&show) {
-        let row = oom_decide(now, prev.get(&s.unit), &s, &|since| journal_has_oom(cfg, &s.unit, since));
+        let row = oom_decide(now, prev.get(&s.unit), &s);
         if row.last_oom > 0 && now - row.last_oom < cfg.oom_hold_secs {
             standing.push(Cond {
                 key: s.unit.clone(),
                 reference: format!("incident:oom-killed-{}", s.unit),
                 title: format!("OOM KILLED: {} was killed for memory and restarted ({} restarts)", s.unit, s.restarts),
                 body: format!(
-                    "{} was last OOM-killed {}s ago and has restarted {} times; Restart= hides this from the failed-unit list.\n\nIts MemoryMax is too low for what it does: `systemctl --user show {} -p MemoryMax -p MemoryPeak`, `journalctl --user -u {} | grep -i oom`.\n",
-                    s.unit, now - row.last_oom, s.restarts, s.unit, s.unit
+                    "{} was last OOM-killed {}s ago and has restarted {} times; Restart= hides this from the failed-unit list.\n\nIts MemoryMax is too low for what it does: `systemctl --user show {} -p MemoryMax -p MemoryPeak`.\n",
+                    s.unit, now - row.last_oom, s.restarts, s.unit
                 ),
                 priority: 2,
                 sustain_secs: 0,
@@ -576,39 +546,17 @@ pub fn content_drift(cfg: &ContentDriftCfg) -> Reading {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn every_journalctl_argv_is_bounded() {
-        assert!(journal_args("u", LOG_LOOKBACK, &["-n", "5"]).contains(&"--since".to_string()));
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut seen = 0;
-        for f in ["probes.rs", "sweep/escalate.rs"] {
-            let text = std::fs::read_to_string(src.join(f)).unwrap();
-            let prod = text.split("mod tests {").next().unwrap();
-            for l in prod.lines().filter(|l| l.contains("\"--user\", \"-u\"") && l.contains("args(")) {
-                seen += 1;
-                assert!(l.contains("--since"), "unbounded journalctl argv in {f}: {l}");
-            }
-        }
-        assert_eq!(seen, 0, "journalctl argv is built only by journal_args");
-    }
-
     use super::*;
 
     #[test]
-    fn an_oom_kill_is_seen_through_the_restart_that_erases_it() {
+    fn an_oom_kill_is_read_from_the_unit_result_and_held() {
         let show = "Id=spira-a.service\nNRestarts=4\nResult=success\n\nId=spira-b.service\nNRestarts=0\nResult=oom-kill\n";
         let rows = parse_oom_show(show);
         assert_eq!(rows.len(), 2);
-        let a = &rows[0];
-        let yes = |_: i64| true;
-        let no = |_: i64| false;
-        assert_eq!(oom_decide(100, None, a, &yes).last_oom, 0, "first sight has no baseline to grow from");
         let prev = OomRow { restarts: 3, last_oom: 0 };
-        assert_eq!(oom_decide(100, Some(&prev), a, &yes), OomRow { restarts: 4, last_oom: 100 });
-        assert_eq!(oom_decide(100, Some(&prev), a, &no).last_oom, 0, "a restart the journal does not blame on the OOM killer");
-        assert_eq!(oom_decide(100, Some(&OomRow { restarts: 4, last_oom: 0 }), a, &yes).last_oom, 0, "no new restart, nothing to ask");
-        assert_eq!(oom_decide(100, None, &rows[1], &no).last_oom, 100, "Result=oom-kill alone is evidence");
-        assert_eq!(oom_decide(200, Some(&OomRow { restarts: 4, last_oom: 100 }), a, &no).last_oom, 100, "a past hit is held");
+        assert_eq!(oom_decide(100, Some(&prev), &rows[0]), OomRow { restarts: 4, last_oom: 0 }, "a restart alone is not an OOM kill");
+        assert_eq!(oom_decide(100, None, &rows[1]).last_oom, 100, "Result=oom-kill is evidence");
+        assert_eq!(oom_decide(200, Some(&OomRow { restarts: 4, last_oom: 100 }), &rows[0]).last_oom, 100, "a past hit is held");
     }
 
     #[test]
@@ -801,7 +749,6 @@ mod tests {
     fn cfg(dir: &Path) -> Cfg {
         Cfg {
             systemctl: "/nonexistent/systemctl".into(),
-            journalctl: "/nonexistent/journalctl".into(),
             releases: Some(dir.join("releases").to_string_lossy().into_owned()),
             keep: 2,
             store_slack: 1,

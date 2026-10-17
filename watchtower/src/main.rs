@@ -188,7 +188,6 @@ fn build_sweep_cfg() -> sweep::Cfg {
         drain_warn_mins: getenv_i64("SPIRA_DRAIN_WARN_MINS", 15),
         idle_while_ready_n: getenv_i64("SPIRA_IDLE_WHILE_READY_N", 5).max(0) as usize,
         systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
-        journalctl: getenv("SPIRA_JOURNALCTL").unwrap_or_else(|| "journalctl".to_string()),
         prompt_file: getenv("SPIRA_WATCH_PROMPT_FILE").map(PathBuf::from),
         lapsed_dir: getenv("SPIRA_LAPSED_DIR").map(PathBuf::from),
         lapsed_marker: getenv("SPIRA_LAPSED_MARKER").map(PathBuf::from),
@@ -393,7 +392,6 @@ fn main() {
             }
             let cfg = probes::Cfg {
                 systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
-                journalctl: getenv("SPIRA_JOURNALCTL").unwrap_or_else(|| "journalctl".to_string()),
                 releases: {
                     // SPIRA_RELEASES is registered but its declared value may legitimately be
                     // "" (not configured) — preserved as `None`, same as `getenv`'s own
