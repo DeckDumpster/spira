@@ -593,6 +593,79 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
     OK
 }
 
+/// The door for a red that was not the tree's fault: withdraw it from the lifecycle row and from the
+/// batch red-tip record, so the same tip is admitted again. Evidence is mandatory and must name the tip.
+pub fn absolve(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text, evidence: &Text, evidence_tip: &str) -> i32 {
+    let text = |t: &Text, what: &str| match read_text(w, t) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            w.err(format!("queue.sh absolve: cannot read the {what}: {e}"));
+            Err(USAGE)
+        }
+    };
+    let (reason, evidence) = match (text(reason, "reason"), text(evidence, "evidence")) {
+        (Ok(r), Ok(e)) => (r, e),
+        (Err(rc), _) | (_, Err(rc)) => return rc,
+    };
+    if reason.trim().is_empty() {
+        w.err("queue.sh absolve: --reason is required — say why the red was not the tree's fault");
+        return USAGE;
+    }
+    if evidence.trim().is_empty() {
+        w.err("queue.sh absolve: --evidence is required — the failing step and why it ran before any suite, or the clean rerun on the tip");
+        return USAGE;
+    }
+    if !SANCTIONED_REWORKERS.contains(&by) {
+        w.err(format!("queue.sh absolve: refused — only {} may absolve a red tip (--by {by})", SANCTIONED_REWORKERS.join(" or ")));
+        return FAIL;
+    }
+    let reason = match statute_gate(w, "absolve", &reason) {
+        Ok(Some(line)) => format!("{reason}\n\n{line}"),
+        Ok(None) => reason,
+        Err(rc) => return rc,
+    };
+    let Ok(c) = resolve(w, "absolve", repo) else { return FAIL };
+    if repo_path(w, "absolve", &c).is_err() || idents(w, "absolve", &[("bead id", id), ("repo", &c.r.name), ("by", by)]).is_err() {
+        return FAIL;
+    }
+    if super::require_lc(w, "absolve").is_err() {
+        return FAIL;
+    }
+    let Ok(_g) = take_lock(w, "absolve", &c, "") else { return FAIL };
+    let Some(row) = w.lc.bead_row(id) else {
+        w.err(format!("queue.sh absolve: {id}: no lifecycle row — refused"));
+        return FAIL;
+    };
+    let Some(tip) = row.tip.clone().filter(|t| !t.is_empty()) else {
+        w.err(format!("queue.sh absolve: {id} has no recorded tip — refused"));
+        return FAIL;
+    };
+    if evidence_tip != tip {
+        w.err(format!("queue.sh absolve: --evidence-tip must equal the bead's tip {tip} (got {evidence_tip:?}) — refused"));
+        return FAIL;
+    }
+    let in_row = row.ejected_red_tip.as_deref() == Some(tip.as_str());
+    let in_record = super::round::batch_red_at(&c, id, &tip);
+    if !in_row && !in_record {
+        w.err(format!("queue.sh absolve: no red is recorded against {id} at {tip} — nothing to absolve"));
+        return FAIL;
+    }
+    if in_row {
+        if let Err((rc, e)) = w.lc.absolve(id, &tip, by, reason.trim(), evidence.trim(), evidence_tip) {
+            w.err(format!("queue.sh absolve: spira-lc refused {id} (rc={rc}): {e}"));
+            return FAIL;
+        }
+    }
+    if let Err(e) = super::round::forget_batch_red(&c, id, &tip) {
+        w.err(format!("queue.sh absolve: {id} absolved on spira-lc but the batch red-tip record is unwritable: {e}"));
+        return FAIL;
+    }
+    w.lib.comment(id, &format!("Red at {tip} absolved by {by}.\n\n{reason}\n\nEvidence:\n{}", evidence.trim()));
+    landing_log(&c.s.run, &format!("QUEUE ABSOLVE {} branch={id} tip={tip} by={by} reason={}", w.clock.now(), reason.lines().next().unwrap_or("")));
+    w.out(format!("queue.sh absolve: {id} red at {tip} withdrawn; the tip is admissible again"));
+    OK
+}
+
 pub fn release(w: &World, repo: Option<&str>) -> i32 {
     let Ok(c) = resolve(w, "release", repo) else { return FAIL };
     if repo_path(w, "release", &c).is_err() {

@@ -681,6 +681,26 @@ fn retip_refuses_without_provenance_naming_the_missing_field() {
 }
 
 #[test]
+fn absolve_refuses_without_evidence_and_clears_the_recorded_red_with_it() {
+    let mut f = Fake::default();
+    let tip = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+    let r = f.bead("sp-a", BeadState::Certified);
+    r.tip = Some(tip.into());
+    r.ejected_red_tip = Some(tip.into());
+    for args in [
+        vec!["sp-a", tip, "concierge", "infra red", "", tip],
+        vec!["sp-a", tip, "concierge", "infra red", "image build timed out", "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"],
+    ] {
+        let a = go(&mut f, "absolve", &args);
+        assert_eq!(a.code, REFUSED, "{}", a.stderr);
+        assert_eq!(f.beads["sp-a"].ejected_red_tip.as_deref(), Some(tip));
+    }
+    let a = go(&mut f, "absolve", &["sp-a", tip, "concierge", "infra red", "sccache startup timeout, no suite ran", tip]);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!((f.state("sp-a"), f.beads["sp-a"].ejected_red_tip.clone()), ("CERTIFIED", None));
+}
+
+#[test]
 fn every_event_verb_needs_its_arguments() {
     let mut f = Fake::default();
     for (verb, args) in [("hold", vec!["sp-a"]), ("drop", vec!["sp-a"]), ("returned", vec!["sp-a"]), ("content-on-base", vec!["sp-a"]), ("certify", vec!["sp-a", "t"]), ("deliver", vec!["push-delivered", "sp-a"]), ("state", vec![])] {
