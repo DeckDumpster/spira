@@ -117,14 +117,14 @@ pub fn work_labels(fayth_labels: &str, repo: &str) -> String {
 
 /// Why `base` cannot be stacked under a new bead of `repo`, or `None` when it can: only a
 /// live work bead of the same repo carries commits the new branch can be cut from.
-pub fn stack_after_refusal(base: &str, row: Option<&ShowRow>, repo: &str) -> Option<String> {
+pub fn stack_after_refusal(base: &str, row: Option<&ShowRow>, terminal: bool, repo: &str) -> Option<String> {
     let Some(row) = row else {
         return Some(format!("--stack-after {base}: no such bead"));
     };
     if matches!(row.issue_type.as_str(), "epic" | "decision" | "event" | "molecule" | "gate") {
         return Some(format!("--stack-after {base}: a {} carries no commits to stack on", row.issue_type));
     }
-    if row.status == "closed" {
+    if terminal {
         return Some(format!("--stack-after {base}: already closed; file without --stack-after"));
     }
     if !row.labels.iter().any(|l| l == &format!("repo:{repo}")) {
@@ -833,10 +833,10 @@ mod tests {
     #[test]
     fn a_stack_base_must_be_live_same_repo_work() {
         let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into() };
-        assert_eq!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), "r"), None);
-        assert!(stack_after_refusal("sp-a", None, "r").is_some());
-        assert!(stack_after_refusal("sp-a", Some(&row("epic", "open", "repo:r")), "r").is_some());
-        assert!(stack_after_refusal("sp-a", Some(&row("task", "closed", "repo:r")), "r").is_some());
-        assert!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:other")), "r").is_some());
+        assert_eq!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), false, "r"), None);
+        assert!(stack_after_refusal("sp-a", None, false, "r").is_some());
+        assert!(stack_after_refusal("sp-a", Some(&row("epic", "open", "repo:r")), false, "r").is_some());
+        assert!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), true, "r").is_some());
+        assert!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:other")), false, "r").is_some());
     }
 }

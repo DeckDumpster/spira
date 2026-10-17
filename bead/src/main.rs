@@ -757,7 +757,8 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
 
         if let Some(base) = &stack_after {
             let (_, shown) = bdq_capture(home, &s(&["show", base, "--json"]));
-            if let Some(why) = stack_after_refusal(base, parse_show_row(&shown).as_ref(), &repo) {
+            let terminal = lc_done(&mut None, base);
+            if let Some(why) = stack_after_refusal(base, parse_show_row(&shown).as_ref(), terminal, &repo) {
                 eprintln!("bead: {why}");
                 return 2;
             }
