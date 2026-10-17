@@ -25,7 +25,7 @@ chmod +x "$T/bin/podman"
 run() { # part [KEY=VAL...] -> rc in \$rc, stderr in \$err
     local part="$1"; shift
     : > "$T/podman.log"
-    err="$(env -i HOME="$T" PATH="$T/bin:/usr/bin:/bin" SPIRA_TOML="${SPIRA_TOML:-}" SPIRA_RUN="$T/run" "$@" bash "$HERE/metrics-stack.sh" "$part" 2>&1 >/dev/null)"
+    err="$(env -i HOME="$T" PATH="$T/bin:/usr/bin:/bin" SPIRA_TOML="${SPIRA_TOML:-}" SPIRA_RUN="$T/run" SPIRA_METRICS_IDLE_ONCE=1 "$@" bash "$HERE/metrics-stack.sh" "$part" 2>&1 >/dev/null)"
     rc=$?
 }
 

@@ -9,7 +9,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 part="${1:-}"
 case "$part" in vm|collector|grafana) ;; *) printf 'usage: metrics-stack.sh vm|collector|grafana\n' >&2; exit 2 ;; esac
 
-[ -n "${SPIRA_METRICS_DATA:-}" ] || { printf 'metrics-stack: SPIRA_METRICS_DATA is empty — %s stays idle\n' "$part" >&2; exit 0; }
+if [ -z "${SPIRA_METRICS_DATA:-}" ]; then
+    printf 'metrics-stack: SPIRA_METRICS_DATA is empty — %s stays idle\n' "$part" >&2
+    [ -z "${SPIRA_METRICS_IDLE_ONCE:-}" ] || exit 0
+    _conf_file="$(spira_toml_write_target)"
+    _conf_mtime_0="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
+    while ! conf_changed "$_conf_file" "$_conf_mtime_0"; do sleep 5; done
+    exit 0
+fi
 case "$SPIRA_METRICS_DATA" in /*) ;; *) printf 'metrics-stack: SPIRA_METRICS_DATA must be absolute\n' >&2; exit 2 ;; esac
 command -v podman >/dev/null 2>&1 || { printf 'metrics-stack: podman not found on PATH (%s)\n' "$PATH" >&2; exit 2; }
 
