@@ -39,6 +39,11 @@ fn refused(what: &str, r: &Refusal) -> i32 {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let op = match args.first().map(String::as_str) {
+        Some(o @ ("select" | "gate" | "budget" | "header")) => o,
+        _ => "other",
+    };
+    let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "suite-select", op);
     let code = match args.first().map(String::as_str) {
         Some("select") => cmd_select(&args[1..]),
         Some("gate") => cmd_gate(&args[1..]),
@@ -51,6 +56,7 @@ fn main() {
         Some(o) => usage(&format!("unknown command: {o}")),
         None => usage("a command is required"),
     };
+    meter.end(spira_otel::metrics::outcome_of(code));
     std::process::exit(code);
 }
 

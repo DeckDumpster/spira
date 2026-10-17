@@ -399,3 +399,56 @@ mod tests {
         }
     }
 }
+
+/// A fixture OTLP/HTTP sink: answers 204 to every push until the pushes stop, and hands back
+/// all the request bytes.
+pub struct OtlpSink {
+    pub addr: String,
+    handle: std::thread::JoinHandle<Vec<u8>>,
+}
+
+impl OtlpSink {
+    pub fn start() -> OtlpSink {
+        use std::io::Read;
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind sink");
+        l.set_nonblocking(true).expect("nonblocking");
+        let addr = l.local_addr().expect("addr").to_string();
+        let handle = std::thread::spawn(move || {
+            let mut all = Vec::new();
+            let mut deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while std::time::Instant::now() < deadline {
+                let Ok((mut conn, _)) = l.accept() else {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                };
+                conn.set_nonblocking(false).ok();
+                conn.set_read_timeout(Some(std::time::Duration::from_secs(2))).ok();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let Ok(n) = conn.read(&mut chunk) else { break };
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                    let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                    let len: usize = head.split("content-length: ").nth(1).and_then(|s| s.split("\r\n").next()).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    if buf.len() >= i + 4 + len {
+                        break;
+                    }
+                }
+                let _ = std::io::Write::write_all(&mut conn, b"HTTP/1.1 204 No Content\r\n\r\n");
+                all.extend_from_slice(&buf);
+                deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+            }
+            all
+        });
+        OtlpSink { addr, handle }
+    }
+
+    /// Every push as text (names and label values are plain in the protobuf); empty when nothing arrived.
+    pub fn body(self) -> String {
+        String::from_utf8_lossy(&self.handle.join().unwrap_or_default()).into_owned()
+    }
+}

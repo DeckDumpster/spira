@@ -55,6 +55,13 @@ where
     v.trim().parse::<T>().map_err(|e| format!("{key} = {v:?} in spira.toml does not parse: {e}"))
 }
 
+/// The metrics sink for `service`: `SPIRA_METRICS_ENDPOINT` as declared, disabled when the config
+/// does not resolve. Short deadline: a push never holds its producer.
+pub fn metrics_sink(service: &str) -> spira_otel::metrics::MetricsSink {
+    let endpoint = cfg("SPIRA_METRICS_ENDPOINT").ok();
+    spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), service, std::time::Duration::from_millis(500))
+}
+
 /// A complete `spira.toml` for TESTS in any crate: every key declared (spira-config's
 /// `tests/fixtures/complete.toml`), with `declare`'s `SPIRA_<KEY>` pairs written as
 /// `spira.<key>`. Written to `<dir>/spira.toml`; point `SPIRA_TOML` at the returned path.
@@ -68,4 +75,14 @@ pub fn fixture_toml(dir: &std::path::Path, declare: &[(&str, &str)]) -> std::pat
     let p = dir.join(crate::FILE_NAME);
     crate::serialize_and_write(&p, &d).expect("the fixture writes");
     p
+}
+
+/// The environment that points a spawned binary's config door at a fixture declaring
+/// `SPIRA_METRICS_ENDPOINT = endpoint` (and `declare`'s other keys), for tests of what it pushes.
+pub fn fixture_metrics_env(dir: &std::path::Path, endpoint: &str, declare: &[(&str, &str)]) -> Vec<(&'static str, String)> {
+    let mut keys = vec![("SPIRA_METRICS_ENDPOINT", endpoint)];
+    keys.extend_from_slice(declare);
+    let toml = fixture_toml(dir, &keys);
+    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+    vec![("SPIRA_TOML", toml.display().to_string()), ("SPIRA_HOME", home.display().to_string())]
 }

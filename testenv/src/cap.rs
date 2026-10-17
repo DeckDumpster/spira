@@ -128,6 +128,7 @@ pub fn arm(limit: Duration) -> Armed {
         TRIPPED.store(true, Ordering::SeqCst);
         if wait(limit + UNWIND) {
             kill_descendants(std::process::id());
+            crate::telemetry::push_over_cap(&crate::telemetry::sink(), "self");
             println!("{}", over_cap_line(&what, limit.as_secs()));
             println!("VERDICT FAULT rc=2 ran=0 reason=over-cap");
             // SAFETY: a watchdog thread has no caller to return to; _exit skips atexit handlers, stdout is line-buffered and already flushed.

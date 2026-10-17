@@ -35,6 +35,14 @@ impl Clock for Wall {
 }
 
 fn main() -> ExitCode {
+    let op = if std::env::args().nth(2).as_deref() == Some("--worker") { "helper" } else { "tick" };
+    let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "gate-worker", op);
+    let code = real_main(&meter);
+    meter.end(spira_otel::metrics::outcome_of_exit(code));
+    code
+}
+
+fn real_main(meter: &spira_otel::metrics::Run) -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) != Some("run") {
         eprintln!("usage: gate-worker run [--worker]");
@@ -123,6 +131,7 @@ fn main() -> ExitCode {
                 current
             });
             println!("gate-worker: {filed} verdict(s) filed (slot {slot})");
+            meter.sink().push(&[spira_otel::metrics::Point::Count { name: "spira_gate_worker_verdicts", value: filed as u64 }], &[("component", "gate-worker")]);
             ExitCode::SUCCESS
         }
     };

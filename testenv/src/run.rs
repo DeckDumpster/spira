@@ -224,6 +224,7 @@ pub fn execute(inv: Invocation, deps: &Deps) -> i32 {
         Invocation::Report(n) => report(n, deps),
         Invocation::Run(args) => {
             let fin = run(&args, deps);
+            crate::telemetry::push_finish(&crate::telemetry::sink(), fin.rc, fin.ran, fin.red, fin.skipped, fin.reason);
             (deps.out)(&fin.verdict_line());
             fin.rc
         }
@@ -999,6 +1000,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     match decl_text {
         Some(text) => {
             let lease = admit(admission::Pool::Test, 1);
+            crate::telemetry::note_queue_wait("test", lease.waited);
             if lease.waited > 0 {
                 deps.log(&format!("queue-wait={}s pool=test", lease.waited));
             }
@@ -1342,6 +1344,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     } else {
         let lease = admit(admission::Pool::Compile, admission::profile_weight(&args.profile));
         shift(lease.waited);
+        crate::telemetry::note_queue_wait("compile", lease.waited);
         if lease.waited > 0 {
             deps.log(&format!("queue-wait={}s pool=compile", lease.waited));
             ph.mark("admit-compile");
@@ -1365,6 +1368,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     ph.mark("build");
     let _test_lease = admit(admission::Pool::Test, 1);
     shift(_test_lease.waited);
+    crate::telemetry::note_queue_wait("test", _test_lease.waited);
     if _test_lease.waited > 0 {
         deps.log(&format!("queue-wait={}s pool=test", _test_lease.waited));
         ph.mark("admit-test");

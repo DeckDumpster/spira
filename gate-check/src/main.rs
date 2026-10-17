@@ -19,12 +19,19 @@ fn default_home() -> PathBuf {
 }
 
 fn main() {
+    let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "gate-check", "check");
+    let code = real_main();
+    meter.end(spira_otel::metrics::outcome_of(code));
+    std::process::exit(code);
+}
+
+fn real_main() -> i32 {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
     let mut home = None;
     if argv.first().map(String::as_str) == Some("--home") {
         if argv.len() < 2 {
             eprintln!("gate-check: --home needs a directory");
-            std::process::exit(1);
+            return 1;
         }
         home = Some(PathBuf::from(argv.remove(1)));
         argv.remove(0);
@@ -37,25 +44,26 @@ fn main() {
         Ok(v) => Some(v).filter(|v| !v.is_empty()),
         Err(e) => {
             eprintln!("gate-check: {e}");
-            std::process::exit(1);
+            return 1;
         }
     };
     let bd = match spira_config::process::cfg("SPIRA_BD") {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gate-check: {e}");
-            std::process::exit(1);
+            return 1;
         }
     };
     let flaky_repo = match spira_config::process::cfg("SPIRA_FLAKY_GH_REPO") {
         Ok(v) => Some(v).filter(|v| !v.is_empty()),
         Err(e) => {
             eprintln!("gate-check: {e}");
-            std::process::exit(1);
+            return 1;
         }
     };
     let world = Real::new(home.clone(), db, bd, flaky_repo);
     run(&world, &home);
+    0
 }
 
 fn run(world: &dyn World, home: &std::path::Path) {

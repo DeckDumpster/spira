@@ -123,6 +123,10 @@ impl Run {
         Run { sink: MetricsSink::new(endpoint, &format!("spira-{component}"), RUN_DEADLINE), component: component.into(), operation: operation.into(), start: Instant::now() }
     }
 
+    pub fn sink(&self) -> &MetricsSink {
+        &self.sink
+    }
+
     pub fn end(self, outcome: &str) {
         self.end_with(outcome, &[]);
     }
