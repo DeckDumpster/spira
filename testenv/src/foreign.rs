@@ -514,8 +514,20 @@ pub fn first_error(log: &str) -> Option<String> {
     lines
         .iter()
         .find(|l| failure(l))
+        .or_else(|| lines.iter().rev().find(|l| !l.trim().is_empty() && !is_server_banner(l)))
         .or_else(|| lines.iter().rev().find(|l| !l.trim().is_empty()))
         .map(|l| l.trim().to_string())
+}
+
+fn is_server_banner(l: &str) -> bool {
+    let low = l.to_lowercase();
+    (low.contains("serving on") || low.contains("listening on")) && low.contains("http")
+}
+
+/// The last `n` lines of a tier's log, for evidence that outlives the scratch tree.
+pub fn tail(log: &str, n: usize) -> String {
+    let lines: Vec<&str> = log.lines().collect();
+    lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
 fn is_yaml_fragment(t: &str) -> bool {
@@ -609,6 +621,8 @@ mod tests {
         let pw = "Running 2 tests\n  ✘  1 a.spec.ts:3:1 › loads (1.2s)\n  Error: expect(received).toBe(expected)\n  1 failed\n  1 passed\nserving on http://127.0.0.1:18080\n";
         assert_eq!(first_error(pw).unwrap(), "✘  1 a.spec.ts:3:1 › loads (1.2s)");
         assert_eq!(first_error("Running\n  1 failed\nserving on http://x\n").unwrap(), "1 failed");
+        assert_eq!(first_error("Running\ntimed out waiting\ndumpstar serving on http://127.0.0.1:18080\n").unwrap(), "timed out waiting");
+        assert_eq!(tail("a\nb\nc\n", 2), "b\nc");
     }
 
     #[test]
