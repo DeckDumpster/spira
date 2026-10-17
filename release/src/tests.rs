@@ -2360,7 +2360,7 @@ fn a_delta_naming_a_placeholder_path_is_refused_and_the_shipped_one_is_clean() {
     let bad = "[added]\n\"spira.lc_snapshot\" = \"/placeholder/run/bead-snapshot.json\"\n";
     let err = config_delta::Delta::parse(bad).unwrap_err();
     assert!(err.contains("placeholder path"), "{err}");
-    let ok = config_delta::Delta::parse("[added]\n\"spira.lc_snapshot\" = \"/home/u/run/bead-snapshot.json\"\n\"spira.groom_gate_label\" = \"placeholder-gate\"\n");
+    let ok = config_delta::Delta::parse("[added]\n\"spira.lc_snapshot\" = \"/srv/run/bead-snapshot.json\"\n\"spira.groom_gate_label\" = \"placeholder-gate\"\n");
     assert!(ok.is_ok(), "{ok:?}");
     let shipped = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../", "spira/config-delta.toml")).unwrap();
     let d = config_delta::Delta::parse(&shipped).unwrap();
