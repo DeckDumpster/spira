@@ -445,7 +445,7 @@ impl<A: Ec2Api> Provider for Ec2<A> {
     }
 
     fn diagnose(&self, vmid: &str) -> String {
-        match self.script(vmid, "tailscale status 2>&1 | head -20; journalctl -u tailscaled --no-pager -n 20 2>&1; tail -n 20 /var/log/cloud-init-output.log 2>&1") {
+        match self.script(vmid, "tailscale status 2>&1 | head -20; systemctl show tailscaled -p ActiveState,SubState,Result,ExecMainStatus,ExecMainExitTimestamp 2>&1; tail -n 20 /var/log/cloud-init-output.log 2>&1") {
             Ok((rc, out)) => format!("SSM diagnosis (exit {rc}): {}", out.trim()),
             Err(e) => match self.api.end_reason(vmid) {
                 Ok(Some(r)) => format!("SSM diagnosis failed: {e}; AWS reports {r}"),
@@ -971,6 +971,8 @@ mod tests {
         let e = provision(&p, &spec(), &mut |_| {}).unwrap_err();
         assert!(e.reason.contains("did not come up") && e.reason.contains("SSM diagnosis") && e.reason.contains("diagnostic output"), "{}", e.reason);
         assert!(fake.scripts().iter().any(|s| s.contains("tailscale status")));
+        assert!(fake.scripts().iter().any(|s| s.contains("systemctl show tailscaled")), "unit state comes from systemd, not a log");
+        assert!(!fake.scripts().iter().any(|s| s.contains("journalctl")), "nothing reads the journal");
         assert!(fake.ids().is_empty(), "leaked {:?}", fake.ids());
         assert!(e.doomed.is_none());
     }
