@@ -175,6 +175,7 @@ impl Run {
         points.extend(extra.iter().map(|p| match p {
             Point::Count { name, value } => Point::Count { name, value: *value },
             Point::Seconds { name, value } => Point::Seconds { name, value: *value },
+            Point::Gauge { name, value } => Point::Gauge { name, value: *value },
         }));
         self.sink.push(&points, &[("component", &self.component), ("operation", &self.operation), ("outcome", outcome)]);
     }
