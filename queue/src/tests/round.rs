@@ -228,6 +228,19 @@ fn abandon_returns_the_members_and_closes_the_round() {
 }
 
 #[test]
+fn ending_a_round_retires_the_mender_beads_filed_for_it() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-2"]), 0, "{}", t.err());
+    fs::write(marker(&t, "hand-2", "mender-1-gate-x"), "sp-m9\n").unwrap();
+    assert_eq!(t.run(&["round", "eject", "hand-2", "sp-b", "--reason", "red"]), 0, "{}", t.err());
+    assert!(t.lib.has("bead_close sp-m9"), "{:?}", t.lib.calls.borrow());
+    assert!(marker(&t, "hand-2", "mender-1-gate-x.retired").exists());
+    fs::write(marker(&t, "hand-2", "mender-2-gate-y"), "sp-m10\n").unwrap();
+    assert_eq!(t.run(&["round", "abandon", "hand-2", "--reason", "base moved"]), 0, "{}", t.err());
+    assert!(t.lib.has("bead_close sp-m10"), "{:?}", t.lib.calls.borrow());
+}
+
+#[test]
 fn abandon_of_a_batch_the_lifecycle_already_abandoned_drops_the_record() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta", "--name", "hand-1"]), 0, "{}", t.err());

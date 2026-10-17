@@ -1187,6 +1187,7 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         }
     }
 
+    retire_menders(w, &c, batch, &format!("{id} ejected"));
     if survivors.is_empty() {
         let emptied = bounded_text(&format!("round emptied: {id} ejected — {reason}"));
         if let Err((rc, out)) = lc_abandon(w, batch, LC_ACTOR, &emptied) {
@@ -1422,6 +1423,7 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
             false
         }
     };
+    retire_menders(w, &c, batch, "round landed");
     drop_record(&c, batch);
     w.git.worktree_remove(&path, &wt);
     finish(&c, batch, &format!("landed {head} members={}", csv(&members)));
@@ -1542,6 +1544,7 @@ fn abandon(w: &World, batch: &str, repo: Option<&str>, reason: &Text) -> i32 {
         }
         w.out(format!("queue.sh {label}: {}: {state}", m.id));
     }
+    retire_menders(w, &c, batch, "round abandoned");
     drop_record(&c, batch);
     w.git.worktree_remove(&path, &worktree_of(&kv));
     finish(&c, batch, &format!("abandoned: {}", one_line(&reason)));
