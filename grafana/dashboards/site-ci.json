@@ -1,0 +1,239 @@
+{
+  "uid": "spira-site-ci",
+  "title": "Spira site CI",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "tags": [
+    "spira"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_VM",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "data source"
+      },
+      {
+        "name": "repo",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_VM}"
+        },
+        "label": "repo",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "query": {
+          "query": "label_values(spira_gate_runs, repo)",
+          "refId": "v"
+        },
+        "refresh": 2
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "gate-run wall p50 / p90 by repo",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, repo) (rate(spira_gate_run_seconds_bucket{repo=~\"$repo\"}[$__rate_interval])))",
+          "legendFormat": "p90 {{repo}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "gate-run wall p50 by repo",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, repo) (rate(spira_gate_run_seconds_bucket{repo=~\"$repo\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{repo}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "queue time p90 by repo",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, repo) (rate(spira_gate_queue_seconds_bucket{repo=~\"$repo\"}[$__rate_interval])))",
+          "legendFormat": "{{repo}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "wait time p90 by repo",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, repo) (rate(spira_gate_wait_seconds_bucket{repo=~\"$repo\"}[$__rate_interval])))",
+          "legendFormat": "{{repo}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "red rate by repo",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (repo) (increase(spira_gate_runs{repo=~\"$repo\",verdict=\"red\"}[$__range])) / sum by (repo) (increase(spira_gate_runs{repo=~\"$repo\"}[$__range]))",
+          "legendFormat": "{{repo}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "gate runs by verdict",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (verdict) (increase(spira_gate_runs{repo=~\"$repo\"}[$__interval]))",
+          "legendFormat": "{{verdict}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

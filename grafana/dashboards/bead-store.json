@@ -1,0 +1,175 @@
+{
+  "uid": "spira-bead-store",
+  "title": "Spira bead store",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "tags": [
+    "spira"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_VM",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "data source"
+      },
+      {
+        "name": "verb",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_VM}"
+        },
+        "label": "verb",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "query": {
+          "query": "label_values(spira_bead_store_calls, verb)",
+          "refId": "v"
+        },
+        "refresh": 2
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "call rate by verb",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (verb) (rate(spira_bead_store_calls{verb=~\"$verb\"}[$__rate_interval]))",
+          "legendFormat": "{{verb}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "latency p50 by verb",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, verb) (rate(spira_bead_store_call_seconds_bucket{verb=~\"$verb\"}[$__rate_interval])))",
+          "legendFormat": "{{verb}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "latency p90 by verb",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, verb) (rate(spira_bead_store_call_seconds_bucket{verb=~\"$verb\"}[$__rate_interval])))",
+          "legendFormat": "{{verb}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "latency p99 by verb",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, verb) (rate(spira_bead_store_call_seconds_bucket{verb=~\"$verb\"}[$__rate_interval])))",
+          "legendFormat": "{{verb}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
