@@ -638,8 +638,9 @@ fn rewrite(file: &Path, drop: &[&str], add: &[(&str, &str)]) -> Result<(), Strin
 
 /// Abandon the batch on spira-lc, which requeues every member to CERTIFIED. Reported, never
 /// fatal: the PR and the record are going either way.
-fn lc_requeue(w: &World, b: &Batch, reason: &str) {
+fn lc_requeue(w: &World, c: &Ctx, b: &Batch, reason: &str) {
     let Some(id) = b.kv.get("batch_id") else { return };
+    super::round::retire_menders(w, c, id, reason);
     let r = crate::ident::bounded_text(reason);
     if let Err((rc, e)) = super::lc_abandon(w, id, "verdict.sh", &r) {
         w.err(format!("verdict: spira-lc abandon-batch refused for {id} (rc={rc}): {e}"));
@@ -650,7 +651,7 @@ fn lc_requeue(w: &World, b: &Batch, reason: &str) {
 fn close_and_certify(w: &World, c: &Ctx, b: &Batch) {
     w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, &b.pr);
-    lc_requeue(w, b, "batch closed");
+    lc_requeue(w, c, b, "batch closed");
     let _ = std::fs::remove_file(b.file);
 }
 
@@ -759,6 +760,9 @@ fn fast_forward(w: &World, c: &Ctx, b: &Batch, base: &str, remote: &str, base_br
     }
     let _ = std::fs::remove_file(c.queue_file("capacity-backoff"));
     w.out(format!("verdict {name}: PR {pr} landed by fast-forward ({})", b.head));
+    if let Some(id) = b.kv.get("batch_id") {
+        super::round::retire_menders(w, c, id, "batch landed");
+    }
     if !lc_land(w, b) {
         // The base has moved but the lifecycle did not take the land: keep the record so the
         // reconciler lands it once the PR reads merged.
@@ -870,7 +874,7 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
     w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, pr);
     w.out(format!("verdict {name}: PR {pr} base moved ({}) — closed, members requeued", current.as_deref().unwrap_or("unknown")));
-    lc_requeue(w, b, "base moved");
+    lc_requeue(w, c, b, "base moved");
     for m in &b.members {
         if let Some(cur) = current.as_ref().filter(|cur| w.git.is_ancestor(b.path, &m.tip, cur)) {
             super::land::lc_deliver(w, b.path, cur, m);
@@ -971,7 +975,7 @@ fn eject_red_members(w: &World, c: &Ctx, b: &Batch, faulty: &[(Member, Vec<Strin
         w.lib.comment(&m.id, &format!("Ejected from batch PR {pr}: its own files failed CI.\n\n{}\n\nFix the failing issue and re-certify before rejoining the queue.", lines.join("\n")));
         w.out(format!("verdict {name}: PR {pr} red — {bo}{} ejected: {}", m.id, lines.join(" | ")));
     }
-    lc_requeue(w, b, &format!("member red: {}", faulty.iter().map(|(m, _)| m.id.as_str()).collect::<Vec<_>>().join(",")));
+    lc_requeue(w, c, b, &format!("member red: {}", faulty.iter().map(|(m, _)| m.id.as_str()).collect::<Vec<_>>().join(",")));
     w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, pr);
     let _ = std::fs::remove_file(b.file);
@@ -1036,7 +1040,7 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
     );
     w.lib.cancel_runs(&c.s.forge, b.path, &b.branch);
     w.forge.pr_close(&c.s.forge, b.path, &b.pr);
-    lc_requeue(w, b, &format!("setup red, {same}: {shown}: {}", log.lines().last().unwrap_or("")));
+    lc_requeue(w, c, b, &format!("setup red, {same}: {shown}: {}", log.lines().last().unwrap_or("")));
     let _ = std::fs::remove_file(b.file);
     w.out(format!("verdict {name}: PR {pr} red — {bo}no suite annotations, {same}; batch abandoned, members requeued"));
     OK

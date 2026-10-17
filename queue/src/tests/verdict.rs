@@ -611,6 +611,21 @@ fn a_lint_red_naming_a_members_file_ejects_that_member_and_bars_its_tip() {
 }
 
 #[test]
+fn ejecting_the_member_a_red_names_retires_the_mender_bead_it_filed() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.lib.bug_id.borrow_mut() = Some("sp-m1".into());
+    t.git.stat("b0", "ta", &[("mtg_collector/other.py", 1, 0)]);
+    t.git.stat("b0", "tb", &[("mtg_collector/cli/data_cmd.py", 3, 1)]);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    t.forge.status.borrow_mut().push(Some("red\nfailed-step: gate / Lint\nstep-log: mtg_collector/cli/data_cmd.py:3:1: I001\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lib.has("create_bug"), "{}", t.out());
+    assert!(t.lib.has("bead_close sp-m1"), "{:?}", t.lib.calls.borrow());
+    assert!(t.out().contains("mender bead sp-m1 retired"), "{}", t.out());
+}
+
+#[test]
 fn a_lint_red_naming_no_members_file_is_still_a_setup_red() {
     let t = T::new(LandMode::Queue);
     lc_batch(&t);
