@@ -49,17 +49,32 @@ pub struct Live<'a>(pub &'a crate::db::Conn);
 impl Mends for Live<'_> {
     fn open_mends(&mut self, target: &str) -> Result<Vec<String>, String> {
         let needle = needle(target);
-        let out = bd::run(&["list", "--title-contains", &needle, "--status", "open,in_progress,blocked,deferred", "--limit", "0", "--json"])?;
+        let out = bd::run(&["list", "--title-contains", &needle, "--limit", "0", "--json"])?;
         let start = out.find(['[', '{']).ok_or("bd list: no JSON")?;
         let v: serde_json::Value = serde_json::from_str(&out[start..]).map_err(|e| format!("bd list --json: {e}"))?;
         let rows = match v {
             serde_json::Value::Array(a) => a,
             o => vec![o],
         };
+        let (rc, listing) = crate::dispatch(&["list".into()], self.0);
+        if rc != 0 {
+            return Err(format!("lifecycle list exited {rc}: {listing}"));
+        }
+        let ended: std::collections::HashSet<String> = serde_json::from_str::<serde_json::Value>(listing.trim())
+            .map_err(|e| format!("lifecycle list: {e}"))?
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|r| r.get("state").and_then(|s| s.as_str()).and_then(BeadState::from_str).is_some_and(BeadState::is_terminal))
+                    .filter_map(|r| r.get("bead_id").and_then(|i| i.as_str()).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
         Ok(rows
             .iter()
             .filter(|r| r.get("title").and_then(|t| t.as_str()).is_some_and(|t| t.starts_with(&needle)))
             .filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string))
+            .filter(|id| !ended.contains(id))
             .collect())
     }
     fn retire(&mut self, mend: &str, reason: &str) -> Result<(), String> {
