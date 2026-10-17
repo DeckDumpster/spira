@@ -23,7 +23,7 @@ mod tests {
         let m = spira_otel::metrics::run::RunMeter::start(COMPONENT, "units-install");
         m.finish(|| Some(addr), "error", &[]);
         let body = h.join().unwrap();
-        for want in ["spira_component_runs", "spira_component_run_seconds", "install", "units-install", "error"] {
+        for want in ["spira_component_invocations", "spira_component_duration_seconds", "install", "units-install", "error"] {
             assert!(body.contains(want), "{want} missing from the push");
         }
     }

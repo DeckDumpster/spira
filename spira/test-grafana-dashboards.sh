@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: grafana/** tsd/src/pass.rs spira-otel/src/** auron/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs
+# covers: grafana/** tsd/src/pass.rs spira-otel/src/** auron/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs
 #
 # The provisioned Grafana dashboards parse, read their data source from a variable, carry no
 # annotations or text panels, and every cert-pass series they query is one the producer pushes.
@@ -42,7 +42,7 @@ missing="$(comm -13 <(printf '%s\n' "$pushed") <(printf '%s\n' "$queried"))"
 is "rounds.json queries only series cert-pass pushes" "" "$missing"
 [ -n "$pushed" ] && ok "positive control: the producer's series were found" || bad "no pushed series found"
 
-pushed_otel="$(grep -ho '"spira_[a-z_]*"' "$ROOT/spira-otel/src/metrics.rs" "$ROOT/auron/src/main.rs" "$ROOT/inbox-triage/src/main.rs" "$ROOT/store-persist/src/main.rs" | tr -d '"' | sort -u)"
+pushed_otel="$(grep -ho '"spira_[a-z_]*"' "$ROOT/spira-otel/src/metrics.rs" "$ROOT/auron/src/main.rs" "$ROOT/inbox-triage/src/main.rs" "$ROOT/store-persist/src/main.rs" "$ROOT"/round-vm/src/telemetry.rs "$ROOT"/sccache-dav/src/telemetry.rs "$ROOT"/release/src/telemetry.rs | tr -d '"' | sort -u)"
 queried_c="$(grep -o 'spira_[a-z_]*' "$DASH/components.json" | sort -u)"
 missing_c="$(comm -13 <(printf '%s\n' "$pushed_otel") <(printf '%s\n' "$queried_c"))"
 is "components.json queries only series the components push" "" "$missing_c"

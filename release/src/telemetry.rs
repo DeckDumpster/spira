@@ -26,7 +26,7 @@ mod tests {
         let m = spira_otel::metrics::run::RunMeter::start(COMPONENT, operation(&argv));
         m.finish(|| Some(addr), "error", &[]);
         let body = h.join().unwrap();
-        for want in ["spira_component_runs", "spira_component_run_seconds", COMPONENT, "build", "error"] {
+        for want in ["spira_component_invocations", "spira_component_duration_seconds", COMPONENT, "build", "error"] {
             assert!(body.contains(want), "{want} missing from the push");
         }
     }

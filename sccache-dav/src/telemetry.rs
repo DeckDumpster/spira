@@ -48,7 +48,7 @@ impl Tally {
         for ((op, out), seconds) in drained {
             let mean = seconds.iter().sum::<f64>() / seconds.len() as f64;
             sink.push(
-                &[Point::Count { name: "spira_component_runs", value: seconds.len() as u64 }, Point::Seconds { name: "spira_component_run_seconds", value: mean }],
+                &[Point::Count { name: "spira_component_invocations", value: seconds.len() as u64 }, Point::Seconds { name: "spira_component_duration_seconds", value: mean }],
                 &[("component", COMPONENT), ("operation", op), ("outcome", out)],
             );
         }
@@ -76,7 +76,7 @@ mod tests {
         let (addr, h) = spira_otel::metrics::run::fixture_sink();
         t.flush(&MetricsSink::new(Some(&addr), "spira-sccache-dav", Duration::from_secs(2)));
         let body = h.join().unwrap();
-        for want in ["spira_component_runs", "spira_component_run_seconds", COMPONENT, "get", "hit"] {
+        for want in ["spira_component_invocations", "spira_component_duration_seconds", COMPONENT, "get", "hit"] {
             assert!(body.contains(want), "{want} missing from the push");
         }
         assert_eq!(outcome("GET", 404), "miss");

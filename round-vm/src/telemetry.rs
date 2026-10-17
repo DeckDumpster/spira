@@ -42,7 +42,7 @@ mod tests {
         let code = spira_otel::metrics::run::metered_code(|| Some(addr), COMPONENT, operation(&args), || 1);
         assert_eq!(code, 1);
         let body = h.join().unwrap();
-        for want in ["spira_component_runs", "spira_component_run_seconds", "round-vm", "acquire", "error"] {
+        for want in ["spira_component_invocations", "spira_component_duration_seconds", "round-vm", "acquire", "error"] {
             assert!(body.contains(want), "{want} missing from the push");
         }
     }

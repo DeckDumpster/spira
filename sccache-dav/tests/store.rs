@@ -261,7 +261,7 @@ async fn served_requests_are_tallied_and_flushed_as_hits_and_misses() {
     });
     let body = h.join().unwrap();
     flushed.await.unwrap();
-    for want in ["spira_component_runs", "spira_component_run_seconds", "sccache-dav"] {
+    for want in ["spira_component_invocations", "spira_component_duration_seconds", "sccache-dav"] {
         assert!(body.contains(want), "{want} missing from the push");
     }
 }
