@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=metrics
+DOC=Directory on the metrics store disk holding VictoriaMetrics data, the collector's file offsets and Grafana's state; empty means the metrics stack is installed but idle
+SCHEMA=Absolute directory for the metrics stack's data (VictoriaMetrics, OpenTelemetry Collector offsets, Grafana state and its admin credential). No default: empty keeps all three metrics units idle (they exit 0 without starting a container), so installing a release never starts the stack before the disk it belongs on exists.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

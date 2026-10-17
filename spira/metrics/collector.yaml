@@ -1,0 +1,36 @@
+extensions:
+  file_storage:
+    directory: /state
+
+receivers:
+  otlpjsonfile:
+    include: ["/otel/*.jsonl"]
+    start_at: end
+    storage: file_storage
+
+connectors:
+  spanmetrics:
+    namespace: traces.span.metrics
+    histogram:
+      explicit:
+        buckets: [1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2500ms, 5s, 10s, 30s]
+    dimensions:
+      - name: rpc.method
+      - name: spira.caller
+
+exporters:
+  prometheusremotewrite:
+    endpoint: http://victoria-metrics:8428/api/v1/write
+    timeout: 30s
+    resource_to_telemetry_conversion:
+      enabled: true
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    traces:
+      receivers: [otlpjsonfile]
+      exporters: [spanmetrics]
+    metrics:
+      receivers: [spanmetrics]
+      exporters: [prometheusremotewrite]

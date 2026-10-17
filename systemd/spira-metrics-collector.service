@@ -1,0 +1,22 @@
+[Unit]
+Description=OpenTelemetry Collector — span files to spanmetrics
+Documentation=file://@SPIRA_HOME@/metrics-stack.sh
+After=spira-metrics-vm.service
+Wants=spira-metrics-vm.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=simple
+ExecStart=@SPIRA_PROD@/metrics-stack.sh collector
+CPUQuota=50%
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:@SPIRA_RUN@/spira-metrics-collector.log
+StandardError=append:@SPIRA_RUN@/spira-metrics-collector.log
+
+[Install]
+WantedBy=default.target
