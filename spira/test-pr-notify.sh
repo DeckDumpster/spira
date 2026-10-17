@@ -278,7 +278,7 @@ cat > "$DR/.gh-pr-merge.json" <<JSON
 {"mergeCommit":{"oid":"$SHA"},"body":"Merge-queue batch: 2 beads.\n\n- sp-aaa11 — First change\n- sp-bbb22 — Second change"}
 JSON
 run --show
-is "merge: exactly one operator note on merge" "1" "$(op_count) ERR[$(cat "$TMP/err")] MAIL[$(find "$RUN/mail" -maxdepth 2 | tr '\n' ' ')]"
+is "merge: exactly one operator note on merge" "1" "$(op_count)"
 txt="$(op_text)"
 has "merge note names the PR"      "$txt" "PR #7"
 has "merge note carries the sha"   "$txt" "$SHA"

@@ -75,13 +75,14 @@ MAILEOF
 }
 
 # _operator <subject> <body> — a merge or deploy outcome, mailed to the operator as a note:
-# the channel that reaches his phone. Failure is remembered like _report's, never dropped.
+# the channel that reaches his phone. --digest because the operator mailbox otherwise admits
+# only class-bearing asks and reroutes a note to the concierge. Failure is remembered like _report's, never dropped.
 _operator() {
     local subject="$1" body="$2"
     mail send operator \
         --from "PR Notify <pr-notify@spira>" \
         --subject "$subject" \
-        --kind note <<MAILEOF >/dev/null || { _MAIL_FAILED=1; printf 'pr-notify: operator mail failed for: %s\n' "$subject" >&2; }
+        --kind note --digest <<MAILEOF >/dev/null || { _MAIL_FAILED=1; printf 'pr-notify: operator mail failed for: %s\n' "$subject" >&2; }
 ## Note
 $body
 MAILEOF
@@ -133,7 +134,7 @@ _merged_report() {
     local repo_dir="$1" repo_name="$2" n="$3" title="$4" out sha beads
     out="$(cd "$repo_dir" && timeout 5 gh pr view "$n" --json mergeCommit,body 2>/dev/null | python3 -c "$_MERGE_PY")"
     sha="$(head -n1 <<< "$out")"
-    beads="$(tail -n +2 <<< "$out")"
+    beads="$(tail -n +2 <<< "$out" | sed 's/^- /- bead /')"
     _operator "MERGED #$n [$repo_name]${sha:+ ${sha:0:9}}" "PR #$n $title [$repo_name] merged${sha:+ at $sha}.
 ${beads:+
 Beads:
