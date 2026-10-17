@@ -1532,3 +1532,54 @@ fn absolve_refuses_without_evidence_and_with_it_readmits_a_red_tip() {
     assert_eq!(t.run(&["round", "open", "--members", "sp-b:tb"]), 0, "{}", t.err());
     assert!(t.out().contains("members=sp-b:tb"), "{}", t.out());
 }
+
+fn declare_own_testenv(t: &T) {
+    let wt = PathBuf::from(&kv_of(t, "round")["worktree"]);
+    fs::create_dir_all(wt.join(".spira")).unwrap();
+    fs::write(wt.join(".spira").join("testenv.toml"), "").unwrap();
+}
+
+#[test]
+fn a_repo_that_declares_its_own_testenv_certifies_and_lands_from_its_verdict() {
+    let t = round_world();
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 2, out: String::new(), err: "round-vm must not run".into() };
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let calls = t.scripts.calls.borrow().clone();
+    assert!(calls.iter().any(|c| c.starts_with("repo-testenv merged-tb spira wall=900")), "{calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("round-vm")), "{calls:?}");
+    assert!(certified_tree_exists(&t));
+    assert_eq!(round_phase(&t), "GREEN");
+
+    assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
+}
+
+#[test]
+fn a_repo_that_declares_its_own_testenv_goes_red_and_does_not_land_on_a_failing_suite() {
+    let t = round_world();
+    *t.scripts.repo_testenv.borrow_mut() = RunOut { rc: 1, out: "VERDICT RED ran=4 red=1".into(), err: String::new() };
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 1);
+    assert!(t.out().contains("red=testenv"), "{}", t.out());
+    assert!(!certified_tree_exists(&t), "a red round certifies nothing");
+    assert_eq!(t.run(&["round", "land", &batch]), 1);
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing landed");
+}
+
+#[test]
+fn a_testenv_fault_on_an_own_testenv_repo_is_not_judged() {
+    let t = round_world();
+    *t.scripts.repo_testenv.borrow_mut() = RunOut { rc: 2, out: "VERDICT FAULT rc=2".into(), err: String::new() };
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    assert!(t.err().contains("testenv exited 2") && t.err().contains("not judged"), "{}", t.err());
+}

@@ -723,6 +723,28 @@ impl Scripts for RealScripts {
             Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run round-vm: {e}") },
         }
     }
+    fn repo_testenv(&self, head: &str, repo: &str, wall_secs: u64, handle: &Path) -> RunOut {
+        // batch-job: bounded by the same hang guard as round-vm
+        let spawned = Command::new("timeout")
+            .args(["-k", "5", &wall_secs.saturating_mul(ROUND_HANG_GUARD_FACTOR).to_string(), "testenv", head, repo])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        let child = match spawned {
+            Ok(c) => c,
+            Err(e) => return RunOut { rc: 127, out: String::new(), err: format!("cannot run testenv: {e}") },
+        };
+        let _ = fs::write(handle, child.id().to_string());
+        match child.wait_with_output() {
+            Ok(o) => RunOut {
+                rc: o.status.code().unwrap_or(127),
+                out: String::from_utf8_lossy(&o.stdout).to_string(),
+                err: String::from_utf8_lossy(&o.stderr).to_string(),
+            },
+            Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run testenv: {e}") },
+        }
+    }
     fn pass_terminate(&self, pid: u32) {
         // SAFETY: a plain SIGTERM to the pid the run wrote to its handle.
         unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };

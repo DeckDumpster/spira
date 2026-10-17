@@ -249,6 +249,10 @@ pub trait Scripts {
     /// `handle` is where the run's pid is written while it runs: the one thing `round preempt`
     /// addresses. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
     fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut;
+    /// `testenv <head> <repo>` under `timeout`: a repository that declares its own suites
+    /// (`.spira/testenv.toml`) judged on its own image. Exit 0 GREEN, 1 RED, anything else a
+    /// fault. `handle` receives the pid exactly as `round_vm`'s does.
+    fn repo_testenv(&self, head: &str, repo: &str, wall_secs: u64, handle: &Path) -> RunOut;
     /// SIGTERM to a run's pid: round-vm salvages the finished suites' results and releases the VM.
     fn pass_terminate(&self, pid: u32);
     fn pass_alive(&self, pid: u32) -> bool;
