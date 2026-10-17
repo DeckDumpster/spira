@@ -3247,7 +3247,7 @@ mod lifecycle_tests {
         assert_eq!(lc_probe(&e), Ok(()));
         assert_eq!(lc_cut_batch(&e, "r", "spira/queue/1", "h", "b", &members()), Some("2".into()));
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
-        assert!(log.starts_with("list --state SUBMITTED,CERTIFIED\n"), "{log}");
+        assert!(log.starts_with("list --state SUBMITTED,CERTIFIED --snapshot\n"), "{log}");
         assert!(log.contains("cut spira/queue/1 --repo r --head h --base b --members sp-a:aaaa,sp-b:bbbb"), "{log}");
     }
 

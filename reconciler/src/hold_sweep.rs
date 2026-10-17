@@ -552,6 +552,6 @@ mod tests {
         assert!(live.holds().unwrap().is_empty());
         let calls = fs::read_to_string(&log).unwrap();
         assert_eq!(calls.lines().count(), Kind::ALL.len());
-        assert!(calls.lines().all(|l| l.starts_with("list --hold ") && l.ends_with(" --live")), "{calls}");
+        assert!(calls.lines().all(|l| l.starts_with("list --hold ") && l.ends_with(" --live --snapshot")), "{calls}");
     }
 }

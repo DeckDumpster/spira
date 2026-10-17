@@ -110,8 +110,8 @@ mod tests {
         let stub = fixture_script(
             &d,
             r#"case "$*" in
-  "list --state LANDED") echo '[{"bead_id":"sp-a","tip":"t","since":100},{"bead_id":"sp-b","tip":"t","since":300},{"bead_id":"sp-c","tip":"t","since":null}]' ;;
-  "list --state CERTIFIED") echo '[{"bead_id":"sp-x","tip":"abc","since":"7"}]' ;;
+  "list --state LANDED --snapshot") echo '[{"bead_id":"sp-a","tip":"t","since":100},{"bead_id":"sp-b","tip":"t","since":300},{"bead_id":"sp-c","tip":"t","since":null}]' ;;
+  "list --state CERTIFIED --snapshot") echo '[{"bead_id":"sp-x","tip":"abc","since":"7"}]' ;;
   "list --delivery --state PR_OPEN") echo '[{"bead_id":"sp-p","mode":"pr","version":2,"entered_at":50}]' ;;
   "show sp-p") echo '{"bead":{"tip":"tt"}}' ;;
   "event delivery sp-p --expect PR_OPEN --version 2 --actor harness --kind {\"Requeued\":{\"tip\":\"tt\"}}") exit 0 ;;
