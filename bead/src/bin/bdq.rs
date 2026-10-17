@@ -23,6 +23,8 @@ use spira_config::repos::Registry;
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    let op = argv.first().map(String::as_str).filter(|a| a.starts_with("__")).unwrap_or("bdq");
+    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-bdq", op);
     let rc = match argv.first().map(String::as_str) {
         Some("__fence") => cmd_fence(&argv[1..]),
         Some("__json_only") => cmd_json_only(),
@@ -31,7 +33,7 @@ fn main() {
         Some("__latency") => cmd_latency(),
         _ => cmd_bdq(&argv),
     };
-    std::process::exit(rc);
+    spira_otel::process::exit(rc);
 }
 
 fn cmd_latency() -> i32 {

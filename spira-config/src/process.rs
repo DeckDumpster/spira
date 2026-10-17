@@ -46,6 +46,11 @@ pub fn cfg(key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{key} is not a registered config key (spira/conf.d) — refusing"))
 }
 
+/// The metrics endpoint components push to; `None` when config does not resolve or declares none.
+pub fn metrics_endpoint() -> Option<String> {
+    cfg("SPIRA_METRICS_ENDPOINT").ok()
+}
+
 /// [`cfg`], parsed. A declared value that does not parse is an error naming the key.
 pub fn cfg_parse<T: FromStr>(key: &str) -> Result<T, String>
 where

@@ -92,7 +92,7 @@ fn ledger_path() -> PathBuf {
     let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let run = spira_config::resolve::resolve_run_dir(&env_map, &harness_home()).unwrap_or_else(|e| {
         eprintln!("sop: FATAL: {e}");
-        std::process::exit(1);
+        spira_otel::process::exit(1);
     });
     run.join("sop").join("applied.jsonl")
 }
@@ -136,6 +136,22 @@ fn make_clock() -> Result<RealClock, ExitCode> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let op = args.first().cloned().unwrap_or_else(|| "usage".into());
+    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sop", &op);
+    let code = dispatch(&args);
+    let ok = format!("{code:?}") == format!("{:?}", ExitCode::SUCCESS);
+    if ok && matches!(op.as_str(), "write" | "retire" | "applied") {
+        let name = match op.as_str() {
+            "write" => "spira_sops_written",
+            "retire" => "spira_sops_retired",
+            _ => "spira_sops_applied",
+        };
+        spira_otel::process::event(name, 1, &[]);
+    }
+    spira_otel::process::finish(code)
+}
+
+fn dispatch(args: &[String]) -> ExitCode {
     let home = harness_home();
     if home.as_os_str().is_empty() {
         eprintln!("sop: cannot source lib.sh: SPIRA_HOME is unset and lib.sh not found beside the binary; export SPIRA_HOME=<checkout>/spira");

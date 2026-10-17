@@ -12,11 +12,13 @@ fn main() {
     let invoked_as = args.first().and_then(|a| std::path::Path::new(a).file_name()).and_then(|n| n.to_str()).map(str::to_string);
     args.remove(0);
     if invoked_as.as_deref().is_some_and(|n| world::INERT_TOOLS.contains(&n)) {
-        std::process::exit(0);
+        spira_otel::process::exit(0);
     }
     if let Some(name @ ("gh" | "round-vm" | "cargo")) = invoked_as.as_deref() {
         args.insert(0, name.to_string());
     }
+    let op = args.first().map(String::as_str).unwrap_or("usage").to_string();
+    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sim", &op);
     let code = match run(&args) {
         Ok(()) => 0,
         Err(e) => {
@@ -24,7 +26,7 @@ fn main() {
             if e.starts_with("usage") { 2 } else { 1 }
         }
     };
-    std::process::exit(code);
+    spira_otel::process::exit(code);
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -76,7 +78,7 @@ fn gh_main(state: &std::path::Path, cwd: &std::path::Path, args: &[String]) -> R
     let _ = std::io::stdout().write_all(&out.stdout);
     eprint!("{}", out.stderr);
     if out.code != 0 {
-        std::process::exit(out.code);
+        spira_otel::process::exit(out.code);
     }
     Ok(())
 }
@@ -87,7 +89,7 @@ fn round_vm_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Resul
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
     let (code, err) = roundvm::run(&PathBuf::from(world), args, env, now);
     eprint!("{err}");
-    std::process::exit(code);
+    spira_otel::process::exit(code);
 }
 
 fn ci_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {

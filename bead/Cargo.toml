@@ -19,6 +19,7 @@ path = "src/bin/bdq.rs"
 test = false
 
 [dependencies]
+spira-otel = { path = "../spira-otel" }
 regex = "1"
 serde_json = "1"
 sha2 = "0.10"

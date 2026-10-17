@@ -1385,6 +1385,18 @@ fn cmd_init(args: &[String]) -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
+    let endpoint = env_nonempty("SPIRA_METRICS_ENDPOINT").or_else(spira_config::process::metrics_endpoint);
+    let op = args.first().map(String::as_str).unwrap_or("usage");
+    spira_otel::process::begin(endpoint.as_deref(), "spira-config", op);
+    let code = dispatch(&args);
+    let failed = format!("{code:?}") != format!("{:?}", ExitCode::SUCCESS);
+    if failed && matches!(op, "validate" | "get" | "export" | "resolve" | "env-bootstrap" | "check-bd") {
+        spira_otel::process::event("spira_config_resolve_failures", 1, &[]);
+    }
+    spira_otel::process::finish(code)
+}
+
+fn dispatch(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("validate") => cmd_validate(args.get(1).map(String::as_str)),
         Some("get") => match args.get(1) {

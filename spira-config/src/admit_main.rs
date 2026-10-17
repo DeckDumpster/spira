@@ -55,8 +55,10 @@ fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match args.first().and_then(|a| a.to_str()) {
         None | Some("-h") | Some("--help") | Some("help") => usage(),
-        Some("status") => status(&args[1..]),
-        Some("run") => run(&args[1..]),
+        Some(op @ ("status" | "run")) => {
+            spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-admit", op);
+            spira_otel::process::finish(if op == "status" { status(&args[1..]) } else { run(&args[1..]) })
+        }
         Some(_) => wrapper(args),
     }
 }
@@ -65,7 +67,11 @@ fn main() -> ExitCode {
 /// compiler. Only a crate compile waits; probes and inherited jobs exec at once.
 fn wrapper(args: Vec<OsString>) -> ExitCode {
     let rest: Vec<String> = args[1..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
-    match admission::wrapper_action(var(admission::INHERIT_ENV).as_deref(), &rest) {
+    let action = admission::wrapper_action(var(admission::INHERIT_ENV).as_deref(), &rest);
+    if !matches!(action, admission::WrapperAction::Exec) {
+        spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-admit", "wrapper");
+    }
+    match action {
         admission::WrapperAction::Exec => {}
         admission::WrapperAction::Wait => {
             if let Some(run) = run_dir() {
@@ -87,6 +93,7 @@ fn wrapper(args: Vec<OsString>) -> ExitCode {
             }
         }
     }
+    spira_otel::process::end(0);
     let (prog, argv): (OsString, &[OsString]) = match var(admission::INNER_ENV) {
         Some(inner) => (OsString::from(inner), &args[..]),
         None => (args[0].clone(), &args[1..]),

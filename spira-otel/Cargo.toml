@@ -9,6 +9,7 @@ description = "spira-otel — one OTLP/JSON span per call, appended as a line to
 opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "metrics", "gen-tonic-messages", "with-serde"] }
 prost = { version = "0.13", default-features = false, features = ["std"] }
 serde = "1"
+libc = "0.2"
 serde_json = "1"
 
 [dev-dependencies]

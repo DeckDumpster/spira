@@ -50,7 +50,7 @@ use spira_world::spira_prod_or_home;
 /// `SPIRA_RUN`.
 fn die(msg: &str) -> ! {
     eprintln!("spira: FATAL world: {msg}");
-    std::process::exit(1);
+    spira_otel::process::exit(1);
 }
 
 fn run_or_die() -> PathBuf {
@@ -846,6 +846,7 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let cmd = args.first().cloned().unwrap_or_else(|| "status".to_string());
     let rest = if args.is_empty() { &[][..] } else { &args[1..] };
+    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-world", &cmd);
     let rc = match cmd.as_str() {
         "stop" => cmd_stop(rest),
         "start" => cmd_start(rest),
@@ -866,5 +867,8 @@ fn main() {
             64
         }
     };
-    std::process::exit(rc);
+    if rc == 0 && matches!(cmd.as_str(), "stop" | "start" | "drain" | "resume") {
+        spira_otel::process::event("spira_world_state_changes", 1, &[("to", &cmd)]);
+    }
+    spira_otel::process::exit(rc);
 }

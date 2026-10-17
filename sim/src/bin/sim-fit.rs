@@ -16,8 +16,13 @@ fn main() -> ExitCode {
         *slot = args.next().map(PathBuf::from);
     }
     let (Some(gate), Some(land), Some(out)) = (gate, land, out) else { return usage() };
-    match sim::fit::fit_files(&gate, &land).and_then(|d| sim::fit::render(&d)) {
-        Ok(text) => match std::fs::write(&out, text) {
+    spira_otel::process::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sim-fit", "fit");
+    spira_otel::process::finish(fit(&gate, &land, &out))
+}
+
+fn fit(gate: &PathBuf, land: &PathBuf, out: &PathBuf) -> ExitCode {
+    match sim::fit::fit_files(gate, land).and_then(|d| sim::fit::render(&d)) {
+        Ok(text) => match std::fs::write(out, text) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => fail(&format!("{}: {e}", out.display())),
         },
