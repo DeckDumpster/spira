@@ -231,6 +231,7 @@ mender_max = 5
 max_live_aeons = 6
 memories_cache = "/fixture/userhome/spira/run/memories-cache.json"
 memories_cache_age = 300
+metrics_endpoint = ""
 mirror = ""
 notify = ""
 notify_age = 1800

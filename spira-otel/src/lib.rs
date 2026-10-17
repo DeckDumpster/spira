@@ -3,6 +3,8 @@
 //! `otlpjsonfile` receiver can ship the files unchanged. Emitting never fails or blocks the
 //! caller beyond one short append: an error is counted and dropped.
 
+pub mod metrics;
+
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;

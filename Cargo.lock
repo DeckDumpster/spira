@@ -1788,6 +1788,7 @@ name = "spira-otel"
 version = "1.0.0"
 dependencies = [
  "opentelemetry-proto",
+ "prost",
  "serde",
  "serde_json",
  "testkit",
@@ -2146,6 +2147,7 @@ name = "tsd"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+ "spira-otel",
  "testkit",
 ]
 
