@@ -273,7 +273,7 @@ impl Env for Live {
     fn holds(&mut self) -> Result<Vec<Hold>, String> {
         let mut out = Vec::new();
         for kind in Kind::ALL {
-            let ids = bead_ids(&lc(&self.lc_bin, &["list", "--hold", kind.as_str(), "--live"])?)?;
+            let ids = bead_ids(&lc(&self.lc_bin, &["list", "--hold", kind.as_str(), "--live", "--snapshot"])?)?;
             for id in ids {
                 let history = lc(&self.lc_bin, &["history", &id, "--machine", "bead"])?;
                 if ends_terminal(&history)? {

@@ -275,7 +275,7 @@ fn gather() -> Snapshot {
     });
     // An aeon's phase is on its lifecycle row (sp-vknc2j.16); the pane never scans /proc.
     let mut phases: HashMap<i64, String> = HashMap::new();
-    match lc_json(&["list", "--live"]) {
+    match lc_json(&["list", "--live", "--snapshot"]) {
         Ok(rows) => {
             for r in rows {
                 let id = text(&r["bead_id"]);

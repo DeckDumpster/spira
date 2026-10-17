@@ -56,7 +56,7 @@ fn rows(args: &[&str]) -> Option<Vec<Value>> {
 
 pub fn beads_in(state: &str) -> Option<Vec<BeadRow>> {
     Some(
-        rows(&["list", "--state", state])?
+        rows(&["list", "--state", state, "--snapshot"])?
             .iter()
             .map(|r| BeadRow { id: text(r, "bead_id"), tip: text(r, "tip"), since: epoch(r, "since") })
             .collect(),
