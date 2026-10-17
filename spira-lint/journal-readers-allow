@@ -1,0 +1,28 @@
+# journal-reads: files that read journald and predate the rule, as `<path> <converting-bead>`.
+#
+# SHRINK-ONLY. A line leaves in the landing that converts its reader to a producer-sourced
+# signal; nothing is added for a new reader. A line whose file no longer reads the journal
+# is itself a finding.
+auron/src/gather.rs sp-o87n74.2
+auron/src/main.rs sp-o87n74.2
+doctor/src/lib.rs sp-o87n74.2
+incident/src/main.rs sp-o87n74.2
+install/src/bin/install.rs sp-o87n74.2
+install/src/bin/units_install.rs sp-o87n74.2
+loom/src/lib.rs sp-o87n74.2
+loom/src/units.rs sp-o87n74.2
+release/src/acceptance/mod.rs sp-o87n74.2
+round-vm/src/ec2.rs sp-o87n74.2
+spira/aeon-watch.sh sp-o87n74.2
+spira/chamber/ops.fayth sp-o87n74.2
+spira/chamber/warden.fayth sp-o87n74.2
+spira/deploy.sh sp-o87n74.2
+spira/deps.toml sp-o87n74.2
+spira/first-run.sh sp-o87n74.2
+spira/watchers sp-o87n74.2
+unit-run/src/lib.rs sp-o87n74.2
+unit-run/src/main.rs sp-o87n74.2
+watchtower/src/main.rs sp-o87n74.2
+watchtower/src/probes.rs sp-o87n74.2
+watchtower/src/sweep/cfg.rs sp-o87n74.2
+watchtower/src/sweep/escalate.rs sp-o87n74.2
