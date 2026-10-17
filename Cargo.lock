@@ -2202,6 +2202,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
  "tsd",
 ]

@@ -6,6 +6,9 @@
 //! with the accounting. The fold is pure; the clock, the journal and `systemctl` arrive as
 //! the traits below so a test drives all three.
 
+pub mod dbus;
+pub mod watch;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
