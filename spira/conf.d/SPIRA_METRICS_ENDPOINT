@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=lifecycle
+DOC=host:port of the Prometheus-compatible store (VictoriaMetrics) that producers push OTLP metrics to over HTTP; empty disables the push.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_METRICS_ENDPOINT:=}"
+SPIRA_CONF_DEFAULT_EOF

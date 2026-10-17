@@ -156,6 +156,26 @@ impl PassRecord {
         let line = crate::build_row(ts, host, FAMILY, &self.fields())?;
         crate::append_line(&crate::family_path(root, FAMILY), &line)
     }
+
+    /// Pushes this pass's phases and verdict to the metrics store; the JSONL row stays the record.
+    pub fn push_metrics(&self, sink: &spira_otel::metrics::MetricsSink) {
+        use spira_otel::metrics::Point;
+        let place = self.place.as_str();
+        let labels = [("repo", self.repo.as_str()), ("instance_type", self.instance_type.as_str()), ("where", place), ("verdict", self.cause.verdict()), ("cause", self.cause.as_str())];
+        let secs = |name, v: u64| Point::Seconds { name, value: v as f64 };
+        sink.push(
+            &[
+                secs("spira_cert_pass_capacity_wait_seconds", self.capacity_wait_s),
+                secs("spira_cert_pass_boot_seconds", self.boot_s),
+                secs("spira_cert_pass_build_seconds", self.build_s),
+                secs("spira_cert_pass_suites_seconds", self.suites_s),
+                secs("spira_cert_pass_total_seconds", self.capacity_wait_s + self.boot_s + self.build_s + self.suites_s),
+                Point::Count { name: "spira_cert_pass_verdicts", value: 1 },
+                Point::Count { name: "spira_cert_pass_causes", value: 1 },
+            ],
+            &labels,
+        );
+    }
 }
 
 /// Checks that every `(repo, batch, pass)` expected has exactly one row in `text`, and counts

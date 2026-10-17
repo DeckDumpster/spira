@@ -51,7 +51,11 @@ fn run_pass(args: &[String]) -> Result<(), String> {
     let Some(root) = env::var("SPIRA_RUN").ok().filter(|v| !v.is_empty()).map(PathBuf::from) else {
         return Err("SPIRA_RUN is not set — refusing to write a pass record to a relative path".into());
     };
-    tsd::pass::from_args(args)?.write(&root, &default_host(), &now_iso())
+    let rec = tsd::pass::from_args(args)?;
+    rec.write(&root, &default_host(), &now_iso())?;
+    let endpoint = env::var("SPIRA_METRICS_ENDPOINT").ok();
+    rec.push_metrics(&spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-tsd", std::time::Duration::from_secs(2)));
+    Ok(())
 }
 
 /// `tsd-write escape <member> <suite> <class> [batch_id]` — `_tsd_escape`'s own door: one

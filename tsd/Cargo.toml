@@ -18,6 +18,7 @@ path = "src/report_main.rs"
 
 [dependencies]
 serde_json = "1"
+spira-otel = { path = "../spira-otel" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
