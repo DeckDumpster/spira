@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=metrics
+DOC=This host's tailnet address (ip:port, never a wildcard) Grafana publishes on; empty means Grafana does not start
+SCHEMA=This host's tailnet `ip:port` that Grafana is published on. Never a wildcard or loopback-only guess: metrics-stack.sh refuses an empty, wildcard or unparseable value, so Grafana is reachable on the tailnet and nowhere else. No default.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
+SPIRA_CONF_DEFAULT_EOF

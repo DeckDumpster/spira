@@ -466,3 +466,5 @@ sift_mend_hold_secs
 testenv_gate_cap
 testenv_suite_cap
 metrics_endpoint
+metrics_data
+metrics_grafana_addr

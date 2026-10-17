@@ -111,3 +111,5 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.no_progress_breaker_window_minutes" = 180
 "spira.dolt_maintenance_units" = "lc-backup.service lc-backup-drill.service dolt-persist-compact.service"
 "spira.metrics_endpoint" = ""
+"spira.metrics_data" = ""
+"spira.metrics_grafana_addr" = ""

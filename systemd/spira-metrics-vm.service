@@ -1,0 +1,24 @@
+[Unit]
+Description=VictoriaMetrics — the metrics store
+Documentation=file://@SPIRA_HOME@/metrics-stack.sh
+After=default.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=simple
+ExecStart=@SPIRA_PROD@/metrics-stack.sh vm
+CPUQuota=100%
+Restart=always
+RestartSec=30
+StandardOutput=append:@SPIRA_RUN@/spira-metrics-vm.log
+StandardError=append:@SPIRA_RUN@/spira-metrics-vm.log
+
+[X-Spira]
+Plane=observability
+
+[Install]
+WantedBy=default.target
