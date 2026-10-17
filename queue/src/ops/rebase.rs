@@ -1,7 +1,7 @@
 //! `rebase-waiting`: after a landing, rebase every bead still waiting for a round onto the
 //! new landing ref, so a landing does not turn the queue into mechanical rework.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::{landing_log, repo_path, require_lc, resolve, World, FAIL, OK};
 use crate::model::LcBeadRow;
@@ -64,7 +64,9 @@ pub fn rebase_waiting(w: &World, repo: Option<&str>) -> i32 {
         }
     };
     let here: HashSet<String> = w.git.branches(&path, "spira/").into_iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
-    let ids: Vec<String> = rows.iter().filter(|r| waiting(r) && here.contains(&r.bead_id)).map(|r| r.bead_id.clone()).collect();
+    let queued: HashSet<&str> = rows.iter().filter(|r| waiting(r) && here.contains(&r.bead_id)).map(|r| r.bead_id.as_str()).collect();
+    let on_waiting_base = |r: &LcBeadRow| r.stack.keys().any(|p| queued.contains(p.as_str()));
+    let ids: Vec<String> = rows.iter().filter(|r| queued.contains(r.bead_id.as_str()) && !on_waiting_base(r)).map(|r| r.bead_id.clone()).collect();
     let landref = c.r.landref.clone().unwrap_or_default();
     let landed = w.git.rev_parse(&path, &landref).unwrap_or_else(|| landref.clone());
     for (id, out) in w.scripts.rebase_stale(&ids, &c.r.name) {
@@ -83,5 +85,110 @@ pub fn rebase_waiting(w: &World, repo: Option<&str>) -> i32 {
         landing_log(&c.s.run, &format!("QUEUE REBASE-WAITING {} repo={} id={id} outcome={}", w.clock.now(), c.r.name, outcome.replace('\n', " ")));
         w.out(format!("queue.sh {label}: {id}: {outcome}"));
     }
+    stack_waiting(w, label, &path, &c, &landed);
     OK
+}
+
+fn branch_ref(id: &str) -> String {
+    format!("refs/heads/spira/{id}")
+}
+
+fn shared_changes(w: &World, path: &std::path::Path, landref: &str, tip: &str, shared: &[String]) -> BTreeSet<String> {
+    let Some(base) = w.git.merge_base(path, landref, tip) else { return BTreeSet::new() };
+    let Ok(stat) = w.git.numstat(path, &base, tip) else { return BTreeSet::new() };
+    stat.into_iter().map(|(p, _, _)| p).filter(|p| shared.iter().any(|s| if s.ends_with('/') { p.starts_with(s.as_str()) } else { p == s })).collect()
+}
+
+/// Cut `id` onto `onto` in place and record the stack edge with one Restack: the branch moves only
+/// once the machine has taken the event, and moves back if it refuses.
+#[allow(clippy::too_many_arguments)]
+fn restack(w: &World, c: &super::Ctx, path: &std::path::Path, id: &str, tip: &str, upstream: &str, base: (&str, &str), depth: u32) -> Result<String, String> {
+    let scratch = c.s.run.join(format!("restack-{id}"));
+    let new = w.git.rebase_onto(path, &scratch, tip, upstream, base.1, &c.s.git_name, &c.s.git_email).map_err(|files| format!("conflict files={}", files.join(",")))?;
+    let (state, version) = w.lc.bead_state(id).ok_or("no lifecycle row")?;
+    let reference = branch_ref(id);
+    if !w.git.update_ref(path, &reference, &new, Some(tip)) {
+        return Err("branch moved underneath".into());
+    }
+    let kind = serde_json::json!({"Restack": {"tip": new, "stack": {base.0: base.1}, "stack_depth": depth}});
+    if let Err(e) = event(w, id, &state, &version, kind) {
+        w.git.update_ref(path, &reference, tip, Some(&new));
+        return Err(e);
+    }
+    Ok(new)
+}
+
+/// Beads waiting for a round that change the same shared files are stacked, the later on the
+/// earlier, instead of left to turn each landing into a does-not-merge mend for the rest. A bead
+/// already stacked on a waiting prerequisite is re-cut when that prerequisite's tip moved.
+fn stack_waiting(w: &World, label: &str, path: &std::path::Path, c: &super::Ctx, landref: &str) {
+    let shared: Vec<String> = match w.env.config("SPIRA_STACK_SHARED_FILES") {
+        Ok(v) => v.split_whitespace().map(String::from).collect(),
+        Err(e) => return w.err(format!("queue.sh {label}: auto-stack off: {e}")),
+    };
+    if shared.is_empty() {
+        return;
+    }
+    let max_depth = match w.env.config("SPIRA_STACK_MAX_DEPTH").map(|v| v.trim().parse::<u32>()) {
+        Ok(Ok(n)) => n,
+        _ => return w.err(format!("queue.sh {label}: auto-stack off: SPIRA_STACK_MAX_DEPTH unreadable")),
+    };
+    let Ok(rows) = w.lc.bead_rows(None) else { return };
+    let here: HashSet<String> = w.git.branches(path, "spira/").into_iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
+    let mut queue: Vec<&LcBeadRow> = rows.iter().filter(|r| matches!(r.state.as_str(), "SUBMITTED" | "CERTIFIED") && here.contains(&r.bead_id)).collect();
+    queue.sort_by(|a, b| (a.since, &a.bead_id).cmp(&(b.since, &b.bead_id)));
+    let ids: HashSet<&str> = queue.iter().map(|r| r.bead_id.as_str()).collect();
+    let mut placed: Vec<(String, BTreeSet<String>)> = Vec::new();
+    let mut depth: BTreeMap<String, u32> = BTreeMap::new();
+    let mut pending: Vec<&LcBeadRow> = queue.clone();
+    let say = |id: &str, outcome: String| {
+        landing_log(&c.s.run, &format!("QUEUE STACK-WAITING {} repo={} id={id} outcome={}", w.clock.now(), c.r.name, outcome.replace('\n', " ")));
+        w.out(format!("queue.sh {label}: {id}: {outcome}"));
+    };
+    while !pending.is_empty() {
+        let before = pending.len();
+        let mut next = Vec::new();
+        for row in pending {
+            let waiting_bases: Vec<(&String, &String)> = row.stack.iter().filter(|(p, _)| ids.contains(p.as_str())).collect();
+            if waiting_bases.iter().any(|(p, _)| !depth.contains_key(p.as_str())) {
+                next.push(row);
+                continue;
+            }
+            let id = row.bead_id.as_str();
+            let Some(tip) = row.tip.as_deref().filter(|t| w.git.rev_parse(path, &branch_ref(id)).as_deref() == Some(*t)) else { continue };
+            let own = shared_changes(w, path, landref, tip, &shared);
+            if let Some((prereq, recorded)) = waiting_bases.first() {
+                let d = depth[prereq.as_str()] + 1;
+                depth.insert(id.to_string(), d);
+                placed.push((id.to_string(), own));
+                if let Some(now) = w.git.rev_parse(path, &branch_ref(prereq)).filter(|n| n != *recorded) {
+                    let outcome = restack(w, c, path, id, tip, recorded, (prereq, &now), d).map_or_else(|e| format!("recut-failed: {e}"), |_| format!("recut onto {prereq}"));
+                    say(id, outcome);
+                }
+                continue;
+            }
+            let base = placed.iter().rev().find(|(_, f)| !f.is_disjoint(&own)).map(|(p, _)| p.clone());
+            depth.insert(id.to_string(), 0);
+            if let Some(prereq) = base {
+                let d = depth[&prereq] + 1;
+                let outcome = match (d <= max_depth, w.git.rev_parse(path, &branch_ref(&prereq)), w.git.merge_base(path, landref, tip)) {
+                    (false, ..) => format!("not-stacked: depth {d} over SPIRA_STACK_MAX_DEPTH {max_depth}"),
+                    (_, Some(on), Some(mb)) => match restack(w, c, path, id, tip, &mb, (&prereq, &on), d) {
+                        Ok(_) => {
+                            depth.insert(id.to_string(), d);
+                            format!("stacked on {prereq}")
+                        }
+                        Err(e) => format!("not-stacked: {e}"),
+                    },
+                    _ => "not-stacked: no base to cut onto".to_string(),
+                };
+                say(id, outcome);
+            }
+            placed.push((id.to_string(), own));
+        }
+        if next.len() == before {
+            break;
+        }
+        pending = next;
+    }
 }

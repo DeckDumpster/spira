@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=queue
+DOC=Space-separated paths the queue treats as shared; a trailing slash names a directory. Two waiting beads that change one are stacked instead of left to loop on rebase. Empty disables auto-stack.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Paths whose concurrent edits make waiting beads conflict on every landing: `queue
+    # rebase-waiting` stacks the later of two beads that both change one onto the earlier.
+    # A trailing slash names a directory. Empty disables auto-stack.
+    : "${SPIRA_STACK_SHARED_FILES:=Cargo.lock Cargo.toml spira/config-delta.toml spira/conf.d/ spira-lint/}"
+SPIRA_CONF_DEFAULT_EOF
