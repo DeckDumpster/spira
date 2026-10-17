@@ -60,6 +60,16 @@ async fn main() {
             }
         });
     }
+    let tally = Arc::new(sccache_dav::telemetry::Tally::default());
+    let flush_tally = tally.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(sccache_dav::telemetry::FLUSH_EVERY);
+        loop {
+            tick.tick().await;
+            let t = flush_tally.clone();
+            let _ = tokio::task::spawn_blocking(move || t.flush(&sccache_dav::telemetry::sink())).await;
+        }
+    });
     let sweep_root = cfg.root.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(sccache_dav::SWEEP_EVERY);
@@ -68,12 +78,13 @@ async fn main() {
             let root = sweep_root.clone();
             if let Ok(ev) = tokio::task::spawn_blocking(move || sccache_dav::evict_to_cap(&root, cap)).await {
                 if ev.files > 0 {
+                    let _ = tokio::task::spawn_blocking(move || sccache_dav::telemetry::push_eviction(&sccache_dav::telemetry::sink(), ev.files, ev.bytes)).await;
                     eprintln!("sccache-dav: evicted {} files ({} bytes); {} bytes remain (cap {cap})", ev.files, ev.bytes, ev.remaining);
                 }
             }
         }
     });
-    let state = Arc::new(AppState { root: cfg.root, token: cfg.token });
+    let state = Arc::new(AppState { root: cfg.root, token: cfg.token, tally });
     let app = router(state);
     let mut servers = tokio::task::JoinSet::new();
     for listener in listeners {

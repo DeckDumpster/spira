@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod telemetry;
 pub mod git;
 pub mod ports;
 pub mod reap;

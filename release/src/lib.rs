@@ -23,6 +23,7 @@ pub mod session_hook;
 pub mod stage;
 pub mod stage_lc;
 pub mod systemctl;
+pub mod telemetry;
 pub mod units;
 pub mod verify;
 pub mod workspace;

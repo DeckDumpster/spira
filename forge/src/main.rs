@@ -7,9 +7,14 @@ use forge::ports::{Gh, Proc};
 use forge::real::{RealGh, RealProc};
 use std::io::Read;
 use std::path::Path;
-use std::process::ExitCode;
+use spira_otel::exit::ExitCode;
 
-fn main() -> ExitCode {
+fn main() -> std::process::ExitCode {
+    let first = std::env::args().nth(1);
+    spira_otel::exit::finish(forge::telemetry::run(&forge::telemetry::sink(), first.as_deref(), || run_main().code()))
+}
+
+fn run_main() -> ExitCode {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.is_empty() {
         eprintln!("forge: usage: forge <verb> <repo-dir> [args...]");

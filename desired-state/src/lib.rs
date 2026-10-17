@@ -9,3 +9,4 @@ pub mod compose;
 pub mod producer;
 pub mod resource;
 pub mod store;
+pub mod telemetry;

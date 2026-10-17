@@ -1,3 +1,4 @@
+pub mod telemetry;
 pub mod cmds;
 pub mod ports;
 pub mod real;

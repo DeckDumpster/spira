@@ -49,6 +49,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 fn main() -> ExitCode {
+    install::telemetry::metered_exit("units-install", run_main)
+}
+
+fn run_main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     // --seed-prod-instance <conf> <toml> <instance> <home> — the underlying function alone,

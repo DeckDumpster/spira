@@ -38,7 +38,7 @@ fn main() -> ExitCode {
             return ExitCode::from(rc as u8);
         }
     };
-    let code = match cmd {
+    let code = landing_pass::telemetry::run(&landing_pass::telemetry::sink(), args.first().map(String::as_str), || match cmd {
         Cmd::Help => {
             println!("{}", cli::USAGE);
             0
@@ -53,7 +53,7 @@ fn main() -> ExitCode {
         Cmd::ConflictNote(args) => conflict_note_cmd(&args),
         Cmd::OtherBeads { repo, branch, base, files } => other_beads_cmd(&repo, &branch, &base, &files),
         Cmd::IsWorkType { ty } => is_work_type_cmd(&ty),
-    };
+    });
     ExitCode::from(code as u8)
 }
 
@@ -221,6 +221,7 @@ fn land() -> i32 {
         swept_conflict: Cell::new(0),
     };
     p.run();
+    landing_pass::telemetry::moved(&landing_pass::telemetry::sink(), out.moved());
     files.write_status(&StatusFile { at: util::unix_now(), rc: 0, branches: out.branches(), moved: out.moved() });
     files.clear_run();
     0

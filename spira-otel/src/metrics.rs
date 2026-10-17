@@ -149,6 +149,125 @@ fn post(addr: &str, body: &[u8], deadline: Duration) -> std::io::Result<()> {
     }
 }
 
+/// The standard run metrics every component pushes: `spira_component_invocations` and
+/// `spira_component_duration_seconds`, labelled by `component`, `operation` and `outcome`.
+pub mod run {
+    use super::{MetricsSink, Point};
+    use std::process::ExitCode;
+    use std::time::{Duration, Instant};
+
+    pub const DEADLINE: Duration = Duration::from_secs(2);
+
+    /// `arg` if it is one of `known`, else `unknown`: a label stays bounded whatever argv holds.
+    pub fn operation_label<'a>(arg: Option<&str>, known: &[&'a str]) -> &'a str {
+        arg.and_then(|a| known.iter().find(|k| **k == a)).copied().unwrap_or("unknown")
+    }
+
+    /// The first argument that is not a flag.
+    pub fn verb(args: &[String]) -> Option<&str> {
+        args.iter().map(String::as_str).find(|a| !a.starts_with('-'))
+    }
+
+    pub fn outcome_of(code: i32) -> &'static str {
+        if code == 0 {
+            "ok"
+        } else {
+            "error"
+        }
+    }
+
+    /// The endpoint is resolved after the run (`endpoint` is called at `finish`), so a config that
+    /// only resolves once the component has set up its own environment still reaches the sink.
+    pub struct RunMeter {
+        component: String,
+        operation: String,
+        started: Instant,
+    }
+
+    impl RunMeter {
+        pub fn start(component: &str, operation: &str) -> RunMeter {
+            RunMeter { component: component.into(), operation: operation.into(), started: Instant::now() }
+        }
+
+        pub fn finish(&self, endpoint: impl FnOnce() -> Option<String>, outcome: &str, extra: &[Point]) {
+            let sink = MetricsSink::new(endpoint().as_deref(), &format!("spira-{}", self.component), DEADLINE);
+            let mut points = vec![Point::Count { name: "spira_component_invocations", value: 1 }, Point::Seconds { name: "spira_component_duration_seconds", value: self.started.elapsed().as_secs_f64() }];
+            points.extend(extra.iter().map(|p| match p {
+                Point::Count { name, value } => Point::Count { name, value: *value },
+                Point::Seconds { name, value } => Point::Seconds { name, value: *value },
+                Point::Gauge { name, value } => Point::Gauge { name, value: *value },
+            }));
+            sink.push(&points, &[("component", &self.component), ("operation", &self.operation), ("outcome", outcome)]);
+        }
+    }
+
+    pub fn metered_code(endpoint: impl FnOnce() -> Option<String>, component: &str, operation: &str, f: impl FnOnce() -> i32) -> i32 {
+        let m = RunMeter::start(component, operation);
+        let code = f();
+        m.finish(endpoint, outcome_of(code), &[]);
+        code
+    }
+
+    pub fn metered_exit(endpoint: impl FnOnce() -> Option<String>, component: &str, operation: &str, f: impl FnOnce() -> ExitCode) -> ExitCode {
+        let m = RunMeter::start(component, operation);
+        let code = f();
+        let ok = format!("{code:?}") == format!("{:?}", ExitCode::SUCCESS);
+        m.finish(endpoint, if ok { "ok" } else { "error" }, &[]);
+        code
+    }
+
+    /// A one-shot HTTP sink on a loopback port: returns its address and a handle yielding the request text.
+    pub fn fixture_sink() -> (String, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let h = std::thread::spawn(move || {
+            let (mut c, _) = l.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = c.read(&mut chunk).unwrap();
+                buf.extend_from_slice(&chunk[..n]);
+                let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                let len: usize = head.split("content-length: ").nth(1).unwrap().split("\r\n").next().unwrap().parse().unwrap();
+                if buf.len() >= i + 4 + len {
+                    break;
+                }
+            }
+            c.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").unwrap();
+            String::from_utf8_lossy(&buf).into_owned()
+        });
+        (addr, h)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_failed_run_pushes_its_count_duration_and_error_outcome() {
+            let (addr, h) = fixture_sink();
+            let code = metered_code(|| Some(addr.clone()), "skew", "check", || 3);
+            assert_eq!(code, 3);
+            let body = h.join().unwrap();
+            for want in ["spira_component_invocations", "spira_component_duration_seconds", "skew", "check", "error", "spira-skew"] {
+                assert!(body.contains(want), "{want} missing from the push");
+            }
+        }
+
+        #[test]
+        fn a_successful_exit_code_is_ok_and_an_unlisted_operation_is_unknown() {
+            let (addr, h) = fixture_sink();
+            metered_exit(|| Some(addr.clone()), "c", "o", || ExitCode::SUCCESS);
+            assert!(h.join().unwrap().contains("ok"));
+            assert_eq!(operation_label(Some("--weird"), &["a", "b"]), "unknown");
+            assert_eq!(operation_label(Some("b"), &["a", "b"]), "b");
+            assert_eq!(operation_label(None, &["a"]), "unknown");
+        }
+    }
+}
+
 pub const RUN_DEADLINE: Duration = Duration::from_secs(1);
 
 /// One run or unit of work of a component: `end` pushes `spira_component_invocations`,
@@ -195,6 +314,36 @@ pub fn outcome_of_exit(code: std::process::ExitCode) -> &'static str {
     if format!("{code:?}").contains("(0)") { "ok" } else { "error" }
 }
 
+pub const RUNS: &str = "spira_component_invocations";
+pub const RUN_DURATION: &str = "spira_component_duration_seconds";
+
+/// `arg` when it is one of `allowed`, else `other`: keeps an operation label bounded when it
+/// comes from argv.
+pub fn operation<'a>(arg: Option<&str>, allowed: &[&'a str]) -> &'a str {
+    arg.and_then(|a| allowed.iter().copied().find(|x| *x == a)).unwrap_or("other")
+}
+
+/// The `SPIRA_METRICS_ENDPOINT` sink for `component`; disabled when unset.
+pub fn sink_for(endpoint: Option<&str>, component: &str) -> MetricsSink {
+    MetricsSink::new(endpoint, &format!("spira-{component}"), RUN_DEADLINE)
+}
+
+/// Runs `f`, then pushes one invocation and its duration labelled `component`, `operation` and
+/// the outcome class `outcome(code)`. The code is returned unchanged; a failed push never reaches it.
+pub fn timed_as(sink: &MetricsSink, component: &str, operation: &str, outcome: impl Fn(i32) -> &'static str, f: impl FnOnce() -> i32) -> i32 {
+    let start = Instant::now();
+    let code = f();
+    sink.push(
+        &[Point::Count { name: RUNS, value: 1 }, Point::Seconds { name: RUN_DURATION, value: start.elapsed().as_secs_f64() }],
+        &[("component", component), ("operation", operation), ("outcome", outcome(code))],
+    );
+    code
+}
+
+pub fn timed(sink: &MetricsSink, component: &str, operation: &str, f: impl FnOnce() -> i32) -> i32 {
+    timed_as(sink, component, operation, outcome_of, f)
+}
+
 /// A sink for tests: a local HTTP listener that records every metric pushed to it.
 pub mod fixture {
     use super::*;
@@ -215,6 +364,20 @@ pub mod fixture {
         let mut c = std::process::Command::new("env");
         c.arg("-i").arg("PATH=/usr/bin:/bin").arg(format!("SPIRA_HOME={}", home.display())).arg(format!("SPIRA_TOML={}", toml.display())).arg(bin);
         c
+    }
+
+    impl Sample {
+        pub fn label(&self, k: &str) -> Option<&str> {
+            self.labels.get(k).map(String::as_str)
+        }
+    }
+
+    /// Hands `f` a sink aimed at a fresh [`Capture`]; returns `f`'s result and every sample
+    /// received once it has returned.
+    pub fn capture<R>(f: impl FnOnce(&MetricsSink) -> R) -> (R, Vec<Sample>) {
+        let cap = Capture::start();
+        let r = f(&MetricsSink::new(Some(&cap.addr), "fixture", RUN_DEADLINE));
+        (r, cap.settled())
     }
 
     pub struct Capture {
@@ -273,6 +436,19 @@ pub mod fixture {
                 }
             });
             Capture { addr, seen }
+        }
+
+        /// Samples once the count has stopped growing for three polls, capped at two seconds.
+        pub fn settled(&self) -> Vec<Sample> {
+            let end = Instant::now() + Duration::from_secs(2);
+            let (mut last, mut stable) = (0, 0);
+            while stable < 3 && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(20));
+                let n = self.seen.lock().unwrap().len();
+                stable = if n > 0 && n == last { stable + 1 } else { 0 };
+                last = n;
+            }
+            self.seen.lock().unwrap().clone()
         }
 
         /// Samples received so far, waiting up to two seconds for at least `n`.
@@ -430,8 +606,12 @@ mod instrument_tests {
         let sink = MetricsSink::for_component(Some(fx.addr()), "spira-x");
         assert_eq!(instrument(&sink, "x", "pass", || 3), 3);
         assert_eq!(instrument_result(&sink, "x", "other", || Ok::<_, String>(7)), Ok(7));
-        std::thread::sleep(Duration::from_millis(200));
-        let got = fx.received(Duration::from_secs(2));
+        let end = Instant::now() + Duration::from_secs(2);
+        let mut got = fx.received(Duration::from_secs(2));
+        while !["pass", "other"].iter().all(|op| got.iter().any(|s| s.name == INVOCATIONS && s.label("operation") == Some(*op))) && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+            got = fx.received(Duration::from_secs(2));
+        }
         let fail = got.iter().find(|s| s.name == INVOCATIONS && s.label("operation") == Some("pass")).unwrap();
         assert_eq!((fail.service.as_str(), fail.label("component"), fail.label("outcome")), ("spira-x", Some("x"), Some("exit_3")));
         assert!(got.iter().any(|s| s.name == RUN_SECONDS && s.label("operation") == Some("pass")));

@@ -1117,6 +1117,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         tsd::pass::Place::Ec2 => facts.instance_type.as_deref().and_then(crate::ec2::vcpus_of),
         _ => Some(env.cfg.vcpus),
     };
+    crate::telemetry::push_placement(if place == tsd::pass::Place::Ec2 { "ec2" } else { "local" }, facts.instance_type.as_deref().unwrap_or("unknown"), facts.wait_s, boot_s);
     let (pass, members) = match env.record.pass_context(batch) {
         Some((n, m)) => (n.to_string(), m),
         None => (format!("t{started}"), Vec::new()),

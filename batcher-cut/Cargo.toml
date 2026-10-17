@@ -12,6 +12,7 @@ path = "src/main.rs"
 batcher = { path = "../batcher" }
 sift = { path = "../sift" }
 spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
 suite-select = { path = "../suite-select" }
 gate = { path = "../gate" }
 lifecycle = { path = "../lifecycle" }

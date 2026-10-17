@@ -86,6 +86,11 @@ fn is_exec(p: &std::path::Path) -> bool {
 }
 
 fn main() -> ExitCode {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    skew::telemetry::metered_exit(&argv, run_main)
+}
+
+fn run_main() -> ExitCode {
     let home = match resolve_home() {
         Ok(h) => h,
         Err(e) => {

@@ -591,12 +591,16 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    release::telemetry::metered_exit(&argv, || run_main(&argv))
+}
+
+fn run_main(argv: &[String]) -> ExitCode {
     // acceptance has its own flags (DESIGN.md "acceptance") and, on a clean machine, no
     // config document to resolve — it never reaches the shared parser or Config.
     if argv.first().map(String::as_str) == Some("acceptance") {
         return ExitCode::from(release::acceptance::main(&argv[1..]));
     }
-    match run(&argv) {
+    match run(argv) {
         Ok(()) => ExitCode::SUCCESS,
         Err((code, msg)) => {
             // An empty message means the detail was already printed (e.g. `session-hook

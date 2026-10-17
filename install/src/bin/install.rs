@@ -651,6 +651,10 @@ fn resolve_own_config_and_release() {
 }
 
 fn main() -> ExitCode {
+    install::telemetry::metered_exit("install", run_main)
+}
+
+fn run_main() -> ExitCode {
     resolve_own_config_and_release();
     let opts = match parse_args() {
         Ok(o) => o,

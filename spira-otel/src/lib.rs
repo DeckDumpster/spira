@@ -344,3 +344,29 @@ mod tests {
         }
     }
 }
+
+/// A process exit status a `main` body can return and the telemetry wrapper can read back,
+/// which `std::process::ExitCode` does not allow.
+pub mod exit {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct ExitCode(u8);
+
+    impl ExitCode {
+        pub const SUCCESS: ExitCode = ExitCode(0);
+        pub const FAILURE: ExitCode = ExitCode(1);
+
+        pub fn code(self) -> i32 {
+            i32::from(self.0)
+        }
+    }
+
+    impl From<u8> for ExitCode {
+        fn from(c: u8) -> ExitCode {
+            ExitCode(c)
+        }
+    }
+
+    pub fn finish(code: i32) -> std::process::ExitCode {
+        std::process::ExitCode::from(code.clamp(0, 255) as u8)
+    }
+}
