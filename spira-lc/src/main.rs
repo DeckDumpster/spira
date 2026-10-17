@@ -41,6 +41,7 @@ mod repo_config;
 mod rows;
 mod serve;
 mod slow;
+mod snapshot;
 mod work;
 
 use db::Conn;

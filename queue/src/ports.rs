@@ -328,6 +328,11 @@ pub trait Lc {
     fn probe(&self) -> Result<(), String>;
     /// `list [--state S]`: every bead row (with `since`). Err = cannot tell.
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String>;
+    /// `list --state S --snapshot`: the same rows from the shared snapshot, for a poller that
+    /// never reads back its own write. Defaults to the store read.
+    fn polled_rows(&self, state: &str) -> Result<Vec<LcBeadRow>, String> {
+        self.bead_rows(Some(state))
+    }
     /// `list --express`: the id of every bead whose row carries Express. Err = cannot tell.
     fn express_ids(&self) -> Result<Vec<String>, String>;
     /// `show <bead>` → the bead row; None when it has no row or the machine cannot say.

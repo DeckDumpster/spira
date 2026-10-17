@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lifecycle
+DOC=Seconds between lc-serve's rewrites of the shared bead-state snapshot file; 0 turns the snapshot off.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LC_SNAPSHOT_SECS:=2}"
+SPIRA_CONF_DEFAULT_EOF

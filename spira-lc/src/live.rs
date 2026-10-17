@@ -23,14 +23,14 @@ use crate::rows::escape;
 pub const WINDOW_SECS: i64 = 24 * 3600;
 
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
-const LIVE: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK"];
+pub(crate) const LIVE: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK"];
 
 const BEAD_COLS: &str = "bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, updated_at, title, priority, repo";
 const DELIVERY_COLS: &str = "bead_id, mode, state, batch_id, pr, merge_sha, version";
 
-const LIST_COLS: [&str; 20] =
+pub(crate) const LIST_COLS: [&str; 20] =
     ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "title", "priority"];
-const FULL_LIST_COLS: [&str; 22] = [
+pub(crate) const FULL_LIST_COLS: [&str; 22] = [
     "bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note",
     "ejected_red_tip", "sifted_tip", "title", "priority", "repo",
 ];
@@ -67,11 +67,11 @@ impl Snapshot {
     }
 }
 
-fn text<'a>(row: &'a Value, col: &str) -> &'a str {
+pub(crate) fn text<'a>(row: &'a Value, col: &str) -> &'a str {
     row.get(col).and_then(Value::as_str).unwrap_or_default()
 }
 
-fn num(row: &Value, col: &str) -> Option<i64> {
+pub(crate) fn num(row: &Value, col: &str) -> Option<i64> {
     row.get(col).and_then(Value::as_str).and_then(|s| s.parse().ok())
 }
 
@@ -169,7 +169,7 @@ fn row_digest(bead: &Value, delivery: Option<&Value>, blocks: Option<&BTreeSet<S
     format!("{bead}|{}|{}", delivery.map_or(String::new(), Value::to_string), blocks.map_or(String::new(), |b| b.iter().cloned().collect::<Vec<_>>().join(",")))
 }
 
-fn project(row: &Value, cols: &[&str]) -> Map<String, Value> {
+pub(crate) fn project(row: &Value, cols: &[&str]) -> Map<String, Value> {
     cols.iter().map(|c| (c.to_string(), row.get(*c).cloned().unwrap_or(Value::Null))).collect()
 }
 

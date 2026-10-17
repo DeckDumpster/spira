@@ -1259,7 +1259,7 @@ fn every_lifecycle_read_carries_a_filter() {
     st.lifecycle_of(&["a".into(), "b".into()]).unwrap();
     assert!(st.lifecycle_of(&[]).unwrap().is_empty());
     let calls = std::fs::read_to_string(&log).unwrap();
-    assert_eq!(calls.lines().collect::<Vec<_>>(), ["list --state READY,REWORK", "list --ids a,b"], "{calls}");
+    assert_eq!(calls.lines().collect::<Vec<_>>(), ["list --state READY,REWORK --snapshot", "list --ids a,b"], "{calls}");
 }
 
 #[test]

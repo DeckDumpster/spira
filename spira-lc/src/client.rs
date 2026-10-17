@@ -63,6 +63,11 @@ pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
     if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl") | Some("admin-migrate") | Some("admin-accounts") | Some("verify-login") | Some("classify")) {
         return None;
     }
+    if let Some(out) = crate::snapshot::answer(args) {
+        return Some((0, out));
+    }
+    let stripped = crate::snapshot::without_flag(args);
+    let args = &stripped[..];
     // One source of config (per Ryan 2026-10-05): $SPIRA_TOML's declared socket path, never
     // this process's own environment.
     let socket_path = match route() {

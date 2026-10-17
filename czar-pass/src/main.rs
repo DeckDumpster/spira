@@ -1228,7 +1228,7 @@ fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
 /// or unparseable machine reads as depth 0, said on stderr: a stall detector must not invent a
 /// pool it could not see.
 fn certified_depth(cfg: &Config, repo_path: &Path) -> u32 {
-    let out = match spira_config::bounded::bounded(&cfg.seams.spira_lc).args(["list", "--state", "CERTIFIED"]).output() {
+    let out = match spira_config::bounded::bounded(&cfg.seams.spira_lc).args(["list", "--state", "CERTIFIED", "--snapshot"]).output() {
         Ok(o) if o.status.success() => o.stdout,
         Ok(o) => {
             eprintln!("czar-pass: spira-lc list --state CERTIFIED exited {}", o.status);

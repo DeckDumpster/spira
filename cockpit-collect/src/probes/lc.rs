@@ -108,7 +108,7 @@ pub fn shared_live(key: &str, fetch: impl FnOnce() -> Option<String>) -> Option<
 }
 
 fn list_live(states: &str) -> Option<String> {
-    let raw = verb(&["list", "--state", states])?;
+    let raw = verb(&["list", "--state", states, "--snapshot"])?;
     parse_rows(&raw).map(|_| raw)
 }
 
@@ -167,7 +167,7 @@ pub fn state_index_of(ids: &[String]) -> Option<HashMap<String, Row>> {
 
 /// Rows carrying hold `kind` that are not long terminal (`list --hold <kind> --live`).
 pub fn held_rows(kind: &str) -> Option<HashMap<String, Row>> {
-    read_rows(&format!("hold-{kind}"), &["list", "--hold", kind, "--live"])
+    read_rows(&format!("hold-{kind}"), &["list", "--hold", kind, "--live", "--snapshot"])
 }
 
 #[cfg(test)]

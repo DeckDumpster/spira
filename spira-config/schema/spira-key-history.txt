@@ -347,6 +347,8 @@ cockpit_client_idle_secs
 czar_outcome_mins
 czar_unclaimed_mins
 lc_live_check_secs
+lc_snapshot
+lc_snapshot_secs
 lc_socket
 lc_testdb_data
 lc_testdb_port

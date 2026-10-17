@@ -1049,8 +1049,12 @@ impl Lc for RealLc {
         };
         serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))
     }
+    fn polled_rows(&self, state: &str) -> Result<Vec<LcBeadRow>, String> {
+        let out = self.stdout(&["list", "--state", state, "--snapshot"])?;
+        serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))
+    }
     fn express_ids(&self) -> Result<Vec<String>, String> {
-        let out = self.stdout(&["list", "--express"])?;
+        let out = self.stdout(&["list", "--express", "--live", "--snapshot"])?;
         let rows: Vec<LcBeadRow> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))?;
         Ok(rows.into_iter().map(|r| r.bead_id).collect())
     }
