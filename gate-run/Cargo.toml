@@ -9,6 +9,7 @@ name = "gate-run"
 path = "src/main.rs"
 
 [dependencies]
+spira-otel = { path = "../spira-otel" }
 libc = "0.2"
 spira-config = { path = "../spira-config" }
 

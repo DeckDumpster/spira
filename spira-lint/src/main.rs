@@ -35,6 +35,13 @@ fn default_root() -> Option<PathBuf> {
 }
 
 fn main() -> ExitCode {
+    let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "spira-lint", "lint");
+    let code = real_main();
+    meter.end(spira_otel::metrics::outcome_of_exit(code));
+    code
+}
+
+fn real_main() -> ExitCode {
     let mut root: Option<PathBuf> = None;
     let mut only: Option<String> = None;
     let mut base: Option<String> = std::env::var("SPIRA_GATE_BASE").ok();

@@ -75,6 +75,18 @@ fn load_config(who: &str) -> Option<spira_config::SpiraToml> {
 }
 
 fn main() -> ExitCode {
+    let first = std::env::args().nth(1).unwrap_or_default();
+    let op = match first.as_str() {
+        o @ ("suites" | "lint" | "owed" | "shots" | "ui" | "preflight" | "status" | "testdb" | "wait" | "container" | "warm") => o,
+        _ => "run",
+    };
+    let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "testenv", op);
+    let code = real_main();
+    meter.end(spira_otel::metrics::outcome_of_exit(code));
+    code
+}
+
+fn real_main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `testenv suites …` — the suite-state tooling (DESIGN-suites.md). A branch literally
     // named `suites` is `testenv -- suites`.

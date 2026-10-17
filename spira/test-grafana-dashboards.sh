@@ -26,7 +26,7 @@ print("\n".join(bad))
 PY
 }
 
-for want_f in rounds site-ci bead-store components; do
+for want_f in rounds site-ci bead-store components gate-tooling; do
   f="$DASH/$want_f.json"
   is "$want_f.json is valid and clean" "" "$(check "$f" 2>&1)"
 done

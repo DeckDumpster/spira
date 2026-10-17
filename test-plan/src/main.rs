@@ -547,7 +547,12 @@ fn usage() -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
+    let op = match args.first().map(String::as_str) {
+        Some(o @ ("catalogue-ids" | "validate" | "orphans" | "gaps" | "launcher-gaps" | "launcher-sites" | "matrix" | "render" | "write-matrix" | "schema")) => o,
+        _ => "other",
+    };
+    let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "test-plan", op);
+    let code = match args.first().map(String::as_str) {
         Some("catalogue-ids") => cmd_catalogue_ids(&args[1..]),
         Some("validate") => cmd_validate(&args[1..]),
         Some("orphans") => cmd_orphans(&args[1..]),
@@ -559,7 +564,9 @@ fn main() -> ExitCode {
         Some("write-matrix") => cmd_write_matrix(&args[1..]),
         Some("schema") => cmd_schema(args.get(1).map(String::as_str)),
         _ => usage(),
-    }
+    };
+    meter.end(spira_otel::metrics::outcome_of_exit(code));
+    code
 }
 
 #[cfg(test)]

@@ -28,6 +28,7 @@ pub mod shots;
 pub mod skipgate;
 pub mod suite;
 pub mod suites;
+pub mod telemetry;
 pub mod testdb;
 pub mod tap;
 pub mod timing;

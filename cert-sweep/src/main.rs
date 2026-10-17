@@ -47,6 +47,18 @@ fn reap_unit_leftovers() {
 const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME] [--start-deadline SECS] [--round-wait SECS] [--round-poll SECS]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
 
 fn main() -> ExitCode {
+    let op = match std::env::args().nth(1).as_deref() {
+        Some("pass") => "pass",
+        Some("seed") => "seed",
+        _ => "other",
+    };
+    let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "cert-sweep", op);
+    let code = real_main();
+    meter.end(spira_otel::metrics::outcome_of_exit(code));
+    code
+}
+
+fn real_main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flags = match parse_flags(&args[args.len().min(1)..]) {
         Ok(f) => f,

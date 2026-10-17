@@ -19,19 +19,45 @@ fn default_home() -> PathBuf {
 }
 
 fn main() {
+    let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "gate-diag", "diagnose");
+    let code = real_main(&meter);
+    meter.end(spira_otel::metrics::outcome_of(code));
+    std::process::exit(code);
+}
+
+#[derive(Default)]
+struct Tally {
+    suites: u64,
+    wall_secs: f64,
+    red: u64,
+    flaky: u64,
+    fault: u64,
+}
+
+fn push_tally(meter: &spira_otel::metrics::Run, t: &Tally) {
+    use spira_otel::metrics::Point;
+    meter.sink().push(&[Point::Count { name: "spira_gate_diag_suites", value: t.suites }, Point::Seconds { name: "spira_gate_diag_suites_seconds", value: t.wall_secs }], &[("component", "gate-diag")]);
+    for (class, n) in [("real", t.red), ("flaky", t.flaky), ("harness", t.fault)] {
+        if n > 0 {
+            meter.sink().push(&[Point::Count { name: "spira_gate_diag_reds", value: n }], &[("component", "gate-diag"), ("class", class)]);
+        }
+    }
+}
+
+fn real_main(meter: &spira_otel::metrics::Run) -> i32 {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
     let mut home = None;
     if argv.first().map(String::as_str) == Some("--home") {
         if argv.len() < 2 {
             eprintln!("gate-diag: --home needs a directory");
-            std::process::exit(1);
+            return 1;
         }
         home = Some(PathBuf::from(argv.remove(1)));
         argv.remove(0);
     }
     let Some(root) = argv.first().filter(|r| !r.is_empty()) else {
         eprintln!("gate-diag.sh: 1: usage: gate-diag.sh <results-root>");
-        std::process::exit(1);
+        return 1;
     };
     let root = PathBuf::from(root);
     let home = home.unwrap_or_else(default_home);
@@ -41,22 +67,26 @@ fn main() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gate-diag: {e}");
-            std::process::exit(1);
+            return 1;
         }
     };
     let suite_timeout_default = match spira_config::process::cfg_parse::<u64>("SPIRA_SUITE_TIMEOUT") {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gate-diag: {e}");
-            std::process::exit(1);
+            return 1;
         }
     };
     let world = Real { batch_tail_lines, suite_timeout_default };
-    std::process::exit(run(&world, &home, &root));
+    let mut tally = Tally::default();
+    let code = run(&world, &home, &root, &mut tally);
+    push_tally(meter, &tally);
+    code
 }
 
-fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32 {
+fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path, tally: &mut Tally) -> i32 {
     let results = world.result_files(root);
+    tally.suites = results.len() as u64;
 
     // results.jsonl and junit.xml — for EVERY suite, unconditionally, before the reds-only
     // report below (DESIGN.md: a reader of the machine-readable results needs the green and
@@ -65,6 +95,7 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
     world.write(&jsonl_path, "");
     for rf in &results {
         let (status, secs, _rc) = world.read_result(&rf.result_path);
+        tally.wall_secs += secs.map_or(0.0, |s| s as f64);
         let fallback = if status.is_empty() { "red".to_string() } else { status };
         let secs_s = secs.map(|s| s.to_string()).unwrap_or_else(|| "0".to_string());
         let src = world.suite_source(home, &rf.suite).unwrap_or_default();
@@ -126,6 +157,8 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
             engine::RetryClass::Flaky => flaky_list.push(suite.clone()),
             _ => red_list.push(suite.clone()),
         }
+        tally.red = red_list.len() as u64;
+        tally.flaky = flaky_list.len() as u64;
 
         let tail = engine::tail_n(&raw_out, tail_n);
         if in_gha {
@@ -154,6 +187,7 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
         let lines = engine::fail_lines(&raw_out);
         let first = format!("(podman lost the exit status at {secs}s — not a suite defect, see spira/gate-retry.sh)");
         fault_list.push(suite.clone());
+        tally.fault = fault_list.len() as u64;
 
         let tail = engine::tail_n(&raw_out, tail_n);
         if in_gha {
@@ -191,4 +225,20 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
     }
 
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tally_pushes_suites_wall_time_and_each_red_class() {
+        let sink = testkit::OtlpSink::start();
+        let m = spira_otel::metrics::Run::begin(Some(&sink.addr), "gate-diag", "diagnose");
+        push_tally(&m, &Tally { suites: 4, wall_secs: 90.0, red: 1, flaky: 1, fault: 1 });
+        let body = sink.body();
+        for want in ["spira_gate_diag_suites", "spira_gate_diag_suites_seconds", "spira_gate_diag_reds", "real", "flaky", "harness"] {
+            assert!(body.contains(want), "{want} missing: {body:?}");
+        }
+    }
 }

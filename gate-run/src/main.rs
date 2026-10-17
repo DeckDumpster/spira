@@ -82,6 +82,21 @@ enum Mode {
 }
 
 fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).take(3).collect();
+    let op = if args.iter().any(|a| a == "--exec") {
+        "exec"
+    } else if args.iter().any(|a| a == "--status") {
+        "status"
+    } else {
+        "wait"
+    };
+    let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "gate-run", op);
+    let code = real_main();
+    meter.end(spira_otel::metrics::outcome_of_exit(code));
+    code
+}
+
+fn real_main() -> ExitCode {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
     // `--home <dir>` is not part of the bash's own CLI (which always resolved its own
     // directory via `$(dirname "$0")`); it exists so this binary — installed apart from

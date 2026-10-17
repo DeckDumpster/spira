@@ -47,6 +47,7 @@ fn scan(dry: bool, grace: u64, exe: Option<&str>) -> Result<usize, String> {
             println!("would kill pid {} tier={} wall={}s cap={}s", b.proc.pid, b.tier, b.proc.age_secs, b.cap);
         } else if cap::kill_verified(&b.proc) {
             report(&inbox, &b);
+            testenv::telemetry::push_over_cap(&testenv::telemetry::sink(), b.tier);
             killed += 1;
         }
     }
