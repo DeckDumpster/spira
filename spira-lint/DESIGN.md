@@ -1323,6 +1323,24 @@ a count above the file's findings is itself a finding. Inventory: `docs/time-onl
 **Known limits.** Keyword and brace heuristics: a cap keyword near an unrelated poll passes, and a
 fixed backoff inside a loop is not flagged.
 
+## Rule `journal-reads`
+
+Mechanism for law-nothing-reads-the-journal.
+
+**Intent.** The journal is a log for humans. A program gets a fact from the component that produced
+it (a systemd D-Bus event, the producer's own record, a pushed metric), never by reading journald.
+
+**Scope.** Every tracked or untracked file except `spira-lint/`, `*.md`, `*.txt` and paths under
+`tests/`, `testlib/`, `docs/`, `fixtures/`, `target/` or `test-*`; Rust `#[cfg(test)]` regions are skipped.
+
+**Violation.** A file that mentions `journalctl`, `sd_journal`, `sd-journal`, `libsystemd`,
+`systemd::journal`, `systemd-journal`, `journald` or `python-systemd`, comments and strings included,
+and is not on the allow list. One finding per file, at its first mention; the message names the statute
+and the exit.
+
+**Allow list.** `spira-lint/journal-readers-allow`, `<path> <converting-bead>`, shrink-only; a line whose
+file no longer reads the journal is itself a finding.
+
 ## Rule `one-runtime`
 
 A repository holds source and test files for one language runtime (law-one-language-runtime-per-repo).
