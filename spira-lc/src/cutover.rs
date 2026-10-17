@@ -1679,21 +1679,28 @@ fn cascade_step(
 
 /// `event-continuity`: for each (machine, lc_key), every applied event's from_state must equal
 /// the previous applied event's to_state. Prints the first break per key as one JSON line.
-/// The first run records the highest break seq in `event-continuity.baseline` under the run
-/// directory and exits 0; later runs exit 3 only for a break past that mark.
-pub fn cmd_event_continuity(_args: &[String], conn: &Conn) -> (i32, String) {
-    let baseline_path = match crate::lifecycle_run_dir() {
-        Ok(d) => d.join("event-continuity.baseline"),
+/// A break listed in `event-continuity.acknowledged` (seq, machine, key, reason; tab-separated,
+/// under the run directory) is printed with its reason and passes; any other exits 3.
+/// `--acknowledge --through SEQ --reason R` records every unacknowledged break at or below SEQ.
+pub fn cmd_event_continuity(args: &[String], conn: &Conn) -> (i32, String) {
+    let ack_path = match crate::lifecycle_run_dir() {
+        Ok(d) => d.join("event-continuity.acknowledged"),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
-    let baseline: Option<i64> = match std::fs::read_to_string(&baseline_path) {
-        Ok(t) => match t.trim().parse() {
-            Ok(n) => Some(n),
-            Err(_) => return (CANNOT_TELL, format!("cannot tell: {} is not a seq", baseline_path.display())),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return (CANNOT_TELL, format!("cannot tell: {}: {e}", baseline_path.display())),
-    };
+    let mut acked = std::collections::HashMap::new();
+    match std::fs::read_to_string(&ack_path) {
+        Ok(t) => {
+            for l in t.lines().filter(|l| !l.trim().is_empty()) {
+                let f: Vec<&str> = l.splitn(4, '\t').collect();
+                if f.len() != 4 {
+                    return (CANNOT_TELL, format!("cannot tell: {} has a malformed row: {l}", ack_path.display()));
+                }
+                acked.insert((f[1].to_string(), f[2].to_string(), f[0].to_string()), f[3].to_string());
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {}: {e}", ack_path.display())),
+    }
     let sql = "SELECT machine, lc_key, seq, event, from_state, prev_to FROM (\
                SELECT seq, machine, lc_key, event, from_state, \
                LAG(to_state) OVER (PARTITION BY machine, lc_key ORDER BY seq) AS prev_to \
@@ -1705,26 +1712,45 @@ pub fn cmd_event_continuity(_args: &[String], conn: &Conn) -> (i32, String) {
     };
     let mut seen = std::collections::HashSet::new();
     let mut breaks = Vec::new();
-    let mut high = 0i64;
-    let mut fresh = false;
     for r in rows {
         let field = |c: &str| r.get(c).and_then(|v| v.as_str()).unwrap_or("").to_string();
         if seen.insert((field("machine"), field("lc_key"))) {
-            let seq: i64 = field("seq").parse().unwrap_or(0);
-            high = high.max(seq);
-            fresh |= baseline.is_some_and(|b| seq > b);
-            breaks.push(serde_json::json!({
+            breaks.push((field("machine"), field("lc_key"), field("seq"), serde_json::json!({
                 "machine": field("machine"), "key": field("lc_key"), "seq": field("seq"),
                 "event": field("event"), "from_state": field("from_state"), "previous_to_state": field("prev_to"),
-            }));
+            })));
         }
     }
-    let out = breaks.iter().map(|b| b.to_string()).collect::<Vec<_>>().join("\n");
-    if baseline.is_none() {
-        if let Err(e) = std::fs::write(&baseline_path, high.to_string()) {
-            return (CANNOT_TELL, format!("cannot tell: {}: {e}", baseline_path.display()));
+    if args.iter().any(|a| a == "--acknowledge") {
+        let (Some(reason), Some(through)) = (flag(args, "--reason"), flag(args, "--through").and_then(|t| t.parse::<i64>().ok())) else {
+            return (REFUSED, "refused: --acknowledge needs --reason R and --through SEQ".to_string());
+        };
+        if reason.trim().is_empty() || reason.contains(['\t', '\n']) {
+            return (REFUSED, "refused: --reason must be one non-empty line".to_string());
         }
+        let mut rows = String::new();
+        for (m, k, seq, _) in &breaks {
+            if seq.parse::<i64>().unwrap_or(i64::MAX) <= through && !acked.contains_key(&(m.clone(), k.clone(), seq.clone())) {
+                rows.push_str(&format!("{seq}\t{m}\t{k}\t{reason}\n"));
+            }
+        }
+        use std::io::Write;
+        let wrote = std::fs::OpenOptions::new().create(true).append(true).open(&ack_path).and_then(|mut f| f.write_all(rows.as_bytes()));
+        return match wrote {
+            Ok(()) => (0, format!("acknowledged {} break(s)", rows.lines().count())),
+            Err(e) => (CANNOT_TELL, format!("cannot tell: {}: {e}", ack_path.display())),
+        };
     }
+    let mut fresh = false;
+    let mut lines = Vec::new();
+    for (m, k, seq, mut j) in breaks {
+        match acked.get(&(m, k, seq)) {
+            Some(reason) => j["acknowledged"] = serde_json::Value::String(reason.clone()),
+            None => fresh = true,
+        }
+        lines.push(j.to_string());
+    }
+    let out = lines.join("\n");
     if fresh { (REFUSED, out) } else { (0, out) }
 }
 
