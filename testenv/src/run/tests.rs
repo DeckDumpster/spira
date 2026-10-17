@@ -2059,6 +2059,31 @@ fn a_tier_that_names_its_own_image_runs_in_it_and_the_others_keep_the_repo_image
 }
 
 #[test]
+fn a_forge_repo_run_waits_for_a_test_slot_so_local_rounds_never_exceed_the_pool() {
+    let mut w = foreign_world("foreign-admit-wait", Some(FOREIGN_DECL));
+    w.env.insert("SPIRA_TEST_PAR".into(), "1".into());
+    let start = spira_config::admission::Procs::start_of(&spira_config::admission::RealProcs, 1).expect("pid 1");
+    let dir = w.root.join("run/test-admission");
+    fs::create_dir_all(&dir).unwrap();
+    let slot = dir.join("slot.1");
+    fs::write(&slot, format!("pid=1 start={start} who=blocker since={} waited=0 last=0\n", spira_config::admission::now_epoch())).unwrap();
+    let freer = {
+        let slot = slot.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            fs::remove_file(slot).unwrap();
+        })
+    };
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "unit", "topic"], "", &w.root);
+    freer.join().unwrap();
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
+    assert!(w.has_line(|l| l.contains("batch: waiting for a test slot: 1 of 1 held by blocker")), "{:?}", w.lines.lock().unwrap());
+    assert!(w.has_line(|l| l.contains("batch: admitted to test slot 1 after ")));
+}
+
+#[test]
 fn a_forge_repo_runs_its_declared_tier_in_its_own_image() {
     let w = foreign_world("foreign-pass", Some(FOREIGN_DECL));
     let rt = runtime();

@@ -968,7 +968,13 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let decl_text = git(&repo.path, &["show", &format!("{br}:{}", foreign::DECL)]).ok();
     let has_suite_dir = git(&repo.path, &["cat-file", "-e", &format!("{br}:spira")]).is_ok();
     match decl_text {
-        Some(text) => return run_foreign(args, deps, &repo.name, &text, &tree, &wt.path, started),
+        Some(text) => {
+            let lease = admit(admission::Pool::Test, 1);
+            if lease.waited > 0 {
+                deps.log(&format!("queue-wait={}s pool=test", lease.waited));
+            }
+            return run_foreign(args, deps, &repo.name, &text, &tree, &wt.path, started);
+        }
         None if !has_suite_dir => {
             stderr(&format!(
                 "batch: {} declares no test entry: add {} to the tree under test",
