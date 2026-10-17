@@ -31,6 +31,10 @@ struct Fake {
     ejects: Vec<Vec<String>>,
     /// bead id -> content status, as `content-rows` reports it.
     content: BTreeMap<String, String>,
+    /// The `event-seq` answer: newest seq and the keys changed after any `--since`.
+    seq: u64,
+    changed: Vec<String>,
+    content_reads: usize,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -80,7 +84,13 @@ impl Machine for Fake {
                     (0, json!({"bead": Self::row_json(r), "delivery": d}).to_string())
                 }
             },
+            "event-seq" => {
+                let since: u64 = flag(args, "--since").and_then(|s| s.parse().ok()).unwrap_or(0);
+                let keys: Vec<&String> = if since >= self.seq { Vec::new() } else { self.changed.iter().collect() };
+                (0, json!({"seq": self.seq, "keys": keys}).to_string())
+            }
             "content-rows" => {
+                self.content_reads += 1;
                 let ids = flag(args, "--ids").unwrap_or_default();
                 let only_open = args.iter().any(|a| a == "--open");
                 let rows: Vec<Value> = ids
@@ -1136,6 +1146,28 @@ fn reconcile_content_closes_the_store_bead_of_every_terminal_state_and_only_thos
         f.content.insert(id.clone(), "closed".into());
     }
     assert_eq!(reconcile_content(&v(&["--apply"]), &mut f, &mut b).stdout, "reconcile-content: 0 closed");
+}
+
+#[test]
+fn reconcile_content_since_seq_reads_only_what_changed_and_nothing_when_nothing_did() {
+    let mut f = Fake::default();
+    let mut b = FakeBd::default();
+    for id in ["sp-a", "sp-b"] {
+        f.bead(id, BeadState::Landed);
+        f.content.insert(id.into(), "open".into());
+    }
+    f.seq = 7;
+    let quiet = reconcile_content(&v(&["--since-seq", "7"]), &mut f, &mut b);
+    assert_eq!(quiet.code, APPLIED, "{}", quiet.stderr);
+    assert_eq!(f.content_reads, 0, "an unchanged store reads no content rows");
+    assert_eq!(quiet.stdout, "through-seq: 7\nreconcile-content: 0 would close (dry run; --apply to write)");
+
+    f.changed = vec!["sp-a".into()];
+    let one = reconcile_content(&v(&["--since-seq", "3"]), &mut f, &mut b);
+    assert!(one.stdout.contains("would close sp-a") && !one.stdout.contains("sp-b") && one.stdout.contains("through-seq: 7"), "{}", one.stdout);
+    let carried = reconcile_content(&v(&["--since-seq", "7", "sp-b"]), &mut f, &mut b);
+    assert!(carried.stdout.contains("would close sp-b") && !carried.stdout.contains("sp-a"), "{}", carried.stdout);
+    assert_eq!(reconcile_content(&v(&["--since-seq", "x"]), &mut f, &mut b).code, 2);
 }
 
 #[test]

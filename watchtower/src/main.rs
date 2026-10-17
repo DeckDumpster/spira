@@ -438,6 +438,7 @@ fn main() {
                 lc_bin: spira_config::lifecycle_row::lc_bin(),
                 slack: getenv_i64("SPIRA_CONTENT_DRIFT_SLACK", 10).max(0) as usize,
                 sustain_secs: getenv_i64("SPIRA_CONTENT_DRIFT_SUSTAIN_SECS", 1800),
+                state: run.join("conditions").join("content-drift.state"),
             };
             conditions::reconcile(n, &ctx, "content-drift", probes::content_drift(&drift_cfg));
         }
