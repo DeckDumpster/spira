@@ -50,9 +50,7 @@ SPIRA_DB="$TMP/no-such-db"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN" "$TMP/bin"
 tl_config SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$SPIRA_RUN"
 LCSTATE="$TMP/lc-state"
-# The stub answers `state` from the fixture and closes an epic in the store alone, as the real
-# verb does for an epic with no lifecycle row (the suite runs no lifecycle service; the verb's
-# own gates are cargo-tested); every other verb is the tree's own spira-lc.
+# The stub closes an epic in the store alone (no lifecycle service runs here); other verbs are the real spira-lc.
 REAL_LC="$(command -v spira-lc 2>/dev/null || true)"
 cat > "$TMP/bin/spira-lc" <<STUB
 #!/usr/bin/env bash
