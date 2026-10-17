@@ -241,6 +241,23 @@ fn ending_a_round_retires_the_mender_beads_filed_for_it() {
 }
 
 #[test]
+fn a_later_round_event_retires_the_mender_beads_of_batches_already_closed() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-3"]), 0, "{}", t.err());
+    fs::write(marker(&t, "old-1", "mender-1-gate-x"), "sp-m11\n").unwrap();
+    fs::write(marker(&t, "live-1", "mender-1-gate-y"), "sp-m12\n").unwrap();
+    t.lc.batch_states.borrow_mut().insert("old-1".into(), ("ABANDONED".into(), "2".into()));
+    t.lib.close_fail.set(true);
+    assert_eq!(t.run(&["round", "eject", "hand-3", "sp-b", "--reason", "red"]), 0, "{}", t.err());
+    assert!(t.err().contains("sp-m11") && t.err().contains("refused"), "{}", t.err());
+    assert!(!marker(&t, "old-1", "mender-1-gate-x.retired").exists());
+    t.lib.close_fail.set(false);
+    assert_eq!(t.run(&["round", "abandon", "hand-3", "--reason", "base moved"]), 0, "{}", t.err());
+    assert!(marker(&t, "old-1", "mender-1-gate-x.retired").exists());
+    assert!(!marker(&t, "live-1", "mender-1-gate-y.retired").exists());
+}
+
+#[test]
 fn abandon_of_a_batch_the_lifecycle_already_abandoned_drops_the_record() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta", "--name", "hand-1"]), 0, "{}", t.err());

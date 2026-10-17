@@ -477,6 +477,9 @@ impl Lib for RealLib {
     fn bead_close(&self, id: &str, reason: &str) -> bool {
         spira_config::lifecycle_row::close_landed(id, reason, "queue").is_ok()
     }
+    fn bead_retire(&self, id: &str, reason: &str) -> Result<(), String> {
+        spira_config::lifecycle_row::close(id, reason, "queue", None)
+    }
     fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String> {
         let Some(root) = self.repo_registry().root(repo) else { return Ok(false) };
         if !RealGit.ref_exists(Path::new(&root), &format!("refs/heads/{branch}")) {

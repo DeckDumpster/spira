@@ -249,6 +249,10 @@ impl Lib for FLib {
         self.log(format!("bead_close {id} {sha}"));
         !self.close_fail.get()
     }
+    fn bead_retire(&self, id: &str, reason: &str) -> Result<(), String> {
+        self.log(format!("bead_close {id} {}", reason.split_whitespace().next().unwrap_or("?")));
+        if self.close_fail.get() { Err("refused".into()) } else { Ok(()) }
+    }
     fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String> {
         self.log(format!("reap {id} {repo} {branch} {why}"));
         Ok(true)
