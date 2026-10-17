@@ -170,6 +170,24 @@ mod tests {
     }
 
     #[test]
+    fn every_converted_poller_is_answered_from_the_fixture() {
+        let t = fixture(100);
+        let callers: [(&str, &[&str], &[&str]); 7] = [
+            ("lc-view", &["list", "--live", "--snapshot"], &["sp-a", "sp-b", "sp-c"]),
+            ("watchtower", &["list", "--state", "READY", "--snapshot"], &["sp-b", "sp-c"]),
+            ("queue-watch certified", &["list", "--state", "CERTIFIED", "--snapshot"], &[]),
+            ("queue-watch express", &["list", "--express", "--live", "--snapshot"], &["sp-b"]),
+            ("batcher-cut", &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"], &[]),
+            ("hold-sweep", &["list", "--hold", "wait", "--live", "--snapshot"], &["sp-b"]),
+            ("supersede-duty", &["list", "--live", "--hold", "manual", "--snapshot"], &[]),
+        ];
+        for (who, a, want) in callers {
+            let out = answer_from(&args(a), &t, 100, 2).unwrap_or_else(|| panic!("{who} fell through to the service"));
+            assert_eq!(ids(&out), want, "{who}");
+        }
+    }
+
+    #[test]
     fn a_stale_or_future_or_broken_file_is_not_believed() {
         let a = args(&["list", "--snapshot", "--live"]);
         assert!(answer_from(&a, &fixture(100), 106, 2).is_some());

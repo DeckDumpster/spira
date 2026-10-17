@@ -112,12 +112,12 @@ pub fn read_bisect(dir: &Path) -> Result<Option<(Vec<String>, u64)>, String> {
 /// this shells out rather than reading a directory or re-deriving the query in SQL here.
 /// Records are shared across repos; the caller narrows by the bead's `repo:` label.
 pub fn read_certified(env: &Env) -> Result<Vec<String>, String> {
-    lc_list(env, &["--state", "CERTIFIED"])
+    lc_list(env, &["--state", "CERTIFIED", "--snapshot"])
 }
 
 /// Every bead whose lifecycle row carries Express.
 pub fn read_express(env: &Env) -> Result<BTreeSet<String>, String> {
-    Ok(lc_list(env, &["--express"])?.into_iter().collect())
+    Ok(lc_list(env, &["--express", "--live", "--snapshot"])?.into_iter().collect())
 }
 
 fn lc_list(env: &Env, filter: &[&str]) -> Result<Vec<String>, String> {

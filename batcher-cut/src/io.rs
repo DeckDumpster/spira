@@ -214,7 +214,7 @@ pub fn lc_rows(env: &Env) -> Result<Vec<serde_json::Value>, String> {
     if let Some(rows) = held.as_ref() {
         return Ok(rows.clone());
     }
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&lcq(env, &["list", "--state", "SUBMITTED,CERTIFIED"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&lcq(env, &["list", "--state", "SUBMITTED,CERTIFIED", "--snapshot"])?).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
     *held = Some(rows.clone());
     Ok(rows)
 }
@@ -3215,7 +3215,7 @@ mod lifecycle_tests {
             vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001, false, vec![]), ("sp-b".into(), "bbbb".into(), 1790000002, true, vec![]), ("sp-n".into(), "none".into(), 0, false, vec![])]
         );
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
-        assert_eq!(log.lines().collect::<Vec<_>>(), vec!["list --state SUBMITTED,CERTIFIED"], "{log}");
+        assert_eq!(log.lines().collect::<Vec<_>>(), vec!["list --state SUBMITTED,CERTIFIED --snapshot"], "{log}");
         assert!(read_pool(&env(&d, Some(fake_lc(&d, "not json")))).unwrap_err().contains("unparsed"));
         assert!(read_pool(&env(&d, None)).is_err());
     }
@@ -3247,7 +3247,7 @@ mod lifecycle_tests {
         assert_eq!(lc_probe(&e), Ok(()));
         assert_eq!(lc_cut_batch(&e, "r", "spira/queue/1", "h", "b", &members()), Some("2".into()));
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
-        assert!(log.starts_with("list --state SUBMITTED,CERTIFIED\n"), "{log}");
+        assert!(log.starts_with("list --state SUBMITTED,CERTIFIED --snapshot\n"), "{log}");
         assert!(log.contains("cut spira/queue/1 --repo r --head h --base b --members sp-a:aaaa,sp-b:bbbb"), "{log}");
     }
 

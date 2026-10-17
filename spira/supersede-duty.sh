@@ -103,7 +103,7 @@ declare -A _SD_NOT_A_REQUEST=()
 # A hold changes the bead's version, so a bead already read at its current version as holding
 # something other than a request is not read again until it moves.
 _sd_held() {
-    timeout 5 spira-lc list --live --hold manual 2>/dev/null | python3 -c '
+    timeout 5 spira-lc list --live --hold manual --snapshot 2>/dev/null | python3 -c '
 import sys, json
 try: rows = json.load(sys.stdin)
 except Exception: sys.exit(1)
