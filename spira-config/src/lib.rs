@@ -120,10 +120,24 @@ pub fn load(path: &Path) -> Result<SpiraToml, String> {
     load_layered(&path.to_string_lossy()).map(|(doc, _)| doc)
 }
 
+/// Refuses an added value that names a host path through a `placeholder` segment: a delta is
+/// written without knowing the host, so such a path is right on none.
+pub fn placeholder_paths<'a>(added: impl Iterator<Item = (&'a str, &'a toml::Value)>) -> Result<(), String> {
+    for (k, v) in added {
+        if let Some(s) = v.as_str().filter(|s| s.starts_with('/') && s.split('/').any(|seg| seg.eq_ignore_ascii_case("placeholder"))) {
+            return Err(format!("{k} = {s:?} is a placeholder path; omit the key so its registry default derives from the install's own roots"));
+        }
+    }
+    Ok(())
+}
+
 /// `(added, removed)` key paths a `config-delta.toml` declares: `[added]` table keys and the
 /// `removed` array.
 pub fn parse_config_delta(text: &str) -> Result<(Vec<String>, Vec<String>), String> {
     let v: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    if let Some(t) = v.get("added").and_then(|a| a.as_table()) {
+        placeholder_paths(t.iter().map(|(k, v)| (k.as_str(), v)))?;
+    }
     let added = v.get("added").and_then(|a| a.as_table()).map(|t| t.keys().cloned().collect()).unwrap_or_default();
     let removed = v
         .get("removed")

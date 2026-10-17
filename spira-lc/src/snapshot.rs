@@ -10,12 +10,35 @@ use serde_json::{json, Value};
 
 use crate::live::{self, ListFilter};
 
-/// The rows to serve the request from, or `None` when it must go to the service.
+/// The rows to serve the request from, or `None` when it must go to the service. A poller that
+/// asked for the snapshot and did not get it is counted by reason, so a broken snapshot shows.
 pub fn answer(args: &[String]) -> Option<String> {
-    let secs: u64 = spira_config::process::cfg_parse("SPIRA_LC_SNAPSHOT_SECS").ok().filter(|s| *s > 0)?;
-    let path = spira_config::process::cfg("SPIRA_LC_SNAPSHOT").ok().filter(|p| !p.is_empty())?;
-    let text = std::fs::read_to_string(path).ok()?;
-    answer_from(args, &text, crate::db::now_epoch(), secs)
+    let wanted = filter_of(args).is_some();
+    let out = read(args);
+    if wanted {
+        if let Err(reason) = &out {
+            record_miss(reason);
+        }
+    }
+    out.ok()
+}
+
+fn read(args: &[String]) -> Result<String, &'static str> {
+    let secs: u64 = spira_config::process::cfg_parse("SPIRA_LC_SNAPSHOT_SECS").ok().filter(|s| *s > 0).ok_or("disabled")?;
+    let path = spira_config::process::cfg("SPIRA_LC_SNAPSHOT").ok().filter(|p| !p.is_empty()).ok_or("disabled")?;
+    read_at(args, &path, secs, crate::db::now_epoch())
+}
+
+fn read_at(args: &[String], path: &str, secs: u64, now: i64) -> Result<String, &'static str> {
+    let text = std::fs::read_to_string(path).map_err(|_| "missing")?;
+    answer_from(args, &text, now, secs).ok_or("stale")
+}
+
+fn record_miss(reason: &str) {
+    use spira_otel::metrics::{MetricsSink, Point};
+    let Ok(endpoint) = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT") else { return };
+    MetricsSink::new(Some(&endpoint), "spira-lc", std::time::Duration::from_millis(250))
+        .push(&[Point::Count { name: "spira_lc_snapshot_fallback", value: 1 }], &[("reason", reason)]);
 }
 
 pub(crate) fn answer_from(args: &[String], text: &str, now: i64, secs: u64) -> Option<String> {
@@ -154,6 +177,18 @@ mod tests {
         assert!(answer_from(&a, &fixture(100), 99, 2).is_none());
         assert!(answer_from(&a, "{not json", 100, 2).is_none());
         assert!(answer_from(&a, "{\"beads\":[]}", 100, 2).is_none());
+    }
+
+    #[test]
+    fn a_missing_or_stale_file_names_why_it_was_not_answered() {
+        let dir = testkit::TempDir::new("lc-snapshot-miss");
+        let a = args(&["list", "--snapshot", "--live"]);
+        let path = dir.join("snap.json");
+        let p = path.to_str().unwrap();
+        assert_eq!(read_at(&a, p, 2, 100), Err("missing"));
+        std::fs::write(&path, fixture(100)).unwrap();
+        assert!(read_at(&a, p, 2, 100).is_ok());
+        assert_eq!(read_at(&a, p, 2, 200), Err("stale"));
     }
 
     #[test]

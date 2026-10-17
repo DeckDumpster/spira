@@ -177,6 +177,18 @@ mod tests {
     }
 
     #[test]
+    fn a_placeholder_path_in_the_delta_fails_the_lint() {
+        let t = repo();
+        let control = check(&t).0;
+        assert_eq!(control, Ok(vec![]));
+        t.write(DELTA, "[added]\n\"spira.alpha\" = \"/placeholder/run/x.json\"\n");
+        match check(&t).0 {
+            Err(LintError::Refused(m)) => assert!(m.contains("placeholder path"), "{m}"),
+            o => panic!("{o:?}"),
+        }
+    }
+
+    #[test]
     fn it_refuses_without_a_base() {
         let t = repo();
         let tree = Tree::from_git(t.path()).unwrap();
