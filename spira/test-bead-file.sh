@@ -99,6 +99,7 @@ cat > "$STUB_LC" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$LC_LOG_PATH"
 [ -n "${LC_FAIL:-}" ] && exit 2
+[ "${1:-}" = "list" ] && echo '[{"bead_id":"sp-done","state":"LANDED"}]'
 exit 0
 STUB
 chmod +x "$STUB_LC"
