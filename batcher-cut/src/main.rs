@@ -738,7 +738,7 @@ fn check_forge_member(env_: &Env, repo: &Repo, start_sha: &str, m: &Member) -> b
             };
             if let Some((fault, first)) = landing {
                 println!("batcher {}: FAULT the declared tiers are red on the landing ref {start_sha} itself — {} is not blamed", repo.name, m.id);
-                if first {
+                if first && !io::testenv_cut_at_cap(&fault) {
                     let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
                     let reason = format!("landing-ref-red {first_error}");
                     match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], start_sha, &fault, &reason) {
@@ -841,7 +841,7 @@ fn check_forge_pool(env_: &Env, repo: &Repo, base: &str, pool: &[Member]) {
                 };
                 if let Some((fault, first)) = landing {
                     println!("batcher {}: FAULT the declared tiers are red on the landing ref {base} itself — no member is blamed", repo.name);
-                    if first {
+                    if first && !io::testenv_cut_at_cap(&fault) {
                         let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
                         let reason = format!("landing-ref-red {first_error}");
                         match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], base, &fault, &reason) {

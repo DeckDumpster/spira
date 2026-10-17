@@ -1326,8 +1326,13 @@ pub fn over_cap_from_load(text: &str, load: Option<f64>, cores: usize) -> bool {
     testenv_cut_at_cap(text) && load.is_some_and(|l| l > cores as f64)
 }
 
+/// The highest of the 1, 5 and 15-minute averages: a cap-length run outlasts the 1-minute window.
+fn max_load(loadavg: &str) -> Option<f64> {
+    loadavg.split_whitespace().take(3).filter_map(|w| w.parse::<f64>().ok()).reduce(f64::max)
+}
+
 fn host_load() -> (Option<f64>, usize) {
-    let load = fs::read_to_string("/proc/loadavg").ok().and_then(|t| t.split_whitespace().next().and_then(|w| w.parse().ok()));
+    let load = fs::read_to_string("/proc/loadavg").ok().and_then(|t| max_load(&t));
     (load, std::thread::available_parallelism().map_or(1, |n| n.get()))
 }
 
@@ -3977,7 +3982,9 @@ mod fences_verdict_tests {
         assert!(!over_cap_from_load(cut, None, 4));
         assert!(!over_cap_from_load("VERDICT RED ran=1 red=1\n", Some(32.9), 4));
         assert!(!over_cap_from_load("VERDICT FAULT rc=2 ran=0 reason=container-run\n", Some(32.9), 4));
-        assert!(over_cap_from_load("VERDICT FAULT rc=2 ran=0 reason=over-cap\n", Some(32.9), 4));
+        assert!(over_cap_from_load("VERDICT FAULT rc=2 ran=1 reason=over-cap\n", Some(32.9), 4));
+        assert_eq!(super::max_load("2.0 58.9 51.5 3/900 1234\n"), Some(58.9));
+        assert!(super::testenv_cut_at_cap("x\nVERDICT FAULT rc=2 ran=1 reason=over-cap"));
     }
 
     #[test]
