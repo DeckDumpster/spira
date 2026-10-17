@@ -82,16 +82,20 @@ _csg_once() {   # _csg_once <key> <message>
 
 cmd_pass() {
     _csg_init
-    local name root ref tmp out line
+    local name root ref tmp out line sha stamp
     for name in $(repo_names); do
         root="$(repo_root "$name")" || continue
         ref="$(spira_landref "$name")" || { _csg_once "noref-$name" "CI SPILL: $name has no resolvable landing ref; its workflows are unchecked"; continue; }
+        sha="$(git -C "$root" rev-parse "$ref" 2>/dev/null)" || sha=""
+        stamp="$SPIRA_RUN/watchd/ci-spill-guard.refs/$name"
+        [ -n "$sha" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$sha" ] && continue
         tmp="$(mktemp -d)" || continue
         if git -C "$root" archive "$ref" .github/workflows 2>/dev/null | tar -x -C "$tmp" 2>/dev/null; then
             out="$(_csg_tree "$tmp" "$name:")"
             while IFS= read -r line; do
                 case "$line" in COUNT*|'') ;; *) _csg_once "$line" "CI SPILL: law-buy-capacity-rather-than-wait: $line (at $ref)" ;; esac
             done <<< "$out"
+            if [ -n "$sha" ]; then mkdir -p "$(dirname "$stamp")" && printf '%s\n' "$sha" > "$stamp"; fi
         fi
         rm -rf "$tmp"
     done

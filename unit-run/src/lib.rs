@@ -389,7 +389,14 @@ impl Sink<'_> {
     }
 }
 
-const SAVE_EVERY: usize = 500;
+/// A save serialises every open execution, so it is rate-limited: a crash between saves repeats
+/// records the sink drops, never loses them.
+pub const SAVE_MIN_INTERVAL_S: u64 = 60;
+
+enum Kind {
+    Idle,
+    Line,
+}
 
 /// Read `source` to its end, writing each closed execution once. `save` receives the folder
 /// after every write, on idle, and every few hundred lines — always after the records it
@@ -403,21 +410,24 @@ pub fn pass(
 ) -> Result<(Folder, usize), String> {
     let mut folder = start;
     let mut written = 0;
-    let mut since_save = 0;
+    let mut dirty = false;
+    let mut last_save = sink.clock.now_epoch();
     for item in source.open(folder.cursor.as_deref(), follow)? {
-        let records = match item {
-            Item::Idle => folder.tick(sink.clock.now_epoch().saturating_mul(1_000_000)),
+        let (records, item_kind) = match item {
+            Item::Idle => (folder.tick(sink.clock.now_epoch().saturating_mul(1_000_000)), Kind::Idle),
             Item::Line(l) => match parse_entry(&l) {
-                Some(e) => folder.push(&e),
+                Some(e) => (folder.push(&e), Kind::Line),
                 None => continue,
             },
         };
         let wrote = sink.write(&records)?;
         written += wrote;
-        since_save += 1;
-        if wrote > 0 || since_save >= SAVE_EVERY {
+        dirty |= wrote > 0 || !matches!(item_kind, Kind::Idle);
+        let now = sink.clock.now_epoch();
+        if dirty && now.saturating_sub(last_save) >= SAVE_MIN_INTERVAL_S {
             save(&folder)?;
-            since_save = 0;
+            dirty = false;
+            last_save = now;
         }
     }
     if !follow {

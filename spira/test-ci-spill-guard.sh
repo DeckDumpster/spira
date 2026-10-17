@@ -71,4 +71,15 @@ wf "$REPO" ci.yml "spill: ec2-only"
 git -C "$REPO" add -A; git -C "$REPO" -c user.name=t -c user.email=t@t commit -qm fix
 is "a repaired repo is quiet" "" "$(w pass)"
 
+echo "unchanged ref"
+rm -rf "$TMP/run/watchd/ci-spill-guard.refs" "$TMP/run/watchd/ci-spill-guard.said"
+git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m noop
+wf "$REPO" ci.yml "spill: ec2"
+git -C "$REPO" add -A; git -C "$REPO" -c user.name=t -c user.email=t@t commit -qm bad
+want "a moved ref is scanned" "ci.yml:8" "$(w pass)"
+rm -f "$TMP/run/watchd/ci-spill-guard.said"
+is "an unchanged ref is skipped, not re-archived" "" "$(w pass)"
+git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m moved
+want "a new commit on the ref is scanned again" "ci.yml:8" "$(w pass)"
+
 tl_summary
