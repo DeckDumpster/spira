@@ -12,7 +12,7 @@ use crate::{Entry, Finding, LintError, Rule, Tree};
 pub struct JournalReads;
 
 const NAME: &str = "journal-reads";
-const ALLOW_FILE: &str = "spira-lint/journal-readers-allow";
+const ALLOW_FILE: &str = "spira-lint/journal-readers-allow.d";
 
 fn reader() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
@@ -26,18 +26,13 @@ fn exempt_path(path: &str) -> bool {
         || path.split('/').any(|c| matches!(c, "tests" | "testlib" | "docs" | "fixtures" | "target") || c.starts_with("test-"))
 }
 
-fn parse_allow(text: &str) -> Result<BTreeMap<String, usize>, LintError> {
+fn parse_allow(tree: &Tree) -> Result<BTreeMap<String, ()>, LintError> {
     let mut m = BTreeMap::new();
-    for (i, l) in text.lines().enumerate() {
-        let t = l.trim();
-        if t.is_empty() || t.starts_with('#') {
-            continue;
+    for (path, bead) in crate::allow_dir(tree, ALLOW_FILE) {
+        if !bead.starts_with("sp-") || bead.contains(char::is_whitespace) {
+            return Err(LintError::BadAllow { file: format!("{ALLOW_FILE}/{path}"), line: 1, reason: format!("want the converting bead id, got `{bead}`") });
         }
-        let f: Vec<&str> = t.split_whitespace().collect();
-        if f.len() != 2 || !f[1].starts_with("sp-") {
-            return Err(LintError::BadAllow { file: ALLOW_FILE.to_string(), line: i + 1, reason: format!("want `<path> <converting-bead>`, got `{t}`") });
-        }
-        m.insert(f[0].to_string(), i + 1);
+        m.insert(path, ());
     }
     Ok(m)
 }
@@ -64,7 +59,8 @@ impl Rule for JournalReads {
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
         let files = crate::scope(tree, self)?;
-        let allow = parse_allow(&tree.read_text(ALLOW_FILE))?;
+        let allow = parse_allow(tree)?;
+        let prior = crate::allow_dir_at(tree, ALLOW_FILE);
         let shapes: Vec<(&Entry, crate::rust_test::Shape)> =
             files.iter().filter(|e| e.path.ends_with(".rs")).filter_map(|e| tree.content(e).map(|c| (*e, shape(c)))).collect();
         let whole = whole_test_files(tree, &shapes);
@@ -87,13 +83,21 @@ impl Rule for JournalReads {
                 });
             }
         }
-        for (path, line) in &allow {
+        for path in allow.keys() {
+            let entry = format!("{ALLOW_FILE}/{path}");
             if !by.contains_key(path) {
                 out.push(Finding {
                     rule: NAME,
                     path: path.clone(),
                     line: None,
-                    message: format!("{ALLOW_FILE}:{line} allows {path}, which no longer reads the journal — remove the line (the list only shrinks)"),
+                    message: format!("{entry} allows {path}, which no longer reads the journal — remove the file (the list only shrinks)"),
+                });
+            } else if prior.as_ref().is_some_and(|p| !p.contains(path)) {
+                out.push(Finding {
+                    rule: NAME,
+                    path: entry.clone(),
+                    line: None,
+                    message: format!("new entry {path} — the list takes no new reader; take the fact from the component that produced it"),
                 });
             }
         }
@@ -103,7 +107,7 @@ impl Rule for JournalReads {
     fn hint(&self) -> &'static str {
         "law-nothing-reads-the-journal: the journal is a log for humans. Get the fact from the component \
 that produced it: a systemd D-Bus event, the producer's own record, or a pushed metric. Tests may read \
-a journal only to assert on a fixture they wrote. spira-lint/journal-readers-allow only shrinks."
+a journal only to assert on a fixture they wrote. spira-lint/journal-readers-allow.d only shrinks."
     }
 }
 
@@ -111,6 +115,17 @@ a journal only to assert on a fixture they wrote. spira-lint/journal-readers-all
 mod tests {
     use super::*;
     use crate::testutil::TempDir;
+
+    fn allow(t: &TempDir, entries: &[(&str, &str)]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|(p, b)| {
+                let rel = format!("{ALLOW_FILE}/{p}");
+                t.write(&rel, &format!("{b}\n"));
+                rel
+            })
+            .collect()
+    }
 
     fn run(t: &TempDir, files: &[&str]) -> Result<Vec<String>, LintError> {
         let tree = Tree::from_paths(t.path(), files.iter().copied(), std::iter::empty::<&str>());
@@ -120,7 +135,6 @@ mod tests {
     #[test]
     fn a_journalctl_call_in_a_non_allowlisted_file_is_flagged() {
         let t = TempDir::new("jr-fail");
-        t.write(ALLOW_FILE, "");
         t.write("spira/probe.sh", "#!/bin/bash\njournalctl --user -u x -n 5\n");
         t.write("a/src/lib.rs", "pub fn f() {\n    let _ = std::process::Command::new(\"journalctl\");\n}\n");
         let got = run(&t, &["spira/probe.sh", "a/src/lib.rs"]).unwrap();
@@ -132,13 +146,14 @@ mod tests {
     #[test]
     fn tests_prose_and_allowlisted_readers_pass() {
         let t = TempDir::new("jr-pass");
-        t.write(ALLOW_FILE, "# h\nspira/old.sh sp-abc\n");
+        let a = allow(&t, &[("spira/old.sh", "sp-abc")]);
         t.write("spira/old.sh", "journalctl -n 1\n");
         t.write("spira/test-x.sh", "journalctl -n 1\n");
         t.write("a/tests/t.rs", "fn t() { let _ = \"journalctl\"; }\n");
         t.write("docs/j.md", "journalctl\n");
         t.write("a/src/lib.rs", "pub fn f() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() { let _ = \"journalctl\"; }\n}\n");
-        let files = ["spira/old.sh", "spira/test-x.sh", "a/tests/t.rs", "docs/j.md", "a/src/lib.rs"];
+        let mut files = vec!["spira/old.sh", "spira/test-x.sh", "a/tests/t.rs", "docs/j.md", "a/src/lib.rs"];
+        files.extend(a.iter().map(String::as_str));
         assert_eq!(run(&t, &files).unwrap(), Vec::<String>::new());
     }
 
@@ -146,13 +161,14 @@ mod tests {
     fn a_stale_or_malformed_allowance_is_refused() {
         let t = TempDir::new("jr-allow");
         t.write("spira/fixed.sh", "true\n");
-        t.write(ALLOW_FILE, "spira/fixed.sh sp-abc\n");
+        let a = allow(&t, &[("spira/fixed.sh", "sp-abc")]);
+        let files = ["spira/fixed.sh", a[0].as_str()];
         assert_eq!(
-            run(&t, &["spira/fixed.sh"]).unwrap(),
-            vec!["journal-reads: spira/fixed.sh: spira-lint/journal-readers-allow:1 allows spira/fixed.sh, which no longer reads the journal — remove the line (the list only shrinks)"]
+            run(&t, &files).unwrap(),
+            vec!["journal-reads: spira/fixed.sh: spira-lint/journal-readers-allow.d/spira/fixed.sh allows spira/fixed.sh, which no longer reads the journal — remove the file (the list only shrinks)"]
         );
-        t.write(ALLOW_FILE, "spira/fixed.sh\n");
-        assert!(run(&t, &["spira/fixed.sh"]).is_err());
+        allow(&t, &[("spira/fixed.sh", "")]);
+        assert!(run(&t, &files).is_err());
     }
 
     #[test]

@@ -361,6 +361,35 @@ pub fn scope<'t>(tree: &'t Tree, rule: &dyn Rule) -> Result<Vec<&'t Entry>, Lint
     }
 }
 
+/// A shrink-only allow list kept as a directory, one file per entry: the path under `dir` is
+/// the key and the file's first line is the value. Two branches removing different entries
+/// touch different files and merge.
+pub fn allow_dir(tree: &Tree, dir: &str) -> Vec<(String, String)> {
+    let pre = format!("{dir}/");
+    tree.entries
+        .iter()
+        .filter_map(|e| {
+            let key = e.path.strip_prefix(&pre)?;
+            let text = tree.content(e).map(|b| String::from_utf8_lossy(b).into_owned())?;
+            Some((key.to_string(), text.lines().next().unwrap_or("").trim().to_string()))
+        })
+        .collect()
+}
+
+/// The keys of [`allow_dir`] as `base` had them, read from the single-file list this directory replaced when the base predates it; `None` when there is no base to compare with.
+pub fn allow_dir_at(tree: &Tree, dir: &str) -> Option<std::collections::BTreeSet<String>> {
+    let base = tree.base_commit().ok()?;
+    let pre = format!("{dir}/");
+    let out = tree.git(&["ls-tree", "-r", "--name-only", &base, "--", &pre]).ok()?;
+    let keys: std::collections::BTreeSet<String> =
+        String::from_utf8_lossy(&out).lines().filter_map(|l| l.strip_prefix(&pre).map(str::to_string)).collect();
+    if !keys.is_empty() {
+        return Some(keys);
+    }
+    let legacy = dir.strip_suffix(".d")?;
+    Some(allow_lines(&tree.show(&base, legacy)?).iter().filter_map(|l| l.split_whitespace().next().map(str::to_string)).collect())
+}
+
 /// Non-blank, non-`#` lines, verbatim.
 pub fn allow_lines(text: &str) -> Vec<String> {
     text.lines()

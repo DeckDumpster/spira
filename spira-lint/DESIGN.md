@@ -1338,8 +1338,9 @@ it (a systemd D-Bus event, the producer's own record, a pushed metric), never by
 and is not on the allow list. One finding per file, at its first mention; the message names the statute
 and the exit.
 
-**Allow list.** `spira-lint/journal-readers-allow`, `<path> <converting-bead>`, shrink-only; a line whose
-file no longer reads the journal is itself a finding.
+**Allow list.** `spira-lint/journal-readers-allow.d/<path>`, one file per reader holding its converting
+bead, shrink-only; a file for a path that no longer reads the journal, and a file the base did not have,
+are findings. One file per entry so branches removing different readers never conflict.
 
 ## Rule `one-runtime`
 

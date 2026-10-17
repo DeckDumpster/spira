@@ -1,6 +1,6 @@
 //! `otel-binaries` — every workspace crate that builds a binary depends on `spira-otel`, the one
 //! way a component sends OTLP to the metrics store. A crate that does not is listed in
-//! `spira-lint/otel-binaries-allow` against the open sweep bead that instruments it; the list
+//! `spira-lint/otel-binaries-allow.d/<crate dir>` (the file holds that bead) against the open sweep bead that instruments it; the list
 //! only shrinks and a crate added to the workspace after it was written can never join it.
 
 use std::collections::BTreeSet;
@@ -10,28 +10,14 @@ use crate::{Entry, Finding, LintError, Rule, Tree};
 pub struct OtelBinaries;
 
 const NAME: &str = "otel-binaries";
-const ALLOW_FILE: &str = "spira-lint/otel-binaries-allow";
+const ALLOW_FILE: &str = "spira-lint/otel-binaries-allow.d";
 const ROOT: &str = "Cargo.toml";
 const OTEL: &str = "spira-otel";
 
 const HINT: &str = "every component sends OTLP to the metrics store through spira-otel: add the spira-otel \
 dependency and push at least the standard run metrics (invocations, duration, outcome), fire-and-forget \
-with a short deadline. spira-lint/otel-binaries-allow lists today's uninstrumented binaries, only shrinks, \
+with a short deadline. spira-lint/otel-binaries-allow.d holds one file per uninstrumented binary, only shrinks, \
 and takes no new crate.";
-
-fn parse(text: &str) -> Vec<(usize, String, String)> {
-    text.lines()
-        .enumerate()
-        .filter(|(_, l)| {
-            let t = l.trim_start();
-            !(t.is_empty() || t.starts_with('#'))
-        })
-        .map(|(i, l)| {
-            let mut w = l.split_whitespace();
-            (i + 1, w.next().unwrap_or("").to_string(), w.next().unwrap_or("").to_string())
-        })
-        .collect()
-}
 
 fn bead_id(s: &str) -> bool {
     let Some(rest) = s.strip_prefix("sp-") else { return false };
@@ -94,12 +80,9 @@ impl Rule for OtelBinaries {
             }
         }
 
-        let allow = parse(&tree.read_text(ALLOW_FILE));
-        let prior: Option<BTreeSet<String>> = match tree.base_commit() {
-            Ok(base) => tree.show(&base, ALLOW_FILE).map(|t| parse(&t).into_iter().map(|(_, c, _)| c).collect()),
-            Err(_) => None,
-        };
-        let listed: BTreeSet<&str> = allow.iter().map(|(_, c, _)| c.as_str()).collect();
+        let allow = crate::allow_dir(tree, ALLOW_FILE);
+        let prior = crate::allow_dir_at(tree, ALLOW_FILE);
+        let listed: BTreeSet<&str> = allow.iter().map(|(c, _)| c.as_str()).collect();
         let finding = |path: &str, line: Option<usize>, message: String| Finding { rule: NAME, path: path.into(), line, message };
         let mut out = Vec::new();
 
@@ -112,19 +95,20 @@ impl Rule for OtelBinaries {
                 ));
             }
         }
-        for (line, dir, bead) in &allow {
+        for (dir, bead) in &allow {
+            let entry = format!("{ALLOW_FILE}/{dir}");
             if !uninstrumented.contains(dir) {
                 out.push(finding(
-                    ALLOW_FILE,
-                    Some(*line),
-                    format!("lists {dir}, which is not an uninstrumented binary crate any more — remove the line (the list only shrinks)"),
+                    &entry,
+                    None,
+                    format!("lists {dir}, which is not an uninstrumented binary crate any more — remove the file (the list only shrinks)"),
                 ));
             } else if !bead_id(bead) {
-                out.push(finding(ALLOW_FILE, Some(*line), format!("{dir} names no sweep bead (`<crate dir> <bead id>`) — each entry names the open bead that instruments it")));
+                out.push(finding(&entry, None, format!("{dir} names no sweep bead (the file holds the open bead that instruments it)")));
             } else if prior.as_ref().is_some_and(|p| !p.contains(dir)) {
                 out.push(finding(
-                    ALLOW_FILE,
-                    Some(*line),
+                    &entry,
+                    None,
                     format!("new entry {dir} — the list takes no new crate; depend on {OTEL} and push at least the standard run metrics (invocations, duration, outcome)"),
                 ));
             }
@@ -150,6 +134,23 @@ mod tests {
     const PLAIN: &str = "[package]\nname = \"x\"\n";
 
     fn repo(allow: &str) -> TempDir {
+        let t = repo_files(allow);
+        t.git(&["add", "."]);
+        t.git(&["commit", "-qm", "base"]);
+        t.git(&["tag", "base"]);
+        t
+    }
+
+    fn set_allow(t: &TempDir, allow: &str) {
+        let _ = std::fs::remove_dir_all(t.path().join(ALLOW_FILE));
+        for l in allow.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
+            let mut w = l.split_whitespace();
+            let key = w.next().unwrap();
+            t.write(&format!("{ALLOW_FILE}/{key}"), &format!("{}\n", w.next().unwrap_or("")));
+        }
+    }
+
+    fn repo_files(allow: &str) -> TempDir {
         let t = TempDir::new("otel-binaries");
         t.git_init();
         t.write(ROOT, "[workspace]\nmembers = [\"lib\", \"good\", \"old\", \"fresh\"]\n");
@@ -161,10 +162,7 @@ mod tests {
         t.write("old/src/main.rs", "fn main() {}\n");
         t.write("fresh/Cargo.toml", OTEL_DEP);
         t.write("fresh/src/bin/a.rs", "fn main() {}\n");
-        t.write(ALLOW_FILE, allow);
-        t.git(&["add", "."]);
-        t.git(&["commit", "-qm", "base"]);
-        t.git(&["tag", "base"]);
+        set_allow(&t, allow);
         t
     }
 
@@ -191,7 +189,7 @@ mod tests {
     fn a_new_crate_cannot_join_the_list() {
         let t = repo("old sp-abc\n");
         t.write("fresh/Cargo.toml", PLAIN);
-        t.write(ALLOW_FILE, "old sp-abc\nfresh sp-abc\n");
+        set_allow(&t, "old sp-abc\nfresh sp-abc\n");
         let got = run(&t).unwrap();
         assert_eq!(got.len(), 1);
         assert!(got[0].starts_with("new entry fresh"), "{got:?}");
