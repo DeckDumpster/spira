@@ -391,6 +391,18 @@ fn run_foreign(
             if let Some(e) = foreign::first_error(&log) {
                 (deps.out)(&format!("  first error ({t}): {e}"));
             }
+            let tail = foreign::tail(&log, 60);
+            if !tail.is_empty() {
+                let dir = s.run.join("testenv-evidence");
+                let file = dir.join(format!("{repo}-{t}.tail"));
+                if fs::create_dir_all(&dir).and_then(|_| fs::write(&file, &tail)).is_ok() {
+                    (deps.out)(&format!("  evidence ({t}): {}", file.display()));
+                }
+                (deps.out)(&format!("  last 60 lines ({t}):"));
+                for l in tail.lines() {
+                    (deps.out)(&format!("    {l}"));
+                }
+            }
         }
         match o {
             foreign::Outcome::Pass => ran += 1,
