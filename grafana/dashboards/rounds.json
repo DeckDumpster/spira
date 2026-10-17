@@ -86,7 +86,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le, instance_type) (rate(spira_cert_pass_capacity_wait_seconds_bucket{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_capacity_wait_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "p90 {{instance_type}}",
           "refId": "A"
         }
@@ -118,7 +118,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le, instance_type) (rate(spira_cert_pass_boot_seconds_bucket{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_boot_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "p90 {{instance_type}}",
           "refId": "A"
         }
@@ -150,7 +150,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le, instance_type) (rate(spira_cert_pass_build_seconds_bucket{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_build_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "p90 {{instance_type}}",
           "refId": "A"
         }
@@ -182,7 +182,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le, instance_type) (rate(spira_cert_pass_suites_seconds_bucket{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_suites_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "p90 {{instance_type}}",
           "refId": "A"
         }
@@ -214,7 +214,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.5, sum by (le, repo) (rate(spira_cert_pass_total_seconds_bucket{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.5, spira_cert_pass_total_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "{{repo}}",
           "refId": "A"
         }
@@ -246,7 +246,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le, instance_type) (rate(spira_cert_pass_total_seconds_bucket{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__rate_interval])))",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_total_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "{{instance_type}}",
           "refId": "A"
         }
@@ -278,7 +278,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (verdict) (increase(spira_cert_pass_verdicts{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval]))",
+          "expr": "sum by (verdict) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval]))",
           "legendFormat": "{{verdict}}",
           "refId": "A"
         }
@@ -310,7 +310,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (cause) (increase(spira_cert_pass_causes{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval]))",
+          "expr": "sum by (cause) (sum_over_time(spira_cert_pass_causes{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval]))",
           "legendFormat": "{{cause}}",
           "refId": "A"
         }
@@ -342,7 +342,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum(increase(spira_cert_pass_causes{repo=~\"$repo\",instance_type=~\"$instance_type\",cause=\"infra\"}[$__range])) / sum(increase(spira_cert_pass_causes{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__range]))",
+          "expr": "sum(sum_over_time(spira_cert_pass_causes{repo=~\"$repo\",instance_type=~\"$instance_type\",cause=\"infra\"}[$__range])) / sum(sum_over_time(spira_cert_pass_causes{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__range]))",
           "legendFormat": "infra share",
           "refId": "A"
         }
@@ -374,7 +374,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (repo) (increase(spira_cert_pass_verdicts{repo=~\"$repo\",instance_type=~\"$instance_type\",verdict=\"red\"}[$__range])) / sum by (repo) (increase(spira_cert_pass_verdicts{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__range]))",
+          "expr": "sum by (repo) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",instance_type=~\"$instance_type\",verdict=\"red\"}[$__range])) / sum by (repo) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__range]))",
           "legendFormat": "{{repo}}",
           "refId": "A"
         }

@@ -1,4 +1,4 @@
-//! Fire-and-forget OTLP metrics pushed straight to a Prometheus-compatible store (VictoriaMetrics
+//! Fire-and-forget OTLP metrics, each point a timestamped Gauge sample (the store drops delta sums and histograms), pushed straight to a Prometheus-compatible store (VictoriaMetrics
 //! `/opentelemetry/v1/metrics`), protobuf over plain HTTP. Every phase has a deadline; a failed
 //! push is counted in `push_failed()`, never returned, and never touches the producer's durable record.
 
@@ -10,15 +10,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{any_value::Value, AnyValue, InstrumentationScope, KeyValue};
 use opentelemetry_proto::tonic::metrics::v1::{
-    metric::Data, number_data_point::Value as Num, AggregationTemporality, Histogram, HistogramDataPoint, Metric, NumberDataPoint, ResourceMetrics, ScopeMetrics, Sum,
+    metric::Data, number_data_point::Value as Num, Gauge, Metric, NumberDataPoint, ResourceMetrics, ScopeMetrics,
 };
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use prost::Message;
 
 static PUSH_FAILED: AtomicU64 = AtomicU64::new(0);
-
-/// Seconds-scale bucket bounds shared by every duration histogram.
-pub const SECONDS_BOUNDS: [f64; 12] = [1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 3600.0, 7200.0];
 
 pub const PATH: &str = "/opentelemetry/v1/metrics";
 
@@ -28,9 +25,9 @@ pub fn push_failed() -> u64 {
 }
 
 pub enum Point<'a> {
-    /// A monotonic counter incremented by `value`.
+    /// One event sample of `value` (sum it over a window to count).
     Count { name: &'a str, value: u64 },
-    /// One observation of a seconds histogram.
+    /// One duration sample in seconds.
     Seconds { name: &'a str, value: f64 },
 }
 
@@ -64,39 +61,16 @@ impl MetricsSink {
         let attributes: Vec<KeyValue> = labels.iter().map(|(k, v)| kv(k, v)).collect();
         let metrics = points
             .iter()
-            .map(|p| match p {
-                Point::Count { name, value } => Metric {
-                    name: (*name).into(),
-                    data: Some(Data::Sum(Sum {
-                        data_points: vec![NumberDataPoint { attributes: attributes.clone(), start_time_unix_nano: t, time_unix_nano: t, value: Some(Num::AsInt(*value as i64)), ..Default::default() }],
-                        aggregation_temporality: AggregationTemporality::Delta as i32,
-                        is_monotonic: true,
-                    })),
+            .map(|p| {
+                let (name, unit, value) = match p {
+                    Point::Count { name, value } => (*name, "", Num::AsInt(*value as i64)),
+                    Point::Seconds { name, value } => (*name, "s", Num::AsDouble(*value)),
+                };
+                Metric {
+                    name: name.into(),
+                    unit: unit.into(),
+                    data: Some(Data::Gauge(Gauge { data_points: vec![NumberDataPoint { attributes: attributes.clone(), time_unix_nano: t, value: Some(value), ..Default::default() }] })),
                     ..Default::default()
-                },
-                Point::Seconds { name, value } => {
-                    let mut buckets = vec![0u64; SECONDS_BOUNDS.len() + 1];
-                    buckets[SECONDS_BOUNDS.iter().position(|b| value <= b).unwrap_or(SECONDS_BOUNDS.len())] = 1;
-                    Metric {
-                        name: (*name).into(),
-                        unit: "s".into(),
-                        data: Some(Data::Histogram(Histogram {
-                            data_points: vec![HistogramDataPoint {
-                                attributes: attributes.clone(),
-                                start_time_unix_nano: t,
-                                time_unix_nano: t,
-                                count: 1,
-                                sum: Some(*value),
-                                bucket_counts: buckets,
-                                explicit_bounds: SECONDS_BOUNDS.to_vec(),
-                                min: Some(*value),
-                                max: Some(*value),
-                                ..Default::default()
-                            }],
-                            aggregation_temporality: AggregationTemporality::Delta as i32,
-                        })),
-                        ..Default::default()
-                    }
                 }
             })
             .collect();
@@ -167,30 +141,19 @@ mod tests {
     const LABELS: [(&str, &str); 2] = [("repo", "r"), ("instance_type", "c7a.4xlarge")];
 
     #[test]
-    fn a_histogram_and_a_counter_encode_with_their_labels_and_round_trip() {
+    fn every_point_encodes_as_a_timestamped_gauge_with_its_labels() {
         let s = sink("127.0.0.1:1");
-        let req = s.encode(&[Point::Seconds { name: "cert_pass_boot_seconds", value: 20.0 }, Point::Count { name: "cert_pass_verdicts_total", value: 1 }], &LABELS, UNIX_EPOCH + Duration::from_secs(5));
+        let req = s.encode(&[Point::Seconds { name: "cert_pass_boot_seconds", value: 20.0 }, Point::Count { name: "cert_pass_verdicts", value: 1 }], &LABELS, UNIX_EPOCH + Duration::from_secs(5));
         let back = ExportMetricsServiceRequest::decode(req.encode_to_vec().as_slice()).unwrap();
         let m = &back.resource_metrics[0].scope_metrics[0].metrics;
-        let Some(Data::Histogram(h)) = &m[0].data else { panic!("histogram") };
-        let p = &h.data_points[0];
-        assert_eq!((p.count, p.sum), (1, Some(20.0)));
-        assert_eq!(p.bucket_counts.iter().sum::<u64>(), 1);
-        assert_eq!(p.bucket_counts[2], 0);
-        assert_eq!(p.bucket_counts[3], 1, "20s falls in the (15,30] bucket");
-        assert_eq!(p.attributes.len(), 2);
+        let Some(Data::Gauge(g)) = &m[0].data else { panic!("gauge") };
+        let p = &g.data_points[0];
+        assert_eq!(p.value, Some(Num::AsDouble(20.0)));
+        assert_eq!(p.time_unix_nano, 5_000_000_000);
         assert_eq!(p.attributes[1].key, "instance_type");
-        let Some(Data::Sum(c)) = &m[1].data else { panic!("sum") };
-        assert!(c.is_monotonic);
+        let Some(Data::Gauge(c)) = &m[1].data else { panic!("gauge") };
         assert_eq!(c.data_points[0].value, Some(Num::AsInt(1)));
         assert_eq!(c.data_points[0].time_unix_nano, 5_000_000_000);
-    }
-
-    #[test]
-    fn a_value_past_the_last_bound_lands_in_the_overflow_bucket() {
-        let req = sink("x:1").encode(&[Point::Seconds { name: "n", value: 99_999.0 }], &[], UNIX_EPOCH);
-        let Some(Data::Histogram(h)) = &req.resource_metrics[0].scope_metrics[0].metrics[0].data else { panic!() };
-        assert_eq!(*h.data_points[0].bucket_counts.last().unwrap(), 1);
     }
 
     #[test]
