@@ -35,7 +35,7 @@ fn lc(bin: &Path, args: &[String], env: &[(String, String)], extra: &[(&str, &st
 
 struct Fixture {
     _server: Server,
-    _t: testkit::TempDir,
+    _t: Option<testkit::TempDir>,
     root: PathBuf,
     bin: PathBuf,
     port: String,
@@ -63,32 +63,38 @@ fn fixture() -> Option<Fixture> {
     };
     let t = testkit::TempDir::new("lc-rotation");
     let root = t.path().to_path_buf();
-    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let port = 20000 + ((std::process::id() * 7 + N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) % 20000) as u16;
-    std::fs::create_dir_all(root.join("data")).unwrap();
-    std::fs::write(
-        root.join("server.yaml"),
-        format!("log_level: warning\nlistener:\n  port: {port}\n  max_connections: 50\ndata_dir: \"{}\"\nbehavior:\n  dolt_transaction_commit: false\n  event_scheduler: \"OFF\"\n", root.join("data").display()),
-    )
-    .unwrap();
-    // batch-job: the test's own disposable sql-server, killed by Server::drop.
-    let child = Command::new("dolt").args(["sql-server", "--config"]).arg(root.join("server.yaml")).current_dir(&root).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
-    let f = Fixture { _server: Server(child), _t: t, root: root.clone(), bin, port: port.to_string(), data: root.to_string_lossy().to_string(), rw_file: root.join("spira-lc.credential"), ro_file: root.join("spira-lc.credential-ro") };
     let one = root.join("one.sql");
     std::fs::write(&one, "SELECT 1;\n").unwrap();
     let empty = root.join("empty-pw");
     std::fs::write(&empty, "").unwrap();
-    let probe = |_: ()| f.run(&["admin-apply-ddl".into(), one.to_string_lossy().to_string()], &[("SPIRA_LC_ADMIN_USER".into(), "root".into()), ("SPIRA_LC_ADMIN_PASSWORD_FILE".into(), empty.to_string_lossy().to_string())]);
-    let mut up = false;
-    for _ in 0..100 {
-        if probe(()).0 == 0 {
-            up = true;
-            break;
+    // A port chosen by the kernel, a fresh data dir per attempt, and a server that died on a
+    // bind race is replaced rather than waited on: the probe must never reach another server.
+    for _ in 0..4 {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let _ = std::fs::remove_dir_all(root.join("data"));
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::write(
+            root.join("server.yaml"),
+            format!("log_level: warning\nlistener:\n  port: {port}\n  max_connections: 50\ndata_dir: \"{}\"\nbehavior:\n  dolt_transaction_commit: false\n  event_scheduler: \"OFF\"\n", root.join("data").display()),
+        )
+        .unwrap();
+        // batch-job: the test's own disposable sql-server, killed by Server::drop.
+        let child = Command::new("dolt").args(["sql-server", "--config"]).arg(root.join("server.yaml")).current_dir(&root).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        let mut f = Fixture { _server: Server(child), _t: None, root: root.clone(), bin: bin.clone(), port: port.to_string(), data: root.to_string_lossy().to_string(), rw_file: root.join("spira-lc.credential"), ro_file: root.join("spira-lc.credential-ro") };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        while std::time::Instant::now() < deadline {
+            if f._server.0.try_wait().ok().flatten().is_some() {
+                break;
+            }
+            let r = f.run(&["admin-apply-ddl".into(), one.to_string_lossy().to_string()], &[("SPIRA_LC_ADMIN_USER".into(), "root".into()), ("SPIRA_LC_ADMIN_PASSWORD_FILE".into(), empty.to_string_lossy().to_string())]);
+            if r.0 == 0 {
+                f._t = Some(t);
+                return Some(f);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    assert!(up, "a fresh dolt server must start with root passwordless (the positive control)");
-    Some(f)
+    panic!("a fresh dolt server must start with root passwordless (the positive control)");
 }
 
 const OLD_RW: &str = "oldRwSecretAbc123xyz";
