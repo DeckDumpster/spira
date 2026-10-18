@@ -302,6 +302,7 @@ fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, pat
     let cause = decide::sanitize_cause(&entry.cause);
     let mut cfg = env.file_config(&provenance);
     cfg.cause = &cause;
+    cfg.repo_declared = entry.repo.as_deref().or(env.repo.as_deref());
     let mut log = Vec::new();
     let alarm_label = env_or("SPIRA_ALARM_LABEL", "alarm");
     let file_labels = if entry.reference.starts_with("incident:") && !env.labels.split(',').any(|l| l == alarm_label) {
@@ -359,6 +360,7 @@ fn cmd_systemd(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, u
         unit: unit.to_string(),
         incident_path: unit.to_string(),
         cause: env.cause.clone(),
+        repo: env.repo.clone(),
         body: payload.into_bytes(),
     };
     let _ = std::fs::create_dir_all(&env.spool_dir);
@@ -399,6 +401,7 @@ fn cmd_file(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, titl
         unit: env.unit.clone(),
         incident_path: env.path.clone(),
         cause: env.cause.clone(),
+        repo: env.repo.clone(),
         body,
     };
     let _ = std::fs::create_dir_all(&env.spool_dir);

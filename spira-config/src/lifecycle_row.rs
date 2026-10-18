@@ -327,6 +327,15 @@ pub fn reopen_with(bin: &str, id: &str, cause: &str, actor: &str) -> Result<(), 
     }
 }
 
+/// Point the bead's lifecycle row at `repo`: the row is what a claim reads to pick a checkout.
+pub fn set_repo_with(bin: &str, id: &str, repo: &str) -> Result<(), String> {
+    lc_status(bin, &["set-repo", id, repo])
+}
+
+pub fn set_repo(id: &str, repo: &str) -> Result<(), String> {
+    set_repo_with(&lc_bin(), id, repo)
+}
+
 /// [`reopen_with`] through the configured `spira-lc`.
 pub fn reopen(id: &str, cause: &str, actor: &str) -> Result<(), String> {
     reopen_with(&lc_bin(), id, cause, actor)

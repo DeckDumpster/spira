@@ -247,6 +247,9 @@ impl Bd for RealBd {
     fn set_state(&self, db: &str, id: &str, kv: &str) -> bool {
         self.run(db, &["set-state", id, kv]).map(|(rc, ..)| rc == 0).unwrap_or(false)
     }
+    fn set_repo(&self, id: &str, repo: &str) -> bool {
+        spira_config::lifecycle_row::set_repo(id, repo).is_ok()
+    }
     fn reopen(&self, _db: &str, id: &str, cause: &str) -> bool {
         spira_config::lifecycle_row::reopen(id, cause, "incident").is_ok()
     }
