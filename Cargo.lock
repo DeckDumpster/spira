@@ -491,6 +491,7 @@ dependencies = [
  "spira-otel",
  "suite-select",
  "testkit",
+ "toml",
  "tsd",
 ]
 

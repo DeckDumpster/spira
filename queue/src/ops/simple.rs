@@ -593,6 +593,45 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
     OK
 }
 
+/// Shows the suites an eject forces on `id`'s recertification, or with `clear` drops them so the
+/// next submit runs the normal gate.
+pub fn forced_suites(w: &World, id: &str, repo: Option<&str>, clear: bool, by: &str, reason: &Text) -> i32 {
+    let Ok(c) = resolve(w, "forced-suites", repo) else { return FAIL };
+    if idents(w, "forced-suites", &[("bead id", id)]).is_err() {
+        return FAIL;
+    }
+    let forced = spira_config::proof::failing(&c.s.run, id);
+    if !clear {
+        w.out(if forced.is_empty() { format!("queue.sh forced-suites: {id} has none") } else { format!("queue.sh forced-suites: {id}: {}", forced.join(",")) });
+        return OK;
+    }
+    let reason = match read_text(w, reason) {
+        Ok(r) if !r.trim().is_empty() => r,
+        Ok(_) => {
+            w.err("queue.sh forced-suites: --reason is required — say why the forced suites cannot be satisfied");
+            return USAGE;
+        }
+        Err(e) => {
+            w.err(format!("queue.sh forced-suites: cannot read the reason: {e}"));
+            return USAGE;
+        }
+    };
+    if !SANCTIONED_REWORKERS.contains(&by) {
+        w.err(format!("queue.sh forced-suites: refused — only {} may clear forced suites (--by {by})", SANCTIONED_REWORKERS.join(" or ")));
+        return FAIL;
+    }
+    spira_config::proof::clear_failing(&c.s.run, id);
+    let sidecar = c.s.run.join("ejected").join(id);
+    if sidecar.exists() && std::fs::remove_file(&sidecar).is_err() {
+        w.err(format!("queue.sh forced-suites: cannot remove {} — the sidecar still forces its suites", sidecar.display()));
+        return FAIL;
+    }
+    w.lib.comment(id, &format!("Forced suites cleared by {by}: {}.\n\n{}", if forced.is_empty() { "none were recorded".to_string() } else { forced.join(",") }, reason.trim()));
+    landing_log(&c.s.run, &format!("QUEUE FORCED-SUITES-CLEAR {} branch={id} by={by} cleared={}", w.clock.now(), forced.join(",")));
+    w.out(format!("queue.sh forced-suites: cleared {id}'s forced suites ({}); its next submit runs the normal gate", if forced.is_empty() { "none recorded".to_string() } else { forced.join(",") }));
+    OK
+}
+
 /// The door for a red that was not the tree's fault: withdraw it from the lifecycle row and from the
 /// batch red-tip record, so the same tip is admitted again. Evidence is mandatory and must name the tip.
 pub fn absolve(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text, evidence: &Text, evidence_tip: &str) -> i32 {

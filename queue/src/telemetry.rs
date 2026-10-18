@@ -3,7 +3,7 @@
 use spira_otel::metrics::{self, MetricsSink};
 
 pub const COMPONENT: &str = "queue";
-pub const OPERATIONS: &[&str] = &["submit", "protect", "stats", "churn", "flush", "step", "verdict", "eject", "abandon", "open-batch", "claim", "release", "resubmit", "absolve", "rework", "land-local", "publish", "publish-settle", "to-forge", "to-local", "rollback-local", "rebase-waiting", "round"];
+pub const OPERATIONS: &[&str] = &["submit", "protect", "stats", "churn", "flush", "step", "verdict", "eject", "abandon", "open-batch", "claim", "release", "resubmit", "absolve", "rework", "forced-suites", "land-local", "publish", "publish-settle", "to-forge", "to-local", "rollback-local", "rebase-waiting", "round"];
 
 pub fn sink() -> MetricsSink {
     metrics::sink_for(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), COMPONENT)
