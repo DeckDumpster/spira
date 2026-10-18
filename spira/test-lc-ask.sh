@@ -149,6 +149,16 @@ wantrc "a closed ask refuses a second close" 3 $?
 nowant "list-asks no longer lists it as open" "sp-ask-1" "$(spira-lc list-asks)"
 want "list-asks --state ANSWERED does" "sp-ask-1" "$(spira-lc list-asks --state ANSWERED)"
 
+# ── a replay of the closed ask's hold cannot put it back ──────────────────────────────────
+spira-lc hold sp-w-1 ask "waiting on the operator" test-suite >/dev/null 2>&1
+wantrc "an ask hold replayed after the ask closed is refused" 3 $?
+is "...and the work bead's holds stay empty" "" "$(spira-lc holds sp-w-1)"
+seed_bead sp-w-4 WORKING
+spira-lc create-ask sp-ask-4 --work-bead sp-w-4
+spira-lc hold sp-w-4 ask "a fresh question" test-suite >/dev/null 2>&1
+wantrc "POSITIVE CONTROL: an ask hold with an open ask is applied" 0 $?
+is "...and the hold stands" ask "$(spira-lc holds sp-w-4)"
+
 # ── an ask with no work bead (a question about a statute) resolves cleanly ────────────────
 spira-lc create-ask sp-ask-2
 spira-lc close-ask sp-ask-2 --exit withdrawn --quote "answered by the statute text" --actor claude

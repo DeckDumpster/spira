@@ -655,6 +655,21 @@ fn cmd_event(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// An ask hold waits on an OPEN ask. A bead whose every ask is closed has been answered,
+/// defaulted or withdrawn, so a replayed hold has nothing left to wait for; a bead that
+/// never had an ask row is held by a writer that sends no mail first, and is let through.
+fn closed_asks_only(conn: &Conn, work_bead: &str) -> Option<String> {
+    let rows = conn.query(&format!("SELECT ask_id, state FROM ask WHERE work_bead = {}", cutover::q(work_bead))).ok()?;
+    let open = rows.iter().any(|r| r.get("state").and_then(Value::as_str) == Some("OPEN"));
+    if rows.is_empty() || open {
+        return None;
+    }
+    let ids: Vec<&str> = rows.iter().filter_map(|r| r.get("ask_id").and_then(Value::as_str)).collect();
+    let why = format!("every ask on it is closed ({}) and none is open, so there is nothing to wait for", ids.join(", "));
+    eprintln!("spira-lc: refused ask hold on {work_bead}: {why}");
+    Some(why)
+}
+
 fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &str, kind_json: &str, at: i64) -> (i32, String) {
     let Some(expect_state) = bead::BeadState::from_str(expect) else {
         return (CANNOT_TELL, format!("event: unknown bead state {expect:?}"));
@@ -669,6 +684,11 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
     let ev = bead::BeadEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string(), at: Some(at) };
+    if matches!(kind, bead::BeadEventKind::Hold { kind: bead::HoldKind::Ask, .. }) {
+        if let Some(why) = closed_asks_only(conn, key) {
+            return (REFUSED, format!("refused: ask hold on {key}: {why}"));
+        }
+    }
     // The tip invariant, extended (design stacked-dependents-2026-09-28 §1): a claim whose
     // proposed stack names a prerequisite tip that is no longer that prerequisite's current
     // certified tip is refused the same way a stale-tip submit is — checked here, against
