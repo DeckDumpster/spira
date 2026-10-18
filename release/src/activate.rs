@@ -297,11 +297,10 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
         }
     }
 
-    let old_root = prev.as_deref().map(|p| cfg.releases.join(p)).unwrap_or_else(|| rel.clone());
     let mut out = Switched { rewritten: changes.iter().map(|c| c.unit.clone()).collect(), retired, ..Default::default() };
     let mut draining = Vec::new();
     for c in &changes {
-        if !c.unit.ends_with(".service") || !restart_needed(&c.unit, &c.old, &c.new, &old_root, &rel) {
+        if !c.unit.ends_with(".service") || !restart_needed(&c.unit, &c.old, &c.new, &rel) {
             continue;
         }
         match ctx.sc.state(&c.unit) {
@@ -514,16 +513,33 @@ const KILL_RESTARTED: &str = "dolt-beads.service";
 /// Whether a rewritten service must be restarted. The store server is restarted only when its
 /// unit changed in something other than the release root every unit embeds: the server binary
 /// comes from the toolchain environment, and a restart is an outage for every caller.
-fn restart_needed(unit: &str, old: &str, new: &str, old_root: &Path, new_root: &Path) -> bool {
+fn restart_needed(unit: &str, old: &str, new: &str, new_root: &Path) -> bool {
     if unit != KILL_RESTARTED {
         return units::exec_changed(old, new);
     }
-    let moved = old.replace(&old_root.display().to_string(), &new_root.display().to_string());
-    let changed = units::without_documentation(&moved) != units::without_documentation(new);
+    let changed = unrooted(&units::without_documentation(old), new_root) != unrooted(&units::without_documentation(new), new_root);
     if !changed {
         eprintln!("release: {unit} differs only in the release root; left running");
     }
     changed
+}
+
+/// The text with every `<releases>/<name>` prefix collapsed, whatever `<name>` is: an installed
+/// unit may name a release by sha or by the `current` link, and neither is a change to the unit.
+fn unrooted(text: &str, root: &Path) -> String {
+    let Some(parent) = root.parent() else { return text.to_string() };
+    let prefix = format!("{}/", parent.display());
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find(&prefix) {
+        out.push_str(&rest[..i]);
+        out.push_str("ROOT");
+        let tail = &rest[i + prefix.len()..];
+        let end = tail.find(|c: char| c == '/' || c.is_whitespace() || c == ':').unwrap_or(tail.len());
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn restart_unit(sc: &dyn Systemctl, unit: &str) -> Result<(), String> {
