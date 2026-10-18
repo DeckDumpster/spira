@@ -118,3 +118,4 @@ removed = ["spira.express_label", "spira.overlap_defer_label"]
 "spira.metrics_endpoint" = ""
 "spira.metrics_data" = ""
 "spira.metrics_grafana_addr" = ""
+"spira.brain_dirty_age" = 3600

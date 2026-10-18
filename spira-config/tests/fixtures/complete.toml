@@ -56,6 +56,7 @@ batch_tail_lines = "50"
 bd = "/fixture/userhome/.local/bin/bd"
 bd_pin = "/fixture/userhome/spira/run/bd-pin"
 bd_tag = "v1.2.1"
+brain_dirty_age = 3600
 brief_keep_recurrences = "5"
 brief_notes_max_chars = "8000"
 broker_enable = "0"

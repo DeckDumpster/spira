@@ -1,0 +1,9 @@
+TYPE=u64
+GROUP=archivist
+DOC=SECONDS A WIKI PATH MAY STAY UNCOMMITTED BEFORE THE BRAIN-DIRTY WATCHER ALARMS
+SCHEMA=Seconds a path under the wiki checkout may stay uncommitted before brain-dirty alarms.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS A WIKI PATH MAY STAY UNCOMMITTED. Replicas sync only what is committed, so a page
+    # left dirty is invisible everywhere else, and no other session may sweep it up.
+    : "${SPIRA_BRAIN_DIRTY_AGE:=3600}"
+SPIRA_CONF_DEFAULT_EOF

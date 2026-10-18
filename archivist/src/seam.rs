@@ -345,6 +345,7 @@ pub mod fake {
         pub agent_rc: RefCell<i32>,
         pub agent_calls: RefCell<Vec<String>>,
         pub today_value: RefCell<String>,
+        pub agent_writes: RefCell<Vec<(PathBuf, String)>>,
     }
 
     impl FakeSeam {
@@ -383,6 +384,9 @@ pub mod fake {
         }
         fn run_agent(&self, spec: &AgentSpec) -> i32 {
             self.agent_calls.borrow_mut().push(spec.task_stdin.to_string());
+            for (p, text) in self.agent_writes.borrow().iter() {
+                std::fs::write(p, text).unwrap();
+            }
             *self.agent_rc.borrow()
         }
         fn today(&self, _tz: &str) -> String {

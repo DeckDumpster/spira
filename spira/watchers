@@ -211,3 +211,8 @@ mend-watch|log|@SPIRA_RUN@/mend-watch.log
 spira-submission|extern|spira-submission|spira-submission health
 
 testenv-cap|daemon|testenv-cap watch --interval 15|testenv-cap health
+
+# BRAIN-DIRTY alarms on any path under the wiki checkout left uncommitted past SPIRA_BRAIN_DIRTY_AGE.
+# The archivist commits what it writes; this is the backstop for a failed commit or a writer that
+# never committed. One line per stale path, once.
+brain-dirty|daemon|@SPIRA_HOME@/brain-dirty.sh watch --interval 600|@SPIRA_HOME@/brain-dirty.sh health

@@ -200,29 +200,11 @@ The difference is not whether the claim is true. The difference is whether **you
 
 ## Committing what you write
 
-If `$SPIRA_WIKI` is set (non-empty), commit every wiki page you write before you exit. The
-four bounds are absolute and all must hold:
-
-- **PATHS:** only files under `wiki/` inside the wiki repository, plus `index.md` and
-  `log.md` at the repo root. Not the harness, not `.claude/`, not any code.
-- **AUTHORSHIP:** only the files you wrote in this sweep. Stage each path explicitly by name.
-  `git add -A` and `git commit -a` are prohibited (`law-commit-only-paths-you-changed`);
-  list every path on the `git add` line. For `index.md` and `log.md`, stage them only when
-  you appended to them in this sweep — they pre-exist, and another sweep's work is not yours
-  to commit.
-- **NEVER CODE.** Not `spira/`, not `.claude/`, not any file outside `wiki/` or the two
-  root files above.
-- **COUNT:** any number of pages per sweep. There is no one-page limit.
-
-```bash
-# List every path you wrote — never git add -A or git add .
-git -C "$SPIRA_WIKI" add wiki/path/to/page.md index.md log.md
-git -C "$SPIRA_WIKI" commit -m "archivist: <terse subject>"
-git -C "$SPIRA_WIKI" push
-```
-
-`$SPIRA_WIKI` is the wiki repository root and is available in your environment. If it is
-empty, there is no wiki and nothing to commit.
+Do not commit. When you exit, the harness stages exactly the files you changed under `wiki/`,
+plus `index.md` and `log.md` if you appended to them, commits them, rebases and pushes. A
+failed commit or push fails the run loudly. Write only inside those bounds — never the
+harness, `.claude/` or any code — and never `git add -A` or `git commit -a`
+(`law-commit-only-paths-you-changed`).
 
 <!-- task -->
 
