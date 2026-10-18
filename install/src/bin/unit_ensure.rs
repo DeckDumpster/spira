@@ -2,7 +2,8 @@
 //! Safe while aeons are active: installs new/changed unit files and daemon-reloads, but
 //! never restarts a running service. `landing-pass` runs this after every pass.
 //!
-//! usage: unit-ensure [--diff]
+//! usage: unit-ensure [--diff] [--retire]
+//! `--retire` also stops, disables and deletes this instance's units the release no longer ships.
 
 use install::bootstrap;
 use install::ensure;
@@ -16,6 +17,7 @@ fn main() -> ExitCode {
 
 fn run_main() -> ExitCode {
     let diff = std::env::args().skip(1).any(|a| a == "--diff");
+    let retire = std::env::args().skip(1).any(|a| a == "--retire");
     let instance = bootstrap::nonempty_env("SPIRA_INSTANCE").unwrap_or_else(|| "prod".into());
 
     if diff {
@@ -57,12 +59,15 @@ fn run_main() -> ExitCode {
     let no_suspend = |_: &str| false; // unit-ensure.sh never read ctrl.sh's suspended set either.
     let ctx = Ctx { unit_dir: &dir, templates_dir: &templates_dir, host: &host, manifest: &manifest, systemctl: &systemctl, suspended: &no_suspend, world_halted, skip_migrate_watchers: false };
 
-    let r = ensure::run(&ctx, bootstrap::declared("SPIRA_BROKER_ENABLE").is_some_and(|v| v == "1"));
+    let r = ensure::run(&ctx, bootstrap::declared("SPIRA_BROKER_ENABLE").is_some_and(|v| v == "1"), retire);
     for e in &r.errors {
         eprintln!("unit-ensure: {e}");
     }
     for u in &r.installed {
         println!("unit-ensure: installed  {u}");
+    }
+    for u in &r.retired {
+        println!("unit-ensure: retired    {u} (this release does not ship it)");
     }
     for u in &r.updated {
         println!("unit-ensure: updated    {u}");

@@ -2,7 +2,7 @@
 //! are active — installs missing or changed unit files and daemon-reloads, but never
 //! restarts a running service. `landing-pass` runs this after every pass.
 
-use crate::install_units::{execstart_target_ok, is_masked, render_all, write_unit, Ctx};
+use crate::install_units::{execstart_target_ok, is_masked, render_all, retire_dropped_units, write_unit, Ctx};
 use crate::manifest::inst_name;
 use std::fs;
 
@@ -11,6 +11,7 @@ pub struct Report {
     pub installed: Vec<String>,
     pub updated: Vec<String>,
     pub unchanged: u32,
+    pub retired: Vec<String>,
     pub missing_target: Vec<String>,
     pub enabled_started: Vec<String>,
     pub broker_enabled: Vec<String>,
@@ -20,7 +21,7 @@ pub struct Report {
 
 /// `broker_enable` is the declared `SPIRA_BROKER_ENABLE` — resolved by the caller from the one
 /// source of config, so this library function never reads config (or the environment) itself.
-pub fn run(ctx: &Ctx, broker_enable: bool) -> Report {
+pub fn run(ctx: &Ctx, broker_enable: bool, retire: bool) -> Report {
     let mut r = Report::default();
     let rendered = match render_all(ctx) {
         Ok(v) => v,
@@ -57,6 +58,12 @@ pub fn run(ctx: &Ctx, broker_enable: bool) -> Report {
 
     if !r.installed.is_empty() || !r.updated.is_empty() {
         let _ = ctx.systemctl.daemon_reload();
+    }
+
+    if retire {
+        let mut ir = crate::install_units::Report::default();
+        retire_dropped_units(ctx, &rendered, &mut ir);
+        r.retired = ir.retired;
     }
 
     // Enable+start only newly installed units in the ENABLE set — updated (DIFFERS) units
@@ -138,22 +145,57 @@ mod tests {
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
 
-        let r = run(&ctx, false);
+        let r = run(&ctx, false, false);
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert_eq!(r.installed.len(), 2);
         assert!(r.enabled_started.contains(&"spira-sentinel-prod.timer".to_string()));
         assert_eq!(sc.restarts.borrow().len(), 0);
 
         // A second run with the template unchanged: no-op.
-        let r2 = run(&ctx, false);
+        let r2 = run(&ctx, false, false);
         assert_eq!(r2.installed.len(), 0);
         assert_eq!(r2.updated.len(), 0);
         assert_eq!(r2.unchanged, 2);
 
         // A changed template installs but does NOT restart or re-enable (operator's call).
         std::fs::write(tmpl_dir.join("spira-sentinel.service"), "[Service]\nExecStart=/bin/false\n").unwrap();
-        let r3 = run(&ctx, false);
+        let r3 = run(&ctx, false, false);
         assert_eq!(r3.updated, vec!["spira-sentinel-prod.service".to_string()]);
         assert_eq!(sc.restarts.borrow().len(), 0);
+    }
+
+    fn retire_fixture(retire: bool) -> (testkit::TempDir, std::path::PathBuf, FakeSystemctl, Report) {
+        let base = td();
+        let unit_dir = base.join("units");
+        let tmpl_dir = base.join("templates");
+        std::fs::create_dir_all(&unit_dir).unwrap();
+        std::fs::create_dir_all(&tmpl_dir).unwrap();
+        std::fs::write(tmpl_dir.join("spira-sentinel.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        std::fs::write(tmpl_dir.join("spira-sentinel.timer"), "[Unit]\nUnit=spira-sentinel.service\n").unwrap();
+        std::fs::write(unit_dir.join("spira-dropped-prod.service"), "[Service]\nExecStart=/bin/true\n").unwrap();
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx, false, retire);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        (base, unit_dir, sc, r)
+    }
+
+    #[test]
+    fn retire_removes_an_instance_unit_the_release_dropped_and_keeps_the_shipped_ones() {
+        let (_base, unit_dir, _sc, r) = retire_fixture(true);
+        assert_eq!(r.retired, vec!["spira-dropped-prod.service".to_string()]);
+        assert!(!unit_dir.join("spira-dropped-prod.service").exists());
+        assert!(unit_dir.join("spira-sentinel-prod.service").exists());
+        assert!(unit_dir.join("spira-sentinel-prod.timer").exists());
+    }
+
+    #[test]
+    fn without_retire_a_dropped_unit_is_left_alone() {
+        let (_base, unit_dir, _sc, r) = retire_fixture(false);
+        assert!(r.retired.is_empty());
+        assert!(unit_dir.join("spira-dropped-prod.service").exists());
     }
 }
