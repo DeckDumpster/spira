@@ -469,7 +469,7 @@ fn ensure_new_units(cfg: &Config, sha: &str) -> Result<(), String> {
     }
     // batch-job: installs and starts whatever units are new, bounded at 120 s by timeout(1)
     let mut cmd = Command::new("timeout");
-    cmd.arg("120").arg(&bin).env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
+    cmd.arg("120").arg(&bin).arg("--retire").env("SPIRA_HOME", rel.join("spira")).env_remove("SPIRA_REPO");
     for (k, v) in verify::pre_activate_env(cfg, &rel)? {
         cmd.env(k, v);
     }

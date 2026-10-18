@@ -375,7 +375,7 @@ const LEDGER: &str = ".spira-installed-units";
 
 /// Units a previous run installed and this release no longer ships. The ledger, not a name
 /// pattern, decides what is Spira's to remove.
-fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, String)], r: &mut Report) {
+pub(crate) fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, String)], r: &mut Report) {
     let ledger = ctx.unit_dir.join(LEDGER);
     let now: std::collections::BTreeSet<String> = rendered.iter().map(|(inst, _, _)| inst.clone()).collect();
     let mut keep = now.clone();
