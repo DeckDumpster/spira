@@ -56,9 +56,9 @@ pub fn cmd_ops_view(args: &[String], conn: &Conn) -> (i32, String) {
     };
     let rows = match conn.live().and_then(|l| l.ops_view(view, crate::db::now_epoch())) {
         Some(rows) => rows,
-        None => match conn.query(&format!("SELECT * FROM {view}")) {
+        None => match view_cached(conn, view, crate::db::now_epoch()) {
             Ok(rows) => rows,
-            Err(e) => return (2, format!("cannot tell: {e:?}")),
+            Err(e) => return (2, format!("cannot tell: {e}")),
         },
     };
     if !args.iter().any(|a| a == "--epics") {
@@ -67,6 +67,55 @@ pub fn cmd_ops_view(args: &[String], conn: &Conn) -> (i32, String) {
     match epics_cached(conn, crate::db::now_epoch()) {
         Ok(epics) => (0, serde_json::json!({ "rows": rows, "epics": epics }).to_string()),
         Err(e) => (2, format!("cannot tell: epics: {e}")),
+    }
+}
+
+// ───────────────────────────── views computed in Dolt, kept warm by the sweeper
+
+/// Views whose SQL scans the event history; a serving process answers them from memory.
+const SLOW_VIEWS: [&str; 4] = ["ops_edges", "ops_dwell", "ops_dwell_p95", "ops_round"];
+
+const VIEW_TTL_SECS: i64 = 30;
+
+type ViewCache = std::collections::BTreeMap<&'static str, (i64, Vec<Value>)>;
+
+static VIEW_CACHE: std::sync::Mutex<ViewCache> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn view_fetch(conn: &Conn, view: &'static str, now: i64) -> Result<Vec<Value>, String> {
+    let rows = conn.query(&format!("SELECT * FROM {view}")).map_err(|e| format!("{e:?}"))?;
+    if let Ok(mut c) = VIEW_CACHE.lock() {
+        c.insert(view, (now, rows.clone()));
+    }
+    Ok(rows)
+}
+
+fn view_cached(conn: &Conn, view: &str, now: i64) -> Result<Vec<Value>, String> {
+    let Some(name) = SLOW_VIEWS.iter().find(|v| **v == view) else {
+        return conn.query(&format!("SELECT * FROM {view}")).map_err(|e| format!("{e:?}"));
+    };
+    if conn.live.is_some() {
+        if let Some((at, rows)) = VIEW_CACHE.lock().ok().and_then(|c| c.get(name).cloned()) {
+            if now - at < EPICS_MAX_AGE_SECS {
+                return Ok(rows);
+            }
+        }
+    }
+    view_fetch(conn, name, now)
+}
+
+/// The serving process recomputes the slow views off the request path.
+pub fn views_tick(conn: &Conn) {
+    if conn.live.is_none() {
+        return;
+    }
+    let now = crate::db::now_epoch();
+    for name in SLOW_VIEWS {
+        let stale = VIEW_CACHE.lock().ok().and_then(|c| c.get(name).map(|(at, _)| now - at >= VIEW_TTL_SECS)).unwrap_or(true);
+        if stale {
+            if let Err(e) = view_fetch(conn, name, now) {
+                eprintln!("spira-lc serve: {name} not refreshed: {e}");
+            }
+        }
     }
 }
 
@@ -404,6 +453,19 @@ pub fn cmd_set_repo(args: &[String], conn: &Conn) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_serving_process_answers_the_slow_views_from_memory() {
+        let mut conn = Conn::unreachable();
+        let now = crate::db::now_epoch();
+        assert!(view_cached(&conn, "ops_dwell", now).is_err(), "the unreachable store is the positive control");
+        VIEW_CACHE.lock().unwrap().insert("ops_dwell", (now, vec![serde_json::json!({"bead_id": "sp-a"})]));
+        assert!(view_cached(&conn, "ops_dwell", now).is_err(), "a one-shot process never trusts memory");
+        conn.enable_live();
+        let rows = view_cached(&conn, "ops_dwell", now).expect("served from memory");
+        assert_eq!(rows.len(), 1);
+        assert!(view_cached(&conn, "ops_dwell", now + EPICS_MAX_AGE_SECS + 1).is_err(), "past the max age it asks the store");
+    }
 
     #[test]
     fn a_working_refusal_names_the_release_step() {
