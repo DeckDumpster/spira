@@ -240,21 +240,25 @@ if [ -s "$HD/old-remote" ]; then
     printf '%s\n' "$ID" >"$HD/state/dismissed"
 fi
 
-export COCKPIT_ABSENT_PROBES=3
+export COCKPIT_FORGET_SECS=2
 echo empty >"$HD/hunk.mode"
 is "an empty successful list reads idle" "brain" "$(_want)"
 is "and keeps the dismissal" "$ID" "$(cat "$HD/state/dismissed")"
 echo live >"$HD/hunk.mode"
 is "live, empty, live never flips to hunk" "brain" "$(_want)"
 echo empty >"$HD/hunk.mode"; _want >/dev/null; _want >/dev/null; _want >/dev/null
-is "absent across the bound forgets the dismissal" "0" "$(grep -c . "$HD/state/dismissed")"
+is "many empty probes inside the window keep the dismissal (daemon restart)" "$ID" "$(cat "$HD/state/dismissed")"
+sleep 3; _want >/dev/null
+is "absent across the window forgets the dismissal" "0" "$(grep -c . "$HD/state/dismissed")"
 echo live >"$HD/hunk.mode"
 is "the same id, forgotten, wants hunk again" "hunk" "$(_want)"
 printf '%s\n' "$ID" >"$HD/state/dismissed"
-printf '%s\n' '#!/bin/sh' 'case "$1 $2" in "session close") echo "$3" >>"$0.closed";; *) echo "'$ID' R1";; esac' >"$HD/hunk2"
+sleep 600 & VICTIM=$!
+printf '%s\n' '#!/bin/sh' 'case "$1 $2" in "session get") echo "{\"pid\": '$VICTIM'}";; *) echo "'$ID' R1";; esac' >"$HD/hunk2"
 chmod +x "$HD/hunk2"
 env -i PATH="$PATH" HOME="$HD" HUNK="$HD/hunk2" COCKPIT_STATE="$HD/state" COCKPIT_SESSION=nosuch-$$ bash "$CR" finish >/dev/null 2>&1
-is "finish closes the live session" "$ID" "$(cat "$HD/hunk2.closed" 2>/dev/null)"
+sleep 0.3
+if kill -0 "$VICTIM" 2>/dev/null; then kill "$VICTIM"; is "finish ends the session's TUI" "gone" "alive"; else is "finish ends the session's TUI" "gone" "gone"; fi
 rm -rf "$HD"
 
 echo

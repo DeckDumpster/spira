@@ -61,7 +61,7 @@ LOCK="${TMPDIR:-/tmp}/cockpit-watch.lock"
 LOG="${TMPDIR:-/tmp}/cockpit-watch.log"
 STATE_DIR="${COCKPIT_STATE:-$HOME/.local/state/cockpit}"
 ABSENT="$STATE_DIR/dismissed.absent"
-ABSENT_MAX="${COCKPIT_ABSENT_PROBES:-5}"
+FORGET_SECS="${COCKPIT_FORGET_SECS:-86400}"
 DISMISS="$STATE_DIR/dismissed"                  # hunk session-ids dismissed from the view
 DONE_KEY="${COCKPIT_DONE_KEY:-E}"               # <prefix> KEY signals "review phase ended"
 HEAL_EVERY="${COCKPIT_HEAL_EVERY:-5}"           # poll iterations between layout checks
@@ -168,20 +168,19 @@ review_active() {
   return 1
 }
 
-# A dismissal is forgotten only after its session was absent from ABSENT_MAX consecutive
-# successful probes; one empty answer from a CPU-capped probe is not an ended session.
+# A dismissal is forgotten only after its session has been absent for FORGET_SECS straight.
+# Probes cannot tell an ended session from a hunk daemon restart (a TUI re-registers later),
+# so a probe count forgets a live TUI's dismissal and pops the view.
 forget_absent() {  # live-ids
   [ -s "$DISMISS" ] || { rm -f "$ABSENT"; return 0; }
-  local id n keep="" counts=""
+  local id since now keep="" marks=""; now=$(date +%s)
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    if printf '%s\n' "$1" | grep -Fxq "$id"; then
-      keep+="$id"$'\n'; continue
-    fi
-    n=$(awk -v i="$id" '$1==i {print $2}' "$ABSENT" 2>/dev/null); n=$(( ${n:-0} + 1 ))
-    if [ "$n" -lt "$ABSENT_MAX" ]; then keep+="$id"$'\n'; counts+="$id $n"$'\n'; fi
+    if printf '%s\n' "$1" | grep -Fxq "$id"; then keep+="$id"$'\n'; continue; fi
+    since=$(awk -v i="$id" '$1==i {print $2}' "$ABSENT" 2>/dev/null); since=${since:-$now}
+    if [ $(( now - since )) -lt "$FORGET_SECS" ]; then keep+="$id"$'\n'; marks+="$id $since"$'\n'; fi
   done <"$DISMISS"
-  printf '%s' "$counts" >"$ABSENT"
+  printf '%s' "$marks" >"$ABSENT"
   printf '%s' "$keep" >"$DISMISS.tmp" && mv "$DISMISS.tmp" "$DISMISS"
 }
 
@@ -272,7 +271,7 @@ watch_loop() {
     elif [ "$cur" != "$last" ]; then
       # First pass only seeds `last` (attach already synced the view); flip on real
       # transitions thereafter.
-      [ -n "$last" ] && select_want "$cur"
+      [ -n "$last" ] && { echo "cockpit watcher: flip $last -> $cur; live sessions: $(live_ids | tr '\n' ' ')" >&2; select_want "$cur"; }
       last="$cur"
     fi
     # The view poll is 3s because a flip should feel immediate. A dead pane does not need
@@ -374,13 +373,20 @@ cmd_done() {
   fi
 }
 
+# hunk has no `session close`: end the session by signalling the TUI pid its record reports.
+close_session() {  # id
+  local t="${COCKPIT_HUNK_TIMEOUT:-5}" pid
+  pid=$(timeout "$t" "${HUNK_FENCE[@]}" "$HUNK" session get "$1" --json 2>/dev/null \
+    | grep -oE '"(pid|processId|terminalPid)"[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+$' | head -1)
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null
+}
+
 cmd_finish() {
   local live id; live=$(live_ids) || { echo "hunk did not answer; nothing closed"; return 1; }
   cmd_done
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    timeout "${COCKPIT_HUNK_TIMEOUT:-5}" "${HUNK_FENCE[@]}" "$HUNK" session close "$id" >/dev/null 2>&1 \
-      || echo "could not close hunk session $id" >&2
+    close_session "$id" || echo "could not close hunk session $id" >&2
   done <<<"$live"
 }
 
