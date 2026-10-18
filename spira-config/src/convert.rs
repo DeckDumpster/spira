@@ -540,6 +540,7 @@ pub fn convert(
         spira: Some(spira),
         repo,
         persona,
+        publish: Default::default(),
     };
     // A conf without SPIRA_ID_PREFIX still converts: the refusal is `spira-config validate`'s
     // (doctor, pre-activate), the one place the required key is checked (sp-k6m1m).

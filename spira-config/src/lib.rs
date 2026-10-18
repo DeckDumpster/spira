@@ -344,6 +344,18 @@ pub struct SpiraToml {
     pub repo: BTreeMap<String, RepoSection>,
     #[serde(default)]
     pub persona: BTreeMap<String, PersonaSection>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub publish: BTreeMap<String, PublishSection>,
+}
+
+/// `[publish.<name>]` — where a `queue.local` repository's green work is published. `remote`
+/// `"none"` declares the repository publishes nowhere. Keyed by repository name, and kept
+/// apart from `[repo.<name>]` because that table is only present for a box without a repo-map.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PublishSection {
+    pub remote: Option<String>,
+    pub branch: Option<String>,
 }
 
 /// on/off, spelled as an enum rather than a bool so a TOML reader sees the word `spira.conf`

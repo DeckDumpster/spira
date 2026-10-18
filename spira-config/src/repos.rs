@@ -238,6 +238,7 @@ pub struct Registry {
     home: String,
     root_override: Option<String>,
     map_present: bool,
+    publish: BTreeMap<String, crate::PublishSection>,
 }
 
 impl Registry {
@@ -260,7 +261,15 @@ impl Registry {
             home: home_repo(env, home),
             root_override: repo_override(env),
             map_present: map_text.is_some(),
+            publish: BTreeMap::new(),
         }
+    }
+
+    /// The `[publish.<name>]` declarations, for a registry built outside [`Registry::from_env`].
+    #[doc(hidden)]
+    pub fn with_publish(mut self, publish: BTreeMap<String, crate::PublishSection>) -> Registry {
+        self.publish = publish;
+        self
     }
 
     /// THE production constructor (sp-k6lku, following through on sp-z3eyk's
@@ -277,12 +286,14 @@ impl Registry {
     pub fn from_env(env: BTreeMap<String, String>, home: &Path) -> Registry {
         let env = registry_env(env, home);
         let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
+        let doc = crate::locate::locate(None).found().and_then(|p| crate::load(&p).ok());
+        let publish = doc.as_ref().map(|d| d.publish.clone()).unwrap_or_default();
         if map_text.is_none() {
-            if let Some(rows) = crate::locate::locate(None).found().and_then(|p| crate::load(&p).ok()).map(|d| rows_from_toml(&d)) {
-                return Registry { rows, home: home_repo(&env, home), root_override: repo_override(&env), map_present: true };
+            if let Some(rows) = doc.as_ref().map(rows_from_toml) {
+                return Registry { rows, home: home_repo(&env, home), root_override: repo_override(&env), map_present: true, publish };
             }
         }
-        Registry::new(map_text.as_deref(), &env, home)
+        Registry::new(map_text.as_deref(), &env, home).with_publish(publish)
     }
 
     /// [`Registry::from_env`] for a caller that needs the home repo as a git checkout. A
@@ -600,7 +611,7 @@ pub fn landrefs(reg: &Registry, repo: &str) -> Option<(String, Option<String>)> 
 pub fn publish_forge(reg: &Registry, name: &str, env: &BTreeMap<String, String>) -> Option<(String, String)> {
     let base = landref(reg, name)?;
     let key = publish_key(name);
-    let remote = publish_remote(name, env);
+    let remote = publish_remote(reg, name, env);
     if remote == NO_PUBLISH {
         return None;
     }
@@ -608,6 +619,7 @@ pub fn publish_forge(reg: &Registry, name: &str, env: &BTreeMap<String, String>)
         .get(&format!("SPIRA_PUBLISH_BRANCH_{key}"))
         .filter(|v| !v.is_empty())
         .cloned()
+        .or_else(|| reg.publish.get(name).and_then(|p| p.branch.clone()).filter(|v| !v.is_empty()))
         .unwrap_or_else(|| base.strip_prefix("local/").unwrap_or(&base).to_string());
     if branch.is_empty() {
         return None;
@@ -628,18 +640,20 @@ fn publish_key(name: &str) -> String {
         .collect()
 }
 
-fn publish_remote(name: &str, env: &BTreeMap<String, String>) -> String {
+fn publish_remote(reg: &Registry, name: &str, env: &BTreeMap<String, String>) -> String {
     env.get(&format!("SPIRA_PUBLISH_REMOTE_{}", publish_key(name)))
         .filter(|v| !v.is_empty())
         .cloned()
+        .or_else(|| reg.publish.get(name).and_then(|p| p.remote.clone()).filter(|v| !v.is_empty()))
         .or_else(|| env.get("SPIRA_PUBLISH_REMOTE").filter(|v| !v.is_empty()).cloned())
         .unwrap_or_else(|| "origin".to_string())
 }
 
 /// True when the repository is explicitly declared unpublished
-/// (`SPIRA_PUBLISH_REMOTE_<NAME>=none`), as opposed to a target that merely fails to resolve.
-pub fn publishes_nowhere(name: &str, env: &BTreeMap<String, String>) -> bool {
-    publish_remote(name, env) == NO_PUBLISH
+/// (`[publish.<name>] remote = "none"`, or `SPIRA_PUBLISH_REMOTE_<NAME>=none`), as opposed to a
+/// target that merely fails to resolve.
+pub fn publishes_nowhere(reg: &Registry, name: &str, env: &BTreeMap<String, String>) -> bool {
+    publish_remote(reg, name, env) == NO_PUBLISH
 }
 
 /// `_spira_gitstore <path>` — its shared git directory, canonicalized, or `None` when `path`
@@ -1283,9 +1297,26 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
         let reg = registry_for(&map, "my-queue");
         let off = env(&[("SPIRA_PUBLISH_REMOTE_MY_QUEUE", "none")]);
         assert_eq!(publish_forge(&reg, "my-queue", &off), None);
-        assert!(publishes_nowhere("my-queue", &off));
-        assert!(!publishes_nowhere("my-queue", &env(&[])));
-        assert!(!publishes_nowhere("other", &off), "the declaration is per repository");
+        assert!(publishes_nowhere(&reg, "my-queue", &off));
+        assert!(!publishes_nowhere(&reg, "my-queue", &env(&[])));
+        assert!(!publishes_nowhere(&reg, "other", &off), "the declaration is per repository");
+    }
+
+    #[test]
+    fn publish_declared_in_the_registry_needs_no_env_var() {
+        let dir = testkit::TempDir::new("spira-config-repos-publish-registry");
+        let repo = dir.join("repo");
+        init_repo(&repo, "trunk");
+        run_git(&repo, &["branch", "-q", "local/trunk"]);
+        let map = format!("my-queue | {} | push | local/trunk |  | \n", repo.display());
+        let doc = crate::set_path(&crate::SpiraToml::default(), "publish.my-queue.remote", "none").unwrap();
+        let reg = registry_for(&map, "my-queue").with_publish(doc.publish.clone());
+        assert!(publishes_nowhere(&reg, "my-queue", &env(&[])));
+        assert_eq!(publish_forge(&reg, "my-queue", &env(&[])), None);
+        assert!(!publishes_nowhere(&reg, "other", &env(&[])));
+        let doc = crate::set_path(&doc, "publish.my-queue.remote", "upstream").unwrap();
+        let reg = registry_for(&map, "my-queue").with_publish(doc.publish);
+        assert_eq!(publish_forge(&reg, "my-queue", &env(&[])), Some(("upstream".to_string(), "trunk".to_string())));
     }
 
     #[test]
