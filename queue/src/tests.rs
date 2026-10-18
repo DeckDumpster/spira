@@ -47,10 +47,18 @@ struct FGit {
 
 impl FGit {
     fn stat(&self, a: &str, b: &str, files: &[(&str, u32, u32)]) {
-        self.stats.borrow_mut().insert((a.into(), b.into()), files.iter().map(|(p, x, y)| (p.to_string(), *x, *y)).collect());
+        self.stats.borrow_mut().insert(
+            (a.into(), b.into()),
+            files
+                .iter()
+                .map(|(p, x, y)| (p.to_string(), *x, *y))
+                .collect(),
+        );
     }
     fn file(&self, rev: &str, path: &str, text: &str) {
-        self.files.borrow_mut().insert(format!("{rev}:{path}"), text.into());
+        self.files
+            .borrow_mut()
+            .insert(format!("{rev}:{path}"), text.into());
     }
     fn set(&self, r: &str, sha: &str) {
         self.refs.borrow_mut().insert(r.into(), sha.into());
@@ -83,10 +91,14 @@ impl Git for FGit {
     }
     fn merge_base(&self, _: &Path, a: &str, b: &str) -> Option<String> {
         let m = self.bases.borrow();
-        m.get(&(a.to_string(), b.to_string())).or_else(|| m.get(&(b.to_string(), a.to_string()))).cloned()
+        m.get(&(a.to_string(), b.to_string()))
+            .or_else(|| m.get(&(b.to_string(), a.to_string())))
+            .cloned()
     }
     fn update_ref(&self, _: &Path, r: &str, new: &str, old: Option<&str>) -> bool {
-        self.calls.borrow_mut().push(format!("update-ref {r} {new} {}", old.unwrap_or("-")));
+        self.calls
+            .borrow_mut()
+            .push(format!("update-ref {r} {new} {}", old.unwrap_or("-")));
         if let Some(o) = old {
             if self.get(r).as_deref() != Some(o) {
                 return false;
@@ -102,7 +114,9 @@ impl Git for FGit {
         self.current.borrow().clone()
     }
     fn fetch(&self, _: &Path, remote: &str, branch: &str) -> bool {
-        self.calls.borrow_mut().push(format!("fetch {remote} {branch}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("fetch {remote} {branch}"));
         self.fetch_ok.get()
     }
     fn log_range(&self, _: &Path, range: &str) -> Result<Vec<RangeCommit>, String> {
@@ -113,7 +127,12 @@ impl Git for FGit {
         self.commits.borrow().contains(sha)
     }
     fn numstat(&self, _: &Path, a: &str, b: &str) -> Result<Vec<(String, u32, u32)>, String> {
-        Ok(self.stats.borrow().get(&(a.to_string(), b.to_string())).cloned().unwrap_or_default())
+        Ok(self
+            .stats
+            .borrow()
+            .get(&(a.to_string(), b.to_string()))
+            .cloned()
+            .unwrap_or_default())
     }
     fn path_exists(&self, _: &Path, rev: &str, path: &str) -> bool {
         self.files.borrow().contains_key(&format!("{rev}:{path}"))
@@ -130,37 +149,69 @@ impl Git for FGit {
     }
     fn branch_delete(&self, _: &Path, name: &str) -> bool {
         self.calls.borrow_mut().push(format!("branch -D {name}"));
-        self.refs.borrow_mut().remove(&format!("refs/heads/{name}")).is_some()
+        self.refs
+            .borrow_mut()
+            .remove(&format!("refs/heads/{name}"))
+            .is_some()
     }
     fn branch_delete_sanctioned(&self, _: &Path, name: &str) -> bool {
-        self.calls.borrow_mut().push(format!("branch -D sanctioned {name}"));
-        self.refs.borrow_mut().remove(&format!("refs/heads/{name}")).is_some()
+        self.calls
+            .borrow_mut()
+            .push(format!("branch -D sanctioned {name}"));
+        self.refs
+            .borrow_mut()
+            .remove(&format!("refs/heads/{name}"))
+            .is_some()
     }
     fn branches(&self, _: &Path, _prefix: &str) -> Vec<(String, String)> {
         self.branches.borrow().clone()
     }
     fn worktree_prune(&self, _: &Path) {}
     fn worktree_add_detached(&self, _: &Path, p: &Path, sha: &str) -> bool {
-        self.refs.borrow_mut().insert(format!("{}:HEAD", p.display()), sha.into());
+        self.refs
+            .borrow_mut()
+            .insert(format!("{}:HEAD", p.display()), sha.into());
         *self.cut_on.borrow_mut() = sha.into();
         true
     }
     fn worktree_remove(&self, _: &Path, _: &Path) {}
-    fn merge_no_ff(&self, wt: &Path, msg: &str, tip: &str, _git_name: &str, _git_email: &str) -> bool {
+    fn merge_no_ff(
+        &self,
+        wt: &Path,
+        msg: &str,
+        tip: &str,
+        _git_name: &str,
+        _git_email: &str,
+    ) -> bool {
         self.calls.borrow_mut().push(format!("merge {tip} {msg}"));
         if self.merge_fail.borrow().contains(tip) {
             return false;
         }
         let base = self.cut_on.borrow().clone();
-        let head = if self.heads_name_their_base.get() && base != "b0" { format!("merged-{tip}@{base}") } else { format!("merged-{tip}") };
+        let head = if self.heads_name_their_base.get() && base != "b0" {
+            format!("merged-{tip}@{base}")
+        } else {
+            format!("merged-{tip}")
+        };
         self.anc.borrow_mut().insert((base, head.clone()));
         self.refs.borrow_mut().insert("HEAD".into(), head);
         let _ = wt;
         true
     }
     fn merge_abort(&self, _: &Path) {}
-    fn rebase_onto(&self, _: &Path, _: &Path, tip: &str, _: &str, onto: &str, _: &str, _: &str) -> Result<String, Vec<String>> {
-        self.calls.borrow_mut().push(format!("rebase-onto {tip} {onto}"));
+    fn rebase_onto(
+        &self,
+        _: &Path,
+        _: &Path,
+        tip: &str,
+        _: &str,
+        onto: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<String, Vec<String>> {
+        self.calls
+            .borrow_mut()
+            .push(format!("rebase-onto {tip} {onto}"));
         match self.rebase_fail.borrow().get(tip) {
             Some(paths) => Err(paths.clone()),
             None => Ok(format!("rebased-{tip}")),
@@ -182,7 +233,13 @@ impl Bd for FBd {
         if self.fail.get() {
             return Err("bd down".into());
         }
-        Ok(self.rows.borrow().iter().filter(|r| ids.contains(&r.id)).cloned().collect())
+        Ok(self
+            .rows
+            .borrow()
+            .iter()
+            .filter(|r| ids.contains(&r.id))
+            .cloned()
+            .collect())
     }
 }
 
@@ -245,15 +302,32 @@ impl Lib for FLib {
     }
     /// Logged as `bead_close <id> <sha>`, the sha read back out of the reason it carries.
     fn bead_close(&self, id: &str, reason: &str) -> bool {
-        let sha = reason.split("landed at ").nth(1).and_then(|r| r.split_whitespace().next()).unwrap_or("?");
+        let sha = reason
+            .split("landed at ")
+            .nth(1)
+            .and_then(|r| r.split_whitespace().next())
+            .unwrap_or("?");
         self.log(format!("bead_close {id} {sha}"));
         !self.close_fail.get()
     }
     fn bead_retire(&self, id: &str, reason: &str) -> Result<(), String> {
-        self.log(format!("bead_close {id} {}", reason.split_whitespace().next().unwrap_or("?")));
-        if self.close_fail.get() { Err("refused".into()) } else { Ok(()) }
+        self.log(format!(
+            "bead_close {id} {}",
+            reason.split_whitespace().next().unwrap_or("?")
+        ));
+        if self.close_fail.get() {
+            Err("refused".into())
+        } else {
+            Ok(())
+        }
     }
-    fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String> {
+    fn reap_landed_branch(
+        &self,
+        id: &str,
+        repo: &str,
+        branch: &str,
+        why: &str,
+    ) -> Result<bool, String> {
         self.log(format!("reap {id} {repo} {branch} {why}"));
         Ok(true)
     }
@@ -269,7 +343,15 @@ impl Lib for FLib {
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.log(format!("event {kind} {title} {detail}"));
     }
-    fn divergence(&self, _mailbox: &str, _: &Path, _: &str, _: &Path, forge: &str, local: &str) -> Divergence {
+    fn divergence(
+        &self,
+        _mailbox: &str,
+        _: &Path,
+        _: &str,
+        _: &Path,
+        forge: &str,
+        local: &str,
+    ) -> Divergence {
         self.log(format!("divergence {forge} {local}"));
         if self.cannot_check.get() {
             Divergence::CannotCheck("no queue dir".into())
@@ -290,12 +372,21 @@ impl Lib for FLib {
     fn land_subject(&self, id: &str) -> String {
         format!("spira: land {id}")
     }
-    fn sort_rows(&self, _express: &HashSet<String>, _: &Path, _: &str, prio: &str, rows: &str) -> Vec<(String, String)> {
+    fn sort_rows(
+        &self,
+        _express: &HashSet<String>,
+        _: &Path,
+        _: &str,
+        prio: &str,
+        rows: &str,
+    ) -> Vec<(String, String)> {
         self.log(format!("sort_rows {prio}"));
-        rows.lines().filter_map(|l| {
-            let mut it = l.split_whitespace();
-            Some((it.next()?.to_string(), it.next()?.to_string()))
-        }).collect()
+        rows.lines()
+            .filter_map(|l| {
+                let mut it = l.split_whitespace();
+                Some((it.next()?.to_string(), it.next()?.to_string()))
+            })
+            .collect()
     }
     fn cancel_runs(&self, _: &Path, _: &Path, br: &str) {
         self.log(format!("cancel_runs {br}"));
@@ -310,8 +401,17 @@ impl Lib for FLib {
         self.log(format!("pf_gate {br} {wall}"));
         (self.pf_rc.get(), "pf output".into())
     }
-    fn create_bug(&self, actor: &str, title: &str, prio: &str, labels: &str, body: &str) -> Option<String> {
-        self.log(format!("create_bug {actor} {prio} {labels} {title}\n{body}"));
+    fn create_bug(
+        &self,
+        actor: &str,
+        title: &str,
+        prio: &str,
+        labels: &str,
+        body: &str,
+    ) -> Option<String> {
+        self.log(format!(
+            "create_bug {actor} {prio} {labels} {title}\n{body}"
+        ));
         self.bug_id.borrow().clone()
     }
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool {
@@ -362,14 +462,21 @@ struct FScripts {
 
 impl Scripts for FScripts {
     fn lint(&self, tip: &str, _: &Path, verify: bool) -> (i32, String) {
-        self.calls.borrow_mut().push(format!("lint {tip} verify={verify}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("lint {tip} verify={verify}"));
         match self.lint_red.borrow().get(tip) {
-            Some(first) => (1, format!("refused: {tip} failed its compile-and-lint check at {first}")),
+            Some(first) => (
+                1,
+                format!("refused: {tip} failed its compile-and-lint check at {first}"),
+            ),
             None => (0, String::new()),
         }
     }
     fn suite_run(&self, check: &str, tip: &str, repo: &str) -> (i32, String) {
-        self.calls.borrow_mut().push(format!("suite_run {check} {tip} {repo}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("suite_run {check} {tip} {repo}"));
         if self.suite_red.borrow().iter().any(|c| c == check) {
             (1, format!("{check}: 2 failed"))
         } else {
@@ -377,21 +484,41 @@ impl Scripts for FScripts {
         }
     }
     fn gate(&self, br: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
-        self.calls.borrow_mut().push(format!("gate {br} {repo} bead={bead} suites={suites}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("gate {br} {repo} bead={bead} suites={suites}"));
         (self.gate_rc.get(), "gate says".into())
     }
-    fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut {
-        self.calls.borrow_mut().push(format!("judgement-ci {} {repo} {suites} {members} {evidence} home={}", bin.display(), s.home.display()));
+    fn judgement_ci(
+        &self,
+        bin: &Path,
+        s: &Settings,
+        repo: &str,
+        suites: &str,
+        members: &str,
+        evidence: &str,
+    ) -> RunOut {
+        self.calls.borrow_mut().push(format!(
+            "judgement-ci {} {repo} {suites} {members} {evidence} home={}",
+            bin.display(),
+            s.home.display()
+        ));
         self.judgement.borrow().clone()
     }
     fn observe_flake(&self, suite: &str, sha: &str) {
-        self.calls.borrow_mut().push(format!("observe-flake {suite} {sha}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("observe-flake {suite} {sha}"));
     }
     fn mail_operator(&self, subject: &str, body: &str) {
-        self.calls.borrow_mut().push(format!("mail-operator {subject}\n{body}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("mail-operator {subject}\n{body}"));
     }
     fn batcher_cut(&self, _: &Path, repo: &str, wz: bool) -> i32 {
-        self.calls.borrow_mut().push(format!("cut {repo} wait0={wz}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("cut {repo} wait0={wz}"));
         0
     }
     fn path_attribution(&self, _: &Path, _: &str, _: &str, _: &Path) -> String {
@@ -409,34 +536,62 @@ impl Scripts for FScripts {
         self.pass_alive.get()
     }
     fn pass_restart(&self, batch: &str, repo: &str) -> bool {
-        self.calls.borrow_mut().push(format!("restart {batch} {repo}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("restart {batch} {repo}"));
         !self.restart_fails.get()
     }
     fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
         ids.iter()
             .map(|id| {
-                self.calls.borrow_mut().push(format!("rebase-stale {id} {repo}"));
-                (id.clone(), self.rebase.borrow().get(id).cloned().unwrap_or_default())
+                self.calls
+                    .borrow_mut()
+                    .push(format!("rebase-stale {id} {repo}"));
+                (
+                    id.clone(),
+                    self.rebase.borrow().get(id).cloned().unwrap_or_default(),
+                )
             })
             .collect()
     }
     fn boundary_sync(&self, tree: &Path) -> RunOut {
-        self.calls.borrow_mut().push(format!("boundary-sync {}", tree.display()));
+        self.calls
+            .borrow_mut()
+            .push(format!("boundary-sync {}", tree.display()));
         RunOut::default()
     }
     fn rebase_waiting_start(&self, repo: &str) -> bool {
-        self.calls.borrow_mut().push(format!("rebase-waiting-start {repo}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("rebase-waiting-start {repo}"));
         true
     }
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
-        self.calls.borrow_mut().push(format!("round-vm {} base={base} round={}/{} wall={wall_secs}", tree.display(), round.0, round.1));
+    fn round_vm(
+        &self,
+        tree: &Path,
+        results: &Path,
+        base: &str,
+        round: (&str, &str),
+        wall_secs: u64,
+        handle: &Path,
+    ) -> RunOut {
+        self.calls.borrow_mut().push(format!(
+            "round-vm {} base={base} round={}/{} wall={wall_secs}",
+            tree.display(),
+            round.0,
+            round.1
+        ));
         fs::write(handle, "777").unwrap();
         if self.preempted_during_vm.get() {
             fs::write(handle.with_extension("preempt"), "why").unwrap();
         }
         fs::create_dir_all(results).unwrap();
         for (suite, status) in self.round_vm_results.borrow().iter() {
-            fs::write(results.join(format!("{suite}.result")), format!("{status}\n")).unwrap();
+            fs::write(
+                results.join(format!("{suite}.result")),
+                format!("{status}\n"),
+            )
+            .unwrap();
         }
         if !self.round_vm_meta.borrow().is_empty() {
             fs::write(results.join("runner.meta"), &*self.round_vm_meta.borrow()).unwrap();
@@ -444,24 +599,54 @@ impl Scripts for FScripts {
         self.round_vm.borrow().clone()
     }
     fn repo_testenv(&self, head: &str, repo: &str, wall_secs: u64, handle: &Path) -> RunOut {
-        self.calls.borrow_mut().push(format!("repo-testenv {head} {repo} wall={wall_secs}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("repo-testenv {head} {repo} wall={wall_secs}"));
         fs::write(handle, "777").unwrap();
         self.repo_testenv.borrow().clone()
     }
     fn unit_active_state(&self, unit: &str) -> String {
         self.unit_asked.borrow_mut().push(unit.to_string());
         let mut q = self.unit_states.borrow_mut();
-        if q.len() > 1 { q.pop_front().unwrap() } else { q.front().cloned().unwrap_or_else(|| "active".into()) }
+        if q.len() > 1 {
+            q.pop_front().unwrap()
+        } else {
+            q.front().cloned().unwrap_or_else(|| "active".into())
+        }
     }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
-        self.release_calls.borrow_mut().push((bin.display().to_string(), args.join(" "), db.to_string()));
+        self.release_calls.borrow_mut().push((
+            bin.display().to_string(),
+            args.join(" "),
+            db.to_string(),
+        ));
         self.calls.borrow_mut().push(format!("release {}", args[0]));
         if args[0] == "activate" {
             self.activated.set(true);
         }
-        let seq = if args[0] == "activate" { self.activate_seq.borrow_mut().pop_front() } else { None };
-        let (rc, err) = seq.unwrap_or_else(|| self.release_rc.borrow().get(&args[0]).cloned().unwrap_or((0, String::new())));
-        let out = if args[0] == "build" && rc == 0 { format!("{}\n", self.build_answers.borrow().clone().unwrap_or_else(|| args[1].clone())) } else { String::new() };
+        let seq = if args[0] == "activate" {
+            self.activate_seq.borrow_mut().pop_front()
+        } else {
+            None
+        };
+        let (rc, err) = seq.unwrap_or_else(|| {
+            self.release_rc
+                .borrow()
+                .get(&args[0])
+                .cloned()
+                .unwrap_or((0, String::new()))
+        });
+        let out = if args[0] == "build" && rc == 0 {
+            format!(
+                "{}\n",
+                self.build_answers
+                    .borrow()
+                    .clone()
+                    .unwrap_or_else(|| args[1].clone())
+            )
+        } else {
+            String::new()
+        };
         RunOut { rc, out, err }
     }
 }
@@ -491,13 +676,26 @@ struct FForge {
 }
 
 impl Forge for FForge {
-    fn pr_create(&self, _: &Path, _: &Path, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
-        self.calls.borrow_mut().push(format!("pr-create {head} {base} {title}\n{body}"));
+    fn pr_create(
+        &self,
+        _: &Path,
+        _: &Path,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<String, String> {
+        self.calls
+            .borrow_mut()
+            .push(format!("pr-create {head} {base} {title}\n{body}"));
         if let Some((n, e)) = self.create_then_err.borrow().clone() {
             self.queue_prs.borrow_mut().push((n, head.to_string()));
             return Err(e);
         }
-        self.pr.borrow().clone().ok_or_else(|| "rc=1: stub".to_string())
+        self.pr
+            .borrow()
+            .clone()
+            .ok_or_else(|| "rc=1: stub".to_string())
     }
     fn pr_automerge(&self, _: &Path, _: &Path, pr: &str) -> bool {
         self.calls.borrow_mut().push(format!("pr-automerge {pr}"));
@@ -513,7 +711,9 @@ impl Forge for FForge {
         Some(self.publish_prs.borrow().clone())
     }
     fn pr_comment(&self, _: &Path, _: &Path, pr: &str, line: &str) {
-        self.calls.borrow_mut().push(format!("pr-comment {pr} {line}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("pr-comment {pr} {line}"));
     }
     fn branch_protect(&self, _: &Path, _: &Path, b: &str) -> bool {
         self.calls.borrow_mut().push(format!("protect {b}"));
@@ -521,14 +721,23 @@ impl Forge for FForge {
     }
     fn pr_state(&self, _: &Path, _: &Path, pr: &str) -> Option<String> {
         self.calls.borrow_mut().push(format!("pr-state {pr}"));
-        Some(self.pr_state.borrow().clone().unwrap_or_else(|| "open".into()))
+        Some(
+            self.pr_state
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| "open".into()),
+        )
     }
     fn pr_merge_commit(&self, _: &Path, _: &Path, pr: &str) -> Option<String> {
-        self.calls.borrow_mut().push(format!("pr-merge-commit {pr}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("pr-merge-commit {pr}"));
         self.merge_commit.borrow().clone()
     }
     fn check_status(&self, _: &Path, _: &Path, pr: &str, branch: &str) -> Option<String> {
-        self.calls.borrow_mut().push(format!("check-status {pr} {branch}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("check-status {pr} {branch}"));
         let mut q = self.status.borrow_mut();
         if q.is_empty() {
             Some("pending\n".into())
@@ -545,14 +754,18 @@ impl Forge for FForge {
         self.meta.borrow().clone()
     }
     fn fail_lines(&self, _: &Path, _: &Path, run: &str, suites: &str) -> String {
-        self.calls.borrow_mut().push(format!("fail-lines {run} {suites}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("fail-lines {run} {suites}"));
         self.fails.borrow().clone()
     }
     fn run_cancel(&self, _: &Path, _: &Path, run: &str) {
         self.calls.borrow_mut().push(format!("run-cancel {run}"));
     }
     fn workflow_rerun(&self, _: &Path, _: &Path, run: &str) {
-        self.calls.borrow_mut().push(format!("workflow-rerun {run}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("workflow-rerun {run}"));
     }
 }
 
@@ -599,7 +812,33 @@ struct FLc {
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { churn: RefCell::default(), available: Cell::new(false), bead_rows: RefCell::default(), rows: RefCell::new(Ok(Vec::new())), certify_refused: Cell::new(false), land_refused: Cell::new(None), promote_refused: Cell::new(None), cut_refused: Cell::new(None), cut_refuses_member: Cell::new(None), deadline_after_write: Cell::new(None), down_for: Cell::new(0), no_batch_row: Cell::new(false), activated: Default::default(), batch_states: RefCell::default(), eject_refused: Cell::new(false), event_refused: Cell::new(None), batch_event_refused: Cell::new(None), batch_event_times_out: Cell::new(None), event_ignored: Cell::new(false), event_races: RefCell::default(), row_fails: Cell::new(false), batch_view: RefCell::default(), mend_tips: RefCell::default(), mend_refused: RefCell::default(), calls: RefCell::default() }
+        FLc {
+            churn: RefCell::default(),
+            available: Cell::new(false),
+            bead_rows: RefCell::default(),
+            rows: RefCell::new(Ok(Vec::new())),
+            certify_refused: Cell::new(false),
+            land_refused: Cell::new(None),
+            promote_refused: Cell::new(None),
+            cut_refused: Cell::new(None),
+            cut_refuses_member: Cell::new(None),
+            deadline_after_write: Cell::new(None),
+            down_for: Cell::new(0),
+            no_batch_row: Cell::new(false),
+            activated: Default::default(),
+            batch_states: RefCell::default(),
+            eject_refused: Cell::new(false),
+            event_refused: Cell::new(None),
+            batch_event_refused: Cell::new(None),
+            batch_event_times_out: Cell::new(None),
+            event_ignored: Cell::new(false),
+            event_races: RefCell::default(),
+            row_fails: Cell::new(false),
+            batch_view: RefCell::default(),
+            mend_tips: RefCell::default(),
+            mend_refused: RefCell::default(),
+            calls: RefCell::default(),
+        }
     }
 }
 
@@ -647,48 +886,99 @@ impl Lc for FLc {
         }
     }
     fn churn_facts(&self, _: i64) -> Result<String, String> {
-        self.churn.borrow().clone().ok_or_else(|| "no lifecycle".to_string())
+        self.churn
+            .borrow()
+            .clone()
+            .ok_or_else(|| "no lifecycle".to_string())
     }
     fn create_bead(&self, id: &str) {
         self.calls.borrow_mut().push(format!("create-bead {id}"));
     }
-    fn cut(&self, id: &str, _: &str, _: &str, _: &str, members: &str, _: &str) -> Result<String, (i32, String)> {
+    fn cut(
+        &self,
+        id: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        members: &str,
+        _: &str,
+    ) -> Result<String, (i32, String)> {
         self.calls.borrow_mut().push(format!("cut {id} {members}"));
         if let Some(why) = self.cut_refused.get() {
             return Err((3, why.into()));
         }
-        if let Some(bad) = self.cut_refuses_member.get().filter(|b| members.split(',').any(|m| m.split(':').next() == Some(*b))) {
+        if let Some(bad) = self
+            .cut_refuses_member
+            .get()
+            .filter(|b| members.split(',').any(|m| m.split(':').next() == Some(*b)))
+        {
             return Err((2, format!("cut: Deliver refused unexpectedly for {bad}: Some(EjectedRedTip {{ tip: \"x\" }})")));
         }
-        self.batch_view.borrow_mut().get_or_insert(("OPEN".into(), 1, 0, String::new()));
+        self.batch_view
+            .borrow_mut()
+            .get_or_insert(("OPEN".into(), 1, 0, String::new()));
         if self.deadline_after_write.get() == Some("cut") {
             self.deadline_after_write.set(None);
             return Err((2, "cannot tell: deadline".into()));
         }
         Ok("1".into())
     }
-    fn stage(&self, id: &str, _: &str, head: &str, base: &str, members: &str, parent: &str, _: &str) -> Result<String, (i32, String)> {
-        self.calls.borrow_mut().push(format!("stage {id} {head} {base} {members} behind {parent}"));
+    fn stage(
+        &self,
+        id: &str,
+        _: &str,
+        head: &str,
+        base: &str,
+        members: &str,
+        parent: &str,
+        _: &str,
+    ) -> Result<String, (i32, String)> {
+        self.calls.borrow_mut().push(format!(
+            "stage {id} {head} {base} {members} behind {parent}"
+        ));
         Ok("0".into())
     }
     fn promote(&self, id: &str, head: &str, base: &str, _: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("promote {id} {head} {base}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("promote {id} {head} {base}"));
         match self.promote_refused.get() {
             Some(why) => Err((3, why.into())),
             None => Ok(()),
         }
     }
-    fn abandon_batch(&self, id: &str, s: &str, v: &str, _: &str, r: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("abandon-batch {id} {s} {v} {r}"));
+    fn abandon_batch(
+        &self,
+        id: &str,
+        s: &str,
+        v: &str,
+        _: &str,
+        r: &str,
+    ) -> Result<(), (i32, String)> {
+        self.calls
+            .borrow_mut()
+            .push(format!("abandon-batch {id} {s} {v} {r}"));
         if self.deadline_after_write.get() == Some("abandon-batch") {
             self.deadline_after_write.set(None);
-            self.batch_states.borrow_mut().insert(id.into(), ("ABANDONED".into(), "9".into()));
+            self.batch_states
+                .borrow_mut()
+                .insert(id.into(), ("ABANDONED".into(), "9".into()));
             return Err((2, "cannot tell: deadline".into()));
         }
         Ok(())
     }
-    fn eject_member(&self, id: &str, bead: &str, s: &str, v: &str, _: &str, r: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("eject-member {id} {bead} {s} {v} {r}"));
+    fn eject_member(
+        &self,
+        id: &str,
+        bead: &str,
+        s: &str,
+        v: &str,
+        _: &str,
+        r: &str,
+    ) -> Result<(), (i32, String)> {
+        self.calls
+            .borrow_mut()
+            .push(format!("eject-member {id} {bead} {s} {v} {r}"));
         if self.deadline_after_write.get() == Some("eject-member") {
             self.deadline_after_write.set(None);
             return Err((2, "cannot tell: deadline".into()));
@@ -698,14 +988,37 @@ impl Lc for FLc {
         }
         Ok(())
     }
-    fn batch_event(&self, id: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("event batch {id} {s} {v} {kind}"));
-        if self.batch_event_refused.get().is_some_and(|k| kind.contains(k)) {
+    fn batch_event(
+        &self,
+        id: &str,
+        s: &str,
+        v: &str,
+        _: &str,
+        kind: &str,
+    ) -> Result<(), (i32, String)> {
+        self.calls
+            .borrow_mut()
+            .push(format!("event batch {id} {s} {v} {kind}"));
+        if self
+            .batch_event_refused
+            .get()
+            .is_some_and(|k| kind.contains(k))
+        {
             return Err((1, "refused: IllegalTransition".into()));
         }
         if let Some(view) = self.batch_view.borrow_mut().as_mut() {
-            let n: u32 = kind.split("\"n\":").nth(1).and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next()).and_then(|d| d.parse().ok()).unwrap_or(view.2);
-            let (state, pass, phase) = match kind.trim_start_matches("{\"").split('"').next().unwrap_or("") {
+            let n: u32 = kind
+                .split("\"n\":")
+                .nth(1)
+                .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|d| d.parse().ok())
+                .unwrap_or(view.2);
+            let (state, pass, phase) = match kind
+                .trim_start_matches("{\"")
+                .split('"')
+                .next()
+                .unwrap_or("")
+            {
                 "PassStarted" => ("CI_RUNNING", n, "build"),
                 "SuitesStarted" => ("CI_RUNNING", view.2, "suites"),
                 "PassGreen" => ("GREEN", view.2, ""),
@@ -716,26 +1029,49 @@ impl Lc for FLc {
             };
             *view = (state.to_string(), view.1 + 1, pass, phase.to_string());
         }
-        if self.batch_event_times_out.get().is_some_and(|k| kind.contains(k)) {
+        if self
+            .batch_event_times_out
+            .get()
+            .is_some_and(|k| kind.contains(k))
+        {
             return Err((2, "cannot tell: deadline".into()));
         }
         Ok(())
     }
     fn bead_state(&self, bead: &str) -> Option<(String, String)> {
         self.calls.borrow_mut().push(format!("show {bead}"));
-        Some(self.bead_rows.borrow().get(bead).cloned().unwrap_or(("CERTIFIED".into(), "3".into())))
+        Some(
+            self.bead_rows
+                .borrow()
+                .get(bead)
+                .cloned()
+                .unwrap_or(("CERTIFIED".into(), "3".into())),
+        )
     }
-    fn bead_event(&self, bead: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("event bead {bead} {s} {v} {kind}"));
+    fn bead_event(
+        &self,
+        bead: &str,
+        s: &str,
+        v: &str,
+        _: &str,
+        kind: &str,
+    ) -> Result<(), (i32, String)> {
+        self.calls
+            .borrow_mut()
+            .push(format!("event bead {bead} {s} {v} {kind}"));
         if let Some((state, version)) = self.event_races.borrow_mut().take() {
-            self.bead_rows.borrow_mut().insert(bead.into(), (state, version));
+            self.bead_rows
+                .borrow_mut()
+                .insert(bead.into(), (state, version));
             return Err((1, "stale version".into()));
         }
         match self.event_refused.get() {
             Some(why) => Err((1, why.into())),
             None => {
                 if kind.contains("\"GateRed\"") && !self.event_ignored.get() {
-                    self.bead_rows.borrow_mut().insert(bead.into(), ("REWORK".into(), "4".into()));
+                    self.bead_rows
+                        .borrow_mut()
+                        .insert(bead.into(), ("REWORK".into(), "4".into()));
                 }
                 Ok(())
             }
@@ -749,8 +1085,14 @@ impl Lc for FLc {
         }
     }
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String> {
-        self.calls.borrow_mut().push(format!("list {}", state.unwrap_or("")));
-        self.rows.borrow().clone().map(|r| r.into_iter().filter(|b| state.is_none_or(|s| b.state == s)).collect())
+        self.calls
+            .borrow_mut()
+            .push(format!("list {}", state.unwrap_or("")));
+        self.rows.borrow().clone().map(|r| {
+            r.into_iter()
+                .filter(|b| state.is_none_or(|s| b.state == s))
+                .collect()
+        })
     }
     fn express_ids(&self) -> Result<Vec<String>, String> {
         self.calls.borrow_mut().push("list --express".into());
@@ -761,14 +1103,39 @@ impl Lc for FLc {
         if self.row_fails.get() {
             return None;
         }
-        self.rows.borrow().clone().ok()?.into_iter().find(|b| b.bead_id == bead)
+        self.rows
+            .borrow()
+            .clone()
+            .ok()?
+            .into_iter()
+            .find(|b| b.bead_id == bead)
     }
-    fn mending_event(&self, id: &str, pass: u32, suite: &str, kind: &str, _: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("mending-event {id} {pass} {suite} {kind}"));
+    fn mending_event(
+        &self,
+        id: &str,
+        pass: u32,
+        suite: &str,
+        kind: &str,
+        _: &str,
+    ) -> Result<(), (i32, String)> {
+        self.calls
+            .borrow_mut()
+            .push(format!("mending-event {id} {pass} {suite} {kind}"));
         Ok(())
     }
-    fn mend(&self, id: &str, pass: u32, suite: &str, members: &str, facts: &str, fences: &str, _: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("mend {id} {pass} {suite} {members} facts={facts} fences={fences}"));
+    fn mend(
+        &self,
+        id: &str,
+        pass: u32,
+        suite: &str,
+        members: &str,
+        facts: &str,
+        fences: &str,
+        _: &str,
+    ) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!(
+            "mend {id} {pass} {suite} {members} facts={facts} fences={fences}"
+        ));
         match self.mend_refused.borrow().clone() {
             Some(why) => Err((3, why)),
             None => Ok(()),
@@ -778,17 +1145,33 @@ impl Lc for FLc {
         Ok(self.mend_tips.borrow().clone())
     }
     fn certify(&self, bead: &str, tip: &str, _: &str, _: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("certify {bead} {tip}"));
+        self.calls
+            .borrow_mut()
+            .push(format!("certify {bead} {tip}"));
         if self.certify_refused.get() {
             return Err((3, "refused".into()));
         }
         Ok(())
     }
-    fn retip(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("retip {bead} {tip} {actor} [{reason}] [{evidence}] {evidence_tip}"));
+    fn retip(
+        &self,
+        bead: &str,
+        tip: &str,
+        actor: &str,
+        reason: &str,
+        evidence: &str,
+        evidence_tip: &str,
+    ) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!(
+            "retip {bead} {tip} {actor} [{reason}] [{evidence}] {evidence_tip}"
+        ));
         let mut rows = self.rows.borrow_mut();
-        let Ok(rows) = rows.as_mut() else { return Err((2, "cannot tell".into())) };
-        let Some(r) = rows.iter_mut().find(|r| r.bead_id == bead) else { return Err((1, "no row".into())) };
+        let Ok(rows) = rows.as_mut() else {
+            return Err((2, "cannot tell".into()));
+        };
+        let Some(r) = rows.iter_mut().find(|r| r.bead_id == bead) else {
+            return Err((1, "no row".into()));
+        };
         if r.state == "REWORK" && !r.holds.iter().any(|h| h == "manual") {
             return Err((3, "refused: NotManuallyHeld".into()));
         }
@@ -796,11 +1179,25 @@ impl Lc for FLc {
         r.tip = Some(tip.into());
         Ok(())
     }
-    fn absolve(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)> {
-        self.calls.borrow_mut().push(format!("absolve {bead} {tip} {actor} [{reason}] [{evidence}] {evidence_tip}"));
+    fn absolve(
+        &self,
+        bead: &str,
+        tip: &str,
+        actor: &str,
+        reason: &str,
+        evidence: &str,
+        evidence_tip: &str,
+    ) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!(
+            "absolve {bead} {tip} {actor} [{reason}] [{evidence}] {evidence_tip}"
+        ));
         let mut rows = self.rows.borrow_mut();
-        let Ok(rows) = rows.as_mut() else { return Err((2, "cannot tell".into())) };
-        let Some(r) = rows.iter_mut().find(|r| r.bead_id == bead) else { return Err((1, "no row".into())) };
+        let Ok(rows) = rows.as_mut() else {
+            return Err((2, "cannot tell".into()));
+        };
+        let Some(r) = rows.iter_mut().find(|r| r.bead_id == bead) else {
+            return Err((1, "no row".into()));
+        };
         if r.ejected_red_tip.as_deref() != Some(tip) {
             return Err((3, "refused: illegal".into()));
         }
@@ -824,14 +1221,18 @@ impl ConfigStore for FConfig {
         Ok(self.rows.borrow().get(name).cloned().unwrap_or_default())
     }
     fn set_repo_row(&self, _: &Path, name: &str, m: &str, b: &str) -> Result<(), String> {
-        self.rows.borrow_mut().insert(name.into(), (m.into(), b.into()));
+        self.rows
+            .borrow_mut()
+            .insert(name.into(), (m.into(), b.into()));
         Ok(())
     }
     fn set_legacy_map_row(&self, _: &Path, name: &str, l: &str, b: &str) -> Result<(), String> {
         if self.legacy_fail.get() {
             return Err("legacy map write failed".into());
         }
-        self.legacy.borrow_mut().insert(name.into(), (l.into(), b.into()));
+        self.legacy
+            .borrow_mut()
+            .insert(name.into(), (l.into(), b.into()));
         Ok(())
     }
 }
@@ -978,8 +1379,26 @@ impl T {
         *forge.pr.borrow_mut() = Some("77".into());
         let lc = FLc::default();
         lc.available.set(true);
-        let lc = FLc { activated: scripts.activated.clone(), ..lc };
-        T { _serial: serial, dir, git, bd: FBd::default(), lib, scripts, forge, lc, config: FConfig::default(), clock: FClock { now: Cell::new(1_000) }, env: FEnv::default(), io: Cap::default() }
+        let lc = FLc {
+            activated: scripts.activated.clone(),
+            ..lc
+        };
+        T {
+            _serial: serial,
+            dir,
+            git,
+            bd: FBd::default(),
+            lib,
+            scripts,
+            forge,
+            lc,
+            config: FConfig::default(),
+            clock: FClock {
+                now: Cell::new(1_000),
+            },
+            env: FEnv::default(),
+            io: Cap::default(),
+        }
     }
 
     fn run(&self, args: &[&str]) -> i32 {
@@ -1020,7 +1439,18 @@ impl T {
     }
     /// A spira-lc bead row entered at `since`.
     fn lc_row(&self, id: &str, state: &str, tip: &str, since: u64) {
-        let row = LcBeadRow { bead_id: id.into(), state: state.into(), tip: Some(tip.into()), since: Some(since), blocked_by: Vec::new(), reason: None, holds: Vec::new(), stack: Default::default(), ejected_red_tip: None, holder: None };
+        let row = LcBeadRow {
+            bead_id: id.into(),
+            state: state.into(),
+            tip: Some(tip.into()),
+            since: Some(since),
+            blocked_by: Vec::new(),
+            reason: None,
+            holds: Vec::new(),
+            stack: Default::default(),
+            ejected_red_tip: None,
+            holder: None,
+        };
         self.lc.rows.borrow_mut().as_mut().unwrap().push(row);
     }
     fn open_record(&self, text: &str) {
@@ -1040,14 +1470,15 @@ impl T {
     }
 }
 
-
 // ------------------------------------------------------------------------------ submit
 
 #[test]
 fn submit_queue_mode_refuses_a_branch_outside_spira() {
     let t = T::new(LandMode::QueueLocal);
     assert_eq!(t.run(&["submit", "feature/x"]), 1);
-    assert!(t.err().contains("queue mode requires a branch under spira/"));
+    assert!(t
+        .err()
+        .contains("queue mode requires a branch under spira/"));
     assert!(t.scripts.calls.borrow().is_empty());
 }
 
@@ -1057,12 +1488,24 @@ fn submit_queue_mode_refuses_a_branch_outside_spira() {
 fn submit_refuses_a_bead_less_suite_state_branch() {
     for mode in [LandMode::Queue, LandMode::QueueLocal] {
         let t = T::new(mode);
-        t.git.set("refs/heads/spira-suite-state/test-a-20260101T000000Z", "t1");
-        assert_eq!(t.run(&["submit", "spira-suite-state/test-a-20260101T000000Z"]), 1);
-        assert!(t.err().contains("queue mode requires a branch under spira/"), "{}", t.err());
+        t.git
+            .set("refs/heads/spira-suite-state/test-a-20260101T000000Z", "t1");
+        assert_eq!(
+            t.run(&["submit", "spira-suite-state/test-a-20260101T000000Z"]),
+            1
+        );
+        assert!(
+            t.err()
+                .contains("queue mode requires a branch under spira/"),
+            "{}",
+            t.err()
+        );
         assert!(t.scripts.calls.borrow().is_empty(), "no gate ran");
         assert!(!t.lc.has("certify"));
-        assert!(!t.s().queue_dir.join("spira-suite-state").exists(), "no queue record");
+        assert!(
+            !t.s().queue_dir.join("spira-suite-state").exists(),
+            "no queue record"
+        );
     }
 }
 
@@ -1072,21 +1515,32 @@ fn submit_red_gate_logs_caught_and_propagates_the_gate_code() {
     t.git.set("refs/heads/spira/sp-a", "t1");
     t.scripts.gate_rc.set(75);
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 75);
-    assert!(t.err().contains("queue.sh submit: spira/sp-a failed the gate (NO_VERDICT)"));
+    assert!(t
+        .err()
+        .contains("queue.sh submit: spira/sp-a failed the gate (NO_VERDICT)"));
     assert!(t.err().contains("gate says"));
     assert!(t.landing_log().contains("QUEUE CAUGHT 1000 branch=sp-a"));
     assert!(!t.lc.has("certify") && !t.lc.has("event"));
 }
 
-
 #[test]
 fn submit_of_a_tip_that_fails_its_lint_is_refused_naming_file_and_line_before_the_gate() {
     let t = T::new(LandMode::Queue);
     t.git.set("refs/heads/spira/sp-a", "t1");
-    t.scripts.lint_red.borrow_mut().insert("t1".into(), "src/binder.rs:222:9".into());
+    t.scripts
+        .lint_red
+        .borrow_mut()
+        .insert("t1".into(), "src/binder.rs:222:9".into());
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 1);
     assert!(t.err().contains("src/binder.rs:222:9"), "{}", t.err());
-    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("gate ")), "no gate ran");
+    assert!(
+        !t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("gate ")),
+        "no gate ran"
+    );
     assert!(!t.lc.has("certify"));
 
     t.scripts.lint_red.borrow_mut().clear();
@@ -1128,10 +1582,15 @@ fn submit_missing_branch_is_refused() {
 fn protect_writes_the_receipt_only_for_queue_forge() {
     let t = T::new(LandMode::QueueLocal);
     assert_eq!(t.run(&["protect"]), 1);
-    assert!(t.err().contains("repo is not in queue mode (mode=queue.local)"));
+    assert!(t
+        .err()
+        .contains("repo is not in queue mode (mode=queue.local)"));
     let t = T::new(LandMode::Queue);
     assert_eq!(t.run(&["protect"]), 0);
-    assert_eq!(fs::read_to_string(t.s().run.join("queue-protected-spira")).unwrap(), "main\n");
+    assert_eq!(
+        fs::read_to_string(t.s().run.join("queue-protected-spira")).unwrap(),
+        "main\n"
+    );
     assert_eq!(t.out().lines().count(), 5);
 }
 
@@ -1168,7 +1627,11 @@ fn step_queue_local_publishes_with_stderr_folded_into_stdout() {
     // the verdict runs in process (nothing to settle) and batch.sh's old sweep is retired
     // (sp-uwhx0) — with no batcher configured, the cut refuses before calling anything, so
     // no Scripts call happens at all.
-    assert!(t.scripts.calls.borrow().is_empty(), "{:?}", t.scripts.calls.borrow());
+    assert!(
+        t.scripts.calls.borrow().is_empty(),
+        "{:?}",
+        t.scripts.calls.borrow()
+    );
     // the missing batcher's refusal is on stderr (it is _batch_cut's own), the publish's on stdout
     assert!(t.err().contains("no batcher program"));
     assert!(t.out().contains("nothing to publish for spira"));
@@ -1190,7 +1653,11 @@ impl T {
             self.bd.rows.borrow_mut().push(BeadRow {
                 id: (*id).into(),
                 status: Some("open".into()),
-                labels: vec!["spira-submitted".into(), "repo:spira".into(), format!("branch:spira/{id}")], // literal-ok: fixture vocabulary
+                labels: vec![
+                    "spira-submitted".into(),
+                    "repo:spira".into(),
+                    format!("branch:spira/{id}"),
+                ], // literal-ok: fixture vocabulary
                 ..Default::default()
             });
         }
@@ -1218,7 +1685,13 @@ impl T {
     }
     /// The queue.forge repositories whose verdict ran (see `repo`).
     fn verdicts(&self) -> Vec<String> {
-        self.forge.calls.borrow().iter().filter_map(|c| c.strip_prefix("check-status ")).map(|c| format!("verdict {}", c.split(' ').next().unwrap_or(""))).collect()
+        self.forge
+            .calls
+            .borrow()
+            .iter()
+            .filter_map(|c| c.strip_prefix("check-status "))
+            .map(|c| format!("verdict {}", c.split(' ').next().unwrap_or("")))
+            .collect()
     }
 }
 
@@ -1226,10 +1699,26 @@ impl T {
 fn step_all_parses_and_refuses_a_repository_beside_it() {
     let p = |a: &[&str]| cli::parse(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
     assert_eq!(p(&["step", "--all"]), Ok(Cmd::StepAll));
-    assert_eq!(p(&["step", "spira"]), Ok(Cmd::Step { repo: "spira".into() }));
-    assert_eq!(p(&["step", "--all", "spira"]), Err(cli::Usage("queue.sh step: --all takes no repository".into())));
-    assert_eq!(p(&["step", "--bogus"]), Err(cli::Usage("queue.sh step: unknown option: --bogus".into())));
-    assert_eq!(p(&["step"]), Err(cli::Usage("queue.sh step: repo required".into())));
+    assert_eq!(
+        p(&["step", "spira"]),
+        Ok(Cmd::Step {
+            repo: "spira".into()
+        })
+    );
+    assert_eq!(
+        p(&["step", "--all", "spira"]),
+        Err(cli::Usage(
+            "queue.sh step: --all takes no repository".into()
+        ))
+    );
+    assert_eq!(
+        p(&["step", "--bogus"]),
+        Err(cli::Usage("queue.sh step: unknown option: --bogus".into()))
+    );
+    assert_eq!(
+        p(&["step"]),
+        Err(cli::Usage("queue.sh step: repo required".into()))
+    );
     assert!(cli::USAGE.contains("queue.sh step --all"));
 }
 
@@ -1240,20 +1729,37 @@ fn step_all_steps_every_queue_mode_repo_in_order_and_skips_the_rest() {
     t.repo("svc", LandMode::Queue);
     t.repo("pushy", LandMode::Push);
     t.repo("held", LandMode::Hold);
-    t.lib.by_name.borrow_mut().insert("broken".into(), Err("seam exited 1".into()));
-    *t.lib.repos.borrow_mut() = Ok(vec!["spira".into(), "pushy".into(), "broken".into(), "svc".into(), "held".into()]);
+    t.lib
+        .by_name
+        .borrow_mut()
+        .insert("broken".into(), Err("seam exited 1".into()));
+    *t.lib.repos.borrow_mut() = Ok(vec![
+        "spira".into(),
+        "pushy".into(),
+        "broken".into(),
+        "svc".into(),
+        "held".into(),
+    ]);
     t.git.set("refs/remotes/origin/main", "f0");
     t.git.set("refs/heads/local/main", "f0");
     assert_eq!(t.run(&["step", "--all"]), 0);
     // svc's open batch was judged (pending); spira (queue.local) had no publish record
     assert_eq!(t.verdicts(), vec!["verdict svc"]);
-    assert!(t.out().contains("verdict svc: PR svc pending (run age 0s)"), "{}", t.out());
+    assert!(
+        t.out().contains("verdict svc: PR svc pending (run age 0s)"),
+        "{}",
+        t.out()
+    );
     let out = t.out();
-    assert!(out.contains("queue.sh step --all: spira\n") && out.contains("queue.sh step --all: svc\n"));
+    assert!(
+        out.contains("queue.sh step --all: spira\n") && out.contains("queue.sh step --all: svc\n")
+    );
     assert!(!out.contains("step --all: pushy") && !out.contains("step --all: held"));
     // queue.local still publishes inside the step
     assert!(out.contains("nothing to publish for spira"));
-    assert!(t.err().contains("cannot resolve the harness configuration: seam exited 1"));
+    assert!(t
+        .err()
+        .contains("cannot resolve the harness configuration: seam exited 1"));
     assert!(out.ends_with("queue.sh step --all: stepped=2 busy=0 unresolved=1 stepped:spira,svc unresolved:broken\n"), "{out}");
 }
 
@@ -1277,7 +1783,9 @@ fn step_all_without_a_repository_list_is_a_failure_not_an_empty_pass() {
     let t = T::new(LandMode::Queue);
     *t.lib.repos.borrow_mut() = Err("lib.sh repos seam exited 1 with 0 name(s)".into());
     assert_eq!(t.run(&["step", "--all"]), 1);
-    assert!(t.err().contains("queue.sh step --all: cannot list repositories: lib.sh repos seam exited 1"));
+    assert!(t
+        .err()
+        .contains("queue.sh step --all: cannot list repositories: lib.sh repos seam exited 1"));
     assert!(t.verdicts().is_empty());
 }
 
@@ -1291,12 +1799,21 @@ fn step_all_skips_a_repo_another_stepper_holds_and_steps_the_others() {
     assert!(matches!(held, crate::lock::Acquire::Held(_)));
     assert_eq!(t.run(&["step", "--all"]), 0);
     assert_eq!(t.verdicts(), vec!["verdict spira"]);
-    assert!(t.err().contains("queue.sh step: another step holds the step lock for svc — skipped"));
-    assert!(t.out().ends_with("stepped=1 busy=1 unresolved=0 stepped:spira busy:svc\n"));
+    assert!(t
+        .err()
+        .contains("queue.sh step: another step holds the step lock for svc — skipped"));
+    assert!(t
+        .out()
+        .ends_with("stepped=1 busy=1 unresolved=0 stepped:spira busy:svc\n"));
     drop(held);
     t.forge.calls.borrow_mut().clear();
     assert_eq!(t.run(&["step", "--all"]), 0);
-    assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"], "{}", t.err());
+    assert_eq!(
+        t.verdicts(),
+        vec!["verdict spira", "verdict svc"],
+        "{}",
+        t.err()
+    );
 }
 
 #[test]
@@ -1305,10 +1822,10 @@ fn a_single_step_under_a_held_step_lock_is_skipped_with_status_zero() {
     let _held = crate::lock::try_step_lock(&t.lib.s.queue_dir, "spira");
     assert_eq!(t.run(&["step", "spira"]), 0);
     assert!(t.verdicts().is_empty());
-    assert!(t.err().contains("another step holds the step lock for spira — skipped"));
+    assert!(t
+        .err()
+        .contains("another step holds the step lock for spira — skipped"));
 }
-
-
 
 #[test]
 fn step_all_probes_spira_lc_and_refuses_loudly_when_unreachable() {
@@ -1317,13 +1834,22 @@ fn step_all_probes_spira_lc_and_refuses_loudly_when_unreachable() {
     *t.lib.repos.borrow_mut() = Ok(vec!["spira".into()]);
     assert_eq!(t.run(&["step", "--all"]), 0);
     assert!(t.lc.calls.borrow().contains(&"probe".to_string()));
-    for args in [&["step", "--all"][..], &["step", "spira"][..], &["flush"][..]] {
+    for args in [
+        &["step", "--all"][..],
+        &["step", "spira"][..],
+        &["flush"][..],
+    ] {
         let t = T::new(LandMode::Queue);
         *t.lc.rows.borrow_mut() = Err("dolt down".into());
         t.repo("spira", LandMode::Queue);
         *t.lib.repos.borrow_mut() = Ok(vec!["spira".into()]);
         assert_eq!(t.run(args), 1, "{args:?}");
-        assert!(t.err().contains("spira-lc is unreachable (dolt down) — refused, nothing changed"), "{}", t.err());
+        assert!(
+            t.err()
+                .contains("spira-lc is unreachable (dolt down) — refused, nothing changed"),
+            "{}",
+            t.err()
+        );
         assert!(t.scripts.calls.borrow().is_empty(), "{args:?} ran a child");
     }
 }
@@ -1337,7 +1863,12 @@ fn a_step_never_holds_the_queue_lock_verdict_and_batch_take() {
     assert!(matches!(_q, crate::lock::Acquire::Held(_)));
     assert_eq!(t.run(&["step", "spira"]), 0);
     // the verdict waited SPIRA_QUEUE_LOCK_WAIT for the lock, then skipped its turn
-    assert!(t.out().contains("verdict spira: another queue operation holds the lock"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("verdict spira: another queue operation holds the lock"),
+        "{}",
+        t.out()
+    );
     assert!(t.verdicts().is_empty());
     drop(_q);
     assert_eq!(t.run(&["step", "spira"]), 0);
@@ -1350,15 +1881,22 @@ fn open_batch_record(t: &T) {
     t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-b:tb\nopened=5\nbranch=spira/queue/x\nowner=batcher\n");
 }
 
-
 #[test]
 fn eject_with_a_locked_lifecycle_store_exits_nonzero_naming_the_lock() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
     t.lc.event_refused.set(Some("database is locked"));
     assert_eq!(t.run(&["eject", "sp-a"]), 1);
-    assert!(t.err().contains("database is locked") && t.err().contains("sp-a"), "{}", t.err());
-    assert!(!t.out().contains("ejected sp-a from spira batch"), "{}", t.out());
+    assert!(
+        t.err().contains("database is locked") && t.err().contains("sp-a"),
+        "{}",
+        t.err()
+    );
+    assert!(
+        !t.out().contains("ejected sp-a from spira batch"),
+        "{}",
+        t.out()
+    );
 }
 
 #[test]
@@ -1368,15 +1906,25 @@ fn eject_member_records_the_harness_cause_and_returns_it_to_rework_on_spira_lc()
     assert_eq!(t.run(&["eject", "sp-a", "--reason", "needs rebase"]), 0);
     assert!(t.lib.has("cause_event sp-a eject"));
     let calls = t.lc.calls.borrow().clone();
-    let d = calls.iter().position(|c| c == "event bead sp-a CERTIFIED 3 \"Deliver\"").unwrap_or_else(|| panic!("no Deliver: {calls:?}"));
-    let r = calls.iter().position(|c| c == "event bead sp-a IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}").unwrap_or_else(|| panic!("no Returned: {calls:?}"));
+    let d = calls
+        .iter()
+        .position(|c| c == "event bead sp-a CERTIFIED 3 \"Deliver\"")
+        .unwrap_or_else(|| panic!("no Deliver: {calls:?}"));
+    let r = calls
+        .iter()
+        .position(|c| {
+            c == "event bead sp-a IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}"
+        })
+        .unwrap_or_else(|| panic!("no Returned: {calls:?}"));
     assert!(d < r);
     assert!(t.lib.has("release_claim sp-a"));
     assert!(!t.lib.has("bead_reopen"));
     assert!(t.forge.calls.borrow().contains(&"pr-close 12".to_string()));
     assert!(!t.qfile("open").exists());
     assert!(t.lib.has("notify spira sp-a ejected (queue.sh eject)"));
-    assert!(t.out().contains("queue.sh eject: ejected sp-a from spira batch"));
+    assert!(t
+        .out()
+        .contains("queue.sh eject: ejected sp-a from spira batch"));
 }
 
 #[test]
@@ -1387,30 +1935,75 @@ fn eject_red_records_eject_red() {
     assert!(t.lib.has("cause_event sp-a eject-red"));
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
-    assert_eq!(t.run(&["eject", "sp-a", "--red", "--suites", "test-x.sh"]), 0);
+    assert_eq!(
+        t.run(&["eject", "sp-a", "--red", "--suites", "test-x.sh"]),
+        0
+    );
     assert!(t.lib.has("cause_event sp-a eject-red"));
     let calls = t.lc.calls.borrow().clone();
-    assert!(calls.contains(&"event bead sp-a IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected-red\"}}".to_string()), "{calls:?}");
+    assert!(
+        calls.contains(
+            &"event bead sp-a IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected-red\"}}"
+                .to_string()
+        ),
+        "{calls:?}"
+    );
 }
 
 #[test]
 fn eject_of_a_certified_unbatched_bead_reopens_with_the_cause() {
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
-    assert_eq!(t.run(&["eject", "sp-c", "--red", "--suites", "test-x.sh", "--reason-file", "-"]), 0);
+    assert_eq!(
+        t.run(&[
+            "eject",
+            "sp-c",
+            "--red",
+            "--suites",
+            "test-x.sh",
+            "--reason-file",
+            "-"
+        ]),
+        0
+    );
     assert!(t.lib.has("bead_reopen sp-c eject-red "));
-    assert!(t.out().contains("ejected sp-c (certified, not yet batched) for spira (withdrawn)"));
+    assert!(t
+        .out()
+        .contains("ejected sp-c (certified, not yet batched) for spira (withdrawn)"));
 }
 
 #[test]
 fn eject_of_a_submitted_unbatched_bead_withdraws_it_to_rework_at_its_red_tip() {
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-s", "SUBMITTED", "ts", 5);
-    assert_eq!(t.run(&["eject", "sp-s", "--red", "--suites", "test-x.sh", "--reason-file", "-"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&[
+            "eject",
+            "sp-s",
+            "--red",
+            "--suites",
+            "test-x.sh",
+            "--reason-file",
+            "-"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(t.lib.has("bead_reopen sp-s eject-red "));
     let calls = t.lc.calls.borrow().clone();
-    assert!(calls.iter().any(|c| c.contains("sp-s ") && c.contains("Deliver")), "{calls:?}");
-    assert!(calls.iter().any(|c| c.contains("sp-s IN_DELIVERY") && c.contains("batch-ejected-red")), "{calls:?}");
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.contains("sp-s ") && c.contains("Deliver")),
+        "{calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.contains("sp-s IN_DELIVERY") && c.contains("batch-ejected-red")),
+        "{calls:?}"
+    );
 }
 
 #[test]
@@ -1419,7 +2012,20 @@ fn eject_of_a_certified_unbatched_bead_is_not_blocked_by_an_unrelated_open_batch
     let rec = "pr=12\nmembers=sp-a:ta,sp-b:tb\nbatch_id=spira-1\nversion=3\n";
     t.open_record(rec);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
-    assert_eq!(t.run(&["eject", "sp-c", "--red", "--suites", "test-x.sh", "--reason-file", "-"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&[
+            "eject",
+            "sp-c",
+            "--red",
+            "--suites",
+            "test-x.sh",
+            "--reason-file",
+            "-"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(t.lib.has("bead_reopen sp-c eject-red "));
     assert_eq!(fs::read_to_string(t.qfile("open")).unwrap(), rec);
     assert!(!t.lc.has("abandon-batch"));
@@ -1431,27 +2037,64 @@ fn ejecting_a_non_member_returns_it_to_rework_and_leaves_the_open_batch_and_its_
     let rec = "pr=460\nmembers=sp-a:ta,sp-b:tb\nbatch_id=spira-1\nversion=3\n";
     t.open_record(rec);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
-    assert_eq!(t.run(&["eject", "sp-c", "--red", "--suites", "test-x.sh", "--reason", "withdrawn"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&[
+            "eject",
+            "sp-c",
+            "--red",
+            "--suites",
+            "test-x.sh",
+            "--reason",
+            "withdrawn"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     let calls = t.lc.calls.borrow().join("\n");
-    assert!(calls.contains("event bead sp-c") && calls.contains("Returned"), "{calls}");
-    assert!(!calls.contains("abandon-batch") && !calls.contains("eject-member"), "{calls}");
+    assert!(
+        calls.contains("event bead sp-c") && calls.contains("Returned"),
+        "{calls}"
+    );
+    assert!(
+        !calls.contains("abandon-batch") && !calls.contains("eject-member"),
+        "{calls}"
+    );
     assert_eq!(fs::read_to_string(t.qfile("open")).unwrap(), rec);
-    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-close")), "{:?}", t.forge.calls.borrow());
+    assert!(
+        !t.forge
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("pr-close")),
+        "{:?}",
+        t.forge.calls.borrow()
+    );
 }
 
 #[test]
 fn eject_takes_a_comma_separated_suites_list_and_still_refuses_a_bad_name_in_it() {
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
-    assert_eq!(t.run(&["eject", "sp-c", "--suites", "test-x.sh,test-y.sh"]), 0);
+    assert_eq!(
+        t.run(&["eject", "sp-c", "--suites", "test-x.sh,test-y.sh"]),
+        0
+    );
     assert!(t.lib.has("bead_reopen sp-c eject-red test-x.sh,test-y.sh"));
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
-    assert_ne!(t.run(&["eject", "sp-c", "--suites", "test-x.sh,bad name.sh"]), 0);
+    assert_ne!(
+        t.run(&["eject", "sp-c", "--suites", "test-x.sh,bad name.sh"]),
+        0
+    );
     assert!(!t.lib.has("bead_reopen"));
     let t = T::new(LandMode::Queue);
     t.lc_row("sp-c", "CERTIFIED", "tc", 5);
-    assert_ne!(t.run(&["eject", "sp-c", "--suites", "test-x.sh,"]), 0, "an empty name in the list is refused");
+    assert_ne!(
+        t.run(&["eject", "sp-c", "--suites", "test-x.sh,"]),
+        0,
+        "an empty name in the list is refused"
+    );
 }
 
 #[test]
@@ -1459,7 +2102,9 @@ fn eject_of_a_stranger_names_the_members_and_changes_nothing() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
     assert_eq!(t.run(&["eject", "sp-z"]), 1);
-    assert!(t.err().contains("sp-z is not a member of the open batch for spira and is not CERTIFIED or SUBMITTED"));
+    assert!(t.err().contains(
+        "sp-z is not a member of the open batch for spira and is not CERTIFIED or SUBMITTED"
+    ));
     assert!(t.err().contains("batch members: sp-a sp-b"));
     assert!(t.qfile("open").exists());
     assert!(t.lib.calls.borrow().is_empty());
@@ -1475,13 +2120,16 @@ fn eject_refuses_a_concierge_owned_batch_unless_overridden() {
     assert_eq!(t.run(&["eject", "sp-a"]), 0);
 }
 
-
 #[test]
 fn eject_with_a_batch_id_ejects_on_spira_lc_too() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
     assert_eq!(t.run(&["eject", "sp-a", "--reason", "multi\nline"]), 0);
-    assert!(t.lc.calls.borrow().contains(&"eject-member spira-1 sp-a CI_RUNNING 4 multi line".to_string()));
+    assert!(t
+        .lc
+        .calls
+        .borrow()
+        .contains(&"eject-member spira-1 sp-a CI_RUNNING 4 multi line".to_string()));
 }
 
 #[test]
@@ -1490,7 +2138,14 @@ fn eject_cancels_the_closed_prs_runs_and_only_its_own_branch() {
     open_batch_record(&t);
     assert_eq!(t.run(&["eject", "sp-a", "--reason", "x"]), 0, "{}", t.err());
     let calls = t.lib.calls.borrow().clone();
-    assert_eq!(calls.iter().filter(|c| c.starts_with("cancel_runs")).collect::<Vec<_>>(), ["cancel_runs spira/queue/x"], "{calls:?}");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.starts_with("cancel_runs"))
+            .collect::<Vec<_>>(),
+        ["cancel_runs spira/queue/x"],
+        "{calls:?}"
+    );
 }
 
 #[test]
@@ -1505,11 +2160,32 @@ fn eject_of_a_record_with_no_branch_cancels_nothing() {
 fn a_forge_eject_returns_the_member_to_rework_only_after_eject_member_requeues_it() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
-    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
-    assert_eq!(t.run(&["eject", "sp-a", "--red", "--suites", "test-x.sh", "--reason", "PR red"]), 0, "{}", t.err());
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    assert_eq!(
+        t.run(&[
+            "eject",
+            "sp-a",
+            "--red",
+            "--suites",
+            "test-x.sh",
+            "--reason",
+            "PR red"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     let calls = t.lc.calls.borrow().clone();
-    let e = calls.iter().position(|c| c.starts_with("eject-member spira-1 sp-a")).unwrap_or_else(|| panic!("{calls:?}"));
-    let r = calls.iter().position(|c| c.contains("event bead sp-a") && c.contains("Returned")).unwrap_or_else(|| panic!("no Returned: {calls:?}"));
+    let e = calls
+        .iter()
+        .position(|c| c.starts_with("eject-member spira-1 sp-a"))
+        .unwrap_or_else(|| panic!("{calls:?}"));
+    let r = calls
+        .iter()
+        .position(|c| c.contains("event bead sp-a") && c.contains("Returned"))
+        .unwrap_or_else(|| panic!("no Returned: {calls:?}"));
     assert!(e < r, "{calls:?}");
 }
 
@@ -1517,20 +2193,57 @@ fn a_forge_eject_returns_the_member_to_rework_only_after_eject_member_requeues_i
 fn a_forge_eject_of_a_red_member_requeued_to_submitted_still_ends_in_rework() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
-    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("SUBMITTED".into(), "7".into()));
-    assert_eq!(t.run(&["eject", "sp-a", "--red", "--suites", "test-x.sh", "--reason", "PR red"]), 0, "{}", t.err());
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-a".into(), ("SUBMITTED".into(), "7".into()));
+    assert_eq!(
+        t.run(&[
+            "eject",
+            "sp-a",
+            "--red",
+            "--suites",
+            "test-x.sh",
+            "--reason",
+            "PR red"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     let calls = t.lc.calls.borrow().clone();
-    assert!(calls.contains(&"event bead sp-a SUBMITTED 7 \"Deliver\"".to_string()), "{calls:?}");
-    assert!(calls.contains(&"event bead sp-a IN_DELIVERY 8 {\"Returned\":{\"reason\":\"batch-ejected-red\"}}".to_string()), "{calls:?}");
+    assert!(
+        calls.contains(&"event bead sp-a SUBMITTED 7 \"Deliver\"".to_string()),
+        "{calls:?}"
+    );
+    assert!(
+        calls.contains(
+            &"event bead sp-a IN_DELIVERY 8 {\"Returned\":{\"reason\":\"batch-ejected-red\"}}"
+                .to_string()
+        ),
+        "{calls:?}"
+    );
 }
 
 #[test]
 fn a_forge_eject_whose_return_write_is_refused_exits_nonzero_naming_the_write() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
-    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
     t.lc.event_refused.set(Some("stale version"));
-    assert_ne!(t.run(&["eject", "sp-a", "--red", "--suites", "test-x.sh", "--reason", "PR red"]), 0);
+    assert_ne!(
+        t.run(&[
+            "eject",
+            "sp-a",
+            "--red",
+            "--suites",
+            "test-x.sh",
+            "--reason",
+            "PR red"
+        ]),
+        0
+    );
     assert!(t.err().contains("Returned refused"), "{}", t.err());
 }
 
@@ -1538,7 +2251,18 @@ fn a_forge_eject_whose_return_write_is_refused_exits_nonzero_naming_the_write() 
 fn a_forge_harness_fault_eject_leaves_the_member_certified() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
-    assert_eq!(t.run(&["eject", "sp-a", "--harness-fault", "--reason", "runner died"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&[
+            "eject",
+            "sp-a",
+            "--harness-fault",
+            "--reason",
+            "runner died"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     let calls = t.lc.calls.borrow().join("\n");
     assert!(calls.contains("eject-member spira-1 sp-a"), "{calls}");
     assert!(!calls.contains("event bead sp-a"), "{calls}");
@@ -1548,10 +2272,21 @@ fn a_forge_harness_fault_eject_leaves_the_member_certified() {
 fn eject_leaving_a_member_abandons_the_batch_row_so_the_survivor_is_not_stranded() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
-    assert_eq!(t.run(&["eject", "sp-a", "--reason", "bad"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["eject", "sp-a", "--reason", "bad"]),
+        0,
+        "{}",
+        t.err()
+    );
     let calls = t.lc.calls.borrow().clone();
-    let e = calls.iter().position(|c| c.starts_with("eject-member spira-1 sp-a")).unwrap_or_else(|| panic!("{calls:?}"));
-    let a = calls.iter().position(|c| c.starts_with("abandon-batch spira-1")).unwrap_or_else(|| panic!("no abandon: {calls:?}"));
+    let e = calls
+        .iter()
+        .position(|c| c.starts_with("eject-member spira-1 sp-a"))
+        .unwrap_or_else(|| panic!("{calls:?}"));
+    let a = calls
+        .iter()
+        .position(|c| c.starts_with("abandon-batch spira-1"))
+        .unwrap_or_else(|| panic!("no abandon: {calls:?}"));
     assert!(e < a);
     assert!(t.forge.calls.borrow().contains(&"pr-close 12".to_string()));
     assert!(!t.qfile("open").exists());
@@ -1562,9 +2297,24 @@ fn a_deadline_on_the_batch_abandon_inside_an_eject_is_settled_not_left_half_writ
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
     t.lc.deadline_after_write.set(Some("abandon-batch"));
-    assert_eq!(t.run(&["eject", "sp-a", "--reason", "bad"]), 0, "{}", t.err());
-    let n = t.lc.calls.borrow().iter().filter(|c| c.starts_with("abandon-batch spira-1")).count();
-    assert_eq!(n, 1, "the write that landed is not repeated: {:?}", t.lc.calls.borrow());
+    assert_eq!(
+        t.run(&["eject", "sp-a", "--reason", "bad"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let n =
+        t.lc.calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("abandon-batch spira-1"))
+            .count();
+    assert_eq!(
+        n,
+        1,
+        "the write that landed is not repeated: {:?}",
+        t.lc.calls.borrow()
+    );
     assert!(!t.qfile("open").exists());
 }
 
@@ -1573,8 +2323,17 @@ fn eject_of_a_batch_with_no_lifecycle_row_sweeps_the_orphans_it_left() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
     t.lc.no_batch_row.set(true);
-    assert_eq!(t.run(&["eject", "sp-a", "--reason", "bad"]), 1, "{}", t.err());
-    assert!(t.err().contains("no readable lifecycle row"), "POSITIVE CONTROL: the abandon was refused: {}", t.err());
+    assert_eq!(
+        t.run(&["eject", "sp-a", "--reason", "bad"]),
+        1,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.err().contains("no readable lifecycle row"),
+        "POSITIVE CONTROL: the abandon was refused: {}",
+        t.err()
+    );
     assert!(t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
 }
 
@@ -1582,7 +2341,12 @@ fn eject_of_a_batch_with_no_lifecycle_row_sweeps_the_orphans_it_left() {
 fn an_eject_that_settles_runs_no_sweep() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
-    assert_eq!(t.run(&["eject", "sp-a", "--reason", "bad"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["eject", "sp-a", "--reason", "bad"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(!t.lc.has("requeue-orphans"), "{:?}", t.lc.calls.borrow());
 }
 
@@ -1591,8 +2355,18 @@ fn a_deadline_on_the_member_eject_is_retried_and_the_eject_completes() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta sp-b:tb\nbatch_id=spira-1\nversion=3\n");
     t.lc.deadline_after_write.set(Some("eject-member"));
-    assert_eq!(t.run(&["eject", "sp-a", "--reason", "bad"]), 0, "{}", t.err());
-    let n = t.lc.calls.borrow().iter().filter(|c| c.starts_with("eject-member spira-1 sp-a")).count();
+    assert_eq!(
+        t.run(&["eject", "sp-a", "--reason", "bad"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let n =
+        t.lc.calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("eject-member spira-1 sp-a"))
+            .count();
     assert_eq!(n, 2, "{:?}", t.lc.calls.borrow());
     assert!(!t.qfile("open").exists());
 }
@@ -1608,13 +2382,25 @@ fn eject_of_the_last_member_abandons_the_emptied_batch_row() {
 
 #[test]
 fn spira_lc_unreachable_refuses_loudly_and_changes_nothing() {
-    for args in [&["eject", "sp-a"][..], &["abandon", "--reason", "x"][..], &["open-batch", "--skip-pregate"][..]] {
+    for args in [
+        &["eject", "sp-a"][..],
+        &["abandon", "--reason", "x"][..],
+        &["open-batch", "--skip-pregate"][..],
+    ] {
         let t = T::new(LandMode::Queue);
         *t.lc.rows.borrow_mut() = Err("Access denied".into());
         open_batch_record(&t);
         assert_eq!(t.run(args), 1, "{args:?}");
-        assert!(t.err().contains("spira-lc is unreachable (Access denied) — refused, nothing changed"), "{}", t.err());
-        assert!(t.lib.calls.borrow().is_empty(), "{args:?} changed something");
+        assert!(
+            t.err()
+                .contains("spira-lc is unreachable (Access denied) — refused, nothing changed"),
+            "{}",
+            t.err()
+        );
+        assert!(
+            t.lib.calls.borrow().is_empty(),
+            "{args:?} changed something"
+        );
         assert!(t.qfile("open").exists());
     }
     // no binary at all is the same refusal
@@ -1625,16 +2411,22 @@ fn spira_lc_unreachable_refuses_loudly_and_changes_nothing() {
     assert!(t.err().contains("no spira-lc program"));
 }
 
-
 #[test]
 fn eject_of_a_member_already_in_delivery_returns_without_a_second_deliver() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
-    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
     assert_eq!(t.run(&["eject", "sp-a"]), 0);
     let calls = t.lc.calls.borrow().join("\n");
     assert!(!calls.contains("\"Deliver\""), "{calls}");
-    assert!(calls.contains("event bead sp-a IN_DELIVERY 7 {\"Returned\":{\"reason\":\"batch-ejected\"}}"), "{calls}");
+    assert!(
+        calls.contains(
+            "event bead sp-a IN_DELIVERY 7 {\"Returned\":{\"reason\":\"batch-ejected\"}}"
+        ),
+        "{calls}"
+    );
 }
 
 #[test]
@@ -1643,8 +2435,17 @@ fn eject_of_a_certified_unbatched_bead_delivers_then_returns_on_spira_lc() {
     t.lc_row("sp-c", "CERTIFIED", "tc", 1);
     assert_eq!(t.run(&["eject", "sp-c"]), 0, "{}", t.err());
     let calls = t.lc.calls.borrow().clone();
-    assert!(calls.contains(&"event bead sp-c CERTIFIED 3 \"Deliver\"".to_string()), "{calls:?}");
-    assert!(calls.contains(&"event bead sp-c IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}".to_string()), "{calls:?}");
+    assert!(
+        calls.contains(&"event bead sp-c CERTIFIED 3 \"Deliver\"".to_string()),
+        "{calls:?}"
+    );
+    assert!(
+        calls.contains(
+            &"event bead sp-c IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}"
+                .to_string()
+        ),
+        "{calls:?}"
+    );
 }
 
 #[test]
@@ -1658,8 +2459,16 @@ fn a_lock_held_past_the_deadline_refuses_naming_its_recorded_holder() {
     let start = t.clock.now();
     assert_eq!(t.run(&["eject", "sp-a"]), 1);
     let want = format!("verb=round certify");
-    assert!(t.err().contains(&want) && t.err().contains("pid="), "{}", t.err());
-    assert_eq!(t.clock.now() - start, t.s().verdict.lock_wait, "waited the whole deadline");
+    assert!(
+        t.err().contains(&want) && t.err().contains("pid="),
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        t.clock.now() - start,
+        t.s().verdict.lock_wait,
+        "waited the whole deadline"
+    );
 }
 
 #[test]
@@ -1668,7 +2477,9 @@ fn eject_refuses_while_another_queue_operation_holds_the_lock() {
     open_batch_record(&t);
     let _g = t.hold_lock();
     assert_eq!(t.run(&["eject", "sp-a"]), 1);
-    assert!(t.err().contains("another queue operation holds the lock for spira"));
+    assert!(t
+        .err()
+        .contains("another queue operation holds the lock for spira"));
 }
 
 #[test]
@@ -1699,13 +2510,16 @@ fn abandon_requires_a_reason() {
     assert!(t.err().contains("--reason is required"));
 }
 
-
 #[test]
 fn abandon_with_lifecycle_on_abandons_the_batch_on_spira_lc() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
     assert_eq!(t.run(&["abandon", "--reason", "dirty"]), 0);
-    assert!(t.lc.calls.borrow().contains(&"abandon-batch spira-1 CI_RUNNING 4 dirty".to_string()));
+    assert!(t
+        .lc
+        .calls
+        .borrow()
+        .contains(&"abandon-batch spira-1 CI_RUNNING 4 dirty".to_string()));
     assert!(t.out().contains("spira-1 abandoned on spira-lc"));
 }
 
@@ -1725,7 +2539,9 @@ fn abandon_dry_run_prints_the_audit_line_and_changes_nothing() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
     assert_eq!(t.run(&["abandon", "--reason=why", "--dry-run"]), 0);
-    assert!(t.out().contains("dry-run: audit line (landing.log): QUEUE ABANDON"));
+    assert!(t
+        .out()
+        .contains("dry-run: audit line (landing.log): QUEUE ABANDON"));
     assert!(t.qfile("open").exists());
     assert!(t.landing_log().is_empty());
 }
@@ -1738,12 +2554,19 @@ fn claim_and_release_hand_the_batch_back() {
     open_batch_record(&t);
     assert_eq!(t.run(&["claim", "--reason", "hand edit"]), 0);
     let rec = fs::read_to_string(t.qfile("open")).unwrap();
-    assert!(rec.ends_with("owner=concierge\npre_claim_owner=batcher\nclaim_reason=hand edit\n"), "{rec}");
+    assert!(
+        rec.ends_with("owner=concierge\npre_claim_owner=batcher\nclaim_reason=hand edit\n"),
+        "{rec}"
+    );
     assert_eq!(t.run(&["claim", "--reason", "again"]), 1);
-    assert!(t.err().contains("already claimed by concierge — pass --force to reclaim"));
+    assert!(t
+        .err()
+        .contains("already claimed by concierge — pass --force to reclaim"));
     assert_eq!(t.run(&["release"]), 0);
     assert!(t.out().contains("released back to batcher"));
-    assert!(fs::read_to_string(t.qfile("open")).unwrap().ends_with("owner=batcher\n"));
+    assert!(fs::read_to_string(t.qfile("open"))
+        .unwrap()
+        .ends_with("owner=batcher\n"));
     assert_eq!(t.run(&["release"]), 1);
     assert!(t.err().contains("is not claimed by concierge"));
 }
@@ -1756,19 +2579,24 @@ fn claim_without_reason_is_usage() {
 
 // -------------------------------------------------------------------------- open-batch
 
-
 #[test]
 fn open_batch_with_lifecycle_on_cuts_on_spira_lc_and_records_the_batch_id() {
     let t = T::new(LandMode::Queue);
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
     let calls = t.lc.calls.borrow().clone();
     assert!(calls.contains(&"create-bead sp-a".to_string()));
     assert!(calls.contains(&"cut spira-20260929T010203Z sp-a:ta".to_string()));
-    assert!(fs::read_to_string(t.qfile("open")).unwrap().ends_with("batch_id=spira-20260929T010203Z\nversion=1\n"));
+    assert!(fs::read_to_string(t.qfile("open"))
+        .unwrap()
+        .ends_with("batch_id=spira-20260929T010203Z\nversion=1\n"));
 }
 
 #[test]
@@ -1777,13 +2605,29 @@ fn a_deadline_on_the_cut_that_wrote_the_row_opens_the_pr_on_that_row() {
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     t.lc.deadline_after_write.set(Some("cut"));
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    let cuts = t.lc.calls.borrow().iter().filter(|c| c.starts_with("cut ")).count();
+    let cuts =
+        t.lc.calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("cut "))
+            .count();
     assert_eq!(cuts, 1, "{:?}", t.lc.calls.borrow());
-    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")));
-    assert!(fs::read_to_string(t.qfile("open")).unwrap().contains("batch_id=spira-20260929T010203Z"));
+    assert!(t
+        .forge
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("pr-create")));
+    assert!(fs::read_to_string(t.qfile("open"))
+        .unwrap()
+        .contains("batch_id=spira-20260929T010203Z"));
 }
 
 #[test]
@@ -1792,14 +2636,27 @@ fn open_batch_adopts_a_pr_the_forge_made_while_reporting_failure() {
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     *t.forge.create_then_err.borrow_mut() = Some(("236".into(), "rc=1: deadline".into()));
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
     let calls = t.forge.calls.borrow().clone();
-    assert!(!calls.iter().any(|c| c.starts_with("pr-close")), "{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c.starts_with("pr-close")),
+        "{calls:?}"
+    );
     assert!(calls.iter().any(|c| c == "pr-automerge 236"), "{calls:?}");
-    assert!(fs::read_to_string(t.qfile("open")).unwrap().contains("pr=236\n"));
-    assert!(!t.lc.calls.borrow().iter().any(|c| c.contains("abandon")), "{:?}", t.lc.calls.borrow());
+    assert!(fs::read_to_string(t.qfile("open"))
+        .unwrap()
+        .contains("pr=236\n"));
+    assert!(
+        !t.lc.calls.borrow().iter().any(|c| c.contains("abandon")),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
 }
 
 #[test]
@@ -1808,7 +2665,11 @@ fn open_batch_pr_create_failure_with_no_pr_carries_the_forge_error_and_rolls_bac
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     *t.forge.pr.borrow_mut() = None;
     assert_ne!(t.run(&["open-batch", "--skip-pregate"]), 0);
     assert!(t.err().contains("rc=1: stub"), "{}", t.err());
@@ -1821,11 +2682,21 @@ fn open_batch_arms_auto_merge_on_the_pr_it_opens() {
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
     let calls = t.forge.calls.borrow().clone();
-    let create = calls.iter().position(|c| c.starts_with("pr-create")).expect("pr-create");
-    let armed = calls.iter().position(|c| c.starts_with("pr-automerge")).expect("a batch PR is armed to merge itself on green");
+    let create = calls
+        .iter()
+        .position(|c| c.starts_with("pr-create"))
+        .expect("pr-create");
+    let armed = calls
+        .iter()
+        .position(|c| c.starts_with("pr-automerge"))
+        .expect("a batch PR is armed to merge itself on green");
     assert!(create < armed, "{calls:?}");
 }
 
@@ -1835,7 +2706,11 @@ fn open_batch_fails_when_the_pr_cannot_be_armed() {
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     t.forge.arm_fails.set(true);
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
     assert!(t.err().contains("could not be armed"), "{}", t.err());
@@ -1847,14 +2722,28 @@ fn open_batch_refused_cut_opens_no_pr_and_leaves_no_state() {
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
-    t.lc.cut_refused.set(Some("refused: sp-b is REWORK not SUBMITTED or CERTIFIED"));
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
+    t.lc.cut_refused
+        .set(Some("refused: sp-b is REWORK not SUBMITTED or CERTIFIED"));
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
     assert!(t.err().contains("spira-lc cut refused"), "{}", t.err());
     assert!(!t.out().contains("opened"), "{}", t.out());
     assert!(!t.qfile("open").exists());
-    assert!(t.git.calls.borrow().iter().any(|c| c == "branch -D spira/queue/20260929T010203Z"));
-    assert!(!t.git.calls.borrow().iter().any(|c| c.starts_with("push")), "{:?}", t.git.calls.borrow());
+    assert!(t
+        .git
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c == "branch -D spira/queue/20260929T010203Z"));
+    assert!(
+        !t.git.calls.borrow().iter().any(|c| c.starts_with("push")),
+        "{:?}",
+        t.git.calls.borrow()
+    );
 }
 
 #[test]
@@ -1863,23 +2752,41 @@ fn open_batch_with_only_a_submitted_bead_cuts_it_as_a_provisional_member() {
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-s".into(), "ts".into())];
     t.lc_row("sp-s", "SUBMITTED", "ts", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-s".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-s".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    assert!(t.lc.calls.borrow().iter().any(|c| c.contains("cut ") && c.contains("sp-s:ts")));
+    assert!(t
+        .lc
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.contains("cut ") && c.contains("sp-s:ts")));
     let rec = fs::read_to_string(t.qfile("open")).unwrap();
-    assert!(rec.contains("members=sp-s:ts\n") && rec.contains("provisional=sp-s\n"), "{rec}");
+    assert!(
+        rec.contains("members=sp-s:ts\n") && rec.contains("provisional=sp-s\n"),
+        "{rec}"
+    );
 }
 
 #[test]
 fn open_batch_puts_certified_ahead_of_submitted_and_marks_only_the_submitted_provisional() {
     let t = T::new(LandMode::Queue);
     t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-s".into(), "ts".into()), ("spira/sp-c".into(), "tc".into())];
+    *t.git.branches.borrow_mut() = vec![
+        ("spira/sp-s".into(), "ts".into()),
+        ("spira/sp-c".into(), "tc".into()),
+    ];
     t.lc_row("sp-s", "SUBMITTED", "ts", 1);
     t.lc_row("sp-c", "CERTIFIED", "tc", 2);
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
     let rec = fs::read_to_string(t.qfile("open")).unwrap();
-    assert!(rec.contains("members=sp-c:tc sp-s:ts\n") && rec.contains("provisional=sp-s\n"), "{rec}");
+    assert!(
+        rec.contains("members=sp-c:tc sp-s:ts\n") && rec.contains("provisional=sp-s\n"),
+        "{rec}"
+    );
 }
 
 #[test]
@@ -1890,7 +2797,12 @@ fn open_batch_leaves_a_submitted_bead_whose_gate_is_already_fail_out() {
     t.lc_row("sp-s", "SUBMITTED", "ts", 1);
     round::file_gate_verdict(&t, "sp-s", "ts", 1);
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 1);
-    assert!(t.out().contains("sp-s: its gate is FAIL at ts (branch-red)"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("sp-s: its gate is FAIL at ts (branch-red)"),
+        "{}",
+        t.out()
+    );
 }
 
 #[test]
@@ -1899,8 +2811,16 @@ fn verdict_ejects_a_provisional_member_whose_gate_went_red_naming_the_gate_lines
     t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-s:ts\nopened=5\nbranch=spira/queue/x\nowner=batcher\nprovisional=sp-s\nbatch_id=spira-x\nversion=1\n");
     round::file_gate_verdict(&t, "sp-s", "ts", 1);
     t.run(&["verdict", "spira"]);
-    assert!(t.out().contains("provisional member sp-s") && t.out().contains("branch-red"), "{}", t.out());
-    assert!(t.lib.has("cause_event sp-s eject-red"), "{:?}", t.lib.calls.borrow());
+    assert!(
+        t.out().contains("provisional member sp-s") && t.out().contains("branch-red"),
+        "{}",
+        t.out()
+    );
+    assert!(
+        t.lib.has("cause_event sp-s eject-red"),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
 }
 
 #[test]
@@ -1908,7 +2828,9 @@ fn open_batch_refuses_while_a_batch_is_open() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=1\n");
     assert_eq!(t.run(&["open-batch"]), 1);
-    assert!(t.err().contains("a batch is already open for spira (owner=batcher)"));
+    assert!(t
+        .err()
+        .contains("a batch is already open for spira (owner=batcher)"));
 }
 
 #[test]
@@ -1917,12 +2839,36 @@ fn open_batch_replace_abandons_the_open_batch_and_cuts_the_named_members_in_one_
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     t.open_record("pr=463\nbranch=spira/queue/old\nbatch_id=spira-old\nversion=1\nowner=batcher\n");
-    assert_eq!(t.run(&["open-batch", "--members", "sp-a", "--skip-pregate", "--replace", "--reason", "recut"]), 0, "{}{}", t.out(), t.err());
+    assert_eq!(
+        t.run(&[
+            "open-batch",
+            "--members",
+            "sp-a",
+            "--skip-pregate",
+            "--replace",
+            "--reason",
+            "recut"
+        ]),
+        0,
+        "{}{}",
+        t.out(),
+        t.err()
+    );
     let calls = t.lc.calls.borrow().clone();
-    let abandon = calls.iter().position(|c| c.starts_with("abandon-batch spira-old")).expect("old batch abandoned");
-    let cut = calls.iter().position(|c| c.starts_with("cut spira-20260929T010203Z sp-a:ta")).expect("new batch cut");
+    let abandon = calls
+        .iter()
+        .position(|c| c.starts_with("abandon-batch spira-old"))
+        .expect("old batch abandoned");
+    let cut = calls
+        .iter()
+        .position(|c| c.starts_with("cut spira-20260929T010203Z sp-a:ta"))
+        .expect("new batch cut");
     assert!(abandon < cut, "{calls:?}");
     let open = fs::read_to_string(t.qfile("open")).unwrap();
     assert!(open.contains("batch_id=spira-20260929T010203Z"), "{open}");
@@ -1931,9 +2877,16 @@ fn open_batch_replace_abandons_the_open_batch_and_cuts_the_named_members_in_one_
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("closed-pr463-"))
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("closed-pr463-")
+        })
         .expect("replaced batch archived");
-    assert!(fs::read_to_string(archived).unwrap().contains("reason=recut"));
+    assert!(fs::read_to_string(archived)
+        .unwrap()
+        .contains("reason=recut"));
 }
 
 #[test]
@@ -1941,7 +2894,11 @@ fn open_batch_replace_requires_a_reason_and_leaves_the_open_batch_alone() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=1\n");
     assert_eq!(t.run(&["open-batch", "--replace"]), 2);
-    assert!(t.err().contains("--replace requires --reason"), "{}", t.err());
+    assert!(
+        t.err().contains("--replace requires --reason"),
+        "{}",
+        t.err()
+    );
     assert!(t.qfile("open").exists());
 }
 
@@ -1953,7 +2910,12 @@ fn open_batch_does_not_admit_when_the_lifecycle_row_cannot_be_read() {
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
     t.lc.row_fails.set(true);
     assert_eq!(t.run(&["open-batch", "--members", "sp-a"]), 1);
-    assert!(t.out().contains("sp-a: no lifecycle row (spira-lc could not say) — not admitted"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("sp-a: no lifecycle row (spira-lc could not say) — not admitted"),
+        "{}",
+        t.out()
+    );
     assert!(t.out().contains("no cut — nothing admissible for spira"));
 }
 
@@ -1970,12 +2932,27 @@ fn open_batch_skips_a_certified_bead_stacked_on_a_held_prerequisite_until_the_ho
         rows[0].holds = vec!["manual".into()];
         rows[1].stack = [("sp-p".to_string(), "t0".to_string())].into();
     }
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-q".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-q".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     assert_eq!(t.run(&["open-batch", "--members", "sp-q"]), 1);
-    assert!(t.out().contains("sp-q: stacked on held sp-p — not admitted"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("sp-q: stacked on held sp-p — not admitted"),
+        "{}",
+        t.out()
+    );
     assert!(!t.qfile("open").exists());
     t.lc.rows.borrow_mut().as_mut().unwrap()[0].holds.clear();
-    assert_eq!(t.run(&["open-batch", "--members", "sp-q", "--skip-pregate"]), 0, "{}{}", t.out(), t.err());
+    assert_eq!(
+        t.run(&["open-batch", "--members", "sp-q", "--skip-pregate"]),
+        0,
+        "{}{}",
+        t.out(),
+        t.err()
+    );
 }
 
 #[test]
@@ -1984,11 +2961,20 @@ fn open_batch_red_pregate_deletes_the_branch() {
     t.git.set("origin/main", "b0");
     *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), status: Some("closed".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
     t.lib.pf_rc.set(1);
     assert_eq!(t.run(&["open-batch", "--members", "sp-a"]), 1);
     assert!(t.err().contains("local pre-flight gate failed"));
-    assert!(t.git.calls.borrow().iter().any(|c| c == "branch -D spira/queue/20260929T010203Z"));
+    assert!(t
+        .git
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c == "branch -D spira/queue/20260929T010203Z"));
     assert!(!t.qfile("open").exists());
 }
 
@@ -2040,10 +3026,19 @@ impl T {
 fn land_local_refuses_a_tree_no_gate_or_round_certified() {
     let t = T::new(LandMode::QueueLocal);
     uncertified_local_repo(&t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        1
+    );
     let e = t.err();
-    assert!(e.contains(&format!("no round GREEN for h1's tree {T1} in spira")), "{e}");
-    assert!(e.contains("SPIRA_LAND_UNGATED=<reason>") && e.contains("refused, nothing changed"), "{e}");
+    assert!(
+        e.contains(&format!("no round GREEN for h1's tree {T1} in spira")),
+        "{e}"
+    );
+    assert!(
+        e.contains("SPIRA_LAND_UNGATED=<reason>") && e.contains("refused, nothing changed"),
+        "{e}"
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing moved");
     assert!(!t.lc.has("certify") && !t.lc.has("event"));
     assert!(!t.qfile("round-seq").exists());
@@ -2055,9 +3050,15 @@ fn land_local_refuses_a_budgeted_gate_pass_for_the_head_tree() {
     let t = T::new(LandMode::QueueLocal);
     uncertified_local_repo(&t);
     t.certify("spira", T1, gate::cert::Source::Gate, "harness-now");
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        1
+    );
     let e = t.err();
-    assert!(e.contains("only a budgeted gate PASS exists") && e.contains("no round GREEN"), "{e}");
+    assert!(
+        e.contains("only a budgeted gate PASS exists") && e.contains("no round GREEN"),
+        "{e}"
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing moved");
     assert!(!t.lib.has("land_mark"));
 }
@@ -2067,23 +3068,66 @@ fn land_local_accepts_a_round_green_for_the_head_tree() {
     let t = T::new(LandMode::QueueLocal);
     uncertified_local_repo(&t);
     t.certify("spira", T1, gate::cert::Source::Round, "-");
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
-    assert!(t.err().contains(&format!("tree {T1} certified by round GREEN")), "{}", t.err());
-    assert!(t.scripts.calls.borrow().contains(&"rebase-waiting-start spira".to_string()), "a landing starts the rebase of the waiting queue: {:?}", t.scripts.calls.borrow());
+    assert!(
+        t.err()
+            .contains(&format!("tree {T1} certified by round GREEN")),
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.scripts
+            .calls
+            .borrow()
+            .contains(&"rebase-waiting-start spira".to_string()),
+        "a landing starts the rebase of the waiting queue: {:?}",
+        t.scripts.calls.borrow()
+    );
 }
 
 #[test]
 fn land_local_syncs_the_boundary_wiki_page_only_for_the_home_repo() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
-    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("boundary-sync")), "{:?}", t.scripts.calls.borrow());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        !t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("boundary-sync")),
+        "{:?}",
+        t.scripts.calls.borrow()
+    );
     let mut t = T::new(LandMode::QueueLocal);
     t.lib.s.home_repo = "spira".into();
     local_repo(&t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
-    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("boundary-sync")), "{:?}", t.scripts.calls.borrow());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("boundary-sync")),
+        "{:?}",
+        t.scripts.calls.borrow()
+    );
 }
 
 #[test]
@@ -2096,14 +3140,30 @@ fn land_local_ignores_a_pass_for_another_tree_or_repo() {
     // A file at the right path that claims another tree is not a certificate for this one.
     let p = gate::cert::path(&t.s().run.join("verdicts"), "spira", T1).unwrap();
     fs::create_dir_all(p.parent().unwrap()).unwrap();
-    let forged = fs::read_to_string(gate::cert::path(&t.s().run.join("verdicts"), "spira", T_BRANCH).unwrap()).unwrap();
+    let forged = fs::read_to_string(
+        gate::cert::path(&t.s().run.join("verdicts"), "spira", T_BRANCH).unwrap(),
+    )
+    .unwrap();
     fs::write(&p, forged).unwrap();
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        1
+    );
     assert!(t.err().contains("no round GREEN"), "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
     // A red verdict is not a certificate either.
-    fs::write(&p, fs::read_to_string(&p).unwrap().replace(T_BRANCH, T1).replace("verdict=PASS", "verdict=FAIL")).unwrap();
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    fs::write(
+        &p,
+        fs::read_to_string(&p)
+            .unwrap()
+            .replace(T_BRANCH, T1)
+            .replace("verdict=PASS", "verdict=FAIL"),
+    )
+    .unwrap();
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        1
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
 }
 
@@ -2113,9 +3173,25 @@ fn land_local_honours_spira_verdicts_as_the_gate_does() {
     uncertified_local_repo(&t);
     let v = t.dir.join("elsewhere");
     t.var("SPIRA_VERDICTS", &v.display().to_string());
-    let c = gate::cert::Cert { source: gate::cert::Source::Round, tree: T1.into(), repo: "spira".into(), rev: "r".into(), branch: "b".into(), by: "x".into(), when: "w".into(), at: 1, harness: "-".into(), suites: "-".into() };
+    let c = gate::cert::Cert {
+        source: gate::cert::Source::Round,
+        tree: T1.into(),
+        repo: "spira".into(),
+        rev: "r".into(),
+        branch: "b".into(),
+        by: "x".into(),
+        when: "w".into(),
+        at: 1,
+        harness: "-".into(),
+        suites: "-".into(),
+    };
     gate::cert::write(&v, &c).unwrap();
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
 }
 
 #[test]
@@ -2123,15 +3199,39 @@ fn land_local_ungated_override_lands_and_logs_the_reason() {
     let t = T::new(LandMode::QueueLocal);
     uncertified_local_repo(&t);
     t.var("SPIRA_LAND_UNGATED", "");
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1, "an empty reason is no override");
-    t.var("SPIRA_LAND_UNGATED", "operator: gate host down\nsecond line");
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        1,
+        "an empty reason is no override"
+    );
+    t.var(
+        "SPIRA_LAND_UNGATED",
+        "operator: gate host down\nsecond line",
+    );
     t.var("SPIRA_LAND_UNGATED_BY", "operator");
     t.var("SPIRA_LAND_UNGATED_EVIDENCE", "b0");
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     let reason = "operator: gate host down second line";
-    assert!(t.err().contains(&format!("UNGATED LANDING of h1 (tree {T1}) onto local/main")), "{}", t.err());
-    assert!(t.err().contains(&format!("SPIRA_LAND_UNGATED={reason} by=operator evidence=b0")), "{}", t.err());
+    assert!(
+        t.err().contains(&format!(
+            "UNGATED LANDING of h1 (tree {T1}) onto local/main"
+        )),
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.err().contains(&format!(
+            "SPIRA_LAND_UNGATED={reason} by=operator evidence=b0"
+        )),
+        "{}",
+        t.err()
+    );
     assert!(t.landing_log().contains(&format!("QUEUE UNGATED 1000 repo=spira head=h1 tree={T1} by=operator evidence=b0 reason={reason}")), "{}", t.landing_log());
 }
 
@@ -2142,16 +3242,31 @@ fn land_local_ungated_override_refuses_without_by_or_evidence_on_the_tip() {
     t.git.set("elsewhere", "x9");
     t.var("SPIRA_LAND_UNGATED", "gate host down");
     for (by, ev, want) in [
-        (None, Some("b0"), "SPIRA_LAND_UNGATED_BY must be concierge or operator"),
-        (Some("aeon"), Some("b0"), "SPIRA_LAND_UNGATED_BY must be concierge or operator"),
+        (
+            None,
+            Some("b0"),
+            "SPIRA_LAND_UNGATED_BY must be concierge or operator",
+        ),
+        (
+            Some("aeon"),
+            Some("b0"),
+            "SPIRA_LAND_UNGATED_BY must be concierge or operator",
+        ),
         (Some("operator"), None, "SPIRA_LAND_UNGATED_EVIDENCE"),
         (Some("operator"), Some("nope"), "does not resolve"),
         (Some("concierge"), Some("elsewhere"), "is not on the tip"),
     ] {
         t.var("SPIRA_LAND_UNGATED_BY", by.unwrap_or(""));
         t.var("SPIRA_LAND_UNGATED_EVIDENCE", ev.unwrap_or(""));
-        assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
-        assert!(t.err().contains(want) && t.err().contains("refused, nothing changed"), "{want}: {}", t.err());
+        assert_eq!(
+            t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+            1
+        );
+        assert!(
+            t.err().contains(want) && t.err().contains("refused, nothing changed"),
+            "{want}: {}",
+            t.err()
+        );
         assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing moved");
     }
 }
@@ -2160,9 +3275,19 @@ fn land_local_ungated_override_refuses_without_by_or_evidence_on_the_tip() {
 fn land_local_delivers_each_member_at_its_version() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let calls = t.lc.calls.borrow().clone();
-    let ev = |c: &str| calls.iter().position(|x| x == c).unwrap_or_else(|| panic!("missing {c}: {calls:?}"));
+    let ev = |c: &str| {
+        calls
+            .iter()
+            .position(|x| x == c)
+            .unwrap_or_else(|| panic!("missing {c}: {calls:?}"))
+    };
     let a = (
         ev("event bead sp-a CERTIFIED 3 \"Deliver\""),
         ev("event bead sp-a IN_DELIVERY 4 {\"Delivered\":{\"merge_sha\":\"ta\",\"proof\":\"ancestry\"}}"),
@@ -2177,20 +3302,42 @@ fn land_local_with_lifecycle_on_resumes_a_member_already_in_delivery() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
     t.git.ancestor("ta", "h1");
-    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     let calls = t.lc.calls.borrow().join("\n");
     assert!(!calls.contains("\"Deliver\""), "{calls}");
-    assert!(calls.contains("event bead sp-a IN_DELIVERY 7 {\"Delivered\""), "{calls}");
+    assert!(
+        calls.contains("event bead sp-a IN_DELIVERY 7 {\"Delivered\""),
+        "{calls}"
+    );
 }
 
 #[test]
 fn land_local_with_lifecycle_on_does_not_deliver_a_tip_that_is_not_in_the_head() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:tz"]), 1);
-    assert!(t.err().contains("sp-a: tip tz is not an ancestor of h1"), "{}", t.err());
-    assert!(!t.lc.calls.borrow().iter().any(|c| c.starts_with("event bead")));
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:tz"]),
+        1
+    );
+    assert!(
+        t.err().contains("sp-a: tip tz is not an ancestor of h1"),
+        "{}",
+        t.err()
+    );
+    assert!(!t
+        .lc
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("event bead")));
 }
 
 #[test]
@@ -2198,20 +3345,32 @@ fn land_local_with_spira_lc_unreachable_lands_nothing() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
     t.lc.available.set(false);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
-    assert!(t.err().contains("spira-lc is unreachable (no spira-lc program) — refused, nothing changed"), "{}", t.err());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        1
+    );
+    assert!(
+        t.err()
+            .contains("spira-lc is unreachable (no spira-lc program) — refused, nothing changed"),
+        "{}",
+        t.err()
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
     assert!(!t.lib.has("bead_close"));
 }
-
 
 #[test]
 fn land_local_refuses_a_head_that_does_not_fast_forward() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
     t.git.set("h9", "h9");
-    assert_eq!(t.run(&["land-local", "--head", "h9", "--members", "sp-a:ta"]), 1);
-    assert!(t.err().contains("does not fast-forward from local/main (b0) — refused, nothing changed"));
+    assert_eq!(
+        t.run(&["land-local", "--head", "h9", "--members", "sp-a:ta"]),
+        1
+    );
+    assert!(t
+        .err()
+        .contains("does not fast-forward from local/main (b0) — refused, nothing changed"));
     assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("b0"));
 }
 
@@ -2219,11 +3378,21 @@ fn land_local_refuses_a_head_that_does_not_fast_forward() {
 fn land_local_refuses_a_remote_tracking_base_and_other_modes() {
     let t = T::new(LandMode::QueueLocal);
     t.lib.r.borrow_mut().landref = Some("origin/main".into());
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "a:b"]), 1);
-    assert!(t.err().contains("resolves to a remote-tracking ref (origin/main) — not a queue.local base"));
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "a:b"]),
+        1
+    );
+    assert!(t
+        .err()
+        .contains("resolves to a remote-tracking ref (origin/main) — not a queue.local base"));
     let t = T::new(LandMode::Queue);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "a:b"]), 1);
-    assert!(t.err().contains("repo is not in queue.local mode (mode=queue)"));
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "a:b"]),
+        1
+    );
+    assert!(t
+        .err()
+        .contains("repo is not in queue.local mode (mode=queue)"));
 }
 
 fn release_in_force(t: &T) {
@@ -2242,8 +3411,14 @@ fn round_worktree(t: &T, tree: &str) -> PathBuf {
     fs::create_dir_all(&bins).unwrap();
     testkit::write_exe(bins.join("spira-config"), "#!/bin/sh\n");
     testkit::write_exe(bins.join("release"), "#!/bin/sh\n");
-    t.git.refs.borrow_mut().insert("HEAD".into(), "wt-head".into());
-    t.git.trees.borrow_mut().insert("wt-head".into(), tree.into());
+    t.git
+        .refs
+        .borrow_mut()
+        .insert("HEAD".into(), "wt-head".into());
+    t.git
+        .trees
+        .borrow_mut()
+        .insert("wt-head".into(), tree.into());
     t.git.trees.borrow_mut().insert("h1".into(), T1.into());
     wt
 }
@@ -2253,7 +3428,18 @@ fn land_local_refuses_a_worktree_at_another_tree() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
     let wt = round_worktree(&t, "OTHER");
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta", "--worktree", &wt.display().to_string()]), 1);
+    assert_eq!(
+        t.run(&[
+            "land-local",
+            "--head",
+            "h1",
+            "--members",
+            "sp-a:ta",
+            "--worktree",
+            &wt.display().to_string()
+        ]),
+        1
+    );
     assert!(t.err().contains("is not at h1's tree"));
     assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("b0"));
 }
@@ -2264,19 +3450,33 @@ fn land_local_of_another_repository_publishes_no_release() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
     release_in_force(&t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
-    assert!(t.scripts.release_calls.borrow().is_empty(), "no release step for a repository that is not the harness");
+    assert!(
+        t.scripts.release_calls.borrow().is_empty(),
+        "no release step for a repository that is not the harness"
+    );
 }
 #[test]
 fn land_local_skips_its_lock_only_when_the_caller_holds_it() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
     let _g = t.hold_lock();
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        1
+    );
     assert!(t.err().contains("another queue operation holds the lock"));
     t.var("SPIRA_QUEUE_LOCK_HELD", "1");
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0);
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0
+    );
 }
 
 #[test]
@@ -2284,10 +3484,12 @@ fn land_local_reads_members_from_stdin() {
     let t = T::new(LandMode::QueueLocal);
     local_repo(&t);
     *t.env.stdin.borrow_mut() = "sp-a:ta\nsp-b:tb\n".into();
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members-file", "-"]), 0);
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members-file", "-"]),
+        0
+    );
     assert!(t.lc.has("event bead sp-b CERTIFIED 3 \"Deliver\""));
 }
-
 
 // ------------------------------------------ land-local: the landing publishes a release (§8 D13)
 
@@ -2300,16 +3502,34 @@ fn harness_world(t: &mut T) -> String {
 }
 
 fn land_harness(t: &T, wts: &str) -> i32 {
-    t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b", "--worktree", wts])
+    t.run(&[
+        "land-local",
+        "--head",
+        "h1",
+        "--members",
+        "sp-a:ta,sp-b",
+        "--worktree",
+        wts,
+    ])
 }
 
 fn release_argv(t: &T) -> Vec<String> {
-    t.scripts.release_calls.borrow().iter().map(|(_, a, _)| a.clone()).collect()
+    t.scripts
+        .release_calls
+        .borrow()
+        .iter()
+        .map(|(_, a, _)| a.clone())
+        .collect()
 }
 
 /// The `bin` each `release` call was actually run as (§8 D14, sp-ktgll).
 fn release_bins(t: &T) -> Vec<String> {
-    t.scripts.release_calls.borrow().iter().map(|(bin, _, _)| bin.clone()).collect()
+    t.scripts
+        .release_calls
+        .borrow()
+        .iter()
+        .map(|(bin, _, _)| bin.clone())
+        .collect()
 }
 
 #[test]
@@ -2327,16 +3547,39 @@ fn land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it() 
         vec![
             format!("build h1 --repo {REPO} --bin-dir {wts}/target/release {common}"),
             format!("verify h1 {common}"),
-            format!("activate h1 --repo {REPO} --landed-ref local/main --drain-wait {} {common}", crate::ops::deploy::LAND_DRAIN_WAIT_SECS),
+            format!(
+                "activate h1 --repo {REPO} --landed-ref local/main --drain-wait {} {common}",
+                crate::ops::deploy::LAND_DRAIN_WAIT_SECS
+            ),
         ]
     );
-    assert!(t.scripts.release_calls.borrow().iter().all(|(_, _, db)| db == "/db"), "every release child gets SPIRA_DB");
+    assert!(
+        t.scripts
+            .release_calls
+            .borrow()
+            .iter()
+            .all(|(_, _, db)| db == "/db"),
+        "every release child gets SPIRA_DB"
+    );
     // §8 D14 (sp-ktgll): build, verify and activate all run the round's OWN release
     // binary, from the --bin-dir it is about to ship — never production's by name on PATH.
     let want_bin = format!("{wts}/target/release/release");
-    assert_eq!(release_bins(&t), vec![want_bin.clone(), want_bin.clone(), want_bin], "the builder and the build must be the same commit");
-    assert!(!t.err().contains("running PATH's release instead"), "{}", t.err());
-    assert!(t.out().contains("queue.sh land-local: activated release h1"), "{}", t.out());
+    assert_eq!(
+        release_bins(&t),
+        vec![want_bin.clone(), want_bin.clone(), want_bin],
+        "the builder and the build must be the same commit"
+    );
+    assert!(
+        !t.err().contains("running PATH's release instead"),
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.out()
+            .contains("queue.sh land-local: activated release h1"),
+        "{}",
+        t.out()
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     // The landing is recorded before the (slow) release step starts.
     let calls = t.lib.calls.borrow().clone();
@@ -2347,7 +3590,10 @@ fn land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it() 
 
 #[test]
 fn land_drain_wait_is_explicit_and_below_the_round_cap() {
-    assert!(crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0 && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60);
+    assert!(
+        crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0
+            && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60
+    );
 }
 
 #[test]
@@ -2363,12 +3609,27 @@ fn land_local_falls_back_to_paths_release_when_the_bin_dir_has_none_and_says_so(
     let bins = wt.join("target/release");
     fs::create_dir_all(&bins).unwrap();
     testkit::write_exe(bins.join("spira-config"), "#!/bin/sh\n"); // no `release` binary here
-    t.git.refs.borrow_mut().insert("HEAD".into(), "wt-head".into());
+    t.git
+        .refs
+        .borrow_mut()
+        .insert("HEAD".into(), "wt-head".into());
     t.git.trees.borrow_mut().insert("wt-head".into(), T1.into());
     t.git.trees.borrow_mut().insert("h1".into(), T1.into());
     release_in_force(&t);
-    assert_eq!(land_harness(&t, &wt.display().to_string()), 0, "{}", t.err());
-    assert_eq!(release_bins(&t), vec!["release".to_string(), "release".to_string(), "release".to_string()]);
+    assert_eq!(
+        land_harness(&t, &wt.display().to_string()),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        release_bins(&t),
+        vec![
+            "release".to_string(),
+            "release".to_string(),
+            "release".to_string()
+        ]
+    );
     let want = format!("no release binary at {}/release — running PATH's release instead, not this round's own build", bins.display());
     assert!(t.err().contains(&want), "{}", t.err());
 }
@@ -2380,14 +3641,24 @@ fn land_local_build_or_verify_failure_refuses_and_leaves_the_ref_where_it_was() 
         t.submitted(&["sp-a", "sp-b"]);
         let wts = harness_world(&mut t);
         release_in_force(&t);
-        t.scripts.release_rc.borrow_mut().insert(sub.into(), (1, format!("release: {sub} said no\n")));
+        t.scripts
+            .release_rc
+            .borrow_mut()
+            .insert(sub.into(), (1, format!("release: {sub} said no\n")));
         assert_eq!(land_harness(&t, &wts), 1, "{sub}");
         let e = t.err();
         assert!(e.contains(&format!("release h1 failed to build or verify: release {sub} exited 1: release: {sub} said no")), "{e}");
         assert!(e.contains("refused, local/main left at b0"), "{e}");
         assert_eq!(release_argv(&t).len(), calls, "{sub}");
-        assert_eq!(t.landed_ref().as_deref(), Some("b0"), "{sub}: the ref never moved");
-        assert!(!t.lib.has("bead_close sp-a h1") && t.git.get("refs/archive/rounds/1").is_none(), "{sub}");
+        assert_eq!(
+            t.landed_ref().as_deref(),
+            Some("b0"),
+            "{sub}: the ref never moved"
+        );
+        assert!(
+            !t.lib.has("bead_close sp-a h1") && t.git.get("refs/archive/rounds/1").is_none(),
+            "{sub}"
+        );
     }
 }
 
@@ -2403,8 +3674,14 @@ fn land_local_deploy_fault_reports_the_first_failure_before_the_rollback_one() {
     );
     assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
     let e = t.err();
-    let fault = e.lines().find(|l| l.contains("LAND DEPLOY FAILED")).unwrap();
-    let (first, second) = (fault.find("u.service: restart failed").expect(fault), fault.find("on the previous release").expect(fault));
+    let fault = e
+        .lines()
+        .find(|l| l.contains("LAND DEPLOY FAILED"))
+        .unwrap();
+    let (first, second) = (
+        fault.find("u.service: restart failed").expect(fault),
+        fault.find("on the previous release").expect(fault),
+    );
     assert!(first < second, "{fault}");
 }
 
@@ -2414,11 +3691,22 @@ fn land_local_activate_failure_is_a_deploy_fault_and_keeps_the_landing() {
     t.submitted(&["sp-a", "sp-b"]);
     let wts = harness_world(&mut t);
     release_in_force(&t);
-    t.scripts.release_rc.borrow_mut().insert("activate".into(), (1, "release: activate said no\n".into()));
+    t.scripts
+        .release_rc
+        .borrow_mut()
+        .insert("activate".into(), (1, "release: activate said no\n".into()));
     assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
     let e = t.err();
-    assert!(e.contains("LAND DEPLOY FAILED for h1: release activate exited 1: release: activate said no"), "{e}");
-    assert!(e.contains("current is untouched (still ") && e.contains("/r1)"), "names what current still is: {e}");
+    assert!(
+        e.contains(
+            "LAND DEPLOY FAILED for h1: release activate exited 1: release: activate said no"
+        ),
+        "{e}"
+    );
+    assert!(
+        e.contains("current is untouched (still ") && e.contains("/r1)"),
+        "names what current still is: {e}"
+    );
     assert_eq!(release_argv(&t).len(), 3);
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"") && t.lib.has("bead_close sp-a h1"));
@@ -2432,15 +3720,36 @@ fn land_local_waits_for_a_timed_out_unit_to_settle_and_reattempts_activation_onc
     t.submitted(&["sp-a", "sp-b"]);
     let wts = harness_world(&mut t);
     release_in_force(&t);
-    t.scripts.activate_seq.borrow_mut().push_back((1, RESTART_124.into()));
-    t.scripts.unit_states.borrow_mut().extend(["activating".to_string(), "deactivating".to_string(), "active".to_string()]);
+    t.scripts
+        .activate_seq
+        .borrow_mut()
+        .push_back((1, RESTART_124.into()));
+    t.scripts.unit_states.borrow_mut().extend([
+        "activating".to_string(),
+        "deactivating".to_string(),
+        "active".to_string(),
+    ]);
     assert_eq!(land_harness(&t, &wts), 0, "{}", t.err());
     let argv = release_argv(&t);
-    assert_eq!(argv.iter().filter(|a| a.starts_with("activate ")).count(), 2, "{argv:?}");
+    assert_eq!(
+        argv.iter().filter(|a| a.starts_with("activate ")).count(),
+        2,
+        "{argv:?}"
+    );
     assert_eq!(t.scripts.unit_asked.borrow().len(), 3);
-    assert!(t.scripts.unit_asked.borrow().iter().all(|u| u == "spira-watch-bead-sweep-prod.service"));
+    assert!(t
+        .scripts
+        .unit_asked
+        .borrow()
+        .iter()
+        .all(|u| u == "spira-watch-bead-sweep-prod.service"));
     assert!(!t.err().contains("LAND DEPLOY FAILED"), "{}", t.err());
-    assert!(t.out().contains("queue.sh land-local: activated release h1"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("queue.sh land-local: activated release h1"),
+        "{}",
+        t.out()
+    );
 }
 
 #[test]
@@ -2449,13 +3758,29 @@ fn land_local_alarms_once_with_both_errors_when_the_reattempt_also_fails() {
     t.submitted(&["sp-a", "sp-b"]);
     let wts = harness_world(&mut t);
     release_in_force(&t);
-    t.scripts.activate_seq.borrow_mut().push_back((1, RESTART_124.into()));
-    t.scripts.activate_seq.borrow_mut().push_back((1, "release: dolt-beads.service: did not come up (ActiveState=deactivating, Result=success)\n".into()));
+    t.scripts
+        .activate_seq
+        .borrow_mut()
+        .push_back((1, RESTART_124.into()));
+    t.scripts.activate_seq.borrow_mut().push_back((
+        1,
+        "release: dolt-beads.service: did not come up (ActiveState=deactivating, Result=success)\n"
+            .into(),
+    ));
     assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
     let e = t.err();
     assert_eq!(e.matches("LAND DEPLOY FAILED").count(), 1, "{e}");
-    assert!(e.contains("exit status: 124") && e.contains("did not come up"), "both failures: {e}");
-    assert_eq!(release_argv(&t).iter().filter(|a| a.starts_with("activate ")).count(), 2);
+    assert!(
+        e.contains("exit status: 124") && e.contains("did not come up"),
+        "both failures: {e}"
+    );
+    assert_eq!(
+        release_argv(&t)
+            .iter()
+            .filter(|a| a.starts_with("activate "))
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -2464,9 +3789,18 @@ fn land_local_does_not_retry_an_activation_refused_for_a_reason_that_is_not_a_un
     t.submitted(&["sp-a", "sp-b"]);
     let wts = harness_world(&mut t);
     release_in_force(&t);
-    t.scripts.release_rc.borrow_mut().insert("activate".into(), (1, "release: MANIFEST missing a binary\n".into()));
+    t.scripts.release_rc.borrow_mut().insert(
+        "activate".into(),
+        (1, "release: MANIFEST missing a binary\n".into()),
+    );
     assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
-    assert_eq!(release_argv(&t).iter().filter(|a| a.starts_with("activate ")).count(), 1);
+    assert_eq!(
+        release_argv(&t)
+            .iter()
+            .filter(|a| a.starts_with("activate "))
+            .count(),
+        1
+    );
     assert!(t.scripts.unit_asked.borrow().is_empty());
 }
 
@@ -2482,7 +3816,13 @@ fn land_local_over_a_standing_hotfix_is_refused_by_release_activate_and_reported
     );
     assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
     assert!(release_argv(&t)[2].contains("--landed-ref local/main"));
-    assert!(t.err().contains("LAND DEPLOY FAILED for h1: release activate exited 1: release: a hotfix is running"), "{}", t.err());
+    assert!(
+        t.err().contains(
+            "LAND DEPLOY FAILED for h1: release activate exited 1: release: a hotfix is running"
+        ),
+        "{}",
+        t.err()
+    );
 }
 
 #[test]
@@ -2492,7 +3832,12 @@ fn land_local_answer_for_another_commit_is_a_fault() {
     release_in_force(&t);
     *t.scripts.build_answers.borrow_mut() = Some("h0".into());
     assert_eq!(land_harness(&t, &wts), 1);
-    assert!(t.err().contains("release build answered \"h0\" for h1 — not the landed commit"), "{}", t.err());
+    assert!(
+        t.err()
+            .contains("release build answered \"h0\" for h1 — not the landed commit"),
+        "{}",
+        t.err()
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
     assert_eq!(release_argv(&t).len(), 1);
 }
@@ -2502,11 +3847,26 @@ fn land_local_with_no_release_in_force_skips_the_release_step_and_needs_no_workt
     // Before the cutover: the landing lands; nothing is built or activated, loudly.
     let mut t = T::new(LandMode::QueueLocal);
     harness_world(&mut t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     assert!(t.scripts.release_calls.borrow().is_empty());
-    assert!(t.err().contains("release step skipped: no release is in force"), "{}", t.err());
-    assert!(t.err().contains("production does not run h1 until a release is activated"), "{}", t.err());
+    assert!(
+        t.err()
+            .contains("release step skipped: no release is in force"),
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.err()
+            .contains("production does not run h1 until a release is activated"),
+        "{}",
+        t.err()
+    );
 }
 
 #[test]
@@ -2514,9 +3874,20 @@ fn land_local_of_the_harness_requires_the_round_worktree_while_a_release_is_in_f
     let mut t = T::new(LandMode::QueueLocal);
     harness_world(&mut t);
     release_in_force(&t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
-    assert!(t.err().contains("--worktree <round worktree> is required to land spira"), "{}", t.err());
-    assert!(t.err().contains("law-deploy-the-tested-artifacts") && t.err().contains("refused, nothing changed"));
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        1
+    );
+    assert!(
+        t.err()
+            .contains("--worktree <round worktree> is required to land spira"),
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.err().contains("law-deploy-the-tested-artifacts")
+            && t.err().contains("refused, nothing changed")
+    );
     assert_eq!(t.landed_ref().as_deref(), Some("b0"));
     assert!(t.scripts.release_calls.borrow().is_empty());
 }
@@ -2524,7 +3895,14 @@ fn land_local_of_the_harness_requires_the_round_worktree_while_a_release_is_in_f
 // ----------------------------------------------------------------------------- publish
 
 fn full_suite_passed(t: &T, sha: &str) {
-    spira_config::local_pass::record(&t.lib.s.run, spira_config::local_pass::Kind::FullSuite, sha, "test", "0").unwrap();
+    spira_config::local_pass::record(
+        &t.lib.s.run,
+        spira_config::local_pass::Kind::FullSuite,
+        sha,
+        "test",
+        "0",
+    )
+    .unwrap();
 }
 
 fn publishable(t: &T) {
@@ -2537,12 +3915,23 @@ fn publishable(t: &T) {
         let _ = id;
     }
     *t.git.log.borrow_mut() = vec![
-        RangeCommit { sha: "m3".into(), parents: vec!["m2".into(), "t2".into()], subject: "spira: land sp-b — B".into() },
-        RangeCommit { sha: "r".into(), parents: vec!["m1".into()], subject: "round 9: fix".into() },
-        RangeCommit { sha: "m1".into(), parents: vec!["f0".into(), "t1".into()], subject: "spira: land sp-a".into() },
+        RangeCommit {
+            sha: "m3".into(),
+            parents: vec!["m2".into(), "t2".into()],
+            subject: "spira: land sp-b — B".into(),
+        },
+        RangeCommit {
+            sha: "r".into(),
+            parents: vec!["m1".into()],
+            subject: "round 9: fix".into(),
+        },
+        RangeCommit {
+            sha: "m1".into(),
+            parents: vec!["f0".into(), "t1".into()],
+            subject: "spira: land sp-a".into(),
+        },
     ];
 }
-
 
 #[test]
 fn publish_prefers_the_lifecycle_row_tip_when_it_is_in_range() {
@@ -2551,7 +3940,9 @@ fn publish_prefers_the_lifecycle_row_tip_when_it_is_in_range() {
     t.git.ancestor("tx", "m3");
     t.lc_row("sp-a", "LANDED", "tx", 5);
     assert_eq!(t.run(&["publish"]), 0);
-    assert!(fs::read_to_string(t.qfile("publish")).unwrap().contains("members=sp-a:tx sp-b:t2"));
+    assert!(fs::read_to_string(t.qfile("publish"))
+        .unwrap()
+        .contains("members=sp-a:tx sp-b:t2"));
 }
 
 #[test]
@@ -2560,7 +3951,9 @@ fn publish_with_nothing_new_is_success() {
     t.git.set("refs/heads/local/main", "f0");
     t.git.set("refs/remotes/origin/main", "f0");
     assert_eq!(t.run(&["publish"]), 0);
-    assert!(t.out().contains("nothing to publish for spira (origin/main already at f0)"));
+    assert!(t
+        .out()
+        .contains("nothing to publish for spira (origin/main already at f0)"));
     assert!(!t.qfile("publish").exists());
 }
 
@@ -2570,13 +3963,20 @@ fn publish_refuses_a_divergence_an_open_publish_and_a_range_without_land_commits
     publishable(&t);
     t.lib.diverged.set(true);
     assert_eq!(t.run(&["publish"]), 1);
-    assert!(t.err().contains("is not an ancestor of local/main — refusing to publish"));
+    assert!(t
+        .err()
+        .contains("is not an ancestor of local/main — refusing to publish"));
 
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);
     t.lib.cannot_check.set(true);
     assert_eq!(t.run(&["publish"]), 1);
-    assert!(t.err().contains("cannot check whether origin/main is an ancestor of local/main"), "{}", t.err());
+    assert!(
+        t.err()
+            .contains("cannot check whether origin/main is an ancestor of local/main"),
+        "{}",
+        t.err()
+    );
     assert!(t.err().contains("no queue dir"));
     assert!(!t.err().contains("something else moved the forge"));
 
@@ -2584,13 +3984,20 @@ fn publish_refuses_a_divergence_an_open_publish_and_a_range_without_land_commits
     publishable(&t);
     fs::write(t.qfile("publish"), "pr=9\n").unwrap();
     assert_eq!(t.run(&["publish"]), 1);
-    assert!(t.err().contains("a publish PR is already open for spira (pr=9) — settle it first"));
+    assert!(t
+        .err()
+        .contains("a publish PR is already open for spira (pr=9) — settle it first"));
 
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);
-    t.git.log.borrow_mut().retain(|c| !c.subject.starts_with("spira: land"));
+    t.git
+        .log
+        .borrow_mut()
+        .retain(|c| !c.subject.starts_with("spira: land"));
     assert_eq!(t.run(&["publish"]), 1);
-    assert!(t.err().contains("no land commit (spira: land <id>) in range — refusing"));
+    assert!(t
+        .err()
+        .contains("no land commit (spira: land <id>) in range — refusing"));
     assert!(!t.lib.has("push"));
 }
 
@@ -2615,7 +4022,11 @@ fn publish_waits_on_an_unmoved_red_head_then_republishes_once_local_main_moves()
     t.git.set("refs/heads/local/main", "m4");
     t.git.ancestor("m4", "m4");
     t.git.ancestor("f0", "m4");
-    *t.git.log.borrow_mut() = vec![RangeCommit { sha: "m4".into(), parents: vec!["m3".into()], subject: "spira: land sp-c".into() }];
+    *t.git.log.borrow_mut() = vec![RangeCommit {
+        sha: "m4".into(),
+        parents: vec!["m3".into()],
+        subject: "spira: land sp-c".into(),
+    }];
     assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
     assert!(t.qfile("publish").exists());
     assert!(!t.qfile("publish-red").exists());
@@ -2626,7 +4037,10 @@ fn publish_waits_on_an_unmoved_red_head_then_republishes_once_local_main_moves()
 fn forgeable(t: &mut T) {
     publishable(t);
     t.lib.toml = Some(t.dir.join("cfg"));
-    t.config.rows.borrow_mut().insert("spira".into(), ("queue.local".into(), "local/main".into()));
+    t.config
+        .rows
+        .borrow_mut()
+        .insert("spira".into(), ("queue.local".into(), "local/main".into()));
     let map = t.dir.join("legacy-map");
     fs::write(&map, "x").unwrap();
     t.lib.s.repo_map = Some(map);
@@ -2637,15 +4051,38 @@ fn to_forge_waits_for_the_final_publish_then_refuses_if_the_forge_did_not_catch_
     let mut t = T::new(LandMode::QueueLocal);
     forgeable(&mut t);
     // pending, then green (the in-process settle fast-forwards and removes the record)...
-    t.forge.status.borrow_mut().extend([Some("pending\n".into()), Some("green\n".into())]);
+    t.forge
+        .status
+        .borrow_mut()
+        .extend([Some("pending\n".into()), Some("green\n".into())]);
     // ...but the forge ref this fake fetches never moved to local/main's m3.
     assert_eq!(t.run(&["to-forge"]), 1);
     assert!(t.out().contains("running the final publish for spira"));
-    assert!(t.out().contains("queue.sh publish: PR 77 opened"), "the final publish's output is on stdout");
-    assert!(t.out().contains("waiting for publish PR 77 to settle green"));
-    assert_eq!(t.forge.calls.borrow().iter().filter(|c| c.starts_with("check-status")).count(), 2);
-    assert!(t.out().contains("verdict spira: publish PR 77 green — origin/main fast-forwarded to m3"), "{}", t.out());
-    assert!(t.err().contains("origin/main (f0) and local/main (m3) differ — refused, nothing changed"));
+    assert!(
+        t.out().contains("queue.sh publish: PR 77 opened"),
+        "the final publish's output is on stdout"
+    );
+    assert!(t
+        .out()
+        .contains("waiting for publish PR 77 to settle green"));
+    assert_eq!(
+        t.forge
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("check-status"))
+            .count(),
+        2
+    );
+    assert!(
+        t.out()
+            .contains("verdict spira: publish PR 77 green — origin/main fast-forwarded to m3"),
+        "{}",
+        t.out()
+    );
+    assert!(t
+        .err()
+        .contains("origin/main (f0) and local/main (m3) differ — refused, nothing changed"));
     assert!(t.config.legacy.borrow().is_empty());
     assert_eq!(t.config.rows.borrow()["spira"].0, "queue.local");
 }
@@ -2658,8 +4095,14 @@ fn to_forge_happy_path_flips_archives_and_deletes_the_local_branch() {
     t.git.set("refs/remotes/origin/main", "m3");
     *t.lib.readback.borrow_mut() = ("queue".into(), "origin/main".into());
     assert_eq!(t.run(&["to-forge"]), 0, "{}", t.err());
-    assert_eq!(t.config.rows.borrow()["spira"], ("queue.forge".to_string(), "origin/main".to_string()));
-    assert_eq!(t.config.legacy.borrow()["spira"], ("queue.forge".to_string(), "origin/main".to_string()));
+    assert_eq!(
+        t.config.rows.borrow()["spira"],
+        ("queue.forge".to_string(), "origin/main".to_string())
+    );
+    assert_eq!(
+        t.config.legacy.borrow()["spira"],
+        ("queue.forge".to_string(), "origin/main".to_string())
+    );
     assert_eq!(t.git.get("refs/archive/local/main").as_deref(), Some("m3"));
     assert!(t.git.get("refs/heads/local/main").is_none());
     assert!(t.out().contains("queue.sh to-forge: spira is now queue.forge (base=origin/main); local/main archived at refs/archive/local/main"));
@@ -2669,11 +4112,16 @@ fn to_forge_happy_path_flips_archives_and_deletes_the_local_branch() {
 fn to_forge_refuses_on_a_red_final_publish() {
     let mut t = T::new(LandMode::QueueLocal);
     forgeable(&mut t);
-    t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\n".into()));
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("red\nred-suite: test-a.sh\n".into()));
     assert_eq!(t.run(&["to-forge"]), 1);
     // red is refused, not settled: the record stays for the normal fix-forward recovery
     assert!(t.qfile("publish").exists());
-    assert!(t.err().contains("the final publish (PR 77) is red — refused, nothing changed"));
+    assert!(t
+        .err()
+        .contains("the final publish (PR 77) is red — refused, nothing changed"));
     assert_eq!(t.config.rows.borrow()["spira"].0, "queue.local");
 }
 
@@ -2682,15 +4130,19 @@ fn to_forge_times_out_on_a_pending_publish() {
     let mut t = T::new(LandMode::QueueLocal);
     forgeable(&mut t);
     assert_eq!(t.run(&["to-forge"]), 1);
-    assert!(t.err().contains("timed out waiting for publish PR 77 to settle — refused, nothing changed"));
+    assert!(t
+        .err()
+        .contains("timed out waiting for publish PR 77 to settle — refused, nothing changed"));
 }
-
 
 #[test]
 fn transitions_refuse_when_the_two_stores_already_disagree() {
     let mut t = T::new(LandMode::QueueLocal);
     forgeable(&mut t);
-    t.config.rows.borrow_mut().insert("spira".into(), ("queue".into(), "origin/main".into()));
+    t.config
+        .rows
+        .borrow_mut()
+        .insert("spira".into(), ("queue".into(), "origin/main".into()));
     assert_eq!(t.run(&["to-forge"]), 1);
     assert!(t.err().contains("already disagree about spira"));
     assert!(t.err().contains("queue.local|local/main"));
@@ -2701,7 +4153,10 @@ fn transitions_refuse_when_the_two_stores_already_disagree() {
 fn to_local_derives_the_local_branch_and_restores_the_config_if_the_legacy_map_fails() {
     let mut t = T::new(LandMode::Queue);
     t.lib.toml = Some(t.dir.join("cfg"));
-    t.config.rows.borrow_mut().insert("spira".into(), ("queue.forge".into(), "origin/main".into()));
+    t.config
+        .rows
+        .borrow_mut()
+        .insert("spira".into(), ("queue.forge".into(), "origin/main".into()));
     let map = t.dir.join("legacy-map");
     fs::write(&map, "x").unwrap();
     t.lib.s.repo_map = Some(map);
@@ -2709,15 +4164,27 @@ fn to_local_derives_the_local_branch_and_restores_the_config_if_the_legacy_map_f
     t.config.legacy_fail.set(true);
     assert_eq!(t.run(&["to-local"]), 1);
     assert!(t.err().contains("legacy map write failed"));
-    assert_eq!(t.config.rows.borrow()["spira"], ("queue.forge".to_string(), "origin/main".to_string()), "restored");
-    assert!(t.git.get("refs/heads/local/main").is_none(), "the new branch is deleted again");
+    assert_eq!(
+        t.config.rows.borrow()["spira"],
+        ("queue.forge".to_string(), "origin/main".to_string()),
+        "restored"
+    );
+    assert!(
+        t.git.get("refs/heads/local/main").is_none(),
+        "the new branch is deleted again"
+    );
 
     t.config.legacy_fail.set(false);
     *t.lib.readback.borrow_mut() = ("queue.local".into(), "local/main".into());
     assert_eq!(t.run(&["to-local"]), 0, "{}", t.err());
     assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("f5"));
-    assert_eq!(t.config.rows.borrow()["spira"], ("queue.local".to_string(), "local/main".to_string()));
-    assert!(t.out().contains("spira is now queue.local (base=local/main, synced to origin/main)"));
+    assert_eq!(
+        t.config.rows.borrow()["spira"],
+        ("queue.local".to_string(), "local/main".to_string())
+    );
+    assert!(t
+        .out()
+        .contains("spira is now queue.local (base=local/main, synced to origin/main)"));
 }
 
 #[test]
@@ -2726,7 +4193,9 @@ fn to_local_refuses_an_archive_the_forge_does_not_descend_from() {
     t.git.set("refs/remotes/origin/main", "f5");
     t.git.set("refs/archive/local/main", "old");
     assert_eq!(t.run(&["to-local"]), 1);
-    assert!(t.err().contains("is not an ancestor of origin/main (f5) — refs differ, refused"));
+    assert!(t
+        .err()
+        .contains("is not an ancestor of origin/main (f5) — refs differ, refused"));
 }
 
 // ---------------------------------------------------------------------- rollback-local
@@ -2735,7 +4204,9 @@ fn to_local_refuses_an_archive_the_forge_does_not_descend_from() {
 fn rollback_local_reactivates_the_previous_rounds_release_without_rebuilding() {
     let t = T::new(LandMode::QueueLocal);
     assert_eq!(t.run(&["rollback-local"]), 1);
-    assert!(t.err().contains("round-seq is 0 — no landed round to roll back to"));
+    assert!(t
+        .err()
+        .contains("round-seq is 0 — no landed round to roll back to"));
     fs::write(t.qfile("round-seq"), "2\n").unwrap();
     t.git.set("refs/archive/rounds/1", "p1");
     t.git.set("refs/heads/local/main", "h2");
@@ -2745,18 +4216,34 @@ fn rollback_local_reactivates_the_previous_rounds_release_without_rebuilding() {
     assert_eq!(t.run(&["rollback-local"]), 1);
     assert!(t.err().contains("no release p1 in"), "{}", t.err());
     fs::create_dir_all(t.s().releases.clone().unwrap().join("p1")).unwrap();
-    t.scripts.release_rc.borrow_mut().insert("verify".into(), (1, "release: p1 FAILS verify\n".into()));
+    t.scripts
+        .release_rc
+        .borrow_mut()
+        .insert("verify".into(), (1, "release: p1 FAILS verify\n".into()));
     assert_eq!(t.run(&["rollback-local"]), 1);
-    assert!(t.err().contains("could not re-activate release p1; nothing changed"), "{}", t.err());
+    assert!(
+        t.err()
+            .contains("could not re-activate release p1; nothing changed"),
+        "{}",
+        t.err()
+    );
     assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h2"));
     t.scripts.release_rc.borrow_mut().clear();
     t.scripts.release_calls.borrow_mut().clear();
     assert_eq!(t.run(&["rollback-local"]), 0, "{}", t.err());
     let argv = release_argv(&t);
     assert_eq!(argv.len(), 2);
-    assert!(argv[0].starts_with("verify p1 ") && argv[1].starts_with(&format!("activate p1 --repo {REPO} --landed-ref local/main")), "{argv:?}");
+    assert!(
+        argv[0].starts_with("verify p1 ")
+            && argv[1].starts_with(&format!(
+                "activate p1 --repo {REPO} --landed-ref local/main"
+            )),
+        "{argv:?}"
+    );
     assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("p1"));
-    assert!(t.out().contains("queue.sh rollback-local: activated release p1, local/main reset to p1"));
+    assert!(t
+        .out()
+        .contains("queue.sh rollback-local: activated release p1, local/main reset to p1"));
 }
 
 // ------------------------------------------------------------------------------- misc
@@ -2787,7 +4274,10 @@ fn churn_measures_the_lifecycles_rows_and_diffs_the_tips_through_git() {
     let out = t.out();
     assert!(out.contains("beads sent back:       1"), "{out}");
     assert!(out.contains("landed with <= 4 lines:  1"), "{out}");
-    assert!(out.contains("p95 failure-to-outcome:      ? (target < 300s) NO DATA"), "{out}");
+    assert!(
+        out.contains("p95 failure-to-outcome:      ? (target < 300s) NO DATA"),
+        "{out}"
+    );
     *t.lc.churn.borrow_mut() = None;
     assert_eq!(t.run(&["churn"]), 1);
     assert_eq!(t.run(&["churn", "--since", "soon"]), 2);
@@ -2807,8 +4297,20 @@ use crate::ops::publish::{ci_of, decide, Ci, Pr, Settle};
 
 #[test]
 fn settle_decision_table() {
-    let open = |ci, behind| Some(Pr::Open { ci, behind, tries: 0 });
-    let tried = |tries| Some(Pr::Open { ci: Ci::Untested, behind: false, tries });
+    let open = |ci, behind| {
+        Some(Pr::Open {
+            ci,
+            behind,
+            tries: 0,
+        })
+    };
+    let tried = |tries| {
+        Some(Pr::Open {
+            ci: Ci::Untested,
+            behind: false,
+            tries,
+        })
+    };
     assert_eq!(decide(None), Settle::Open);
     assert_eq!(decide(open(Ci::Green, true)), Settle::Wait);
     assert_eq!(decide(open(Ci::Green, false)), Settle::Wait);
@@ -2851,8 +4353,15 @@ fn settle_supersedes_a_red_or_untested_publish_that_local_has_moved_past() {
         assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
         let calls = t.forge.calls.borrow().clone();
         assert!(calls.contains(&"pr-close 77".to_string()), "{calls:?}");
-        assert!(calls.iter().any(|c| c.starts_with("pr-create spira/publish/20260929T010203Z main")), "{calls:?}");
-        assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=78\nhead=m4\n"));
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.starts_with("pr-create spira/publish/20260929T010203Z main")),
+            "{calls:?}"
+        );
+        assert!(fs::read_to_string(t.qfile("publish"))
+            .unwrap()
+            .starts_with("pr=78\nhead=m4\n"));
     }
 }
 
@@ -2862,14 +4371,27 @@ fn settle_skips_a_repository_declared_unpublished_and_still_fails_a_fetch_that_c
     t.lib.r.borrow_mut().unpublished = true;
     t.git.fetch_ok.set(false);
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert!(t.out().contains("publish-settle spira: declared unpublished — skipped"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("publish-settle spira: declared unpublished — skipped"),
+        "{}",
+        t.out()
+    );
     assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
     assert!(t.forge.calls.borrow().is_empty());
 
     let t = T::new(LandMode::QueueLocal);
     t.git.fetch_ok.set(false);
-    assert_ne!(t.run(&["publish-settle"]), 0, "positive control: a published repository whose fetch fails is red");
-    assert!(t.err().contains("could not fetch origin/main"), "{}", t.err());
+    assert_ne!(
+        t.run(&["publish-settle"]),
+        0,
+        "positive control: a published repository whose fetch fails is red"
+    );
+    assert!(
+        t.err().contains("could not fetch origin/main"),
+        "{}",
+        t.err()
+    );
 }
 
 #[test]
@@ -2882,8 +4404,15 @@ fn settle_waits_on_a_green_or_pending_publish_and_on_an_unmoved_red_one() {
         }
         assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
         let calls = t.forge.calls.borrow().clone();
-        assert!(!calls.iter().any(|c| c.starts_with("pr-close") || c.starts_with("pr-create")), "{calls:?}");
-        assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=77\n"));
+        assert!(
+            !calls
+                .iter()
+                .any(|c| c.starts_with("pr-close") || c.starts_with("pr-create")),
+            "{calls:?}"
+        );
+        assert!(fs::read_to_string(t.qfile("publish"))
+            .unwrap()
+            .starts_with("pr=77\n"));
     }
 }
 
@@ -2893,17 +4422,55 @@ fn settle_reruns_an_untested_publish_once_then_alarms_once() {
     stale_publish(&t, "harness_fault\n");
     t.git.set("refs/heads/local/main", "m3");
     *t.forge.run.borrow_mut() = Some("4242".into());
-    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
-    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("harness_fault\n".into()));
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("harness_fault\n".into()));
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert_eq!(t.forge.calls.borrow().iter().filter(|c| c.as_str() == "workflow-rerun 4242").count(), 1, "{:?}", t.forge.calls.borrow());
-    assert!(fs::read_to_string(t.qfile("publish")).unwrap().contains("rerun=4242"));
+    assert_eq!(
+        t.forge
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.as_str() == "workflow-rerun 4242")
+            .count(),
+        1,
+        "{:?}",
+        t.forge.calls.borrow()
+    );
+    assert!(fs::read_to_string(t.qfile("publish"))
+        .unwrap()
+        .contains("rerun=4242"));
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert_eq!(t.forge.calls.borrow().iter().filter(|c| c.as_str() == "workflow-rerun 4242").count(), 1);
-    assert!(fs::read_to_string(t.qfile("publish")).unwrap().contains("alarmed="));
-    assert!(t.lib.has("notify spira publish PR 77 untested after a rerun"));
+    assert_eq!(
+        t.forge
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.as_str() == "workflow-rerun 4242")
+            .count(),
+        1
+    );
+    assert!(fs::read_to_string(t.qfile("publish"))
+        .unwrap()
+        .contains("alarmed="));
+    assert!(t
+        .lib
+        .has("notify spira publish PR 77 untested after a rerun"));
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert_eq!(t.forge.calls.borrow().iter().filter(|c| c.as_str() == "workflow-rerun 4242").count(), 1);
+    assert_eq!(
+        t.forge
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.as_str() == "workflow-rerun 4242")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -2912,7 +4479,9 @@ fn settle_opens_a_publish_when_none_is_open_and_skips_other_modes() {
     publishable(&t);
     *t.forge.pr.borrow_mut() = Some("78".into());
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=78\nhead=m3\n"));
+    assert!(fs::read_to_string(t.qfile("publish"))
+        .unwrap()
+        .starts_with("pr=78\nhead=m3\n"));
     let t = T::new(LandMode::Queue);
     assert_eq!(t.run(&["publish-settle"]), 0);
     assert!(t.forge.calls.borrow().is_empty());
@@ -2924,13 +4493,37 @@ fn settle_defers_the_cut_while_a_round_pass_runs_and_cuts_after_it() {
     publishable(&t);
     *t.forge.pr.borrow_mut() = Some("78".into());
     fs::write(t.qfile("round"), "batch_id=b-1\n").unwrap();
-    t.lc.batch_states.borrow_mut().insert("b-1".into(), ("CI_RUNNING".into(), "4".into()));
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("b-1".into(), ("CI_RUNNING".into(), "4".into()));
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert!(t.out().contains("a round pass holds the hypervisor"), "{}", t.out());
-    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "{:?}", t.forge.calls.borrow());
-    t.lc.batch_states.borrow_mut().insert("b-1".into(), ("GREEN".into(), "5".into()));
+    assert!(
+        t.out().contains("a round pass holds the hypervisor"),
+        "{}",
+        t.out()
+    );
+    assert!(
+        !t.forge
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("pr-create")),
+        "{:?}",
+        t.forge.calls.borrow()
+    );
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("b-1".into(), ("GREEN".into(), "5".into()));
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "{:?}", t.forge.calls.borrow());
+    assert!(
+        t.forge
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("pr-create")),
+        "{:?}",
+        t.forge.calls.borrow()
+    );
 }
 
 #[test]
@@ -2942,11 +4535,31 @@ fn settle_defers_the_cut_while_round_progress_is_live_and_fresh() {
     let prog = t.dir.join("run/round-progress.json");
     fs::write(&prog, "{\"phase\":\"suites\",\"updated_at\":900}\n").unwrap();
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert!(t.out().contains("a round pass holds the hypervisor"), "{}", t.out());
-    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "{:?}", t.forge.calls.borrow());
+    assert!(
+        t.out().contains("a round pass holds the hypervisor"),
+        "{}",
+        t.out()
+    );
+    assert!(
+        !t.forge
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("pr-create")),
+        "{:?}",
+        t.forge.calls.borrow()
+    );
     fs::write(&prog, "{\"phase\":\"suites\",\"updated_at\":100}\n").unwrap();
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert!(t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")), "a stale file does not hold the cut: {:?}", t.forge.calls.borrow());
+    assert!(
+        t.forge
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("pr-create")),
+        "a stale file does not hold the cut: {:?}",
+        t.forge.calls.borrow()
+    );
 }
 
 #[test]
@@ -2955,7 +4568,12 @@ fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
     publishable(&t);
     let _q = crate::lock::try_lock(&t.lib.s.queue_dir, "spira");
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
-    assert!(t.out().contains("publish-settle spira: another queue operation holds the lock"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("publish-settle spira: another queue operation holds the lock"),
+        "{}",
+        t.out()
+    );
     assert!(t.forge.calls.borrow().is_empty());
 }
 
@@ -2966,10 +4584,18 @@ fn submit_green_in_a_queue_mode_certifies_on_spira_lc_and_keeps_no_record_of_its
     t.lib.s.certify_suites = "off".into();
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0);
     assert_eq!(t.scripts.calls.borrow()[0], "lint t1 verify=false");
-    assert_eq!(t.scripts.calls.borrow()[1], "gate spira/sp-a spira bead=sp-a suites=off");
+    assert_eq!(
+        t.scripts.calls.borrow()[1],
+        "gate spira/sp-a spira bead=sp-a suites=off"
+    );
     assert!(t.lc.has("certify sp-a t1"));
-    assert!(!t.s().queue_dir.join("sp-a").exists(), "the lifecycle row is the only certification record");
-    assert!(t.landing_log().contains("QUEUE GATE_COST 1000 branch=sp-a seconds=0"));
+    assert!(
+        !t.s().queue_dir.join("sp-a").exists(),
+        "the lifecycle row is the only certification record"
+    );
+    assert!(t
+        .landing_log()
+        .contains("QUEUE GATE_COST 1000 branch=sp-a seconds=0"));
     assert!(t.out().contains("queue.sh submit: certified spira/sp-a"));
 }
 
@@ -2987,10 +4613,15 @@ fn submit_does_not_certify_when_spira_lc_refuses() {
 fn eject_dry_run_writes_nothing() {
     let t = T::new(LandMode::Queue);
     open_batch_record(&t);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-a".into(), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        ..Default::default()
+    });
     assert_eq!(t.run(&["eject", "sp-a", "--dry-run"]), 0);
     assert!(t.out().contains("dry-run: would record cause eject"));
-    assert!(t.out().contains("dry-run: would return bead sp-a to spira-lc via a Returned event"));
+    assert!(t
+        .out()
+        .contains("dry-run: would return bead sp-a to spira-lc via a Returned event"));
     assert!(!t.lc.has("event") && !t.lc.has("eject-member"));
     assert!(t.qfile("open").exists());
     assert!(t.lib.calls.borrow().is_empty());
@@ -3004,15 +4635,24 @@ fn abandon_keeps_reworked_members_archives_and_audits() {
     t.var("SPIRA_QUEUE_ACTOR", "op");
     assert_eq!(t.run(&["abandon", "--reason", "dirty\nPR"]), 0);
     assert!(t.out().contains("queue.sh abandon: sp-a: left as REWORK"));
-    assert!(t.out().contains("queue.sh abandon: sp-b: returned to CERTIFIED"));
+    assert!(t
+        .out()
+        .contains("queue.sh abandon: sp-b: returned to CERTIFIED"));
     assert!(t.lib.has("cancel_runs spira/queue/x"));
-    assert!(t.forge.calls.borrow().iter().any(|c| c == "pr-comment 12 Batch abandoned. Reason: dirty PR"));
+    assert!(t
+        .forge
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c == "pr-comment 12 Batch abandoned. Reason: dirty PR"));
     let archive = t.qfile("closed-pr12-20260929T010203Z");
     let a = fs::read_to_string(&archive).unwrap();
     assert!(a.ends_with("reason=dirty PR\nactor=op\n"), "{a}");
     assert!(!t.qfile("open").exists());
     assert!(t.landing_log().contains("QUEUE ABANDON 1000 repo=spira pr=12 actor=op members=sp-a:REWORK,sp-b:CERTIFIED reason=dirty PR"));
-    assert!(t.lib.has("event queue.abandoned abandoned PR 12 for spira (actor=op)"));
+    assert!(t
+        .lib
+        .has("event queue.abandoned abandoned PR 12 for spira (actor=op)"));
 }
 
 /// sp-mve9i: admission reads the member's lifecycle row, never bd's status (design §3.4 —
@@ -3023,17 +4663,35 @@ fn abandon_keeps_reworked_members_archives_and_audits() {
 fn open_batch_admits_on_the_lifecycle_row_not_bd_status() {
     let t = T::new(LandMode::Queue);
     t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into()), ("spira/sp-r".into(), "tr".into())];
+    *t.git.branches.borrow_mut() = vec![
+        ("spira/sp-a".into(), "ta".into()),
+        ("spira/sp-r".into(), "tr".into()),
+    ];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
     t.lc_row("sp-r", "REWORK", "tr", 2);
     t.lc_row("sp-r", "CERTIFIED", "tr", 2);
     t.bd.rows.borrow_mut().extend([
-        BeadRow { id: "sp-a".into(), status: Some("in_progress".into()), title: Some("A".into()), ..Default::default() },
-        BeadRow { id: "sp-r".into(), status: Some("closed".into()), title: Some("R".into()), ..Default::default() },
+        BeadRow {
+            id: "sp-a".into(),
+            status: Some("in_progress".into()),
+            title: Some("A".into()),
+            ..Default::default()
+        },
+        BeadRow {
+            id: "sp-r".into(),
+            status: Some("closed".into()),
+            title: Some("R".into()),
+            ..Default::default()
+        },
     ]);
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
     let out = t.out();
-    assert!(out.contains("skip — sp-r: lifecycle state=REWORK (no longer SUBMITTED or CERTIFIED) — not admitted"), "{out}");
+    assert!(
+        out.contains(
+            "skip — sp-r: lifecycle state=REWORK (no longer SUBMITTED or CERTIFIED) — not admitted"
+        ),
+        "{out}"
+    );
     let rec = fs::read_to_string(t.qfile("open")).unwrap();
     assert!(rec.contains("members=sp-a:ta\n"), "{rec}");
 }
@@ -3042,12 +4700,20 @@ fn open_batch_admits_on_the_lifecycle_row_not_bd_status() {
 fn open_batch_does_not_admit_a_held_bead() {
     let t = T::new(LandMode::Queue);
     t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into()), ("spira/sp-h".into(), "th".into())];
+    *t.git.branches.borrow_mut() = vec![
+        ("spira/sp-a".into(), "ta".into()),
+        ("spira/sp-h".into(), "th".into()),
+    ];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
     t.lc_row("sp-h", "CERTIFIED", "th", 2);
     t.lc.rows.borrow_mut().as_mut().unwrap()[1].holds = vec!["manual".into()];
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
-    assert!(t.out().contains("skip — sp-h: held (manual) — not admitted"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("skip — sp-h: held (manual) — not admitted"),
+        "{}",
+        t.out()
+    );
     let rec = fs::read_to_string(t.qfile("open")).unwrap();
     assert!(rec.contains("members=sp-a:ta\n"), "{rec}");
     let t = T::new(LandMode::Queue);
@@ -3055,7 +4721,10 @@ fn open_batch_does_not_admit_a_held_bead() {
     *t.git.branches.borrow_mut() = vec![("spira/sp-h".into(), "th".into())];
     t.lc_row("sp-h", "CERTIFIED", "th", 2);
     t.lc.rows.borrow_mut().as_mut().unwrap()[0].holds = vec!["manual".into()];
-    assert_eq!(t.run(&["open-batch", "--skip-pregate", "--members", "sp-h"]), 1);
+    assert_eq!(
+        t.run(&["open-batch", "--skip-pregate", "--members", "sp-h"]),
+        1
+    );
     assert!(!t.qfile("open").exists());
 }
 
@@ -3063,7 +4732,11 @@ fn open_batch_does_not_admit_a_held_bead() {
 fn open_batch_assembles_admits_opens_and_cuts_on_spira_lc() {
     let t = T::new(LandMode::Queue);
     t.git.set("origin/main", "b0");
-    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into()), ("spira/sp-b".into(), "tb".into()), ("spira/sp-c".into(), "tc".into())];
+    *t.git.branches.borrow_mut() = vec![
+        ("spira/sp-a".into(), "ta".into()),
+        ("spira/sp-b".into(), "tb".into()),
+        ("spira/sp-c".into(), "tc".into()),
+    ];
     t.lc_row("sp-a", "CERTIFIED", "ta", 1);
     t.lc_row("sp-b", "CERTIFIED", "tb", 2);
     // sp-c was CERTIFIED when the candidates were read and is REWORK by admission (the
@@ -3071,23 +4744,47 @@ fn open_batch_assembles_admits_opens_and_cuts_on_spira_lc() {
     t.lc_row("sp-c", "REWORK", "tc", 3);
     t.lc_row("sp-c", "CERTIFIED", "tc", 3);
     t.bd.rows.borrow_mut().extend([
-        BeadRow { id: "sp-a".into(), status: Some("closed".into()), title: Some("A".into()), ..Default::default() },
-        BeadRow { id: "sp-b".into(), status: Some("open".into()), labels: vec!["spira-submitted".into()], ..Default::default() }, // literal-ok: fixture vocabulary
-        BeadRow { id: "sp-c".into(), status: Some("open".into()), ..Default::default() },
+        BeadRow {
+            id: "sp-a".into(),
+            status: Some("closed".into()),
+            title: Some("A".into()),
+            ..Default::default()
+        },
+        BeadRow {
+            id: "sp-b".into(),
+            status: Some("open".into()),
+            labels: vec!["spira-submitted".into()],
+            ..Default::default()
+        }, // literal-ok: fixture vocabulary
+        BeadRow {
+            id: "sp-c".into(),
+            status: Some("open".into()),
+            ..Default::default()
+        },
     ]);
     t.lib.conflict_with_base.borrow_mut().insert("tb".into());
     t.git.merge_fail.borrow_mut().insert("tb".into());
     assert_eq!(t.run(&["open-batch", "--skip-pregate"]), 0, "{}", t.err());
     let out = t.out();
-    assert!(out.contains("skip — sp-c: lifecycle state=REWORK (no longer SUBMITTED or CERTIFIED) — not admitted"), "{out}");
+    assert!(
+        out.contains(
+            "skip — sp-c: lifecycle state=REWORK (no longer SUBMITTED or CERTIFIED) — not admitted"
+        ),
+        "{out}"
+    );
     assert!(out.contains("skip — sp-b: conflicts with base"));
     assert!(out.contains("PR 77 opened — 1 branches (spira/queue/20260929T010203Z)"));
     let rec = fs::read_to_string(t.qfile("open")).unwrap();
     assert!(rec.starts_with("pr=77\nhead=merged-ta\nbase=b0\nmembers=sp-a:ta\nopened=1000\nbranch=spira/queue/20260929T010203Z\nowner=operator\n"), "{rec}");
-    assert!(rec.contains("batch_id=spira-20260929T010203Z\nversion=1\n"), "{rec}");
+    assert!(
+        rec.contains("batch_id=spira-20260929T010203Z\nversion=1\n"),
+        "{rec}"
+    );
     assert!(t.lc.has("create-bead sp-a") && t.lc.has("cut spira-20260929T010203Z sp-a:ta"));
     assert!(t.forge.calls.borrow()[0].contains("- sp-a — A"));
-    assert!(t.landing_log().contains("members=1 gate_seconds=0 verdict=green source=open-batch"));
+    assert!(t
+        .landing_log()
+        .contains("members=1 gate_seconds=0 verdict=green source=open-batch"));
 }
 
 #[test]
@@ -3095,11 +4792,19 @@ fn land_local_lands_and_archives_and_delivers_on_spira_lc() {
     let t = T::new(LandMode::QueueLocal);
     t.submitted(&["sp-a", "sp-b"]);
     local_repo(&t);
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h1"));
     assert_eq!(t.git.get("refs/archive/rounds/1").as_deref(), Some("h1"));
     assert_eq!(fs::read_to_string(t.qfile("round-seq")).unwrap(), "1\n");
-    assert!(t.lib.has("divergence f0 b0"), "the cached forge ref is checked, never fetched");
+    assert!(
+        t.lib.has("divergence f0 b0"),
+        "the cached forge ref is checked, never fetched"
+    );
     assert!(!t.git.calls.borrow().iter().any(|c| c.starts_with("fetch")));
     assert!(t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\""));
     assert!(t.lib.has("bead_close sp-b h1"));
@@ -3113,7 +4818,12 @@ fn land_local_lands_through_a_forge_divergence_and_an_open_publish() {
     local_repo(&t);
     t.lib.diverged.set(true);
     fs::write(t.qfile("publish"), "pr=9\n").unwrap();
-    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(t.lib.has("divergence f0 b0"));
     assert_eq!(t.git.get("refs/heads/local/main").as_deref(), Some("h1"));
 }
@@ -3122,7 +4832,11 @@ fn land_local_lands_through_a_forge_divergence_and_an_open_publish() {
 fn publish_members_come_from_land_commits_even_when_lifecycle_rows_are_missing() {
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);
-    t.bd.rows.borrow_mut().push(BeadRow { id: "sp-b".into(), title: Some("B".into()), ..Default::default() });
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-b".into(),
+        title: Some("B".into()),
+        ..Default::default()
+    });
     assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
     assert!(t.git.calls.borrow().contains(&"log f0..m3".to_string()));
     let rec = fs::read_to_string(t.qfile("publish")).unwrap();
@@ -3130,12 +4844,19 @@ fn publish_members_come_from_land_commits_even_when_lifecycle_rows_are_missing()
         rec,
         "pr=77\nhead=m3\nbase=f0\nmembers=sp-a:t1 sp-b:t2\nopened=1000\nbranch=spira/publish/20260929T010203Z\nremote=origin\nforge_branch=main\n"
     );
-    assert!(t.lib.has("push origin m3:refs/heads/spira/publish/20260929T010203Z"));
+    assert!(t
+        .lib
+        .has("push origin m3:refs/heads/spira/publish/20260929T010203Z"));
     let pr = t.forge.calls.borrow()[0].clone();
-    assert!(pr.starts_with("pr-create spira/publish/20260929T010203Z main publish: 2 bead(s) for spira"));
+    assert!(pr
+        .starts_with("pr-create spira/publish/20260929T010203Z main publish: 2 bead(s) for spira"));
     assert!(pr.contains("- sp-a — (title unavailable)") && pr.contains("- sp-b — B"));
-    assert!(t.landing_log().contains("QUEUE PUBLISH 1000 repo=spira pr=77 members=2"));
-    assert!(t.out().contains("queue.sh publish: PR 77 opened — 2 bead(s) since last publish"));
+    assert!(t
+        .landing_log()
+        .contains("QUEUE PUBLISH 1000 repo=spira pr=77 members=2"));
+    assert!(t
+        .out()
+        .contains("queue.sh publish: PR 77 opened — 2 bead(s) since last publish"));
 }
 
 #[test]
@@ -3145,7 +4866,9 @@ fn transitions_refuse_while_work_is_in_delivery() {
     forgeable(&mut t);
     t.open_record("pr=5\n");
     assert_eq!(t.run(&["to-forge"]), 1);
-    assert!(t.err().contains("has work in delivery (open batch PR 5) — refused, nothing changed"));
+    assert!(t
+        .err()
+        .contains("has work in delivery (open batch PR 5) — refused, nothing changed"));
     assert!(!t.lib.has("push"), "no final publish");
 
     // spira-lc says IN_DELIVERY
@@ -3183,15 +4906,29 @@ fn a_landed_submitted_member_is_closed_citing_the_sha_and_its_branch_reaped() {
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_close sp-a t1"));
     assert!(t.lib.has("reap sp-a spira spira/sp-a landed at t1"));
-    assert!(t.out().contains("land-close sp-a: closed at t1 (submitted -> landed)"));
-    assert!(t.out().contains("land-close sp-a: reaped branch spira/sp-a"));
+    assert!(t
+        .out()
+        .contains("land-close sp-a: closed at t1 (submitted -> landed)"));
+    assert!(t
+        .out()
+        .contains("land-close sp-a: reaped branch spira/sp-a"));
 }
 
 #[test]
 fn close_on_land_leaves_a_never_submitted_bead_alone_whatever_bd_status_says() {
     for row in [
-        BeadRow { id: "sp-a".into(), status: Some("closed".into()), labels: vec!["repo:spira".into()], ..Default::default() }, // literal-ok: fixture vocabulary
-        BeadRow { id: "sp-a".into(), status: Some("open".into()), labels: vec!["repo:spira".into()], ..Default::default() },
+        BeadRow {
+            id: "sp-a".into(),
+            status: Some("closed".into()),
+            labels: vec!["repo:spira".into()],
+            ..Default::default()
+        }, // literal-ok: fixture vocabulary
+        BeadRow {
+            id: "sp-a".into(),
+            status: Some("open".into()),
+            labels: vec!["repo:spira".into()],
+            ..Default::default()
+        },
     ] {
         let t = T::new(LandMode::Push);
         t.bd.rows.borrow_mut().push(row);
@@ -3211,12 +4948,15 @@ fn a_refused_close_is_left_submitted_and_reaps_nothing() {
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_close sp-a t1"));
     assert!(!t.lib.has("reap"));
-    assert!(t.out().contains("land-close sp-a: bd close failed — left submitted (LANDED is on the lifecycle record)"));
+    assert!(t.out().contains(
+        "land-close sp-a: bd close failed — left submitted (LANDED is on the lifecycle record)"
+    ));
 }
 
 #[test]
 fn the_land_close_reason_cites_the_sha_or_unknown() {
-    assert!(crate::ops::helpers::land_close_reason("abc").contains("work landed at abc (law-closed-is-not-landed)"));
+    assert!(crate::ops::helpers::land_close_reason("abc")
+        .contains("work landed at abc (law-closed-is-not-landed)"));
     assert!(crate::ops::helpers::land_close_reason("").contains("work landed at unknown"));
 }
 
@@ -3228,7 +4968,12 @@ fn publish_refuses_a_head_with_no_full_suite_local_pass_naming_the_record_and_co
     *t.forge.pr.borrow_mut() = Some("78".into());
     for cmd in ["publish", "publish-settle"] {
         assert_eq!(t.run(&[cmd]), 1, "{cmd}: {}", t.out());
-        assert!(t.err().contains("full-suite local-pass record for m3") && t.err().contains("testenv --suites"), "{}", t.err());
+        assert!(
+            t.err().contains("full-suite local-pass record for m3")
+                && t.err().contains("testenv --suites"),
+            "{}",
+            t.err()
+        );
     }
     assert!(t.forge.calls.borrow().is_empty());
     assert!(!t.qfile("publish").exists());
@@ -3240,11 +4985,17 @@ fn publish_goes_ahead_on_a_named_override_and_logs_it() {
     publishable(&t);
     fs::remove_file(t.lib.s.run.join("local-pass/full-suite/m3")).unwrap();
     *t.forge.pr.borrow_mut() = Some("78".into());
-    t.env.vars.borrow_mut().insert(spira_config::local_pass::OVERRIDE_ENV.into(), "local round impossible, box is down".into());
+    t.env.vars.borrow_mut().insert(
+        spira_config::local_pass::OVERRIDE_ENV.into(),
+        "local round impossible, box is down".into(),
+    );
     assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
     assert!(t.qfile("publish").exists());
     let log = fs::read_to_string(t.lib.s.run.join("local-pass/overrides.log")).unwrap();
-    assert!(log.contains("sha=m3") && log.contains("box is down"), "{log}");
+    assert!(
+        log.contains("sha=m3") && log.contains("box is down"),
+        "{log}"
+    );
 }
 
 #[test]
@@ -3253,12 +5004,23 @@ fn a_plain_eject_reason_contradicting_a_statute_is_refused_before_anything_is_to
     open_batch_record(&t);
     let g = t.dir.path().join("statute-guards");
     std::fs::write(&g, "law-nonrebase | refuse | rebase by hand\n").unwrap();
-    t.env.vars.borrow_mut().insert("SPIRA_STATUTE_GUARDS".into(), g.to_string_lossy().into_owned());
+    t.env.vars.borrow_mut().insert(
+        "SPIRA_STATUTE_GUARDS".into(),
+        g.to_string_lossy().into_owned(),
+    );
     assert_eq!(t.run(&["eject", "sp-a", "--reason", "rebase by hand"]), 1);
     assert!(t.err().contains("law-nonrebase"), "{}", t.err());
     assert!(t.qfile("open").exists() && !t.lib.has("cause_event sp-a eject"));
-    t.env.vars.borrow_mut().insert("BEAD_STATUTE_CONSIDERED".into(), "why".into());
-    assert_eq!(t.run(&["eject", "sp-a", "--reason", "rebase by hand"]), 0, "{}", t.err());
+    t.env
+        .vars
+        .borrow_mut()
+        .insert("BEAD_STATUTE_CONSIDERED".into(), "why".into());
+    assert_eq!(
+        t.run(&["eject", "sp-a", "--reason", "rebase by hand"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(t.lib.has("cause_event sp-a eject"));
 }
 
@@ -3275,9 +5037,20 @@ fn settle_adopts_a_green_forge_publish_the_record_does_not_know_then_opens_the_n
     let calls = t.forge.calls.borrow().clone();
     assert!(calls.contains(&"pr-close 587".to_string()), "{calls:?}");
     assert!(t.lib.has("notify spira publish PR 587 merged"));
-    assert!(calls.iter().any(|c| c.starts_with("pr-create spira/publish/")), "{calls:?}");
-    assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=588\nhead=m3\n"));
-    assert!(t.out().contains("adopted open publish PR 587"), "{}", t.out());
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.starts_with("pr-create spira/publish/")),
+        "{calls:?}"
+    );
+    assert!(fs::read_to_string(t.qfile("publish"))
+        .unwrap()
+        .starts_with("pr=588\nhead=m3\n"));
+    assert!(
+        t.out().contains("adopted open publish PR 587"),
+        "{}",
+        t.out()
+    );
 }
 
 // ------------------------------------------------------------------------------ auto-stack
@@ -3289,34 +5062,79 @@ fn waiting_fixture(t: &T, beads: &[(&str, &str, &[&str])]) {
     for (n, (id, tip, files)) in beads.iter().enumerate() {
         t.lc_row(id, "SUBMITTED", tip, 10 + n as u64);
         t.git.set(&format!("refs/heads/spira/{id}"), tip);
-        t.git.branches.borrow_mut().push((format!("spira/{id}"), tip.to_string()));
-        t.git.bases.borrow_mut().insert(("m1".into(), tip.to_string()), "m1".into());
+        t.git
+            .branches
+            .borrow_mut()
+            .push((format!("spira/{id}"), tip.to_string()));
+        t.git
+            .bases
+            .borrow_mut()
+            .insert(("m1".into(), tip.to_string()), "m1".into());
         let stat: Vec<(&str, u32, u32)> = files.iter().map(|f| (*f, 1, 0)).collect();
         t.git.stat("m1", tip, &stat);
     }
 }
 
 fn restacks(t: &T) -> Vec<String> {
-    t.lc.calls.borrow().iter().filter(|c| c.contains("\"Restack\"")).cloned().collect()
+    t.lc.calls
+        .borrow()
+        .iter()
+        .filter(|c| c.contains("\"Restack\""))
+        .cloned()
+        .collect()
 }
 
 #[test]
 fn three_beads_that_each_add_a_dependency_are_stacked_into_one_chain() {
     let t = T::new(LandMode::QueueLocal);
-    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock", "a/Cargo.toml"]), ("sp-b", "tb", &["Cargo.lock", "b/Cargo.toml"]), ("sp-c", "tc", &["Cargo.lock", "c/Cargo.toml"])]);
+    waiting_fixture(
+        &t,
+        &[
+            ("sp-a", "ta", &["Cargo.lock", "a/Cargo.toml"]),
+            ("sp-b", "tb", &["Cargo.lock", "b/Cargo.toml"]),
+            ("sp-c", "tc", &["Cargo.lock", "c/Cargo.toml"]),
+        ],
+    );
     assert_eq!(t.run(&["rebase-waiting"]), 0);
     let r = restacks(&t);
     assert_eq!(r.len(), 2, "{r:?}");
-    assert!(r[0].contains("event bead sp-b") && r[0].contains("\"stack\":{\"sp-a\":\"ta\"}") && r[0].contains("\"stack_depth\":1") && r[0].contains("rebased-tb"), "{}", r[0]);
-    assert!(r[1].contains("event bead sp-c") && r[1].contains("\"stack\":{\"sp-b\":\"rebased-tb\"}") && r[1].contains("\"stack_depth\":2"), "{}", r[1]);
-    assert_eq!(t.git.get("refs/heads/spira/sp-b").as_deref(), Some("rebased-tb"));
-    assert_eq!(t.git.get("refs/heads/spira/sp-a").as_deref(), Some("ta"), "the bottom bead is not moved");
+    assert!(
+        r[0].contains("event bead sp-b")
+            && r[0].contains("\"stack\":{\"sp-a\":\"ta\"}")
+            && r[0].contains("\"stack_depth\":1")
+            && r[0].contains("rebased-tb"),
+        "{}",
+        r[0]
+    );
+    assert!(
+        r[1].contains("event bead sp-c")
+            && r[1].contains("\"stack\":{\"sp-b\":\"rebased-tb\"}")
+            && r[1].contains("\"stack_depth\":2"),
+        "{}",
+        r[1]
+    );
+    assert_eq!(
+        t.git.get("refs/heads/spira/sp-b").as_deref(),
+        Some("rebased-tb")
+    );
+    assert_eq!(
+        t.git.get("refs/heads/spira/sp-a").as_deref(),
+        Some("ta"),
+        "the bottom bead is not moved"
+    );
 }
 
 #[test]
 fn beads_that_share_no_shared_file_are_left_alone() {
     let t = T::new(LandMode::QueueLocal);
-    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["b/src/lib.rs"]), ("sp-c", "tc", &["c/src/lib.rs", "Cargo.toml"])]);
+    waiting_fixture(
+        &t,
+        &[
+            ("sp-a", "ta", &["Cargo.lock"]),
+            ("sp-b", "tb", &["b/src/lib.rs"]),
+            ("sp-c", "tc", &["c/src/lib.rs", "Cargo.toml"]),
+        ],
+    );
     assert_eq!(t.run(&["rebase-waiting"]), 0);
     assert!(restacks(&t).is_empty(), "{:?}", restacks(&t));
 }
@@ -3324,7 +5142,13 @@ fn beads_that_share_no_shared_file_are_left_alone() {
 #[test]
 fn an_empty_shared_file_list_turns_auto_stack_off() {
     let t = T::new(LandMode::QueueLocal);
-    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"])]);
+    waiting_fixture(
+        &t,
+        &[
+            ("sp-a", "ta", &["Cargo.lock"]),
+            ("sp-b", "tb", &["Cargo.lock"]),
+        ],
+    );
     t.var("SPIRA_STACK_SHARED_FILES", "");
     assert_eq!(t.run(&["rebase-waiting"]), 0);
     assert!(restacks(&t).is_empty());
@@ -3333,18 +5157,38 @@ fn an_empty_shared_file_list_turns_auto_stack_off() {
 #[test]
 fn a_conflicting_cut_leaves_the_later_bead_unstacked_and_its_branch_alone() {
     let t = T::new(LandMode::QueueLocal);
-    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"])]);
-    t.git.rebase_fail.borrow_mut().insert("tb".into(), vec!["Cargo.lock".into()]);
+    waiting_fixture(
+        &t,
+        &[
+            ("sp-a", "ta", &["Cargo.lock"]),
+            ("sp-b", "tb", &["Cargo.lock"]),
+        ],
+    );
+    t.git
+        .rebase_fail
+        .borrow_mut()
+        .insert("tb".into(), vec!["Cargo.lock".into()]);
     assert_eq!(t.run(&["rebase-waiting"]), 0);
     assert!(restacks(&t).is_empty());
     assert_eq!(t.git.get("refs/heads/spira/sp-b").as_deref(), Some("tb"));
-    assert!(t.out().contains("sp-b: not-stacked: conflict files=Cargo.lock"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("sp-b: not-stacked: conflict files=Cargo.lock"),
+        "{}",
+        t.out()
+    );
 }
 
 #[test]
 fn a_refused_restack_puts_the_branch_back() {
     let t = T::new(LandMode::QueueLocal);
-    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"])]);
+    waiting_fixture(
+        &t,
+        &[
+            ("sp-a", "ta", &["Cargo.lock"]),
+            ("sp-b", "tb", &["Cargo.lock"]),
+        ],
+    );
     t.lc.event_refused.set(Some("IllegalTransition"));
     assert_eq!(t.run(&["rebase-waiting"]), 0);
     assert_eq!(t.git.get("refs/heads/spira/sp-b").as_deref(), Some("tb"));
@@ -3353,22 +5197,52 @@ fn a_refused_restack_puts_the_branch_back() {
 #[test]
 fn the_depth_cap_stops_a_chain() {
     let t = T::new(LandMode::QueueLocal);
-    waiting_fixture(&t, &[("sp-a", "ta", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"]), ("sp-c", "tc", &["Cargo.lock"])]);
+    waiting_fixture(
+        &t,
+        &[
+            ("sp-a", "ta", &["Cargo.lock"]),
+            ("sp-b", "tb", &["Cargo.lock"]),
+            ("sp-c", "tc", &["Cargo.lock"]),
+        ],
+    );
     t.var("SPIRA_STACK_MAX_DEPTH", "1");
     assert_eq!(t.run(&["rebase-waiting"]), 0);
     assert_eq!(restacks(&t).len(), 1);
-    assert!(t.out().contains("sp-c: not-stacked: depth 2 over SPIRA_STACK_MAX_DEPTH 1"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("sp-c: not-stacked: depth 2 over SPIRA_STACK_MAX_DEPTH 1"),
+        "{}",
+        t.out()
+    );
 }
 
 #[test]
 fn a_stacked_bead_is_recut_when_its_prerequisite_tip_moved() {
     let t = T::new(LandMode::QueueLocal);
-    waiting_fixture(&t, &[("sp-a", "ta2", &["Cargo.lock"]), ("sp-b", "tb", &["Cargo.lock"])]);
-    t.lc.rows.borrow_mut().as_mut().unwrap()[1].stack = [("sp-a".to_string(), "ta1".to_string())].into();
+    waiting_fixture(
+        &t,
+        &[
+            ("sp-a", "ta2", &["Cargo.lock"]),
+            ("sp-b", "tb", &["Cargo.lock"]),
+        ],
+    );
+    t.lc.rows.borrow_mut().as_mut().unwrap()[1].stack =
+        [("sp-a".to_string(), "ta1".to_string())].into();
     assert_eq!(t.run(&["rebase-waiting"]), 0);
     let r = restacks(&t);
     assert_eq!(r.len(), 1, "{r:?}");
-    assert!(r[0].contains("event bead sp-b") && r[0].contains("\"stack\":{\"sp-a\":\"ta2\"}"), "{}", r[0]);
-    assert!(!t.scripts.calls.borrow().iter().any(|c| c.contains("rebase-stale sp-b")), "a stacked bead is cut onto its prerequisite, not the landing ref");
+    assert!(
+        r[0].contains("event bead sp-b") && r[0].contains("\"stack\":{\"sp-a\":\"ta2\"}"),
+        "{}",
+        r[0]
+    );
+    assert!(
+        !t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.contains("rebase-stale sp-b")),
+        "a stacked bead is cut onto its prerequisite, not the landing ref"
+    );
     assert!(t.out().contains("sp-b: recut onto sp-a"), "{}", t.out());
 }

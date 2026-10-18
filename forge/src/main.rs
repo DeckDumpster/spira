@@ -5,13 +5,17 @@
 use forge::cmds::Out;
 use forge::ports::{Gh, Proc};
 use forge::real::{RealGh, RealProc};
+use spira_otel::exit::ExitCode;
 use std::io::Read;
 use std::path::Path;
-use spira_otel::exit::ExitCode;
 
 fn main() -> std::process::ExitCode {
     let first = std::env::args().nth(1);
-    spira_otel::exit::finish(forge::telemetry::run(&forge::telemetry::sink(), first.as_deref(), || run_main().code()))
+    spira_otel::exit::finish(forge::telemetry::run(
+        &forge::telemetry::sink(),
+        first.as_deref(),
+        || run_main().code(),
+    ))
 }
 
 fn run_main() -> ExitCode {
@@ -21,7 +25,11 @@ fn run_main() -> ExitCode {
         return ExitCode::from(1);
     }
     let cmd = argv.remove(0);
-    let repo = if !argv.is_empty() { argv.remove(0) } else { String::new() };
+    let repo = if !argv.is_empty() {
+        argv.remove(0)
+    } else {
+        String::new()
+    };
     let repo = Path::new(&repo);
     let gh = RealGh;
     let proc = RealProc;
@@ -48,12 +56,23 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         Ok(w) => w,
         Err(e) => {
             eprintln!("forge: {e}");
-            return Out { code: 2, lines: vec![] };
+            return Out {
+                code: 2,
+                lines: vec![],
+            };
         }
     };
     let workflow = workflow.as_str();
     match cmd {
-        "pr-create" => pr_create(gh, repo, arg(args, 0), arg(args, 1), arg(args, 2), &stdin_bytes(), &std::env::var("QUEUE_SECOND_PR_CONSIDERED").unwrap_or_default()),
+        "pr-create" => pr_create(
+            gh,
+            repo,
+            arg(args, 0),
+            arg(args, 1),
+            arg(args, 2),
+            &stdin_bytes(),
+            &std::env::var("QUEUE_SECOND_PR_CONSIDERED").unwrap_or_default(),
+        ),
         "pr-number" => pr_number(gh, repo, arg(args, 0)),
         "pr-list-queue" => pr_list_queue(gh, repo),
         "pr-list-open" => pr_list_open(gh, repo),
@@ -75,13 +94,17 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
             // one source of config, through `spira_config::process::cfg_parse`, never a
             // competing environment override or a crate-local default (per Ryan
             // 2026-10-05).
-            let mut min_age: u64 = match spira_config::process::cfg_parse("SPIRA_STRANDED_RUNNER_MIN_AGE") {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("forge: {e}");
-                    return Out { code: 2, lines: vec![] };
-                }
-            };
+            let mut min_age: u64 =
+                match spira_config::process::cfg_parse("SPIRA_STRANDED_RUNNER_MIN_AGE") {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("forge: {e}");
+                        return Out {
+                            code: 2,
+                            lines: vec![],
+                        };
+                    }
+                };
             let mut it = args.iter();
             while let Some(a) = it.next() {
                 if a == "--min-age" {
@@ -90,7 +113,10 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
                     }
                 }
             }
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
             stranded_runners(gh, repo, now, min_age)
         }
         "run-metadata" => run_metadata(gh, repo, arg(args, 0)),
@@ -108,7 +134,10 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("forge: {e}");
-                    return Out { code: 2, lines: vec![] };
+                    return Out {
+                        code: 2,
+                        lines: vec![],
+                    };
                 }
             };
             branch_protect(gh, repo, arg(args, 0), &app_id)
@@ -116,7 +145,10 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "branch-protection-status" => branch_protection_status(gh, repo, arg(args, 0)),
         other => {
             eprintln!("forge: unknown command: {other}");
-            Out { code: 1, lines: vec![] }
+            Out {
+                code: 1,
+                lines: vec![],
+            }
         }
     }
 }

@@ -34,8 +34,28 @@ fn parse(bytes: &[u8]) -> Option<Value> {
 
 /// One open PR per repo from this installation's identity, whoever opens it. Unreadable
 /// listing refuses too: a control that cannot check must not wave the PR through.
-pub fn pr_create(gh: &dyn Gh, repo: &Path, head: &str, base: &str, title: &str, body: &[u8], second_pr_why: &str) -> Out {
-    let listed = gh.call(Some(repo), &["pr", "list", "--state", "open", "--author", "@me", "--json", "number,headRefName"]);
+pub fn pr_create(
+    gh: &dyn Gh,
+    repo: &Path,
+    head: &str,
+    base: &str,
+    title: &str,
+    body: &[u8],
+    second_pr_why: &str,
+) -> Out {
+    let listed = gh.call(
+        Some(repo),
+        &[
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--author",
+            "@me",
+            "--json",
+            "number,headRefName",
+        ],
+    );
     let Some(Value::Array(open)) = listed.ok().then(|| parse(&listed.stdout)).flatten() else {
         eprintln!("forge pr-create: cannot list this installation's open PRs on {} — refusing to open {head}", repo.display());
         return fail(vec![String::new()]);
@@ -43,7 +63,13 @@ pub fn pr_create(gh: &dyn Gh, repo: &Path, head: &str, base: &str, title: &str, 
     let open: Vec<String> = open
         .iter()
         .filter(|p| jstr(p, "headRefName").as_deref() != Some(head))
-        .map(|p| format!("#{} ({})", p.get("number").map(|n| n.to_string()).unwrap_or_default(), jstr(p, "headRefName").unwrap_or_default()))
+        .map(|p| {
+            format!(
+                "#{} ({})",
+                p.get("number").map(|n| n.to_string()).unwrap_or_default(),
+                jstr(p, "headRefName").unwrap_or_default()
+            )
+        })
         .collect();
     if !open.is_empty() {
         let why = second_pr_why.trim();
@@ -55,27 +81,61 @@ pub fn pr_create(gh: &dyn Gh, repo: &Path, head: &str, base: &str, title: &str, 
             );
             return fail(vec![String::new()]);
         }
-        eprintln!("forge pr-create: SECOND_PR_CONSIDERED opening {head} beside {}: {why}", open.join(", "));
+        eprintln!(
+            "forge pr-create: SECOND_PR_CONSIDERED opening {head} beside {}: {why}",
+            open.join(", ")
+        );
     }
-    let r = gh.call_merged(Some(repo), &["pr", "create", "--head", head, "--base", base, "--title", title, "--body-file", "-"], Some(body));
+    let r = gh.call_merged(
+        Some(repo),
+        &[
+            "pr",
+            "create",
+            "--head",
+            head,
+            "--base",
+            base,
+            "--title",
+            title,
+            "--body-file",
+            "-",
+        ],
+        Some(body),
+    );
     if !r.ok() {
         return ok(vec![String::new()]);
     }
-    let n = gh.call(Some(repo), &["pr", "view", head, "--json", "number", "-q", ".number"]);
+    let n = gh.call(
+        Some(repo),
+        &["pr", "view", head, "--json", "number", "-q", ".number"],
+    );
     ok(vec![n.text().trim().to_string()])
 }
 
 // ── pr-number ────────────────────────────────────────────────────────────────────────────
 
 pub fn pr_number(gh: &dyn Gh, repo: &Path, head: &str) -> Out {
-    let n = gh.call(Some(repo), &["pr", "view", head, "--json", "number", "-q", ".number"]);
+    let n = gh.call(
+        Some(repo),
+        &["pr", "view", head, "--json", "number", "-q", ".number"],
+    );
     ok(vec![n.text().trim().to_string()])
 }
 
 // ── pr-list-queue ────────────────────────────────────────────────────────────────────────
 
 pub fn pr_list_queue(gh: &dyn Gh, repo: &Path) -> Out {
-    let r = gh.call(Some(repo), &["pr", "list", "--state", "open", "--json", "number,headRefName"]);
+    let r = gh.call(
+        Some(repo),
+        &[
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--json",
+            "number,headRefName",
+        ],
+    );
     let mut lines = Vec::new();
     if let Some(Value::Array(items)) = parse(&r.stdout) {
         for pr in items {
@@ -95,7 +155,17 @@ pub fn pr_list_queue(gh: &dyn Gh, repo: &Path) -> Out {
 /// `<number> <headRefName>` per open PR — the superset `land_pr`'s dedup scan needs
 /// (DESIGN.md §3.1, §6).
 pub fn pr_list_open(gh: &dyn Gh, repo: &Path) -> Out {
-    let r = gh.call(Some(repo), &["pr", "list", "--state", "open", "--json", "number,headRefName"]);
+    let r = gh.call(
+        Some(repo),
+        &[
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--json",
+            "number,headRefName",
+        ],
+    );
     let mut lines = Vec::new();
     if let Some(Value::Array(items)) = parse(&r.stdout) {
         for pr in items {
@@ -111,11 +181,16 @@ pub fn pr_list_open(gh: &dyn Gh, repo: &Path) -> Out {
 // ── pr-mergeability ──────────────────────────────────────────────────────────────────────
 
 pub fn pr_mergeability(gh: &dyn Gh, repo: &Path, pr_n: &str) -> Out {
-    let r = gh.call(Some(repo), &["pr", "view", pr_n, "--json", "mergeable,mergeStateStatus"]);
+    let r = gh.call(
+        Some(repo),
+        &["pr", "view", pr_n, "--json", "mergeable,mergeStateStatus"],
+    );
     let word = (|| {
         let v = parse(&r.stdout)?;
         let m = jstr(&v, "mergeable").unwrap_or_default().to_uppercase();
-        let ms = jstr(&v, "mergeStateStatus").unwrap_or_default().to_uppercase();
+        let ms = jstr(&v, "mergeStateStatus")
+            .unwrap_or_default()
+            .to_uppercase();
         if m == "CONFLICTING" || ms == "DIRTY" {
             Some("DIRTY")
         } else if m == "MERGEABLE" {
@@ -131,7 +206,10 @@ pub fn pr_mergeability(gh: &dyn Gh, repo: &Path, pr_n: &str) -> Out {
 // ── pr-state ─────────────────────────────────────────────────────────────────────────────
 
 pub fn pr_state(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
-    let r = gh.call(Some(repo), &["pr", "view", selector, "--json", "state", "-q", ".state"]);
+    let r = gh.call(
+        Some(repo),
+        &["pr", "view", selector, "--json", "state", "-q", ".state"],
+    );
     let st = r.text().trim().to_string();
     let word = match st.as_str() {
         "OPEN" => "open",
@@ -145,7 +223,18 @@ pub fn pr_state(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
 // ── pr-merge-commit ──────────────────────────────────────────────────────────────────────
 
 pub fn pr_merge_commit(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
-    let r = gh.call(Some(repo), &["pr", "view", selector, "--json", "mergeCommit", "-q", ".mergeCommit.oid"]);
+    let r = gh.call(
+        Some(repo),
+        &[
+            "pr",
+            "view",
+            selector,
+            "--json",
+            "mergeCommit",
+            "-q",
+            ".mergeCommit.oid",
+        ],
+    );
     let sha = r.text().trim().to_string();
     if r.code == 0 && !sha.is_empty() && sha != "null" {
         ok(vec![sha])
@@ -156,16 +245,35 @@ pub fn pr_merge_commit(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
 
 // ── pr-red ───────────────────────────────────────────────────────────────────────────────
 
-const PR_RED_BAD: [&str; 5] = ["FAILURE", "CANCELLED", "TIMED_OUT", "STALE", "ACTION_REQUIRED"];
+const PR_RED_BAD: [&str; 5] = [
+    "FAILURE",
+    "CANCELLED",
+    "TIMED_OUT",
+    "STALE",
+    "ACTION_REQUIRED",
+];
 const PR_RED_MAX_LINES: usize = 20;
 
 /// A PR whose required check is red: `head <sha>`, then per failing job `job <name>` and the
 /// `fail-line: <text>` lines of its log. Silent when nothing is red or it cannot be read —
 /// never a guess at red.
 pub fn pr_red(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
-    let r = gh.call(Some(repo), &["pr", "view", selector, "--json", "headRefOid,statusCheckRollup"]);
-    let Some(v) = parse(&r.stdout) else { return ok(vec![]) };
-    let Some(checks) = v.get("statusCheckRollup").and_then(Value::as_array) else { return ok(vec![]) };
+    let r = gh.call(
+        Some(repo),
+        &[
+            "pr",
+            "view",
+            selector,
+            "--json",
+            "headRefOid,statusCheckRollup",
+        ],
+    );
+    let Some(v) = parse(&r.stdout) else {
+        return ok(vec![]);
+    };
+    let Some(checks) = v.get("statusCheckRollup").and_then(Value::as_array) else {
+        return ok(vec![]);
+    };
     let mut lines = Vec::new();
     for c in checks {
         let concl = jstr(c, "conclusion").unwrap_or_default();
@@ -173,15 +281,35 @@ pub fn pr_red(gh: &dyn Gh, repo: &Path, selector: &str) -> Out {
             continue;
         }
         if lines.is_empty() {
-            lines.push(format!("head {}", jstr(&v, "headRefOid").unwrap_or_default()));
+            lines.push(format!(
+                "head {}",
+                jstr(&v, "headRefOid").unwrap_or_default()
+            ));
         }
         lines.push(format!("job {}", jstr(c, "name").unwrap_or_default()));
         let job_id = jstr(c, "detailsUrl")
-            .and_then(|u| u.rsplit_once("/job/").map(|(_, id)| id.chars().take_while(char::is_ascii_digit).collect::<String>()))
+            .and_then(|u| {
+                u.rsplit_once("/job/").map(|(_, id)| {
+                    id.chars()
+                        .take_while(char::is_ascii_digit)
+                        .collect::<String>()
+                })
+            })
             .filter(|id| !id.is_empty());
         if let Some(id) = job_id {
-            let log = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")]);
-            for l in log.text().lines().filter(|l| l.contains("FAIL") || l.contains("not ok")).take(PR_RED_MAX_LINES) {
+            let log = gh.call(
+                Some(repo),
+                &[
+                    "api",
+                    &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs"),
+                ],
+            );
+            for l in log
+                .text()
+                .lines()
+                .filter(|l| l.contains("FAIL") || l.contains("not ok"))
+                .take(PR_RED_MAX_LINES)
+            {
                 lines.push(format!("fail-line: {}", l.trim()));
             }
         }
@@ -202,12 +330,23 @@ pub fn pr_automerge(gh: &dyn Gh, repo: &Path, selector: &str, method: &str) -> O
         "rebase" => "--rebase",
         _ => return fail(vec![]),
     };
-    if !gh.call(Some(repo), &["pr", "merge", "--auto", flag, selector]).ok() {
+    if !gh
+        .call(Some(repo), &["pr", "merge", "--auto", flag, selector])
+        .ok()
+    {
         return fail(vec![]);
     }
-    let r = gh.call(Some(repo), &["pr", "view", selector, "--json", "autoMergeRequest,state"]);
+    let r = gh.call(
+        Some(repo),
+        &["pr", "view", selector, "--json", "autoMergeRequest,state"],
+    );
     match parse(&r.stdout) {
-        Some(v) if jstr(&v, "state").as_deref() == Some("MERGED") || v.get("autoMergeRequest").is_some_and(|a| !a.is_null()) => ok(vec![]),
+        Some(v)
+            if jstr(&v, "state").as_deref() == Some("MERGED")
+                || v.get("autoMergeRequest").is_some_and(|a| !a.is_null()) =>
+        {
+            ok(vec![])
+        }
         _ => fail(vec![]),
     }
 }
@@ -215,16 +354,34 @@ pub fn pr_automerge(gh: &dyn Gh, repo: &Path, selector: &str, method: &str) -> O
 /// The reconciler: arms every open batch PR (`spira/queue/*`) that has no auto-merge
 /// request. One `armed <n>` / `failed <n>` line per PR touched; exit 1 if any failed.
 pub fn pr_arm_queue(gh: &dyn Gh, repo: &Path, method: &str) -> Out {
-    let r = gh.call(Some(repo), &["pr", "list", "--state", "open", "--json", "number,headRefName,autoMergeRequest"]);
+    let r = gh.call(
+        Some(repo),
+        &[
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--json",
+            "number,headRefName,autoMergeRequest",
+        ],
+    );
     let Some(Value::Array(items)) = parse(&r.stdout) else {
-        return if r.ok() { ok(vec![]) } else { fail(vec!["failed list".into()]) };
+        return if r.ok() {
+            ok(vec![])
+        } else {
+            fail(vec!["failed list".into()])
+        };
     };
     let mut lines = Vec::new();
     let mut bad = false;
     for pr in items {
-        let batch = jstr(&pr, "headRefName").unwrap_or_default().starts_with("spira/queue/");
+        let batch = jstr(&pr, "headRefName")
+            .unwrap_or_default()
+            .starts_with("spira/queue/");
         let unarmed = pr.get("autoMergeRequest").is_none_or(|a| a.is_null());
-        let Some(n) = pr.get("number").map(|n| n.to_string()) else { continue };
+        let Some(n) = pr.get("number").map(|n| n.to_string()) else {
+            continue;
+        };
         if !batch || !unarmed {
             continue;
         }
@@ -235,13 +392,19 @@ pub fn pr_arm_queue(gh: &dyn Gh, repo: &Path, method: &str) -> Out {
             lines.push(format!("failed {n}"));
         }
     }
-    if bad { fail(lines) } else { ok(lines) }
+    if bad {
+        fail(lines)
+    } else {
+        ok(lines)
+    }
 }
 
 /// The gate workflow for the repository named `name`: its `name=Workflow` pair in `table`,
 /// else `default`.
 pub fn workflow_for<'a>(default: &'a str, table: &'a str, name: Option<&str>) -> &'a str {
-    let Some(name) = name.filter(|n| !n.is_empty()) else { return default };
+    let Some(name) = name.filter(|n| !n.is_empty()) else {
+        return default;
+    };
     table
         .split_whitespace()
         .filter_map(|p| p.split_once('='))
@@ -251,7 +414,13 @@ pub fn workflow_for<'a>(default: &'a str, table: &'a str, name: Option<&str>) ->
 
 // ── check-status ─────────────────────────────────────────────────────────────────────────
 
-pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, branch: &str) -> Out {
+pub fn check_status(
+    gh: &dyn Gh,
+    proc: &dyn Proc,
+    repo: &Path,
+    workflow: &str,
+    branch: &str,
+) -> Out {
     if branch.is_empty() {
         // Without a branch there is no way to tell two PRs sharing a head commit apart
         // (law-a-control-that-cannot-check-must-refuse): report pending, never a guess.
@@ -259,13 +428,28 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, b
     }
     let run_list = gh.call(
         Some(repo),
-        &["run", "list", "--branch", branch, "--workflow", workflow, "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            branch,
+            "--workflow",
+            workflow,
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
+        ],
     );
     let rl = parse(&run_list.stdout).unwrap_or(Value::Array(vec![]));
     let first = first_elem(&rl);
-    let run_id = first.and_then(|r| r.get("databaseId")).map(|v| v.to_string());
+    let run_id = first
+        .and_then(|r| r.get("databaseId"))
+        .map(|v| v.to_string());
     let run_status = first.and_then(|r| jstr(r, "status")).unwrap_or_default();
-    let run_conclusion = first.and_then(|r| jstr(r, "conclusion")).unwrap_or_default();
+    let run_conclusion = first
+        .and_then(|r| jstr(r, "conclusion"))
+        .unwrap_or_default();
     let head_sha = first.and_then(|r| jstr(r, "headSha")).unwrap_or_default();
     let run_url = first.and_then(|r| jstr(r, "url")).unwrap_or_default();
 
@@ -287,32 +471,68 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, b
     if status == "green" || status == "red" {
         run_attributable = true;
         if let Some(rid) = &run_id {
-            let jr = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{rid}/jobs")]);
+            let jr = gh.call(
+                Some(repo),
+                &[
+                    "api",
+                    &format!("repos/{{owner}}/{{repo}}/actions/runs/{rid}/jobs"),
+                ],
+            );
             jobs_json = jr.text().into_owned();
         }
         let jv = parse(jobs_json.as_bytes());
         if status == "red" {
-            let prov_failed = jv.as_ref().map(|v| job_bad(v, "provision")).unwrap_or(false);
+            let prov_failed = jv
+                .as_ref()
+                .map(|v| job_bad(v, "provision"))
+                .unwrap_or(false);
             if prov_failed {
                 status = "provision_fault".to_string();
                 if let Some(id) = jv.as_ref().and_then(|v| bad_job_id(v, "provision")) {
-                    let logs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")]);
+                    let logs = gh.call(
+                        Some(repo),
+                        &[
+                            "api",
+                            &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs"),
+                        ],
+                    );
                     capacity_line = capacity_marker(&logs.text()).map(|m| format!("capacity: {m}"));
                 }
             }
         }
         if status == "red" {
             if let Some(build_job_id) = jv.as_ref().and_then(|v| bad_job_id(v, "build")) {
-                let logs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{build_job_id}/logs")]);
+                let logs = gh.call(
+                    Some(repo),
+                    &[
+                        "api",
+                        &format!("repos/{{owner}}/{{repo}}/actions/jobs/{build_job_id}/logs"),
+                    ],
+                );
                 build_err_lines = extract_build_errors(&logs.text());
             }
         }
         if status == "red" {
             if let Some(v) = &jv {
                 for (job_id, job, step) in failed_steps(v) {
-                    let logs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs")]);
+                    let logs = gh.call(
+                        Some(repo),
+                        &[
+                            "api",
+                            &format!("repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs"),
+                        ],
+                    );
                     step_lines.push(format!("failed-step: {job} / {step}"));
-                    step_lines.extend(step_log_tail(&logs.text(), STEP_LOG_TAIL).into_iter().map(|l| format!("step-log: {l}")));
+                    step_lines.extend(
+                        step_log_tail(&logs.text(), STEP_LOG_TAIL)
+                            .into_iter()
+                            .map(|l| format!("step-log: {}", redact_line(&l))),
+                    );
+                    step_lines.extend(
+                        failure_excerpt(&logs.text())
+                            .into_iter()
+                            .map(|l| format!("fail-evidence: {l}")),
+                    );
                 }
             }
         }
@@ -374,7 +594,9 @@ pub fn check_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, b
 
 /// A job named `name` exists and its conclusion is neither empty nor `success`.
 fn job_bad(v: &Value, name: &str) -> bool {
-    let Some(jobs) = v.get("jobs").and_then(Value::as_array) else { return false };
+    let Some(jobs) = v.get("jobs").and_then(Value::as_array) else {
+        return false;
+    };
     for j in jobs {
         if jstr(j, "name").as_deref() == Some(name) {
             let concl = jstr(j, "conclusion").unwrap_or_default().to_lowercase();
@@ -386,7 +608,13 @@ fn job_bad(v: &Value, name: &str) -> bool {
     false
 }
 
-const CAPACITY_MARKERS: [&str; 5] = ["VcpuLimitExceeded", "InstanceLimitExceeded", "MaxSpotInstanceCountExceeded", "InsufficientInstanceCapacity", "spill ceiling"];
+const CAPACITY_MARKERS: [&str; 5] = [
+    "VcpuLimitExceeded",
+    "InstanceLimitExceeded",
+    "MaxSpotInstanceCountExceeded",
+    "InsufficientInstanceCapacity",
+    "spill ceiling",
+];
 
 /// The first capacity marker a provision job's log names: a failure that retrying cannot change.
 fn capacity_marker(log: &str) -> Option<&'static str> {
@@ -398,17 +626,24 @@ const MAX_FAILED_JOBS: usize = 3;
 
 /// `(job id, job name, step name)` for the first failed step of each failed job.
 fn failed_steps(v: &Value) -> Vec<(String, String, String)> {
-    let Some(jobs) = v.get("jobs").and_then(Value::as_array) else { return Vec::new() };
+    let Some(jobs) = v.get("jobs").and_then(Value::as_array) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for j in jobs {
         if jstr(j, "conclusion").as_deref() != Some("failure") {
             continue;
         }
-        let (Some(id), Some(name)) = (j.get("id"), jstr(j, "name")) else { continue };
+        let (Some(id), Some(name)) = (j.get("id"), jstr(j, "name")) else {
+            continue;
+        };
         let step = j
             .get("steps")
             .and_then(Value::as_array)
-            .and_then(|ss| ss.iter().find(|s| jstr(s, "conclusion").as_deref() == Some("failure")))
+            .and_then(|ss| {
+                ss.iter()
+                    .find(|s| jstr(s, "conclusion").as_deref() == Some("failure"))
+            })
             .and_then(|s| jstr(s, "name"))
             .unwrap_or_else(|| "<unknown step>".into());
         out.push((id.to_string(), name, step));
@@ -422,9 +657,156 @@ fn failed_steps(v: &Value) -> Vec<(String, String, String)> {
 /// The last `n` lines of a job log up to its final `##[error]` line (post-step cleanup after
 /// the failure is dropped), with GitHub's per-line timestamp stripped and blanks removed.
 fn step_log_tail(log: &str, n: usize) -> Vec<String> {
-    let lines: Vec<&str> = log.lines().map(|l| l.split_once(' ').filter(|(t, _)| t.ends_with('Z') && t.contains('T')).map_or(l, |(_, r)| r)).filter(|l| !l.trim().is_empty()).collect();
-    let end = lines.iter().rposition(|l| l.starts_with("##[error]")).map_or(lines.len(), |i| i + 1);
-    lines[end.saturating_sub(n)..end].iter().map(|l| l.to_string()).collect()
+    let lines: Vec<&str> = log
+        .lines()
+        .map(|l| {
+            l.split_once(' ')
+                .filter(|(t, _)| t.ends_with('Z') && t.contains('T'))
+                .map_or(l, |(_, r)| r)
+        })
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let end = lines
+        .iter()
+        .rposition(|l| l.starts_with("##[error]"))
+        .map_or(lines.len(), |i| i + 1);
+    lines[end.saturating_sub(n)..end]
+        .iter()
+        .map(|l| l.to_string())
+        .collect()
+}
+
+const EXCERPT_CONTEXT: usize = 10;
+const EXCERPT_CONTEXT_BUDGET: usize = 100;
+const EXCERPT_MAX_MATCHES: usize = 60;
+
+fn is_failing_line(l: &str) -> bool {
+    let t = l.trim_start();
+    l.contains("FAIL") || l.contains("not ok") || t.starts_with("!!")
+}
+
+fn is_summary_line(l: &str) -> bool {
+    let low = l.to_ascii_lowercase();
+    l.chars().any(|c| c.is_ascii_digit())
+        && (low.contains(" passed")
+            || low.contains(" failed")
+            || low.contains("# pass")
+            || low.contains("# fail")
+            || low.contains("# tests")
+            || low.starts_with("pass:")
+            || low.starts_with("tests:"))
+}
+
+const SECRET_PREFIXES: [&str; 11] = [
+    "ghp_",
+    "gho_",
+    "ghs_",
+    "ghu_",
+    "ghr_",
+    "github_pat_",
+    "AKIA",
+    "ASIA",
+    "xoxb-",
+    "xoxp-",
+    "sk-",
+];
+const SECRET_KEYS: [&str; 9] = [
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "apikey",
+    "api_key",
+    "_key",
+    "credential",
+    "credentials",
+];
+
+/// Blank what looks like a credential. GitHub masks its own secrets in a log; this is for the
+/// ones a suite echoes that GitHub never registered.
+pub fn redact_line(l: &str) -> String {
+    let mut out = String::with_capacity(l.len());
+    let mut prev_bearer = false;
+    let mut rest = l;
+    while !rest.is_empty() {
+        let ws = rest.len() - rest.trim_start().len();
+        out.push_str(&rest[..ws]);
+        rest = &rest[ws..];
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let tok = &rest[..end];
+        rest = &rest[end..];
+        let mut bad = prev_bearer && !tok.is_empty();
+        prev_bearer = tok.eq_ignore_ascii_case("bearer");
+        let body = tok.trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
+        bad |= tok.len() >= 12
+            && (SECRET_PREFIXES.iter().any(|p| body.starts_with(p)) || body.starts_with("eyJ"));
+        if !bad {
+            if let Some(i) = tok.find(['=', ':']) {
+                let (k, v) = (tok[..i].to_ascii_lowercase(), &tok[i + 1..]);
+                let numeric = v.chars().all(|c| c.is_ascii_digit());
+                if !v.is_empty() && !numeric && SECRET_KEYS.iter().any(|s| k.ends_with(s)) {
+                    out.push_str(&tok[..=i]);
+                    out.push_str("***");
+                    continue;
+                }
+            }
+        }
+        out.push_str(if bad { "***" } else { tok });
+    }
+    out
+}
+
+/// Every failing line of a job log (`FAIL`, `not ok`, `!!`) with up to `EXCERPT_CONTEXT` lines
+/// either side while the context budget lasts, then the summary-count lines; timestamps stripped
+/// and credentials blanked. Gaps between kept runs are marked `...`.
+fn failure_excerpt(log: &str) -> Vec<String> {
+    let lines: Vec<&str> = log
+        .lines()
+        .map(|l| {
+            l.split_once(' ')
+                .filter(|(t, _)| t.ends_with('Z') && t.contains('T'))
+                .map_or(l, |(_, r)| r)
+        })
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let matches: Vec<usize> = (0..lines.len())
+        .filter(|&i| is_failing_line(lines[i]))
+        .take(EXCERPT_MAX_MATCHES)
+        .collect();
+    let mut keep = vec![false; lines.len()];
+    for &i in &matches {
+        keep[i] = true;
+    }
+    let mut budget = EXCERPT_CONTEXT_BUDGET;
+    for &i in &matches {
+        for j in i.saturating_sub(EXCERPT_CONTEXT)..(i + EXCERPT_CONTEXT + 1).min(lines.len()) {
+            if !keep[j] && budget > 0 {
+                keep[j] = true;
+                budget -= 1;
+            }
+        }
+    }
+    let mut counts: Vec<usize> = (0..lines.len())
+        .filter(|&i| is_summary_line(lines[i]))
+        .collect();
+    let skip = counts.len().saturating_sub(5);
+    counts.drain(..skip);
+    for i in counts {
+        keep[i] = true;
+    }
+    let mut out = Vec::new();
+    let mut last: Option<usize> = None;
+    for i in (0..lines.len()).filter(|&i| keep[i]) {
+        if last.is_some_and(|p| i > p + 1) {
+            out.push("...".to_string());
+        }
+        out.push(redact_line(lines[i]));
+        last = Some(i);
+    }
+    if matches.is_empty() {
+        out.clear();
+    }
+    out
 }
 
 fn bad_job_id(v: &Value, name: &str) -> Option<String> {
@@ -442,7 +824,9 @@ fn bad_job_id(v: &Value, name: &str) -> Option<String> {
 
 fn suites_job_faulted(v: &Value) -> bool {
     const FAULT: [&str; 2] = ["cancelled", "timed_out"];
-    let Some(jobs) = v.get("jobs").and_then(Value::as_array) else { return false };
+    let Some(jobs) = v.get("jobs").and_then(Value::as_array) else {
+        return false;
+    };
     for j in jobs {
         if jstr(j, "name").as_deref() != Some("suites") {
             continue;
@@ -501,7 +885,10 @@ fn extract_build_errors(log: &str) -> Vec<String> {
             if let Some(rest2) = rest.strip_prefix('[') {
                 if let Some(close) = rest2.find(']') {
                     let code = &rest2[..close];
-                    if code.starts_with('E') && code[1..].chars().all(|c| c.is_ascii_digit()) && rest2[close + 1..].starts_with(':') {
+                    if code.starts_with('E')
+                        && code[1..].chars().all(|c| c.is_ascii_digit())
+                        && rest2[close + 1..].starts_with(':')
+                    {
                         return true;
                     }
                 }
@@ -529,7 +916,21 @@ fn extract_build_errors(log: &str) -> Vec<String> {
 // ── run-id ───────────────────────────────────────────────────────────────────────────────
 
 pub fn run_id(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
-    let r = gh.call(Some(repo), &["run", "list", "--branch", branch, "--json", "databaseId", "--limit", "1", "-q", ".[0].databaseId"]);
+    let r = gh.call(
+        Some(repo),
+        &[
+            "run",
+            "list",
+            "--branch",
+            branch,
+            "--json",
+            "databaseId",
+            "--limit",
+            "1",
+            "-q",
+            ".[0].databaseId",
+        ],
+    );
     ok(vec![r.text().trim().to_string()])
 }
 
@@ -539,7 +940,21 @@ pub fn runs_for_branch(gh: &dyn Gh, repo: &Path, workflow: &str, branch: &str) -
     if branch.is_empty() {
         return ok(vec![]);
     }
-    let r = gh.call(Some(repo), &["run", "list", "--branch", branch, "--workflow", workflow, "--json", "databaseId,status", "--limit", "20"]);
+    let r = gh.call(
+        Some(repo),
+        &[
+            "run",
+            "list",
+            "--branch",
+            branch,
+            "--workflow",
+            workflow,
+            "--json",
+            "databaseId,status",
+            "--limit",
+            "20",
+        ],
+    );
     let mut lines = Vec::new();
     if let Some(Value::Array(items)) = parse(&r.stdout) {
         for run in items {
@@ -557,7 +972,19 @@ pub fn runs_for_branch(gh: &dyn Gh, repo: &Path, workflow: &str, branch: &str) -
 // ── runs-queue-branches ──────────────────────────────────────────────────────────────────
 
 pub fn runs_queue_branches(gh: &dyn Gh, repo: &Path, workflow: &str) -> Out {
-    let r = gh.call(Some(repo), &["run", "list", "--workflow", workflow, "--json", "databaseId,headBranch,status", "--limit", "100"]);
+    let r = gh.call(
+        Some(repo),
+        &[
+            "run",
+            "list",
+            "--workflow",
+            workflow,
+            "--json",
+            "databaseId,headBranch,status",
+            "--limit",
+            "100",
+        ],
+    );
     let mut lines = Vec::new();
     if let Some(Value::Array(items)) = parse(&r.stdout) {
         for run in items {
@@ -575,14 +1002,35 @@ pub fn runs_queue_branches(gh: &dyn Gh, repo: &Path, workflow: &str) -> Out {
 
 // ── batch-ci-status ──────────────────────────────────────────────────────────────────────
 
-pub fn batch_ci_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str, branch: &str) -> Out {
+pub fn batch_ci_status(
+    gh: &dyn Gh,
+    proc: &dyn Proc,
+    repo: &Path,
+    workflow: &str,
+    branch: &str,
+) -> Out {
     let run_list = gh.call(
         Some(repo),
-        &["run", "list", "--branch", branch, "--workflow", workflow, "--json", "databaseId,conclusion,status,updatedAt,headSha,url", "--limit", "1"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            branch,
+            "--workflow",
+            workflow,
+            "--json",
+            "databaseId,conclusion,status,updatedAt,headSha,url",
+            "--limit",
+            "1",
+        ],
     );
     let rl = parse(&run_list.stdout).unwrap_or(Value::Array(vec![]));
-    let Some(first) = first_elem(&rl) else { return ok(vec![]) };
-    let Some(run_id) = first.get("databaseId").map(|v| v.to_string()) else { return ok(vec![]) };
+    let Some(first) = first_elem(&rl) else {
+        return ok(vec![]);
+    };
+    let Some(run_id) = first.get("databaseId").map(|v| v.to_string()) else {
+        return ok(vec![]);
+    };
     let mut lines = vec![format!("run-id: {run_id}")];
     let conclusion = jstr(first, "conclusion").unwrap_or_default();
     if !conclusion.is_empty() {
@@ -602,7 +1050,13 @@ pub fn batch_ci_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str
             lines.push(format!("run-url: {url}"));
         }
     }
-    let jobs_raw = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs")]);
+    let jobs_raw = gh.call(
+        Some(repo),
+        &[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs"),
+        ],
+    );
     if !jobs_raw.ok() {
         return ok(lines);
     }
@@ -617,7 +1071,12 @@ pub fn batch_ci_status(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, workflow: &str
         if !artifact_out.is_empty() {
             lines.extend(artifact_out.lines().map(str::to_string));
         } else {
-            lines.extend(zipread::red_suites_annotations(gh, proc, repo, &jobs_raw.text()));
+            lines.extend(zipread::red_suites_annotations(
+                gh,
+                proc,
+                repo,
+                &jobs_raw.text(),
+            ));
         }
     }
     ok(lines)
@@ -645,12 +1104,32 @@ fn queued_since_of(jobs_json: &[u8]) -> Option<u64> {
 // ── queued-since ─────────────────────────────────────────────────────────────────────────
 
 pub fn queued_since(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
-    let r = gh.call(Some(repo), &["run", "list", "--branch", branch, "--json", "databaseId", "--limit", "1", "-q", ".[0].databaseId"]);
+    let r = gh.call(
+        Some(repo),
+        &[
+            "run",
+            "list",
+            "--branch",
+            branch,
+            "--json",
+            "databaseId",
+            "--limit",
+            "1",
+            "-q",
+            ".[0].databaseId",
+        ],
+    );
     let run_id = r.text().trim().to_string();
     if run_id.is_empty() {
         return ok(vec![]);
     }
-    let jr = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs")]);
+    let jr = gh.call(
+        Some(repo),
+        &[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs"),
+        ],
+    );
     if !jr.ok() {
         return ok(vec![]);
     }
@@ -663,18 +1142,34 @@ pub fn queued_since(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
 // ── runs-active ──────────────────────────────────────────────────────────────────────────
 
 pub fn runs_active(gh: &dyn Gh, repo: &Path) -> Out {
-    let runs = gh.call(Some(repo), &["api", "repos/{owner}/{repo}/actions/runs?per_page=100"]);
+    let runs = gh.call(
+        Some(repo),
+        &["api", "repos/{owner}/{repo}/actions/runs?per_page=100"],
+    );
     if !runs.ok() || runs.stdout.is_empty() {
         return ok(vec!["?".into()]);
     }
-    let Some(d) = parse(&runs.stdout) else { return ok(vec!["?".into()]) };
-    let Some(all) = d.get("workflow_runs").and_then(Value::as_array) else { return ok(vec!["?".into()]) };
+    let Some(d) = parse(&runs.stdout) else {
+        return ok(vec!["?".into()]);
+    };
+    let Some(all) = d.get("workflow_runs").and_then(Value::as_array) else {
+        return ok(vec!["?".into()]);
+    };
 
-    let open_prs = gh.call(Some(repo), &["pr", "list", "--state", "open", "--json", "number"]);
+    let open_prs = gh.call(
+        Some(repo),
+        &["pr", "list", "--state", "open", "--json", "number"],
+    );
     // None (unparseable / failed) means "cannot tell which PRs are open" — every run then
     // counts (law-absence-needs-a-positive-control); Some(empty set) is a real empty answer.
     let open_numbers: Option<std::collections::HashSet<i64>> = if open_prs.ok() {
-        parse(&open_prs.stdout).and_then(|v| v.as_array().map(|a| a.iter().filter_map(|p| p.get("number").and_then(Value::as_i64)).collect()))
+        parse(&open_prs.stdout).and_then(|v| {
+            v.as_array().map(|a| {
+                a.iter()
+                    .filter_map(|p| p.get("number").and_then(Value::as_i64))
+                    .collect()
+            })
+        })
     } else {
         None
     };
@@ -685,14 +1180,25 @@ pub fn runs_active(gh: &dyn Gh, repo: &Path) -> Out {
             continue;
         }
         let status = jstr(r, "status").unwrap_or_default();
-        if !["queued", "in_progress", "waiting", "requested", "pending"].contains(&status.as_str()) {
+        if !["queued", "in_progress", "waiting", "requested", "pending"].contains(&status.as_str())
+        {
             continue;
         }
         let belongs = match &open_numbers {
             None => true,
             Some(open) => {
-                let prs = r.get("pull_requests").and_then(Value::as_array).cloned().unwrap_or_default();
-                prs.is_empty() || prs.iter().any(|p| p.get("number").and_then(Value::as_i64).map(|n| open.contains(&n)).unwrap_or(false))
+                let prs = r
+                    .get("pull_requests")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                prs.is_empty()
+                    || prs.iter().any(|p| {
+                        p.get("number")
+                            .and_then(Value::as_i64)
+                            .map(|n| open.contains(&n))
+                            .unwrap_or(false)
+                    })
             }
         };
         if belongs {
@@ -704,7 +1210,17 @@ pub fn runs_active(gh: &dyn Gh, repo: &Path) -> Out {
 
 // ── stranded-runners ─────────────────────────────────────────────────────────────────────
 
-const GENERIC_LABELS: [&str; 9] = ["self-hosted", "linux", "macos", "windows", "x64", "arm64", "x86_64", "arm", "ubuntu-latest"];
+const GENERIC_LABELS: [&str; 9] = [
+    "self-hosted",
+    "linux",
+    "macos",
+    "windows",
+    "x64",
+    "arm64",
+    "x86_64",
+    "arm",
+    "ubuntu-latest",
+];
 
 fn vmid_of(name: &str) -> String {
     let mut best = String::new();
@@ -733,24 +1249,56 @@ fn vmid_of(name: &str) -> String {
 /// vanished is never replaced under that label, so the job would otherwise wait out GitHub's
 /// own 24h ceiling.
 pub fn stranded_runners(gh: &dyn Gh, repo: &Path, now: u64, min_age: u64) -> Out {
-    let runs = gh.call(Some(repo), &["api", "repos/{owner}/{repo}/actions/runs?per_page=50"]);
-    let Some(d) = (if runs.ok() { parse(&runs.stdout) } else { None }) else { return ok(vec![]) };
+    let runs = gh.call(
+        Some(repo),
+        &["api", "repos/{owner}/{repo}/actions/runs?per_page=50"],
+    );
+    let Some(d) = (if runs.ok() { parse(&runs.stdout) } else { None }) else {
+        return ok(vec![]);
+    };
     let ids: Vec<String> = d
         .get("workflow_runs")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter(|r| jstr(r, "status").as_deref() != Some("completed")).filter_map(|r| r.get("id").map(|i| i.to_string())).collect())
+        .map(|a| {
+            a.iter()
+                .filter(|r| jstr(r, "status").as_deref() != Some("completed"))
+                .filter_map(|r| r.get("id").map(|i| i.to_string()))
+                .collect()
+        })
         .unwrap_or_default();
     if ids.is_empty() {
         return ok(vec![]);
     }
-    let rr = gh.call(Some(repo), &["api", "repos/{owner}/{repo}/actions/runners?per_page=100"]);
-    let runners: Vec<Value> = if rr.ok() { parse(&rr.stdout).and_then(|v| v.get("runners").and_then(Value::as_array).cloned()).unwrap_or_default() } else { vec![] };
+    let rr = gh.call(
+        Some(repo),
+        &["api", "repos/{owner}/{repo}/actions/runners?per_page=100"],
+    );
+    let runners: Vec<Value> = if rr.ok() {
+        parse(&rr.stdout)
+            .and_then(|v| v.get("runners").and_then(Value::as_array).cloned())
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
 
     let mut lines = Vec::new();
     for id in ids {
-        let jr = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{id}/jobs")]);
-        let Some(jv) = (if jr.ok() { parse(&jr.stdout) } else { None }) else { continue };
-        for j in jv.get("jobs").and_then(Value::as_array).cloned().unwrap_or_default() {
+        let jr = gh.call(
+            Some(repo),
+            &[
+                "api",
+                &format!("repos/{{owner}}/{{repo}}/actions/runs/{id}/jobs"),
+            ],
+        );
+        let Some(jv) = (if jr.ok() { parse(&jr.stdout) } else { None }) else {
+            continue;
+        };
+        for j in jv
+            .get("jobs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
             if jstr(&j, "status").as_deref() != Some("queued") {
                 continue;
             }
@@ -762,16 +1310,36 @@ pub fn stranded_runners(gh: &dyn Gh, repo: &Path, now: u64, min_age: u64) -> Out
             let labels: Vec<String> = j
                 .get("labels")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).filter(|l| !GENERIC_LABELS.contains(&l.to_lowercase().as_str())).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|l| l.as_str().map(str::to_string))
+                        .filter(|l| !GENERIC_LABELS.contains(&l.to_lowercase().as_str()))
+                        .collect()
+                })
                 .unwrap_or_default();
             if labels.is_empty() {
                 continue;
             }
             let considered: Vec<&Value> = runners
                 .iter()
-                .filter(|r| r.get("labels").and_then(Value::as_array).map(|ls| ls.iter().any(|l| l.get("name").and_then(Value::as_str).map(|n| labels.iter().any(|x| x == n)).unwrap_or(false))).unwrap_or(false))
+                .filter(|r| {
+                    r.get("labels")
+                        .and_then(Value::as_array)
+                        .map(|ls| {
+                            ls.iter().any(|l| {
+                                l.get("name")
+                                    .and_then(Value::as_str)
+                                    .map(|n| labels.iter().any(|x| x == n))
+                                    .unwrap_or(false)
+                            })
+                        })
+                        .unwrap_or(false)
+                })
                 .collect();
-            if considered.iter().any(|r| jstr(r, "status").as_deref() == Some("online")) {
+            if considered
+                .iter()
+                .any(|r| jstr(r, "status").as_deref() == Some("online"))
+            {
                 continue;
             }
             let (runner, vmid) = match considered.first() {
@@ -799,12 +1367,21 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
         return fail(vec![]);
     }
     let mut lines = Vec::new();
-    let run_json = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}")]);
+    let run_json = gh.call(
+        Some(repo),
+        &[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}"),
+        ],
+    );
     if let Some(v) = parse(&run_json.stdout) {
         if let Some(st) = jstr(&v, "status").filter(|s| !s.is_empty()) {
             lines.push(format!("run-status: {st}"));
         }
-        let started = jstr(&v, "run_started_at").filter(|s| !s.is_empty()).or_else(|| jstr(&v, "created_at")).unwrap_or_default();
+        let started = jstr(&v, "run_started_at")
+            .filter(|s| !s.is_empty())
+            .or_else(|| jstr(&v, "created_at"))
+            .unwrap_or_default();
         let e = epoch(&started);
         if e > 0 {
             lines.push(format!("started-at: {e}"));
@@ -820,7 +1397,15 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
         let sha = jstr(&v, "head_sha").unwrap_or_default();
         let wf = wf.split('@').next().unwrap_or("");
         if !wf.is_empty() && !sha.is_empty() {
-            let src = gh.call(Some(repo), &["api", "-H", "Accept: application/vnd.github.raw", &format!("repos/{{owner}}/{{repo}}/contents/{wf}?ref={sha}")]);
+            let src = gh.call(
+                Some(repo),
+                &[
+                    "api",
+                    "-H",
+                    "Accept: application/vnd.github.raw",
+                    &format!("repos/{{owner}}/{{repo}}/contents/{wf}?ref={sha}"),
+                ],
+            );
             if src.code == 0 {
                 if let Some(m) = declared_timeout_minutes(&String::from_utf8_lossy(&src.stdout)) {
                     lines.push(format!("timeout-sec: {}", m * 60));
@@ -828,14 +1413,26 @@ pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
             }
         }
     }
-    let jobs_json = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs")]);
+    let jobs_json = gh.call(
+        Some(repo),
+        &[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs"),
+        ],
+    );
     if let Some(v) = parse(&jobs_json.stdout) {
         if let Some(jobs) = v.get("jobs").and_then(Value::as_array) {
             let mut latest = 0u64;
             for j in jobs {
                 if jstr(j, "completed_at").is_none() && jstr(j, "started_at").is_some() {
                     if let Some(id) = j.get("id").and_then(Value::as_u64) {
-                        let log = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs")]);
+                        let log = gh.call(
+                            Some(repo),
+                            &[
+                                "api",
+                                &format!("repos/{{owner}}/{{repo}}/actions/jobs/{id}/logs"),
+                            ],
+                        );
                         latest = latest.max(last_log_stamp(&String::from_utf8_lossy(&log.stdout)));
                     }
                 }
@@ -895,7 +1492,10 @@ fn declared_timeout_minutes(yaml: &str) -> Option<u64> {
 
 /// Epoch of the last timestamped line of a job log (`2026-10-10T12:00:00.1234567Z msg`); 0 when none parses.
 fn last_log_stamp(log: &str) -> u64 {
-    log.lines().rev().find_map(|l| l.get(..19).map(epoch).filter(|e| *e > 0)).unwrap_or(0)
+    log.lines()
+        .rev()
+        .find_map(|l| l.get(..19).map(epoch).filter(|e| *e > 0))
+        .unwrap_or(0)
 }
 
 // ── run-cancel / workflow-rerun / pr-close / pr-comment / dispatch ─────────────────────────
@@ -913,13 +1513,24 @@ pub fn force_cancel(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
         eprintln!("forge: force-cancel: run id required");
         return fail(vec![]);
     }
-    let jobs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs")]);
+    let jobs = gh.call(
+        Some(repo),
+        &[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs"),
+        ],
+    );
     let mut labels: Vec<String> = serde_json::from_slice::<Value>(&jobs.stdout)
         .ok()
         .and_then(|v| v.get("jobs").and_then(Value::as_array).cloned())
         .unwrap_or_default()
         .iter()
-        .flat_map(|j| j.get("labels").and_then(Value::as_array).cloned().unwrap_or_default())
+        .flat_map(|j| {
+            j.get("labels")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
         .filter_map(|l| l.as_str().map(str::to_string))
         .filter(|l| l != "self-hosted")
         .collect();
@@ -930,15 +1541,35 @@ pub fn force_cancel(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
     } else {
         eprintln!("forge: force-cancel: run {run_id} provisioned runner(s) - destroy explicitly, do not wait for the reaper:\n{}", labels.join("\n"));
     }
-    let r = gh.call(Some(repo), &["api", "--method", "POST", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/force-cancel")]);
-    Out { code: r.code, lines: passthrough(&r) }
+    let r = gh.call(
+        Some(repo),
+        &[
+            "api",
+            "--method",
+            "POST",
+            &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/force-cancel"),
+        ],
+    );
+    Out {
+        code: r.code,
+        lines: passthrough(&r),
+    }
 }
 
 /// A completed run with a verdict (success, or red outside a faulted suites job) was decided by
 /// its tree, its workflow file and the harness at that commit; re-running it can only repeat
 /// the answer, so it is refused with that reason. Only a fault or an unfinished run is re-run.
 pub fn rerun_refusal(gh: &dyn Gh, repo: &Path, run_id: &str) -> Option<String> {
-    let run = parse(&gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}")]).stdout)?;
+    let run = parse(
+        &gh.call(
+            Some(repo),
+            &[
+                "api",
+                &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}"),
+            ],
+        )
+        .stdout,
+    )?;
     if jstr(&run, "status").as_deref() != Some("completed") {
         return None;
     }
@@ -947,7 +1578,16 @@ pub fn rerun_refusal(gh: &dyn Gh, repo: &Path, run_id: &str) -> Option<String> {
         return None;
     }
     if concl == "failure" {
-        let jobs = parse(&gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs")]).stdout)?;
+        let jobs = parse(
+            &gh.call(
+                Some(repo),
+                &[
+                    "api",
+                    &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs"),
+                ],
+            )
+            .stdout,
+        )?;
         if suites_job_faulted(&jobs) {
             return None;
         }
@@ -960,15 +1600,24 @@ pub fn rerun_refusal(gh: &dyn Gh, repo: &Path, run_id: &str) -> Option<String> {
 pub fn workflow_rerun(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
     if let Some(why) = rerun_refusal(gh, repo, run_id) {
         eprintln!("forge: workflow-rerun refused: {why}");
-        return Out { code: 3, lines: vec![] };
+        return Out {
+            code: 3,
+            lines: vec![],
+        };
     }
-    let st = gh.call(Some(repo), &["run", "view", run_id, "--json", "status", "-q", ".status"]);
+    let st = gh.call(
+        Some(repo),
+        &["run", "view", run_id, "--json", "status", "-q", ".status"],
+    );
     let status = st.text().trim().to_string();
     if status == "in_progress" || status == "queued" {
         let _ = gh.call(Some(repo), &["run", "cancel", run_id]);
     }
     let r = gh.call(Some(repo), &["run", "rerun", run_id]);
-    Out { code: r.code, lines: passthrough(&r) }
+    Out {
+        code: r.code,
+        lines: passthrough(&r),
+    }
 }
 
 pub fn pr_close(gh: &dyn Gh, repo: &Path, pr_n: &str) -> Out {
@@ -986,8 +1635,22 @@ pub fn dispatch(gh: &dyn Gh, repo: &Path, workflow: &str, ref_: &str, suites: &s
         eprintln!("forge: dispatch: ref required");
         return fail(vec![]);
     }
-    let r = gh.call(Some(repo), &["workflow", "run", workflow, "--ref", ref_, "-f", &format!("suites={suites}")]);
-    Out { code: r.code, lines: passthrough(&r) }
+    let r = gh.call(
+        Some(repo),
+        &[
+            "workflow",
+            "run",
+            workflow,
+            "--ref",
+            ref_,
+            "-f",
+            &format!("suites={suites}"),
+        ],
+    );
+    Out {
+        code: r.code,
+        lines: passthrough(&r),
+    }
 }
 
 fn passthrough(r: &GhOut) -> Vec<String> {
@@ -1019,7 +1682,18 @@ pub fn branch_protect(gh: &dyn Gh, repo: &Path, base: &str, app_id: &str) -> Out
     let body = format!(
         r#"{{"required_status_checks":{{"strict":false,"checks":[{{"context":"gate","app_id":{app_id}}}]}},"enforce_admins":true,"required_pull_request_reviews":null,"restrictions":null,"allow_force_pushes":false,"allow_deletions":false,"block_creations":false}}"#
     );
-    let r = gh.call_merged(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/branches/{base}/protection"), "--method", "PUT", "--input", "-"], Some(body.as_bytes()));
+    let r = gh.call_merged(
+        Some(repo),
+        &[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/branches/{base}/protection"),
+            "--method",
+            "PUT",
+            "--input",
+            "-",
+        ],
+        Some(body.as_bytes()),
+    );
     ok(passthrough(&r))
 }
 
@@ -1027,7 +1701,13 @@ pub fn branch_protection_status(gh: &dyn Gh, repo: &Path, base: &str) -> Out {
     if base.is_empty() {
         return ok(vec!["unprotected".into()]);
     }
-    let r = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/branches/{base}")]);
-    let word = parse(&r.stdout).and_then(|v| v.get("protected").and_then(Value::as_bool)).map(|p| if p { "protected" } else { "unprotected" }).unwrap_or("unprotected");
+    let r = gh.call(
+        Some(repo),
+        &["api", &format!("repos/{{owner}}/{{repo}}/branches/{base}")],
+    );
+    let word = parse(&r.stdout)
+        .and_then(|v| v.get("protected").and_then(Value::as_bool))
+        .map(|p| if p { "protected" } else { "unprotected" })
+        .unwrap_or("unprotected");
     ok(vec![word.to_string()])
 }

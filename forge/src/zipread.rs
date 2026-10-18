@@ -9,7 +9,13 @@ use std::path::{Path, PathBuf};
 /// Downloads the run's `batch-results-*` artifact zip to a temp dir; None if there is none
 /// (no artifact, or the download failed). Caller removes the parent dir.
 fn artifact_zip(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, run_id: &str) -> Option<PathBuf> {
-    let list = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/artifacts")]);
+    let list = gh.call(
+        Some(repo),
+        &[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/artifacts"),
+        ],
+    );
     if !list.ok() {
         return None;
     }
@@ -29,11 +35,21 @@ except: pass
     if art_id.is_empty() {
         return None;
     }
-    let zip_bytes = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/artifacts/{art_id}/zip")]);
+    let zip_bytes = gh.call(
+        Some(repo),
+        &[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/actions/artifacts/{art_id}/zip"),
+        ],
+    );
     if !zip_bytes.ok() || zip_bytes.stdout.is_empty() {
         return None;
     }
-    let dir = std::env::temp_dir().join(format!("forge-artifact-{}-{}", std::process::id(), unique()));
+    let dir = std::env::temp_dir().join(format!(
+        "forge-artifact-{}-{}",
+        std::process::id(),
+        unique()
+    ));
     std::fs::create_dir_all(&dir).ok()?;
     let zpath = dir.join("b.zip");
     std::fs::write(&zpath, &zip_bytes.stdout).ok()?;
@@ -42,7 +58,10 @@ except: pass
 
 fn unique() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
 }
 
 const RED_SUITES_PY: &str = r#"
@@ -96,7 +115,9 @@ except Exception:
 /// `artifact-truncated: n/m` line means the artifact's own count disagrees with what it
 /// holds — the caller must not attribute against a partial list.
 pub fn red_suites_artifact(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, run_id: &str) -> String {
-    let Some(zip) = artifact_zip(gh, proc, repo, run_id) else { return String::new() };
+    let Some(zip) = artifact_zip(gh, proc, repo, run_id) else {
+        return String::new();
+    };
     let zip_s = zip.to_string_lossy().into_owned();
     let (_, out) = proc.run("python3", &["-c", RED_SUITES_PY, &zip_s], None);
     if let Some(parent) = zip.parent() {
@@ -126,8 +147,16 @@ except Exception:
 
 /// Up to 20 `FAIL`-containing lines from each named suite's own `<suite>.out` in the run's
 /// artifact (or its last 20 lines if none matched); `fail-line: <suite>: <text>` per line.
-pub fn fail_lines_artifact(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, run_id: &str, suites: &[&str]) -> Vec<String> {
-    let Some(zip) = artifact_zip(gh, proc, repo, run_id) else { return Vec::new() };
+pub fn fail_lines_artifact(
+    gh: &dyn Gh,
+    proc: &dyn Proc,
+    repo: &Path,
+    run_id: &str,
+    suites: &[&str],
+) -> Vec<String> {
+    let Some(zip) = artifact_zip(gh, proc, repo, run_id) else {
+        return Vec::new();
+    };
     let zip_s = zip.to_string_lossy().into_owned();
     let mut lines = Vec::new();
     for s in suites {
@@ -146,7 +175,12 @@ pub fn fail_lines_artifact(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, run_id: &s
 
 /// Fallback suite list from per-job annotations (GitHub caps 10/step) — used when the
 /// artifact is absent or truncated.
-pub fn red_suites_annotations(gh: &dyn Gh, proc: &dyn Proc, repo: &Path, jobs_json: &str) -> Vec<String> {
+pub fn red_suites_annotations(
+    gh: &dyn Gh,
+    proc: &dyn Proc,
+    repo: &Path,
+    jobs_json: &str,
+) -> Vec<String> {
     const JOB_IDS_PY: &str = r#"
 import json, sys
 try:
@@ -181,7 +215,13 @@ except Exception:
         if jid.is_empty() {
             continue;
         }
-        let annot = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/check-runs/{jid}/annotations")]);
+        let annot = gh.call(
+            Some(repo),
+            &[
+                "api",
+                &format!("repos/{{owner}}/{{repo}}/check-runs/{jid}/annotations"),
+            ],
+        );
         if !annot.ok() {
             continue;
         }

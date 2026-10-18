@@ -4,7 +4,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{actor, czar_ok, idents, require_lc, lock_held_by_caller, read_text, repo_path, resolve, take_lock, World, FAIL, OK, USAGE};
+use super::{
+    actor, czar_ok, idents, lock_held_by_caller, read_text, repo_path, require_lc, resolve,
+    take_lock, World, FAIL, OK, USAGE,
+};
 use crate::cli::Text;
 use crate::model::{LandMode, Member};
 use crate::records::{self, write_atomic};
@@ -24,7 +27,10 @@ pub fn round_bins(w: &World, repo: &Path, head: &str, worktree: &Path) -> Result
     }
     let dir = worktree.join("target").join("release");
     let has_exe = fs::read_dir(&dir)
-        .map(|rd| rd.flatten().any(|e| super::simple::is_executable(&e.path())))
+        .map(|rd| {
+            rd.flatten()
+                .any(|e| super::simple::is_executable(&e.path()))
+        })
         .unwrap_or(false);
     if !has_exe {
         return Err(format!(
@@ -38,15 +44,26 @@ pub fn round_bins(w: &World, repo: &Path, head: &str, worktree: &Path) -> Result
 /// §8 D12: Ok when a round GREEN (the full corpus on a round VM) certifies exactly `head`'s
 /// tree in `repo` (`gate::cert`, matched by (repo, tree) alone), naming it on stderr. A gate
 /// PASS is a budgeted selection and never certifies a landing; Err is the refusal text.
-pub fn certified(w: &World, path: &Path, repo: &str, s: &crate::ports::Settings, head: &str, head_arg: &str) -> Result<(), String> {
+pub fn certified(
+    w: &World,
+    path: &Path,
+    repo: &str,
+    s: &crate::ports::Settings,
+    head: &str,
+    head_arg: &str,
+) -> Result<(), String> {
     let Some(tree) = w.git.rev_parse(path, &format!("{head}^{{tree}}")) else {
-        return Err(format!("cannot resolve {head}^{{tree}} — nothing can say what would land"));
+        return Err(format!(
+            "cannot resolve {head}^{{tree}} — nothing can say what would land"
+        ));
     };
     let verdicts = gate::cert::verdicts_dir(w.var("SPIRA_VERDICTS").as_deref(), &s.run);
     let found = gate::cert::path(&verdicts, repo, &tree)
         .and_then(|p| w.env.read_file(&p).ok())
         .and_then(|text| gate::cert::certifies(&text, repo, &tree));
-    let gate_only = found.as_ref().is_some_and(|c| c.source != gate::cert::Source::Round);
+    let gate_only = found
+        .as_ref()
+        .is_some_and(|c| c.source != gate::cert::Source::Round);
     match found.filter(|c| c.source == gate::cert::Source::Round) {
         Some(c) => {
             w.err(format!(
@@ -77,7 +94,9 @@ pub struct BreakGlass {
 fn break_glass(w: &World, repo: &Path, head: &str, reason: String) -> Result<BreakGlass, String> {
     let by = w.var("SPIRA_LAND_UNGATED_BY").unwrap_or_default();
     if by != "concierge" && by != "operator" {
-        return Err(format!("SPIRA_LAND_UNGATED_BY must be concierge or operator (got {by:?})"));
+        return Err(format!(
+            "SPIRA_LAND_UNGATED_BY must be concierge or operator (got {by:?})"
+        ));
     }
     let spec = w.var("SPIRA_LAND_UNGATED_EVIDENCE").unwrap_or_default();
     if spec.is_empty() {
@@ -90,7 +109,11 @@ fn break_glass(w: &World, repo: &Path, head: &str, reason: String) -> Result<Bre
     if !w.git.is_ancestor(repo, &evidence, head) {
         return Err(format!("evidence {evidence} is not on the tip {head}"));
     }
-    Ok(BreakGlass { reason, by, evidence })
+    Ok(BreakGlass {
+        reason,
+        by,
+        evidence,
+    })
 }
 
 /// Members from `--members`: `id:tip` tokens, comma or space separated; a token with no
@@ -98,16 +121,38 @@ fn break_glass(w: &World, repo: &Path, head: &str, reason: String) -> Result<Bre
 pub fn land_members(text: &str, head: &str) -> Vec<Member> {
     crate::model::parse_members(text)
         .into_iter()
-        .map(|m| if m.tip.is_empty() { Member { id: m.id, tip: head.to_string() } } else { m })
+        .map(|m| {
+            if m.tip.is_empty() {
+                Member {
+                    id: m.id,
+                    tip: head.to_string(),
+                }
+            } else {
+                m
+            }
+        })
         .collect()
 }
 
-pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text, worktree: Option<&Path>) -> i32 {
+pub fn land_local(
+    w: &World,
+    repo: Option<&str>,
+    head_arg: &str,
+    members: &Text,
+    worktree: Option<&Path>,
+) -> i32 {
     land_local_with(w, repo, head_arg, members, worktree, lock_held_by_caller(w))
 }
 
 /// [`land_local`] for a caller that already holds the repository's queue lock.
-pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &Text, worktree: Option<&Path>, lock_held: bool) -> i32 {
+pub fn land_local_with(
+    w: &World,
+    repo: Option<&str>,
+    head_arg: &str,
+    members: &Text,
+    worktree: Option<&Path>,
+    lock_held: bool,
+) -> i32 {
     if !czar_ok(w) {
         return FAIL;
     }
@@ -122,15 +167,24 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
         w.err("queue.sh land-local: --members is required");
         return USAGE;
     }
-    let Ok(c) = resolve(w, "land-local", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "land-local", &c) else { return FAIL };
+    let Ok(c) = resolve(w, "land-local", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "land-local", &c) else {
+        return FAIL;
+    };
     let name = c.r.name.clone();
     if c.r.mode != LandMode::QueueLocal {
-        w.err(format!("queue.sh land-local: repo is not in queue.local mode (mode={})", c.r.mode.as_str()));
+        w.err(format!(
+            "queue.sh land-local: repo is not in queue.local mode (mode={})",
+            c.r.mode.as_str()
+        ));
         return FAIL;
     }
     let Some(base) = c.r.landref.clone() else {
-        w.err(format!("queue.sh land-local: cannot resolve landing ref for {name}"));
+        w.err(format!(
+            "queue.sh land-local: cannot resolve landing ref for {name}"
+        ));
         return FAIL;
     };
     // queue.local's base is a LOCAL branch that happens to contain a slash (local/main).
@@ -153,7 +207,13 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
     }
     let ms = land_members(&members_text, &head);
     for m in &ms {
-        if idents(w, "land-local", &[("member id", &m.id), ("member tip", &m.tip)]).is_err() {
+        if idents(
+            w,
+            "land-local",
+            &[("member id", &m.id), ("member tip", &m.tip)],
+        )
+        .is_err()
+        {
             return FAIL;
         }
     }
@@ -176,8 +236,13 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
     // Row 4: alarm (never refuse) on a foreign forge divergence, against the CACHED
     // remote-tracking ref — no fetch on the round's critical path.
     if let Some((remote, branch)) = &c.r.publish {
-        if let Some(fsha) = w.git.rev_parse(&path, &format!("refs/remotes/{remote}/{branch}")) {
-            let _ = w.lib.divergence(&c.s.mailbox, &c.s.queue_dir, &name, &path, &fsha, &base_sha);
+        if let Some(fsha) = w
+            .git
+            .rev_parse(&path, &format!("refs/remotes/{remote}/{branch}"))
+        {
+            let _ = w
+                .lib
+                .divergence(&c.s.mailbox, &c.s.queue_dir, &name, &path, &fsha, &base_sha);
         }
     }
 
@@ -190,7 +255,11 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
     // head's tree, or the named, logged override.
     let ungated = match certified(w, &path, &name, &c.s, &head, head_arg) {
         Ok(()) => None,
-        Err(refusal) => match w.var("SPIRA_LAND_UNGATED").map(|r| crate::ident::bounded_text(&r)).filter(|r| !r.is_empty()) {
+        Err(refusal) => match w
+            .var("SPIRA_LAND_UNGATED")
+            .map(|r| crate::ident::bounded_text(&r))
+            .filter(|r| !r.is_empty())
+        {
             Some(reason) => match break_glass(w, &path, &head, reason) {
                 Ok(bg) => Some(bg),
                 Err(why) => {
@@ -199,7 +268,9 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
                 }
             },
             None => {
-                w.err(format!("queue.sh land-local: {refusal}; refused, nothing changed"));
+                w.err(format!(
+                    "queue.sh land-local: {refusal}; refused, nothing changed"
+                ));
                 return FAIL;
             }
         },
@@ -212,7 +283,9 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
         Some(wt) => match round_bins(w, &path, &head, wt) {
             Ok(b) => Some(b),
             Err(why) => {
-                w.err(format!("queue.sh land-local: {why}; refused, nothing changed"));
+                w.err(format!(
+                    "queue.sh land-local: {why}; refused, nothing changed"
+                ));
                 return FAIL;
             }
         },
@@ -221,14 +294,19 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
     // Only a landing of the harness (the repository releases are made from), and only
     // while a release is in force: before the cutover nothing runs one, and the first
     // activation is the cutover's, never a routine landing's.
-    let in_force = c.s.releases.clone().filter(|r| super::deploy::release_in_force(r));
+    let in_force =
+        c.s.releases
+            .clone()
+            .filter(|r| super::deploy::release_in_force(r));
     let plan = if name != c.s.home_repo {
         None
     } else if let Some(releases) = in_force {
         match deploy_plan(&c.s, &path, &base, releases, bins) {
             Ok(p) => Some(p),
             Err(why) => {
-                w.err(format!("queue.sh land-local: {why}; refused, nothing changed"));
+                w.err(format!(
+                    "queue.sh land-local: {why}; refused, nothing changed"
+                ));
                 return FAIL;
             }
         }
@@ -259,11 +337,21 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
     // A CAS, never a plain write.
     let base_ref = format!("refs/heads/{base}");
     if !w.git.update_ref(&path, &base_ref, &head, Some(&base_sha)) {
-        w.err(format!("queue.sh land-local: {base} moved concurrently — refused, nothing changed"));
+        w.err(format!(
+            "queue.sh land-local: {base} moved concurrently — refused, nothing changed"
+        ));
         return FAIL;
     }
-    if let Some(BreakGlass { reason, by, evidence }) = &ungated {
-        let tree = w.git.rev_parse(&path, &format!("{head}^{{tree}}")).unwrap_or_else(|| "-".into());
+    if let Some(BreakGlass {
+        reason,
+        by,
+        evidence,
+    }) = &ungated
+    {
+        let tree = w
+            .git
+            .rev_parse(&path, &format!("{head}^{{tree}}"))
+            .unwrap_or_else(|| "-".into());
         w.err(format!(
             "queue.sh land-local: UNGATED LANDING of {head} (tree {tree}) onto {base} — no gate PASS or round GREEN certified it; SPIRA_LAND_UNGATED={reason} by={by} evidence={evidence}"
         ));
@@ -281,12 +369,17 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
         super::helpers::close_on_land(w, &c.s.submitted_label, &m.id, &head);
         w.out(format!("queue.sh land-local: {} landed at {head}", m.id));
     }
-    let lc_faults = ms.iter().filter(|m| !lc_deliver(w, &path, &head, m)).count();
+    let lc_faults = ms
+        .iter()
+        .filter(|m| !lc_deliver(w, &path, &head, m))
+        .count();
     // The landing is recorded; now publish its release (§8 D13). A fault never reverts the
     // ref or the records: it leaves `current` where it was and makes the exit non-zero.
-    let outcome = plan.as_ref().zip(verified.as_deref()).map(|(p, sha)| match super::deploy::activate(w, p, sha) {
-        Ok(()) => super::deploy::Outcome::Activated(sha.to_string()),
-        Err(why) => super::deploy::Outcome::Fault(why),
+    let outcome = plan.as_ref().zip(verified.as_deref()).map(|(p, sha)| {
+        match super::deploy::activate(w, p, sha) {
+            Ok(()) => super::deploy::Outcome::Activated(sha.to_string()),
+            Err(why) => super::deploy::Outcome::Fault(why),
+        }
     });
     if let Some(pin) = &pin {
         let _ = fs::remove_file(pin);
@@ -318,7 +411,9 @@ pub fn land_local_with(w: &World, repo: Option<&str>, head_arg: &str, members: &
             ungated.as_ref().map(|r| format!(". UNGATED — no gate PASS or round GREEN for this tree; SPIRA_LAND_UNGATED={} by={} evidence={}", r.reason, r.by, r.evidence)).unwrap_or_default()
         ),
     );
-    w.out(format!("queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"));
+    w.out(format!(
+        "queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"
+    ));
     if name == c.s.home_repo {
         let tree = worktree.unwrap_or(&path);
         let r = w.scripts.boundary_sync(tree);
@@ -357,7 +452,9 @@ pub fn lc_deliver(w: &World, path: &Path, head: &str, m: &Member) -> bool {
     };
     let who = actor(w);
     if state == "CERTIFIED" {
-        if let Err((rc, e)) = w.lc.bead_event(&m.id, &state, &v.to_string(), &who, "\"Deliver\"") {
+        if let Err((rc, e)) =
+            w.lc.bead_event(&m.id, &state, &v.to_string(), &who, "\"Deliver\"")
+        {
             return fail(format!("Deliver refused (rc={rc}): {e}"));
         }
         state = "IN_DELIVERY".into();
@@ -366,7 +463,10 @@ pub fn lc_deliver(w: &World, path: &Path, head: &str, m: &Member) -> bool {
     if state != "IN_DELIVERY" {
         return fail(format!("in state {state}, not CERTIFIED or IN_DELIVERY"));
     }
-    let kind = format!("{{\"Delivered\":{{\"merge_sha\":\"{}\",\"proof\":\"ancestry\"}}}}", m.tip);
+    let kind = format!(
+        "{{\"Delivered\":{{\"merge_sha\":\"{}\",\"proof\":\"ancestry\"}}}}",
+        m.tip
+    );
     match w.lc.bead_event(&m.id, &state, &v.to_string(), &who, &kind) {
         Ok(()) => true,
         Err((rc, e)) => fail(format!("Delivered refused (rc={rc}): {e}")),
@@ -376,28 +476,51 @@ pub fn lc_deliver(w: &World, path: &Path, head: &str, m: &Member) -> bool {
 /// §8 D13's precondition for a landing of the harness while a release is in force: the
 /// round's tested build to publish (law-deploy-the-tested-artifacts — never a rebuild). Err
 /// is the refusal reason.
-fn deploy_plan(s: &crate::ports::Settings, repo: &Path, landref: &str, releases: PathBuf, bins: Option<PathBuf>) -> Result<super::deploy::Plan, String> {
+fn deploy_plan(
+    s: &crate::ports::Settings,
+    repo: &Path,
+    landref: &str,
+    releases: PathBuf,
+    bins: Option<PathBuf>,
+) -> Result<super::deploy::Plan, String> {
     let Some(bins) = bins else {
         return Err(format!(
             "--worktree <round worktree> is required to land {}: its release ships the round's own tested build (law-deploy-the-tested-artifacts), never a rebuild",
             s.home_repo
         ));
     };
-    Ok(super::deploy::Plan { repo: repo.to_path_buf(), landref: landref.to_string(), releases, run: s.run.clone(), bins: Some(bins), db: s.db.clone() })
+    Ok(super::deploy::Plan {
+        repo: repo.to_path_buf(),
+        landref: landref.to_string(),
+        releases,
+        run: s.run.clone(),
+        bins: Some(bins),
+        db: s.db.clone(),
+    })
 }
 
 pub fn rollback_local(w: &World, repo: Option<&str>) -> i32 {
     if !czar_ok(w) {
         return FAIL;
     }
-    let Ok(c) = resolve(w, "rollback-local", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "rollback-local", &c) else { return FAIL };
+    let Ok(c) = resolve(w, "rollback-local", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "rollback-local", &c) else {
+        return FAIL;
+    };
     if c.r.mode != LandMode::QueueLocal {
-        w.err(format!("queue.sh rollback-local: repo is not in queue.local mode (mode={})", c.r.mode.as_str()));
+        w.err(format!(
+            "queue.sh rollback-local: repo is not in queue.local mode (mode={})",
+            c.r.mode.as_str()
+        ));
         return FAIL;
     }
     let Some(base) = c.r.landref.clone() else {
-        w.err(format!("queue.sh rollback-local: cannot resolve landing ref for {}", c.r.name));
+        w.err(format!(
+            "queue.sh rollback-local: cannot resolve landing ref for {}",
+            c.r.name
+        ));
         return FAIL;
     };
     let _g = if lock_held_by_caller(w) {
@@ -410,17 +533,27 @@ pub fn rollback_local(w: &World, repo: Option<&str>) -> i32 {
     };
     let n = records::read_seq(&c.queue_file("round-seq"));
     if n < 2 {
-        w.err(format!("queue.sh rollback-local: round-seq is {n} — no landed round to roll back to"));
+        w.err(format!(
+            "queue.sh rollback-local: round-seq is {n} — no landed round to roll back to"
+        ));
         return FAIL;
     }
-    let Some(prev) = w.git.rev_parse(&path, &format!("refs/archive/rounds/{}", n - 1)) else {
-        w.err(format!("queue.sh rollback-local: refs/archive/rounds/{} has no archived head", n - 1));
+    let Some(prev) = w
+        .git
+        .rev_parse(&path, &format!("refs/archive/rounds/{}", n - 1))
+    else {
+        w.err(format!(
+            "queue.sh rollback-local: refs/archive/rounds/{} has no archived head",
+            n - 1
+        ));
         return FAIL;
     };
     // Re-activate the previous round's release (§8 D13): it was published when that round
     // landed, so it is verified and activated as it stands — never rebuilt.
     let Some(releases) = c.s.releases.clone() else {
-        w.err("queue.sh rollback-local: SPIRA_RELEASES does not resolve — no release to roll back to");
+        w.err(
+            "queue.sh rollback-local: SPIRA_RELEASES does not resolve — no release to roll back to",
+        );
         return FAIL;
     };
     if !super::deploy::release_in_force(&releases) {
@@ -431,8 +564,17 @@ pub fn rollback_local(w: &World, repo: Option<&str>) -> i32 {
         w.err(format!("queue.sh rollback-local: no release {prev} in {} (pruned, or that round never published one)", releases.display()));
         return FAIL;
     }
-    let plan = super::deploy::Plan { repo: path.clone(), landref: base.clone(), releases, run: c.s.run.clone(), bins: None, db: c.s.db.clone() };
-    if let Err(why) = super::deploy::verify(w, &plan, &prev).and_then(|()| super::deploy::activate(w, &plan, &prev)) {
+    let plan = super::deploy::Plan {
+        repo: path.clone(),
+        landref: base.clone(),
+        releases,
+        run: c.s.run.clone(),
+        bins: None,
+        db: c.s.db.clone(),
+    };
+    if let Err(why) = super::deploy::verify(w, &plan, &prev)
+        .and_then(|()| super::deploy::activate(w, &plan, &prev))
+    {
         w.err(format!("queue.sh rollback-local: {why} — could not re-activate release {prev}; nothing changed"));
         return FAIL;
     }
@@ -454,6 +596,8 @@ pub fn rollback_local(w: &World, repo: Option<&str>) -> i32 {
         &format!("local rollback (round {n} -> {})", n - 1),
         &format!("{base} reset to {prev} (release {prev} re-activated)."),
     );
-    w.out(format!("queue.sh rollback-local: activated release {prev}, {base} reset to {prev}"));
+    w.out(format!(
+        "queue.sh rollback-local: activated release {prev}, {base} reset to {prev}"
+    ));
     OK
 }

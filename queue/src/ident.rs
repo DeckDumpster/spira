@@ -23,7 +23,10 @@ pub fn check(kind: &str, s: &str) -> Result<(), String> {
     if s.starts_with('-') {
         return Err(format!("{kind} '{s}' starts with '-'"));
     }
-    if let Some(c) = s.chars().find(|c| !(c.is_ascii_alphanumeric() || "._/:@+~^-".contains(*c))) {
+    if let Some(c) = s
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || "._/:@+~^-".contains(*c)))
+    {
         return Err(format!("{kind} '{s}' contains {c:?}"));
     }
     Ok(())
@@ -61,7 +64,16 @@ mod tests {
 
     #[test]
     fn plain_identifiers_pass() {
-        for s in ["sp-abc12", "sp-s088v.5", "spira/sp-x", "origin/main", "local/main", "refs/archive/rounds/12", "abc123:def456", "HEAD^"] {
+        for s in [
+            "sp-abc12",
+            "sp-s088v.5",
+            "spira/sp-x",
+            "origin/main",
+            "local/main",
+            "refs/archive/rounds/12",
+            "abc123:def456",
+            "HEAD^",
+        ] {
             assert!(check("x", s).is_ok(), "{s}");
         }
     }

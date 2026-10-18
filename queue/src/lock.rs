@@ -39,7 +39,9 @@ pub fn try_lock_as(queue_dir: &Path, repo: &str, verb: &str) -> Acquire {
 
 /// The holder record of a held lock; empty when the holder does not record one.
 pub fn holder(queue_dir: &Path, repo: &str) -> String {
-    fs::read_to_string(queue_dir.join(repo).join("lock")).map(|s| s.trim().to_string()).unwrap_or_default()
+    fs::read_to_string(queue_dir.join(repo).join("lock"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// The step lock (`<repo>/step.lock`): one stepper per repository. Deliberately NOT the
@@ -51,7 +53,12 @@ pub fn try_step_lock(queue_dir: &Path, repo: &str) -> Acquire {
 fn try_lock_file(queue_dir: &Path, repo: &str, file: &str, verb: Option<&str>) -> Acquire {
     let dir = queue_dir.join(repo);
     let _ = fs::create_dir_all(&dir);
-    let f = match OpenOptions::new().create(true).write(true).truncate(false).open(dir.join(file)) {
+    let f = match OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(dir.join(file))
+    {
         Ok(f) => f,
         Err(_) => return Acquire::Unopenable,
     };
@@ -90,11 +97,18 @@ mod tests {
         let d = tmpdir("lockholder");
         let a = try_lock_as(&d, "spira", "round certify");
         assert!(matches!(a, Acquire::Held(_)));
-        assert_eq!(holder(&d, "spira"), format!("pid={} verb=round certify", std::process::id()));
+        assert_eq!(
+            holder(&d, "spira"),
+            format!("pid={} verb=round certify", std::process::id())
+        );
         drop(a);
         assert_eq!(holder(&d, "spira"), "");
         let b = try_lock(&d, "spira");
-        assert_eq!(holder(&d, "spira"), "", "an unrecording taker leaves no stale record");
+        assert_eq!(
+            holder(&d, "spira"),
+            "",
+            "an unrecording taker leaves no stale record"
+        );
         drop(b);
     }
 

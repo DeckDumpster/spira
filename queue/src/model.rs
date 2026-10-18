@@ -61,8 +61,14 @@ pub struct Member {
 impl Member {
     pub fn parse(tok: &str) -> Member {
         match tok.split_once(':') {
-            Some((id, tip)) => Member { id: id.into(), tip: tip.into() },
-            None => Member { id: tok.into(), tip: String::new() },
+            Some((id, tip)) => Member {
+                id: id.into(),
+                tip: tip.into(),
+            },
+            None => Member {
+                id: tok.into(),
+                tip: String::new(),
+            },
         }
     }
 
@@ -73,7 +79,10 @@ impl Member {
         let id = tok.split(':').next().unwrap_or("").to_string();
         let tip = tok.rsplit(':').next().unwrap_or("").to_string();
         if !tok.contains(':') {
-            return Member { id: tok.into(), tip: tok.into() };
+            return Member {
+                id: tok.into(),
+                tip: tok.into(),
+            };
         }
         Member { id, tip }
     }
@@ -85,7 +94,10 @@ impl Member {
 
 /// Parse a member list: space- or comma-separated tokens, empties skipped.
 pub fn parse_members(s: &str) -> Vec<Member> {
-    s.split(|c: char| c == ',' || c.is_whitespace()).filter(|t| !t.is_empty()).map(Member::parse).collect()
+    s.split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|t| !t.is_empty())
+        .map(Member::parse)
+        .collect()
 }
 
 pub fn render_members(ms: &[Member]) -> String {
@@ -172,8 +184,18 @@ pub struct LcBeadRow {
     pub holder: Option<String>,
 }
 
-fn stack_tips_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<std::collections::BTreeMap<String, String>, D::Error> {
-    let tips = |v: serde_json::Value| v.as_object().map(|o| o.iter().filter_map(|(k, t)| t.as_str().map(|t| (k.clone(), t.to_string()))).collect()).unwrap_or_default();
+fn stack_tips_any<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<std::collections::BTreeMap<String, String>, D::Error> {
+    let tips = |v: serde_json::Value| {
+        v.as_object()
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, t)| t.as_str().map(|t| (k.clone(), t.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     Ok(match serde_json::Value::deserialize(d)? {
         serde_json::Value::String(t) => serde_json::from_str(&t).map(tips).unwrap_or_default(),
         other => tips(other),
@@ -181,7 +203,15 @@ fn stack_tips_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<std::collect
 }
 
 fn holds_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
-    let strings = |a: Vec<serde_json::Value>| a.into_iter().map(|v| v.as_str().map(String::from).unwrap_or_else(|| v.to_string())).collect();
+    let strings = |a: Vec<serde_json::Value>| {
+        a.into_iter()
+            .map(|v| {
+                v.as_str()
+                    .map(String::from)
+                    .unwrap_or_else(|| v.to_string())
+            })
+            .collect()
+    };
     Ok(match serde_json::Value::deserialize(d)? {
         serde_json::Value::Array(a) => strings(a),
         serde_json::Value::String(t) => match serde_json::from_str::<Vec<serde_json::Value>>(&t) {
@@ -227,7 +257,13 @@ mod tests {
     fn members_parse_both_separators() {
         let m = parse_members("a:1, b:2 c");
         assert_eq!(m.len(), 3);
-        assert_eq!(m[2], Member { id: "c".into(), tip: String::new() });
+        assert_eq!(
+            m[2],
+            Member {
+                id: "c".into(),
+                tip: String::new()
+            }
+        );
         assert_eq!(render_members(&m[..2]), "a:1 b:2");
     }
 
@@ -235,8 +271,14 @@ mod tests {
     fn eject_cause_red_when_flagged_or_suites_named() {
         assert_eq!(EjectCause::decide(false, false, ""), EjectCause::Eject);
         assert_eq!(EjectCause::decide(true, false, ""), EjectCause::EjectRed);
-        assert_eq!(EjectCause::decide(false, false, "test-a.sh"), EjectCause::EjectRed);
-        assert_eq!(EjectCause::decide(true, true, "test-a.sh"), EjectCause::Eject);
+        assert_eq!(
+            EjectCause::decide(false, false, "test-a.sh"),
+            EjectCause::EjectRed
+        );
+        assert_eq!(
+            EjectCause::decide(true, true, "test-a.sh"),
+            EjectCause::Eject
+        );
         assert_eq!(EjectCause::EjectRed.as_str(), "eject-red");
     }
 }

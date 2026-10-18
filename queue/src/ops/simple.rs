@@ -2,7 +2,10 @@
 
 use std::fs;
 
-use super::{idents, landing_log, read_text, repo_path, resolve, statute_gate, take_lock, Ctx, World, FAIL, OK, USAGE};
+use super::{
+    idents, landing_log, read_text, repo_path, resolve, statute_gate, take_lock, Ctx, World, FAIL,
+    OK, USAGE,
+};
 use crate::cli::Text;
 use crate::model::LandMode;
 use crate::ports::{ref_branch, Emit};
@@ -19,10 +22,16 @@ pub fn gate_outcome(rc: i32) -> &'static str {
 }
 
 pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
-    let Ok(c) = resolve(w, "submit", repo) else { return FAIL };
+    let Ok(c) = resolve(w, "submit", repo) else {
+        return FAIL;
+    };
     let name = c.r.name.clone();
     // repo_root, else $SPIRA_REPO (queue.sh: `|| repo="$SPIRA_REPO"`).
-    let Some(path) = c.r.path.clone().or_else(|| w.var("SPIRA_REPO").map(Into::into)) else {
+    let Some(path) =
+        c.r.path
+            .clone()
+            .or_else(|| w.var("SPIRA_REPO").map(Into::into))
+    else {
         w.err(format!("queue.sh submit: no such repo: {name}"));
         return FAIL;
     };
@@ -30,7 +39,9 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
     // Every change in a queued mode is a bead on spira/<id> with a lifecycle row — a
     // suite-state edit included (sp-lck63: `testenv suites` files or is handed one).
     if mode.is_queued() && !branch.starts_with("spira/") {
-        w.err(format!("queue.sh submit: {branch}: queue mode requires a branch under spira/"));
+        w.err(format!(
+            "queue.sh submit: {branch}: queue mode requires a branch under spira/"
+        ));
         return FAIL;
     }
     if idents(w, "submit", &[("branch", branch), ("repo", &name)]).is_err() {
@@ -51,13 +62,25 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
     let start = w.clock.now();
     let (rc, out) = w.scripts.gate(branch, &name, &id, &suites);
     if rc != 0 {
-        w.err(format!("queue.sh submit: {branch} failed the gate ({})", gate_outcome(rc)));
+        w.err(format!(
+            "queue.sh submit: {branch} failed the gate ({})",
+            gate_outcome(rc)
+        ));
         w.err(out.trim_end_matches('\n'));
-        landing_log(&c.s.run, &format!("QUEUE CAUGHT {} branch={id}", w.clock.now()));
+        landing_log(
+            &c.s.run,
+            &format!("QUEUE CAUGHT {} branch={id}", w.clock.now()),
+        );
         return rc;
     }
     let cost = w.clock.now().saturating_sub(start);
-    landing_log(&c.s.run, &format!("QUEUE GATE_COST {} branch={id} seconds={cost}", w.clock.now()));
+    landing_log(
+        &c.s.run,
+        &format!(
+            "QUEUE GATE_COST {} branch={id} seconds={cost}",
+            w.clock.now()
+        ),
+    );
 
     match mode {
         LandMode::Queue | LandMode::QueueLocal => {
@@ -70,7 +93,9 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
         }
         LandMode::Push => {
             let Some(base) = c.r.landref.clone() else {
-                w.err(format!("queue.sh submit: cannot resolve landing ref for {name}"));
+                w.err(format!(
+                    "queue.sh submit: cannot resolve landing ref for {name}"
+                ));
                 return FAIL;
             };
             let remote = c.r.ref_remote(&base);
@@ -79,17 +104,35 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
                 let _ = w.git.fetch(&path, r, "");
             }
             if let Err(why) = w.lib.rebase(branch, &base, &path, &name) {
-                let why = if why.is_empty() { "conflict".to_string() } else { why };
-                w.err(format!("queue.sh submit: {branch} does not rebase onto {base} ({why})"));
+                let why = if why.is_empty() {
+                    "conflict".to_string()
+                } else {
+                    why
+                };
+                w.err(format!(
+                    "queue.sh submit: {branch} does not rebase onto {base} ({why})"
+                ));
                 return FAIL;
             }
             tip = w.git.rev_parse(&path, branch).unwrap_or_default();
             let r = remote.unwrap_or_else(|| "origin".into());
             if !w.lib.push(&path, &r, &format!("{branch}:{base_branch}")) {
-                w.err(format!("queue.sh submit: push of {branch} to {base_branch} failed"));
+                w.err(format!(
+                    "queue.sh submit: push of {branch} to {base_branch} failed"
+                ));
                 return FAIL;
             }
-            if lc_certify(w, &id, &tip).is_err() || !super::land::lc_deliver(w, &path, &tip, &crate::model::Member { id: id.clone(), tip: tip.clone() }) {
+            if lc_certify(w, &id, &tip).is_err()
+                || !super::land::lc_deliver(
+                    w,
+                    &path,
+                    &tip,
+                    &crate::model::Member {
+                        id: id.clone(),
+                        tip: tip.clone(),
+                    },
+                )
+            {
                 return FAIL;
             }
             super::helpers::close_on_land(w, &c.s.submitted_label, &id, &tip);
@@ -99,7 +142,10 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
             if lc_certify(w, &id, &tip).is_err() {
                 return FAIL;
             }
-            w.out(format!("queue.sh submit: certified {branch} ({})", mode.as_str()));
+            w.out(format!(
+                "queue.sh submit: certified {branch} ({})",
+                mode.as_str()
+            ));
         }
     }
     OK
@@ -118,17 +164,33 @@ pub fn lint_passed(w: &World, verb: &str, path: &std::path::Path, tip: &str, ver
 /// The checks an ejection named must each pass at `tip` before the bead is resubmitted: the
 /// missing ones are run here, recorded with their summary line, and any still red or unrun
 /// refuses by name.
-fn checks_proven(w: &World, verb: &str, run: &std::path::Path, repo: &str, id: &str, tip: &str) -> bool {
+fn checks_proven(
+    w: &World,
+    verb: &str,
+    run: &std::path::Path,
+    repo: &str,
+    id: &str,
+    tip: &str,
+) -> bool {
     use spira_config::proof;
     let mut notes = Vec::new();
     for check in proof::unproven(run, id, tip) {
         let (rc, out) = w.scripts.suite_run(&check, tip, repo);
         if let Err(e) = proof::record_run(run, id, tip, &check, rc, &out) {
-            w.err(format!("queue.sh {verb}: cannot record the run of {check}: {e} — refused"));
+            w.err(format!(
+                "queue.sh {verb}: cannot record the run of {check}: {e} — refused"
+            ));
             return false;
         }
         if rc != 0 {
-            notes.push(format!("{check} failed at {tip} (rc={rc}): {}", out.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no output")));
+            notes.push(format!(
+                "{check} failed at {tip} (rc={rc}): {}",
+                out.lines()
+                    .rev()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("no output")
+            ));
         }
     }
     if notes.is_empty() {
@@ -140,20 +202,33 @@ fn checks_proven(w: &World, verb: &str, run: &std::path::Path, repo: &str, id: &
 
 /// Record the gate pass on spira-lc; a refusal is reported and the submit does not certify.
 fn lc_certify(w: &World, id: &str, tip: &str) -> Result<(), ()> {
-    w.lc.certify(id, tip, "queue-submit", &super::actor(w)).map_err(|(rc, e)| {
-        w.err(format!("queue.sh submit: spira-lc certify refused for {id} (rc={rc}): {e}"));
-    })
+    w.lc.certify(id, tip, "queue-submit", &super::actor(w))
+        .map_err(|(rc, e)| {
+            w.err(format!(
+                "queue.sh submit: spira-lc certify refused for {id} (rc={rc}): {e}"
+            ));
+        })
 }
 
 pub fn protect(w: &World, repo: Option<&str>) -> i32 {
-    let Ok(c) = resolve(w, "protect", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "protect", &c) else { return FAIL };
+    let Ok(c) = resolve(w, "protect", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "protect", &c) else {
+        return FAIL;
+    };
     if c.r.mode != LandMode::Queue {
-        w.err(format!("queue.sh protect: repo is not in queue mode (mode={})", c.r.mode.as_str()));
+        w.err(format!(
+            "queue.sh protect: repo is not in queue mode (mode={})",
+            c.r.mode.as_str()
+        ));
         return FAIL;
     }
     let Some(base) = c.r.landref.clone() else {
-        w.err(format!("queue.sh protect: cannot resolve base ref for {}", c.r.name));
+        w.err(format!(
+            "queue.sh protect: cannot resolve base ref for {}",
+            c.r.name
+        ));
         return FAIL;
     };
     let base_branch = ref_branch(&base).to_string();
@@ -165,17 +240,27 @@ pub fn protect(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     let _ = fs::create_dir_all(&c.s.run);
-    let _ = fs::write(c.s.run.join(format!("queue-protected-{}", c.r.name)), format!("{base_branch}\n"));
-    w.out(format!("queue.sh protect: protection set for repo:{} (branch: {base_branch})", c.r.name));
+    let _ = fs::write(
+        c.s.run.join(format!("queue-protected-{}", c.r.name)),
+        format!("{base_branch}\n"),
+    );
+    w.out(format!(
+        "queue.sh protect: protection set for repo:{} (branch: {base_branch})",
+        c.r.name
+    ));
     w.out("queue.sh protect: attribution note: suite-level attribution requires CI to emit");
     w.out("queue.sh protect:   failure annotations whose path matches spira/test-*.sh,");
     w.out("queue.sh protect:   or a check annotation titled \"red-twice suite\".");
-    w.out("queue.sh protect:   Without them a red batch PR is left for the batcher persona to judge.");
+    w.out(
+        "queue.sh protect:   Without them a red batch PR is left for the batcher persona to judge.",
+    );
     OK
 }
 
 pub fn stats(w: &World) -> i32 {
-    let Ok(c) = resolve(w, "stats", None) else { return FAIL };
+    let Ok(c) = resolve(w, "stats", None) else {
+        return FAIL;
+    };
     let log = fs::read_to_string(c.s.run.join("landing.log")).unwrap_or_default();
     w.io.out(&crate::stats::render(&crate::stats::tally(&log)));
     OK
@@ -184,11 +269,23 @@ pub fn stats(w: &World) -> i32 {
 /// `churn`: the mender's meter over a window (default 14 days) of the lifecycle's own rows.
 pub fn churn(w: &World, since: Option<&str>, until: Option<&str>, repo: Option<&str>) -> i32 {
     use crate::churn;
-    let Ok(c) = resolve(w, "churn", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "churn", &c) else { return FAIL };
+    let Ok(c) = resolve(w, "churn", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "churn", &c) else {
+        return FAIL;
+    };
     let now = w.clock.now() as i64;
-    let when = |flag: &str, v: &str| churn::parse_when(v, now).ok_or_else(|| w.err(format!("queue.sh churn: --{flag} {v:?}: not a duration (14d) or date (2026-09-26)")));
-    let Ok(from) = when("since", since.unwrap_or("14d")) else { return USAGE };
+    let when = |flag: &str, v: &str| {
+        churn::parse_when(v, now).ok_or_else(|| {
+            w.err(format!(
+                "queue.sh churn: --{flag} {v:?}: not a duration (14d) or date (2026-09-26)"
+            ))
+        })
+    };
+    let Ok(from) = when("since", since.unwrap_or("14d")) else {
+        return USAGE;
+    };
     let to = match until {
         None => now + 1,
         Some(u) => match when("until", u) {
@@ -204,7 +301,13 @@ pub fn churn(w: &World, since: Option<&str>, until: Option<&str>, repo: Option<&
             return FAIL;
         }
     };
-    let lines = |a: &str, b: &str| w.git.numstat(&path, a, b).ok().map(|f| f.iter().map(|(_, add, del)| u64::from(*add) + u64::from(*del)).sum());
+    let lines = |a: &str, b: &str| {
+        w.git.numstat(&path, a, b).ok().map(|f| {
+            f.iter()
+                .map(|(_, add, del)| u64::from(*add) + u64::from(*del))
+                .sum()
+        })
+    };
     let returned = churn::wasted(&churn::returns(&facts, from, to), &lines);
     let rows = churn::failures(&facts, from, to, &lines);
     let m = churn::measures(&facts, &rows, from, to, returned.identical);
@@ -219,11 +322,17 @@ pub fn churn(w: &World, since: Option<&str>, until: Option<&str>, repo: Option<&
 /// its sweep retired with it, not ported — see queue/DESIGN.md "batch.sh retirement").
 fn batch_cut(w: &World, c: &Ctx, wait_zero: bool) -> i32 {
     if c.s.batcher_off {
-        w.out(format!("queue.sh: SPIRA_BATCHER_ENABLE=0 — the operator cuts rounds; no cut for {}", c.r.name));
+        w.out(format!(
+            "queue.sh: SPIRA_BATCHER_ENABLE=0 — the operator cuts rounds; no cut for {}",
+            c.r.name
+        ));
         return OK;
     }
     let Some(bin) = c.s.batcher_bin.as_ref() else {
-        w.err(format!("queue.sh: no batcher program — cannot cut a round for {}", c.r.name));
+        w.err(format!(
+            "queue.sh: no batcher program — cannot cut a round for {}",
+            c.r.name
+        ));
         return FAIL;
     };
     w.scripts.batcher_cut(bin, &c.r.name, wait_zero)
@@ -231,16 +340,23 @@ fn batch_cut(w: &World, c: &Ctx, wait_zero: bool) -> i32 {
 
 pub fn is_executable(p: &std::path::Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    fs::metadata(p)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 pub fn flush(w: &World, repo: Option<&str>) -> i32 {
-    let Ok(c) = resolve(w, "flush", repo) else { return FAIL };
+    let Ok(c) = resolve(w, "flush", repo) else {
+        return FAIL;
+    };
     if repo_path(w, "flush", &c).is_err() {
         return FAIL;
     }
     if c.r.mode != LandMode::Queue {
-        w.err(format!("queue.sh flush: repo is not in queue mode (mode={})", c.r.mode.as_str()));
+        w.err(format!(
+            "queue.sh flush: repo is not in queue mode (mode={})",
+            c.r.mode.as_str()
+        ));
         return FAIL;
     }
     if idents(w, "flush", &[("repo", &c.r.name)]).is_err() {
@@ -276,18 +392,26 @@ fn step_lock(w: &World, c: &Ctx) -> StepLock {
     match try_step_lock(&c.s.queue_dir, &c.r.name) {
         Acquire::Held(g) => StepLock::Held(g),
         Acquire::Busy => {
-            w.err(format!("queue.sh step: another step holds the step lock for {} — skipped", c.r.name));
+            w.err(format!(
+                "queue.sh step: another step holds the step lock for {} — skipped",
+                c.r.name
+            ));
             StepLock::Busy
         }
         Acquire::Unopenable => {
-            w.err(format!("queue.sh step: cannot open the step lock for {}", c.r.name));
+            w.err(format!(
+                "queue.sh step: cannot open the step lock for {}",
+                c.r.name
+            ));
             StepLock::Unopenable
         }
     }
 }
 
 pub fn step(w: &World, repo: &str) -> i32 {
-    let Ok(c) = resolve(w, "step", Some(repo)) else { return FAIL };
+    let Ok(c) = resolve(w, "step", Some(repo)) else {
+        return FAIL;
+    };
     if idents(w, "step", &[("repo", &c.r.name)]).is_err() {
         return FAIL;
     }
@@ -309,7 +433,9 @@ pub fn step_all(w: &World) -> i32 {
     let names = match w.lib.repos() {
         Ok(n) => n,
         Err(e) => {
-            w.err(format!("queue.sh step --all: cannot list repositories: {e}"));
+            w.err(format!(
+                "queue.sh step --all: cannot list repositories: {e}"
+            ));
             return FAIL;
         }
     };
@@ -322,7 +448,9 @@ pub fn step_all(w: &World) -> i32 {
         let c = match w.lib.context(Some(&name)) {
             Ok((s, r)) => Ctx { s, r },
             Err(e) => {
-                w.err(format!("queue.sh step: cannot resolve the harness configuration: {e}"));
+                w.err(format!(
+                    "queue.sh step: cannot resolve the harness configuration: {e}"
+                ));
                 unresolved.push(name);
                 continue;
             }
@@ -351,7 +479,11 @@ pub fn step_all(w: &World) -> i32 {
         busy.len(),
         unresolved.len()
     );
-    for (label, v) in [("stepped", &stepped), ("busy", &busy), ("unresolved", &unresolved)] {
+    for (label, v) in [
+        ("stepped", &stepped),
+        ("busy", &busy),
+        ("unresolved", &unresolved),
+    ] {
         if !v.is_empty() {
             line.push_str(&format!(" {label}:{}", v.join(",")));
         }
@@ -386,11 +518,15 @@ pub fn claim(w: &World, repo: Option<&str>, reason: &Text, force: bool) -> i32 {
         w.err("queue.sh claim: --reason is required — say what the hand edit is for");
         return USAGE;
     }
-    let Ok(c) = resolve(w, "claim", repo) else { return FAIL };
+    let Ok(c) = resolve(w, "claim", repo) else {
+        return FAIL;
+    };
     if repo_path(w, "claim", &c).is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "claim", &c, "") else { return FAIL };
+    let Ok(_g) = take_lock(w, "claim", &c, "") else {
+        return FAIL;
+    };
     let open = c.queue_file("open");
     let kv = match records::read_kv(&open) {
         Ok(Some(kv)) => kv,
@@ -401,7 +537,10 @@ pub fn claim(w: &World, repo: Option<&str>, reason: &Text, force: bool) -> i32 {
     };
     let cur = kv.get("owner").unwrap_or("").to_string();
     if cur == "concierge" && !force {
-        w.err(format!("queue.sh claim: {} is already claimed by concierge — pass --force to reclaim", c.r.name));
+        w.err(format!(
+            "queue.sh claim: {} is already claimed by concierge — pass --force to reclaim",
+            c.r.name
+        ));
         return FAIL;
     }
     let new = records::claim_rewrite(&kv, &cur, &reason);
@@ -409,22 +548,48 @@ pub fn claim(w: &World, repo: Option<&str>, reason: &Text, force: bool) -> i32 {
         w.err(format!("queue.sh claim: {e}"));
         return FAIL;
     }
-    let was = if cur.is_empty() { "<none>".to_string() } else { cur };
-    w.lib.notify(&c.s.mailbox, &c.r.name, "batch claimed for hand-edit", &format!("Claimed the open batch for {} (was: {was}). Reason: {reason}", c.r.name));
-    w.out(format!("queue.sh claim: {} claimed for concierge (was: {was})", c.r.name));
+    let was = if cur.is_empty() {
+        "<none>".to_string()
+    } else {
+        cur
+    };
+    w.lib.notify(
+        &c.s.mailbox,
+        &c.r.name,
+        "batch claimed for hand-edit",
+        &format!(
+            "Claimed the open batch for {} (was: {was}). Reason: {reason}",
+            c.r.name
+        ),
+    );
+    w.out(format!(
+        "queue.sh claim: {} claimed for concierge (was: {was})",
+        c.r.name
+    ));
     OK
 }
 
 const SANCTIONED_RESUBMITTER: &str = "concierge";
 
 fn is_full_sha(s: &str) -> bool {
-    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    s.len() == 40
+        && s.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// The concierge's door for a hand-built fix: record the new tip and move a manually held REWORK
 /// row, or an unclaimed READY one, to SUBMITTED, so the round's full suite certifies it where the host gate cannot.
 #[allow(clippy::too_many_arguments)]
-pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, reason: &Text, evidence: &Text, evidence_tip: &str) -> i32 {
+pub fn resubmit(
+    w: &World,
+    id: &str,
+    repo: Option<&str>,
+    tip: &str,
+    by: &str,
+    reason: &Text,
+    evidence: &Text,
+    evidence_tip: &str,
+) -> i32 {
     let reason = match read_text(w, reason) {
         Ok(r) => r,
         Err(e) => {
@@ -460,18 +625,34 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         Ok(None) => reason,
         Err(rc) => return rc,
     };
-    let Ok(c) = resolve(w, "resubmit", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "resubmit", &c) else { return FAIL };
-    if idents(w, "resubmit", &[("bead id", id), ("repo", &c.r.name), ("by", by)]).is_err() {
+    let Ok(c) = resolve(w, "resubmit", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "resubmit", &c) else {
+        return FAIL;
+    };
+    if idents(
+        w,
+        "resubmit",
+        &[("bead id", id), ("repo", &c.r.name), ("by", by)],
+    )
+    .is_err()
+    {
         return FAIL;
     }
     if !is_full_sha(tip) {
-        w.err(format!("queue.sh resubmit: --tip {tip}: not a full 40-hex commit name — refused"));
+        w.err(format!(
+            "queue.sh resubmit: --tip {tip}: not a full 40-hex commit name — refused"
+        ));
         return FAIL;
     }
     let branch = format!("spira/{id}");
     if !w.git.commit_exists(&path, tip) {
-        let remote = c.r.landref.as_deref().and_then(|b| c.r.ref_remote(b)).unwrap_or_else(|| "origin".to_string());
+        let remote =
+            c.r.landref
+                .as_deref()
+                .and_then(|b| c.r.ref_remote(b))
+                .unwrap_or_else(|| "origin".to_string());
         if !w.git.fetch(&path, &remote, &branch) || !w.git.commit_exists(&path, tip) {
             w.err(format!("queue.sh resubmit: --tip {tip}: no such commit in {} (fetching {branch} from {remote} did not bring it) — refused", c.r.name));
             return FAIL;
@@ -487,7 +668,9 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         return FAIL;
     }
     let Some(row) = w.lc.bead_row(id) else {
-        w.err(format!("queue.sh resubmit: {id}: no lifecycle row — refused"));
+        w.err(format!(
+            "queue.sh resubmit: {id}: no lifecycle row — refused"
+        ));
         return FAIL;
     };
     match row.state.as_str() {
@@ -497,7 +680,11 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         }
         "REWORK" | "READY" => {}
         "WORKING" => {
-            let holder = row.holder.as_deref().filter(|h| !h.is_empty()).unwrap_or("<unknown>");
+            let holder = row
+                .holder
+                .as_deref()
+                .filter(|h| !h.is_empty())
+                .unwrap_or("<unknown>");
             w.err(format!("queue.sh resubmit: {id} is held by a live aeon ({holder}) — refused, nothing changed"));
             return FAIL;
         }
@@ -507,12 +694,21 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         }
     }
     let local = format!("refs/heads/{branch}");
-    if !w.git.update_ref(&path, &local, tip, None) || w.git.rev_parse(&path, &local).as_deref() != Some(tip) {
-        w.err(format!("queue.sh resubmit: could not move {local} to {tip} in {} — refused, nothing changed", c.r.name));
+    if !w.git.update_ref(&path, &local, tip, None)
+        || w.git.rev_parse(&path, &local).as_deref() != Some(tip)
+    {
+        w.err(format!(
+            "queue.sh resubmit: could not move {local} to {tip} in {} — refused, nothing changed",
+            c.r.name
+        ));
         return FAIL;
     }
-    if let Err((rc, e)) = w.lc.retip(id, tip, by, reason.trim(), evidence.trim(), evidence_tip) {
-        w.err(format!("queue.sh resubmit: spira-lc refused {id} (rc={rc}): {e}"));
+    if let Err((rc, e)) =
+        w.lc.retip(id, tip, by, reason.trim(), evidence.trim(), evidence_tip)
+    {
+        w.err(format!(
+            "queue.sh resubmit: spira-lc refused {id} (rc={rc}): {e}"
+        ));
         return FAIL;
     }
     let branch = format!("spira/{id}");
@@ -520,7 +716,14 @@ pub fn resubmit(w: &World, id: &str, repo: Option<&str>, tip: &str, by: &str, re
         w.err(format!("queue.sh resubmit: {id} re-tipped to {tip} but cannot point {branch} at it — set it by hand"));
         return FAIL;
     }
-    landing_log(&c.s.run, &format!("QUEUE RESUBMIT {} branch={id} tip={tip} by={by} reason={}", w.clock.now(), reason.lines().next().unwrap_or("")));
+    landing_log(
+        &c.s.run,
+        &format!(
+            "QUEUE RESUBMIT {} branch={id} tip={tip} by={by} reason={}",
+            w.clock.now(),
+            reason.lines().next().unwrap_or("")
+        ),
+    );
     w.out(format!("queue.sh resubmit: {id} re-tipped to {tip}, {} -> SUBMITTED; admit it with `queue round open --members {id}:{tip}` — the round certifies it", row.state));
     OK
 }
@@ -542,7 +745,10 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
         return USAGE;
     }
     if !SANCTIONED_REWORKERS.contains(&by) {
-        w.err(format!("queue.sh rework: refused — only {} may send a bead to rework (--by {by})", SANCTIONED_REWORKERS.join(" or ")));
+        w.err(format!(
+            "queue.sh rework: refused — only {} may send a bead to rework (--by {by})",
+            SANCTIONED_REWORKERS.join(" or ")
+        ));
         return FAIL;
     }
     let reason = match statute_gate(w, "rework", &reason) {
@@ -550,16 +756,29 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
         Ok(None) => reason,
         Err(rc) => return rc,
     };
-    let Ok(c) = resolve(w, "rework", repo) else { return FAIL };
-    if repo_path(w, "rework", &c).is_err() || idents(w, "rework", &[("bead id", id), ("repo", &c.r.name), ("by", by)]).is_err() {
+    let Ok(c) = resolve(w, "rework", repo) else {
+        return FAIL;
+    };
+    if repo_path(w, "rework", &c).is_err()
+        || idents(
+            w,
+            "rework",
+            &[("bead id", id), ("repo", &c.r.name), ("by", by)],
+        )
+        .is_err()
+    {
         return FAIL;
     }
     if super::require_lc(w, "rework").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "rework", &c, "") else { return FAIL };
+    let Ok(_g) = take_lock(w, "rework", &c, "") else {
+        return FAIL;
+    };
     for record in ["open", super::round::RECORD, super::stage::STAGED] {
-        let Ok(Some(kv)) = records::read_kv(&c.queue_file(record)) else { continue };
+        let Ok(Some(kv)) = records::read_kv(&c.queue_file(record)) else {
+            continue;
+        };
         if kv.members().iter().any(|m| m.id == id) {
             let batch = kv.get_first("batch_id").unwrap_or("");
             w.err(format!("queue.sh rework: {id} is a member of the open {record} {batch} for {} — refused; eject it with `queue eject` or `queue round eject`", c.r.name));
@@ -571,11 +790,16 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
         return FAIL;
     };
     if !matches!(row.state.as_str(), "SUBMITTED" | "CERTIFIED") {
-        w.err(format!("queue.sh rework: {id} is {}, not SUBMITTED or CERTIFIED — refused, nothing changed", row.state));
+        w.err(format!(
+            "queue.sh rework: {id} is {}, not SUBMITTED or CERTIFIED — refused, nothing changed",
+            row.state
+        ));
         return FAIL;
     }
     let Some(tip) = row.tip.filter(|t| !t.is_empty()) else {
-        w.err(format!("queue.sh rework: {id} has no recorded tip — refused"));
+        w.err(format!(
+            "queue.sh rework: {id} has no recorded tip — refused"
+        ));
         return FAIL;
     };
     let Some((state, version)) = w.lc.bead_state(id) else {
@@ -584,25 +808,52 @@ pub fn rework(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text) 
     };
     let kind = format!("{{\"GateRed\":{{\"tip\":\"{tip}\",\"reason\":\"suites-failed\"}}}}");
     if let Err((rc, e)) = w.lc.bead_event(id, &state, version.trim(), by, &kind) {
-        w.err(format!("queue.sh rework: spira-lc refused {id} (rc={rc}): {e}"));
+        w.err(format!(
+            "queue.sh rework: spira-lc refused {id} (rc={rc}): {e}"
+        ));
         return FAIL;
     }
-    w.lib.comment(id, &format!("Returned to rework by {by} on tip {tip}.\n\n{reason}"));
-    landing_log(&c.s.run, &format!("QUEUE REWORK {} branch={id} tip={tip} by={by} reason={}", w.clock.now(), reason.lines().next().unwrap_or("")));
-    w.out(format!("queue.sh rework: {id} {state} -> REWORK on {tip}; a builder may claim it"));
+    w.lib.comment(
+        id,
+        &format!("Returned to rework by {by} on tip {tip}.\n\n{reason}"),
+    );
+    landing_log(
+        &c.s.run,
+        &format!(
+            "QUEUE REWORK {} branch={id} tip={tip} by={by} reason={}",
+            w.clock.now(),
+            reason.lines().next().unwrap_or("")
+        ),
+    );
+    w.out(format!(
+        "queue.sh rework: {id} {state} -> REWORK on {tip}; a builder may claim it"
+    ));
     OK
 }
 
 /// Shows the suites an eject forces on `id`'s recertification, or with `clear` drops them so the
 /// next submit runs the normal gate.
-pub fn forced_suites(w: &World, id: &str, repo: Option<&str>, clear: bool, by: &str, reason: &Text) -> i32 {
-    let Ok(c) = resolve(w, "forced-suites", repo) else { return FAIL };
+pub fn forced_suites(
+    w: &World,
+    id: &str,
+    repo: Option<&str>,
+    clear: bool,
+    by: &str,
+    reason: &Text,
+) -> i32 {
+    let Ok(c) = resolve(w, "forced-suites", repo) else {
+        return FAIL;
+    };
     if idents(w, "forced-suites", &[("bead id", id)]).is_err() {
         return FAIL;
     }
     let forced = spira_config::proof::failing(&c.s.run, id);
     if !clear {
-        w.out(if forced.is_empty() { format!("queue.sh forced-suites: {id} has none") } else { format!("queue.sh forced-suites: {id}: {}", forced.join(",")) });
+        w.out(if forced.is_empty() {
+            format!("queue.sh forced-suites: {id} has none")
+        } else {
+            format!("queue.sh forced-suites: {id}: {}", forced.join(","))
+        });
         return OK;
     }
     let reason = match read_text(w, reason) {
@@ -612,29 +863,63 @@ pub fn forced_suites(w: &World, id: &str, repo: Option<&str>, clear: bool, by: &
             return USAGE;
         }
         Err(e) => {
-            w.err(format!("queue.sh forced-suites: cannot read the reason: {e}"));
+            w.err(format!(
+                "queue.sh forced-suites: cannot read the reason: {e}"
+            ));
             return USAGE;
         }
     };
     if !SANCTIONED_REWORKERS.contains(&by) {
-        w.err(format!("queue.sh forced-suites: refused — only {} may clear forced suites (--by {by})", SANCTIONED_REWORKERS.join(" or ")));
+        w.err(format!(
+            "queue.sh forced-suites: refused — only {} may clear forced suites (--by {by})",
+            SANCTIONED_REWORKERS.join(" or ")
+        ));
         return FAIL;
     }
     spira_config::proof::clear_failing(&c.s.run, id);
     let sidecar = c.s.run.join("ejected").join(id);
     if sidecar.exists() && std::fs::remove_file(&sidecar).is_err() {
-        w.err(format!("queue.sh forced-suites: cannot remove {} — the sidecar still forces its suites", sidecar.display()));
+        w.err(format!(
+            "queue.sh forced-suites: cannot remove {} — the sidecar still forces its suites",
+            sidecar.display()
+        ));
         return FAIL;
     }
-    w.lib.comment(id, &format!("Forced suites cleared by {by}: {}.\n\n{}", if forced.is_empty() { "none were recorded".to_string() } else { forced.join(",") }, reason.trim()));
-    landing_log(&c.s.run, &format!("QUEUE FORCED-SUITES-CLEAR {} branch={id} by={by} cleared={}", w.clock.now(), forced.join(",")));
+    w.lib.comment(
+        id,
+        &format!(
+            "Forced suites cleared by {by}: {}.\n\n{}",
+            if forced.is_empty() {
+                "none were recorded".to_string()
+            } else {
+                forced.join(",")
+            },
+            reason.trim()
+        ),
+    );
+    landing_log(
+        &c.s.run,
+        &format!(
+            "QUEUE FORCED-SUITES-CLEAR {} branch={id} by={by} cleared={}",
+            w.clock.now(),
+            forced.join(",")
+        ),
+    );
     w.out(format!("queue.sh forced-suites: cleared {id}'s forced suites ({}); its next submit runs the normal gate", if forced.is_empty() { "none recorded".to_string() } else { forced.join(",") }));
     OK
 }
 
 /// The door for a red that was not the tree's fault: withdraw it from the lifecycle row and from the
 /// batch red-tip record, so the same tip is admitted again. Evidence is mandatory and must name the tip.
-pub fn absolve(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text, evidence: &Text, evidence_tip: &str) -> i32 {
+pub fn absolve(
+    w: &World,
+    id: &str,
+    repo: Option<&str>,
+    by: &str,
+    reason: &Text,
+    evidence: &Text,
+    evidence_tip: &str,
+) -> i32 {
     let text = |t: &Text, what: &str| match read_text(w, t) {
         Ok(v) => Ok(v),
         Err(e) => {
@@ -655,7 +940,10 @@ pub fn absolve(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text,
         return USAGE;
     }
     if !SANCTIONED_REWORKERS.contains(&by) {
-        w.err(format!("queue.sh absolve: refused — only {} may absolve a red tip (--by {by})", SANCTIONED_REWORKERS.join(" or ")));
+        w.err(format!(
+            "queue.sh absolve: refused — only {} may absolve a red tip (--by {by})",
+            SANCTIONED_REWORKERS.join(" or ")
+        ));
         return FAIL;
     }
     let reason = match statute_gate(w, "absolve", &reason) {
@@ -663,20 +951,35 @@ pub fn absolve(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text,
         Ok(None) => reason,
         Err(rc) => return rc,
     };
-    let Ok(c) = resolve(w, "absolve", repo) else { return FAIL };
-    if repo_path(w, "absolve", &c).is_err() || idents(w, "absolve", &[("bead id", id), ("repo", &c.r.name), ("by", by)]).is_err() {
+    let Ok(c) = resolve(w, "absolve", repo) else {
+        return FAIL;
+    };
+    if repo_path(w, "absolve", &c).is_err()
+        || idents(
+            w,
+            "absolve",
+            &[("bead id", id), ("repo", &c.r.name), ("by", by)],
+        )
+        .is_err()
+    {
         return FAIL;
     }
     if super::require_lc(w, "absolve").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "absolve", &c, "") else { return FAIL };
+    let Ok(_g) = take_lock(w, "absolve", &c, "") else {
+        return FAIL;
+    };
     let Some(row) = w.lc.bead_row(id) else {
-        w.err(format!("queue.sh absolve: {id}: no lifecycle row — refused"));
+        w.err(format!(
+            "queue.sh absolve: {id}: no lifecycle row — refused"
+        ));
         return FAIL;
     };
     let Some(tip) = row.tip.clone().filter(|t| !t.is_empty()) else {
-        w.err(format!("queue.sh absolve: {id} has no recorded tip — refused"));
+        w.err(format!(
+            "queue.sh absolve: {id} has no recorded tip — refused"
+        ));
         return FAIL;
     };
     if evidence_tip != tip {
@@ -686,12 +989,18 @@ pub fn absolve(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text,
     let in_row = row.ejected_red_tip.as_deref() == Some(tip.as_str());
     let in_record = super::round::batch_red_at(&c, id, &tip);
     if !in_row && !in_record {
-        w.err(format!("queue.sh absolve: no red is recorded against {id} at {tip} — nothing to absolve"));
+        w.err(format!(
+            "queue.sh absolve: no red is recorded against {id} at {tip} — nothing to absolve"
+        ));
         return FAIL;
     }
     if in_row {
-        if let Err((rc, e)) = w.lc.absolve(id, &tip, by, reason.trim(), evidence.trim(), evidence_tip) {
-            w.err(format!("queue.sh absolve: spira-lc refused {id} (rc={rc}): {e}"));
+        if let Err((rc, e)) =
+            w.lc.absolve(id, &tip, by, reason.trim(), evidence.trim(), evidence_tip)
+        {
+            w.err(format!(
+                "queue.sh absolve: spira-lc refused {id} (rc={rc}): {e}"
+            ));
             return FAIL;
         }
     }
@@ -699,18 +1008,37 @@ pub fn absolve(w: &World, id: &str, repo: Option<&str>, by: &str, reason: &Text,
         w.err(format!("queue.sh absolve: {id} absolved on spira-lc but the batch red-tip record is unwritable: {e}"));
         return FAIL;
     }
-    w.lib.comment(id, &format!("Red at {tip} absolved by {by}.\n\n{reason}\n\nEvidence:\n{}", evidence.trim()));
-    landing_log(&c.s.run, &format!("QUEUE ABSOLVE {} branch={id} tip={tip} by={by} reason={}", w.clock.now(), reason.lines().next().unwrap_or("")));
-    w.out(format!("queue.sh absolve: {id} red at {tip} withdrawn; the tip is admissible again"));
+    w.lib.comment(
+        id,
+        &format!(
+            "Red at {tip} absolved by {by}.\n\n{reason}\n\nEvidence:\n{}",
+            evidence.trim()
+        ),
+    );
+    landing_log(
+        &c.s.run,
+        &format!(
+            "QUEUE ABSOLVE {} branch={id} tip={tip} by={by} reason={}",
+            w.clock.now(),
+            reason.lines().next().unwrap_or("")
+        ),
+    );
+    w.out(format!(
+        "queue.sh absolve: {id} red at {tip} withdrawn; the tip is admissible again"
+    ));
     OK
 }
 
 pub fn release(w: &World, repo: Option<&str>) -> i32 {
-    let Ok(c) = resolve(w, "release", repo) else { return FAIL };
+    let Ok(c) = resolve(w, "release", repo) else {
+        return FAIL;
+    };
     if repo_path(w, "release", &c).is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "release", &c, "") else { return FAIL };
+    let Ok(_g) = take_lock(w, "release", &c, "") else {
+        return FAIL;
+    };
     let open = c.queue_file("open");
     let kv = match records::read_kv(&open) {
         Ok(Some(kv)) => kv,
@@ -720,7 +1048,10 @@ pub fn release(w: &World, repo: Option<&str>) -> i32 {
         }
     };
     if kv.get("owner").unwrap_or("") != "concierge" {
-        w.err(format!("queue.sh release: {} is not claimed by concierge", c.r.name));
+        w.err(format!(
+            "queue.sh release: {} is not claimed by concierge",
+            c.r.name
+        ));
         return FAIL;
     }
     let (new, restore) = records::release_rewrite(&kv);
@@ -728,7 +1059,14 @@ pub fn release(w: &World, repo: Option<&str>) -> i32 {
         w.err(format!("queue.sh release: {e}"));
         return FAIL;
     }
-    let shown = if restore.is_empty() { "<none>" } else { restore.as_str() };
-    w.out(format!("queue.sh release: {} released back to {shown}", c.r.name));
+    let shown = if restore.is_empty() {
+        "<none>"
+    } else {
+        restore.as_str()
+    };
+    w.out(format!(
+        "queue.sh release: {} released back to {shown}",
+        c.r.name
+    ));
     OK
 }

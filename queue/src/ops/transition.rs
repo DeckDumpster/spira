@@ -9,18 +9,31 @@ use crate::records;
 /// already agree about the row before either transition touches anything (queue.sh
 /// _land_mode_agrees). No config document in force: nothing to disagree with.
 fn agrees(w: &World, c: &Ctx) -> Result<(), i32> {
-    let Some(doc) = w.lib.toml_path() else { return Ok(()) };
+    let Some(doc) = w.lib.toml_path() else {
+        return Ok(());
+    };
     let (cf_mode, cf_base) = match w.config.repo_row(&doc, &c.r.name) {
         Ok(r) => r,
         Err(e) => {
-            w.err(format!("queue.sh: cannot read {}: {e} — refused", doc.display()));
+            w.err(format!(
+                "queue.sh: cannot read {}: {e} — refused",
+                doc.display()
+            ));
             return Err(FAIL);
         }
     };
-    let cf_mode = if cf_mode == "queue.forge" { "queue".to_string() } else { cf_mode };
+    let cf_mode = if cf_mode == "queue.forge" {
+        "queue".to_string()
+    } else {
+        cf_mode
+    };
     let map_land = c.r.mode.as_str();
     if map_land != cf_mode || c.r.map_base != cf_base {
-        let map = c.s.repo_map.as_deref().map(|p| p.display().to_string()).unwrap_or_else(|| "<legacy map>".into());
+        let map =
+            c.s.repo_map
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "<legacy map>".into());
         w.err(format!(
             "queue.sh: {map} and {} already disagree about {} ({map}: {map_land}|{}; {}: {cf_mode}|{cf_base}) — refused, reconcile by hand first",
             doc.display(),
@@ -39,7 +52,10 @@ fn agrees(w: &World, c: &Ctx) -> Result<(), i32> {
 pub fn in_delivery(w: &World, c: &Ctx, path: &std::path::Path) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     if let Ok(Some(kv)) = records::read_kv(&c.queue_file("open")) {
-        out.push(format!("open batch PR {}", kv.get_first("pr").unwrap_or("?")));
+        out.push(format!(
+            "open batch PR {}",
+            kv.get_first("pr").unwrap_or("?")
+        ));
     }
     let here = |t: &str| crate::ident::check("tip", t).is_ok() && w.git.commit_exists(path, t);
     for row in w.lc.bead_rows(Some("IN_DELIVERY"))? {
@@ -85,12 +101,21 @@ fn write_row(w: &World, c: &Ctx, mode: LandMode, base: &str) -> Result<(), i32> 
     if let Some(d) = &doc {
         previous = w.config.repo_row(d, name).ok();
         if let Err(e) = w.config.set_repo_row(d, name, mode.config_word(), base) {
-            w.err(format!("queue.sh: setting {name} to {}|{base} in {} failed ({e}) — nothing changed", mode.config_word(), d.display()));
+            w.err(format!(
+                "queue.sh: setting {name} to {}|{base} in {} failed ({e}) — nothing changed",
+                mode.config_word(),
+                d.display()
+            ));
             return Err(FAIL);
         }
     }
-    let Some(map) = c.s.repo_map.clone().filter(|p| p.is_file()) else { return Ok(()) };
-    match w.config.set_legacy_map_row(&map, name, mode.config_word(), base) {
+    let Some(map) = c.s.repo_map.clone().filter(|p| p.is_file()) else {
+        return Ok(());
+    };
+    match w
+        .config
+        .set_legacy_map_row(&map, name, mode.config_word(), base)
+    {
         Ok(()) => Ok(()),
         Err(e) => {
             w.err(format!("queue.sh: {e} — refused"));
@@ -116,8 +141,12 @@ impl Emit for Merged<'_> {
 }
 
 pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
-    let Ok(c) = resolve(w, "to-forge", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "to-forge", &c) else { return FAIL };
+    let Ok(c) = resolve(w, "to-forge", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "to-forge", &c) else {
+        return FAIL;
+    };
     let name = c.r.name.clone();
     if c.r.mode != LandMode::QueueLocal {
         w.err(format!("queue.sh to-forge: {name} is not in queue.local mode (mode={}) — nothing to transition", c.r.mode.as_str()));
@@ -127,7 +156,9 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     let Some(base) = c.r.landref.clone() else {
-        w.err(format!("queue.sh to-forge: cannot resolve landing ref for {name}"));
+        w.err(format!(
+            "queue.sh to-forge: cannot resolve landing ref for {name}"
+        ));
         return FAIL;
     };
     if c.r.ref_remote(&base).is_some() {
@@ -138,7 +169,10 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     if !w.git.ref_exists(&path, &format!("refs/heads/{base}")) {
-        w.err(format!("queue.sh to-forge: {base} does not exist as a local branch in {}", path.display()));
+        w.err(format!(
+            "queue.sh to-forge: {base} does not exist as a local branch in {}",
+            path.display()
+        ));
         return FAIL;
     }
     if w.git.current_branch(&path).as_deref() == Some(base.as_str()) {
@@ -146,13 +180,19 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     let Some((remote, fbranch)) = c.r.publish.clone() else {
-        w.err(format!("queue.sh to-forge: cannot resolve a forge target for {name}"));
+        w.err(format!(
+            "queue.sh to-forge: cannot resolve a forge target for {name}"
+        ));
         return FAIL;
     };
-    let Ok(_g) = take_lock(w, "to-forge", &c, " — stop cutting local rounds first") else { return FAIL };
+    let Ok(_g) = take_lock(w, "to-forge", &c, " — stop cutting local rounds first") else {
+        return FAIL;
+    };
 
     // Re-read under the lock.
-    let Ok(c) = resolve(w, "to-forge", Some(&name)) else { return FAIL };
+    let Ok(c) = resolve(w, "to-forge", Some(&name)) else {
+        return FAIL;
+    };
     if c.r.mode != LandMode::QueueLocal {
         w.err(format!("queue.sh to-forge: {name} is not in queue.local mode (mode={}) — nothing to transition", c.r.mode.as_str()));
         return FAIL;
@@ -161,7 +201,9 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
 
-    w.out(format!("queue.sh to-forge: running the final publish for {name}"));
+    w.out(format!(
+        "queue.sh to-forge: running the final publish for {name}"
+    ));
     let merged = Merged(w.io);
     let w2 = World { io: &merged, ..*w };
     if super::publish::publish_with(&w2, Some(&name), true) != 0 {
@@ -171,9 +213,15 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
 
     let pfile = c.queue_file("publish");
     if pfile.exists() {
-        let pr = records::read_kv(&pfile).ok().flatten().and_then(|k| k.get("pr").map(String::from)).unwrap_or_default();
+        let pr = records::read_kv(&pfile)
+            .ok()
+            .flatten()
+            .and_then(|k| k.get("pr").map(String::from))
+            .unwrap_or_default();
         let deadline = w.clock.now() + c.s.transition_maxsec;
-        w.out(format!("queue.sh to-forge: waiting for publish PR {pr} to settle green"));
+        w.out(format!(
+            "queue.sh to-forge: waiting for publish PR {pr} to settle green"
+        ));
         loop {
             if super::verdict::settle_publish(w, &c, &path) == super::verdict::RED {
                 w.err(format!(
@@ -193,10 +241,14 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
     }
 
     if !w.git.fetch(&path, &remote, &fbranch) {
-        w.err(format!("queue.sh to-forge: could not fetch {remote}/{fbranch} to verify"));
+        w.err(format!(
+            "queue.sh to-forge: could not fetch {remote}/{fbranch} to verify"
+        ));
         return FAIL;
     }
-    let forge_sha = w.git.rev_parse(&path, &format!("refs/remotes/{remote}/{fbranch}"));
+    let forge_sha = w
+        .git
+        .rev_parse(&path, &format!("refs/remotes/{remote}/{fbranch}"));
     let local_sha = w.git.rev_parse(&path, &base);
     let (Some(fs_), Some(ls_)) = (forge_sha.clone(), local_sha.clone()) else {
         w.err(format!(
@@ -237,8 +289,12 @@ pub fn to_forge(w: &World, repo: Option<&str>) -> i32 {
 }
 
 pub fn to_local(w: &World, repo: Option<&str>) -> i32 {
-    let Ok(c) = resolve(w, "to-local", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "to-local", &c) else { return FAIL };
+    let Ok(c) = resolve(w, "to-local", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "to-local", &c) else {
+        return FAIL;
+    };
     let name = c.r.name.clone();
     if c.r.mode != LandMode::Queue {
         w.err(format!("queue.sh to-local: {name} is not in queue.forge mode (mode={}) — nothing to transition", c.r.mode.as_str()));
@@ -248,7 +304,9 @@ pub fn to_local(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     let Some(base) = c.r.landref.clone() else {
-        w.err(format!("queue.sh to-local: cannot resolve landing ref for {name}"));
+        w.err(format!(
+            "queue.sh to-local: cannot resolve landing ref for {name}"
+        ));
         return FAIL;
     };
     let Some(remote) = c.r.ref_remote(&base) else {
@@ -268,8 +326,12 @@ pub fn to_local(w: &World, repo: Option<&str>) -> i32 {
         w.err(format!("queue.sh to-local: {new_base} already exists as a local branch — refused, nothing changed"));
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "to-local", &c, "") else { return FAIL };
-    let Ok(c) = resolve(w, "to-local", Some(&name)) else { return FAIL };
+    let Ok(_g) = take_lock(w, "to-local", &c, "") else {
+        return FAIL;
+    };
+    let Ok(c) = resolve(w, "to-local", Some(&name)) else {
+        return FAIL;
+    };
     if c.r.mode != LandMode::Queue {
         w.err(format!("queue.sh to-local: {name} is not in queue.forge mode (mode={}) — nothing to transition", c.r.mode.as_str()));
         return FAIL;
@@ -278,11 +340,18 @@ pub fn to_local(w: &World, repo: Option<&str>) -> i32 {
         return FAIL;
     }
     if !w.git.fetch(&path, &remote, &fbranch) {
-        w.err(format!("queue.sh to-local: could not fetch {remote}/{fbranch}"));
+        w.err(format!(
+            "queue.sh to-local: could not fetch {remote}/{fbranch}"
+        ));
         return FAIL;
     }
-    let Some(forge_sha) = w.git.rev_parse(&path, &format!("refs/remotes/{remote}/{fbranch}")) else {
-        w.err(format!("queue.sh to-local: cannot resolve {remote}/{fbranch}"));
+    let Some(forge_sha) = w
+        .git
+        .rev_parse(&path, &format!("refs/remotes/{remote}/{fbranch}"))
+    else {
+        w.err(format!(
+            "queue.sh to-local: cannot resolve {remote}/{fbranch}"
+        ));
         return FAIL;
     };
     let archive = format!("refs/archive/{new_base}");
@@ -295,7 +364,9 @@ pub fn to_local(w: &World, repo: Option<&str>) -> i32 {
         }
     }
     if !w.git.branch_set(&path, &new_base, &forge_sha, false) {
-        w.err(format!("queue.sh to-local: could not create {new_base} at {forge_sha}"));
+        w.err(format!(
+            "queue.sh to-local: could not create {new_base} at {forge_sha}"
+        ));
         return FAIL;
     }
     if write_row(w, &c, LandMode::QueueLocal, &new_base).is_err() {

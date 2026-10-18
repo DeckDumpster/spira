@@ -20,16 +20,32 @@ pub fn epoch(t: &str) -> u64 {
     // would refuse (forge.sh's format has no %f) — GitHub timestamps here carry none, but
     // fail closed (0) on anything unexpected rather than misparse.
     let bytes = t.as_bytes();
-    if bytes.len() != 19 || bytes[4] != b'-' || bytes[7] != b'-' || bytes[10] != b'T' || bytes[13] != b':' || bytes[16] != b':' {
+    if bytes.len() != 19
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
         return 0;
     }
     let num = |s: &str| s.parse::<i64>().ok();
-    let (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(s)) =
-        (num(&t[0..4]), num(&t[5..7]), num(&t[8..10]), num(&t[11..13]), num(&t[14..16]), num(&t[17..19]))
-    else {
+    let (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(s)) = (
+        num(&t[0..4]),
+        num(&t[5..7]),
+        num(&t[8..10]),
+        num(&t[11..13]),
+        num(&t[14..16]),
+        num(&t[17..19]),
+    ) else {
         return 0;
     };
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || !(0..=23).contains(&h) || !(0..=59).contains(&mi) || !(0..=60).contains(&s) {
+    if !(1..=12).contains(&mo)
+        || !(1..=31).contains(&d)
+        || !(0..=23).contains(&h)
+        || !(0..=59).contains(&mi)
+        || !(0..=60).contains(&s)
+    {
         return 0;
     }
     let days = days_from_civil(y, mo, d);

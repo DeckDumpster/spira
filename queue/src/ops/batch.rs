@@ -2,7 +2,11 @@
 
 use std::fs;
 
-use super::{actor, converge_orphans, czar_ok, lc_abandon, lc_eject_member, require_lc, idents, landing_log, owner_refused, read_text, repo_path, statute_gate, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
+use super::{
+    actor, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_eject_member,
+    owner_refused, read_text, repo_path, require_lc, resolve, statute_gate, take_lock, title_line,
+    World, FAIL, OK, USAGE,
+};
 use crate::cli::Text;
 use crate::ident::bounded_text;
 use crate::model::{EjectCause, LandMode, Member};
@@ -14,34 +18,63 @@ use crate::records::{self, one_line, write_atomic, Kv};
 /// reported here and handed back: an eject that leaves the row where it was must exit non-zero.
 pub fn lc_return(w: &World, id: &str, red: bool) -> Result<(), ()> {
     let fail = |why: String| {
-        w.err(format!("queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"));
+        w.err(format!(
+            "queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"
+        ));
         Err(())
     };
-    let Some((mut state, version)) = w.lc.bead_state(id) else { return fail("no lifecycle row".into()) };
-    let Ok(mut v) = version.trim().parse::<u64>() else { return fail(format!("unreadable version {version:?}")) };
+    let Some((mut state, version)) = w.lc.bead_state(id) else {
+        return fail("no lifecycle row".into());
+    };
+    let Ok(mut v) = version.trim().parse::<u64>() else {
+        return fail(format!("unreadable version {version:?}"));
+    };
     if state == "REWORK" {
         return Ok(());
     }
     let who = "queue.sh";
     if state == "CERTIFIED" || state == "SUBMITTED" {
-        if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "\"Deliver\"") {
+        if let Err((rc, e)) =
+            w.lc.bead_event(id, &state, &v.to_string(), who, "\"Deliver\"")
+        {
             return fail(format!("Deliver refused (rc={rc}): {e}"));
         }
         state = "IN_DELIVERY".into();
         v += 1;
     }
     if state != "IN_DELIVERY" {
-        return fail(format!("in state {state}, not SUBMITTED, CERTIFIED or IN_DELIVERY"));
+        return fail(format!(
+            "in state {state}, not SUBMITTED, CERTIFIED or IN_DELIVERY"
+        ));
     }
-    let reason = if red { "batch-ejected-red" } else { "batch-ejected" };
-    if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, &format!("{{\"Returned\":{{\"reason\":\"{reason}\"}}}}")) {
+    let reason = if red {
+        "batch-ejected-red"
+    } else {
+        "batch-ejected"
+    };
+    if let Err((rc, e)) = w.lc.bead_event(
+        id,
+        &state,
+        &v.to_string(),
+        who,
+        &format!("{{\"Returned\":{{\"reason\":\"{reason}\"}}}}"),
+    ) {
         return fail(format!("Returned refused (rc={rc}): {e}"));
     }
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &str, red: bool, harness_fault: bool, dry_run: bool) -> i32 {
+pub fn eject(
+    w: &World,
+    id: &str,
+    repo: Option<&str>,
+    reason: &Text,
+    suites: &str,
+    red: bool,
+    harness_fault: bool,
+    dry_run: bool,
+) -> i32 {
     if !czar_ok(w) {
         return FAIL;
     }
@@ -57,14 +90,23 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         Ok(None) => reason,
         Err(rc) => return rc,
     };
-    let Ok(c) = resolve(w, "eject", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "eject", &c) else { return FAIL };
+    let Ok(c) = resolve(w, "eject", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "eject", &c) else {
+        return FAIL;
+    };
     if idents(w, "eject", &[("bead id", id), ("repo", &c.r.name)]).is_err() {
         return FAIL;
     }
     // --suites is a comma-separated list (queue.sh's contract, and what recertification
     // reads back): each name is an identifier, the commas are not.
-    if !suites.is_empty() && suites.split(',').try_for_each(|s| idents(w, "eject", &[("suite", s)])).is_err() {
+    if !suites.is_empty()
+        && suites
+            .split(',')
+            .try_for_each(|s| idents(w, "eject", &[("suite", s)]))
+            .is_err()
+    {
         return FAIL;
     }
     let actor = actor(w);
@@ -72,13 +114,23 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     if !dry_run && require_lc(w, "eject").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "eject", &c, "") else { return FAIL };
+    let Ok(_g) = take_lock(w, "eject", &c, "") else {
+        return FAIL;
+    };
 
     let open = c.queue_file("open");
     let kv = records::read_kv(&open).ok().flatten();
     let members = kv.as_ref().map(Kv::members).unwrap_or_default();
-    let pr = kv.as_ref().and_then(|k| k.get_first("pr")).unwrap_or("").to_string();
-    let batch_id = kv.as_ref().and_then(|k| k.get_first("batch_id")).unwrap_or("").to_string();
+    let pr = kv
+        .as_ref()
+        .and_then(|k| k.get_first("pr"))
+        .unwrap_or("")
+        .to_string();
+    let batch_id = kv
+        .as_ref()
+        .and_then(|k| k.get_first("batch_id"))
+        .unwrap_or("")
+        .to_string();
     let hit = members.iter().find(|m| m.id == id).cloned();
     let survivors: Vec<Member> = members.iter().filter(|m| m.id != id).cloned().collect();
 
@@ -92,16 +144,29 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     let Some(hit) = hit else {
         // Not batched: a CERTIFIED or SUBMITTED bead is withdrawn the way a reopen withdraws it.
         let st = w.lc.bead_row(id);
-        if !matches!(st.as_ref().map(|s| s.state.as_str()), Some("CERTIFIED" | "SUBMITTED")) {
+        if !matches!(
+            st.as_ref().map(|s| s.state.as_str()),
+            Some("CERTIFIED" | "SUBMITTED")
+        ) {
             w.err(format!("queue.sh eject: {id} is not a member of the open batch for {} and is not CERTIFIED or SUBMITTED", c.r.name));
             let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
-            w.err(format!("batch members: {}", if ids.is_empty() { "<none>".to_string() } else { ids.join(" ") }));
+            w.err(format!(
+                "batch members: {}",
+                if ids.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    ids.join(" ")
+                }
+            ));
             return FAIL;
         }
         if dry_run {
             let state = st.as_ref().map(|s| s.state.clone()).unwrap_or_default();
             let tip = st.and_then(|s| s.tip).unwrap_or_default();
-            w.out(format!("dry-run: {id} is {state} but not yet batched for {} (tip={tip})", c.r.name));
+            w.out(format!(
+                "dry-run: {id} is {state} but not yet batched for {} (tip={tip})",
+                c.r.name
+            ));
             w.out(format!("dry-run: would reopen bead {id}, return it to REWORK on spira-lc and clear assignee"));
             w.out(format!("dry-run: would record cause {}", cause.as_str()));
             w.out(format!("dry-run: would post comment to {id}"));
@@ -109,14 +174,21 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         }
         let reopened = w.lib.bead_reopen(id, cause.as_str(), suites);
         if !reopened {
-            w.err(format!("queue.sh eject: cannot reopen {id} (cause {})", cause.as_str()));
+            w.err(format!(
+                "queue.sh eject: cannot reopen {id} (cause {})",
+                cause.as_str()
+            ));
         }
         let returned = lc_return(w, id, cause == EjectCause::EjectRed).is_ok();
-        let mut comment = format!("Ejected while certified but not yet batched in {}.", c.r.name);
+        let mut comment = format!(
+            "Ejected while certified but not yet batched in {}.",
+            c.r.name
+        );
         if !reason.is_empty() {
             comment.push_str(&format!("\n\n{reason}"));
         }
-        comment.push_str("\n\nWithdrawn from the queue. Recertify the branch before it can rejoin.");
+        comment
+            .push_str("\n\nWithdrawn from the queue. Recertify the branch before it can rejoin.");
         if !suites.is_empty() {
             comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
         }
@@ -124,24 +196,39 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         if !reopened || !returned {
             return FAIL;
         }
-        w.out(format!("queue.sh eject: ejected {id} (certified, not yet batched) for {} (withdrawn)", c.r.name));
+        w.out(format!(
+            "queue.sh eject: ejected {id} (certified, not yet batched) for {} (withdrawn)",
+            c.r.name
+        ));
         return OK;
     };
 
     if dry_run {
-        w.out(format!("dry-run: {id} is in the open batch for {} (tip={})", c.r.name, hit.tip));
+        w.out(format!(
+            "dry-run: {id} is in the open batch for {} (tip={})",
+            c.r.name, hit.tip
+        ));
         w.out(format!("dry-run: would record cause {}", cause.as_str()));
-        w.out(format!("dry-run: would return bead {id} to spira-lc via a Returned event"));
+        w.out(format!(
+            "dry-run: would return bead {id} to spira-lc via a Returned event"
+        ));
         w.out(format!("dry-run: would post comment to {id}"));
         w.out(format!("dry-run: would close PR {pr}"));
         if !survivors.is_empty() {
             let s: Vec<&str> = survivors.iter().map(|m| m.id.as_str()).collect();
-            w.out(format!("dry-run: would return survivors to CERTIFIED: {}", s.join(" ")));
+            w.out(format!(
+                "dry-run: would return survivors to CERTIFIED: {}",
+                s.join(" ")
+            ));
         }
         return bead_resolves(w, id);
     }
 
-    let why = if reason.is_empty() { "ejected".to_string() } else { reason.clone() };
+    let why = if reason.is_empty() {
+        "ejected".to_string()
+    } else {
+        reason.clone()
+    };
     // The cause row spira-claim classifies: eject (harness) or eject-red (judged). §8 D1.
     // `bead_reopen` carries the suites a recertification must force.
     w.lib.cause_event(id, cause.as_str());
@@ -161,7 +248,9 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             Ok(()) => w.out(format!("queue.sh eject: {id} ejected on spira-lc")),
             Err((rc, out)) => {
                 failed = true;
-                w.err(format!("queue.sh eject: spira-lc eject-member refused for {id} (rc={rc}): {out}"));
+                w.err(format!(
+                    "queue.sh eject: spira-lc eject-member refused for {id} (rc={rc}): {out}"
+                ));
             }
         }
     }
@@ -183,9 +272,13 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     // The PR is closed and no rebuilt one is opened: the batch row must not outlive it, or its
     // members stay IN_DELIVERY behind a PR that is gone, or an emptied batch stays OPEN.
     if !batch_id.is_empty() {
-        let r = bounded_text(&format!("{id} ejected; the batch PR is closed and not rebuilt"));
+        let r = bounded_text(&format!(
+            "{id} ejected; the batch PR is closed and not rebuilt"
+        ));
         match lc_abandon(w, &batch_id, "queue.sh", &r) {
-            Ok(()) => w.out(format!("queue.sh eject: {batch_id} abandoned on spira-lc (survivors back to CERTIFIED)")),
+            Ok(()) => w.out(format!(
+                "queue.sh eject: {batch_id} abandoned on spira-lc (survivors back to CERTIFIED)"
+            )),
             Err((rc, out)) => {
                 failed = true;
                 w.err(format!("queue.sh eject: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}"));
@@ -195,7 +288,11 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     if failed {
         converge_orphans(w);
     }
-    let branch = kv.as_ref().and_then(|k| k.get_first("branch")).unwrap_or("").to_string();
+    let branch = kv
+        .as_ref()
+        .and_then(|k| k.get_first("branch"))
+        .unwrap_or("")
+        .to_string();
     if !branch.is_empty() && idents(w, "eject", &[("branch", &branch)]).is_ok() {
         w.lib.cancel_runs(&c.s.forge, &path, &branch);
     }
@@ -204,24 +301,45 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     }
     let _ = fs::remove_file(&open);
 
-    let surv = if survivors.is_empty() { "<none>".to_string() } else { crate::model::render_members(&survivors) };
+    let surv = if survivors.is_empty() {
+        "<none>".to_string()
+    } else {
+        crate::model::render_members(&survivors)
+    };
     let mut body = format!("{id} ejected from PR {pr} by {actor}.");
     if !reason.is_empty() {
         body.push_str(&format!(" Reason: {reason}"));
     }
     body.push_str(&format!("\nSurvivors returned to CERTIFIED: {surv}"));
-    w.lib.notify(&c.s.mailbox, &c.r.name, &format!("{id} ejected (queue.sh eject)"), &body);
+    w.lib.notify(
+        &c.s.mailbox,
+        &c.r.name,
+        &format!("{id} ejected (queue.sh eject)"),
+        &body,
+    );
     if failed {
         w.err(format!("queue.sh eject: {id} left the {} batch record but spira-lc did not take every write — see above", c.r.name));
         return FAIL;
     }
-    w.out(format!("queue.sh eject: ejected {id} from {} batch {batch_id}; {} member(s) remain", c.r.name, survivors.len()));
+    w.out(format!(
+        "queue.sh eject: ejected {id} from {} batch {batch_id}; {} member(s) remain",
+        c.r.name,
+        survivors.len()
+    ));
     OK
 }
 
 /// A cut that answered "cannot tell" may have written the batch row: look before retrying, so a
 /// deadline neither strands BATCHED members behind no PR nor cuts the same batch twice.
-pub(super) fn cut_settled(w: &World, id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)> {
+pub(super) fn cut_settled(
+    w: &World,
+    id: &str,
+    repo: &str,
+    head: &str,
+    base: &str,
+    members: &str,
+    actor: &str,
+) -> Result<String, (i32, String)> {
     let mut last = Err((2, "no attempt".to_string()));
     for attempt in 0..3u32 {
         if attempt > 0 {
@@ -261,17 +379,31 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
         return USAGE;
     }
     let actor = actor(w);
-    let Ok(c) = resolve(w, "abandon", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "abandon", &c) else { return FAIL };
+    let Ok(c) = resolve(w, "abandon", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "abandon", &c) else {
+        return FAIL;
+    };
     if !dry_run && require_lc(w, "abandon").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "abandon", &c, "") else { return FAIL };
+    let Ok(_g) = take_lock(w, "abandon", &c, "") else {
+        return FAIL;
+    };
     abandon_locked(w, &c, &path, &reason, &actor, dry_run, "abandon")
 }
 
 /// The abandon itself, with the repo's queue lock already held by the caller.
-fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &str, actor: &str, dry_run: bool, label: &str) -> i32 {
+fn abandon_locked(
+    w: &World,
+    c: &super::Ctx,
+    path: &std::path::Path,
+    reason: &str,
+    actor: &str,
+    dry_run: bool,
+    label: &str,
+) -> i32 {
     let open = c.queue_file("open");
     let kv = match records::read_kv(&open) {
         Ok(Some(kv)) => kv,
@@ -280,13 +412,25 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
             return FAIL;
         }
     };
-    if owner_refused(w, kv.get("owner").unwrap_or(""), actor, &format!("queue.sh {label}")) {
+    if owner_refused(
+        w,
+        kv.get("owner").unwrap_or(""),
+        actor,
+        &format!("queue.sh {label}"),
+    ) {
         return FAIL;
     }
     let pr = kv.get_first("pr").unwrap_or("").to_string();
     let branch = kv.get_first("branch").unwrap_or("").to_string();
     let batch_id = kv.get_first("batch_id").unwrap_or("").to_string();
-    if !pr.is_empty() && idents(w, label, &[("pr", &pr)]).is_ok() && w.forge.pr_state(&c.s.forge, path, &pr).as_deref().map(str::trim) == Some("merged") {
+    if !pr.is_empty()
+        && idents(w, label, &[("pr", &pr)]).is_ok()
+        && w.forge
+            .pr_state(&c.s.forge, path, &pr)
+            .as_deref()
+            .map(str::trim)
+            == Some("merged")
+    {
         w.err(format!("queue.sh {label}: refused — PR {pr} is already merged; its batch lands through verdict, not abandon"));
         return FAIL;
     }
@@ -299,7 +443,9 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
     let reason_clean = one_line(reason);
 
     // A member already returned to REWORK is a verdict an abandon never overturns.
-    let kept = |id: &str| -> Option<String> { w.lc.bead_row(id).map(|r| r.state).filter(|s| s == "REWORK") };
+    let kept = |id: &str| -> Option<String> {
+        w.lc.bead_row(id).map(|r| r.state).filter(|s| s == "REWORK")
+    };
 
     if dry_run {
         w.out(format!("dry-run: would close PR {pr} for {}", c.r.name));
@@ -311,13 +457,22 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
                     audit.push(format!("{}:{st}", m.id));
                 }
                 None => {
-                    w.out(format!("dry-run: {}: return to CERTIFIED at {}", m.id, m.tip));
+                    w.out(format!(
+                        "dry-run: {}: return to CERTIFIED at {}",
+                        m.id, m.tip
+                    ));
                     audit.push(format!("{}:CERTIFIED", m.id));
                 }
             }
         }
-        let audit = if audit.is_empty() { "<none>".to_string() } else { audit.join(",") };
-        w.out(format!("dry-run: would cancel non-completed Gate run(s) for branch {branch}"));
+        let audit = if audit.is_empty() {
+            "<none>".to_string()
+        } else {
+            audit.join(",")
+        };
+        w.out(format!(
+            "dry-run: would cancel non-completed Gate run(s) for branch {branch}"
+        ));
         w.out(format!("dry-run: archive path: {}", archive.display()));
         w.out(format!(
             "dry-run: audit line (landing.log): QUEUE ABANDON {} repo={} pr={pr} actor={actor} members={audit} reason={reason_clean}",
@@ -330,15 +485,24 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
     if !batch_id.is_empty() {
         let r = bounded_text(reason);
         match lc_abandon(w, &batch_id, "queue.sh", &r) {
-            Ok(()) => w.out(format!("queue.sh {label}: {batch_id} abandoned on spira-lc")),
-            Err((rc, out)) => w.err(format!("queue.sh {label}: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}")),
+            Ok(()) => w.out(format!(
+                "queue.sh {label}: {batch_id} abandoned on spira-lc"
+            )),
+            Err((rc, out)) => w.err(format!(
+                "queue.sh {label}: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}"
+            )),
         }
     }
     if !branch.is_empty() && idents(w, label, &[("branch", &branch)]).is_ok() {
         w.lib.cancel_runs(&c.s.forge, path, &branch);
     }
     if !pr.is_empty() && idents(w, label, &[("pr", &pr)]).is_ok() {
-        w.forge.pr_comment(&c.s.forge, path, &pr, &bounded_text(&format!("Batch abandoned. Reason: {reason}")));
+        w.forge.pr_comment(
+            &c.s.forge,
+            path,
+            &pr,
+            &bounded_text(&format!("Batch abandoned. Reason: {reason}")),
+        );
         w.forge.pr_close(&c.s.forge, path, &pr);
     }
     let mut audit = Vec::new();
@@ -354,7 +518,11 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
             }
         }
     }
-    let audit = if audit.is_empty() { "<none>".to_string() } else { audit.join(",") };
+    let audit = if audit.is_empty() {
+        "<none>".to_string()
+    } else {
+        audit.join(",")
+    };
 
     // The archive keeps who and why, in the file itself.
     let mut archived = kv.clone();
@@ -366,15 +534,27 @@ fn abandon_locked(w: &World, c: &super::Ctx, path: &std::path::Path, reason: &st
     }
     landing_log(
         &c.s.run,
-        &format!("QUEUE ABANDON {} repo={} pr={pr} actor={actor} members={audit} reason={reason_clean}", w.clock.now(), c.r.name),
+        &format!(
+            "QUEUE ABANDON {} repo={} pr={pr} actor={actor} members={audit} reason={reason_clean}",
+            w.clock.now(),
+            c.r.name
+        ),
     );
     w.lib.event(
         "queue.abandoned",
         &format!("abandoned PR {pr} for {} (actor={actor})", c.r.name),
         &format!("members={audit} reason={reason_clean}"),
     );
-    w.lib.notify(&c.s.mailbox, &c.r.name, "batch abandoned (queue.sh abandon)", &format!("PR {pr} abandoned by {actor}. Reason: {reason_clean}\nMembers: {audit}"));
-    w.out(format!("queue.sh {label}: PR {pr} closed, batch abandoned for {}", c.r.name));
+    w.lib.notify(
+        &c.s.mailbox,
+        &c.r.name,
+        "batch abandoned (queue.sh abandon)",
+        &format!("PR {pr} abandoned by {actor}. Reason: {reason_clean}\nMembers: {audit}"),
+    );
+    w.out(format!(
+        "queue.sh {label}: PR {pr} closed, batch abandoned for {}",
+        c.r.name
+    ));
     OK
 }
 
@@ -390,14 +570,26 @@ fn barred_prereq(w: &World, row: &crate::model::LcBeadRow) -> Option<String> {
         }
         match w.lc.bead_row(&p) {
             None => return Some(p),
-            Some(pr) if !pr.holds.is_empty() || (pr.ejected_red_tip.is_some() && pr.ejected_red_tip == pr.tip) => return Some(p),
+            Some(pr)
+                if !pr.holds.is_empty()
+                    || (pr.ejected_red_tip.is_some() && pr.ejected_red_tip == pr.tip) =>
+            {
+                return Some(p)
+            }
             Some(pr) => todo.extend(pr.stack.into_keys()),
         }
     }
     None
 }
 
-pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregate: bool, dry_run: bool, replace: Option<&Text>) -> i32 {
+pub fn open_batch(
+    w: &World,
+    repo: Option<&str>,
+    members_arg: &Text,
+    skip_pregate: bool,
+    dry_run: bool,
+    replace: Option<&Text>,
+) -> i32 {
     if !czar_ok(w) {
         return FAIL;
     }
@@ -419,18 +611,29 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
             return USAGE;
         }
     };
-    let actor = w.var("SPIRA_QUEUE_ACTOR").unwrap_or_else(|| "operator".into());
-    let Ok(c) = resolve(w, "open-batch", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "open-batch", &c) else { return FAIL };
+    let actor = w
+        .var("SPIRA_QUEUE_ACTOR")
+        .unwrap_or_else(|| "operator".into());
+    let Ok(c) = resolve(w, "open-batch", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "open-batch", &c) else {
+        return FAIL;
+    };
     let name = c.r.name.clone();
     if c.r.mode != LandMode::Queue {
-        w.err(format!("queue.sh open-batch: repo is not in queue mode (mode={})", c.r.mode.as_str()));
+        w.err(format!(
+            "queue.sh open-batch: repo is not in queue mode (mode={})",
+            c.r.mode.as_str()
+        ));
         return FAIL;
     }
     if !dry_run && require_lc(w, "open-batch").is_err() {
         return FAIL;
     }
-    let Ok(_g) = take_lock(w, "open-batch", &c, "") else { return FAIL };
+    let Ok(_g) = take_lock(w, "open-batch", &c, "") else {
+        return FAIL;
+    };
     let open = c.queue_file("open");
     if open.exists() && replace_reason.is_some() && !dry_run {
         let r = replace_reason.as_deref().unwrap_or_default();
@@ -439,18 +642,34 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         }
     }
     if open.exists() && !(dry_run && replace_reason.is_some()) {
-        let owner = records::read_kv(&open).ok().flatten().and_then(|k| k.get("owner").map(String::from)).unwrap_or_default();
-        let owner = if owner.is_empty() { "batcher".into() } else { owner };
+        let owner = records::read_kv(&open)
+            .ok()
+            .flatten()
+            .and_then(|k| k.get("owner").map(String::from))
+            .unwrap_or_default();
+        let owner = if owner.is_empty() {
+            "batcher".into()
+        } else {
+            owner
+        };
         w.err(format!("queue.sh open-batch: a batch is already open for {name} (owner={owner}) — abandon it first (queue.sh abandon) or pass --replace --reason"));
         return FAIL;
     }
     if !(dry_run && replace_reason.is_some()) {
-        if let Some((pr, br)) = w.forge.queue_prs(&c.s.forge, &path).and_then(|v| v.into_iter().next()) {
+        if let Some((pr, br)) = w
+            .forge
+            .queue_prs(&c.s.forge, &path)
+            .and_then(|v| v.into_iter().next())
+        {
             w.err(format!("queue.sh open-batch: {name} already has open batch PR {pr} ({br}) on the forge — nothing cut; abandon it first (queue.sh abandon) or pass --replace --reason"));
             return FAIL;
         }
     }
-    if let Some(until) = records::read_kv(&c.queue_file("capacity-backoff")).ok().flatten().and_then(|k| k.get("until").and_then(|u| u.trim().parse::<u64>().ok())) {
+    if let Some(until) = records::read_kv(&c.queue_file("capacity-backoff"))
+        .ok()
+        .flatten()
+        .and_then(|k| k.get("until").and_then(|u| u.trim().parse::<u64>().ok()))
+    {
         let now = w.clock.now();
         if until > now && !dry_run {
             w.out(format!("queue.sh open-batch: no cut — {name} is waiting on capacity (a capacity failure closed its last batch); {}s of backoff remain", until - now));
@@ -458,7 +677,9 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         }
     }
     let Some(base) = c.r.landref.clone() else {
-        w.err(format!("queue.sh open-batch: cannot resolve landing ref for {name}"));
+        w.err(format!(
+            "queue.sh open-batch: cannot resolve landing ref for {name}"
+        ));
         return FAIL;
     };
     let Some(base_sha) = w.git.rev_parse(&path, &base) else {
@@ -474,8 +695,15 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     let mut skips: Vec<String> = Vec::new();
     let mut cands: Vec<(String, String)> = Vec::new();
     if !members_arg.trim().is_empty() {
-        for mid in members_arg.split(|ch: char| ch == ',' || ch.is_whitespace()).filter(|s| !s.is_empty()) {
-            match certs.iter().chain(submitted.iter()).find(|(i, _, _)| i == mid) {
+        for mid in members_arg
+            .split(|ch: char| ch == ',' || ch.is_whitespace())
+            .filter(|s| !s.is_empty())
+        {
+            match certs
+                .iter()
+                .chain(submitted.iter())
+                .find(|(i, _, _)| i == mid)
+            {
                 Some((i, t, _)) => cands.push((i.clone(), t.clone())),
                 None => skips.push(format!("{mid}: not SUBMITTED or CERTIFIED")),
             }
@@ -493,7 +721,11 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
                 continue;
             }
             let ids: Vec<String> = group.iter().map(|(i, _, _)| i.clone()).collect();
-            let prio = w.bd.show(&ids).ok().map(|rows| rows_json(&rows)).unwrap_or_else(|| "[]".into());
+            let prio =
+                w.bd.show(&ids)
+                    .ok()
+                    .map(|rows| rows_json(&rows))
+                    .unwrap_or_else(|| "[]".into());
             let rows: String = group.iter().fold(String::new(), |mut acc, (i, t, e)| {
                 acc.push_str(&format!("{i} {t} {e}\n"));
                 acc
@@ -510,31 +742,50 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     let mut provisional: Vec<String> = Vec::new();
     for (id, tip) in cands {
         match w.lc.bead_row(&id) {
-            None => skips.push(format!("{id}: no lifecycle row (spira-lc could not say) — not admitted")),
-            Some(r) if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") && super::round::batch_red_at(&c, &id, &tip) => {
-                skips.push(format!("{id}: {tip} already went red in a batch — not admitted until the tip changes"))
+            None => skips.push(format!(
+                "{id}: no lifecycle row (spira-lc could not say) — not admitted"
+            )),
+            Some(r)
+                if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED")
+                    && super::round::batch_red_at(&c, &id, &tip) =>
+            {
+                skips.push(format!(
+                    "{id}: {tip} already went red in a batch — not admitted until the tip changes"
+                ))
             }
-            Some(r) if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") && !r.holds.is_empty() => {
+            Some(r)
+                if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") && !r.holds.is_empty() =>
+            {
                 skips.push(format!("{id}: held ({}) — not admitted", r.holds.join(",")))
             }
-            Some(r) if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") => match barred_prereq(w, &r) {
-                Some(p) => skips.push(format!("{id}: stacked on held {p} — not admitted")),
-                None => {
-                    if r.state == "SUBMITTED" {
-                        if let Some(why) = super::round::gate_red_at(&c, &id, &tip) {
-                            skips.push(format!("{id}: its gate is FAIL at {tip} ({why}) — not admitted"));
-                            continue;
+            Some(r) if matches!(r.state.as_str(), "CERTIFIED" | "SUBMITTED") => {
+                match barred_prereq(w, &r) {
+                    Some(p) => skips.push(format!("{id}: stacked on held {p} — not admitted")),
+                    None => {
+                        if r.state == "SUBMITTED" {
+                            if let Some(why) = super::round::gate_red_at(&c, &id, &tip) {
+                                skips.push(format!(
+                                    "{id}: its gate is FAIL at {tip} ({why}) — not admitted"
+                                ));
+                                continue;
+                            }
+                            provisional.push(id.clone());
                         }
-                        provisional.push(id.clone());
+                        admitted.push((id, tip))
                     }
-                    admitted.push((id, tip))
                 }
-            },
-            Some(r) => skips.push(format!("{id}: lifecycle state={} (no longer SUBMITTED or CERTIFIED) — not admitted", r.state)),
+            }
+            Some(r) => skips.push(format!(
+                "{id}: lifecycle state={} (no longer SUBMITTED or CERTIFIED) — not admitted",
+                r.state
+            )),
         }
     }
 
-    let wt = c.s.run.join("worktree").join(format!(".open-batch-{name}-{}", w.env.pid()));
+    let wt =
+        c.s.run
+            .join("worktree")
+            .join(format!(".open-batch-{name}-{}", w.env.pid()));
     w.git.worktree_prune(&path);
     if let Some(p) = wt.parent() {
         let _ = fs::create_dir_all(p);
@@ -545,19 +796,26 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     }
     let mut members: Vec<Member> = Vec::new();
     for (id, tip) in admitted {
-        if crate::ident::check("member", &id).is_err() || crate::ident::check("tip", &tip).is_err() {
+        if crate::ident::check("member", &id).is_err() || crate::ident::check("tip", &tip).is_err()
+        {
             skips.push(format!("{id}: not a valid id:tip"));
             continue;
         }
         if !super::simple::lint_passed(w, "open-batch", &path, &tip, false) {
-            skips.push(format!("{id}: {tip} fails its compile-and-lint check — not admitted"));
+            skips.push(format!(
+                "{id}: {tip} fails its compile-and-lint check — not admitted"
+            ));
             continue;
         }
         if super::round::merge_member(w, &c, &wt, &id, &tip) {
             members.push(Member { id, tip });
         } else {
             w.git.merge_abort(&wt);
-            let why = if w.lib.base_conflict(&path, &base_sha, &tip) { "conflicts with base" } else { "conflicts with batch" };
+            let why = if w.lib.base_conflict(&path, &base_sha, &tip) {
+                "conflicts with base"
+            } else {
+                "conflicts with batch"
+            };
             skips.push(format!("{id}: {why}"));
         }
     }
@@ -565,7 +823,9 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         w.out(format!("queue.sh open-batch: skip — {s}"));
     }
     if members.is_empty() {
-        w.out(format!("queue.sh open-batch: no cut — nothing admissible for {name}"));
+        w.out(format!(
+            "queue.sh open-batch: no cut — nothing admissible for {name}"
+        ));
         w.git.worktree_remove(&path, &wt);
         return FAIL;
     }
@@ -598,9 +858,13 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     w.git.worktree_remove(&path, &wt);
 
     if skip_pregate {
-        w.out("queue.sh open-batch: pre-flight gate skipped (--skip-pregate) — CI is the authority");
+        w.out(
+            "queue.sh open-batch: pre-flight gate skipped (--skip-pregate) — CI is the authority",
+        );
     } else {
-        let (mut rc, out) = w.lib.pf_gate(&batch_br, &name, &stamp, c.s.preflight_wall_secs);
+        let (mut rc, out) = w
+            .lib
+            .pf_gate(&batch_br, &name, &stamp, c.s.preflight_wall_secs);
         if rc == 124 {
             w.out("queue.sh open-batch: pre-flight hit its wall — opening the PR, CI decides");
             rc = 0;
@@ -614,7 +878,11 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         }
     }
     let lc_id = format!("{name}-{stamp}");
-    let csv = members.iter().map(Member::render).collect::<Vec<_>>().join(",");
+    let csv = members
+        .iter()
+        .map(Member::render)
+        .collect::<Vec<_>>()
+        .join(",");
     for m in &members {
         w.lc.create_bead(&m.id);
     }
@@ -630,14 +898,20 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         let _ = lc_abandon(w, &lc_id, "queue.sh", why);
         w.git.branch_delete(&path, &batch_br);
     };
-    if !w.lib.push(&path, &remote, &format!("{head}:refs/heads/{batch_br}")) {
+    if !w
+        .lib
+        .push(&path, &remote, &format!("{head}:refs/heads/{batch_br}"))
+    {
         w.err(format!("queue.sh open-batch: could not push {batch_br}"));
         undo("open-batch could not push the batch branch");
         return FAIL;
     }
     let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
     let titles = w.bd.show(&ids).unwrap_or_default();
-    let mut body = format!("Merge-queue batch: {} beads for {name}, onto {base_branch}.\n\n", members.len());
+    let mut body = format!(
+        "Merge-queue batch: {} beads for {name}, onto {base_branch}.\n\n",
+        members.len()
+    );
     if skip_pregate {
         body.push_str("Opened with --skip-pregate: the local pre-flight gate was not run for this batch; CI is the gate.\n\n");
     }
@@ -645,17 +919,30 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         body.push_str(&format!("- {id} — {}\n", title_line(&titles, id)));
     }
     let title = format!("queue: {} beads for {name}", members.len());
-    let pr = match w.forge.pr_create(&c.s.forge, &path, &batch_br, &base_branch, &title, body.trim_end_matches('\n')) {
+    let pr = match w.forge.pr_create(
+        &c.s.forge,
+        &path,
+        &batch_br,
+        &base_branch,
+        &title,
+        body.trim_end_matches('\n'),
+    ) {
         Ok(pr) => pr,
         Err(e) => {
-            let adopted = w.forge.queue_prs(&c.s.forge, &path).and_then(|prs| prs.into_iter().find(|(_, b)| *b == batch_br).map(|(n, _)| n));
+            let adopted = w.forge.queue_prs(&c.s.forge, &path).and_then(|prs| {
+                prs.into_iter()
+                    .find(|(_, b)| *b == batch_br)
+                    .map(|(n, _)| n)
+            });
             match adopted {
                 Some(n) => {
                     w.err(format!("queue.sh open-batch: forge pr-create reported failure for {batch_br} ({e}) but PR {n} is open on it — adopting it"));
                     n
                 }
                 None => {
-                    w.err(format!("queue.sh open-batch: forge pr-create failed for {batch_br}: {e}"));
+                    w.err(format!(
+                        "queue.sh open-batch: forge pr-create failed for {batch_br}: {e}"
+                    ));
                     undo("open-batch could not open the PR");
                     return FAIL;
                 }
@@ -663,7 +950,9 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         }
     };
     if pr.is_empty() {
-        w.err(format!("queue.sh open-batch: forge returned no PR number for {batch_br}"));
+        w.err(format!(
+            "queue.sh open-batch: forge returned no PR number for {batch_br}"
+        ));
         undo("open-batch got no PR number");
         return FAIL;
     }
@@ -672,7 +961,12 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         w.err(format!("queue.sh open-batch: PR {pr} for {name} is open but auto-merge could not be armed — the reconciler arms it on the next pass"));
     }
     let opened = w.clock.now();
-    let provisional = provisional.iter().filter(|p| members.iter().any(|m| &m.id == *p)).cloned().collect::<Vec<_>>().join(" ");
+    let provisional = provisional
+        .iter()
+        .filter(|p| members.iter().any(|m| &m.id == *p))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut rec = Kv::default();
     for (k, v) in [
         ("pr", pr.as_str()),
@@ -687,7 +981,9 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     }
     if !provisional.is_empty() {
         rec.push("provisional", &provisional);
-        w.out(format!("queue.sh open-batch: provisional (SUBMITTED, gate still running): {provisional}"));
+        w.out(format!(
+            "queue.sh open-batch: provisional (SUBMITTED, gate still running): {provisional}"
+        ));
     }
     if let Err(e) = write_atomic(&open, &rec.render()) {
         w.err(format!("queue.sh open-batch: {e}"));
@@ -698,12 +994,21 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         rec.push("batch_id", &lc_id);
         rec.push("version", &version);
         let _ = write_atomic(&open, &rec.render());
-        w.out(format!("queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"));
+        w.out(format!(
+            "queue.sh open-batch: {lc_id} cut on spira-lc (version={version})"
+        ));
     }
     let _ = fs::remove_file(c.s.run.join(format!("queue-stuck-{name}")));
     landing_log(&c.s.run, &format!("QUEUE BATCH {opened} repo={name} members={} gate_seconds=0 verdict=green source=open-batch", members.len()));
-    w.out(format!("queue.sh open-batch: PR {pr} opened — {} branches ({batch_br})", members.len()));
-    if armed { OK } else { FAIL }
+    w.out(format!(
+        "queue.sh open-batch: PR {pr} opened — {} branches ({batch_br})",
+        members.len()
+    ));
+    if armed {
+        OK
+    } else {
+        FAIL
+    }
 }
 
 /// The bd rows as the JSON array `queue_sort_rows` reads through PRIO_JSON.

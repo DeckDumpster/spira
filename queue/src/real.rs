@@ -29,7 +29,12 @@ fn close_inherited_fds(cmd: &mut Command) {
     unsafe {
         cmd.pre_exec(|| {
             const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
-            let r = libc::syscall(libc::SYS_close_range, 3u32, libc::c_uint::MAX, CLOSE_RANGE_CLOEXEC);
+            let r = libc::syscall(
+                libc::SYS_close_range,
+                3u32,
+                libc::c_uint::MAX,
+                CLOSE_RANGE_CLOEXEC,
+            );
             if r != 0 {
                 for fd in 3..4096 {
                     libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
@@ -44,10 +49,21 @@ fn close_inherited_fds(cmd: &mut Command) {
 /// `$(…)`), through a temp file both descriptors share.
 fn run_combined(cmd: &mut Command) -> (i32, String) {
     let path = std::env::temp_dir().join(format!("queue-out-{}-{}", std::process::id(), unique()));
-    let Ok(f) = File::create(&path) else { return (127, String::new()) };
-    let Ok(f2) = f.try_clone() else { return (127, String::new()) };
+    let Ok(f) = File::create(&path) else {
+        return (127, String::new());
+    };
+    let Ok(f2) = f.try_clone() else {
+        return (127, String::new());
+    };
     close_inherited_fds(cmd);
-    let rc = cmd.stdin(Stdio::null()).stdout(f).stderr(f2).status().ok().and_then(|s| s.code()).unwrap_or(127);
+    let rc = cmd
+        .stdin(Stdio::null())
+        .stdout(f)
+        .stderr(f2)
+        .status()
+        .ok()
+        .and_then(|s| s.code())
+        .unwrap_or(127);
     let out = fs::read_to_string(&path).unwrap_or_default();
     let _ = fs::remove_file(&path);
     (rc, out)
@@ -61,13 +77,22 @@ fn unique() -> u64 {
 
 fn ok(cmd: &mut Command) -> bool {
     close_inherited_fds(cmd);
-    cmd.stdin(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+    cmd.stdin(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn stdout_of(cmd: &mut Command) -> Option<String> {
     close_inherited_fds(cmd);
-    let o = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).to_string())
+    let o = cmd
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    o.status
+        .success()
+        .then(|| String::from_utf8_lossy(&o.stdout).to_string())
 }
 
 // ------------------------------------------------------------------------------------ git
@@ -82,13 +107,19 @@ fn git(repo: &Path) -> Command {
 
 impl Git for RealGit {
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String> {
-        stdout_of(git(repo).args(["rev-parse", "--verify", "-q", rev])).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        stdout_of(git(repo).args(["rev-parse", "--verify", "-q", rev]))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
     fn is_ancestor(&self, repo: &Path, a: &str, b: &str) -> bool {
-        ok(git(repo).args(["merge-base", "--is-ancestor", a, b]).stderr(Stdio::null()))
+        ok(git(repo)
+            .args(["merge-base", "--is-ancestor", a, b])
+            .stderr(Stdio::null()))
     }
     fn merge_base(&self, repo: &Path, a: &str, b: &str) -> Option<String> {
-        stdout_of(git(repo).args(["merge-base", a, b]).stderr(Stdio::null())).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        stdout_of(git(repo).args(["merge-base", a, b]).stderr(Stdio::null()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
     fn update_ref(&self, repo: &Path, refname: &str, new: &str, old: Option<&str>) -> bool {
         let mut c = git(repo);
@@ -99,10 +130,14 @@ impl Git for RealGit {
         ok(c.stderr(Stdio::null()))
     }
     fn ref_exists(&self, repo: &Path, refname: &str) -> bool {
-        ok(git(repo).args(["show-ref", "--verify", "--quiet", refname]).stderr(Stdio::null()))
+        ok(git(repo)
+            .args(["show-ref", "--verify", "--quiet", refname])
+            .stderr(Stdio::null()))
     }
     fn current_branch(&self, repo: &Path) -> Option<String> {
-        stdout_of(git(repo).args(["symbolic-ref", "-q", "--short", "HEAD"])).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        stdout_of(git(repo).args(["symbolic-ref", "-q", "--short", "HEAD"]))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
     fn fetch(&self, repo: &Path, remote: &str, branch: &str) -> bool {
         let mut c = git(repo);
@@ -121,13 +156,21 @@ impl Git for RealGit {
         if !o.status.success() {
             return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
         }
-        Ok(crate::publish_range::parse_log(&String::from_utf8_lossy(&o.stdout)))
+        Ok(crate::publish_range::parse_log(&String::from_utf8_lossy(
+            &o.stdout,
+        )))
     }
     fn commit_exists(&self, repo: &Path, sha: &str) -> bool {
-        ok(git(repo).args(["cat-file", "-e", &format!("{sha}^{{commit}}")]).stderr(Stdio::null()))
+        ok(git(repo)
+            .args(["cat-file", "-e", &format!("{sha}^{{commit}}")])
+            .stderr(Stdio::null()))
     }
     fn numstat(&self, repo: &Path, a: &str, b: &str) -> Result<Vec<(String, u32, u32)>, String> {
-        let o = git(repo).args(["diff", "--numstat", "--no-renames", a, b]).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+        let o = git(repo)
+            .args(["diff", "--numstat", "--no-renames", a, b])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
         if !o.status.success() {
             return Err(String::from_utf8_lossy(&o.stderr).trim().to_string());
         }
@@ -136,22 +179,37 @@ impl Git for RealGit {
             .filter_map(|l| {
                 let mut f = l.splitn(3, '\t');
                 let (add, del, path) = (f.next()?, f.next()?, f.next()?);
-                Some((path.to_string(), add.parse().unwrap_or(0), del.parse().unwrap_or(0)))
+                Some((
+                    path.to_string(),
+                    add.parse().unwrap_or(0),
+                    del.parse().unwrap_or(0),
+                ))
             })
             .collect())
     }
     fn path_exists(&self, repo: &Path, rev: &str, path: &str) -> bool {
-        ok(git(repo).args(["cat-file", "-e", &format!("{rev}:{path}")]).stderr(Stdio::null()))
+        ok(git(repo)
+            .args(["cat-file", "-e", &format!("{rev}:{path}")])
+            .stderr(Stdio::null()))
     }
     fn file_at(&self, repo: &Path, rev: &str, path: &str) -> Option<String> {
         stdout_of(git(repo).args(["show", &format!("{rev}:{path}")]))
     }
     fn grep_files(&self, repo: &Path, rev: &str, needle: &str, glob: &str) -> Vec<String> {
-        stdout_of(git(repo).args(["grep", "-l", "-F", "-e", needle, rev, "--", &format!(":(glob){glob}")]))
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|l| l.strip_prefix(&format!("{rev}:")).map(String::from))
-            .collect()
+        stdout_of(git(repo).args([
+            "grep",
+            "-l",
+            "-F",
+            "-e",
+            needle,
+            rev,
+            "--",
+            &format!(":(glob){glob}"),
+        ]))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.strip_prefix(&format!("{rev}:")).map(String::from))
+        .collect()
     }
     fn branch_set(&self, repo: &Path, name: &str, sha: &str, force: bool) -> bool {
         let mut c = git(repo);
@@ -159,33 +217,68 @@ impl Git for RealGit {
         if force {
             c.arg("-f");
         }
-        ok(c.args([name, sha]).stdout(Stdio::null()).stderr(Stdio::null()))
+        ok(c.args([name, sha])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()))
     }
     fn branch_delete(&self, repo: &Path, name: &str) -> bool {
-        ok(git(repo).args(["branch", "-D", name]).stdout(Stdio::null()).stderr(Stdio::null()))
+        ok(git(repo)
+            .args(["branch", "-D", name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()))
     }
     fn branch_delete_sanctioned(&self, repo: &Path, name: &str) -> bool {
-        ok(git(repo).args(["branch", "-D", name]).env("SPIRA_REF_SANCTIONED", "1").stdout(Stdio::null()).stderr(Stdio::null()))
+        ok(git(repo)
+            .args(["branch", "-D", name])
+            .env("SPIRA_REF_SANCTIONED", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()))
     }
     fn branches(&self, repo: &Path, prefix: &str) -> Vec<(String, String)> {
-        stdout_of(git(repo).args(["for-each-ref", "--format=%(refname:short) %(objectname)", prefix]))
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|l| l.split_once(' ').map(|(a, b)| (a.to_string(), b.to_string())))
-            .collect()
+        stdout_of(git(repo).args([
+            "for-each-ref",
+            "--format=%(refname:short) %(objectname)",
+            prefix,
+        ]))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            l.split_once(' ')
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+        })
+        .collect()
     }
     fn worktree_prune(&self, repo: &Path) {
         let _ = ok(git(repo).args(["worktree", "prune"]).stderr(Stdio::null()));
     }
     fn worktree_add_detached(&self, repo: &Path, path: &Path, sha: &str) -> bool {
-        ok(git(repo).args(["worktree", "add", "-q", "--detach"]).arg(path).arg(sha).stdout(Stdio::null()).stderr(Stdio::null()))
+        ok(git(repo)
+            .args(["worktree", "add", "-q", "--detach"])
+            .arg(path)
+            .arg(sha)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()))
     }
     fn worktree_remove(&self, repo: &Path, path: &Path) {
-        let _ = ok(git(repo).args(["worktree", "remove", "-f"]).arg(path).stderr(Stdio::null()));
+        let _ = ok(git(repo)
+            .args(["worktree", "remove", "-f"])
+            .arg(path)
+            .stderr(Stdio::null()));
     }
-    fn merge_no_ff(&self, wt: &Path, message: &str, tip: &str, git_name: &str, git_email: &str) -> bool {
+    fn merge_no_ff(
+        &self,
+        wt: &Path,
+        message: &str,
+        tip: &str,
+        git_name: &str,
+        git_email: &str,
+    ) -> bool {
         // The subject carries a bead title (free text): a file, never argv.
-        let msg = std::env::temp_dir().join(format!("queue-merge-msg-{}-{}", std::process::id(), unique()));
+        let msg = std::env::temp_dir().join(format!(
+            "queue-merge-msg-{}-{}",
+            std::process::id(),
+            unique()
+        ));
         if fs::write(&msg, message).is_err() {
             return false;
         }
@@ -206,7 +299,16 @@ impl Git for RealGit {
     fn merge_abort(&self, wt: &Path) {
         let _ = ok(git(wt).args(["merge", "--abort"]).stderr(Stdio::null()));
     }
-    fn rebase_onto(&self, repo: &Path, scratch: &Path, tip: &str, upstream: &str, onto: &str, git_name: &str, git_email: &str) -> Result<String, Vec<String>> {
+    fn rebase_onto(
+        &self,
+        repo: &Path,
+        scratch: &Path,
+        tip: &str,
+        upstream: &str,
+        onto: &str,
+        git_name: &str,
+        git_email: &str,
+    ) -> Result<String, Vec<String>> {
         self.worktree_prune(repo);
         self.worktree_remove(repo, scratch);
         if !self.worktree_add_detached(repo, scratch, tip) {
@@ -223,15 +325,20 @@ impl Git for RealGit {
         let result = if done {
             self.rev_parse(scratch, "HEAD").ok_or_else(Vec::new)
         } else {
-            let paths = stdout_of(git(scratch).args(["diff", "--name-only", "--diff-filter=U"])).unwrap_or_default();
-            let _ = ok(git(scratch).args(["rebase", "--abort"]).stderr(Stdio::null()));
+            let paths = stdout_of(git(scratch).args(["diff", "--name-only", "--diff-filter=U"]))
+                .unwrap_or_default();
+            let _ = ok(git(scratch)
+                .args(["rebase", "--abort"])
+                .stderr(Stdio::null()));
             Err(paths.lines().map(str::to_string).collect())
         };
         self.worktree_remove(repo, scratch);
         result
     }
     fn is_clean(&self, wt: &Path) -> bool {
-        stdout_of(git(wt).args(["status", "--porcelain"])).map(|s| s.trim().is_empty()).unwrap_or(false)
+        stdout_of(git(wt).args(["status", "--porcelain"]))
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(false)
     }
 }
 
@@ -247,7 +354,10 @@ impl Bd for RealBd {
         if self.db.is_empty() {
             return Err("SPIRA_DB is empty".into());
         }
-        let timeout = std::env::var("BD_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "180".into());
+        let timeout = std::env::var("BD_TIMEOUT")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "180".into());
         let mut out = Vec::new();
         for chunk in ids.chunks(100) {
             let o = Command::new("timeout")
@@ -273,14 +383,20 @@ impl Bd for RealBd {
 
 /// `bdjson`'s `json_only`: from the first line starting `[` or `{`; one object or a list.
 pub fn parse_bd_json(text: &str) -> Result<Vec<BeadRow>, String> {
-    let start = text.lines().position(|l| l.starts_with('[') || l.starts_with('{')).ok_or("bd answered no JSON")?;
+    let start = text
+        .lines()
+        .position(|l| l.starts_with('[') || l.starts_with('{'))
+        .ok_or("bd answered no JSON")?;
     let body: String = text.lines().skip(start).collect::<Vec<_>>().join("\n");
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let items = match v {
         serde_json::Value::Array(a) => a,
         o => vec![o],
     };
-    Ok(items.into_iter().filter_map(|i| serde_json::from_value(i).ok()).collect())
+    Ok(items
+        .into_iter()
+        .filter_map(|i| serde_json::from_value(i).ok())
+        .collect())
 }
 
 // ------------------------------------------------------------------------------- lib seam
@@ -314,11 +430,17 @@ impl RealLib {
         // batch-job: this runs whatever its caller names, as long as that takes
         let mut cmd = Command::new("bash");
         cmd.stdin(Stdio::piped()).stderr(Stdio::inherit());
-        cmd.stdout(if capture { Stdio::piped() } else { Stdio::inherit() });
+        cmd.stdout(if capture {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        });
         // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
         // bin/+spira/ on the CHILD's PATH, never only inherited — see inbox-triage's scar.
         cmd.envs(spira_config::release_env::child_path_env_for_process());
-        let Ok(mut child) = cmd.spawn() else { return (127, String::new()) };
+        let Ok(mut child) = cmd.spawn() else {
+            return (127, String::new());
+        };
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(&seam::stdin_bytes(op, &all));
         }
@@ -358,7 +480,12 @@ fn git_remotes(repo: &str) -> Vec<String> {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(String::from).collect())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split_whitespace()
+                .map(String::from)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -371,7 +498,9 @@ impl Lib for RealLib {
         // lookup still has it, and every repo-registry field below reads the same
         // Registry the shims used to shell out to.
         let reg = self.repo_registry();
-        let name = repo.map(str::to_string).unwrap_or_else(|| reg.home_repo().to_string());
+        let name = repo
+            .map(str::to_string)
+            .unwrap_or_else(|| reg.home_repo().to_string());
         let (rc, ans) = self.answer(Op::Context, &[&name]);
         if rc != 0 || ans.is_empty() {
             return Err(format!("lib.sh context seam exited {rc}"));
@@ -389,7 +518,8 @@ impl Lib for RealLib {
         let git_name = spira_config::process::cfg("SPIRA_GIT_NAME")?;
         let git_email = spira_config::process::cfg("SPIRA_GIT_EMAIL")?;
         let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
-        let round_wall_secs = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
+        let round_wall_secs =
+            spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
         let rounds_max = spira_config::process::cfg_parse::<usize>("SPIRA_QUEUE_ROUNDS_MAX")?;
         let s = Settings {
             home: PathBuf::from(g("home")),
@@ -417,7 +547,9 @@ impl Lib for RealLib {
                 lock_starve_max: n("starve_max", 5),
                 capacity_backoff_min: n("capacity_backoff_min", 300),
                 capacity_backoff_max: n("capacity_backoff_max", 3600),
-                incident_priority: Some(g("incident_priority")).filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "1".into()),
+                incident_priority: Some(g("incident_priority"))
+                    .filter(|p| !p.trim().is_empty())
+                    .unwrap_or_else(|| "1".into()),
                 red_tracker_label: g("red_tracker_label"),
                 mender_label: g("mender_label"),
             },
@@ -437,8 +569,12 @@ impl Lib for RealLib {
         let path = path.map(PathBuf::from);
         let r = RepoCtx {
             mode: LandMode::parse(&reg.land(&name)).unwrap_or(LandMode::Push),
-            map_land: reg.field(&name, spira_config::repos::Column::Land).unwrap_or_default(),
-            map_base: reg.field(&name, spira_config::repos::Column::Base).unwrap_or_default(),
+            map_land: reg
+                .field(&name, spira_config::repos::Column::Land)
+                .unwrap_or_default(),
+            map_base: reg
+                .field(&name, spira_config::repos::Column::Base)
+                .unwrap_or_default(),
             name,
             path,
             landref,
@@ -482,20 +618,33 @@ impl Lib for RealLib {
     fn bead_retire(&self, id: &str, reason: &str) -> Result<(), String> {
         spira_config::lifecycle_row::close(id, reason, "queue", None)
     }
-    fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String> {
-        let Some(root) = self.repo_registry().root(repo) else { return Ok(false) };
+    fn reap_landed_branch(
+        &self,
+        id: &str,
+        repo: &str,
+        branch: &str,
+        why: &str,
+    ) -> Result<bool, String> {
+        let Some(root) = self.repo_registry().root(repo) else {
+            return Ok(false);
+        };
         if !RealGit.ref_exists(Path::new(&root), &format!("refs/heads/{branch}")) {
             return Ok(false);
         }
         // batch-job: the Sending's verified branch+worktree deletion (a content fence over
         // the branch's diff), bounded by its own SPIRA_REAP_TIMEOUT below.
-        let timeout = std::env::var("SPIRA_REAP_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "300".into());
+        let timeout = std::env::var("SPIRA_REAP_TIMEOUT")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "300".into());
         let mut c = Command::new("timeout");
         c.arg(timeout).arg("sending").arg("reap-landed-branch");
         if let Ok(f) = std::env::var("SPIRA_STATUS_FILE") {
             c.arg("--status-from").arg(f);
         }
-        c.args([id, branch, &root, why]).stdin(Stdio::null()).stderr(Stdio::null());
+        c.args([id, branch, &root, why])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null());
         match c.output() {
             Ok(o) if o.status.success() => Ok(true),
             Ok(o) => {
@@ -511,7 +660,9 @@ impl Lib for RealLib {
     /// backs this any more. stdout/stderr inherit straight through, exactly as the
     /// dropped seam call's own `capture: false` did.
     fn gh_issue_closeout(&self, id: &str, sha: &str, repo: &Path) {
-        let _ = spira_config::bounded::bounded("gh-intake").args(["closeout", id, sha, &repo.display().to_string()]).status();
+        let _ = spira_config::bounded::bounded("gh-intake")
+            .args(["closeout", id, sha, &repo.display().to_string()])
+            .status();
     }
     fn comment(&self, id: &str, text: &str) {
         self.call(Op::Comment, &[id, text], false);
@@ -524,7 +675,15 @@ impl Lib for RealLib {
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.call(Op::Event, &[kind, title, detail], false);
     }
-    fn divergence(&self, mailbox: &str, queue_dir: &Path, repo: &str, path: &Path, forge: &str, local: &str) -> Divergence {
+    fn divergence(
+        &self,
+        mailbox: &str,
+        queue_dir: &Path,
+        repo: &str,
+        path: &Path,
+        forge: &str,
+        local: &str,
+    ) -> Divergence {
         // In-process (sp-hwjsq, "wave 4.32"); lib.sh's queue_local_check_divergence is
         // retired outright — nothing else ever called it.
         crate::ops::helpers::check_divergence(mailbox, queue_dir, repo, path, forge, local)
@@ -534,10 +693,17 @@ impl Lib for RealLib {
         // (`spira_git_push ... 2>/dev/null`) did for this call site specifically —
         // spira_git_push itself never redirected anything; that stays the caller's choice,
         // which is why the CLI shim for bash callers (below, in main.rs) does not.
-        ok(crate::ops::helpers::git_push_cmd(path, &["-q".to_string(), remote.to_string(), refspec.to_string()]).stderr(Stdio::null()))
+        ok(crate::ops::helpers::git_push_cmd(
+            path,
+            &["-q".to_string(), remote.to_string(), refspec.to_string()],
+        )
+        .stderr(Stdio::null()))
     }
     fn rebase(&self, branch: &str, onto: &str, path: &Path, name: &str) -> Result<(), String> {
-        let (rc, why) = self.answer(Op::Rebase, &[branch, onto, &path.display().to_string(), name]);
+        let (rc, why) = self.answer(
+            Op::Rebase,
+            &[branch, onto, &path.display().to_string(), name],
+        );
         if rc == 0 {
             Ok(())
         } else {
@@ -548,14 +714,26 @@ impl Lib for RealLib {
         // land_subject prints one line (the title is whitespace-collapsed); anything before
         // it inside the command substitution is not the subject.
         let (_, ans) = self.answer(Op::LandSubject, &[id]);
-        let ans = ans.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+        let ans = ans
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .to_string();
         if ans.is_empty() {
             format!("spira: land {id}")
         } else {
             ans
         }
     }
-    fn sort_rows(&self, express: &HashSet<String>, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)> {
+    fn sort_rows(
+        &self,
+        express: &HashSet<String>,
+        path: &Path,
+        base: &str,
+        prio_json: &str,
+        rows: &str,
+    ) -> Vec<(String, String)> {
         // In-process (sp-hwjsq, "wave 4.32"): queue_sort_rows and its internal
         // queue_is_suite_transition, both ported here. queue_is_suite_transition has no
         // caller left at all once this goes in-process, so lib.sh's copy is retired
@@ -582,15 +760,31 @@ impl Lib for RealLib {
         crate::ops::helpers::cancel_branch_runs(forge, path, branch, "QUEUE");
     }
     fn format_batch(&self, wt: &Path, base: &str, name: &str) {
-        self.call(Op::FormatBatch, &[&wt.display().to_string(), base, name], false);
+        self.call(
+            Op::FormatBatch,
+            &[&wt.display().to_string(), base, name],
+            false,
+        );
     }
     fn base_conflict(&self, path: &Path, base: &str, tip: &str) -> bool {
-        self.call(Op::BaseConflict, &[&path.display().to_string(), base, tip], false).0 == 0
+        self.call(
+            Op::BaseConflict,
+            &[&path.display().to_string(), base, tip],
+            false,
+        )
+        .0 == 0
     }
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String) {
         self.answer(Op::PfGate, &[branch, name, stamp, &wall_secs.to_string()])
     }
-    fn create_bug(&self, actor: &str, title: &str, priority: &str, labels: &str, body: &str) -> Option<String> {
+    fn create_bug(
+        &self,
+        actor: &str,
+        title: &str,
+        priority: &str,
+        labels: &str,
+        body: &str,
+    ) -> Option<String> {
         let (_, ans) = self.answer(Op::CreateBug, &[actor, title, priority, labels, body]);
         Some(ans.trim().to_string()).filter(|id| !id.is_empty())
     }
@@ -626,12 +820,27 @@ impl Scripts for RealScripts {
                 .env("SPIRA_GATE_SUITES", suites),
         )
     }
-    fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut {
+    fn judgement_ci(
+        &self,
+        bin: &Path,
+        s: &Settings,
+        repo: &str,
+        suites: &str,
+        members: &str,
+        evidence: &str,
+    ) -> RunOut {
         let (rc, out) = run_combined(
             Command::new(bin)
                 .arg("judgement-ci")
                 .arg(repo)
-                .args(["--suites", suites, "--members", members, "--evidence", evidence])
+                .args([
+                    "--suites",
+                    suites,
+                    "--members",
+                    members,
+                    "--evidence",
+                    evidence,
+                ])
                 .arg("--home")
                 .arg(&s.home)
                 .arg("--run")
@@ -639,14 +848,28 @@ impl Scripts for RealScripts {
                 .arg("--db")
                 .arg(&s.db),
         );
-        RunOut { rc, out, err: String::new() }
+        RunOut {
+            rc,
+            out,
+            err: String::new(),
+        }
     }
     fn observe_flake(&self, suite: &str, sha: &str) {
-        let _ = ok(Command::new("testenv").args(["suites", "observe-flake", suite, sha]).stdout(Stdio::null()).stderr(Stdio::null()));
+        let _ = ok(Command::new("testenv")
+            .args(["suites", "observe-flake", suite, sha])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()));
     }
     fn mail_operator(&self, subject: &str, body: &str) {
         let Ok(mut child) = spira_config::bounded::bounded("mail")
-            .args(["send", "operator", "--from", "Spira Queue <queue@spira>", "--subject", subject])
+            .args([
+                "send",
+                "operator",
+                "--from",
+                "Spira Queue <queue@spira>",
+                "--subject",
+                subject,
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -666,25 +889,45 @@ impl Scripts for RealScripts {
         if wait_zero {
             c.env("SPIRA_QUEUE_BATCH_WAIT", "0");
         }
-        c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
+        c.stdin(Stdio::null())
+            .status()
+            .ok()
+            .and_then(|s| s.code())
+            .unwrap_or(127)
     }
     fn path_attribution(&self, bin: &Path, repo: &str, members: &str, reds: &Path) -> String {
         // batch-job: path-attribute reads git diffs only
-        let out = Command::new(bin).args(["path-attribute", repo, "--home"]).arg(&self.home).args(["--members", members, "--reds"]).arg(reds).stdin(Stdio::null()).output();
-        out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+        let out = Command::new(bin)
+            .args(["path-attribute", repo, "--home"])
+            .arg(&self.home)
+            .args(["--members", members, "--reds"])
+            .arg(reds)
+            .stdin(Stdio::null())
+            .output();
+        out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
     }
     fn czar_fence(&self, class: &str) -> bool {
         ok(Command::new("czar-fence.sh").arg(class))
     }
     fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
         // batch-job: this runs whatever its caller names, as long as that takes
-        match Command::new(bin).args(args).env("SPIRA_DB", db).stdin(Stdio::null()).output() {
+        match Command::new(bin)
+            .args(args)
+            .env("SPIRA_DB", db)
+            .stdin(Stdio::null())
+            .output()
+        {
             Ok(o) => RunOut {
                 rc: o.status.code().unwrap_or(127),
                 out: String::from_utf8_lossy(&o.stdout).to_string(),
                 err: String::from_utf8_lossy(&o.stderr).to_string(),
             },
-            Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run release: {e}") },
+            Err(e) => RunOut {
+                rc: 127,
+                out: String::new(),
+                err: format!("cannot run release: {e}"),
+            },
         }
     }
     fn unit_active_state(&self, unit: &str) -> String {
@@ -696,10 +939,26 @@ impl Scripts for RealScripts {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default()
     }
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut {
+    fn round_vm(
+        &self,
+        tree: &Path,
+        results: &Path,
+        base: &str,
+        round: (&str, &str),
+        wall_secs: u64,
+        handle: &Path,
+    ) -> RunOut {
         // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
         let spawned = Command::new("timeout")
-            .args(["-k", "5", &wall_secs.saturating_mul(ROUND_HANG_GUARD_FACTOR).to_string(), "round-vm", "run"])
+            .args([
+                "-k",
+                "5",
+                &wall_secs
+                    .saturating_mul(ROUND_HANG_GUARD_FACTOR)
+                    .to_string(),
+                "round-vm",
+                "run",
+            ])
             .arg(tree)
             .arg("--results-dir")
             .arg(results)
@@ -713,7 +972,13 @@ impl Scripts for RealScripts {
             .spawn();
         let child = match spawned {
             Ok(c) => c,
-            Err(e) => return RunOut { rc: 127, out: String::new(), err: format!("cannot run round-vm: {e}") },
+            Err(e) => {
+                return RunOut {
+                    rc: 127,
+                    out: String::new(),
+                    err: format!("cannot run round-vm: {e}"),
+                }
+            }
         };
         let _ = fs::write(handle, child.id().to_string());
         match child.wait_with_output() {
@@ -722,20 +987,39 @@ impl Scripts for RealScripts {
                 out: String::from_utf8_lossy(&o.stdout).to_string(),
                 err: String::from_utf8_lossy(&o.stderr).to_string(),
             },
-            Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run round-vm: {e}") },
+            Err(e) => RunOut {
+                rc: 127,
+                out: String::new(),
+                err: format!("cannot run round-vm: {e}"),
+            },
         }
     }
     fn repo_testenv(&self, head: &str, repo: &str, wall_secs: u64, handle: &Path) -> RunOut {
         // batch-job: bounded by the same hang guard as round-vm
         let spawned = Command::new("timeout")
-            .args(["-k", "5", &wall_secs.saturating_mul(ROUND_HANG_GUARD_FACTOR).to_string(), "testenv", head, repo])
+            .args([
+                "-k",
+                "5",
+                &wall_secs
+                    .saturating_mul(ROUND_HANG_GUARD_FACTOR)
+                    .to_string(),
+                "testenv",
+                head,
+                repo,
+            ])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn();
         let child = match spawned {
             Ok(c) => c,
-            Err(e) => return RunOut { rc: 127, out: String::new(), err: format!("cannot run testenv: {e}") },
+            Err(e) => {
+                return RunOut {
+                    rc: 127,
+                    out: String::new(),
+                    err: format!("cannot run testenv: {e}"),
+                }
+            }
         };
         let _ = fs::write(handle, child.id().to_string());
         match child.wait_with_output() {
@@ -744,7 +1028,11 @@ impl Scripts for RealScripts {
                 out: String::from_utf8_lossy(&o.stdout).to_string(),
                 err: String::from_utf8_lossy(&o.stderr).to_string(),
             },
-            Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run testenv: {e}") },
+            Err(e) => RunOut {
+                rc: 127,
+                out: String::new(),
+                err: format!("cannot run testenv: {e}"),
+            },
         }
     }
     fn pass_terminate(&self, pid: u32) {
@@ -758,40 +1046,68 @@ impl Scripts for RealScripts {
     fn rebase_stale(&self, ids: &[String], repo: &str) -> Vec<(String, RunOut)> {
         let width = ids.len().clamp(1, REBASE_WIDTH);
         let next = std::sync::atomic::AtomicUsize::new(0);
-        let slots: Vec<std::sync::Mutex<Option<RunOut>>> = ids.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        let slots: Vec<std::sync::Mutex<Option<RunOut>>> =
+            ids.iter().map(|_| std::sync::Mutex::new(None)).collect();
         std::thread::scope(|sc| {
             for _ in 0..width {
                 sc.spawn(|| loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let Some(id) = ids.get(i) else { break };
                     // batch-job: rebase-stale bounds itself by its own lock wait and gate
-                    let out = match Command::new("rebase-stale").arg(id).arg(repo).stdin(Stdio::null()).output() {
+                    let out = match Command::new("rebase-stale")
+                        .arg(id)
+                        .arg(repo)
+                        .stdin(Stdio::null())
+                        .output()
+                    {
                         Ok(o) => RunOut {
                             rc: o.status.code().unwrap_or(127),
                             out: String::from_utf8_lossy(&o.stdout).to_string(),
                             err: String::from_utf8_lossy(&o.stderr).to_string(),
                         },
-                        Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run rebase-stale: {e}") },
+                        Err(e) => RunOut {
+                            rc: 127,
+                            out: String::new(),
+                            err: format!("cannot run rebase-stale: {e}"),
+                        },
                     };
                     *slots[i].lock().unwrap_or_else(|p| p.into_inner()) = Some(out);
                 });
             }
         });
-        ids.iter().cloned().zip(slots.into_iter().map(|s| s.into_inner().unwrap_or_else(|p| p.into_inner()).unwrap_or_default())).collect()
+        ids.iter()
+            .cloned()
+            .zip(slots.into_iter().map(|s| {
+                s.into_inner()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_default()
+            }))
+            .collect()
     }
     fn boundary_sync(&self, tree: &Path) -> RunOut {
         // batch-job: a git commit in the wiki repo, bounded by git itself
-        match Command::new("bash").arg(tree.join("spira").join("boundary.sh")).arg("sync").stdin(Stdio::null()).output() {
+        match Command::new("bash")
+            .arg(tree.join("spira").join("boundary.sh"))
+            .arg("sync")
+            .stdin(Stdio::null())
+            .output()
+        {
             Ok(o) => RunOut {
                 rc: o.status.code().unwrap_or(127),
                 out: String::from_utf8_lossy(&o.stdout).to_string(),
                 err: String::from_utf8_lossy(&o.stderr).to_string(),
             },
-            Err(e) => RunOut { rc: 127, out: String::new(), err: format!("cannot run boundary.sh: {e}") },
+            Err(e) => RunOut {
+                rc: 127,
+                out: String::new(),
+                err: format!("cannot run boundary.sh: {e}"),
+            },
         }
     }
     fn rebase_waiting_start(&self, repo: &str) -> bool {
-        let Ok(exe) = std::env::current_exe() else { return false };
+        let Ok(exe) = std::env::current_exe() else {
+            return false;
+        };
         // batch-job: the rebase pass runs as long as its gates take, detached from the landing
         Command::new(exe)
             .args(["rebase-waiting", repo])
@@ -803,7 +1119,9 @@ impl Scripts for RealScripts {
             .is_ok()
     }
     fn pass_restart(&self, batch: &str, repo: &str) -> bool {
-        let Ok(exe) = std::env::current_exe() else { return false };
+        let Ok(exe) = std::env::current_exe() else {
+            return false;
+        };
         // batch-job: the next pass runs as long as its round-vm wall allows, detached from this verb
         Command::new(exe)
             .args(["round", "certify", batch, repo])
@@ -819,7 +1137,9 @@ impl Scripts for RealScripts {
 /// round-vm's `--on-red` argument: this binary's `round failed`, the suite name appended by round-vm.
 /// round-vm splits it on whitespace, so a path that holds any gets no hook rather than a wrong one.
 fn on_red_hook(batch: &str, repo: &str) -> Vec<String> {
-    let Ok(exe) = std::env::current_exe() else { return vec![] };
+    let Ok(exe) = std::env::current_exe() else {
+        return vec![];
+    };
     match on_red_cmd(&exe.to_string_lossy(), batch, repo) {
         Some(cmd) => vec!["--on-red".into(), cmd],
         None => {
@@ -845,7 +1165,15 @@ const REBASE_WIDTH: usize = 4;
 pub struct RealForge;
 
 impl Forge for RealForge {
-    fn pr_create(&self, forge: &Path, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
+    fn pr_create(
+        &self,
+        forge: &Path,
+        repo: &Path,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<String, String> {
         let mut child = spira_config::bounded::bounded(forge)
             .arg("pr-create")
             .arg(repo)
@@ -860,19 +1188,34 @@ impl Forge for RealForge {
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(body.as_bytes());
         }
-        let o = child.wait_with_output().map_err(|e| format!("forge wait failed: {e}"))?;
+        let o = child
+            .wait_with_output()
+            .map_err(|e| format!("forge wait failed: {e}"))?;
         if !o.status.success() {
             let err = String::from_utf8_lossy(&o.stderr);
             let err = err.trim();
-            return Err(format!("rc={}: {}", o.status.code().unwrap_or(-1), if err.is_empty() { "(no stderr)" } else { err }));
+            return Err(format!(
+                "rc={}: {}",
+                o.status.code().unwrap_or(-1),
+                if err.is_empty() { "(no stderr)" } else { err }
+            ));
         }
         Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
     }
     fn pr_automerge(&self, forge: &Path, repo: &Path, pr: &str) -> bool {
-        ok(Command::new(forge).arg("pr-automerge").arg(repo).arg(pr).arg("merge").stderr(Stdio::null()))
+        ok(Command::new(forge)
+            .arg("pr-automerge")
+            .arg(repo)
+            .arg(pr)
+            .arg("merge")
+            .stderr(Stdio::null()))
     }
     fn pr_close(&self, forge: &Path, repo: &Path, pr: &str) {
-        let _ = ok(Command::new(forge).arg("pr-close").arg(repo).arg(pr).stderr(Stdio::null()));
+        let _ = ok(Command::new(forge)
+            .arg("pr-close")
+            .arg(repo)
+            .arg(pr)
+            .stderr(Stdio::null()));
     }
     fn queue_prs(&self, forge: &Path, repo: &Path) -> Option<Vec<(String, String)>> {
         let out = stdout_of(Command::new(forge).arg("pr-list-open").arg(repo))?;
@@ -895,31 +1238,61 @@ impl Forge for RealForge {
         )
     }
     fn pr_comment(&self, forge: &Path, repo: &Path, pr: &str, line: &str) {
-        let _ = ok(Command::new(forge).arg("pr-comment").arg(repo).arg(pr).arg(line).stderr(Stdio::null()));
+        let _ = ok(Command::new(forge)
+            .arg("pr-comment")
+            .arg(repo)
+            .arg(pr)
+            .arg(line)
+            .stderr(Stdio::null()));
     }
     fn branch_protect(&self, forge: &Path, repo: &Path, branch: &str) -> bool {
-        ok(Command::new(forge).arg("branch-protect").arg(repo).arg(branch))
+        ok(Command::new(forge)
+            .arg("branch-protect")
+            .arg(repo)
+            .arg(branch))
     }
     fn pr_state(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String> {
-        stdout_of(Command::new(forge).arg("pr-state").arg(repo).arg(pr)).map(|s| s.trim().to_string())
+        stdout_of(Command::new(forge).arg("pr-state").arg(repo).arg(pr))
+            .map(|s| s.trim().to_string())
     }
     fn pr_merge_commit(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String> {
-        stdout_of(Command::new(forge).arg("pr-merge-commit").arg(repo).arg(pr)).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        stdout_of(Command::new(forge).arg("pr-merge-commit").arg(repo).arg(pr))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
     fn check_status(&self, forge: &Path, repo: &Path, pr: &str, branch: &str) -> Option<String> {
-        stdout_of(Command::new(forge).arg("check-status").arg(repo).arg(pr).arg(branch))
+        stdout_of(
+            Command::new(forge)
+                .arg("check-status")
+                .arg(repo)
+                .arg(pr)
+                .arg(branch),
+        )
     }
     fn run_id(&self, forge: &Path, repo: &Path, branch: &str) -> Option<String> {
-        stdout_of(Command::new(forge).arg("run-id").arg(repo).arg(branch)).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        stdout_of(Command::new(forge).arg("run-id").arg(repo).arg(branch))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
     fn run_metadata(&self, forge: &Path, repo: &Path, run: &str) -> String {
         stdout_of(Command::new(forge).arg("run-metadata").arg(repo).arg(run)).unwrap_or_default()
     }
     fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String {
-        stdout_of(Command::new(forge).arg("fail-lines").arg(repo).arg(run).arg(suites)).unwrap_or_default()
+        stdout_of(
+            Command::new(forge)
+                .arg("fail-lines")
+                .arg(repo)
+                .arg(run)
+                .arg(suites),
+        )
+        .unwrap_or_default()
     }
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str) {
-        let _ = ok(Command::new(forge).arg("run-cancel").arg(repo).arg(run).stderr(Stdio::null()));
+        let _ = ok(Command::new(forge)
+            .arg("run-cancel")
+            .arg(repo)
+            .arg(run)
+            .stderr(Stdio::null()));
     }
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) {
         let _ = ok(Command::new(forge).arg("workflow-rerun").arg(repo).arg(run));
@@ -934,7 +1307,9 @@ pub struct RealLc {
 
 impl RealLc {
     fn run(&self, args: &[&str]) -> (i32, String) {
-        let Some(bin) = &self.bin else { return (2, "no spira-lc program".into()) };
+        let Some(bin) = &self.bin else {
+            return (2, "no spira-lc program".into());
+        };
         let timeout = match crate::conf::nonempty("SPIRA_LC_TIMEOUT") {
             Ok(t) => t,
             Err(e) => return (2, e),
@@ -949,12 +1324,23 @@ impl RealLc {
             if attempt > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
-            let o = Command::new("timeout").arg(&timeout).arg(bin).args(args).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+            let o = Command::new("timeout")
+                .arg(&timeout)
+                .arg(bin)
+                .args(args)
+                .stdin(Stdio::null())
+                .output()
+                .map_err(|e| e.to_string())?;
             if o.status.success() {
                 return Ok(String::from_utf8_lossy(&o.stdout).to_string());
             }
             let err = String::from_utf8_lossy(&o.stderr);
-            last = format!("spira-lc {} exited {:?}: {}", args.first().unwrap_or(&""), o.status.code(), err.trim());
+            last = format!(
+                "spira-lc {} exited {:?}: {}",
+                args.first().unwrap_or(&""),
+                o.status.code(),
+                err.trim()
+            );
         }
         Err(last)
     }
@@ -981,51 +1367,171 @@ impl Lc for RealLc {
     fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)> {
         let out = self.stdout(&["show-batch", batch_id]).ok()?;
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;
-        Some((v.get("pass")?.as_u64()? as u32, json_str(&v, "phase").unwrap_or_default()))
+        Some((
+            v.get("pass")?.as_u64()? as u32,
+            json_str(&v, "phase").unwrap_or_default(),
+        ))
     }
     fn create_bead(&self, id: &str) {
         let _ = self.run(&["create-bead", id]);
     }
-    fn cut(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)> {
-        let (rc, out) = self.run(&["cut", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", members, "--actor", actor]);
+    fn cut(
+        &self,
+        batch_id: &str,
+        repo: &str,
+        head: &str,
+        base: &str,
+        members: &str,
+        actor: &str,
+    ) -> Result<String, (i32, String)> {
+        let (rc, out) = self.run(&[
+            "cut",
+            batch_id,
+            "--repo",
+            repo,
+            "--head",
+            head,
+            "--base",
+            base,
+            "--members",
+            members,
+            "--actor",
+            actor,
+        ]);
         if rc != 0 {
             return Err((rc, out.trim().to_string()));
         }
-        Ok(self.batch_state(batch_id).map(|(_, version)| version).unwrap_or_default())
+        Ok(self
+            .batch_state(batch_id)
+            .map(|(_, version)| version)
+            .unwrap_or_default())
     }
-    fn stage(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, parent: &str, actor: &str) -> Result<String, (i32, String)> {
-        let (rc, out) = self.run(&["stage", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", members, "--parent", parent, "--actor", actor]);
+    fn stage(
+        &self,
+        batch_id: &str,
+        repo: &str,
+        head: &str,
+        base: &str,
+        members: &str,
+        parent: &str,
+        actor: &str,
+    ) -> Result<String, (i32, String)> {
+        let (rc, out) = self.run(&[
+            "stage",
+            batch_id,
+            "--repo",
+            repo,
+            "--head",
+            head,
+            "--base",
+            base,
+            "--members",
+            members,
+            "--parent",
+            parent,
+            "--actor",
+            actor,
+        ]);
         if rc != 0 {
             return Err((rc, out.trim().to_string()));
         }
-        Ok(self.batch_state(batch_id).map(|(_, version)| version).unwrap_or_default())
+        Ok(self
+            .batch_state(batch_id)
+            .map(|(_, version)| version)
+            .unwrap_or_default())
     }
-    fn promote(&self, batch_id: &str, head: &str, base: &str, actor: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["promote", batch_id, "--head", head, "--base", base, "--actor", actor]);
+    fn promote(
+        &self,
+        batch_id: &str,
+        head: &str,
+        base: &str,
+        actor: &str,
+    ) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&[
+            "promote", batch_id, "--head", head, "--base", base, "--actor", actor,
+        ]);
         if rc == 0 {
             Ok(())
         } else {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["abandon-batch", batch_id, "--expect", state, "--version", version, "--actor", actor, "--reason", reason]);
+    fn abandon_batch(
+        &self,
+        batch_id: &str,
+        state: &str,
+        version: &str,
+        actor: &str,
+        reason: &str,
+    ) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&[
+            "abandon-batch",
+            batch_id,
+            "--expect",
+            state,
+            "--version",
+            version,
+            "--actor",
+            actor,
+            "--reason",
+            reason,
+        ]);
         if rc == 0 {
             Ok(())
         } else {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn eject_member(&self, batch_id: &str, bead: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["eject-member", batch_id, "--bead-id", bead, "--expect", state, "--version", version, "--actor", actor, "--reason", reason]);
+    fn eject_member(
+        &self,
+        batch_id: &str,
+        bead: &str,
+        state: &str,
+        version: &str,
+        actor: &str,
+        reason: &str,
+    ) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&[
+            "eject-member",
+            batch_id,
+            "--bead-id",
+            bead,
+            "--expect",
+            state,
+            "--version",
+            version,
+            "--actor",
+            actor,
+            "--reason",
+            reason,
+        ]);
         if rc == 0 {
             Ok(())
         } else {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn batch_event(&self, batch_id: &str, state: &str, version: &str, actor: &str, kind: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["event", "batch", batch_id, "--expect", state, "--version", version, "--actor", actor, "--kind", kind]);
+    fn batch_event(
+        &self,
+        batch_id: &str,
+        state: &str,
+        version: &str,
+        actor: &str,
+        kind: &str,
+    ) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&[
+            "event",
+            "batch",
+            batch_id,
+            "--expect",
+            state,
+            "--version",
+            version,
+            "--actor",
+            actor,
+            "--kind",
+            kind,
+        ]);
         if rc == 0 {
             Ok(())
         } else {
@@ -1046,16 +1552,52 @@ impl Lc for RealLc {
         let row = v.get("bead")?;
         Some((json_str(row, "state")?, json_str(row, "version")?))
     }
-    fn bead_event(&self, bead: &str, state: &str, version: &str, actor: &str, kind: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["event", "bead", bead, "--expect", state, "--version", version, "--actor", actor, "--kind", kind]);
+    fn bead_event(
+        &self,
+        bead: &str,
+        state: &str,
+        version: &str,
+        actor: &str,
+        kind: &str,
+    ) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&[
+            "event",
+            "bead",
+            bead,
+            "--expect",
+            state,
+            "--version",
+            version,
+            "--actor",
+            actor,
+            "--kind",
+            kind,
+        ]);
         if rc == 0 {
             Ok(())
         } else {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn land_batch(&self, batch_id: &str, version: &str, actor: &str, sha: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["land", batch_id, "--expect", "GREEN", "--version", version, "--actor", actor, "--sha", sha]);
+    fn land_batch(
+        &self,
+        batch_id: &str,
+        version: &str,
+        actor: &str,
+        sha: &str,
+    ) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&[
+            "land",
+            batch_id,
+            "--expect",
+            "GREEN",
+            "--version",
+            version,
+            "--actor",
+            actor,
+            "--sha",
+            sha,
+        ]);
         if rc == 0 {
             Ok(())
         } else {
@@ -1064,7 +1606,9 @@ impl Lc for RealLc {
     }
     fn probe(&self) -> Result<(), String> {
         let out = self.stdout(&["list", "--state", "IN_DELIVERY"])?;
-        serde_json::from_str::<serde_json::Value>(&out).map(|_| ()).map_err(|e| format!("spira-lc list: {e}"))
+        serde_json::from_str::<serde_json::Value>(&out)
+            .map(|_| ())
+            .map_err(|e| format!("spira-lc list: {e}"))
     }
     fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String> {
         let out = match state {
@@ -1079,7 +1623,8 @@ impl Lc for RealLc {
     }
     fn express_ids(&self) -> Result<Vec<String>, String> {
         let out = self.stdout(&["list", "--express", "--live", "--snapshot"])?;
-        let rows: Vec<LcBeadRow> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))?;
+        let rows: Vec<LcBeadRow> =
+            serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))?;
         Ok(rows.into_iter().map(|r| r.bead_id).collect())
     }
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow> {
@@ -1087,16 +1632,60 @@ impl Lc for RealLc {
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;
         serde_json::from_value(v.get("bead")?.clone()).ok()
     }
-    fn mending_event(&self, batch_id: &str, pass: u32, suite: &str, kind: &str, actor: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["mending", "event", batch_id, "--pass", &pass.to_string(), "--suite", suite, "--kind", kind, "--actor", actor]);
+    fn mending_event(
+        &self,
+        batch_id: &str,
+        pass: u32,
+        suite: &str,
+        kind: &str,
+        actor: &str,
+    ) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&[
+            "mending",
+            "event",
+            batch_id,
+            "--pass",
+            &pass.to_string(),
+            "--suite",
+            suite,
+            "--kind",
+            kind,
+            "--actor",
+            actor,
+        ]);
         if rc == 0 {
             Ok(())
         } else {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn mend(&self, batch_id: &str, pass: u32, suite: &str, members: &str, facts: &str, fences: &str, actor: &str) -> Result<(), (i32, String)> {
-        let (rc, out) = self.run(&["mending", "mend", batch_id, "--pass", &pass.to_string(), "--suite", suite, "--members", members, "--facts", facts, "--fences", fences, "--actor", actor]);
+    fn mend(
+        &self,
+        batch_id: &str,
+        pass: u32,
+        suite: &str,
+        members: &str,
+        facts: &str,
+        fences: &str,
+        actor: &str,
+    ) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&[
+            "mending",
+            "mend",
+            batch_id,
+            "--pass",
+            &pass.to_string(),
+            "--suite",
+            suite,
+            "--members",
+            members,
+            "--facts",
+            facts,
+            "--fences",
+            fences,
+            "--actor",
+            actor,
+        ]);
         if rc == 0 {
             Ok(())
         } else {
@@ -1105,13 +1694,22 @@ impl Lc for RealLc {
     }
     fn mend_tips(&self, beads: &[String]) -> Result<BTreeMap<String, String>, String> {
         let out = self.stdout(&["mending", "tips", "--beads", &beads.join(",")])?;
-        let v: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc mending tips: {e}"))?;
-        Ok(v.into_iter().filter_map(|(k, t)| t.as_str().map(|t| (k, t.to_string()))).collect())
+        let v: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&out).map_err(|e| format!("spira-lc mending tips: {e}"))?;
+        Ok(v.into_iter()
+            .filter_map(|(k, t)| t.as_str().map(|t| (k, t.to_string())))
+            .collect())
     }
     fn churn_facts(&self, since: i64) -> Result<String, String> {
         self.stdout(&["churn-facts", "--since", &since.to_string()])
     }
-    fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)> {
+    fn certify(
+        &self,
+        bead: &str,
+        tip: &str,
+        detail: &str,
+        actor: &str,
+    ) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["certify", bead, tip, "pass", detail, actor]);
         if rc == 0 {
             Ok(())
@@ -1119,7 +1717,15 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn retip(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)> {
+    fn retip(
+        &self,
+        bead: &str,
+        tip: &str,
+        actor: &str,
+        reason: &str,
+        evidence: &str,
+        evidence_tip: &str,
+    ) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["retip", bead, tip, actor, reason, evidence, evidence_tip]);
         if rc == 0 {
             Ok(())
@@ -1127,7 +1733,15 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
-    fn absolve(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)> {
+    fn absolve(
+        &self,
+        bead: &str,
+        tip: &str,
+        actor: &str,
+        reason: &str,
+        evidence: &str,
+        evidence_tip: &str,
+    ) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["absolve", bead, tip, actor, reason, evidence, evidence_tip]);
         if rc == 0 {
             Ok(())
@@ -1153,7 +1767,13 @@ impl ConfigStore for RealConfig {
         let (mk, bk) = (format!("repo.{name}.mode"), format!("repo.{name}.base"));
         spira_config::set_paths_in_file(toml, &[(&mk, mode), (&bk, base)])
     }
-    fn set_legacy_map_row(&self, map: &Path, name: &str, land: &str, base: &str) -> Result<(), String> {
+    fn set_legacy_map_row(
+        &self,
+        map: &Path,
+        name: &str,
+        land: &str,
+        base: &str,
+    ) -> Result<(), String> {
         spira_config::legacy_map::set_row_in_file(map, name, land, base)
     }
 }
@@ -1188,7 +1808,12 @@ pub fn utc_stamp(t: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", secs / 3600, (secs % 3600) / 60, secs % 60)
+    format!(
+        "{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
 }
 
 pub struct SysEnv;
@@ -1202,7 +1827,9 @@ impl Env for SysEnv {
     }
     fn read_stdin(&self) -> Result<String, String> {
         let mut s = String::new();
-        std::io::stdin().read_to_string(&mut s).map_err(|e| e.to_string())?;
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .map_err(|e| e.to_string())?;
         Ok(s)
     }
     fn read_file(&self, p: &Path) -> Result<String, String> {
@@ -1220,7 +1847,9 @@ pub struct StdEmit {
 
 impl StdEmit {
     pub fn new() -> StdEmit {
-        StdEmit { _lock: RefCell::new(()) }
+        StdEmit {
+            _lock: RefCell::new(()),
+        }
     }
 }
 
@@ -1248,8 +1877,14 @@ mod tests {
 
     #[test]
     fn the_on_red_hook_survives_a_replaced_binary_and_refuses_a_spaced_path() {
-        assert_eq!(on_red_cmd("/r/queue (deleted)", "b1", "repo").as_deref(), Some("/r/queue round failed b1 repo --suite"));
-        assert_eq!(on_red_cmd("/r/queue", "b1", "repo").as_deref(), Some("/r/queue round failed b1 repo --suite"));
+        assert_eq!(
+            on_red_cmd("/r/queue (deleted)", "b1", "repo").as_deref(),
+            Some("/r/queue round failed b1 repo --suite")
+        );
+        assert_eq!(
+            on_red_cmd("/r/queue", "b1", "repo").as_deref(),
+            Some("/r/queue round failed b1 repo --suite")
+        );
         assert_eq!(on_red_cmd("/my dir/queue", "b1", "repo"), None);
     }
     use super::*;
@@ -1271,7 +1906,10 @@ mod tests {
 
     #[test]
     fn bd_json_skips_a_preamble_and_accepts_one_object() {
-        let rows = parse_bd_json("warning: x\n[{\"id\":\"sp-a\",\"status\":\"closed\",\"labels\":[\"l\"]}]").unwrap();
+        let rows = parse_bd_json(
+            "warning: x\n[{\"id\":\"sp-a\",\"status\":\"closed\",\"labels\":[\"l\"]}]",
+        )
+        .unwrap();
         assert_eq!(rows[0].id, "sp-a");
         let one = parse_bd_json("{\"id\":\"sp-b\"}").unwrap();
         assert_eq!(one[0].id, "sp-b");
@@ -1288,7 +1926,11 @@ mod tests {
     fn stub_home() -> testkit::TempDir {
         let d = crate::testutil::tmpdir("reallib");
         // A home carries the key registry (conf.d): the repo registry resolves through it.
-        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), d.join("conf.d")).unwrap();
+        std::os::unix::fs::symlink(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"),
+            d.join("conf.d"),
+        )
+        .unwrap();
         fs::write(
             d.join("lib.sh"),
             r#"SPIRA_RUN=/run/x; SPIRA_RELEASES=; SPIRA_DB=/db
@@ -1339,7 +1981,10 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
             declare.push(("SPIRA_HOME_REPO", h));
         }
         let toml = spira_config::process::fixture_toml(dir, &declare);
-        let _env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        let _env = testkit::env(&[
+            ("SPIRA_HOME", Some(REAL_SPIRA_HOME)),
+            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+        ]);
         f()
     }
 
@@ -1354,7 +1999,10 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     /// declares the SAME values.
     fn declare_test_spira_toml(fixture_dir: &Path) -> testkit::EnvGuard {
         let toml = spira_config::process::fixture_toml(fixture_dir, PROCESS_CFG_DECLARE);
-        testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))])
+        testkit::env(&[
+            ("SPIRA_HOME", Some(REAL_SPIRA_HOME)),
+            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+        ])
     }
 
     #[test]
@@ -1368,11 +2016,24 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
             format!("{lib_sh}SPIRA_QUEUE_CI_MAXSEC=100; SPIRA_QUEUE_CI_MAXSEC_SPIRA=77; SPIRA_QUEUE_CI_IDLE_SEC=12; SPIRA_QUEUE_INFRA_RETRIES=4; SPIRA_QUEUE_LOCK_WAIT=9; SPIRA_QUEUE_LOCK_STARVE_MAX=3; SPIRA_INCIDENT_PRIORITY=3\n"),
         )
         .unwrap();
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
         let (s, _) = lib.context(Some("spira")).unwrap();
         assert_eq!(
             s.verdict,
-            VerdictSettings { ci_maxsec: 77, ci_idle_sec: 12, infra_retries: 4, lock_wait: 9, lock_starve_max: 3, capacity_backoff_min: 300, capacity_backoff_max: 3600, incident_priority: "3".into(), red_tracker_label: String::new(), mender_label: "mender-failure".into() }
+            VerdictSettings {
+                ci_maxsec: 77,
+                ci_idle_sec: 12,
+                infra_retries: 4,
+                lock_wait: 9,
+                lock_starve_max: 3,
+                capacity_backoff_min: 300,
+                capacity_backoff_max: 3600,
+                incident_priority: "3".into(),
+                red_tracker_label: String::new(),
+                mender_label: "mender-failure".into()
+            }
         );
         // another repository gets the global value; a name that is not an identifier none
         let (s, _) = lib.context(Some("svc")).unwrap();
@@ -1395,13 +2056,25 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
             ),
         )
         .unwrap();
-        let lib = RealLib { home: home.to_path_buf() };
-        let id = lib.create_bug("queue.sh", "publish PR 7 red for spira: a.sh", "3", "spira,plan,repo:spira", "line one\n$(two) `x`");
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
+        let id = lib.create_bug(
+            "queue.sh",
+            "publish PR 7 red for spira: a.sh",
+            "3",
+            "spira,plan,repo:spira",
+            "line one\n$(two) `x`",
+        );
         assert_eq!(id.as_deref(), Some("sp-new9"));
         let seen = fs::read_to_string(&rec).unwrap();
         assert!(seen.starts_with("queue.sh|create|publish PR 7 red for spira: a.sh|--type|bug|--priority|3|--labels|spira,plan,repo:spira|--body-file|"), "{seen}");
         assert!(seen.ends_with("|--silent|\nline one\n$(two) `x`"), "{seen}");
-        fs::write(home.join("lib.sh"), format!("{lib_sh}bdq() {{ return 1; }}\n")).unwrap();
+        fs::write(
+            home.join("lib.sh"),
+            format!("{lib_sh}bdq() {{ return 1; }}\n"),
+        )
+        .unwrap();
         assert_eq!(lib.create_bug("a", "t", "1", "l", "b"), None);
     }
 
@@ -1409,7 +2082,9 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     fn context_seam_round_trips_through_bash() {
         let _serial = crate::testutil::serial();
         let home = stub_home();
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
 
         // spira_home_repo/repo_root/repo_land/repo_field (family U) and spira_landref/
         // spira_publish_forge (family W) are all resolved in-process now (family U since
@@ -1430,7 +2105,11 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
                 .env("GIT_COMMITTER_EMAIL", "t@t")
                 .output()
                 .unwrap();
-            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            assert!(
+                o.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
         };
         git(&["init", "-q", "-b", "trunk"]);
         fs::write(repo.join("f"), "x").unwrap();
@@ -1443,7 +2122,14 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         git(&["remote", "add", "origin", "."]);
         git(&["remote", "add", "upstream", "."]);
         let map = home.join("repomap-fixture");
-        fs::write(&map, format!("spira | {} | queue.local | local/main |  | \n", repo.display())).unwrap();
+        fs::write(
+            &map,
+            format!(
+                "spira | {} | queue.local | local/main |  | \n",
+                repo.display()
+            ),
+        )
+        .unwrap();
 
         let (s, r) = with_repo_map(&map, Some("spira"), || lib.context(Some("spira")).unwrap());
 
@@ -1473,7 +2159,9 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     fn repos_seam_lists_home_first_once_each() {
         let _serial = crate::testutil::serial();
         let home = stub_home();
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
         let map = home.join("repomap-fixture");
         // Home repo first always, a repeated or blank row dropped, and a row sharing the
         // home repo's own name not duplicated — spira_config::repos::Registry::all()'s own
@@ -1494,12 +2182,20 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         // an unset env var, which no longer reaches the registry at all.
         let _serial = crate::testutil::serial();
         let home = stub_home();
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
         let toml = spira_config::process::fixture_toml(
             &home,
-            &[("SPIRA_REPO_MAP", home.join("no-such-map").to_str().unwrap()), ("SPIRA_HOME_REPO", "spira")],
+            &[
+                ("SPIRA_REPO_MAP", home.join("no-such-map").to_str().unwrap()),
+                ("SPIRA_HOME_REPO", "spira"),
+            ],
         );
-        let env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        let env = testkit::env(&[
+            ("SPIRA_HOME", Some(REAL_SPIRA_HOME)),
+            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+        ]);
         let names = lib.repos();
         drop(env);
         assert_eq!(names.unwrap(), vec!["spira".to_string()]);
@@ -1511,26 +2207,46 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let d = crate::testutil::tmpdir("cut-home");
         let rec = d.join("seen");
         let bin = d.join("batcher");
-        testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n", rec.display()));
+        testkit::write_exe(
+            &bin,
+            &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n", rec.display()),
+        );
         let home = d.join("h");
         let s = RealScripts { home: home.clone() };
         s.batcher_cut(&bin, "spira", false);
-        assert_eq!(fs::read_to_string(&rec).unwrap().trim(), format!("cut spira --home {}", home.display()));
+        assert_eq!(
+            fs::read_to_string(&rec).unwrap().trim(),
+            format!("cut spira --home {}", home.display())
+        );
     }
 
     #[test]
     fn answer_seams_ignore_log_lines_and_carry_failures() {
         let _serial = crate::testutil::serial();
         let home = stub_home();
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
         assert_eq!(lib.land_subject("sp-a"), "spira: land sp-a — T");
-        assert_eq!(lib.rebase("spira/sp-a", "origin/main", Path::new("/repo"), "spira"), Err("conflict".to_string()));
+        assert_eq!(
+            lib.rebase("spira/sp-a", "origin/main", Path::new("/repo"), "spira"),
+            Err("conflict".to_string())
+        );
         // sort_rows runs in process now (sp-hwjsq, "wave 4.32"): "/repo" does not exist, so
         // the real `git diff` behind queue_is_suite_transition fails closed (not a
         // transition) for both rows, same as the bash stub it replaced always answered.
         assert_eq!(
-            lib.sort_rows(&HashSet::new(), Path::new("/repo"), "b0", "[]", "sp-a ta 6\nsp-b tb 5\n"),
-            vec![("sp-b".to_string(), "tb".to_string()), ("sp-a".to_string(), "ta".to_string())]
+            lib.sort_rows(
+                &HashSet::new(),
+                Path::new("/repo"),
+                "b0",
+                "[]",
+                "sp-a ta 6\nsp-b tb 5\n"
+            ),
+            vec![
+                ("sp-b".to_string(), "tb".to_string()),
+                ("sp-a".to_string(), "ta".to_string())
+            ]
         );
     }
 
@@ -1558,14 +2274,25 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let trans_tip = git(&repo, &["rev-parse", "HEAD"]);
 
         let home = minimal_home(":");
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
         // sp-t carries the LATER epoch (2 vs. 1): the transition tiebreak must still put it
         // first, ahead of certification age — sp-ihxa0's "tiebreak only within a priority"
         // rule, not a rank of its own that could outrank arrival order the other way.
-        let out = lib.sort_rows(&HashSet::new(), &repo, &base, "[]", &format!("sp-t {trans_tip} 2\nsp-p {base} 1\n"));
+        let out = lib.sort_rows(
+            &HashSet::new(),
+            &repo,
+            &base,
+            "[]",
+            &format!("sp-t {trans_tip} 2\nsp-p {base} 1\n"),
+        );
         // sp-t (the transition) ranks first within the same (default) priority, despite
         // its later epoch.
-        assert_eq!(out, vec![("sp-t".to_string(), trans_tip), ("sp-p".to_string(), base)]);
+        assert_eq!(
+            out,
+            vec![("sp-t".to_string(), trans_tip), ("sp-p".to_string(), base)]
+        );
     }
 
     #[test]
@@ -1588,7 +2315,14 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         fs::create_dir_all(&queue_dir).unwrap();
         let mail_log = run.join("mail-log");
         let bindir = crate::testutil::tmpdir("div-bin");
-        testkit::write_exe(bindir.join("mail"), &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\ncat >> {}\n", mail_log.display(), mail_log.display()));
+        testkit::write_exe(
+            bindir.join("mail"),
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\ncat >> {}\n",
+                mail_log.display(),
+                mail_log.display()
+            ),
+        );
         let old_path = std::env::var_os("PATH").unwrap_or_default();
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
@@ -1596,40 +2330,77 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let _env = testkit::env(&[("PATH", Some(p.to_str().unwrap()))]);
 
         let home = minimal_home(":");
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
 
         // Local ahead of forge (healthy): true, no alarm, no statefile.
-        assert_eq!(lib.divergence("concierge", &queue_dir, "fixq", &repo, &local, &foreign), Divergence::Ancestor);
+        assert_eq!(
+            lib.divergence("concierge", &queue_dir, "fixq", &repo, &local, &foreign),
+            Divergence::Ancestor
+        );
         assert!(!queue_dir.join("fixq/divergence-alarmed").exists());
 
         // Foreign commit on top of local: false, alarmed once.
-        assert!(matches!(lib.divergence("concierge", &queue_dir, "fixq", &repo, &foreign, &local), Divergence::Diverged(_)));
-        let alarmed_after_first = fs::read_to_string(queue_dir.join("fixq/divergence-alarmed")).unwrap();
+        assert!(matches!(
+            lib.divergence("concierge", &queue_dir, "fixq", &repo, &foreign, &local),
+            Divergence::Diverged(_)
+        ));
+        let alarmed_after_first =
+            fs::read_to_string(queue_dir.join("fixq/divergence-alarmed")).unwrap();
         assert_eq!(alarmed_after_first.trim(), foreign);
         let mail_after_first = fs::read_to_string(&mail_log).unwrap();
         assert!(mail_after_first.contains("fixq"), "{mail_after_first}");
-        assert!(mail_after_first.contains("foreign push"), "{mail_after_first}");
+        assert!(
+            mail_after_first.contains("foreign push"),
+            "{mail_after_first}"
+        );
 
         // Same foreign tip again: still false, but silent (no second mail).
         fs::write(&mail_log, "").unwrap();
-        assert!(matches!(lib.divergence("concierge", &queue_dir, "fixq", &repo, &foreign, &local), Divergence::Diverged(_)));
-        assert_eq!(fs::read_to_string(&mail_log).unwrap(), "", "a repeated call against the SAME foreign tip must not re-alarm");
+        assert!(matches!(
+            lib.divergence("concierge", &queue_dir, "fixq", &repo, &foreign, &local),
+            Divergence::Diverged(_)
+        ));
+        assert_eq!(
+            fs::read_to_string(&mail_log).unwrap(),
+            "",
+            "a repeated call against the SAME foreign tip must not re-alarm"
+        );
 
         // Healthy again: the marker clears.
-        assert_eq!(lib.divergence("concierge", &queue_dir, "fixq", &repo, &local, &foreign), Divergence::Ancestor);
+        assert_eq!(
+            lib.divergence("concierge", &queue_dir, "fixq", &repo, &local, &foreign),
+            Divergence::Ancestor
+        );
         assert!(!queue_dir.join("fixq/divergence-alarmed").exists());
-
     }
 
     #[test]
     fn divergence_cannot_check_without_a_queue_dir_or_a_resolvable_repo() {
         let _serial = crate::testutil::serial();
         let home = minimal_home(":");
-        let lib = RealLib { home: home.to_path_buf() };
-        let r = lib.divergence("concierge", Path::new(""), "fixq", Path::new("/repo"), "a", "b");
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
+        let r = lib.divergence(
+            "concierge",
+            Path::new(""),
+            "fixq",
+            Path::new("/repo"),
+            "a",
+            "b",
+        );
         assert!(matches!(r, Divergence::CannotCheck(_)), "{r:?}");
         let qd = crate::testutil::tmpdir("div-cc");
-        let r = lib.divergence("concierge", &qd, "fixq", Path::new("/nonexistent-repo"), "a", "b");
+        let r = lib.divergence(
+            "concierge",
+            &qd,
+            "fixq",
+            Path::new("/nonexistent-repo"),
+            "a",
+            "b",
+        );
         assert!(matches!(r, Divergence::CannotCheck(_)), "{r:?}");
     }
 
@@ -1648,7 +2419,10 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         assert!(plain.contains("push"), "{plain}");
         let with_creds = argv(true);
         assert!(with_creds.contains("credential.helper"), "{with_creds}");
-        assert!(with_creds.contains("insteadOf=git@github.com:"), "{with_creds}");
+        assert!(
+            with_creds.contains("insteadOf=git@github.com:"),
+            "{with_creds}"
+        );
         assert!(with_creds.contains("push"), "{with_creds}");
     }
 
@@ -1660,8 +2434,14 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         // spira_config::resolve::run_dir_for_process(), which (per Ryan 2026-10-05: one
         // source of config) reads `spira.run` from the resolved $SPIRA_TOML — setting
         // SPIRA_RUN itself is no longer an override, so the fixture toml must declare it.
-        let toml = spira_config::process::fixture_toml(run.path(), &[("SPIRA_RUN", run.path().to_str().unwrap())]);
-        let _env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.to_str().unwrap()))]);
+        let toml = spira_config::process::fixture_toml(
+            run.path(),
+            &[("SPIRA_RUN", run.path().to_str().unwrap())],
+        );
+        let _env = testkit::env(&[
+            ("SPIRA_HOME", Some(REAL_SPIRA_HOME)),
+            ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+        ]);
         let bindir = crate::testutil::tmpdir("cancel-bin");
         let forge = bindir.join("forge-fake.sh");
         testkit::write_exe(
@@ -1674,11 +2454,19 @@ esac
 "#,
         );
         let home = minimal_home(":");
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
         lib.cancel_runs(&forge, Path::new("/repo"), "spira/queue/1");
         let log = fs::read_to_string(run.join("landing.log")).unwrap();
-        assert!(log.contains("RUN_CANCEL ") && log.contains("run=101"), "{log}");
-        assert!(log.contains("RUN_CANCEL_FAILED") && log.contains("run=202"), "{log}");
+        assert!(
+            log.contains("RUN_CANCEL ") && log.contains("run=101"),
+            "{log}"
+        );
+        assert!(
+            log.contains("RUN_CANCEL_FAILED") && log.contains("run=202"),
+            "{log}"
+        );
     }
 
     #[test]
@@ -1687,7 +2475,13 @@ esac
         let run = crate::testutil::tmpdir("notify-run");
         let mail_log = run.join("mail-args");
         let bindir = crate::testutil::tmpdir("notify-bin");
-        testkit::write_exe(&bindir.join("mail"), &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n", mail_log.display()));
+        testkit::write_exe(
+            &bindir.join("mail"),
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n",
+                mail_log.display()
+            ),
+        );
         let old_path = std::env::var_os("PATH").unwrap_or_default();
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
@@ -1695,12 +2489,13 @@ esac
         let _env = testkit::env(&[("PATH", Some(p.to_str().unwrap()))]);
 
         let home = minimal_home(":");
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
         lib.notify("concierge", "fixq", "test subject", "test body");
         let seen = fs::read_to_string(&mail_log).unwrap();
         assert!(seen.contains("send concierge"), "{seen}");
         assert!(seen.contains("Merge queue: fixq test subject"), "{seen}");
-
     }
 
     // ---------------------------------------------------------------------------- sp-uwhx0
@@ -1709,8 +2504,17 @@ esac
     // use elsewhere — parity proof that the inlining kept batch.sh's own behaviour.
 
     fn git(dir: &std::path::Path, args: &[&str]) -> String {
-        let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
@@ -1719,7 +2523,11 @@ esac
     /// name — supplied by the caller's PATH, not lib.sh.
     fn minimal_home(repo_format_body: &str) -> testkit::TempDir {
         let d = crate::testutil::tmpdir("batchfns");
-        fs::write(d.join("lib.sh"), format!("log() {{ :; }}\nrepo_format() {{ {repo_format_body}\n}}\n")).unwrap();
+        fs::write(
+            d.join("lib.sh"),
+            format!("log() {{ :; }}\nrepo_format() {{ {repo_format_body}\n}}\n"),
+        )
+        .unwrap();
         fs::write(d.join("lc.sh"), "").unwrap();
         d
     }
@@ -1752,8 +2560,13 @@ esac
         let new_base = git(&repo, &["rev-parse", "HEAD"]);
 
         let home = minimal_home(":");
-        let lib = RealLib { home: home.to_path_buf() };
-        assert!(lib.base_conflict(&repo, &new_base, &tip_conflicts), "same-line edits on both sides must conflict with base");
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
+        assert!(
+            lib.base_conflict(&repo, &new_base, &tip_conflicts),
+            "same-line edits on both sides must conflict with base"
+        );
 
         // A tip that touches an unrelated file: merges cleanly with base (no base conflict).
         git(&repo, &["checkout", "-q", &base]);
@@ -1762,10 +2575,17 @@ esac
         git(&repo, &["add", "g"]);
         git(&repo, &["commit", "-qm", "tipB"]);
         let tip_clean = git(&repo, &["rev-parse", "HEAD"]);
-        assert!(!lib.base_conflict(&repo, &new_base, &tip_clean), "a disjoint-file tip must not conflict with base");
+        assert!(
+            !lib.base_conflict(&repo, &new_base, &tip_clean),
+            "a disjoint-file tip must not conflict with base"
+        );
 
         // The scratch worktree it used is cleaned up either way.
-        assert!(!run.join("worktree").read_dir().unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with(".batch-ck-")));
+        assert!(!run.join("worktree").read_dir().unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".batch-ck-")));
     }
 
     #[test]
@@ -1785,27 +2605,50 @@ esac
 
         // repo_format prints a shell command that rewrites the tracked file.
         let home = minimal_home("printf 'echo formatted > f.txt'");
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
         lib.format_batch(&repo, &base, "spira");
         let after_head = git(&repo, &["rev-parse", "HEAD"]);
-        assert_ne!(before_head, after_head, "a formatter that changes tracked content must produce a new commit");
-        assert_eq!(fs::read_to_string(repo.join("f.txt")).unwrap(), "formatted\n");
+        assert_ne!(
+            before_head, after_head,
+            "a formatter that changes tracked content must produce a new commit"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "formatted\n"
+        );
         let msg = git(&repo, &["log", "-1", "--format=%s"]);
         assert_eq!(msg, "spira: format batch");
-        assert!(git(&repo, &["status", "--porcelain"]).is_empty(), "the tree must be clean after the commit");
+        assert!(
+            git(&repo, &["status", "--porcelain"]).is_empty(),
+            "the tree must be clean after the commit"
+        );
 
         // A formatter that changes nothing: no new commit.
         let home2 = minimal_home("printf 'true'");
-        let lib2 = RealLib { home: home2.to_path_buf() };
+        let lib2 = RealLib {
+            home: home2.to_path_buf(),
+        };
         lib2.format_batch(&repo, &base, "spira");
-        assert_eq!(git(&repo, &["rev-parse", "HEAD"]), after_head, "a no-op formatter must not add a commit");
+        assert_eq!(
+            git(&repo, &["rev-parse", "HEAD"]),
+            after_head,
+            "a no-op formatter must not add a commit"
+        );
 
         // repo_format answering nothing: format_batch does not touch the tree at all.
         let home3 = minimal_home("printf ''");
-        let lib3 = RealLib { home: home3.to_path_buf() };
+        let lib3 = RealLib {
+            home: home3.to_path_buf(),
+        };
         fs::write(repo.join("f.txt"), "dirty\n").unwrap();
         lib3.format_batch(&repo, &base, "spira");
-        assert_eq!(fs::read_to_string(repo.join("f.txt")).unwrap(), "dirty\n", "no configured formatter must leave the working tree untouched");
+        assert_eq!(
+            fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "dirty\n",
+            "no configured formatter must leave the working tree untouched"
+        );
         git(&repo, &["checkout", "-q", "--", "."]);
     }
 
@@ -1820,10 +2663,15 @@ esac
         p.push(&old_path);
         let _env = testkit::env(&[("PATH", Some(p.to_str().unwrap()))]);
         let home = minimal_home(":");
-        let lib = RealLib { home: home.to_path_buf() };
+        let lib = RealLib {
+            home: home.to_path_buf(),
+        };
         let (rc, out) = lib.pf_gate("spira/queue/1", "spira", "1700000000", 10);
         assert_eq!(rc, 3);
-        assert_eq!(out.trim(), "gate ran for spira/queue/1/spira bead=batch-1700000000");
+        assert_eq!(
+            out.trim(),
+            "gate ran for spira/queue/1/spira bead=batch-1700000000"
+        );
 
         // A gate that outlives the wall is killed — the WHOLE process group, grandchild
         // included (test-batch-preflight.sh's own case: a test container the gate started
@@ -1832,18 +2680,29 @@ esac
         let grandchild_pid = mark.join("grandchild-pid");
         testkit::write_exe(
             &bindir.join("gate.sh"),
-            &format!("#!/bin/sh\nsleep 30 & echo $! > {}\nsleep 30\n", grandchild_pid.display()),
+            &format!(
+                "#!/bin/sh\nsleep 30 & echo $! > {}\nsleep 30\n",
+                grandchild_pid.display()
+            ),
         );
         let t0 = std::time::Instant::now();
         let (rc, _) = lib.pf_gate("spira/queue/2", "spira", "1700000001", 1);
         assert_eq!(rc, 124);
-        assert!(t0.elapsed().as_secs() < 20, "the wall must cut the gate off well before its own sleep finishes");
+        assert!(
+            t0.elapsed().as_secs() < 20,
+            "the wall must cut the gate off well before its own sleep finishes"
+        );
         std::thread::sleep(std::time::Duration::from_millis(200));
         let gc = fs::read_to_string(&grandchild_pid).unwrap_or_default();
         let gc = gc.trim();
         assert!(!gc.is_empty(), "the gate's grandchild must have started");
         assert!(
-            Command::new("kill").arg("-0").arg(gc).status().map(|s| !s.success()).unwrap_or(true),
+            Command::new("kill")
+                .arg("-0")
+                .arg(gc)
+                .status()
+                .map(|s| !s.success())
+                .unwrap_or(true),
             "the whole process group must be killed, grandchild included — pid {gc} still alive"
         );
     }

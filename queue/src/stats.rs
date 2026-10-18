@@ -16,21 +16,29 @@ pub struct Stats {
 /// the LAST occurrence because `.*` is greedy). Non-numeric or absent → 0.
 fn num_after(line: &str, key: &str) -> u64 {
     let Some(pos) = line.rfind(key) else { return 0 };
-    let digits: String = line[pos + key.len()..].chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = line[pos + key.len()..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     digits.parse().unwrap_or(0)
 }
 
 /// `verdict=<[a-z]*>`, present only on local-gate lines.
 fn verdict(line: &str) -> Option<String> {
     let pos = line.rfind("verdict=")?;
-    let v: String = line[pos + 8..].chars().take_while(|c| c.is_ascii_lowercase()).collect();
+    let v: String = line[pos + 8..]
+        .chars()
+        .take_while(|c| c.is_ascii_lowercase())
+        .collect();
     // queue.sh tested `[ -n "$_v" ]`: an empty verdict= is a CI line.
     (!v.is_empty()).then_some(v)
 }
 
 /// `cost=<n>s` — only counted when the digits are followed by `s`.
 fn cost(line: &str) -> u64 {
-    let Some(pos) = line.rfind("cost=") else { return 0 };
+    let Some(pos) = line.rfind("cost=") else {
+        return 0;
+    };
     let rest = &line[pos + 5..];
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     if rest[digits.len()..].starts_with('s') {
@@ -70,7 +78,11 @@ pub fn tally(log: &str) -> Stats {
 
 pub fn render(s: &Stats) -> String {
     let avg = if s.members > 0 { s.cost / s.members } else { 0 };
-    let pct = if s.local_batches > 0 { s.local_red * 100 / s.local_batches } else { 0 };
+    let pct = if s.local_batches > 0 {
+        s.local_red * 100 / s.local_batches
+    } else {
+        0
+    };
     format!(
         "caught:          {}\nescaped:         {}\nbatches:         {} ({} members)\nlocal_red_rate:  {}/{} ({}%)\ncost:            {}s avg per branch\n",
         s.caught, s.escaped, s.batches, s.members, s.local_red, s.local_batches, pct, avg
@@ -102,7 +114,18 @@ QUEUE PUBLISH 7 repo=spira pr=3 members=2
 other line
 ";
         let s = tally(log);
-        assert_eq!(s, Stats { caught: 1, escaped: 1, batches: 3, members: 5, cost: 180, local_batches: 2, local_red: 1 });
+        assert_eq!(
+            s,
+            Stats {
+                caught: 1,
+                escaped: 1,
+                batches: 3,
+                members: 5,
+                cost: 180,
+                local_batches: 2,
+                local_red: 1
+            }
+        );
         let r = render(&s);
         assert!(r.contains("batches:         3 (5 members)"));
         assert!(r.contains("local_red_rate:  1/2 (50%)"));
