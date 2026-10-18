@@ -556,6 +556,12 @@ pub fn is_tool(verb: &str) -> bool {
     TOOLS.iter().any(|(v, _)| *v == verb)
 }
 
+/// The verbs that run a brokered tool (lint, testenv, bead.sh, a harness sweep) and so wait on
+/// the client's tool bound, not the store-call deadline; `work`'s client waits the same set.
+pub fn brokers_tool(verb: &str) -> bool {
+    is_tool(verb) || LANE_VERBS.contains(&verb) || matches!(verb, "file-followup" | "split" | "submit")
+}
+
 const ANY: &[&str] = &["*"];
 
 /// THE allow table: operation → the personas that may run it (`*`: every persona). An
